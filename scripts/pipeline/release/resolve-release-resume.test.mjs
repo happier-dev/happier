@@ -239,6 +239,29 @@ test('standard release resume retains successful mobile flows only under their s
   }
   assert.deepEqual(resolveReleaseResume({ ...input, jobs: [...jobs, jobs[1]] }).uiCompleted, { ...nativeComplete, nativeIos: false });
   assert.deepEqual(resolveReleaseResume({ ...input, expected: { ...input.expected, sourceSha: '' } }).uiCompleted, incomplete);
+  for (const combined of [false, true]) {
+    const workflowSha = 'c'.repeat(40);
+    const pinnedJobs = jobs.map((job, index) => ({ ...job, head_sha: workflowSha,
+      name: `${combined ? 'Release preview channel' : 'Release single channel'} / deploy_ui / ${index === 3
+        ? 'Mobile APK release (local runner) / Sign and publish Android APK' : flows[index][0]}`,
+      ...(index === 3 ? { steps: [{ name: 'Sign and publish APK with trusted control', status: 'completed', conclusion: 'success' }] } : {}),
+    }));
+    const pinned = { ...input,
+      originRun: { ...input.originRun, head_sha: workflowSha },
+      artifacts: [statusArtifact({ name: combined ? 'happier-release-status-preview' : 'happier-release-status',
+        workflow_run: { id: RUN_ID, head_sha: workflowSha } })],
+      expected: { ...input.expected, ...(combined ? { statusArtifactName: 'happier-release-status-preview' } : {}) },
+      jobs: pinnedJobs,
+    };
+    assert.deepEqual(resolveReleaseResume(pinned).uiCompleted, nativeComplete,
+      'candidate-bound status and successful origin steps retain native completion under a different control SHA');
+    assert.throws(() => resolveReleaseResume({ ...pinned, expected: { ...pinned.expected, sourceSha: workflowSha } }), /authorized source SHA/);
+    for (const patch of [{ run_id: RUN_ID + 1 }, { head_sha: SOURCE_SHA },
+      { steps: [{ ...pinnedJobs[1].steps[0], conclusion: 'skipped' }] }]) {
+      assert.deepEqual(resolveReleaseResume({ ...pinned, jobs: pinnedJobs.map((job, index) => index === 1 ? { ...job, ...patch } : job) }).uiCompleted,
+        { ...nativeComplete, nativeIos: false }, 'different control still requires exact-origin successful native steps');
+    }
+  }
 });
 
 test('standard release desktop recovery admits finalized artifacts from only the requested channel and exact origin', () => {
@@ -318,10 +341,11 @@ test('resume inspection binds one unexpired status artifact to the exact origin 
     artifactDigest: DIGEST,
     artifactId: 1234,
     workflowSha: SOURCE_SHA,
+    statusArtifactName: 'happier-release-status',
   });
 });
 
-test('combined releases select the channel-specific status artifact from the shared run', () => {
+test('combined releases select the channel-specific status artifact from the shared run', async (t) => {
   const combinedExpected = {
     repository: REPOSITORY,
     workflowPath: '.github/workflows/release.yml',
@@ -342,7 +366,41 @@ test('combined releases select the channel-specific status artifact from the sha
     artifactDigest: DIGEST,
     artifactId: 5678,
     workflowSha: SOURCE_SHA,
+    statusArtifactName: 'happier-release-status-preview',
   });
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'resume-scoped-inspect-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(root, 'run.json'), JSON.stringify(originRun({ path: combinedExpected.workflowPath })));
+  fs.writeFileSync(path.join(root, 'artifacts.json'), JSON.stringify([
+    statusArtifact({ id: 5678, name: 'happier-release-status-preview' }),
+    statusArtifact({ id: 9012, name: 'happier-release-status-production' }),
+  ]));
+  const result = await main(['--mode', 'inspect', '--origin-run-json', path.join(root, 'run.json'),
+    '--artifacts-json', path.join(root, 'artifacts.json'), '--expected-repository', REPOSITORY,
+    '--expected-workflow', combinedExpected.workflowPath, '--expected-channel', 'preview',
+    '--github-output', path.join(root, 'outputs')]);
+  assert.equal(result.artifactId, 5678, 'the CLI default delegates selection to canonical channel admission');
+  assert.match(fs.readFileSync(path.join(root, 'outputs'), 'utf8'), /^artifact_id=5678$/m);
+});
+
+test('automatic status selection fails closed on missing channel, ambiguous topology, or invalid scoped status', () => {
+  const expected = { repository: REPOSITORY, workflowPath: '.github/workflows/release.yml', channel: 'preview' };
+  const origin = originRun({ path: expected.workflowPath });
+  const preview = statusArtifact({ name: 'happier-release-status-preview' });
+  const production = statusArtifact({ id: 5678, name: 'happier-release-status-production' });
+  const inspect = (artifacts, expectation = expected) => inspectReleaseResumeOrigin({ originRun: origin, artifacts, expected: expectation });
+  for (const artifacts of [[production], [preview, preview], []]) {
+    assert.throws(() => inspect(artifacts), /exactly one/);
+  }
+  for (const artifacts of [[preview, statusArtifact()], [production, statusArtifact()]]) {
+    assert.throws(() => inspect(artifacts), /ambiguous/);
+  }
+  assert.throws(() => inspect([{ ...preview, expired: true }]), /expired/);
+  assert.throws(() => inspect([{ ...preview, workflow_run: { id: RUN_ID + 1, head_sha: SOURCE_SHA } }]), /exact origin/);
+  assert.throws(() => inspect([preview], { ...expected, statusArtifactName: production.name }), /workflow and channel/);
+  assert.throws(() => inspectReleaseResumeOrigin({ originRun: originRun(), artifacts: [preview], expected: {
+    repository: REPOSITORY, workflowPath: '.github/workflows/nightly-dev.yml', channel: 'dev',
+  } }), /exactly one happier-release-status artifact/);
 });
 
 test('resume resolution reuses only successful verified immutable candidates', () => {

@@ -263,7 +263,6 @@ jobs:
       expected_channel: ${{ inputs.environment }}
       expected_source_sha: ${{ inputs.authorized_promotion_source_sha }}
       expected_operation_id: ${{ inputs.hmaint_operation_id }}
-      status_artifact_name: ${{ inputs.combined_preview_production == true && format('happier-release-status-{0}', inputs.environment) || 'happier-release-status' }}
 
   resolve_validation_profile:
     name: Resolve bounded release validation profile

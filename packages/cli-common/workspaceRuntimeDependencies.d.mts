@@ -12,6 +12,8 @@ export type ResolvedRuntimePackage = Readonly<{
 
 export function parsePackageNameSegments(packageName: unknown): string[];
 
+export function omitWorkspaceSourceCondition(value: unknown): unknown;
+
 export function collectExternalRuntimeDependencies(packageJson: any): ReadonlyArray<RuntimeDependency>;
 
 export function assertResolvedRuntimeDependencyMatchesDeclaration(params: Readonly<{

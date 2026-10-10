@@ -1,4 +1,5 @@
 import { afterEach } from 'vitest';
+import { posix } from 'node:path';
 
 import type { PluginDaemonModuleNamespace } from '../../types';
 import type { AgentContributionRuntimeRegistration } from '../../api/registrationRightsHost';
@@ -25,6 +26,7 @@ type AdmittedRegistry = ReturnType<typeof createTargetAgentRuntimeRegistryProduc
     fixture: AuthoredFixture;
     readPluginOccurrenceId: NonNullable<AuthoredFixture['registry']['readPluginOccurrenceId']>;
     readPluginSourceCustody: NonNullable<AuthoredFixture['registry']['readPluginSourceCustody']>;
+    sdkRegistrations: TargetRegistryParams['targetRegistrations'];
 }>;
 type FixtureOptions = Readonly<{
     /** Physical behavior is loaded without injecting callbacks for custody assertions. */
@@ -43,7 +45,7 @@ afterEach(async () => {
     for (const dispose of disposers.splice(0).reverse()) await dispose();
 });
 
-const ACP_TRANSPORT = { kind: 'stdio', executable: { kind: 'systemTool', id: 'fixture-acp' } };
+const ACP_TRANSPORT = { kind: 'stdio', executable: { kind: 'systemTool', id: 'fixture-acp' } } as const;
 const SESSION_CAPABILITIES = { open: ['create'], delivery: ['newTurn'], cancel: true };
 const SOURCE_DECLARATION = {
     sourceKind: 'fixture',
@@ -108,12 +110,23 @@ function authoredFiles(entries: readonly Readonly<{
         if (values[${index}]?.externalSessionTakeover) takeover${index} = values[${index}].externalSessionTakeover;
         cliAuth${index} = values[${index}]?.cliAuth;
     `).join('\n');
+    const runnerModules: Record<string, string> = {};
     const registrations = entries.map((entry, index) => {
         const id = JSON.stringify(entry.localId);
+        const locator = entry.value.sessionRunnerFactory ?? {
+            module: './agent-runtime.mjs', export: `createAgent${index}`, runtimeApiVersion: 1,
+            ...(entry.value.externalSessions ? { externalSessionsExport: `externalSessions${index}` } : {}),
+        };
+        if (entry.sessionPrimary && entry.value.sessionRunnerFactory) {
+            const modulePath = locator.module.replace(/^\.\//, '');
+            const relativeLeafPath = posix.relative(posix.dirname(modulePath), 'agent-runtime.mjs');
+            const leafSpecifier = relativeLeafPath.startsWith('.') ? relativeLeafPath : `./${relativeLeafPath}`;
+            runnerModules[modulePath] = `export {createAgent${index} as ${locator.export}${locator.externalSessionsExport
+                ? `,externalSessions${index} as ${locator.externalSessionsExport}` : ''}} from ${JSON.stringify(leafSpecifier)};\n`;
+        }
         const options = entry.sessionPrimary ? `{
             ...leaf.options${index},
-            sessionRunnerFactory: {module:'./agent-runtime.mjs',export:'createAgent${index}',runtimeApiVersion:1,
-                ${entry.value.externalSessions ? `externalSessionsExport:'externalSessions${index}'` : ''}},
+            sessionRunnerFactory: ${JSON.stringify(locator)},
         }` : `leaf.options${index}`;
         return [
             ...(entry.custom ? [`api.agents.register(${id},leaf.createAgent${index},${options});`] : []),
@@ -127,6 +140,7 @@ function authoredFiles(entries: readonly Readonly<{
         ].join('\n');
     }).join('\n');
     return {
+        ...runnerModules,
         'agent-runtime.mjs': `${declarations}\nexport function configureUnitLeaves(values) {${configure}}\n`,
         'daemon.mjs': `import * as leaf from './agent-runtime.mjs';
             export function activate(api) {${registrations}}
@@ -153,11 +167,14 @@ function authoredPlugin(params: Readonly<{
     const entries = localIds.map((localId) => {
         const value = registrations.find((entry) => entry.localId === localId)?.value ?? {};
         const selected = params.agents.find((agent) => (agent.identity?.localId ?? agent.richDefinition?.definition.id ?? agent.id) === localId)?.richDefinition?.definition;
-        const custom = value.factory !== undefined || value.daemonSpawnHooks !== undefined || value.terminalPromptSubmitVerification !== undefined;
+        const custom = value.factory !== undefined || value.daemonSpawnHooks !== undefined;
         const sessionPrimary = custom && !(selected
             && isPrimaryAgentContributionDefinition(selected)
             && selected.primary === 'executionRuns');
-        const surfaces = [...(value.externalSessions ? ['externalSessions'] : []), ...(value.terminal ? ['terminal'] : [])];
+        const surfaces = [
+            ...(value.externalSessions ? ['externalSessions'] : []),
+            ...(value.terminal || value.externalSessions?.terminal ? ['terminal'] : []),
+        ];
         const declared = selected ?? {
             id: localId, title: localId, runtime: custom ? { kind: 'custom' } : { kind: 'acp', transport: ACP_TRANSPORT },
             primary: 'sessions', capabilities: { sessions: SESSION_CAPABILITIES },
@@ -180,7 +197,18 @@ function authoredPlugin(params: Readonly<{
     });
     const manifest = requireManifest(createPluginManifestV2Fixture({
         id: params.pluginId, version: params.version, entrypoints: { daemon: './daemon.mjs' },
-        contributes: { agents: entries.map(({ definition }) => definition) },
+        contributes: {
+            agents: entries.map(({ definition }) => definition),
+            ...(entries.some(({ definition }) => {
+                const runtime = definition.runtime;
+                return runtime.kind === 'acp' && 'transport' in runtime
+                    && runtime.transport.kind === 'stdio'
+                    && runtime.transport.executable.kind === 'systemTool'
+                    && runtime.transport.executable.id === 'fixture-acp';
+            }) ? {
+                systemTools: [{ id: 'fixture-acp', title: 'Fixture ACP', executableNames: ['fixture-acp'] }],
+            } : {}),
+        },
     }));
     return {
         manifest, files: authoredFiles(entries),
@@ -198,11 +226,11 @@ function authoredPlugin(params: Readonly<{
     };
 }
 
-function attachFixture(registry: ReturnType<typeof createTargetAgentRuntimeRegistryProduction>, fixture: AuthoredFixture): AdmittedRegistry {
+function attachFixture(registry: ReturnType<typeof createTargetAgentRuntimeRegistryProduction>, fixture: AuthoredFixture, sdkRegistrations: TargetRegistryParams['targetRegistrations'] = []): AdmittedRegistry {
     const readPluginOccurrenceId = fixture.registry.readPluginOccurrenceId;
     const readPluginSourceCustody = fixture.registry.readPluginSourceCustody;
     if (!readPluginOccurrenceId || !readPluginSourceCustody) throw new Error('Admitted fixture has no source identity readers');
-    return Object.assign(registry, { fixture, readPluginOccurrenceId, readPluginSourceCustody });
+    return Object.assign(registry, { fixture, readPluginOccurrenceId, readPluginSourceCustody, sdkRegistrations });
 }
 
 /** UNIT callbacks exercise public registration and host wrapping, not source byte integrity. */
@@ -243,7 +271,11 @@ export async function createTargetAgentRuntimeRegistry(params: TargetRegistryFix
             ...(source.resolveRelativeModule ? { resolveRelativeModule: source.resolveRelativeModule } : {}),
         });
         disposers.push(() => activated.dispose());
-        if (activated.status !== 'active') throw new Error(activated.diagnostics.map(({ message }) => message).join('\n'));
+        if (activated.status === 'unavailable') throw new Error(activated.diagnostics.map(({ message }) => message).join('\n'));
+        if (activated.status === 'dormant'
+            && (activated.registrations.length !== 0 || activated.diagnostics.length !== 0)) {
+            throw new Error('Dormant activation must have no registrations or diagnostics');
+        }
         targetRegistrations.push(...activated.registrations.map((registration) => ({ pluginId: target.pluginId, occurrenceId, registration })));
     }
     const agents = params.invalidOwnerInput ? params.agents : params.agents.map((agent) => ({
@@ -258,7 +290,7 @@ export async function createTargetAgentRuntimeRegistry(params: TargetRegistryFix
         ...params, agents, activationTargets: targets, targetRegistrations, immutableGenerationIdsByPluginId,
         readPluginOccurrenceId: (pluginId) => fixture.registry.readPluginOccurrenceId?.(pluginId) ?? null,
         readPluginSourceCustody: (pluginId) => fixture.registry.readPluginSourceCustody?.(pluginId) ?? null,
-    }), fixture);
+    }), fixture, targetRegistrations);
 }
 
 export async function createDeclarativeAcpAgentRuntimeRegistry(params: DeclarativeRegistryFixtureParams): Promise<AdmittedRegistry> {

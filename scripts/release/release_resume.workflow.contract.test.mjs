@@ -23,7 +23,7 @@ test('one trusted reusable workflow resolves prior release candidates by exact r
   assert.ok(parsed.on.workflow_call.inputs.origin_run_id);
   assert.ok(parsed.on.workflow_call.inputs.expected_workflow);
   assert.ok(parsed.on.workflow_call.inputs.expected_channel);
-  assert.equal(parsed.on.workflow_call.inputs.status_artifact_name.default, 'happier-release-status');
+  assert.equal(parsed.on.workflow_call.inputs.status_artifact_name.default, '');
   for (const output of [
     'source_sha',
     'desktop_run_number',
@@ -182,10 +182,6 @@ test('full release resume binds the prior run to the same operation and authoriz
   assert.equal(
     parsed.jobs.resolve_resume.with.expected_workflow,
     '.github/workflows/release.yml',
-  );
-  assert.equal(
-    parsed.jobs.resolve_resume.with.status_artifact_name,
-    "${{ inputs.combined_preview_production == true && format('happier-release-status-{0}', inputs.environment) || 'happier-release-status' }}",
   );
   assert.equal(parsed.jobs.resolve_resume.with.expected_source_sha, '${{ inputs.authorized_promotion_source_sha }}');
   assert.equal(parsed.jobs.resolve_resume.with.expected_operation_id, '${{ inputs.hmaint_operation_id }}');

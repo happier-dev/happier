@@ -202,13 +202,13 @@ describe('bundleWorkspacePackageWithRuntimeDependencies', () => {
     const sourceDir = join(root, 'packages', 'sdk');
     const destinationDir = join(root, 'apps', 'cli', 'node_modules', '@happier-dev', 'sdk');
     const imports = {
-      '#http': { node: './runtime/node.js', default: './dist/fetch.js' },
+      '#http': { 'happier-source': './src/http.js', node: './runtime/node.js', default: './dist/fetch.js' },
       '#fs': 'fs',
       '#disabled': null,
     };
     const sourceManifest = {
       name: '@happier-dev/sdk', version: '0.0.0', type: 'module',
-      exports: { '.': './dist/connect.js' }, imports,
+      exports: { '.': { browser: { 'happier-source': './src/connect.js', default: './dist/connect.js' }, 'happier-source': './src/connect.js', default: './dist/connect.js' } }, imports,
       scripts: { build: 'authored package compiler' },
     };
     const sourceFiles = {
@@ -216,11 +216,14 @@ describe('bundleWorkspacePackageWithRuntimeDependencies', () => {
       'dist/fetch.js': 'export const transport = "fetch";\n',
       'runtime/node.js': 'export const transport = "node";\n',
       'src/authored.ts': 'export const authoredSource = true;\n',
+      'src/connect.js': 'export { selected } from "./private.js";\n',
+      'src/http.js': 'export { transport } from "./private.js";\n',
+      'src/private.js': 'export const selected = "source"; export const transport = "source";\n',
     };
     writePackage(sourceDir, sourceManifest, sourceFiles);
     const authoredManifestBytes = readFileSync(join(sourceDir, 'package.json'));
-    // Live readers retain their installed mount; artifact publication must detach
-    // a package-manager workspace link without writing through the authored root.
+    // Both publication modes detach workspace links before publishing private
+    // compiled contents, preserving the linked author's original files.
     const linkedRoot = publicationMode === 'artifact' ? sourceDir : join(root, 'mounted', 'sdk');
     if (publicationMode === 'live') writePackage(linkedRoot, sourceManifest, sourceFiles);
     mkdirSync(dirname(destinationDir), { recursive: true });
@@ -233,16 +236,17 @@ describe('bundleWorkspacePackageWithRuntimeDependencies', () => {
       }],
     });
 
-    expect(lstatSync(destinationDir).isSymbolicLink()).toBe(publicationMode === 'live');
-    if (publicationMode === 'live') expect(realpathSync(destinationDir)).toBe(realpathSync(linkedRoot));
+    expect(lstatSync(destinationDir).isSymbolicLink()).toBe(false);
     expect(readFileSync(join(sourceDir, 'package.json'))).toEqual(authoredManifestBytes);
     expect(readFileSync(join(sourceDir, 'src/authored.ts'), 'utf8')).toBe(sourceFiles['src/authored.ts']);
 
     // Real Node resolution observes the published manifest, not Vitest's resolver.
-    expect(execFileSync(process.execPath, ['--input-type=module', '-e',
-      `const module = await import(${JSON.stringify(pathToFileURL(join(destinationDir, 'dist/connect.js')).href)}); console.log(module.selected);`,
-    ], { encoding: 'utf8' }).trim()).toBe('node:function');
-    expect(readPackageJson(destinationDir).imports).toEqual(imports);
+    expect(execFileSync(process.execPath, ['--conditions=happier-source', '--conditions=browser', '--input-type=module', '-e',
+      'const module = await import("@happier-dev/sdk"); console.log(module.selected);',
+    ], { cwd: join(root, 'apps', 'cli'), encoding: 'utf8' }).trim()).toBe('node:function');
+    expect(readPackageJson(destinationDir).imports).toEqual({
+      ...imports, '#http': { node: './runtime/node.js', default: './dist/fetch.js' },
+    });
     expect(readFileSync(join(destinationDir, 'dist/fetch.js'), 'utf8')).toContain('fetch');
     const hostDir = join(root, 'apps', 'cli');
     writePackage(hostDir, { bundledDependencies: ['@happier-dev/sdk'] });

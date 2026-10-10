@@ -151,6 +151,22 @@ function createParams() {
   } as const;
 }
 
+function withCanonicalChildExitOwner(
+  params: ReturnType<typeof createParams>,
+  removeSessionMarkerFn: NonNullable<Parameters<typeof createOnChildExited>[0]['removeSessionMarkerFn']> = async () => {},
+) {
+  const onChildExited = createOnChildExited({
+    pidToTrackedSession: params.pidToTrackedSession,
+    spawnResourceCleanupByPid: new Map(),
+    sessionAttachCleanupByPid: new Map(),
+    getApiMachineForSessions: () => null,
+    // Marker IO is the persistent-system boundary; retirement and startup
+    // settlement execute through the real canonical owner beneath this spy.
+    removeSessionMarkerFn,
+  });
+  return { ...params, onChildExited: vi.fn(onChildExited) };
+}
+
 describe('spawnRegularProcessAndWaitForWebhook', () => {
   let routeRegistryGeneration = 0;
   let pendingCapturedCase: Promise<void> | undefined;
@@ -1055,6 +1071,10 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
       getApiMachineForSessions: () => null,
       promoteSessionMarkerFn,
       removeSessionMarkerFn: vi.fn(async () => undefined),
+      processPresenceDependencies: {
+        readProcessRunState: async (pid) => pid === runnerPid ? 'servable' : 'dead',
+        readProcessIdentityByPid: async (pid) => ({ pid, processStartTimeMs: 2_000, command: 'runner command' }),
+      },
     } as never);
     const { createOnHappySessionWebhook } =
       await import('../sessions/onHappySessionWebhook');
@@ -1096,6 +1116,12 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
 
     child.emit('exit', 0, null);
     releaseMarker();
+    await vi.waitFor(() => {
+      expect(params.pidToTrackedSession.get(wrapperPid)?.runnerProcessIdentity?.pid).toBe(runnerPid);
+    });
+    // The existing heartbeat repeats missing-wrapper observations after a held
+    // report captures its runner generation; startup keeps the same exit owner.
+    await onChildExited(wrapperPid, { reason: 'process-missing', code: null, signal: null });
     await vi.waitFor(() => {
       expect(params.pidToTrackedSession.get(runnerPid))
         .toBeDefined();
@@ -1227,14 +1253,12 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
       releaseMarker = resolve;
     });
     let markerPresent = false;
-    const params = createParams();
+    const params = withCanonicalChildExitOwner(createParams(), async () => {
+      markerPresent = false;
+    });
     params.spawnLifecycleCallbacks.persistAcceptedSpawnMarker.mockImplementationOnce(async () => {
       await markerPersisted;
       markerPresent = true;
-    });
-    params.onChildExited.mockImplementationOnce(async () => {
-      await markerPersisted;
-      markerPresent = false;
     });
 
     const { spawnRegularProcessAndWaitForWebhook } = await import('./spawnRegularProcessAndWaitForWebhook');
@@ -1246,7 +1270,8 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
 
     releaseMarker();
 
-    await vi.waitFor(() => expect(params.onChildExited).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(params.pidToTrackedSession.has(4244)).toBe(false));
+    expect(params.onChildExited).toHaveBeenCalledOnce();
     expect(markerPresent).toBe(false);
     expect(params.onChildExited).toHaveBeenCalledWith(4244, expect.objectContaining({
       reason: 'process-exited-before-webhook',
@@ -1267,7 +1292,7 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
     });
     const flushStreamingSanitizer = vi.fn(() => '');
     const params = {
-      ...createParams(),
+      ...withCanonicalChildExitOwner(createParams()),
       createStreamingSanitizer: () => ({
         push: () => '',
         flush: flushStreamingSanitizer,
@@ -1624,7 +1649,7 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
     const sanitizeDiagnosticText = vi.fn((value: string) => value.replaceAll(rawSecret, '[REDACTED]'));
 
     const { spawnRegularProcessAndWaitForWebhook } = await import('./spawnRegularProcessAndWaitForWebhook');
-    const params = { ...createParams(), sanitizeDiagnosticText };
+    const params = { ...withCanonicalChildExitOwner(createParams()), sanitizeDiagnosticText };
     const resultPromise = spawnRegularProcessAndWaitForWebhook(params);
 
     await vi.waitFor(() => expect(mocks.spawnHappyCLI).toHaveBeenCalledTimes(1));
@@ -1664,7 +1689,7 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
     };
 
     const { spawnRegularProcessAndWaitForWebhook } = await import('./spawnRegularProcessAndWaitForWebhook');
-    const params = { ...createParams(), createStreamingSanitizer };
+    const params = { ...withCanonicalChildExitOwner(createParams()), createStreamingSanitizer };
     const resultPromise = spawnRegularProcessAndWaitForWebhook(params);
 
     await vi.waitFor(() => expect(mocks.spawnHappyCLI).toHaveBeenCalledTimes(1));

@@ -225,6 +225,9 @@ export function isPluginAgentCliAuthBackgroundCheckSafe(
 
 export const PluginAgentCliMetadataSchema = lazyZodSchema(() => z.object({
   displayName: NonEmptyStringSchema.optional(),
+  commandPolicy: z.object({
+    daemonAutostartDefault: z.literal('preferLocalTui').optional(),
+  }).strict().optional(),
   executable: PluginAgentCliExecutableMetadataSchema,
   install: PluginAgentCliInstallMetadataSchema,
   auth: PluginAgentCliAuthMetadataSchema,

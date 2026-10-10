@@ -33,6 +33,12 @@ export type HappierOptionRowControlProps = Readonly<{
     onKeyDown?: (event: unknown) => void;
 }>;
 
+// The same host component is RNW on web, where role accepts the full ARIA union.
+// Keep that host-only extension here rather than narrowing the public control contract to native roles.
+const OptionRowPressable = Pressable as React.ComponentType<
+    Omit<React.ComponentProps<typeof Pressable>, 'role'> & Pick<HappierOptionRowControlProps, 'role'>
+>;
+
 /** Controlled option anatomy. Admission, option inventories, selection and theme paint belong to callers. */
 export type HappierOptionRowProps = Readonly<{
     title: React.ReactNode;
@@ -77,8 +83,8 @@ export const HappierOptionRow = React.forwardRef<HappierFocusable, HappierOption
     </>;
     const control = { ...props.controlProps, ref: bindRef, disabled: props.disabled, onPress: props.disabled ? undefined : props.onSelect };
     if (props.rightElementOutsidePressable && props.right) return <View style={props.rowStyle(false) as StyleProp<ViewStyle>}>
-        <Pressable {...control} style={({ pressed }) => [styles.splitPressable, pressed && !props.disabled ? { opacity: props.splitPressOpacity } : null]}>{content(false)}</Pressable>
+        <OptionRowPressable {...control} style={({ pressed }) => [styles.splitPressable, pressed && !props.disabled ? { opacity: props.splitPressOpacity } : null]}>{content(false)}</OptionRowPressable>
         <View style={styles.right}>{props.right}</View>
     </View>;
-    return <Pressable {...control} style={({ pressed }) => props.rowStyle(pressed) as StyleProp<ViewStyle>}>{content(true)}</Pressable>;
+    return <OptionRowPressable {...control} style={({ pressed }) => props.rowStyle(pressed) as StyleProp<ViewStyle>}>{content(true)}</OptionRowPressable>;
 });

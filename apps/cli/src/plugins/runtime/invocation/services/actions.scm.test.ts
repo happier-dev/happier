@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
@@ -9,6 +9,7 @@ import {
     type ActionExecutorDeps,
     type ActionId,
     type ScmActionExecute,
+    buildWorktreeRelativePath,
 } from '@happier-dev/protocol';
 
 import { createPluginInvocationActionsService } from './actions';
@@ -16,6 +17,10 @@ import { createPluginActionCallerMaterializationFixture } from './actionCaller.t
 import { executeScmActionOperation } from '@/scm/actions/executeScmActionOperation';
 import { createScmBackendRegistry } from '@/scm/registry';
 import type { ScmBackend } from '@/scm/types';
+import { createLocalScmRepositoryFixture, runScmExecutable } from '@/scm/contracts/scmBackendContractFixtures';
+import { createRegisteredScmBackendAdapter } from '@/scm/pluginBackends/registeredScmBackendAdapter';
+import { createGitScmBackendRuntimeRegistration } from '../../../../../../../packages/plugins/scm-git/src/backend';
+import { createScmHostingProviderRuntimeServicesForTest } from '../../../../../../../packages/plugins/scm-git/src/testkit/scmRuntime.test-support';
 
 const SCM_ACTION_INPUTS = Object.freeze([
     ['scm.pullRequest.list', { cwd: '/workspace' }],
@@ -85,102 +90,74 @@ const SCM_ACTION_INPUTS = Object.freeze([
 const scmMaterialization = createPluginActionCallerMaterializationFixture('acme.scm');
 
 describe('plugin invocation SCM actions', () => {
-    it('materializes the provider-authorized source tip at the exact plugin-selected root', async () => {
-        const selectedRoot = '/selected/workspace';
-        const prepareReviewWorkspace = vi.fn(async () => ({
-            success: true as const,
-            targetPath: `${selectedRoot}/.dev/worktree/feature/auth`,
-            branchName: 'feature/auth',
-            created: true,
-            currentness: { kind: 'currentAtObservedHead' } as const,
-        }));
-        const registry = createScmBackendRegistry([{
-            id: 'git',
-            kind: 'git',
-            selection: {
-                modeSelectionScores: { '.git': 200 },
-                preferenceAllowedModes: ['.git'],
-            },
-            detectRepo: async ({ cwd }: Parameters<NonNullable<ScmBackend['detectRepo']>>[0]) => ({
-                isRepo: true,
-                rootPath: cwd,
-                mode: '.git',
-            }),
-            workspaceIntegration: {
-                inspectWorkspaceLocation: async () => null,
-                prepareReviewWorkspace,
-            },
-        } as unknown as ScmBackend]);
-        const scmActionExecute = vi.fn<ScmActionExecute>(async ({ actionId, input, context }) => await executeScmActionOperation({
-            actionId,
-            input,
-            workingDirectory: '/host/default-workspace',
-            accessPolicy: { kind: 'restrictedRoots', roots: [selectedRoot] },
-            registry,
-            ...(context.signal ? { signal: context.signal } : {}),
-        }));
+    it.each(['materialize', 'verify', 'refuse'] as const)('settles the %s result through the real prepared-workspace Action', async (operation) => {
+        const fixture = createLocalScmRepositoryFixture({
+            executable: 'git', repoMode: '.git', prefix: 'happier-plugin-review-root-',
+        });
+        const selectedRoot = fixture.rootPath;
+        const sourceUrl = 'https://forge.example/contributor/repository.git';
+        runScmExecutable(selectedRoot, 'git', ['remote', 'add', 'source', sourceUrl]);
+        // Git's real URL rewrite models the remote network at a local repository boundary.
+        runScmExecutable(selectedRoot, 'git', ['config', `url.file://${selectedRoot}.insteadOf`, sourceUrl]);
+        const registration = createGitScmBackendRuntimeRegistration();
+        const registry = createScmBackendRegistry([createRegisteredScmBackendAdapter({
+            definition: { id: 'git', kind: 'git' }, qualifiedId: 'happier.scm.backend.git/git',
+            executableDefinition: registration.runtime!, registration,
+            hostingProviderRuntimeServices: createScmHostingProviderRuntimeServicesForTest(),
+        })]);
         const actionExecutor = createActionExecutor({
-            scmActionExecute,
+            scmActionExecute: async ({ actionId, input, context }) => await executeScmActionOperation({
+                actionId, input, workingDirectory: fixture.nestedPath,
+                accessPolicy: { kind: 'restrictedRoots', roots: [selectedRoot] },
+                registry, ...(context.signal ? { signal: context.signal } : {}),
+            }),
             isActionApprovalRequired: () => false,
-        } as unknown as ActionExecutorDeps);
+        } as ActionExecutorDeps);
         const service = createPluginInvocationActionsService({
             seed: {
                 plugin: { id: 'acme.scm', version: '1.0.0' },
-                resolveCurrentPluginMaterializationRef:
-                    scmMaterialization.resolveCurrentPluginMaterializationRef,
-                occurrenceId: 'occurrenceId-1',
-                surface: 'plugin',
-                session: { id: 'session-1' },
-                signal: new AbortController().signal,
-                isOccurrenceCurrent: () => true,
+                resolveCurrentPluginMaterializationRef: scmMaterialization.resolveCurrentPluginMaterializationRef,
+                occurrenceId: 'occurrenceId-1', surface: 'plugin', session: { id: 'session-1' },
+                signal: new AbortController().signal, isOccurrenceCurrent: () => true,
             },
-            actionExecutor,
-            invokeContributedAction: vi.fn(),
+            actionExecutor, invokeContributedAction: vi.fn(),
         });
-
-        await expect(service.execute('scm.reviewWorkspace.materializePrepared', {
-            cwd: selectedRoot,
-            displayName: 'Pull request 42',
+        const branchName = 'feature-auth';
+        const targetPath = join(selectedRoot, buildWorktreeRelativePath(branchName));
+        const request = {
+            cwd: selectedRoot, displayName: branchName,
             sourceTip: {
-                repository: {
-                    kind: 'github',
-                    deployment: 'https://github.com',
-                    repository: 'contributor/repository',
-                },
-                cloneUrl: 'https://github.com/contributor/repository.git',
-                branch: 'feature/auth',
-                sourceHeadSha: '0123456789abcdef0123456789abcdef01234567',
-                fetchRef: 'refs/heads/feature/auth',
+                repository: { kind: 'github' as const, deployment: 'https://forge.example', repository: 'contributor/repository' },
+                cloneUrl: sourceUrl, branch: branchName, sourceHeadSha: fixture.headCommit,
+                fetchRef: `refs/heads/${fixture.branchName}`,
             },
-        })).resolves.toEqual({
-            success: true,
-            targetPath: `${selectedRoot}/.dev/worktree/feature/auth`,
-            branchName: 'feature/auth',
-            created: true,
-            currentness: { kind: 'currentAtObservedHead' },
-        });
-        expect(scmActionExecute).toHaveBeenCalledWith(expect.objectContaining({
-            actionId: 'scm.reviewWorkspace.materializePrepared',
-            input: expect.objectContaining({ cwd: selectedRoot }),
-        }));
-        expect(prepareReviewWorkspace).toHaveBeenCalledWith(expect.objectContaining({
-            context: expect.objectContaining({ cwd: selectedRoot }),
-            request: {
-                cwd: selectedRoot,
-                displayName: 'Pull request 42',
-                sourceTip: {
-                    repository: {
-                        kind: 'github',
-                        deployment: 'https://github.com',
-                        repository: 'contributor/repository',
-                    },
-                    cloneUrl: 'https://github.com/contributor/repository.git',
-                    branch: 'feature/auth',
-                    sourceHeadSha: '0123456789abcdef0123456789abcdef01234567',
-                    fetchRef: 'refs/heads/feature/auth',
-                },
-            },
-        }));
+        };
+        try {
+            if (operation === 'materialize') {
+                await expect(service.execute('scm.reviewWorkspace.materializePrepared', request)).resolves.toEqual({
+                    success: true, targetPath, branchName, created: true,
+                    currentness: { kind: 'currentAtObservedHead' },
+                });
+            } else {
+                // Prepare the existing checkout at the real Git boundary; verification must only read it.
+                runScmExecutable(selectedRoot, 'git', ['worktree', 'add', '-b', branchName, targetPath, fixture.headCommit]);
+                const worktreesBefore = runScmExecutable(selectedRoot, 'git', ['worktree', 'list', '--porcelain']);
+                const verification = { targetPath: operation === 'verify' ? targetPath : `${selectedRoot}-outside` };
+                await expect(service.execute('scm.reviewWorkspace.materializePrepared', {
+                    ...request, verification,
+                })).resolves.toEqual(operation === 'verify' ? {
+                    success: true, verification: { targetPath, sourceHeadSha: fixture.headCommit },
+                } : {
+                    success: false, errorCode: 'INVALID_PATH', error: expect.any(String),
+                });
+                expect(runScmExecutable(selectedRoot, 'git', ['worktree', 'list', '--porcelain'])).toBe(worktreesBefore);
+                expect(existsSync(join(selectedRoot, '.git', 'FETCH_HEAD'))).toBe(false);
+            }
+            expect(runScmExecutable(targetPath, 'git', ['rev-parse', 'HEAD'])).toBe(fixture.headCommit);
+            expect(runScmExecutable(selectedRoot, 'git', ['worktree', 'list', '--porcelain'])).toContain(targetPath);
+        } finally {
+            rmSync(selectedRoot, { recursive: true, force: true });
+        }
     });
 
     it('refuses a prepared review workspace outside the caller\'s restricted root before invoking the backend', async () => {

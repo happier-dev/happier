@@ -1,7 +1,6 @@
 import { readFile, writeFile } from 'node:fs/promises';
 
 import { WorkflowActionOutputSchemasV1 } from '@happier-dev/protocol/workflows/actionsV1';
-import { parseWorkflowDocumentJsonIngressV1, serializeWorkflowDocumentJsonV1 } from '@happier-dev/protocol/workflows/workflowDocumentV1';
 
 import { printJsonEnvelope, writeJsonStdout } from '@/cli/output/jsonEnvelope';
 import { argvBeforeOptionTerminator } from '@/cli/commands/shared/argvFlags';
@@ -46,27 +45,6 @@ function commandFor(path: readonly string[]) {
     throw new Error(`Missing canonical Action command: ${path.join(' ')}`);
   }
   return command;
-}
-
-function valueOption(argv: readonly string[], name: string): string | null {
-  let selected: string | null = null;
-  for (let index = 0; index < argv.length; index += 1) {
-    const token = argv[index]!;
-    let value: string | null = null;
-    if (token === name) {
-      const next = argv[index + 1];
-      if (!next || next.startsWith('--')) throw new TypeError(`${name} requires a value.`);
-      value = next;
-      index += 1;
-    } else if (token.startsWith(`${name}=`)) {
-      value = token.slice(name.length + 1);
-      if (!value) throw new TypeError(`${name} requires a value.`);
-    }
-    if (value === null) continue;
-    if (selected !== null) throw new TypeError(`Provide ${name} once.`);
-    selected = value;
-  }
-  return selected;
 }
 
 function transportArgs(argv: readonly string[]): readonly string[] {
@@ -141,13 +119,15 @@ export async function tryHandleWorkflowDocumentCliCommand(params: Readonly<{
     ? argv[2]
     : null;
   if (operation !== 'import' && operation !== 'export') return false;
+  // Structured Action invocations need no local file adaptation.
+  if (argv.some((arg) => arg === '--input-json' || arg.startsWith('--input-json='))) return false;
 
   const deps = { ...DEFAULT_DEPS, ...params };
   const kind = `workflow_definition_${operation}`;
   try {
     if (argv.includes('--help') || argv.includes('-h')) {
       const usage = operation === 'import'
-        ? 'Usage: happier workflow definition import <file|-> --definition-id <id> --metadata-json <json> [--server-id <id>] [--machine-id <id>] [--json]'
+        ? 'Usage: happier workflow definition import <file|-> [--server-id <id>] [--machine-id <id>] [--json]'
         : 'Usage: happier workflow definition export <definition-id> [file|-] [--server-id <id>] [--machine-id <id>]';
       console.log(usage);
       return true;
@@ -157,45 +137,19 @@ export async function tryHandleWorkflowDocumentCliCommand(params: Readonly<{
       const source = positionalAt(argv, 3);
       assertKnownOptions(
         argv.slice(4),
-        new Set(['--definition-id', '--metadata-json', '--server-id', '--machine-id']),
+        new Set(['--server-id', '--machine-id']),
       );
-      const definitionId = valueOption(argv.slice(4), '--definition-id');
-      const metadataJson = valueOption(argv.slice(4), '--metadata-json');
-      if (!source || !definitionId || !metadataJson) {
-        throw new TypeError('Import requires <file|->, --definition-id, and --metadata-json.');
-      }
+      if (!source) throw new TypeError('Import requires <file|->.');
       const raw = decodeUtf8(source === '-'
         ? await deps.readStdinFn()
         : await deps.readFileFn(resolveAbsolutePathFromWorkingDirectory(source) ?? source));
-      const parsedDocument = parseWorkflowDocumentJsonIngressV1(raw);
-      if (!parsedDocument.ok && parsedDocument.code === 'workflow_document_unsupported_version') {
-        await reportError(params.argv, kind, 'unsupported_workflow_document_version', {
-          version: parsedDocument.version,
-        });
-        return true;
-      }
-      if (!parsedDocument.ok) {
-        if (parsedDocument.code === 'workflow_document_invalid_definition') {
-          await reportError(params.argv, kind, 'invalid_workflow_definition', {
-            issues: parsedDocument.issues,
-          });
-          return true;
-        }
-        throw new TypeError(parsedDocument.code);
-      }
-      const definition = parsedDocument.document.definition;
-      if (definition === undefined) {
-        await reportError(params.argv, kind, 'invalid_workflow_definition');
-        return true;
-      }
-      const metadata = JSON.parse(metadataJson) as unknown;
-      const command = commandFor(['workflow', 'definition', 'create']);
+      const command = commandFor(['workflow', 'definition', 'import']);
       await runCompiledActionCliCommand({
         command,
         argv: [
           ...command.path,
           '--input-json',
-          JSON.stringify({ definitionId, definition, metadata }),
+          JSON.stringify({ json: raw }),
           ...transport,
         ],
         ...(deps.actionExecutionDeps ? { deps: deps.actionExecutionDeps } : {}),
@@ -211,23 +165,18 @@ export async function tryHandleWorkflowDocumentCliCommand(params: Readonly<{
       argv.slice(target ? 5 : 4),
       new Set(['--server-id', '--machine-id']),
     );
-    const command = commandFor(['workflow', 'definition', 'get']);
+    const command = commandFor(['workflow', 'definition', 'export']);
     await runCompiledActionCliCommand({
       command,
       argv: [...command.path, '--input-json', JSON.stringify({ definitionId }), ...transport],
       ...(deps.actionExecutionDeps ? { deps: deps.actionExecutionDeps } : {}),
       ...(params.signal ? { signal: params.signal } : {}),
       consumeSuccess: async (payload) => {
-        const result = WorkflowActionOutputSchemasV1['workflow.definition.get'].parse(payload);
-        const json = serializeWorkflowDocumentJsonV1({
-          kind: 'happier.workflow',
-          version: 1,
-          definition: result.definition,
-        });
+        const result = WorkflowActionOutputSchemasV1['workflow.definition.export'].parse(payload);
         if (!target || target === '-') {
-          await writeJsonStdout(JSON.parse(json) as unknown);
+          await writeJsonStdout(result.document);
         } else {
-          await deps.writeFileFn(resolveAbsolutePathFromWorkingDirectory(target) ?? target, `${json}\n`);
+          await deps.writeFileFn(resolveAbsolutePathFromWorkingDirectory(target) ?? target, `${result.json}\n`);
         }
         return true;
       },

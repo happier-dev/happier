@@ -113,14 +113,15 @@ function flattenArtifacts(value) {
 }
 
 /**
- * Job evidence admits current-origin accepted flows, not store public availability.
+ * Candidate-bound status and exact-origin successful steps admit these flows
+ * independently of the control SHA, not store public availability.
  * @param {unknown} value
  * @param {{ runId: number; workflowSha: string; sourceSha: string; expectedSourceSha?: string; operationId?: string; workflowPath: string; channel: string; statusArtifactName?: string; requested: boolean; expoAction: string }} identity
  */
 function resolveUiFlowCompletion(value, identity) {
   const completed = { ota: false, nativeIos: false, nativeAndroid: false, apk: false };
   if (!value || !identity.requested || !identity.operationId || identity.sourceSha !== identity.expectedSourceSha
-    || identity.sourceSha !== identity.workflowSha || !['preview', 'production'].includes(identity.channel)
+    || !['preview', 'production'].includes(identity.channel)
     || identity.workflowPath !== '.github/workflows/release.yml') return completed;
   const pages = Array.isArray(value) ? value : [value];
   const jobs = pages.flatMap((page) => {
@@ -270,24 +271,31 @@ export function inspectReleaseResumeOrigin(input) {
     throw new Error('[release] resume origin URL does not bind the expected repository and run ID');
   }
 
-  const statusArtifactName = input.expected.statusArtifactName === undefined || input.expected.statusArtifactName === ''
-    ? 'happier-release-status' : requiredString(input.expected.statusArtifactName, 'resume status artifact name');
+  const artifacts = flattenArtifacts(input.artifacts).map((entry) => asRecord(entry, 'artifact'));
+  let statusArtifactName = input.expected.statusArtifactName === undefined || input.expected.statusArtifactName === ''
+    ? '' : requiredString(input.expected.statusArtifactName, 'resume status artifact name');
+  if (!statusArtifactName) {
+    const scoped = expectedWorkflowPath === '.github/workflows/release.yml'
+      && artifacts.some((artifact) => ['happier-release-status-preview', 'happier-release-status-production'].includes(String(artifact.name)));
+    if (scoped && artifacts.some((artifact) => artifact.name === 'happier-release-status')) {
+      throw new Error('[release] resume status artifact topology is ambiguous');
+    }
+    statusArtifactName = scoped ? `happier-release-status-${input.expected.channel}` : 'happier-release-status';
+  }
   if (statusArtifactName !== 'happier-release-status'
     && (expectedWorkflowPath !== '.github/workflows/release.yml'
       || !['preview', 'production'].includes(input.expected.channel)
       || statusArtifactName !== `happier-release-status-${input.expected.channel}`)) {
     throw new Error('[release] resume status artifact name must match the requested workflow and channel');
   }
-  const matches = flattenArtifacts(input.artifacts)
-    .map((entry) => asRecord(entry, 'artifact'))
-    .filter((artifact) => artifact.name === statusArtifactName);
+  const matches = artifacts.filter((artifact) => artifact.name === statusArtifactName);
   if (matches.length !== 1) {
     throw new Error(`[release] resume origin must contain exactly one ${statusArtifactName} artifact`);
   }
   const artifact = matches[0];
   if (artifact.expired !== false) throw new Error('[release] resume status artifact is expired');
   const admitted = inspectOriginArtifact(artifact, runId, workflowSha);
-  return { artifactDigest: admitted.digest, artifactId: admitted.id, workflowSha };
+  return { artifactDigest: admitted.digest, artifactId: admitted.id, workflowSha, statusArtifactName };
 }
 
 /**
@@ -443,7 +451,7 @@ export function resolveReleaseResume(input) {
     uiCompleted: resolveUiFlowCompletion(input.jobs, {
       runId: Number(originRun.id), workflowSha: inspected.workflowSha, sourceSha: statusSourceSha,
       expectedSourceSha: input.expected.sourceSha, operationId: expectedOperationId, workflowPath: input.expected.workflowPath,
-      channel: input.expected.channel, statusArtifactName: input.expected.statusArtifactName,
+      channel: input.expected.channel, statusArtifactName: inspected.statusArtifactName,
       requested: desktopRequested && requestedUiSurfaces === 1, expoAction: uiExpoAction,
     }),
     ...(input.expected.workflowPath === '.github/workflows/nightly-dev.yml' || desktopRequested
@@ -482,7 +490,7 @@ export async function main(argv = process.argv.slice(2)) {
       'expected-channel': { type: 'string' },
       'expected-source-sha': { type: 'string', default: '' },
       'expected-operation-id': { type: 'string', default: '' },
-      'status-artifact-name': { type: 'string', default: 'happier-release-status' },
+      'status-artifact-name': { type: 'string', default: '' },
       'github-output': { type: 'string' },
     },
     allowPositionals: false,

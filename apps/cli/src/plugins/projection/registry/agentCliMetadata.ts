@@ -257,6 +257,7 @@ export function createManifestAgentCatalogEntry(params: Readonly<{
         ...(connectedAccountServiceIds.length > 0 ? { connectedAccountServiceIds } : {}),
         ...(cli
             ? {
+                ...(cli.commandPolicy ? { cliCommandPolicy: Object.freeze({ ...cli.commandPolicy }) } : {}),
                 getCliDetect: async () => ({
                     versionArgsToTry: [['--version'], ['version'], ['-v']],
                     loginStatusArgs: null,

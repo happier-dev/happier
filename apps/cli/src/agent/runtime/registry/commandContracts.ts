@@ -1,8 +1,7 @@
-export type CommandDaemonAutostartDefault = 'preferLocalTui';
+import type { PluginAgentCliMetadata } from '@happier-dev/protocol/plugins/contributions/agentCliMetadata';
 
-export type CommandDispatchPolicy = Readonly<{
-    daemonAutostartDefault?: CommandDaemonAutostartDefault;
-}>;
+export type CommandDispatchPolicy = Readonly<NonNullable<PluginAgentCliMetadata['commandPolicy']>>;
+export type CommandDaemonAutostartDefault = NonNullable<CommandDispatchPolicy['daemonAutostartDefault']>;
 
 export type CommandDispatchDescriptor<THandler> = Readonly<{
     id: string;

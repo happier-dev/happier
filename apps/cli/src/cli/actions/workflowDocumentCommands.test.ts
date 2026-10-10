@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { parseWorkflowDocumentV1, validateWorkflowDefinition, type WorkflowDefinitionGetResultV1 } from '@happier-dev/protocol';
+import { parseWorkflowDocumentV1, validateWorkflowDefinition } from '@happier-dev/protocol';
+import { parseWorkflowDocumentJsonIngressV1 } from '@happier-dev/protocol/workflows/workflowDocumentV1';
 import { captureStdoutJsonOutput } from '@/testkit/logger/captureOutput';
 
 import { tryHandleWorkflowDocumentCliCommand } from './workflowDocumentCommands';
@@ -39,15 +40,13 @@ function actionHarness(resultFor: (actionId: string, input: unknown) => unknown)
 }
 
 describe('workflow document CLI commands', () => {
-  it('imports strict JSON from stdin through workflow.definition.create', async () => {
-    const harness = actionHarness((_actionId, input) => input);
+  it('imports stdin through the canonical unsaved document Action', async () => {
+    const harness = actionHarness(() => ({ ok: true, classification: 'unsaved_definition', document: DOCUMENT }));
     const output = captureStdoutJsonOutput();
     try {
       expect(await tryHandleWorkflowDocumentCliCommand({
         argv: [
           'workflow', 'definition', 'import', '-',
-          '--definition-id', 'workflow-definition-1',
-          '--metadata-json', '{"title":"Review workflow"}',
           '--json',
         ],
         readStdinFn: async () => JSON.stringify(DOCUMENT),
@@ -56,17 +55,14 @@ describe('workflow document CLI commands', () => {
 
       expect(harness.execute).toHaveBeenCalledOnce();
       expect(harness.execute).toHaveBeenCalledWith(
-        'workflow.definition.create',
-        {
-          definitionId: 'workflow-definition-1',
-          definition: DOCUMENT.definition,
-          metadata: { title: 'Review workflow' },
-        },
+        'workflow.definition.import',
+        { json: JSON.stringify(DOCUMENT) },
         expect.objectContaining({ surface: 'cli' }),
       );
       expect(output.json()).toMatchObject({
         ok: true,
-        kind: 'workflow_definition_create',
+        kind: 'workflow_definition_import',
+        data: { classification: 'unsaved_definition', document: DOCUMENT },
       });
     } finally {
       output.restore();
@@ -74,15 +70,13 @@ describe('workflow document CLI commands', () => {
     }
   });
 
-  it('normalizes an ingress-dialect document before workflow.definition.create', async () => {
+  it('passes ingress JSON intact to the canonical import Action', async () => {
     const harness = actionHarness((_actionId, input) => input);
     const output = captureStdoutJsonOutput();
     try {
       expect(await tryHandleWorkflowDocumentCliCommand({
         argv: [
           'workflow', 'definition', 'import', '-',
-          '--definition-id', 'workflow-definition-1',
-          '--metadata-json', '{"title":"Review workflow"}',
           '--json',
         ],
         readStdinFn: async () => JSON.stringify({
@@ -95,11 +89,9 @@ describe('workflow document CLI commands', () => {
 
       expect(harness.execute).toHaveBeenCalledOnce();
       expect(harness.execute).toHaveBeenCalledWith(
-        'workflow.definition.create',
+        'workflow.definition.import',
         {
-          definitionId: 'workflow-definition-1',
-          definition: DOCUMENT.definition,
-          metadata: { title: 'Review workflow' },
+          json: JSON.stringify({ kind: 'happier.workflow', version: 1, definition: INGRESS_DEFINITION }),
         },
         expect.objectContaining({ surface: 'cli' }),
       );
@@ -109,14 +101,14 @@ describe('workflow document CLI commands', () => {
     }
   });
 
-  it('exports the exact portable wrapper from workflow.definition.get to stdout', async () => {
+  it('exports the portable wrapper returned by the canonical export Action', async () => {
     const harness = actionHarness(() => ({
       definitionId: 'workflow-definition-1',
       revision: { headerVersion: 2, bodyVersion: 3 },
-      definition: DOCUMENT.definition,
+      document: DOCUMENT,
+      json: JSON.stringify(DOCUMENT),
       metadata: { title: 'Review workflow' },
-      access: 'owner',
-    } satisfies WorkflowDefinitionGetResultV1));
+    }));
     const output = captureStdoutJsonOutput();
     try {
       expect(await tryHandleWorkflowDocumentCliCommand({
@@ -127,7 +119,7 @@ describe('workflow document CLI commands', () => {
 
       expect(harness.execute).toHaveBeenCalledOnce();
       expect(harness.execute).toHaveBeenCalledWith(
-        'workflow.definition.get',
+        'workflow.definition.export',
         { definitionId: 'workflow-definition-1' },
         expect.objectContaining({ surface: 'cli' }),
       );
@@ -138,15 +130,13 @@ describe('workflow document CLI commands', () => {
     }
   });
 
-  it('preserves the file when a future document version is unsupported and invokes no Action', async () => {
-    const harness = actionHarness(() => ({ ok: true }));
+  it('preserves the file and reports the canonical unsupported document result', async () => {
+    const harness = actionHarness(() => parseWorkflowDocumentJsonIngressV1(JSON.stringify({ ...DOCUMENT, version: 2 })));
     const output = captureStdoutJsonOutput();
     try {
       expect(await tryHandleWorkflowDocumentCliCommand({
         argv: [
           'workflow', 'definition', 'import', 'future.json',
-          '--definition-id', 'workflow-definition-1',
-          '--metadata-json', '{"title":"Future"}',
           '--json',
         ],
         readFileFn: async () => JSON.stringify({ ...DOCUMENT, version: 2 }),
@@ -154,11 +144,11 @@ describe('workflow document CLI commands', () => {
         actionExecutionDeps: harness.deps as never,
       })).toBe(true);
 
-      expect(harness.execute).not.toHaveBeenCalled();
+      expect(harness.execute).toHaveBeenCalledOnce();
       expect(output.json()).toMatchObject({
         ok: false,
         kind: 'workflow_definition_import',
-        error: { code: 'unsupported_workflow_document_version', version: 2 },
+        error: { code: 'workflow_document_unsupported_version' },
       });
       expect(process.exitCode).toBe(1);
     } finally {

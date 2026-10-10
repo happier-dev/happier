@@ -23,12 +23,15 @@ import {
   resolveSessionWebhookPath,
 } from './onHappySessionWebhook';
 import {
+  armSessionWebhookStartupCustody,
   markSessionWebhookPidTimedOut,
   waitForSessionWebhook,
 } from '../spawn/waitForSessionWebhook';
 import { hashProcessCommand } from '../sessionRegistry';
 import { readProcessIdentityByPid } from '../processIdentity';
 import { serializeWindowsCommandLine } from '../platform/windows/windowsCommandLine';
+import { probeSessionRunnerPresence } from './isSessionRunnerActive';
+import { resolveExistingSessionSpawnPreGate } from '../spawn/resolveExistingSessionSpawnPreGate';
 
 function createMetadata(pid: number, startedBy: 'daemon' | 'terminal', rootPath = '/tmp'): Metadata {
   return {
@@ -45,6 +48,137 @@ function createMetadata(pid: number, startedBy: 'daemon' | 'terminal', rootPath 
 }
 
 describe('createOnHappySessionWebhook', () => {
+  it('does not replace the latest reported runner PID with a delayed earlier identity read', async () => {
+    const wrapperPid = 649125;
+    const firstRunnerPid = 649126;
+    const latestRunnerPid = 649127;
+    const tracked: TrackedSession = { pid: wrapperPid, startedBy: 'daemon', happySessionId: `PID-${wrapperPid}` };
+    const sessions = new Map([[wrapperPid, tracked]]);
+    const awaiters = new Map<number, (session: TrackedSession) => void>([[wrapperPid, () => {}]]);
+    let releaseFirst!: () => void;
+    let releaseLatest!: () => void;
+    const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    const latestGate = new Promise<void>((resolve) => { releaseLatest = resolve; });
+    let firstRead = false;
+    let latestRead = false;
+    const report = createOnHappySessionWebhook({
+      pidToTrackedSession: sessions, pidToAwaiter: awaiters, getParentPidFn: () => wrapperPid,
+      // Different reports enter the real owner before their queued OS reads complete.
+      readProcessIdentityByPidFn: async (pid) => {
+        if (pid === firstRunnerPid) { firstRead = true; await firstGate; }
+        if (pid === latestRunnerPid) { latestRead = true; await latestGate; }
+        return { pid, processStartTimeMs: 2000, command: 'runner' };
+      },
+      writeSessionMarkerFn: async () => {}, listSessionMarkersFn: async () => [], readCredentialsFn: async () => null,
+    });
+    try {
+      await report(`PID-${firstRunnerPid}`, createMetadata(firstRunnerPid, 'daemon'));
+      await vi.waitFor(() => expect(firstRead).toBe(true));
+      await report(`PID-${latestRunnerPid}`, createMetadata(latestRunnerPid, 'daemon'));
+      expect(tracked.sessionRunnerPid).toBe(latestRunnerPid);
+      releaseFirst();
+      await vi.waitFor(() => expect(latestRead).toBe(true));
+      expect(tracked.sessionRunnerPid).toBe(latestRunnerPid);
+      expect(tracked.runnerProcessIdentity?.pid).not.toBe(firstRunnerPid);
+      releaseLatest();
+      await tracked.reportMarkerCustody?.pending;
+      expect(tracked.runnerProcessIdentity?.pid).toBe(latestRunnerPid);
+    } finally {
+      releaseFirst(); releaseLatest();
+      await tracked.reportMarkerCustody?.pending;
+    }
+  });
+
+  it('retains startup and fences Resume while a reported wrapper runner generation is still being read', async () => {
+    const wrapperPid = 649124;
+    const runnerPid = process.pid;
+    const sessionId = 'session-report-generation-pending';
+    const runnerIdentity = await readProcessIdentityByPid(runnerPid);
+    if (runnerIdentity?.processStartTimeMs === undefined || !runnerIdentity.command) {
+      throw new Error('Test requires current runner generation evidence');
+    }
+    const tracked: TrackedSession = {
+      pid: wrapperPid, startedBy: 'daemon', happySessionId: `PID-${wrapperPid}`,
+      processStartTimeMs: 1000, spawnOptions: { directory: '/tmp' },
+      agentRuntimeDaemonServiceAuthorityFilePath: '/tmp/fixture-session-authority',
+    };
+    const sessions = new Map([[wrapperPid, tracked]]);
+    const awaiters = new Map<number, (session: TrackedSession) => void>();
+    const resolvers = new Map<number, (result: SpawnSessionResult) => void>();
+    const timeouts = new Map<number, ReturnType<typeof setTimeout>>();
+    const completion = waitForSessionWebhook({
+      pid: wrapperPid, pidToTrackedSession: sessions, pidToAwaiter: awaiters,
+      pidToSpawnResultResolver: resolvers, pidToSpawnWebhookTimeout: timeouts,
+      timeoutErrorMessage: 'Fixture webhook timeout',
+    });
+    armSessionWebhookStartupCustody(tracked, completion, Promise.resolve());
+    let releaseIdentity!: () => void;
+    const identityGate = new Promise<void>((resolve) => { releaseIdentity = resolve; });
+    let releaseReadiness!: () => void;
+    const readinessGate = new Promise<void>((resolve) => { releaseReadiness = resolve; });
+    let identityReadStarted = false;
+    const report = createOnHappySessionWebhook({
+      pidToTrackedSession: sessions, pidToAwaiter: awaiters,
+      getParentPidFn: () => wrapperPid,
+      // Hold the OS read after the real report owner records its runner PID.
+      readProcessIdentityByPidFn: async (pid) => {
+        if (pid !== runnerPid) return { pid, processStartTimeMs: 1000, command: 'wrapper' };
+        identityReadStarted = true;
+        await identityGate;
+        return runnerIdentity;
+      },
+      writeSessionMarkerFn: async () => {}, listSessionMarkersFn: async () => [], readCredentialsFn: async () => null,
+    });
+    const reporting = report(sessionId, createMetadata(runnerPid, 'daemon'), async () => await readinessGate);
+    const readState = async (pid: number) => pid === wrapperPid ? 'dead' as const : 'servable' as const;
+    const exit = createOnChildExited({
+      pidToTrackedSession: sessions, spawnResourceCleanupByPid: new Map(), sessionAttachCleanupByPid: new Map(),
+      getApiMachineForSessions: () => null,
+      processPresenceDependencies: { readProcessRunState: readState, readProcessIdentityByPid },
+      // Marker IO is a persistent-system boundary; lifecycle/promotion stay real.
+      promoteSessionMarkerFn: async () => ({ sourceMarkerOwnership: null, targetMarkerOwnership: {
+        happySessionId: sessionId, processStartTimeMs: runnerIdentity.processStartTimeMs,
+        processCommandHash: hashProcessCommand(runnerIdentity.command!),
+      } }),
+      removeSessionMarkerFn: async () => {},
+    });
+    try {
+      await vi.waitFor(() => expect(identityReadStarted).toBe(true));
+      expect(tracked.sessionRunnerPid).toBe(runnerPid);
+      expect(tracked.runnerProcessIdentity).toBeUndefined();
+      const resumed = await resolveExistingSessionSpawnPreGate({
+        existingSessionId: sessionId, pidToTrackedSession: sessions,
+        probeSessionRunnerPresence: async (id) => await probeSessionRunnerPresence({
+          sessionId: id, trackedSessions: sessions.values(), readProcessRunState: readState,
+          readProcessIdentityByPid, readSessionRunnerLockStatus: async () => ({ ok: false, reason: 'not_found' }),
+        }),
+        pendingSessionStartup: {
+          pidToAwaiter: awaiters, machineId: 'machine-test', happyHomeDir: configuration.happyHomeDir,
+          readSessionMetadata: async () => null,
+        },
+        waitForExitTimeoutMs: 0, waitForExitPollIntervalMs: 1, logDebug: () => {}, logWarn: () => {},
+      });
+      expect(resumed.shortCircuitResult).toMatchObject({ type: 'error', errorCode: 'UNEXPECTED' });
+      await exit(wrapperPid, { reason: 'process-missing', code: null, signal: null });
+      expect(sessions.get(wrapperPid)).toBe(tracked);
+      expect(sessions.has(runnerPid)).toBe(false);
+      expect(completion.isPending()).toBe(true);
+      releaseIdentity();
+      await vi.waitFor(() => expect(tracked.runnerProcessIdentity?.pid).toBe(runnerPid));
+      releaseReadiness();
+      await reporting;
+      await expect(completion).resolves.toMatchObject({ type: 'success', sessionId });
+      await exit(wrapperPid, { reason: 'process-missing', code: null, signal: null });
+      expect(sessions.get(runnerPid)).toBe(tracked);
+      expect(sessions.has(wrapperPid)).toBe(false);
+    } finally {
+      releaseIdentity(); releaseReadiness();
+      completion.settleFailure({ type: 'error', errorCode: 'UNEXPECTED', errorMessage: 'Fixture cleanup' });
+      await Promise.allSettled([reporting, completion, tracked.reportMarkerCustody?.pending]);
+      for (const timeout of timeouts.values()) clearTimeout(timeout);
+    }
+  });
+
   it('preserves canonical marker custody validation after early fresh-session identity binding', async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), 'happier-early-startup-marker-'));
     const originalHome = Object.getOwnPropertyDescriptor(configuration, 'happyHomeDir')!;

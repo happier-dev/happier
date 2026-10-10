@@ -1,40 +1,48 @@
+import { spawn } from 'node:child_process';
 import { describe, expect, it, vi } from 'vitest';
 
-import { spawnSupervisedPluginProcess } from '@/plugins/runtime/exec/processSupervisor';
-
 import {
+  abortAndDisposeRunnerRuntime,
   requestExplicitRunnerStop,
   resolveRunnerRuntimeDisposalReason,
 } from './runnerRuntimeDisposal';
 
 describe('runner runtime disposal', () => {
-  it('releases native process custody while native cancellation is still pending', async () => {
+  it('releases native process custody and terminates while native cancellation never settles', async () => {
     let releaseCancellation!: () => void;
     const cancellation = new Promise<void>((resolve) => { releaseCancellation = resolve; });
-    const nativeProcess = spawnSupervisedPluginProcess({
-      command: process.execPath,
-      args: ['-e', 'setInterval(() => {}, 1000)'],
-      spawnOptions: { detached: process.platform !== 'win32' },
+    // The native process is the OS boundary; cancellation and host disposal logic stay real.
+    const nativeProcess = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+      stdio: 'ignore',
+    });
+    const nativeExit = new Promise<void>((resolve, reject) => {
+      nativeProcess.once('exit', () => resolve());
+      nativeProcess.once('error', reject);
     });
     let settled = false;
+    let terminationRequested = false;
     const stopping = requestExplicitRunnerStop({
       abortActiveTurn: () => cancellation,
       disposeRuntime: async (reason) => {
         expect(reason).toBe('session_closed');
-        await nativeProcess.dispose();
+        nativeProcess.kill();
+        await nativeExit;
       },
-      requestTermination: () => undefined,
+      requestTermination: () => { terminationRequested = true; },
       whenTerminated: Promise.resolve(),
     }).then(() => { settled = true; });
     try {
       await vi.waitFor(() => expect(
-        nativeProcess.child.exitCode !== null || nativeProcess.child.signalCode !== null,
+        nativeProcess.exitCode !== null || nativeProcess.signalCode !== null,
       ).toBe(true));
-      expect(settled).toBe(false);
+      await vi.waitFor(() => expect(terminationRequested).toBe(true));
+      await stopping;
+      expect(settled).toBe(true);
     } finally {
       releaseCancellation();
       await stopping;
-      await nativeProcess.dispose();
+      if (nativeProcess.exitCode === null && nativeProcess.signalCode === null) nativeProcess.kill();
+      await nativeExit;
     }
   });
 
@@ -75,6 +83,41 @@ describe('runner runtime disposal', () => {
     })).rejects.toBe(disposalError);
 
     expect(requestTermination).not.toHaveBeenCalled();
+  });
+
+  it('finishes signal cleanup after disposal without waiting for native cancellation', async () => {
+    let disposed = false;
+    let finished = false;
+    let releaseCancellation!: () => void;
+    const cancellation = new Promise<void>((resolve) => { releaseCancellation = resolve; });
+    const cleanup = abortAndDisposeRunnerRuntime({
+      abortActiveTurn: () => cancellation,
+      disposeRuntime: async (reason) => {
+        expect(reason).toBe('host_shutdown');
+        disposed = true;
+      },
+      reason: 'host_shutdown',
+    }).then(() => { finished = true; });
+    try {
+      await vi.waitFor(() => expect(disposed).toBe(true));
+      await vi.waitFor(() => expect(finished).toBe(true));
+    } finally {
+      releaseCancellation();
+      await cleanup;
+    }
+  });
+
+  it('still disposes and terminates when native cancellation rejects', async () => {
+    let disposed = false;
+    let terminationRequested = false;
+    await requestExplicitRunnerStop({
+      abortActiveTurn: async () => { throw new Error('native cancel rejected'); },
+      disposeRuntime: async () => { disposed = true; },
+      requestTermination: () => { terminationRequested = true; },
+      whenTerminated: Promise.resolve(),
+    });
+    expect(disposed).toBe(true);
+    expect(terminationRequested).toBe(true);
   });
 
   it('maps killSession to destroy and signal/crash termination to preservation reasons', () => {

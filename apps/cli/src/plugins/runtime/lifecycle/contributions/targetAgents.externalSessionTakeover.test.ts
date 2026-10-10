@@ -48,13 +48,13 @@ function target(): ActivationTarget {
     return {
         provenance: 'external',
         source: { kind: 'path' },
-        pluginId: 'happier.agent.fixture',
-        manifestPath: '/plugins/happier.agent.fixture/plugin.json',
-        daemonEntryPath: '/plugins/happier.agent.fixture/daemon.js',
+        pluginId: 'acme.agent.fixture',
+        manifestPath: '/plugins/acme.agent.fixture/plugin.json',
+        daemonEntryPath: '/plugins/acme.agent.fixture/daemon.js',
         devDaemonEntryPath: null,
         sourceSpec: {
             kind: 'path',
-            locator: '/plugins/happier.agent.fixture',
+            locator: '/plugins/acme.agent.fixture',
             trustPolicy: 'local_trusted',
             installPolicy: 'link',
         },
@@ -88,14 +88,14 @@ async function registry(params: Readonly<{
         agents: [{
             id: 'assistant',
             identity: {
-                pluginId: 'happier.agent.fixture',
+                pluginId: 'acme.agent.fixture',
                 localId: 'assistant',
             },
-            pluginId: 'happier.agent.fixture',
+            pluginId: 'acme.agent.fixture',
         }],
         activationTargets: [target()],
         targetRegistrations: [{
-            pluginId: 'happier.agent.fixture',
+            pluginId: 'acme.agent.fixture',
             occurrenceId: 'generation-7',
             registration: {
                 family: 'agents',
@@ -141,11 +141,14 @@ describe('target Agent External Session takeover lease', () => {
             };
         });
         const takeover = Object.freeze({ resolveLaunch });
-        const lease = (await registry({ takeover })).get('assistant');
+        const admitted = await registry({ takeover });
+        const lease = admitted.get('assistant');
+        const occurrenceId = admitted.readPluginOccurrenceId('acme.agent.fixture');
+        expect(occurrenceId).toBeDefined();
 
         expect(lease).toMatchObject({
             agentId: 'assistant',
-            occurrenceId: 'generation-7',
+            occurrenceId,
             hasPrimaryRuntime: false,
         });
         expect(lease?.externalSessionTakeover).toBeDefined();

@@ -12,12 +12,11 @@ export async function abortAndDisposeRunnerRuntime(input: Readonly<{
   disposeRuntime: (reason: RuntimeTurnDisposeReason) => Promise<void>;
   reason: RuntimeTurnDisposeReason;
 }>): Promise<void> {
-  // Native cancellation can wait for a terminal provider event. Retiring the
-  // runtime's process custody must start even when that event never arrives.
-  await Promise.all([
-    Promise.resolve().then(() => input.abortActiveTurn()),
-    Promise.resolve().then(() => input.disposeRuntime(input.reason)),
-  ]);
+  // Native cancellation can wait for a terminal provider event forever. The
+  // cancellation owner handles its diagnostics; retirement is best effort and
+  // must not hold disposal or runner termination behind that acknowledgement.
+  void Promise.resolve().then(() => input.abortActiveTurn()).catch(() => undefined);
+  await Promise.resolve().then(() => input.disposeRuntime(input.reason));
 }
 
 export async function requestExplicitRunnerStop(input: Readonly<{

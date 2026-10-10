@@ -156,6 +156,9 @@ const CODEX_BUNDLED_PLUGIN_MANIFEST = Object.freeze(
             "nonInteractiveStatusProbe": true,
             "support": "login_terminal"
           },
+          "commandPolicy": {
+            "daemonAutostartDefault": "preferLocalTui"
+          },
           "displayName": "OpenAI Codex CLI",
           "executable": {
             "binaryName": "codex",

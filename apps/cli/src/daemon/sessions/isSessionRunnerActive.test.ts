@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { TrackedSession } from '../types';
-import { isSessionRunnerActive, probeSessionRunnerServiceability, resolveSessionRunnerResumeDecision } from './isSessionRunnerActive';
+import { isSessionRunnerActive, probeSessionRunnerPresence, probeSessionRunnerServiceability, resolveSessionRunnerResumeDecision } from './isSessionRunnerActive';
 
 describe('probeSessionRunnerServiceability', () => {
   it('waits for a live runner whose exact controls fail during resume', () => {
@@ -95,6 +95,62 @@ describe('probeSessionRunnerServiceability', () => {
 });
 
 describe('isSessionRunnerActive', () => {
+  it.each(['state', 'identity'] as const)('fences a newer runner report received during the OS %s read', async (read) => {
+    const tracked: TrackedSession = {
+      pid: 456, sessionRunnerPid: 457, startedBy: 'daemon', happySessionId: 'sess-overlap',
+      runnerProcessIdentity: { pid: 457, processStartTimeMs: 2000, processCommandHash: 'a'.repeat(64) },
+    };
+    let releaseRead!: () => void;
+    const gate = new Promise<void>((resolve) => { releaseRead = resolve; });
+    let started = false;
+    const pending = probeSessionRunnerPresence({
+      sessionId: 'sess-overlap', trackedSessions: [tracked],
+      readProcessRunState: async () => {
+        if (read === 'state') { started = true; await gate; return 'dead'; }
+        return 'servable';
+      },
+      readProcessIdentityByPid: async (pid) => {
+        started = true; await gate;
+        return { pid, processStartTimeMs: 3000, command: 'replacement' };
+      },
+      readSessionRunnerLockStatus: async () => ({ ok: false, reason: 'not_found' }),
+    });
+    try {
+      await vi.waitFor(() => expect(started).toBe(true));
+      tracked.sessionRunnerPid = 458;
+      releaseRead();
+      await expect(pending).resolves.toEqual({ state: 'runner_unknown', reason: 'runner_presence_unproven' });
+    } finally { releaseRead(); await pending; }
+  });
+
+  it.each(['unpaired', 'previous_runner', 'present', 'reused', 'unreadable'] as const)('keeps reported runner evidence separate from its dead wrapper (%s)', async (evidence) => {
+    const wrapperPid = 456;
+    const runnerPid = 457;
+    const tracked: TrackedSession = {
+      pid: wrapperPid, sessionRunnerPid: runnerPid, startedBy: 'daemon', happySessionId: 'sess-wrapper',
+      processStartTimeMs: 1000,
+      ...(evidence === 'unpaired' ? {} : {
+        runnerProcessIdentity: { pid: evidence === 'previous_runner' ? 458 : runnerPid, processStartTimeMs: 2000, processCommandHash: 'a'.repeat(64) },
+      }),
+    };
+    const result = await probeSessionRunnerPresence({
+      sessionId: 'sess-wrapper', trackedSessions: [tracked],
+      readProcessRunState: async (pid) => {
+        if (evidence === 'unreadable') throw new Error('OS process state unavailable');
+        return pid === wrapperPid ? 'dead' : 'servable';
+      },
+      readProcessIdentityByPid: async (pid) => evidence === 'unreadable' ? null : {
+        pid, processStartTimeMs: evidence === 'reused' ? 3000 : 2000, command: 'runner',
+      },
+      readSessionRunnerLockStatus: async () => ({ ok: false, reason: 'not_found' }),
+    });
+    expect(result).toEqual(evidence === 'present'
+      ? { state: 'runner_present' }
+      : evidence === 'reused'
+        ? { state: 'runner_absent' }
+        : { state: 'runner_unknown', reason: 'runner_presence_unproven' });
+  });
+
   it('returns false for empty session id', async () => {
     const res = await isSessionRunnerActive({ sessionId: '   ', trackedSessions: [] });
     expect(res).toBe(false);

@@ -4,6 +4,7 @@ import {
     buildQualifiedPluginContributionKey,
     createPluginContributionIdentity,
     type ScmHostingProviderContribution,
+    type PluginConnectedAccountDescriptorContributionV2,
 } from '@happier-dev/protocol';
 
 import { buildPluginProjectionV2 } from './projection/v2';
@@ -25,16 +26,33 @@ const sourceSpec = {
 function authoredHostingPlugin(
     pluginId: string,
     providers: readonly ScmHostingProviderContribution[],
+    connectedAccountDescriptors: readonly PluginConnectedAccountDescriptorContributionV2[] = [],
 ) {
+    const accountRegistrations = connectedAccountDescriptors.map((descriptor) => {
+        const modes = descriptor.authentication?.modes ?? [];
+        if (modes.some((mode) => mode.kind !== 'manual')) {
+            throw new Error('This authored projection fixture declares only manual authentication');
+        }
+        // The physical plugin binds every declared registration. These tests
+        // observe auth metadata, not a credential-completion operation.
+        return `    api.connectedAccounts.register(${JSON.stringify(descriptor.id)}, { authentication: { modes: { ${modes.map((mode) => (
+            `${JSON.stringify(mode.id)}: { kind: 'manual', async complete() { throw new Error('Credential completion is not exercised by this projection fixture'); } }`
+        )).join(', ')} } },
+            async refresh() { throw new Error('Account refresh is not exercised by this projection fixture'); },
+            async revoke() { throw new Error('Account revoke is not exercised by this projection fixture'); },
+            async status() { throw new Error('Account status is not exercised by this projection fixture'); },
+            async materialize() { throw new Error('Account materialization is not exercised by this projection fixture'); }
+        });`;
+    });
     return {
         manifest: createPluginManifestV2Fixture({
             id: pluginId,
-            contributes: { scmHostingProviders: providers },
+            contributes: { scmHostingProviders: providers, connectedAccountDescriptors },
         }),
         files: {
             'daemon.mjs': `export function activate(api) {\n${providers.map((provider) => (
-                `    api.scm.registerHostingProvider(${JSON.stringify(provider.id)}, { adapter: {} });`
-            )).join('\n')}\n}\n`,
+                `    api.scm.registerHostingProvider(${JSON.stringify(provider.id)}, { adapter: { routing: { detectRemote: () => null, buildCompareUrl: () => null } } });`
+            )).join('\n')}\n${accountRegistrations.join('\n')}\n}\n`,
         },
     };
 }
@@ -137,7 +155,7 @@ describe('SCM hosting-provider plugin contributions', () => {
     it('projects admitted static descriptors through the sibling-owned projection family', async () => {
         const fixture = await createAuthoredAdmittedPluginRuntimeFixture({
             plugins: [authoredHostingPlugin('acme.scm', [{
-                id: 'acme.scm.github', kind: 'github', title: 'Acme GitHub', capabilities: ['detect', 'pullRequest'],
+                id: 'github', kind: 'github', title: 'Acme GitHub', capabilities: ['detect', 'pullRequest'],
             }])],
         });
         try {
@@ -146,10 +164,10 @@ describe('SCM hosting-provider plugin contributions', () => {
                 generation: fixture.controller.getState().generation,
             });
 
-            expect(projection.familiesById.scmHostingProviders?.entriesById['acme.scm/acme.scm.github']).toEqual(
+            expect(projection.familiesById.scmHostingProviders?.entriesById['acme.scm/github']).toEqual(
                 expect.objectContaining({
-                    id: 'acme.scm/acme.scm.github',
-                    localId: 'acme.scm.github',
+                    id: 'acme.scm/github',
+                    localId: 'github',
                     pluginId: 'acme.scm',
                     kind: 'github',
                     displayName: 'Acme GitHub',
@@ -205,16 +223,26 @@ describe('SCM hosting-provider plugin contributions', () => {
                     authService: 'account',
                     metadata: { tier: 'enterprise' },
                 },
-            ]), authoredHostingPlugin('acme.scm.dormant', [
+            ], [{
+                id: 'account', title: 'Acme Account',
+                authentication: {
+                    defaultModeId: 'manual',
+                    modes: [{
+                        id: 'manual', kind: 'manual', outcomeReconciliation: 'none',
+                        fields: [{ id: 'token', title: 'Token', schema: { type: 'string' }, secret: true }],
+                    }],
+                },
+            }]), authoredHostingPlugin('acme.scm.dormant', [
                 { id: 'stale', title: 'Stale Forge', kind: 'acme', capabilities: ['detect'] },
             ])],
+            runtimeOptions: { pluginIds: [pluginId] },
         });
         try {
             const runtime = fixture.registry;
             if (!runtime.activatePluginsForValidation) throw new Error('Expected runtime activation owner');
             await runtime.activatePluginsForValidation([pluginId]);
             const active = runtime.scmHostingProvidersById.get(pluginId + '/active');
-            expect(active).toBeDefined();
+            expect(active, JSON.stringify(runtime.pluginDiagnosticsByPluginId[pluginId])).toBeDefined();
             if (!runtime.readPluginOccurrenceId || !runtime.isPluginOccurrenceCurrent) throw new Error('Expected admitted plugin occurrence owners');
             const occurrenceId = runtime.readPluginOccurrenceId(pluginId);
             if (!occurrenceId) throw new Error('Expected current SCM plugin occurrence');

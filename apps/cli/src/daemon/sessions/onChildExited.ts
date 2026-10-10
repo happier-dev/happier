@@ -212,7 +212,7 @@ export function createOnChildExited(params: Readonly<{
       if (pidToTrackedSession.get(pid) !== tracked) return;
       const currentRunnerPid = tracked.sessionRunnerPid;
       let canPromoteRunner = typeof currentRunnerPid === 'number' && currentRunnerPid !== pid && isPidPresent(currentRunnerPid);
-      if (canPromoteRunner && tracked.runnerProcessIdentity) {
+      if (canPromoteRunner && (tracked.runnerProcessIdentity || tracked.startupCustody)) {
         const presence = await classifyTrackedSessionProcessPresence({
           tracked,
           readProcessRunState: params.processPresenceDependencies?.readProcessRunState ?? readProcessRunState,

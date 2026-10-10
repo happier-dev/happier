@@ -9,6 +9,8 @@ import { spawnInlineNodeParentWithChild } from '@/testkit/process/spawn';
 import { once } from 'node:events';
 import type { TrackedSession } from '../types';
 import { readProcessIdentityByPid } from '../processIdentity';
+import { armSessionWebhookStartupCustody, waitForSessionWebhook } from '../spawn/waitForSessionWebhook';
+import type { SpawnSessionResult } from '@/session/shared/spawnSessionContract';
 
 let temporaryHome: string | undefined;
 
@@ -45,6 +47,46 @@ it('preserves marker evidence when an exit notification has no tracked custody',
   expect(await listSessionMarkers()).toEqual([
     expect.objectContaining({ pid, happySessionId: 'retained-session' }),
   ]);
+});
+
+it('retains pending wrapper custody until a reported runner has paired generation evidence', async () => {
+  const pid = 683103;
+  const runnerPid = process.pid;
+  const tracked: TrackedSession = {
+    pid, startedBy: 'daemon', happySessionId: 'pending-paired-runner', sessionRunnerPid: runnerPid,
+    processStartTimeMs: 1000,
+  };
+  const sessions = new Map([[pid, tracked]]);
+  const awaiters = new Map<number, (session: TrackedSession) => void>();
+  const resolvers = new Map<number, (result: SpawnSessionResult) => void>();
+  const timeouts = new Map<number, ReturnType<typeof setTimeout>>();
+  const completion = waitForSessionWebhook({
+    pid, pidToTrackedSession: sessions, pidToAwaiter: awaiters,
+    pidToSpawnResultResolver: resolvers, pidToSpawnWebhookTimeout: timeouts,
+    timeoutErrorMessage: 'Fixture webhook timeout',
+  });
+  armSessionWebhookStartupCustody(tracked, completion, Promise.resolve());
+  const exit = createOnChildExited({
+    pidToTrackedSession: sessions, spawnResourceCleanupByPid: new Map(), sessionAttachCleanupByPid: new Map(),
+    getApiMachineForSessions: () => null,
+    processPresenceDependencies: {
+      readProcessRunState: async (target) => target === pid ? 'dead' : 'servable',
+      readProcessIdentityByPid,
+    },
+    promoteSessionMarkerFn: async () => ({ sourceMarkerOwnership: null, targetMarkerOwnership: { happySessionId: 'pending-paired-runner' } }),
+    removeSessionMarkerFn: async () => {},
+  });
+  try {
+    await exit(pid, { reason: 'process-missing', code: null, signal: null });
+    expect(sessions.get(pid)).toBe(tracked);
+    expect(sessions.has(runnerPid)).toBe(false);
+    expect(completion.isPending()).toBe(true);
+    expect(tracked.processStartTimeMs).toBe(1000);
+  } finally {
+    completion.settleFailure({ type: 'error', errorCode: 'UNEXPECTED', errorMessage: 'Fixture cleanup' });
+    await Promise.allSettled([completion, tracked.reportMarkerCustody?.pending]);
+    for (const timeout of timeouts.values()) clearTimeout(timeout);
+  }
 });
 
 it('preserves a replacement birth-only marker when exiting custody has a different start witness', async () => {

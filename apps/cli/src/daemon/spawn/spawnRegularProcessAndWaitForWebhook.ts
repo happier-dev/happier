@@ -321,6 +321,8 @@ export async function spawnRegularProcessAndWaitForWebhook(params: Readonly<{
     clearExactProvisionalWaiterCustody();
     provisionalResolver(result);
   };
+  const retainsTrackedSessionOwner = (): boolean =>
+    params.pidToTrackedSession.get(trackedSession.pid) === trackedSession;
   const delegateTerminalObservationIfStillOwned = (exit: ChildExit): Promise<void> | null => {
     if (params.pidToTrackedSession.get(pid) !== trackedSession) {
       return null;
@@ -343,14 +345,9 @@ export async function spawnRegularProcessAndWaitForWebhook(params: Readonly<{
       const observation = delegateTerminalObservationIfStillOwned(exit);
       if (observation) {
         terminalObservationPromise = observation.then(() => {
-          const promotedSameOwner = Array.from(
-            params.pidToTrackedSession.values(),
-          ).some(
-            (candidate) =>
-              candidate === trackedSession
-              && candidate.pid !== pid,
-          );
-          if (!promotedSameOwner) {
+          // The canonical exit owner may retain unresolved runner custody at
+          // the wrapper PID as well as promote it. Neither is a startup failure.
+          if (!retainsTrackedSessionOwner()) {
             settleProvisionalSpawnResult(failure);
           }
         });
@@ -467,14 +464,7 @@ export async function spawnRegularProcessAndWaitForWebhook(params: Readonly<{
     if (observation) {
       await observation;
     }
-    const promotedSameOwner = Array.from(
-      params.pidToTrackedSession.values(),
-    ).some(
-      (candidate) =>
-        candidate === trackedSession
-        && candidate.pid !== pid,
-    );
-    if (!promotedSameOwner) {
+    if (!retainsTrackedSessionOwner()) {
       if (ownsTrackedPidAfterMarker) {
         params.spawnLifecycleCallbacks.consumeSessionAttachCleanupForPid(pid);
       }
