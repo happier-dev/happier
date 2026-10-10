@@ -5,6 +5,8 @@ import type {
     ActionOperationListV1Response,
     ActionOperationSnapshotV1,
 } from '@happier-dev/protocol';
+import { projectActionOperationSnapshotForV1Reader } from '@happier-dev/protocol/actions/operations/v1';
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 
 import { listActionOperations } from '@/sync/ops/actionOperations';
 import { useActiveServerAccountScope, useAllMachines, useSocketStatus } from '@/sync/domains/state/storage';
@@ -31,6 +33,8 @@ export type ActionOperationMachineRuntimeScope = Readonly<{
 type ListActionOperations = (params: Readonly<{
     machineId: string;
     serverId: string;
+    accountId: string;
+    requireCurrentDomainFacts: () => boolean;
     request?: ActionOperationListV1Request;
 }>) => Promise<ActionOperationListV1Response>;
 
@@ -52,6 +56,7 @@ export async function reconcileActionOperationsOnce(params: Readonly<{
     store?: ActionOperationStore;
     list?: ListActionOperations;
     shouldContinue?: () => boolean;
+    requireCurrentDomainFacts?: true;
 }>): Promise<void> {
     const store = params.store ?? actionOperationStore;
     const list = params.list ?? listActionOperations;
@@ -67,6 +72,10 @@ export async function reconcileActionOperationsOnce(params: Readonly<{
             })),
     );
     const listedSnapshots: ActionOperationSnapshotV1[] = [];
+    const requireCurrentDomainFacts = () => params.requireCurrentDomainFacts === true || [...store.getSnapshot().operationsByKey.values()].some(operation => (
+        belongsToScope(operation, { ...params.scope, serverId })
+        && !sameStrictJsonValue(operation.snapshot, projectActionOperationSnapshotForV1Reader(operation.snapshot))
+    ));
     const seenCursors = new Set<string>();
     let cursor: string | undefined;
 
@@ -74,6 +83,8 @@ export async function reconcileActionOperationsOnce(params: Readonly<{
         const response = await list({
             machineId: params.scope.machineId,
             serverId,
+            accountId: params.scope.accountId,
+            requireCurrentDomainFacts,
             request: cursor ? { cursor } : {},
         });
         if (!shouldContinue()) return;

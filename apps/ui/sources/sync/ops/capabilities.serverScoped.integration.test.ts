@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { enterDemoMode, resetDemoModeDepthForTests } from '@/demoMode/runtime/enterExitDemoMode';
+import { markRpcRequestDisposition } from '@happier-dev/sync-client';
 
 const machineRpcWithServerScopeMock = vi.hoisted(() => vi.fn());
 
@@ -14,6 +15,20 @@ describe('capabilities ops server-scoped routing', () => {
 
     afterEach(() => {
         resetDemoModeDepthForTests();
+    });
+
+    it.each(['notSent', 'outcomeUnknown'] as const)('retains the transport admission disposition (%s) for invoke callers', async (requestDisposition) => {
+        machineRpcWithServerScopeMock.mockRejectedValueOnce(markRpcRequestDisposition(new Error('Transport unavailable'), requestDisposition));
+        const { machineCapabilitiesInvoke } = await import('./capabilities');
+        await expect(machineCapabilitiesInvoke('machine', { id: 'tool.systemTasks', method: 'start', params: {} }))
+            .resolves.toEqual({ supported: false, reason: 'error', requestDisposition });
+    });
+
+    it('preserves the existing invoke error shape when admission is unclassified', async () => {
+        machineRpcWithServerScopeMock.mockRejectedValueOnce(new Error('Unclassified error'));
+        const { machineCapabilitiesInvoke } = await import('./capabilities');
+        await expect(machineCapabilitiesInvoke('machine', { id: 'tool.systemTasks', method: 'start', params: {} }))
+            .resolves.toEqual({ supported: false, reason: 'error' });
     });
 
     it('does not detect live machine capabilities in demo mode', async () => {

@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
 
 import { WorkspaceEmbeddedTerminalPane } from '@/components/projects/panes/details/views/WorkspaceEmbeddedTerminalPane';
 import { IconButton } from '@/components/ui/buttons/IconButton';
@@ -109,7 +110,7 @@ export const ProjectCommandOutputPane = React.memo(
           attachedTerminalId={attachment.terminalId}
           workspace={workspace ?? undefined}
           terminalKey={`project-command:${attachment.terminalId}`}
-          title={`${props.title} · ${machineName}`}
+          title={joinHappierFacts(props.title, machineName)}
           closeOnUnmount={false}
           toolbarActionsStart={
             <>

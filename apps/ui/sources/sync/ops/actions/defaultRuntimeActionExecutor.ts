@@ -33,6 +33,9 @@ import {
     revokeLocalServicePublicPreviewExposureViaMachineRpc,
 } from '@/sync/domains/local/services/publicPreview/machineRpc';
 import { readMachineControlTargetForSession } from '@/sync/ops/sessionMachineTarget';
+import { readRegisteredStorageState } from '@/sync/domains/state/storageStateReaderBridge';
+import { readCurrentProjectAccountRows, readProjectWorkspaceRefs } from '@/sync/store/domains/projectAccountRows';
+import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 
 export type CreateDefaultRuntimeActionExecutorInput = Readonly<{
     browserControl?: BrowserRuntimeControlAdapter;
@@ -73,6 +76,7 @@ function resolveBrowserCommandSessionId(command: BrowserCommandV1): string | nul
 
 export function createDefaultRuntimeActionExecutor(
     input: CreateDefaultRuntimeActionExecutorInput = {},
+    accountLifetime?: ServerAccountScopeLifetime,
 ): RuntimeActionExecute {
     const fallback = createUnavailableRuntimeActionExecutor();
     const simulator = createSimulatorPreviewRuntimeActionExecutor({
@@ -80,9 +84,17 @@ export function createDefaultRuntimeActionExecutor(
         fallback,
     });
     // The person's computer controls (choose a window, stop, hand back) go to the machine they name.
-    const computer = createComputerRuntimeActionExecutor({ fallback: simulator });
+    const computer = createComputerRuntimeActionExecutor({ fallback: simulator, accountLifetime });
     const localServices = createLocalServicesRuntimeActionExecutor({
         ...input.localServices,
+        readWorkspaceRefs: input.localServices?.readWorkspaceRefs ?? (() => {
+            const state = readRegisteredStorageState();
+            if (!state) return null;
+            const current = readCurrentProjectAccountRows(state);
+            return current?.status === 'ready'
+                ? { ...current.scope, refs: readProjectWorkspaceRefs(state) }
+                : null;
+        }),
         resolveMachineId: resolveSessionMachineId,
         fetchInventorySnapshot: input.localServices?.fetchInventorySnapshot ?? fetchLocalServiceInventorySnapshotViaMachineRpc,
         fetchLauncherSnapshot: input.localServices?.fetchLauncherSnapshot ?? fetchLocalServiceLauncherSnapshotViaMachineRpc,
@@ -101,12 +113,13 @@ export function createDefaultRuntimeActionExecutor(
             ? {
                 resolveControl: (command) => {
                     const browserSessionId = resolveBrowserCommandSessionId(command);
-                    return browserSessionId ? readRegisteredBrowserRuntimeControlAdapter(browserSessionId) : null;
+                    return browserSessionId ? readRegisteredBrowserRuntimeControlAdapter(browserSessionId,
+                        command.kind === 'openView' ? undefined : command.viewId) : null;
                 },
             }
             : {}),
         ...(input.browserAutomation ? { automation: input.browserAutomation } : {}),
-        ...(!input.browserAutomation ? { resolveAutomation: (request) => readRegisteredBrowserRuntimeAutomationAdapter(request.browserSessionId) } : {}),
+        ...(!input.browserAutomation ? { resolveAutomation: (request) => readRegisteredBrowserRuntimeAutomationAdapter(request.browserSessionId, request.viewId) } : {}),
         // BRW-15 attach-to-composer leaf: resolve the registered recording-attach owner so the
         // `browser.recording.attachToComposer` action dispatches a real attach (fail-closed when
         // no owner is registered).

@@ -9,6 +9,7 @@ import { readMachineControlTargetForSession } from '@/sync/ops/sessionMachineTar
 import {
     sessionExecutionRunAction,
     sessionExecutionRunCancelTurn,
+    sessionExecutionRunEnsure,
     sessionExecutionRunGet,
     sessionExecutionRunList,
     sessionExecutionRunStart,
@@ -16,6 +17,7 @@ import {
     sessionExecutionRunWait,
 } from '@/sync/ops/sessionExecutionRuns';
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
+import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 
 type UiExecutionRunActionDeps = Pick<
     ActionExecutorDeps,
@@ -26,6 +28,7 @@ type UiExecutionRunActionDeps = Pick<
     | 'detachedExecutionRunSend'
     | 'executionRunStop'
     | 'executionRunCancelTurn'
+    | 'executionRunEnsure'
     | 'executionRunAction'
     | 'executionRunPermissionRespond'
     | 'executionRunWait'
@@ -99,7 +102,7 @@ async function callDetachedExecutionRunRpc(
  * scope stays on session RPC; detached scope has no fallback and only uses the
  * exact machine selected by V2 preflight or host-stamped invocation context.
  */
-export function createUiExecutionRunActionDeps(): UiExecutionRunActionDeps {
+export function createUiExecutionRunActionDeps(scope?: ServerAccountScope): UiExecutionRunActionDeps {
     return {
         executionRunCheckProtocolV2: async (sessionId, requirement, opts) => {
             if (
@@ -118,6 +121,7 @@ export function createUiExecutionRunActionDeps(): UiExecutionRunActionDeps {
                 { requests: [{ id: 'tool.executionRuns' }] },
                 {
                     serverId: opts?.serverId,
+                    ...(scope ? { accountId: scope.accountId } : {}),
                     ...(opts?.signal ? { signal: opts.signal } : {}),
                 },
             );
@@ -140,8 +144,9 @@ export function createUiExecutionRunActionDeps(): UiExecutionRunActionDeps {
             ? await callDetachedExecutionRunRpc(SESSION_RPC_METHODS.EXECUTION_RUN_START, request, opts)
             : await sessionExecutionRunStart(sessionId, request, {
                 serverId: opts?.serverId,
-                ...(normalizeId(opts?.exactMachineId)
-                    ? { expectedMachineId: normalizeId(opts?.exactMachineId) }
+                ...(scope ? { scope } : {}),
+                ...(normalizeId(opts?.exactMachineId) ?? normalizeId(opts?.targetMachineId)
+                    ? { expectedMachineId: normalizeId(opts?.exactMachineId) ?? normalizeId(opts?.targetMachineId) }
                     : {}),
             }),
         executionRunList: async (sessionId, request, opts) => sessionId === null
@@ -155,13 +160,16 @@ export function createUiExecutionRunActionDeps(): UiExecutionRunActionDeps {
             await callDetachedExecutionRunRpc(SESSION_RPC_METHODS.EXECUTION_RUN_SEND, request, opts),
         executionRunStop: async (sessionId, request, opts) => sessionId === null
             ? await callDetachedExecutionRunRpc(SESSION_RPC_METHODS.EXECUTION_RUN_STOP, request, opts)
-            : await sessionExecutionRunStop(sessionId, request, { serverId: opts?.serverId }),
+            : await sessionExecutionRunStop(sessionId, request, { serverId: opts?.serverId, ...(scope ? { scope } : {}) }),
         executionRunCancelTurn: async (sessionId, request, opts) => sessionId === null
             ? await callDetachedExecutionRunRpc(SESSION_RPC_METHODS.EXECUTION_RUN_CANCEL_TURN_V1, request, opts)
-            : await sessionExecutionRunCancelTurn(sessionId, request, { serverId: opts?.serverId }),
+            : await sessionExecutionRunCancelTurn(sessionId, request, { serverId: opts?.serverId, ...(scope ? { scope } : {}) }),
+        executionRunEnsure: async (sessionId, request, opts) => sessionId === null
+            ? await callDetachedExecutionRunRpc(SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE, request, opts)
+            : await sessionExecutionRunEnsure(sessionId, request, { serverId: opts?.serverId, ...(scope ? { scope } : {}) }),
         executionRunAction: async (sessionId, request, opts) => sessionId === null
             ? await callDetachedExecutionRunRpc(SESSION_RPC_METHODS.EXECUTION_RUN_ACTION, request, opts)
-            : await sessionExecutionRunAction(sessionId, request, { serverId: opts?.serverId }),
+            : await sessionExecutionRunAction(sessionId, request, { serverId: opts?.serverId, ...(scope ? { scope } : {}) }),
         executionRunPermissionRespond: async (request, context) => {
             const machineId = resolveExactExecutionRunMachineId(null, {
                 targetMachineId: context.executionRunTargetMachineId,

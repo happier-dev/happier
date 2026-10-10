@@ -81,7 +81,7 @@ describe('Board Actions through captured Home Artifacts', () => {
         const uiPersistence = createWorkBoardArtifactBoundary({ v: 1, boards: [uiBoard] });
         const uiStore = createWorkBoardAccountStore(uiPersistence.transport, () => true);
         const uiPort = createWorkBoardUiActionPort(() => ({ scope: { serverId: target.id, accountId: 'board-owner' }, board: uiBoard,
-            membership: projectBoardMembership(uiBoard, { isHomeMounted: () => true, sections: {}, filtered: null }), isHomeMounted: () => true }), uiStore.queue);
+            membership: projectBoardMembership(uiBoard, { isHomeMounted: () => true, sections: {}, filtered: null }), isHomeMounted: () => true }), uiStore.queue, uiStore.readBoardAccess);
         const uiExecutor = createDefaultActionExecutor({ workBoardArtifacts: uiPort });
         expect(await uiExecutor.execute('boards.apply', { intent: { kind: 'set_positions', boardId: 'mine',
             positionsByItemRef: { [first]: { x: 72, y: 120 } } } }, { ...context, expectedAccountId: 'board-owner' }))
@@ -94,10 +94,10 @@ describe('Board Actions through captured Home Artifacts', () => {
             body: { kind: 'declarative', document: { version: 1, root: { kind: 'text', text: 'Checks' } } }, provenance: { source: { kind: 'authored' } } } }, bindings: {} } satisfies import('@happier-dev/protocol/widgets').WidgetInstanceV1;
         const widgetResult = await executor.execute('boards.apply', { intent: { kind: 'widget_add', boardId: 'mine', ref: { surface, instanceId: instance.id }, instance } }, context);
         expect(widgetResult, JSON.stringify(widgetResult)).toMatchObject({ ok: true });
-        expect(await executor.execute('widgets.instance.list', { surface }, context)).toMatchObject({ ok: true, result: { instances: [{ instance, size: 'medium' }] } });
-        expect(await executor.execute('widgets.instance.size.set', { ref: { surface, instanceId: instance.id }, size: 'full' }, context)).toMatchObject({ ok: true });
+        expect(await executor.execute('widgets.item.list', { surface }, context)).toMatchObject({ ok: true, result: { instances: [{ instance, size: 'medium' }] } });
+        expect(await executor.execute('widgets.item.size.set', { ref: { surface, instanceId: instance.id }, size: 'full' }, context)).toMatchObject({ ok: true });
         expect(board.widgets?.[0]?.size).toBe('full');
-        expect(await executor.execute('widgets.instance.remove', { ref: { surface, instanceId: instance.id } }, context)).toMatchObject({ ok: true });
+        expect(await executor.execute('widgets.item.remove', { ref: { surface, instanceId: instance.id } }, context)).toMatchObject({ ok: true });
         expect(board.widgets).toEqual([]);
         expect(await executor.execute('boards.list', {}, context)).toMatchObject({ ok: true, result: { boards: [{ id: 'mine' }] } });
         expect(await executor.execute('boards.apply', { intent: { kind: 'delete', boardId: 'mine' } }, context)).toMatchObject({ ok: true });

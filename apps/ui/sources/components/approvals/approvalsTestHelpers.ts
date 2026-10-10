@@ -7,6 +7,7 @@ type ApprovalStorageModuleFactory = (importOriginal: ApprovalImportOriginal) => 
 type InstallApprovalCommonModuleMocksOptions = Readonly<{
     modal?: ApprovalModuleFactory;
     reactNative?: ApprovalModuleFactory;
+    reactNavigation?: ApprovalModuleFactory;
     router?: ApprovalModuleFactory;
     storage?: ApprovalStorageModuleFactory;
     text?: ApprovalModuleFactory;
@@ -17,6 +18,7 @@ const approvalModuleState = vi.hoisted(() => ({
     options: {
         modal: undefined as ApprovalModuleFactory | undefined,
         reactNative: undefined as ApprovalModuleFactory | undefined,
+        reactNavigation: undefined as ApprovalModuleFactory | undefined,
         router: undefined as ApprovalModuleFactory | undefined,
         storage: undefined as ApprovalStorageModuleFactory | undefined,
         text: undefined as ApprovalModuleFactory | undefined,
@@ -30,13 +32,19 @@ export function installApprovalCommonModuleMocks(
     approvalModuleState.options = {
         modal: options.modal,
         reactNative: options.reactNative,
+        reactNavigation: options.reactNavigation,
         router: options.router,
         storage: options.storage,
         text: options.text,
         unistyles: options.unistyles,
     };
 
-    vi.mock('@react-navigation/native', () => ({ useIsFocused: () => true }));
+    vi.mock('@react-navigation/native', async () => {
+        const factory = approvalModuleState.options.reactNavigation;
+        if (factory) return await factory();
+        const { createReactNavigationNativeMock } = await import('@/dev/testkit/mocks/reactNavigation');
+        return createReactNavigationNativeMock();
+    });
 
     vi.mock('react-native', async () => {
         const activeOptions = approvalModuleState.options;

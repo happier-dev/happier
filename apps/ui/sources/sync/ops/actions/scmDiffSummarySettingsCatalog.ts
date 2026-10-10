@@ -16,15 +16,19 @@ import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/ser
 import { areAccountSettingsJsonValuesEqual } from '@/sync/domains/settings/accountSettingsStructuralEquality';
 import { storage } from '@/sync/domains/state/storage';
 import type { captureLazyActionAccountContext } from './actionAccountContext';
+import { readAcpCatalogInContext } from '@/sync/api/account/apiAcpCatalog';
+import { isAcpCatalogCaptureCurrent } from '@/sync/store/settings/acpCatalogSnapshot';
 
-type ActionAccount = Pick<Awaited<ReturnType<typeof captureLazyActionAccountContext>>,
-    'serverId' | 'accountLifetime' | 'assertCurrent' | 'readLiveSettings'>;
+type ActionAccount = Awaited<ReturnType<typeof captureLazyActionAccountContext>>;
 
 /** Settings admission reads the picker's catalog/probe owners under its captured Account. */
 export function createScmDiffSummarySettingsCatalogReader(account: ActionAccount | null): NonNullable<SettingsMutationServices['readScmDiffSummaryCatalog']> {
     return async (settings, storedValue) => {
-        if (!account || account.readLiveSettings() === null) return null;
+        if (!account) return null;
         account.assertCurrent();
+        const { catalog } = await readAcpCatalogInContext(account);
+        account.assertCurrent();
+        if (catalog.status !== 'ready') return null;
         const selected = decodeScmDiffSummaryModelOverride(storedValue);
         if (!selected?.backendTargetKey) return null;
         const selectionKey = MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.sourceControl;
@@ -38,7 +42,7 @@ export function createScmDiffSummarySettingsCatalogReader(account: ActionAccount
         const inputs = projection?.kind === 'ready' ? projection.inputs : null;
         const entry = getResolvedBackendCatalogEntries({
             enabledAgentIds: getEnabledAgentIds({ backendEnabledByTargetKey: settings.backendEnabledByTargetKey }),
-            acpCatalogSettingsV1: settings.acpCatalogSettingsV1, backendEnabledByTargetKey: settings.backendEnabledByTargetKey,
+            acpCatalogSnapshot: catalog, backendEnabledByTargetKey: settings.backendEnabledByTargetKey,
             discoveredBackendIds: inputs?.discoveredBackendIds,
             mergedProviderProjectionById: inputs?.mergedProviderProjectionById,
             mergedBackendProjectionById: inputs?.mergedBackendProjectionById,
@@ -59,9 +63,8 @@ export function createScmDiffSummarySettingsCatalogReader(account: ActionAccount
             agentFormats: entry.kind === 'builtInAgent' ? core?.structuredOutput?.formats : null });
         return { profiles, isCurrent: current => {
             const cached = inputs && machineId ? readReusableDaemonMergedProjectionCacheEntry({ ...params, machineId }) : null;
-            return account.accountLifetime.isCurrent() && account.readLiveSettings() !== null
+            return account.accountLifetime.isCurrent() && isAcpCatalogCaptureCurrent(account.accountLifetime.scope, catalog)
                 && areAccountSettingsJsonValuesEqual(current.backendEnabledByTargetKey, settings.backendEnabledByTargetKey)
-                && areAccountSettingsJsonValuesEqual(current.acpCatalogSettingsV1, settings.acpCatalogSettingsV1)
                 && areAccountSettingsJsonValuesEqual(storage.getState().settings.machineAdministrationTargetsLocalV1[selectionKey] ?? null, selectedMachine)
                 && (!inputs || cached?.kind === 'ready' && cached.inputs === inputs)
                 && (!probe || cacheKey !== null && readDynamicModelProbeCache(cacheKey) === probe);

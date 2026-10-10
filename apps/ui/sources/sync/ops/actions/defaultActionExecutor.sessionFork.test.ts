@@ -1,6 +1,9 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
+import { renderHook } from '@/dev/testkit/hooks/renderHook';
+import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { AgentNativeResumeIdentityV1Schema, buildQualifiedPluginContributionKey, computeWorkspaceSyncPolicyDigest, deriveSessionCreationTagV1, MACHINE_PLAIN_DATA_KEY_MARKER,
-  PluginManifestV2Schema, PluginProjectionV2Schema, SessionCreationCorrespondenceV1Schema, SessionCurrentProjectionRecordV1Schema,
+  PluginManifestV2Schema, PluginProjectionV2Schema, SessionCreationCorrespondenceV1Schema, SessionForkRpcParamsSchema,
   type ActionExecutorContext, type SessionRollbackTarget } from '@happier-dev/protocol';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import type { SocketRpcRequestPayload } from '@happier-dev/protocol/socketRpc';
@@ -12,7 +15,9 @@ import { createSessionFixture, createSessionAccessFixture } from '@/dev/testkit/
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
-import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { installSessionActionRpcBoundary, installSessionActionFixture } from '@/dev/testkit/harness/sessionActionRpcBoundary';
+import { decideApprovalAsInbox } from '@/dev/testkit/harness/approvalInbox';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { getAgentCore, publishRuntimeCapabilities } from '@happier-dev/agents';
@@ -21,27 +26,8 @@ import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import { installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
 import { parseDecryptedSessionMetadata } from '@/sync/engine/sessions/parsePlainSessionPayload';
 
-const outgoing: SocketRpcRequestPayload[] = [];
 let daemonAnswer: (request: SocketRpcRequestPayload) => unknown = () => { throw new Error('Unexpected daemon request'); };
-installDisconnectedServerSocketBoundary((socket) => {
-  vi.mocked(socket.connect).mockImplementation(() => {
-    socket.connected = true;
-    for (const listener of socket.listeners('connect')) listener();
-    return socket;
-  });
-  vi.spyOn(socket, 'timeout').mockReturnValue(socket);
-  vi.spyOn(socket, 'emitWithAck').mockImplementation(async (event, payload) => {
-    if (event !== 'rpc-call') return { v: 1, ok: true, admittedSessionIds: [] };
-    // Socket.IO serializes these JSON-only RPC packets before the daemon sees them.
-    const wirePayload: unknown = JSON.parse(JSON.stringify(payload));
-    if (!wirePayload || typeof wirePayload !== 'object' || !('method' in wirePayload) || typeof wirePayload.method !== 'string' || !('params' in wirePayload)) {
-      throw new Error('Malformed socket RPC request');
-    }
-    const request: SocketRpcRequestPayload = { method: wirePayload.method, params: wirePayload.params };
-    outgoing.push(request);
-    return { ok: true, result: daemonAnswer(request) };
-  });
-});
+const outgoing = installSessionActionRpcBoundary(request => daemonAnswer(request));
 const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
 await loadSyncSingletonForTests();
@@ -51,6 +37,8 @@ const { storage } = await import('@/sync/domains/state/storage');
 const { sync } = await import('@/sync/sync');
 const { createServerFetchAtEndpoint } = await import('@/sync/http/client');
 const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
+const { useSessionForkStrategyFlow } = await import('@/sync/domains/sessionFork/useSessionForkStrategyFlow');
+const { getExistingSessionDraftProjection, resetSessionDraftRepositoryForTests } = await import('@/sync/ops/sessionDrafts/sessionDraftRepository');
 const { startSessionHandoff } = await import('@/sync/ops/sessionHandoffs');
 const { serverScopedRpcSocketPool } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcSocketPool');
 const { resetScopedMachineTransportCacheForTests } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcPool');
@@ -81,20 +69,7 @@ let webLocks: ReturnType<typeof installWebLockManagerMock> | undefined;
 const context = () => ({ surface: 'ui' as const, authority: 'present_user' as const, serverId });
 
 function installSession(overrides: Partial<Session> = {}) {
-  const session = createSessionFixture({ id: 'sess_parent', serverId, active: true,
-    metadata: { path: '/repo', host: 'tester.local', homeDir: '/Users/tester', machineId: 'machine_1', flavor: 'codex', codexBackendMode: 'appServer', codexSessionId: 'thread_1' },
-    ...overrides });
-  storage.setState({ sessions: { ...storage.getState().sessions, [session.id]: session },
-    sessionListRowsByServerId: { ...storage.getState().sessionListRowsByServerId,
-      [serverId]: { ...storage.getState().sessionListRowsByServerId[serverId], [session.id]: session } } });
-  const wire = SessionCurrentProjectionRecordV1Schema.parse({ ...session,
-    metadata: JSON.stringify(session.metadata), metadataLayoutVersion: 0,
-    effectiveAccess: { v: 1, level: session.access!.level, sources: [{ kind: 'owner' }], capabilities: session.access!.capabilities },
-    responsibleAccountId: null, responsibleAccount: null, share: null, archivedAt: null,
-    agentState: null, dataEncryptionKey: null, pendingCount: 0, pendingVersion: 0 });
-  homes.answer(serverId, `/v2/sessions/${session.id}`, { body: { session: wire } });
-  homes.answer(serverId, `/v2/sessions/${session.id}?accessProjectionVersion=1`, { body: { session: wire } });
-  return session;
+  return installSessionActionFixture({ homes, storage, serverId, session: { id: 'sess_parent', ...overrides } });
 }
 function setSettings(delta: SettingsWriteDelta) {
   storage.getState().applySettingsLocal(delta);
@@ -114,6 +89,16 @@ function answerFork() {
 function rpcRequests(method: string) { return outgoing.filter((request) => request.method.endsWith(`:${method}`)); }
 function executor(options: Parameters<typeof createDefaultActionExecutor>[0] = {}) {
   return createDefaultActionExecutor({ openSession: vi.fn(), ...options });
+}
+async function mountForkFlow(navigate = vi.fn()) {
+  const onNavigated = vi.fn();
+  const harness = await renderHook(() => useSessionForkStrategyFlow({
+    request: { parentSessionId: 'sess_parent', serverId, machineId: 'machine_1',
+      forkPoint: { type: 'seq', upToSeqInclusive: 12 }, restoredDraftText: 'restored draft', replayMaxSeedChars: 12_345 },
+    navigate, onNavigated,
+  }));
+  await vi.waitFor(() => expect(harness.getCurrent().ready).toBe(true));
+  return { harness, navigate, onNavigated };
 }
 
 describe('default Action executor Session lifecycle contracts', () => {
@@ -145,6 +130,8 @@ describe('default Action executor Session lifecycle contracts', () => {
     daemonAnswer = () => { throw new Error('Unexpected daemon request'); };
   });
   afterEach(async () => {
+    await standardCleanup();
+    resetSessionDraftRepositoryForTests();
     await connection?.dispose();
     connection = undefined;
     serverScopedRpcSocketPool.resetForTests();
@@ -167,6 +154,187 @@ describe('default Action executor Session lifecycle contracts', () => {
       params: expect.objectContaining({ v: 1, parentSessionId: 'sess_parent', forkPoint: { type: 'latest' } }) }));
     expect(homes.requestsFor('/v2/sessions/sess_child?accessProjectionVersion=1').length).toBeGreaterThan(0);
     expect(openSession).toHaveBeenCalledWith('sess_child', { serverId });
+  });
+
+  it('honors an explicit Replay cutoff and leaves child navigation to the initiating presentation', async () => {
+    installSession();
+    answerFork();
+    const openSession = vi.fn();
+    const result = await executor({ openSession }).execute('session.fork', {
+      sessionId: 'sess_parent', strategy: 'replay', forkPoint: { type: 'seq', upToSeqInclusive: 12 },
+      replayMaxSeedChars: 12_345,
+    }, context());
+    expect(result).toMatchObject({ ok: true, result: { childSessionId: 'sess_child' } });
+    expect(rpcRequests(RPC_METHODS.SESSION_FORK)[0]?.params).toMatchObject({
+      parentSessionId: 'sess_parent', strategy: 'replay', forkPoint: { type: 'seq', upToSeqInclusive: 12 }, replayMaxSeedChars: 12_345,
+    });
+    expect(openSession).not.toHaveBeenCalled();
+  });
+
+  it('refuses explicit Replay when the Account disables it even if Native is available', async () => {
+    installSession();
+    setSettings({ sessionReplayEnabled: false });
+    expect(await executor({ currentAgentCapabilities: codex }).execute('session.fork', {
+      sessionId: 'sess_parent', strategy: 'replay',
+    }, context())).toMatchObject({ ok: false, errorCode: 'action_disabled' });
+    expect(outgoing).toEqual([]);
+  });
+
+  it('keeps explicit Native failure distinct from a successful Replay fallback', async () => {
+    installSession();
+    daemonAnswer = request => {
+      const params = request.params as Readonly<{ strategy?: string }>;
+      return params.strategy === 'native'
+        ? { ok: false, errorCode: 'FORK_UNSUPPORTED', errorMessage: 'Native unavailable' }
+        : { ok: true, childSessionId: 'replay_child' };
+    };
+    expect(await executor().execute('session.fork', { sessionId: 'sess_parent', strategy: 'native' }, context()))
+      .toMatchObject({ ok: false, errorCode: 'FORK_UNSUPPORTED' });
+    expect(rpcRequests(RPC_METHODS.SESSION_FORK)[0]?.params).toHaveProperty('strategy', 'native');
+  });
+
+  it('admits the chooser through Action policy before emitting a fork', async () => {
+    installSession();
+    setSettings({ actionsSettingsV1: { v: 1, actions: { 'session.fork': { disabledSurfaces: ['ui'] } } } });
+    const { harness, navigate } = await mountForkFlow();
+    await act(async () => { await harness.getCurrent().submit('replay'); });
+    expect(harness.getCurrent().phase).toEqual({ type: 'choosing' });
+    expect(harness.getCurrent().failure).toMatchObject({ route: 'replay', kind: 'error' });
+    expect(outgoing).toEqual([]);
+    expect(navigate).not.toHaveBeenCalled();
+  });
+
+  it('waits for real approval without claiming an issued fork or allowing another mutation', async () => {
+    installSession();
+    await homes.requireUiApproval(serverId, 'session.fork');
+    const { harness, navigate } = await mountForkFlow();
+    let submission: Promise<void> | undefined;
+    await act(async () => { submission = harness.getCurrent().submit('replay'); });
+    await vi.waitFor(() => expect(harness.getCurrent().phase).toMatchObject({ type: 'awaiting_approval', route: 'replay', artifactId: expect.any(String) }));
+    const phase = harness.getCurrent().phase;
+    if (phase.type !== 'awaiting_approval') throw new Error('Expected approval custody');
+    expect(harness.getCurrent().isBusy).toBe(true);
+    expect(outgoing).toEqual([]);
+    await act(async () => { await harness.getCurrent().submit('native'); });
+    expect(outgoing).toEqual([]);
+    expect(navigate).not.toHaveBeenCalled();
+    expect(await decideApprovalAsInbox(serverId, phase.artifactId, 'reject')).toMatchObject({ ok: true });
+    await submission;
+    await vi.waitFor(() => expect(harness.getCurrent().phase).toEqual({ type: 'choosing' }));
+    expect(harness.getCurrent().failure).toMatchObject({ route: 'replay', kind: 'error' });
+    expect(outgoing).toEqual([]);
+    expect(navigate).not.toHaveBeenCalled();
+  });
+
+  it('forks through the chooser with the selected cutoff and restores the draft before navigating once', async () => {
+    installSession();
+    answerFork();
+    const { harness, navigate, onNavigated } = await mountForkFlow();
+    expect(harness.getCurrent().phase).toEqual({ type: 'choosing' });
+    expect(outgoing).toEqual([]);
+    await act(async () => { await harness.getCurrent().submit('replay'); });
+    expect(rpcRequests(RPC_METHODS.SESSION_FORK)[0]?.params).toMatchObject({ strategy: 'replay',
+      forkPoint: { type: 'seq', upToSeqInclusive: 12 }, replayMaxSeedChars: 12_345 });
+    expect(getExistingSessionDraftProjection({ serverId, accountId: 'alice' }, 'sess_child'))
+      .toMatchObject({ text: 'restored draft' });
+    expect(navigate).toHaveBeenCalledExactlyOnceWith('sess_child', { serverId });
+    expect(onNavigated).toHaveBeenCalledTimes(1);
+    expect(harness.getCurrent().phase).toEqual({ type: 'navigated' });
+  });
+
+  it('shows a typed daemon update requirement without treating it as an ambiguous fork', async () => {
+    installSession();
+    daemonAnswer = () => ({ ok: false, errorCode: 'DAEMON_RPC_UNAVAILABLE', errorMessage: 'Update daemon' });
+    const { harness, navigate } = await mountForkFlow();
+    await act(async () => { await harness.getCurrent().submit('native'); });
+    expect(harness.getCurrent().phase).toEqual({ type: 'choosing' });
+    expect(harness.getCurrent().failure).toEqual({ route: 'native', kind: 'update_required', message: 'Update daemon' });
+    expect(rpcRequests(RPC_METHODS.SESSION_FORK)).toHaveLength(1);
+    expect(navigate).not.toHaveBeenCalled();
+  });
+
+  it('keeps the daemon attempt identity stable for a safe retry and distinct for another route', async () => {
+    installSession();
+    const machine = storage.getState().machines.machine_1;
+    if (!machine?.metadata) throw new Error('Expected installed machine metadata');
+    const currentMachine = { ...machine, metadata: { ...machine.metadata, happyCliVersion: '0.3.0' } };
+    storage.setState({ machines: { ...storage.getState().machines, machine_1: currentMachine },
+      machineListByServerId: { [serverId]: [currentMachine] } });
+    daemonAnswer = () => ({ ok: false, errorCode: 'SPAWN_FAILED', errorMessage: 'not created' });
+    const { harness } = await mountForkFlow();
+    await act(async () => { await harness.getCurrent().submit('native'); });
+    await act(async () => { await harness.getCurrent().submit('native'); });
+    await act(async () => { await harness.getCurrent().submit('replay'); });
+    const attempts = rpcRequests(RPC_METHODS.SESSION_FORK).map(request => SessionForkRpcParamsSchema.parse(request.params));
+    expect(attempts).toHaveLength(3);
+    expect(attempts[0]).toHaveProperty('requestId', expect.any(String));
+    expect(attempts[1]).toHaveProperty('requestId', attempts[0]?.requestId);
+    expect(attempts[2]?.requestId).not.toBe(attempts[0]?.requestId);
+  });
+
+  it('keeps an ambiguous fork pending and adopts a subsequently visible child without reissuing the mutation', async () => {
+    installSession();
+    daemonAnswer = () => ({ ok: false, errorCode: 'SESSION_WEBHOOK_TIMEOUT', errorMessage: 'pending' });
+    const { harness, navigate } = await mountForkFlow();
+    await act(async () => { await harness.getCurrent().submit('replay'); });
+    expect(harness.getCurrent().phase).toMatchObject({ type: 'unknown' });
+    await act(async () => { await harness.getCurrent().submit('replay'); });
+    expect(rpcRequests(RPC_METHODS.SESSION_FORK)).toHaveLength(1);
+    installSession({ id: 'sess_child', metadata: { path: '/repo', host: 'tester.local', machineId: 'machine_1',
+      forkV1: { v: 1, parentSessionId: 'sess_parent', createdAtMs: 1, strategy: 'replay', parentCutoffSeqInclusive: 12 } } });
+    await act(async () => { await harness.getCurrent().checkForFork(); });
+    expect(navigate).toHaveBeenCalledExactlyOnceWith('sess_child', { serverId });
+    expect(harness.getCurrent().phase).toEqual({ type: 'navigated' });
+    expect(rpcRequests(RPC_METHODS.SESSION_FORK)).toHaveLength(1);
+  });
+
+  it('does not adopt a preexisting layout-1 child as the result of an unknown attempt', async () => {
+    installSession();
+    const existing = installSession({ id: 'existing_child', metadata: { path: '/repo', host: 'tester.local', machineId: 'machine_1',
+      forkV1: { v: 1, parentSessionId: 'sess_parent', createdAtMs: 1, strategy: 'replay', parentCutoffSeqInclusive: 12 } } });
+    const shared = parseDecryptedSessionMetadata({ v: 1, agentPresentation: { agentId: 'codex' } }, 1);
+    if (!shared) throw new Error('Expected recipient-safe Session metadata');
+    storage.setState({ sessions: { ...storage.getState().sessions,
+      [existing.id]: { ...existing, metadataLayoutVersion: 1, metadata: shared, ownerMetadataView: existing.metadata } } });
+    daemonAnswer = () => ({ ok: false, errorCode: 'SESSION_WEBHOOK_TIMEOUT', errorMessage: 'pending' });
+    const { harness, navigate } = await mountForkFlow();
+    await act(async () => { await harness.getCurrent().submit('replay'); });
+    await act(async () => { await harness.getCurrent().checkForFork(); });
+    expect(harness.getCurrent().phase).toMatchObject({ type: 'unknown', lastCheck: 'none' });
+    expect(rpcRequests(RPC_METHODS.SESSION_FORK)).toHaveLength(1);
+    expect(navigate).not.toHaveBeenCalled();
+  });
+
+  it('allows child navigation to be retried without another fork mutation', async () => {
+    installSession();
+    daemonAnswer = () => ({ ok: true, childSessionId: 'sess_child' });
+    homes.answer(serverId, '/v2/sessions/sess_child?accessProjectionVersion=1', { status: 404, body: { error: 'not_found' } });
+    const { harness, navigate, onNavigated } = await mountForkFlow();
+    await act(async () => { await harness.getCurrent().submit('replay'); });
+    expect(harness.getCurrent().phase).toMatchObject({ type: 'opening', childSessionId: 'sess_child', stalled: true });
+    expect(onNavigated).not.toHaveBeenCalled();
+    expect(navigate).not.toHaveBeenCalled();
+    answerFork();
+    await act(async () => { await harness.getCurrent().retryOpen(); });
+    expect(harness.getCurrent().phase).toEqual({ type: 'navigated' });
+    expect(rpcRequests(RPC_METHODS.SESSION_FORK)).toHaveLength(1);
+  });
+
+  it('does not duplicate an in-flight request or navigate after its initiating surface unmounts', async () => {
+    installSession();
+    let settle: ((value: unknown) => void) | undefined;
+    daemonAnswer = () => new Promise(resolve => { settle = resolve; });
+    const { harness, navigate, onNavigated } = await mountForkFlow();
+    let submission: Promise<void> | undefined;
+    await act(async () => { submission = harness.getCurrent().submit('replay'); });
+    await vi.waitFor(() => expect(settle).toBeTypeOf('function'));
+    await act(async () => { await harness.getCurrent().submit('replay'); });
+    expect(rpcRequests(RPC_METHODS.SESSION_FORK)).toHaveLength(1);
+    await harness.unmount();
+    settle?.({ ok: true, childSessionId: 'sess_child' });
+    await submission;
+    expect(navigate).not.toHaveBeenCalled();
+    expect(onNavigated).not.toHaveBeenCalled();
   });
 
   it.each([true, false])('includes the replay summary runner only while execution runs are enabled (%s)', async (enabled) => {

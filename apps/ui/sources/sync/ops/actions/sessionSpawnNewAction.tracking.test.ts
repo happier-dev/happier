@@ -136,6 +136,7 @@ describe('executeSessionSpawnNewAction tracking', () => {
         expect(frontDoorExecute).toHaveBeenCalledWith('session.spawn_new', manualInput, {
             surface: 'ui',
             actionRequestId: userAttemptId,
+            expectedAccountId: 'account-1',
         });
 
         if (first.status !== 'executed') throw new Error('expected executed manual action');

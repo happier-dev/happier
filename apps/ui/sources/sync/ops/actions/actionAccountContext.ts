@@ -1,7 +1,6 @@
 import { TokenStorage, subscribeHomeCredentialMutations } from '@/auth/storage/tokenStorage';
 import { readCredentialAuthorityKind } from '@/auth/context/credentialAuthority';
 import { ArtifactAccessRecipientCensusResponseV1Schema, type ArtifactCallerAccessV1 } from '@happier-dev/protocol/artifacts/artifactAccessV1';
-import { isArtifactHtmlHeaderV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
 import { artifactKindHasSharedWidgetInputsV1, readArtifactSharedAudienceV1 } from '@happier-dev/protocol/artifacts/artifactSharingV1';
 import { loadAiLaunchProfileArtifacts, readAiLaunchProfileCollection } from '@happier-dev/protocol/profiles/read';
 import type { ArtifactAccessActionTransportV1 } from '@happier-dev/protocol/actions/executor/artifactAccessActions';
@@ -14,12 +13,12 @@ import { createEncryptionFromAuthCredentials } from '@/auth/encryption/createEnc
 import { resolveSettingsSecretsKeySet } from '@/sync/encryption/resolveSettingsSecretsKeySet';
 import { fetchAccountEncryptionMode } from '@/sync/api/account/apiAccountEncryptionMode';
 import { captureActiveServerAccountScopeCurrentness } from '@/sync/domains/scope/activeServerAccountScope';
-import { areServerProfileIdentifiersEquivalent, getServerProfileById, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
+import { areServerProfileIdentifiersEquivalent, buildHomeConnectionDescriptorForProfile, getServerProfileById, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { areAccountSettingsScopesEqual } from '@/sync/domains/settings/scope/accountSettingsScope';
 import { storage } from '@/sync/domains/state/storage';
 import { loadAccountSettings } from '@/sync/domains/state/accountSettingsPersistence';
 import { readAccountSettingsBaseline } from '@/sync/engine/settings/accountSettingsBaseline';
-import { syncSettings, requireOneShotAccountSettingsMutationApplied } from '@/sync/engine/settings/syncSettings';
+import { syncSettings, requireOneShotAccountSettingsMutationApplied, type AccountSettingsMutationCapture } from '@/sync/engine/settings/syncSettings';
 import { settingsParse, type Settings } from '@/sync/domains/settings/settings';
 import { createServerFetchAtEndpoint, type ServerFetch } from '@/sync/http/client';
 import { resolveServerScopedTransport } from '@/sync/runtime/orchestration/serverScopedRpc/resolveServerScopedTransport';
@@ -27,11 +26,12 @@ import { getAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/con
 import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
 import { parseToken } from '@/utils/auth/parseToken';
 import { createArtifactWithHeaderViaApi, decryptArtifactListItems, fetchArtifactWithBodyFromApi, updateArtifactWithHeaderViaApi,
-    fetchArtifactBodyRevisionsFromApi, fetchArtifactHtmlPreviewFromApi, restoreArtifactBodyRevisionViaApi, type ArtifactDataKeyCache } from '@/sync/engine/artifacts/syncArtifacts';
+    fetchArtifactBodyRevisionsFromApi, restoreArtifactBodyRevisionViaApi, type ArtifactDataKeyCache } from '@/sync/engine/artifacts/syncArtifacts';
 import { createArtifactAccessApi, deleteArtifact as deleteArtifactApi, fetchArtifacts as fetchArtifactsApi, fetchArtifactStorageUsage, encodeArtifactListCursor } from '@/sync/api/artifacts/apiArtifacts';
 import { HappyError } from '@/utils/errors/errors';
 import type { ArtifactBodyInput, ArtifactHeader, DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import { isEmbedWindowContext } from '@/embed/isEmbedWindowContext';
+import { resolveHomeTarget as resolveCapturedHomeTarget, resolveHomeTargetFromDescriptor } from '@happier-dev/cli-common/homeTarget';
 
 function artifactContentUnavailable(): Error & Readonly<{ code: 'content_unavailable' }> {
     return Object.assign(new Error('Artifact content is unavailable'), { code: 'content_unavailable' as const });
@@ -51,12 +51,13 @@ const artifactAccessProjectionSchema = ArtifactAccessRecipientCensusResponseV1Sc
 type ArtifactCreateOperation = Readonly<{ artifactId?: string; header: Readonly<Record<string, unknown>>; body: ArtifactBodyInput; savedBy?: ArtifactSavedByV1; source?: ArtifactWorkspaceSourceV1; signal?: AbortSignal }>;
 type ArtifactUpdateOperation = Omit<Parameters<WorkflowDefinitionArtifactOperations['update']>[0], 'body'> & Readonly<{ body: ArtifactBodyInput; savedBy?: ArtifactSavedByV1 }>;
 type ActionEffectClass = ReturnType<typeof getActionSpec>['sideEffectClass'];
-type RawSettingsMutationOptions = Readonly<{
+export type RawSettingsMutationOptions = Readonly<{
     signal?: AbortSignal;
     expectedProfileTransferRevision?: number | 'absent';
     expectedSettingsVersion?: number;
     rebaseOnConflict?: boolean;
     observeOutcome?: boolean;
+    capture?: (transition: AccountSettingsMutationCapture) => unknown;
 }>;
 const isEffectResult = (effectClass: ActionEffectClass) => effectClass === 'write' || effectClass === 'external' || effectClass === 'danger';
 
@@ -98,11 +99,14 @@ export async function captureLazyActionAccountContext(serverIdRaw: string, signa
         return {
             // The embed producer publishes its captured scope.endpointUrl as serverId.
             serverId: embed.serverId, endpointUrl: embed.serverId, serverIdentityId: undefined, accountId: embed.accountId,
+            resolveHomeTarget: unavailable, shareableServerUrl: null,
             accountLifetime: { scope: { serverId: embed.serverId, accountId: embed.accountId }, isCurrent: embed.isCurrent, onRetire: embed.onRetire },
             accountOnlyLifetime: { scope: { serverId: embed.serverId, accountId: embed.accountId }, isCurrent: embed.isCurrent, onRetire: embed.onRetire },
             credentials: embed.credentials, credentialAuthorityKind: 'api_token' as const,
             request: embed.request, assertCurrent, assertAccountCurrent, assertResultCurrent, dispose: () => {},
-            resolveAccountMode: unavailable, resolveAccountEncryption: unavailable, readSettings: unavailable, readRawSettings: unavailable, readLaunchProfiles: unavailable, readLaunchProfileSnapshot: unavailable,
+            resolveAccountMode: unavailable, resolveAccountEncryption: unavailable, readSettings: unavailable, readRawSettings: unavailable,
+            readRawSettingsSnapshot: unavailable,
+            readLaunchProfiles: unavailable, readLaunchProfileSnapshot: unavailable,
             mutateRawSettings: async (_mutate: (raw: Readonly<Record<string, unknown>>) => Record<string, unknown> | Promise<Record<string, unknown>>,
                 options?: RawSettingsMutationOptions) => {
                     assertCurrent();
@@ -116,7 +120,6 @@ export async function captureLazyActionAccountContext(serverIdRaw: string, signa
             createArtifact: async (_header: Readonly<Record<string, unknown>>, _body: string) => unavailable(),
             createArtifactDocument: async (_input: ArtifactCreateOperation) => artifactUnavailable(),
             updateArtifactDocument: async (_input: ArtifactUpdateOperation) => artifactUnavailable(),
-            readArtifactHtmlPreview: async (_artifact: DecryptedArtifact, _signal?: AbortSignal): Promise<Readonly<{ previewUrl?: string; previewError?: 'artifact_html_preview_unavailable' }>> => artifactUnavailable(),
             updateArtifact: async (_artifactId: string, _header: ArtifactHeader, _body: string, _basis?: DecryptedArtifact) => unavailable(),
             workflowArtifacts, artifactAccessGrants, encodeArtifactListCursor,
             homeHubArtifactTransport: { read: artifactUnavailable, create: artifactUnavailable, update: artifactUnavailable } satisfies HomeHubArtifactTransportV1,
@@ -127,11 +130,26 @@ export async function captureLazyActionAccountContext(serverIdRaw: string, signa
             readArtifactPublicLinkResource: async (_artifactId: string, _signal?: AbortSignal): Promise<ArtifactPublicLinkKeyholdingResourceV1 | null> => artifactUnavailable(),
         };
     }
-    if (isEmbedWindowContext()) throw new Error('action_home_signed_out');
+    if (isEmbedWindowContext()) {
+        const { AccountStorageCurrentnessUnavailableError } = await import('@/sync/encryption/accountStorageContext');
+        throw new AccountStorageCurrentnessUnavailableError(undefined, 'unauthorized', 'action_home_signed_out');
+    }
     const serverId = resolveServerProfileScopeIdForIdentifier(serverIdRaw);
     const profile = getServerProfileById(serverId);
     if (!profile) throw new Error('action_home_not_found');
     const endpointUrl = profile.serverUrl;
+    const shareableServerUrl = profile.shareableServerUrl ?? null;
+    // Resolve only when a Home task needs it, using the Profile captured before
+    // credential admission. A later focused Home cannot replace this target.
+    const resolveHomeTarget = async () => {
+        const descriptor = buildHomeConnectionDescriptorForProfile(profile);
+        const savedProfile = { id: profile.id, serverUrl: profile.canonicalServerUrl ?? profile.serverUrl,
+            webappUrl: profile.serverUrl };
+        return descriptor
+            ? resolveHomeTargetFromDescriptor({ descriptor, authority: 'current_connection', profile: savedProfile })
+            : resolveCapturedHomeTarget({ input: { kind: 'saved_profile', profileRef: profile.id },
+                readSavedProfile: async () => savedProfile });
+    };
     const serverIdentityId = profile.serverIdentityId?.trim() || undefined;
     const applied = getAppliedActiveServerSnapshot();
     const currentness = areServerProfileIdentifiersEquivalent(applied.serverId, serverId)
@@ -165,7 +183,10 @@ export async function captureLazyActionAccountContext(serverIdRaw: string, signa
         const credentials = await TokenStorage.getCredentialsForServerUrl(profile.serverUrl, { serverId });
         assertCurrent();
         signal?.throwIfAborted();
-        if (!credentials) throw new Error('action_home_signed_out');
+        if (!credentials) {
+            const { AccountStorageCurrentnessUnavailableError } = await import('@/sync/encryption/accountStorageContext');
+            throw new AccountStorageCurrentnessUnavailableError(undefined, 'unauthorized', 'action_home_signed_out');
+        }
         const credentialAuthorityKind = readCredentialAuthorityKind(credentials.token);
         const accountId = parseToken(credentials.token);
         const scope = { serverId, accountId };
@@ -323,28 +344,6 @@ export async function captureLazyActionAccountContext(serverIdRaw: string, signa
                     ? encodeArtifactListCursor({ artifactId: last.id, updatedAt: last.updatedAt }) : undefined;
                 return { items, coverage, ...(nextCursor ? { nextCursor } : {}) };
         };
-        const readArtifactHtmlPreview = async (artifact: DecryptedArtifact, operationSignal?: AbortSignal): Promise<Readonly<{ previewUrl?: string; previewError?: 'artifact_html_preview_unavailable' }>> => {
-            if (!isArtifactHtmlHeaderV1(artifact.rawHeader ?? artifact.header)) return {};
-            try {
-                const previewUrl = await fetchArtifactHtmlPreviewFromApi({ ...await artifactParams(), artifactId: artifact.id,
-                    artifact, signal: operationSignal ?? signal, forbiddenOrigins: [new URL(profile.serverUrl).origin] });
-                assertCurrent();
-                return { previewUrl };
-            } catch {
-                assertCurrent();
-                operationSignal?.throwIfAborted();
-                return { previewError: 'artifact_html_preview_unavailable' };
-            }
-        };
-        // Optional preview preparation cannot erase an already acknowledged mutation.
-        const readAcknowledgedArtifactPreview = async (artifact: DecryptedArtifact, operationSignal?: AbortSignal) => {
-            if (!accountLifetime.isCurrent() || operationSignal?.aborted) return {};
-            try { return await readArtifactHtmlPreview(artifact, operationSignal); }
-            catch (error) {
-                if (!accountLifetime.isCurrent() || operationSignal?.aborted) return {};
-                throw error;
-            }
-        };
         const createArtifactDocument = async ({ artifactId, header, body, savedBy, source, signal: operationSignal }: ArtifactCreateOperation) => {
             assertCurrent();
             const publication: { artifact?: DecryptedArtifact } = {};
@@ -357,8 +356,7 @@ export async function captureLazyActionAccountContext(serverIdRaw: string, signa
             });
             const created = publication.artifact;
             if (!created?.isDecrypted || created.bodyVersion === undefined) throw artifactContentUnavailable();
-            return { artifactId: created.id, artifact: created, revision: { headerVersion: created.headerVersion, bodyVersion: created.bodyVersion },
-                ...await readAcknowledgedArtifactPreview(created, operationSignal) };
+            return { artifactId: created.id, artifact: created, revision: { headerVersion: created.headerVersion, bodyVersion: created.bodyVersion } };
         };
         const updateArtifactDocument = async ({ artifactId, expectedRevision, header, body, savedBy, signal: operationSignal }: ArtifactUpdateOperation) => {
                 const current = await fetchArtifact(artifactId, { signal: operationSignal });
@@ -375,8 +373,7 @@ export async function captureLazyActionAccountContext(serverIdRaw: string, signa
                     });
                     const updated = publication.artifact;
                     if (!updated || updated.bodyVersion === undefined) throw artifactContentUnavailable();
-                    return { ok: true as const, revision: { headerVersion: updated.headerVersion, bodyVersion: updated.bodyVersion },
-                        ...await readAcknowledgedArtifactPreview(updated, operationSignal) };
+                    return { ok: true as const, revision: { headerVersion: updated.headerVersion, bodyVersion: updated.bodyVersion } };
                 } catch (error) {
                     if (error instanceof Error && 'code' in error && error.code === 'version_mismatch') {
                         return { ok: false as const, errorCode: 'version_mismatch', error: error.message };
@@ -444,8 +441,16 @@ export async function captureLazyActionAccountContext(serverIdRaw: string, signa
             assertCurrent();
             return readAiLaunchProfileCollection(rawProfiles, { artifactsById, includeShared: true });
         };
+        const readRawSettingsSnapshot = async () => {
+            const { accountMode, encryption } = await resolveAccountEncryption();
+            const baseline = await readAccountSettingsBaseline({ request, credentials, encryption, accountMode });
+            assertCurrent();
+            if (baseline.raw === null && baseline.content !== null) throw artifactContentUnavailable();
+            return { raw: baseline.raw ?? {}, version: baseline.version };
+        };
         return {
             serverId, endpointUrl, serverIdentityId, accountId, credentials, credentialAuthorityKind,
+            resolveHomeTarget, shareableServerUrl,
             request, assertCurrent, assertAccountCurrent, assertResultCurrent, dispose, accountLifetime, accountOnlyLifetime,
             resolveAccountMode, resolveAccountEncryption,
             readLaunchProfileSnapshot,
@@ -453,13 +458,8 @@ export async function captureLazyActionAccountContext(serverIdRaw: string, signa
                 return (await readLaunchProfileSnapshot(rawProfiles)).entries
                     .flatMap((entry) => entry.kind === 'opaque' ? [] : [entry.profile]);
             },
-            readRawSettings: async () => {
-                const { accountMode, encryption } = await resolveAccountEncryption();
-                const baseline = await readAccountSettingsBaseline({ request, credentials, encryption, accountMode });
-                assertCurrent();
-                if (baseline.raw === null && baseline.content !== null) throw artifactContentUnavailable();
-                return baseline.raw ?? {};
-            },
+            readRawSettingsSnapshot,
+            readRawSettings: async () => (await readRawSettingsSnapshot()).raw,
             mutateRawSettings: async (mutate: (raw: Readonly<Record<string, unknown>>) => Record<string, unknown> | Promise<Record<string, unknown>>,
                 options?: RawSettingsMutationOptions) => {
                 const cancellation = mergeAbortSignals([signal, options?.signal, controller.signal]);
@@ -488,6 +488,7 @@ export async function captureLazyActionAccountContext(serverIdRaw: string, signa
                         requestContext: { scope, endpointUrl: profile.serverUrl, request: mutationRequest }, pendingSettings: {}, clearPendingSettings: () => {},
                         oneShotServerSettingsMutation: { expectedSettingsVersion: options?.expectedSettingsVersion ?? baseline.version,
                             rebaseOnConflict: options?.rebaseOnConflict ?? true,
+                            ...(options?.capture ? { capture: options.capture } : {}),
                             ...(options?.expectedProfileTransferRevision === undefined ? {} : { expectedProfileTransferRevision: options.expectedProfileTransferRevision }),
                             mutate: async (raw) => {
                                 assertMutationCurrent();
@@ -534,7 +535,7 @@ export async function captureLazyActionAccountContext(serverIdRaw: string, signa
             },
             fetchArtifact,
             createArtifactDocument,
-            updateArtifactDocument, readArtifactHtmlPreview,
+            updateArtifactDocument,
             readArtifactPublicLinkResource: async (artifactId: string, operationSignal?: AbortSignal): Promise<ArtifactPublicLinkKeyholdingResourceV1 | null> => {
                 const artifact = await fetchArtifact(artifactId, { signal: operationSignal });
                 if (!artifact) return null;

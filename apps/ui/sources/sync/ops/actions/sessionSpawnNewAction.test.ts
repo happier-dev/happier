@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { RPC_ERROR_CODES, type SessionSpawnNewResultV1 } from '@happier-dev/protocol';
+import { t } from '@/text';
 
 import * as sessionSpawnNewAction from './sessionSpawnNewAction';
 
@@ -27,6 +28,23 @@ type ResultFailureMessageKeyResolver = (
     | 'teams.policy.externalSharingAdmins';
 
 describe('session.spawn_new Action failure presentation', () => {
+    it('retains strict rejection and Action error codes in generic user-facing messages', () => {
+        expect(sessionSpawnNewAction.resolveSessionSpawnNewResultFailureMessage({
+            type: 'error', code: 'creation_conflict', retryable: false,
+        })).toContain('creation_conflict');
+        const message = sessionSpawnNewAction.resolveSessionSpawnNewActionFailureMessage({
+            ok: false, errorCode: 'action_account_scope_changed', error: 'private daemon detail',
+        });
+        expect(message).toContain('action_account_scope_changed');
+        expect(message).not.toContain('private daemon detail');
+        expect(sessionSpawnNewAction.resolveSessionSpawnNewResultFailureMessage({
+            type: 'pending', retryWithSameCreationKey: true, outcome: 'unknown',
+        })).toBe(t('newSession.launchStillPendingBody'));
+        expect(sessionSpawnNewAction.resolveSessionSpawnNewActionFailureMessage({
+            ok: false, errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE, error: 'RPC method not available',
+        })).toBe(t('newSession.actionMethodUnavailable'));
+    });
+
     it('reserves update guidance for an unavailable Action method', () => {
         const resolveFailurePresentation = (
             sessionSpawnNewAction as unknown as Readonly<{

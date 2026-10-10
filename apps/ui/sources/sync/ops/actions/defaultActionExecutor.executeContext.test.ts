@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { createScmCapabilities } from '@happier-dev/protocol/scm';
 import { ApprovalRequestSchema, buildApprovalRequestArtifactHeaderV1, encodePlainArtifactStoredContent, projectLegacySessionAccessCapabilitiesV1 } from '@happier-dev/protocol';
+import { createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 
 // Imported from their owning testkit modules, never the `@/dev/testkit` barrel:
 // the harness installs its network boundaries with `vi.doMock`, which only
@@ -182,6 +183,74 @@ describe('withDefaultActionExecuteContext', () => {
         }
     });
 
+    it('returns merged conversation JSON through the mounted client Action', async () => {
+        await loadSyncSingletonForTests();
+        const serverId = await addHome();
+        harness.answer(serverId, '/v2/account/settings', { body: { content: { t: 'plain', v: {
+            ...APPROVAL_REQUIRED_ACTIONS_SETTINGS, featureToggles: { 'memory.search': true },
+        } }, version: 1 } });
+        harness.answer(serverId, '/v1/machines', { body: [createPlainMachineRowFixture({ id: 'one', accountId: ACCOUNT_ID }),
+            { ...createPlainMachineRowFixture({ id: 'offline', accountId: ACCOUNT_ID }), active: false, activeAt: 0 }] });
+        const { DEFAULT_MEMORY_SETTINGS } = await import('@happier-dev/protocol/memory/memorySettings');
+        rpc.machine.mockImplementation(async (call) => {
+            if (call.method === RPC_METHODS.DAEMON_MEMORY_SETTINGS_GET) return { ...DEFAULT_MEMORY_SETTINGS,
+                conversationSearch: { ...DEFAULT_MEMORY_SETTINGS.conversationSearch, indexExternal: {
+                    ...DEFAULT_MEMORY_SETTINGS.conversationSearch.indexExternal, enabled: true, agents: ['pi'],
+                } } };
+            if (call.method === RPC_METHODS.DAEMON_MEMORY_STATUS) return { v: 1, enabled: true,
+                indexMode: 'deep', hintsIndexReady: true, deepIndexReady: true, activeIndexReady: true,
+                activeIndexSearchable: true, embeddingsEnabled: false, embeddingsMode: 'disabled',
+                embeddingsPresetId: null, embeddingsProviderKind: null, embeddingsModelId: null,
+                embeddingsRuntimeState: 'unavailable', embeddingsUsingFallback: false,
+                tier1DbPath: null, deepDbPath: null, tier1DbBytes: null, deepDbBytes: null };
+            return { v: 1, ok: true, hits: [{ type: 'external_transcript', source: {
+                type: 'external_transcript', agentId: 'pi', sourceKey: 'local', nativeSessionId: 'native',
+            }, sourceItemId: call.payload.cursor ? 'next-message' : 'message', createdAtFromMs: 10, createdAtToMs: 20, summary: 'quartz', score: 0.5 }],
+                ...(!call.payload.cursor ? { hasMore: true, nextCursor: 'next' } : {}) };
+        });
+        const result = await executorModule.createDefaultActionExecutor().execute('search.conversations', {
+            machineIds: ['one', 'offline'], mode: 'indexed',
+            query: { v: 1, query: 'quartz', scope: { type: 'global' }, mode: 'auto', corpora: ['external_transcripts'] },
+        }, { serverId, surface: 'agent', authority: 'account_automation', bypassApprovals: true });
+        expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: {
+            hits: [{ machineId: 'one', mode: 'indexed', hit: { sourceItemId: 'message' } }],
+            machines: [{ machineId: 'one', status: 'partial' }, { machineId: 'offline', status: 'offline' }],
+        } });
+        const next = await executorModule.createDefaultActionExecutor().execute('search.conversations', {
+            mode: 'indexed', query: { v: 1, query: 'quartz', scope: { type: 'global' }, mode: 'auto',
+                corpora: ['external_transcripts'], cursor: JSON.stringify({ machineId: 'one', cursor: 'next' }) },
+        }, { serverId, surface: 'agent', authority: 'account_automation', bypassApprovals: true });
+        expect(next, JSON.stringify(next)).toMatchObject({ ok: true, result: {
+            hits: [{ machineId: 'one', hit: { sourceItemId: 'next-message' } }], machines: [{ machineId: 'one', status: 'partial' }],
+        } });
+        expect(rpc.machine.mock.calls.filter(([call]) => call.method === RPC_METHODS.DAEMON_MEMORY_SEARCH).at(-1)?.[0])
+            .toMatchObject({ machineId: 'one', payload: { cursor: 'next' } });
+        expect(rpc.machine.mock.calls.every(([call]) => call.accountId === ACCOUNT_ID)).toBe(true);
+    });
+
+    it('opens a native memory window on the captured Home and Account without a Session projection', async () => {
+        await loadSyncSingletonForTests();
+        const serverId = await addHome();
+        harness.answer(serverId, '/v2/account/settings', { body: { content: { t: 'plain', v: {
+            ...APPROVAL_REQUIRED_ACTIONS_SETTINGS, featureToggles: { 'memory.search': true },
+        } }, version: 1 } });
+        const source = { type: 'external_transcript', agentId: 'pi', sourceKey: 'local', nativeSessionId: 'native' } as const;
+        rpc.machine.mockResolvedValue({ v: 1, snippets: [], citations: [], externalSnippets: [
+            { source, sourceItemId: 'message', createdAtMs: 10, text: 'quartz' },
+        ] });
+        const result = await executorModule.createDefaultActionExecutor().execute('memory.get_window', {
+            machineId: 'one', source, sourceItemId: 'message', cursor: 'opaque',
+        }, { serverId, surface: 'agent', authority: 'account_automation', bypassApprovals: true });
+        expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: {
+            externalSnippets: [{ source, sourceItemId: 'message', text: 'quartz' }],
+        } });
+        expect(rpc.machine).toHaveBeenCalledWith(expect.objectContaining({
+            machineId: 'one', serverId, accountId: ACCOUNT_ID, preferScoped: true,
+            method: RPC_METHODS.DAEMON_MEMORY_GET_WINDOW,
+            payload: { v: 1, source, sourceItemId: 'message', cursor: 'opaque' },
+        }));
+    });
+
     it('returns typed unavailability for native navigation on a sidecar-only Home', async () => {
         const serverId = await addHome();
         const { FeaturesResponseSchema } = await import('@happier-dev/protocol');
@@ -355,24 +424,26 @@ describe('withDefaultActionExecuteContext', () => {
                 ...ApprovalRequestSchema.parse(storedApproval(serverId, row.id).request),
                 status: 'rejected', decision: { kind: 'reject', decidedAtMs: Date.now() },
             });
-            // The remote device commits through the genuine persistence boundary,
-            // not the local decision notifier or optimistic Artifact cache.
-            const written = await harness.artifacts(serverId).handle(path, { method: 'POST', body: JSON.stringify({
-                header: encodePlainArtifactStoredContent(buildApprovalRequestArtifactHeaderV1(rejected)),
-                body: encodePlainArtifactStoredContent({ body: JSON.stringify(rejected) }),
-                expectedHeaderVersion: row.headerVersion, expectedBodyVersion: row.bodyVersion,
-            }) });
-            expect(written?.status).toBe(200);
+            // Model another device's write with the canonical Account codec, including
+            // revision-bound private provenance, not the local approval notifier/cache.
+            const bodyVersion = row.bodyVersion;
+            if (bodyVersion === undefined) throw new Error('Expected approval body revision');
+            const written = await executorModule.withDefaultActionExecuteContext(undefined, { serverId },
+                (_executor, account) => account.updateArtifactDocument({ artifactId: row.id,
+                    header: buildApprovalRequestArtifactHeaderV1(rejected), body: JSON.stringify(rejected),
+                    expectedRevision: { headerVersion: row.headerVersion, bodyVersion } }));
+            expect(written).toMatchObject({ ok: true, revision: { headerVersion: 2, bodyVersion: 2 } });
+            const readsBeforeWake = harness.requestsFor(path).length;
             publishHomeAccountChange('unrelated-home', [row.id]);
             publishHomeAccountChange(serverId, ['unrelated-artifact']);
             await Promise.resolve();
-            expect(harness.requestsFor(path)).toHaveLength(1);
+            expect(harness.requestsFor(path)).toHaveLength(readsBeforeWake);
             publishHomeAccountChange(serverId, [row.id]);
-            await vi.waitFor(() => expect(harness.requestsFor(path)).toHaveLength(2));
+            await vi.waitFor(() => expect(harness.requestsFor(path)).toHaveLength(readsBeforeWake + 1));
             await expect(pending).resolves.toMatchObject({ ok: false, errorCode: 'approval_rejected' });
             publishHomeAccountChange(serverId);
             await Promise.resolve();
-            expect(harness.requestsFor(path)).toHaveLength(2);
+            expect(harness.requestsFor(path)).toHaveLength(readsBeforeWake + 1);
         } finally {
             abort.abort();
             await pending.catch(() => undefined);
@@ -671,6 +742,7 @@ describe('withDefaultActionExecuteContext', () => {
         const serverId = await addHome();
         const { createDefaultActionExecutor } = await loadExecutor();
         const executor = createDefaultActionExecutor();
+        harness.answer(serverId, '/v1/machines', { body: [createPlainMachineRowFixture({ id: 'machine-1', accountId: ACCOUNT_ID })] });
         const created = await executor.execute(
             'review.start',
             { sessionId: 'session-1', engineIds: ['codex'], instructions: 'Review this change.' },

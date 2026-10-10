@@ -99,7 +99,9 @@ describe('original Account finite Project admission', () => {
                 installationId: 'alice-installation', installationPublicKey: encodeBase64(installation.publicKey), revokedAt: null,
                 replacedByMachineId: null, dataEncryptionKey: null, runnerContentKeyBinding: null,
                 access: { custodian: { accountId: 'alice', displayName: 'Alice' }, role: 'use', resourceMode: 'plain', accessState: 'ready' } }]);
-            expect(disclosure).toHaveBeenCalledOnce();
+            // D24 disclosure belongs to the ordinary share/approval surface;
+            // requester transport must not impose another mandatory confirmation.
+            expect(disclosure).not.toHaveBeenCalled();
             const body: unknown = JSON.parse(String(init?.body));
             if (path === '/v1/actions/projects.prepare/execution-authorization') {
                 const envelope = ExternalActionRequestEnvelopeV1Schema.parse((body as Readonly<{ envelope: unknown }>).envelope);

@@ -14,6 +14,14 @@ import {
 
 export type ActionOperationObservation = 'available' | 'reconnecting' | 'unavailable';
 
+/** Reachable transport cannot erase the execution owner's uncertainty about an active outcome. */
+export function resolveActionOperationObservation(
+    snapshot: ActionOperationSnapshotV1,
+    transportObservation: ActionOperationObservation,
+): ActionOperationObservation {
+    return snapshot.observation ? 'unavailable' : transportObservation;
+}
+
 export type ActionOperationStoreSnapshot = Readonly<{
     operationsByKey: ReadonlyMap<string, QualifiedActionOperation>;
     machineObservationByKey: ReadonlyMap<string, ActionOperationObservation>;

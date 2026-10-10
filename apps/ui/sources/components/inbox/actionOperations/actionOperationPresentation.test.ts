@@ -3,6 +3,7 @@ import type { ActionOperationProjection } from '@/sync/domains/actionOperations/
 
 import {
     classifyActionOperationSection,
+    canRequestActionOperationStop,
     readActionOperationDestinationSessionId,
     readActionOperationDestinationServerId,
     readActionOperationSessionSpawnNewInitialInput,
@@ -29,8 +30,42 @@ function operation(overrides: Partial<ActionOperationSnapshot> = {}): ActionOper
 }
 
 describe('action operation inbox presentation', () => {
+    it('permits another supported Stop only while active and reachable or explicitly unconfirmed', () => {
+        const active = operation({ cancellation: 'supported' });
+        expect(canRequestActionOperationStop(active, 'available')).toBe(true);
+        expect(canRequestActionOperationStop(active, 'unavailable')).toBe(false);
+        expect(canRequestActionOperationStop({ ...active, observation: { kind: 'outcome_uncertain', code: 'lost' } }, 'unavailable')).toBe(false);
+        expect(canRequestActionOperationStop({ ...active, observation: { kind: 'stop_unconfirmed', code: 'not_observed' } }, 'unavailable')).toBe(true);
+        expect(canRequestActionOperationStop({ ...active, cancellation: 'unsupported' }, 'available')).toBe(false);
+        expect(canRequestActionOperationStop({ ...active, state: 'cancelled', settledAt: 2_000 }, 'available')).toBe(false);
+    });
+
+    it('keeps owner-reported uncertain outcomes active and in attention even while the machine is available', () => {
+        for (const kind of ['outcome_uncertain', 'stop_unconfirmed'] as const) {
+            const snapshot = operation({ observation: { kind, code: 'owner_not_observed' } });
+            expect(classifyActionOperationSection(snapshot, 'available')).toBe('needsAttention');
+            expect(resolveActionOperationStatus(snapshot, 'available')).toEqual({
+                tone: 'muted', label: { kind: 'host', value: 'unavailable' },
+            });
+            expect(snapshot.state).toBe('running');
+        }
+    });
+
     it('groups active, attention, and recent operations without treating reconnecting as failure', () => {
         expect(classifyActionOperationSection(operation())).toBe('inProgress');
+        const review = operation({
+            actionId: 'projects.script.run',
+            state: 'accepted',
+            cancellation: 'supported',
+            domainRef: { kind: 'projectCommand', purpose: 'script', serverId: 'home', machineId: 'machine-1', workspaceRefId: 'workspace', cwd: '/repo' },
+            setupReview: { kind: 'pendingApproval', code: 'project_setup_effect_changed', reviewedEffectDigest: 'reviewed', reviewedEffect: {} },
+        });
+        expect(classifyActionOperationSection(review, 'available')).toBe('needsAttention');
+        expect(resolveActionOperationStatus(review, 'available')).toEqual({
+            tone: 'muted', label: { kind: 'host', value: 'needs_review' },
+        });
+        expect(review.state).toBe('accepted');
+        expect(canRequestActionOperationStop(review, 'available')).toBe(true);
         expect(classifyActionOperationSection(operation(), 'unavailable')).toBe('needsAttention');
         expect(classifyActionOperationSection(operation(), 'reconnecting')).toBe('inProgress');
         expect(classifyActionOperationSection(operation({
@@ -109,6 +144,8 @@ describe('action operation inbox presentation', () => {
     it('derives plugin identity without treating core session actions as plugins', () => {
         expect(readActionOperationPluginIdentity('acme.preview/deploy')).toBe('acme.preview');
         expect(readActionOperationPluginIdentity('session.fork')).toBeNull();
+        expect(readActionOperationPluginIdentity('action.operations.get')).toBeNull();
+        expect(readActionOperationPluginIdentity('projects.execution.output.read')).toBeNull();
     });
 
     it('reads initial-input disposition only from a valid successful session creation result', () => {

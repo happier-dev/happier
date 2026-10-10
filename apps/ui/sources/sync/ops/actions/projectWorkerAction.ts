@@ -20,7 +20,7 @@ import type { LazyActionAccountContext } from './actionAccountContext';
 export function createUiProjectWorkerActionV1(account: LazyActionAccountContext): NonNullable<ActionExecutorDeps['projectWorkerAction']> {
     return async ({ actionId, input, signal, context }) => {
         account.assertCurrent();
-        if (actionId === 'projects.worker.status' || actionId === 'projects.worker.copy.retire') {
+        if (actionId === 'projects.worker.status' || actionId === 'projects.worker.copy.inspect' || actionId === 'projects.worker.copy.retire') {
             const request = ProjectWorkerActionInputSchemasV1[actionId].parse(input);
             const machineId = 'destination' in request ? request.destination.machineId : request.machineId;
             if (!areServerProfileIdentifiersEquivalent(request.workspace.serverId, account.serverId)) {
@@ -45,7 +45,9 @@ export function createUiProjectWorkerActionV1(account: LazyActionAccountContext)
             const output = ProjectWorkerActionOutputSchemasV1[actionId].safeParse(raw);
             if (!output.success || ('candidate' in output.data && output.data.eligible
                 && (!areServerProfileIdentifiersEquivalent(output.data.candidate.serverId, request.workspace.serverId)
-                    || output.data.candidate.machineId !== machineId))) {
+                    || output.data.candidate.machineId !== machineId))
+                || ('targetMachineId' in request && 'preview' in output.data && output.data.ok
+                    && (output.data.preview.targetMachineId !== request.targetMachineId || output.data.preview.workspaceRefId !== request.targetWorkspaceRefId))) {
                 const errorCode = actionId === 'projects.worker.copy.retire' ? 'outcome_unknown' : 'invalid_action_output';
                 return { ok: false, errorCode, error: errorCode };
             }

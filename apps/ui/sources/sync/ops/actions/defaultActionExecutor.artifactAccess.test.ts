@@ -186,8 +186,7 @@ describe('UI Artifact sharing Action front door', () => {
                 inputs: { fields: [] }, inputSchema: { type: 'object', additionalProperties: false },
                 provenance: { source: { kind: 'authored' } } };
             const instance = { v: 1 as const, id: 'copy', definition: { kind: 'artifact' as const, artifactId: definition.id }, bindings: {} };
-            const layout = { v: 1, order: [instance.id], hidden: [], instances: [instance],
-                sections: { [instance.id]: { size: 'medium', frameStyle: 'plain' } } };
+            const layout = { v: 1, order: [instance.id], hidden: [], items: [{ kind: 'widget', instance, size: 'medium', frameStyle: 'plain' }] };
             const row = (id: string, header: Readonly<Record<string, unknown>>, body?: string) => ({ id,
                 header: encodePlainArtifactStoredContent(header), ...(body ? { body: encodePlainArtifactStoredContent({ body }) } : {}),
                 dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER, ownerAccountId: 'owner', access: 'owner', encryptionMode: 'plain',
@@ -203,8 +202,8 @@ describe('UI Artifact sharing Action front door', () => {
                 if (target.pathname === '/v1/artifacts') return Response.json([row('authored', buildWidgetDefinitionArtifactHeaderV1(definition))]);
                 if (target.pathname === `/v1/artifacts/${homeId}`) return Response.json(row(homeId,
                     { kind: HOME_HUB_ARTIFACT_KIND_V1, v: 1 }, JSON.stringify(mixedInstalledPlacement ? { ...layout,
-                        instances: [...layout.instances, { v: 1, id: 'installed-copy',
-                            definition: { kind: 'installed', surface: { pluginId: 'acme.tools', localId: 'glance' } }, bindings: {} }],
+                        items: [...layout.items, { kind: 'widget', instance: { v: 1, id: 'installed-copy',
+                            definition: { kind: 'installed', surface: { pluginId: 'acme.tools', localId: 'glance' } }, bindings: {} } }],
                     } : layout)));
                 throw new Error(`unexpected_home_request:${target.pathname}`);
             });

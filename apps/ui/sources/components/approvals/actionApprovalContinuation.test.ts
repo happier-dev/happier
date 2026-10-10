@@ -149,7 +149,7 @@ describe('createHomeActionApprovalContinuation', () => {
         }, expectedRevision: 1 };
         const mutation = applyAcpBackendUpsertV1({ settings: { v: 2, backends: [] }, backend: input.backend, nowMs: 2 });
         if (!mutation.ok) throw new Error(mutation.code);
-        const result = { backend: mutation.backend };
+        const result = { backend: mutation.backend, revision: 2 };
         const artifact = executedArtifact({ actionId: 'agents.acp.backends.upsert', actionArgs: input, result });
         const terminal = approvalArtifactBodyMatchesHeaderV1(artifact.header ?? {}, artifact.body);
         expect(terminal).toMatchObject({ family: 'built_in', request: { status: 'executed', execution: { ok: true } } });

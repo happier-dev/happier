@@ -4,8 +4,9 @@ import { describe, expect, it, vi } from 'vitest';
 import { renderHook, renderScreen } from '@/dev/testkit';
 import { act } from 'react-test-renderer';
 import { useComputerApprovalChoice } from './useComputerApprovalChoice';
+import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 
-import { ComputerActionApprovalCard, describeComputerActionApproval } from './ComputerActionApprovalCard';
+import { applyComputerSelection, ComputerActionApprovalCard, describeComputerActionApproval } from './ComputerActionApprovalCard';
 
 vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
 vi.mock('@/text', async () => {
@@ -22,11 +23,33 @@ const unchosen = { machineDisplayName: 'Studio laptop', requiresTargetSelection:
 const typeInput = { machineId: 'machine_1', captureId: 'capture_1', operation: { kind: 'type', text: 'ana@lumen.dev' } };
 
 describe('describeComputerActionApproval', () => {
+    it('shows confidential entry against the owner-reviewed window without displaying or retargeting a credential', async () => {
+        const args = { serverId: 'home-1', sessionId: 'session_1', machineId: 'machine_1', purpose: 'Sign in',
+            sourceId: 'source-1', target: { kind: 'window', displayId: ':77', pid: 123, windowId: 456 }, captureId: 'capture-1',
+            geometry: { captureWidth: 1280, captureHeight: 800, nativeWidth: 1280, nativeHeight: 800,
+                originX: 0, originY: 0, scaleX: 1, scaleY: 1, crop: { x: 0, y: 0, width: 1280, height: 800 } },
+            field: { fieldId: 'password', focusId: 'focus-1' } };
+        const presentation = describeComputerActionApproval({ actionId: 'computer.secret.fill', actionArgs: args,
+            preview: { computerApprovalDisplay: shared } });
+        expect(presentation).toMatchObject({ access: 'use', act: 'fill', machineName: 'Studio laptop',
+            target: shared.target, requiresTargetSelection: false, sent: null });
+        expect(applyComputerSelection(presentation!, { ...shared, target: { kind: 'window', title: 'Another window' } })).toBe(presentation);
+        const screen = await renderScreen(<ComputerActionApprovalCard presentation={presentation!} onChooseTarget={() => {}} testID="c" />);
+        expect(screen.getTextContent()).toContain('Sign in to Lumen');
+        expect(screen.findByTestId('c-choose')).toBeNull();
+        expect(screen.getTextContent()).not.toContain(':77');
+    });
+
     it('retains the human’s see-only choice and owner app name when approving a suggested target', async () => {
+        // Public caller input: this test exercises the picker choice, not the
+        // Account lifetime producer (the confidential owner suite keeps it real).
+        const accountLifetime: ServerAccountScopeLifetime = { scope: { serverId: 'home-1', accountId: 'account-a' },
+            isCurrent: () => true, onRetire: () => ({ dispose: () => {} }) };
         let pickerInput: Parameters<typeof import('@/components/computer/openComputerTargetPickerForSession').openComputerTargetPickerForSession>[0] | undefined;
         const hook = await renderHook(() => useComputerApprovalChoice({
             actionId: 'computer.target.select', actionArgs: { machineId: 'machine_1', requestedTarget: 'Lumen' },
             preview: { computerApprovalDisplay: unchosen }, sessionId: 'session_1',
+            accountLifetime,
             resolveOpenPicker: () => (params) => { pickerInput = params; },
         }));
         await act(async () => { hook.getCurrent().chooseTarget(); });

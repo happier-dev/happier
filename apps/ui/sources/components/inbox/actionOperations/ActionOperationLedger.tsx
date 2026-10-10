@@ -1,8 +1,11 @@
 import * as React from 'react';
+import { joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
 import { View, type GestureResponderEvent } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Item } from '@/components/ui/lists/Item';
+import { InboxWorkRow } from '../InboxWorkRow';
+import { resolveWorkStatusTone } from '@/components/work/status/resolveWorkStatusTone';
 import {
     ItemGroupRowPositionProvider,
     useItemGroupRowPosition,
@@ -33,26 +36,17 @@ import { useSessionAudienceContext } from '@/hooks/teams/useSessionAudienceConte
 import { openActionOperation } from './actionOperationPresentationRuntime';
 import {
     classifyActionOperationSection,
+    canRequestActionOperationStop,
+    describeActionOperationStatusLabel,
     formatActionOperationAge,
     resolveActionOperationStatus,
     type ActionOperationSection,
 } from './actionOperationPresentation';
-import { requestAcceptedActionOperationStop } from './requestActionOperationStop';
+import { requestAcceptedActionOperationStop, type ActionOperationStopResponse, type ActionOperationStopContext, type ActionOperationStopTarget } from './requestActionOperationStop';
+import { useActionOperationStopControl } from './useActionOperationStopControl';
 import { projectActionOperationSourceContext } from './actionOperationSourceContext';
 
 const SECTION_ORDER: readonly ActionOperationSection[] = ['inProgress', 'needsAttention', 'recent'];
-
-function translateHostStatus(value: 'accepted' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'reconnecting' | 'unavailable'): string {
-    switch (value) {
-        case 'accepted': return t('inbox.actionOperations.status.accepted');
-        case 'running': return t('inbox.actionOperations.status.running');
-        case 'succeeded': return t('inbox.actionOperations.status.succeeded');
-        case 'failed': return t('inbox.actionOperations.status.failed');
-        case 'cancelled': return t('inbox.actionOperations.status.cancelled');
-        case 'reconnecting': return t('inbox.actionOperations.observation.reconnecting');
-        case 'unavailable': return t('inbox.actionOperations.observation.unavailable');
-    }
-}
 
 function translateSection(section: ActionOperationSection): string {
     switch (section) {
@@ -67,7 +61,7 @@ const ActionOperationRow = React.memo(function ActionOperationRow(props: Readonl
     presentation?: 'activity' | 'inbox';
     audienceScopes: ReadonlyMap<string, ServerAccountScope>;
     onOpenOperation: (operation: ActionOperationProjection) => void;
-    onCancelOperation?: (operation: ActionOperationProjection) => Promise<void> | void;
+    onCancelOperation?: (operation: ActionOperationProjection, context?: ActionOperationStopContext) => Promise<ActionOperationStopResponse | void> | void;
     onDismissOperation?: (operation: ActionOperationProjection) => void;
     showDivider?: boolean;
 }>) {
@@ -81,9 +75,7 @@ const ActionOperationRow = React.memo(function ActionOperationRow(props: Readonl
     // only the rows bound to that Home rather than the whole ledger.
     const homeObservations = useSessionListHomeObservations();
     const status = resolveActionOperationStatus(snapshot, observation);
-    const statusLabel = status.label.kind === 'producer'
-        ? status.label.value
-        : translateHostStatus(status.label.value);
+    const statusLabel = describeActionOperationStatusLabel(status.label);
     const sourceContext = projectActionOperationSourceContext({
         serverId,
         snapshot,
@@ -102,27 +94,28 @@ const ActionOperationRow = React.memo(function ActionOperationRow(props: Readonl
         : null;
     const inboxPresentation = props.presentation === 'inbox';
     const subtitleText = inboxPresentation
-        ? [props.operation.followUpAttention ?? statusLabel, sourceTitle].filter(Boolean).join(' · ')
+        ? joinHappierFacts(props.operation.followUpAttention ?? statusLabel, sourceTitle)
         : sourceTitle;
-    const detailText = (inboxPresentation
+    const detailText = joinHappierFacts(...(inboxPresentation
         ? [determinateProgress, sourceContext.contextLine]
         : [
             props.operation.followUpAttention,
             formatActionOperationAge(snapshot),
             determinateProgress,
             sourceContext.contextLine,
-        ]).filter(Boolean).join(' · ');
+        ]));
     const active = snapshot.state === 'accepted' || snapshot.state === 'running';
     const canDismiss = Boolean(props.onDismissOperation)
         && (inboxPresentation || (active && props.operation.isUnavailableProjection));
     const canStop = Boolean(serverId)
         && !inboxPresentation
         && !canDismiss
-        && observation === 'available'
-        && active
-        && snapshot.cancellation === 'supported';
-    const [stopPending, setStopPending] = React.useState(false);
-    const [stopFailed, setStopFailed] = React.useState(false);
+        && !props.operation.isUnavailableProjection
+        && canRequestActionOperationStop(snapshot, observation);
+    const requestStop = React.useCallback((_operation: ActionOperationStopTarget, context: ActionOperationStopContext) => props.onCancelOperation?.(props.operation, context), [props.onCancelOperation, props.operation]);
+    const stopControl = useActionOperationStopControl(props.operation, requestStop);
+    const stopPending = stopControl.pending;
+    const stopFailed = stopControl.feedback === 'failed';
     const iconColor = props.operation.followUpAttention || status.tone === 'danger'
         ? theme.colors.status.error
         : status.tone === 'success'
@@ -130,13 +123,33 @@ const ActionOperationRow = React.memo(function ActionOperationRow(props: Readonl
             : theme.colors.text.secondary;
     const stop = React.useCallback((event?: GestureResponderEvent) => {
         event?.stopPropagation();
-        if (!props.onCancelOperation || stopPending) return;
-        setStopPending(true);
-        setStopFailed(false);
-        Promise.resolve(props.onCancelOperation(props.operation))
-            .catch(() => setStopFailed(true))
-            .finally(() => setStopPending(false));
-    }, [props.onCancelOperation, props.operation, stopPending]);
+        if (!props.onCancelOperation || stopPending || stopControl.stopRequested) return;
+        stopControl.requestStop();
+    }, [props.onCancelOperation, stopControl.requestStop, stopControl.stopRequested, stopPending]);
+
+    const dismiss = React.useCallback((event?: GestureResponderEvent) => {
+        event?.stopPropagation();
+        props.onDismissOperation?.(props.operation);
+    }, [props.onDismissOperation, props.operation]);
+    const dismissButton = canDismiss && props.onDismissOperation ? <TactilePressable
+        testID={`action-operation-dismiss.${snapshot.operationId}`} accessibilityLabel={t('inbox.actionOperations.dismiss')}
+        onPress={dismiss} glyph style={styles.stopButton}>
+        <Icon name="x" size={ICON_SIZE.sm} color={theme.colors.text.secondary} />
+    </TactilePressable> : undefined;
+    const workStatus = resolveWorkStatusTone({ kind: 'action_operation', facts: { state: snapshot.state, observation,
+        setupReview: snapshot.setupReview, word: props.operation.followUpAttention ?? statusLabel } });
+
+    if (inboxPresentation) return <InboxWorkRow
+        testID={`inbox.action-operation.${snapshot.operationId}`} title={snapshot.title}
+        facts={[sourceTitle, determinateProgress, sourceContext.contextLine]}
+        phase={workStatus.bucket === 'working' ? 'live' : workStatus.bucket === 'needs_you' ? 'attention' : 'finished'}
+        status={workStatus}
+        accessibilityLiveRegion="polite"
+        accessibilityLabel={`${snapshot.title}, ${props.operation.followUpAttention ?? statusLabel}, ${detailText}${sourceContext.accessibilityContext ? `, ${sourceContext.accessibilityContext}` : ''}`}
+        mark={<Icon name={status.tone === 'success' ? 'check-circle' : status.tone === 'danger' ? 'warning-circle' : 'clock'} size={ICON_SIZE.md} color={iconColor} />}
+        trailingAccessory={dismissButton}
+        onPress={() => props.onOpenOperation(props.operation)}
+    />;
 
     return (
         <Item
@@ -158,7 +171,7 @@ const ActionOperationRow = React.memo(function ActionOperationRow(props: Readonl
                 <TactilePressable
                     testID={`action-operation-stop.${snapshot.operationId}`}
                     accessibilityLabel={t('inbox.actionOperations.cancel.stop')}
-                    disabled={stopPending}
+                    disabled={stopPending || stopControl.stopRequested}
                     onPress={stop}
                     glyph
                     containerStyle={stopPending ? styles.stopButtonPending : undefined}
@@ -174,20 +187,7 @@ const ActionOperationRow = React.memo(function ActionOperationRow(props: Readonl
                         />
                     )}
                 </TactilePressable>
-            ) : canDismiss && props.onDismissOperation ? (
-                <TactilePressable
-                    testID={`action-operation-dismiss.${snapshot.operationId}`}
-                    accessibilityLabel={t('inbox.actionOperations.dismiss')}
-                    onPress={(event) => {
-                        event?.stopPropagation();
-                        props.onDismissOperation?.(props.operation);
-                    }}
-                    glyph
-                    style={styles.stopButton}
-                >
-                    <Icon name="x" size={ICON_SIZE.sm} color={theme.colors.text.secondary} />
-                </TactilePressable>
-            ) : undefined}
+            ) : dismissButton}
             rightElementOutsidePressable={true}
             keepChevronWithRightElement={inboxPresentation && canDismiss}
             showDivider={props.showDivider}
@@ -204,7 +204,7 @@ export const ActionOperationRows = React.memo(function ActionOperationRows(props
     operations: readonly ActionOperationProjection[];
     presentation?: 'activity' | 'inbox';
     onOpenOperation: (operation: ActionOperationProjection) => void;
-    onCancelOperation?: (operation: ActionOperationProjection) => Promise<void> | void;
+    onCancelOperation?: (operation: ActionOperationProjection, context?: ActionOperationStopContext) => Promise<ActionOperationStopResponse | void> | void;
     onDismissOperation?: (operation: ActionOperationProjection) => void;
     /** Supplied by ItemGroup when this row collection sits among sibling rows. */
     showDivider?: boolean;
@@ -248,7 +248,7 @@ export const ActionOperationLedgerView = React.memo(function ActionOperationLedg
     operations: readonly ActionOperationProjection[];
     preferredSessionAddress?: SessionAddress | null;
     onOpenOperation: (operation: ActionOperationProjection) => void;
-    onCancelOperation?: (operation: ActionOperationProjection) => Promise<void> | void;
+    onCancelOperation?: (operation: ActionOperationProjection, context?: ActionOperationStopContext) => Promise<ActionOperationStopResponse | void> | void;
     onDismissOperation?: (operation: ActionOperationProjection) => void;
     onClearRecent?: () => void;
 }>) {
@@ -333,8 +333,8 @@ export const ActionOperationLedger = React.memo(function ActionOperationLedger(p
     preferredSessionAddress?: SessionAddress | null;
 }> = {}) {
     const operations = useAllActionOperations();
-    const stopOperation = React.useCallback(async (operation: ActionOperationProjection) => {
-        await requestAcceptedActionOperationStop(operation);
+    const stopOperation = React.useCallback(async (operation: ActionOperationProjection, context?: ActionOperationStopContext) => {
+        return await requestAcceptedActionOperationStop(operation, context);
     }, []);
     return (
         <ActionOperationLedgerView

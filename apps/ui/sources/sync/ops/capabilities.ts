@@ -17,6 +17,7 @@ import {
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
 import { ServerFetchAbortedForServerSwitchError } from '@/sync/http/client';
 import { isDemoModeActive } from '@/demoMode/runtime/enterExitDemoMode';
+import { readRpcRequestDisposition, type RpcRequestDisposition } from '@happier-dev/sync-client';
 
 export type {
     CapabilitiesDescribeResponse,
@@ -94,7 +95,7 @@ export async function machineCapabilitiesDetect(
 
 export type MachineCapabilitiesInvokeResult =
     | { supported: true; response: CapabilitiesInvokeResponse }
-    | { supported: false; reason: 'not-supported' | 'error' };
+    | { supported: false; reason: 'not-supported' | 'error'; requestDisposition?: RpcRequestDisposition };
 
 export async function machineCapabilitiesInvoke(
     machineId: string,
@@ -119,8 +120,9 @@ export async function machineCapabilitiesInvoke(
         const parsed = parseCapabilitiesInvokeResponse(result);
         if (!parsed) return { supported: false, reason: 'error' };
         return { supported: true, response: parsed };
-    } catch {
-        return { supported: false, reason: 'error' };
+    } catch (error) {
+        const requestDisposition = readRpcRequestDisposition(error);
+        return { supported: false, reason: 'error', ...(requestDisposition ? { requestDisposition } : {}) };
     }
 }
 

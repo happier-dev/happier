@@ -45,7 +45,7 @@ export function ActionOperationDetailControls(props: Readonly<{
                         title={stopControl.pending ? t('runs.stop.stoppingLabel') : t('inbox.actionOperations.cancel.stop')}
                         testID="action-operation-cancel"
                         loading={stopControl.pending}
-                        disabled={stopControl.pending || stopControl.feedback === 'requested'}
+                        disabled={stopControl.pending || stopControl.stopRequested}
                         onPress={stopControl.requestStop}
                     />
                 ) : null}

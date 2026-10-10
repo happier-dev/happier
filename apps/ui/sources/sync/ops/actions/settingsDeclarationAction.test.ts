@@ -55,7 +55,7 @@ import { createVoiceProviderRegistry } from '@/voice/registry/providerRegistry';
 import { commitExternalVoiceProviderRegistration, removeExternalVoiceProviderRegistration } from '@/voice/registry/externalVoiceProviderRegistrations';
 import { getResolvedAgentCatalogEntries } from '@/agents/backendCatalog/agentCatalogProjection';
 import { getEnabledAgentIds } from '@/agents/catalog/enabled';
-import { readVoiceDiagnosticsSettings, writeVoiceProviderSettingsConfig } from '@/sync/domains/settings/voiceSettings';
+import { readLocalConversationVoiceSettings, writeLocalConversationVoiceSettings, readVoiceDiagnosticsSettings, writeVoiceProviderSettingsConfig } from '@/sync/domains/settings/voiceSettings';
 import { normalizeVoiceSettingsLocalDelta } from '@/sync/domains/settings/voiceSettingsPersistence';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { projectBundledVoiceManifestContributions } from '@/voice/registry/bundledVoiceManifestProjection';
@@ -75,6 +75,8 @@ import { captureLazyActionAccountContext } from './actionAccountContext';
 import { readAcpCatalogInContext } from '@/sync/api/account/apiAcpCatalog';
 import { ACP_CATALOG_ROWS_ROUTE_V1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 import { darkTheme } from '@/theme';
+import type { ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/actionExecutor';
 
 describe('exact Account Settings history purge declaration', () => {
     it('requires incumbent approval and refuses execution without an Account history transport', async () => {
@@ -98,7 +100,8 @@ const { voiceSettingsDeclarationRegistry } = await import('@/voice/settings/voic
 const { prepareSpeechEndpointSettingChange } = await import('@/voice/settings/panels/bundledSpeech/prepareEndpointSettingChange');
 
 function throughActionExecutor(settingsDeclarationAction: ReturnType<typeof createSettingsDeclarationAction>,
-    readActionsSettings?: () => ActionsSettingsV1) {
+    readActionsSettings?: () => ActionsSettingsV1,
+    approvalTransport?: Pick<ActionExecutorDeps, 'approvalsCreate' | 'approvalsGet' | 'approvalsUpdate' | 'isApprovalExecutionOriginCurrent'>) {
     const approvalPolicy: Pick<Parameters<typeof createActionExecutor>[0], 'isActionApprovalRequired'> = readActionsSettings
         ? { isActionApprovalRequired: (actionId, context, input) =>
             isApprovalRequiredByActionsSettings(actionId, readActionsSettings(), context, undefined, undefined, input) }
@@ -107,6 +110,7 @@ function throughActionExecutor(settingsDeclarationAction: ReturnType<typeof crea
     const unusedTransport = async () => { throw new Error('unexpected_unrelated_transport'); };
     return createActionExecutor({ settingsDeclarationAction,
         ...approvalPolicy,
+        ...approvalTransport,
         executionRunStart: unusedTransport, executionRunList: unusedTransport, executionRunGet: unusedTransport,
         detachedExecutionRunSend: unusedTransport, executionRunStop: unusedTransport, executionRunAction: unusedTransport,
         executionRunWait: unusedTransport, sessionOpen: unusedTransport, sessionFork: unusedTransport,
@@ -142,14 +146,16 @@ function createOwner(host: { os: 'web' | 'ios'; desktop: boolean } = { os: 'web'
         canUseRuntimeContributions: () => runtimeContributions,
         isCurrent: lifetime?.isCurrent,
         openHumanInteraction: navigation ?? (async (href) => { openedInteractions.push(href); return true; }),
-        mutationServices: { readScmDiffSummaryCatalog, readAgentCatalog: async (settings) => ({
-            entries: getResolvedAgentCatalogEntries({
+        mutationServices: { readScmDiffSummaryCatalog, readAgentCatalog: async (settings) => {
+            const captured = await readSummaryCatalogAccount();
+            const { catalog } = await readAcpCatalogInContext(captured);
+            return { entries: getResolvedAgentCatalogEntries({
                 enabledAgentIds: getEnabledAgentIds({ backendEnabledByTargetKey: settings.backendEnabledByTargetKey }),
                 backendEnabledByTargetKey: settings.backendEnabledByTargetKey,
-                acpCatalogSettingsV1: settings.acpCatalogSettingsV1,
+                acpCatalogSnapshot: catalog,
             }),
-            isCurrent: () => true,
-        }) },
+            isCurrent: captured.accountLifetime.isCurrent };
+        } },
         readAccountSettings: async () => { lifetime?.onReadAccount?.(); return account; },
         writeAccountSettings: async (delta) => { account = applySettings(account, delta); },
         mutateAccountSettings: async (mutate) => { account = settingsParse(mutate(rebase ? rebase(account) : account)); },
@@ -159,6 +165,89 @@ function createOwner(host: { os: 'web' | 'ios'; desktop: boolean } = { os: 'web'
     });
     return { action, account: () => account, local: () => local, openedInteractions };
 }
+
+describe('Instructions Agent edits policy declaration', () => {
+    const anchor = 'actions.promptDocAgentEdits';
+
+    it('edits only the Agent prompt-document mode through human admission and the latest Account snapshot', async () => {
+        const owner = createOwner(undefined, true, true, settingsDefaults, undefined, settings => ({
+            ...settings,
+            actionsSettingsV1: ActionsSettingsV1Schema.parse({ ...settings.actionsSettingsV1,
+                actions: { ...settings.actionsSettingsV1.actions,
+                    'prompt_doc.create': { disabledSurfaces: ['mcp'] },
+                    'prompt_doc.update': { ...settings.actionsSettingsV1.actions['prompt_doc.update'], disabledSurfaces: ['agent', 'cli'] },
+                },
+            }),
+        }));
+        const executor = throughActionExecutor(owner.action);
+        const context = { surface: 'ui', authority: 'present_user', presentUserConfirmation: { actionId: 'settings.set' } } as const;
+        expect(await executor.execute('settings.set', { anchor, value: 'allowed' }, context)).toMatchObject({ ok: true, result: { anchor, value: 'allowed' } });
+        expect(owner.account().actionsSettingsV1.actions['prompt_doc.update'].disabledSurfaces).toEqual(['cli']);
+        expect(owner.account().actionsSettingsV1.approvalWaivedSurfaces?.['prompt_doc.update']).toEqual(['agent']);
+        expect(owner.account().actionsSettingsV1.actions['prompt_doc.create'].disabledSurfaces).toEqual(['mcp']);
+        expect(await executor.execute('settings.set', { anchor, value: { approvalWaivedSurfaces: { 'settings.set': ['agent'] } } }, context))
+            .toMatchObject({ ok: false, errorCode: 'invalid_setting_value' });
+    });
+
+    it('never lets automation grant itself a waiver, even when settings.set is waived', async () => {
+        const owner = createOwner(undefined, true, true, settingsParse({ actionsSettingsV1: { v: 1,
+            actions: {}, approvalWaivedSurfaces: { 'settings.set': ['agent', 'mcp'] },
+        } }));
+        const executor = throughActionExecutor(owner.action, () => owner.account().actionsSettingsV1);
+        for (const surface of ['agent', 'mcp'] as const) {
+            expect(await executor.execute('settings.set', { anchor, value: 'allowed' }, { surface,
+                actionsSettings: owner.account().actionsSettingsV1 }))
+                .toMatchObject({ ok: false, errorCode: 'approvals_not_supported' });
+        }
+        expect(owner.account().actionsSettingsV1.approvalWaivedSurfaces?.['prompt_doc.update']).toBeUndefined();
+    });
+
+    it('lets an Agent request the exact mode and applies it only after a human decision', async () => {
+        const owner = createOwner(undefined, true);
+        const requests = new Map<string, ApprovalRequest>();
+        // Approval Artifacts are the persistence boundary; admission, review and replay remain real.
+        const executor = throughActionExecutor(owner.action, () => owner.account().actionsSettingsV1, {
+            approvalsCreate: async ({ request }) => { requests.set('policy-approval', request); return { artifactId: 'policy-approval' }; },
+            approvalsGet: async ({ artifactId }) => requests.get(artifactId) ?? null,
+            approvalsUpdate: async ({ artifactId, request }) => { requests.set(artifactId, request); return { ok: true }; },
+            isApprovalExecutionOriginCurrent: async () => true,
+        });
+        const agent = { surface: 'agent', serverId: 'home-a', defaultSessionId: 'worker', actionRequestId: 'policy-request' } as const;
+        expect(await executor.execute('settings.set', { anchor, value: 'allowed' }, agent)).toMatchObject({ ok: true });
+        expect(requests.get('policy-approval')).toMatchObject({ status: 'open', actionId: 'settings.set', actionArgs: { anchor, value: 'allowed' } });
+        expect(owner.account().actionsSettingsV1.approvalWaivedSurfaces?.['prompt_doc.update']).toBeUndefined();
+        expect(await executor.execute('approval.request.decide', { artifactId: 'policy-approval', decision: 'approve' }, agent))
+            .toMatchObject({ ok: false });
+        expect(requests.get('policy-approval')?.status).toBe('open');
+        expect(await executor.execute('approval.request.decide', { artifactId: 'policy-approval', decision: 'approve' }, {
+            surface: 'ui', authority: 'present_user', serverId: 'home-a',
+        })).toMatchObject({ ok: true });
+        expect(owner.account().actionsSettingsV1.approvalWaivedSurfaces?.['prompt_doc.update']).toEqual(['agent']);
+        expect(requests.get('policy-approval')?.status).toBe('executed');
+    });
+});
+
+describe('Usage model-price Account Settings declaration parity', () => {
+    it('round-trips rates and mappings through ordinary Actions and rejects cycles without replacing persisted settings', async () => {
+        const owner = createOwner(undefined, true);
+        const executor = throughActionExecutor(owner.action);
+        const context = { surface: 'ui', authority: 'present_user', presentUserConfirmation: { actionId: 'settings.set' } } as const;
+        const rates = { private: { kind: 'rates', inputUsdPerMillion: 2, outputUsdPerMillion: 4 } };
+        expect(await executor.execute('settings.set', { anchor: 'usage.modelPrices', value: rates }, context))
+            .toMatchObject({ ok: true, result: { anchor: 'usage.modelPrices', value: rates } });
+        expect(await executor.execute('settings.get', { anchor: 'usage.modelPrices' }, context))
+            .toMatchObject({ ok: true, result: { value: rates } });
+        const mapped = { ...rates, other: { kind: 'map', modelId: 'private' } };
+        expect(await executor.execute('settings.set', { anchor: 'usage.modelPrices', value: mapped }, context))
+            .toMatchObject({ ok: true, result: { value: mapped } });
+        expect(owner.account().usageModelPriceOverridesV1).toEqual(mapped);
+        expect(await executor.execute('settings.set', { anchor: 'usage.modelPrices', value: {
+            private: { kind: 'map', modelId: 'other' }, other: { kind: 'map', modelId: 'private' },
+        } }, context)).toMatchObject({ ok: false, errorCode: 'invalid_setting_value' });
+        expect(await executor.execute('settings.get', { anchor: 'usage.modelPrices' }, context))
+            .toMatchObject({ ok: true, result: { value: mapped } });
+    });
+});
 
 describe('notification Settings declaration parity', () => {
     it('rebases coupled push-event policy edits and preserves sibling Account policy', async () => {
@@ -646,8 +735,12 @@ describe('declared settings owner', () => {
             health: { captureFailure: false, cleanup: { status: 'healthy', code: null, ownedEntryCount: 0 } },
             backupPolicy: { status: 'best_effort', storage: 'private_cache', mechanism: 'cachedir_tag', automaticSync: 'not_implemented' } };
         settingsMachineRpc.mockResolvedValue(status);
+        const { readVoiceDiagnosticsRuntimeStatus } = await import('@/voice/diagnostics/runtimeStatus');
+        const { projectVoiceProcessingDisclosures } = await import('@/voice/settings/projectVoiceProcessingDisclosures');
         expect(await owner.action({ actionId: 'settings.invoke', input: { anchor: 'voicePrivacy.diagnosticsLocation' } }))
-            .toEqual({ anchor: 'voicePrivacy.diagnosticsLocation', status: 'completed', value: status });
+            .toEqual({ anchor: 'voicePrivacy.diagnosticsLocation', status: 'completed', value: {
+                daemonStatus: status, clientRuntime: readVoiceDiagnosticsRuntimeStatus(), processingDisclosures: projectVoiceProcessingDisclosures(account.voice),
+            } });
         expect(await owner.action({ actionId: 'settings.invoke', input: { anchor: 'voicePrivacy.diagnosticsExport', input: { kind: 'diagnostics_export', artifactId: 'missing', machineId: 'different' } } }))
             .toMatchObject({ status: 'unavailable', reason: 'execution_machine_changed' });
         expect(await owner.action({ actionId: 'settings.invoke', input: { anchor: 'voicePrivacy.diagnosticsExport', input: { kind: 'diagnostics_export', artifactId: 'missing', machineId: 'voice-machine' } } }))
@@ -655,6 +748,62 @@ describe('declared settings owner', () => {
         expect(settingsMachineRpc.mock.calls.every(([request]) => request.machineId === 'voice-machine' && request.method === 'daemon.voiceDiagnostics.status')).toBe(true);
         expect(owner.openedInteractions).toEqual([]);
         expect(owner.account()).toEqual(account);
+    });
+    it('reads current client diagnostic retry identities and selected disclosure facts without a selected execution machine', async () => {
+        const before = storage.getState();
+        const runtime = await import('@/voice/diagnostics/runtimeStatus');
+        const { projectVoiceProcessingDisclosures } = await import('@/voice/settings/projectVoiceProcessingDisclosures');
+        onTestFinished(() => { runtime.resetVoiceDiagnosticsRuntimeStatusForTests(); storage.setState(before, true); });
+        runtime.publishVoiceDiagnosticsRuntimeStatus({ machineId: 'former-machine', phase: 'status_unknown' });
+        const obligation = runtime.beginVoiceDiagnosticsRevocationObligation({ kind: 'machine_policy', machineId: 'former-machine' }, 'failed');
+        const account = applySettings(settingsDefaults, { voiceSettingsV1: { ...settingsDefaults.voice, executionMachine: { mode: 'fixed', machineId: null } } });
+        storage.setState({ settings: account, machines: {} });
+        const owner = createOwner(undefined, true, true, account);
+        expect(await owner.action({ actionId: 'settings.invoke', input: { anchor: 'voicePrivacy.diagnosticsLocation' } }))
+            .toEqual({ anchor: 'voicePrivacy.diagnosticsLocation', status: 'completed', value: {
+                daemonStatus: null, clientRuntime: runtime.readVoiceDiagnosticsRuntimeStatus(), processingDisclosures: projectVoiceProcessingDisclosures(owner.account().voice),
+            } });
+        expect(obligation).toMatchObject({ key: 'machine:former-machine', revision: expect.any(Number) });
+        expect(await owner.action({ actionId: 'settings.set', input: { anchor: 'voicePrivacy.diagnosticsLocation', value: {} } }))
+            .toMatchObject({ error: 'setting_not_bound' });
+        expect(owner.openedInteractions).toEqual([]);
+    });
+    it('does not disclose owner facts after the captured Account retires during a read', async () => {
+        let current = true;
+        let reads = 0;
+        const owner = createOwner(undefined, true, true, settingsDefaults, undefined, undefined, undefined, {
+            isCurrent: () => current,
+            onReadAccount: () => { if (++reads === 2) queueMicrotask(() => { current = false; }); },
+        });
+        expect(await owner.action({ actionId: 'settings.invoke', input: { anchor: 'voicePrivacy.diagnosticsLocation' } }))
+            .toMatchObject({ status: 'cancelled' });
+    });
+    it('stops the incumbent native preview through its declaration, including late playback registration', async () => {
+        const before = storage.getState();
+        onTestFinished(() => storage.setState(before, true));
+        const local = readLocalConversationVoiceSettings(settingsDefaults.voice);
+        const account = applySettings(settingsDefaults, { voiceSettingsV1: writeLocalConversationVoiceSettings(
+            { ...settingsDefaults.voice, providerId: 'local_conversation' }, { ...local,
+                tts: { ...local.tts, provider: 'local_neural', localNeural: { ...local.tts.localNeural, execution: 'device', voiceId: 'af_heart' } },
+            }) });
+        storage.setState({ settings: account });
+        const owner = createOwner({ os: 'ios', desktop: false }, true, true, account);
+        expect(await owner.action({ actionId: 'settings.invoke', input: { anchor: 'voiceConversations.ttsPreviewStop' } }))
+            .toEqual({ anchor: 'voiceConversations.ttsPreviewStop', status: 'completed', value: { stopped: false } });
+        const { localNeuralTtsPreviewController } = await import('@/voice/settings/panels/localTts/providers/localNeural/previewLocalNeuralTts');
+        onTestFinished(() => localNeuralTtsPreviewController.stop());
+        const attempt = localNeuralTtsPreviewController.begin('af_heart');
+        const nativeStop = vi.fn();
+        // The native media target is the real controller's system boundary.
+        attempt.registerPlaybackStopper(nativeStop);
+        expect(await owner.action({ actionId: 'settings.invoke', input: { anchor: 'voiceConversations.ttsPreviewStop' } }))
+            .toEqual({ anchor: 'voiceConversations.ttsPreviewStop', status: 'completed', value: { stopped: true } });
+        expect(nativeStop).toHaveBeenCalledOnce();
+        expect(localNeuralTtsPreviewController.read()).toBeNull();
+        expect(attempt.isCurrent()).toBe(false);
+        const lateNativeStop = vi.fn();
+        attempt.registerPlaybackStopper(lateNativeStop);
+        expect(lateNativeStop).toHaveBeenCalledOnce();
     });
     it('keeps human recording consent and destructive confirmation while publishing declaration-owned approval defaults', async () => {
         const owner = createOwner(undefined, true);
@@ -1082,6 +1231,24 @@ describe('declared settings owner', () => {
         expect(owner.local().uiFontScale).toBe(UI_FONT_SCALE_PRESETS.large);
     });
 
+    it('changes every surface finish through Settings Actions and restores inheritance without changing neighboring roles', async () => {
+        const owner = createOwner();
+        const roles = ['Card', 'Floating', 'Composer', 'PrimaryButton', 'SecondaryButton'] as const;
+        expect(await owner.action({ actionId: 'settings.get', input: { anchor: 'appearance.surfaceFinish' } })).toEqual({ anchor: 'appearance.surfaceFinish', value: 'soft' });
+        for (const role of roles) {
+            const anchor = `appearance.surfaceFinish${role}`;
+            expect(await owner.action({ actionId: 'settings.set', input: { anchor, value: 'flat' } })).toEqual({ anchor, value: 'flat' });
+        }
+        expect(owner.local().uiSurfaceFinishOverrides).toEqual({ card: 'flat', floating: 'flat', composer: 'flat', primaryButton: 'flat', secondaryButton: 'flat' });
+        const anchor = 'appearance.surfaceFinishCard';
+        expect(await owner.action({ actionId: 'settings.set', input: { anchor, value: 'auto' } })).toEqual({ anchor, value: 'auto' });
+        expect(owner.local().uiSurfaceFinishOverrides).toEqual({ floating: 'flat', composer: 'flat', primaryButton: 'flat', secondaryButton: 'flat' });
+        expect(await owner.action({ actionId: 'settings.set', input: { anchor: 'appearance.surfaceFinish', value: 'flat' } })).toEqual({ anchor: 'appearance.surfaceFinish', value: 'flat' });
+        expect(await owner.action({ actionId: 'settings.set', input: { anchor, value: 'glossy' } })).toMatchObject({ ok: false, errorCode: 'invalid_setting_value' });
+        expect(owner.local().uiSurfaceFinish).toBe('flat');
+        expect(await owner.action({ actionId: 'settings.get', input: { anchor } })).toEqual({ anchor, value: 'auto' });
+    });
+
     it('changes and reads scalar local and Account settings through their schema and persistence owners', async () => {
         const owner = createOwner();
         expect(await owner.action({ actionId: 'settings.set', input: { anchor: 'appearance.density', value: 'compact' } }))
@@ -1287,7 +1454,7 @@ describe('declared settings owner', () => {
     it.each([{ os: 'web', desktop: true }, { os: 'ios', desktop: false }] as const)('round-trips admitted scalar declarations on $os through the canonical schemas', async (host) => {
             // Writable shared-state preferences still require the real owner's human privacy consent.
             humanConfirmation.confirm.mockResolvedValue(true);
-            onTestFinished(() => humanConfirmation.confirm.mockResolvedValue(false));
+            onTestFinished(() => { humanConfirmation.confirm.mockResolvedValue(false); });
             // Desktop setting commits reach the native window, which is the only substituted boundary.
             const invoke = vi.spyOn(desktopHostBoundary, 'invokeDesktopHost').mockResolvedValue(undefined);
             onTestFinished(() => invoke.mockRestore());

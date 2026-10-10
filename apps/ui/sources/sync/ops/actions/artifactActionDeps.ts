@@ -1,4 +1,4 @@
-import { ArtifactActionInputSchemasV1, ArtifactDocumentV1Schema } from '@happier-dev/protocol/artifacts/artifactActionsV1';
+import { ArtifactActionInputSchemasV1, ArtifactDocumentV1Schema, projectArtifactHeaderV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
 import { artifactSavedByFromActionContextV1 } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
 import { createArtifactPublicLinkActionsV1, type ArtifactPublicLinkIssuedV1 } from '@happier-dev/protocol/actions/executor/artifactPublicLinkActions';
 import { listArtifactHeadersV1 } from '@happier-dev/protocol/artifacts/artifactListSelectionV1';
@@ -18,6 +18,7 @@ import { downloadDaemonWorkspaceFileToDestination } from '@/sync/domains/transfe
 import { createBufferedTransferDestination } from '@/sync/domains/transfers/runtime/transferRuntime/carriers/createBufferedTransferDestination';
 import { hashArtifactBinaryContent } from '@/sync/domains/artifacts/artifactBinaryContent';
 import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
+import { assertAccountRoleArtifactDeletionV1 } from '@happier-dev/protocol/prompts/roles/accountRoleActions';
 
 /** Ordinary Artifact Actions use the captured Account transport and canonical sync codecs. */
 export function createUiArtifactAction(account: LazyActionAccountContext, options?: Readonly<{
@@ -80,7 +81,14 @@ export function createUiArtifactAction(account: LazyActionAccountContext, option
                 headers: { Authorization: `Bearer ${account.credentials.token}`, 'Content-Type': 'application/json' },
                 ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
             account.assertCurrent();
-            if (!response.ok) throw Object.assign(new Error('public_share_request_failed'), { code: 'public_share_request_failed' });
+            if (!response.ok) {
+                const payload: unknown = await response.json().catch(() => null);
+                account.assertCurrent();
+                const code = payload && typeof payload === 'object' && !Array.isArray(payload)
+                    && Reflect.get(payload, 'error') === 'public_share_isolation_unavailable'
+                    ? 'public_share_isolation_unavailable' : 'public_share_request_failed';
+                throw Object.assign(new Error(code), { code });
+            }
             return await response.json();
         },
     });
@@ -104,14 +112,18 @@ export function createUiArtifactAction(account: LazyActionAccountContext, option
                     return { artifact: ArtifactDocumentV1Schema.parse({ artifactId: artifact.id, header: artifact.rawHeader, body: artifact.body,
                         provenance: artifact.provenance,
                         ownerAccountId: artifact.ownerAccountId, access: artifact.access, seq: artifact.seq,
+                        publicAudience: artifact.publicAudience,
                         createdAt: artifact.createdAt, updatedAt: artifact.updatedAt,
-                        revision: { headerVersion: artifact.headerVersion, bodyVersion: artifact.bodyVersion } }), ...await account.readArtifactHtmlPreview(artifact, signal) };
+                        revision: { headerVersion: artifact.headerVersion, bodyVersion: artifact.bodyVersion } }) };
                 }
                 case 'artifact.list': {
                     const args = ArtifactActionInputSchemasV1[actionId].parse(input);
                     const page = await listArtifactHeadersV1({ options: { ...args, sort: args.sort ?? 'updated_desc', signal },
                         readPage: (options) => account.listArtifacts(options ?? {}), encodeCursor: account.encodeArtifactListCursor });
-                    return { items: page.items, ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}) };
+                    // Native document lists also carry retained body metadata. The ordinary
+                    // Action publishes only its existing strict header projection.
+                    const items = page.items.map(projectArtifactHeaderV1);
+                    return { items, ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}) };
                 }
                 case 'artifact.update': {
                     const args = ArtifactActionInputSchemasV1[actionId].parse(input);
@@ -122,6 +134,16 @@ export function createUiArtifactAction(account: LazyActionAccountContext, option
                 }
                 case 'artifact.delete': {
                     const args = ArtifactActionInputSchemasV1[actionId].parse(input);
+                    const rawSettings = await account.readRawSettings();
+                    account.assertCurrent();
+                    signal?.throwIfAborted();
+                    await assertAccountRoleArtifactDeletionV1({ artifactId: args.artifactId, accountId: account.accountId, rawSettings,
+                        readTargetArtifactKind: async () => {
+                            const target = await account.workflowArtifacts.read(args.artifactId, { signal });
+                            account.assertCurrent();
+                            signal?.throwIfAborted();
+                            return typeof target?.header.kind === 'string' ? target.header.kind : undefined;
+                        } });
                     const result = await account.workflowArtifacts.delete(args.artifactId, { expectedRevision: args.expectedRevision, signal });
                     return result.ok ? { artifactId: args.artifactId, deleted: true } : result;
                 }

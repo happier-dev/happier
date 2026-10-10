@@ -79,8 +79,8 @@ describe('ActionOperationLedgerView', () => {
             </ItemGroupRowPositionProvider>,
         );
 
-        expect(screen.tree.root.findAllByType(Item).map((node) => node.props.showDivider)).toEqual([true, false]);
-        expect(screen.tree.root.findAllByType(ItemGroupRowPositionProvider).map((node) => node.props.value)).toEqual([
+        expect(screen.findAllByType(Item).map((node) => node.props.showDivider)).toEqual([true, false]);
+        expect(screen.findAllByType(ItemGroupRowPositionProvider).map((node) => node.props.value)).toEqual([
             { isFirst: true, isLast: true },
             { isFirst: true, isLast: false },
             { isFirst: false, isLast: true },
@@ -179,50 +179,6 @@ describe('ActionOperationLedgerView', () => {
 
         await screen.pressByTestIdAsync('action-operations-clear-recent');
         expect(onClearRecent).toHaveBeenCalledTimes(1);
-    });
-
-    it('offers Stop on a cancellable running row without opening its detail', async () => {
-        const onOpenOperation = vi.fn();
-        const onCancelOperation = vi.fn();
-        const screen = await renderScreen(
-            <ActionOperationLedgerView
-                operations={[{
-                    serverId: 'server-1',
-                    snapshot: {
-                        version: 1,
-                        operationId: 'operation-1',
-                        revision: 2,
-                        actionId: 'session.fork',
-                        state: 'running',
-                        scope: { accountId: 'account-1', machineId: 'machine-1', sessionId: 'session-1' },
-                        title: 'Fork session',
-                        createdAt: 100,
-                        startedAt: 120,
-                        cancellation: 'supported',
-                    },
-                    observation: 'available',
-                    isUnavailableProjection: false,
-                }]}
-                onOpenOperation={onOpenOperation}
-                onCancelOperation={onCancelOperation}
-            />,
-        );
-
-        await screen.pressByTestIdAsync('action-operation-stop.operation-1');
-        expect(onCancelOperation).toHaveBeenCalledWith(expect.objectContaining({
-            serverId: 'server-1',
-            snapshot: expect.objectContaining({ operationId: 'operation-1' }),
-        }));
-        expect(onOpenOperation).not.toHaveBeenCalled();
-
-        const rowPressTarget = screen.findHostByTestId('inbox.action-operation.operation-1');
-        const stopPressTarget = screen.findHostByTestId('action-operation-stop.operation-1');
-        expect(rowPressTarget).not.toBeNull();
-        expect(stopPressTarget).not.toBeNull();
-
-        let ancestor = stopPressTarget?.parent ?? null;
-        while (ancestor && ancestor !== rowPressTarget) ancestor = ancestor.parent;
-        expect(ancestor).toBeNull();
     });
 
     it('moves unavailable active work to attention with Dismiss, no Stop, and status only in accessibility', async () => {

@@ -14,7 +14,7 @@ import {
     waitForHomeGovernance,
 } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
-import type { ActionApprovalContinuation } from './actionApprovalContinuation';
+import { createActionApprovalContinuation, type ActionApprovalContinuation } from './actionApprovalContinuation';
 
 /**
  * The shared result-custody owner, over the real approval lifecycle.
@@ -117,6 +117,36 @@ describe('useActionApprovalContinuation', () => {
         await hook.rerender({ scopeKey: `${serverId}:${ACCOUNT_ID}` });
         expect(onExecuted).toHaveBeenCalledTimes(1);
         expect(harness.requestsFor(TEAM_UPDATE_PATH)).toHaveLength(1);
+    });
+
+    it('leaves projection refresh with a caller that owns completion beyond Action admission', async () => {
+        const serverId = await addApprovalHome();
+        answerRename(serverId);
+        const artifactId = await openRenameApproval(serverId, 'caller-owned-completion');
+        const refresh = vi.fn();
+        const hook = await renderContinuation(serverId, refresh);
+        const received: unknown[] = [];
+        const scope = createServerAccountScope(serverId, ACCOUNT_ID);
+        if (!scope) throw new Error('Expected the originating Home scope');
+        const continuation = createActionApprovalContinuation({
+            artifactId,
+            actionId: 'teams.update',
+            scope,
+            expectedInput: { v: 1, teamId: 'team-1', name: 'Renamed' },
+            refreshAfterExecution: false,
+            onSucceeded: (value: unknown) => { received.push(value); },
+        });
+
+        act(() => hook.getCurrent().requestApproval(continuation));
+        await decideApprovalAsInbox(serverId, artifactId, 'approve');
+        await waitForHomeGovernance(() => expect(received).toHaveLength(1));
+
+        expect(hook.getCurrent().approvalId).toBeNull();
+        expect(hook.getCurrent().approvalPending).toBe(false);
+        expect(harness.requestsFor(TEAM_UPDATE_PATH)).toHaveLength(1);
+        // The origin received its real result, but only that origin can know
+        // when its remaining work is complete and its projection can refresh.
+        expect(refresh).not.toHaveBeenCalled();
     });
 
     it('hands a chained result-bearing Action to the same owner after the first result is claimed', async () => {

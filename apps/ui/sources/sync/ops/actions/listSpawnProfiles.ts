@@ -3,12 +3,12 @@ import { BackendTargetKeyV2Schema, parseBackendTargetKeyV2 } from '@happier-dev/
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { projectLaunchProfileListV1, type LaunchProfileListProjectionV1 } from '@happier-dev/protocol/profiles/listProjection';
 
-import { readUiAiLaunchProfileSnapshot, type UiAiLaunchProfileSnapshot } from '@/sync/domains/profiles/aiLaunchProfileCollection';
+import { readUiProfileCatalogSnapshot, type UiAiLaunchProfileSnapshot } from '@/sync/domains/profiles/aiLaunchProfileCollection';
+import { getProfileCatalogSnapshot } from '@/sync/store/settings/profileCatalogSnapshot';
 import { storage } from '@/sync/domains/state/storage';
 
 /**
- * The Account's Launch Profiles, answered from the settings this client already
- * holds.
+ * The Account's Launch Profiles, answered from its admitted scoped catalog.
  *
  * `sessions.spawn.profiles.list` had exactly one implementation — the CLI's —
  * so a mounted plugin surface asking the app for the profile it was configured
@@ -25,10 +25,12 @@ export type SpawnProfilesListResult = LaunchProfileListProjectionV1;
 
 export function listSpawnProfilesForActions(
     args: Readonly<{ agentId?: string; backendTargetKey?: string; limit?: number }>,
-    capturedSnapshot?: UiAiLaunchProfileSnapshot,
+    capturedSnapshot?: UiAiLaunchProfileSnapshot & Readonly<{ available: boolean }>,
 ): SpawnProfilesListResult {
     const state = storage.getState();
-    const snapshot = capturedSnapshot ?? readUiAiLaunchProfileSnapshot(state.settings.profiles, state.artifacts);
+    const catalog = getProfileCatalogSnapshot(state.settingsScope);
+    const snapshot = capturedSnapshot ?? (catalog ? readUiProfileCatalogSnapshot(catalog)
+        : { profiles: [], unreadableCount: 0, available: false });
     const agentIds = new Set<string>(AGENT_IDS);
     for (const profile of snapshot.profiles) {
         // Only the historical V1 profile shape carries `compatibilityByTargetKey`; a V2
@@ -49,6 +51,6 @@ export function listSpawnProfilesForActions(
         ...(args.agentId === undefined ? {} : { agentId: args.agentId }),
         ...(args.limit === undefined ? {} : { limit: args.limit }),
         unreadableCount: snapshot.unreadableCount,
-        available: capturedSnapshot !== undefined || state.settingsVersion !== null,
+        available: snapshot.available,
     });
 }

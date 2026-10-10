@@ -1,7 +1,28 @@
 import type { PermissionMode } from '@/sync/domains/permissions/permissionTypes';
 import { parsePermissionIntentAlias } from '@happier-dev/agents';
+import type { FrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { HappyError } from '@/utils/errors/errors';
 
-export async function applyPermissionModeSelection(params: {
+export async function applyPermissionModeSelection(params: Readonly<{
+    sessionId: string;
+    serverId: string | null;
+    mode: PermissionMode;
+    applyTiming: 'immediate' | 'next_prompt';
+    executeAction: (...args: Parameters<FrontDoorActionExecute>) => ReturnType<FrontDoorActionExecute>;
+}>): Promise<void> {
+    const result = await params.executeAction('session.permission_mode.set', {
+        sessionId: params.sessionId,
+        permissionMode: params.mode,
+        applyTiming: params.applyTiming,
+    }, { surface: 'ui', defaultSessionId: params.sessionId, ...(params.serverId ? { serverId: params.serverId } : {}) });
+    if (!result.ok) throw new HappyError(result.error, false, { code: result.errorCode, details: result.details });
+    const approval = ActionApprovalRequestCreatedResultSchema.safeParse(result.result);
+    if (approval.success) throw new HappyError(approval.data.kind, false, { code: approval.data.kind, details: approval.data });
+}
+
+/** Raw projection/publication effect; only the Action executor supplies these dependencies. */
+export async function applyPermissionModeSelectionEffect(params: {
     sessionId: string;
     mode: PermissionMode;
     applyTiming: 'immediate' | 'next_prompt';

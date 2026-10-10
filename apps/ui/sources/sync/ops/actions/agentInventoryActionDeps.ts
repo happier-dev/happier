@@ -1,15 +1,20 @@
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { resolveActionBackendTargetSelection } from '@happier-dev/protocol/actions/resolveActionBackendTargetSelection';
 import type { BackendTargetRefV1 } from '@happier-dev/protocol/backends/targets/backendTargetRef';
-import type { AgentExecutionTargetV1 } from '@happier-dev/protocol';
+import type { AgentExecutionTargetV1, BackendTargetRefV2 } from '@happier-dev/protocol';
+import type { AgentInventoryProbeInput } from '@happier-dev/protocol/actions/actionSpecs';
+import { AgentModelsProbeObservationSchema, AgentSessionModesProbeObservationSchema, AgentConfigOptionsProbeObservationSchema } from '@happier-dev/protocol/capabilities';
 import type { ConnectedServicesProfileOption } from '@happier-dev/agents';
 
 import { getAgentCore, isBundledAgentId } from '@/agents/catalog/catalog';
 import { buildProviderCliCapabilityId } from '@/capabilities/cliCapabilityId';
-import { machineCapabilitiesInvoke } from '@/sync/ops/capabilities';
+import { machineCapabilitiesInvoke, type MachineCapabilitiesInvokeResult } from '@/sync/ops/capabilities';
+import { createFrontDoorActionExecute } from './frontDoorRuntimeActionExecutor';
+import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
+import { readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { loadDaemonMergedProjectionInputs } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
-import { storage } from '@/sync/domains/state/storage';
+import { projectConnectedPresentationLabelsV1 } from '@happier-dev/protocol/connect/connectedAccountPresentationRowsV1';
 import {
     applyProjectedCredentialKindRestrictions,
     buildQualifiedConnectedAccountGroupOptionsByServiceId,
@@ -33,7 +38,7 @@ import { NEW_SESSION_CAPABILITY_PROBE_TIMEOUT_MS } from '@/components/sessions/n
  * empty/unavailable answer, never bundled Codex/Claude substitutes.
  */
 
-type AgentInventoryProbeTarget = Readonly<{
+export type AgentInventoryProbeTarget = Readonly<{
     /** The runtime Agent id that names the machine capability (`cli.<id>`). */
     agentId: string;
     /**
@@ -43,7 +48,7 @@ type AgentInventoryProbeTarget = Readonly<{
      * resolves it from the capability id — so omitting the param is the
      * contract, not a lost fact.
      */
-    backendTargetParam: BackendTargetRefV1 | null;
+    backendTargetParam: BackendTargetRefV1 | BackendTargetRefV2 | null;
 }>;
 
 export async function resolveSessionSpawnAgentInventorySelectionForActions(args: Readonly<{
@@ -117,10 +122,12 @@ export function resolveAgentInventoryProbeTarget(args: Readonly<{
 async function probeAgentInventory(
     machineId: string,
     target: AgentInventoryProbeTarget,
-    method: 'probeModes' | 'probeConfigOptions',
+    method: 'probeModels' | 'probeModes' | 'probeConfigOptions',
     requestedServerId?: string,
+    probe?: AgentInventoryProbeInput,
 ): Promise<Readonly<{ ok: true; result: Record<string, unknown> }> | Readonly<{ ok: false }>> {
     const serverId = normalizeId(requestedServerId) || normalizeId(getActiveServerSnapshot()?.serverId);
+    const { transportTimeoutMs, ...capabilityParams } = probe ?? {};
     const res = await machineCapabilitiesInvoke(
         machineId,
         {
@@ -128,15 +135,66 @@ async function probeAgentInventory(
             method,
             params: {
                 timeoutMs: NEW_SESSION_CAPABILITY_PROBE_TIMEOUT_MS,
+                ...capabilityParams,
                 ...(target.backendTargetParam ? { backendTarget: target.backendTargetParam } : {}),
             },
         },
-        { ...(serverId ? { serverId } : {}) },
+        { ...(serverId ? { serverId } : {}), ...(transportTimeoutMs ? { timeoutMs: transportTimeoutMs } : {}) },
     );
     if (!res.supported || !res.response.ok) return { ok: false };
     const result = res.response.result;
     if (!result || typeof result !== 'object' || Array.isArray(result)) return { ok: false };
+    if (probe) {
+        const parsed = (method === 'probeModels' ? AgentModelsProbeObservationSchema
+            : method === 'probeModes' ? AgentSessionModesProbeObservationSchema : AgentConfigOptionsProbeObservationSchema).safeParse(result);
+        return parsed.success ? { ok: true, result: parsed.data } : { ok: false };
+    }
     return { ok: true, result: result as Record<string, unknown> };
+}
+
+/** Existing inventory Actions are the only public preflight transport front door. */
+export async function invokeAgentInventoryProbeAction(params: Readonly<{
+    agentId: string;
+    machineId: string;
+    serverId?: string | null;
+    backendTarget?: BackendTargetRefV1 | BackendTargetRefV2 | null;
+    capabilityParams: Readonly<Record<string, unknown>>;
+    bypassCache?: boolean;
+    transportTimeoutMs?: number;
+}>, method: 'probeModels' | 'probeModes' | 'probeConfigOptions'): Promise<MachineCapabilitiesInvokeResult> {
+    try {
+        const target = params.backendTarget ? readBackendTargetRefV2(params.backendTarget) : null;
+        const configured = target?.configuredBackendId || target?.sourceKind === 'configured';
+        const result = await createFrontDoorActionExecute()(method === 'probeModels' ? 'agents.models.list'
+            : method === 'probeModes' ? 'agents.session_modes.list' : 'agents.config_options.list', {
+            ...(!configured ? { agentId: params.agentId } : {}),
+            ...(target ? { backendTargetKey: resolveBackendTargetKeyV2(target) } : {}),
+            machineId: params.machineId,
+            probe: { ...params.capabilityParams, ...(params.bypassCache ? { bypassCache: true } : {}),
+                ...(params.transportTimeoutMs ? { transportTimeoutMs: params.transportTimeoutMs } : {}) },
+        }, { surface: 'ui', ...(params.serverId ? { serverId: params.serverId } : {}) });
+        if (!result.ok || !result.result || typeof result.result !== 'object' || Array.isArray(result.result)) return { supported: false, reason: 'error' };
+        const observation = (method === 'probeModels' ? AgentModelsProbeObservationSchema
+            : method === 'probeModes' ? AgentSessionModesProbeObservationSchema : AgentConfigOptionsProbeObservationSchema)
+            .safeParse((result.result as Record<string, unknown>).probeObservation);
+        return observation.success ? { supported: true, response: { ok: true, result: observation.data } } : { supported: false, reason: 'error' };
+    } catch {
+        return { supported: false, reason: 'error' };
+    }
+}
+
+/** Admitted native model transport, below the Action executor and shared cache. */
+export async function probeAgentModelsForActions(args: Readonly<{ machineId: string; serverId?: string; probe: AgentInventoryProbeInput }>, target: AgentInventoryProbeTarget): Promise<unknown> {
+    const probe = await probeAgentInventory(args.machineId, target, 'probeModels', args.serverId, args.probe);
+    if (!probe.ok) return { agentId: target.agentId, items: [], source: 'unavailable' };
+    const parsed = AgentModelsProbeObservationSchema.parse(probe.result);
+    return {
+        agentId: target.agentId,
+        items: parsed.availableModels.map(model => ({ modelId: model.id, label: model.name, ...(model.description ? { description: model.description } : {}) })),
+        supportsFreeform: parsed.supportsFreeform,
+        source: parsed.source ?? 'preflight',
+        probeObservation: parsed,
+    };
 }
 
 function readProbeSource(result: Record<string, unknown>): 'static' | 'dynamic' | 'unavailable' | null {
@@ -151,12 +209,14 @@ function inventoryListResult(params: Readonly<{
     items: readonly unknown[];
     source: 'static' | 'dynamic' | 'unavailable';
     limit: number | null;
+    probeObservation?: Readonly<Record<string, unknown>>;
 }>): unknown {
     const bounded = params.limit ? params.items.slice(0, params.limit) : params.items;
     return {
         agentId: params.agentId,
         items: bounded,
         source: params.source,
+        ...(params.probeObservation ? { probeObservation: params.probeObservation } : {}),
     };
 }
 
@@ -175,14 +235,15 @@ export type AgentSessionModesListArgs = Readonly<{
     serverId?: string;
     limit?: number;
     backendTargetKey?: string;
+    probe?: AgentInventoryProbeInput;
 }>;
 
 /**
  * `agents.session_modes.list`: the selected machine's mode probe, projected
  * into the shared inventory row shape the CLI host answers with.
  */
-export async function listAgentSessionModesForActions(args: AgentSessionModesListArgs): Promise<unknown> {
-    const target = resolveAgentInventoryProbeTarget(args);
+export async function listAgentSessionModesForActions(args: AgentSessionModesListArgs, admittedTarget?: AgentInventoryProbeTarget): Promise<unknown> {
+    const target = admittedTarget ? { ok: true as const, target: admittedTarget } : resolveAgentInventoryProbeTarget(args);
     if (!target.ok) {
         return { ok: false, errorCode: target.errorCode, errorMessage: target.errorCode };
     }
@@ -192,7 +253,7 @@ export async function listAgentSessionModesForActions(args: AgentSessionModesLis
         // honest answer and no bundled stand-in.
         return { ok: false, errorCode: 'invalid_parameters', errorMessage: 'invalid_parameters' };
     }
-    const probe = await probeAgentInventory(machineId, target.target, 'probeModes', args.serverId);
+    const probe = await probeAgentInventory(machineId, target.target, 'probeModes', args.serverId, args.probe);
     if (!probe.ok) {
         return inventoryListResult({
             agentId: target.target.agentId,
@@ -209,6 +270,7 @@ export async function listAgentSessionModesForActions(args: AgentSessionModesLis
             items: [],
             source: 'unavailable',
             limit: readInventoryLimit(args.limit),
+            ...(args.probe ? { probeObservation: probe.result } : {}),
         });
     }
     const items = dedupeById(modesRaw
@@ -231,6 +293,7 @@ export async function listAgentSessionModesForActions(args: AgentSessionModesLis
         items,
         source,
         limit: readInventoryLimit(args.limit),
+        ...(args.probe ? { probeObservation: probe.result } : {}),
     });
 }
 
@@ -241,14 +304,15 @@ export type AgentConfigOptionsListArgs = Readonly<{
     limit?: number;
     backendTargetKey?: string;
     modelId?: string;
+    probe?: AgentInventoryProbeInput;
 }>;
 
 /**
  * `agents.config_options.list`: the selected machine's config-option probe,
  * projected into the shared inventory row shape the CLI host answers with.
  */
-export async function listAgentConfigOptionsForActions(args: AgentConfigOptionsListArgs): Promise<unknown> {
-    const target = resolveAgentInventoryProbeTarget(args);
+export async function listAgentConfigOptionsForActions(args: AgentConfigOptionsListArgs, admittedTarget?: AgentInventoryProbeTarget): Promise<unknown> {
+    const target = admittedTarget ? { ok: true as const, target: admittedTarget } : resolveAgentInventoryProbeTarget(args);
     if (!target.ok) {
         return { ok: false, errorCode: target.errorCode, errorMessage: target.errorCode };
     }
@@ -256,7 +320,7 @@ export async function listAgentConfigOptionsForActions(args: AgentConfigOptionsL
     if (!machineId) {
         return { ok: false, errorCode: 'invalid_parameters', errorMessage: 'invalid_parameters' };
     }
-    const probe = await probeAgentInventory(machineId, target.target, 'probeConfigOptions', args.serverId);
+    const probe = await probeAgentInventory(machineId, target.target, 'probeConfigOptions', args.serverId, args.probe);
     if (!probe.ok) {
         return inventoryListResult({
             agentId: target.target.agentId,
@@ -273,6 +337,7 @@ export async function listAgentConfigOptionsForActions(args: AgentConfigOptionsL
             items: [],
             source: 'unavailable',
             limit: readInventoryLimit(args.limit),
+            ...(args.probe ? { probeObservation: probe.result } : {}),
         });
     }
     const items = dedupeById(optionsRaw
@@ -326,6 +391,7 @@ export async function listAgentConfigOptionsForActions(args: AgentConfigOptionsL
         items,
         source,
         limit: readInventoryLimit(args.limit),
+        ...(args.probe ? { probeObservation: probe.result } : {}),
     });
 }
 
@@ -353,75 +419,84 @@ export async function listSpawnConnectedServicesForActions(args: SpawnConnectedS
     if (!agentId) {
         return { ok: false, errorCode: 'unknown_agent', errorMessage: 'unknown_agent' };
     }
-    const state = storage.getState();
-    const connectedAccounts = state.profile?.connectedAccountsV4 ?? [];
-    const connectedGroups = state.profile?.connectedAccountGroupsV4 ?? [];
-
-    const agentCore = isBundledAgentId(agentId) ? getAgentCore(agentId) : null;
-    let projectedConnectedAccounts: readonly Readonly<{
-        service: { pluginId: string; localId: string };
-        credentialKinds?: readonly ('oauth' | 'token')[];
-    }>[] = [];
-    const machineId = normalizeId(args.machineId);
-    if (machineId) {
-        const serverId = normalizeId(args.serverId) || normalizeId(getActiveServerSnapshot()?.serverId);
-        const projection = (await loadDaemonMergedProjectionInputs({
-            machineId,
-            ...(serverId ? { serverId } : {}),
-        }))?.pluginProjectionV2;
-        if (projection) {
-            projectedConnectedAccounts = projection.agentsById[agentId]?.connectedAccounts ?? [];
+    const serverId = normalizeId(args.serverId) || normalizeId(getActiveServerSnapshot()?.serverId);
+    if (!serverId) return { ok: false, errorCode: 'action_home_not_found', errorMessage: 'action_home_not_found' };
+    const { captureLazyActionAccountContext } = await import('./actionAccountContext');
+    const account = await captureLazyActionAccountContext(serverId);
+    try {
+        const agentCore = isBundledAgentId(agentId) ? getAgentCore(agentId) : null;
+        let projectedConnectedAccounts: readonly Readonly<{
+            service: { pluginId: string; localId: string };
+            credentialKinds?: readonly ('oauth' | 'token')[];
+        }>[] = [];
+        const machineId = normalizeId(args.machineId);
+        if (machineId) {
+            const projection = (await loadDaemonMergedProjectionInputs({
+                machineId,
+                serverId: account.serverId,
+                accountLifetime: account.accountLifetime,
+            }))?.pluginProjectionV2;
+            if (projection) {
+                projectedConnectedAccounts = projection.agentsById[agentId]?.connectedAccounts ?? [];
+            }
         }
-    }
-    const supportedServiceIds = projectedConnectedAccounts.length > 0
-        ? resolveProjectedConnectedAccountServiceKeys(projectedConnectedAccounts)
-        : agentCore
-        ? (agentCore.connectedServices?.supportedServiceIds ?? [])
-            .map((serviceId) => resolveQualifiedConnectedAccountServiceKey(serviceId))
-            .filter((serviceKey): serviceKey is string => Boolean(serviceKey))
-            .filter((serviceKey, index, all) => all.indexOf(serviceKey) === index)
-        : [];
+        const supportedServiceIds = projectedConnectedAccounts.length > 0
+            ? resolveProjectedConnectedAccountServiceKeys(projectedConnectedAccounts)
+            : agentCore
+            ? (agentCore.connectedServices?.supportedServiceIds ?? [])
+                .map((serviceId) => resolveQualifiedConnectedAccountServiceKey(serviceId))
+                .filter((serviceKey): serviceKey is string => Boolean(serviceKey))
+                .filter((serviceKey, index, all) => all.indexOf(serviceKey) === index)
+            : [];
 
-    if (supportedServiceIds.length === 0) {
-        return { agentId, supportedServiceIds: [], items: [] };
-    }
+        if (supportedServiceIds.length === 0) {
+            return { agentId, supportedServiceIds: [], items: [] };
+        }
 
-    const labelsByKey = readConnectedServiceProfileLabels(state.settings);
-    const profileOptionsByServiceId = applyProjectedCredentialKindRestrictions({
-        optionsByServiceId: buildQualifiedConnectedAccountProfileOptionsByServiceId({
-            accounts: connectedAccounts,
+        const { readConnectedMetadataCatalogInContext, readConnectedMetadataProfileInContext } = await import('@/sync/api/account/apiConnectedMetadataCatalog');
+        const profile = await readConnectedMetadataProfileInContext(account);
+        let catalog = await readConnectedMetadataCatalogInContext(account, undefined, undefined, false);
+        if ((catalog.presentation.status === 'unavailable' && catalog.presentation.reason === 'authority-not-confirmed')
+            || (catalog.acknowledgements.status === 'unavailable' && catalog.acknowledgements.reason === 'authority-not-confirmed')) {
+            catalog = await readConnectedMetadataCatalogInContext(account);
+        }
+        account.assertCurrent();
+        const connectedAccounts = profile.connectedAccountsV4;
+        const connectedGroups = profile.connectedAccountGroupsV4;
+        const labelsByKey = catalog.presentation.status === 'ready' || catalog.presentation.status === 'partial'
+            ? projectConnectedPresentationLabelsV1(catalog.presentation) : {};
+        const profileOptionsByServiceId = applyProjectedCredentialKindRestrictions({
+            optionsByServiceId: buildQualifiedConnectedAccountProfileOptionsByServiceId({
+                accounts: connectedAccounts,
+                supportedServiceIds,
+                labelsByKey,
+            }),
+            connectedAccounts: projectedConnectedAccounts,
+        });
+        const groupOptionsByServiceId = buildQualifiedConnectedAccountGroupOptionsByServiceId({
+            groups: connectedGroups,
             supportedServiceIds,
             labelsByKey,
-        }),
-        connectedAccounts: projectedConnectedAccounts,
-    });
-    const groupOptionsByServiceId = buildQualifiedConnectedAccountGroupOptionsByServiceId({
-        groups: connectedGroups,
-        supportedServiceIds,
-    });
+        });
 
-    const includeUnavailable = args.includeUnavailable === true;
-    const items = Object.entries(profileOptionsByServiceId).flatMap(([serviceId, options]) => (
-        options
-            .filter((option) => includeUnavailable || option.status === 'connected')
-            .map((option) => ({
-                value: `${serviceId}:profile:${option.profileId}`,
-                label: option.label ?? option.providerEmail ?? `${serviceId}:${option.profileId}`,
-            }))
-    ));
+        const includeUnavailable = args.includeUnavailable === true;
+        const items = Object.entries(profileOptionsByServiceId).flatMap(([serviceId, options]) => (
+            options
+                .filter((option) => includeUnavailable || option.status === 'connected')
+                .map((option) => ({
+                    value: `${serviceId}:profile:${option.profileId}`,
+                    label: option.label ?? option.providerEmail ?? `${serviceId}:${option.profileId}`,
+                }))
+        ));
 
-    return {
-        agentId,
-        supportedServiceIds,
-        profileOptionsByServiceId,
-        groupOptionsByServiceId,
-        items,
-    };
-}
-
-function readConnectedServiceProfileLabels(settings: unknown): Record<string, string | undefined> {
-    if (!settings || typeof settings !== 'object' || Array.isArray(settings)) return {};
-    const labels = (settings as Record<string, unknown>).connectedServicesProfileLabelByKey;
-    if (!labels || typeof labels !== 'object' || Array.isArray(labels)) return {};
-    return labels as Record<string, string | undefined>;
+        return {
+            agentId,
+            supportedServiceIds,
+            profileOptionsByServiceId,
+            groupOptionsByServiceId,
+            items,
+        };
+    } finally {
+        account.dispose();
+    }
 }

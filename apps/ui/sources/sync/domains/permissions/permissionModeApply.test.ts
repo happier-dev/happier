@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { applyPermissionModeSelection } from './permissionModeApply';
+import { applyPermissionModeSelectionEffect as applyPermissionModeSelection } from './permissionModeApply';
 
 describe('applyPermissionModeSelection', () => {
     it('publishes metadata immediately when applyTiming=immediate', async () => {

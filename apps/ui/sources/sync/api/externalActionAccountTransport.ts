@@ -153,9 +153,12 @@ export async function executeOriginalAccountActionTransport(params: Readonly<{
     try { payload = await response.json(); } catch { return failure(invalid); }
     if (!response.ok) {
         const refusal = ExternalActionHttpErrorSchema.safeParse(payload);
-        if (envelope.v === 2 && refusal.success && 'requestId' in refusal.data && refusal.data.requestId !== envelope.requestId) return failure(invalid);
-        const result = failure(refusal.success && 'code' in refusal.data ? refusal.data.code : params.requestFailureCode ?? 'project_transport_unavailable');
-        return refusal.success && 'managedAdmission' in refusal.data
+        // Only the authenticated pre-open error contract proves that no Action
+        // ran. An invalid or differently bound reply cannot settle an issued request.
+        if (!refusal.success || 'requestId' in refusal.data && refusal.data.requestId !== undefined
+            && refusal.data.requestId !== envelope.requestId) return failure(invalid);
+        const result = failure('code' in refusal.data ? refusal.data.code : params.requestFailureCode ?? 'project_transport_unavailable');
+        return 'managedAdmission' in refusal.data
             && (envelope.v === 1 || refusal.data.requestId === envelope.requestId) ? { ...result, details: refusal.data } : result;
     }
     if (envelope.v === 2 && material) return openExternalActionResponseV2({ envelope: payload, binding, material, request: envelope }) ?? failure(invalid);
@@ -196,6 +199,9 @@ export async function executeOriginalAccountMachineAction(params: OriginalAccoun
     if (foreignCustody && !row.installationPublicKey) return failure('content_unavailable');
     if (accountMode === 'e2ee' && !encryption) return failure('content_unavailable');
     return await executeOriginalAccountActionTransport({ account, input: params.input,
+        // Open owns checkout effects; an untrusted post-dispatch response cannot
+        // authorize a fresh materialization. Read Actions keep their output errors.
+        ...(params.actionId === 'projects.open' ? { invalidResponseCode: 'outcome_unknown' } : {}),
         ...(params.handoffAdmission ? { handoffAdmission: params.handoffAdmission } : {}),
         binding: { serverIdentityId: account.serverIdentityId, accountId: account.accountId, authentication,
             actionId: params.actionId, requestId: params.requestId, target: { kind: 'machine', machineId: params.machineId } },

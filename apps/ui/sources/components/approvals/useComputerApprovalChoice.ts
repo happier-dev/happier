@@ -2,6 +2,8 @@ import * as React from 'react';
 import type { ComputerAccessV1, ComputerApprovalDisplayV1, ComputerTargetV1 } from '@happier-dev/protocol';
 
 import { noteSessionComputerMachine } from '@/sync/domains/computer/sessionComputerMachines';
+import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
+import { useSessionViewerSourceAccountLifetime } from '@/components/sessions/viewer/SessionViewerSourceAccountScope';
 
 import { applyComputerSelection, describeComputerActionApproval, type ComputerActionApproval } from './ComputerActionApprovalCard';
 
@@ -26,39 +28,67 @@ export type ComputerApprovalChoice = Readonly<{
  * other computer Action the pick is shared directly by the person.
  */
 export function useComputerApprovalChoice(input: Readonly<{
+    /** The canonical approval Artifact; choices never transfer to another request. */
+    artifactId?: string;
     actionId: string;
     actionArgs: unknown;
     preview: unknown;
     sessionId: string;
     serverId?: string | null;
+    accountLifetime?: ServerAccountScopeLifetime | null;
     /** The picker opener, resolved on the press (surfaces that render without the store pass a require). */
     resolveOpenPicker: () => OpenComputerTargetPicker;
 }>): ComputerApprovalChoice {
-    const [chosenDisplay, setChosenDisplay] = React.useState<ComputerApprovalDisplayV1 | null>(null);
-    const [chosenTarget, setChosenTarget] = React.useState<ComputerTargetV1 | null>(null);
-    const [chosenAccess, setChosenAccess] = React.useState<ComputerAccessV1 | null>(null);
+    const borrowedLifetime = useSessionViewerSourceAccountLifetime();
+    const accountLifetime = input.accountLifetime === undefined ? borrowedLifetime : input.accountLifetime;
     const described = React.useMemo(
         () => describeComputerActionApproval({ actionId: input.actionId, actionArgs: input.actionArgs, preview: input.preview }),
         [input.actionArgs, input.actionId, input.preview],
     );
+    const { sessionId, resolveOpenPicker } = input;
+    const serverId = input.serverId ?? accountLifetime?.scope.serverId ?? null;
+    const machineId = described?.machineId ?? null;
+    const owner = React.useMemo(() => ({ accountLifetime, artifactId: input.artifactId, serverId, sessionId, machineId }),
+        [accountLifetime, input.artifactId, machineId, serverId, sessionId]);
+    const currentOwner = React.useRef<typeof owner | null>(owner);
+    currentOwner.current = owner;
+    const [choice, setChoice] = React.useState<Readonly<{
+        owner: typeof owner;
+        display: ComputerApprovalDisplayV1;
+        target: ComputerTargetV1 | null;
+        access: ComputerAccessV1 | null;
+    }> | null>(null);
+    const admittedChoice = choice?.owner === owner && accountLifetime?.isCurrent() ? choice : null;
+    const chosenDisplay = admittedChoice?.display ?? null;
+    const chosenTarget = admittedChoice?.target ?? null;
+    const chosenAccess = admittedChoice?.access ?? null;
+    React.useEffect(() => {
+        currentOwner.current = owner;
+        const retirement = accountLifetime?.onRetire(() => {
+            setChoice(previous => previous?.owner === owner ? null : previous);
+        });
+        return () => {
+            retirement?.dispose();
+            if (currentOwner.current === owner) currentOwner.current = null;
+        };
+    }, [accountLifetime, owner]);
     const presentation = React.useMemo(
         () => (described ? applyComputerSelection(described, chosenDisplay) : null),
         [chosenDisplay, described],
     );
-    const { sessionId, serverId, resolveOpenPicker } = input;
-    const machineId = described?.machineId ?? null;
     const machineName = described?.machineName ?? null;
     React.useEffect(() => {
         if (machineId) noteSessionComputerMachine({ sessionId, machineId, machineName });
     }, [machineId, machineName, sessionId]);
 
     const chooseTarget = React.useCallback(() => {
-        if (!described) return;
+        if (currentOwner.current !== owner || !described || described.act === 'fill' || !accountLifetime?.isCurrent()) return;
         const open = resolveOpenPicker();
         const share = described.act === 'share';
         open({
             sessionId,
             serverId: serverId ?? null,
+            accountLifetime,
             machineId: described.machineId,
             machineName: described.machineName,
             access: presentation?.access ?? described.access,
@@ -66,21 +96,23 @@ export function useComputerApprovalChoice(input: Readonly<{
                 ? {
                     requestedTarget: described.suggestion ?? null,
                     onChosen: (entry, access) => {
-                        setChosenTarget(entry.target);
-                        setChosenAccess(access);
-                        setChosenDisplay({
+                        if (currentOwner.current !== owner || !accountLifetime.isCurrent()) return;
+                        setChoice({ owner, target: entry.target, access, display: {
                             machineDisplayName: described.machineName,
                             requiresTargetSelection: false,
                             access,
                             ...(entry.appName ? { appName: entry.appName } : {}),
                             target: { kind: entry.target.kind, title: entry.target.kind === 'display' ? entry.label ?? entry.title ?? '' : entry.title ?? '' },
-                        });
+                        } });
                     },
                 }
                 : {}),
-            onSelected: (selection) => setChosenDisplay(selection.approvalDisplay),
+            onSelected: (selection) => {
+                if (currentOwner.current !== owner || !accountLifetime.isCurrent()) return;
+                setChoice({ owner, display: selection.approvalDisplay, target: null, access: null });
+            },
         });
-    }, [described, presentation?.access, resolveOpenPicker, serverId, sessionId]);
+    }, [accountLifetime, described, owner, presentation?.access, resolveOpenPicker, serverId, sessionId]);
 
     const share = described?.act === 'share';
     const exactTargetInRequest = share && Boolean(

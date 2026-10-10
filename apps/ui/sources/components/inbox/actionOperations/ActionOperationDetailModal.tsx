@@ -2,6 +2,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useRouter } from 'expo-router';
+import { joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
 
 import type { CustomModalInjectedProps } from '@/modal';
 import { Text } from '@/components/ui/text/Text';
@@ -253,19 +254,19 @@ export const ActionOperationDetailModal = React.memo(function ActionOperationDet
                 <Item
                     mode="info"
                     title={t('inbox.actionOperations.machine')}
-                    subtitle={[
+                    subtitle={joinHappierFacts(
                         sourceContext.machineTitle ?? snapshot.scope.machineId,
                         sessionId ? null : sourceContext.contextLine,
-                    ].filter(Boolean).join(' · ')}
+                    )}
                 />
                 {sessionId ? (
                     <Item
                         mode="info"
                         title={t('inbox.actionOperations.session')}
-                        subtitle={[
+                        subtitle={joinHappierFacts(
                             sourceContext.sessionTitle ?? sessionId,
                             sourceContext.contextLine,
-                        ].filter(Boolean).join(' · ')}
+                        )}
                     />
                 ) : null}
                 <Item
@@ -290,7 +291,7 @@ export const ActionOperationDetailModal = React.memo(function ActionOperationDet
                         testID="action-operation-project-command.target"
                         mode="info"
                         title={t('projects.scripts.output.ranOn')}
-                        subtitle={detail.projectCommand ? `${projectCommandMachineName ?? detail.projectCommand.machineId} · ${detail.projectCommand.cwd}`
+                        subtitle={detail.projectCommand ? joinHappierFacts(projectCommandMachineName ?? detail.projectCommand.machineId, detail.projectCommand.cwd)
                             : projectCommandMachineName ?? detail.machineEnvironment!.machineId}
                     />
                     <View style={styles.output}>

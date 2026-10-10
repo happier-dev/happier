@@ -6,6 +6,7 @@ import {
     ComputerInputRequestV1Schema,
     ComputerTargetRequestV1Schema,
     ComputerTargetSelectRequestV1Schema,
+    ComputerSecretFillRequestV1Schema,
     type ComputerApprovalDisplayV1,
 } from '@happier-dev/protocol/computer/v1';
 
@@ -23,7 +24,7 @@ import { t } from '@/text';
  */
 export type ComputerActionApproval = Readonly<{
     access: 'see' | 'use';
-    act: 'see' | 'read' | 'click' | 'press' | 'type' | 'share';
+    act: 'see' | 'read' | 'click' | 'press' | 'type' | 'share' | 'fill';
     machineId: string;
     machineName: string;
     appName?: string;
@@ -49,7 +50,7 @@ function readDisplay(preview: unknown): ComputerApprovalDisplayV1 | null {
 
 export function describeComputerActionApproval(input: Readonly<{ actionId: string; actionArgs: unknown; preview: unknown }>): ComputerActionApproval | null {
     if (input.actionId !== 'computer.capture' && input.actionId !== 'computer.query' && input.actionId !== 'computer.input'
-        && input.actionId !== 'computer.target.select') return null;
+        && input.actionId !== 'computer.target.select' && input.actionId !== 'computer.secret.fill') return null;
     const display = readDisplay(input.preview);
     if (!display) return null;
     const facts = {
@@ -59,6 +60,11 @@ export function describeComputerActionApproval(input: Readonly<{ actionId: strin
         requiresTargetSelection: display.requiresTargetSelection,
         captureMedia: display.requiresTargetSelection ? null : display.captureMedia ?? null,
     };
+    if (input.actionId === 'computer.secret.fill') {
+        const parsed = ComputerSecretFillRequestV1Schema.safeParse(input.actionArgs);
+        if (!parsed.success || display.requiresTargetSelection || !display.target) return null;
+        return { access: 'use', act: 'fill', machineId: parsed.data.machineId, ...facts, sent: null };
+    }
     if (input.actionId === 'computer.target.select') {
         const parsed = ComputerTargetSelectRequestV1Schema.safeParse(input.actionArgs);
         if (!parsed.success) return null;
@@ -103,7 +109,7 @@ export function applyComputerSelection(
     presentation: ComputerActionApproval,
     display: ComputerApprovalDisplayV1 | null,
 ): ComputerActionApproval {
-    if (!display || display.requiresTargetSelection || !display.target) return presentation;
+    if (presentation.act === 'fill' || !display || display.requiresTargetSelection || !display.target) return presentation;
     return {
         ...presentation,
         machineName: display.machineDisplayName,
@@ -157,7 +163,7 @@ export const ComputerActionApprovalCard = React.memo(function ComputerActionAppr
     return (
         <View style={[styles.card, props.style]} testID={testID}>
             <View style={styles.what}>
-                <Text style={styles.act}>{presentation.act === 'share' && presentation.appName
+                <Text style={styles.act}>{presentation.act === 'fill' ? t('approvals.confidential.title') : presentation.act === 'share' && presentation.appName
                     ? t('computerUse.picker.shareApp', { app: presentation.appName })
                     : t(`computerUse.approval.act.${presentation.act}`)}</Text>
                 <Text style={styles.where}>{where}</Text>

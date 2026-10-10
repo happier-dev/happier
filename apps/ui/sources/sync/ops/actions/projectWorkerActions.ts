@@ -1,7 +1,6 @@
-import {
-    ActionApprovalRequestCreatedResultSchema, ProjectWorkerActionOutputSchemasV1, getActionSpec,
-    type ProjectWorkerActionIdV1, type ProjectWorkerActionInputV1, type ProjectWorkerActionOutputV1,
-} from '@happier-dev/protocol';
+import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { ProjectWorkerActionOutputSchemasV1, type ProjectWorkerActionIdV1, type ProjectWorkerActionInputV1, type ProjectWorkerActionOutputV1 } from '@happier-dev/protocol/actions/specs/projectWorkers';
 import { randomUUID } from '@/platform/randomUUID';
 import { withDefaultActionExecuteContext } from '@/sync/ops/actions/defaultActionExecutor';
 import {

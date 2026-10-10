@@ -1,5 +1,6 @@
 import * as React from 'react';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
+import type { ActionExecutorContext } from '@happier-dev/protocol';
 import { ActionApprovalRequestCreatedResultSchema, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 import { awaitActionApprovalResult, createActionApprovalContinuation, type ActionApprovalContinuation } from './actionApprovalContinuation';
@@ -7,6 +8,7 @@ import { useActionApprovalContinuation } from './useActionApprovalContinuation';
 import { areServerAccountScopesEqual, serverAccountScopeKeySuffix, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
 
 const onExecuted = () => {};
 const retired = (): ActionExecuteResult => ({ ok: false, errorCode: 'action_account_scope_changed', error: 'action_account_scope_changed' });
@@ -29,24 +31,30 @@ export function useMountedActionExecution(scopeOrHome: ServerAccountScope | stri
     const scopeKey = binding ? `${serverAccountScopeKeySuffix(binding.scope)}:${binding.revision}` : JSON.stringify(['unbound', scopeOrHome]);
     const approval = useActionApprovalContinuation({ scopeKey, serverId: scope?.serverId ?? '', onExecuted });
     const frontDoor = React.useMemo(() => createFrontDoorActionExecute(), []);
-    const execute = React.useCallback(async (actionId: ActionId, input: unknown): Promise<ActionExecuteResult> => {
+    const execute = React.useCallback(async (actionId: ActionId, input: unknown,
+        operation?: Readonly<{ signal?: AbortSignal; actionRequestId?: ActionExecutorContext['actionRequestId'] }>): Promise<ActionExecuteResult> => {
         if (!binding || !scope || !isCurrent()) return retired();
+        const cancellation = mergeAbortSignals([lifetime.controller.signal, operation?.signal]);
+        try {
         // The admitted input includes the draft's original CAS. Never recapture it after approval.
         // Await the initial operation directly: later retirement cannot retract a durable ACK.
         const result = await frontDoor(actionId, input, {
             surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
             serverId: scope.serverId, expectedAccountId: scope.accountId,
+            signal: cancellation.signal,
+            ...(operation?.actionRequestId ? { actionRequestId: operation.actionRequestId } : {}),
         });
         if (!result.ok) return result;
         const pending = ActionApprovalRequestCreatedResultSchema.safeParse(result.result);
         if (!pending.success) return result;
         if (!isCurrent()) return retired();
-        return awaitActionApprovalResult<unknown, ActionExecuteResult>({
-            signal: lifetime.controller.signal,
+        return await awaitActionApprovalResult<unknown, ActionExecuteResult>({
+            signal: cancellation.signal,
             execute: async callbacks => {
                 const registration = createActionApprovalContinuation({
                     artifactId: pending.data.artifactId, actionId, scope: binding.scope, expectedInput: input,
-                    signal: lifetime.controller.signal,
+                    ...(operation?.actionRequestId ? { expectedRequestId: operation.actionRequestId } : {}),
+                    signal: cancellation.signal,
                     onSucceeded: callbacks.onApprovalSucceeded, onFailed: callbacks.onApprovalFailed,
                 });
                 approval.requestApproval(registration);
@@ -57,6 +65,7 @@ export function useMountedActionExecution(scopeOrHome: ServerAccountScope | stri
             failed: (code, failure) => failure ?? { ok: false, errorCode: code, error: code },
             aborted: retired,
         });
+        } finally { cancellation.dispose(); }
     }, [approval.requestApproval, binding, frontDoor, isCurrent, lifetime, options?.onApprovalPending, scope]);
     return { execute, ready: isCurrent(), isCurrent, approval };
 }

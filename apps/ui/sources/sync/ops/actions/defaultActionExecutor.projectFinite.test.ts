@@ -57,6 +57,7 @@ installHomeGovernanceBoundaries(homes);
 const calls: Array<{ serverUrl: string | undefined; token: unknown; request: SocketRpcRequestPayload }> = [];
 let response: unknown;
 let consumeAcknowledgement: (() => void) | undefined;
+let rejectOpenJson = false;
 let restoreHttpReplyDecoder: (() => void) | undefined;
 const rpcResponses = new Map<string, unknown>();
 const configureRelay: NonNullable<Parameters<typeof installDisconnectedServerSocketBoundary>[0]> = (socket, serverUrl) => {
@@ -83,7 +84,7 @@ function answerOwnMachineActions(homeId: string, accountId: string, serverIdenti
     }));
     homes.answer(homeId, '/v1/machines', { body: machines });
     for (const machine of machines) homes.answer(homeId, `GET /v1/machines/${machine.id}`, { body: { machine } });
-    for (const actionId of ['projects.prepare', 'projects.script.run', 'projects.compute.exec'] as const) {
+    for (const actionId of ['projects.open', 'projects.prepare', 'projects.script.run', 'projects.compute.exec'] as const) {
         homes.answer(homeId, `/v1/actions/${actionId}/execution-authorization`, { select: body => {
             const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
             const machine = machines.find(candidate => candidate.id === request.machineId);
@@ -141,6 +142,7 @@ beforeEach(async () => {
     clipboard.write.mockClear();
     installDisconnectedServerSocketBoundary(configureRelay);
     await homes.reset(); await loadSyncSingletonForTests(); calls.length = 0; rpcResponses.clear(); consumeAcknowledgement = undefined;
+    rejectOpenJson = false;
     foreignDisclosure.mockReset().mockResolvedValue(true);
     requesterHomeId = await homes.addHome({ name: 'Finite requester', serverUrl, serverIdentityId: 'srv_finite_requester',
         accountId: 'requester', currentAccount: true, active: false, machinePoolsEnabled: true });
@@ -155,6 +157,9 @@ beforeEach(async () => {
     const decodeHttpReply = Response.prototype.json;
     const replyDecoder = vi.spyOn(Response.prototype, 'json').mockImplementation(async function (this: Response) {
         const payload: unknown = await decodeHttpReply.call(this);
+        if (rejectOpenJson && payload && typeof payload === 'object' && 'actionId' in payload && payload.actionId === 'projects.open') {
+            throw new SyntaxError('Incomplete Action HTTP response');
+        }
         // Native HTTP reply decoding is the real boundary. Abort only after a
         // complete Action ACK exists, not during issuance or discovery reads.
         if (ExternalActionResponseEnvelopeV1Schema.safeParse(payload).success) consumeAcknowledgement?.();
@@ -165,6 +170,61 @@ beforeEach(async () => {
 afterEach(async () => { restoreHttpReplyDecoder?.(); restoreHttpReplyDecoder = undefined; await homes.reset(); });
 
 describe('Project finite delivery through the default UI Action host', () => {
+    it.each(['invalid_json', 'mismatched', 'mismatched_refusal', 'outcome_unknown', 'pre_open_refusal'] as const)('keeps original Open custody after HTTP settlement: %s', async settlement => {
+        const [{ createProjectOpenController }, { createSessionDraftRepository }, { createSessionDraftCipher },
+            { captureLazyActionAccountContext }] = await Promise.all([
+            import('@/components/projects/activation/projectOpenController'),
+            import('@/sync/ops/sessionDrafts/sessionDraftRepository'),
+            import('@/sync/encryption/sessionDraftEncryption'),
+            import('./actionAccountContext'),
+        ]);
+        const account = await captureLazyActionAccountContext(serverId);
+        const scope = { serverId, accountId: 'requester' };
+        const storage = new Map<string, string>();
+        const repository = createSessionDraftRepository({
+            scope, syncEnabled: false,
+            storage: { getString: key => storage.get(key), set: (key, value) => storage.set(key, value), delete: key => storage.delete(key) },
+            cipher: createSessionDraftCipher({ accountMode: 'plain', accountCryptoMaterial: null,
+                getSessionContext: () => { throw new Error('Open cannot create a Session'); }, randomBytes: size => new Uint8Array(size) }),
+            transport: { read: async () => ({ status: 'absent' }), list: async () => ({ items: [] }),
+                mutate: async () => { throw new Error('Local draft cannot issue a remote draft mutation'); } },
+        });
+        const input = { serverId, machineId: 'source', source: { kind: 'folder' as const, path: '/repo' }, materialization: { kind: 'attach' as const } };
+        let effects = 0;
+        rejectOpenJson = settlement === 'invalid_json';
+        homes.answer(requesterHomeId, '/v1/actions/projects.open', { select: body => {
+            const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+            if (settlement === 'pre_open_refusal') return { status: 409,
+                body: { error: 'invalid_request', code: 'target_unavailable', requestId: request.envelope.requestId } };
+            effects += 1;
+            if (settlement === 'mismatched_refusal') return { status: 409,
+                body: { error: 'invalid_request', code: 'target_unavailable', requestId: 'another-open' } };
+            return { body: { v: 1, actionId: 'projects.open',
+                requestId: settlement === 'mismatched' ? 'another-open' : request.envelope.requestId,
+                execution: { ok: false, errorCode: 'outcome_unknown', error: 'outcome_unknown', details: { operationId: 'original-open' } } } };
+        } });
+        const navigation: unknown[] = [];
+        const controller = createProjectOpenController({ repository, scope, draftId: '00000000-0000-4000-8000-000000000081',
+            initialDraft: input, captureLifetime: () => account.accountLifetime, executor: createDefaultActionExecutor(),
+            onOpened: result => { navigation.push(result); } });
+        try {
+            await controller.submit();
+            if (settlement === 'pre_open_refusal') {
+                expect(controller.getSnapshot().uncertainInput).toBeNull();
+                expect(controller.getSnapshot().result).toMatchObject({ ok: false, errorCode: 'target_unavailable' });
+            } else {
+                expect(controller.getSnapshot()).toMatchObject({ uncertainInput: input, result: { kind: 'outcomeUnknown' },
+                    canCheck: settlement === 'outcome_unknown' });
+                if (settlement === 'outcome_unknown') expect(controller.getSnapshot().result).toEqual({ kind: 'outcomeUnknown', operationId: 'original-open' });
+            }
+            controller.setDraft({ ...input, source: { kind: 'folder', path: '/edited' } });
+            await controller.submit();
+            expect(homes.requestsFor('/v1/actions/projects.open')).toHaveLength(settlement === 'pre_open_refusal' ? 2 : 1);
+            expect(effects).toBe(settlement === 'pre_open_refusal' ? 0 : 1);
+            expect(navigation).toEqual([]);
+        } finally { controller.dispose(); account.dispose(); }
+    });
+
     it('copies retained output from the toolbar through the registered Action and actual execution target', async () => {
         const disposeExecutor = await installRealActionExecutorModuleLoader();
         const { ProjectCommandOutputPane } = await import('@/components/inbox/actionOperations/ProjectCommandOutputPane');

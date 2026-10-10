@@ -8,6 +8,8 @@ export type AccountActionTransport = (input: Readonly<{
     method: string;
     payload: unknown;
     signal?: AbortSignal;
+    /** Connection setup stays bounded; the caller owns admission cancellation. */
+    operationTimeoutMs?: null;
 }>) => Promise<unknown>;
 
 export type UiAccountActionExecute = (args: Readonly<{
@@ -51,6 +53,10 @@ export function createUiAccountActionTransport(params: Readonly<{
                 ? createTargetedActionRpcRequestV1(args.input, target, { defaultSessionId: args.context.defaultSessionId })
                 : args.input,
             ...(signal ? { signal } : {}),
+            // Admission may finish after connection/key hydration consumed the
+            // ordinary RPC budget. Keep its authoritative result rather than
+            // abandoning a late refusal to missing-Run reconciliation.
+            ...(args.actionId === 'workflow.run.start' ? { operationTimeoutMs: null } : {}),
         });
         try {
             params.account.assertCurrent();

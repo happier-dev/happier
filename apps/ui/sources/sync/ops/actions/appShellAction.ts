@@ -16,10 +16,44 @@ import { runWithSessionDraftRepositoryScopedRuntime } from '@/sync/ops/sessionDr
 import { captureLazyActionAccountContext, type LazyActionAccountContext } from './actionAccountContext';
 import { applyRegisteredNewSessionDirectoryIntent } from '@/components/sessions/presentation/sessionComposerPresentationTargets';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
+import { invokeMountedWorkRead } from './mountedWorkReadAction';
+import { sync } from '@/sync/sync';
+import { writeSessionInitialPromptV1 } from '@/sync/domains/sessionInitialPrompt/sessionInitialPromptV1';
 
 /** Thin projection of the incumbent bulk-acknowledgement and draft-repository owners. */
 export function createAppShellAction(accountContext?: LazyActionAccountContext): NonNullable<ActionExecutorDeps['appShellAction']> {
     return async ({ actionId, input, context }) => {
+        if (actionId === 'session.draft.append') {
+            context.signal?.throwIfAborted();
+            const serverId = accountContext?.serverId ?? context.serverId;
+            if (!serverId) return { status: 'unavailable' };
+            const account = accountContext ?? await captureLazyActionAccountContext(serverId, context.signal);
+            try {
+                account.assertCurrent();
+                if ((context.serverId && !areServerProfileIdentifiersEquivalent(account.serverId, context.serverId))
+                    || (context.runtimeAccountId && context.runtimeAccountId !== account.accountId)) return { status: 'unavailable' };
+                const { sessionId, text, sourceSessionId } = AppShellActionInputSchemas[actionId].parse(input);
+                const createdAtMs = Date.now();
+                await sync.patchSessionMetadataWithRetry(sessionId, metadata => writeSessionInitialPromptV1({
+                    metadata, text, mode: 'append', createdAtMs, sourceSessionId,
+                }), { serverId: account.serverId, accountLifetime: account.accountOnlyLifetime });
+                account.assertAccountCurrent();
+                return { status: 'appended', sessionId, createdAtMs };
+            } finally { if (!accountContext) account.dispose(); }
+        }
+        if (actionId === 'session.work.get' || actionId === 'inbox.get') {
+            if (!context.serverId || !context.runtimeAccountId) return { status: 'unavailable' };
+            const account = accountContext ?? await captureLazyActionAccountContext(context.serverId, context.signal);
+            try {
+                account.assertCurrent();
+                if (!areServerProfileIdentifiersEquivalent(account.serverId, context.serverId)
+                    || account.accountId !== context.runtimeAccountId) return { status: 'unavailable' };
+                const result = await invokeMountedWorkRead({ actionId, input,
+                    context: { ...context, serverId: account.serverId, runtimeAccountId: account.accountId } });
+                account.assertCurrent();
+                return result;
+            } finally { if (!accountContext) account.dispose(); }
+        }
         if (actionId === 'session.draft.directory.set') {
             context.signal?.throwIfAborted();
             accountContext?.assertCurrent();

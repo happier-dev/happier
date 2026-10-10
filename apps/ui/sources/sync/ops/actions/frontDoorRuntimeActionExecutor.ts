@@ -2,7 +2,9 @@ import type { ActionId, RuntimeActionExecute } from '@happier-dev/protocol';
 
 import type { createDefaultActionExecutor, UiActionExecutorContext } from './defaultActionExecutor';
 
-type ActionExecutorLike = Pick<ReturnType<typeof createDefaultActionExecutor>, 'execute'>;
+type ActionExecutorLike = Pick<ReturnType<typeof createDefaultActionExecutor>, 'execute'> &
+  Partial<Pick<ReturnType<typeof createDefaultActionExecutor>, 'prepare'>>;
+export type FrontDoorActionExecute = ActionExecutorLike['execute'] & Pick<ReturnType<typeof createDefaultActionExecutor>, 'prepare'>;
 
 /**
  * The canonical `ActionExecutor.execute` front door, lazily resolved.
@@ -16,18 +18,28 @@ type ActionExecutorLike = Pick<ReturnType<typeof createDefaultActionExecutor>, '
 export function createFrontDoorActionExecute(
   executor?: ActionExecutorLike,
   options?: Parameters<typeof createDefaultActionExecutor>[0],
-): ActionExecutorLike['execute'] {
+): FrontDoorActionExecute {
   // Lazily resolve the default executor on first dispatch so that mounting a surface (which often
   // renders nothing) never eagerly builds the full executor dependency graph.
   let resolved: ActionExecutorLike | null = executor ?? null;
-  return async (actionId, input, context) => {
+  const resolve = (): ActionExecutorLike => resolved ?? (resolved = (require('./defaultActionExecutor') as typeof import('./defaultActionExecutor')).createDefaultActionExecutor(options));
+  const execute: ActionExecutorLike['execute'] = async (actionId, input, context) => {
     // A call-time `require`, not `import()`: the executor is already part of the main bundle, and a
     // dynamic import makes the dev bundler serve a duplicate lazy bundle that takes seconds to build
     // (production cost is unchanged). Evaluation stays deferred to the first dispatch. A top-level
     // import would form a cycle: the executor's dependencies import this front door.
-    const target = resolved ?? (resolved = (require('./defaultActionExecutor') as typeof import('./defaultActionExecutor')).createDefaultActionExecutor(options));
+    const target = resolve();
     return target.execute(actionId, input, context);
   };
+  return Object.assign(execute, {
+    prepare: async (...args: Parameters<ReturnType<typeof createDefaultActionExecutor>['prepare']>) => {
+      const target = resolve();
+      return target.prepare ? target.prepare(...args) : {
+        kind: 'settled' as const,
+        result: { ok: false as const, errorCode: 'action_prepare_unavailable', error: 'action_prepare_unavailable' },
+      };
+    },
+  });
 }
 
 /**

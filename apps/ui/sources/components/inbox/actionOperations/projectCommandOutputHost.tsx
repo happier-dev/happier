@@ -8,6 +8,7 @@ import { useSessionTerminalActionExecute } from '@/components/sessions/terminal/
 import type { ActionOperationProjection } from '@/sync/domains/actionOperations/actionOperationSelectors';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { useDeviceType } from '@/utils/platform/responsive';
+import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 
 import { openActionOperationDetail } from './openActionOperationDetail';
 import { readActionOperationOutputAttachment } from './actionOperationDetailPresentation';
@@ -63,49 +64,58 @@ export function useProjectCommandOutputOpener() {
       operation: ActionOperationProjection,
       options: ProjectCommandOutputOpenOptions,
     ): Promise<boolean> => {
-      const attachment = readActionOperationOutputAttachment(operation.snapshot);
-      const server = scopeId ? scopeServerId(scopeId) : null;
-      if (
-        scopeId &&
-        !phone &&
-        attachment?.terminalId &&
-        server &&
-        areServerProfileIdentifiersEquivalent(server, attachment.serverId)
-      ) {
-        const workspace = readSessionTerminalWorkspaceForScope(
-          scopeId,
-          parseProjectPaneScopeId(scopeId)
-            ? EMPTY_TERMINAL_WORKSPACE
-            : undefined,
-        );
-        const open = workspace?.tabs
-          .flatMap((tab) => tab.terminals)
-          .find(
-            (member) =>
-              member.target.kind === 'terminal_view' &&
-              member.target.terminalId === attachment.terminalId &&
-              member.target.machineId === attachment.machineId,
+      let openedInTerminal = false;
+      const present = async () => {
+        const attachment = readActionOperationOutputAttachment(operation.snapshot);
+        const server = scopeId ? scopeServerId(scopeId) : null;
+        if (scopeId && !phone && attachment?.terminalId && server
+          && areServerProfileIdentifiersEquivalent(server, attachment.serverId)) {
+          const workspace = readSessionTerminalWorkspaceForScope(
+            scopeId,
+            parseProjectPaneScopeId(scopeId)
+              ? EMPTY_TERMINAL_WORKSPACE
+              : undefined,
           );
-        const result = open
-          ? await execute('session.terminals.focus', { terminalId: open.id })
-          : await execute('session.terminals.open', {
-              target: {
-                kind: 'terminal_view',
-                machineId: attachment.machineId,
-                terminalId: attachment.terminalId,
-                terminalKey: `project-command:${attachment.terminalId}`,
-                ...(attachment.kind === 'projectCommand' ? { cwd: attachment.cwd } : {}),
-              },
-              title: options.title,
-            });
-        if (result.ok) return true;
-      }
-      if (options.fallbackToDetail !== false)
-        openActionOperationDetail({
-          serverId: operation.serverId,
-          operationId: operation.snapshot.operationId,
+          const open = workspace?.tabs
+            .flatMap((tab) => tab.terminals)
+            .find(
+              (member) =>
+                member.target.kind === 'terminal_view' &&
+                member.target.terminalId === attachment.terminalId &&
+                member.target.machineId === attachment.machineId,
+            );
+          const result = open
+            ? await execute('session.terminals.focus', { terminalId: open.id })
+            : await execute('session.terminals.open', {
+                target: {
+                  kind: 'terminal_view',
+                  machineId: attachment.machineId,
+                  terminalId: attachment.terminalId,
+                  terminalKey: `project-command:${attachment.terminalId}`,
+                  ...(attachment.kind === 'projectCommand' ? { cwd: attachment.cwd } : {}),
+                },
+                title: options.title,
+              });
+          if (result.ok) {
+            openedInTerminal = true;
+            return;
+          }
+        }
+        if (options.fallbackToDetail !== false) openActionOperationDetail({
+          serverId: operation.serverId, operationId: operation.snapshot.operationId,
         });
-      return false;
+      };
+      const executeOpen = createFrontDoorActionExecute(undefined, { actionOperationOpenOutput: present });
+      const result = await executeOpen('projects.execution.output.open', {
+        serverId: operation.serverId,
+        machineId: operation.snapshot.scope.machineId,
+        operationId: operation.snapshot.operationId,
+      }, { surface: 'ui', authority: 'present_user', serverId: operation.serverId,
+        expectedAccountId: operation.snapshot.scope.accountId });
+      if (!result.ok && options.fallbackToDetail !== false) openActionOperationDetail({
+        serverId: operation.serverId, operationId: operation.snapshot.operationId,
+      });
+      return openedInTerminal;
     },
     [execute, phone, scopeId],
   );

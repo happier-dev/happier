@@ -20,14 +20,14 @@ import {
 
 import { ActionOperationLedgerView } from './ActionOperationLedger';
 import { openActionOperation } from './actionOperationPresentationRuntime';
-import { requestAcceptedActionOperationStop } from './requestActionOperationStop';
+import { requestAcceptedActionOperationStop, type ActionOperationStopResponse, type ActionOperationStopContext } from './requestActionOperationStop';
 
 export type ActionOperationActivityButtonViewProps = Readonly<{
     operations: readonly ActionOperationProjection[];
     hasAttention: boolean;
     preferredSessionAddress?: SessionAddress | null;
     onOpenOperation: (operation: ActionOperationProjection) => void;
-    onCancelOperation?: (operation: ActionOperationProjection) => Promise<void> | void;
+    onCancelOperation?: (operation: ActionOperationProjection, context?: ActionOperationStopContext) => Promise<ActionOperationStopResponse | void> | void;
     onDismissOperation?: (operation: ActionOperationProjection) => void;
     onMarkVisibleTerminalSeen: () => void;
     onClearRecent?: () => void;
@@ -237,8 +237,8 @@ const ActionOperationActivityDetails = React.memo(function ActionOperationActivi
     const markVisibleTerminalSeen = React.useCallback(() => {
         actionOperationStore.markAllTerminalSeen();
     }, []);
-    const stopOperation = React.useCallback(async (operation: ActionOperationProjection) => {
-        await requestAcceptedActionOperationStop(operation);
+    const stopOperation = React.useCallback(async (operation: ActionOperationProjection, context?: ActionOperationStopContext) => {
+        return await requestAcceptedActionOperationStop(operation, context);
     }, []);
     return (
         <ActionOperationActivityDetailsView
