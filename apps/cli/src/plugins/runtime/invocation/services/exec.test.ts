@@ -1565,24 +1565,32 @@ process.stdin.on('data', (chunk) => {
     });
 
     it.each(['handshake', 'connection'] as const)('cancels a loopback client during %s readiness', async (phase) => {
-        const controller = new AbortController();
-        const service = createService();
-        const pending = service.clients.spawn({
-            kind: 'loopbackWebSocketJson',
-            launch: { executable, args: ['-e', 'setInterval(() => {}, 1000)'] },
-            ...(phase === 'handshake' ? {
-                handshake: {
-                    framing: 'lengthPrefix' as const,
-                    byteOrder: 'little-endian' as const,
-                    requestFrames: [],
-                    decodeResponse: () => ({ host: '127.0.0.1' as const, port: 12_345 }),
-                },
-            } : { endpoint: { host: '127.0.0.1' as const, port: 12_345 } }),
-            maxFrameBytes: 4096,
-        }, { signal: controller.signal });
-        const rejected = expect(pending).rejects.toMatchObject({ code: 'PLUGIN_EXEC_CLIENT_ABORTED' });
-        await new Promise<void>(resolve => setTimeout(resolve, 100));
-        controller.abort();
-        await rejected;
+        await withTempDir('happier-loopback-cancel-', async root => {
+            const marker = join(root, 'started');
+            const controller = new AbortController();
+            const service = createService();
+            const pending = service.clients.spawn({
+                kind: 'loopbackWebSocketJson',
+                launch: { executable, args: ['-e', `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'ready'); setInterval(() => {}, 1000)`] },
+                ...(phase === 'handshake' ? {
+                    handshake: {
+                        framing: 'lengthPrefix' as const,
+                        byteOrder: 'little-endian' as const,
+                        requestFrames: [],
+                        decodeResponse: () => ({ host: '127.0.0.1' as const, port: 12_345 }),
+                    },
+                } : { endpoint: { host: '127.0.0.1' as const, port: 12_345 } }),
+                maxFrameBytes: 4096,
+            }, { signal: controller.signal });
+            const rejected = expect(pending).rejects.toMatchObject({ code: 'PLUGIN_EXEC_CLIENT_ABORTED' });
+            try {
+                await expect.poll(() => readFile(marker, 'utf8').catch(() => ''), { timeout: 10_000 }).toBe('ready');
+                controller.abort();
+                await rejected;
+            } finally {
+                controller.abort();
+                await pending.catch(() => undefined);
+            }
+        });
     });
 });
