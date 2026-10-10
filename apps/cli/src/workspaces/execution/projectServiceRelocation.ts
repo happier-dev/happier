@@ -99,6 +99,8 @@ export function createProjectServiceRelocation(ports: ProjectServiceRelocationPo
     if (stopped.status !== 'stopped') {
       return failure(stopped.status === 'unsupported' ? 'service_control_unsupported' : 'stop_unconfirmed');
     }
+    // Retain the native Stop fact even if cancellation or admission prevents copy.
+    progress('stopped', 'Service stopped');
     if (signal?.aborted) return failure('cancelled');
     const currentDestination = await ports.revalidateDestination(input, selected, signal);
     if (currentDestination.status === 'refused') return failure(currentDestination.reasonCode);
