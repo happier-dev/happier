@@ -33,17 +33,23 @@ function containers(stdout: string, project: string): readonly Container[] | nul
 }
 
 function endpoint(rows: readonly Container[]): string | null {
-    const ports = new Set<number>();
+    const ports = new Map<number, Set<string>>();
     for (const row of rows) for (const [containerPort, publishers] of Object.entries(row.ports)) {
         if (!containerPort.endsWith('/tcp') || !Array.isArray(publishers)) continue;
         for (const publisher of publishers) {
             if (!record(publisher) || !['0.0.0.0', '127.0.0.1', '::', '::1'].includes(String(publisher.HostIp))
                 || typeof publisher.HostPort !== 'string' || !/^\d+$/u.test(publisher.HostPort)) continue;
             const port = Number(publisher.HostPort);
-            if (Number.isSafeInteger(port) && port >= 1 && port <= 65535) ports.add(port);
+            if (Number.isSafeInteger(port) && port >= 1 && port <= 65535) {
+                const hosts = ports.get(port) ?? new Set<string>();
+                hosts.add(String(publisher.HostIp).includes(':') ? '[::1]' : '127.0.0.1');
+                ports.set(port, hosts);
+            }
         }
     }
-    return ports.size === 1 ? `http://127.0.0.1:${[...ports][0]}` : null;
+    if (ports.size !== 1) return null;
+    const [port, hosts] = [...ports][0];
+    return `http://${hosts.has('127.0.0.1') ? '127.0.0.1' : '[::1]'}:${port}`;
 }
 
 /** A codec/control capture, not another supervisor, registry, shell or placement owner. */
