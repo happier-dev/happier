@@ -179,7 +179,7 @@ describe('acquireCanonicalExternalSessionFollowLease background recovery', () =>
                 ownerMetadata: patch.ownerMetadata,
                 metadataVersion: serverSession.metadataVersion + 1,
                 agentState: patch.agentState.ciphertext,
-                agentStateVersion: serverSession.agentStateVersion + 1,
+                agentStateVersion: patch.agentState.expectedVersion + 1,
             };
             afterMetadataPublication?.();
             return {
