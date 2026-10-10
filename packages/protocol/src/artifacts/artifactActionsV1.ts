@@ -5,20 +5,14 @@ import { StrictJsonValueSchema } from '../json/strictJsonValue.js';
 import { ArtifactCallerAccessV1Schema } from './artifactAccessV1.js';
 import { StoredContentPublicShareAccessLogResponseV1Schema, StoredContentPublicShareCreateRequestV1Schema, StoredContentPublicShareV1Schema, StoredContentPublicSharesListResponseV1Schema } from '../sharing/storedContentPublicShareV1.js';
 import { ArtifactBodyV1Schema, ArtifactRevisionProvenanceV1Schema } from './artifactBinaryV1.js';
+import { ARTIFACT_ACTION_IDS_V1 } from './artifactActionIdsV1.js';
+export { ARTIFACT_ACTION_IDS_V1 } from './artifactActionIdsV1.js';
+import { ArtifactRevisionV1Schema } from './artifactRevisionV1.js';
+export { ArtifactRevisionV1Schema, type ArtifactRevisionV1 } from './artifactRevisionV1.js';
 
-/** Ordinary Artifact Action wire epoch V1. Mutation and identity objects are closed. */
-export const ARTIFACT_ACTION_IDS_V1 = [
-  'artifact.create', 'artifact.get', 'artifact.list', 'artifact.update', 'artifact.delete',
-  'artifact.publish_from_file', 'artifact.revisions.list', 'artifact.revisions.restore', 'artifact.storage.usage',
-  'artifact.public_link.create', 'artifact.public_link.list', 'artifact.public_link.revoke', 'artifact.public_link.audit',
-] as const;
 export const ArtifactActionIdV1Schema = lazyZodSchema(() => z.enum(ARTIFACT_ACTION_IDS_V1));
 export type ArtifactActionIdV1 = z.infer<typeof ArtifactActionIdV1Schema>;
 
-export const ArtifactRevisionV1Schema = lazyZodSchema(() => z.object({
-  headerVersion: z.number().int().positive(), bodyVersion: z.number().int().positive(),
-}).strict());
-export type ArtifactRevisionV1 = z.infer<typeof ArtifactRevisionV1Schema>;
 /** Authenticated read fact: omitted or unfamiliar values never establish privacy. */
 export const ArtifactPublicAudienceV1ReadSchema = lazyZodSchema(() => z.enum(['retained', 'none', 'unknown'])
   .optional().default('unknown').catch('unknown'));
