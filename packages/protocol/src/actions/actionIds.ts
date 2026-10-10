@@ -51,7 +51,7 @@ import { REMOTE_HOST_ACTION_IDS_V1 } from '../remoteHosts/remoteHostActionIdsV1.
 import { HOME_RUNTIME_ACTION_IDS_V1 } from '../home/runtime/actionIdsV1.js';
 import { ARTIFACT_FOLDER_ACTION_IDS_V1 } from '../prompts/library/artifactFolderActionIdsV1.js';
 import { USAGE_SOURCE_ACTION_IDS } from '../usage/usageSources.js';
-import { WORKFLOW_AUTHORING_ACTION_IDS } from './workflowAuthoringAction.js';
+import { WORKFLOW_AUTHORING_ACTION_IDS } from './workflowAuthoringActionIds.js';
 
 export const WORKFLOW_ACTION_IDS_V1 = [
   'workflow.validate', 'workflow.run.start', 'workflow.run.list', 'workflow.run.summaries', 'workflow.run.get', 'workflow.run.wait',

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { AccountSettingsStoredContentEnvelopeSchema } from '../account/settings/accountSettingsStoredContentEnvelope.js';
+import { listActionSpecs } from './actionSpecs.js';
 
 import {
   ACTION_ID_FAMILIES_V1,
@@ -11,6 +12,11 @@ import {
 } from './actionIds.js';
 
 describe('ActionIdSchema', () => {
+  it('provides a canonical spec for every registered Action id', () => {
+    const specs = listActionSpecs();
+    const specifiedIds = new Set(specs.map(spec => spec.id));
+    expect(ACTION_IDS.filter(id => !specifiedIds.has(id))).toEqual([]);
+  });
   it('admits reset-bound Pending set and cancel through the canonical session control family', () => {
     for (const id of ['session.pending.resetStart.set', 'session.pending.resetStart.cancel']) {
       expect(ActionIdSchema.safeParse(id).success).toBe(true);
