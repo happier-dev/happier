@@ -3,20 +3,32 @@ import { computeCanonicalDomainSeparatedDigest, encodeCanonicalLengthDelimited }
 import { createCanonicalJsonSigningInput } from '../crypto/canonicalJson.js';
 import { signEd25519Message, verifyEd25519Signature } from '../crypto/ed25519.js';
 import { MachineInstallationPrivateKeySchema, MachineInstallationPublicKeySchema } from '../machines/identity/installationIdentity.js';
-import { SOCKET_RPC_EVENTS, WorkspaceSyncSourceRoutingV1Schema, WorkspaceSyncSourceWriterTargetRoutingV1Schema,
-  type WorkspaceSyncSourceRoutingV1, type WorkspaceSyncSourceWriterTargetRoutingV1 } from '../rpc/socket.js';
+import { SOCKET_RPC_EVENTS, WorkspaceSyncSourceRoutingV1Schema, WorkspaceSyncSourceWriterTargetRoutingV1Schema, WorkspaceSyncSeedRoutingV1Schema,
+  type WorkspaceSyncSourceRoutingV1, type WorkspaceSyncSourceWriterTargetRoutingV1, type WorkspaceSyncSeedRoutingV1 } from '../rpc/socket.js';
 import { SESSION_PENDING_ENQUEUE_BY_MACHINE_EVENT_V1 } from '../sessions/messages/sessionPendingMachineAdmissionV1.js';
 import { SESSION_PENDING_EXECUTION_RUN_ENQUEUE_BY_MACHINE_EVENT_V2 } from '../sessions/messages/sessionPendingExecutionRunMachineAdmissionV2.js';
+import { RPC_METHODS } from '../rpc/methods.js';
 
 export type ExternalActionMachineRpcEventV1 = typeof SOCKET_RPC_EVENTS.CALL
   | typeof SESSION_PENDING_ENQUEUE_BY_MACHINE_EVENT_V1
   | typeof SESSION_PENDING_EXECUTION_RUN_ENQUEUE_BY_MACHINE_EVENT_V2;
-import { ExternalActionRequestEnvelopeSchema, ExternalActionRequestIdV1Schema, ExternalActionTargetV1Schema, type ExternalActionTargetV1, type ExternalActionRequestEnvelope } from './externalActionApi.js';
+import { ExternalActionRequestEnvelopeSchema, ExternalActionRequestIdV1Schema, ExternalActionTargetV1Schema,
+  type ExternalActionExecutionAuthorizationBindingV1, type ExternalActionTargetV1, type ExternalActionRequestEnvelope } from './externalActionApi.js';
 
 export function computeExternalActionRequestEnvelopeDigestV1(envelope: ExternalActionRequestEnvelope): string {
   return computeCanonicalDomainSeparatedDigest('happier-external-action-envelope-v1', [
     createCanonicalJsonSigningInput(ExternalActionRequestEnvelopeSchema.parse(envelope)),
   ]);
+}
+
+/** Exact envelope binding only; current principal and installation admission remain Home-owned. */
+export function isExternalActionAuthorizationBoundToEnvelope(binding: ExternalActionExecutionAuthorizationBindingV1,
+  input: Readonly<{ actionId: string; machineId: string; envelope: ExternalActionRequestEnvelope }>): boolean {
+  return binding.actionId === input.actionId && binding.machineId === input.machineId
+    && binding.requestId === input.envelope.requestId
+    && input.envelope.target?.kind === 'machine' && input.envelope.target.machineId === input.machineId
+    && encodeExternalActionResolvedTargetV1(binding.target) === encodeExternalActionResolvedTargetV1(input.envelope.target)
+    && binding.requestEnvelopeDigest === computeExternalActionRequestEnvelopeDigestV1(input.envelope);
 }
 
 /** Binds the real Session RPC carrier without reinterpreting its ciphertext as an Action envelope. */
@@ -82,6 +94,7 @@ type MachineRpcRequest = Readonly<{
   params?: unknown;
   workspaceSyncSourceRouting?: WorkspaceSyncSourceRoutingV1;
   workspaceSyncSourceWriterTargetRouting?: WorkspaceSyncSourceWriterTargetRoutingV1;
+  workspaceSyncSeedRouting?: WorkspaceSyncSeedRoutingV1;
 }>;
 
 function machineRpcRequestBytes(request: MachineRpcRequest): Uint8Array {
@@ -89,6 +102,11 @@ function machineRpcRequestBytes(request: MachineRpcRequest): Uint8Array {
   if (event !== SOCKET_RPC_EVENTS.CALL && event !== SESSION_PENDING_ENQUEUE_BY_MACHINE_EVENT_V1
     && event !== SESSION_PENDING_EXECUTION_RUN_ENQUEUE_BY_MACHINE_EVENT_V2) {
     throw new TypeError('Unsupported external Action Machine carrier');
+  }
+  if (request.workspaceSyncSeedRouting !== undefined && (event !== SOCKET_RPC_EVENTS.CALL
+    || request.effectActionId !== 'projects.open' || !request.method.endsWith(`:${RPC_METHODS.DAEMON_DIRECT_TRANSFER_EXPORT_PREPARE}`)
+    || request.workspaceSyncSourceRouting !== undefined || request.workspaceSyncSourceWriterTargetRouting !== undefined)) {
+    throw new TypeError('Seed routing requires the exact Project export preparation carrier');
   }
   return encodeCanonicalLengthDelimited([
     'happier-external-action-machine-rpc-v1', request.authorizationToken,
@@ -107,6 +125,10 @@ function machineRpcRequestBytes(request: MachineRpcRequest): Uint8Array {
     ...(request.workspaceSyncSourceRouting !== undefined ? [
       'workspace-sync-source-routing-v1',
       createCanonicalJsonSigningInput(WorkspaceSyncSourceRoutingV1Schema.parse(request.workspaceSyncSourceRouting)),
+    ] : []),
+    ...(request.workspaceSyncSeedRouting !== undefined ? [
+      'workspace-sync-seed-routing-v1',
+      createCanonicalJsonSigningInput(WorkspaceSyncSeedRoutingV1Schema.parse(request.workspaceSyncSeedRouting)),
     ] : []),
   ]);
 }
