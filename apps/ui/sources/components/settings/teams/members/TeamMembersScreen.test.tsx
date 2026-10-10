@@ -24,7 +24,7 @@ const virtualizedBoundary = vi.hoisted(() => ({
     mountLimit: Number.POSITIVE_INFINITY,
 }));
 const navigationState = vi.hoisted(() => ({
-    focusEffects: [] as Array<() => void | (() => void)>,
+    focused: true,
 }));
 
 vi.mock('@/components/ui/lists/virtualized', () => ({
@@ -42,22 +42,10 @@ vi.mock('@/components/ui/lists/virtualized', () => ({
 }));
 
 vi.mock('@react-navigation/native', async () => {
-    const ReactModule = await import('react');
     const { createReactNavigationNativeMock } = await import('@/dev/testkit/mocks/reactNavigation');
     return {
         ...createReactNavigationNativeMock(),
-        useFocusEffect: (effect: () => void | (() => void)) => {
-            ReactModule.useEffect(() => {
-                navigationState.focusEffects.push(effect);
-                const cleanup = effect();
-                return () => {
-                    navigationState.focusEffects = navigationState.focusEffects.filter(
-                        (registered) => registered !== effect,
-                    );
-                    if (typeof cleanup === 'function') cleanup();
-                };
-            }, [effect]);
-        },
+        useIsFocused: () => navigationState.focused,
     };
 });
 
@@ -80,7 +68,11 @@ const MEMBERS_LIST_PATH = '/v1/teams/members/list';
 
 async function renderMembers(serverId: string) {
     const { TeamMembersScreen } = await import('./TeamMembersScreen');
-    return renderScreen(<TeamMembersScreen serverId={serverId} teamId="team-1" />);
+    const { NavigationContext, useNavigation } = await import('@react-navigation/native');
+    function NativeRoute({ children }: React.PropsWithChildren) {
+        return <NavigationContext.Provider value={useNavigation()}>{children}</NavigationContext.Provider>;
+    }
+    return renderScreen(<TeamMembersScreen serverId={serverId} teamId="team-1" />, { wrapper: NativeRoute });
 }
 
 async function addHome(team: ReturnType<typeof teamSummaryFixture>): Promise<string> {
@@ -113,7 +105,7 @@ beforeEach(async () => {
     await harness.selectHomes([]);
     routerPush.mockReset();
     languageMock.current = 'en';
-    navigationState.focusEffects = [];
+    navigationState.focused = true;
     virtualizedBoundary.props = null;
     virtualizedBoundary.mountLimit = Number.POSITIVE_INFINITY;
 });
@@ -123,17 +115,34 @@ afterEach(() => {
 });
 
 describe('TeamMembersScreen', () => {
+    it.each([
+        { leave: true, status: 'active' },
+        { leave: false, status: 'active' },
+        { leave: true, status: 'suspended' },
+    ] as const)('offers leave only on the acting Account entry and preserves status: %j', async ({ leave, status }) => {
+        const serverId = await addHome(teamSummaryFixture({ viewerRole: 'member', capabilities: teamCapabilitiesFixture({ leave }) }));
+        harness.answer(serverId, MEMBERS_LIST_PATH, { body: {
+            items: [teamMembershipFixture({ status }), teamMembershipFixture({ id: 'other', accountId: 'account-other' })], nextCursor: null,
+        } });
+        const screen = await renderMembers(serverId);
+        await waitForTestId(screen, 'team-members-row:membership-1');
+        const ids = collectRenderedTestIds(screen.tree.toJSON());
+        expect(ids.includes('team-members-leave:membership-1')).toBe(leave);
+        expect(ids).not.toContain('team-members-leave:other');
+        expect(ids.includes('team-members-status:membership-1')).toBe(status === 'suspended');
+    });
+
     it('formats the joined date in the selected app language', async () => {
         languageMock.current = 'de';
         const joinedAt = Date.parse('2025-02-03T12:00:00Z');
-        const serverId = await addHome(teamSummaryFixture({ viewerRole: 'member' }));
+        const serverId = await addHome(teamSummaryFixture({ viewerRole: 'member', capabilities: teamCapabilitiesFixture({}) }));
         harness.answer(serverId, MEMBERS_LIST_PATH, {
             body: { items: [teamMembershipFixture({ joinedAt })], nextCursor: null },
         });
 
         const screen = await renderMembers(serverId);
         await waitForTestId(screen, 'team-members-row:membership-1');
-        expect(screen.findByTestId('team-members-row:membership-1')?.props.subtitle)
+        expect(screen.getTextContent())
             .toContain(new Intl.DateTimeFormat('de', { dateStyle: 'medium' }).format(joinedAt));
     });
     it('renders a large roster as stable chunks in the canonical virtualized list', async () => {
@@ -201,6 +210,36 @@ describe('TeamMembersScreen', () => {
         await waitForTestId(screen, 'team-members-add');
 
         screen.pressByTestId('team-members-add');
+        expect(routerPush).toHaveBeenCalledWith(
+            `/settings/teams/${encodeURIComponent(serverId)}/team-1/members/add`,
+        );
+    });
+
+    it('offers both ways to add someone when the viewer may also invite', async () => {
+        const serverId = await addHome(teamSummaryFixture({
+            capabilities: teamCapabilitiesFixture({ manageMembers: true, manageInvitations: true }),
+        }));
+        harness.answer(serverId, MEMBERS_LIST_PATH, {
+            body: { items: [teamMembershipFixture()], nextCursor: null },
+        });
+
+        const screen = await renderMembers(serverId);
+        await waitForTestId(screen, 'team-members-add');
+
+        // Adding is not a guess at the common path: the action opens the two ways to add,
+        // named by what the owner knows (DR-06, lab `tsMembers-M`).
+        const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
+        const menu = () => screen.findAllByType(DropdownMenu as never)
+            .find((node) => node.props?.testID === 'team-members-add-menu') as
+            | { props: { open: boolean; items: ReadonlyArray<{ id: string }>; onSelect: (id: string) => void } }
+            | undefined;
+        // The menu boundary is driven through its props (as UsageAnalyticsDashboard.test does):
+        // opening the real Popover needs a DOM window this native renderer does not have.
+        expect(menu()?.props.open).toBe(false);
+        expect(menu()?.props.items.map((item) => item.id)).toEqual(['existing', 'invite']);
+        expect(routerPush).not.toHaveBeenCalled();
+        // Someone already on this Home is added on the existing add page.
+        React.act(() => menu()!.props.onSelect('existing'));
         expect(routerPush).toHaveBeenCalledWith(
             `/settings/teams/${encodeURIComponent(serverId)}/team-1/members/add`,
         );
@@ -297,7 +336,6 @@ describe('TeamMembersScreen', () => {
 
         const screen = await renderMembers(serverId);
         await waitForTestId(screen, 'team-members-row:membership-1');
-        expect(navigationState.focusEffects).toHaveLength(1);
 
         // The add route returns the canonical membership, but this retained
         // roster must re-read its own canonical page before it is shown again;
@@ -316,7 +354,11 @@ describe('TeamMembersScreen', () => {
                 nextCursor: null,
             },
         });
-        navigationState.focusEffects[0]?.();
+        const { TeamMembersScreen } = await import('./TeamMembersScreen');
+        navigationState.focused = false;
+        await screen.update(<TeamMembersScreen serverId={serverId} teamId="team-1" />);
+        navigationState.focused = true;
+        await screen.update(<TeamMembersScreen serverId={serverId} teamId="team-1" />);
 
         await waitForTestId(screen, 'team-members-row:membership-new');
         expect(harness.requestsFor(MEMBERS_LIST_PATH)).toHaveLength(2);
@@ -325,7 +367,8 @@ describe('TeamMembersScreen', () => {
     it('explains a viewer the Home would not answer, and reads no roster', async () => {
         const serverId = await addHome(teamSummaryFixture({
             viewerRole: null,
-            capabilities: teamCapabilitiesFixture({ viewTeam: false }),
+            // A non-member Home administrator: the Team is visible, its roster and Groups are not (DR-20).
+            capabilities: teamCapabilitiesFixture({ viewRoster: false, manageSettings: true }),
         }));
 
         const screen = await renderMembers(serverId);

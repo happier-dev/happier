@@ -9,6 +9,7 @@ import {
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { Item } from '@/components/ui/lists/Item';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SectionButtonRow } from '@/components/ui/lists/SectionButtonRow';
 import { randomUUID } from '@/platform/randomUUID';
@@ -124,13 +125,11 @@ const CreateGroupForm = React.memo(function CreateGroupForm(props: Readonly<{
     if (!context.team.capabilities.manageGroups) {
         return (
             <ItemGroup>
-                <Item
+                <SurfaceStateCard
                     testID="team-group-create-forbidden"
-                    title={t('homeGovernance.forbiddenTitle')}
-                    subtitle={t('teams.errors.forbidden')}
-                    subtitleLines={0}
-                    mode="info"
-                    showChevron={false}
+                    kind="denied"
+                    size="line"
+                    title={t('teams.denied.title')}
                 />
             </ItemGroup>
         );

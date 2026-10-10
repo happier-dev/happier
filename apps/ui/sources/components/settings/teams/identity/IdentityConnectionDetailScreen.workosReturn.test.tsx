@@ -14,7 +14,16 @@ import { renderScreen, standardCleanup } from '@/dev/testkit';
  */
 const executeMock = vi.hoisted(() => vi.fn());
 const appStateChangeMock = vi.hoisted(() => ({ current: null as null | ((state: string) => void) }));
-const focusEffectsMock = vi.hoisted(() => ({ current: [] as Array<() => void | (() => void)> }));
+// Screen focus is the React Navigation boundary the destination focus owner
+// reads; a route regaining focus is focus going false then true again.
+const screenFocusMock = vi.hoisted(() => ({
+    focused: true,
+    listeners: new Set<() => void>(),
+    set(focused: boolean) {
+        this.focused = focused;
+        for (const listener of this.listeners) listener();
+    },
+}));
 const openExternalUrlMock = vi.hoisted(() => vi.fn());
 
 vi.mock('expo-router', async () => {
@@ -23,18 +32,18 @@ vi.mock('expo-router', async () => {
 });
 vi.mock('@react-navigation/native', async () => {
     const ReactModule = await import('react');
+    const { createReactNavigationNativeMock } = await import('@/dev/testkit/mocks/reactNavigation');
     return {
-        useIsFocused: () => true,
-        useFocusEffect: (effect: () => void | (() => void)) => {
-            ReactModule.useEffect(() => {
-                focusEffectsMock.current.push(effect);
-                const cleanup = effect();
-                return () => {
-                    focusEffectsMock.current = focusEffectsMock.current.filter((registered) => registered !== effect);
-                    if (typeof cleanup === 'function') cleanup();
-                };
-            }, [effect]);
-        },
+        ...createReactNavigationNativeMock(),
+        // A rendered screen: the destination owner asks this screen whether it is focused.
+        NavigationContext: ReactModule.createContext<Readonly<Record<string, unknown>> | undefined>({}),
+        useIsFocused: () => ReactModule.useSyncExternalStore(
+            (listener) => {
+                screenFocusMock.listeners.add(listener);
+                return () => screenFocusMock.listeners.delete(listener);
+            },
+            () => screenFocusMock.focused,
+        ),
     };
 });
 vi.mock('react-native', async (importOriginal) => {
@@ -66,7 +75,9 @@ vi.mock('@/modal', async () => {
         spies: { confirm: vi.fn(async () => true) },
     }).module;
 });
-vi.mock('./identityAdministrationClient', () => ({
+// Only the Home transport is replaced; the real read/abort wrapper the projection hook uses stays.
+vi.mock('./identityAdministrationClient', async (importOriginal) => ({
+    ...await importOriginal<typeof import('./identityAdministrationClient')>(),
     createIdentityAdministrationClient: () => ({
         execute: executeMock,
         executeExternalGroupBinding: vi.fn(async () => ({ ok: true, value: { items: [], nextCursor: null } })),
@@ -148,7 +159,8 @@ beforeEach(() => {
     openExternalUrlMock.mockReset();
     openExternalUrlMock.mockResolvedValue(true);
     appStateChangeMock.current = null;
-    focusEffectsMock.current = [];
+    screenFocusMock.focused = true;
+    screenFocusMock.listeners.clear();
 });
 
 describe('IdentityConnectionDetailScreen WorkOS portal return', () => {
@@ -178,7 +190,10 @@ describe('IdentityConnectionDetailScreen WorkOS portal return', () => {
 
         current = workosConnection({ revision: 3 });
         await act(async () => {
-            for (const effect of [...focusEffectsMock.current]) effect();
+            screenFocusMock.set(false);
+        });
+        await act(async () => {
+            screenFocusMock.set(true);
         });
 
         await vi.waitFor(() => expect(reconcileCalls()).toHaveLength(1));
@@ -198,7 +213,10 @@ describe('IdentityConnectionDetailScreen WorkOS portal return', () => {
             'teams.identity.connections.list', expect.anything(), expect.anything(),
         ));
         await act(async () => {
-            for (const effect of [...focusEffectsMock.current]) effect();
+            screenFocusMock.set(false);
+        });
+        await act(async () => {
+            screenFocusMock.set(true);
         });
 
         await vi.waitFor(() => expect(

@@ -7,6 +7,17 @@ import { createHappierCollectionVisitMemory, resolveHappierCollectionInitialKey 
 
 const TEAMS_ROOT_SEGMENTS = ['settings', 'teams'] as const;
 
+/** The addressed Team may be readable to a Home administrator without membership.
+ * Keep that observed identity alongside the member directory, not a false empty
+ * list. This does not turn a member page sequence into an administered directory.
+ */
+export function resolveTeamsCollectionRows(rows: readonly TeamsDirectoryRow[], selected: TeamsDirectoryRow | null) {
+    if (!selected || selected.team.archivedAt !== null || rows.some((row) => teamAddressKey(row.address) === teamAddressKey(selected.address))) {
+        return { rows, supplemented: false };
+    }
+    return { rows: [...rows, selected], supplemented: true };
+}
+
 /**
  * The Team a Teams-collection pathname is about (`/settings/teams/<serverId>/<teamId>/…`), so the
  * rail can show it selected on every destination of that Team. `null` on the index and `new`.
@@ -19,6 +30,26 @@ export function resolveSelectedTeamAddress(pathname: string): TeamAddress | null
     if (!serverId || !teamId || serverId === 'new') return null;
     try {
         return { serverId: decodeURIComponent(serverId), teamId: decodeURIComponent(teamId) };
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * The member a Teams-collection pathname is about (`…/<teamId>/members/<membershipId>`), so the
+ * Members rail can stand beside the open person. `null` on the roster itself, on the add page and
+ * everywhere else in the Team.
+ */
+export function resolveSelectedTeamMember(
+    pathname: string,
+): Readonly<{ address: TeamAddress; membershipId: string }> | null {
+    const address = resolveSelectedTeamAddress(pathname);
+    if (!address) return null;
+    const segments = pathname.split('/').filter((segment) => segment.length > 0);
+    const membershipId = segments[5];
+    if (segments[4] !== 'members' || !membershipId || membershipId === 'add' || segments.length !== 6) return null;
+    try {
+        return { address, membershipId: decodeURIComponent(membershipId) };
     } catch {
         return null;
     }

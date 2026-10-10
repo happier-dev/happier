@@ -80,7 +80,7 @@ export const TeamSection = React.memo(function TeamSection(props: Readonly<{
      * the second argument of `children`, so the banners always sit under the page's identity.
      */
     childRendersHeader?: boolean;
-    /** The page itself offers restore (Settings), so the archived notice does not lead elsewhere. */
+    /** The page itself says the Team is archived and offers restore (Settings), so no second notice is drawn here. */
     restoresHere?: boolean;
     /**
      * `embedded`: the section lives inside another surface (the Home console's Invite people dialog),
@@ -88,6 +88,13 @@ export const TeamSection = React.memo(function TeamSection(props: Readonly<{
      * banners sit above the child, and the screen title is left alone.
      */
     presentation?: 'item-list' | 'virtualized-list' | 'embedded';
+    /**
+     * The page's known sections, holding their rows as skeletons while the Team is read, so the
+     * page keeps its shape when the Team arrives. Without it the wait is one state under the header.
+     */
+    renderLoading?: () => React.ReactNode;
+    /** Quiet actions at the head of a sub-page whose content has no section title to carry them. */
+    renderHeaderActions?: (context: TeamSectionContext) => React.ReactNode;
     children: (context: TeamSectionContext, header?: React.ReactNode) => React.ReactNode;
 }>) {
     const navigation = useNavigation();
@@ -125,11 +132,12 @@ export const TeamSection = React.memo(function TeamSection(props: Readonly<{
         navigation.setOptions({ title: resolvedTitle });
     }, [embedded, navigation, resolvedTitle]);
 
-    const plainHeader = (
+    const renderPlainHeader = (actions?: React.ReactNode) => (
         <PageHeader
             testID="team-page-header"
             title={resolvedTitle}
             description={props.description}
+            actions={actions}
             alwaysShowTitle={headsItself}
             meta={[
                 ...(readyTeamName && readyTeamName !== resolvedTitle ? [{ key: 'team', text: readyTeamName }] : []),
@@ -137,6 +145,7 @@ export const TeamSection = React.memo(function TeamSection(props: Readonly<{
             ]}
         />
     );
+    const plainHeader = renderPlainHeader();
 
     // A page with nothing to show but its condition: the header, then the condition.
     const conditionPage = (condition: React.ReactNode) => embedded ? condition : (
@@ -147,7 +156,7 @@ export const TeamSection = React.memo(function TeamSection(props: Readonly<{
     );
 
     if (binding.kind === 'resolving') {
-        return conditionPage(<TeamStateCard kind="loading" title={t('teams.loading')} testID="team-resolving" />);
+        return conditionPage(props.renderLoading?.() ?? <TeamStateCard kind="loading" title={t('teams.loading')} testID="team-resolving" />);
     }
 
     if (binding.kind === 'invalid_address' || binding.kind === 'unknown_home') {
@@ -160,8 +169,7 @@ export const TeamSection = React.memo(function TeamSection(props: Readonly<{
         return conditionPage(
             <TeamStateCard
                 kind="unavailable"
-                title={t('homeGovernance.forbiddenTitle')}
-                body={t('homeGovernance.forbiddenBody')}
+                title={t('homeGovernance.signedOutTitle')}
                 testID="team-signed-out"
             />,
         );
@@ -176,7 +184,7 @@ export const TeamSection = React.memo(function TeamSection(props: Readonly<{
     const { state, homeName, address, refresh } = binding;
 
     if (state.kind === 'unobserved' || state.kind === 'loading') {
-        return conditionPage(<TeamStateCard kind="loading" title={t('teams.loading')} testID="team-loading" />);
+        return conditionPage(props.renderLoading?.() ?? <TeamStateCard kind="loading" title={t('teams.loading')} testID="team-loading" />);
     }
 
     if (state.kind === 'unavailable' && state.error.code === 'team_authentication_required') {
@@ -188,7 +196,7 @@ export const TeamSection = React.memo(function TeamSection(props: Readonly<{
         return conditionPage(
             <TeamStateCard
                 kind="warning"
-                title={presentation?.title ?? t('homeGovernance.forbiddenTitle')}
+                title={presentation?.title ?? t('teams.denied.title')}
                 body={presentation?.body}
                 action={{
                     label: t('teams.entry.signInToTeam'),
@@ -211,7 +219,7 @@ export const TeamSection = React.memo(function TeamSection(props: Readonly<{
         return conditionPage(
             <TeamStateCard
                 kind={denied ? 'unavailable' : 'error'}
-                title={denied ? t('homeGovernance.forbiddenTitle') : t('teams.unavailable.title')}
+                title={denied ? t('teams.denied.title') : t('teams.unavailable.title')}
                 body={denied
                     ? t('teams.errors.forbidden')
                     : unsupported
@@ -240,12 +248,11 @@ export const TeamSection = React.memo(function TeamSection(props: Readonly<{
 
     // Restore lives in the Team's Settings; the archived notice leads there, except on Settings itself.
     const canRestore = state.team.capabilities.restoreTeam
-        && state.mutationsAvailable
-        && props.restoresHere !== true;
+        && state.mutationsAvailable;
 
     const header = (
         <>
-            {embedded || props.childRendersHeader ? null : props.renderHeader ? props.renderHeader(context) : plainHeader}
+            {embedded || props.childRendersHeader ? null : props.renderHeader ? props.renderHeader(context) : renderPlainHeader(props.renderHeaderActions?.(context))}
             {approvalId ? (
                 <AttentionBanner
                     testID="team-approval"
@@ -273,7 +280,7 @@ export const TeamSection = React.memo(function TeamSection(props: Readonly<{
                 />
             ) : null}
 
-            {state.archived ? (
+            {state.archived && props.restoresHere !== true ? (
                 <AttentionBanner
                     testID="team-archived"
                     tone="neutral"

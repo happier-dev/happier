@@ -55,11 +55,11 @@ const routerBack = vi.hoisted(() => vi.fn());
 const routeParams = vi.hoisted(() => ({ current: {} as Record<string, string> }));
 const focusEffects = vi.hoisted(() => new Set<() => void | (() => void)>());
 
-vi.mock('@react-navigation/native', async () => {
-    const { createReactNavigationNativeMock } = await import('@/dev/testkit/mocks/reactNavigation');
+vi.mock('@/components/appShell/workspace/destinationRoute', async (importOriginal) => {
+    const original = await importOriginal<typeof import('@/components/appShell/workspace/destinationRoute')>();
     const ReactModule = await import('react');
     return {
-        ...createReactNavigationNativeMock(),
+        ...original,
         useFocusEffect: (effect: () => void | (() => void)) => {
             ReactModule.useEffect(() => {
                 focusEffects.add(effect);
@@ -573,8 +573,13 @@ describe('live-only invitation custody', () => {
         harness.answer(serverId, INVITATIONS_LIST_PATH, {
             body: { items: [], nextCursor: null, emailDelivery: 'unavailable', linkDelivery: 'available' },
         });
-        const { TeamInvitationCreateScreen } = await import('./invitations/TeamInvitationCreateScreen');
-        const screen = await renderScreen(<TeamInvitationCreateScreen serverId={serverId} teamId="team-1" />);
+        const { TeamInvitationForm } = await import('./invitations/TeamInvitationCreateScreen');
+        const { TeamSection } = await import('./TeamSection');
+        const screen = await renderScreen(
+            <TeamSection serverId={serverId} teamId="team-1">
+                {(context) => <TeamInvitationForm context={context} />}
+            </TeamSection>,
+        );
         await waitForTestId(screen, 'team-invite-submit');
 
         // The row deliberately starts a void-owned async submission. Keeping an
@@ -605,8 +610,13 @@ describe('live-only invitation custody', () => {
         harness.answer(serverId, INVITATIONS_LIST_PATH, {
             body: { items: [], nextCursor: null, emailDelivery: 'unavailable', linkDelivery: 'available' },
         });
-        const { TeamInvitationCreateScreen } = await import('./invitations/TeamInvitationCreateScreen');
-        const screen = await renderScreen(<TeamInvitationCreateScreen serverId={serverId} teamId="team-1" />);
+        const { TeamInvitationForm } = await import('./invitations/TeamInvitationCreateScreen');
+        const { TeamSection } = await import('./TeamSection');
+        const screen = await renderScreen(
+            <TeamSection serverId={serverId} teamId="team-1">
+                {(context) => <TeamInvitationForm context={context} />}
+            </TeamSection>,
+        );
         await waitForTestId(screen, 'team-invite-submit');
         // The pending invocation is the custody under test. The row owns it as
         // a void async action, so do not hold an async React `act` open across

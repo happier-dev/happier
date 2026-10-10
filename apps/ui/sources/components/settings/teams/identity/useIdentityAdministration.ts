@@ -3,8 +3,9 @@ import { TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes
 
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import type { ActionApprovalRegistration } from '@/components/approvals/actionApprovalContinuation';
-import { serverAccountScopedTeamKey, type TeamAddress } from '@/sync/domains/teams/teamAddress';
-import { subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
+import { serverAccountScopedTeamKey } from '@/sync/domains/teams/teamAddress';
+import { isHomeAdministrationAccountChange, subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
+import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
 
 import { createIdentityAdministrationClient, executeIdentityAdministrationRead, type TeamIdentityActionOutput } from './identityAdministrationClient';
 import {
@@ -33,11 +34,12 @@ type BoundIdentityAdministrationState = Readonly<{
  */
 export function useIdentityAdministration(
     scope: ServerAccountScope,
-    teamId: string,
+    teamId: string | null,
     onApprovalPending?: (registration: ActionApprovalRegistration) => void,
 ): IdentityAdministrationBinding {
-    const address: TeamAddress = { serverId: scope.serverId, teamId };
-    const bindingKey = serverAccountScopedTeamKey(scope, address);
+    const bindingKey = teamId === null
+        ? `${serverAccountScopeKeySuffix(scope)}:home-identity`
+        : serverAccountScopedTeamKey(scope, { serverId: scope.serverId, teamId });
     const [boundState, setBoundState] = React.useState<BoundIdentityAdministrationState>(() => ({
         bindingKey,
         value: INITIAL_IDENTITY_ADMINISTRATION_STATE,
@@ -76,8 +78,8 @@ export function useIdentityAdministration(
                                 ok: true,
                                 items: result.value.items,
                                 eligibleProviders: result.value.eligibleProviders,
-                                admissionModeApplicability: result.value.admissionModeApplicability,
-                                memberSignInUrl: result.value.memberSignInUrl,
+                                admissionModeApplicability: 'admissionModeApplicability' in result.value ? result.value.admissionModeApplicability : null,
+                                memberSignInUrl: 'memberSignInUrl' in result.value ? result.value.memberSignInUrl : null,
                             }
                             : { ok: false, failure: result.failure },
                     ),
@@ -98,10 +100,10 @@ export function useIdentityAdministration(
 
     React.useEffect(() => subscribeHomeAccountChange((event) => {
         if (event.serverId !== scope.serverId) return;
-        if (event.entityIds !== undefined
-            && !event.entityIds.includes(TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1)) return;
+        if (teamId === null ? !isHomeAdministrationAccountChange(event)
+            : event.entityIds !== undefined && !event.entityIds.includes(TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1)) return;
         refresh();
-    }), [refresh, scope.serverId]);
+    }), [refresh, scope.serverId, teamId]);
 
     return React.useMemo(() => ({ state, refresh }), [state, refresh]);
 }

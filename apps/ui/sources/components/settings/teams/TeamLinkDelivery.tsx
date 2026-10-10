@@ -4,10 +4,12 @@ import { StyleSheet } from 'react-native-unistyles';
 
 import { QRCode } from '@/components/qr';
 import { tryCreateQRMatrix } from '@/components/qr/qrMatrix';
+import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { CopiedPill } from '@/components/ui/copy/CopiedPill';
 import { useTemporaryCopyFeedback } from '@/components/ui/copy/useTemporaryCopyFeedback';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { SectionButtonRow } from '@/components/ui/lists/SectionButtonRow';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import { Modal } from '@/modal';
 import { t } from '@/text';
@@ -83,7 +85,7 @@ export const TeamLinkDelivery = React.memo(function TeamLinkDelivery(props: Read
      * keeps the QR visible immediately.
      */
     qrActionLabel?: string;
-    footer?: string;
+    description?: string;
     /**
      * An in-app preview of where the link lands. Only a link the app itself can
      * route offers one; an invitation bearer is handed over, not opened by the
@@ -113,61 +115,89 @@ export const TeamLinkDelivery = React.memo(function TeamLinkDelivery(props: Read
         }
     }, [url]);
 
+    // The link itself, then its handover in one place (lab `tsInvites-K`): the QR beside the
+    // buttons that copy and share it. What the link authorizes, and that it is shown once, is the
+    // section's description.
     return (
-        <ItemGroup title={props.title} description={props.footer}>
-            {props.open ? (
-                <Item
-                    testID={`${props.testIDPrefix}-open`}
-                    title={props.open.label}
-                    onPress={props.open.onPress}
-                    showChevron
-                />
-            ) : null}
+        <ItemGroup title={props.title} description={props.description}>
             <Item
-                testID={`${props.testIDPrefix}-copy-link`}
-                title={props.copyLabel}
-                rightElement={(
-                    <CopiedPill
-                        visible={copyFeedback.isCopied()}
-                        testID={`${props.testIDPrefix}-copy-link-copied`}
-                    />
-                )}
-                onPress={copy}
+                testID={`${props.testIDPrefix}-link`}
+                title={url}
+                titleLines={1}
+                mode="info"
                 showChevron={false}
             />
-            {sharingAvailable ? (
-                <Item
-                    testID={`${props.testIDPrefix}-share-link`}
-                    title={props.shareLabel}
-                    onPress={share}
-                    showChevron={false}
-                />
-            ) : null}
-            {props.qrActionLabel ? (
-                <Item
-                    testID={`${props.testIDPrefix}-show-qr`}
-                    title={props.qrActionLabel}
-                    accessibilityExpanded={qrRevealed}
-                    onPress={() => setQrRevealed((visible) => !visible)}
-                    showChevron={false}
-                />
-            ) : null}
-            {qrRevealed ? (
-                <SectionContentRow>
-                    <TeamLinkQr
-                        url={url}
-                        accessibilityLabel={props.qrAccessibilityLabel}
-                        testID={`${props.testIDPrefix}-qr`}
-                    />
-                </SectionContentRow>
-            ) : null}
+            <SectionContentRow>
+                <View style={styles.handover}>
+                    {qrRevealed ? (
+                        <TeamLinkQr
+                            url={url}
+                            accessibilityLabel={props.qrAccessibilityLabel}
+                            testID={`${props.testIDPrefix}-qr`}
+                        />
+                    ) : null}
+                    <View style={styles.actions}>
+                        <SectionButtonRow>
+                            <RoundButton
+                                testID={`${props.testIDPrefix}-copy-link`}
+                                size="small"
+                                display="secondary"
+                                title={props.copyLabel}
+                                onPress={copy}
+                            />
+                            {sharingAvailable ? (
+                                <RoundButton
+                                    testID={`${props.testIDPrefix}-share-link`}
+                                    size="small"
+                                    display="inverted"
+                                    title={props.shareLabel}
+                                    onPress={share}
+                                />
+                            ) : null}
+                            {props.qrActionLabel ? (
+                                <RoundButton
+                                    testID={`${props.testIDPrefix}-show-qr`}
+                                    size="small"
+                                    display="inverted"
+                                    title={props.qrActionLabel}
+                                    expanded={qrRevealed}
+                                    onPress={() => setQrRevealed((visible) => !visible)}
+                                />
+                            ) : null}
+                            {props.open ? (
+                                <RoundButton
+                                    testID={`${props.testIDPrefix}-open`}
+                                    size="small"
+                                    display="inverted"
+                                    title={props.open.label}
+                                    onPress={props.open.onPress}
+                                />
+                            ) : null}
+                            <CopiedPill
+                                visible={copyFeedback.isCopied()}
+                                testID={`${props.testIDPrefix}-copy-link-copied`}
+                            />
+                        </SectionButtonRow>
+                    </View>
+                </View>
+            </SectionContentRow>
         </ItemGroup>
     );
 });
 
 const styles = StyleSheet.create(() => ({
+    // The QR and its buttons sit side by side and wrap beneath each other on a narrow page.
+    handover: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        alignItems: 'center',
+        gap: 16,
+    },
+    actions: {
+        flexGrow: 1,
+        flexShrink: 1,
+    },
     qr: {
         alignSelf: 'center',
-        paddingVertical: 12,
     },
 }));

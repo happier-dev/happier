@@ -280,7 +280,8 @@ describe('TeamGroupsScreen', () => {
         harness.answer(serverId, TEAM_GET_PATH, {
             body: teamSummaryFixture({
                 viewerRole: null,
-                capabilities: teamCapabilitiesFixture({ viewTeam: false }),
+                // A non-member Home administrator: the Team is visible, its roster and Groups are not (DR-20).
+            capabilities: teamCapabilitiesFixture({ viewRoster: false, manageSettings: true }),
             }),
         });
 

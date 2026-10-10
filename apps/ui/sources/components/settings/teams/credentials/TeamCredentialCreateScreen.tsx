@@ -259,7 +259,7 @@ const CredentialCreator = React.memo(function CredentialCreator(props: Readonly<
     // unreachable behind this return, so the screen used to spin forever.
     if (projection.viewer === null && projection.error !== null) return <ItemGroup description={credentialFailureMessage(projection.error)}><Item testID="team-credential-create-retry" title={t('teams.unavailable.retry')} onPress={() => void projection.retry()} showChevron={false} /></ItemGroup>;
     if (projection.viewer === null) return <ItemGroup><Item testID="team-credential-create-loading" title={t('teams.credentials.create.title')} loading showChevron={false} /></ItemGroup>;
-    if (!mayOffer || (!context.canMutate && !context.approvalPending)) return <ItemGroup description={t('teams.credentials.create.notAllowed')}><Item testID="team-credential-create-forbidden" title={t('homeGovernance.forbiddenTitle')} showChevron={false} /></ItemGroup>;
+    if (!mayOffer || (!context.canMutate && !context.approvalPending)) return <ItemGroup description={t('teams.credentials.create.notAllowed')}><Item testID="team-credential-create-forbidden" title={t('teams.denied.title')} showChevron={false} /></ItemGroup>;
     const directExportSupported = selected?.candidate.directExportSupport !== 'unsupported';
     const modes = offeredDeliveryModes({
         disclosureCeiling: directExportSupported ? ceiling : 'brokered_only',

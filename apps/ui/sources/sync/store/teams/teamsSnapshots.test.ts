@@ -94,6 +94,7 @@ function team(id: string, overrides: Partial<TeamSummaryV1> = {}): TeamSummaryV1
         admission: {
             historyChoice: { admin: 'choice', member: 'choice', guest: 'hidden' },
         },
+        counts: null,
         ...overrides,
     };
 }

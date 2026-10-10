@@ -244,7 +244,7 @@ const CredentialEditor = React.memo(function CredentialEditor(props: Readonly<{
             <ItemGroup description={t('teams.credentials.forbidden')}>
                 <Item
                     testID="team-credential-edit-forbidden"
-                    title={t('homeGovernance.forbiddenTitle')}
+                    title={t('teams.denied.title')}
                     showChevron={false}
                 />
             </ItemGroup>

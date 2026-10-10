@@ -79,7 +79,7 @@ describe('TeamCreateScreen creation policy link', () => {
         await screen.pressByTestIdAsync('teams-create-open-creation-policy');
 
         expect(routerPush).toHaveBeenCalledWith(
-            `/settings/home/${encodeURIComponent(home)}/policies?setting=homeAdministration.teamsPolicy.teamCreationPolicy`,
+            `/settings/home/${encodeURIComponent(home)}/teams?setting=homeAdministration.teamsPolicy.teamCreationPolicy`,
         );
     });
 

@@ -19,6 +19,47 @@ function fail(): TeamPageOutcome<string> {
 }
 
 describe('useTeamPagedList', () => {
+    it.each([
+        { failure: UNREACHABLE, rows: ['a', 'b'], hasMore: true },
+        { failure: FORBIDDEN, rows: [], hasMore: false },
+    ])('handles $failure.kind during continuation revalidation without publishing a partial refresh', async ({ failure, rows, hasMore }) => {
+        const loadPage = vi.fn()
+            .mockResolvedValueOnce(ok(['a'], 'c1'))
+            .mockResolvedValueOnce(ok(['b'], 'c2'))
+            .mockResolvedValueOnce(ok(['changed-a'], 'fresh-c1'))
+            .mockResolvedValueOnce({ kind: 'failed', failure });
+        const rendered = await renderHook(() => useTeamPagedList<string>({ key: 'k', enabled: true, loadPage }));
+        await vi.waitFor(() => expect(rendered.getCurrent().status).toBe('ready'));
+        await rendered.getCurrent().loadMore();
+        await vi.waitFor(() => expect(rendered.getCurrent().rows).toEqual(['a', 'b']));
+        await rendered.getCurrent().reload();
+        await vi.waitFor(() => expect(rendered.getCurrent().status).toBe('error'));
+        expect(rendered.getCurrent().rows).toEqual(rows);
+        expect(rendered.getCurrent().hasMore).toBe(hasMore);
+        expect(rendered.getCurrent().error).toEqual(failure);
+        await rendered.unmount();
+    });
+
+    it('revalidates loaded continuation rows on AccountChange and withdraws removed rows', async () => {
+        const loadPage = vi.fn()
+            .mockResolvedValueOnce(ok(['a', 'revoked'], 'c1'))
+            .mockResolvedValueOnce(ok(['c', 'd'], 'c2'))
+            .mockResolvedValueOnce(ok(['a', 'c'], 'fresh-c1'))
+            .mockResolvedValueOnce(ok(['d', 'e'], 'fresh-c2'));
+        const rendered = await renderHook(() => useTeamPagedList<string>({
+            key: 'k', enabled: true, loadPage,
+            accountChange: { serverId: 'home-a', entityId: 'teams' },
+        }));
+        await vi.waitFor(() => expect(rendered.getCurrent().status).toBe('ready'));
+        await rendered.getCurrent().loadMore();
+        await vi.waitFor(() => expect(rendered.getCurrent().rows).toEqual(['a', 'revoked', 'c', 'd']));
+        publishHomeAccountChange('home-a', ['teams']);
+        await vi.waitFor(() => expect(rendered.getCurrent().rows).toEqual(['a', 'c', 'd', 'e']));
+        expect(rendered.getCurrent().hasMore).toBe(true);
+        expect(loadPage.mock.calls.map(([cursor]) => cursor)).toEqual([null, 'c1', null, 'fresh-c1']);
+        await rendered.unmount();
+    });
+
     it('accumulates pages in the Home order and stops when no cursor remains', async () => {
         const loadPage = vi.fn()
             .mockResolvedValueOnce(ok(['a', 'b'], 'c1'))

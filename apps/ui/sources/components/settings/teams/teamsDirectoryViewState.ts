@@ -3,6 +3,8 @@ import type { TeamSummaryV1 } from '@happier-dev/protocol/teams';
 import type { TeamsHomeAdmissionEntry } from '@/sync/domains/teams/teamsSettingsAdmission';
 import type { TeamAddress } from '@/sync/domains/teams/teamAddress';
 import type { TeamsDirectorySnapshot } from '@/sync/store/teams/teamsSnapshots';
+import type { ScopedSnapshotError } from '@/sync/domains/scope/scopedSnapshotFacts';
+import { t } from '@/text';
 
 /**
  * What the Teams directory should render for the exact Home set right now.
@@ -58,16 +60,25 @@ const EMPTY_UNAVAILABLE: readonly TeamsDirectoryUnavailableHome[] = Object.freez
  * `unsupported` are the Home's settled answers and are not offered a retry that
  * would ask the same question again.
  */
-function unavailableReason(
-    snapshot: TeamsDirectorySnapshot | undefined,
+export function teamsUnavailableReason(
+    error: ScopedSnapshotError | null | undefined,
 ): Readonly<{ reason: TeamsDirectoryUnavailableHome['reason']; retryable: boolean }> {
-    const error = snapshot?.error ?? null;
     if (!error) return { reason: 'loading', retryable: false };
     if (error.kind === 'forbidden' || error.kind === 'unauthorized') {
         return { reason: 'denied', retryable: false };
     }
     if (error.kind === 'unsupported') return { reason: 'unsupported', retryable: false };
     return { reason: 'offline', retryable: error.retryable };
+}
+
+export function teamsUnavailableHomeReason(home: Pick<TeamsDirectoryUnavailableHome, 'reason'>): string {
+    switch (home.reason) {
+        case 'loading': return t('teams.directory.loading');
+        case 'denied': return t('teams.errors.forbidden');
+        case 'unsupported': return t('teams.unavailable.updateRequired');
+        case 'offline': return t('teams.unavailable.offline');
+        case 'credential_unreadable': return t('homeGovernance.credentialUnreadableTitle');
+    }
 }
 
 export function resolveTeamsDirectoryViewState(
@@ -119,7 +130,7 @@ export function resolveTeamsDirectoryViewState(
         const teams = snapshot?.data ?? null;
 
         if (!teams) {
-            const { reason, retryable } = unavailableReason(snapshot);
+            const { reason, retryable } = teamsUnavailableReason(snapshot?.error);
             unavailableHomes.push(Object.freeze({ serverId: home.serverId, homeName, reason, retryable }));
             continue;
         }

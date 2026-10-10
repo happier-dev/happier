@@ -76,6 +76,7 @@ function team(id: string, name = `Team ${id}`): TeamSummaryV1 {
         admission: {
             historyChoice: { admin: 'choice', member: 'choice', guest: 'hidden' },
         },
+        counts: null,
     };
 }
 

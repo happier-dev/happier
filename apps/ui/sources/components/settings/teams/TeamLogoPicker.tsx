@@ -2,12 +2,12 @@ import * as React from 'react';
 import { File } from 'expo-file-system';
 import type { TeamLogoSourceV1, TeamSummaryV1 } from '@happier-dev/protocol/teams';
 
-import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { Avatar } from '@/components/ui/avatar/Avatar';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Item } from '@/components/ui/lists/Item';
+import { SectionButtonRow } from '@/components/ui/lists/SectionButtonRow';
 import {
     TEAM_LOGO_ACCEPTED_MIME_TYPES,
     createTeamLogoSource,
@@ -130,7 +130,7 @@ export const TeamLogoPicker = React.memo(function TeamLogoPicker(props: Readonly
     const thumbhash = previewSource ? null : props.currentLogo?.thumbhash ?? null;
 
     const actions = candidate ? (
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+        <SectionButtonRow>
             <RoundButton
                 testID={`${props.testIDPrefix}-logo-cancel`}
                 size="small"
@@ -148,9 +148,9 @@ export const TeamLogoPicker = React.memo(function TeamLogoPicker(props: Readonly
                 disabled={props.disabled || busy}
                 onPress={() => void use()}
             />
-        </View>
+        </SectionButtonRow>
     ) : (
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+        <SectionButtonRow>
             {props.remove && props.currentLogo ? (
                 <RoundButton
                     testID={`${props.testIDPrefix}-logo-remove`}
@@ -170,7 +170,7 @@ export const TeamLogoPicker = React.memo(function TeamLogoPicker(props: Readonly
                 disabled={props.disabled || busy}
                 onPress={() => void pick()}
             />
-        </View>
+        </SectionButtonRow>
     );
     const shownError = error ?? props.remove?.error ?? null;
 

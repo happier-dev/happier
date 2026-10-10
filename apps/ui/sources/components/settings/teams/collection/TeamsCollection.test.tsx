@@ -48,6 +48,22 @@ async function addHome(name: string) {
 }
 
 describe('Team collection loaded-page search', () => {
+    it('retains a readable addressed Team outside the member directory without an empty or zero-count claim', async () => {
+        const home = await addHome('admin-home');
+        await harness.selectHomes([home]);
+        const team = teamSummaryFixture({ id: 'design', name: 'Design', viewerRole: null });
+        harness.answer(home, LIST_PATH, { body: { items: [], nextCursor: null } });
+        harness.answer(home, '/v1/teams/get', { body: team });
+        pathname = `/settings/teams/${home}/design/settings`;
+        const { TeamsCollectionRail } = await import('./TeamsCollectionRail');
+        const screen = await renderScreen(<TeamsCollectionRail />);
+        await vi.waitFor(() => expect(collectRenderedTestIds(screen.tree.toJSON())).toContain(`teams-row:${home}:design`));
+        expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('teams-directory-empty');
+        const { CollectionList } = await import('@/components/ui/lists/collection/CollectionList');
+        expect(screen.tree.findByType(CollectionList).props.count).toBeNull();
+        expect(harness.requestsFor(LIST_PATH).every((request) => (request.input as { scope: string }).scope === 'member')).toBe(true);
+    });
+
     it.each(['rail', 'page'] as const)('keeps %s search partial through page continuation and an unavailable Home', async (surface) => {
         const home = await addHome('home-a');
         const unavailable = await addHome('home-b');
@@ -102,5 +118,16 @@ describe('Team collection loaded-page search', () => {
         expect(screen.tree.findByType('LegendList')).toBe(list);
         expect(selected('team-1')).toBe(true);
         expect(selected('team-0')).toBe(false);
+    });
+
+    it('says an empty collection once, on its page: the rail beside it adds no second empty state (DR-19)', async () => {
+        const home = await addHome('empty-home');
+        await harness.selectHomes([home]);
+        harness.answer(home, LIST_PATH, { body: { items: [], nextCursor: null } });
+        const { TeamsCollectionRail } = await import('./TeamsCollectionRail');
+        const screen = await renderScreen(<TeamsCollectionRail />);
+        await vi.waitFor(() => expect(harness.requestsFor(LIST_PATH).length).toBeGreaterThan(0));
+        await vi.waitFor(() => expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('teams-directory-loading'));
+        expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('teams-directory-empty');
     });
 });

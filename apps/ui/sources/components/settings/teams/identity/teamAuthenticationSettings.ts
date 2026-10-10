@@ -1,7 +1,9 @@
 import { defineSettingsPage } from '@/components/settings/catalog/settingDeclarations';
-import { identitySettingAtRoute, identitySettingParam, identitySettingTeamAddress } from '@/components/settings/identity/identitySettingsRoutes';
+import { identitySettingAtRoute, identitySettingParam, identitySettingTeamAddress, identitySettingHomeId } from '@/components/settings/identity/identitySettingsRoutes';
 
-import { teamAuthenticationPath, teamIdentityConnectionPath } from '../teamsRoutes';
+import { homeAdministrationIdentityConnectionPath, homeAdministrationWorkosSetupPath } from '@/components/settings/home/governance/homeAdministrationRoutes';
+
+import { teamAuthenticationPath, teamIdentityConnectionPath, teamIdentityProviderSetupPath } from '../teamsRoutes';
 
 export const TEAM_AUTHENTICATION_SETTINGS = defineSettingsPage({
     pageId: 'teams',
@@ -15,28 +17,55 @@ export const TEAM_AUTHENTICATION_SETTINGS = defineSettingsPage({
     },
     sections: {
         admission: { titleKey: 'teams.authentication.policy.admissionSection', settings: {
-            admissionInviteOnly: { titleKey: 'teams.authentication.policy.admissionInviteOnly' },
-            admissionProvisioned: { titleKey: 'teams.authentication.policy.admissionProvisioned' },
-            admissionJit: { titleKey: 'teams.authentication.policy.admissionJit' },
+            admissionInviteOnly: {},
+            admissionProvisioned: {},
+            admissionJit: {},
         } },
         accepted: { titleKey: 'teams.authentication.policy.acceptedSection', settings: {
-            acceptedInherit: { titleKey: 'teams.authentication.policy.acceptedInherit' },
-            acceptedRestricted: { titleKey: 'teams.authentication.policy.acceptedRestricted' },
-            acceptedMethods: { titleKey: 'teams.authentication.policy.connectionsSection' },
-            save: { titleKey: 'common.save' },
+            acceptedInherit: {},
+            acceptedRestricted: {},
+            acceptedMethods: {},
+            save: {},
         } },
         connections: { settings: {
-            connections: { titleKey: 'teams.authentication.connectionsSection' },
-            eligibleProviders: { titleKey: 'identityAdministration.eligibleProviders' },
-            githubApps: { titleKey: 'identityAdministration.githubApps' },
-            addGitHubApp: { titleKey: 'identityAdministration.githubAppAdd' },
+            connections: {},
+            eligibleProviders: {},
+            githubApps: {},
+            addGitHubApp: {},
         } },
         directory: { settings: {
-            directory: { titleKey: 'teams.authentication.directory.title', descriptionKey: 'teams.authentication.directory.manageSubtitle' },
+            directory: {},
         } },
     },
 });
 
+const IDENTITY_CONNECTION_SECTIONS = {
+        configuration: { titleKey: 'teams.authentication.detail.configuration', settings: {
+            allowedUsers: {},
+            allowedDomains: {},
+            groupsAny: {},
+            groupsAll: {},
+            organization: {},
+            save: {},
+            workosConnection: {},
+        } },
+        groupMappings: { titleKey: 'identityAdministration.directoryGroups', settings: {
+            groupMappings: {},
+            externalGroupId: {},
+            mapCreate: {},
+            mapExisting: {},
+        } },
+        actions: { titleKey: 'identityAdministration.actions', settings: {
+            edit: {},
+            test: {},
+            enable: {},
+            disable: {},
+            workosSetupSso: {},
+            workosSetupDirectory: {},
+            workosCheckSetup: {},
+            remove: {},
+        } },
+};
 export const TEAM_IDENTITY_CONNECTION_SETTINGS = defineSettingsPage({
     pageId: 'teams',
     subpage: {
@@ -48,31 +77,53 @@ export const TEAM_IDENTITY_CONNECTION_SETTINGS = defineSettingsPage({
             return address && connectionId ? identitySettingAtRoute(context, teamIdentityConnectionPath(address, connectionId)) : null;
         },
     },
+    sections: IDENTITY_CONNECTION_SECTIONS,
+});
+
+export const HOME_IDENTITY_CONNECTION_SETTINGS = defineSettingsPage({
+    pageId: 'homeAdministration',
+    subpage: {
+        id: 'identityConnection',
+        titleKey: 'teams.authentication.detail.connection',
+        route: (context) => {
+            const serverId = identitySettingHomeId(context);
+            const connectionId = identitySettingParam(context, 'connectionId');
+            return serverId && connectionId ? identitySettingAtRoute(context, homeAdministrationIdentityConnectionPath(serverId, connectionId)) : null;
+        },
+    },
     sections: {
-        configuration: { titleKey: 'teams.authentication.detail.configuration', settings: {
-            allowedUsers: { titleKey: 'teams.authentication.detail.allowedUsers' },
-            allowedDomains: { titleKey: 'teams.authentication.detail.allowedDomains' },
-            groupsAny: { titleKey: 'identityAdministration.groupsAny' },
-            groupsAll: { titleKey: 'identityAdministration.groupsAll' },
-            organization: { titleKey: 'teams.authentication.detail.organization' },
-            save: { titleKey: 'identityAdministration.save' },
-            workosConnection: { titleKey: 'identityAdministration.workosChooseConnection' },
-        } },
-        groupMappings: { titleKey: 'identityAdministration.directoryGroups', settings: {
-            groupMappings: { titleKey: 'identityAdministration.directoryGroups', keywordKeys: ['identityAdministration.removeMapping'] },
-            externalGroupId: { titleKey: 'identityAdministration.directoryGroups' },
-            mapCreate: { titleKey: 'identityAdministration.mapCreate' },
-            mapExisting: { titleKey: 'identityAdministration.mapExisting' },
-        } },
+        configuration: { titleKey: 'teams.authentication.detail.configuration', settings: { workosConnection: {} } },
         actions: { titleKey: 'identityAdministration.actions', settings: {
-            edit: { titleKey: 'identityAdministration.edit' },
-            test: { titleKey: 'identityAdministration.test' },
-            enable: { titleKey: 'identityAdministration.enable' },
-            disable: { titleKey: 'identityAdministration.disable' },
-            workosSetupSso: { titleKey: 'identityAdministration.workosSetupSso' },
-            workosSetupDirectory: { titleKey: 'identityAdministration.workosSetupDirectory' },
-            workosCheckSetup: { titleKey: 'identityAdministration.workosCheckSetup' },
-            remove: { titleKey: 'identityAdministration.remove' },
+            test: {}, enable: {}, disable: {}, workosSetupSso: {}, workosCheckSetup: {}, remove: {},
         } },
     },
+});
+
+const WORKOS_SETUP_SECTIONS = {
+    configuration: { settings: { companyName: {}, create: {} } },
+};
+
+export const TEAM_WORKOS_SETUP_SETTINGS = defineSettingsPage({
+    pageId: 'teams',
+    subpage: {
+        id: 'workosSetup', titleKey: 'identityAdministration.homeWorkosAdd',
+        route: (context) => {
+            const address = identitySettingTeamAddress(context);
+            return address && identitySettingParam(context, 'kind') === 'workos_sso'
+                ? identitySettingAtRoute(context, teamIdentityProviderSetupPath(address, 'workos_sso')) : null;
+        },
+    },
+    sections: WORKOS_SETUP_SECTIONS,
+});
+
+export const HOME_WORKOS_SETUP_SETTINGS = defineSettingsPage({
+    pageId: 'homeAdministration',
+    subpage: {
+        id: 'workosSetup', titleKey: 'identityAdministration.homeWorkosAdd',
+        route: (context) => {
+            const serverId = identitySettingHomeId(context);
+            return serverId ? identitySettingAtRoute(context, homeAdministrationWorkosSetupPath(serverId)) : null;
+        },
+    },
+    sections: WORKOS_SETUP_SECTIONS,
 });

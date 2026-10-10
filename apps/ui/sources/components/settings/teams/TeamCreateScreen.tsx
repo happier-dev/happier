@@ -10,18 +10,16 @@ import {
 
 import type { HomeAccountPickerRowV1 } from '@happier-dev/protocol/home/governance';
 
-import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { resolveHomeDisplayLabel } from '@/components/settings/server/homeDisplayName';
 import { resolveHomeGovernanceViewState } from '@/components/settings/home/governance/homeGovernanceViewState';
 import { useActionApprovalContinuation } from '@/components/approvals/useActionApprovalContinuation';
 import { Avatar } from '@/components/ui/avatar/Avatar';
-import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { CompactSearchField } from '@/components/ui/forms/CompactSearchField';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { Icon } from '@/components/ui/icons/Icon';
-import { PageHeader } from '@/components/ui/layout/PageHeader';
+import { PageHeader, type PageHeaderPrimaryAction } from '@/components/ui/layout/PageHeader';
 import { PageHeaderMarkSlot } from '@/components/ui/layout/PageHeaderMarkSlot';
 import { PageHeaderMenu } from '@/components/ui/layout/PageHeaderEntityParts';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
@@ -30,9 +28,7 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
-import { buildSettingHref } from '@/components/settings/catalog/settingDeclarations';
-import { homeAdministrationPoliciesPath } from '@/components/settings/home/governance/homeAdministrationRoutes';
-import { HOME_TEAMS_POLICY_SETTINGS } from '@/components/settings/home/governance/homeTeamsPolicySettings';
+import { homeTeamCreationPolicyHref } from '@/components/settings/home/governance/homeTeamsPolicySettings';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
 import { useHomeAccountSearch } from '@/hooks/home/useHomeAccountSearch';
@@ -548,7 +544,7 @@ export const TeamCreateScreen = React.memo(function TeamCreateScreen(props: Read
     // One eligible Home is a fact about the draft, named on the header's meta line; a choice between
     // several is a radio group below.
     const singleHome = homes.length === 1 ? homes[0]! : null;
-    const draftHeader = (props: Readonly<{ actions?: React.ReactNode; details?: React.ReactNode }> = {}) => (
+    const draftHeader = (props: Readonly<{ actions?: React.ReactNode; primaryAction?: PageHeaderPrimaryAction; details?: React.ReactNode }> = {}) => (
         <PageHeader
             testID="teams-create-header"
             // The draft's own name heads the page once typed; until then the navigation title says it.
@@ -568,6 +564,7 @@ export const TeamCreateScreen = React.memo(function TeamCreateScreen(props: Read
                 testID: `teams-create-home:${singleHome.scope.serverId}`,
             }] : undefined}
             actions={props.actions}
+            primaryAction={props.primaryAction}
         />
     );
     const conditionPage = (condition: React.ReactNode) => (
@@ -681,33 +678,28 @@ export const TeamCreateScreen = React.memo(function TeamCreateScreen(props: Read
                         testID="teams-create-error"
                         accessibilityRole="alert"
                         accessibilityLiveRegion="polite"
-                        style={{ color: theme.colors.state.danger.foreground, fontSize: 13, lineHeight: 18 }}
+                        style={{ color: theme.colors.state.danger.foreground }}
                     >
                         {error}
                     </Text>
                 ) : undefined,
-                actions: (
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                        {selectedStale && committedTeam === null ? null : <RoundButton
-                            testID="teams-create-submit"
-                            size="small"
-                            title={committedTeam
-                                ? t('teams.logo.retry')
-                                : submitting ? t('teams.create.submitting') : t('teams.create.submit')}
-                            loading={submitting}
-                            disabled={committedTeam
-                                ? submitting || approvalPending || committedTeam.logoSource === null
-                                : !canSubmit}
-                            onPress={() => void submit()}
-                        />}
-                        {committedTeam === null ? (
-                            <PageHeaderMenu
-                                testID="teams-create-menu"
-                                actions={[{ id: 'discard', title: t('teams.create.discard'), onSelect: discardDraft }]}
-                            />
-                        ) : null}
-                    </View>
-                ),
+                primaryAction: selectedStale && committedTeam === null ? undefined : {
+                    testID: 'teams-create-submit',
+                    title: committedTeam
+                        ? t('teams.logo.retry')
+                        : submitting ? t('teams.create.submitting') : t('teams.create.submit'),
+                    loading: submitting,
+                    disabled: committedTeam
+                        ? submitting || approvalPending || committedTeam.logoSource === null
+                        : !canSubmit,
+                    onPress: submit,
+                },
+                actions: committedTeam === null ? (
+                    <PageHeaderMenu
+                        testID="teams-create-menu"
+                        actions={[{ id: 'discard', title: t('teams.create.discard'), onSelect: discardDraft }]}
+                    />
+                ) : undefined,
             })}
             {/* A deferred creation is waiting on a person, not stuck. The same
                 notice every other Team surface shows says so and leads to the
@@ -839,10 +831,7 @@ export const TeamCreateScreen = React.memo(function TeamCreateScreen(props: Read
                     scope={selected.scope}
                     selected={initialOwner}
                     onSelect={setInitialOwner}
-                    onOpenCreationPolicy={() => router.push(buildSettingHref(
-                        homeAdministrationPoliciesPath(selected.scope.serverId),
-                        HOME_TEAMS_POLICY_SETTINGS.settings.teamCreationPolicy,
-                    ) as never)}
+                    onOpenCreationPolicy={() => router.push(homeTeamCreationPolicyHref(selected.scope.serverId) as never)}
                 />
             ) : null}
         </ItemList>

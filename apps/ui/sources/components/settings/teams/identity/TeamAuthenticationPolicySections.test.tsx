@@ -240,20 +240,20 @@ async function addHomeWithTeam(
 }
 
 /**
- * The explanation an admission row is actually carrying.
- *
- * `findByTestId` prefers the host node that painted, which never holds `Item`'s
- * own `subtitle`, so the row's composite is selected explicitly instead of
- * reading the generated accessibility label (which also carries the mode title
- * and therefore could not compare one reason across two modes).
+ * The explanation an admission mode is carrying. Admission is one segmented choice; each mode the
+ * Home cannot enforce announces its own reason after its name (`"<mode>, <reason>"`), so one reason
+ * can be compared across two modes without reading the row's combined line.
  */
 function admissionReason(
     screen: Awaited<ReturnType<typeof renderAuthentication>>,
     mode: string,
 ): string | undefined {
-    const row = screen.findAllByTestId(`team-admission-mode:${mode}`)
-        .find((node) => typeof node.props?.subtitle === 'string');
-    return row?.props.subtitle as string | undefined;
+    const label = screen.findAllByTestId(`team-admission-mode:${mode}`)
+        .map((node) => node.props?.accessibilityLabel)
+        .find((value): value is string => typeof value === 'string');
+    if (label === undefined) return undefined;
+    const separator = label.indexOf(', ');
+    return separator < 0 ? undefined : label.slice(separator + 2);
 }
 
 async function waitForTestId(
@@ -267,7 +267,7 @@ async function waitForTestId(
 
 /**
  * A control is only offerable once the projections it depends on are current.
- * Waiting for the row to exist would press it while it is still explained as
+ * Waiting for the choice to exist would press it while it is still explained as
  * unavailable, which is a different contract than the one under test.
  */
 async function waitForPressable(
@@ -275,7 +275,9 @@ async function waitForPressable(
     testID: string,
 ): Promise<void> {
     await vi.waitFor(() => {
-        expect(screen.findByTestId(testID)?.props.onPress).toBeTypeOf('function');
+        const node = screen.findByTestId(testID);
+        expect(node).toBeTruthy();
+        expect(node?.props.accessibilityState?.disabled ?? node?.props.disabled ?? false).toBe(false);
     }, { timeout: 10_000 });
 }
 
@@ -307,7 +309,7 @@ describe('TeamAuthenticationPolicySections', () => {
 
         const screen = await renderAuthentication(serverId);
         await waitForPressable(screen, 'team-admission-mode:provisioned');
-        expect(screen.findByTestId('team-admission-mode:jit')?.props.onPress).toBeTypeOf('function');
+        expect(screen.findByTestId('team-admission-mode:jit')?.props.accessibilityState).toMatchObject({ disabled: false });
         await screen.pressByTestIdAsync('team-admission-mode:provisioned');
 
         await vi.waitFor(() => expect(harness.requestsFor(TEAM_POLICY_PATH)).toHaveLength(1));
@@ -362,8 +364,8 @@ describe('TeamAuthenticationPolicySections', () => {
                 const provisioned = admissionReason(screen, 'provisioned');
                 expect(typeof provisioned).toBe('string');
                 expect(provisioned).not.toBe(previousProvisioned);
-                expect(screen.findByTestId('team-admission-mode:invite_only')?.props.onPress)
-                    .toBeTypeOf('function');
+                expect(screen.findByTestId('team-admission-mode:invite_only')?.props.accessibilityState)
+                    .toMatchObject({ disabled: false });
             }, { timeout: 10_000 });
 
             const provisionedRow = screen.findByTestId('team-admission-mode:provisioned');
@@ -374,9 +376,7 @@ describe('TeamAuthenticationPolicySections', () => {
             // though it can no longer be enforced.
             expect(provisionedRow?.props.accessibilityState).toMatchObject({ checked: true, disabled: true });
             expect(jitRow?.props.accessibilityState).toMatchObject({ checked: false, disabled: true });
-            // Neither is clickable into a refusal the Home has already predicted.
-            expect(provisionedRow?.props.onPress).toBeUndefined();
-            expect(jitRow?.props.onPress).toBeUndefined();
+            // Neither is clickable into a refusal the Home has already predicted (disabled above).
 
             for (const [reason, rendered] of [
                 [round.provisioned, admissionReason(screen, 'provisioned')],
@@ -442,10 +442,8 @@ describe('TeamAuthenticationPolicySections', () => {
         const { act } = await import('react-test-renderer');
         act(() => publishHomeAccountChange(serverId));
         await waitForTestId(screen, 'team-authentication-stale');
-        expect(screen.findByTestId('team-admission-mode:invite_only')?.props.onPress).toBeUndefined();
         expect(screen.findByTestId('team-admission-mode:invite_only')?.props.accessibilityState)
             .toMatchObject({ disabled: true, checked: true });
-        expect(screen.findByTestId('team-admission-mode:jit')?.props.onPress).toBeUndefined();
         expect(screen.findByTestId('team-admission-mode:jit')?.props.accessibilityState)
             .toMatchObject({ disabled: true, checked: false });
         expect(harness.requestsFor(TEAM_POLICY_PATH)).toHaveLength(0);
@@ -599,7 +597,7 @@ describe('TeamAuthenticationPolicySections', () => {
         harness.answer(serverId, TEAM_POLICY_PATH, {
             body: { ...team, policy: teamPolicyFixture({ authenticationPolicy: RESTRICTED_TO_OKTA }) },
         });
-        await screen.pressByTestIdAsync('team-authentication-policy-rebase');
+        await screen.pressByTestIdAsync('team-authentication-policy-rebase:continue');
         await screen.pressByTestIdAsync('team-authentication-policy-save');
 
         await vi.waitFor(() => expect(harness.requestsFor(TEAM_POLICY_PATH)).toHaveLength(2));
@@ -791,7 +789,7 @@ describe('TeamAuthenticationPolicySections', () => {
         expect(screen.findByTestId(methodTestId)?.props.onPress).toBeUndefined();
 
         harness.answer(serverId, HOME_AUTH_ENTRY_PATH, { body: HOME_AUTH_ENTRY });
-        await screen.pressByTestIdAsync('team-authentication-home-methods-unavailable');
+        await screen.pressByTestIdAsync('team-authentication-home-methods-retry');
         await waitForPressable(screen, methodTestId);
         expect(collectRenderedTestIds(screen.tree.toJSON()))
             .not.toContain('team-authentication-home-methods-unavailable');

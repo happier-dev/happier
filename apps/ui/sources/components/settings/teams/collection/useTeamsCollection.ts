@@ -2,9 +2,11 @@ import * as React from 'react';
 
 import { useHomeGovernanceEligibilitySnapshots } from '@/hooks/home/useHomeGovernanceEligibilitySnapshots';
 import { useTeamsDirectory, type TeamsDirectoryBinding } from '@/hooks/teams/useTeamsDirectory';
+import { useTeamBinding } from '@/hooks/teams/useTeamBinding';
 import { resolveHomeDisplayLabel } from '@/components/settings/server/homeDisplayName';
 import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
-import { teamAddressKey } from '@/sync/domains/teams/teamAddress';
+import { teamAddressKey, type TeamAddress } from '@/sync/domains/teams/teamAddress';
+import { resolveTeamsCollectionRows } from './teamsCollection';
 
 import type { TeamCredentialSourceHint } from '../teamsRoutes';
 import type { TeamsDirectoryRow } from '../teamsDirectoryViewState';
@@ -18,6 +20,8 @@ function matchesDirectorySearch(row: TeamsDirectoryRow, normalizedQuery: string)
 
 export type TeamsCollection = Readonly<{
     active: TeamsDirectoryBinding;
+    activeRows: readonly TeamsDirectoryRow[];
+    multiHome: boolean;
     archived: TeamsDirectoryBinding;
     visibleActiveRows: readonly TeamsDirectoryRow[];
     visibleArchivedRows: readonly TeamsDirectoryRow[];
@@ -64,6 +68,7 @@ const TEAMS_SEARCH_THRESHOLD = 8;
 export function useTeamsCollection(options: Readonly<{
     sourceHint: TeamCredentialSourceHint | null;
     query: string;
+    selectedAddress?: TeamAddress | null;
 }>): TeamsCollection {
     const { sourceHint } = options;
     const [showArchived, setShowArchived] = React.useState(false);
@@ -76,6 +81,19 @@ export function useTeamsCollection(options: Readonly<{
     // The archived query is a separate page sequence with its own ordering. Its first page is read
     // with the active one, so "Show archived" is only offered when there is something behind it.
     const archived = useTeamsDirectory({ archived: 'archived', enabled: sourceHint === null });
+    const selected = useTeamBinding(options.selectedAddress?.serverId ?? '', options.selectedAddress?.teamId ?? '');
+    const selectedRow = selected.kind === 'bound' && selected.state.kind === 'ready'
+        ? { address: selected.address, team: selected.state.team, homeName: selected.homeName }
+        : null;
+    const selectedTeam = selectedRow?.team;
+    const selectedHomeName = selectedRow?.homeName;
+    const selectedAddress = selectedRow?.address;
+    const { rows: activeRows, supplemented } = React.useMemo(
+        () => resolveTeamsCollectionRows(active.rows, selectedTeam && selectedHomeName && selectedAddress
+            ? { team: selectedTeam, homeName: selectedHomeName, address: selectedAddress }
+            : null),
+        [active.rows, selectedTeam, selectedHomeName, selectedAddress],
+    );
 
     const toggleArchived = React.useCallback(() => {
         setShowArchived((current) => !current);
@@ -100,8 +118,8 @@ export function useTeamsCollection(options: Readonly<{
 
     const normalizedQuery = options.query.trim().toLocaleLowerCase();
     const visibleActiveRows = React.useMemo(
-        () => active.rows.filter((row) => matchesDirectorySearch(row, normalizedQuery)),
-        [active.rows, normalizedQuery],
+        () => activeRows.filter((row) => matchesDirectorySearch(row, normalizedQuery)),
+        [activeRows, normalizedQuery],
     );
     const visibleArchivedRows = React.useMemo(
         () => archivedRows.filter((row) => matchesDirectorySearch(row, normalizedQuery)),
@@ -145,6 +163,8 @@ export function useTeamsCollection(options: Readonly<{
 
     return {
         active,
+        activeRows,
+        multiHome: active.multiHome || new Set(activeRows.map((row) => row.address.serverId)).size > 1,
         archived,
         visibleActiveRows,
         visibleArchivedRows,
@@ -156,7 +176,7 @@ export function useTeamsCollection(options: Readonly<{
         canCreateTeam,
         createGuidance,
         normalizedQuery,
-        activeIncomplete: active.kind === 'loading' || active.hasMore || active.partial,
-        searchable: active.rows.length > TEAMS_SEARCH_THRESHOLD || active.hasMore || normalizedQuery.length > 0,
+        activeIncomplete: supplemented || active.kind === 'loading' || active.hasMore || active.partial,
+        searchable: activeRows.length > TEAMS_SEARCH_THRESHOLD || active.hasMore || normalizedQuery.length > 0,
     };
 }

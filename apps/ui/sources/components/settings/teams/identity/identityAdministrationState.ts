@@ -1,10 +1,10 @@
 import type {
     TeamAdmissionModeApplicabilityV1,
-    TeamIdentityConnectionV1,
     TeamIdentityEligibleProviderV1,
 } from '@happier-dev/protocol/teams';
 
 import { sortIdentityConnectionsForAdministration } from './identityAdministrationPresentation';
+import type { ScopedIdentityConnectionV1 } from './identityAdministrationClient';
 
 export type IdentityAdministrationFailure = Readonly<{
     code: string;
@@ -16,9 +16,9 @@ export type IdentityAdministrationState =
     | Readonly<{ kind: 'unavailable'; failure: IdentityAdministrationFailure }>
     | Readonly<{
         kind: 'ready';
-        items: readonly TeamIdentityConnectionV1[];
+        items: readonly ScopedIdentityConnectionV1[];
         eligibleProviders: readonly TeamIdentityEligibleProviderV1[];
-        admissionModeApplicability: TeamAdmissionModeApplicabilityV1;
+        admissionModeApplicability: TeamAdmissionModeApplicabilityV1 | null;
         /** The Home's rendered member sign-in link, or null when it publishes none. */
         memberSignInUrl: string | null;
         refreshing: boolean;
@@ -29,9 +29,9 @@ export type IdentityAdministrationState =
 export type IdentityAdministrationLoadResult =
     | Readonly<{
         ok: true;
-        items: readonly TeamIdentityConnectionV1[];
+        items: readonly ScopedIdentityConnectionV1[];
         eligibleProviders: readonly TeamIdentityEligibleProviderV1[];
-        admissionModeApplicability: TeamAdmissionModeApplicabilityV1;
+        admissionModeApplicability: TeamAdmissionModeApplicabilityV1 | null;
         memberSignInUrl: string | null;
     }>
     | Readonly<{ ok: false; failure: IdentityAdministrationFailure }>;

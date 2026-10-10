@@ -74,7 +74,7 @@ const CredentialActivity = React.memo(function CredentialActivity(props: Readonl
             <ItemGroup description={t('teams.credentials.forbidden')}>
                 <Item
                     testID="team-credential-activity-forbidden"
-                    title={t('homeGovernance.forbiddenTitle')}
+                    title={t('teams.denied.title')}
                     showChevron={false}
                 />
             </ItemGroup>

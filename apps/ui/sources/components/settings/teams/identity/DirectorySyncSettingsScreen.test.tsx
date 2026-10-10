@@ -56,7 +56,11 @@ vi.mock('@/components/ui/lists/Item', async () => {
     return { Item: (props: { rightElement?: unknown }) => React.createElement('Item', props, props.rightElement as never) };
 });
 vi.mock('@/components/ui/forms/FieldTextInput', () => ({ FieldTextInput: 'TextInput' }));
-vi.mock('@/components/ui/lists/ItemGroup', () => ({ ItemGroup: 'ItemGroup' }));
+// Sections render their header action beside their rows, as the real section does.
+vi.mock('@/components/ui/lists/ItemGroup', async () => {
+    const React = await import('react');
+    return { ItemGroup: (props: { action?: unknown; children?: unknown }) => React.createElement('ItemGroup', props, props.action as never, props.children as never) };
+});
 vi.mock('@/components/ui/feedback/ActivitySpinner', () => ({ ActivitySpinner: 'ActivitySpinner' }));
 vi.mock('@/utils/url/openExternalUrl', () => ({ openExternalUrl: openExternalUrlMock }));
 vi.mock('@/text', () => ({ t: (key: string) => key }));

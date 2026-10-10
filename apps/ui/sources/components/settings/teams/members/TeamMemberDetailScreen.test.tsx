@@ -205,7 +205,6 @@ describe('TeamMemberDetailScreen management source', () => {
         const screen = await renderDetail(serverId);
         await waitForTestId(screen, 'team-member-management');
 
-        await screen.pressByTestIdAsync('team-member-management');
         await waitForTestId(screen, 'team-member-management:source-entra');
         await screen.pressByTestIdAsync('team-member-management:source-entra');
 
@@ -240,7 +239,6 @@ describe('TeamMemberDetailScreen management source', () => {
 
         const screen = await renderDetail(serverId);
         await waitForTestId(screen, 'team-member-management');
-        await screen.pressByTestIdAsync('team-member-management');
         await waitForTestId(screen, 'team-member-management:source-okta');
         await screen.pressByTestIdAsync('team-member-management:source-okta');
 
@@ -275,7 +273,6 @@ describe('TeamMemberDetailScreen management source', () => {
             `/settings/teams/${encodeURIComponent(serverId)}/team-1/authentication/directory/source-okta`,
         );
 
-        await screen.pressByTestIdAsync('team-member-management');
         await screen.pressByTestIdAsync('team-member-management:native');
 
         await vi.waitFor(() => {
@@ -300,8 +297,9 @@ describe('TeamMemberDetailScreen current membership', () => {
         });
 
         const screen = await renderDetail(serverId);
-        await waitForTestId(screen, 'team-member-status');
-        expect(screen.getTextContent()).toContain('teams.status.active');
+        await waitForTestId(screen, 'team-member-identity');
+        // An active membership is the quiet state: nothing on the page says "suspended".
+        expect(screen.getTextContent()).not.toContain('teams.status.suspended');
 
         harness.answer(serverId, MEMBER_GET_PATH, {
             body: teamMembershipFixture({
@@ -327,7 +325,7 @@ describe('TeamMemberDetailScreen current membership', () => {
         expect(harness.requestsFor(MEMBER_GET_PATH)).toHaveLength(2);
     });
 
-    it('labels a suspended membership as Status, Suspended without also saying Active', async () => {
+    it('says a suspended membership is suspended at the head of the page, without also saying Active', async () => {
         const serverId = await addHome(teamSummaryFixture({
             capabilities: teamCapabilitiesFixture({ manageMembers: true }),
         }));
@@ -338,7 +336,6 @@ describe('TeamMemberDetailScreen current membership', () => {
         const screen = await renderDetail(serverId);
         await waitForTestId(screen, 'team-member-status');
 
-        expect(screen.getTextContent()).toContain('teams.authentication.detail.status');
         expect(screen.getTextContent()).toContain('teams.status.suspended');
         expect(screen.getTextContent()).not.toContain('teams.status.active');
     });

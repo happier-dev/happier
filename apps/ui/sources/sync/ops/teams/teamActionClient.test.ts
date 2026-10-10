@@ -39,6 +39,7 @@ vi.mock('@/auth/storage/tokenStorage', async (importOriginal) => {
 
 import { createServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { setActiveServerId, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
+import { listTeamCredentialDirectMaterialPreparation } from './teamCredentialOperations';
 
 import {
     resetTeamActionClientForTests,
@@ -78,6 +79,19 @@ afterEach(() => {
 });
 
 describe('runTeamAction', () => {
+    it('checks credential preparation through the registered read Action without requesting the recipient census', async () => {
+        const serverId = (await upsertServerProfile({ serverUrl: 'https://home-a.example', name: 'A' })).id;
+        await setActiveServerId(serverId, { scope: 'device' });
+        const observation = { status: 'not_ready', reason: 'preparation_pending', counts: { ready: 2, pending: 1 } };
+        runtimeFetchMock.mockResolvedValue(json(observation));
+        const outcome = await listTeamCredentialDirectMaterialPreparation({
+            scope: createServerAccountScope(serverId, 'account')!, teamId: 'team /1', resourceId: 'resource?/1',
+        });
+        expect(outcome).toEqual({ kind: 'succeeded', value: observation });
+        expect(runtimeFetchMock.mock.calls.map(([input]) => String(input?.url))).toEqual([
+            'https://home-a.example/v2/teams/team%20%2F1/credential-resources/resource%3F%2F1/direct-material?view=readiness',
+        ]);
+    });
     it('carries a Team intent to the path its Action row declares, naming no path itself', async () => {
         const serverId = (await upsertServerProfile({ serverUrl: 'https://home-a.example', name: 'A' })).id;
         await setActiveServerId(serverId, { scope: 'device' });

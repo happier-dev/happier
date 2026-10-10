@@ -1,6 +1,7 @@
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { isHomeDomainActionIdV1 } from '@happier-dev/protocol/actions/homeDomainActionFamily';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 import {
     createHomeActionApprovalContinuation,
@@ -72,7 +73,7 @@ function buildTeamActionApprovalRegistration<TValue>(input: Readonly<{
     actionRequestId: string;
     parse: (value: unknown) => TValue;
     onSucceeded?: (value: TValue) => void | Promise<void>;
-    onFailed?: (code: string) => void;
+    onFailed?: (code: string, failure?: ActionExecuteFailure) => void;
 }>): ActionApprovalRegistration {
     if (!input.onSucceeded && !input.onFailed) return input.artifactId;
     if (!isHomeDomainActionIdV1(input.actionId)) return input.artifactId;
@@ -157,8 +158,8 @@ export async function runTeamAction<TValue>(params: Readonly<{
      * Home already performed it when the approval was granted.
      */
     onApprovalSucceeded?: (value: TValue) => void | Promise<void>;
-    /** Receives the Home's or the approval's own typed refusal code. */
-    onApprovalFailed?: (code: string) => void;
+    /** Receives the refusal code and the shared continuation's validated failure. */
+    onApprovalFailed?: (code: string, failure?: ActionExecuteFailure) => void;
 }>): Promise<TeamActionOutcome<TValue>> {
     const actionRequestId = randomUUID();
     const result = await scopedHomeActionExecutor(params.scope)(params.actionId, params.input, {

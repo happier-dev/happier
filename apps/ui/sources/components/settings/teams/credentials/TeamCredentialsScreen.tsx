@@ -125,7 +125,7 @@ const CredentialsList = React.memo(function CredentialsList(props: Readonly<{
             <ItemGroup description={t('teams.credentials.forbidden')}>
                 <Item
                     testID="team-credentials-forbidden"
-                    title={t('homeGovernance.forbiddenTitle')}
+                    title={t('teams.denied.title')}
                     showChevron={false}
                 />
             </ItemGroup>

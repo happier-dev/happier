@@ -35,6 +35,7 @@ const TEAM = {
     viewerRole: 'owner' as const,
     capabilities: {
         viewTeam: true,
+        viewRoster: true,
         manageSettings: true,
         managePolicy: true,
         manageMembers: true,
@@ -44,8 +45,10 @@ const TEAM = {
         manageAuthentication: true,
         archiveTeam: true,
         restoreTeam: false,
+        leave: false,
     },
     admission: { historyChoice: { admin: 'choice' as const, member: 'choice' as const, guest: 'hidden' as const } },
+    counts: null,
 };
 
 type TeamLifecycleConfirmationFixture = Parameters<typeof archiveTeam>[0];
@@ -96,6 +99,7 @@ describe('setTeamPolicy', () => {
             viewerRole: 'owner',
             capabilities: {
                 viewTeam: true,
+                viewRoster: true,
                 manageSettings: true,
                 managePolicy: true,
                 manageMembers: true,
@@ -105,8 +109,10 @@ describe('setTeamPolicy', () => {
                 manageAuthentication: true,
                 archiveTeam: true,
                 restoreTeam: false,
+                leave: false,
             },
             admission: { historyChoice: { admin: 'choice', member: 'choice', guest: 'hidden' } },
+            counts: null,
         };
         runTeamActionMock.mockResolvedValueOnce({ kind: 'succeeded', value: team });
 
@@ -156,6 +162,7 @@ describe('setTeamPolicy', () => {
             viewerRole: 'owner',
             capabilities: {
                 viewTeam: true,
+                viewRoster: true,
                 manageSettings: true,
                 managePolicy: true,
                 manageMembers: true,
@@ -165,8 +172,10 @@ describe('setTeamPolicy', () => {
                 manageAuthentication: true,
                 archiveTeam: true,
                 restoreTeam: false,
+                leave: false,
             },
             admission: { historyChoice: { admin: 'choice', member: 'choice', guest: 'hidden' } },
+            counts: null,
         };
         runTeamActionMock.mockResolvedValueOnce({ kind: 'succeeded', value: team });
 

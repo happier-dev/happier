@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { TeamInvitationRowV1 } from '@happier-dev/protocol/teams';
 
-import { resolveTeamInvitationPresentation } from './teamInvitationPresentation';
+import { partitionTeamInvitations, resolveTeamInvitationPresentation } from './teamInvitationPresentation';
 
 const NOW = 1_000_000;
 
@@ -108,5 +108,33 @@ describe('reissue safety', () => {
         const accepted = resolveTeamInvitationPresentation(row({ state: 'accepted' }), NOW);
         expect(accepted.canReissue).toBe(false);
         expect(accepted.reissueMode).toBe('none');
+    });
+});
+
+describe('partitionTeamInvitations', () => {
+    it('separates invitations still waiting from the ones that are finished, keeping their order', () => {
+        const rows = [
+            row({ id: 'waiting-1' }),
+            row({ id: 'accepted', state: 'accepted' }),
+            row({ id: 'waiting-2' }),
+            row({ id: 'revoked', state: 'revoked' }),
+            // Its expiry passed while the list was on screen: it is finished, whatever the row still says.
+            row({ id: 'lapsed', expiresAt: NOW - 1 }),
+        ];
+        const { waiting, finished } = partitionTeamInvitations(rows, NOW);
+        expect(waiting.map((invitation) => invitation.id)).toEqual(['waiting-1', 'waiting-2']);
+        expect(finished.map((invitation) => invitation.id)).toEqual(['accepted', 'revoked', 'lapsed']);
+    });
+});
+
+describe('an email that did not arrive', () => {
+    it('is the only state that asks for the invitation to be sent again from its row', () => {
+        const failed = { status: 'failed' as const, attemptedAt: NOW - 10 };
+        const sent = { status: 'sent' as const, attemptedAt: NOW - 10 };
+        const undelivered = row({ recipientEmailMask: 'j•••@acme.dev', lastEmailDelivery: failed });
+        expect(resolveTeamInvitationPresentation(undelivered, NOW).emailUndelivered).toBe(true);
+        expect(resolveTeamInvitationPresentation(row({ recipientEmailMask: 'j•••@acme.dev', lastEmailDelivery: sent }), NOW).emailUndelivered).toBe(false);
+        // A finished invitation has nothing left to deliver.
+        expect(resolveTeamInvitationPresentation({ ...undelivered, state: 'revoked' }, NOW).emailUndelivered).toBe(false);
     });
 });

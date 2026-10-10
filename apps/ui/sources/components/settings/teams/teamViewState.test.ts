@@ -24,6 +24,7 @@ function team(overrides?: Partial<TeamSummaryV1>): TeamSummaryV1 {
         viewerRole: 'owner',
         capabilities: { ...NO_TEAM_CAPABILITIES_V1, viewTeam: true, manageSettings: true },
         admission: { historyChoice: { admin: 'choice', member: 'choice', guest: 'hidden' } },
+        counts: null,
         ...overrides,
     };
 }

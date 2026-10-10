@@ -4,7 +4,6 @@ import { useGlobalSearchParams, usePathname, useRouter } from '@/components/appS
 import { useUnistyles } from 'react-native-unistyles';
 
 import { IconButton } from '@/components/ui/buttons/IconButton';
-import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
@@ -17,6 +16,7 @@ import { fireAndForget } from '@/utils/system/fireAndForget';
 import { TeamRow } from '../TeamRow';
 import { teamCredentialCreatePath, teamDetailPath, teamsCreatePath } from '../teamsRoutes';
 import type { TeamsDirectoryUnavailableHome } from '../teamsDirectoryViewState';
+import { teamsUnavailableHomeReason } from '../teamsDirectoryViewState';
 import { teamCreateDraftName } from './teamCreateDraftName';
 import {
     readTeamCredentialSourceHint,
@@ -30,21 +30,6 @@ import { HappierCollectionListMark } from '@happier-dev/plugin-ui/presentation';
 type CollectionRow = Readonly<{ key: string; render: () => React.ReactElement }>;
 const collectionRowKey = (row: CollectionRow) => row.key;
 const renderCollectionRow = ({ item }: Readonly<{ item: CollectionRow }>) => item.render();
-
-export function teamsUnavailableHomeReason(home: TeamsDirectoryUnavailableHome): string {
-    switch (home.reason) {
-        case 'loading':
-            return t('teams.directory.loading');
-        case 'denied':
-            return t('teams.errors.forbidden');
-        case 'unsupported':
-            return t('teams.unavailable.updateRequired');
-        case 'offline':
-            return t('teams.unavailable.offline');
-        case 'credential_unreadable':
-            return t('homeGovernance.credentialUnreadableTitle');
-    }
-}
 
 /**
  * The collection's "+": a new Team, shown only where a Home in view offers creation to this viewer,
@@ -98,10 +83,10 @@ export const TeamsCollectionRail = React.memo(function TeamsCollectionRail() {
         [params, pathname],
     );
     const [query, setQuery] = React.useState('');
-    const collection = useTeamsCollection({ sourceHint, query });
+    const selected = React.useMemo(() => resolveSelectedTeamAddress(pathname), [pathname]);
+    const collection = useTeamsCollection({ sourceHint, query, selectedAddress: selected });
     const { active } = collection;
 
-    const selected = resolveSelectedTeamAddress(pathname);
     const selectedKey = selected ? teamAddressKey(selected) : null;
 
     const open = React.useCallback((href: string) => {
@@ -114,7 +99,7 @@ export const TeamsCollectionRail = React.memo(function TeamsCollectionRail() {
     }, [open, sourceHint]);
 
     const drafting = pathname === '/settings/teams/new';
-    const total = active.rows.length;
+    const total = collection.activeRows.length;
     const searchable = collection.searchable;
     const noMatches = total > 0 && collection.visibleActiveRows.length === 0;
 
@@ -124,7 +109,7 @@ export const TeamsCollectionRail = React.memo(function TeamsCollectionRail() {
         for (const row of teams) {
             add(`${prefix}:${teamAddressKey(row.address)}`, () => (
                 <TeamRow row={row} variant="rail" selected={selectedKey === teamAddressKey(row.address)}
-                    showHome={active.multiHome} onPress={() => openTeam(row.address)} />
+                    showHome={collection.multiHome} onPress={() => openTeam(row.address)} />
             ));
         }
     };
@@ -133,10 +118,7 @@ export const TeamsCollectionRail = React.memo(function TeamsCollectionRail() {
         add('loading', () => <ItemLoadStateRows testID="teams-directory-loading" state={{ kind: 'loading' }} rows={3}
             accessibilityLabel={t('teams.directory.loading')} />);
     }
-    if (active.kind === 'empty' && !drafting) {
-        add('empty', () => <EmptyState testID="teams-directory-empty" layout="line" title={t('teams.directory.emptyTitle')}
-            lineDensity="compact" lineRowStyle={collectionListStyles.row} />);
-    }
+    // An empty collection is said once, by its page beside the rail (DR-19); the rail adds no line.
     if (noMatches) {
         add('search-empty', () => <Item testID="teams-directory-search-empty"
             title={t(collection.activeIncomplete ? 'teams.directory.noLoadedMatches' : 'teams.directory.noMatches')}

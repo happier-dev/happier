@@ -48,8 +48,11 @@ describe('Team identity settings search', () => {
                 ? <IdentityConnectionDetailScreen serverId={serverId} teamId="team-1" connectionId="connection-1" />
                 : <DirectorySyncSettingsScreen serverId={serverId} teamId="team-1" />);
 
-        const forbiddenTitle = t(surface === 'authentication' ? 'homeGovernance.forbiddenTitle' : 'teams.errors.forbidden');
-        await waitForHomeGovernance(() => expect(screen.findAllByProps({ title: forbiddenTitle }).length).toBeGreaterThan(0));
+        // The denied state is asserted by its owner's identity, not its wording.
+        const forbiddenTitle = t('teams.errors.forbidden');
+        await waitForHomeGovernance(() => (surface === 'authentication'
+            ? expect(screen.findByTestId('team-authentication-forbidden')).not.toBeNull()
+            : expect(screen.findAllByProps({ title: forbiddenTitle }).length).toBeGreaterThan(0)));
         // First establish that the destination exists; a missing anchor should
         // fail here rather than consuming the runner's whole reveal wait.
         expect(screen.findAllByProps({ nativeID: `setting-section-${section}` }).length).toBeGreaterThan(0);

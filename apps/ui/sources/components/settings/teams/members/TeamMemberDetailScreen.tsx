@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
-import { Pressable } from 'react-native';
 import { TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
 import {
     type TeamMembershipV1,
@@ -11,13 +10,15 @@ import { Avatar } from '@/components/ui/avatar/Avatar';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
+import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
 import { SectionButtonRow } from '@/components/ui/lists/SectionButtonRow';
+import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { teamReadFailureLabel } from '@/components/settings/teams/teamMutationPresentation';
-import { useTeamMemberGroups } from '@/hooks/teams/useTeamMemberGroups';
-import { restoreFocusToBestTarget } from '@/keyboard/focusReturn';
+import { useTeamMemberGroups, type TeamMemberGroups } from '@/hooks/teams/useTeamMemberGroups';
 import { Modal } from '@/modal';
 import { resolveAccountDisplayName } from '@/sync/domains/account/formatAccountDisplayName';
 import {
@@ -34,7 +35,8 @@ import {
 } from '@/sync/ops/teams/teamActionClient';
 import { subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { isAuthoritativeScopedSnapshotRefusalKind } from '@/sync/domains/scope/scopedSnapshotFacts';
-import { t } from '@/text';
+import { getPreferredLanguage, t } from '@/text';
+import { formatWithCachedDateTimeFormatter } from '@/utils/datetime/cachedIntlFormatters';
 
 import { TeamSection } from '../TeamSection';
 import type { TeamSectionContext } from '../teamSectionContext';
@@ -49,6 +51,11 @@ import { teamDirectorySourcePath, teamGroupDetailPath, teamIdentityConnectionPat
 import { useDirectoryAdministration } from '../identity/useDirectoryAdministration';
 import type { TeamMemberSectionRenderer } from './teamMemberSectionContext';
 import { Icon } from '@/components/ui/icons/Icon';
+import {
+    resolveTeamMemberManagementChoices,
+    teamMemberRemovalLines,
+    type TeamMemberManagementChoiceId,
+} from './teamMemberPresentation';
 
 const MEMBER_HEADER_AVATAR_SIZE = 44;
 
@@ -60,116 +67,96 @@ type MembershipLoad =
 const LOADING: MembershipLoad = Object.freeze({ kind: 'loading' as const });
 const UNAVAILABLE: MembershipLoad = Object.freeze({ kind: 'unavailable' as const });
 
-/**
- * A refused role, suspension, or reactivation in the Home's own terms.
- *
- * The typed code carries the reason a bare kind cannot: the final-owner guard
- * is an actionable governance fact, not a generic conflict, and a
- * directory-owned lifetime is read-only at its source. Only after those exact
- * reasons does the transport kind decide the message, so a race, a permission
- * loss, and an unreachable Home never read as the same failure.
- */
+/** The fixed order roles are offered in, most authority first. */
+const ROLE_ORDER: readonly TeamRoleV1[] = Object.freeze(['owner', 'admin', 'member', 'guest']);
+
+/** A segmented control holds two to four choices; past that the same choice is a field select. */
+const SEGMENTED_CHOICE_LIMIT = 4;
+
 /**
  * The Groups this membership is effectively in.
  *
  * Read-only and offered to every viewer the Home answers: a person's Group
  * membership explains where their access comes from, and hiding it from a
  * non-manager would leave the roster unable to answer its own question. Each row
- * opens the same Group destination the Group list opens.
+ * opens the same Group destination the Group list opens. The read belongs to the
+ * person page, which also names these Groups when it confirms a removal.
  */
 const MemberGroupsSection = React.memo(function MemberGroupsSection(props: Readonly<{
     context: TeamSectionContext;
-    membershipId: string;
+    groups: TeamMemberGroups;
 }>) {
     const router = useRouter();
-    const { context, membershipId } = props;
-    const groups = useTeamMemberGroups({
-        scope: context.scope,
-        address: context.address,
-        membershipId,
-        enabled: context.team.capabilities.viewTeam,
-    });
+    const { context, groups } = props;
 
-    if (!context.team.capabilities.viewTeam) return null;
+    if (!context.team.capabilities.viewRoster) return null;
 
-    if (groups.rows.length === 0) {
-        // A still-loading list is not an empty one, and an unreachable Home is
-        // not an empty one either: each says exactly what it knows.
-        if (groups.error) {
-            return (
-                <ItemGroup title={t('teams.members.detailGroups')} description={teamReadFailureLabel(groups.error)}>
-                    {groups.error.retryable ? <Item
-                        testID="team-member-groups-retry"
-                        title={t('teams.unavailable.retry')}
-                        onPress={() => void groups.reload()}
-                        showChevron={false}
-                    /> : null}
-                </ItemGroup>
-            );
-        }
-        return (
-            <ItemGroup title={t('teams.members.detailGroups')}>
-                <Item
-                    testID={groups.status === 'ready' ? 'team-member-groups-empty' : 'team-member-groups-loading'}
-                    title={groups.status === 'ready'
-                        ? t('teams.members.detailGroupsEmpty')
-                        : t('teams.members.detailGroups')}
-                    loading={groups.status !== 'ready'}
-                    showChevron={false}
-                />
-            </ItemGroup>
-        );
-    }
+    // A still-loading list is not an empty one, and an unreachable Home is not an empty one
+    // either: each says exactly what it knows, in the section's own place.
+    const failure = groups.error ? (
+        <SurfaceStateCard
+            testID="team-member-groups-unavailable"
+            kind="error"
+            size="line"
+            title={teamReadFailureLabel(groups.error)}
+            action={groups.error.retryable ? {
+                label: t('teams.unavailable.retry'),
+                onPress: () => void groups.reload(),
+                testID: 'team-member-groups-retry',
+            } : undefined}
+            accessibilitySemantics="alert"
+        />
+    ) : null;
 
     return (
-        <>
-            <ItemGroup title={t('teams.members.detailGroups')}>
-                {groups.rows.map((group) => {
-                    const managedBy = groupManagementLabel(group);
-                    const archived = group.archivedAt !== null;
-                    return (
-                        <Item
-                            key={group.id}
-                            testID={`team-member-group:${group.id}`}
-                            title={group.name}
-                            subtitle={[managedBy, archived ? t('teams.directory.archivedBadge') : null]
-                                .filter((part): part is string => part !== null)
-                                .join(' · ') || undefined}
-                            onPress={() => router.push(teamGroupDetailPath(context.address, group.id))}
-                        />
-                    );
-                })}
-            </ItemGroup>
-            {/* Rows already read stay on screen through a failure. */}
-            {groups.error ? (
-                <ItemGroup description={teamReadFailureLabel(groups.error)}>
-                    {groups.error.retryable ? (
-                        <Item
-                            testID="team-member-groups-retry"
-                            title={t('teams.unavailable.retry')}
-                            onPress={() => void groups.reload()}
-                            showChevron={false}
-                        />
-                    ) : null}
-                </ItemGroup>
-            ) : groups.hasMore ? (
-                <ItemGroup>
+        <ItemGroup title={t('teams.members.detailGroups')}>
+            {groups.rows.map((group) => {
+                const managedBy = groupManagementLabel(group);
+                const archived = group.archivedAt !== null;
+                return (
                     <Item
-                        testID="team-member-groups-load-more"
-                        title={t('homeGovernance.loadMore')}
-                        loading={groups.status === 'loading_more'}
-                        disabled={groups.status === 'loading_more'}
-                        onPress={() => void groups.loadMore()}
-                        showChevron={false}
+                        key={group.id}
+                        testID={`team-member-group:${group.id}`}
+                        title={group.name}
+                        subtitle={[managedBy, archived ? t('teams.directory.archivedBadge') : null]
+                            .filter((part): part is string => part !== null)
+                            .join(' · ') || undefined}
+                        onPress={() => router.push(teamGroupDetailPath(context.address, group.id))}
                     />
-                </ItemGroup>
+                );
+            })}
+            {/* Rows already read stay on screen through a failure. */}
+            {failure ?? (groups.rows.length > 0 ? null : groups.status === 'ready' ? (
+                <SurfaceStateCard
+                    testID="team-member-groups-empty"
+                    kind="empty"
+                    size="line"
+                    title={t('teams.members.detailGroupsEmpty')}
+                />
+            ) : (
+                <ItemLoadStateRows
+                    testID="team-member-groups-loading"
+                    state={{ kind: 'loading' }}
+                    rows={2}
+                    accessibilityLabel={t('teams.members.detailGroups')}
+                />
+            ))}
+            {!groups.error && groups.hasMore ? (
+                <Item
+                    testID="team-member-groups-load-more"
+                    title={t('homeGovernance.loadMore')}
+                    loading={groups.status === 'loading_more'}
+                    disabled={groups.status === 'loading_more'}
+                    onPress={() => void groups.loadMore()}
+                    showChevron={false}
+                />
             ) : null}
-        </>
+        </ItemGroup>
     );
 });
 
 /**
- * The explicit management-source transfer.
+ * Who manages this membership (lab `tsMembers-D`): the directory that owns it, or Happier.
  *
  * It renders only behind the Home's own `setManagement` capability, which is
  * false when the conversion would refuse by construction — there is no local
@@ -177,9 +164,9 @@ const MemberGroupsSection = React.memo(function MemberGroupsSection(props: Reado
  * native management names no source; binding names the exact one, because a
  * vague "manage externally" would let the client pick a source it did not
  * choose. The transfer preserves the lifetime, role, status and horizon, which
- * is what the confirmation says.
+ * is what the line beneath says.
  */
-const MemberManagementSection = React.memo(function MemberManagementSection(props: Readonly<{
+const MemberManagementRow = React.memo(function MemberManagementRow(props: Readonly<{
     context: TeamSectionContext;
     membership: TeamMembershipV1;
     busy: boolean;
@@ -188,8 +175,7 @@ const MemberManagementSection = React.memo(function MemberManagementSection(prop
     ) => Promise<void>;
 }>) {
     const { context, membership } = props;
-    const [expanded, setExpanded] = React.useState(false);
-    const triggerRef = React.useRef<React.ComponentRef<typeof Pressable> | null>(null);
+    const [open, setOpen] = React.useState(false);
 
     // Directory sources are read from the destination that owns them, and only
     // when this viewer may reach that destination at all.
@@ -202,80 +188,59 @@ const MemberManagementSection = React.memo(function MemberManagementSection(prop
     const sources = canReadSources && directory.state.kind === 'ready'
         ? directory.state.items
         : [];
-
-    const close = React.useCallback(() => {
-        setExpanded(false);
-        restoreFocusToBestTarget(triggerRef);
-    }, []);
+    const choices = React.useMemo(
+        () => resolveTeamMemberManagementChoices(membership, sources),
+        [membership, sources],
+    );
 
     if (!membership.capabilities.setManagement) return null;
 
-    const nativeSelected = membership.management.kind === 'native';
-    const boundSourceId = membership.management.kind === 'directory_source'
-        ? membership.management.directorySourceId
-        : null;
     const enabled = context.canMutate && !props.busy;
+    const choose = (id: TeamMemberManagementChoiceId) => {
+        if (id === choices.selectedId) return;
+        void props.onTransfer(id === 'native'
+            ? { kind: 'native' }
+            : { kind: 'directory_source', directorySourceId: id });
+    };
+
+    if (choices.options.length > SEGMENTED_CHOICE_LIMIT) {
+        return (
+            <DropdownMenu
+                testID="team-member-management"
+                open={open}
+                onOpenChange={setOpen}
+                selectedId={choices.selectedId}
+                items={choices.options.map((option) => ({
+                    id: option.id,
+                    title: option.label,
+                    testID: `team-member-management:${option.id}`,
+                    disabled: !enabled,
+                }))}
+                onSelect={(id) => {
+                    setOpen(false);
+                    choose(id);
+                }}
+                itemTrigger={{
+                    title: t('teams.members.detailManagedBy'),
+                    subtitle: t('teams.members.managementHelp'),
+                    showSelectedSubtitle: false,
+                }}
+            />
+        );
+    }
 
     return (
-        <>
-            <ItemGroup title={t('teams.members.managementTitle')} description={t('teams.members.managementHelp')}>
-                <Item
-                    testID="team-member-management"
-                    title={t('teams.members.detailManagedBy')}
-                    detail={membership.management.kind === 'native'
-                        ? t('teams.members.managementNative')
-                        : membership.management.label}
-                    pressableRef={triggerRef}
-                    accessibilityExpanded={expanded}
-                    disabled={!enabled}
-                    onPress={() => (expanded ? close() : setExpanded(true))}
-                    showChevron={false}
-                />
-            </ItemGroup>
-
-            {expanded ? (
-                <ItemGroup
-                    title={t('teams.members.managementTitle')}
-                    accessibilityRole="radiogroup"
-                    accessibilityLabel={t('teams.members.managementTitle')}
-                >
-                    <Item
-                        testID="team-member-management:native"
-                        title={t('teams.members.managementNative')}
-                        accessibilityRole="radio"
-                        webRole="radio"
-                        accessibilityChecked={nativeSelected}
-                        selected={nativeSelected}
-                        disabled={!enabled || nativeSelected}
-                        onPress={async () => {
-                            close();
-                            await props.onTransfer({ kind: 'native' });
-                        }}
-                        showChevron={false}
-                    />
-                    {sources.map((source) => (
-                        <Item
-                            key={source.id}
-                            testID={`team-member-management:${source.id}`}
-                            title={source.displayName}
-                            accessibilityRole="radio"
-                            webRole="radio"
-                            accessibilityChecked={source.id === boundSourceId}
-                            selected={source.id === boundSourceId}
-                            disabled={!enabled || source.id === boundSourceId}
-                            onPress={async () => {
-                                close();
-                                await props.onTransfer({
-                                    kind: 'directory_source',
-                                    directorySourceId: source.id,
-                                });
-                            }}
-                            showChevron={false}
-                        />
-                    ))}
-                </ItemGroup>
-            ) : null}
-        </>
+        <SegmentedChoiceItem<TeamMemberManagementChoiceId>
+            testID="team-member-management"
+            title={t('teams.members.detailManagedBy')}
+            subtitle={t('teams.members.managementHelp')}
+            subtitleLines={0}
+            options={choices.options}
+            value={choices.selectedId}
+            onChange={choose}
+            disabled={!enabled}
+            testIDPrefix="team-member-management"
+        />
     );
 });
 
@@ -299,6 +264,13 @@ const MemberDetail = React.memo(function MemberDetail(props: Readonly<{
     const serverId = context.scope.serverId;
     const accountId = context.scope.accountId;
     const teamId = context.address.teamId;
+
+    const groups = useTeamMemberGroups({
+        scope: context.scope,
+        address: context.address,
+        membershipId,
+        enabled: context.team.capabilities.viewRoster,
+    });
 
     const reload = React.useCallback(() => {
         const currentGeneration = (generation.current += 1);
@@ -435,8 +407,14 @@ const MemberDetail = React.memo(function MemberDetail(props: Readonly<{
                     { key: 'home', icon: 'house', text: context.homeName },
                 ]} />
                 {props.banners}
-                <ItemGroup>
-                    <Item testID="team-member-loading" title={t('teams.tabs.members')} loading mode="info" showChevron={false} />
+                {/* The page's known first section holds its place while the person is read. */}
+                <ItemGroup title={t('teams.members.roleLabel')}>
+                    <ItemLoadStateRows
+                        testID="team-member-loading"
+                        state={{ kind: 'loading' }}
+                        rows={1}
+                        accessibilityLabel={t('teams.loading')}
+                    />
                 </ItemGroup>
             </>
         );
@@ -469,10 +447,16 @@ const MemberDetail = React.memo(function MemberDetail(props: Readonly<{
     // per-membership capability. Neither alone is sufficient.
     const canAct = context.canMutate && !busy;
     const assignableRoles = membership.capabilities.assignableRoles;
-    // Withheld rather than offered and refused; the footer says why.
+    // Withheld rather than offered and refused; the section says why.
     const ownerWithheld = membership.capabilities.setRole
         && context.team.capabilities.manageMembers
         && !context.team.capabilities.manageOwners;
+    // The Home's answer, not the whole enum: a role it would refuse is not offered. When the
+    // current role is not among them (the owner-required recovery), no choice is marked and the
+    // row names the current role beneath its label instead.
+    const roleOptions = ROLE_ORDER
+        .filter((role) => assignableRoles.includes(role))
+        .map((role) => ({ id: role, label: teamRoleLabel(role), description: teamRoleDescription(role) }));
 
     const memberContext = {
         scope: context.scope,
@@ -486,54 +470,56 @@ const MemberDetail = React.memo(function MemberDetail(props: Readonly<{
         },
     };
 
-    const removeButton = (
-        <RoundButton
-            testID="team-member-remove"
-            size="small"
-            display="destructive"
-            title={t('teams.members.remove')}
-            disabled={!canAct}
-            onPress={async () => {
-                const confirmed = await Modal.confirm(
-                    t('teams.members.removeTitle', { name: displayName }),
-                    t('teams.members.removeBody'),
-                    { confirmText: t('teams.members.remove'), destructive: true },
-                );
-                if (!confirmed) return;
-                if (transitionInFlightRef.current) return;
-                transitionInFlightRef.current = true;
-                setNotice(null);
-                setBusy(true);
-                let outcome: Awaited<ReturnType<typeof removeTeamMember>>;
-                try {
-                    outcome = await removeTeamMember({
-                        scope: context.scope,
-                        address: context.address,
-                        membershipId: membership.id,
-                    });
-                } catch (cause) {
-                    transitionInFlightRef.current = false;
-                    setBusy(false);
-                    if (isTeamActionApprovalPendingError(cause)) {
-                        context.requestApproval(cause.artifactId);
-                        return;
-                    }
-                    throw cause;
-                }
-                transitionInFlightRef.current = false;
-                setBusy(false);
-                context.refresh();
-                // A removed lifetime no longer addresses anything,
-                // so success leaves. A refusal keeps the member
-                // on screen with the Home's own reason.
-                if (outcome.kind === 'succeeded') router.back();
-                else {
-                    setNotice(teamMutationFailureLabel(outcome.failure));
-                    reload();
-                }
-            }}
-        />
-    );
+    const remove = async () => {
+        // The consequence in the manager's terms (lab `tsMembers-X`): what ends, the Groups by
+        // name, and what stays.
+        const confirmed = await Modal.confirm(
+            t('teams.members.removal.title', { name: displayName, team: context.team.name }),
+            teamMemberRemovalLines({
+                groupNames: groups.rows.map((group) => group.name),
+                moreGroups: groups.hasMore || groups.status !== 'ready',
+            }).join('\n'),
+            { confirmText: t('teams.members.remove'), destructive: true },
+        );
+        if (!confirmed) return;
+        if (transitionInFlightRef.current) return;
+        transitionInFlightRef.current = true;
+        setNotice(null);
+        setBusy(true);
+        let outcome: Awaited<ReturnType<typeof removeTeamMember>>;
+        try {
+            outcome = await removeTeamMember({
+                scope: context.scope,
+                address: context.address,
+                membershipId: membership.id,
+            });
+        } catch (cause) {
+            transitionInFlightRef.current = false;
+            setBusy(false);
+            if (isTeamActionApprovalPendingError(cause)) {
+                context.requestApproval(cause.artifactId);
+                return;
+            }
+            throw cause;
+        }
+        transitionInFlightRef.current = false;
+        setBusy(false);
+        context.refresh();
+        // A removed lifetime no longer addresses anything,
+        // so success leaves. A refusal keeps the member
+        // on screen with the Home's own reason.
+        if (outcome.kind === 'succeeded') router.back();
+        else {
+            setNotice(teamMutationFailureLabel(outcome.failure));
+            reload();
+        }
+    };
+
+    const management = membership.management;
+    const canOpenSource = management.kind !== 'native' && context.team.capabilities.manageAuthentication;
+    const hasLifecycleActions = membership.capabilities.suspend
+        || membership.capabilities.reactivate
+        || membership.capabilities.remove;
 
     return (
         <>
@@ -549,19 +535,30 @@ const MemberDetail = React.memo(function MemberDetail(props: Readonly<{
                     />
                 )}
                 meta={[
-                    { key: 'team', text: context.team.name },
-                    { key: 'home', icon: 'house', text: context.homeName },
                     { key: 'role', text: teamRoleLabel(membership.role) },
                     ...(person.viewer && person.named
                         ? [{ key: 'you', text: t('teams.members.you') }]
                         : []),
+                    ...(membership.status === 'suspended'
+                        ? [{ key: 'status', testID: 'team-member-status', text: t('teams.status.suspended') }]
+                        : []),
+                    {
+                        key: 'joined',
+                        text: t('teams.members.joined', {
+                            when: formatWithCachedDateTimeFormatter(new Date(membership.joinedAt), getPreferredLanguage(), { dateStyle: 'medium' }),
+                        }),
+                    },
+                    ...(managedBy ? [{ key: 'managed', testID: 'team-member-managed-by', text: managedBy }] : []),
+                    // The exact Team and Home this person is a member of, as every Team page says.
+                    { key: 'team', text: context.team.name },
+                    { key: 'home', icon: 'house' as const, text: context.homeName },
                 ]}
             />
             {props.banners}
             {notice ? (
                 <AttentionBanner
                     testID="team-member-notice"
-                    title={t('teams.members.managementTitle')}
+                    title={t('homeGovernance.changeFailedTitle')}
                     description={notice}
                     accessibilityLiveRegion="polite"
                 />
@@ -578,114 +575,106 @@ const MemberDetail = React.memo(function MemberDetail(props: Readonly<{
                 />
             ) : null}
 
+            {/* Role (lab `tsMembers-A`/`D`/`R`): a manager chooses among the roles the Home would
+                accept, each with its one sentence of consequence; anyone else reads the role and
+                who changes it. A directory-managed membership says where its role is set. */}
             <ItemGroup
-                title={t('teams.members.membershipSection')}
-                description={managedBy ? t('teams.members.managedReadOnly') : undefined}
+                title={t('teams.members.roleLabel')}
+                description={managedBy
+                    ? t('teams.members.managedReadOnly')
+                    : ownerWithheld ? t('teams.members.ownerOnlyAction') : undefined}
             >
-                <Item
-                    testID="team-member-status"
-                    title={t('teams.authentication.detail.status')}
-                    detail={membership.status === 'suspended'
-                        ? t('teams.status.suspended')
-                        : t('teams.status.active')}
-                    showChevron={false}
-                />
-                <Item
-                    testID="team-member-history"
-                    title={t('teams.history.label')}
-                    detail={membership.historyAccess === 'all_existing'
-                        ? t('teams.history.allExisting')
-                        : t('teams.history.fromMembership')}
-                    showChevron={false}
-                />
-                {managedBy ? (
-                    <Item
-                        testID="team-member-managed-by"
-                        title={t('teams.members.detailManagedBy')}
-                        detail={managedBy}
-                        showChevron={false}
-                    />
-                ) : null}
-                {/* An externally owned lifetime is read-only here and says where
-                    it is owned. The source id is navigation, not authority: the
-                    directory destination re-checks its own capability, so the
-                    row is offered only to a viewer who can reach it. */}
-                {membership.management.kind !== 'native'
-                    && context.team.capabilities.manageAuthentication ? (() => {
-                        const management = membership.management;
-                        return (
-                        <Item
-                            testID="team-member-open-source"
-                            icon={<Icon name="tree-structure" />}
-                            title={t('teams.members.detailOpenSource')}
-                            detail={management.label}
-                            onPress={() => router.push(
-                                management.kind === 'directory_source'
-                                    ? teamDirectorySourcePath(
-                                        context.address,
-                                        management.directorySourceId,
-                                    )
-                                    : teamIdentityConnectionPath(
-                                        context.address,
-                                        management.identityConnectionId,
-                                    ),
-                            )}
-                        />
-                        );
-                    })() : null}
-            </ItemGroup>
-
-            {/* Every offered role carries its one sentence of consequence, and
-                the set itself is the Home's answer rather than the whole enum:
-                a control the Home would refuse is not rendered. */}
-            {assignableRoles.length > 0 ? (
-                <ItemGroup
-                    title={t('teams.members.roleLabel')}
-                    description={ownerWithheld ? t('teams.members.ownerOnlyAction') : undefined}
-                    accessibilityRole="radiogroup"
-                    accessibilityLabel={t('teams.members.roleLabel')}
-                >
-                    {assignableRoles.map((role) => (
-                        <Item
-                            key={role}
-                            testID={`team-member-role:${role}`}
-                            title={teamRoleLabel(role)}
-                            subtitle={teamRoleDescription(role)}
-                            accessibilityRole="radio"
-                            webRole="radio"
-                            accessibilityChecked={role === membership.role}
-                            selected={role === membership.role}
-                            disabled={!canAct || role === membership.role}
-                            onPress={() => void run(() => setTeamMemberRole({
+                {assignableRoles.length > 0 ? (
+                    <SegmentedChoiceItem<TeamRoleV1>
+                        testID="team-member-role"
+                        title={t('teams.members.roleLabel')}
+                        subtitle={teamRoleLabel(membership.role)}
+                        subtitleLines={0}
+                        options={roleOptions}
+                        value={membership.role}
+                        onChange={(role) => {
+                            if (role === membership.role) return;
+                            void run(() => setTeamMemberRole({
                                 scope: context.scope,
                                 address: context.address,
                                 membershipId: membership.id,
                                 role,
-                            }))}
-                            showChevron={false}
-                        />
-                    ))}
-                </ItemGroup>
-            ) : null}
+                            }));
+                        }}
+                        disabled={!canAct}
+                        testIDPrefix="team-member-role"
+                    />
+                ) : (
+                    <Item
+                        testID="team-member-role"
+                        title={teamRoleLabel(membership.role)}
+                        subtitle={management.kind === 'native'
+                            ? `${teamRoleDescription(membership.role)} ${t('teams.members.roleReadOnly', { team: context.team.name })}`
+                            : t('teams.members.roleSetBy', { source: management.label })}
+                        subtitleLines={0}
+                        mode="info"
+                        showChevron={false}
+                    />
+                )}
+                {/* Where an externally owned membership is owned (lab `tsMembers-D`). The source id
+                    is navigation, not authority: the directory destination re-checks its own
+                    capability, so the row is offered only to a viewer who can reach it. */}
+                {management.kind !== 'native' && canOpenSource ? (
+                    <Item
+                        testID="team-member-open-source"
+                        icon={<Icon name="tree-structure" />}
+                        title={management.label}
+                        onPress={() => router.push(
+                            management.kind === 'directory_source'
+                                ? teamDirectorySourcePath(context.address, management.directorySourceId)
+                                : teamIdentityConnectionPath(context.address, management.identityConnectionId),
+                        )}
+                    />
+                ) : null}
+                <MemberManagementRow
+                    context={context}
+                    membership={membership}
+                    busy={busy}
+                    onTransfer={(next) => transferManagement(membership, next)}
+                />
+            </ItemGroup>
 
-            <MemberManagementSection
-                context={context}
-                membership={membership}
-                busy={busy}
-                onTransfer={(management) => transferManagement(membership, management)}
-            />
+            <MemberGroupsSection context={context} groups={groups} />
 
-            <MemberGroupsSection context={context} membershipId={membership.id} />
+            <ItemGroup title={t('teams.members.accessSection')}>
+                <Item
+                    testID="team-member-history"
+                    title={t('teams.history.label')}
+                    subtitle={membership.historyAccess === 'all_existing'
+                        ? t('teams.history.allExisting')
+                        : t('teams.history.fromMembership')}
+                    subtitleLines={0}
+                    mode="info"
+                    showChevron={false}
+                />
+            </ItemGroup>
 
             {/* Contributed sections mount here with the host's own resolved
                 Home, Team, membership and readiness. */}
             {props.renderEncryptionSection?.(memberContext) ?? null}
 
-            {membership.capabilities.suspend || membership.capabilities.reactivate
-                || membership.capabilities.remove ? (
+            {/* The page closes with the quiet leave-and-destroy row: suspension on the left, the
+                irreversible removal at the far edge, their consequences beneath. Any further
+                destructive action on this membership (the member leaving) belongs in this row. */}
+            {hasLifecycleActions ? (
                 <ItemGroup surface="none">
                     <SectionButtonRow
-                        trailing={membership.capabilities.remove ? removeButton : undefined}
+                        footnote={t('teams.members.lifecycleFootnote')}
+                        trailing={membership.capabilities.remove ? (
+                            <RoundButton
+                                testID="team-member-remove"
+                                size="small"
+                                display="destructive"
+                                title={t('teams.members.removal.action', { team: context.team.name })}
+                                disabled={!canAct}
+                                onPress={remove}
+                            />
+                        ) : undefined}
                     >
                     {membership.capabilities.suspend ? (
                         <RoundButton

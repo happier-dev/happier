@@ -10,6 +10,7 @@ import {
     workosConnectionStatusLabel,
     workosConnectionStrategyLabel,
     sortIdentityConnectionsForAdministration,
+    workosSetupSteps,
 } from './identityAdministrationPresentation';
 
 function connection(overrides: Partial<TeamIdentityConnectionV1>): TeamIdentityConnectionV1 {
@@ -91,5 +92,39 @@ describe('identityAdministrationPresentation', () => {
         expect(workosConnectionStatusLabel('active')).toBe(t('identityAdministration.active'));
         expect(workosConnectionStrategyLabel('future_strategy')).toBe(t('identityAdministration.workosStrategyOther'));
         expect(workosConnectionStatusLabel('future_status')).toBe(t('identityAdministration.workosStatusUnknown'));
+    });
+
+    it('derives the WorkOS setup steps from the projection alone, with exactly one current step', () => {
+        const workos = (overrides: Partial<TeamIdentityConnectionV1>) => connection({
+            provider: { id: 'provider-workos', kind: 'workos_sso', displayName: 'WorkOS SSO' },
+            externalReference: { v: 1, kind: 'workos_sso', organizationId: null, connectionId: null },
+            settings: { v: 1, kind: 'workos_sso' },
+            lastObservation: null,
+            enabled: false,
+            firstEnabledAt: null,
+            state: 'setting_up',
+            ...overrides,
+        });
+        const states = (value: TeamIdentityConnectionV1) => workosSetupSteps(value)?.map((step) => `${step.id}:${step.state}`);
+
+        expect(states(workos({}))).toEqual(['portal:current', 'choose:upcoming', 'test:upcoming', 'enable:upcoming']);
+        expect(states(workos({
+            externalReference: { v: 1, kind: 'workos_sso', organizationId: 'org-1', connectionId: null },
+        }))).toEqual(['portal:done', 'choose:current', 'test:upcoming', 'enable:upcoming']);
+        expect(states(workos({
+            externalReference: { v: 1, kind: 'workos_sso', organizationId: 'org-1', connectionId: 'conn-1' },
+            lastSuccessfulTest: { at: 1, runtimeFingerprint: 'f', current: false },
+        }))).toEqual(['portal:done', 'choose:done', 'test:current', 'enable:upcoming']);
+        expect(states(workos({
+            externalReference: { v: 1, kind: 'workos_sso', organizationId: 'org-1', connectionId: 'conn-1' },
+            lastSuccessfulTest: { at: 1, runtimeFingerprint: 'f', current: true },
+        }))).toEqual(['portal:done', 'choose:done', 'test:done', 'enable:current']);
+        // An enabled connection has finished setup; a non-WorkOS connection never had these steps.
+        expect(workosSetupSteps(workos({
+            externalReference: { v: 1, kind: 'workos_sso', organizationId: 'org-1', connectionId: 'conn-1' },
+            enabled: true,
+            state: 'connected',
+        }))).toBeNull();
+        expect(workosSetupSteps(connection({}))).toBeNull();
     });
 });

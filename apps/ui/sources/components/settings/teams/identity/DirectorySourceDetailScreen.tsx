@@ -2,11 +2,12 @@ import * as React from 'react';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { AppState, type Pressable } from 'react-native';
 
-import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { SettingAnchor, SettingSection, useSettingRevealRequested } from '@/components/settings/shell/SettingRow';
 import { SearchHeader } from '@/components/ui/forms/SearchHeader';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { SectionButtonRow } from '@/components/ui/lists/SectionButtonRow';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { VirtualizedList, type VirtualizedListRef } from '@/components/ui/lists/virtualized';
@@ -27,8 +28,7 @@ import type { ActionApprovalRegistration } from '@/components/approvals/actionAp
 import { TeamSection } from '../TeamSection';
 import { teamMemberDetailPath } from '../teamsRoutes';
 import { DirectoryListFailure, useDirectoryPeopleList } from './DirectoryPeopleList';
-import { directorySourceStateLabel } from './DirectorySyncSettingsScreen';
-import { directorySourcePresentationState } from './directoryAdministrationPresentation';
+import { directorySourcePresentationState, directorySourceRemovalBody, directorySourceStateLabel } from './directoryAdministrationPresentation';
 import { runDirectoryGroupMappingChange } from './directoryGroupMapping';
 import { runDirectorySourceRemoval } from './directorySourceRemoval';
 import {
@@ -397,7 +397,7 @@ const AuthorizedDirectorySourceDetail = React.memo(function AuthorizedDirectoryS
         if (!connectionId || source.kind !== 'workos_directory' || !props.mutationsAvailable) return;
         if (!await Modal.confirm(
             t('identityAdministration.workosSetupDirectory'),
-            t('teams.authentication.subtitle'),
+            t('identityAdministration.workosDirectoryPortalConfirmBody'),
             { cancelText: t('common.cancel'), confirmText: t('common.continue') },
         )) return;
         setWorkosPortalPending(true);
@@ -447,7 +447,7 @@ const AuthorizedDirectorySourceDetail = React.memo(function AuthorizedDirectoryS
             readImpact: readRemovalImpact,
             confirm: async (preflight) => await Modal.confirm(
                 t('teams.authentication.directory.actions.removeTitle', { source: preflight.sourceLabel }),
-                t('teams.authentication.directory.actions.removeBody', preflight.impact),
+                directorySourceRemovalBody(preflight.impact),
                 {
                     cancelText: t('common.cancel'),
                     confirmText: t('teams.authentication.directory.actions.remove'),
@@ -475,7 +475,7 @@ const AuthorizedDirectorySourceDetail = React.memo(function AuthorizedDirectoryS
             requestApproval={props.requestApproval}
             beforeRows={[{
                 key: 'source-loading',
-                element: <ItemGroup><Item title={t('common.loading')} leftElement={<ActivitySpinner />} showChevron={false} /></ItemGroup>,
+                element: <ItemGroup><SurfaceStateCard testID="team-directory-source-loading" kind="loading" size="line" title={t('common.loading')} accessibilitySemantics="status" /></ItemGroup>,
             }]}
             header={<>{props.shellHeader}</>}
         />;
@@ -492,12 +492,14 @@ const AuthorizedDirectorySourceDetail = React.memo(function AuthorizedDirectoryS
                 key: 'source-unavailable',
                 element: (
                     <ItemGroup>
-                        <Item
+                        <SurfaceStateCard
                             testID="team-directory-source-unavailable"
+                            kind="error"
+                            size="line"
                             title={identityAdministrationFailureMessage(state.failure.code)}
-                            detail={state.failure.retryable ? t('common.retry') : undefined}
-                            onPress={state.failure.retryable ? refresh : undefined}
-                            showChevron={false}
+                            diagnosticCode={state.failure.code}
+                            action={state.failure.retryable ? { label: t('common.retry'), onPress: refresh } : undefined}
+                            accessibilitySemantics="alert"
                         />
                     </ItemGroup>
                 ),
@@ -515,7 +517,7 @@ const AuthorizedDirectorySourceDetail = React.memo(function AuthorizedDirectoryS
             requestApproval={props.requestApproval}
             beforeRows={[{
                 key: 'source-not-found',
-                element: <ItemGroup><Item title={t('teams.errors.notFound')} showChevron={false} /></ItemGroup>,
+                element: <ItemGroup><SurfaceStateCard testID="team-directory-source-not-found" kind="unavailable" size="line" title={t('teams.errors.notFound')} /></ItemGroup>,
             }]}
             header={<>{props.shellHeader}</>}
         />;
@@ -562,9 +564,13 @@ const AuthorizedDirectorySourceDetail = React.memo(function AuthorizedDirectoryS
         <>
             {props.shellHeader}
             {state.stale ? (
-                <ItemGroup description={t('teams.stale.label')}>
-                    <Item title={t('teams.unavailable.offline')} detail={t('common.retry')} onPress={refresh} showChevron={false} />
-                </ItemGroup>
+                <AttentionBanner
+                    testID="team-directory-source-stale"
+                    title={t('teams.unavailable.offline')}
+                    description={t('teams.stale.label')}
+                    accessibilityLiveRegion="polite"
+                    action={{ label: t('common.retry'), onPress: refresh }}
+                />
             ) : null}
             <ItemGroup title={source.displayName}>
                 <Item
@@ -722,7 +728,7 @@ export const DirectorySourceDetailScreen = React.memo(function DirectorySourceDe
     sourceId: string;
 }>) {
     return (
-        <TeamSection serverId={props.serverId} teamId={props.teamId} title={t('teams.authentication.directory.title')} description={t('teams.pages.directory')} presentation="virtualized-list">
+        <TeamSection serverId={props.serverId} teamId={props.teamId} title={t('teams.authentication.directory.title')} description={t('teams.authentication.directory.sourcePurpose')} presentation="virtualized-list">
             {({ team, scope, address, canMutate, requestApproval }, shellHeader) => team.capabilities.manageAuthentication ? (
                 <AuthorizedDirectorySourceDetail
                     scope={scope}
@@ -737,7 +743,7 @@ export const DirectorySourceDetailScreen = React.memo(function DirectorySourceDe
             ) : <>
                 {shellHeader}
                 <SettingSection section={DIRECTORY_SOURCE_SETTINGS.sectionRefs.actions} answersFor={[DIRECTORY_SOURCE_SETTINGS.sectionRefs.groups]}>
-                    <ItemGroup><Item testID="team-directory-source-forbidden" title={t('teams.errors.forbidden')} showChevron={false} /></ItemGroup>
+                    <ItemGroup><SurfaceStateCard testID="team-directory-source-forbidden" kind="denied" size="line" title={t('teams.errors.forbidden')} /></ItemGroup>
                 </SettingSection>
             </>}
         </TeamSection>

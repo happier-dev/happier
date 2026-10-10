@@ -47,8 +47,14 @@ const INVITATION_REISSUE_PATH = '/v1/teams/invitations/reissue';
 const INVITATION_LIST_PATH = '/v1/teams/invitations/list';
 
 async function renderCreateScreen(serverId: string) {
-    const { TeamInvitationCreateScreen } = await import('./TeamInvitationCreateScreen');
-    return renderScreen(<TeamInvitationCreateScreen serverId={serverId} teamId="team-1" />);
+    // The form has no page of its own: it mounts inside the Team shell, as the Invite people dialog mounts it.
+    const { TeamInvitationForm } = await import('./TeamInvitationCreateScreen');
+    const { TeamSection } = await import('../TeamSection');
+    return renderScreen(
+        <TeamSection serverId={serverId} teamId="team-1">
+            {(context) => <TeamInvitationForm context={context} />}
+        </TeamSection>,
+    );
 }
 
 async function addManagedHome(

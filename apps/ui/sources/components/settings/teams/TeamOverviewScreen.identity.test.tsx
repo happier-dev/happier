@@ -12,14 +12,16 @@ import {
 } from '@/dev/testkit';
 
 import { installSettingsViewCommonModuleMocks } from '../settingsViewTestHelpers';
+import { decideApprovalAsInbox } from '@/dev/testkit/harness/approvalInbox';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const routerPush = vi.hoisted(() => vi.fn());
+const routerReplace = vi.hoisted(() => vi.fn());
 
 installSettingsViewCommonModuleMocks({
     router: async () => ({
-        useRouter: () => ({ push: routerPush, back: vi.fn(), replace: vi.fn() }),
+        useRouter: () => ({ push: routerPush, back: vi.fn(), replace: routerReplace }),
         useNavigation: () => ({ setOptions: vi.fn() }),
         useLocalSearchParams: () => ({}),
     }),
@@ -66,6 +68,7 @@ beforeEach(async () => {
     await harness.reset();
     await harness.selectHomes([]);
     routerPush.mockReset();
+    routerReplace.mockReset();
 });
 
 afterEach(() => {
@@ -73,6 +76,63 @@ afterEach(() => {
 });
 
 describe('TeamOverviewScreen Team identity', () => {
+    it('confirms leave for a non-manager, removes the Team from the directory and returns there', async () => {
+        const serverId = await addHome({ viewerRole: 'member', capabilities: teamCapabilitiesFixture({ leave: true }) });
+        const { Modal } = await import('@/modal');
+        const confirm = vi.spyOn(Modal, 'confirm');
+        confirm.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+        harness.answer(serverId, '/v1/teams/members/leave', { body: { status: 'removed', membershipId: 'membership-1' } });
+        harness.answer(serverId, '/v1/teams/list', { body: { items: [], nextCursor: null } });
+        const screen = await renderOverview(serverId);
+        await waitForTestId(screen, 'team-overview-leave');
+        await screen.pressByTestIdAsync('team-overview-leave');
+        expect(harness.requestsFor('/v1/teams/members/leave')).toHaveLength(0);
+        expect(routerReplace).not.toHaveBeenCalled();
+        harness.answer(serverId, TEAM_GET_PATH, { status: 403, body: { error: 'team_forbidden' } });
+        await screen.pressByTestIdAsync('team-overview-leave');
+        await vi.waitFor(() => expect(routerReplace).toHaveBeenCalledWith('/settings/teams'));
+        expect(confirm).toHaveBeenLastCalledWith(expect.any(String), expect.any(String), expect.objectContaining({ destructive: true }));
+        expect(harness.requestsFor('/v1/teams/members/leave')[0]?.input).toEqual({ v: 1, teamId: 'team-1' });
+        expect(harness.requestsFor('/v1/artifacts')).toHaveLength(0);
+        const { getTeamsDirectorySnapshot } = await import('@/sync/store/teams/teamsSnapshots');
+        const { teamDirectoryQueryKeyV1 } = await import('@happier-dev/protocol/teams');
+        expect(getTeamsDirectorySnapshot({ serverId, accountId: 'account-ada' }, teamDirectoryQueryKeyV1({ v: 1, scope: 'member', archived: 'active' }))?.data).toEqual([]);
+    });
+
+    it('finishes leave after deferred UI approval without redispatching', async () => {
+        const serverId = await addHome({ viewerRole: 'member', capabilities: teamCapabilitiesFixture({ leave: true }) });
+        const { Modal } = await import('@/modal');
+        vi.spyOn(Modal, 'confirm').mockResolvedValue(true);
+        await harness.requireUiApproval(serverId, 'teams.members.leave');
+        harness.answer(serverId, '/v1/teams/members/leave', { body: { status: 'removed', membershipId: 'membership-1' } });
+        harness.answer(serverId, '/v1/teams/list', { body: { items: [], nextCursor: null } });
+        const screen = await renderOverview(serverId);
+        await waitForTestId(screen, 'team-overview-leave');
+        await screen.pressByTestIdAsync('team-overview-leave');
+        await waitForTestId(screen, 'team-approval');
+        expect(harness.requestsFor('/v1/teams/members/leave')).toHaveLength(0);
+        expect(routerReplace).not.toHaveBeenCalled();
+        const create = harness.requestsFor('/v1/artifacts').find((request) => {
+            const input = request.input;
+            return input !== null && typeof input === 'object' && 'id' in input;
+        });
+        const input = create?.input;
+        if (!input || typeof input !== 'object' || !('id' in input) || typeof input.id !== 'string') {
+            throw new Error('leave_approval_artifact_missing');
+        }
+        await expect(decideApprovalAsInbox(serverId, input.id, 'approve')).resolves.toMatchObject({ ok: true });
+        await vi.waitFor(() => expect(routerReplace).toHaveBeenCalledWith('/settings/teams'));
+        expect(harness.requestsFor('/v1/teams/members/leave')).toHaveLength(1);
+        expect(routerReplace).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([{ leave: false }, { leave: true, manageMembers: true }])('withholds Overview leave when not projected or for a manager: %j', async (capabilities) => {
+        const serverId = await addHome({ capabilities: teamCapabilitiesFixture(capabilities) });
+        const screen = await renderOverview(serverId);
+        await waitForTestId(screen, 'team-overview-identity');
+        expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('team-overview-leave');
+    });
+
     it('renders the Team logo the Home published, not a name-derived stand-in', async () => {
         const serverId = await addHome({
             name: 'Acme',

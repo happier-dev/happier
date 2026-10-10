@@ -19,11 +19,10 @@ vi.mock('@legendapp/list/react-native', async (importOriginal) => {
 });
 
 installSettingsViewCommonModuleMocks({
-    router: async () => ({
-        useRouter: () => ({ push: vi.fn(), back: vi.fn() }),
-        useNavigation: () => ({ setOptions: vi.fn() }),
-        useLocalSearchParams: () => ({}),
-    }),
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        return createExpoRouterMock().module;
+    },
 });
 
 const harness = createHomeGovernanceHarness();

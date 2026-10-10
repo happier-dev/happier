@@ -14,7 +14,7 @@ export function TeamIdentityProviderSetupRoute() {
     return <TeamIdentityProviderSetupScreen
         serverId={firstRouteParam(params.serverId)}
         teamId={firstRouteParam(params.teamId)}
-        providerKind={kind === 'github_app_identity' ? 'github_app_identity' : 'oidc'}
+        providerKind={kind === 'github_app_identity' ? 'github_app_identity' : kind === 'workos_sso' ? 'workos_sso' : 'oidc'}
     />;
 }
 import { WorkspaceRouteEntry } from '@/components/appShell/workspace/createWorkspaceRouteEntry';

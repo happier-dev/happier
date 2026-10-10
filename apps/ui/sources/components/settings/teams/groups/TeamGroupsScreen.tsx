@@ -5,8 +5,12 @@ import { Platform } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
+import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
+import { SectionButtonRow } from '@/components/ui/lists/SectionButtonRow';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { VirtualizedList } from '@/components/ui/lists/virtualized';
 import { useTeamGroups } from '@/hooks/teams/useTeamGroups';
@@ -28,19 +32,17 @@ type GroupVirtualizedRow = Readonly<{
 const GroupRows = React.memo(function GroupRows(props: Readonly<{
     context: TeamSectionContext;
     groups: readonly TeamGroupV1[];
-    title: string;
+    /** Only a second list on the page (archived) is titled; the page's own list is not. */
+    title?: string;
     testIdPrefix: string;
     first: boolean;
     last: boolean;
-    /** The section's trailing action (the first chunk carries it). */
-    action?: React.ReactNode;
 }>) {
     const router = useRouter();
     if (props.groups.length === 0) return null;
     return (
         <ItemGroup
             title={props.first ? props.title : undefined}
-            action={props.first ? props.action : undefined}
             virtualizedSegment={{ first: props.first, last: props.last }}
         >
             {props.groups.map((group) => {
@@ -70,10 +72,10 @@ const GroupsList = React.memo(function GroupsList(props: Readonly<{
     const { context } = props;
     const [showArchived, setShowArchived] = React.useState(false);
 
-    // The Home authorizes both Group sequences on `viewTeam`; `manageGroups`
+    // The Home authorizes both Group sequences on `viewRoster`; `manageGroups`
     // gates only the writes. A viewer who may read a Team may see which Groups
     // it has, which is also what makes a Group-derived audience explicable.
-    const canRead = context.team.capabilities.viewTeam;
+    const canRead = context.team.capabilities.viewRoster;
     const canCreate = context.team.capabilities.manageGroups && context.canMutate;
     const active = useTeamGroups({
         scope: context.scope,
@@ -99,22 +101,12 @@ const GroupsList = React.memo(function GroupsList(props: Readonly<{
 
     const rows = React.useMemo<readonly GroupVirtualizedRow[]>(() => {
         const result: GroupVirtualizedRow[] = [];
-        // Adding happens in the collection: the Groups section carries its "+".
-        const createAction = canCreate ? (
-            <SectionActionButton
-                testID="team-groups-create"
-                icon="plus"
-                title={t('teams.groups.create')}
-                onPress={() => router.push(teamGroupCreatePath(context.address))}
-            />
-        ) : undefined;
         const add = (key: string, render: () => React.ReactElement) => result.push({ key, render });
         const addGroupChunks = (
             keyPrefix: string,
             groups: readonly TeamGroupV1[],
-            title: string,
+            title: string | undefined,
             testIdPrefix: string,
-            action?: React.ReactNode,
         ) => {
             for (let start = 0; start < groups.length; start += GROUP_CHUNK_SIZE) {
                 const chunk = groups.slice(start, start + GROUP_CHUNK_SIZE);
@@ -128,7 +120,6 @@ const GroupsList = React.memo(function GroupsList(props: Readonly<{
                         testIdPrefix={testIdPrefix}
                         first={first}
                         last={last}
-                        action={action}
                     />
                 ));
             }
@@ -137,42 +128,51 @@ const GroupsList = React.memo(function GroupsList(props: Readonly<{
         if (!canRead) {
             add('forbidden', () => (
                 <ItemGroup>
-                    <Item
+                    <SurfaceStateCard
                         testID="team-groups-forbidden"
-                        title={t('homeGovernance.forbiddenTitle')}
-                        subtitle={t('teams.errors.forbidden')}
-                        subtitleLines={0}
-                        mode="info"
-                        showChevron={false}
+                        kind="denied"
+                        size="line"
+                        title={t('teams.denied.title')}
                     />
                 </ItemGroup>
             ));
             return result;
         }
 
+        // One sheet, with no title repeating the page's (lab `tsGroups-A`). Its rows hold their
+        // place while the first page is read.
         if (active.status === 'loading' && active.rows.length === 0) {
             add('loading', () => (
-                <ItemGroup title={t('teams.tabs.groups')} action={createAction}>
-                    <Item testID="team-groups-loading" title={t('teams.loading')} loading mode="info" showChevron={false} />
-                </ItemGroup>
-            ));
-        }
-
-        if (active.rows.length === 0 && active.status === 'ready') {
-            add('empty', () => (
-                <ItemGroup title={t('teams.tabs.groups')} action={createAction}>
-                    <Item
-                        testID="team-groups-empty"
-                        title={t('teams.groups.emptyTitle')}
-                        subtitle={t('teams.groups.emptyBody')}
-                        mode="info"
-                        showChevron={false}
+                <ItemGroup>
+                    <ItemLoadStateRows
+                        testID="team-groups-loading"
+                        state={{ kind: 'loading' }}
+                        rows={3}
+                        accessibilityLabel={t('teams.loading')}
                     />
                 </ItemGroup>
             ));
         }
 
-        addGroupChunks('active', active.rows, t('teams.tabs.groups'), 'team-groups-row', createAction);
+        // No Groups yet (lab `tsGroups-E`): what a Group is for, and the one action that starts.
+        if (active.rows.length === 0 && active.status === 'ready') {
+            add('empty', () => (
+                <SurfaceStateCard
+                    testID="team-groups-empty"
+                    kind="empty"
+                    iconName="tree-structure"
+                    title={t('teams.groups.emptyTitle')}
+                    reason={t('teams.groups.emptyBody')}
+                    action={canCreate ? {
+                        label: t('teams.groups.create'),
+                        testID: 'team-groups-empty-create',
+                        onPress: () => router.push(teamGroupCreatePath(context.address)),
+                    } : undefined}
+                />
+            ));
+        }
+
+        addGroupChunks('active', active.rows, undefined, 'team-groups-row');
 
         if (active.error) {
             add('retry', () => (
@@ -203,14 +203,18 @@ const GroupsList = React.memo(function GroupsList(props: Readonly<{
 
         if (offerArchived) {
             add('toggle-archived', () => (
-                <ItemGroup>
-                    <Item
-                        testID="team-groups-toggle-archived"
-                        title={showArchived ? t('teams.directory.hideArchived') : t('teams.directory.showArchived')}
-                        accessibilityExpanded={showArchived}
-                        onPress={() => setShowArchived((current) => !current)}
-                        showChevron={false}
-                    />
+                // A quiet button under the list (lab `tsGroups-A`), not a row among the Groups.
+                <ItemGroup surface="none">
+                    <SectionButtonRow>
+                        <RoundButton
+                            testID="team-groups-toggle-archived"
+                            size="small"
+                            display="inverted"
+                            title={showArchived ? t('teams.directory.hideArchived') : t('teams.directory.showArchived')}
+                            expanded={showArchived}
+                            onPress={() => setShowArchived((current) => !current)}
+                        />
+                    </SectionButtonRow>
                 </ItemGroup>
             ));
         }
@@ -218,15 +222,20 @@ const GroupsList = React.memo(function GroupsList(props: Readonly<{
         if (showArchived) {
             if (archived.status === 'loading' && archived.rows.length === 0) {
                 add('archived-loading', () => (
-                    <ItemGroup>
-                        <Item testID="team-groups-archived-loading" title={t('teams.groups.archivedSection')} loading showChevron={false} />
+                    <ItemGroup title={t('teams.groups.archivedSection')}>
+                        <ItemLoadStateRows
+                            testID="team-groups-archived-loading"
+                            state={{ kind: 'loading' }}
+                            rows={1}
+                            accessibilityLabel={t('teams.groups.archivedSection')}
+                        />
                     </ItemGroup>
                 ));
             }
             if (archived.status === 'ready' && archived.rows.length === 0) {
                 add('archived-empty', () => (
                     <ItemGroup title={t('teams.groups.archivedSection')}>
-                        <Item testID="team-groups-archived-empty" title={t('teams.groups.emptyTitle')} mode="info" showChevron={false} />
+                        <SurfaceStateCard testID="team-groups-archived-empty" kind="empty" size="line" title={t('teams.groups.emptyTitle')} />
                     </ItemGroup>
                 ));
             }
@@ -291,6 +300,18 @@ const GroupsList = React.memo(function GroupsList(props: Readonly<{
     );
 });
 
+const NewGroupAction = React.memo(function NewGroupAction(props: Readonly<{ address: TeamSectionContext['address'] }>) {
+    const router = useRouter();
+    return (
+        <SectionActionButton
+            testID="team-groups-create"
+            icon="plus"
+            title={t('teams.groups.create')}
+            onPress={() => router.push(teamGroupCreatePath(props.address))}
+        />
+    );
+});
+
 export const TeamGroupsScreen = React.memo(function TeamGroupsScreen(props: Readonly<{
     serverId: string;
     teamId: string;
@@ -302,6 +323,11 @@ export const TeamGroupsScreen = React.memo(function TeamGroupsScreen(props: Read
             title={t('teams.tabs.groups')}
             description={t('teams.pages.groups')}
             presentation="virtualized-list"
+            // Adding happens at the head of the collection (lab `tsGroups-A`): the list has no
+            // section title of its own to carry a "+".
+            renderHeaderActions={(context) => context.team.capabilities.manageGroups && context.canMutate ? (
+                <NewGroupAction address={context.address} />
+            ) : null}
         >
             {(context, header) => <GroupsList context={context} header={header} />}
         </TeamSection>

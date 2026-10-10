@@ -19,7 +19,8 @@ import { t } from '@/text';
 import { TeamRow } from './TeamRow';
 import { teamCredentialCreatePath, teamDetailPath, teamsCreatePath, type TeamCredentialSourceHint } from './teamsRoutes';
 import type { TeamsDirectoryRow, TeamsDirectoryUnavailableHome } from './teamsDirectoryViewState';
-import { TeamsCollectionAddButton, teamsUnavailableHomeReason } from './collection/TeamsCollectionRail';
+import { teamsUnavailableHomeReason } from './teamsDirectoryViewState';
+import { TeamsCollectionAddButton } from './collection/TeamsCollectionRail';
 import {
     readLastVisitedTeamsCollectionTeam,
     readTeamCredentialSourceHint,
@@ -27,9 +28,7 @@ import {
 } from './collection/teamsCollection';
 import { useTeamsCollection, type TeamsCollection } from './collection/useTeamsCollection';
 import { teamsCreateRefusalText } from './collection/teamsCreateGuidanceText';
-import { buildSettingHref } from '@/components/settings/catalog/settingDeclarations';
-import { homeAdministrationPoliciesPath } from '@/components/settings/home/governance/homeAdministrationRoutes';
-import { HOME_TEAMS_POLICY_SETTINGS } from '@/components/settings/home/governance/homeTeamsPolicySettings';
+import { homeTeamCreationPolicyHref } from '@/components/settings/home/governance/homeTeamsPolicySettings';
 import { useHappierCollectionIndexView } from '@happier-dev/plugin-ui/presentation';
 
 const TEAM_DIRECTORY_CHUNK_SIZE = 12;
@@ -108,10 +107,7 @@ const TeamsEmptyState = React.memo(function TeamsEmptyState(props: Readonly<{
             } : undefined}
             secondaryAction={openCreationPolicyServerId ? {
                 label: t('teams.directory.letEveryoneCreate'),
-                onPress: () => router.push(buildSettingHref(
-                    homeAdministrationPoliciesPath(openCreationPolicyServerId),
-                    HOME_TEAMS_POLICY_SETTINGS.settings.teamCreationPolicy,
-                ) as never),
+                onPress: () => router.push(homeTeamCreationPolicyHref(openCreationPolicyServerId) as never),
                 testID: 'teams-directory-open-creation-policy',
             } : undefined}
             actionUnavailableReason={refusal ? teamsCreateRefusalText(refusal) : undefined}

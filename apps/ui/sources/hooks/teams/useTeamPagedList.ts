@@ -105,7 +105,7 @@ export function useTeamPagedList<TRow>(params: Readonly<{
         publish(mode === 'reset'
             ? { ...initialState<TRow>(), status: 'loading' }
             : mode === 'refresh'
-                ? { ...previous, status: 'loading', error: null, cursor: null, hasMore: true }
+                ? { ...previous, status: 'loading', error: null }
                 : { ...previous, status: 'loading_more', error: null });
 
         const currentGeneration = mode === 'more' ? generation.current : (generation.current += 1);
@@ -114,7 +114,19 @@ export function useTeamPagedList<TRow>(params: Readonly<{
         request.current = controller;
         inFlight.current = true;
         try {
-            const outcome = await loadPageRef.current(cursor, controller.signal);
+            let outcome = await loadPageRef.current(cursor, controller.signal);
+            const refreshedRows: TRow[] = [];
+            // Re-read the visible range using fresh continuation positions. The
+            // Home remains authoritative: removed rows disappear, while later
+            // loaded rows do not collapse to the first page on a background wake.
+            if (mode === 'refresh') {
+                while (outcome.kind === 'succeeded') {
+                    if (controller.signal.aborted || currentGeneration !== generation.current) return;
+                    refreshedRows.push(...outcome.value.items);
+                    if (refreshedRows.length >= previous.rows.length || outcome.value.nextCursor === null) break;
+                    outcome = await loadPageRef.current(outcome.value.nextCursor, controller.signal);
+                }
+            }
             if (controller.signal.aborted || currentGeneration !== generation.current) return;
             const base = stateRef.current;
             if (outcome.kind === 'failed') {
@@ -136,7 +148,8 @@ export function useTeamPagedList<TRow>(params: Readonly<{
             }
             inFlight.current = false;
             publish({
-                rows: mode === 'more' ? [...base.rows, ...outcome.value.items] : outcome.value.items,
+                rows: mode === 'more' ? [...base.rows, ...outcome.value.items]
+                    : mode === 'refresh' ? refreshedRows : outcome.value.items,
                 status: 'ready',
                 error: null,
                 cursor: outcome.value.nextCursor,

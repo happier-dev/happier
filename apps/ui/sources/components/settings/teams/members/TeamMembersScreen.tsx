@@ -8,9 +8,10 @@ import { useUnistyles } from 'react-native-unistyles';
 import { Avatar } from '@/components/ui/avatar/Avatar';
 import { CompactSearchField } from '@/components/ui/forms/CompactSearchField';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import { VirtualizedList } from '@/components/ui/lists/virtualized';
 import { StatusPill } from '@/components/ui/status/StatusPill';
@@ -21,9 +22,11 @@ import { formatWithCachedDateTimeFormatter } from '@/utils/datetime/cachedIntlFo
 
 import { TeamSection } from '../TeamSection';
 import type { TeamSectionContext } from '../teamSectionContext';
-import { teamMemberAddPath, teamMemberDetailPath } from '../teamsRoutes';
-import { membershipManagementLabel, teamRoleLabel } from '../teamLabels';
+import { teamMemberDetailPath } from '../teamsRoutes';
 import { TeamOwnerRequiredNotice } from './TeamOwnerRequiredNotice';
+import { TeamMemberAddAction } from './TeamMemberAddAction';
+import { TeamLeaveAction } from './TeamLeaveAction';
+import { teamMemberRowSubtitle } from './teamMemberPresentation';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { teamReadFailureLabel } from '../teamMutationPresentation';
 
@@ -99,8 +102,7 @@ const MemberRoster = React.memo(function MemberRoster(props: Readonly<{
     // The Home authorizes this roster on `viewTeam`, so every viewer it would
     // answer sees it. Management is a separate question, asked per control and
     // per row below: an ordinary member reads the roster and is offered nothing.
-    const canRead = context.team.capabilities.viewTeam;
-    const canAdd = context.team.capabilities.manageMembers && context.canMutate;
+    const canRead = context.team.capabilities.viewRoster;
     const searchTerm = query.trim();
     const roster = useTeamMembersRoster({
         scope: context.scope,
@@ -147,13 +149,11 @@ const MemberRoster = React.memo(function MemberRoster(props: Readonly<{
         if (!canRead) {
             add('forbidden', () => (
                 <ItemGroup>
-                    <Item
+                    <SurfaceStateCard
                         testID="team-members-forbidden"
-                        title={t('homeGovernance.forbiddenTitle')}
-                        subtitle={t('teams.errors.forbidden')}
-                        subtitleLines={0}
-                        mode="info"
-                        showChevron={false}
+                        kind="denied"
+                        size="line"
+                        title={t('teams.denied.title')}
                     />
                 </ItemGroup>
             ));
@@ -171,15 +171,8 @@ const MemberRoster = React.memo(function MemberRoster(props: Readonly<{
         add('controls', () => (
             <ItemGroup
                 title={t('teams.tabs.members')}
-                action={canAdd ? (
-                    <SectionActionButton
-                        testID="team-members-add"
-                        icon="plus"
-                        title={t('teams.members.add')}
-                        onPress={() => router.push(teamMemberAddPath(context.address))}
-                    />
-                ) : undefined}
-                virtualizedSegment={{ first: true, last: roster.rows.length === 0 }}
+                action={<TeamMemberAddAction context={context} presentation="section" />}
+                virtualizedSegment={{ first: true, last: roster.rows.length === 0 && roster.status !== 'loading' && roster.status !== 'ready' }}
             >
                 <SectionContentRow>
                     <CompactSearchField
@@ -193,23 +186,30 @@ const MemberRoster = React.memo(function MemberRoster(props: Readonly<{
             </ItemGroup>
         ));
 
+        // The roster's known rows hold their place while the first page is read; an answered
+        // roster with nobody to show says so on one line, where the rows would be.
         if (roster.status === 'loading' && roster.rows.length === 0) {
             add('loading', () => (
-                <ItemGroup>
-                    <Item testID="team-members-loading" title={t('teams.loading')} loading mode="info" showChevron={false} />
+                <ItemGroup virtualizedSegment={{ first: false, last: true }}>
+                    <ItemLoadStateRows
+                        testID="team-members-loading"
+                        state={{ kind: 'loading' }}
+                        rows={4}
+                        accessibilityLabel={t('teams.loading')}
+                    />
                 </ItemGroup>
             ));
         }
 
         if (roster.rows.length === 0 && roster.status === 'ready') {
             add('empty', () => (
-                <ItemGroup>
-                    <Item
+                <ItemGroup virtualizedSegment={{ first: false, last: true }}>
+                    <SurfaceStateCard
                         testID="team-members-empty"
+                        kind="empty"
+                        size="line"
                         title={t('teams.members.emptyTitle')}
-                        subtitle={t('teams.members.emptyBody')}
-                        mode="info"
-                        showChevron={false}
+                        reason={t('teams.members.emptyBody')}
                     />
                 </ItemGroup>
             ));
@@ -222,29 +222,15 @@ const MemberRoster = React.memo(function MemberRoster(props: Readonly<{
                 <ItemGroup virtualizedSegment={{ first: false, last }}>
                     {chunk.map((membership) => {
                         const person = resolveAccountDisplayName({ profile: membership.account, accountId: membership.accountId, viewerAccountId: context.scope.accountId });
-                        const displayName = person.name;
-                        const managedBy = membershipManagementLabel(membership);
-                        // The viewer's own row and the one truthful membership-age
-                        // fact the projection already carries. `scope.accountId` is
-                        // the Account this screen was opened for, so the mark
-                        // follows the Home the roster was read from.
-                        const isViewer = person.viewer && person.named;
+                        const leavesOwnMembership = membership.accountId === context.scope.accountId && context.team.capabilities.leave;
                         return (
                             <Item
                                 key={membership.id}
                                 testID={`team-members-row:${membership.id}`}
-                                title={displayName}
-                                subtitle={[
-                                    teamRoleLabel(membership.role),
-                                    isViewer ? t('teams.members.you') : null,
-                                    person.hint,
-                                    managedBy,
-                                    t('teams.members.joined', {
-                                        when: formatWithCachedDateTimeFormatter(new Date(membership.joinedAt), getPreferredLanguage(), { dateStyle: 'medium' }),
-                                    }),
-                                ]
-                                    .filter((part): part is string => part !== null)
-                                    .join(' · ')}
+                                title={person.name}
+                                subtitle={teamMemberRowSubtitle(membership, person, t('teams.members.joined', {
+                                    when: formatWithCachedDateTimeFormatter(new Date(membership.joinedAt), getPreferredLanguage(), { dateStyle: 'medium' }),
+                                }))}
                                 leftElement={(
                                     <Avatar
                                         id={membership.accountId}
@@ -252,14 +238,18 @@ const MemberRoster = React.memo(function MemberRoster(props: Readonly<{
                                         imageUrl={membership.account.avatarUrl}
                                     />
                                 )}
-                                rightElement={membership.status === 'suspended' ? (
-                                    <StatusPill
+                                accessoryLayout="adaptive"
+                                rightElement={membership.status === 'suspended' || leavesOwnMembership ? <>
+                                    {membership.status === 'suspended' ? <StatusPill
                                         testID={`team-members-status:${membership.id}`}
                                         variant="warning"
                                         label={t('teams.status.suspended')}
                                         labelVariant="phrase"
-                                    />
-                                ) : undefined}
+                                    /> : null}
+                                    {leavesOwnMembership ? (
+                                        <TeamLeaveAction context={context} presentation="button" testID={`team-members-leave:${membership.id}`} />
+                                    ) : null}
+                                </> : undefined}
                                 onPress={() => router.push(teamMemberDetailPath(context.address, membership.id))}
                             />
                         );
@@ -297,7 +287,6 @@ const MemberRoster = React.memo(function MemberRoster(props: Readonly<{
 
         return result;
     }, [
-        canAdd,
         canRead,
         context,
         filter,

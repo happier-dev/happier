@@ -45,6 +45,7 @@ import {
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { homeDomainActionInputSchemaV1, homeDomainActionOutputSchemaV1, type HomeDomainActionIdV1 } from '@happier-dev/protocol/actions/homeDomainActionFamily';
 import type { TeamIdentityActionIdV1 } from '@happier-dev/protocol/teams/identity/actionIds';
+import type { HomeIdentityActionIdV1, HomeIdentityConnectionListResultV1 } from '@happier-dev/protocol/home';
 
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { homeDomainFailureCode } from '@/sync/api/home/homeDomainActions';
@@ -130,10 +131,23 @@ type TeamExternalGroupBindingActionOutputMap = Readonly<{
     'teams.externalGroupBindings.remove': TeamExternalGroupBindingRemoveResultV1;
 }>;
 
+/** The same connection presentation is consumed by its Home or Team owner. */
+export type ScopedIdentityConnectionV1 = import('@happier-dev/protocol/teams').IdentityConnectionV1;
+type ScopedIdentityOutput<T> = T extends import('@happier-dev/protocol/teams').TeamIdentityConnectionV1
+    ? ScopedIdentityConnectionV1
+    : T extends readonly (infer TItem)[] ? ScopedIdentityOutput<TItem>[]
+    : T extends object ? { [TKey in keyof T]: ScopedIdentityOutput<T[TKey]> } : T;
 export type TeamIdentityActionInput<TActionId extends TeamIdentityActionIdV1> =
-    TeamIdentityActionInputMap[TActionId];
+    Omit<TeamIdentityActionInputMap[TActionId], 'teamId'> & Readonly<{ teamId: string | null }>;
 export type TeamIdentityActionOutput<TActionId extends TeamIdentityActionIdV1> =
-    TeamIdentityActionOutputMap[TActionId];
+    TActionId extends 'teams.identity.connections.list'
+        ? ScopedIdentityOutput<TeamIdentityActionOutputMap[TActionId]> | HomeIdentityConnectionListResultV1
+        : ScopedIdentityOutput<TeamIdentityActionOutputMap[TActionId]>;
+
+/** Scope selects the declared transport; domain permission decisions stay server-owned. */
+export function identityAdministrationActionId(actionId: TeamIdentityActionIdV1, teamId: string | null): TeamIdentityActionIdV1 | HomeIdentityActionIdV1 {
+    return (teamId === null ? actionId.replace(/^teams\.identity\./, 'home.identity.') : actionId) as TeamIdentityActionIdV1 | HomeIdentityActionIdV1;
+}
 export type TeamExternalGroupBindingActionOutput<TActionId extends TeamExternalGroupBindingActionIdV1> =
     TeamExternalGroupBindingActionOutputMap[TActionId];
 
@@ -275,9 +289,10 @@ export function createIdentityAdministrationClient(
             input: TeamIdentityActionInput<TActionId>,
             options?: IdentityAdministrationExecuteOptions<TeamIdentityActionOutput<TActionId>>,
         ): Promise<IdentityAdministrationActionResult<TeamIdentityActionOutput<TActionId>>> => {
+            const { teamId, ...homeInput } = input;
             return await executeDeclared<TeamIdentityActionOutput<TActionId>>(
-                actionId,
-                input,
+                identityAdministrationActionId(actionId, teamId),
+                teamId === null ? homeInput : input,
                 options?.signal,
                 approvalCallbacks(options),
             );

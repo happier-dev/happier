@@ -13,6 +13,7 @@ import { Avatar } from '@/components/ui/avatar/Avatar';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { CompactSearchField } from '@/components/ui/forms/CompactSearchField';
 import { Item } from '@/components/ui/lists/Item';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SectionButtonRow } from '@/components/ui/lists/SectionButtonRow';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
@@ -183,13 +184,11 @@ const AddMemberForm = React.memo(function AddMemberForm(props: Readonly<{ contex
     if (!context.team.capabilities.manageMembers) {
         return (
             <ItemGroup>
-                <Item
+                <SurfaceStateCard
                     testID="team-member-add-forbidden"
-                    title={t('homeGovernance.forbiddenTitle')}
-                    subtitle={t('teams.errors.forbidden')}
-                    subtitleLines={0}
-                    mode="info"
-                    showChevron={false}
+                    kind="denied"
+                    size="line"
+                    title={t('teams.denied.title')}
                 />
             </ItemGroup>
         );

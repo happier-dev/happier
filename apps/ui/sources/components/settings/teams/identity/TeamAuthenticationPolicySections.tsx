@@ -11,8 +11,12 @@ import {
     type TeamIdentityConnectionV1,
 } from '@happier-dev/protocol/teams';
 
+import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { SectionButtonRow } from '@/components/ui/lists/SectionButtonRow';
+import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { SettingAnchor, SettingSection } from '@/components/settings/shell/SettingRow';
 import { setTeamPolicy } from '@/sync/ops/teams/teamOperations';
 import { isTeamActionApprovalPendingError } from '@/sync/ops/teams/teamActionClient';
@@ -20,6 +24,7 @@ import { t } from '@/text';
 
 import type { TeamSectionContext } from '../teamSectionContext';
 import { teamMutationFailureLabel } from '../teamMutationPresentation';
+import { teamAdmissionModeLabel } from '../teamPolicyPresentation';
 import { identityConnectionDiscriminator } from './identityAdministrationPresentation';
 import { TEAM_AUTHENTICATION_SETTINGS } from './teamAuthenticationSettings';
 
@@ -29,19 +34,17 @@ const ADMISSION_MODES: readonly TeamAdmissionModeV1[] = Object.freeze([
     'jit',
 ]);
 
-const ADMISSION_SETTINGS = {
-    invite_only: TEAM_AUTHENTICATION_SETTINGS.settings.admissionInviteOnly,
-    provisioned: TEAM_AUTHENTICATION_SETTINGS.settings.admissionProvisioned,
-    jit: TEAM_AUTHENTICATION_SETTINGS.settings.admissionJit,
-};
+/** Each mode stays findable by search; all three land on the one row that chooses between them. */
+const ADMISSION_SETTINGS = [
+    TEAM_AUTHENTICATION_SETTINGS.settings.admissionInviteOnly,
+    TEAM_AUTHENTICATION_SETTINGS.settings.admissionProvisioned,
+    TEAM_AUTHENTICATION_SETTINGS.settings.admissionJit,
+];
 
-function admissionModeLabel(mode: TeamAdmissionModeV1): string {
-    switch (mode) {
-        case 'invite_only': return t('teams.authentication.policy.admissionInviteOnly');
-        case 'provisioned': return t('teams.authentication.policy.admissionProvisioned');
-        case 'jit': return t('teams.authentication.policy.admissionJit');
-    }
-}
+const ACCEPTED_MODE_SETTINGS = [
+    TEAM_AUTHENTICATION_SETTINGS.settings.acceptedInherit,
+    TEAM_AUTHENTICATION_SETTINGS.settings.acceptedRestricted,
+];
 
 type UnavailableAdmissionMode = Extract<
     TeamAdmissionModeApplicabilityV1['modes'][TeamAdmissionModeV1],
@@ -74,6 +77,9 @@ function admissionModeUnavailableLabel(availability: UnavailableAdmissionMode): 
             return t('teams.authentication.policy.admissionUnavailableReason.teamConnectionUnavailable');
     }
 }
+
+/** `unset`: the stored restriction cannot be read, so neither choice is the current one. */
+type AcceptedChoice = 'inherit' | 'restricted' | 'unset';
 
 function acceptedKey(reference: TeamAcceptedAuthenticationV1): string {
     return reference.kind === 'home_method'
@@ -357,105 +363,108 @@ export const TeamAuthenticationPolicySections = React.memo(function TeamAuthenti
         && basisKey !== null
         && !restrictedWithoutReferences;
 
-    // A mode the Home cannot enforce is explained on its own row, beside the
-    // choice it describes. Repeating that same sentence here would only crowd
-    // out the help text that says what admission means in the first place.
-    const admissionFooter = admissionNotice
-        ?? (approvalPending ? t('teams.authentication.policy.approvalPending') : undefined)
-        ?? t('teams.authentication.policy.admissionHelp');
+    const conflictLine = (testID: string) => (
+        <SurfaceStateCard
+            testID={testID}
+            kind="warning"
+            size="line"
+            title={t('teams.errors.conflict')}
+            reason={t('teams.authentication.policy.conflictBody')}
+            action={{ label: t('common.continue'), onPress: acknowledgeCurrentBasis, disabled: saving, testID: `${testID}:continue` }}
+            accessibilitySemantics="alert"
+        />
+    );
 
     return (
         <>
+            {/* Who can join (lab `tsAuth-A`): one decision, so one row with every mode in view. A
+                mode the Home cannot enforce stays visible, unavailable, with the Home's own reason
+                under the label. A choice applies as soon as it is made. */}
             <SettingSection section={TEAM_AUTHENTICATION_SETTINGS.sectionRefs.admission}><ItemGroup
                 title={t('teams.authentication.policy.admissionSection')}
-                description={admissionFooter}
-                accessibilityRole="radiogroup"
-                accessibilityLabel={t('teams.authentication.policy.admissionSection')}
+                description={t('teams.authentication.policy.admissionHelp')}
             >
-                {ADMISSION_MODES.map((mode) => {
-                    const availability = admissionModeApplicability?.modes[mode] ?? null;
-                    const available = availability?.status === 'available';
-                    return <SettingAnchor key={mode} setting={ADMISSION_SETTINGS[mode]}><Item
-                        testID={`team-admission-mode:${mode}`}
-                        title={admissionModeLabel(mode)}
-                        accessibilityRole="radio"
-                        webRole="radio"
-                        selected={policy.admissionMode === mode}
-                        accessibilityChecked={policy.admissionMode === mode}
-                        loading={admissionPending === mode}
-                        subtitle={availability?.status === 'unavailable'
-                            ? admissionModeUnavailableLabel(availability)
-                            : undefined}
-                        disabled={!admissionEditable || !available || policy.admissionMode === mode}
-                        onPress={admissionEditable && available && policy.admissionMode !== mode
-                            ? () => { void chooseAdmission(mode); }
-                            : undefined}
-                        showChevron={false}
-                    /></SettingAnchor>;
-                })}
+                <SettingAnchor settings={ADMISSION_SETTINGS}>
+                    <SegmentedChoiceItem<TeamAdmissionModeV1>
+                        testID="team-admission-mode"
+                        title={t('teams.authentication.policy.admissionRow')}
+                        subtitleLines={0}
+                        accessoryLayout="stacked"
+                        options={ADMISSION_MODES.map((mode) => {
+                            const availability = admissionModeApplicability?.modes[mode] ?? null;
+                            return {
+                                id: mode,
+                                label: teamAdmissionModeLabel(mode),
+                                // The mode the Home holds stays shown chosen even when it can no
+                                // longer be enforced, and says why like any other unavailable mode.
+                                unavailableReason: availability?.status === 'unavailable'
+                                    ? admissionModeUnavailableLabel(availability)
+                                    : undefined,
+                            };
+                        })}
+                        value={admissionPending ?? policy.admissionMode}
+                        onChange={(mode) => { void chooseAdmission(mode); }}
+                        disabled={!admissionEditable}
+                        loading={admissionPending !== null}
+                        testIDPrefix="team-admission-mode"
+                    />
+                </SettingAnchor>
                 {admissionNotice ? (
-                    <Item
+                    <SurfaceStateCard
                         testID="team-admission-notice"
+                        kind="error"
+                        size="line"
                         title={admissionNotice}
-                        accessibilityLiveRegion="assertive"
-                        showChevron={false}
+                        accessibilitySemantics="alert"
                     />
                 ) : approvalPending ? (
-                    <Item
+                    <SurfaceStateCard
                         testID="team-admission-approval-pending"
+                        kind="warning"
+                        size="line"
                         title={t('teams.authentication.policy.approvalPending')}
-                        accessibilityLiveRegion="polite"
-                        showChevron={false}
+                        accessibilitySemantics="status"
                     />
                 ) : null}
             </ItemGroup></SettingSection>
 
+            {/* How members sign in: the choice between the Home's sign-in and the Team's own set,
+                and, for "only these", the set itself as checkboxes directly beneath it. The edit is
+                one draft, saved or discarded with the row of buttons that closes the section. */}
             <SettingSection section={TEAM_AUTHENTICATION_SETTINGS.sectionRefs.accepted}><ItemGroup
                 title={t('teams.authentication.policy.acceptedSection')}
-                description={error ?? t('teams.authentication.policy.acceptedHelp')}
-                accessibilityRole="radiogroup"
-                accessibilityLabel={t('teams.authentication.policy.acceptedSection')}
+                description={t('teams.authentication.policy.acceptedHelp')}
             >
                 {repairRequired && committedMode === null ? (
-                    <Item
+                    <SurfaceStateCard
                         testID="team-authentication-policy-repair"
+                        kind="warning"
+                        size="line"
                         title={t('teams.authentication.policy.repairRequired')}
-                        subtitle={t('teams.authentication.policy.repairRequiredHelp')}
-                        accessibilityLiveRegion="assertive"
-                        showChevron={false}
+                        reason={t('teams.authentication.policy.repairRequiredHelp')}
+                        accessibilitySemantics="alert"
                     />
                 ) : null}
-                <SettingAnchor setting={TEAM_AUTHENTICATION_SETTINGS.settings.acceptedInherit}><Item
-                    testID="team-authentication-policy-mode:inherit"
-                    title={t('teams.authentication.policy.acceptedInherit')}
-                    accessibilityRole="radio"
-                    webRole="radio"
-                    selected={selectedMode === 'inherit'}
-                    accessibilityChecked={selectedMode === 'inherit'}
-                    disabled={!editable}
-                    onPress={editable ? () => chooseMode('inherit') : undefined}
-                    showChevron={false}
-                /></SettingAnchor>
-                <SettingAnchor setting={TEAM_AUTHENTICATION_SETTINGS.settings.acceptedRestricted}><Item
-                    testID="team-authentication-policy-mode:restricted"
-                    title={t('teams.authentication.policy.acceptedRestricted')}
-                    accessibilityRole="radio"
-                    webRole="radio"
-                    selected={selectedMode === 'restricted'}
-                    accessibilityChecked={selectedMode === 'restricted'}
-                    disabled={!editable || !connectionsCurrent}
-                    onPress={editable && connectionsCurrent ? () => chooseMode('restricted') : undefined}
-                    showChevron={false}
-                /></SettingAnchor>
-            </ItemGroup></SettingSection>
-
-            {selectedMode === 'restricted' ? (
-                <SettingAnchor setting={TEAM_AUTHENTICATION_SETTINGS.settings.acceptedMethods}><ItemGroup
-                    title={t('teams.authentication.policy.connectionsSection')}
-                    description={restrictedWithoutReferences
-                        ? t('teams.authentication.policy.connectionsEmpty')
-                        : t('teams.authentication.policy.acceptedHelp')}
-                >
+                <SettingAnchor settings={ACCEPTED_MODE_SETTINGS}>
+                    <SegmentedChoiceItem<AcceptedChoice>
+                        testID="team-authentication-policy-mode"
+                        title={t('teams.authentication.policy.acceptedRow')}
+                        subtitle={restrictedWithoutReferences ? t('teams.authentication.policy.connectionsEmpty') : undefined}
+                        subtitleLines={0}
+                        accessoryLayout="stacked"
+                        options={[
+                            { id: 'inherit', label: t('teams.authentication.policy.acceptedInherit') },
+                            // The set to choose from is the connection list: it must be current.
+                            { id: 'restricted', label: t('teams.authentication.policy.acceptedRestricted'), disabled: !connectionsCurrent },
+                        ]}
+                        value={selectedMode ?? 'unset'}
+                        onChange={(mode) => { if (mode !== 'unset' && mode !== selectedMode) chooseMode(mode); }}
+                        disabled={!editable}
+                        testIDPrefix="team-authentication-policy-mode"
+                    />
+                </SettingAnchor>
+                {selectedMode === 'restricted' ? (
+                    <SettingAnchor setting={TEAM_AUTHENTICATION_SETTINGS.settings.acceptedMethods}><>
                     {connections.map((connection) => {
                         const checked = acceptedKeys.has(`team_connection:${connection.id}`);
                         // Two connections may share a provider name. Naming only
@@ -517,13 +526,16 @@ export const TeamAuthenticationPolicySections = React.memo(function TeamAuthenti
                         // selection — removing it drops it from the draft, and
                         // because the Home no longer offers it, it cannot come
                         // back — rather than an inert row whose only escape is
-                        // abandoning the whole policy for inheritance.
+                        // abandoning the whole policy for inheritance. The Home no
+                        // longer publishes a name for it, so the row is titled by
+                        // what it is and the stored id stays a quiet mono detail.
                         <Item
                             key={acceptedKey(reference)}
                             testID={`team-authentication-policy-home-method:${reference.methodId}`}
-                            title={reference.methodId}
-                            subtitle={`${t('teams.authentication.policy.connectionOwnerHome')} · ${t('teams.authentication.policy.homeMethodRetained')}`}
-                            accessibilityLabel={`${reference.methodId}, ${t('teams.authentication.policy.connectionOwnerHome')}, ${t('teams.authentication.policy.homeMethodRetained')}`}
+                            title={t('teams.authentication.policy.connectionOwnerHome')}
+                            subtitle={t('teams.authentication.policy.homeMethodRetained')}
+                            detail={reference.methodId}
+                            accessibilityLabel={`${t('teams.authentication.policy.connectionOwnerHome')}, ${reference.methodId}, ${t('teams.authentication.policy.homeMethodRetained')}`}
                             accessibilityRole="checkbox"
                             webRole="checkbox"
                             selected
@@ -536,65 +548,52 @@ export const TeamAuthenticationPolicySections = React.memo(function TeamAuthenti
                         />
                     ))}
                     {connections.length === 0 && homeMethods.length === 0 ? (
-                        <Item
+                        <SurfaceStateCard
                             testID="team-authentication-policy-connections-empty"
-                            mode="info"
+                            kind="empty"
+                            size="line"
                             title={t('teams.authentication.policy.connectionsEmpty')}
-                            showChevron={false}
                         />
                     ) : null}
-                </ItemGroup></SettingAnchor>
-            ) : null}
+                    </></SettingAnchor>
+                ) : null}
+                {draft !== null && conflicted ? conflictLine('team-authentication-policy-conflict') : null}
+                {draft !== null && basisKey === null ? conflictLine('team-authentication-policy-rebase') : null}
+                {draft !== null && approvalPending ? (
+                    <SurfaceStateCard
+                        testID="team-authentication-policy-approval-pending"
+                        kind="warning"
+                        size="line"
+                        title={t('teams.authentication.policy.approvalPending')}
+                        accessibilitySemantics="status"
+                    />
+                ) : null}
+            </ItemGroup></SettingSection>
 
             {draft !== null ? (
-                <ItemGroup>
-                    {conflicted ? (
-                        <Item
-                            testID="team-authentication-policy-conflict"
-                            title={t('teams.errors.conflict')}
-                            subtitle={t('teams.authentication.policy.conflictBody')}
-                            detail={t('common.continue')}
-                            accessibilityLiveRegion="assertive"
+                <ItemGroup surface="none">
+                    <SectionButtonRow
+                        footnote={error}
+                        footnoteTone="danger"
+                        footnoteTestID="team-authentication-policy-error"
+                    >
+                        <SettingAnchor setting={TEAM_AUTHENTICATION_SETTINGS.settings.save}><RoundButton
+                            testID="team-authentication-policy-save"
+                            size="small"
+                            title={t('common.save')}
+                            loading={saving}
+                            disabled={!canApply}
+                            onPress={() => { void submitPolicy(); }}
+                        /></SettingAnchor>
+                        <RoundButton
+                            testID="team-authentication-policy-cancel"
+                            size="small"
+                            display="inverted"
+                            title={t('common.cancel')}
                             disabled={saving}
-                            onPress={acknowledgeCurrentBasis}
-                            showChevron={false}
+                            onPress={cancelDraft}
                         />
-                    ) : null}
-                    {basisKey === null ? (
-                        <Item
-                            testID="team-authentication-policy-rebase"
-                            title={t('teams.errors.conflict')}
-                            subtitle={t('teams.authentication.policy.conflictBody')}
-                            detail={t('common.continue')}
-                            accessibilityLiveRegion="assertive"
-                            disabled={saving}
-                            onPress={acknowledgeCurrentBasis}
-                            showChevron={false}
-                        />
-                    ) : null}
-                    <SettingAnchor setting={TEAM_AUTHENTICATION_SETTINGS.settings.save}><Item
-                        testID="team-authentication-policy-save"
-                        title={t('common.save')}
-                        loading={saving}
-                        disabled={!canApply}
-                        onPress={canApply ? () => { void submitPolicy(); } : undefined}
-                        showChevron={false}
-                    /></SettingAnchor>
-                    <Item
-                        testID="team-authentication-policy-cancel"
-                        title={t('common.cancel')}
-                        disabled={saving}
-                        onPress={saving ? undefined : cancelDraft}
-                        showChevron={false}
-                    />
-                    {approvalPending ? (
-                        <Item
-                            testID="team-authentication-policy-approval-pending"
-                            title={t('teams.authentication.policy.approvalPending')}
-                            accessibilityLiveRegion="polite"
-                            showChevron={false}
-                        />
-                    ) : null}
+                    </SectionButtonRow>
                 </ItemGroup>
             ) : null}
         </>

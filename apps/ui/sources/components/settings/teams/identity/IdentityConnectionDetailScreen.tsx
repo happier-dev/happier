@@ -3,17 +3,26 @@ import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { useFocusEffect } from '@/components/appShell/workspace/destinationRoute';
 import { AppState } from 'react-native';
 import type { IdentityConnectionTestDiagnosticsV1 } from '@happier-dev/protocol';
-import type { TeamIdentityConnectionV1 } from '@happier-dev/protocol/teams';
+import type { IdentityConnectionV1 } from '@happier-dev/protocol/teams';
 
 import { runTeamIdentityProviderTestReturn } from '@/components/settings/home/identity/identityProviderTestReturn';
 import { useManagedIdentityProviders } from '@/components/settings/home/identity/useManagedIdentityProviders';
 import { IdentityTestDiagnosticsGroup } from '@/components/settings/identity/IdentityTestDiagnosticsGroup';
-import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { Item } from '@/components/ui/lists/Item';
+import { PageHeader } from '@/components/ui/layout/PageHeader';
+import { PageHeaderMarkSlot } from '@/components/ui/layout/PageHeaderMarkSlot';
+import { WorkosMark } from '@/components/settings/identity/WorkosMark';
+import { resolveTestedSignInConnectionStatus, signInConnectionStatusLabel } from '@/components/settings/identity/signInConnectionStatus';
+import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
+import { SectionButtonRow } from '@/components/ui/lists/SectionButtonRow';
+import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
+import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { SetupSteps, type SetupStep } from '@/components/ui/setupBlocks/SetupSteps';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SettingAnchor, SettingRow, SettingSection } from '@/components/settings/shell/SettingRow';
-import { TEAM_IDENTITY_CONNECTION_SETTINGS } from './teamAuthenticationSettings';
+import { TEAM_IDENTITY_CONNECTION_SETTINGS as TEAM_CONNECTION_SETTINGS, HOME_IDENTITY_CONNECTION_SETTINGS } from './teamAuthenticationSettings';
 import { Modal } from '@/modal';
 import { identityAdministrationFailure, identityAdministrationFailureMessage, identityAdministrationFailureRecoveryLabel } from '@/components/settings/identity/identityAdministrationFailure';
 import { announceAccessibilityMessage } from '@/components/ui/accessibility/announceAccessibilityMessage';
@@ -25,18 +34,21 @@ import { TeamSection } from '../TeamSection';
 import { teamDirectoryPath, teamIdentityConnectionPath, teamIdentityConnectionProviderEditPath } from '../teamsRoutes';
 import {
     createIdentityAdministrationClient,
+    identityAdministrationActionId,
     executeIdentityAdministrationRead,
     type IdentityAdministrationActionResult,
     type TeamIdentityActionOutput,
 } from './identityAdministrationClient';
 import {
+    connectionStateLabel,
     identityConnectionMode,
-    identityConnectionTestStatus,
     identityProviderKindLabel,
+    identityProviderKindIconName,
     workosConnectionStatusLabel,
     workosConnectionStrategyLabel,
+    workosSetupSteps,
+    type WorkosSetupStep,
 } from './identityAdministrationPresentation';
-import { connectionStateLabel } from './TeamAuthenticationSettingsScreen';
 import { useIdentityAdministration } from './useIdentityAdministration';
 import { createWorkosPortalReturnController } from './workosPortalReturn';
 import { IdentityConnectionGroupMappings } from './IdentityConnectionGroupMappings';
@@ -49,6 +61,8 @@ import {
     type RevisionedSettingsDraftOrigin,
 } from '@/components/settings/identity/revisionedSettingsDraft';
 import { Icon } from '@/components/ui/icons/Icon';
+import { homeAdministrationIdentityConnectionPath, homeAdministrationPoliciesPath } from '@/components/settings/home/governance/homeAdministrationRoutes';
+const TEAM_IDENTITY_CONNECTION_SETTINGS = TEAM_CONNECTION_SETTINGS;
 
 const TeamManagedProviderEditItem = React.memo(function TeamManagedProviderEditItem(props: Readonly<{
     scope: Parameters<typeof useManagedIdentityProviders>[0];
@@ -63,7 +77,7 @@ const TeamManagedProviderEditItem = React.memo(function TeamManagedProviderEditI
     const providers = useManagedIdentityProviders(props.scope, owner, props.requestApproval);
     if (providers.state.kind !== 'ready' || !providers.state.items.some((provider) => provider.id === props.providerId)) return null;
     return <SettingRow
-        setting={TEAM_IDENTITY_CONNECTION_SETTINGS.settings.edit}
+        setting={TEAM_CONNECTION_SETTINGS.settings.edit}
         testID="team-identity-provider-edit"
         icon={<Icon name="pencil-simple" />}
         disabled={props.disabled}
@@ -77,23 +91,86 @@ const TeamManagedProviderEditItem = React.memo(function TeamManagedProviderEditI
  * confirmed yet: the Admin Portal may have just finished it, so arriving on the
  * route is the moment to check. A connected row needs an explicit Portal return.
  */
-function isWorkosSetupAwaitingCheck(connection: TeamIdentityConnectionV1): boolean {
+function isWorkosSetupAwaitingCheck(connection: Pick<IdentityConnectionV1, 'provider' | 'externalReference' | 'state'>): boolean {
     return connection.provider.kind === 'workos_sso'
         && connection.externalReference.kind === 'workos_sso'
         && connection.externalReference.organizationId !== null
         && (connection.state === 'setting_up' || connection.state === 'needs_attention');
 }
 
-const AuthorizedConnectionDetail = React.memo(function AuthorizedConnectionDetail(props: Readonly<{
+
+type WorkosCandidate = Readonly<{ connectionId: string; displayName: string; strategy: string; status: string }>;
+type TeamConnectionRemovalImpact = Readonly<{
+    linkedAccounts: number;
+    accountsRequiringAlternateLogin: number;
+    directorySources: number;
+    externalGroupBindings: number;
+    managedMemberships: number;
+}>;
+
+/** A WorkOS draft cannot sign anyone in, so it is shown but never chosen. */
+function isWorkosDraftCandidate(candidate: WorkosCandidate): boolean {
+    return candidate.status.trim().toLowerCase() === 'draft';
+}
+
+function workosCandidateSummary(candidate: Pick<WorkosCandidate, 'strategy' | 'status'>): string {
+    return `${workosConnectionStrategyLabel(candidate.strategy)} · ${workosConnectionStatusLabel(candidate.status)}`;
+}
+
+/**
+ * What removing the connection does, in the person's terms: who signs in with it, and what is kept.
+ * The Home refuses removal while anything else depends on it, so a confirmable removal only ever
+ * affects the people who sign in with it.
+ */
+function teamConnectionRemovalBody(impact: TeamConnectionRemovalImpact): string {
+    return impact.linkedAccounts > 0
+        ? [
+            t('identityAdministration.removeImpactPeople', { count: impact.linkedAccounts }),
+            t('identityAdministration.removeImpactKept'),
+        ].join('\n')
+        : t('identityAdministration.removeImpactNobody');
+}
+
+/**
+ * Why removal is refused, blocker first: each typed blocker becomes its own counted sentence when
+ * the preview carries its count, otherwise the shared presenter's sentence, followed by where it is
+ * resolved.
+ */
+function teamConnectionRemovalBlockedBody(
+    impact: TeamConnectionRemovalImpact,
+    blockers: readonly string[],
+): string {
+    return blockers.map((blocker) => {
+        const counted = blocker === 'account_would_lose_login' && impact.accountsRequiringAlternateLogin > 0
+            ? t('identityAdministration.removeBlockedAlternateLogins', { count: impact.accountsRequiringAlternateLogin })
+            : blocker === 'directory_source_in_use' && impact.directorySources > 0
+                ? t('identityAdministration.removeBlockedDirectories', { count: impact.directorySources })
+                : blocker === 'external_group_binding_in_use' && impact.externalGroupBindings > 0
+                    ? t('identityAdministration.removeBlockedGroups', { count: impact.externalGroupBindings })
+                    : blocker === 'managed_membership_in_use' && impact.managedMemberships > 0
+                        ? t('identityAdministration.removeBlockedMemberships', { count: impact.managedMemberships })
+                        : identityAdministrationFailureMessage(blocker);
+        const label = identityAdministrationFailureRecoveryLabel(identityAdministrationFailure(blocker).recovery);
+        return label ? `${counted} ${label}.` : counted;
+    }).join('\n');
+}
+
+export const IdentityConnectionDetailContent = React.memo(function IdentityConnectionDetailContent(props: Readonly<{
     scope: Parameters<typeof useIdentityAdministration>[0];
-    teamId: string;
+    teamId: string | null;
     connectionId: string;
     mutationsAvailable: boolean;
-    requestApproval: (registration: ActionApprovalRegistration) => void;
+    requestApproval?: (registration: ActionApprovalRegistration) => void;
     testReturn?: Readonly<{ purpose: string | null; resultHandle: string | null; error: string | null }>;
     workosPortalReturn?: boolean;
+    conditionBanners?: React.ReactNode;
 }>) {
     const router = useRouter();
+    const TEAM_IDENTITY_CONNECTION_SETTINGS = props.teamId === null ? HOME_IDENTITY_CONNECTION_SETTINGS : TEAM_CONNECTION_SETTINGS;
+    const detailPath = React.useCallback(() => props.teamId === null
+        ? homeAdministrationIdentityConnectionPath(props.scope.serverId, props.connectionId)
+        : teamIdentityConnectionPath({ serverId: props.scope.serverId, teamId: props.teamId }, props.connectionId),
+    [props.scope.serverId, props.teamId, props.connectionId]);
     const { state, refresh } = useIdentityAdministration(props.scope, props.teamId, props.requestApproval);
     const client = React.useMemo(
         () => createIdentityAdministrationClient(props.scope, {
@@ -121,7 +198,8 @@ const AuthorizedConnectionDetail = React.memo(function AuthorizedConnectionDetai
         announceAccessibilityMessage(message);
     }, []);
     const [testDiagnostics, setTestDiagnostics] = React.useState<IdentityConnectionTestDiagnosticsV1 | null>(null);
-    const [workosCandidates, setWorkosCandidates] = React.useState<readonly Readonly<{ connectionId: string; displayName: string; strategy: string; status: string }>[]>([]);
+    const [workosCandidates, setWorkosCandidates] = React.useState<readonly WorkosCandidate[]>([]);
+    const [chosenWorkosCandidateId, setChosenWorkosCandidateId] = React.useState<string | null>(null);
     // The WorkOS Admin Portal returns either to the original screen (foreground)
     // or as a fresh document on this exact route (teams-lane-03/06 §7.4(5)-(6)).
     // Both refresh the authoritative projection first and then check setup; only
@@ -180,12 +258,13 @@ const AuthorizedConnectionDetail = React.memo(function AuthorizedConnectionDetai
     }, [connection, reloadConnectionSettings, settingsDirty, settingsOrigin]);
 
     const reconcileWorkos = React.useCallback(async () => {
-        if (!connection || !connection.allowedActions.includes('teams.identity.workos.reconcile')) return;
+        if (!props.mutationsAvailable || !connection || !connection.allowedActions.includes(identityAdministrationActionId('teams.identity.workos.reconcile', props.teamId))) return;
         setPending('workos:reconcile'); setActionFailure(null);
         try {
             const applyResult = (value: TeamIdentityActionOutput<'teams.identity.workos.reconcile'>) => {
                 if (value.outcome === 'selection_required') {
                     setWorkosCandidates(value.candidates);
+                    setChosenWorkosCandidateId(null);
                     // A new decision appears further down the screen than the
                     // control that was pressed, so it is announced as well as
                     // rendered; nothing is chosen on the caller's behalf.
@@ -193,6 +272,7 @@ const AuthorizedConnectionDetail = React.memo(function AuthorizedConnectionDetai
                     return;
                 }
                 setWorkosCandidates([]);
+                setChosenWorkosCandidateId(null);
                 refresh();
             };
             const result = await client.execute(
@@ -205,7 +285,7 @@ const AuthorizedConnectionDetail = React.memo(function AuthorizedConnectionDetai
                 reportActionFailure(result.failure.code);
             } else applyResult(result.value);
         } finally { setPending(null); }
-    }, [client, connection, props.teamId, refresh, reportActionFailure]);
+    }, [client, connection, props.teamId, props.mutationsAvailable, refresh, reportActionFailure]);
 
     const routeFocusedRef = React.useRef(false);
     useFocusEffect(React.useCallback(() => {
@@ -240,14 +320,26 @@ const AuthorizedConnectionDetail = React.memo(function AuthorizedConnectionDetai
         setWorkosReturn(null);
         const canReconcile = state.kind === 'ready'
             && !state.stale
-            && connection?.allowedActions.includes('teams.identity.workos.reconcile') === true;
+            && props.mutationsAvailable
+            && connection?.allowedActions.includes(identityAdministrationActionId('teams.identity.workos.reconcile', props.teamId)) === true;
         if (workosReturn === 'portal') {
-            if (canReconcile) void reconcileWorkos();
-            else reportActionFailure('workos_reconcile_unavailable');
+            const clearReturnedMarker = () => {
+                // Only a fresh-document return has a URL marker. Foreground
+                // returns keep the current route and its focus/scroll intact.
+                if (props.workosPortalReturn) router.replace(detailPath());
+            };
+            if (canReconcile) void reconcileWorkos().then(clearReturnedMarker, () => {
+                reportActionFailure('home_unreachable');
+                clearReturnedMarker();
+            });
+            else {
+                reportActionFailure('workos_reconcile_unavailable');
+                clearReturnedMarker();
+            }
             return;
         }
         if (canReconcile && connection && isWorkosSetupAwaitingCheck(connection)) void reconcileWorkos();
-    }, [connection, reconcileWorkos, state, workosReturn]);
+    }, [connection, detailPath, reconcileWorkos, reportActionFailure, router, state, workosReturn, props.teamId, props.mutationsAvailable, props.workosPortalReturn]);
 
     React.useEffect(() => {
         const testReturn = props.testReturn;
@@ -282,21 +374,32 @@ const AuthorizedConnectionDetail = React.memo(function AuthorizedConnectionDetai
                 reportActionFailure('home_unreachable');
             } finally {
                 setPending(null);
-                router.replace(teamIdentityConnectionPath(
-                    { serverId: props.scope.serverId, teamId: props.teamId },
-                    props.connectionId,
-                ));
+                router.replace(detailPath());
             }
         })();
-    }, [client, connection, props.connectionId, props.scope.serverId, props.teamId, props.testReturn, refresh, reportActionFailure, router]);
+    }, [client, connection, detailPath, props.connectionId, props.scope.serverId, props.teamId, props.testReturn, refresh, reportActionFailure, router]);
 
-    if (state.kind === 'loading') return <ItemGroup><Item title={t('common.loading')} leftElement={<ActivitySpinner />} showChevron={false} /></ItemGroup>;
-    if (state.kind === 'unavailable') return <ItemGroup><Item testID="identity-connection-unavailable" title={identityAdministrationFailureMessage(state.failure.code)} detail={state.failure.retryable ? t('common.retry') : undefined} onPress={state.failure.retryable ? refresh : undefined} showChevron={false} /></ItemGroup>;
-    if (!connection) return <ItemGroup><Item testID="identity-connection-not-found" title={t('teams.errors.notFound')} showChevron={false} /></ItemGroup>;
+    const header = <PageHeader
+        testID="identity-connection-header"
+        alwaysShowTitle
+        title={connection?.provider.displayName ?? t('teams.authentication.detail.connection')}
+        leading={connection ? <PageHeaderMarkSlot>{connection.provider.kind === 'workos_sso' ? <WorkosMark size={32} /> : <Icon name={identityProviderKindIconName(connection.provider.kind)} size={32} />}</PageHeaderMarkSlot> : undefined}
+        description={connection ? props.teamId === null ? t('identityAdministration.homeWorkosPurpose') : identityProviderKindLabel(connection.provider.kind) : undefined}
+        meta={connection ? [
+            { key: 'state', text: connectionStateLabel(connection.state) },
+            { key: 'mode', text: identityConnectionMode(connection) === 'sign_in_time_groups' ? t('teams.authentication.mode.signInTimeGroups') : t('teams.authentication.mode.signInOnly') },
+        ] : undefined}
+    />;
+    if (state.kind === 'loading') return <>{header}{props.conditionBanners}<ItemGroup><SurfaceStateCard testID="identity-connection-loading" kind="loading" size="line" title={t('common.loading')} accessibilitySemantics="status" /></ItemGroup></>;
+    if (state.kind === 'unavailable') return <>{header}{props.conditionBanners}<ItemGroup><SurfaceStateCard testID="identity-connection-unavailable" kind="error" size="line" title={identityAdministrationFailureMessage(state.failure.code)} diagnosticCode={state.failure.code} action={state.failure.retryable ? { label: t('common.retry'), onPress: refresh, testID: 'identity-connection-retry' } : undefined} accessibilitySemantics="alert" /></ItemGroup></>;
+    if (!connection) return <>{header}{props.conditionBanners}<ItemGroup><SurfaceStateCard testID="identity-connection-not-found" kind="unavailable" size="line" title={t('teams.errors.notFound')} /></ItemGroup></>;
 
     const mode = identityConnectionMode(connection) === 'sign_in_time_groups' ? t('teams.authentication.mode.signInTimeGroups') : t('teams.authentication.mode.signInOnly');
-    const testStatus = identityConnectionTestStatus(connection);
-    const can = (actionId: (typeof connection.allowedActions)[number]) => connection.allowedActions.includes(actionId);
+    // This row describes the last test, not whether the binding's sign-in switch is on.
+    const testStatusLabel = signInConnectionStatusLabel(resolveTestedSignInConnectionStatus({
+        enabled: true, testable: true, lastSuccessfulTest: connection.lastSuccessfulTest,
+    }));
+    const can = (actionId: import('@happier-dev/protocol/teams').TeamIdentityActionIdV1) => connection.allowedActions.includes(identityAdministrationActionId(actionId, props.teamId));
     const projectionCurrent = !state.refreshing && !state.stale;
     const workosReturnRefreshing = workosReturn === 'portal'
         || (workosReturn === 'route' && connection !== null && isWorkosSetupAwaitingCheck(connection));
@@ -313,6 +416,7 @@ const AuthorizedConnectionDetail = React.memo(function AuthorizedConnectionDetai
     };
 
     const runLifecycle = async (actionId: 'teams.identity.connections.enable' | 'teams.identity.connections.disable') => {
+        if (!props.mutationsAvailable || mutationBusy || !can(actionId)) return;
         setPending(actionId); setActionFailure(null);
         try {
             settle(await client.execute(
@@ -362,6 +466,7 @@ const AuthorizedConnectionDetail = React.memo(function AuthorizedConnectionDetai
     };
 
     const test = async () => {
+        if (!props.mutationsAvailable || mutationBusy || !can('teams.identity.connections.test.start')) return;
         setPending('test'); setActionFailure(null); setTestDiagnostics(null);
         try {
             const continueTest = async (value: TeamIdentityActionOutput<'teams.identity.connections.test.start'>) => {
@@ -382,7 +487,8 @@ const AuthorizedConnectionDetail = React.memo(function AuthorizedConnectionDetai
     };
 
     const openWorkosPortal = async () => {
-        if (!await Modal.confirm(t('identityAdministration.workosSetupSso'), t('teams.authentication.subtitle'), { cancelText: t('common.cancel'), confirmText: t('common.continue') })) return;
+        if (!props.mutationsAvailable || mutationBusy || !can('teams.identity.workos.adminPortalLink.create')) return;
+        if (!await Modal.confirm(t('identityAdministration.workosSetupSso'), t('identityAdministration.workosPortalConfirmBody'), { cancelText: t('common.cancel'), confirmText: t('common.continue') })) return;
         const intent = 'sso' as const;
         setPending(`workos:${intent}`); setActionFailure(null);
         try {
@@ -406,24 +512,16 @@ const AuthorizedConnectionDetail = React.memo(function AuthorizedConnectionDetai
         } finally { setPending(null); }
     };
 
-    const chooseWorkos = async (candidate: Readonly<{
-        connectionId: string; displayName: string; strategy: string; status: string;
-    }>) => {
+    // Choosing fixes the provider namespace every future identity under this
+    // binding is issued in, so a row only selects; the commit is the explicit
+    // primary action that names the chosen connection.
+    const chooseWorkos = async (candidate: WorkosCandidate) => {
+        if (!props.mutationsAvailable || mutationBusy || !can('teams.identity.workos.connection.set')) return;
+        if (isWorkosDraftCandidate(candidate)) return;
         const workosConnectionId = candidate.connectionId;
-        // Choosing fixes the provider namespace every future identity under this
-        // binding is issued in, so the choice is confirmed by name rather than
-        // committed by a single press on a row that appeared mid-screen.
-        if (!await Modal.confirm(
-            t('identityAdministration.workosChooseConnection'),
-            [
-                candidate.displayName,
-                `${workosConnectionStrategyLabel(candidate.strategy)} · ${workosConnectionStatusLabel(candidate.status)}`,
-            ].join('\n'),
-            { cancelText: t('common.cancel'), confirmText: t('common.continue') },
-        )) return;
         setPending(`workos:set:${workosConnectionId}`); setActionFailure(null);
         try {
-            const applyConnection = () => { setWorkosCandidates([]); refresh(); };
+            const applyConnection = () => { setWorkosCandidates([]); setChosenWorkosCandidateId(null); refresh(); };
             const result = await client.execute(
                 'teams.identity.workos.connection.set',
                 { v: 1, teamId: props.teamId, connectionId: connection.id, expectedRevision: connection.revision, workosConnectionId },
@@ -437,6 +535,7 @@ const AuthorizedConnectionDetail = React.memo(function AuthorizedConnectionDetai
     };
 
     const remove = async () => {
+        if (!props.mutationsAvailable || mutationBusy || !can('teams.identity.connections.remove')) return;
         const signal = readLifetime.current?.signal;
         if (!signal || signal.aborted) return;
         setPending('remove'); setActionFailure(null);
@@ -448,19 +547,15 @@ const AuthorizedConnectionDetail = React.memo(function AuthorizedConnectionDetai
             ), signal);
             if (signal.aborted) return;
             if (!preflight.ok) { reportActionFailure(preflight.failure.code); return; }
-            const impact = t('identityAdministration.teamRemoveImpact', { accounts: preflight.value.impact.linkedAccounts, alternateLogins: preflight.value.impact.accountsRequiringAlternateLogin, directories: preflight.value.impact.directorySources, groups: preflight.value.impact.externalGroupBindings, memberships: preflight.value.impact.managedMemberships });
             if (!preflight.value.canRemove) {
-                // Each blocker names a dependent and where it is resolved; the
-                // counts alone would hide why removal is refused.
-                const reasons = preflight.value.blockers.map((blocker) => {
-                    const message = identityAdministrationFailureMessage(blocker);
-                    const label = identityAdministrationFailureRecoveryLabel(identityAdministrationFailure(blocker).recovery);
-                    return label ? `${message} ${label}.` : message;
-                });
-                await Modal.alertAsync(t('identityAdministration.remove'), [...reasons, impact].join('\n'));
+                await Modal.alertAsync(
+                    t('identityAdministration.removeBlockedTitle', { name: connection.provider.displayName }),
+                    teamConnectionRemovalBlockedBody(preflight.value.impact, preflight.value.blockers),
+                );
                 return;
             }
-            if (!await Modal.confirm(t('identityAdministration.removeTitle', { name: connection.provider.displayName }), impact, { cancelText: t('common.cancel'), confirmText: t('identityAdministration.remove'), destructive: true })) return;
+            const removalBody = props.teamId === null ? t('identityAdministration.removeBody', { name: connection.provider.displayName }) : teamConnectionRemovalBody(preflight.value.impact);
+            if (!await Modal.confirm(t('identityAdministration.removeTitle', { name: connection.provider.displayName }), removalBody, { cancelText: t('common.cancel'), confirmText: t('identityAdministration.remove'), destructive: true })) return;
             if (signal.aborted) return;
             const finishRemoval = () => router.back();
             const result = await client.execute(
@@ -475,82 +570,227 @@ const AuthorizedConnectionDetail = React.memo(function AuthorizedConnectionDetai
         } finally { if (!signal.aborted) setPending(null); }
     };
 
+    const setupSteps = workosSetupSteps(connection);
+    const isWorkos = connection.provider.kind === 'workos_sso';
+    const workosObservation = connection.lastObservation?.kind === 'workos_sso' ? connection.lastObservation.presentation : null;
+    const chosenCandidate = workosCandidates.find((candidate) => candidate.connectionId === chosenWorkosCandidateId) ?? null;
+    const controlsDisabled = mutationBusy || !props.mutationsAvailable;
+    const candidatePicker = workosCandidates.length > 0 ? (
+        <SettingAnchor setting={TEAM_IDENTITY_CONNECTION_SETTINGS.settings.workosConnection}><ItemGroup accessibilityRole="radiogroup">
+            {workosCandidates.map((candidate) => {
+                const draft = isWorkosDraftCandidate(candidate);
+                const detail = draft ? t('identityAdministration.workosCandidateDraft') : workosCandidateSummary(candidate);
+                const chosen = candidate.connectionId === chosenWorkosCandidateId;
+                return <Item
+                    key={candidate.connectionId}
+                    testID={`identity-workos-candidate:${candidate.connectionId}`}
+                    title={candidate.displayName}
+                    subtitle={detail}
+                    accessibilityLabel={`${candidate.displayName}, ${detail}`}
+                    accessibilityRole="radio"
+                    webRole="radio"
+                    selected={chosen}
+                    accessibilityChecked={chosen}
+                    disabled={draft || controlsDisabled || !can('teams.identity.workos.connection.set')}
+                    onPress={() => setChosenWorkosCandidateId(candidate.connectionId)}
+                    showChevron={false}
+                />;
+            })}
+            <SectionContentRow showDivider={false}><SectionButtonRow>
+                <RoundButton
+                    testID="team-identity-workos-use"
+                    size="small"
+                    title={chosenCandidate
+                        ? t('identityAdministration.workosUseConnection', { name: chosenCandidate.displayName })
+                        : t('identityAdministration.workosChooseConnection')}
+                    loading={chosenCandidate !== null && pending === `workos:set:${chosenCandidate.connectionId}`}
+                    disabled={chosenCandidate === null || controlsDisabled || !can('teams.identity.workos.connection.set')}
+                    onPress={() => { if (chosenCandidate) void chooseWorkos(chosenCandidate); }}
+                />
+            </SectionButtonRow></SectionContentRow>
+        </ItemGroup></SettingAnchor>
+    ) : null;
+    const workosStep = (step: WorkosSetupStep): SetupStep => {
+        const current = step.state === 'current';
+        const done = step.state === 'done';
+        switch (step.id) {
+            case 'portal': return {
+                key: step.id,
+                state: step.state,
+                title: done ? t('identityAdministration.workosStepPortalDone') : t('identityAdministration.workosSetupSso'),
+                detail: done ? t('identityAdministration.workosStepPortalDoneDetail') : t('identityAdministration.workosStepPortalDetail'),
+                body: can('teams.identity.workos.adminPortalLink.create') ? (
+                    <RoundButton
+                        testID="team-identity-workos-sso"
+                        size="small"
+                        display={current ? 'default' : 'inverted'}
+                        title={current ? t('identityAdministration.workosOpenPortal') : t('identityAdministration.workosOpenPortalAgain')}
+                        loading={pending === 'workos:sso'}
+                        disabled={controlsDisabled}
+                        onPress={() => void openWorkosPortal()}
+                    />
+                ) : undefined,
+            };
+            case 'choose': return {
+                key: step.id,
+                state: step.state,
+                title: done ? t('identityAdministration.workosStepChooseDone') : t('identityAdministration.workosChooseConnection'),
+                detail: done
+                    ? (workosObservation ? `${workosObservation.displayName} · ${workosCandidateSummary(workosObservation)}` : undefined)
+                    : props.teamId === null ? t('identityAdministration.homeWorkosChooseDetail') : t('identityAdministration.workosStepChooseDetail'),
+                body: candidatePicker ?? (current && can('teams.identity.workos.reconcile') ? (
+                    <RoundButton
+                        testID="team-identity-workos-reconcile"
+                        size="small"
+                        title={t('identityAdministration.workosFindConnections')}
+                        loading={pending === 'workos:reconcile'}
+                        disabled={controlsDisabled}
+                        onPress={() => void reconcileWorkos()}
+                    />
+                ) : undefined),
+            };
+            case 'test': return {
+                key: step.id,
+                state: step.state,
+                title: t('identityAdministration.test'),
+                detail: done ? t('identityAdministration.workosTestPassed') : t('identityAdministration.workosStepTestDetail'),
+                body: current && can('teams.identity.connections.test.start') ? (
+                    <RoundButton
+                        testID="team-identity-test"
+                        size="small"
+                        title={t('identityAdministration.test')}
+                        loading={pending === 'test' || pending === 'test:return'}
+                        disabled={controlsDisabled}
+                        onPress={() => void test()}
+                    />
+                ) : undefined,
+            };
+            case 'enable': return {
+                key: step.id,
+                state: step.state,
+                title: t('identityAdministration.workosStepEnable'),
+                detail: props.teamId === null ? t('identityAdministration.homeWorkosEnableDetail') : t('identityAdministration.workosStepEnableDetail'),
+                body: current && can('teams.identity.connections.enable') ? (
+                    <RoundButton
+                        testID="team-identity-enable"
+                        size="small"
+                        title={t('identityAdministration.workosTurnOn')}
+                        loading={pending === 'teams.identity.connections.enable'}
+                        disabled={controlsDisabled}
+                        onPress={() => void runLifecycle('teams.identity.connections.enable')}
+                    />
+                ) : undefined,
+            };
+        }
+    };
+
     return <>
-        {state.stale ? <ItemGroup description={t('teams.stale.label')}><Item title={t('teams.unavailable.offline')} detail={t('common.retry')} onPress={refresh} showChevron={false} /></ItemGroup> : null}
-        {workosReturnRefreshing ? <ItemGroup><Item testID="identity-workos-return-checking" title={t('identityAdministration.workosCheckSetup')} detail={t('common.loading')} loading accessibilityLiveRegion="polite" showChevron={false} /></ItemGroup> : null}
-        <SettingSection section={TEAM_IDENTITY_CONNECTION_SETTINGS.sectionRefs.configuration} answersFor={[TEAM_IDENTITY_CONNECTION_SETTINGS.sectionRefs.groupMappings]}><ItemGroup title={connection.provider.displayName}>
+        {header}
+        {props.conditionBanners}
+        {state.stale ? <AttentionBanner testID="identity-connection-stale" title={t('teams.unavailable.offline')} description={t('teams.stale.label')} accessibilityLiveRegion="polite" action={{ label: t('common.retry'), onPress: refresh }} /> : null}
+        {workosReturnRefreshing ? <ItemGroup><SurfaceStateCard testID="identity-workos-return-checking" kind="loading" size="line" title={t('identityAdministration.workosCheckSetup')} accessibilitySemantics="status" /></ItemGroup> : null}
+        {isWorkos ? null : <SettingSection section={TEAM_IDENTITY_CONNECTION_SETTINGS.sectionRefs.configuration} answersFor={[TEAM_CONNECTION_SETTINGS.sectionRefs.groupMappings]}><ItemGroup title={connection.provider.displayName}>
             <Item testID="identity-connection-status" title={t('teams.authentication.detail.status')} detail={connectionStateLabel(connection.state)} showChevron={false} />
             <Item testID="identity-connection-mode" title={t('teams.authentication.detail.mode')} detail={mode} showChevron={false} />
             <Item testID="identity-connection-provider" title={t('teams.authentication.detail.provider')} detail={identityProviderKindLabel(connection.provider.kind)} showChevron={false} />
-            <Item
+            {isWorkos ? null : <Item
                 testID="identity-connection-test-status"
                 title={t('identityAdministration.test')}
                 detail={pending === 'test:return'
                     ? t('common.loading')
-                    : testStatus === 'current'
-                    ? t('identityAdministration.tested')
-                    : testStatus === 'stale'
-                        ? t('identityAdministration.staleTest')
-                        : t('identityAdministration.needsTest')}
+                    : testStatusLabel}
                 loading={pending === 'test:return'}
                 accessibilityLiveRegion={pending === 'test:return' ? 'polite' : undefined}
                 showChevron={false}
-            />
-        </ItemGroup></SettingSection>
-        {testDiagnostics ? <IdentityTestDiagnosticsGroup diagnostics={testDiagnostics} groupMappings /> : null}
-        {settingsConflict ? <ItemGroup description={t('identityAdministration.settingsChangedElsewhere')}>{settingsOrigin?.resourceId !== connection.id || connection.revision > settingsOrigin.revision ? <Item testID="identity-settings-reload-conflict" title={t('common.refresh')} disabled={pending !== null || !props.mutationsAvailable} onPress={reloadConnectionSettings} showChevron={false} /> : <Item testID="identity-settings-refresh-conflict" title={t('common.retry')} disabled={pending !== null} onPress={refresh} showChevron={false} />}</ItemGroup> : null}
-        {connection.settings.kind === 'oidc' ? <ItemGroup title={t('teams.authentication.detail.restrictions')}>
-            <SettingRow setting={TEAM_IDENTITY_CONNECTION_SETTINGS.settings.allowedUsers} accessoryLayout="stacked" showChevron={false} rightElement={<FieldTextInput testID="identity-settings-allowed-users" accessibilityLabel={t('teams.authentication.detail.allowedUsers')} value={oidcSettings.allowedUsers} editable={projectionCurrent && props.mutationsAvailable && can('teams.identity.connections.settings.update')} multiline onChangeText={(value) => editOidcSettings({ allowedUsers: value })} />} />
-            <SettingRow setting={TEAM_IDENTITY_CONNECTION_SETTINGS.settings.allowedDomains} accessoryLayout="stacked" showChevron={false} rightElement={<FieldTextInput testID="identity-settings-allowed-domains" accessibilityLabel={t('teams.authentication.detail.allowedDomains')} value={oidcSettings.allowedEmailDomains} editable={projectionCurrent && props.mutationsAvailable && can('teams.identity.connections.settings.update')} multiline autoCapitalize="none" onChangeText={(value) => editOidcSettings({ allowedEmailDomains: value })} />} />
-            <SettingRow setting={TEAM_IDENTITY_CONNECTION_SETTINGS.settings.groupsAny} accessoryLayout="stacked" showChevron={false} rightElement={<FieldTextInput testID="identity-settings-groups-any" accessibilityLabel={t('identityAdministration.groupsAny')} value={oidcSettings.groupsAny} editable={projectionCurrent && props.mutationsAvailable && can('teams.identity.connections.settings.update')} multiline onChangeText={(value) => editOidcSettings({ groupsAny: value })} />} />
-            <SettingRow setting={TEAM_IDENTITY_CONNECTION_SETTINGS.settings.groupsAll} accessoryLayout="stacked" showChevron={false} rightElement={<FieldTextInput testID="identity-settings-groups-all" accessibilityLabel={t('identityAdministration.groupsAll')} value={oidcSettings.groupsAll} editable={projectionCurrent && props.mutationsAvailable && can('teams.identity.connections.settings.update')} multiline onChangeText={(value) => editOidcSettings({ groupsAll: value })} />} />
-            {can('teams.identity.connections.settings.update') ? <SettingRow setting={TEAM_IDENTITY_CONNECTION_SETTINGS.settings.save} testID="identity-settings-save" loading={pending === 'settings'} disabled={mutationBusy || settingsConflict || !settingsDirty || !props.mutationsAvailable} onPress={() => void saveSettings()} showChevron={false} /> : null}
-        </ItemGroup> : null}
-        {connection.settings.kind === 'github_app_identity' ? <ItemGroup title={t('teams.authentication.detail.configuration')}>
-            <SettingRow setting={TEAM_IDENTITY_CONNECTION_SETTINGS.settings.organization} accessoryLayout="adaptive" showChevron={false} rightElement={<FieldTextInput testID="identity-settings-organization" accessibilityLabel={t('teams.authentication.detail.organization')} value={organizationLogin} editable={projectionCurrent && props.mutationsAvailable && can('teams.identity.connections.settings.update')} autoCapitalize="none" onChangeText={editOrganizationLogin} />} />
-            {can('teams.identity.connections.settings.update') ? <SettingRow setting={TEAM_IDENTITY_CONNECTION_SETTINGS.settings.save} testID="identity-settings-save" loading={pending === 'settings'} disabled={mutationBusy || settingsConflict || !settingsDirty || !props.mutationsAvailable} onPress={() => void saveSettings()} showChevron={false} /> : null}
-        </ItemGroup> : null}
-        {connection.lastObservation?.kind === 'workos_sso' && connection.lastObservation.presentation ? <ItemGroup title={t('teams.authentication.detail.configuration')}><Item testID="identity-workos-current-connection" title={t('teams.authentication.detail.connection')} detail={connection.lastObservation.presentation.displayName} subtitle={`${workosConnectionStrategyLabel(connection.lastObservation.presentation.strategy)} · ${workosConnectionStatusLabel(connection.lastObservation.presentation.status)}`} showChevron={false} /></ItemGroup> : null}
-        {connection.provider.kind === 'oidc' || connection.provider.kind === 'github_app_identity' ? <IdentityConnectionGroupMappings scope={props.scope} address={{ serverId: props.scope.serverId, teamId: props.teamId }} connectionId={connection.id} mutationsAvailable={props.mutationsAvailable && projectionCurrent} requestApproval={props.requestApproval} /> : null}
-        {workosCandidates.length > 0 ? (
-            <SettingAnchor setting={TEAM_IDENTITY_CONNECTION_SETTINGS.settings.workosConnection}><ItemGroup
-                title={t('identityAdministration.workosChooseConnection')}
-                accessibilityRole="radiogroup"
-                accessibilityLabel={t('identityAdministration.workosChooseConnection')}
-            >
-                {workosCandidates.map((candidate) => {
-                    const detail = `${workosConnectionStrategyLabel(candidate.strategy)} · ${workosConnectionStatusLabel(candidate.status)}`;
-                    return (
-                        <Item
-                            key={candidate.connectionId}
-                            testID={`identity-workos-candidate:${candidate.connectionId}`}
-                            title={candidate.displayName}
-                            subtitle={detail}
-                            // The row's own name and strategy/status carry the
-                            // whole choice, so assistive technology reads the
-                            // same thing the eye does instead of "button".
-                            accessibilityLabel={`${candidate.displayName}, ${detail}`}
-                            accessibilityRole="radio"
-                            webRole="radio"
-                            accessibilityChecked={false}
-                            disabled={mutationBusy || !props.mutationsAvailable}
-                            onPress={() => void chooseWorkos(candidate)}
-                            showChevron={false}
-                        />
-                    );
-                })}
+            />}
+        </ItemGroup></SettingSection>}
+        {setupSteps ? (
+            // The WorkOS path as visible steps: only the current step offers its
+            // action; done steps keep their fact, later steps wait.
+            <SettingAnchor setting={TEAM_IDENTITY_CONNECTION_SETTINGS.settings.workosSetupSso}><ItemGroup title={t('identityAdministration.workosSetupSection')} description={t('identityAdministration.workosSetupFooter')}>
+                <SectionContentRow showDivider={false}>
+                    <SetupSteps testID="identity-workos-setup-steps" steps={setupSteps.map(workosStep)} />
+                </SectionContentRow>
             </ItemGroup></SettingAnchor>
         ) : null}
-        {actionFailure ? <ItemGroup><Item testID="identity-connection-failure" title={actionFailure} showChevron={false} /></ItemGroup> : null}
-        <SettingSection section={TEAM_IDENTITY_CONNECTION_SETTINGS.sectionRefs.actions}><ItemGroup title={t('identityAdministration.actions')}>
-            {connection.provider.kind === 'oidc' ? <TeamManagedProviderEditItem scope={props.scope} address={{ serverId: props.scope.serverId, teamId: props.teamId }} connectionId={connection.id} providerId={connection.provider.id} disabled={mutationBusy || !props.mutationsAvailable} requestApproval={props.requestApproval} /> : null}
-            {can('teams.identity.connections.test.start') ? <SettingRow setting={TEAM_IDENTITY_CONNECTION_SETTINGS.settings.test} testID="team-identity-test" loading={pending === 'test'} disabled={mutationBusy || !props.mutationsAvailable} onPress={() => void test()} showChevron={false} /> : null}
-            {can('teams.identity.connections.enable') ? <SettingRow setting={TEAM_IDENTITY_CONNECTION_SETTINGS.settings.enable} testID="team-identity-enable" loading={pending === 'teams.identity.connections.enable'} disabled={mutationBusy || !props.mutationsAvailable} onPress={() => void runLifecycle('teams.identity.connections.enable')} showChevron={false} /> : null}
-            {can('teams.identity.connections.disable') ? <SettingRow setting={TEAM_IDENTITY_CONNECTION_SETTINGS.settings.disable} testID="team-identity-disable" loading={pending === 'teams.identity.connections.disable'} disabled={mutationBusy || !props.mutationsAvailable} onPress={() => void runLifecycle('teams.identity.connections.disable')} showChevron={false} /> : null}
-            {can('teams.identity.workos.adminPortalLink.create') ? <><SettingRow setting={TEAM_IDENTITY_CONNECTION_SETTINGS.settings.workosSetupSso} testID="team-identity-workos-sso" disabled={mutationBusy || !props.mutationsAvailable} onPress={() => void openWorkosPortal()} showChevron={false} /><SettingRow setting={TEAM_IDENTITY_CONNECTION_SETTINGS.settings.workosSetupDirectory} testID="team-identity-workos-directory" icon={<Icon name="users" />} disabled={mutationBusy || !props.mutationsAvailable} onPress={() => router.push(teamDirectoryPath({ serverId: props.scope.serverId, teamId: props.teamId }))} showChevron /></> : null}
-            {can('teams.identity.workos.reconcile') ? <SettingRow setting={TEAM_IDENTITY_CONNECTION_SETTINGS.settings.workosCheckSetup} testID="team-identity-workos-reconcile" disabled={mutationBusy || !props.mutationsAvailable} onPress={() => void reconcileWorkos()} showChevron={false} /> : null}
-            {can('teams.identity.connections.remove') ? <SettingRow setting={TEAM_IDENTITY_CONNECTION_SETTINGS.settings.remove} testID="team-identity-remove" destructive disabled={mutationBusy || !props.mutationsAvailable} onPress={() => void remove()} showChevron={false} /> : null}
-        </ItemGroup></SettingSection>
+        {isWorkos && !setupSteps ? (
+            <SettingAnchor setting={TEAM_IDENTITY_CONNECTION_SETTINGS.settings.workosCheckSetup}><ItemGroup title={t('identityAdministration.workosConnectionSection')}>
+                <Item title={t('identityAdministration.homeWorkosCompanyName')} detail={connection.provider.displayName} showChevron={false} rightElement={can('teams.identity.workos.adminPortalLink.create') ? <RoundButton testID="team-identity-workos-sso" size="small" display="secondary" title={t('identityAdministration.workosOpenPortalAgain')} disabled={controlsDisabled} loading={pending === 'workos:sso'} onPress={() => void openWorkosPortal()} /> : undefined} />
+                <Item
+                    testID="identity-workos-current-connection"
+                    title={t('identityAdministration.workosConnectionRow')}
+                    subtitle={workosObservation
+                        ? `${workosObservation.displayName} · ${workosCandidateSummary(workosObservation)}`
+                        : t('identityAdministration.workosConnectionNotChosen')}
+                    rightElement={can('teams.identity.workos.reconcile') ? (
+                        <RoundButton testID="team-identity-workos-reconcile" size="small" display="inverted" title={t('identityAdministration.workosChange')} loading={pending === 'workos:reconcile'} disabled={controlsDisabled} onPress={() => void reconcileWorkos()} />
+                    ) : undefined}
+                    showChevron={false}
+                />
+                <Item
+                    testID="identity-connection-test-status"
+                    title={t('identityAdministration.test')}
+                    subtitle={pending === 'test:return'
+                        ? t('common.loading')
+                        : testStatusLabel}
+                    loading={pending === 'test:return'}
+                    accessibilityLiveRegion={pending === 'test:return' ? 'polite' : undefined}
+                    rightElement={can('teams.identity.connections.test.start') ? (
+                        <RoundButton testID="team-identity-test" size="small" display="secondary" title={t('identityAdministration.workosTestAgain')} loading={pending === 'test'} disabled={controlsDisabled} onPress={() => void test()} />
+                    ) : undefined}
+                    showChevron={false}
+                />
+            </ItemGroup></SettingAnchor>
+        ) : null}
+        {testDiagnostics ? <IdentityTestDiagnosticsGroup diagnostics={testDiagnostics} groupMappings={props.teamId !== null} /> : null}
+        {props.teamId === null && isWorkos ? <ItemGroup description={t('identityAdministration.homeWorkosOffboarding')}>
+            <Item title={t('homeGovernance.signInTitle')} subtitle={t('identityAdministration.homeWorkosEnableDetail')} onPress={() => router.push(homeAdministrationPoliciesPath(props.scope.serverId))} />
+        </ItemGroup> : null}
+        {settingsConflict ? <ItemGroup description={t('identityAdministration.settingsChangedElsewhere')}>{settingsOrigin?.resourceId !== connection.id || connection.revision > settingsOrigin.revision ? <Item testID="identity-settings-reload-conflict" title={t('common.refresh')} disabled={pending !== null || !props.mutationsAvailable} onPress={reloadConnectionSettings} showChevron={false} /> : <Item testID="identity-settings-refresh-conflict" title={t('common.retry')} disabled={pending !== null} onPress={refresh} showChevron={false} />}</ItemGroup> : null}
+        {connection.settings.kind === 'oidc' ? <ItemGroup title={t('teams.authentication.detail.restrictions')}>
+            <SettingRow setting={TEAM_CONNECTION_SETTINGS.settings.allowedUsers} accessoryLayout="stacked" showChevron={false} rightElement={<FieldTextInput testID="identity-settings-allowed-users" accessibilityLabel={t('teams.authentication.detail.allowedUsers')} value={oidcSettings.allowedUsers} editable={projectionCurrent && props.mutationsAvailable && can('teams.identity.connections.settings.update')} multiline onChangeText={(value) => editOidcSettings({ allowedUsers: value })} />} />
+            <SettingRow setting={TEAM_CONNECTION_SETTINGS.settings.allowedDomains} accessoryLayout="stacked" showChevron={false} rightElement={<FieldTextInput testID="identity-settings-allowed-domains" accessibilityLabel={t('teams.authentication.detail.allowedDomains')} value={oidcSettings.allowedEmailDomains} editable={projectionCurrent && props.mutationsAvailable && can('teams.identity.connections.settings.update')} multiline autoCapitalize="none" onChangeText={(value) => editOidcSettings({ allowedEmailDomains: value })} />} />
+            <SettingRow setting={TEAM_CONNECTION_SETTINGS.settings.groupsAny} accessoryLayout="stacked" showChevron={false} rightElement={<FieldTextInput testID="identity-settings-groups-any" accessibilityLabel={t('identityAdministration.groupsAny')} value={oidcSettings.groupsAny} editable={projectionCurrent && props.mutationsAvailable && can('teams.identity.connections.settings.update')} multiline onChangeText={(value) => editOidcSettings({ groupsAny: value })} />} />
+            <SettingRow setting={TEAM_CONNECTION_SETTINGS.settings.groupsAll} accessoryLayout="stacked" showChevron={false} rightElement={<FieldTextInput testID="identity-settings-groups-all" accessibilityLabel={t('identityAdministration.groupsAll')} value={oidcSettings.groupsAll} editable={projectionCurrent && props.mutationsAvailable && can('teams.identity.connections.settings.update')} multiline onChangeText={(value) => editOidcSettings({ groupsAll: value })} />} />
+            {can('teams.identity.connections.settings.update') ? <SettingRow setting={TEAM_CONNECTION_SETTINGS.settings.save} testID="identity-settings-save" loading={pending === 'settings'} disabled={mutationBusy || settingsConflict || !settingsDirty || !props.mutationsAvailable} onPress={() => void saveSettings()} showChevron={false} /> : null}
+        </ItemGroup> : null}
+        {connection.settings.kind === 'github_app_identity' ? <ItemGroup title={t('teams.authentication.detail.configuration')}>
+            <SettingRow setting={TEAM_CONNECTION_SETTINGS.settings.organization} accessoryLayout="adaptive" showChevron={false} rightElement={<FieldTextInput testID="identity-settings-organization" accessibilityLabel={t('teams.authentication.detail.organization')} value={organizationLogin} editable={projectionCurrent && props.mutationsAvailable && can('teams.identity.connections.settings.update')} autoCapitalize="none" onChangeText={editOrganizationLogin} />} />
+            {can('teams.identity.connections.settings.update') ? <SettingRow setting={TEAM_CONNECTION_SETTINGS.settings.save} testID="identity-settings-save" loading={pending === 'settings'} disabled={mutationBusy || settingsConflict || !settingsDirty || !props.mutationsAvailable} onPress={() => void saveSettings()} showChevron={false} /> : null}
+        </ItemGroup> : null}
+        {props.teamId !== null && props.requestApproval && (connection.provider.kind === 'oidc' || connection.provider.kind === 'github_app_identity') ? <IdentityConnectionGroupMappings scope={props.scope} address={{ serverId: props.scope.serverId, teamId: props.teamId }} connectionId={connection.id} mutationsAvailable={props.mutationsAvailable && projectionCurrent} requestApproval={props.requestApproval} /> : null}
+        {setupSteps ? null : candidatePicker}
+        {actionFailure ? <ItemGroup><SurfaceStateCard testID="identity-connection-failure" kind="error" size="line" title={actionFailure} accessibilitySemantics="alert" /></ItemGroup> : null}
+        <SettingSection section={TEAM_IDENTITY_CONNECTION_SETTINGS.sectionRefs.actions}>{isWorkos ? <>
+            <ItemGroup surface="none">
+                <SectionButtonRow trailing={can('teams.identity.connections.remove') ? <SettingAnchor setting={TEAM_IDENTITY_CONNECTION_SETTINGS.settings.remove}><RoundButton
+                    testID="team-identity-remove"
+                    size="small"
+                    display="destructive"
+                    title={t('identityAdministration.remove')}
+                    disabled={controlsDisabled}
+                    onPress={() => void remove()}
+                /></SettingAnchor> : undefined}>
+                    {can('teams.identity.connections.disable') ? <SettingAnchor setting={TEAM_IDENTITY_CONNECTION_SETTINGS.settings.disable}><RoundButton
+                        testID="team-identity-disable"
+                        size="small"
+                        display="secondary"
+                        title={t('identityAdministration.disable')}
+                        loading={pending === 'teams.identity.connections.disable'}
+                        disabled={controlsDisabled}
+                        onPress={() => void runLifecycle('teams.identity.connections.disable')}
+                    /></SettingAnchor> : null}
+                </SectionButtonRow>
+            </ItemGroup>
+            {props.teamId !== null && can('teams.identity.workos.adminPortalLink.create') ? <ItemGroup><SettingRow setting={TEAM_CONNECTION_SETTINGS.settings.workosSetupDirectory} testID="team-identity-workos-directory" icon={<Icon name="users" />} disabled={controlsDisabled} onPress={() => { if (props.teamId !== null) router.push(teamDirectoryPath({ serverId: props.scope.serverId, teamId: props.teamId })); }} showChevron /></ItemGroup> : null}
+        </> : <ItemGroup title={t('identityAdministration.actions')}>
+            {props.teamId !== null && props.requestApproval && connection.provider.kind === 'oidc' ? <TeamManagedProviderEditItem scope={props.scope} address={{ serverId: props.scope.serverId, teamId: props.teamId }} connectionId={connection.id} providerId={connection.provider.id} disabled={controlsDisabled} requestApproval={props.requestApproval} /> : null}
+            {!isWorkos && can('teams.identity.connections.test.start') ? <SettingRow setting={TEAM_IDENTITY_CONNECTION_SETTINGS.settings.test} testID="team-identity-test" loading={pending === 'test'} disabled={controlsDisabled} onPress={() => void test()} showChevron={false} /> : null}
+            {!isWorkos && can('teams.identity.connections.enable') ? <SettingRow setting={TEAM_IDENTITY_CONNECTION_SETTINGS.settings.enable} testID="team-identity-enable" loading={pending === 'teams.identity.connections.enable'} disabled={controlsDisabled} onPress={() => void runLifecycle('teams.identity.connections.enable')} showChevron={false} /> : null}
+            {can('teams.identity.connections.disable') ? <SettingRow setting={TEAM_IDENTITY_CONNECTION_SETTINGS.settings.disable} testID="team-identity-disable" loading={pending === 'teams.identity.connections.disable'} disabled={controlsDisabled} onPress={() => void runLifecycle('teams.identity.connections.disable')} showChevron={false} /> : null}
+            {props.teamId !== null && isWorkos && can('teams.identity.workos.adminPortalLink.create') ? <SettingRow setting={TEAM_CONNECTION_SETTINGS.settings.workosSetupDirectory} testID="team-identity-workos-directory" icon={<Icon name="users" />} disabled={controlsDisabled} onPress={() => { if (props.teamId !== null) router.push(teamDirectoryPath({ serverId: props.scope.serverId, teamId: props.teamId })); }} showChevron /> : null}
+            {can('teams.identity.connections.remove') ? <SettingRow setting={TEAM_IDENTITY_CONNECTION_SETTINGS.settings.remove} testID="team-identity-remove" destructive disabled={controlsDisabled} onPress={() => void remove()} showChevron={false} /> : null}
+        </ItemGroup>}</SettingSection>
     </>;
 });
 
@@ -562,13 +802,15 @@ export const IdentityConnectionDetailScreen = React.memo(function IdentityConnec
     workosPortalReturn?: boolean;
 }>) {
     return (
-        <TeamSection serverId={props.serverId} teamId={props.teamId} title={t('teams.tabs.authentication')}>
-            {({ team, scope, canMutate, requestApproval }) => team.capabilities.manageAuthentication ? (
-                <AuthorizedConnectionDetail key={props.connectionId} scope={scope} teamId={team.id} connectionId={props.connectionId} mutationsAvailable={canMutate} requestApproval={requestApproval} testReturn={props.testReturn} workosPortalReturn={props.workosPortalReturn} />
+        <TeamSection serverId={props.serverId} teamId={props.teamId} title={t('teams.authentication.detail.connection')} childRendersHeader>
+            {({ team, scope, canMutate, requestApproval }, conditionBanners) => team.capabilities.manageAuthentication ? (
+                <IdentityConnectionDetailContent key={props.connectionId} scope={scope} teamId={team.id} connectionId={props.connectionId} mutationsAvailable={canMutate} requestApproval={requestApproval} testReturn={props.testReturn} workosPortalReturn={props.workosPortalReturn} conditionBanners={conditionBanners} />
             ) : (
+                <><PageHeader title={t('teams.authentication.detail.connection')} />{conditionBanners}
                 <SettingSection section={TEAM_IDENTITY_CONNECTION_SETTINGS.sectionRefs.actions} answersFor={Object.values(TEAM_IDENTITY_CONNECTION_SETTINGS.sectionRefs)}>
-                    <ItemGroup><Item title={t('teams.errors.forbidden')} showChevron={false} /></ItemGroup>
+                    <ItemGroup><SurfaceStateCard testID="identity-connection-forbidden" kind="denied" size="line" title={t('teams.errors.forbidden')} /></ItemGroup>
                 </SettingSection>
+                </>
             )}
         </TeamSection>
     );

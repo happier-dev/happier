@@ -54,6 +54,11 @@ export type TeamInvitationPresentation = Readonly<{
     recipientLabel: string | null;
     deliveryLabel: string | null;
     /**
+     * A waiting invitation whose last email was refused by the mail boundary. The one state that
+     * asks for attention on its own row; a finished invitation has nothing left to deliver.
+     */
+    emailUndelivered: boolean;
+    /**
      * What this invitation actually offers, in the manager's words.
      *
      * A reviewer deciding whether to revoke an outstanding invitation needs the
@@ -104,8 +109,26 @@ export function resolveTeamInvitationPresentation(
             ? null
             : t('teams.invitations.maskedRecipient', { email: row.recipientEmailMask }),
         deliveryLabel,
+        emailUndelivered: state === 'active' && row.lastEmailDelivery?.status === 'failed',
         offerLabel: `${teamRoleLabel(row.role)} · ${row.historyAccess === 'all_existing'
             ? t('teams.history.allExisting')
             : t('teams.history.fromMembership')}`,
     });
+}
+
+/**
+ * The list's two groups (lab `tsInvites-A`): invitations still waiting to be accepted, and the ones
+ * that are finished — accepted, revoked or expired. The state is the presenter's, so a row whose
+ * expiry passed on screen moves to finished with the rest of what it shows.
+ */
+export function partitionTeamInvitations(
+    rows: readonly TeamInvitationRowV1[],
+    now: number,
+): Readonly<{ waiting: readonly TeamInvitationRowV1[]; finished: readonly TeamInvitationRowV1[] }> {
+    const waiting: TeamInvitationRowV1[] = [];
+    const finished: TeamInvitationRowV1[] = [];
+    for (const row of rows) {
+        (resolveState(row, now) === 'active' ? waiting : finished).push(row);
+    }
+    return { waiting, finished };
 }

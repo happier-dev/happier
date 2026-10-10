@@ -26,6 +26,7 @@ function team(id: string, name: string, overrides?: Partial<TeamSummaryV1>): Tea
         viewerRole: 'member',
         capabilities: {
             viewTeam: true,
+            viewRoster: true,
             manageSettings: false,
             managePolicy: false,
             manageMembers: false,
@@ -35,8 +36,10 @@ function team(id: string, name: string, overrides?: Partial<TeamSummaryV1>): Tea
             manageAuthentication: false,
             archiveTeam: false,
             restoreTeam: false,
+            leave: false,
         },
         admission: { historyChoice: { admin: 'choice', member: 'choice', guest: 'hidden' } },
+        counts: null,
         ...overrides,
     };
 }

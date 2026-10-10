@@ -63,7 +63,7 @@ installSettingsViewCommonModuleMocks({
             },
         }).module;
     },
-    storage: async (importOriginal) => providerHarness.storageModule(importOriginal),
+    storage: 'real',
 });
 
 const harness = createHomeGovernanceHarness();

@@ -81,6 +81,11 @@ installSettingsViewCommonModuleMocks({
         const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
         return createModalModuleMock({ confirmResult: true }).module;
     },
+    // Approval writers and continuation subscribers must share the real store.
+    storage: async (importOriginal) => {
+        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleMock({ importOriginal, overrides: {} });
+    },
 });
 
 const harness = createHomeGovernanceHarness();
@@ -220,10 +225,13 @@ describe('TeamSettingsScreen', () => {
 
         const screen = await renderSettings(serverId);
         await waitForTestId(screen, 'team-settings-name');
-        expect(screen.getTextContent()).toContain('common.save');
+        // One save model (DR-18): Cancel and Save exist only while there is a draft.
+        expect(screen.findByTestId('team-settings-save')).toBeFalsy();
+        expect(screen.findByTestId('team-settings-cancel')).toBeFalsy();
         // The edit has to be committed before the save reads it; without this
         // the submission carries the name the field started with.
         act(() => screen.changeTextByTestId('team-settings-name', 'Platform Core'));
+        await waitForTestId(screen, 'team-settings-cancel');
         await screen.pressByTestIdAsync('team-settings-save');
 
         await vi.waitFor(() => {
@@ -376,6 +384,24 @@ describe('TeamSettingsScreen', () => {
         const ids = collectRenderedTestIds(screen.tree.toJSON());
         expect(ids).not.toContain('team-settings-name');
         expect(ids).not.toContain('team-settings-logo-set');
+        expect(ids).not.toContain('team-settings-archive');
+    });
+
+    it('shows a viewer who can change nothing who can, and the values as text rather than dimmed controls', async () => {
+        const serverId = await addHomeWithTeam(teamSummaryFixture({
+            viewerRole: 'member',
+            capabilities: teamCapabilitiesFixture({}),
+        }));
+
+        const screen = await renderSettings(serverId);
+        await waitForTestId(screen, 'team-settings-read-only');
+
+        const ids = collectRenderedTestIds(screen.tree.toJSON());
+        for (const row of ['team-settings-session-creation', 'team-settings-external-sharing', 'team-settings-history-default']) {
+            expect(ids).toContain(row);
+            expect(ids.filter((id) => id.startsWith(`${row}:`))).toEqual([]);
+        }
+        expect(ids).toContain('team-settings-name-fact');
         expect(ids).not.toContain('team-settings-archive');
     });
 
@@ -649,6 +675,8 @@ describe('TeamSettingsScreen', () => {
             waiveDangerousUi: false,
             homeKey: 'identity-approval-canceled',
         });
+        // A live Account activates both scopes before Artifact publication.
+        await harness.requireUiApproval(serverId, 'teams.update');
 
         const screen = await renderSettings(serverId);
         await waitForTestId(screen, 'team-settings-name');
@@ -675,6 +703,7 @@ describe('TeamSettingsScreen', () => {
             waiveDangerousUi: false,
             homeKey: 'identity-approval-executed',
         });
+        await harness.requireUiApproval(serverId, 'teams.update');
 
         harness.answer(serverId, TEAM_UPDATE_PATH, { body: { ...team, name: 'Approval rename' } });
         const screen = await renderSettings(serverId);
@@ -780,11 +809,17 @@ describe('TeamSettingsScreen', () => {
         harness.answer(serverId, TEAM_RESTORE_PATH, { body: { ...team, archivedAt: null } });
 
         const screen = await renderSettings(serverId);
-        await waitForTestId(screen, 'team-archived');
+        // Settings says the Team is archived itself, once, with Restore on that one banner.
+        await waitForTestId(screen, 'team-settings-archived');
 
         const ids = collectRenderedTestIds(screen.tree.toJSON());
+        expect(ids).not.toContain('team-archived');
         expect(ids).toContain('team-settings-restore');
         expect(ids).not.toContain('team-settings-archive');
+        // Nothing can change, so nothing is drawn as a control: the values read as text.
+        expect(ids).toContain('team-settings-session-creation');
+        expect(ids.filter((id) => id.startsWith('team-settings-session-creation:'))).toEqual([]);
+        expect(ids).not.toContain('team-settings-name');
 
         await screen.pressByTestIdAsync('team-settings-restore');
         await vi.waitFor(() => {

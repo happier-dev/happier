@@ -29,7 +29,6 @@ import {
 } from '@/sync/ops/teams/teamCredentialOperations';
 import { t, type TranslationKey } from '@/text';
 import { setClipboardStringSafe } from '@/utils/ui/clipboard';
-import { useActiveUnsavedChangesGuard } from '@/utils/navigation/useActiveUnsavedChangesGuard';
 import { useUnsavedChangesBeforeRemoveGuard } from '@/utils/navigation/useUnsavedChangesBeforeRemoveGuard';
 import {
     runUnsavedChangesGuard,
@@ -166,11 +165,6 @@ const ExternalApiContent = React.memo(function ExternalApiContent(props: Readonl
         onContinue: continuePreventedNavigation,
         tag: revealLossGuard.tag,
     });
-    useActiveUnsavedChangesGuard({
-        navigation,
-        guard: revealLossGuard,
-        enabled: revealWouldBeLost,
-    });
 
     React.useEffect(() => {
         // Native-stack swipe dismissal can bypass beforeRemove on some platform
@@ -287,7 +281,7 @@ const ExternalApiContent = React.memo(function ExternalApiContent(props: Readonl
     if (view.resolved && !canReadKeys) {
         return (
             <ItemGroup description={view.resource ? t('teams.credentials.forbidden') : t('teams.credentials.detail.notFound')}>
-                <Item testID="team-credential-external-forbidden" title={t('homeGovernance.forbiddenTitle')} showChevron={false} />
+                <Item testID="team-credential-external-forbidden" title={t('teams.denied.title')} showChevron={false} />
             </ItemGroup>
         );
     }

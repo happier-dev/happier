@@ -19,6 +19,7 @@ import { teamIdentityConnectionPath } from '../teamsRoutes';
 import { createIdentityAdministrationClient } from './identityAdministrationClient';
 import { teamGitHubAppSurface } from './TeamGitHubAppScreens';
 import { connectionSettingsFromDraft, type OidcConnectionSettingsDraft } from './teamIdentitySetup';
+import { IdentityWorkosSetupContent } from './IdentityWorkosSetupContent';
 
 const EMPTY_CONNECTION_SETTINGS: OidcConnectionSettingsDraft = Object.freeze({
     allowedUsers: '', allowedEmailDomains: '', groupsAny: '', groupsAll: '',
@@ -94,10 +95,11 @@ const OidcSetupContent = React.memo(function OidcSetupContent(props: Readonly<{
 export const TeamIdentityProviderSetupScreen = React.memo(function TeamIdentityProviderSetupScreen(props: Readonly<{
     serverId: string;
     teamId: string;
-    providerKind: 'oidc' | 'github_app_identity';
+    providerKind: 'oidc' | 'github_app_identity' | 'workos_sso';
 }>) {
-    return <TeamSection serverId={props.serverId} teamId={props.teamId} title={t('identityAdministration.add')} description={t('teams.pages.identityProviderNew')}>
-        {(context) => {
+    const router = useRouter();
+    return <TeamSection serverId={props.serverId} teamId={props.teamId} title={t('identityAdministration.add')} description={t('teams.pages.identityProviderNew')} childRendersHeader={props.providerKind === 'workos_sso'}>
+        {(context, conditionBanners) => {
             if (!context.team.capabilities.manageAuthentication) {
                 return <ItemGroup><Item testID="team-provider-setup-forbidden" title={t('teams.errors.forbidden')} showChevron={false} /></ItemGroup>;
             }
@@ -107,6 +109,13 @@ export const TeamIdentityProviderSetupScreen = React.memo(function TeamIdentityP
                     manifestReturn={{ kind: 'team', serverId: context.address.serverId, teamId: context.address.teamId }}
                 />;
             }
+            if (props.providerKind === 'workos_sso') return <IdentityWorkosSetupContent
+                key={`${context.scope.serverId}:${context.scope.accountId}:${context.address.teamId}`}
+                scope={context.scope} teamId={context.address.teamId} homeName={context.homeName} mutationsAvailable={context.canMutate}
+                requestApproval={context.requestApproval}
+                conditionBanners={conditionBanners}
+                onCreated={(connectionId) => router.replace(teamIdentityConnectionPath(context.address, connectionId))}
+            />;
             return <OidcSetupContent
                 key={`${context.address.serverId}:${context.address.teamId}:oidc-create`}
                 scope={context.scope}

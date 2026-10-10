@@ -4,7 +4,7 @@ import type {
     DaemonProviderConnectionsDescribeResponseV1,
 } from '@happier-dev/protocol/rpc';
 
-import { describeProviderConnections, providerErrorFromRpcFailure } from '@/providers/rpc/client';
+import { describeProviderConnections, providerErrorFromRpcFailure } from '@/providers/actions/client';
 import type { ProviderSettingsMachineRowV1 } from '@/providers/hooks/targetMachine';
 import {
     captureActiveServerAccountScopeLifetime,

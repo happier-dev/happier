@@ -5,8 +5,10 @@ import type {
     TeamCredentialUsageQueryInputV1,
 } from '@happier-dev/protocol/teams';
 
-import { UsageVolumeBarChart } from '@/components/settings/usage/UsageVolumeBarChart';
-import type { UsageVolumeMetric } from '@/components/settings/usage/UsageVolumeBarChart';
+import { StackedSeriesChart } from '@happier-dev/plugin-ui/presentation';
+import { useUnistyles } from 'react-native-unistyles';
+import { projectPluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemeProjection';
+import { usageSeriesFrame, usageSeriesTooltip, usageSeriesValueFormatter, useUsageSeriesMotion, usageVolumeLens } from '@/components/settings/usage/usageSeriesPresentation';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { useTeamCredentialUsage, useTeamCredentialUsageWriteRefresh } from '@/hooks/teams/useTeamCredentialResources';
@@ -49,6 +51,7 @@ import { useTeamCredentialResourceView } from './useTeamCredentialResourceView';
  * Labels for the metrics the shared usage chart can draw. Request points are
  * offered only when the Home's coverage projection says the count is usable.
  */
+type UsageVolumeMetric = 'tokens' | 'cost' | 'requests';
 function metricLabel(metric: UsageVolumeMetric): string {
     if (metric === 'requests') return t('teams.credentials.limits.metric.requests');
     return metric === 'tokens' ? t('usage.tokens') : t('usage.cost');
@@ -117,6 +120,7 @@ const CredentialUsage = React.memo(function CredentialUsage(props: Readonly<{
     const resource = view.resource;
     const catalogResource = view.catalogResource;
 
+    const { theme } = useUnistyles();
     const [period, setPeriod] = React.useState<UsagePeriod>('30days');
     const [metric, setMetric] = React.useState<UsageVolumeMetric>('tokens');
     const [breakdown, setBreakdown] = React.useState<TeamCredentialUsageBreakdownDimensionV1 | null>(null);
@@ -183,6 +187,7 @@ const CredentialUsage = React.memo(function CredentialUsage(props: Readonly<{
         resourceRevision: resource?.revision ?? catalogResource?.resourceRevision ?? null,
         enabled: usageEnabled,
     });
+    const seriesMotion = useUsageSeriesMotion(usage.result?.series.length ?? 0);
     // Refresh moves the end to the current instant; a reread on the same
     // instant would otherwise leave the query identity unchanged.
     const refreshToNow = React.useCallback(() => {
@@ -449,15 +454,20 @@ const CredentialUsage = React.memo(function CredentialUsage(props: Readonly<{
 
             {result !== null && series.length > 0 && chartMetrics.length > 0 ? (
                 <ItemGroup title={t('usage.usageOverTime')}>
-                    <UsageVolumeBarChart
+                    <StackedSeriesChart
                         testID="team-credential-usage-series"
-                        points={series}
-                        metric={selectedMetric}
-                        currency={result.totals.cost.currency}
-                        requestLabels={{
-                            metric: usageRequestMetricLabel(result.coverage.requestCountCoverage),
-                            total: usageRequestMetricLabel(result.coverage.requestCountCoverage),
-                        }}
+                        theme={projectPluginUiTheme(theme)} label={metricLabel(selectedMetric)} variant="bar" size="full" minimumMaximum={1}
+                        {...seriesMotion} showReadout={false}
+                        unknownLabel={t('common.unavailable')}
+                        barWidth={26} barSlotWidth={42} barGap={10} barLeadingInset={4} barMinHeight={10} barTrackColor={theme.colors.surface.inset}
+                        barEmphasis="maximum" showPeakValue showPointLabels showScaleValues
+                        series={[{ id: selectedMetric, label: selectedMetric === 'requests' ? usageRequestMetricLabel(result.coverage.requestCountCoverage) : metricLabel(selectedMetric), color: theme.colors.text.link,
+                            points: series.map((point) => ({ id: String(point.timestamp), x: point.timestamp, label: seriesBucketLabel(point.timestamp, period),
+                                y: selectedMetric === 'tokens' ? point.tokens : selectedMetric === 'cost' ? point.cost : point.requests ?? null })) }]}
+                        valueFormatter={usageSeriesValueFormatter(selectedMetric, result.totals.cost.currency)}
+                        renderBucket={usageSeriesTooltip(theme.colors.text.link, 'usage-volume-point-trigger', usageSeriesValueFormatter(selectedMetric, result.totals.cost.currency))}
+                        renderFrame={usageSeriesFrame(series.length, { accentColor: theme.colors.text.link,
+                            resolveContent: usageVolumeLens(series, result.totals.cost.currency, (timestamp) => seriesBucketLabel(timestamp, period), usageRequestMetricLabel(result.coverage.requestCountCoverage)) })}
                     />
                     <Item
                         testID="team-credential-usage-series-list-toggle"

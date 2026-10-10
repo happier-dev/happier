@@ -3,7 +3,9 @@ import type { TeamCredentialResourceCatalogEntryV1 } from '@happier-dev/protocol
 
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { ItemGroupTitleWithAction } from '@/components/ui/lists/ItemGroupTitleWithAction';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
+import { teamsUnavailableHomeReason } from '../teamsDirectoryViewState';
 import type { HomeTeamCredentialModelCatalog } from '@/hooks/teams/useHomeTeamCredentialModelCatalog';
 import { t } from '@/text';
 
@@ -38,12 +40,33 @@ export const TeamCredentialCatalogSettingsGroup = React.memo(function TeamCreden
         ));
     }, [props.catalog.resources, props.sourceKind]);
 
-    // A stale empty snapshot is still actionable: preserve the section so the
-    // user can retry the canonical catalog instead of mistaking unavailable
-    // data for an empty Team audience. A genuinely current empty catalog stays
-    // absent so it does not add visual noise to ordinary settings.
-    if (resources.length === 0 && props.catalog.current) return null;
+    // Last-known is truthful only when there are retained rows. Disabled and
+    // current-empty catalogs stay absent; cold loads and failures name their state.
+    if (resources.length === 0 && !props.catalog.condition) return null;
     const rail = props.variant === 'rail';
+    const condition = props.catalog.condition;
+    const retry = props.onRetry && condition?.retryable !== false ? {
+        testID: `team-credential-catalog-retry:${props.sourceKind}`,
+        label: t('common.retry'),
+        onPress: () => Promise.resolve(props.onRetry?.()).catch(() => undefined),
+    } : undefined;
+    const state = !props.catalog.current ? resources.length > 0 ? (
+        <SurfaceFreshnessLine
+            testID={`team-credential-catalog-stale:${props.sourceKind}`}
+            reason={[t('teams.stale.label'), condition && condition.reason !== 'loading' ? teamsUnavailableHomeReason(condition) : null].filter(Boolean).join(' ')}
+            busy={condition?.reason === 'loading'}
+            action={retry}
+        />
+    ) : condition ? (
+        <SurfaceStateCard
+            testID={`team-credential-catalog-state:${props.sourceKind}`}
+            size={rail ? 'line' : undefined}
+            kind={condition.reason === 'loading' ? 'loading' : 'unavailable'}
+            title={condition.reason === 'loading' ? t('teams.directory.loading') : t('teams.unavailable.title')}
+            reason={condition.reason === 'loading' ? undefined : teamsUnavailableHomeReason(condition)}
+            action={retry}
+        />
+    ) : null : null;
 
     const rows = resources.map((resource) => {
         const resourceCurrent = props.catalog.currentResourceKeys.has(`${resource.teamId}:${resource.id}`);
@@ -92,41 +115,18 @@ export const TeamCredentialCatalogSettingsGroup = React.memo(function TeamCreden
         return (
             <>
                 <CollectionListGroupLabel
-                    title={props.catalog.current ? props.title : `${props.title} · ${t('teams.stale.label')}`}
-                    count={resources.length}
+                    title={props.title}
+                    count={props.catalog.current || resources.length > 0 ? resources.length : undefined}
                 />
                 {rows}
-                {!props.catalog.current && props.onRetry ? (
-                    <Item
-                        density="compact"
-                        pressableStyle={collectionListStyles.row}
-                        showChevron={false}
-                        testID={`team-credential-catalog-retry:${props.sourceKind}`}
-                        title={t('common.retry')}
-                        accessibilityLabel={t('common.retry')}
-                        onPress={() => { void Promise.resolve(props.onRetry?.()).catch(() => undefined); }}
-                    />
-                ) : null}
+                {state}
             </>
         );
     }
     return (
-        <ItemGroup
-            title={(
-                <ItemGroupTitleWithAction
-                    // The section's description says the data is last known; the title stays its name.
-                    title={props.title}
-                    action={!props.catalog.current && props.onRetry ? {
-                        iconName: 'arrow-clockwise',
-                        accessibilityLabel: t('common.retry'),
-                        testID: `team-credential-catalog-retry:${props.sourceKind}`,
-                        onPress: () => { void Promise.resolve(props.onRetry?.()).catch(() => undefined); },
-                    } : undefined}
-                />
-            )}
-            description={props.catalog.current ? undefined : t('teams.stale.label')}
-        >
+        <ItemGroup title={props.title}>
             {rows}
+            {state}
         </ItemGroup>
     );
 });

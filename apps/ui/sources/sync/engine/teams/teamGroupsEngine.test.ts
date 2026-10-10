@@ -26,6 +26,7 @@ vi.mock('@/auth/storage/tokenStorage', async (importOriginal) => {
 });
 
 import { createServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import { createDeferred } from '@/dev/testkit';
 import { createTeamAddress } from '@/sync/domains/teams/teamAddress';
 import { setActiveServerId, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
 import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
@@ -192,29 +193,70 @@ describe('Team Group projections', () => {
         release();
     });
 
-    it('preserves already-read pages and drops a continuation whose position has moved', async () => {
+    it('atomically revalidates the loaded Groups range through fresh cursors and withdraws removed rows', async () => {
         const homeA = await addHome('Home A', 'https://home-a.example');
         await setActiveServerId(homeA, { scope: 'device' });
         const scope = createServerAccountScope(homeA, 'account')!;
         const address = createTeamAddress(homeA, 'team-1')!;
         const key = groupsQueryKey('team-1');
 
-        runtimeFetchMock.mockImplementation(async () => page([group('g1')], 'cursor-1'));
+        runtimeFetchMock.mockResolvedValueOnce(page([group('g1'), group('removed')], 'cursor-1'));
         const release = observeTeamGroups(scope, address, ACTIVE);
         await vi.waitFor(() => expect(getTeamGroupsSnapshot(scope, address, key)?.nextCursor).toBe('cursor-1'));
 
-        runtimeFetchMock.mockImplementation(async () => page([group('g2')], null));
+        runtimeFetchMock.mockResolvedValueOnce(page([group('g2')], 'cursor-2'));
         await loadMoreTeamGroups(scope, address, ACTIVE);
         expect(getTeamGroupsSnapshot(scope, address, key)?.data?.map((row) => row.id))
-            .toEqual(['g1', 'g2']);
+            .toEqual(['g1', 'removed', 'g2']);
 
-        // A refresh that lands first moves the sequence; a continuation for the
-        // old position must not append rows the refresh already published.
-        runtimeFetchMock.mockImplementation(async () => page([group('g1')], 'cursor-9'));
-        await refreshTeamGroups(scope, address, ACTIVE);
+        const lastGood = getTeamGroupsSnapshot(scope, address, key)!.data!;
+        const continuation = createDeferred<Response>();
+        runtimeFetchMock
+            .mockResolvedValueOnce(page([group('g1', 'Renamed')], 'fresh-1'))
+            .mockReturnValueOnce(continuation.promise);
+        const refresh = refreshTeamGroups(scope, address, ACTIVE);
+        await vi.waitFor(() => expect(runtimeFetchMock).toHaveBeenCalledTimes(4));
+        expect(getTeamGroupsSnapshot(scope, address, key)?.data).toBe(lastGood);
+        expect(getTeamGroupsSnapshot(scope, address, key)?.status).toBe('refreshing');
+        continuation.resolve(page([group('g2'), group('g3')], 'fresh-2'));
+        await refresh;
         const moved = getTeamGroupsSnapshot(scope, address, key)!;
-        expect(moved.nextCursor).toBe('cursor-9');
-        expect(moved.data?.map((row) => row.id)).toEqual(['g1']);
+        expect(moved.nextCursor).toBe('fresh-2');
+        expect(moved.data?.map((row) => row.id)).toEqual(['g1', 'g2', 'g3']);
+        expect(moved.data?.[0]?.name).toBe('Renamed');
+        expect(moved.data?.[1]).toBe(lastGood[2]);
+        expect(runtimeFetchMock.mock.calls.map(([input]) => JSON.parse(input.init.body).cursor ?? null))
+            .toEqual([null, 'cursor-1', null, 'fresh-1']);
+        release();
+    });
+
+    it.each([
+        { status: 503, retained: true },
+        { status: 403, retained: false },
+    ])('handles a $status continuation refusal without publishing a partial Groups refresh', async ({ status, retained }) => {
+        const homeA = await addHome('Home A', 'https://home-a.example');
+        await setActiveServerId(homeA, { scope: 'device' });
+        const scope = createServerAccountScope(homeA, 'account')!;
+        const address = createTeamAddress(homeA, 'team-1')!;
+        const key = groupsQueryKey('team-1');
+
+        runtimeFetchMock.mockResolvedValueOnce(page([group('g1')], 'cursor-1'));
+        const release = observeTeamGroups(scope, address, ACTIVE);
+        await vi.waitFor(() => expect(getTeamGroupsSnapshot(scope, address, key)?.status).toBe('ready'));
+        runtimeFetchMock.mockResolvedValueOnce(page([group('g2')], 'cursor-2'));
+        await loadMoreTeamGroups(scope, address, ACTIVE);
+        const lastGood = getTeamGroupsSnapshot(scope, address, key)!;
+
+        runtimeFetchMock
+            .mockResolvedValueOnce(page([group('g1', 'Renamed')], 'fresh-1'))
+            .mockResolvedValueOnce(new Response('{}', { status }));
+        await refreshTeamGroups(scope, address, ACTIVE);
+        const failed = getTeamGroupsSnapshot(scope, address, key)!;
+        expect(failed.status).toBe('error');
+        expect(failed.data).toBe(retained ? lastGood.data : null);
+        expect(failed.nextCursor).toBe(retained ? 'cursor-2' : null);
+        expect(failed.stale).toBe(retained);
+        expect(failed.error?.kind).toBe(retained ? 'unknown' : 'forbidden');
         release();
     });
 

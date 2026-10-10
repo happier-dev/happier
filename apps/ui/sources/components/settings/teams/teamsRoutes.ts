@@ -164,7 +164,7 @@ export function teamIdentityConnectionProviderEditPath(address: TeamAddress, con
 
 export function teamIdentityProviderSetupPath(
     address: TeamAddress,
-    providerKind: 'oidc' | 'github_app_identity',
+    providerKind: 'oidc' | 'github_app_identity' | 'workos_sso',
 ): string {
     return `${teamAuthenticationPath(address)}/new?kind=${encodeURIComponent(providerKind)}`;
 }
@@ -282,10 +282,6 @@ export function teamGroupDetailPath(address: TeamAddress, groupId: string): stri
 
 export function teamGroupCreatePath(address: TeamAddress): string {
     return `${teamGroupsPath(address)}/new`;
-}
-
-export function teamInvitationCreatePath(address: TeamAddress): string {
-    return `${teamInvitationsPath(address)}/new`;
 }
 
 /*

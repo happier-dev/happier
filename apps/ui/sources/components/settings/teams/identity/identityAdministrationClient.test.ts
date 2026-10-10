@@ -1,11 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
+import { createElement } from 'react';
 import {
     CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION,
     DEFAULT_ACTIONS_SETTINGS_V1,
+    HOME_GOVERNANCE_ACCOUNT_CHANGE_ENTITY_ID_V1,
     TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1,
 } from '@happier-dev/protocol';
-import { createDeferred, renderHook, standardCleanup } from '@/dev/testkit';
+import { createDeferred, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
 import { useManagedIdentityProviders } from '@/components/settings/home/identity/useManagedIdentityProviders';
 import { useManagedGitHubApps } from '@/components/settings/home/githubApps/useManagedGitHubApps';
 import { useIdentityAdministration } from './useIdentityAdministration';
@@ -14,6 +16,19 @@ import { useDirectoryAdministration, useDirectorySourceAdministration } from './
 const serverFetchMock = vi.hoisted(() => vi.fn());
 const runtimeFetchMock = vi.hoisted(() => vi.fn());
 const getCredentialsForServerUrlMock = vi.hoisted(() => vi.fn());
+const routerReplace = vi.hoisted(() => vi.fn());
+
+// Navigation and native presentation are host boundaries; the identity client,
+// projection hook, shared detail and WorkOS step owner all remain real.
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    return createExpoRouterMock({ router: { replace: routerReplace } }).module;
+});
+vi.mock('@react-navigation/native', async () => {
+    const React = await import('react');
+    const { createReactNavigationNativeMock } = await import('@/dev/testkit/mocks/reactNavigation');
+    return { ...createReactNavigationNativeMock(), NavigationContext: React.createContext({}) };
+});
 
 vi.mock('@/sync/http/client', async () => {
     const { createArtifactStoreBoundary } = await import('@/dev/testkit/harness/artifactStoreBoundary');
@@ -61,6 +76,8 @@ import { createServerAccountScope } from '@/sync/domains/scope/serverAccountScop
 import { upsertServerProfile } from '@/sync/domains/server/serverProfiles';
 
 import { createIdentityAdministrationClient } from './identityAdministrationClient';
+import { IdentityConnectionDetailContent } from './IdentityConnectionDetailScreen';
+import { IdentityWorkosSetupContent } from './IdentityWorkosSetupContent';
 import { resetScopedHomeActionExecutorsForTests } from '@/sync/ops/actions/scopedHomeActionExecutor';
 import { storage } from '@/sync/domains/state/storage';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
@@ -131,6 +148,7 @@ beforeEach(() => {
     runtimeFetchMock.mockReset();
     serverFetchMock.mockReset();
     getCredentialsForServerUrlMock.mockReset();
+    routerReplace.mockReset();
     getCredentialsForServerUrlMock.mockResolvedValue({ token: tokenForSub('account-1') });
     resetScopedHomeActionExecutorsForTests();
 });
@@ -142,6 +160,177 @@ afterEach(() => {
 });
 
 describe('createIdentityAdministrationClient', () => {
+    it('refreshes Home company connections on the Home governance wake', async () => {
+        const serverId = (await upsertServerProfile({ serverUrl: 'https://home-company-wake.example', name: 'Company Home' })).id;
+        const scope = createServerAccountScope(serverId, 'account-1')!;
+        runtimeFetchMock.mockImplementation(async () => new Response(JSON.stringify({ items: [], eligibleProviders: [] }), { status: 200 }));
+        const hook = await renderHook(() => useIdentityAdministration(scope, null));
+        await vi.waitFor(() => expect(hook.getCurrent().state.kind).toBe('ready'));
+        await act(async () => { publishHomeAccountChange(serverId, [HOME_GOVERNANCE_ACCOUNT_CHANGE_ENTITY_ID_V1]); });
+        await vi.waitFor(() => expect(runtimeFetchMock.mock.calls.filter(([input]) => new URL(input.url).pathname === '/v1/home/identity/connections/list')).toHaveLength(2));
+    });
+
+    it('creates a named Home WorkOS draft through the shared setup with the captured Home scope', async () => {
+        const serverId = (await upsertServerProfile({ serverUrl: 'https://home-company-create.example', name: 'Company Home' })).id;
+        const scope = createServerAccountScope(serverId, 'account-1')!;
+        const item = { ...connection(false), teamId: null, provider: { id: 'company-provider', kind: 'workos_sso', displayName: 'Acme' }, settings: { v: 1, kind: 'workos_sso' }, externalReference: { v: 1, kind: 'workos_sso', organizationId: null, connectionId: null }, lastObservation: null, allowedActions: ['home.identity.workos.adminPortalLink.create'] };
+        runtimeFetchMock.mockImplementation(async (input) => new Response(JSON.stringify(new URL(input.url).pathname.endsWith('/list')
+            ? { items: [], eligibleProviders: [{ v: 1, providerKind: 'workos_sso', providerId: null, displayName: null, owner: 'home', availability: { status: 'available', setupChoice: { kind: 'create_managed', actionId: 'home.identity.workos.connection.create' } } }] }
+            : { connection: item }), { status: 200 }));
+        const created = vi.fn();
+        const screen = await renderScreen(createElement(IdentityWorkosSetupContent, { scope, teamId: null, mutationsAvailable: true, onCreated: created }));
+        await act(async () => {});
+        await act(async () => { screen.changeTextByTestId('identity-workos-company-name', 'Acme'); });
+        await screen.pressByTestIdAsync('identity-workos-create');
+        expect(created).toHaveBeenCalledWith('connection-1');
+        const request = runtimeFetchMock.mock.calls.find(([input]) => new URL(input.url).pathname === '/v1/home/identity/workos/connection/create')?.[0];
+        expect(request).toBeDefined();
+        expect(JSON.parse(request.init.body)).toEqual({ v: 1, displayName: 'Acme' });
+        expect(new URL(request.url).origin).toBe('https://home-company-create.example');
+    });
+    it('consumes a Home Test return and refreshes its captured Home while another Home is focused', async () => {
+        const serverId = (await upsertServerProfile({ serverUrl: 'https://home-company-test.example', name: 'Company Home' })).id;
+        const scope = createServerAccountScope(serverId, 'account-1')!;
+        await upsertServerProfile({ serverUrl: 'https://other-company-test.example', name: 'Other Home' });
+        const item = { ...connection(false), teamId: null, provider: { id: 'company-provider', kind: 'workos_sso', displayName: 'Acme' }, settings: { v: 1, kind: 'workos_sso' }, externalReference: { v: 1, kind: 'workos_sso', organizationId: 'org_acme', connectionId: 'conn_acme' }, lastObservation: null, allowedActions: ['home.identity.connections.test.start', 'home.identity.connections.enable'] };
+        let consumed = false;
+        runtimeFetchMock.mockImplementation(async (input) => {
+            const path = new URL(input.url).pathname;
+            if (path.endsWith('/test/consume')) {
+                consumed = true;
+                return new Response(JSON.stringify({ connection: { ...item, revision: 3 } }), { status: 200 });
+            }
+            return new Response(JSON.stringify({ items: [{ ...item, revision: consumed ? 3 : 2 }], eligibleProviders: [] }), { status: 200 });
+        });
+        const screen = await renderScreen(createElement(IdentityConnectionDetailContent, {
+            scope, teamId: null, connectionId: 'connection-1', mutationsAvailable: true,
+            testReturn: { purpose: 'identity_connection_test', resultHandle: 'test-result-1', error: null },
+        }));
+        await vi.waitFor(() => expect(routerReplace).toHaveBeenCalledWith(`/settings/home/${serverId}/sign-in-providers/connections/connection-1`));
+        const request = runtimeFetchMock.mock.calls.find(([input]) => new URL(input.url).pathname === '/v1/home/identity/connections/test/consume')?.[0];
+        expect(JSON.parse(request.init.body)).toEqual({ v: 1, connectionId: 'connection-1', resultHandle: 'test-result-1' });
+        expect(runtimeFetchMock.mock.calls.every(([input]) => new URL(input.url).origin === 'https://home-company-test.example')).toBe(true);
+        expect(runtimeFetchMock.mock.calls.filter(([input]) => new URL(input.url).pathname.endsWith('/connections/list')).length).toBeGreaterThanOrEqual(2);
+        expect(screen.findByTestId('identity-connection-failure')).toBeNull();
+    });
+    it('checks and refreshes a Home Portal return before clearing its captured return marker', async () => {
+        const serverId = (await upsertServerProfile({ serverUrl: 'https://home-company-portal.example', name: 'Company Home' })).id;
+        const scope = createServerAccountScope(serverId, 'account-1')!;
+        const item = { ...connection(true), teamId: null, provider: { id: 'company-provider', kind: 'workos_sso', displayName: 'Acme' }, settings: { v: 1, kind: 'workos_sso' }, externalReference: { v: 1, kind: 'workos_sso', organizationId: 'org_acme', connectionId: 'conn_acme' }, lastObservation: null, allowedActions: ['home.identity.workos.reconcile'] };
+        let reconciled = false;
+        runtimeFetchMock.mockImplementation(async (input) => {
+            if (new URL(input.url).pathname.endsWith('/workos/reconcile')) {
+                reconciled = true;
+                return new Response(JSON.stringify({ outcome: 'connected', connection: { ...item, revision: 3 } }), { status: 200 });
+            }
+            return new Response(JSON.stringify({ items: [{ ...item, revision: reconciled ? 3 : 2 }], eligibleProviders: [] }), { status: 200 });
+        });
+        await renderScreen(createElement(IdentityConnectionDetailContent, { scope, teamId: null, connectionId: 'connection-1', mutationsAvailable: true, workosPortalReturn: true }));
+        await vi.waitFor(() => expect(routerReplace).toHaveBeenCalledWith(`/settings/home/${serverId}/sign-in-providers/connections/connection-1`));
+        const request = runtimeFetchMock.mock.calls.find(([input]) => new URL(input.url).pathname === '/v1/home/identity/workos/reconcile')?.[0];
+        expect(JSON.parse(request.init.body)).toEqual({ v: 1, connectionId: 'connection-1', expectedRevision: 2 });
+        expect(runtimeFetchMock.mock.calls.every(([input]) => new URL(input.url).origin === 'https://home-company-portal.example')).toBe(true);
+        expect(runtimeFetchMock.mock.calls.filter(([input]) => new URL(input.url).pathname.endsWith('/connections/list')).length).toBeGreaterThanOrEqual(2);
+    });
+    it('presents Home company setup through the shared WorkOS steps without Team directory controls', async () => {
+        const serverId = (await upsertServerProfile({ serverUrl: 'https://home-company-setup.example', name: 'Company Home' })).id;
+        const scope = createServerAccountScope(serverId, 'account-1')!;
+        runtimeFetchMock.mockResolvedValue(new Response(JSON.stringify({
+            items: [{
+                ...connection(false),
+                teamId: null,
+                provider: { id: 'provider-company', kind: 'workos_sso', displayName: 'Acme' },
+                externalReference: { v: 1, kind: 'workos_sso', organizationId: null, connectionId: null },
+                settings: { v: 1, kind: 'workos_sso' },
+                state: 'setting_up',
+                lastObservation: null,
+                allowedActions: ['home.identity.workos.adminPortalLink.create', 'home.identity.connections.remove'],
+            }],
+            eligibleProviders: [],
+        }), { status: 200 }));
+
+        const screen = await renderScreen(createElement(IdentityConnectionDetailContent, {
+            scope, teamId: null, connectionId: 'connection-1', mutationsAvailable: true, requestApproval: vi.fn(),
+        }));
+        await act(async () => {});
+
+        expect(screen.findHostByTestId('identity-workos-setup-steps')).not.toBeNull();
+        expect(screen.findHostByTestId('team-identity-workos-sso')).not.toBeNull();
+        expect(screen.findHostByTestId('team-identity-workos-directory')).toBeNull();
+        const header = screen.findHostByTestId('identity-connection-header');
+        expect(header).not.toBeNull();
+        expect(header?.findAll((node) => typeof node.type === 'string' && node.props.children === 'Acme').length).toBeGreaterThan(0);
+        expect(screen.findByTestId('identity-connection-status')).toBeNull();
+        expect(screen.findByTestId('identity-connection-mode')).toBeNull();
+    });
+    it('keeps Home WorkOS choices inside Choose and submits only the explicitly selected usable connection', async () => {
+        const serverId = (await upsertServerProfile({ serverUrl: 'https://home-company-choose.example', name: 'Company Home' })).id;
+        const scope = createServerAccountScope(serverId, 'account-1')!;
+        let item = { ...connection(false), teamId: null, provider: { id: 'company-provider', kind: 'workos_sso', displayName: 'Acme' }, settings: { v: 1, kind: 'workos_sso' }, externalReference: { v: 1, kind: 'workos_sso', organizationId: 'org_acme', connectionId: null as string | null }, state: 'setting_up', lastObservation: null, allowedActions: ['home.identity.workos.reconcile', 'home.identity.workos.connection.set'] };
+        runtimeFetchMock.mockImplementation(async (input) => {
+            const path = new URL(input.url).pathname;
+            if (path.endsWith('/workos/reconcile')) return new Response(JSON.stringify({ outcome: 'selection_required', connection: item, candidates: [
+                { connectionId: 'candidate-draft', displayName: 'Draft', strategy: 'SAML', status: 'draft' },
+                { connectionId: 'candidate-live', displayName: 'Acme Okta', strategy: 'SAML', status: 'active' },
+            ] }), { status: 200 });
+            if (path.endsWith('/workos/connection/set')) {
+                item = { ...item, revision: 3, externalReference: { ...item.externalReference, connectionId: 'candidate-live' } };
+                return new Response(JSON.stringify({ connection: item }), { status: 200 });
+            }
+            return new Response(JSON.stringify({ items: [item], eligibleProviders: [] }), { status: 200 });
+        });
+        const screen = await renderScreen(createElement(IdentityConnectionDetailContent, { scope, teamId: null, connectionId: 'connection-1', mutationsAvailable: true }));
+        await vi.waitFor(() => expect(screen.findHostByTestId('identity-workos-candidate:candidate-live')).not.toBeNull());
+        let parent = screen.findHostByTestId('identity-workos-candidate:candidate-live')?.parent;
+        while (parent && parent.props.testID !== 'identity-workos-setup-steps') parent = parent.parent;
+        expect(parent).not.toBeNull();
+        expect(screen.findByTestId('identity-workos-candidate:candidate-draft')?.props.disabled).toBe(true);
+        expect(screen.findByTestId('team-identity-workos-use')?.props.disabled).toBe(true);
+        await screen.pressByTestIdAsync('identity-workos-candidate:candidate-live');
+        expect(runtimeFetchMock.mock.calls.some(([input]) => new URL(input.url).pathname.endsWith('/workos/connection/set'))).toBe(false);
+        await screen.pressByTestIdAsync('team-identity-workos-use');
+        const request = runtimeFetchMock.mock.calls.find(([input]) => new URL(input.url).pathname === '/v1/home/identity/workos/connection/set')?.[0];
+        expect(JSON.parse(request.init.body)).toEqual({ v: 1, connectionId: 'connection-1', expectedRevision: 2, workosConnectionId: 'candidate-live' });
+    });
+
+    it('keeps Home lifecycle controls inert without owner mutation authority even when actions are advertised', async () => {
+        const serverId = (await upsertServerProfile({ serverUrl: 'https://home-company-readonly.example', name: 'Company Home' })).id;
+        const scope = createServerAccountScope(serverId, 'account-1')!;
+        const item = { ...connection(true), teamId: null, provider: { id: 'company-provider', kind: 'workos_sso', displayName: 'Acme' }, settings: { v: 1, kind: 'workos_sso' }, externalReference: { v: 1, kind: 'workos_sso', organizationId: 'org_acme', connectionId: 'conn_acme' }, lastObservation: null, allowedActions: ['home.identity.connections.disable', 'home.identity.connections.remove'] };
+        runtimeFetchMock.mockImplementation(async () => new Response(JSON.stringify({ items: [item], eligibleProviders: [] }), { status: 200 }));
+        const screen = await renderScreen(createElement(IdentityConnectionDetailContent, { scope, teamId: null, connectionId: 'connection-1', mutationsAvailable: false }));
+        await vi.waitFor(() => expect(screen.findByTestId('team-identity-disable')).not.toBeNull());
+        expect(screen.findHostByTestId('team-identity-disable')?.props.accessibilityState).toMatchObject({ disabled: true });
+        expect(screen.findHostByTestId('team-identity-remove')?.props.accessibilityState).toMatchObject({ disabled: true });
+        await screen.pressByTestIdAsync('team-identity-disable');
+        await screen.pressByTestIdAsync('team-identity-remove');
+        expect(runtimeFetchMock.mock.calls.every(([input]) => new URL(input.url).pathname.endsWith('/connections/list'))).toBe(true);
+    });
+    it('reads Home company connections through the scoped Home action without a Team', async () => {
+        const serverId = (await upsertServerProfile({ serverUrl: 'https://home-company-identity.example', name: 'Company Home' })).id;
+        const scope = createServerAccountScope(serverId, 'account-1')!;
+        const item = {
+            ...connection(true),
+            teamId: null,
+            provider: { id: 'provider-company', kind: 'workos_sso', displayName: 'Acme' },
+            externalReference: { v: 1, kind: 'workos_sso', organizationId: 'org_acme', connectionId: 'conn_acme' },
+            settings: { v: 1, kind: 'workos_sso' },
+            lastObservation: null,
+            allowedActions: ['home.identity.connections.disable'],
+        };
+        runtimeFetchMock.mockResolvedValue(new Response(JSON.stringify({
+            items: [item], eligibleProviders: [],
+        }), { status: 200 }));
+
+        const result = await createIdentityAdministrationClient(scope).execute(
+            'teams.identity.connections.list', { v: 1, teamId: null },
+        );
+
+        expect(result).toMatchObject({ ok: true, value: { items: [item] } });
+        const request = runtimeFetchMock.mock.calls.at(-1)?.[0];
+        expect(new URL(request.url).pathname).toBe('/v1/home/identity/connections/list');
+        expect(JSON.parse(request?.init?.body ?? 'null')).toEqual({ v: 1 });
+    });
     it('preserves the authoritative failure kind for a directory reader', async () => {
         const serverId = (await upsertServerProfile({ serverUrl: 'https://home-directory-refused.example', name: 'Refused Home' })).id;
         const scope = createServerAccountScope(serverId, 'account-1')!;

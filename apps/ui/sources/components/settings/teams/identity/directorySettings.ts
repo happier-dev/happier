@@ -15,8 +15,8 @@ export const DIRECTORY_SETTINGS = defineSettingsPage({
     },
     sections: {
         actions: { settings: {
-            addSource: { titleKey: 'teams.authentication.directory.setup.add' },
-            workosSetup: { titleKey: 'teams.authentication.directory.setup.workos', descriptionKey: 'teams.authentication.directory.setup.workosSubtitle' },
+            addSource: {},
+            workosSetup: {},
         } },
     },
 });
@@ -34,14 +34,14 @@ export const DIRECTORY_SOURCE_SETTINGS = defineSettingsPage({
     },
     sections: {
         actions: { titleKey: 'teams.authentication.directory.actions.section', settings: {
-            syncNow: { titleKey: 'teams.authentication.directory.actions.sync', keywordKeys: ['common.retry'] },
-            pause: { titleKey: 'teams.authentication.directory.actions.pause' },
-            resume: { titleKey: 'teams.authentication.directory.actions.resume' },
-            remove: { titleKey: 'teams.authentication.directory.actions.remove' },
-            workosSetup: { titleKey: 'identityAdministration.workosCheckSetup' },
+            syncNow: {},
+            pause: {},
+            resume: {},
+            remove: {},
+            workosSetup: {},
         } },
         groups: { titleKey: 'identityAdministration.directoryGroups', settings: {
-            searchGroups: { titleKey: 'identityAdministration.searchGroups' },
+            searchGroups: {},
         } },
     },
 });

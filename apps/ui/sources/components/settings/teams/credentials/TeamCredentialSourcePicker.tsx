@@ -117,7 +117,7 @@ export const TeamCredentialSourcePicker = React.memo(function TeamCredentialSour
         }];
         return {
             id: 'team-credential-sources',
-            inputPlaceholder: t('modelPickerOverlay.searchPlaceholder'),
+            inputPlaceholder: t('common.search'),
             emptyStateLabel: t('teams.credentials.create.sourceEmpty'),
             sections,
         };

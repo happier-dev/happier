@@ -9,6 +9,7 @@ import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { Item } from '@/components/ui/lists/Item';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SectionButtonRow } from '@/components/ui/lists/SectionButtonRow';
 import { useTeamInvitations } from '@/hooks/teams/useTeamInvitations';
@@ -19,7 +20,6 @@ import {
 } from '@/sync/ops/teams/teamInvitationOperations';
 import { t } from '@/text';
 
-import { TeamSection } from '../TeamSection';
 import type { TeamSectionContext } from '../teamSectionContext';
 import { teamRoleLabel } from '../teamLabels';
 import { teamMutationFailureLabel } from '../teamMutationPresentation';
@@ -217,13 +217,11 @@ export const TeamInvitationForm = React.memo(function TeamInvitationForm(props: 
     if (!canManageInvitations) {
         return (
             <ItemGroup>
-                <Item
+                <SurfaceStateCard
                     testID="team-invite-forbidden"
-                    title={t('homeGovernance.forbiddenTitle')}
-                    subtitle={t('teams.errors.forbidden')}
-                    subtitleLines={0}
-                    mode="info"
-                    showChevron={false}
+                    kind="denied"
+                    size="line"
+                    title={t('teams.denied.title')}
                 />
             </ItemGroup>
         );
@@ -299,7 +297,7 @@ export const TeamInvitationForm = React.memo(function TeamInvitationForm(props: 
                         copyLabel={t('teams.invitations.copyLink')}
                         shareLabel={t('teams.invitations.shareLink')}
                         qrAccessibilityLabel={t('teams.invitations.qrLabel')}
-                        footer={t('teams.invitations.linkNotice', {
+                        description={t('teams.invitations.linkNotice', {
                             team: context.team.name,
                             role: teamRoleLabel(role),
                         })}
@@ -475,21 +473,5 @@ export const TeamInvitationForm = React.memo(function TeamInvitationForm(props: 
                 </SectionButtonRow>
             </ItemGroup>
         </>
-    );
-});
-
-export const TeamInvitationCreateScreen = React.memo(function TeamInvitationCreateScreen(props: Readonly<{
-    serverId: string;
-    teamId: string;
-}>) {
-    return (
-        <TeamSection
-            serverId={props.serverId}
-            teamId={props.teamId}
-            title={t('teams.invitations.invite')}
-            description={t('teams.pages.newInvitation')}
-        >
-            {(context) => <TeamInvitationForm context={context} />}
-        </TeamSection>
     );
 });

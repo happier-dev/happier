@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import type { TeamDirectorySourceSummaryV1 } from '@happier-dev/protocol/teams';
 
-import { directorySourcePresentationState } from './directoryAdministrationPresentation';
+import { t } from '@/text';
+
+import { directorySourcePresentationState, directorySourceRemovalBody } from './directoryAdministrationPresentation';
 
 function source(overrides: Partial<TeamDirectorySourceSummaryV1>): TeamDirectorySourceSummaryV1 {
     return {
@@ -70,5 +72,29 @@ describe('directorySourcePresentationState', () => {
             state: 'needs_attention',
             sync: { ...source({}).sync, attempt: 'failed' },
         }))).toBe('needs_attention');
+    });
+});
+
+describe('directorySourceRemovalBody', () => {
+    const impact = (overrides: Partial<Parameters<typeof directorySourceRemovalBody>[0]>) => ({
+        teamMembershipsRemoved: 0,
+        groupMembershipsRemoved: 0,
+        groupContributionsRemoved: 0,
+        directoryCreatedGroupsRetained: 0,
+        nativeMembershipsPreserved: 0,
+        nativeGroupContributionsPreserved: 0,
+        ...overrides,
+    });
+
+    it('states each consequence only when it happens, and always what is kept', () => {
+        const body = directorySourceRemovalBody(impact({ teamMembershipsRemoved: 3, groupContributionsRemoved: 9 }));
+        expect(body.split('\n')).toEqual([
+            t('teams.authentication.directory.actions.removeMembers', { count: 3 }),
+            t('teams.authentication.directory.actions.removeKept'),
+        ]);
+        expect(directorySourceRemovalBody(impact({})).split('\n')).toEqual([
+            t('teams.authentication.directory.actions.removeNothing'),
+            t('teams.authentication.directory.actions.removeKept'),
+        ]);
     });
 });

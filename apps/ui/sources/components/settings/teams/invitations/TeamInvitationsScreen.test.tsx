@@ -41,7 +41,7 @@ const virtualizedBoundary = vi.hoisted(() => ({
     mountLimit: Number.POSITIVE_INFINITY,
 }));
 const navigationState = vi.hoisted(() => ({
-    focusEffects: [] as Array<() => void | (() => void)>,
+    focused: true,
 }));
 
 vi.mock('@/components/ui/lists/virtualized', () => ({
@@ -67,22 +67,10 @@ vi.mock('@/utils/ui/shareText', () => ({
 }));
 
 vi.mock('@react-navigation/native', async () => {
-    const ReactModule = await import('react');
     const { createReactNavigationNativeMock } = await import('@/dev/testkit/mocks/reactNavigation');
     return {
         ...createReactNavigationNativeMock(),
-        useFocusEffect: (effect: () => void | (() => void)) => {
-            ReactModule.useEffect(() => {
-                navigationState.focusEffects.push(effect);
-                const cleanup = effect();
-                return () => {
-                    navigationState.focusEffects = navigationState.focusEffects.filter(
-                        (registered) => registered !== effect,
-                    );
-                    if (typeof cleanup === 'function') cleanup();
-                };
-            }, [effect]);
-        },
+        useIsFocused: () => navigationState.focused,
     };
 });
 
@@ -127,7 +115,11 @@ const INVITATION_REVOKE_PATH = '/v1/teams/invitations/revoke';
 
 async function renderInvitations(serverId: string) {
     const { TeamInvitationsScreen } = await import('./TeamInvitationsScreen');
-    return renderScreen(<TeamInvitationsScreen serverId={serverId} teamId="team-1" />);
+    const { NavigationContext, useNavigation } = await import('@react-navigation/native');
+    function NativeRoute({ children }: React.PropsWithChildren) {
+        return <NavigationContext.Provider value={useNavigation()}>{children}</NavigationContext.Provider>;
+    }
+    return renderScreen(<TeamInvitationsScreen serverId={serverId} teamId="team-1" />, { wrapper: NativeRoute });
 }
 
 async function addManagedHome(): Promise<string> {
@@ -151,7 +143,8 @@ async function waitForTestId(
     testID: string,
 ): Promise<void> {
     await vi.waitFor(() => {
-        expect(collectRenderedTestIds(screen.tree.toJSON())).toContain(testID);
+        const ids = collectRenderedTestIds(screen.tree.toJSON());
+        expect(ids, JSON.stringify({ ids, text: screen.getTextContent() })).toContain(testID);
     });
 }
 
@@ -173,7 +166,7 @@ beforeEach(async () => {
     shareTextSafeMock.mockReset();
     shareTextSafeMock.mockResolvedValue('shared');
     sharingAvailableMock.current = true;
-    navigationState.focusEffects = [];
+    navigationState.focused = true;
     virtualizedBoundary.props = null;
     virtualizedBoundary.mountLimit = Number.POSITIVE_INFINITY;
 });
@@ -198,7 +191,7 @@ describe('TeamInvitationsScreen', () => {
 
         const screen = await renderInvitations(serverId);
         await waitForTestId(screen, 'team-invitations-row:invitation-1');
-        expect(screen.findByTestId('team-invitations-row:invitation-1')?.props.detail)
+        expect(screen.getTextContent())
             .toContain(new Intl.DateTimeFormat('de', { dateStyle: 'medium' }).format(expiresAt));
     });
     it.each([
@@ -313,6 +306,52 @@ describe('TeamInvitationsScreen', () => {
         expect(modalBoundary.confirmations).toHaveLength(2);
     });
 
+    it('groups invitations still waiting apart from finished ones, with an undelivered email offering Send again', async () => {
+        const serverId = await addManagedHome();
+        harness.answer(serverId, INVITATIONS_LIST_PATH, {
+            body: {
+                items: [
+                    teamInvitationRowFixture({ id: 'waiting-ok' }),
+                    teamInvitationRowFixture({
+                        id: 'waiting-undelivered',
+                        recipientEmailMask: 's•••@gmail.com',
+                        lastEmailDelivery: { status: 'failed', attemptedAt: 1 },
+                    }),
+                    teamInvitationRowFixture({ id: 'finished-accepted', state: 'accepted' }),
+                ],
+                nextCursor: null,
+                emailDelivery: 'available',
+                linkDelivery: 'available',
+            },
+        });
+
+        const screen = await renderInvitations(serverId);
+        await waitForTestId(screen, 'team-invitations-row:finished-accepted');
+
+        const keyExtractor = virtualizedBoundary.props?.keyExtractor as (item: unknown) => string;
+        const data = virtualizedBoundary.props?.data as readonly unknown[];
+        expect(data.map(keyExtractor)).toEqual(['waiting:waiting-ok', 'finished:finished-accepted']);
+        const ids = collectRenderedTestIds(screen.tree.toJSON());
+        // Trouble carries its action in its own row; nothing else does.
+        expect(ids).toContain('team-invitations-send-again:waiting-undelivered');
+        expect(ids).not.toContain('team-invitations-send-again:waiting-ok');
+        expect(ids).not.toContain('team-invitations-send-again:finished-accepted');
+
+        // "Send again" is the same-recipient retry, asked for directly: no chooser opens.
+        harness.answer(serverId, INVITATION_REISSUE_PATH, {
+            body: {
+                previous: teamInvitationRowFixture({ id: 'waiting-undelivered', state: 'revoked' }),
+                replacement: teamInvitationRowFixture({ id: 'replacement' }),
+                joinUrl: null,
+            },
+        });
+        await screen.pressByTestIdAsync('team-invitations-send-again:waiting-undelivered');
+        await vi.waitFor(() => expect(harness.requestsFor(INVITATION_REISSUE_PATH)).toHaveLength(1));
+        expect(modalBoundary.calls).toBe(0);
+        expect(harness.requestsFor(INVITATION_REISSUE_PATH)[0]?.input)
+            .toMatchObject({ invitationId: 'waiting-undelivered', recipientEmail: null });
+    });
+
     it('renders a large invitation ledger as stable chunks in the canonical virtualized list', async () => {
         virtualizedBoundary.mountLimit = 2;
         const serverId = await addManagedHome();
@@ -335,10 +374,11 @@ describe('TeamInvitationsScreen', () => {
         const data = virtualizedBoundary.props?.data as readonly unknown[];
         expect(data.length).toBeLessThan(25);
         const keyExtractor = virtualizedBoundary.props?.keyExtractor as (item: unknown) => string;
+        // Every one of these is still waiting, so all three chunks belong to the Waiting group.
         expect(data.map(keyExtractor)).toEqual([
-            'invitations:invitation-0',
-            'invitations:invitation-12',
-            'invitations:invitation-24',
+            'waiting:invitation-0',
+            'waiting:invitation-12',
+            'waiting:invitation-24',
         ]);
         expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('team-invitations-row:invitation-24');
     });
@@ -358,9 +398,11 @@ describe('TeamInvitationsScreen', () => {
         await waitForTestId(screen, 'team-invitations-row:invitation-1');
         const before = harness.requestsFor(INVITATIONS_LIST_PATH).length;
 
-        await act(async () => {
-            navigationState.focusEffects[0]?.();
-        });
+        const { TeamInvitationsScreen } = await import('./TeamInvitationsScreen');
+        navigationState.focused = false;
+        await screen.update(<TeamInvitationsScreen serverId={serverId} teamId="team-1" />);
+        navigationState.focused = true;
+        await screen.update(<TeamInvitationsScreen serverId={serverId} teamId="team-1" />);
 
         await vi.waitFor(() => {
             expect(harness.requestsFor(INVITATIONS_LIST_PATH).length).toBeGreaterThan(before);

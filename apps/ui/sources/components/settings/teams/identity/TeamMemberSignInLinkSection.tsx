@@ -60,7 +60,7 @@ export const TeamMemberSignInLinkSection = React.memo(function TeamMemberSignInL
             shareLabel={t('teams.authentication.memberSignIn.shareLink')}
             qrActionLabel={t('teams.authentication.memberSignIn.qrLabel')}
             qrAccessibilityLabel={t('teams.authentication.memberSignIn.qrLabel')}
-            footer={t('teams.authentication.memberSignIn.footer')}
+            description={t('teams.authentication.memberSignIn.footer')}
             open={{ label: t('teams.authentication.memberSignIn.open'), onPress: preview }}
         />
     );

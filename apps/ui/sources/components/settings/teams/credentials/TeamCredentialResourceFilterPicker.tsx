@@ -74,7 +74,7 @@ export const TeamCredentialResourceFilterPicker = React.memo(function TeamCreden
     const locale = getPreferredLanguage();
     const rootStep = React.useMemo<SelectionListStep>(() => ({
         id: 'team-credential-resource-filters',
-        inputPlaceholder: t('modelPickerOverlay.searchPlaceholder'),
+        inputPlaceholder: t('common.search'),
         sections: [{
             kind: 'static',
             id: 'filters',

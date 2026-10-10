@@ -348,7 +348,7 @@ describe('TeamsDirectoryScreen Team-creation eligibility', () => {
 
         await screen.pressByTestIdAsync('teams-directory-open-creation-policy');
         expect(routerPush).toHaveBeenCalledWith(
-            `/settings/home/${encodeURIComponent(home)}/policies?setting=homeAdministration.teamsPolicy.teamCreationPolicy`,
+            `/settings/home/${encodeURIComponent(home)}/teams?setting=homeAdministration.teamsPolicy.teamCreationPolicy`,
         );
     });
 

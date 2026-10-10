@@ -4,8 +4,11 @@ import { AppState } from 'react-native';
 import type { TeamDirectorySourceSetupOptionV1, TeamDirectorySourceSetupOptionsV1 } from '@happier-dev/protocol/teams';
 
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { SettingAnchor, SettingSection } from '@/components/settings/shell/SettingRow';
 import { DIRECTORY_SETTINGS } from './directorySettings';
 import { Modal } from '@/modal';
@@ -20,25 +23,11 @@ import type { ActionApprovalRegistration } from '@/components/approvals/actionAp
 
 import { TeamSection } from '../TeamSection';
 import { teamDirectorySourcePath } from '../teamsRoutes';
-import { directorySourcePresentationState } from './directoryAdministrationPresentation';
+import { directorySourcePresentationState, directorySourceStateLabel } from './directoryAdministrationPresentation';
 import { createIdentityAdministrationClient, executeIdentityAdministrationRead } from './identityAdministrationClient';
 import { useDirectoryAdministration } from './useDirectoryAdministration';
 import { createWorkosPortalReturnController } from './workosPortalReturn';
 
-export function directorySourceStateLabel(
-    state: ReturnType<typeof directorySourcePresentationState>,
-): string {
-    switch (state) {
-        case 'initializing': return t('teams.authentication.directory.state.initializing');
-        case 'syncing': return t('teams.authentication.directory.state.syncing');
-        case 'failed': return t('teams.authentication.directory.state.failed');
-        case 'stale': return t('teams.authentication.directory.freshness.stale');
-        case 'never_synced': return t('teams.authentication.directory.freshness.never_synced');
-        case 'active': return t('teams.authentication.directory.state.active');
-        case 'paused': return t('teams.authentication.directory.state.paused');
-        case 'needs_attention': return t('teams.authentication.directory.state.needsAttention');
-    }
-}
 
 function directorySetupOptionKey(option: TeamDirectorySourceSetupOptionV1): string {
     return option.kind === 'workos_directory'
@@ -285,34 +274,61 @@ const AuthorizedDirectoryList = React.memo(function AuthorizedDirectoryList(prop
     }, [client, portalReturnController, projectionCurrent, props.address.teamId, props.mutationsAvailable, reportSetupFailure]);
 
     if (state.kind === 'loading') {
-        return <ItemGroup><Item title={t('common.loading')} leftElement={<ActivitySpinner />} showChevron={false} /></ItemGroup>;
+        return <ItemGroup><SurfaceStateCard testID="team-directory-sources-loading" kind="loading" size="line" title={t('common.loading')} accessibilitySemantics="status" /></ItemGroup>;
     }
     if (state.kind === 'unavailable') {
         return (
             <ItemGroup>
-                <Item
+                <SurfaceStateCard
+                    testID="team-directory-sources-unavailable"
+                    kind="error"
+                    size="line"
                     title={identityAdministrationFailureMessage(state.failure.code)}
-                    detail={state.failure.retryable ? t('common.retry') : undefined}
-                    onPress={state.failure.retryable ? refresh : undefined}
-                    showChevron={false}
+                    diagnosticCode={state.failure.code}
+                    action={state.failure.retryable ? { label: t('common.retry'), onPress: refresh } : undefined}
+                    accessibilitySemantics="alert"
                 />
             </ItemGroup>
         );
     }
 
+    const setupOpen = setup.kind !== 'hidden';
     return (
         <>
             {state.stale ? (
-                <ItemGroup description={t('teams.stale.label')}>
-                    <Item title={t('teams.unavailable.offline')} detail={t('common.retry')} onPress={refresh} showChevron={false} />
-                </ItemGroup>
+                <AttentionBanner
+                    testID="team-directory-stale"
+                    title={t('teams.unavailable.offline')}
+                    description={t('teams.stale.label')}
+                    accessibilityLiveRegion="polite"
+                    action={{ label: t('common.retry'), onPress: refresh }}
+                />
             ) : null}
-            <ItemGroup
+            <SettingSection section={DIRECTORY_SETTINGS.sectionRefs.actions}><ItemGroup
                 title={t('teams.authentication.directory.sourcesSection')}
                 description={t('teams.authentication.directory.subtitle')}
+                action={(
+                    // One way to add a source: the choices open in place under
+                    // this section rather than behind a second "Add a source" step.
+                    <SettingAnchor setting={DIRECTORY_SETTINGS.settings.addSource}><SectionActionButton
+                        testID="team-directory-source-add"
+                        icon="plus"
+                        title={t('teams.authentication.directory.setup.add')}
+                        expanded={setupOpen}
+                        loading={setup.kind === 'loading'}
+                        disabled={!projectionCurrent || !props.mutationsAvailable || pendingSetup !== null || setup.kind === 'loading'}
+                        onPress={() => void loadSetup()}
+                    /></SettingAnchor>
+                )}
             >
                 {state.items.length === 0 ? (
-                    <Item title={t('teams.authentication.directory.empty')} showChevron={false} />
+                    <SurfaceStateCard
+                        testID="team-directory-sources-empty"
+                        kind="empty"
+                        size="line"
+                        title={t('teams.authentication.directory.empty')}
+                        reason={t('teams.authentication.directory.emptyBody')}
+                    />
                 ) : state.items.map((source) => (
                     <Item
                         key={source.id}
@@ -343,16 +359,6 @@ const AuthorizedDirectoryList = React.memo(function AuthorizedDirectoryList(prop
                         showChevron={false}
                     />
                 ) : null}
-            </ItemGroup>
-            <SettingSection section={DIRECTORY_SETTINGS.sectionRefs.actions}><ItemGroup title={t('teams.authentication.directory.setup.section')}>
-                <SettingAnchor setting={DIRECTORY_SETTINGS.settings.addSource}><Item
-                    testID="team-directory-source-add"
-                    title={t('teams.authentication.directory.setup.add')}
-                    loading={setup.kind === 'loading'}
-                    disabled={!projectionCurrent || !props.mutationsAvailable || pendingSetup !== null || setup.kind === 'loading'}
-                    onPress={() => void loadSetup()}
-                    showChevron={false}
-                /></SettingAnchor>
             </ItemGroup></SettingSection>
             {setup.kind === 'ready' || setup.kind === 'unavailable' || (setup.kind === 'loading' && setup.items.length > 0) ? (
                 <ItemGroup
@@ -425,12 +431,12 @@ export const DirectorySyncSettingsScreen = React.memo(function DirectorySyncSett
     teamId: string;
 }>) {
     return (
-        <TeamSection serverId={props.serverId} teamId={props.teamId} title={t('teams.authentication.directory.title')} description={t('teams.pages.directory')}>
+        <TeamSection serverId={props.serverId} teamId={props.teamId} title={t('teams.authentication.directory.title')} description={t('teams.authentication.directory.purpose')}>
             {({ team, scope, address, canMutate, requestApproval }) => team.capabilities.manageAuthentication ? (
                 <AuthorizedDirectoryList scope={scope} address={address} mutationsAvailable={canMutate} requestApproval={requestApproval} />
             ) : (
                 <SettingSection section={DIRECTORY_SETTINGS.sectionRefs.actions}>
-                    <ItemGroup><Item title={t('teams.errors.forbidden')} showChevron={false} /></ItemGroup>
+                    <ItemGroup><SurfaceStateCard testID="team-directory-forbidden" kind="denied" size="line" title={t('teams.errors.forbidden')} /></ItemGroup>
                 </SettingSection>
             )}
         </TeamSection>

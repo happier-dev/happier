@@ -76,7 +76,9 @@ vi.mock('expo-router', async () => {
 // proven against the real projection owner in `.workosReturn.test.tsx`.
 vi.mock('@react-navigation/native', async () => {
     const ReactModule = await import('react');
+    const { createReactNavigationNativeMock } = await import('@/dev/testkit/mocks/reactNavigation');
     return {
+        ...createReactNavigationNativeMock(),
         useFocusEffect: (effect: () => void | (() => void)) => {
             ReactModule.useEffect(effect, [effect]);
         },
@@ -314,10 +316,11 @@ describe('IdentityConnectionDetailScreen test return', () => {
             connectionId="connection-1"
         />);
 
-        expect(screen.findByTestId('identity-connection-provider')?.props.detail)
+        expect(screen.findByTestId('identity-connection-provider')).toBeNull();
+        expect(screen.findByTestId('identity-connection-header')?.props.description)
             .toBe(t('identityAdministration.providerWorkosSso'));
         expect(screen.findByTestId('identity-workos-current-connection')?.props.subtitle)
-            .toBe(`${t('identityAdministration.workosStrategySaml')} · ${t('identityAdministration.active')}`);
+            .toBe(`Ok · ${t('identityAdministration.workosStrategySaml')} · ${t('identityAdministration.active')}`);
 
         await screen.pressByTestIdAsync('team-identity-workos-reconcile');
         const candidate = screen.findByTestId('identity-workos-candidate:candidate-1');
@@ -355,11 +358,14 @@ describe('IdentityConnectionDetailScreen test return', () => {
         expect(Modal.confirm).not.toHaveBeenCalled();
         expect(Modal.alertAsync).toHaveBeenCalledTimes(1);
         const body = String(vi.mocked(Modal.alertAsync).mock.calls[0]?.[1]);
-        expect(body).toContain(identityAdministrationFailureMessage('account_would_lose_login'));
+        // Each blocker leads with its own count when the preview carries one,
+        // then names where it is resolved; zero counts never appear.
+        expect(body).toContain(t('identityAdministration.removeBlockedAlternateLogins', { count: 2 }));
         expect(body).toContain(identityAdministrationFailureRecoveryLabel('alternate_login'));
-        expect(body).toContain(identityAdministrationFailureMessage('directory_source_in_use'));
+        expect(body).toContain(t('identityAdministration.removeBlockedDirectories', { count: 1 }));
         expect(body).toContain(identityAdministrationFailureRecoveryLabel('directory'));
-        expect(body).toContain(`${t('identityAdministration.alternateLogins')}: 2`);
+        expect(body).not.toContain(t('identityAdministration.removeBlockedGroups', { count: 0 }));
+        expect(body).not.toContain(identityAdministrationFailureMessage('account_would_lose_login'));
         expect(body).not.toContain(t('identityAdministration.needsTest'));
     });
 
@@ -546,7 +552,17 @@ describe('IdentityConnectionDetailScreen test return', () => {
     });
 
     it('opens and marks the WorkOS portal when approval settles instead of losing the result URL', async () => {
-        identityStateMock.current.items[0]!.allowedActions = ['teams.identity.workos.adminPortalLink.create'];
+        identityStateMock.current.items[0] = {
+            ...identityStateMock.current.items[0]!,
+            provider: { id: 'provider-1', kind: 'workos_sso', displayName: 'WorkOS' },
+            externalReference: { v: 1, kind: 'workos_sso', organizationId: null, connectionId: null },
+            settings: { v: 1, kind: 'workos_sso' },
+            lastObservation: null,
+            enabled: false,
+            firstEnabledAt: null,
+            state: 'setting_up',
+            allowedActions: ['teams.identity.workos.adminPortalLink.create'],
+        };
         let complete: ((value: Readonly<{ url: string }>) => void | Promise<void>) | undefined;
         executeMock.mockImplementationOnce(async (
             _actionId: string,
@@ -581,9 +597,14 @@ describe('IdentityConnectionDetailScreen test return', () => {
     });
 
     it('hands Directory Sync setup to the directory journey instead of opening a second portal return flow', async () => {
-        identityStateMock.current.items[0]!.allowedActions = [
-            'teams.identity.workos.adminPortalLink.create',
-        ];
+        identityStateMock.current.items[0] = {
+            ...identityStateMock.current.items[0]!,
+            provider: { id: 'provider-1', kind: 'workos_sso', displayName: 'WorkOS' },
+            externalReference: { v: 1, kind: 'workos_sso', organizationId: 'organization-1', connectionId: 'workos-connection-a' },
+            settings: { v: 1, kind: 'workos_sso' },
+            lastObservation: null,
+            allowedActions: ['teams.identity.workos.adminPortalLink.create'],
+        };
         const screen = await renderScreen(<IdentityConnectionDetailScreen
             serverId="home-1"
             teamId="team-1"
@@ -719,11 +740,32 @@ describe('IdentityConnectionDetailScreen test return', () => {
             'identity-group-map-existing',
             'team-identity-test',
             'team-identity-enable',
-            'team-identity-workos-sso',
-            'team-identity-workos-directory',
-            'team-identity-workos-reconcile',
             'team-identity-remove',
         ]) {
+            expect(screen.findByTestId(testID)?.props.disabled).toBe(true);
+        }
+    });
+
+    it('disables the WorkOS setup step and connection controls when the Team is read-only', async () => {
+        canMutateMock.current = false;
+        identityStateMock.current.items[0] = {
+            ...identityStateMock.current.items[0]!,
+            provider: { id: 'provider-1', kind: 'workos_sso', displayName: 'WorkOS' },
+            externalReference: { v: 1, kind: 'workos_sso', organizationId: null, connectionId: null },
+            settings: { v: 1, kind: 'workos_sso' },
+            lastObservation: null,
+            enabled: false,
+            firstEnabledAt: null,
+            state: 'setting_up',
+            allowedActions: ['teams.identity.workos.adminPortalLink.create', 'teams.identity.connections.remove'],
+        };
+        const screen = await renderScreen(<IdentityConnectionDetailScreen
+            serverId="home-1"
+            teamId="team-1"
+            connectionId="connection-1"
+        />);
+
+        for (const testID of ['team-identity-workos-sso', 'team-identity-workos-directory', 'team-identity-remove']) {
             expect(screen.findByTestId(testID)?.props.disabled).toBe(true);
         }
     });
@@ -761,14 +803,53 @@ describe('IdentityConnectionDetailScreen test return', () => {
         );
     });
 
-    it('makes a WorkOS candidate choice an announced, confirmed selection rather than one silent tap', async () => {
-        // Choosing a candidate permanently fixes the provider namespace for
-        // every future identity under this binding, and the list appears far
-        // from the control that was pressed.
+    it('puts the only setup action on the current WorkOS step and keeps later steps inert', async () => {
         identityStateMock.current.items[0] = {
             ...identityStateMock.current.items[0]!,
             provider: { id: 'provider-1', kind: 'workos_sso', displayName: 'WorkOS' },
             externalReference: { v: 1, kind: 'workos_sso', organizationId: 'organization-1', connectionId: null },
+            settings: { v: 1, kind: 'workos_sso' },
+            lastObservation: null,
+            enabled: false,
+            firstEnabledAt: null,
+            state: 'connected',
+            allowedActions: [
+                'teams.identity.workos.reconcile',
+                'teams.identity.workos.adminPortalLink.create',
+                'teams.identity.connections.test.start',
+                'teams.identity.connections.enable',
+            ],
+        };
+        executeMock.mockResolvedValue({ ok: true, value: { v: 1, outcome: 'selection_required', candidates: [] } });
+        const screen = await renderScreen(<IdentityConnectionDetailScreen
+            serverId="home-1"
+            teamId="team-1"
+            connectionId="connection-1"
+        />);
+
+        // Step 1 is done: the portal stays reachable as a quiet reopen, not as the next step.
+        expect(screen.findByTestId('team-identity-workos-sso')).not.toBeNull();
+        // Steps 3 and 4 are upcoming: neither offers its action yet.
+        expect(screen.findByTestId('team-identity-test')).toBeNull();
+        expect(screen.findByTestId('team-identity-enable')).toBeNull();
+
+        executeMock.mockClear();
+        await screen.pressByTestIdAsync('team-identity-workos-reconcile');
+        expect(executeMock).toHaveBeenCalledWith('teams.identity.workos.reconcile', expect.objectContaining({ connectionId: 'connection-1' }), expect.any(Object));
+    });
+
+    it('chooses a WorkOS connection through one named primary action, never through a draft candidate', async () => {
+        // Choosing a candidate permanently fixes the provider namespace for
+        // every future identity under this binding, so the commit is the
+        // explicit "Use <name>" action, not a tap on a row.
+        identityStateMock.current.items[0] = {
+            ...identityStateMock.current.items[0]!,
+            provider: { id: 'provider-1', kind: 'workos_sso', displayName: 'WorkOS' },
+            externalReference: { v: 1, kind: 'workos_sso', organizationId: 'organization-1', connectionId: null },
+            settings: { v: 1, kind: 'workos_sso' },
+            lastObservation: null,
+            enabled: false,
+            firstEnabledAt: null,
             allowedActions: ['teams.identity.workos.reconcile'],
         };
         executeMock.mockResolvedValue({
@@ -778,13 +859,12 @@ describe('IdentityConnectionDetailScreen test return', () => {
                 outcome: 'selection_required',
                 candidates: [
                     { connectionId: 'workos-connection-a', displayName: 'Acme SAML', strategy: 'saml', status: 'active' },
-                    { connectionId: 'workos-connection-b', displayName: 'Acme OIDC', strategy: 'oidc', status: 'inactive' },
+                    { connectionId: 'workos-connection-b', displayName: 'Acme OIDC', strategy: 'oidc', status: 'draft' },
                 ],
             },
         });
         const { Modal } = await import('@/modal');
         vi.mocked(Modal.confirm).mockClear();
-        vi.mocked(Modal.confirm).mockResolvedValue(false);
         const screen = await renderScreen(<IdentityConnectionDetailScreen
             serverId="home-1"
             teamId="team-1"
@@ -797,16 +877,23 @@ describe('IdentityConnectionDetailScreen test return', () => {
         const candidate = screen.findByTestId('identity-workos-candidate:workos-connection-a');
         expect(candidate?.props.accessibilityRole).toBe('radio');
         expect(candidate?.props.accessibilityChecked).toBe(false);
+        expect(screen.findByTestId('identity-workos-candidate:workos-connection-b')?.props.disabled).toBe(true);
+        // Nothing is committed until a candidate is chosen.
+        expect(screen.findByTestId('team-identity-workos-use')?.props.disabled).toBe(true);
 
         executeMock.mockClear();
+        executeMock.mockResolvedValue({ ok: true, value: { v: 1 } });
         await screen.pressByTestIdAsync('identity-workos-candidate:workos-connection-a');
+        expect(executeMock).not.toHaveBeenCalled();
+        expect(screen.findByTestId('identity-workos-candidate:workos-connection-a')?.props.accessibilityChecked).toBe(true);
 
-        expect(Modal.confirm).toHaveBeenCalledWith(
-            t('identityAdministration.workosChooseConnection'),
-            ['Acme SAML', `${t('identityAdministration.workosStrategySaml')} \u00b7 ${t('identityAdministration.active')}`].join('\n'),
+        await screen.pressByTestIdAsync('team-identity-workos-use');
+        expect(Modal.confirm).not.toHaveBeenCalled();
+        expect(executeMock).toHaveBeenCalledWith(
+            'teams.identity.workos.connection.set',
+            expect.objectContaining({ connectionId: 'connection-1', workosConnectionId: 'workos-connection-a' }),
             expect.any(Object),
         );
-        expect(executeMock).not.toHaveBeenCalled();
     });
 
     it('names the target Team Group and the people a Group mapping moves before asking to confirm', async () => {

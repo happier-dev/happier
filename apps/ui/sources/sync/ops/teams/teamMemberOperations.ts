@@ -17,7 +17,7 @@ import {
 
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import type { TeamAddress } from '@/sync/domains/teams/teamAddress';
-import { refreshTeam } from '@/sync/engine/teams/teamsDirectoryEngine';
+import { refreshTeam, refreshTeamsDirectory } from '@/sync/engine/teams/teamsDirectoryEngine';
 
 import { runTeamAction, type HomeDomainFailure } from './teamActionClient';
 
@@ -278,5 +278,37 @@ export async function removeTeamMember(params: Readonly<{
     });
     if (outcome.kind === 'failed') return failed(outcome.failure);
     await refreshTeam(params.scope, params.address);
+    return succeeded(outcome.value);
+}
+
+/** Self-removal settles the same way for immediate and deferred approved execution. */
+export async function leaveTeam(params: Readonly<{
+    scope: ServerAccountScope;
+    address: TeamAddress;
+    onSucceeded?: () => void | Promise<void>;
+    onApprovalFailed?: (code: string) => void;
+}>): Promise<TeamMemberOutcome<TeamMemberRemoveResultV1>> {
+    const publish = async () => {
+        await Promise.all([
+            refreshTeamsDirectory(params.scope, { v: 1, scope: 'member', archived: 'active' }),
+            refreshTeamsDirectory(params.scope, { v: 1, scope: 'member', archived: 'archived' }),
+        ]);
+        // Leaving withdraws the detail's read access. Continue to the directory
+        // before that re-read can unmount the originating confirmation surface.
+        await params.onSucceeded?.();
+        await refreshTeam(params.scope, params.address);
+    };
+    const outcome = await runTeamAction({
+        scope: params.scope,
+        actionId: 'teams.members.leave',
+        input: { v: 1, teamId: params.address.teamId },
+        parse: (value) => TeamMemberRemoveResultV1Schema.parse(value),
+        onApprovalSucceeded: async () => {
+            await publish();
+        },
+        ...(params.onApprovalFailed ? { onApprovalFailed: params.onApprovalFailed } : {}),
+    });
+    if (outcome.kind === 'failed') return failed(outcome.failure);
+    await publish();
     return succeeded(outcome.value);
 }
