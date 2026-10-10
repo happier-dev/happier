@@ -1,8 +1,12 @@
 import { resolveVitestWorkers } from '../../scripts/testing/vitestWorkers';
 import { defineConfig } from 'vitest/config';
 import { fileURLToPath } from 'node:url';
+import { createWorkspacePackageSourcesPlugin } from '../../scripts/testing/vitestWorkspacePackageResolution';
 
 export default defineConfig({
+  plugins: [createWorkspacePackageSourcesPlugin([
+    { packageName: '@happier-dev/protocol', packageSourceRoot: fileURLToPath(new URL('../protocol/src', import.meta.url)) },
+  ], 'happier-sync-client-workspace-package-sources')],
   resolve: { alias: [
     { find: /^@happier-dev\/protocol\/rpc$/, replacement: fileURLToPath(new URL('../protocol/src/rpc/index.ts', import.meta.url)) },
     { find: /^@happier-dev\/protocol\/rpcErrors$/, replacement: fileURLToPath(new URL('../protocol/src/rpc/errors.ts', import.meta.url)) },

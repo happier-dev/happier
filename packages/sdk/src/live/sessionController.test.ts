@@ -257,10 +257,11 @@ describe('SDK live Session over real HTTP and Socket.IO', () => {
     const server = await fixture('e2ee');
     const controller = await server.client.sessions.get('session-1').live();
     await expect.poll(() => durableIds(controller)).toEqual(['row-1']);
+    await expect.poll(() => controller.getSnapshot().connection).toBe('online');
     await new Promise((resolve) => setTimeout(resolve, 100));
     const requestCount = server.requests.length;
     await new Promise((resolve) => setTimeout(resolve, 600));
-    expect(server.requests).toHaveLength(requestCount);
+    expect(server.requests, JSON.stringify(server.requests)).toHaveLength(requestCount);
     const followCount = server.followReads.length;
     server.append('pushed row');
     await expect.poll(() => durableIds(controller)).toEqual(['row-1', 'row-2']);
@@ -475,6 +476,22 @@ describe('SDK live Session over real HTTP and Socket.IO', () => {
     });
   });
 
+  it('cancels the current turn through the Action transport without stopping the process', async () => {
+    const server = await fixture('e2ee');
+    const controller = await server.client.sessions.get('session-1').live();
+    expect(controller.transport).toBe('action');
+    expect(controller.getSnapshot().actions.abort).toBe(true);
+    await expect(controller.abort()).resolves.toBeUndefined();
+    expect(server.actions.filter((action) => action.actionId === 'session.turn.cancel')).toEqual([
+      { actionId: 'session.turn.cancel', input: { sessionId: 'session-1' } },
+    ]);
+    expect(server.actions.some((action) => action.actionId === 'session.stop')).toBe(false);
+    expect(server.rpc).toHaveLength(0);
+    await controller.close();
+    await expect(controller.abort()).rejects.toMatchObject({ name: 'HappierClientClosedError' });
+    expect(server.actions.filter((action) => action.actionId === 'session.turn.cancel')).toHaveLength(1);
+  });
+
   it('closes only its own viewer and root close rejects a pending history result', async () => {
     const server = await fixture();
     const first = await server.client.sessions.get('session-1').live();
@@ -539,7 +556,7 @@ describe('SDK live Session over real HTTP and Socket.IO', () => {
     }
     server.clearPending();
     await expect.poll(() => controller.getSnapshot().pendingRequests.length).toBe(0);
-    expect(controller.getSnapshot().actions.abort).toBe(false);
+    expect(controller.getSnapshot().actions.abort).toBe(true);
     await controller.close();
   }, 20_000);
 

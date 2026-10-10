@@ -100,6 +100,9 @@ export async function validateBrowserConsumer() {
   let cleanupAborted = false;
   requestHandler = (url, options) => {
     const actionId = new URL(url).pathname.split('/').at(-1);
+    if (actionId === 'session.status.get') return new Response(JSON.stringify({
+      v: 1, actionId, execution: { ok: true, result: { session: { active: false } } },
+    }));
     if (actionId === 'transcript.follow') return new Response(JSON.stringify({
       v: 1, actionId, execution: { ok: true, result: {
         items: [{ role: 'assistant' }], nextCursor: '1', truncated: false,

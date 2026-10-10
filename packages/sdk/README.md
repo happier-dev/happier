@@ -91,16 +91,21 @@ export HAPPIER_API_ENDPOINT="http://127.0.0.1:$DAEMON_PORT"
 
 ### Account-server onboarding
 
-`agent` is an exact Agent routing id such as `'codex'`; it is resolved from
+`agent` can be an exact Agent routing id such as `'codex'`; it is resolved from
 the target daemon's current inventory. If it is not installed, disabled, or
 does not expose a Session-capable identity, `sessions.spawn()` rejects with
 `HappierAgentUnavailableError` and its typed `reason`.
 
 Discover that inventory instead of guessing an id. `sessions.spawn()` resolves
-your `agent` value against the same read-only catalog Action. After selecting a
+friendly routing ids against the same read-only catalog Action. After selecting a
 machine below, use that machine-bound client for discovery and spawning.
 Missing, disabled, or identity-less Agents fail typed at spawn time even when
 this discovery step is skipped.
+
+An already qualified target key, such as `'agent:happier.agent.claude/claude'`,
+is parsed directly and admitted by the daemon's canonical spawn owner. This
+lets an embed's create-only grant spawn its bound Agent without also granting
+catalog discovery. The daemon still checks whether that Agent is available.
 
 At a daemon-local endpoint, root `happier.sessions.spawn()` deliberately omits
 the routing target, so the daemon uses its current Machine. It does not perform
@@ -212,7 +217,8 @@ viewer socket and makes no idle interval reads. Socket reconnect uses the change
 feed; Action observation reconnect reloads authoritative history.
 
 `respondToPermission()`, `answerUserAction()`, `abort()`, `loadOlder()` and `send()`
-accept per-call cancellation. The Action adapter has no abort Action; rich permission
+accept per-call cancellation. In 0.3 development, the Action adapter cancels the current
+turn through `session.turn.cancel`, without stopping the Session process. Rich permission
 responses use the same native decision vocabulary through the existing permission
 Action. Answering agent questions uses Send authority, not Approve. The existing `followTranscript()` iterator remains
 the compact semantic Action stream, not a rendering model. It uses the same waiting

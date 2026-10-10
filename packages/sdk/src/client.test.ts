@@ -1260,11 +1260,12 @@ describe('Happier SDK client', () => {
       },
       viewerRole: 'owner',
       capabilities: {
-        viewTeam: true, manageSettings: true, managePolicy: true, manageMembers: true,
+        viewTeam: true, viewRoster: true, manageSettings: true, managePolicy: true, manageMembers: true,
         manageGroups: true, manageInvitations: true, manageOwners: true,
         manageAuthentication: true, archiveTeam: true, restoreTeam: true,
       },
       admission: { historyChoice: { admin: 'choice', member: 'choice', guest: 'hidden' } },
+      counts: null,
     };
     const fetch = vi.fn(async (_url: URL | RequestInfo, init?: RequestInit) => responseForRequest(init, {
       v: 1,

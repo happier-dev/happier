@@ -141,9 +141,12 @@ describe('SDK embed helpers', () => {
       const body = JSON.parse(String(options.body)) as Record<string, unknown>;
       const actionId = url.pathname.split('/').at(-1);
       let result: unknown;
-      if (actionId === 'agents.backends.list') result = { items: [{
-        targetKey: grant.create.agentTargetKey, label: 'Claude', enabled: true, agentId: 'installed-custom-routing-id',
-        identity: { pluginId: 'happier.agent.claude', localId: 'claude' } }] };
+      // The embed's creation grant permits spawn, not unrelated Agent discovery.
+      // Its qualified target already supplies the identity; the real spawn owner
+      // remains responsible for installed/enabled admission.
+      if (actionId === 'agents.backends.list') return new Response(
+        JSON.stringify({ error: 'credential_scope_denied' }), { status: 403 },
+      );
       else {
         spawns.push(body);
         result = { type: 'success', disposition: spawns.length === 1 ? 'created' : 'rejoined',

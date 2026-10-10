@@ -1,5 +1,5 @@
 import type { PublicActionInputById, PublicActionResultById } from '../actions/generated.js';
-import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { parseBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import type { SessionListQueryV1 } from '@happier-dev/protocol';
 import type { FollowTranscriptOptions, HappierTranscriptItem } from '../subscriptions.js';
 import type { HappierSessionController, HappierSessionLiveOptions } from '../live/types.js';
@@ -30,7 +30,7 @@ type AgentIdentity = SessionSpawnActionInput['agentTarget']['identity'];
  */
 export type HappierSessionSpawnInput = Readonly<
   Omit<SessionSpawnActionInput, 'agentTarget' | 'executionTarget' | 'initialInput'> & Readonly<{
-    /** Friendly Agent id or canonical Agent target key; both resolve through the Machine inventory. */
+    /** Friendly Agent id resolved through inventory, or an already qualified canonical Agent target key. */
     agent: string;
     initialMessage?: string;
   }>
@@ -164,9 +164,7 @@ function resolveAgentIdentity(
   items: readonly AgentBackendInventoryItem[],
   agentId: string,
 ): AgentIdentity {
-  const candidate = items.find((item) => agentId.startsWith('agent:')
-    ? item.identity !== undefined && buildBackendTargetKeyV2({ kind: 'agent', identity: item.identity }) === agentId
-    : item.agentId === agentId);
+  const candidate = items.find((item) => item.agentId === agentId);
   if (candidate === undefined) throw new HappierAgentUnavailableError(agentId, 'not_installed');
   if (!candidate.enabled) throw new HappierAgentUnavailableError(agentId, 'disabled');
   if (candidate.identity === undefined) {
@@ -228,33 +226,48 @@ export function createSessions<TOptions extends ActionExecutionOptions = ActionE
   };
 
   return Object.freeze({
-    list: async (input: HappierSessionListInput = {}, options?: TOptions) => await params.execute(
-      'session.list',
-      bindPublicActionInput('session.list', { query: {
-        v: 1,
-        storage: 'active',
-        includeInactive: true,
-        scope: 'all_accessible',
-        attention: 'any',
-        audiences: [],
-        ...input,
-        // The fluent query accepts immutable inputs; the public Action request owns its array.
-        tagIds: [...(input.tagIds ?? [])],
-        folderIds: input.folderIds === undefined ? undefined : [...input.folderIds],
-      } }, options?.requestId),
-      options,
-    ),
+    list: async (input: HappierSessionListInput = {}, options?: TOptions) => {
+      const { folderIds, tagIds, cursor, limit, storage, includeInactive, ...query } = input;
+      return await params.execute(
+        'session.list',
+        bindPublicActionInput('session.list', { query: {
+          v: 1,
+          storage: storage === undefined ? 'active' : storage,
+          includeInactive: includeInactive === undefined ? true : includeInactive,
+          scope: 'all_accessible',
+          attention: 'any',
+          audiences: [],
+          ...query,
+          // The fluent query accepts immutable inputs; the public Action request owns its array.
+          tagIds: [...(tagIds ?? [])],
+          ...(folderIds === undefined ? {} : { folderIds: [...folderIds] }),
+          ...(cursor === undefined ? {} : { cursor }),
+          ...(limit === undefined ? {} : { limit }),
+        } }, options?.requestId),
+        options,
+      );
+    },
     async spawn(input: HappierSessionSpawnInput, options?: TOptions) {
       const { agent, initialMessage, ...actionInput } = input;
-      const inventory = await params.execute(
-        'agents.backends.list',
-        { includeDisabled: true },
-        correspondenceOptions(options),
-      );
+      let identity: AgentIdentity;
+      if (agent.startsWith('agent:')) {
+        const target = parseBackendTargetKeyV2(agent);
+        if (target.kind !== 'agent') throw new HappierAgentUnavailableError(agent, 'identity_unavailable');
+        // A create-only grant need not admit catalog discovery. The canonical
+        // spawn owner checks this qualified Agent's current availability.
+        identity = target.identity;
+      } else {
+        const inventory = await params.execute(
+          'agents.backends.list',
+          { includeDisabled: true },
+          correspondenceOptions(options),
+        );
+        identity = resolveAgentIdentity(inventory.items, agent);
+      }
       const result = await params.spawn(bindPublicActionInput('session.spawn_new', {
         ...actionInput,
         ...(initialMessage === undefined ? {} : { initialInput: { text: initialMessage } }),
-        agentTarget: { kind: 'agent', identity: resolveAgentIdentity(inventory.items, agent) },
+        agentTarget: { kind: 'agent', identity },
       }, options?.requestId), options);
       if (result.type !== 'success') throw new HappierSessionSpawnError(result);
       const session = get(result.sessionId);

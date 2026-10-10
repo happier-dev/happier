@@ -106,6 +106,15 @@ describe('Happier SDK client lifecycle', () => {
     let socketClosed = false;
     const server = createServer((request, response) => {
       const actionId = decodeURIComponent(request.url?.split('/').at(-1) ?? '');
+      if (actionId === 'session.status.get') {
+        response.writeHead(200, { 'content-type': 'application/json' });
+        response.end(JSON.stringify({
+          v: 1,
+          actionId,
+          execution: { ok: true, result: { session: { active: false } } },
+        }));
+        return;
+      }
       if (actionId === 'transcript.follow') {
         response.writeHead(200, { 'content-type': 'application/json' });
         response.end(JSON.stringify({
@@ -141,9 +150,7 @@ describe('Happier SDK client lifecycle', () => {
     const client = connect({ endpoint: `http://127.0.0.1:${address.port}`, token: 'hap_v1_123e4567-e89b-42d3-a456-426614174000_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' });
     const iterator = client.sessions.get('session-1').followTranscript()[Symbol.asyncIterator]();
     await expect(iterator.next()).resolves.toEqual({ done: false, value: { role: 'assistant' } });
-    expect(handshakes).toEqual([expect.objectContaining({
-      clientType: 'session-scoped', sessionId: 'session-1', clientPurpose: 'sdk-transcript',
-    })]);
+    expect(handshakes).toEqual([]);
     const returned = await Promise.race([
       iterator.return!().then(() => 'returned' as const),
       new Promise<'timed_out'>((resolve) => setTimeout(() => resolve('timed_out'), 1_500)),

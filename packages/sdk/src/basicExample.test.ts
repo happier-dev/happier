@@ -98,6 +98,13 @@ function actionResponse(actionId: string): Readonly<Record<string, unknown>> {
 }
 
 function successfulActionResponse(actionId: string): Readonly<Record<string, unknown>> {
+  if (actionId === 'session.status.get') {
+    return {
+      v: 1,
+      actionId,
+      execution: { ok: true, result: { session: { active: false } } },
+    };
+  }
   if (actionId === 'agents.backends.list') {
     return {
       v: 1,
@@ -459,6 +466,7 @@ describe('comprehensive SDK example', () => {
       'agents.backends.list',
       'session.spawn_new',
       'session.wait.idle',
+      'session.status.get',
       'transcript.follow',
       'transcript.unfollow',
       'session.message.send',
@@ -478,6 +486,7 @@ describe('basic SDK example', () => {
       'agents.backends.list',
       'session.spawn_new',
       'session.message.send',
+      'session.status.get',
       'transcript.follow',
       'transcript.unfollow',
       'session.transcript.get',

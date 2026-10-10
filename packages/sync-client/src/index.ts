@@ -10,3 +10,4 @@ export * from './messages/fetchSessionMessagesPage.js';
 export * from './messages/drainSessionMessagesAfter.js';
 export * from './messages/repairSessionMessagesTargets.js';
 export * from './session/followSession.js';
+export * from './machines/finiteTransferHandshake.js';

@@ -424,7 +424,9 @@ describe('SDK protected invocation lifecycle through real HTTP', () => {
     try {
       await expect(client.machine('machine-1').sessions.get('session-1').send('input-sentinel'))
         .rejects.toMatchObject({ code: undefined, status: 503, details: undefined });
-      expect(server.captured).toHaveLength(1);
+      expect(server.captured.map((call) => call.path)).toEqual([
+        '/v1/machines', '/v1/auth/api-tokens/encryption-access',
+      ]);
     } finally { await client.close(); await server.close(); }
   });
 
@@ -457,11 +459,11 @@ describe('SDK protected invocation lifecycle through real HTTP', () => {
     try {
       await expect(client.machine('machine-1').sessions.get('session-1').send('input-sentinel'))
         .rejects.toMatchObject({ code: 'encrypted_action_unsupported', status: 409, details: undefined });
-      // Credential bootstrap, the one target-Machine read, and exactly one
+      // The one target-Machine read, Account bootstrap when needed, and exactly one
       // Action attempt: no retry and no downgraded second send.
       expect(server.captured.map((call) => call.path)).toEqual([
-        '/v1/auth/api-tokens/encryption-access',
         '/v1/machines',
+        '/v1/auth/api-tokens/encryption-access',
         '/v1/actions/session.message.send',
       ]);
     } finally { await client.close(); await server.close(); }
@@ -478,8 +480,8 @@ describe('SDK protected invocation lifecycle through real HTTP', () => {
       await expect(client.machine('machine-1').sessions.get('session-1').send('input-sentinel'))
         .rejects.toMatchObject({ code: undefined, status: 409, details: undefined });
       expect(server.captured.map((call) => call.path)).toEqual([
-        '/v1/auth/api-tokens/encryption-access',
         '/v1/machines',
+        '/v1/auth/api-tokens/encryption-access',
         '/v1/actions/session.message.send',
       ]);
     } finally { await client.close(); await server.close(); }
@@ -491,7 +493,9 @@ describe('SDK protected invocation lifecycle through real HTTP', () => {
     try {
       await expect(client.machine('machine-1').sessions.get('session-1').send('input-sentinel'))
         .rejects.toMatchObject({ code: 'api_token_encryption_stale', status: 409, details: undefined });
-      expect(server.captured).toHaveLength(1);
+      expect(server.captured.map((call) => call.path)).toEqual([
+        '/v1/machines', '/v1/auth/api-tokens/encryption-access',
+      ]);
     } finally { await client.close(); await server.close(); }
   });
 
@@ -506,7 +510,9 @@ describe('SDK protected invocation lifecycle through real HTTP', () => {
     try {
       await expect(client.machine('machine-1').sessions.get('session-1').send('input-sentinel'))
         .rejects.toMatchObject({ code: 'invalid_encrypted_envelope' });
-      expect(server.captured).toHaveLength(1);
+      expect(server.captured.map((call) => call.path)).toEqual([
+        '/v1/machines', '/v1/auth/api-tokens/encryption-access',
+      ]);
     } finally { await client.close(); await server.close(); }
   });
 
@@ -531,9 +537,7 @@ describe('SDK protected invocation lifecycle through real HTTP', () => {
       expect(completed).toContain('execution.run.stream.cancel');
       expect(completed).toContain('transcript.unfollow');
       expect(server.failures).toEqual([]);
-      expect(server.notificationAuth).toEqual([expect.objectContaining({
-        token: bearer, clientType: 'session-scoped', sessionId: 'session-1',
-      })]);
+      expect(server.notificationAuth).toEqual([]);
       expect(server.captured.filter((call) => call.path.endsWith('/encryption-access'))).toHaveLength(1);
       expect(server.captured.filter((call) => call.path.startsWith('/v1/actions/'))
         .every((call) => JSON.parse(call.body).v === 2)).toBe(true);

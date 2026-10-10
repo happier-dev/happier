@@ -1,4 +1,5 @@
 import { createServer } from 'node:http';
+import { performance } from 'node:perf_hooks';
 import { describe, expect, it } from 'vitest';
 
 import { connect } from './index.js';
@@ -55,8 +56,12 @@ describe('public transcript following at a daemon-local Action endpoint', () => 
       expect(inputs[1]).toMatchObject({ cursor: '1', waitForChanges: true });
       await new Promise((resolve) => setTimeout(resolve, 40));
       expect(followReads).toBe(2);
+      const responseAt = performance.now();
       append?.();
       await expect(pushed).resolves.toMatchObject({ done: false, value: { id: '2' } });
+      const actionToSdkMs = performance.now() - responseAt;
+      console.info('WAKE_TIMING', JSON.stringify({ actionToSdkMs }));
+      expect(actionToSdkMs).toBeLessThan(1000);
       const cancelled = iterator.next();
       await expect.poll(() => followReads).toBe(3);
       await iterator.return?.();
