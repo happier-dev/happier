@@ -1221,15 +1221,19 @@ describe('managed-services SVC09 owner', () => {
         let stoppable = false;
         const { owner, exec: lifecycleExec } = createLifecycleHarness([createLifecycleProcess(78)], 'daemon', {
             // Native inspection/control is an OS/tool boundary; the owner and supervisor remain real.
-            resolveNativeLifecycle: async () => ({
-                inspect: async () => ({ phase: 'running', readiness: 'not_reported', endpoint: null }),
-                stop: async () => ({ status: stoppable ? 'stopped' : 'unsupported' }),
-            }),
+            resolveNativeLifecycle: async (_scope, _instance, admission) => {
+                expect(admission.exec).toBe(lifecycleExec);
+                expect(admission.launch.cwd).toBe(process.cwd());
+                return {
+                    inspect: async () => ({ phase: 'running', readiness: 'not_reported', endpoint: null }),
+                    stop: async () => ({ status: stoppable ? 'stopped' : 'unsupported' }),
+                };
+            },
         });
         const services = owner.bindScope(lifecycleScope({ occurrenceId: 'native' }), lifecycleExec);
         const spec: ManagedServiceSpec = {
             id: 'compose',
-            mode: { kind: 'native', launch: { executable: { kind: 'systemTool', id: 'fixture.server' } },
+            mode: { kind: 'native', launch: { executable: { kind: 'systemTool', id: 'fixture.server' }, cwd: process.cwd() },
                 instance: { adapter: { pluginId: 'acme.providers', localId: 'compose' }, nativeResourceId: 'exact-project' } },
         };
         const handle = await services.supervise(spec);
