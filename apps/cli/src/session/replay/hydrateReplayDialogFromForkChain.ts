@@ -5,7 +5,6 @@ import { measureHappierReplayDialogLineChars } from '@happier-dev/agents';
 import { isAuthenticationError } from '@/api/client/httpStatusError';
 import { findTranscriptEncryptedMessageByLocalId } from '@/api/session/transcriptMessageLookup';
 import { configuration } from '@/configuration';
-import { fetchSessionByIdCompat } from '@/session/transport/http/sessionsHttp';
 import {
   resolveSessionEncryptionContextFromCredentials,
   tryDecryptSessionMetadata,
@@ -20,12 +19,7 @@ import { fetchAccountEncryptionCurrentness } from '@/api/client/connectedService
 import type { HappierReplayDialogItem } from './types';
 import { fetchEncryptedTranscriptMessagesPage } from './fetchEncryptedTranscriptMessages';
 import { decryptTranscriptReplaySlice } from './decryptTranscriptReplaySlice';
-
-type ForkV1 = Readonly<{
-  v: 1;
-  parentSessionId: string;
-  parentCutoffSeqInclusive: number;
-}>;
+import { fetchForkTranscriptSegments } from './fetchForkTranscriptSegments';
 
 type RawTranscriptRow = Readonly<{
   seq?: unknown;
@@ -152,18 +146,6 @@ async function tryHydrateSynopsisFromSystemRecord(params: Readonly<{
   });
   const text = typeof synopsis?.synopsis === 'string' ? synopsis.synopsis.trim() : '';
   return text.length > 0 ? text : null;
-}
-
-function readForkV1FromMetadata(metadata: Record<string, unknown>): ForkV1 | null {
-  const fork = (metadata as any)?.forkV1;
-  if (!fork || typeof fork !== 'object') return null;
-  if ((fork as any).v !== 1) return null;
-  const parentSessionId = typeof (fork as any).parentSessionId === 'string' ? String((fork as any).parentSessionId).trim() : '';
-  const cutoffRaw = (fork as any).parentCutoffSeqInclusive;
-  const cutoff = typeof cutoffRaw === 'number' && Number.isFinite(cutoffRaw) ? Math.max(0, Math.floor(cutoffRaw)) : NaN;
-  if (!parentSessionId) return null;
-  if (!Number.isFinite(cutoff)) return null;
-  return { v: 1, parentSessionId, parentCutoffSeqInclusive: cutoff };
 }
 
 function readMinSeq(rows: readonly { seq?: unknown }[]): number | null {
@@ -304,66 +286,15 @@ export async function hydrateReplayDialogFromForkChain(params: Readonly<{
       ? rows
       : rows.filter((row) => typeof row.seq === 'number' && row.seq > afterSeqExclusive);
 
-  const visited = new Set<string>();
   const accountEncryptionCurrentness = await fetchAccountEncryptionCurrentness({
     token: params.credentials.token,
   });
-  const segments: Array<{ sessionId: string; rawSession: any; upToSeqInclusive?: number }> = [];
-
-  let currentSessionId = String(params.startingSessionId ?? '').trim();
-  let currentUpToSeqInclusive = params.upToSeqInclusive;
-  /**
-   * The walk ended because the chain ended, not because a bound or an
-   * unreadable segment stopped it. Only then can an exhausted page walk claim
-   * it reached the start of the source.
-   */
-  let chainTerminatedNaturally = false;
-
-  for (let depth = 0; depth < maxDepth; depth += 1) {
-    if (!currentSessionId) {
-      chainTerminatedNaturally = true;
-      break;
-    }
-    if (visited.has(currentSessionId)) break;
-    visited.add(currentSessionId);
-
-    const rawSession = await fetchSessionByIdCompat({ token: params.credentials.token, sessionId: currentSessionId }).catch((error) => {
-      if (isAuthenticationError(error)) throw error;
-      return null;
-    });
-    if (!rawSession) break;
-
-    segments.push({
-      sessionId: currentSessionId,
-      rawSession,
-      ...(typeof currentUpToSeqInclusive === 'number' && Number.isFinite(currentUpToSeqInclusive)
-        ? { upToSeqInclusive: Math.max(0, Math.floor(currentUpToSeqInclusive)) }
-        : {}),
-    });
-
-    if (afterSeqExclusive !== null) {
-      // The bound is in THIS Session's seq space and no parent segment reaches
-      // above it, so the chain is exhausted here by construction rather than by
-      // a bound the seed would have to disclose.
-      chainTerminatedNaturally = true;
-      break;
-    }
-
-    const metadata = tryDecryptSessionOwnerMetadataView({
-      credentials: params.credentials,
-      rawSession,
-      accountEncryptionMode: accountEncryptionCurrentness.mode,
-    });
-    if (!metadata) break;
-    const fork = readForkV1FromMetadata(metadata);
-    if (!fork) {
-      chainTerminatedNaturally = true;
-      break;
-    }
-
-    currentSessionId = fork.parentSessionId;
-    currentUpToSeqInclusive = fork.parentCutoffSeqInclusive;
-  }
+  const { segments, chainTerminatedNaturally, acquisitionError } = await fetchForkTranscriptSegments({
+    credentials: params.credentials, accountEncryptionMode: accountEncryptionCurrentness.mode,
+    startingSessionId: String(params.startingSessionId ?? ''), upToSeqInclusive: params.upToSeqInclusive,
+    afterSeqExclusive, maxDepth,
+  });
+  if (isAuthenticationError(acquisitionError)) throw acquisitionError;
 
   if (segments.length === 0) return null;
 

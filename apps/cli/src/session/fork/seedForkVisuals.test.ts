@@ -3,6 +3,7 @@ import fastify from 'fastify';
 import { projectSessionAccessCapabilitiesV1 } from '@happier-dev/protocol';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 import { configuration } from '@/configuration';
+import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { seedForkVisualCopies, seedForkVisualsBestEffort } from './seedForkVisuals';
 
 const revision = 'ssr1.AAAACHN5c3JlY18xAAAAAQ';
@@ -37,7 +38,7 @@ describe('fork visual seed', () => {
     let restore = () => {};
     beforeEach(() => {
         app = fastify();
-        restore = installAxiosFastifyAdapter({ app, origin: new URL(configuration.apiServerUrl).origin });
+        restore = installAxiosFastifyAdapter({ app, origin: new URL(resolveServerHttpBaseUrl()).origin });
         // The Home feature endpoint is an external environment boundary, not the mutation owner.
         vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response(JSON.stringify({
             features: { sessions: { enabled: true, board: { enabled: false } }, sharing: { session: { enabled: true } } }, capabilities: {},
@@ -158,6 +159,45 @@ describe('fork visual seed', () => {
         expect(copies).toEqual([{ originServerId: configuration.activeServerId, originSessionId: 'parent',
             originItemId: 'source-visual', status: 'copied', itemId: expect.any(String) }]);
         expect(importedRows).toHaveLength(2);
+    });
+    it('copies an authorized available ancestor when the previous fork settled that reference as not copied', async () => {
+        const ancestorRows = toolRows('ancestor', 1, 'transcript', 'grandparent');
+        const inheritedRows = ancestorRows.map((row, index) => ({ ...row, id: `parent-import-${index}`, seq: 20 + index,
+            content: { t: 'plain', v: { ...row.content.v, meta: { forkVisualOriginV1: { v: 1,
+                serverId: configuration.activeServerId, sessionId: 'grandparent', sourceMessageId: row.id, sourceSeq: row.seq } } } } }));
+        app.get('/v2/sessions/parent', async () => ({ session: { ...rawSession('parent'), seq: 21 } }));
+        app.get('/v1/sessions/parent/messages', async () => ({ messages: inheritedRows, hasMore: false }));
+        app.get('/v1/sessions/grandparent/messages', async () => ({ messages: ancestorRows, hasMore: false }));
+        app.get('/v2/sessions/:id/system-records/record', async request => {
+            const { id } = request.params as { id: string };
+            const { localId } = request.query as { localId: string };
+            return { record: id !== 'grandparent' ? null : { id: 'ancestor-record', address: { owner: 'host', namespace: 'surface', kind: 'item.v1', localId },
+                content: { t: 'plain', v: item }, revision, createdAt: '2026-10-10T00:00:00.000Z', updatedAt: '2026-10-10T00:00:00.000Z' } };
+        });
+        const importedRows: unknown[] = [];
+        app.post('/v3/sessions/child/transcript/import', async request => {
+            const body = request.body as { items: unknown[] }; importedRows.push(...body.items);
+            return { imported: body.items.length, cursor: body.items.length };
+        });
+        app.post('/v2/sessions/child/transcript/import', async request => {
+            const body = request.body as { items: unknown[] }; importedRows.push(...body.items);
+            return { imported: body.items.length, cursor: body.items.length };
+        });
+        app.put('/v2/sessions/child/board', async request => ({ operation: 'upsert_item',
+            itemId: (request.body as { itemId: string }).itemId, itemRevision: revision, outcome: 'created' }));
+        const copies = await seedForkVisualCopies({ credentials, accountEncryptionMode: 'plain', sourceSessionId: 'parent',
+            cutoffSeqInclusive: 0, childSessionId: 'child', sourceMetadata: { path: '', host: '', forkV1: {
+                v: 1, parentSessionId: 'grandparent', parentCutoffSeqInclusive: 2, createdAtMs: 1, strategy: 'replay', visualCopies: [{
+                    originServerId: configuration.activeServerId, originSessionId: 'grandparent', originItemId: 'ancestor', status: 'not_copied',
+                }],
+            } } });
+        expect(copies).toEqual([{ originServerId: configuration.activeServerId, originSessionId: 'grandparent', originItemId: 'ancestor',
+            status: 'copied', itemId: expect.any(String) }]);
+        expect(importedRows).toHaveLength(2);
+        expect(importedRows).toEqual(Array.from({ length: 2 }, () => expect.objectContaining({ surfaceItemReference: {
+            v: 1, itemId: copies[0]?.status === 'copied' ? copies[0].itemId : null, itemRevision: revision,
+            sourceAddress: { serverId: configuration.activeServerId, sessionId: 'grandparent' },
+        } })));
     });
     it('never rejects a committed fork when visual acquisition is unavailable', async () => {
         app.get('/v1/account/encryption/currentness', async (_request, reply) => reply.code(503).send({ error: 'offline' }));
