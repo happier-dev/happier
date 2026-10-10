@@ -92,3 +92,37 @@ describe('Script output before a terminal exists', () => {
     expect(onRun).not.toHaveBeenCalled();
   });
 });
+
+describe('A new machine created for this Run', () => {
+  const workspace: WorkspaceAddressV1 = { serverId: 'source-home', machineId: 'source-machine', workspaceId: 'source-workspace', rootPath: '/source' };
+  const render = (progress: import('@/components/settings/machines/managed/managedMachineCreation').ManagedMachineCreationProgress,
+    handlers: Readonly<{ onCancel: () => void; onResume: () => void }>) => renderScreen(<ProjectScriptRow testID="script"
+    workspace={workspace} name="test" badge={null} command="yarn test" portable operation={null} idleText="Not run"
+    pending={progress.kind !== 'failed'} failureCode={null} compact={false} onRun={() => {}}
+    managedCreation={{ machineName: 'ci-1', progress }} onCancelManagedRun={handlers.onCancel} onResumeManagedRun={handlers.onResume} />);
+
+  it('says which creation stage the Run waits on and cancels only the continuation', async () => {
+    const handlers = { onCancel: vi.fn(), onResume: vi.fn() };
+    const screen = await render({ kind: 'approval' }, handlers);
+    const banner = screen.findAllByTestId('script.managed').find((node) => typeof node.props.title === 'string');
+    expect(banner?.props.title).toContain('managedMachines.creation.approval');
+    expect(banner?.props.description).toContain('projectWorkers.runWaitsForMachine');
+    expect(screen.findByTestId('script.managed.resume')).toBeNull();
+    await screen.pressByTestIdAsync('script.managed.cancel');
+    expect(handlers.onCancel).toHaveBeenCalledTimes(1);
+    expect(handlers.onResume).not.toHaveBeenCalled();
+    await screen.unmount();
+  });
+
+  it('after the wait was cancelled, continues with the same machine only when asked', async () => {
+    const handlers = { onCancel: vi.fn(), onResume: vi.fn() };
+    const screen = await render({ kind: 'failed', code: 'continuation_retired', managedId: 'managed-1' }, handlers);
+    const banner = screen.findAllByTestId('script.managed').find((node) => typeof node.props.title === 'string');
+    expect(banner?.props.title).toContain('projectWorkers.creationStopped');
+    expect(handlers.onResume).not.toHaveBeenCalled();
+    await screen.pressByTestIdAsync('script.managed.resume');
+    expect(handlers.onResume).toHaveBeenCalledTimes(1);
+    expect(screen.findByTestId('script.managed.cancel')).toBeNull();
+    await screen.unmount();
+  });
+});

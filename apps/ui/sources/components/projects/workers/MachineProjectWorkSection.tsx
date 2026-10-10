@@ -9,19 +9,18 @@ import { useUnistyles } from 'react-native-unistyles';
 import type { ProjectWorkerActionOutputV1 } from '@happier-dev/protocol';
 
 import { openActionOperationDetail } from '@/components/inbox/actionOperations/openActionOperationDetail';
+import { useProjectCommandOutputOpener } from '@/components/inbox/actionOperations/projectCommandOutputHost';
+import { RunClock, RunGlyph } from '@/components/projects/projectSetup/ProjectScriptRow';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
-import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { FieldValueItem } from '@/components/ui/forms/FieldValueItem';
 import { Switch } from '@/components/ui/forms/Switch';
 import { Icon } from '@/components/ui/icons/Icon';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { useElapsedTime } from '@/hooks/ui/useElapsedTime';
 import { useActiveActionOperations } from '@/sync/domains/actionOperations/useActionOperations';
 import type { ActionOperationProjection } from '@/sync/domains/actionOperations/actionOperationSelectors';
-import { useAllMachines } from '@/sync/domains/state/storage';
 import { useMachineFreshCopies, type MachineFreshCopy, type MachineFreshCopyNotice } from './useMachineFreshCopies';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { formatRelativeTimeShort } from '@/components/ui/selectionList/formatRelativeTimeShort';
@@ -30,7 +29,7 @@ import { formatByteSize } from '@/utils/files/formatByteSize';
 import { executeProjectWorkerActionV1 } from '@/sync/ops/actions/projectWorkerActions';
 import { t } from '@/text';
 import { getMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
-import { formatRunClock } from '@/components/projects/projectSetup/projectScriptPresentation';
+import { presentProjectRun } from '@/components/projects/projectSetup/projectScriptPresentation';
 
 import {
   useObservedWorkerSetting,
@@ -103,19 +102,23 @@ export function useMachineWorkerPolicy(serverId: string, machineId: string) {
   return { ...setting, save };
 }
 
+/**
+ * One of your runs on this Machine, read through the Scripts row presentation (plan 31 §2/§8):
+ * queued/copying/preparing/offline/stop-unconfirmed come from the operation's own facts, and the
+ * clock starts only once a terminal exists. Open uses the same output opener as the Scripts row.
+ */
 function RunningHereRow(
-  props: Readonly<{ operation: ActionOperationProjection; testID: string }>,
+  props: Readonly<{ operation: ActionOperationProjection; machineName: string; testID: string }>,
 ) {
   const { theme } = useUnistyles();
-  const machines = useAllMachines();
   const ref = props.operation.snapshot.domainRef;
   const command = ref?.kind === 'projectCommand' ? ref : null;
-  const source = command?.sourceWorkspace
-    ? machines.find(
-        (machine) => machine.id === command.sourceWorkspace?.machineId,
-      )
-    : null;
-  const elapsed = useElapsedTime(props.operation.snapshot.createdAt ?? null);
+  const source = useServerScopedMachine(
+    command?.sourceWorkspace?.serverId ?? props.operation.serverId,
+    command?.sourceWorkspace?.machineId ?? '',
+  );
+  const presentation = presentProjectRun(props.operation, props.machineName, '');
+  const output = useProjectCommandOutputOpener();
   const name =
     command?.script?.name ??
     props.operation.snapshot.title ??
@@ -131,27 +134,25 @@ function RunningHereRow(
               machine: getMachineDisplayName(source) ?? '',
             })
           : null,
-        elapsed !== null ? formatRunClock(elapsed) : null,
+        presentation.text,
       ]
         .filter(Boolean)
         .join(' · ')}
-      leftElement={
-        <ActivitySpinner size="small" color={theme.colors.text.secondary} />
-      }
+      icon={<RunGlyph glyph={presentation.glyph} />}
       showChevron={false}
       rightElement={
-        <RoundButton
-          size="small"
-          display="secondary"
-          title={t('projectWorkers.open')}
-          testID={`${props.testID}.open`}
-          onPress={() =>
-            openActionOperationDetail({
-              serverId: props.operation.serverId,
-              operationId: props.operation.snapshot.operationId,
-            })
-          }
-        />
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          {presentation.live && presentation.startedAt ? (
+            <RunClock startedAt={presentation.startedAt} />
+          ) : null}
+          <RoundButton
+            size="small"
+            display="secondary"
+            title={t('projectWorkers.open')}
+            testID={`${props.testID}.open`}
+            onPress={() => void output.open(props.operation, { title: `${name} · ${props.machineName}` })}
+          />
+        </View>
       }
     />
   );
@@ -162,6 +163,14 @@ function RunningHereRow(
  * cleanly synced and its measured size (unknown facts are left out, never guessed). Remove… names the
  * two outcomes; consent belongs to the Action, so a pending approval is shown, not asked again here.
  */
+const DEPENDENCY_STATE: Readonly<Record<NonNullable<MachineFreshCopyNotice['dependencies']>[number]['state'], () => string>> = {
+  queued: () => t('projectWorkers.dependencyQueued'),
+  reserved: () => t('projectWorkers.dependencyReserved'),
+  copying: () => t('projectWorkers.dependencyCopying'),
+  setup: () => t('projectWorkers.dependencySetup'),
+  running: () => t('projectWorkers.dependencyRunning'),
+};
+
 function FreshCopyRow(
   props: Readonly<{
     testID: string;
@@ -173,6 +182,7 @@ function FreshCopyRow(
     approvalId: string | null;
     notice: MachineFreshCopyNotice | null;
     onRemove: (choice?: Readonly<{ removeFiles?: boolean }>) => void;
+    onRefresh: () => void;
   }>,
 ) {
   const { theme } = useUnistyles();
@@ -227,6 +237,18 @@ function FreshCopyRow(
     />
   );
   const approvalId = props.notice?.kind === 'approval' ? props.approvalId : null;
+  // The executor's typed dependencies, named from your own operations where known (31s3).
+  const active = useActiveActionOperations();
+  const dependencies = props.notice?.dependencies ?? [];
+  const ownDependency = dependencies
+    .map((dependency) => active.find((operation) => operation.snapshot.operationId === dependency.operationId))
+    .find((operation) => operation !== undefined) ?? null;
+  const dependencyLines = dependencies.map((dependency) => {
+    const operation = active.find((candidate) => candidate.snapshot.operationId === dependency.operationId);
+    const ref = operation?.snapshot.domainRef;
+    const name = (ref?.kind === 'projectCommand' ? ref.script?.name : null) ?? operation?.snapshot.title ?? t('projectWorkers.dependencyOther');
+    return `${name} · ${DEPENDENCY_STATE[dependency.state]()}`;
+  });
   return (
     <>
       {props.compact ? (
@@ -297,6 +319,7 @@ function FreshCopyRow(
           testID={`${props.testID}.notice`}
           tone={props.notice.kind === 'saving' || props.notice.kind === 'approval' ? 'neutral' : 'warning'}
           title={props.notice.text}
+          details={dependencyLines.length > 0 ? dependencyLines : undefined}
           action={
             approvalId
               ? {
@@ -307,7 +330,24 @@ function FreshCopyRow(
                       `/inbox/approvals/${encodeURIComponent(approvalId)}?serverId=${encodeURIComponent(props.serverId)}`,
                     ),
                 }
-              : null
+              : ownDependency
+                ? {
+                    label: t('projectWorkers.openWork'),
+                    testID: `${props.testID}.openWork`,
+                    onPress: () =>
+                      openActionOperationDetail({
+                        serverId: ownDependency.serverId,
+                        operationId: ownDependency.snapshot.operationId,
+                      }),
+                  }
+                : props.notice.kind === 'unknown'
+                  ? {
+                      // Inspection only: rereads the copy's facts, never repeats the removal.
+                      label: t('projectWorkers.checkAgain'),
+                      testID: `${props.testID}.checkAgain`,
+                      onPress: props.onRefresh,
+                    }
+                  : null
           }
         />
       ) : null}
@@ -435,7 +475,8 @@ export function MachineProjectWorkSection(
                 <Item
                   testID={`${testID}.capacity.row`}
                   title={t('projectWorkers.capacity')}
-                  detail={value?.runAtMost == null ? t('projectWorkers.noLimit') : String(value.runAtMost)}
+                  // Only a read policy has a ceiling to show; loading never claims No limit.
+                  detail={!value ? t('common.loading') : value.runAtMost === null ? t('projectWorkers.noLimit') : String(value.runAtMost)}
                   disabled={disabled}
                   onPress={() => setCapacityOpen(true)}
                 />
@@ -541,6 +582,7 @@ export function MachineProjectWorkSection(
         ) : (
           running.map((operation) => (
             <RunningHereRow
+              machineName={props.machineName}
               key={operation.snapshot.operationId}
               operation={operation}
               testID={`${testID}.running:${operation.snapshot.operationId}`}
@@ -600,6 +642,7 @@ export function MachineProjectWorkSection(
                   : null
               }
               onRemove={(choice) => void freshCopies.remove(copy, choice)}
+              onRefresh={freshCopies.refresh}
             />
           ))
         )}

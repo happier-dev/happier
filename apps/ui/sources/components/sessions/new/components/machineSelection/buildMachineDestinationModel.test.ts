@@ -406,6 +406,13 @@ describe('describeMachineDestinationWorkerFacts', () => {
         }
     });
 
+    it('says an asleep worker starts for this run and a starting one is starting, never offline', () => {
+        const wake = (managedWake: 'asleep' | 'starting') => describeMachineDestinationWorkerFacts(
+            resolveMachineDestinationPurposeEligibility('finite', { ownership: 'owned', managedWake }), { scriptName: 'test' }, 'finite', 'hz-build-2');
+        expect(wake('asleep')).toBe(`${t('managedPower.asleep')} · ${t('projectWorkers.wakeForRun')}`);
+        expect(wake('starting')).toBe(`${t('managedWake.starting', { machine: 'hz-build-2' })} · ${t('projectWorkers.runAfterWake')}`);
+    });
+
     it('adds the last clean copy to an eligible worker only when that fact is known', () => {
         const idle = { kind: 'known' as const, running: 0, queued: 0, accepting: true, runAtMost: null };
         const fresh = describeMachineDestinationWorkerFacts(resolveMachineDestinationPurposeEligibility('finite', {

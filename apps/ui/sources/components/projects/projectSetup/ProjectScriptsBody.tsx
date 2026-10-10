@@ -70,9 +70,12 @@ import {
 } from './useProjectDefinitionInspection';
 import { useProjectScriptsController, type ProjectScriptsController } from './useProjectScriptsController';
 import { useProjectSetupAuthoring } from './useProjectSetupAuthoring';
+import type { ManagedMachineConfigurationContinuation } from '@/components/sessions/new/components/machineSelection/ManagedMachineSelectionOffers';
 
 export type ProjectScriptsBodyProps = Readonly<{
   workspace: WorkspaceAddressV1;
+  /** Exact Project/native selectors, when the caller has a controller-qualified handoff. */
+  initialManagedConfiguration?: ManagedMachineConfigurationContinuation;
   /** The Scripts page leads with its header and editor; the rail and widget keep the compact list. */
   presentation?: 'page' | 'widget';
   /** Services found here are reviewed on the Services page, never appended to the finite list. */
@@ -99,6 +102,7 @@ export function ProjectScriptsBody({
   presentation = 'page',
   onOpenServices,
   outputScopeId,
+  initialManagedConfiguration,
   testID = 'project-scripts',
 }: ProjectScriptsBodyProps): React.ReactElement {
   const workspace = useStableWorkspace(workspaceInput);
@@ -174,6 +178,7 @@ export function ProjectScriptsBody({
     content = (
       <ProjectScriptsContent
         workspace={workspace}
+        initialManagedConfiguration={initialManagedConfiguration}
         inspection={read.value}
         controller={controller}
         page={page}
@@ -244,6 +249,7 @@ function useStableWorkspace(workspace: WorkspaceAddressV1): WorkspaceAddressV1 {
 /** The body below its host chrome; also drawn by the dev specimen with fixture inspections. */
 export function ProjectScriptsContent(
   props: Readonly<{
+    initialManagedConfiguration?: ManagedMachineConfigurationContinuation;
     workspace: WorkspaceAddressV1;
     inspection: ProjectDefinitionInspection;
     controller: ScriptsController;
@@ -324,6 +330,7 @@ export function ProjectScriptsContent(
 /** Declared scripts in declaration order, Setup first because it gates the rest (lab PAGE / RAIL). */
 function DeclaredScripts(
   props: Readonly<{
+    initialManagedConfiguration?: ManagedMachineConfigurationContinuation;
     workspace: WorkspaceAddressV1;
     manifest: ProjectManifestV1;
     inspection: ProjectDefinitionInspection;
@@ -435,6 +442,7 @@ function DeclaredScripts(
             compact={!props.page}
             preference={preference}
             memoryDemand={resolveProjectMemoryDemandV1(declaration.memoryDemand, props.manifest.workspace?.memoryDemand)}
+            initialManagedConfiguration={props.initialManagedConfiguration}
             onOpenWorkerSettings={props.onOpenWorkers ?? undefined}
             idleText={
               setupReady
@@ -514,6 +522,7 @@ function WorkersSummarySection(
 
 function DeclaredScriptRow(
   props: Readonly<{
+    initialManagedConfiguration?: ManagedMachineConfigurationContinuation;
     testID: string;
     workspace: WorkspaceAddressV1;
     name: string;
@@ -557,13 +566,17 @@ function DeclaredScriptRow(
       showDivider={props.showDivider}
       defaultChoice={resolvedChoice.status === 'resolved' ? resolvedChoice.choice : null}
       memoryDemand={props.memoryDemand}
+      initialManagedConfiguration={props.initialManagedConfiguration}
       choiceRequired={props.controller.choiceRequired?.key === rowKey}
       onChooseForRun={(choice) => { void props.controller.chooseForRun(choice); }}
       onDismissChoice={props.controller.dismissChoice}
       onOpenWorkerSettings={props.onOpenWorkerSettings}
       workerRefusal={props.controller.failure?.key === rowKey ? props.controller.failure.workerRefusal ?? null : null}
-      onRun={(choice) => {
-        void props.controller.run(rowKey, { kind: 'named', name: props.name }, choice);
+      managedCreation={props.controller.managedCreation?.key === rowKey ? props.controller.managedCreation : null}
+      onCancelManagedRun={props.controller.cancelRun}
+      onResumeManagedRun={() => { void props.controller.resumeManagedRun(rowKey); }}
+      onRun={(choice, managed) => {
+        void props.controller.run(rowKey, { kind: 'named', name: props.name }, choice, managed);
       }}
     />
   );

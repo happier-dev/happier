@@ -52,7 +52,7 @@ import {
     temporaryComputerTargetOptionKey,
 } from './temporaryComputerTargetIdentity';
 import { showTemporaryComputerExpiryModal } from './TemporaryComputerExpiryModal';
-import { resolveMachineDisplayNames } from '@/utils/sessions/machineDisplayNames';
+import { getMachineDisplayName, resolveMachineDisplayNames } from '@/utils/sessions/machineDisplayNames';
 import {
     managedMachineSelectionOptionId,
     type ManagedMachineSelectionDraft,
@@ -315,7 +315,7 @@ function resolveRowAvailability<TMachine extends MachineDisplayRenderable>(
     const presence = resolveMachinePickerPresence(machine);
     const decided = resolveMachineAvailability?.(machine, serverId);
     // An eligible worker row says its current load (or that it is unknown), never a guessed zero.
-    if (!decided) return { selectable: presence.selectable || !!eligibility.managedWake, reason: describeMachineDestinationWorkerFacts(eligibility, workerSubject, purpose) };
+    if (!decided) return { selectable: presence.selectable || !!eligibility.managedWake, reason: describeMachineDestinationWorkerFacts(eligibility, workerSubject, purpose, getMachineDisplayName(machine) ?? machine.id) };
     return {
         selectable: decided.selectable,
         reason: !decided.selectable || !presence.selectable ? decided.detail : undefined,

@@ -5,11 +5,7 @@ import {
     buildManagedProgressStatusBadge,
     type ManagedProgressModel,
 } from '@/components/machines/managed/managedComposerBadges';
-import {
-    describeActionOperationStatusLabel,
-    resolveActionOperationStatus,
-} from '@/components/inbox/actionOperations/actionOperationPresentation';
-import { describeManagedLifecycleState } from '@/components/settings/machines/managed/managedLifecyclePresentation';
+import { describeManagedCreationProgress } from '@/components/settings/machines/managed/managedCreationProgressPresentation';
 import { Icon } from '@/components/ui/icons/Icon';
 import { t } from '@/text';
 import type { NewSessionManagedMachineDraftModel } from '../newSessionScreenModelTypes';
@@ -28,20 +24,7 @@ export function buildNewSessionManagedProgressBadge(
     if (!draft?.selection || draft.progress.kind === 'idle' || draft.progress.kind === 'ready') return null;
     const { selection, progress } = draft;
     const machineName = selection.receipt.launch.name;
-    const setup = progress.kind === 'setup_pending' || progress.kind === 'failed' ? progress.environmentSetup : undefined;
-    const operation = progress.kind === 'acquiring' || progress.kind === 'failed' ? progress.operation
-        : progress.kind === 'setup_pending' && progress.operation?.scope.machineId === progress.machineId ? progress.operation : undefined;
-    const observedStatus = operation ? resolveActionOperationStatus(operation,
-        (progress.kind === 'acquiring' || progress.kind === 'failed' ? progress.operationObservation : undefined) ?? 'available') : null;
-    const failed = progress.kind === 'failed' || operation?.state === 'failed';
-    const label = setup ? progress.kind === 'failed'
-        ? `${t('managedMachines.creation.setup')} · ${t('inbox.actionOperations.status.failed')}`
-        : observedStatus ? describeActionOperationStatusLabel(observedStatus.label) : t('managedMachines.creation.setup')
-        : observedStatus ? describeActionOperationStatusLabel(observedStatus.label)
-        : progress.kind === 'approval' ? t('managedMachines.creation.approval', { name: machineName })
-            : progress.kind === 'enrollment_pending' ? describeManagedLifecycleState({ kind: 'resourceReady' }).line
-                : failed ? t('inbox.actionOperations.status.failed')
-                    : describeManagedLifecycleState({ kind: 'creationWaiting', name: machineName }).line;
+    const { setup, operation, observedStatus, failed, label, tone } = describeManagedCreationProgress(machineName, progress);
     // A setup row exists only on a joined machine, so Create, Install and Join are observed facts by then.
     const joinedStages: ManagedProgressModel['stages'] = [
         { id: 'create', label: t('managedMachines.creation.create'), status: 'done' },
@@ -60,7 +43,7 @@ export function buildNewSessionManagedProgressBadge(
         machineName, mark: React.createElement(Icon, { name: 'desktop', size: 16 }),
         recipe: selection.receipt.preset?.name ?? '', stages, failed, label,
         ...(failed ? { failureLabel: label, failureTitle: setup ? t('managedMachines.creation.setupFailedTitle', { name: machineName }) : `${machineName} · ${label}` } : {}),
-        tone: failed ? 'warning' : setup?.state === 'pending' || observedStatus && observedStatus.tone !== 'active' ? 'neutral' : 'active',
+        tone,
         message: setup ? progress.kind === 'failed' ? t('managedMachines.creation.setupFailedHelp')
             : t('managedMachines.creation.setupWaiting', { name: machineName }) : failed ? operation?.error?.error ?? t('newSession.failedToStart')
             : t('managedMachines.creation.messageWaiting', { name: machineName }),

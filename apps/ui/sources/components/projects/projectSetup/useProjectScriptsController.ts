@@ -118,7 +118,9 @@ export function useProjectScriptsController(
     selection: ProjectScriptSelection; acquisition: ManagedMachineAcquisitionDraft }>(), [lifetime]);
   const runAbort = React.useRef<AbortController | null>(null);
   const [managedCreation, setManagedCreation] = React.useState<Readonly<{ scopeKey: string; key: string;
-    acquisition: ManagedMachineAcquisitionDraft; progress: ManagedMachineCreationProgress }> | null>(null);
+    acquisition: ManagedMachineAcquisitionDraft; progress: ManagedMachineCreationProgress;
+    /** The reviewed recipe's machine name, for the Script row's creation notice. */
+    machineName: string }> | null>(null);
   const currentCreation = managedCreation?.scopeKey === scopeKey ? managedCreation : null;
   const inventoryIds = React.useMemo(() => currentCreation?.acquisition.managedId ? [workspace.serverId] : [],
     [currentCreation?.acquisition.managedId, workspace.serverId]);
@@ -205,7 +207,8 @@ export function useProjectScriptsController(
             acquisition: continuation.acquisition, scope: binding.scope, signal: cancellation.signal, isCurrent: current,
             executeAction: execute, onApprovalPending: registration => requestApprovalRef.current(registration),
             onAcquisitionChange: value => { continuation.acquisition = value; },
-            onProgress: progress => { if (current()) setManagedCreation({ scopeKey, key, acquisition: continuation.acquisition, progress }); },
+            onProgress: progress => { if (current()) setManagedCreation({ scopeKey, key, acquisition: continuation.acquisition, progress,
+              machineName: continuation.draft.receipt.launch.name }); },
           });
           if (!current() || acquired.kind === 'pending' || acquired.kind === 'delete_requested') return null;
           if (acquired.kind === 'failed') throw Object.assign(new Error(acquired.code), { code: acquired.code });

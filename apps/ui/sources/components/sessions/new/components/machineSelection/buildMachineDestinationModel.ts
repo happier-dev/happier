@@ -70,7 +70,13 @@ export function describeMachineDestinationWorkerFacts(
     eligibility: ReturnType<typeof resolveMachineDestinationPurposeEligibility>,
     subject?: MachineDestinationWorkerSubject,
     purpose: MachineDestinationPurposeV1 = 'finite',
+    machineName?: string,
 ): string | undefined {
+    // A retained managed worker (FX13): INT's power words, and what choosing it does for this Run.
+    if (eligibility.eligible && eligibility.managedWake === 'asleep')
+        return `${t('managedPower.asleep')} · ${t('projectWorkers.wakeForRun')}`;
+    if (eligibility.eligible && eligibility.managedWake === 'starting')
+        return `${t('managedWake.starting', { machine: machineName ?? '' })} · ${t('projectWorkers.runAfterWake')}`;
     if (!eligibility.eligible && eligibility.reason === 'worker_status_unavailable') {
         return eligibility.statusFailed ? t('projectWorkers.statusUnavailable') : t('projectWorkers.loading');
     }

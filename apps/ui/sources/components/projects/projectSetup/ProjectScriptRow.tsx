@@ -21,6 +21,9 @@ import { useProjectCommandOutputOpener } from '@/components/inbox/actionOperatio
 import { ProjectCommandOutputPane } from '@/components/inbox/actionOperations/ProjectCommandOutputPane';
 import { WorkerDestinationPicker } from '@/components/projects/workers/WorkerDestinationPicker';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
+import { useManagedWorkerWake } from '@/components/projects/workers/useManagedWorkerWake';
+import { describeManagedCreationProgress } from '@/components/settings/machines/managed/managedCreationProgressPresentation';
+import type { ManagedMachineCreationProgress } from '@/components/settings/machines/managed/managedMachineCreation';
 import { openWorkspaceSyncWorkerCopySetup } from '@/components/workspaces/sync/openWorkspaceSyncAddMachine';
 import { openWorkspaceSyncRelationshipDetails } from '@/components/workspaces/sync/openWorkspaceSyncRelationshipDetails';
 import { readProjectWorkerNoAcceptanceFailureV1, type ProjectWorkerNoAcceptanceFailureDetailsV1 } from '@happier-dev/protocol/actions/projectActionFamily';
@@ -29,6 +32,8 @@ import { useServerScopedMachine } from '@/sync/store/hooks';
 import { getMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { t } from '@/text';
+import type { ManagedMachineSelectionDraft } from '@/sync/domains/state/newSessionManagedMachineDraft';
+import type { ManagedMachineConfigurationContinuation } from '@/components/sessions/new/components/machineSelection/ManagedMachineSelectionOffers';
 
 import {
   formatRunClock,
@@ -64,10 +69,17 @@ export type ProjectScriptRowProps = Readonly<{
   onOpenWorkerSettings?: () => void;
   /** The typed "no worker can accept" refusal of this row's last Run request, when that is why it did not start. */
   workerRefusal?: ProjectWorkerNoAcceptanceFailureDetailsV1 | null;
-  onRun: (choice?: ProjectExecutionChoiceV1) => void;
+  initialManagedConfiguration?: ManagedMachineConfigurationContinuation;
+  /** A new machine being created for this row's Run (FX13), with the reviewed recipe's name. */
+  managedCreation?: Readonly<{ machineName: string; progress: ManagedMachineCreationProgress }> | null;
+  /** Retires the waiting continuation only; the machine resource is left as it is. */
+  onCancelManagedRun?: () => void;
+  /** Inspects the same acquired resource again and continues the Run when it joins. */
+  onResumeManagedRun?: () => void;
+  onRun: (choice?: ProjectExecutionChoiceV1, managed?: ManagedMachineSelectionDraft) => void;
 }>;
 
-function RunGlyph(props: Readonly<{ glyph: ProjectRunGlyph }>) {
+export function RunGlyph(props: Readonly<{ glyph: ProjectRunGlyph }>) {
   const { theme } = useUnistyles();
   if (props.glyph === 'running')
     return <ActivitySpinner size="small" color={theme.colors.text.secondary} />;
@@ -126,7 +138,19 @@ export const ProjectScriptRow = React.memo(function ProjectScriptRow(
   React.useEffect(() => {
     if (props.pending) setRefusalDismissed(false);
   }, [props.pending]);
-  const statusText = workerRefusal
+  // The exact worker this Run went to; while the Run waits, its inventory may say it is waking.
+  const [runTarget, setRunTarget] = React.useState<string | null>(null);
+  const wakeTargetId = props.pending ? runTarget : null;
+  const wakeTarget = useServerScopedMachine(props.workspace.serverId, wakeTargetId ?? '');
+  const wake = useManagedWorkerWake(props.workspace.serverId, wakeTargetId);
+  const creation = props.managedCreation && props.managedCreation.progress.kind !== 'idle' && props.managedCreation.progress.kind !== 'ready'
+    ? props.managedCreation : null;
+  const creationPresentation = creation ? describeManagedCreationProgress(creation.machineName, creation.progress) : null;
+  const statusText = creationPresentation && !creationPresentation.failed
+    ? creationPresentation.label
+    : wake === 'starting' && wakeTargetId
+    ? `${t('managedWake.starting', { machine: (wakeTarget ? getMachineDisplayName(wakeTarget) : null) ?? wakeTargetId })} · ${t('projectWorkers.scriptStartsWhenReady', { script: props.name })}`
+    : workerRefusal
     ? t('projectWorkers.empty')
     : props.failureCode
     ? t('projects.scripts.run.refused', { reason: props.failureCode })
@@ -160,9 +184,11 @@ export const ProjectScriptRow = React.memo(function ProjectScriptRow(
   React.useEffect(() => {
     if (props.failureCode || props.workerRefusal) runRequest.current = null;
   }, [props.failureCode, props.workerRefusal]);
-  const run = (choice?: ProjectExecutionChoiceV1) => {
+  const run = (choice?: ProjectExecutionChoiceV1, managed?: ManagedMachineSelectionDraft) => {
+    const target = managed ? null : choice ?? props.defaultChoice ?? null;
+    setRunTarget(target?.kind === 'workers' && target.destination.kind === 'machine' ? target.destination.machineId : null);
     if (output.opensInTerminal) runRequest.current = { previous: props.operation?.snapshot.operationId ?? null };
-    props.onRun(choice);
+    props.onRun(choice, managed);
   };
   // Desktop page rows open into their output; phone and compact rows open it directly (the host's
   // bottom terminal tab where it has one, otherwise the operation detail).
@@ -226,6 +252,7 @@ export const ProjectScriptRow = React.memo(function ProjectScriptRow(
             workspace={props.workspace}
             defaultChoice={props.defaultChoice ?? null}
             memoryDemand={props.memoryDemand}
+            initialManagedConfiguration={props.initialManagedConfiguration}
             choiceRequired={props.choiceRequired}
             onChooseForRun={props.onChooseForRun}
             onDismissChoice={props.onDismissChoice}
@@ -265,8 +292,20 @@ export const ProjectScriptRow = React.memo(function ProjectScriptRow(
       onDismiss={() => setRefusalDismissed(true)}
     />
   ) : null;
+  const managedNotice = creation && creationPresentation ? (
+    <ManagedCreationNotice
+      testID={`${props.testID}.managed`}
+      scriptName={props.name}
+      machineName={creation.machineName}
+      progress={creation.progress}
+      presentation={creationPresentation}
+      onCancel={props.onCancelManagedRun}
+      onResume={props.onResumeManagedRun}
+    />
+  ) : null;
+  const notices = <>{refusal}{managedNotice}</>;
 
-  if (!discloses) return <>{header()}{refusal}</>;
+  if (!discloses) return <>{header()}{notices}</>;
   return (
     <>
     <ExpandableItem
@@ -297,10 +336,44 @@ export const ProjectScriptRow = React.memo(function ProjectScriptRow(
         ) : null}
       </View>
     </ExpandableItem>
-    {refusal}
+    {notices}
     </>
   );
 });
+
+/**
+ * The new machine this Run waits on (FX13, lab `m-pick` creating frames): its latest observed stage,
+ * then Cancel, which only stops waiting. After a stop or failure, continuing re-inspects the same
+ * resource; nothing is created again or retried by itself.
+ */
+function ManagedCreationNotice(
+  props: Readonly<{
+    testID: string;
+    scriptName: string;
+    machineName: string;
+    progress: ManagedMachineCreationProgress;
+    presentation: ReturnType<typeof describeManagedCreationProgress>;
+    onCancel?: () => void;
+    onResume?: () => void;
+  }>,
+) {
+  const stopped = props.progress.kind === 'failed' && props.progress.code === 'continuation_retired';
+  const failed = props.presentation.failed;
+  return (
+    <View style={styles.refusal}>
+      <AttentionBanner
+        testID={props.testID}
+        tone={failed && !stopped ? 'warning' : 'neutral'}
+        title={stopped ? t('projectWorkers.creationStopped', { machine: props.machineName }) : props.presentation.label}
+        description={failed ? undefined : t('projectWorkers.runWaitsForMachine', { script: props.scriptName, machine: props.machineName })}
+        action={failed
+          ? props.onResume ? { label: t('projectWorkers.continueWithMachine', { machine: props.machineName }),
+              testID: `${props.testID}.resume`, onPress: props.onResume } : null
+          : props.onCancel ? { label: t('common.cancel'), testID: `${props.testID}.cancel`, onPress: props.onCancel } : null}
+      />
+    </View>
+  );
+}
 
 function describeNoWorkerReason(reason: ProjectWorkerNoAcceptanceFailureDetailsV1['reason']): string {
   switch (reason) {
@@ -457,7 +530,7 @@ function RowStatus(
   );
 }
 
-function RunClock(props: Readonly<{ startedAt: number }>) {
+export function RunClock(props: Readonly<{ startedAt: number }>) {
   const { theme } = useUnistyles();
   const seconds = useElapsedTime(props.startedAt);
   return (
@@ -481,6 +554,7 @@ function RunControl(
     workspace: WorkspaceAddressV1;
     defaultChoice: ProjectExecutionChoiceV1 | null;
     memoryDemand?: ProjectMemoryDemandV1;
+    initialManagedConfiguration?: ManagedMachineConfigurationContinuation;
     choiceRequired?: boolean;
     onChooseForRun?: (choice: ProjectExecutionChoiceV1) => void;
     onDismissChoice?: () => void;
@@ -491,7 +565,7 @@ function RunControl(
     machineName: string;
     pending: boolean;
     canStop: boolean;
-    onRun: (choice?: ProjectExecutionChoiceV1) => void;
+    onRun: (choice?: ProjectExecutionChoiceV1, managed?: ManagedMachineSelectionDraft) => void;
     onStop: () => void;
   }>,
 ) {
@@ -500,6 +574,8 @@ function RunControl(
   const [open, setOpen] = React.useState(false);
   // An invocation-only choice: it changes this Run's input, never the saved preference.
   const [choice, setChoice] = React.useState<ProjectExecutionChoiceV1 | null>(null);
+  const [managedChoice, setManagedChoice] = React.useState<ManagedMachineSelectionDraft | null>(null);
+  React.useEffect(() => { setChoice(null); setManagedChoice(null); }, [props.workspace.serverId, props.workspace.workspaceId, props.workspace.rootPath]);
   const pickerOpen = open || props.choiceRequired === true;
   const selected: ProjectExecutionChoiceV1 = choice ?? props.defaultChoice ?? { kind: 'primary' };
   const poolSelection = selected.kind === 'workers' && selected.destination.kind === 'pool'
@@ -544,7 +620,7 @@ function RunControl(
           : t('projects.scripts.runScript', { name: props.name })
       }
       disabled={props.pending || (stopping && !props.canStop)}
-      onPress={() => (stopping ? props.onStop() : props.onRun(choice ?? undefined))}
+      onPress={() => (stopping ? props.onStop() : props.onRun(choice ?? undefined, managedChoice ?? undefined))}
     />
   );
   return (
@@ -590,7 +666,11 @@ function RunControl(
             exactTargetOnly={props.choiceRequired}
             presentPoolAsAutomatic={poolSelection === 'automatic' && !props.choiceRequired}
             selected={selected}
+            selectedManagedMachine={managedChoice}
+            initialManagedConfiguration={props.initialManagedConfiguration}
+            onChooseManagedMachine={(draft) => { setChoice(null); setManagedChoice(draft); setOpen(false); }}
             onChoose={(next) => {
+              setManagedChoice(null);
               setOpen(false);
               if (props.choiceRequired) props.onChooseForRun?.(next);
               else setChoice(next);

@@ -42,12 +42,25 @@ vi.mock(
     (await import('@/dev/testkit/mocks/modal')).createModalModuleMock().module,
 );
 vi.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
-const machineHttp = vi.hoisted(() => ({ read: null as null | (() => Response) }));
+const machineHttp = vi.hoisted(() => ({ read: null as null | (() => Response), gate: null as null | Promise<void> }));
+const viewport = vi.hoisted(() => ({ compact: false }));
+// Window size is an environment adapter; every row below it is production code.
+vi.mock('@/utils/platform/useViewportClass', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/utils/platform/useViewportClass')>();
+  return { ...actual, useViewportClass: (...args: Parameters<typeof actual.useViewportClass>) =>
+    viewport.compact ? 'compact' : actual.useViewportClass(...args) };
+});
+const rpc = vi.hoisted(() => ({ machine: vi.fn() }));
+// The daemon network is the boundary for copy facts and retirement; Action policy and the hook are real.
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', async () => {
+  const { createServerScopedMachineRpcBoundaryMock } = await import('@/dev/testkit/mocks/serverScopedRpc');
+  return createServerScopedMachineRpcBoundaryMock(rpc.machine);
+});
 // The Machine record read is an HTTP boundary; every other Home request keeps the real client.
 vi.mock('@/sync/http/client', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/sync/http/client')>();
   return { ...actual, serverFetch: async (...args: Parameters<typeof actual.serverFetch>) =>
-    args[0] === '/v1/machines/m1' && machineHttp.read ? machineHttp.read() : await actual.serverFetch(...args) };
+    args[0] === '/v1/machines/m1' && machineHttp.read ? (await machineHttp.gate, machineHttp.read()) : await actual.serverFetch(...args) };
 });
 
 let fixture:
@@ -55,6 +68,9 @@ let fixture:
   | undefined;
 afterEach(() => {
   machineHttp.read = null;
+  machineHttp.gate = null;
+  viewport.compact = false;
+  rpc.machine.mockReset();
   fixture?.dispose();
   fixture = undefined;
   vi.restoreAllMocks();
@@ -64,7 +80,10 @@ afterEach(() => {
  * The Machine's real metadata read (Home HTTP) and its metadata CAS socket are the boundaries; the
  * finite-policy semantic mutation, Action policy and the settings rows above them are production code.
  */
-async function setup() {
+async function setup(options: Readonly<{ holdPolicyRead?: boolean; waive?: readonly string[] }> = {}) {
+  rpc.machine.mockImplementation(async ({ method }: { method: string }) => { throw new Error(`unexpected_rpc:${method}`); });
+  let releasePolicyRead = () => {};
+  if (options.holdPolicyRead) machineHttp.gate = new Promise<void>((resolve) => { releasePolicyRead = resolve; });
   const machine = createMachineFixture({
     id: 'm1',
     storageMode: 'plain',
@@ -108,7 +127,8 @@ async function setup() {
         actionsSettingsV1: {
           v: 1,
           actions: {},
-          approvalWaivedSurfaces: { 'machines.worker.policy.set': ['ui'] },
+          approvalWaivedSurfaces: Object.fromEntries(['machines.worker.policy.set', ...(options.waive ?? [])]
+            .map((surface) => [surface, ['ui']])),
         },
       }),
       (storage.getState().settingsVersion ?? 0) + 1,
@@ -123,13 +143,93 @@ async function setup() {
       machineName="hz-build-1"
     />,
   );
-  await vi.waitFor(() =>
-    expect(screen.findAllByTestId('work.accepting')[0]?.props.disabled).toBe(false),
-  );
-  return { screen, sent };
+  if (!options.holdPolicyRead)
+    await vi.waitFor(() =>
+      expect(screen.findAllByTestId('work.accepting')[0]?.props.disabled).toBe(false),
+    );
+  return { screen, sent, releasePolicyRead };
+}
+
+async function seedWorkerCopy() {
+  const scope = storage.getState().profileScope;
+  if (!scope || scope.serverId !== fixture?.home.id) throw new Error('expected_current_project_account_scope');
+  const source = { id: 'fresh-source', serverId: scope.serverId, machineId: 'source-machine',
+    rootPath: '/source/project', label: 'Original source checkout', createdAtMs: 1, projectKey: 'fresh-project' };
+  const target = { id: 'fresh-target', serverId: scope.serverId, machineId: 'm1',
+    rootPath: '/worker/project', label: 'Worker target checkout', createdAtMs: 1, projectKey: 'fresh-project' };
+  const policy = { v: 1 as const, selection: 'git_worktree' as const, extraIgnorePatterns: [], extraIncludePatterns: [] };
+  const relationship: WorkspaceSyncRelationshipV1 = { v: 1, relationshipId: 'proven-worker-target', controllerMachineId: 'source-machine',
+    alphaWorkspaceRefId: target.id, betaWorkspaceRefId: source.id, mode: 'keep_synced', enabled: true,
+    contentPolicy: { ...policy, policyDigest: computeWorkspaceSyncPolicyDigest(policy) }, createdAtMs: 1, updatedAtMs: 1,
+    provenance: { kind: 'worker_clean_copy', sourceWorkspaceRefId: source.id, targetWorkspaceRefId: target.id } };
+  await act(async () => {
+    storage.getState().activateProjectAccountRowsScope(scope);
+    storage.getState().applyProjectAccountRowsForScope(scope, { scope, status: 'ready', coverage: 'complete',
+      workspaceRefs: [source, target], relationships: [relationship], organizations: [], revisionsByPhysicalKey: {} });
+  });
+  return { scope, source };
 }
 
 describe('Machine › Work from your projects through the Machine policy Actions', () => {
+  it('shows an own queued run from its canonical phase facts, never as running on an acceptance clock', async () => {
+    const { screen } = await setup();
+    const scope = storage.getState().profileScope;
+    if (!scope || !fixture) throw new Error('expected_scope');
+    const { actionOperationStore } = await import('@/sync/domains/actionOperations/actionOperationStore');
+    await act(async () => actionOperationStore.mergeSnapshots({ serverId: fixture!.home.id, snapshots: [{
+      version: 1, operationId: 'own-1', revision: 1, actionId: 'projects.script.run', state: 'accepted',
+      scope: { accountId: scope.accountId, machineId: 'm1' }, title: 'test', createdAt: Date.now() - 95_000,
+      progress: { kind: 'phase', phase: 'queued', queueAhead: 2 },
+      domainRef: { kind: 'projectCommand', purpose: 'script', serverId: fixture!.home.id, machineId: 'm1', workspaceRefId: 'w1',
+        cwd: '/repo', script: { name: 'test' },
+        sourceWorkspace: { serverId: fixture!.home.id, workspaceId: 'w1', machineId: 'source-machine', rootPath: '/repo' } },
+      cancellation: 'supported',
+    } as never] }));
+    const row = () => screen.findAllByTestId('work.running:own-1').find((node) => typeof node.props.title === 'string');
+    await vi.waitFor(() => expect(row()?.props.title).toBe('test'));
+    const subtitle = String(row()?.props.subtitle);
+    expect(subtitle).toContain('projectWorkers.queuedOn');
+    expect(subtitle).toContain('projectWorkers.ahead');
+    // Accepted is not launched: no elapsed clock before a terminal exists.
+    expect(subtitle).not.toMatch(/\d:\d\d/);
+  });
+
+  it('on a phone, says Run at most is loading until the policy is read, and No limit only for a read null', async () => {
+    viewport.compact = true;
+    const { screen, releasePolicyRead } = await setup({ holdPolicyRead: true });
+    const row = () => screen.findAllByTestId('work.capacity.row')[0];
+    await vi.waitFor(() => expect(row()).toBeTruthy());
+    expect(row()?.props.detail).toBe('common.loading');
+    await act(async () => { releasePolicyRead(); });
+    await vi.waitFor(() => expect(row()?.props.detail).toBe('projectWorkers.noLimit'));
+  });
+
+  it('names the work keeping a copy in use and an unknown file removal, and never retries by itself', async () => {
+    const { screen } = await setup({ waive: ['projects.worker.copy.retire'] });
+    await seedWorkerCopy();
+    const retire = vi.fn(async () => ({ ok: false, error: 'in_use', errorCode: 'workspace_sync_relationship_in_use',
+      details: { dependencies: [{ operationId: 'busy-1', workspaceRefId: 'fresh-target', state: 'running' }] } }));
+    rpc.machine.mockImplementation(async ({ method }: { method: string }) => {
+      if (method === 'projects.worker.copy.retire') return await retire();
+      throw new Error(`unexpected_rpc:${method}`);
+    });
+    const menu = () => screen.findAll((node) => typeof node.props.onSelect === 'function'
+      && Array.isArray(node.props.items) && node.props.items.some((item: { id: string }) => item.id === 'files'))[0]!;
+    const notice = () => screen.findAllByTestId('work.copy:proven-worker-target.notice')[0]?.props;
+    await vi.waitFor(() => expect(menu()).toBeTruthy());
+    await act(async () => { menu().props.onSelect('keep'); });
+    await vi.waitFor(() => expect(notice()?.title).toBe('projectWorkers.removeInUse'));
+    expect(notice()?.details).toEqual([expect.stringContaining('projectWorkers.dependencyRunning')]);
+    retire.mockResolvedValueOnce({ ok: false, error: 'unknown', errorCode: 'workspace_copy_removal_unknown',
+      details: { kind: 'outcomeUnknown' } } as never);
+    await act(async () => { menu().props.onSelect('keep'); });
+    await vi.waitFor(() => expect(notice()?.title).toBe('projectWorkers.removeFilesUnknown'));
+    // Checking again only rereads; the removal is not repeated.
+    await act(async () => { notice()?.action?.onPress(); });
+    expect(retire).toHaveBeenCalledTimes(2);
+    expect(screen.findAllByTestId('work.copy:proven-worker-target').length).toBeGreaterThan(0);
+  });
+
   it('offers Fresh-copy removal only for a proven worker target, never ordinary Sync or the worker SOURCE', async () => {
     const { screen } = await setup();
     const scope = storage.getState().profileScope;

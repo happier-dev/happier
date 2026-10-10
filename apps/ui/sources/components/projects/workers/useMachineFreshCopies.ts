@@ -6,6 +6,7 @@ import { executeProjectWorkerActionV1, ProjectWorkerActionError } from '@/sync/o
 import { t } from '@/text';
 import { useActionApprovalContinuation } from '@/components/approvals/useActionApprovalContinuation';
 import type { ProjectWorkerCopyRetireInputV1 } from '@happier-dev/protocol';
+import { ProjectWorkerDependencyV1Schema, type ProjectWorkerDependencyV1 } from '@happier-dev/protocol/workspaces/projectWorkerExecutionV1';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { getWorkspaceSyncCommittedCopyPreview, listWorkspaceSyncStatuses, type WorkspaceSyncCommittedCopyReviewResult } from '@/sync/ops/workspaceSync';
 
@@ -17,6 +18,10 @@ export type MachineFreshCopyNotice = Readonly<{
   text: string;
   errorCode?: string;
   details?: unknown;
+  /** Typed work the executor reported as still using this copy (in_use, or alongside an unknown result). */
+  dependencies?: readonly ProjectWorkerDependencyV1[];
+  /** File removal was attempted and its outcome is unknown; the definition may already be retired. */
+  filesUnknown?: boolean;
 }>;
 
 /** Mounted Machine detail model. Sync owns copy identity, facts and retirement; Actions own consent. */
@@ -142,8 +147,12 @@ export function useMachineFreshCopies(serverId: string, machineId: string) {
         || code === 'outcome_unknown' || code === 'outcomeUnknown' ? 'unknown'
         : code === 'workspace_sync_relationship_in_use' || (detailRecord && Array.isArray(Reflect.get(detailRecord, 'dependencies')))
           ? 'in_use' : 'failed';
+      const dependencies = ProjectWorkerDependencyV1Schema.array().safeParse(detailRecord ? Reflect.get(detailRecord, 'dependencies') : undefined);
+      const filesUnknown = kind === 'unknown' && code === 'workspace_copy_removal_unknown';
       publishNotice({ relationshipId: copy.relationship.relationshipId, kind, errorCode: code, details,
-        text: t(kind === 'unknown' ? 'projectWorkers.removeUnknown' : kind === 'in_use' ? 'projectWorkers.removeInUse' : 'projectWorkers.removeFailed') });
+        ...(dependencies.success && dependencies.data.length > 0 ? { dependencies: dependencies.data } : {}),
+        ...(filesUnknown ? { filesUnknown } : {}),
+        text: t(filesUnknown ? 'projectWorkers.removeFilesUnknown' : kind === 'unknown' ? 'projectWorkers.removeUnknown' : kind === 'in_use' ? 'projectWorkers.removeInUse' : 'projectWorkers.removeFailed') });
     } finally {
       // Observation only, including unknown/in-use; never repeat an effect to refresh a row.
       if (isCurrent()) refresh();
