@@ -16,6 +16,7 @@ export type LocalServiceLauncherRoutes = Readonly<{
 
 export function createLocalServiceLauncherRoutes<TDeclaration = unknown>(input: Readonly<{
     feed: LocalServiceLauncherFeed;
+    history?: CreateLocalServiceLauncherStartTargetInput<TDeclaration>['history'];
     startTarget?: LocalServiceLauncherStartTarget;
     resolveStartTarget?: CreateLocalServiceLauncherStartTargetInput<TDeclaration>['resolveStartTarget'];
     startManagedDeclaration?: CreateLocalServiceLauncherStartTargetInput<TDeclaration>['startManagedDeclaration'];
@@ -24,6 +25,7 @@ export function createLocalServiceLauncherRoutes<TDeclaration = unknown>(input: 
 }>): LocalServiceLauncherRoutes {
     const startTarget = input.startTarget ?? createLocalServiceLauncherStartTarget<TDeclaration>({
         feed: input.feed,
+        ...(input.history ? { history: input.history } : {}),
         ...(input.resolveStartTarget ? { resolveStartTarget: input.resolveStartTarget } : {}),
         ...(input.startManagedDeclaration ? { startManagedDeclaration: input.startManagedDeclaration } : {}),
         ...(input.now ? { now: input.now } : {}),

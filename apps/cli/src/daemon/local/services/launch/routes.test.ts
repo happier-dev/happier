@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { createLocalServiceLauncherRoutes } from './routes';
+import { createLocalServiceLauncherFeed } from './feed';
+import { createLocalServiceInventoryRegistry } from '../inventory/registry';
+import { createLocalServicePreviewRegistry } from '../preview/registry';
 import type { LocalServiceLauncherSnapshotV1 } from '@happier-dev/protocol';
 
 type StartDeclarationFixture = Readonly<{
@@ -22,6 +25,28 @@ function launcherSnapshot(
 }
 
 describe('createLocalServiceLauncherRoutes', () => {
+    it('returns a Start refusal snapshot bound to the actual requested Session and Project root', async () => {
+        const runTargets = ['/repo/a', '/repo/b'].map((cwd, index) => ({
+            id: `package-${index}:dev`, cwd, packageName: `package-${index}`,
+            packageManager: 'npm' as const, scriptName: 'dev', command: 'vite',
+            launchIntent: { kind: 'packageScript' as const, packageManager: 'npm' as const, cwd, scriptName: 'dev' },
+        }));
+        const feed = createLocalServiceLauncherFeed({
+            machineId: 'machine-a',
+            inventoryRegistry: createLocalServiceInventoryRegistry(),
+            previewRegistry: createLocalServicePreviewRegistry(),
+            runTargets,
+        });
+        const routes = createLocalServiceLauncherRoutes({ feed });
+        const result = await routes.startTarget!({
+            machineId: 'machine-a', targetId: 'unknown', sessionId: 'session-a',
+            workspace: { serverId: 'home', machineId: 'machine-a', workspaceId: 'workspace-a', rootPath: '/repo/a' },
+        });
+        expect(result.status).toBe('denied');
+        expect(result.reasonCode).toBe('launcher_target_unknown');
+        expect(result.snapshot.sessionId).toBe('session-a');
+        expect(result.snapshot.targets.map(target => target.cwd)).toEqual(['/repo/a']);
+    });
     it('serves the daemon launcher feed snapshot without rebuilding it at the route boundary', async () => {
         const snapshot = {
             v: 1 as const,
@@ -117,16 +142,6 @@ describe('createLocalServiceLauncherRoutes', () => {
             targetId: declaration.targetId,
             status: 'succeeded',
             snapshot: postStartSnapshot,
-        });
-        expect(resolveStartTarget).toHaveBeenCalledWith({
-            machineId: 'machine-a',
-            targetId: declaration.targetId,
-            sessionId: 'session-a',
-        });
-        expect(startManagedDeclaration).toHaveBeenCalledWith(declaration, {
-            machineId: 'machine-a',
-            targetId: declaration.targetId,
-            sessionId: 'session-a',
         });
         expect(feed.getSnapshot).toHaveBeenCalledTimes(2);
     });

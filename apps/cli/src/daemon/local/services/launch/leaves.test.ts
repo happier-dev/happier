@@ -7,9 +7,12 @@ import {
 import type { BrowserViewTargetV1, LocalServiceLauncherSnapshotV1 } from '@happier-dev/protocol';
 import { LocalServicePreviewResourceV1Schema } from '@happier-dev/protocol/local/services/preview/v1';
 import { createLocalServiceInventoryRegistry } from '../inventory/registry';
-import { createLocalServicePreviewRegistry } from '../preview/registry';
+import { createLocalServicePreviewRegistry, registerLocalServicePreview } from '../preview/registry';
 import { createLocalServicePreviewRoutes } from '../preview/routes';
 import { createLocalServiceLauncherFeed } from './feed';
+import { FeaturesResponseSchema } from '@happier-dev/protocol';
+import { createLocalServicesDaemonFeatureGate } from '../featureGate';
+import { createLocalServicesDaemonRuntimeActionExecutor } from '../actions/runtimeActionExecutor';
 
 const MACHINE_ID = 'machine-a';
 
@@ -149,13 +152,39 @@ describe('createLocalServiceLauncherLeafRoutes', () => {
         expect(result.browserTarget).toEqual(preview.resource.browserTarget);
     });
 
-    it('clearHistory empties the store and returns the cleared count', async () => {
+    it('clearHistory dismisses recents without changing the observed running service or its preview', async () => {
         const history = createLocalServiceLauncherHistoryStore();
-        history.record('inventory:entry-vite');
+        const inventoryRegistry = createLocalServiceInventoryRegistry();
+        inventoryRegistry.replaceSnapshot({
+            v: 1, machineId: MACHINE_ID, generatedAt: 1_000, refreshState: 'idle', diagnostics: [],
+            entries: [{
+                id: 'entry-vite', machineId: MACHINE_ID,
+                address: { kind: 'loopback', host: '127.0.0.1', family: 'ipv4' },
+                port: 5173, protocol: 'tcp', detectedAt: 1_000, lastSeenAt: 1_000,
+                state: 'listening', source: 'detected', labels: [], diagnostics: [],
+                confidence: 'high', processOwnershipConfidence: 'high', workspaceAssociationConfidence: 'high',
+            }],
+        });
+        const previewRegistry = createLocalServicePreviewRegistry();
+        expect(registerLocalServicePreview(previewRegistry, {
+            previewId: 'preview-vite', machineId: MACHINE_ID,
+            owner: { kind: 'user', id: 'account-1' },
+            target: { scheme: 'http', host: '127.0.0.1', port: 5173 },
+            initialPath: { pathname: '/', search: '' },
+            display: { title: 'Web', addressLabel: '127.0.0.1:5173' },
+            originMode: 'host',
+        })).toMatchObject({ ok: true });
+        const feed = createLocalServiceLauncherFeed({ machineId: MACHINE_ID, inventoryRegistry, previewRegistry });
+        const before = await feed.getSnapshot();
+        const target = before.targets.find(candidate => candidate.sourceClass?.kind === 'inventory_entry');
+        if (!target) throw new Error('Expected observed service launch target');
+        history.record(target.id);
         const routes = createLocalServiceLauncherLeafRoutes({
             machineId: MACHINE_ID,
-            feed: { getSnapshot: vi.fn(async () => snapshotWith([])) },
-            previewRoutes: { openOrCreate: vi.fn() },
+            feed,
+            previewRoutes: createLocalServicePreviewRoutes({
+                machineId: MACHINE_ID, accountId: 'account-1', inventoryRegistry, registry: previewRegistry,
+            }),
             history,
         });
 
@@ -164,5 +193,66 @@ describe('createLocalServiceLauncherLeafRoutes', () => {
         expect(result.cleared).toBe(1);
         expect(result.snapshot.machineId).toBe(MACHINE_ID);
         expect(history.list()).toEqual([]);
+        expect(history.isDismissed(target.id)).toBe(true);
+        expect(result.snapshot.targets).toEqual(before.targets);
+        expect(inventoryRegistry.getSnapshot().entries).toMatchObject([{ id: 'entry-vite', state: 'listening' }]);
+        expect(await routes.openPreview({ machineId: MACHINE_ID, targetId: target.id }))
+            .toMatchObject({ status: 'opened', browserTarget: target.browserTarget });
+        expect(history.list()).toEqual([target.id]);
+    });
+
+    it('clears only the requested workspace history while both observed services remain running', async () => {
+        const history = createLocalServiceLauncherHistoryStore();
+        const inventoryRegistry = createLocalServiceInventoryRegistry();
+        inventoryRegistry.replaceSnapshot({
+            v: 1, machineId: MACHINE_ID, generatedAt: 1_000, refreshState: 'idle', diagnostics: [],
+            // These are observed OS facts; the registry, feed, scoping and history remain real.
+            entries: ['/repo/web', '/repo/web-other'].map((root, index) => ({
+                id: `entry-${index}`, machineId: MACHINE_ID,
+                address: { kind: 'loopback' as const, host: '127.0.0.1', family: 'ipv4' as const },
+                port: 5173 + index, protocol: 'tcp' as const, detectedAt: 1_000, lastSeenAt: 1_000,
+                state: 'listening' as const, source: 'detected' as const, labels: [], diagnostics: [],
+                confidence: 'high' as const, processOwnershipConfidence: 'high' as const, workspaceAssociationConfidence: 'high' as const,
+                provenance: { workspace: { path: root, association: 'cwd_containment' as const } },
+            })),
+        });
+        const previewRegistry = createLocalServicePreviewRegistry();
+        const feed = createLocalServiceLauncherFeed({ machineId: MACHINE_ID, inventoryRegistry, previewRegistry });
+        const before = await feed.getSnapshot();
+        const selected = await feed.getSnapshot({ scope: 'workspace', workspaceRoot: '/repo/web' });
+        expect(before.targets).toHaveLength(2);
+        expect(selected.targets).toHaveLength(1);
+        for (const target of before.targets) history.record(target.id);
+        const routes = createLocalServiceLauncherLeafRoutes({ machineId: MACHINE_ID, feed, history,
+            previewRoutes: createLocalServicePreviewRoutes({ machineId: MACHINE_ID, accountId: 'account-1', inventoryRegistry, registry: previewRegistry }),
+        });
+        const features = FeaturesResponseSchema.parse({ features: {
+            localServices: { enabled: true, inventory: { enabled: true }, launcher: { enabled: true } },
+            browser: { enabled: true, viewTargets: { enabled: true } },
+        }, capabilities: {} });
+        const featureGate = createLocalServicesDaemonFeatureGate({ env: {},
+            resolveServerFeaturesSnapshot: () => ({ status: 'ready', features }),
+        });
+        await featureGate.refresh();
+        expect(featureGate.isEnabled('localServices.launcher')).toBe(true);
+        const execute = createLocalServicesDaemonRuntimeActionExecutor({ featureGate, routes: {
+            launcherRoutes: { getSnapshot: feed.getSnapshot, leaves: routes },
+        } });
+        expect(await execute({ actionId: 'localServices.launcher.snapshot',
+            input: { machineId: MACHINE_ID, scope: 'workspace', workspaceRoot: '/repo/web' }, context: {},
+        })).toMatchObject({ targets: selected.targets });
+        const result = await execute({ actionId: 'localServices.launcher.history.clear',
+            input: { machineId: MACHINE_ID, scope: 'workspace', workspaceRoot: '/repo/web' }, context: {},
+        });
+
+        expect(result).toMatchObject({ cleared: 1, snapshot: { targets: selected.targets } });
+        expect(history.list()).toEqual(before.targets.filter(target => target.id !== selected.targets[0]!.id).map(target => target.id));
+        const remaining = history.list();
+        expect(await routes.clearHistory({ machineId: MACHINE_ID, scope: 'workspace' })).toMatchObject({ cleared: 0 });
+        expect(history.list()).toEqual(remaining);
+        await expect(routes.clearHistory({ machineId: MACHINE_ID, scope: 'workspace', sessionId: 'unresolved-session' }))
+            .rejects.toMatchObject({ code: 'local_service_workspace_scope_unavailable' });
+        expect(history.list()).toEqual(remaining);
+        expect(inventoryRegistry.getSnapshot().entries.every(entry => entry.state === 'listening')).toBe(true);
     });
 });

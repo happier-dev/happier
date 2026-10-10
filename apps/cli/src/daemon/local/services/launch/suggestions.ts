@@ -5,11 +5,20 @@ import type {
     LocalServiceLaunchTargetV1,
     LocalServicePreviewResourceV1,
 } from '@happier-dev/protocol';
+import { LOCAL_SERVICE_LAUNCH_TARGET_TITLE_MAX_LENGTH } from '@happier-dev/protocol/local/services/launcher/v1';
 
-import type { LocalServiceRunTarget } from './runTargets';
+import type { LocalServiceLauncherRunTarget } from './runTargets';
 import type { NormalizedLocalServiceInventoryEntry } from '../inventory/scanner';
 import { isWorkspacePathWithin } from '../inventory/provenance';
 import { resolveLocalServiceActionEligibility } from '../actions/policy';
+
+/** Bound display text without changing the source/declaration used for admission. */
+export function formatLocalServiceLauncherTitle(value: string): string {
+    const title = value.trim() || JSON.stringify(value);
+    if (title.length <= LOCAL_SERVICE_LAUNCH_TARGET_TITLE_MAX_LENGTH) return title;
+    // Avoid leaving half a UTF-16 pair when the wire's string-length bound clips a label.
+    return `${title.slice(0, LOCAL_SERVICE_LAUNCH_TARGET_TITLE_MAX_LENGTH - 1).replace(/[\uD800-\uDBFF]$/u, '')}…`;
+}
 
 export type BuildLocalServiceLauncherSnapshotInput = Readonly<{
     machineId: string;
@@ -22,7 +31,7 @@ export type BuildLocalServiceLauncherSnapshotInput = Readonly<{
      */
     workspaceScopePaths?: readonly string[];
     updatedAt: number;
-    runTargets: readonly LocalServiceRunTarget[];
+    runTargets: readonly LocalServiceLauncherRunTarget[];
     inventoryEntries: readonly NormalizedLocalServiceInventoryEntry[];
     previewResources: readonly LocalServicePreviewResourceV1[];
     terminateDetectedEnabled?: boolean;
@@ -264,7 +273,22 @@ function targetFromInventoryEntry(
     };
 }
 
-function targetFromRunTarget(target: LocalServiceRunTarget, machineId: string): LocalServiceLaunchTargetV1 {
+function targetFromRunTarget(target: LocalServiceLauncherRunTarget, machineId: string): LocalServiceLaunchTargetV1 {
+    if ('declaration' in target) {
+        if (target.packageScript) {
+            return { id: target.id, source: 'package_script',
+                sourceClass: { kind: 'package_script', runTargetId: target.id, packageName: target.packageScript.packageName,
+                    scriptName: target.packageScript.scriptName, cwd: target.cwd },
+                machineId, cwd: target.cwd, workspaceId: target.workspaceId, workspace: target.workspace, declaration: target.declaration,
+                title: formatLocalServiceLauncherTitle(target.title), subtitle: target.cwd, kind: 'package_script',
+                commandPreview: `${target.packageScript.packageManager} run ${target.packageScript.scriptName}`,
+                confidence: 'high', state: 'unavailable', unavailableReason: 'launch_unavailable', actions: [] };
+        }
+        return { id: target.id, source: 'managed_service', machineId, cwd: target.cwd,
+            workspaceId: target.workspaceId, workspace: target.workspace, declaration: target.declaration, title: formatLocalServiceLauncherTitle(target.title),
+            subtitle: target.cwd, confidence: 'high', state: 'unavailable',
+            unavailableReason: 'launch_unavailable', actions: [] };
+    }
     return {
         id: `package:${target.id}`,
         source: 'package_script',

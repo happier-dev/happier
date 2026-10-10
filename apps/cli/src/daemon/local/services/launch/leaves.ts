@@ -9,6 +9,8 @@ import type {
 
 import type { LocalServiceLauncherFeed } from './feed';
 import type { LocalServicePreviewRoutes } from '../preview/routes';
+import type { RpcHandlerContext } from '@/api/rpc/types';
+import { DaemonLocalServicePreviewOpenOrCreateRequestV1Schema } from '@happier-dev/protocol/local/services/preview/v1';
 
 /**
  * Launcher leaf actions (LSV-1): `openPreview` (safe "open in browser"), `registerPreview`
@@ -28,7 +30,8 @@ export type LocalServiceLauncherHistoryStore = Readonly<{
     record(targetId: string): void;
     list(): readonly string[];
     isDismissed(targetId: string): boolean;
-    clear(): number;
+    dismiss(targetId: string): void;
+    clear(targetIds?: readonly string[]): number;
 }>;
 
 export function createLocalServiceLauncherHistoryStore(): LocalServiceLauncherHistoryStore {
@@ -45,10 +48,14 @@ export function createLocalServiceLauncherHistoryStore(): LocalServiceLauncherHi
         isDismissed(targetId) {
             return dismissed.has(targetId);
         },
-        clear() {
-            const active = [...recents].filter((id) => !dismissed.has(id));
-            for (const id of active) dismissed.add(id);
-            recents.clear();
+        dismiss(targetId) {
+            dismissed.add(targetId);
+            recents.delete(targetId);
+        },
+        clear(targetIds) {
+            const selected = targetIds ? new Set(targetIds) : undefined;
+            const active = [...recents].filter((id) => !dismissed.has(id) && (!selected || selected.has(id)));
+            for (const id of active) { dismissed.add(id); recents.delete(id); }
             return active.length;
         },
     };
@@ -57,10 +64,12 @@ export function createLocalServiceLauncherHistoryStore(): LocalServiceLauncherHi
 export type LocalServiceLauncherLeafRoutes = Readonly<{
     openPreview(
         request: DaemonLocalServiceLauncherLeafRequestV1,
+        context?: RpcHandlerContext,
     ): Promise<DaemonLocalServiceLauncherOpenPreviewResponseV1>;
     registerPreview(
         request: DaemonLocalServiceLauncherLeafRequestV1,
         signal?: AbortSignal,
+        context?: RpcHandlerContext,
     ): Promise<DaemonLocalServiceLauncherRegisterPreviewResponseV1>;
     clearHistory(
         request: DaemonLocalServiceLauncherLeafRequestV1,
@@ -77,7 +86,7 @@ function findTarget(
 export function createLocalServiceLauncherLeafRoutes(input: Readonly<{
     machineId: string;
     feed: Pick<LocalServiceLauncherFeed, 'getSnapshot'>;
-    previewRoutes: Pick<LocalServicePreviewRoutes, 'openOrCreate'>;
+    previewRoutes: Pick<LocalServicePreviewRoutes, 'openOrCreate'> & Partial<Pick<LocalServicePreviewRoutes, 'getSnapshot'>>;
     history: LocalServiceLauncherHistoryStore;
 }>): LocalServiceLauncherLeafRoutes {
     async function resolveTarget(
@@ -88,9 +97,7 @@ export function createLocalServiceLauncherLeafRoutes(input: Readonly<{
     >> {
         if (!request.targetId) return { ok: false, reasonCode: 'launcher_target_required' };
         if (request.machineId !== input.machineId) return { ok: false, reasonCode: 'wrong_machine' };
-        const snapshot = await input.feed.getSnapshot(
-            request.sessionId ? { sessionId: request.sessionId } : undefined,
-        );
+        const snapshot = await input.feed.getSnapshot(request);
         const target = findTarget(snapshot, request.targetId);
         if (!target) return { ok: false, reasonCode: 'launcher_target_unknown' };
         if (target.machineId !== input.machineId) return { ok: false, reasonCode: 'wrong_machine' };
@@ -98,7 +105,11 @@ export function createLocalServiceLauncherLeafRoutes(input: Readonly<{
     }
 
     return {
-        async openPreview(request) {
+        async openPreview(request, context) {
+            if (context?.machineAdmission || context?.authorization || context?.transportRequestId) {
+                if (!input.previewRoutes.getSnapshot) throw new Error('requester_credentials_unavailable');
+                await input.previewRoutes.getSnapshot(context);
+            }
             const resolved = await resolveTarget(request);
             if (!resolved.ok) {
                 return {
@@ -117,6 +128,15 @@ export function createLocalServiceLauncherLeafRoutes(input: Readonly<{
                     reasonCode: target.unavailableReason ?? 'launcher_target_unavailable',
                 };
             }
+            if (target.sourceClass?.kind === 'managed_service') {
+                const opened = await registerTargetPreview(target, request, context?.signal, context);
+                if (opened.status === 'unavailable' || !opened.browserTarget) return {
+                    protocolVersion: 1, status: 'unavailable', targetId: target.id,
+                    reasonCode: opened.status === 'unavailable' ? opened.reasonCode : 'launcher_target_no_browser_view',
+                };
+                input.history.record(target.id);
+                return { protocolVersion: 1, status: 'opened', targetId: target.id, browserTarget: opened.browserTarget };
+            }
             if (!target.browserTarget) {
                 return {
                     protocolVersion: 1,
@@ -134,7 +154,11 @@ export function createLocalServiceLauncherLeafRoutes(input: Readonly<{
             };
         },
 
-        async registerPreview(request, signal) {
+        async registerPreview(request, signal, context) {
+            if (context?.machineAdmission || context?.authorization || context?.transportRequestId) {
+                if (!input.previewRoutes.getSnapshot) throw new Error('requester_credentials_unavailable');
+                await input.previewRoutes.getSnapshot(context);
+            }
             signal?.throwIfAborted();
             const resolved = await resolveTarget(request);
             if (!resolved.ok) {
@@ -156,46 +180,36 @@ export function createLocalServiceLauncherLeafRoutes(input: Readonly<{
                     ...(target.browserTarget ? { browserTarget: target.browserTarget } : {}),
                 };
             }
-            // A detected loopback inventory entry → register through the canonical preview owner.
-            if (target.sourceClass?.kind === 'inventory_entry') {
-                const inventoryEntryId = target.sourceClass.inventoryEntryId;
-                const result = await input.previewRoutes.openOrCreate({
-                    machineId: input.machineId,
-                    ...(request.sessionId ? { sessionId: request.sessionId } : {}),
-                    inventoryEntryId,
-                }, signal);
-                if (!result.ok) {
-                    return {
-                        protocolVersion: 1,
-                        status: 'unavailable',
-                        targetId: target.id,
-                        reasonCode: result.reasonCode,
-                    };
-                }
-                return {
-                    protocolVersion: 1,
-                    status: result.response.status === 'existing' ? 'existing' : 'registered',
-                    targetId: target.id,
-                    previewId: result.response.preview.previewId,
-                    ...(result.response.preview.resource.browserTarget
-                        ? { browserTarget: result.response.preview.resource.browserTarget }
-                        : {}),
-                };
-            }
-            return {
-                protocolVersion: 1,
-                status: 'unavailable',
-                targetId: target.id,
-                reasonCode: 'preview_target_unregisterable',
-            };
+            return registerTargetPreview(target, request, signal, context);
         },
 
         async clearHistory(request) {
-            const cleared = request.machineId === input.machineId ? input.history.clear() : 0;
-            const snapshot = await input.feed.getSnapshot(
-                request.sessionId ? { sessionId: request.sessionId } : undefined,
-            );
+            let cleared = 0;
+            if (request.machineId === input.machineId && (request.scope !== 'workspace' || request.workspaceRoot || request.sessionId)) {
+                const scoped = request.scope !== 'machine' && Boolean(request.workspaceRoot || request.sessionId);
+                const before = scoped || request.targetId ? await input.feed.getSnapshot({ ...request,
+                    ...(scoped ? { requireWorkspaceScope: true as const } : {}),
+                }) : undefined;
+                cleared = input.history.clear(before?.targets.filter(target => !request.targetId || target.id === request.targetId).map(target => target.id));
+            }
+            const snapshot = await input.feed.getSnapshot(request);
             return { protocolVersion: 1, cleared, snapshot };
         },
     };
+
+    async function registerTargetPreview(target: LocalServiceLaunchTargetV1, request: DaemonLocalServiceLauncherLeafRequestV1,
+        signal?: AbortSignal, context?: RpcHandlerContext): Promise<DaemonLocalServiceLauncherRegisterPreviewResponseV1> {
+        const source = target.sourceClass;
+        const parsed = DaemonLocalServicePreviewOpenOrCreateRequestV1Schema.safeParse(source?.kind === 'managed_service'
+            ? { machineId: input.machineId, serviceTarget: { kind: 'managed_service', machineId: target.machineId,
+                managedServiceId: source.managedServiceId, workspaceId: target.workspaceId, declaration: target.declaration, cwd: target.cwd } }
+            : source?.kind === 'inventory_entry' ? { machineId: input.machineId,
+                ...(request.sessionId ? { sessionId: request.sessionId } : {}), inventoryEntryId: source.inventoryEntryId } : null);
+        if (!parsed.success) return { protocolVersion: 1, status: 'unavailable', targetId: target.id, reasonCode: 'preview_target_unregisterable' };
+        const result = await input.previewRoutes.openOrCreate(parsed.data, signal, context);
+        if (!result.ok) return { protocolVersion: 1, status: 'unavailable', targetId: target.id, reasonCode: result.reasonCode };
+        return { protocolVersion: 1, status: result.response.status === 'existing' ? 'existing' : 'registered', targetId: target.id,
+            previewId: result.response.preview.previewId,
+            ...(result.response.preview.resource.browserTarget ? { browserTarget: result.response.preview.resource.browserTarget } : {}) };
+    }
 }

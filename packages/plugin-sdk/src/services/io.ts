@@ -99,7 +99,8 @@ export type { ManagedExecutableRef } from '@happier-dev/protocol';
 export type PluginExecSpawnRequest = Readonly<{
     executable: ManagedExecutableRef;
     args?: readonly string[];
-    cwd?: PluginPath;
+    /** Process-only selected absolute cwd, or an existing admitted filesystem root. */
+    cwd?: PluginPath | string;
     env?: Readonly<Record<string, string>>;
     stdin?: Uint8Array;
     maxStdoutBytes?: number;

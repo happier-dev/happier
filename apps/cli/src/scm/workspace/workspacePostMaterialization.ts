@@ -1,5 +1,5 @@
 import { runWithScmBackendRegistryLease } from '../scmBackendCatalog';
-import type { ScmBackendRegistry } from '../registry';
+import { resolveScmBackendById, type ScmBackendRegistry } from '../registry';
 import { resolveScmSelection } from '../resolveScmSelection';
 import { createScmWorkspaceIntegrationCheckoutMaterializationRequest } from './checkoutMaterialization';
 import type { ScmWorkspaceIntegrationWorkspaceTransferMetadata } from './workspaceTransfer';
@@ -36,7 +36,7 @@ export async function reconcilePostMaterializationWithScmWorkspace(input: Readon
             ? input.workspaceIntegrationMetadata.provider
             : null;
         const metadataBackend = metadataProvider
-            ? registry.listBackends().find((backend) => backend.id === metadataProvider) ?? null
+            ? resolveScmBackendById(registry.listBackends(), metadataProvider)
             : null;
         const selected = resolved ?? (fallback ? {
             selection: fallback.selection,

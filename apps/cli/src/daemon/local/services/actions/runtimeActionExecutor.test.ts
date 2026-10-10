@@ -14,13 +14,15 @@ import type {
 } from '@happier-dev/protocol';
 
 import type { LocalServiceActionRoutes } from './routes';
+import { createLocalServiceActionRoutes } from './routes';
 import type { LocalServiceLauncherLeafRoutes } from '../launch/leaves';
 import type { LocalServicesDaemonFeatureGate, LocalServicesDaemonFeatureGateId } from '../featureGate';
 import type { LocalServiceInventoryRoutes } from '../inventory/routes';
 import type { NormalizedLocalServiceInventorySnapshot } from '../inventory/scanner';
 import { createLocalServiceInventoryRegistry } from '../inventory/registry';
-import { createLocalServicePreviewRegistry } from '../preview/registry';
+import { createLocalServicePreviewRegistry, registerLocalServicePreview } from '../preview/registry';
 import { createLocalServicePreviewRoutes } from '../preview/routes';
+import { createLocalServicePublicPreviewServerRoutes } from '../public/routes';
 import { LocalServicePreviewResourceV1Schema } from '@happier-dev/protocol/local/services/preview/v1';
 
 function runtimeArgs(
@@ -63,6 +65,15 @@ const actionResult: LocalServiceActionResultV1 = {
         recordedAt: 2_000,
     }],
 };
+
+function createObservedActionRoutes() {
+    const registry = createLocalServiceInventoryRegistry();
+    registry.replaceSnapshot({ ...inventorySnapshot, entries: [{ id: 'entry_1', machineId: 'machine_1',
+        address: { kind: 'loopback', host: '127.0.0.1', family: 'ipv4' }, port: 5173, protocol: 'tcp',
+        detectedAt: 1_000, lastSeenAt: 2_000, state: 'listening', source: 'detected', labels: [],
+        confidence: 'high', processOwnershipConfidence: 'high', workspaceAssociationConfidence: 'high', diagnostics: [] }] });
+    return { registry, routes: createLocalServiceActionRoutes({ machineId: 'machine_1', inventoryRegistry: registry, now: () => 2_000 }) };
+}
 
 const launcherSnapshot: LocalServiceLauncherSnapshotV1 = {
     v: 1,
@@ -116,6 +127,40 @@ const publicPreviewSnapshot: LocalServicePublicPreviewSnapshotV1 = {
 };
 
 describe('daemon local-services runtime action executor', () => {
+    it('opens and revokes the actual source-qualified preview through Actions without retargeting an inventory entry', async () => {
+        const { createLocalServicesDaemonRuntimeActionExecutor } = await import('./runtimeActionExecutor');
+        const registry = createLocalServicePreviewRegistry();
+        const serviceTarget = { kind: 'managed_service' as const, machineId: 'machine_1', managedServiceId: 'actual-instance', cwd: '/workspace/app',
+            declaration: { workspaceRefId: 'workspace_1', selection: { kind: 'manifest' as const, name: 'web' } } };
+        const registered = registerLocalServicePreview(registry, {
+            previewId: 'actual-preview', machineId: 'machine_1', owner: { kind: 'user', id: 'starter' }, serviceTarget,
+            target: { scheme: 'http', host: '127.0.0.1', port: 5173 }, initialPath: { pathname: '/', search: '' },
+            display: { title: 'Web', addressLabel: 'localhost:5173' }, originMode: 'host',
+        });
+        if (!registered.ok) throw new Error(registered.reasonCode);
+        const previewRoutes = createLocalServicePreviewRoutes({ machineId: 'machine_1', registry, server: {
+            token: 'custodian-token', serverBaseUrl: 'https://home.example.test',
+            // Only Home HTTP is replaced; Action normalization, registry and lifecycle run together.
+            http: { async post(_url, body) {
+                const resource = LocalServicePreviewResourceV1Schema.parse(body);
+                expect(resource.serviceTarget).toEqual(serviceTarget);
+                return { data: { resource, accessUrl: 'https://actual-preview.example.test/?previewToken=current', expiresAt: 61_000 } };
+            }, async delete() { return { data: { ok: true } }; } },
+        } });
+        const execute = createLocalServicesDaemonRuntimeActionExecutor({ routes: { previewRoutes }, featureGate: allowAllFeatureGate });
+        const opened = await execute(runtimeArgs({ actionId: 'localServices.preview.openOrCreate', input: {
+            machineId: 'machine_1', targetId: 'managed:web', serviceTarget } }));
+        expect(opened).toMatchObject({ status: 'existing', preview: { previewId: 'actual-preview',
+            accessUrl: 'https://actual-preview.example.test/?previewToken=current', resource: { serviceTarget } } });
+        const wrong = await execute(runtimeArgs({ actionId: 'localServices.preview.revoke', input: {
+            machineId: 'machine_1', previewId: 'actual-preview', serviceTarget: { ...serviceTarget, managedServiceId: 'another-instance' } } }));
+        expect(wrong).toMatchObject({ ok: false });
+        expect(registry.previewsById.has('actual-preview')).toBe(true);
+        const revoked = await execute(runtimeArgs({ actionId: 'localServices.preview.revoke', input: {
+            machineId: 'machine_1', previewId: 'actual-preview', serviceTarget } }));
+        expect(revoked).toMatchObject({ revoked: true, previewId: 'actual-preview' });
+        expect(registry.previewsById.has('actual-preview')).toBe(false);
+    });
     it('maps localServices.inventory.list to the daemon inventory snapshot route', async () => {
         const mod = await import('./runtimeActionExecutor').catch(() => null);
 
@@ -273,15 +318,13 @@ describe('daemon local-services runtime action executor', () => {
         });
     });
 
-    it('routes localServices.actions payloads through the canonical daemon action route', async () => {
+    it('forgets the actual inventory entry through the canonical daemon Action owner', async () => {
         const mod = await import('./runtimeActionExecutor').catch(() => null);
 
         expect(mod?.createLocalServicesDaemonRuntimeActionExecutor).toBeTypeOf('function');
         if (!mod?.createLocalServicesDaemonRuntimeActionExecutor) return;
 
-        const actionRoutes: Pick<LocalServiceActionRoutes, 'execute'> = {
-            execute: vi.fn(async () => actionResult),
-        };
+        const { routes: actionRoutes, registry } = createObservedActionRoutes();
         const execute = mod.createLocalServicesDaemonRuntimeActionExecutor({
             featureGate: allowAllFeatureGate,
             routes: { actionRoutes },
@@ -289,15 +332,15 @@ describe('daemon local-services runtime action executor', () => {
         const request = {
             requestId: 'request_1',
             target: { kind: 'inventory_entry' as const, inventoryEntryId: 'entry_1', machineId: 'machine_1' },
-            action: 'copy_url' as const,
+            action: 'forget' as const,
             force: false,
         };
 
         await expect(execute(runtimeArgs({
-            actionId: 'localServices.actions.copyUrl',
+            actionId: 'localServices.actions.forget',
             input: request,
-        }))).resolves.toEqual(actionResult);
-        expect(actionRoutes.execute).toHaveBeenCalledWith(request);
+        }))).resolves.toMatchObject({ requestId: request.requestId, action: 'forget', status: 'succeeded', undoKey: expect.any(String) });
+        expect(registry.getSnapshot().entries).toEqual([]);
     });
 
     it('rejects a local-service request whose action does not match its Action id', async () => {
@@ -359,7 +402,6 @@ describe('daemon local-services runtime action executor', () => {
             actionId: 'localServices.launcher.start',
             input: request,
         }))).resolves.toEqual(launcherStartResponse);
-        expect(launcherRoutes.startTarget).toHaveBeenCalledWith(request);
         expect(launcherRoutes.getSnapshot).not.toHaveBeenCalled();
     });
 
@@ -413,30 +455,13 @@ describe('daemon local-services runtime action executor', () => {
         expect(launcherRoutes.startTarget).not.toHaveBeenCalled();
     });
 
-    it('routes localServices.actions.stopManaged payloads through the canonical daemon action route', async () => {
+    it('refuses a managed Stop whose actual owner has no such service', async () => {
         const mod = await import('./runtimeActionExecutor').catch(() => null);
 
         expect(mod?.createLocalServicesDaemonRuntimeActionExecutor).toBeTypeOf('function');
         if (!mod?.createLocalServicesDaemonRuntimeActionExecutor) return;
 
-        const stopResult: LocalServiceActionResultV1 = {
-            v: 1,
-            requestId: 'request_stop',
-            action: 'stop_managed',
-            status: 'succeeded',
-            auditEvents: [{
-                v: 1,
-                eventId: 'request_stop:0:succeeded',
-                requestId: 'request_stop',
-                machineId: 'machine_1',
-                action: 'stop_managed',
-                result: 'succeeded',
-                recordedAt: 2_000,
-            }],
-        };
-        const actionRoutes: Pick<LocalServiceActionRoutes, 'execute'> = {
-            execute: vi.fn(async () => stopResult),
-        };
+        const { routes: actionRoutes, registry } = createObservedActionRoutes();
         const execute = mod.createLocalServicesDaemonRuntimeActionExecutor({
             featureGate: allowAllFeatureGate,
             routes: { actionRoutes },
@@ -452,8 +477,8 @@ describe('daemon local-services runtime action executor', () => {
         await expect(execute(runtimeArgs({
             actionId: 'localServices.actions.stopManaged',
             input: request,
-        }))).resolves.toEqual(stopResult);
-        expect(actionRoutes.execute).toHaveBeenCalledWith(request);
+        }))).resolves.toMatchObject({ requestId: request.requestId, action: 'stop_managed', status: 'denied', reasonCode: 'unknown_managed_service' });
+        expect(registry.getSnapshot().entries[0]?.state).toBe('listening');
     });
 
     it('fails localServices.actions closed when the daemon action route is unavailable', async () => {
@@ -488,34 +513,22 @@ describe('daemon local-services runtime action executor', () => {
         expect(mod?.createLocalServicesDaemonRuntimeActionExecutor).toBeTypeOf('function');
         if (!mod?.createLocalServicesDaemonRuntimeActionExecutor) return;
 
-        const publicPreviewRoutes = {
-            getStatus: vi.fn(async () => publicPreviewSnapshot),
-            createExposure: vi.fn(async () => ({
-                protocolVersion: 1 as const,
-                exposure: publicExposure,
-                snapshot: publicPreviewSnapshot,
-            })),
-            revokeExposure: vi.fn(async () => ({
-                protocolVersion: 1 as const,
-                exposureId: 'public_preview_1',
-                revokedAt: 3_100,
-                snapshot: {
-                    ...publicPreviewSnapshot,
-                    exposures: [{ ...publicExposure, state: 'revoked' as const, revokedAt: 3_100 }],
+        let currentExposure = publicExposure;
+        const publicPreviewRoutes = createLocalServicePublicPreviewServerRoutes({ token: 'daemon-token',
+            serverBaseUrl: 'https://home.example.test', http: {
+                async post(url) {
+                    return { data: url.endsWith('/status')
+                        ? { protocolVersion: 1, snapshot: { ...publicPreviewSnapshot, exposures: [currentExposure] } }
+                        : { exposure: currentExposure } };
                 },
-            })),
-            copyUrl: vi.fn(async () => ({
-                protocolVersion: 1 as const,
-                machineId: 'machine_1',
-                sessionId: 'session_1',
-                previewId: 'preview_1',
-                exposureId: 'public_preview_1',
-                publicUrl: 'https://preview.example.test/s/public_preview_1',
-            })),
-        };
+                async delete() {
+                    currentExposure = { ...currentExposure, state: 'revoked', revokedAt: 3_100 };
+                    return { data: { ok: true } };
+                },
+            } });
         const execute = mod.createLocalServicesDaemonRuntimeActionExecutor({
             featureGate: allowAllFeatureGate,
-            routes: { publicPreviewRoutes } as never,
+            routes: { publicPreviewRoutes },
         });
 
         await expect(execute(runtimeArgs({
@@ -527,11 +540,6 @@ describe('daemon local-services runtime action executor', () => {
             },
             context: { surface: 'ui' },
         }))).resolves.toEqual(publicPreviewSnapshot);
-        expect(publicPreviewRoutes.getStatus).toHaveBeenCalledWith({
-            machineId: 'machine_1',
-            sessionId: 'session_1',
-            previewId: 'preview_1',
-        });
 
         const createRequest = {
             machineId: 'machine_1',
@@ -550,7 +558,6 @@ describe('daemon local-services runtime action executor', () => {
             protocolVersion: 1,
             exposure: publicExposure,
         });
-        expect(publicPreviewRoutes.createExposure).toHaveBeenCalledWith(createRequest);
 
         const revokeRequest = {
             machineId: 'machine_1',
@@ -559,6 +566,9 @@ describe('daemon local-services runtime action executor', () => {
             exposureId: 'public_preview_1',
         };
         await expect(execute(runtimeArgs({
+            actionId: 'localServices.publicPreview.copyUrl', input: revokeRequest, context: { surface: 'ui' },
+        }))).resolves.toMatchObject({ protocolVersion: 1, publicUrl: publicExposure.publicUrl });
+        await expect(execute(runtimeArgs({
             actionId: 'localServices.publicPreview.revoke',
             input: revokeRequest,
             context: { surface: 'ui' },
@@ -566,16 +576,12 @@ describe('daemon local-services runtime action executor', () => {
             protocolVersion: 1,
             exposureId: 'public_preview_1',
         });
-        expect(publicPreviewRoutes.revokeExposure).toHaveBeenCalledWith(revokeRequest);
+        expect(currentExposure.state).toBe('revoked');
 
         await expect(execute(runtimeArgs({
             actionId: 'localServices.publicPreview.copyUrl',
             input: revokeRequest,
-        }))).resolves.toMatchObject({
-            protocolVersion: 1,
-            publicUrl: 'https://preview.example.test/s/public_preview_1',
-        });
-        expect(publicPreviewRoutes.copyUrl).toHaveBeenCalledWith(revokeRequest);
+        }))).rejects.toThrow('local_services_public_preview_exposure_unavailable');
     });
 
     it('redacts public-preview status URLs for agent-surface egress', async () => {
@@ -979,9 +985,7 @@ describe('daemon local-services runtime action executor', () => {
 
     it('still executes a governed action when the gate enables its feature', async () => {
         const mod = await import('./runtimeActionExecutor');
-        const actionRoutes: Pick<LocalServiceActionRoutes, 'execute'> = {
-            execute: vi.fn(async () => actionResult),
-        };
+        const { routes: actionRoutes, registry } = createObservedActionRoutes();
         const execute = mod.createLocalServicesDaemonRuntimeActionExecutor({
             routes: { actionRoutes },
             featureGate: gateWith({ 'localServices.actions': true }),
@@ -996,7 +1000,7 @@ describe('daemon local-services runtime action executor', () => {
         await expect(execute(runtimeArgs({
             actionId: 'localServices.actions.copyUrl',
             input: request,
-        }))).resolves.toEqual(actionResult);
-        expect(actionRoutes.execute).toHaveBeenCalledWith(request);
+        }))).resolves.toMatchObject({ requestId: request.requestId, action: 'copy_url', status: 'succeeded' });
+        expect(registry.getSnapshot().entries[0]?.state).toBe('listening');
     });
 });
