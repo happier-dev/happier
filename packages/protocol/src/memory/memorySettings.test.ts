@@ -12,6 +12,22 @@ import {
 } from './memorySettings.js';
 
 describe('memorySettings', () => {
+  it('defaults standard conversation search on and external indexing off for predecessor settings', () => {
+    expect(normalizeMemorySettings({ v: 1 }).conversationSearch).toEqual({
+      standardSearch: { enabled: true },
+      indexExternal: { enabled: false, agents: [], historyDays: null, includeToolOutput: false },
+    });
+  });
+
+  it('round-trips machine-local conversation search choices', () => {
+    const conversationSearch = {
+      standardSearch: { enabled: false },
+      indexExternal: { enabled: true, agents: ['claude', 'pi'], historyDays: 14, includeToolOutput: true },
+    };
+    const settings = MemorySettingsV1Schema.parse({ v: 1, conversationSearch });
+    expect(normalizeMemorySettings(JSON.parse(JSON.stringify(settings))).conversationSearch).toEqual(conversationSearch);
+  });
+
   it('owns the global memory default in the Protocol host', () => {
     const source = readFileSync(join(process.cwd(), 'src/memory/memorySettings.ts'), 'utf8');
 
@@ -21,15 +37,46 @@ describe('memorySettings', () => {
   });
 
   it('normalizes invalid payloads to defaults', () => {
-    expect(normalizeMemorySettings({ v: 999, enabled: 'nope' } as any)).toEqual(DEFAULT_MEMORY_SETTINGS);
+    expect(normalizeMemorySettings({ v: 999, enabled: 'nope' })).toEqual(DEFAULT_MEMORY_SETTINGS);
   });
 
   it('parses a minimal v1 settings object', () => {
     const parsed = MemorySettingsV1Schema.parse({ v: 1, enabled: true });
     expect(parsed.v).toBe(1);
     expect(parsed.enabled).toBe(true);
-    expect(parsed.indexMode).toBe('hints');
+    expect(parsed.indexMode).toBe('deep');
+    expect(parsed.hints.enabled).toBe(false);
+    expect(parsed.embeddings.mode).toBe('disabled');
     expect(parsed.hints.summarizerBackendId).toBe('claude');
+  });
+
+  it('enables keyword indexing by default without enabling model-backed hints or embeddings', () => {
+    const parsed = normalizeMemorySettings(undefined);
+    expect(parsed.enabled).toBe(true);
+    expect(parsed.indexMode).toBe('deep');
+    expect(parsed.hints.enabled).toBe(false);
+    expect(parsed.embeddings.mode).toBe('disabled');
+  });
+
+  // Predecessor settings and worker at 37a6541578749067b49d4579be8c752c9591b8c8
+  // persisted indexMode and ran the summarizer only in hints mode, without a hints switch.
+  it('preserves predecessor hints, deep and disabled choices while honoring an explicit hints switch', () => {
+    const hints = normalizeMemorySettings({ v: 1, enabled: true, indexMode: 'hints', hints: { summarizerModelId: 'chosen' } });
+    expect(hints.indexMode).toBe('hints');
+    expect(hints.hints.enabled).toBe(true);
+    expect(hints.hints.summarizerModelId).toBe('chosen');
+
+    const deep = normalizeMemorySettings({ v: 1, enabled: true, indexMode: 'deep' });
+    expect(deep.indexMode).toBe('deep');
+    expect(deep.hints.enabled).toBe(false);
+
+    const disabled = normalizeMemorySettings({ v: 1, enabled: false, indexMode: 'hints' });
+    expect(disabled.enabled).toBe(false);
+    expect(disabled.indexMode).toBe('hints');
+
+    expect(normalizeMemorySettings({ v: 1, indexMode: 'hints', hints: { enabled: false } }).hints.enabled).toBe(false);
+    expect(normalizeMemorySettings({ v: 1, indexMode: 'deep', hints: { enabled: true } }).hints.enabled).toBe(true);
+    expect(normalizeMemorySettings(JSON.parse(JSON.stringify(hints))).hints.enabled).toBe(true);
   });
 
   it('parses coverage policies for full and bounded semantic history', () => {

@@ -11,6 +11,34 @@ export const MemorySearchScopeSchema = lazyZodSchema(() => z.discriminatedUnion(
 ]));
 export type MemorySearchScope = z.infer<typeof MemorySearchScopeSchema>;
 
+/** Native identity is independent of any imported Happier Session or seq. */
+export const MemoryExternalTranscriptSourceV1Schema = lazyZodSchema(() => z.object({
+  type: z.literal('external_transcript'),
+  agentId: z.string().min(1),
+  sourceKey: z.string().min(1),
+  nativeSessionId: z.string().min(1),
+}).strict());
+export const MemorySourceV1Schema = lazyZodSchema(() => z.discriminatedUnion('type', [
+  z.object({ type: z.literal('happier_session'), sessionId: z.string().min(1) }).strict(),
+  MemoryExternalTranscriptSourceV1Schema,
+]));
+export type MemorySourceV1 = z.infer<typeof MemorySourceV1Schema>;
+export type MemoryExternalTranscriptSourceV1 = z.infer<typeof MemoryExternalTranscriptSourceV1Schema>;
+
+export const MemoryExternalTranscriptSearchHitV1Schema = lazyZodSchema(() => z.object({
+  type: z.literal('external_transcript'),
+  source: MemoryExternalTranscriptSourceV1Schema,
+  sourceItemId: z.string().min(1),
+  cursor: z.string().min(1).optional(),
+  createdAtFromMs: z.number().int().nonnegative(),
+  createdAtToMs: z.number().int().nonnegative(),
+  summary: z.string().min(1),
+  score: z.number().min(0).max(1),
+}).strict().refine(value => value.createdAtFromMs <= value.createdAtToMs, {
+  path: ['createdAtFromMs'], message: 'createdAtFromMs must be <= createdAtToMs',
+}));
+export type MemoryExternalTranscriptSearchHitV1 = z.infer<typeof MemoryExternalTranscriptSearchHitV1Schema>;
+
 export const MemorySearchModeSchema = lazyZodSchema(() => z.enum(['hints', 'deep', 'auto']));
 export type MemorySearchMode = z.infer<typeof MemorySearchModeSchema>;
 
@@ -74,6 +102,7 @@ export type MemoryDocumentSearchHitV1 = z.infer<typeof MemoryDocumentSearchHitV1
 export const MemorySearchResultHitV1Schema = lazyZodSchema(() => z.union([
   MemorySearchHitV1Schema,
   MemoryDocumentSearchHitV1Schema,
+  MemoryExternalTranscriptSearchHitV1Schema,
 ]));
 export type MemorySearchResultHitV1 = z.infer<typeof MemorySearchResultHitV1Schema>;
 
@@ -81,7 +110,15 @@ export function isMemoryDocumentSearchHitV1(hit: MemorySearchResultHitV1): hit i
   return hit.type === 'artifact';
 }
 
-export const MemorySearchCorpusV1Schema = lazyZodSchema(() => z.enum(['sessions', 'documents']));
+export function isMemoryExternalTranscriptSearchHitV1(hit: MemorySearchResultHitV1): hit is MemoryExternalTranscriptSearchHitV1 {
+  return hit.type === 'external_transcript';
+}
+
+export function isMemorySessionSearchHitV1(hit: MemorySearchResultHitV1): hit is MemorySearchHitV1 {
+  return hit.type === undefined;
+}
+
+export const MemorySearchCorpusV1Schema = lazyZodSchema(() => z.enum(['sessions', 'documents', 'external_transcripts']));
 export type MemorySearchCorpusV1 = z.infer<typeof MemorySearchCorpusV1Schema>;
 
 export const MemoryDocumentSearchCoverageV1Schema = lazyZodSchema(() => z.object({
@@ -121,9 +158,18 @@ export const MemorySearchQueryV1Schema = lazyZodSchema(() => z.object({
    * request semantics; older tolerant readers may ignore the additive field.
    */
   eligibleSessionIds: z.array(z.string().min(1)).optional(),
+  /** Exact native History scope; the index applies it before ranking and paging. */
+  externalSource: z.object({ agentId: z.string().min(1), sourceKey: z.string().min(1) }).strict().optional(),
   maxResults: z.number().int().min(1).max(100).optional(),
   minScore: z.number().min(0).max(1).optional(),
-}).passthrough());
+  cursor: z.string().min(1).optional(),
+  createdAfterMs: z.number().int().nonnegative().optional(),
+  createdBeforeMs: z.number().int().nonnegative().optional(),
+}).passthrough().superRefine((value, ctx) => {
+  if (value.createdAfterMs !== undefined && value.createdBeforeMs !== undefined && value.createdAfterMs > value.createdBeforeMs) {
+    ctx.addIssue({ code: 'custom', path: ['createdAfterMs'], message: 'createdAfterMs must be <= createdBeforeMs' });
+  }
+}));
 export type MemorySearchQueryV1 = z.infer<typeof MemorySearchQueryV1Schema>;
 
 export const MemorySearchResultV1Schema = lazyZodSchema(() => z.union([
@@ -132,6 +178,8 @@ export const MemorySearchResultV1Schema = lazyZodSchema(() => z.union([
     ok: z.literal(true),
     hits: z.array(MemorySearchResultHitV1Schema),
     documents: MemoryDocumentSearchCoverageV1Schema.optional(),
+    nextCursor: z.string().min(1).optional(),
+    hasMore: z.boolean().optional(),
   }).passthrough(),
   z.object({
     v: z.literal(1),
@@ -161,20 +209,29 @@ export async function negotiateMemorySearchV1(params: Readonly<{
       if (code !== RPC_ERROR_CODES.METHOD_NOT_AVAILABLE && code !== RPC_ERROR_CODES.METHOD_NOT_FOUND) throw error;
     }
     params.signal?.throwIfAborted();
-    if (!documentSearchSupported && !params.query.corpora?.includes('sessions')) {
+    if (!documentSearchSupported && !params.query.corpora?.includes('sessions')
+      && !params.query.corpora?.includes('external_transcripts')) {
       return { v: 1, ok: true, hits: [], documents: { state: 'unavailable' } };
     }
   }
   const { corpora, ...legacyQuery } = params.query;
-  const query = documentsRequested && !documentSearchSupported ? legacyQuery : params.query;
+  const query = documentsRequested && !documentSearchSupported
+    ? corpora?.includes('external_transcripts')
+      ? { ...legacyQuery, corpora: corpora.filter(corpus => corpus !== 'documents') }
+      : legacyQuery
+    : params.query;
   const result = MemorySearchResultV1Schema.parse(await params.search(query));
   params.signal?.throwIfAborted();
-  if (!result.ok || !documentsRequested) return result;
+  if (!result.ok || !corpora) return result;
   return {
     ...result,
     hits: result.hits.filter((hit) => isMemoryDocumentSearchHitV1(hit)
       ? documentSearchSupported
-      : corpora?.includes('sessions') === true),
-    documents: documentSearchSupported && result.documents ? result.documents : { state: 'unavailable' },
+      : isMemoryExternalTranscriptSearchHitV1(hit)
+        ? corpora?.includes('external_transcripts') === true
+        : corpora?.includes('sessions') === true),
+    ...(documentsRequested ? {
+      documents: documentSearchSupported && result.documents ? result.documents : { state: 'unavailable' as const },
+    } : {}),
   };
 }

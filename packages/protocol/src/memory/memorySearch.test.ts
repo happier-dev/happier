@@ -11,6 +11,16 @@ import {
 import { RPC_ERROR_CODES } from '../rpc/errors.js';
 
 describe('memory_search_result.v1 schema', () => {
+  it('accepts native transcript hits with opaque locators and rejects fake sequence ranges', () => {
+    const hit = {
+      type: 'external_transcript',
+      source: { type: 'external_transcript', agentId: 'claude', sourceKey: '/native/log.jsonl', nativeSessionId: 'native-1' },
+      sourceItemId: 'message-uuid', cursor: 'opaque:page:3',
+      createdAtFromMs: 10, createdAtToMs: 20, summary: 'A native conversation', score: 0.5,
+    };
+    expect(MemorySearchResultV1Schema.safeParse({ v: 1, ok: true, hits: [hit] }).success).toBe(true);
+    expect(MemorySearchResultV1Schema.safeParse({ v: 1, ok: true, hits: [{ ...hit, seqFrom: 1 }] }).success).toBe(false);
+  });
   const documentHit = {
     type: 'artifact',
     ref: { kind: 'doc', artifactId: 'memory_1', serverId: 'home_1' },
@@ -150,6 +160,25 @@ describe('negotiateMemorySearchV1', () => {
     expect(search).not.toHaveBeenCalled();
   });
 
+  it('retains an explicit native corpus when document coverage is unavailable', async () => {
+    const native = { type: 'external_transcript', source: { type: 'external_transcript', agentId: 'pi', sourceKey: 'local', nativeSessionId: 'native' },
+      sourceItemId: 'message', createdAtFromMs: 1, createdAtToMs: 1, summary: 'native fact', score: 0.5 };
+    const requests: MemorySearchQueryV1[] = [];
+    const result = await negotiateMemorySearchV1({
+      query: { ...query, corpora: ['external_transcripts', 'documents'] },
+      readDocumentSearchSupport: async () => false,
+      search: async request => { requests.push(request); return { v: 1, ok: true, hits: [native] }; },
+    });
+    expect(requests).toEqual([{ ...query, corpora: ['external_transcripts'] }]);
+    expect(result).toEqual({ v: 1, ok: true, hits: [native], documents: { state: 'unavailable' } });
+    expect(await negotiateMemorySearchV1({
+      query: { ...query, corpora: ['external_transcripts'] },
+      readDocumentSearchSupport: async () => false,
+      // The predecessor ignores additive corpora and returns Session-only hits.
+      search: async () => ({ v: 1, ok: true, hits: [transcript] }),
+    })).toEqual({ v: 1, ok: true, hits: [] });
+  });
+
   it('requires document coverage even from an advertised peer and leaves legacy requests unprobed', async () => {
     const readDocumentSearchSupport = vi.fn(async () => true);
     const search = vi.fn(async (_query: MemorySearchQueryV1) => ({ v: 1, ok: true, hits: [transcript] }));
@@ -182,6 +211,16 @@ describe('negotiateMemorySearchV1', () => {
 });
 
 describe('MemorySearchQueryV1Schema', () => {
+  it('validates paging and date filters rather than treating malformed filters as annotations', () => {
+    const query = { v: 1, query: 'handoff', scope: { type: 'global' }, mode: 'deep' };
+    expect(MemorySearchQueryV1Schema.safeParse({ ...query, cursor: '', createdAfterMs: -1 }).success).toBe(false);
+    expect(MemorySearchQueryV1Schema.safeParse({ ...query, createdAfterMs: 20, createdBeforeMs: 10 }).success).toBe(false);
+    expect(MemorySearchQueryV1Schema.safeParse({ ...query, cursor: 'opaque', createdAfterMs: 10, createdBeforeMs: 20 }).success).toBe(true);
+    const sourceQuery = { ...query, externalSource: { agentId: 'pi', sourceKey: 'local' } };
+    expect(MemorySearchQueryV1Schema.parse(sourceQuery).externalSource).toEqual(sourceQuery.externalSource);
+    expect(MemorySearchQueryV1Schema.safeParse({ ...query, externalSource: { agentId: 'pi' } }).success).toBe(false);
+    expect(MemorySearchQueryV1Schema.safeParse({ ...sourceQuery, externalSource: { ...sourceQuery.externalSource, nativeSessionId: 'unscoped' } }).success).toBe(false);
+  });
   it('admits only named nonempty corpora and leaves legacy omission untouched', () => {
     const legacy = { v: 1, query: 'fact', scope: { type: 'global' }, mode: 'auto' };
     expect(MemorySearchQueryV1Schema.parse(legacy)).not.toHaveProperty('corpora');

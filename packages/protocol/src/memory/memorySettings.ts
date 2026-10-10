@@ -65,6 +65,7 @@ export const MemoryHintsSettingsV1Schema = lazyZodSchema(() => z.preprocess((val
   return value;
 }, z
   .object({
+    enabled: z.boolean().default(false),
     summarizerBackendId: z.string().trim().min(1).default(DEFAULT_MEMORY_SUMMARIZER_BACKEND_ID),
     summarizerModelId: z.string().trim().min(1).default('default'),
     summarizerPermissionMode: z.enum(['no_tools', 'read_only']).default('no_tools'),
@@ -270,12 +271,37 @@ export const MemoryWorkerSettingsV1Schema = lazyZodSchema(() => z
 export type MemoryWorkerSettingsV1 = z.infer<typeof MemoryWorkerSettingsV1Schema>;
 const DEFAULT_MEMORY_WORKER_SETTINGS: MemoryWorkerSettingsV1 = lazyDefinition(() => MemoryWorkerSettingsV1Schema.parse({}));
 
-export const MemorySettingsV1Schema = lazyZodSchema(() => z
+/** Search executes on this Machine and shares its daemon-local Memory settings. */
+export const ConversationSearchSettingsV1Schema = lazyZodSchema(() => z.object({
+  standardSearch: z.object({ enabled: z.boolean().default(true) }).strict().prefault({}),
+  indexExternal: z.object({
+    enabled: z.boolean().default(false),
+    // Empty selects no Agents; opt-in never silently expands to a new Agent.
+    agents: z.array(z.string().trim().min(1)).default([]),
+    // Null includes all history; there is no independent scan/index budget here.
+    historyDays: z.number().int().positive().nullable().default(null),
+    includeToolOutput: z.boolean().default(false),
+  }).strict().prefault({}),
+}).strict());
+export type ConversationSearchSettingsV1 = z.infer<typeof ConversationSearchSettingsV1Schema>;
+
+export const MemorySettingsV1Schema = lazyZodSchema(() => z.preprocess((value) => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+  const candidate = value as Record<string, unknown>;
+  if (candidate.indexMode !== 'hints') return value;
+  const hints = candidate.hints;
+  if (hints !== undefined && (!hints || typeof hints !== 'object' || Array.isArray(hints))) return value;
+  const hintsSettings = hints as Record<string, unknown> | undefined;
+  if (hintsSettings && Object.prototype.hasOwnProperty.call(hintsSettings, 'enabled')) return value;
+  // The predecessor's explicit hints mode was its summarizer opt-in. Current
+  // writes persist the independent switch, so an explicit false always wins.
+  return { ...candidate, hints: { ...hintsSettings, enabled: true } };
+}, z
   .object({
     v: z.literal(1),
-    enabled: z.boolean().default(false),
+    enabled: z.boolean().default(true),
     enabledAtMs: z.number().int().min(0).default(0),
-    indexMode: z.enum(['hints', 'deep']).default('hints'),
+    indexMode: z.enum(['hints', 'deep']).default('deep'),
     defaultScope: MemoryDefaultScopeV1Schema.default({ type: 'global' }),
     backfillPolicy: z.enum(['new_only', 'last_30_days', 'all_history']).default('new_only'),
     /**
@@ -288,6 +314,7 @@ export const MemorySettingsV1Schema = lazyZodSchema(() => z
      * `MemoryStatusV1.includeArchivedSessionsEffective`.
      */
     includeArchivedSessions: z.boolean().default(false),
+    conversationSearch: ConversationSearchSettingsV1Schema.prefault({}),
     coveragePolicy: MemoryCoveragePolicyV1Schema.prefault(DEFAULT_MEMORY_COVERAGE_POLICY),
     contentPolicy: MemoryContentPolicyV1Schema.prefault(DEFAULT_MEMORY_CONTENT_POLICY),
     deleteOnDisable: z.boolean().default(false),
@@ -300,7 +327,7 @@ export const MemorySettingsV1Schema = lazyZodSchema(() => z
     budgets: MemoryBudgetsSettingsV1Schema.prefault(DEFAULT_MEMORY_BUDGETS_SETTINGS),
     worker: MemoryWorkerSettingsV1Schema.prefault(DEFAULT_MEMORY_WORKER_SETTINGS),
   })
-  .passthrough());
+  .passthrough()));
 
 export type MemorySettingsV1 = z.infer<typeof MemorySettingsV1Schema>;
 

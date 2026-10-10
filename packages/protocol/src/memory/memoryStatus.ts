@@ -1,11 +1,24 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
+import { MemorySourceV1Schema, MemoryExternalTranscriptSourceV1Schema } from './memorySearch.js';
+
+/** Read projection: external readiness covers a configured source, not one native conversation. */
+export const MemoryIndexSourceStatusV1Schema = lazyZodSchema(() => z.object({
+  source: z.union([
+    MemorySourceV1Schema.options[0],
+    MemoryExternalTranscriptSourceV1Schema.omit({ nativeSessionId: true }),
+  ]),
+  state: z.enum(['ready', 'indexing', 'disabled', 'error']),
+  indexedThroughMs: z.number().int().nonnegative().optional(),
+}).strict());
+export type MemoryIndexSourceStatusV1 = z.infer<typeof MemoryIndexSourceStatusV1Schema>;
 
 import {
   MemoryEmbeddingsModeSchema,
   MemoryEmbeddingsPresetIdSchema,
 } from './memorySettings.js';
 
-export const MemoryIndexContentStatusV1Schema = z
+export const MemoryIndexContentStatusV1Schema = lazyZodSchema(() => z
   .object({
     lightShardCount: z.number().int().nonnegative().default(0),
     lightTermCount: z.number().int().nonnegative().default(0),
@@ -15,10 +28,10 @@ export const MemoryIndexContentStatusV1Schema = z
     lastIndexedAtMs: z.number().int().nonnegative().nullable().default(null),
     latestIndexedMessageAtMs: z.number().int().nonnegative().nullable().default(null),
   })
-  .passthrough();
+  .passthrough());
 export type MemoryIndexContentStatusV1 = z.infer<typeof MemoryIndexContentStatusV1Schema>;
 
-export const MemoryWorkerStatusV1Schema = z
+export const MemoryWorkerStatusV1Schema = lazyZodSchema(() => z
   .object({
     state: z.enum(['disabled', 'idle', 'inventorying', 'indexing', 'waiting', 'backoff', 'error']).default('idle'),
     lastTickAtMs: z.number().int().nonnegative().nullable().default(null),
@@ -26,10 +39,10 @@ export const MemoryWorkerStatusV1Schema = z
     currentSessionId: z.string().min(1).nullable().default(null),
     currentPhase: z.string().min(1).nullable().default(null),
   })
-  .passthrough();
+  .passthrough());
 export type MemoryWorkerStatusV1 = z.infer<typeof MemoryWorkerStatusV1Schema>;
 
-export const MemoryIndexQueueStatusV1Schema = z
+export const MemoryIndexQueueStatusV1Schema = lazyZodSchema(() => z
   .object({
     selectedSessionCount: z.number().int().nonnegative().default(0),
     queuedSessionCount: z.number().int().nonnegative().default(0),
@@ -40,10 +53,10 @@ export const MemoryIndexQueueStatusV1Schema = z
     waitingSessionCount: z.number().int().nonnegative().default(0),
     oldestQueuedAtMs: z.number().int().nonnegative().nullable().default(null),
   })
-  .passthrough();
+  .passthrough());
 export type MemoryIndexQueueStatusV1 = z.infer<typeof MemoryIndexQueueStatusV1Schema>;
 
-export const MemoryIndexLastRunStatusV1Schema = z
+export const MemoryIndexLastRunStatusV1Schema = lazyZodSchema(() => z
   .object({
     startedAtMs: z.number().int().nonnegative().nullable().default(null),
     finishedAtMs: z.number().int().nonnegative().nullable().default(null),
@@ -56,10 +69,10 @@ export const MemoryIndexLastRunStatusV1Schema = z
     failures: z.number().int().nonnegative().default(0),
     skipReasons: z.record(z.string().min(1), z.number().int().nonnegative()).default({}),
   })
-  .passthrough();
+  .passthrough());
 export type MemoryIndexLastRunStatusV1 = z.infer<typeof MemoryIndexLastRunStatusV1Schema>;
 
-export const MemoryStatusV1Schema = z
+export const MemoryStatusV1Schema = lazyZodSchema(() => z
   .object({
     v: z.literal(1),
     enabled: z.boolean(),
@@ -92,7 +105,14 @@ export const MemoryStatusV1Schema = z
      * update/unsupported state rather than claim the desired setting applies.
      */
     includeArchivedSessionsEffective: z.boolean().optional(),
+    /**
+     * Optional corpus negotiation for memory.search. Only explicit true permits
+     * a document request; omission preserves old daemon transcript operation.
+     */
+    documentSearchSupported: z.boolean().optional(),
+    /** Omission is an older daemon, never proof that native sources are current. */
+    sources: z.array(MemoryIndexSourceStatusV1Schema).optional(),
   })
-  .passthrough();
+  .passthrough());
 
 export type MemoryStatusV1 = z.infer<typeof MemoryStatusV1Schema>;

@@ -65,6 +65,10 @@ describe('MemoryStatusV1Schema', () => {
     });
 
     expect(parsed.enabled).toBe(true);
+    const native = { source: { type: 'external_transcript', agentId: 'pi', sourceKey: 'local' }, state: 'ready' };
+    expect(MemoryStatusV1Schema.parse({ ...parsed, sources: [native] }).sources).toEqual([native]);
+    expect(MemoryStatusV1Schema.safeParse({ ...parsed, sources: [{ ...native, state: 'unknown' }] }).success).toBe(false);
+    expect(MemoryStatusV1Schema.safeParse({ ...parsed, sources: [{ ...native, source: { ...native.source, nativeSessionId: 'wrong-granularity' } }] }).success).toBe(false);
     expect(parsed.indexMode).toBe('deep');
     expect(parsed.activeIndexReady).toBe(true);
     expect(parsed.activeIndexSearchable).toBe(true);
@@ -186,5 +190,8 @@ describe('MemoryStatusV1Schema', () => {
       ...base,
       includeArchivedSessionsEffective: 'yes',
     })).toThrow();
+    expect(MemoryStatusV1Schema.parse(base).documentSearchSupported).toBeUndefined();
+    expect(MemoryStatusV1Schema.parse({ ...base, documentSearchSupported: true }).documentSearchSupported).toBe(true);
+    expect(() => MemoryStatusV1Schema.parse({ ...base, documentSearchSupported: 'yes' })).toThrow();
   });
 });
