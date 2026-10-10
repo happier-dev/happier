@@ -46,6 +46,7 @@ const AUTH_FIXTURE = Object.freeze({
 
 vi.mock('@/auth/context/AuthContext', () => ({
     useAuth: () => AUTH_FIXTURE,
+    useOptionalAuth: () => AUTH_FIXTURE,
 }));
 
 const tokenStorageMocks = vi.hoisted(() => ({

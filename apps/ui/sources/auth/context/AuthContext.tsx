@@ -19,10 +19,12 @@ import {
 import { createServerUrlComparableKey } from '@/sync/domains/server/url/serverUrlCanonical';
 import {
     disconnectActiveServerConnectionIfCurrent,
+    retireAppliedActiveServerCredentialAuthorityIfChanged,
     switchConnectionToActiveServer,
 } from '@/sync/runtime/orchestration/connectionManager';
 import { startConcurrentSessionCacheSync, stopConcurrentSessionCacheSync } from '@/sync/runtime/orchestration/concurrentSessionCache';
 import { subscribeAuthCredentialsInvalidation } from '@/sync/runtime/orchestration/authCredentialsInvalidation';
+import { subscribeHomeCredentialChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import {
     guardAccountEncryptionFirstKeyCredentialMutation,
@@ -439,6 +441,14 @@ export function AuthProvider({ children, initialCredentials }: { children: React
     useEffect(() => {
         setCurrentAuth(value);
     }, [value]);
+
+    useEffect(() => {
+        return subscribeHomeCredentialChange(event => {
+            const changed = retireAppliedActiveServerCredentialAuthorityIfChanged(event);
+            if (!changed || !areServerProfileIdentifiersEquivalent(event.serverId, getActiveServerSnapshot().serverId)) return;
+            fireAndForget(refreshFromActiveServer(), { tag: 'AuthContext.homeCredentialsChanged.refreshFromActiveServer' });
+        });
+    }, [refreshFromActiveServer]);
 
     useEffect(() => {
         const unsubscribe = subscribeActiveServer((snapshot) => {

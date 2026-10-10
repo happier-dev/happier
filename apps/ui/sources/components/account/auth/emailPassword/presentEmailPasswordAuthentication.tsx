@@ -35,7 +35,7 @@ const EmailPasswordAuthModalHost = React.memo(function EmailPasswordAuthModalHos
 
     if (arrival.state.kind !== 'idle') {
         return (
-            <View style={styles.arrival}>
+            <View style={[styles.content, styles.arrival]}>
                 <ExactHomeDestinationNotice
                     testID="email-password-modal-destination-home"
                     state={arrival.state}
@@ -45,19 +45,21 @@ const EmailPasswordAuthModalHost = React.memo(function EmailPasswordAuthModalHos
     }
 
     return (
-        <EmailPasswordAuthPanel
-            {...panelProps}
-            onAuthenticated={async (outcome) => {
-                const completion = await onAuthenticated(outcome);
-                if (completion === 'retired') return;
-                if (!reachExactHome) {
-                    onClose();
-                    return;
-                }
-                await arrival.continueThrough(reach);
-            }}
-            onBack={onClose}
-        />
+        <View style={styles.content}>
+            <EmailPasswordAuthPanel
+                {...panelProps}
+                onAuthenticated={async (outcome) => {
+                    const completion = await onAuthenticated(outcome);
+                    if (completion === 'retired') return;
+                    if (!reachExactHome) {
+                        onClose();
+                        return;
+                    }
+                    await arrival.continueThrough(reach);
+                }}
+                onBack={onClose}
+            />
+        </View>
     );
 });
 
@@ -75,6 +77,9 @@ export function presentEmailPasswordAuthentication(
         props: input,
         chrome: {
             kind: 'card',
+            // The panel owns each step's visible heading; retain the title as
+            // the dialog's accessible name without a second static title band.
+            header: 'none',
             title: input.action === 'provision'
                 ? t('settingsAccount.nativePassword.createTitle')
                 : input.action === 'connect'
@@ -86,6 +91,7 @@ export function presentEmailPasswordAuthentication(
 }
 
 const styles = StyleSheet.create(() => ({
+    content: { padding: 16, width: '100%' },
     arrival: { gap: 12, width: '100%' },
 }));
 

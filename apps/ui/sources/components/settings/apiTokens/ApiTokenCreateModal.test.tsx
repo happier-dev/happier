@@ -277,6 +277,71 @@ describe('ApiTokenCreateModal', () => {
         expect((await footer()).findByTestId('settings-api-tokens-create-submit')?.props.disabled).toBe(true);
     });
 
+    it('makes the open grant picker\'s Done the one footer action, returning to the same draft summary', async () => {
+        const { ApiTokenCreateModal } = await import('./ApiTokenCreateModal');
+        const state: ApiTokenSettingsState = {
+            ...createState(null),
+            createDraft: { label: 'Leads dashboard', expiryPreset: '30d', access: 'limited', grant: { ...API_TOKEN_FULL_GRANT_V1, actions: { families: [], ids: [] } } },
+        };
+        const setChrome = vi.fn<(chrome: CustomModalChromeCardConfig | null) => void>();
+        const screen = await renderScreen(<ApiTokenCreateModal controller={createController(state)} onClose={vi.fn()} setChrome={setChrome} />);
+        const footer = async () => await renderScreen(<>{setChrome.mock.calls.at(-1)?.[0]?.footer}</>);
+        const continueButton = (await footer()).findByTestId('settings-api-tokens-create-continue');
+        await act(async () => { continueButton?.props.onPress(); });
+
+        await screen.pressByTestIdAsync('api-token-grant-actions');
+        const pickerFooter = await footer();
+        // Lab T5: while a picker is open, its Done is the footer; Create and Back wait for the summary.
+        expect(pickerFooter.findByTestId('settings-api-tokens-create-submit')).toBeNull();
+        expect(pickerFooter.findByTestId('settings-api-tokens-create-back')).toBeNull();
+        const done = pickerFooter.findByTestId('api-token-grant-picker-done');
+        expect(done).toBeTruthy();
+
+        await act(async () => { done?.props.onPress(); });
+        expect(screen.findByTestId('api-token-grant-actions')).toBeTruthy();
+        expect((await footer()).findByTestId('api-token-grant-picker-done')).toBeNull();
+        expect((await footer()).findByTestId('settings-api-tokens-create-submit')).toBeTruthy();
+    });
+
+    it('gives editing access the same picker Done, in place of Save, while a picker is open', async () => {
+        const { ApiTokenCreateModal } = await import('./ApiTokenCreateModal');
+        const token = {
+            tokenId: '11111111-1111-4111-8111-111111111111',
+            label: 'Leads dashboard',
+            displayPrefix: 'hap_v1_11111111',
+            createdAt: '2026-08-22T12:00:00.000Z',
+            lastUsedAt: null,
+            expiresAt: null,
+            hasEncryptionAccess: false,
+            hasUnattendedTeamAccess: false,
+            grant: API_TOKEN_FULL_GRANT_V1,
+            parentTokenId: null,
+            activeChildCount: 0,
+            embedConfig: null,
+        };
+        const setChrome = vi.fn<(chrome: CustomModalChromeCardConfig | null) => void>();
+        const screen = await renderScreen(
+            <ApiTokenCreateModal
+                mode="editAccess"
+                controller={createController({
+                    ...createState(null),
+                    tokens: [token],
+                    accessEdit: { tokenId: token.tokenId, grant: { ...API_TOKEN_FULL_GRANT_V1, approve: true }, pending: false, error: null, signsOutEmbeddedCredentials: false },
+                })}
+                onClose={vi.fn()}
+                setChrome={setChrome}
+            />,
+        );
+        const footer = async () => await renderScreen(<>{setChrome.mock.calls.at(-1)?.[0]?.footer}</>);
+
+        await screen.pressByTestIdAsync('api-token-grant-actions');
+        expect((await footer()).findByTestId('settings-api-tokens-edit-save')).toBeNull();
+        const done = (await footer()).findByTestId('api-token-grant-picker-done');
+        await act(async () => { done?.props.onPress(); });
+        expect(screen.findByTestId('api-token-grant-actions')).toBeTruthy();
+        expect((await footer()).findByTestId('settings-api-tokens-edit-save')).toBeTruthy();
+    });
+
     it('warns that saving edited access signs out active embedded credentials', async () => {
         const { ApiTokenCreateModal } = await import('./ApiTokenCreateModal');
         const token = {
@@ -651,14 +716,11 @@ describe('ApiTokenCreateModal', () => {
                 setChrome={vi.fn()}
             />,
         );
-        const copyFocusedStyle = flattenInteractionStyle(
-            revealScreen.findByTestId('settings-api-tokens-reveal-copy')?.props.style,
-            true,
-        );
-        expect(copyFocusedStyle).toMatchObject({
-            outlineStyle: 'solid',
-            outlineWidth: 2,
-            outlineColor: expect.any(String),
-        });
+        // Copy is the shared button: keyboard focus paints the canonical ring on its visible pill.
+        await act(async () => { revealScreen.findByTestId('settings-api-tokens-reveal-copy')?.props.onFocus({}); });
+        const ringed = revealScreen.findByTestId('settings-api-tokens-reveal-copy')!
+            .findAll((node) => typeof node.type === 'string' && flattenStyle(node.props.style).outlineStyle === 'solid');
+        expect(ringed.length).toBeGreaterThan(0);
+        expect(flattenStyle(ringed[0]!.props.style)).toMatchObject({ outlineWidth: 2, outlineColor: expect.any(String) });
     });
 });

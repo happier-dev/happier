@@ -41,7 +41,11 @@ describe('identityAdministrationFailure', () => {
             ['directory_source_in_use', 'in_use'],
             ['directory_group_already_bound', 'in_use'],
             ['identity_provider_unavailable', 'provider_unavailable'],
-            ['workos_platform_unavailable', 'provider_unavailable'],
+            ['workos_platform_unavailable', 'setup_required'],
+            ['home_policy_prohibited', 'not_allowed'],
+            ['home_policy_unavailable', 'policy_unavailable'],
+            ['provider_disabled', 'disabled'],
+            ['provider_setup_unavailable', 'setup_required'],
             ['directory_sync_unavailable', 'provider_unavailable'],
             ['home_unreachable', 'offline'],
             ['directory_sync_rate_limited', 'rate_limited'],
@@ -66,7 +70,7 @@ describe('identityAdministrationFailure', () => {
         // permission loss or a conflicting write must not invite a blind retry.
         expect(isIdentityAdministrationFailureRetryable('home_unreachable')).toBe(true);
         expect(isIdentityAdministrationFailureRetryable('directory_sync_rate_limited')).toBe(true);
-        expect(isIdentityAdministrationFailureRetryable('workos_platform_unavailable')).toBe(true);
+        expect(isIdentityAdministrationFailureRetryable('workos_platform_unavailable')).toBe(false);
         expect(isIdentityAdministrationFailureRetryable('forbidden')).toBe(false);
         expect(isIdentityAdministrationFailureRetryable('revision_conflict')).toBe(false);
         expect(isIdentityAdministrationFailureRetryable('identity_provider_in_use')).toBe(false);
@@ -103,9 +107,15 @@ describe('identityAdministrationFailure', () => {
         // the same request again.
         expect(identityAdministrationFailure('team_authentication_policy_unavailable'))
             .toMatchObject({ retryable: false, recovery: 'authentication_policy' });
+        expect(identityAdministrationFailure('team_authentication_unavailable'))
+            .toMatchObject({ kind: 'policy_unavailable', retryable: false, recovery: 'authentication_policy' });
         expect(identityAdministrationFailure('team_authentication_required'))
             .toMatchObject({ retryable: false, recovery: 'team_authentication' });
         expect(identityAdministrationFailure('team_identity_not_allowed'))
+            .toMatchObject({ retryable: false, recovery: 'contact_home_admin' });
+        expect(identityAdministrationFailure('workos_platform_unavailable'))
+            .toMatchObject({ retryable: false, recovery: 'contact_home_admin' });
+        expect(identityAdministrationFailure('home_policy_unavailable'))
             .toMatchObject({ retryable: false, recovery: 'contact_home_admin' });
         expect(identityAdministrationFailure('identity_connection_policy_in_use'))
             .toMatchObject({ retryable: false, recovery: 'authentication_policy' });

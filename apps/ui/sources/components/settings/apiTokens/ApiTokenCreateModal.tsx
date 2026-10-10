@@ -35,7 +35,7 @@ import { ApiTokenExpiryChoiceItem } from './ApiTokenExpiryChoiceItem';
 import { ApiTokenRevealBody, ApiTokenRevealDone } from './ApiTokenReveal';
 import { confirmForCapturedAccount } from './confirmForCapturedAccount';
 import { resolveApiTokenOperationErrorMessageKey } from './apiTokenSettingsPresentation';
-import { ApiTokenGrantEditor } from './grant/ApiTokenGrantEditor';
+import { ApiTokenGrantEditor, ApiTokenGrantPickerDone, useApiTokenGrantPicker } from './grant/ApiTokenGrantEditor';
 import { API_TOKEN_LIMITED_GRANT_START_V1, areApiTokenGrantsEqual, isApiTokenGrantDraftSendable } from './grant/apiTokenGrantDraft';
 import { useApiTokenSettingsControllerState } from './useApiTokenSettingsControllerState';
 
@@ -138,6 +138,8 @@ function ApiTokenCreateContent(props: Readonly<{ controller: ApiTokenSettingsCon
     const limited = draft.access === 'limited';
     const grant = draft.grant ?? API_TOKEN_LIMITED_GRANT_START_V1;
     const onAccessStage = limited && stage === 'access' && !reveal;
+    const grantPicker = useApiTokenGrantPicker();
+    const pickerOpen = onAccessStage && grantPicker.picker !== null;
     const labelReady = draft.label.trim().length > 0;
     const canSubmit = labelReady && !state.createPending && !state.recoveryTokenId
         && (!limited || isApiTokenGrantDraftSendable(grant));
@@ -161,6 +163,8 @@ function ApiTokenCreateContent(props: Readonly<{ controller: ApiTokenSettingsCon
         <View style={styles.footer}>
             {reveal ? (
                 <ApiTokenRevealDone revealKey={reveal.token} reducedMotion={reducedMotion} onClose={props.onClose} />
+            ) : pickerOpen ? (
+                <ApiTokenGrantPickerDone onPress={grantPicker.close} />
             ) : (
                 <>
                     <RoundButton
@@ -192,7 +196,7 @@ function ApiTokenCreateContent(props: Readonly<{ controller: ApiTokenSettingsCon
                 </>
             )}
         </View>
-    ), [canSubmit, labelReady, limited, onAccessStage, props.controller.createToken, props.onClose, reducedMotion, reveal, state.createPending, state.recoveryTokenId, styles.footer]);
+    ), [canSubmit, grantPicker.close, labelReady, limited, onAccessStage, pickerOpen, props.controller.createToken, props.onClose, reducedMotion, reveal, state.createPending, state.recoveryTokenId, styles.footer]);
 
     useModalCardChrome(props.setChrome, React.useMemo(() => ({
         kind: 'card' as const,
@@ -203,6 +207,8 @@ function ApiTokenCreateContent(props: Readonly<{ controller: ApiTokenSettingsCon
         subtitle: reveal ? undefined : onAccessStage ? draft.label.trim() : t('settingsApiTokens.create.subtitle'),
         testID: 'settings-api-tokens-create-modal',
         closeButtonTestID: 'settings-api-tokens-create-close',
+        phonePresentation: 'sheet' as const,
+        scrollHost: 'body' as const,
         dimensions: { width: 600, maxHeightRatio: 0.9, size: 'md' as const },
         footer,
     }), [draft.label, footer, onAccessStage, reveal]));
@@ -231,6 +237,8 @@ function ApiTokenCreateContent(props: Readonly<{ controller: ApiTokenSettingsCon
                             testID="settings-api-tokens-grant-editor"
                             value={grant}
                             onChange={(next) => setDraft({ ...draft, grant: next })}
+                            picker={grantPicker.picker}
+                            onPickerChange={grantPicker.setPicker}
                             disabled={state.createPending}
                             label={draft.label}
                             expiresAt={resolveApiTokenExpiryInstant(draft.expiryPreset, Date.now())}
@@ -408,12 +416,18 @@ function ApiTokenEditAccessContent(props: Readonly<{ controller: ApiTokenSetting
     const changed = Boolean(edit && token && !areApiTokenGrantsEqual(edit.grant, token.grant));
     const canSave = Boolean(edit && changed && !edit.pending && isApiTokenGrantDraftSendable(edit.grant));
     const { onClose } = props;
+    const grantPicker = useApiTokenGrantPicker();
+    const pickerOpen = grantPicker.picker !== null;
 
     const save = React.useCallback(async () => {
         if (await props.controller.saveAccessEdit()) onClose();
     }, [onClose, props.controller]);
 
-    const footer = React.useMemo(() => (
+    const footer = React.useMemo(() => pickerOpen ? (
+        <View style={styles.footer}>
+            <ApiTokenGrantPickerDone onPress={grantPicker.close} />
+        </View>
+    ) : (
         <View style={styles.footer}>
             {edit?.signsOutEmbeddedCredentials ? (
                 <View style={styles.footerNote} testID="settings-api-tokens-edit-signs-out">
@@ -431,7 +445,7 @@ function ApiTokenEditAccessContent(props: Readonly<{ controller: ApiTokenSetting
                 action={save}
             />
         </View>
-    ), [canSave, edit?.pending, edit?.signsOutEmbeddedCredentials, onClose, save, styles.footer, styles.footerNote, styles.footerNoteText, theme.colors.state.warning.foreground]);
+    ), [canSave, edit?.pending, edit?.signsOutEmbeddedCredentials, grantPicker.close, onClose, pickerOpen, save, styles.footer, styles.footerNote, styles.footerNoteText, theme.colors.state.warning.foreground]);
 
     useModalCardChrome(props.setChrome, React.useMemo(() => ({
         kind: 'card' as const,
@@ -439,6 +453,8 @@ function ApiTokenEditAccessContent(props: Readonly<{ controller: ApiTokenSetting
         subtitle: token?.label,
         testID: 'settings-api-tokens-edit-modal',
         closeButtonTestID: 'settings-api-tokens-edit-close',
+        phonePresentation: 'sheet' as const,
+        scrollHost: 'body' as const,
         dimensions: { width: 600, maxHeightRatio: 0.9, size: 'md' as const },
         footer,
     }), [footer, token?.label]));
@@ -450,6 +466,8 @@ function ApiTokenEditAccessContent(props: Readonly<{ controller: ApiTokenSetting
                 testID="settings-api-tokens-edit-editor"
                 value={edit.grant}
                 onChange={props.controller.setAccessEditGrant}
+                picker={grantPicker.picker}
+                onPickerChange={grantPicker.setPicker}
                 disabled={edit.pending}
                 label={token.label}
                 expiresAt={token.expiresAt}

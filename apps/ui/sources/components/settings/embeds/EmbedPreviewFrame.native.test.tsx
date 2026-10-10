@@ -64,6 +64,21 @@ describe('native embed preview frame', () => {
         await act(async () => { onError({ nativeEvent: { description: 'web app unavailable' } }); });
         expect(screen.findAllByTestId('settings-embed-preview-unavailable')).toHaveLength(1);
     });
+    it('fills a pushed phone page with the real chat at full width, with no desktop widget chrome (lab P3)', async () => {
+        const { EmbedLivePreview } = await import('./EmbedLivePreview');
+        const screen = await renderScreen(
+            <EmbedLivePreview presentation="page" style={null} ui={{ attachments: true }} newChat={false} />,
+        );
+        await act(async () => {
+            screen.findByTestId('settings-embed-preview')!.props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 375, height: 640 } } });
+        });
+        expect(screen.findAllByTestId('settings-embed-preview-width-phone')).toHaveLength(0);
+        expect(screen.findAllByTestId('settings-embed-preview-reduce-motion')).toHaveLength(0);
+        // The chat is laid out at the page's own width and height, unscaled.
+        const frame = screen.root.findAll((node) => typeof node.type === 'string' && node.props.style?.transformOrigin === 'top left');
+        expect(frame).toHaveLength(1);
+        expect(frame[0]!.props.style).toMatchObject({ width: 375, height: 640, transform: [{ scale: 1 }] });
+    });
     it('loads the preview route of this Home\'s web app in the WebView engine and drives it with configure', async () => {
         const { EmbedPreviewFrame } = await import('./EmbedPreviewFrame');
         const render = (radius: 'soft' | 'round') => (

@@ -16,6 +16,7 @@ const boundary = vi.hoisted(() => ({
 }));
 installDisconnectedServerSocketBoundary();
 installSettingsViewCommonModuleMocks({
+    storage: importOriginal => importOriginal(),
     modal: async () => {
         const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
         return createModalModuleMock({ spies: { confirm: boundary.confirm, alertAsync: boundary.alertAsync } }).module;
@@ -39,7 +40,7 @@ describe('Account session Security confirmation', () => {
         storage.getState().activateProfileScope({ serverId: getActiveServerSnapshot().serverId, accountId: 'account-a' });
     });
     afterEach(async () => {
-        await account.dispose();
+        await account?.dispose();
         retireActiveServerAccountScopeLifetime();
         storage.getState().clearProfileScope();
         standardCleanup();

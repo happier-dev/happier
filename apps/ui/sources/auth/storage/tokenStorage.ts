@@ -8,6 +8,7 @@ import { TeamInvitationPostAuthContinuationV1Schema } from '@happier-dev/protoco
 import type { AuthEntryProviderPresentationV1, TeamInvitationPostAuthContinuationV1 } from '@happier-dev/protocol';
 import { readStorageScopeFromEnv, scopedStorageId } from '@/utils/system/storageScope';
 import { normalizeInternalReturnPath } from '@/utils/path/routeUtils';
+import { desktopHostKind } from '@/utils/platform/desktopHost';
 import {
     areServerProfileIdentifiersEquivalent,
     getActiveServerId,
@@ -513,36 +514,12 @@ function listServerProfileCredentialScopeIds(serverId: string): string[] {
     ]);
 }
 
-/**
- * Resolves the storage scope layout for a server target. Returns null only when
- * an explicitly supplied identity conflicts with the profile registry; such
- * callers must fail closed instead of deriving a URL-hash scope.
- */
-async function getServerScopedKeys(
-    baseKey: string,
+function resolveServerCredentialKeyScope(
     serverUrlOverride?: string,
     options: ServerCredentialLookupOptions = {},
-): Promise<ScopedStorageKeys | null> {
+) {
     const rawUrl = serverUrlOverride ?? getActiveServerUrl();
     const normalizedUrl = normalizeUrl(rawUrl);
-    const legacyCandidates = new Set<string>();
-    const legacyNormalizedUrl = normalizeUrlLegacy(rawUrl);
-    if (legacyNormalizedUrl) legacyCandidates.add(legacyNormalizedUrl);
-
-    // Backwards-compat: older versions treated 127.0.0.1 and localhost as distinct scopes.
-    // If we currently normalized to localhost, also consider the loopback IP scope as a legacy key.
-    try {
-        const parsed = new URL(normalizedUrl);
-        if (parsed.hostname.toLowerCase() === 'localhost') {
-            parsed.hostname = '127.0.0.1';
-            legacyCandidates.add(normalizeUrlLegacy(parsed.toString()));
-        }
-    } catch {
-        // ignore
-    }
-
-    const legacyNormalizedUrlForHash =
-        [...legacyCandidates].find((candidate) => candidate && candidate !== normalizedUrl) ?? '';
     const activeServerId = serverUrlOverride ? null : getActiveServerId();
     const requestedServerId = normalizeServerId(options.serverId);
     let serverId: string | null;
@@ -568,6 +545,48 @@ async function getServerScopedKeys(
         // credentials are never read from the wrong server.
         serverId = resolvedServerId ?? (activeServerUrl && activeServerUrl === normalizedUrl ? activeServerId : null);
     }
+
+    return { rawUrl, normalizedUrl, serverId, preAdoptionIdentityScope };
+}
+
+/**
+ * Resolves the storage scope layout for a server target. Returns null only when
+ * an explicitly supplied identity conflicts with the profile registry; such
+ * callers must fail closed instead of deriving a URL-hash scope.
+ */
+async function getServerScopedKeys(
+    baseKey: string,
+    serverUrlOverride?: string,
+    options: ServerCredentialLookupOptions = {},
+    includeLegacy = true,
+): Promise<ScopedStorageKeys | null> {
+    const scope = resolveServerCredentialKeyScope(serverUrlOverride, options);
+    if (!scope) return null;
+    const { rawUrl, normalizedUrl, serverId, preAdoptionIdentityScope } = scope;
+    if (!includeLegacy) {
+        return {
+            primary: makeScopedKey(baseKey, serverId
+                ? sanitizeScopeToken(serverId)
+                : await getServerHashScopeForNormalizedUrl(normalizedUrl)),
+            legacy: [],
+        };
+    }
+    const legacyCandidates = new Set<string>();
+    const legacyNormalizedUrl = normalizeUrlLegacy(rawUrl);
+    if (legacyNormalizedUrl) legacyCandidates.add(legacyNormalizedUrl);
+
+    // Backwards-compat: older versions treated 127.0.0.1 and localhost as distinct scopes.
+    try {
+        const parsed = new URL(normalizedUrl);
+        if (parsed.hostname.toLowerCase() === 'localhost') {
+            parsed.hostname = '127.0.0.1';
+            legacyCandidates.add(normalizeUrlLegacy(parsed.toString()));
+        }
+    } catch {
+        // ignore
+    }
+    const legacyNormalizedUrlForHash =
+        [...legacyCandidates].find((candidate) => candidate && candidate !== normalizedUrl) ?? '';
 
     if (!serverId) {
         // Independent digests: the boot gate awaits this, so they run together rather than chained.
@@ -626,6 +645,34 @@ async function getAuthKeys(
     options: ServerCredentialLookupOptions = {},
 ): Promise<ScopedStorageKeys | null> {
     return await getServerScopedKeys(AUTH_KEY, serverUrlOverride, options);
+}
+
+async function readHomeCredentials(
+    serverUrl?: string,
+    options: ServerCredentialReadOptions = {},
+): Promise<AuthCredentials | null> {
+    const { storageReadFailure, ...lookup } = options;
+    // Browser Web Locks coordinate mutation across tabs; primary reads only
+    // need the atomic storage read. Keep native and Desktop secure-store
+    // migration on their existing mutation path.
+    if (Platform.OS === 'web' && desktopHostKind() === null) {
+        const capturedScope = resolveServerCredentialKeyScope(serverUrl, lookup);
+        const storageScope = readStorageScopeFromEnv();
+        const keys = await getServerScopedKeys(AUTH_KEY, serverUrl, lookup, false);
+        const primary = keys ? parseCredentialsRaw(await readCredentialRawByKey(keys.primary, storageReadFailure)) : null;
+        const currentScope = resolveServerCredentialKeyScope(serverUrl, lookup);
+        if (primary && capturedScope && currentScope
+            && currentScope.serverId === capturedScope.serverId
+            && currentScope.normalizedUrl === capturedScope.normalizedUrl
+            && storageScope === readStorageScopeFromEnv()) return primary;
+    }
+
+    // Only legacy migration mutates credential layouts. Re-resolve and re-read
+    // under the writer's authority, preserving migration ordering and currentness.
+    return await withHomeMutationAuthority(undefined, async (authority) => {
+        const currentKeys = await getAuthKeys(serverUrl, lookup);
+        return currentKeys ? await readCredentialsForScopedKeys(currentKeys, authority, storageReadFailure) : null;
+    });
 }
 
 /**
@@ -2960,20 +3007,14 @@ export const TokenStorage = {
     },
 
     async getCredentials(): Promise<AuthCredentials | null> {
-        return await withHomeMutationAuthority(undefined, async (authority) => {
-            const keys = await getAuthKeys();
-            return keys ? await readCredentialsForScopedKeys(keys, authority) : null;
-        });
+        return await readHomeCredentials();
     },
 
     async getCredentialsForServerUrl(
         serverUrl: string,
         options: ServerCredentialReadOptions = {},
     ): Promise<AuthCredentials | null> {
-        return await withHomeMutationAuthority(
-            undefined,
-            async (authority) => await getHomeCredentialsUnderMutationAuthority(authority, serverUrl, options),
-        );
+        return await readHomeCredentials(serverUrl, options);
     },
 
     /**

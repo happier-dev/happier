@@ -17,6 +17,7 @@ import {
     type WelcomeActionAdmission,
 } from '@/components/onboarding/preAuth/WelcomeActionList';
 import { FieldItem } from '@/components/ui/forms/FieldItem';
+import { Typography } from '@/constants/Typography';
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { createServerFetchAtEndpoint } from '@/sync/http/client';
 import {
@@ -331,7 +332,7 @@ export const EmailPasswordAuthPanel = React.memo(function EmailPasswordAuthPanel
         autoComplete: 'email' | 'username',
         onSubmitEditing?: () => void,
     ) => (
-        <FieldItem label={t('settingsAccount.nativePassword.email')}>
+        <FieldItem label={t('settingsAccount.nativePassword.email')} labelStyle={styles.fieldLabel}>
             <TextInput
                 ref={emailRef as never}
                 testID="email-password-email"
@@ -396,6 +397,7 @@ export const EmailPasswordAuthPanel = React.memo(function EmailPasswordAuthPanel
     const backAction = props.onBack ? (
         <WelcomeActionCard
             testID="email-password-back"
+            presentation="link"
             title={t('common.back')}
             iconName="arrow-left"
             escape
@@ -490,13 +492,18 @@ export const EmailPasswordAuthPanel = React.memo(function EmailPasswordAuthPanel
                     testID="email-password-use-recovery-key"
                     title={t('settingsAccount.nativePassword.useRecoveryKey')}
                     iconName="key"
-                    onPress={() => router.push({
-                        pathname: '/auth/password/recover',
-                        params: { target: props.recoveryTarget },
-                    })}
+                    onPress={() => {
+                        // Leave the current auth surface so a modal cannot cover recovery.
+                        props.onBack?.();
+                        router.push({
+                            pathname: '/auth/password/recover',
+                            params: { target: props.recoveryTarget },
+                        });
+                    }}
                 />
                 <WelcomeActionCard
                     testID="email-password-forgot-back"
+                    presentation="link"
                     title={t('common.back')}
                     iconName="arrow-left"
                     escape
@@ -531,6 +538,7 @@ export const EmailPasswordAuthPanel = React.memo(function EmailPasswordAuthPanel
                 testID="email-password-password"
                 inputRef={passwordRef}
                 label={t('settingsAccount.nativePassword.password')}
+                labelStyle={styles.fieldLabel}
                 value={draft.password}
                 onChangeText={(password) => setDraft((current) => ({ ...current, password }))}
                 autoComplete={provisioning ? 'new-password' : 'current-password'}
@@ -550,6 +558,7 @@ export const EmailPasswordAuthPanel = React.memo(function EmailPasswordAuthPanel
                     testID="email-password-confirm"
                     inputRef={confirmRef}
                     label={t('settingsAccount.nativePassword.confirmPassword')}
+                    labelStyle={styles.fieldLabel}
                     value={draft.confirmPassword}
                     onChangeText={(confirmPassword) => setDraft((current) => ({ ...current, confirmPassword }))}
                     autoComplete="new-password"
@@ -562,6 +571,7 @@ export const EmailPasswordAuthPanel = React.memo(function EmailPasswordAuthPanel
             {provisioning && collectsCredentials && permittedModes.length > 1 ? (
                 <FieldItem
                     label={t('settingsAccount.nativePassword.accountProtection')}
+                    labelStyle={styles.fieldLabel}
                     supportingText={accountMode === 'e2ee'
                         ? tLoose('settingsAccount.nativePassword.protectionE2eeDetail')
                         : t('settingsAccount.nativePassword.protectionPlainDetail')}
@@ -617,6 +627,7 @@ export const EmailPasswordAuthPanel = React.memo(function EmailPasswordAuthPanel
             {!provisioning ? (
                 <WelcomeActionCard
                     testID="email-password-forgot"
+                    presentation="link"
                     title={t('settingsAccount.nativePassword.forgotPassword')}
                     iconName="lifebuoy"
                     onPress={() => setView({ kind: 'forgot' })}
@@ -630,6 +641,7 @@ export const EmailPasswordAuthPanel = React.memo(function EmailPasswordAuthPanel
 
 const styles = StyleSheet.create((theme) => ({
     root: { width: '100%', gap: 12 },
+    fieldLabel: { ...Typography.default('medium'), fontSize: 13, lineHeight: 18, letterSpacing: 0, marginBottom: 8 },
     title: { fontSize: 20, fontWeight: '600', color: theme.colors.text.primary },
     hint: { fontSize: 13, color: theme.colors.text.secondary },
     formError: { fontSize: 13 },

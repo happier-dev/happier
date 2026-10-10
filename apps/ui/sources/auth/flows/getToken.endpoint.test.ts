@@ -110,6 +110,7 @@ describe('explicit endpoint authentication foundations', () => {
         repaired ? 200 : 400));
         runtimeFetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
             const url = String(input);
+            if (url.endsWith('/v1/auth/ping')) return jsonResponse({ ok: true });
             if (url.endsWith('/v1/account/encryption/currentness')) return request();
             if (url.endsWith('/v1/features')) return jsonResponse({ features: {}, capabilities: keyChallengeV2Capabilities('srv_home') });
             if (url.endsWith('/v1/auth/challenge')) return jsonResponse({
@@ -134,6 +135,7 @@ describe('explicit endpoint authentication foundations', () => {
         const result = await fetchAccountEncryptionCurrentness(credentials).catch((error: unknown) => error);
         expect(readCredentials).toHaveBeenCalledWith('https://focused.example.test', { serverId: focusedSnapshot.serverId });
         expect(runtimeFetchMock.mock.calls.map((call) => String(call[0]))).toEqual([
+            'https://focused.example.test/v1/auth/ping',
             'https://focused.example.test/v1/account/encryption/currentness',
             'https://focused.example.test/v1/features',
             'https://focused.example.test/v1/auth/challenge',

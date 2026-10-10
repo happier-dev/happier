@@ -54,6 +54,44 @@ describe('TokenStorage (web) server-scoped credentials', () => {
         await expect(TokenStorage.getCredentials()).resolves.toEqual({ token: 'token-b', secret: 'secret-b' });
     });
 
+    it('reads primary credentials during Home mutation contention while writers remain exclusive', async () => {
+        restoreLocalStorage = installLocalStorageMock().restore;
+        const { setServerUrl } = await import('@/sync/domains/server/serverConfig');
+        const { withHomeMutationAuthority } = await import('@/sync/domains/server/homeMutationLock');
+        const { TokenStorage } = await import('./tokenStorage');
+        const endpoint = 'https://contended.example.test';
+        const original = { token: 'original', secret: 'original-secret' };
+        const replacement = { token: 'replacement', secret: 'replacement-secret' };
+        await setServerUrl(endpoint);
+        await expect(TokenStorage.setCredentials(original)).resolves.toBe(true);
+
+        let release!: () => void;
+        let acquired!: () => void;
+        const holding = new Promise<void>((resolve) => { release = resolve; });
+        const started = new Promise<void>((resolve) => { acquired = resolve; });
+        const holder = withHomeMutationAuthority(undefined, async () => {
+            acquired();
+            await holding;
+        });
+        await started;
+        const values: unknown[] = [];
+        const readers = Promise.all([
+            TokenStorage.getCredentials().then((value) => { values.push(value); }),
+            TokenStorage.getCredentialsForServerUrl(endpoint).then((value) => { values.push(value); }),
+        ]);
+        let written = false;
+        const writer = TokenStorage.setCredentialsForServerUrl(endpoint, {}, replacement)
+            .then((result) => { written = result; });
+        try {
+            await vi.waitFor(() => expect(values).toEqual([original, original]));
+            expect(written).toBe(false);
+        } finally {
+            release();
+            await Promise.all([holder, readers, writer]);
+        }
+        await expect(TokenStorage.getCredentialsForServerUrl(endpoint)).resolves.toEqual(replacement);
+    });
+
     it('keeps credentials separate across web storage scopes for the same server URL', async () => {
         restoreLocalStorage = installLocalStorageMock().restore;
 
@@ -74,6 +112,30 @@ describe('TokenStorage (web) server-scoped credentials', () => {
 
         process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = 'scope-b';
         await expect(TokenStorage.getCredentials()).resolves.toEqual({ token: 'token-b', secret: 'secret-b' });
+    });
+
+    it('rechecks the storage namespace when it changes during a primary read', async () => {
+        const storage = installLocalStorageMock();
+        restoreLocalStorage = storage.restore;
+        const { setServerUrl } = await import('@/sync/domains/server/serverConfig');
+        const { TokenStorage } = await import('./tokenStorage');
+        await setServerUrl('https://inflight-storage-scope.example.test');
+        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = 'inflight-a';
+        await TokenStorage.setCredentials({ token: 'account-a' });
+        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = 'inflight-b';
+        await TokenStorage.setCredentials({ token: 'account-b' });
+        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = 'inflight-a';
+        let changed = false;
+        storage.getItemMock.mockImplementation((key) => {
+            const value = storage.store.get(key) ?? null;
+            if (!changed && value === JSON.stringify({ token: 'account-a' })) {
+                changed = true;
+                process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = 'inflight-b';
+            }
+            return value;
+        });
+        await expect(TokenStorage.getCredentials()).resolves.toEqual({ token: 'account-b' });
+        expect(changed).toBe(true);
     });
 
     it('can read and clear credentials for a specific server URL (without switching active server)', async () => {

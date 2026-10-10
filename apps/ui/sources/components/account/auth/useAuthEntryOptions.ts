@@ -39,7 +39,7 @@ export type AuthEntryOptions = Readonly<{
     authenticationCatalog?: ProjectedAuthenticationCatalog;
     authenticationActions?: readonly HomeAuthenticationAction[];
     keyChallengeV2Available?: boolean;
-    /** Home explicitly selected/requested by the user; absent for a seeded fallback profile. */
+    /** Home named by selection or its serving web origin; absent for a generic fallback profile. */
     requestedHomeTarget?: HomeTargetInput;
     homeTarget?: HomeTargetInput;
     homeLabel?: string;
@@ -474,7 +474,7 @@ export function useAuthEntryOptions(): AuthEntryOptions {
             ...(activeServerSnapshot.isSelectionExplicit === true
                 ? { requestedHomeTarget: { kind: 'saved_profile', profileRef: activeServerSnapshot.serverId } as const }
                 : {}),
-            homeLabel: activeProfile ? resolveHomeDisplayLabel(activeProfile, activeProfile.id) : serverUrlForCopy,
+            homeLabel: resolveHomeDisplayLabel(activeProfile, activeServerSnapshot.serverId),
             ...(isServerProfilePersonalHomeBootstrapCompleted(activeProfile)
                 ? { isPersonalHome: true as const }
                 : {}),

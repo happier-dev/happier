@@ -140,5 +140,14 @@ export function isPublicRouteForUnauthenticated(segments: string[]): boolean {
   )
     return true;
 
+  // Static real-component surface QA has no Account data, RPCs or persisted callbacks.
+  if (
+    isDevRouteEnabled() &&
+    first === 'dev' &&
+    normalized[1] === 'soft-surfaces' &&
+    normalized.length === 2
+  )
+    return true;
+
   return false;
 }

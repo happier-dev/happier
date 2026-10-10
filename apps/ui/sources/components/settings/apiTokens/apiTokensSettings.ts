@@ -7,13 +7,13 @@ export const API_TOKEN_SETTINGS = defineSettingsPage({
         cliApprovals: {
             titleKey: 'settingsApiTokens.cliPolicy.sectionTitle',
             settings: {
-                cliApprovals: { titleKey: 'settingsApiTokens.cliPolicy.title', descriptionKey: 'settingsApiTokens.cliPolicy.description' },
+                cliApprovals: {},
             },
         },
         security: {
             titleKey: 'settingsApiTokens.securityTitle',
             settings: {
-                revokeAll: { titleKey: 'settingsApiTokens.revokeAll.title', descriptionKey: 'settingsApiTokens.revokeAll.subtitle' },
+                revokeAll: {},
             },
         },
     },

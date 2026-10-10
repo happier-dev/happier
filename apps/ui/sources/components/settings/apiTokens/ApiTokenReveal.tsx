@@ -1,10 +1,8 @@
 import * as React from 'react';
-import { Animated, Platform, Pressable, View } from 'react-native';
+import { Animated, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import { resolveHappierFocusRingVisible } from '@happier-dev/plugin-ui/presentation';
-import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
-
+import { announceAccessibilityMessage } from '@/components/ui/accessibility/announceAccessibilityMessage';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { useTemporaryCopyFeedback } from '@/components/ui/copy/useTemporaryCopyFeedback';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -60,84 +58,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         fontSize: 13,
         lineHeight: 19,
     },
-    copyRow: {
-        minHeight: Platform.OS === 'android' ? 48 : 44,
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: 8,
-        borderRadius: 10,
-        backgroundColor: theme.colors.button.secondary.background,
-    },
-    copyText: {
-        ...Typography.default('semiBold'),
-        color: theme.colors.button.secondary.tint,
-    },
-    copyFeedbackContent: {
-        position: 'relative',
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-    copyFeedbackLayer: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: 8,
-    },
-    copyFeedbackOverlay: {
-        position: 'absolute',
-        top: 0,
-        right: 0,
-        bottom: 0,
-        left: 0,
-    },
 }));
-
-function ApiTokenCopyFeedbackContent(props: Readonly<{
-    copied: boolean;
-    color: string;
-}>) {
-    const styles = stylesheet;
-    const progress = React.useRef(new Animated.Value(props.copied ? 1 : 0)).current;
-
-    React.useEffect(() => {
-        const animation = Animated.timing(progress, {
-            toValue: props.copied ? 1 : 0,
-            duration: motionTokens.durationMs.fast,
-            easing: motionTokens.easing.standard,
-            useNativeDriver: true,
-        });
-        animation.start();
-        return () => animation.stop();
-    }, [progress, props.copied]);
-
-    const hiddenFromAccessibility = {
-        accessibilityElementsHidden: true,
-        importantForAccessibility: 'no-hide-descendants' as const,
-    };
-
-    return (
-        <View style={styles.copyFeedbackContent}>
-            <Animated.View
-                {...hiddenFromAccessibility}
-                style={[styles.copyFeedbackLayer, {
-                    opacity: progress.interpolate({ inputRange: [0, 1], outputRange: [1, 0] }),
-                }]}
-            >
-                <Icon name="copy" size={18} color={props.color} />
-                <Text style={styles.copyText}>{t('settingsApiTokens.reveal.copy')}</Text>
-            </Animated.View>
-            <Animated.View
-                {...hiddenFromAccessibility}
-                style={[styles.copyFeedbackLayer, styles.copyFeedbackOverlay, { opacity: progress }]}
-            >
-                <Icon name="check" size={18} color={props.color} />
-                <Text style={styles.copyText}>{t('settingsApiTokens.reveal.copied')}</Text>
-            </Animated.View>
-        </View>
-    );
-}
 
 export function ApiTokenRevealDone(props: Readonly<{
     revealKey: string;
@@ -298,25 +219,20 @@ export function ApiTokenRevealBody(props: Readonly<{
     const styles = stylesheet;
     const copyFeedback = useTemporaryCopyFeedback(1_500);
     const [copyError, setCopyError] = React.useState(false);
-    const [copyPending, setCopyPending] = React.useState(false);
-    const copyPendingRef = React.useRef(false);
     const { onCopied, token } = props;
+    const copied = copyFeedback.isCopied('token');
+    const copyLabel = copied ? t('settingsApiTokens.reveal.copied') : t('settingsApiTokens.reveal.copy');
 
+    // The shared button owns the in-flight (busy) state and same-tick reentry while the clipboard
+    // write settles; only a real copy acknowledges the reveal.
     const copy = React.useCallback(async () => {
-        if (copyPendingRef.current) return;
-        copyPendingRef.current = true;
-        setCopyPending(true);
         setCopyError(false);
-        try {
-            const copied = await setClipboardStringSafe(token);
-            setCopyError(!copied);
-            if (!copied) return;
-            onCopied();
-            copyFeedback.markCopied('token');
-        } finally {
-            copyPendingRef.current = false;
-            setCopyPending(false);
-        }
+        const didCopy = await setClipboardStringSafe(token);
+        setCopyError(!didCopy);
+        if (!didCopy) return;
+        onCopied();
+        copyFeedback.markCopied('token');
+        announceAccessibilityMessage(t('settingsApiTokens.reveal.copied'));
     }, [copyFeedback, onCopied, token]);
 
     return (
@@ -333,31 +249,15 @@ export function ApiTokenRevealBody(props: Readonly<{
             secret={(
                 <View style={styles.secretSurface}>
                     <Text selectable testID="settings-api-tokens-reveal-secret" style={styles.secret}>{token}</Text>
-                    <Pressable
+                    <RoundButton
                         testID="settings-api-tokens-reveal-copy"
-                        accessibilityRole="button"
-                        accessibilityLabel={copyFeedback.isCopied('token')
-                            ? t('settingsApiTokens.reveal.copied')
-                            : t('settingsApiTokens.reveal.copy')}
-                        accessibilityState={{ disabled: copyPending, busy: copyPending }}
-                        accessibilityLiveRegion="polite"
-                        focusable
-                        disabled={copyPending}
-                        onPress={copy}
-                        style={(interactionState) => {
-                            const webState = interactionState as typeof interactionState & { focused?: boolean };
-                            return [
-                                styles.copyRow,
-                                focusRingStyle({ focused: resolveHappierFocusRingVisible(webState.focused), color: theme.colors.border.focus }),
-                                { opacity: interactionState.pressed ? motionTokens.press.opacity : 1 },
-                            ];
-                        }}
-                    >
-                        <ApiTokenCopyFeedbackContent
-                            copied={copyFeedback.isCopied('token')}
-                            color={theme.colors.button.secondary.tint}
-                        />
-                    </Pressable>
+                        size="normal"
+                        display="secondary"
+                        title={copyLabel}
+                        accessibilityLabel={copyLabel}
+                        leading={<Icon name={copied ? 'check' : 'copy'} size={18} color={theme.colors.text.primary} />}
+                        action={copy}
+                    />
                     {copyError ? (
                         <Text accessibilityLiveRegion="assertive" style={styles.error} testID="settings-api-tokens-copy-error">
                             {t('settingsApiTokens.errors.copyFailed')}

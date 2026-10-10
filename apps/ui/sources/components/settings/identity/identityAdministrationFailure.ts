@@ -28,6 +28,10 @@ export type IdentityAdministrationFailureKind =
     | 'forbidden'
     /** This Home does not let Teams configure this; only a Home administrator can widen it. */
     | 'not_allowed'
+    /** A required identity platform or connection has not been configured. */
+    | 'setup_required'
+    /** The identity provider was explicitly turned off. */
+    | 'disabled'
     /** The Team sign-in this operation needs is missing or no longer current. */
     | 'authentication_required'
     /** The accepted-authentication policy cannot be evaluated right now. */
@@ -102,7 +106,13 @@ const EXACT: Readonly<Record<string, IdentityAdministrationFailureKind>> = Objec
     directory_cursor_expired: 'needs_attention',
     directory_snapshot_incomplete: 'provider_unavailable',
     team_identity_not_allowed: 'not_allowed',
+    workos_platform_unavailable: 'setup_required',
+    home_policy_prohibited: 'not_allowed',
+    home_policy_unavailable: 'policy_unavailable',
+    provider_disabled: 'disabled',
+    provider_setup_unavailable: 'setup_required',
     team_authentication_required: 'authentication_required',
+    team_authentication_unavailable: 'policy_unavailable',
     team_authentication_policy_unavailable: 'policy_unavailable',
     home_authentication_policy_unavailable: 'policy_unavailable',
     identity_connection_policy_in_use: 'policy_in_use',
@@ -188,6 +198,8 @@ const RETRYABLE: ReadonlySet<IdentityAdministrationFailureKind> = new Set<Identi
 const RECOVERY_BY_CODE: Readonly<Record<string, IdentityAdministrationRecovery>> = Object.freeze({
     account_would_lose_login: 'alternate_login',
     home_authentication_policy_unavailable: 'contact_home_admin',
+    home_policy_unavailable: 'contact_home_admin',
+    workos_platform_unavailable: 'contact_home_admin',
     directory_source_in_use: 'directory',
     external_group_binding_in_use: 'group_mappings',
 });
@@ -289,6 +301,9 @@ export function resolveApprovalSettledReadFailure(
 }
 
 export function identityAdministrationFailureMessage(code: string): string {
+    if (code.trim().toLowerCase() === 'workos_platform_unavailable') {
+        return t('identityAdministration.errorWorkosPlatformUnavailable');
+    }
     // The Home refuses Sync with this code only for a PAUSED source, whose
     // recovery is the explicit Resume (Teams child 05 :498). A failed source
     // is retried with Sync itself, so the recorded failures keep the generic
@@ -300,6 +315,8 @@ export function identityAdministrationFailureMessage(code: string): string {
         case 'approval_pending': return t('approvals.status.open');
         case 'forbidden': return t('identityAdministration.errorForbidden');
         case 'not_allowed': return t('identityAdministration.errorNotAllowed');
+        case 'setup_required': return t('identityAdministration.errorSetupRequired');
+        case 'disabled': return t('identityAdministration.disabled');
         case 'authentication_required': return t('identityAdministration.errorAuthenticationRequired');
         case 'policy_unavailable': return t('identityAdministration.errorPolicyUnavailable');
         case 'policy_in_use': return t('identityAdministration.errorPolicyInUse');

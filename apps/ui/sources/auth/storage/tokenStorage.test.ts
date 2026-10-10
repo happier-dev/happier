@@ -92,11 +92,11 @@ describe('TokenStorage (web)', () => {
         storage.setItemMock('auth_credentials', JSON.stringify({ token: 't', secret: 's' }));
 
         const { TokenStorage } = await import('./tokenStorage');
-        await TokenStorage.getCredentials();
+        await expect(TokenStorage.getCredentials()).resolves.toBeNull();
         const scopedKeys = storage.getItemMock.mock.calls.map(([key]) => String(key));
         expect(scopedKeys.every((key) => key.includes('auth_credentials__srv_'))).toBe(true);
-        expect(new Set(scopedKeys).size).toBe(scopedKeys.length);
-        expect(scopedKeys.length).toBeGreaterThanOrEqual(2);
+        // A missing primary is re-read under mutation authority before migrating.
+        expect(new Set(scopedKeys).size).toBeGreaterThanOrEqual(2);
     });
 
     it('fails closed without logging when localStorage is unavailable', async () => {

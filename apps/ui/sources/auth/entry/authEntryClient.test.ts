@@ -64,6 +64,23 @@ describe('fetchHomeAuthEntry', () => {
         await expect(fetchHomeAuthEntry()).resolves.toEqual({ kind: 'unsupported' });
     });
 
+    it('forwards a Home email hint to the existing entry authority without choosing a provider locally', async () => {
+        serverFetch.mockResolvedValueOnce(new Response(JSON.stringify({
+            v: 1,
+            state: 'unavailable',
+            scope: { kind: 'home' },
+            reason: 'entry_not_available',
+            autoRedirect: null,
+        }), { status: 200 }));
+
+        await expect(fetchHomeAuthEntry({ email: 'person@acme.example' })).resolves.toMatchObject({
+            kind: 'ready', projection: { state: 'unavailable' },
+        });
+        expect(serverFetch).toHaveBeenCalledWith('/v1/auth/entry', expect.objectContaining({
+            body: JSON.stringify({ v: 1, scope: { kind: 'home' }, email: 'person@acme.example' }),
+        }), { includeAuth: false, retry: 'none' });
+    });
+
     it('posts an immutable Team scope only to the supplied explicit Home endpoint', async () => {
         endpointFetch.mockResolvedValueOnce(new Response(JSON.stringify({
             v: 1,

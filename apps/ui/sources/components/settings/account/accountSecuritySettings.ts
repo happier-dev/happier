@@ -11,20 +11,20 @@ export const ACCOUNT_SECURITY_SETTINGS = defineSettingsPage({
         emailPassword: {
             titleKey: 'settingsAccount.nativePassword.securitySectionTitle',
             settings: {
-                signInEmail: { titleKey: 'settingsAccount.nativePassword.signInEmail' },
-                password: { titleKey: 'settingsAccount.nativePassword.password', sensitive: true },
+                signInEmail: {},
+                password: {},
             },
         },
         backup: {
             titleKey: 'settingsAccount.backup',
             settings: {
-                recoveryKey: { titleKey: 'settingsAccount.secretKey', descriptionKey: 'settingsAccount.recoveryKeyRowDescription', sensitive: true },
+                recoveryKey: {},
             },
         },
         sessions: {
             titleKey: 'settingsAccount.sessionsSectionTitle',
             settings: {
-                signOutEverywhere: { titleKey: 'settingsApiTokens.signOutEverywhere.title', descriptionKey: 'settingsApiTokens.signOutEverywhere.subtitle' },
+                signOutEverywhere: {},
             },
         },
     },

@@ -1,11 +1,10 @@
 import * as React from 'react';
+import { View } from 'react-native';
 import type { SessionPermissionMode } from '@happier-dev/protocol';
 
-import { SettingsPageHeader } from '@/components/settings/shell/SettingsPageHeader';
 import { Switch } from '@/components/ui/forms/Switch';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { ItemList } from '@/components/ui/lists/ItemList';
 import type { AgentType } from '@/sync/domains/models/modelOptions';
 import { getPermissionModeOptionsForAgentType } from '@/sync/domains/permissions/permissionModeOptions';
 import { t } from '@/text';
@@ -20,7 +19,6 @@ export const EmbedPermissionModesPicker = React.memo(function EmbedPermissionMod
     draft: EmbedDraft;
     onChange: (next: EmbedDraft) => void;
     agentType: AgentType;
-    onDone: () => void;
 }>) {
     const options = getPermissionModeOptionsForAgentType(props.agentType);
     const modes = props.draft.access.permissionModes;
@@ -28,13 +26,7 @@ export const EmbedPermissionModesPicker = React.memo(function EmbedPermissionMod
         props.onChange({ ...props.draft, access: { ...props.draft.access, permissionModes: next && next.length > 0 ? [...next] : null } });
     };
     return (
-        <ItemList testID="settings-embed-permission-modes-picker">
-            <SettingsPageHeader
-                title={t('settingsEmbeds.capabilities.permissionModes')}
-                description={t('settingsEmbeds.capabilities.permissionModesDescription')}
-                alwaysShowTitle
-                cancelAction={{ title: t('common.done'), onPress: props.onDone }}
-            />
+        <View testID="settings-embed-permission-modes-picker">
             <ItemGroup>
                 <Item
                     title={t('settingsEmbeds.capabilities.anyMode')}
@@ -78,6 +70,6 @@ export const EmbedPermissionModesPicker = React.memo(function EmbedPermissionMod
                     })}
                 </ItemGroup>
             ) : null}
-        </ItemList>
+        </View>
     );
 });

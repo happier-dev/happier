@@ -31,8 +31,9 @@ function formatRecordedAt(value: string): string {
  * The Account Settings history/restore surface inside the existing Account
  * settings screen. Restore is the one client-side classification-aware owner
  * (`restoreAccountSettingsFromHistorySnapshot`): it opens the recorded
- * envelope in its recorded mode, keeps every current secret/binding/legacy
- * root, reseals to the current mode, and submits through the ordinary
+ * envelope in its recorded mode, preserves untransferred current entity
+ * sources, excludes opened active destinations, reseals to the current mode,
+ * and submits through the ordinary
  * whole-document CAS. This section adds presentation only — no second
  * restore writer, router, or history store.
  */

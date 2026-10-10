@@ -4,6 +4,8 @@ import {
     API_TOKEN_FULL_GRANT_V1,
     computeAccountEncryptionMigrateKeyFingerprintV1,
 } from '@happier-dev/protocol';
+import { AccountEncryptionModeResponseSchema } from '@happier-dev/protocol/account/encryptionMode';
+import { AccountSettingsV2GetResponseSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
 
 import { createEncryptionFromAuthCredentials } from '@/auth/encryption/createEncryptionFromAuthCredentials';
 import { renderScreen } from '@/dev/testkit';
@@ -24,6 +26,8 @@ export type ApiTokenSettingsControllerHarnessOptions = Readonly<{
     holdCurrentness?: Promise<void>;
     mode?: 'plain' | 'e2ee';
     readiness?: 'available' | 'unavailable';
+    /** Token rows the Home already holds, as its list returns them. */
+    rows?: readonly Record<string, unknown>[];
 }>;
 
 export type ApiTokenSettingsControllerHarnessRequest = Readonly<{ path: string; body: Record<string, unknown> }>;
@@ -59,8 +63,9 @@ export async function createApiTokenSettingsControllerHarness(options: ApiTokenS
     const { TokenStorage } = await import('@/auth/storage/tokenStorage');
     vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue(credentials);
     const requests: ApiTokenSettingsControllerHarnessRequest[] = [];
-    const rows: Record<string, unknown>[] = [];
+    const rows: Record<string, unknown>[] = [...(options.rows ?? [])];
     let currentnessAvailable = true;
+    let listAvailable = true;
     let readiness = options.readiness ?? 'available';
     const { setRuntimeFetch } = await import('@/utils/system/runtimeFetch');
     setRuntimeFetch(async (input, init) => {
@@ -68,6 +73,14 @@ export async function createApiTokenSettingsControllerHarness(options: ApiTokenS
         const body = init?.body ? JSON.parse(String(init.body)) : {};
         requests.push({ path: url.pathname, body });
         let response: unknown = { ok: true };
+        // Action admission reads the captured Account's policy through these
+        // real adapters. An empty settings document is valid in either mode.
+        if (url.pathname === '/v1/account/encryption') {
+            response = AccountEncryptionModeResponseSchema.parse({ mode: options.mode ?? 'e2ee', updatedAt: 1 });
+        }
+        if (url.pathname === '/v2/account/settings') {
+            response = AccountSettingsV2GetResponseSchema.parse({ content: null, version: 0 });
+        }
         if (url.pathname === '/v1/account/encryption/currentness') {
             await options.holdCurrentness;
             if (!currentnessAvailable) throw new Error('Home unavailable');
@@ -124,7 +137,10 @@ export async function createApiTokenSettingsControllerHarness(options: ApiTokenS
             response = { token: `hap_v1_${tokenId}_${'A'.repeat(43)}`, apiToken: row };
             if (options.failure === 'malformed') response = { token: 'malformed', apiToken: row };
         }
-        if (url.pathname.endsWith('/list')) response = { tokens: rows };
+        if (url.pathname.endsWith('/list')) {
+            if (!listAvailable) throw new Error('Home unavailable');
+            response = { tokens: rows };
+        }
         if (url.pathname.endsWith('/revoke')) {
             const tokenId = typeof body.tokenId === 'string' ? body.tokenId : '';
             const rowIndex = rows.findIndex((row) => row.tokenId === tokenId);
@@ -154,6 +170,8 @@ export async function createApiTokenSettingsControllerHarness(options: ApiTokenS
         requests,
         encryption,
         withdrawCurrentness: () => { currentnessAvailable = false; },
+        /** Whether the Home answers the token list from the next read on. */
+        setListAvailable: (next: boolean) => { listAvailable = next; },
         /** The Account's recipient-envelope readiness the Home reports from the next read on. */
         setReadiness: (next: 'available' | 'unavailable') => { readiness = next; },
     };

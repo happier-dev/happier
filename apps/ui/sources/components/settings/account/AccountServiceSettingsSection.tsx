@@ -34,7 +34,7 @@ import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { StatusPill } from '@/components/ui/status/StatusPill';
 import { Icon } from '@/components/ui/icons/Icon';
-import { formatRelativeTimeShort } from '@/components/ui/selectionList/formatRelativeTimeShort';
+import { formatRelativeTimeShort } from '@/utils/time/formatShortRelativeTime';
 import { useUnistyles } from 'react-native-unistyles';
 import { AccountServiceBenefits, AccountServiceInvitationIntro } from './AccountServiceInvitation';
 import { AccountServiceChooser } from './AccountServiceChooser';
@@ -44,7 +44,7 @@ import { AccountServicePasswordForm, type AccountServicePasswordFormView } from 
 import { AccountServiceMethodStrip } from './AccountServiceMethodStrip';
 import { ACCOUNT_SETTINGS } from './accountSettings';
 import { SettingAnchor } from '@/components/settings/shell/SettingRow';
-import { resolveHomeDisplayLabel, resolveHomeDisplayName } from '@/components/settings/server/homeDisplayName';
+import { resolveHomeDisplayLabel } from '@/components/settings/server/homeDisplayName';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
@@ -745,12 +745,7 @@ export function AccountServiceSettingsSection(): React.ReactElement {
                     )
                     : null;
 
-    // A Home is named by its name; an unnamed Home is "This Home" when it is the one in focus, and
-    // otherwise by its address, the only thing that tells two unnamed Homes apart.
-    const localHomeTitle = (profile: ServerProfile) => resolveHomeDisplayName(profile)
-        ?? (areServerProfileIdentifiersEquivalent(resolveServerProfileScopeId(profile), activeServer.serverId)
-            ? t('settingsAccount.thisHomeTitle')
-            : resolveHomeDisplayLabel(profile, profile.id));
+    const localHomeTitle = (profile: ServerProfile) => resolveHomeDisplayLabel(profile, profile.id);
     const serviceMark = <AccountServiceMark url={endpoint.url} size={22} />;
     const toggleChangingService = () => setChangingService((current) => !current);
     // A notice that carries "Change service" itself hides the header's, so there is one way in.

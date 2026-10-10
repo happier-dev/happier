@@ -129,6 +129,7 @@ export function buildEmbedUpdateInput(
 export type EmbedSummaryPart =
     | Readonly<{ kind: 'sites'; count: number }>
     | Readonly<{ kind: 'viewOnly' }>
+    | Readonly<{ kind: 'approve' }>
     | Readonly<{ kind: 'send' }>
     | Readonly<{ kind: 'sendAndApprove' }>
     | Readonly<{ kind: 'models'; models: readonly ProviderBoundModelRef[] }>
@@ -142,8 +143,9 @@ export function listEmbedSummaryParts(embed: Pick<AccountApiTokenSummaryV1, 'gra
     const access = deriveEmbedAccessFromGrantV1(embed.grant);
     const config = embed.embedConfig ?? DEFAULT_EMBED_DRAFT.config;
     const parts: EmbedSummaryPart[] = [{ kind: 'sites', count: access.sites.length }];
-    if (!access.send) parts.push({ kind: 'viewOnly' });
-    else parts.push({ kind: access.approve ? 'sendAndApprove' : 'send' });
+    // Send and Approve are independent grants: approval without Send is never "View only".
+    if (access.send) parts.push({ kind: access.approve ? 'sendAndApprove' : 'send' });
+    else parts.push({ kind: access.approve ? 'approve' : 'viewOnly' });
     if (access.models !== null) parts.push({ kind: 'models', models: access.models });
     if (config.organization.folderId !== null) parts.push({ kind: 'folder', folderId: config.organization.folderId });
     return parts;

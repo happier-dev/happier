@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { ScrollView, View } from 'react-native';
+import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import type { AccountApiTokenSummaryV1 } from '@happier-dev/protocol';
 import { deriveEmbedAccessFromGrantV1 } from '@happier-dev/protocol/embed';
@@ -124,8 +124,13 @@ const stylesheet = StyleSheet.create((theme) => ({
         gap: theme.margins.sm,
         alignItems: 'flex-start',
     },
+    // The pushed phone preview (lab P3): the chat fills the page below its header, edge to edge.
     previewPage: {
-        padding: HAPPIER_PAGE_METRICS.sheetInsetPx,
+        flex: 1,
+        minHeight: 0,
+    },
+    previewPageContainer: {
+        flexGrow: 1,
     },
 }));
 
@@ -329,23 +334,31 @@ const EmbedDetail = React.memo(function EmbedDetail(props: Readonly<{ token: Acc
 
     const header = (
         <SettingsPageHeader
-            title={create ? t('settingsEmbeds.newTitle') : draft.label || props.token!.label}
-            alwaysShowTitle
-            description={create ? t('settingsEmbeds.createDescription') : undefined}
-            meta={meta}
-            titleEditor={create ? undefined : {
+            title={step === 'models' ? t('settingsEmbeds.models.allowed')
+                : step === 'modes' ? t('settingsEmbeds.capabilities.permissionModes')
+                    : step === 'preview' ? t('settingsEmbeds.preview.title')
+                        : create ? t('settingsEmbeds.newTitle') : draft.label || props.token!.label}
+            alwaysShowTitle={!create && step === 'settings'}
+            description={step === 'modes' ? t('settingsEmbeds.capabilities.permissionModesDescription')
+                : step === 'settings' && create ? t('settingsEmbeds.createDescription') : undefined}
+            meta={step === 'settings' ? meta : undefined}
+            titleEditor={step !== 'settings' || create ? undefined : {
                 value: draft.label,
                 placeholder: t('settingsEmbeds.namePlaceholder'),
                 accessibilityLabel: t('settingsEmbeds.name'),
                 onChangeText: (label) => setDraft((current) => ({ ...current, label })),
             }}
-            primaryAction={create ? undefined : {
+            primaryAction={step !== 'settings' || create ? undefined : {
                 title: t('common.save'),
                 testID: 'settings-embed-save',
                 disabled: !update || !labelReady || saving,
                 onPress: () => void save(),
             }}
-            cancelAction={create ? {
+            cancelAction={step !== 'settings' ? {
+                title: t('common.done'),
+                testID: 'settings-embed-picker-done',
+                onPress: () => setStep('settings'),
+            } : create ? {
                 title: t('common.cancel'),
                 testID: 'settings-embed-cancel',
                 onPress: () => navigate(router, EMBEDS_COLLECTION_ROOT, 'EmbedDetail.cancel'),
@@ -354,8 +367,7 @@ const EmbedDetail = React.memo(function EmbedDetail(props: Readonly<{ token: Acc
     );
 
     const settings = (
-        <ItemList testID="settings-embed-detail">
-            {header}
+        <>
             {enforcedEdit ? <Text style={styles.reconnect} accessibilityLiveRegion="polite">{t('settingsEmbeds.detail.reconnect')}</Text> : null}
             {saveError ? <Text style={styles.error} accessibilityLiveRegion="assertive">{saveError}</Text> : null}
             {create ? (
@@ -423,29 +435,37 @@ const EmbedDetail = React.memo(function EmbedDetail(props: Readonly<{ token: Acc
                     </View>
                 </>
             )}
-        </ItemList>
+        </>
     );
 
     const picker = step === 'models' ? (
-        <ItemList>
-            <SettingsPageHeader title={t('settingsEmbeds.models.allowed')} alwaysShowTitle cancelAction={{ title: t('common.done'), onPress: () => setStep('settings') }} />
-            <ApiTokenGrantModelsPicker {...grantPart} />
-        </ItemList>
+        <ApiTokenGrantModelsPicker {...grantPart} />
     ) : step === 'modes' ? (
-        <EmbedPermissionModesPicker draft={draft} onChange={setDraft} agentType={agentType} onDone={() => setStep('settings')} />
+        <EmbedPermissionModesPicker draft={draft} onChange={setDraft} agentType={agentType} />
     ) : step === 'preview' ? (
-        <ScrollView contentContainerStyle={styles.previewPage}>
-            <SettingsPageHeader title={t('settingsEmbeds.preview.title')} alwaysShowTitle cancelAction={{ title: t('common.done'), onPress: () => setStep('settings') }} />
-            <EmbedLivePreview style={draft.config.style} ui={previewUi} newChat={draft.config.newChat?.enabled === true} reconnecting={enforcedEdit} />
-        </ScrollView>
+        <View style={styles.previewPage}>
+            <EmbedLivePreview presentation="page" style={draft.config.style} ui={previewUi} newChat={draft.config.newChat?.enabled === true} reconnecting={enforcedEdit} />
+        </View>
     ) : null;
 
     return (
         <View testID="settings-embed-detail-root" style={styles.root} onLayout={(event) => setWidth(event.nativeEvent.layout.width)}>
             <View style={styles.settings}>
-                <StepTransitionFrame transitionKey={step} direction={step === 'settings' ? 'backward' : 'forward'}>
-                    {picker ?? settings}
-                </StepTransitionFrame>
+                <ItemList
+                    testID="settings-embed-detail"
+                    scrollEnabled={step !== 'preview'}
+                    containerStyle={step === 'preview' ? styles.previewPageContainer : undefined}
+                >
+                    {header}
+                    <StepTransitionFrame
+                        transitionKey={step}
+                        direction={step === 'settings' ? 'backward' : 'forward'}
+                        style={step === 'preview' ? styles.previewPage : undefined}
+                        contentStyle={step === 'preview' ? styles.previewPage : undefined}
+                    >
+                        {picker ?? settings}
+                    </StepTransitionFrame>
+                </ItemList>
             </View>
             {wide && step === 'settings' ? (
                 <View style={styles.previewColumn}>

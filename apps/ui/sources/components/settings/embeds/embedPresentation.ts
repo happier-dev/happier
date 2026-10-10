@@ -20,6 +20,7 @@ export function formatEmbedSummary(parts: readonly EmbedSummaryPart[], names: Em
         switch (part.kind) {
             case 'sites': return [t('settingsEmbeds.summary.sites', { count: part.count })];
             case 'viewOnly': return [t('settingsEmbeds.summary.viewOnly')];
+            case 'approve': return [t('settingsEmbeds.summary.approve')];
             case 'send': return [t('settingsEmbeds.summary.send')];
             case 'sendAndApprove': return [t('settingsEmbeds.summary.sendAndApprove')];
             case 'models': return [formatModels(part.models, names)];

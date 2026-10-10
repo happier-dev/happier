@@ -8,7 +8,6 @@ import { useProfile, useSettingMutable } from '@/sync/domains/state/storage';
 import { sync } from '@/sync/sync';
 import { Switch } from '@/components/ui/forms/Switch';
 import { HappyError } from '@/utils/errors/errors';
-import { storage } from '@/sync/domains/state/storageStore';
 import { isLegacyAuthCredentials, isTokenOnlyAuthCredentials } from '@/auth/storage/tokenStorage';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
@@ -38,12 +37,25 @@ import { openAccountEncryptionFirstKeyExternalAuthUrl, requestAccountEncryptionF
     shouldRetainAccountEncryptionMigrationArtifactUploads } from '@/sync/ops/account/accountEncryptionFirstKeyExternalAuth';
 import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
 import { acknowledgeNewSessionDraftEncryptionMigration, listNewSessionDraftEncryptionMigrationCandidates } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
+import { fetchAccountEncryptionWorkspaceExecutionConfigMigrationCandidates } from '@/sync/ops/account/fetchAccountEncryptionWorkspaceExecutionConfigMigrationCandidates';
+import { fetchAccountEncryptionProjectTrustMigrationCandidates } from '@/sync/ops/account/fetchAccountEncryptionProjectTrustMigrationCandidates';
 import { runAccountEncryptionModeMigration } from '@/sync/ops/account/runAccountEncryptionModeMigration';
 import { fetchAccountEncryptionAuthoringMemoryMigrationCandidates } from '@/sync/ops/account/fetchAccountEncryptionAuthoringMemoryMigrationCandidates';
+import { fetchAccountEncryptionProjectRowsMigrationCandidates } from '@/sync/ops/account/fetchAccountEncryptionProjectRowsMigrationCandidates';
+import { readProfileCatalog } from '@/sync/api/account/apiProfileCatalog';
+import { readPromptLibraryCatalogProjection } from '@/sync/api/account/apiPromptLibraryCatalog';
+import { readProviderCatalog } from '@/sync/api/account/apiProviderCatalog';
+import { fetchAccountEncryptionProviderConnectionsMigrationCandidate } from '@/sync/ops/account/fetchAccountEncryptionProviderConnectionsMigrationCandidate';
+import { fetchAccountEncryptionAcpCatalogMigrationCandidate } from '@/sync/ops/account/fetchAccountEncryptionAcpCatalogMigrationCandidate';
+import { fetchAccountEncryptionMcpServerCatalogMigrationCandidate } from '@/sync/ops/account/fetchAccountEncryptionMcpServerCatalogMigrationCandidate';
+import { fetchAccountEncryptionConnectedAccountCatalogMigrationCandidates } from '@/sync/ops/account/fetchAccountEncryptionConnectedAccountCatalogMigrationCandidates';
+import { fetchAccountEncryptionEntityCatalogMigrationCandidates } from '@/sync/ops/account/fetchAccountEncryptionEntityCatalogMigrationCandidates';
 import { prepareAccountEncryptionModePasswordCredential } from '@/sync/api/auth/accountSecurity';
 import { decodeBase64 } from '@/encryption/base64';
 import { createAccountSecurityActionClient } from './accountSecurityActionClient';
 import { captureAccountSettingsRequest } from '@/sync/api/account/accountSettingsRequest';
+import { readAccountSettingsBaseline } from '@/sync/engine/settings/accountSettingsBaseline';
+import { settingsParse } from '@/sync/domains/settings/settings';
 import { resolveHomeKeyChallengeExpectedAudience } from '@/auth/flows/resolveHomeAuthenticationTarget';
 import { resolveUiClientEncryptionRequirement } from '@/sync/domains/settings/clientEncryptionRequirement';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -418,8 +430,6 @@ export const AccountEncryptionSettingsSection = React.memo(function AccountEncry
                                                     'Account encryption mode changed while preparing the migration',
                                                 );
                                             }
-                                            const settingsSnapshot = storage.getState();
-                                            const expectedSettingsVersion = settingsSnapshot.settingsVersion ?? 0;
                                             const connectedServiceProfiles = profile.connectedServicesV2.flatMap((svc) =>
                                                 svc.profiles.map((p) => ({
                                                     serviceId: svc.serviceId as any,
@@ -576,7 +586,54 @@ export const AccountEncryptionSettingsSection = React.memo(function AccountEncry
                                             const authoringMemory = await fetchAccountEncryptionAuthoringMemoryMigrationCandidates({
                                                 credentials, mode: currentness.mode, request: homeRequest,
                                             });
+                                            const projectRows = await fetchAccountEncryptionProjectRowsMigrationCandidates({
+                                                credentials, mode: currentness.mode, request: homeRequest,
+                                            });
+                                            const workspaceExecutionConfig = await fetchAccountEncryptionWorkspaceExecutionConfigMigrationCandidates({
+                                                credentials, mode: currentness.mode, request: homeRequest,
+                                            });
+                                            const profileRows = await readProfileCatalog(capturedRequest.scope);
+                                            const promptLibraryProjection = await readPromptLibraryCatalogProjection(capturedRequest.scope);
                                             requireCurrentScope();
+                                            if (promptLibraryProjection.catalog.status !== 'ready') {
+                                                throw new Error('Prompt library migration census is unavailable');
+                                            }
+                                            const promptLibrary = promptLibraryProjection.catalog.rows;
+                                            const acpCatalog = await fetchAccountEncryptionAcpCatalogMigrationCandidate({
+                                                credentials, mode: currentness.mode, request: homeRequest, assertCurrent: requireCurrentScope,
+                                            });
+                                            const mcpServerCatalog = await fetchAccountEncryptionMcpServerCatalogMigrationCandidate({
+                                                credentials, mode: currentness.mode, request: homeRequest, assertCurrent: requireCurrentScope,
+                                            });
+                                            const providerCatalog = await readProviderCatalog(capturedRequest.scope, undefined, requireCurrentScope);
+                                            requireCurrentScope();
+                                            if (providerCatalog.status !== 'ready') {
+                                                throw new Error('Provider catalog migration census is unavailable');
+                                            }
+                                            const providerConnections = await fetchAccountEncryptionProviderConnectionsMigrationCandidate({
+                                                credentials, mode: currentness.mode, request: homeRequest,
+                                            });
+                                            requireCurrentScope();
+                                            const connectedCatalogs = await fetchAccountEncryptionConnectedAccountCatalogMigrationCandidates({
+                                                credentials, mode: currentness.mode, request: homeRequest, assertCurrent: requireCurrentScope,
+                                            });
+                                            requireCurrentScope();
+                                            const projectTrust = await fetchAccountEncryptionProjectTrustMigrationCandidates({ credentials, mode: currentness.mode, request: homeRequest });
+                                            requireCurrentScope();
+                                            const entityCatalogs = await fetchAccountEncryptionEntityCatalogMigrationCandidates({
+                                                credentials, mode: currentness.mode, capturedRequest,
+                                            });
+                                            requireCurrentScope();
+                                            // Catalog admission can atomically transfer retained roots and
+                                            // advance Settings; capture its conversion revision only afterward.
+                                            const settingsBaseline = await readAccountSettingsBaseline({
+                                                credentials, encryption: sourceEncryption, accountMode: currentness.mode,
+                                                request: homeRequest,
+                                            });
+                                            requireCurrentScope();
+                                            const rawSettings = settingsBaseline.raw ?? {};
+                                            const settings = settingsParse(rawSettings);
+                                            const expectedSettingsVersion = settingsBaseline.version;
                                             let request: AccountEncryptionMigrateRequest = nextMode === 'plain'
                                                 ? await buildAccountEncryptionMigrateToPlainRequest({
                                                     credentials,
@@ -590,13 +647,24 @@ export const AccountEncryptionSettingsSection = React.memo(function AccountEncry
                                                             .contentKeyFingerprint,
                                                     storageDirectives,
                                                     expectedSettingsVersion,
-                                                    settings: settingsSnapshot.settings,
+                                                    settings,
+                                                    rawSettings,
                                                     connectedServiceProfiles,
                                                     qualifiedConnectedAccounts:
                                                         profile.connectedAccountsV4,
                                                     automations,
                                                     sessionDrafts,
                                                     authoringMemory,
+                                                    projectRows,
+                                                    workspaceExecutionConfig,
+                                                    profileRows,
+                                                    promptLibrary,
+                                                    acpCatalog,
+                                                    mcpServerCatalog,
+                                                    providerConnections,
+                                                    ...entityCatalogs,
+                                                    ...connectedCatalogs,
+                                                    projectTrust,
                                                     fetchConnectedServiceCredentialSealed: async ({ serviceId, profileId }) =>
                                                         await getConnectedServiceCredentialSealed(credentials, { serviceId, profileId }, { request: homeRequest }),
                                                     fetchQualifiedConnectedAccountCredential: async (ref) =>
@@ -622,13 +690,24 @@ export const AccountEncryptionSettingsSection = React.memo(function AccountEncry
                                                             .contentKeyFingerprint,
                                                     storageDirectives,
                                                     expectedSettingsVersion,
-                                                    settings: settingsSnapshot.settings,
+                                                    settings,
+                                                    rawSettings,
                                                     connectedServiceProfiles,
                                                     qualifiedConnectedAccounts:
                                                         profile.connectedAccountsV4,
                                                     automations,
                                                     sessionDrafts,
                                                     authoringMemory,
+                                                    projectRows,
+                                                    workspaceExecutionConfig,
+                                                    profileRows,
+                                                    promptLibrary,
+                                                    acpCatalog,
+                                                    mcpServerCatalog,
+                                                    providerConnections,
+                                                    ...entityCatalogs,
+                                                    ...connectedCatalogs,
+                                                    projectTrust,
                                                     keyProof:
                                                         preparedE2eeKey!
                                                             .keyProof,

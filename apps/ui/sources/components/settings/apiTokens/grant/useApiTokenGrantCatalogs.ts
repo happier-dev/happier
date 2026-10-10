@@ -9,6 +9,7 @@ import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useProviderSettingsTarget } from '@/providers/hooks/targetMachine';
 import { useProviderModelProjection } from '@/providers/hooks/useProviderModelProjection';
 import { useSetting } from '@/sync/domains/state/storage';
+import { useAcpCatalog } from '@/sync/store/useAcpCatalog';
 import { t } from '@/text';
 
 import {
@@ -52,11 +53,11 @@ const NO_PROVIDER_GROUPS: readonly ApiTokenGrantProviderModelGroup[] = Object.fr
  * names that this client does not have enabled (so that ref stays visible and removable).
  */
 export function useApiTokenGrantModelAgents(granted: readonly ProviderBoundModelRef[] | null): readonly ApiTokenGrantModelAgent[] {
-    const acpCatalogSettingsV1 = useSetting('acpCatalogSettingsV1');
+    const { snapshot: acpCatalog } = useAcpCatalog();
     const backendEnabledByTargetKey = useSetting('backendEnabledByTargetKey');
     const enabledAgents = React.useMemo(() => getResolvedBackendCatalogEntries({
         enabledAgentIds: getEnabledAgentIds({ backendEnabledByTargetKey }),
-        acpCatalogSettingsV1,
+        acpCatalogSnapshot: acpCatalog?.catalog,
         backendEnabledByTargetKey,
     }).map((entry): ApiTokenGrantModelAgent => {
         const agentId = entry.agentCatalogEntry.catalogAgentId;
@@ -66,7 +67,7 @@ export function useApiTokenGrantModelAgents(granted: readonly ProviderBoundModel
             title: entry.agentCatalogEntry.title,
             nativeModels: agentId ? readStaticModels(agentId) : NO_NATIVE_MODELS,
         };
-    }), [acpCatalogSettingsV1, backendEnabledByTargetKey]);
+    }), [acpCatalog, backendEnabledByTargetKey]);
     return React.useMemo(() => {
         const known = new Set(enabledAgents.map((agent) => agent.agentTargetKey));
         const orphans: ApiTokenGrantModelAgent[] = [];

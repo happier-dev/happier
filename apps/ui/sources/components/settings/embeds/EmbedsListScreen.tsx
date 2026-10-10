@@ -4,7 +4,7 @@ import { RefreshControl } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 
-import { resolveApiTokenListPresentation } from '@/components/settings/apiTokens/apiTokenSettingsPresentation';
+import { resolveApiTokenListPresentation, resolveApiTokenOperationErrorMessageKey } from '@/components/settings/apiTokens/apiTokenSettingsPresentation';
 import { useApiTokenSettingsScopeController } from '@/components/settings/apiTokens/collection/ApiTokenSettingsScope';
 import { useApiTokenSettingsClock } from '@/components/settings/apiTokens/useApiTokenSettingsClock';
 import { useApiTokenSettingsControllerState } from '@/components/settings/apiTokens/useApiTokenSettingsControllerState';
@@ -14,6 +14,7 @@ import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
+import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { t } from '@/text';
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
@@ -26,7 +27,8 @@ import { useEmbedSummaryNames } from './useEmbedSummaryNames';
 
 /**
  * `/settings/embeds` as a page (plan 04 §6.2): the page header with its one primary ("New embed"),
- * the embeds as rows, or the empty state that invites the first one. Refresh keeps the rows.
+ * the embeds as rows, or the empty state that invites the first one. Refresh keeps the rows; a failed
+ * refresh keeps them too and says so in one freshness line with Retry (lab L3).
  */
 export const EmbedsListScreen = React.memo(function EmbedsListScreen() {
     const { theme } = useUnistyles();
@@ -45,6 +47,7 @@ export const EmbedsListScreen = React.memo(function EmbedsListScreen() {
     const openNew = React.useCallback(() => push(EMBEDS_NEW_PATH, 'EmbedsListScreen.new'), [push]);
     const openEmbed = React.useCallback((token: AccountApiTokenSummaryV1) => push(embedDetailPath(token.tokenId), 'EmbedsListScreen.open'), [push]);
     const empty = presentation === 'empty' || presentation === 'emptyWithRetry';
+    const stale = presentation === 'listWithRetry' || presentation === 'emptyWithRetry';
 
     return (
         <ItemList
@@ -60,6 +63,17 @@ export const EmbedsListScreen = React.memo(function EmbedsListScreen() {
                 description={t('settingsEmbeds.purpose')}
                 primaryAction={empty ? undefined : { title: t('settingsEmbeds.newEmbed'), testID: 'settings-embeds-new', onPress: openNew }}
             />
+            {stale ? (
+                // Under the header, in the page column, without a sheet of its own.
+                <ItemGroup surface="none">
+                    <SurfaceFreshnessLine
+                        testID="settings-embeds-refresh-stale"
+                        reason={t(resolveApiTokenOperationErrorMessageKey(state.listError))}
+                        busy={state.isRefreshing}
+                        action={state.isRefreshing ? undefined : { label: t('common.retry'), onPress: () => void controller.refresh() }}
+                    />
+                </ItemGroup>
+            ) : null}
             {presentation === 'skeleton' ? (
                 <ItemGroup title={t('settingsEmbeds.yourEmbeds')}>
                     <ItemLoadStateRows testID="settings-embeds-skeleton" state={{ kind: 'loading' }} rows={3} lines={2}

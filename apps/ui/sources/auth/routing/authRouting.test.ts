@@ -106,6 +106,9 @@ describe('isPublicRouteForUnauthenticated', () => {
                 expect(isPublicRouteForUnauthenticated(['(app)', 'dev', 'prompts', 'other'])).toBe(false);
                 expect(isPublicRouteForUnauthenticated(['(app)', 'dev', 'scripts'])).toBe(true);
                 expect(isPublicRouteForUnauthenticated(['(app)', 'dev', 'scripts', 'other'])).toBe(false);
+                expect(isPublicRouteForUnauthenticated(['(app)', 'dev', 'soft-surfaces'])).toBe(true);
+                expect(isPublicRouteForUnauthenticated(['dev', 'soft-surfaces'])).toBe(true);
+                expect(isPublicRouteForUnauthenticated(['(app)', 'dev', 'soft-surfaces', 'other'])).toBe(false);
                 // Only the exact fixture specimens: other dev screens read the signed-in account.
                 expect(isPublicRouteForUnauthenticated(['(app)', 'dev', 'logs'])).toBe(false);
             });
@@ -118,6 +121,7 @@ describe('isPublicRouteForUnauthenticated', () => {
                 expect(isPublicRouteForUnauthenticated(['(app)', 'dev', 'find'])).toBe(false);
                 expect(isPublicRouteForUnauthenticated(['(app)', 'dev', 'prompts'])).toBe(false);
                 expect(isPublicRouteForUnauthenticated(['(app)', 'dev', 'scripts'])).toBe(false);
+                expect(isPublicRouteForUnauthenticated(['(app)', 'dev', 'soft-surfaces'])).toBe(false);
                 expect(isPublicRouteForUnauthenticated(['(app)', 'dev', 'stage-dperf'])).toBe(false);
                 expect(isPublicRouteForUnauthenticated(['(app)', 'dev', 'terminal-qa'])).toBe(false);
             });
@@ -128,6 +132,7 @@ describe('isPublicRouteForUnauthenticated', () => {
                 expect(isPublicRouteForUnauthenticated(['(app)', 'dev', 'stage-dperf'])).toBe(true);
                 expect(isPublicRouteForUnauthenticated(['(app)', 'dev', 'terminal-qa'])).toBe(true);
                 expect(isPublicRouteForUnauthenticated(['(app)', 'dev', 'changes'])).toBe(true);
+                expect(isPublicRouteForUnauthenticated(['(app)', 'dev', 'soft-surfaces'])).toBe(true);
             });
         });
     });

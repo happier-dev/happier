@@ -37,6 +37,16 @@ const stylesheet = StyleSheet.create((theme) => ({
         flex: 1,
         color: theme.colors.text.secondary,
     },
+    page: {
+        flex: 1,
+        minHeight: 0,
+    },
+    pageFrame: {
+        flex: 1,
+        minHeight: 0,
+        overflow: 'hidden',
+        backgroundColor: theme.colors.background.canvas,
+    },
     frame: {
         height: PREVIEW_HEIGHT_PX,
         borderRadius: theme.borderRadius.xl,
@@ -75,21 +85,30 @@ export function EmbedLivePreview(props: Readonly<{
     style: EmbedStyleV1 | null;
     ui: EmbedUiOverridesV1;
     newChat: boolean;
-    presentation?: 'interactive' | 'illustration';
+    /**
+     * `interactive` (default): the framed widget with its Phone/Desktop toolbar beside the settings.
+     * `page`: the pushed phone preview (lab P3), the chat filling the page at its own width.
+     * `illustration`: the empty state's passive compact art.
+     */
+    presentation?: 'interactive' | 'page' | 'illustration';
     /** An unsaved access edit: show what open chats show while they reconnect (lab D2). */
     reconnecting?: boolean;
 }>): React.ReactElement {
     const styles = stylesheet;
+    const page = props.presentation === 'page';
     const interactive = props.presentation !== 'illustration';
-    const height = interactive ? PREVIEW_HEIGHT_PX : ILLUSTRATION_HEIGHT_PX;
+    // The framed widget carries the width toolbar and preview controls; a full page is only the chat.
+    const widget = interactive && !page;
+    const [pageHeight, setPageHeight] = React.useState(PREVIEW_HEIGHT_PX);
+    const height = page ? pageHeight : interactive ? PREVIEW_HEIGHT_PX : ILLUSTRATION_HEIGHT_PX;
     const [columnWidth, setColumnWidth] = React.useState(interactive ? 344 : ILLUSTRATION_WIDTH_PX);
     const [width, setWidth] = React.useState<PreviewWidth>('phone');
     const [reduceMotion, setReduceMotion] = React.useState(false);
     const identity = React.useMemo(() => ({ instanceId: randomUUID(), mountNonce: randomUUID() }), []);
     const configuration = React.useMemo<EmbedPreviewConfiguration>(() => ({ style: props.style, ui: props.ui }), [props.style, props.ui]);
 
-    const frameWidth = PREVIEW_FRAME_WIDTH[width];
-    const scale = Math.min(1, columnWidth / frameWidth);
+    const frameWidth = page ? columnWidth : PREVIEW_FRAME_WIDTH[width];
+    const scale = page ? 1 : Math.min(1, columnWidth / frameWidth);
     const path = `${EMBED_PREVIEW_PATH}?${buildEmbedPreviewSearch({ identity, reduceMotion: !interactive || reduceMotion, newChat: props.newChat, reconnecting: props.reconnecting === true })}`;
     // A failure belongs to the route it happened on; the next route gets its own attempt. It never
     // blocks saving: the preview only says it cannot show (plan 04 §6.2).
@@ -97,8 +116,15 @@ export function EmbedLivePreview(props: Readonly<{
     const markUnavailable = React.useCallback(() => setUnavailablePath(path), [path]);
 
     return (
-        <View style={[styles.column, !interactive ? { width: ILLUSTRATION_WIDTH_PX } : null]} onLayout={(event) => setColumnWidth(event.nativeEvent.layout.width)} testID="settings-embed-preview">
-            {interactive ? <View style={styles.toolbar}>
+        <View
+            style={page ? styles.page : [styles.column, !interactive ? { width: ILLUSTRATION_WIDTH_PX } : null]}
+            onLayout={(event) => {
+                setColumnWidth(event.nativeEvent.layout.width);
+                if (page) setPageHeight(event.nativeEvent.layout.height);
+            }}
+            testID="settings-embed-preview"
+        >
+            {widget ? <View style={styles.toolbar}>
                 <Text style={styles.caption}>{t('settingsEmbeds.preview.title')}</Text>
                 <SegmentedTabBar<PreviewWidth>
                     testIDPrefix="settings-embed-preview-width"
@@ -113,7 +139,7 @@ export function EmbedLivePreview(props: Readonly<{
                     onSelectTab={setWidth}
                 />
             </View> : null}
-            <View style={[styles.frame, { height }]} pointerEvents={interactive ? 'auto' : 'none'} importantForAccessibility={interactive ? 'auto' : 'no-hide-descendants'} accessibilityElementsHidden={!interactive}>
+            <View style={page ? styles.pageFrame : [styles.frame, { height }]} pointerEvents={interactive ? 'auto' : 'none'} importantForAccessibility={interactive ? 'auto' : 'no-hide-descendants'} accessibilityElementsHidden={!interactive}>
                 {unavailablePath === path ? (
                     <View style={styles.unavailable} testID="settings-embed-preview-unavailable">
                         <Text style={styles.unavailableText}>{t('settingsEmbeds.preview.unavailable')}</Text>
@@ -133,7 +159,7 @@ export function EmbedLivePreview(props: Readonly<{
                     />
                 )}
             </View>
-            {interactive ? <View style={styles.footer}>
+            {widget ? <View style={styles.footer}>
                 <Text style={styles.note}>{t('settingsEmbeds.preview.reduceMotion')}</Text>
                 <Switch
                     testID="settings-embed-preview-reduce-motion"
@@ -142,7 +168,7 @@ export function EmbedLivePreview(props: Readonly<{
                     onValueChange={setReduceMotion}
                 />
             </View> : null}
-            {interactive ? <Text style={styles.note}>{t('settingsEmbeds.preview.note')}</Text> : null}
+            {widget ? <Text style={styles.note}>{t('settingsEmbeds.preview.note')}</Text> : null}
         </View>
     );
 }

@@ -22,56 +22,56 @@ export const EMBED_SETTINGS = defineSettingsPage({
         sites: {
             titleKey: 'settingsEmbeds.sites.title',
             settings: {
-                sites: { titleKey: 'settingsEmbeds.sites.title', descriptionKey: 'settingsEmbeds.sites.description' },
+                sites: {},
             },
         },
         capabilities: {
             titleKey: 'settingsEmbeds.capabilities.title',
             settings: {
-                send: { titleKey: 'settingsEmbeds.capabilities.send', descriptionKey: 'settingsEmbeds.capabilities.sendDescription' },
-                approve: { titleKey: 'settingsApiTokens.grant.approve.title', descriptionKey: 'settingsEmbeds.capabilities.approveOn' },
-                changeModel: { titleKey: 'settingsEmbeds.capabilities.changeModel' },
-                permissionModes: { titleKey: 'settingsEmbeds.capabilities.permissionModes', descriptionKey: 'settingsEmbeds.capabilities.permissionModesDescription' },
+                send: {},
+                approve: {},
+                changeModel: {},
+                permissionModes: {},
             },
         },
         models: {
             titleKey: 'settingsEmbeds.models.title',
             settings: {
                 // The section's description already says what the restriction does; the row repeats nothing.
-                allowedModels: { titleKey: 'settingsEmbeds.models.allowed', keywordKeys: ['settingsEmbeds.models.description'] },
+                allowedModels: {},
             },
         },
         organization: {
             titleKey: 'settingsEmbeds.organization.title',
             settings: {
-                folder: { titleKey: 'settingsEmbeds.organization.folder' },
-                tags: { titleKey: 'settingsEmbeds.organization.tags' },
+                folder: {},
+                tags: {},
             },
         },
         composer: {
             titleKey: 'settingsEmbeds.composer.title',
             settings: {
-                attachments: { titleKey: 'settingsEmbeds.composer.attachments', descriptionKey: 'settingsEmbeds.composer.attachmentsDescription' },
+                attachments: {},
             },
         },
         sessions: {
             titleKey: 'settingsEmbeds.sessions.title',
             settings: {
-                createSessions: { titleKey: 'settingsEmbeds.sessions.allow', keywordKeys: ['settingsEmbeds.sessions.computer', 'settingsEmbeds.sessions.agent'] },
-                newChat: { titleKey: 'settingsEmbeds.sessions.newChat', descriptionKey: 'settingsEmbeds.sessions.newChatDescription' },
+                createSessions: {},
+                newChat: {},
             },
         },
         appearance: {
             titleKey: 'settingsEmbeds.appearance.title',
             settings: {
-                mode: { titleKey: 'settingsEmbeds.appearance.mode' },
-                theme: { titleKey: 'settingsEmbeds.appearance.theme' },
-                colors: { titleKey: 'settingsEmbeds.appearance.colors' },
-                fontFamily: { titleKey: 'settingsEmbeds.appearance.fontFamily' },
-                fontFile: { titleKey: 'settingsEmbeds.appearance.fontFile', descriptionKey: 'settingsEmbeds.appearance.fontFileDescription' },
-                textSize: { titleKey: 'settingsEmbeds.appearance.textSize' },
-                corners: { titleKey: 'settingsEmbeds.appearance.corners' },
-                density: { titleKey: 'settingsEmbeds.appearance.density' },
+                mode: {},
+                theme: {},
+                colors: {},
+                fontFamily: {},
+                fontFile: {},
+                textSize: {},
+                corners: {},
+                density: {},
             },
         },
     },

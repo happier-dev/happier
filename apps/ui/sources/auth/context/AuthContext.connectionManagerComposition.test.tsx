@@ -2,9 +2,13 @@ import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { AUTHORING_MEMORY_ROUTE_V1, AuthoringMemoryListResponseV1Schema } from '@happier-dev/protocol';
-import { PROJECT_ACCOUNT_ROWS_ROUTE_V1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
+import { PROJECT_ACCOUNT_ROWS_ROUTE_V1, ProjectAccountRowListResponseV1Schema } from '@happier-dev/protocol/projects/projectAccountRowsV1';
+import tweetnacl from 'tweetnacl';
+import { createAccountScopedCryptoMaterialSnapshotV1 } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
+import { encodeBase64 } from '@/encryption/base64';
 
-import { createDeferred, renderScreen } from '@/dev/testkit';
+import { createDeferred, flushHookEffects, renderScreen } from '@/dev/testkit';
 import { installTokenStorageWebPlatformMocks } from '@/auth/storage/tokenStorage.testHelpers';
 import { installLocalStorageMock, installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
@@ -31,6 +35,138 @@ describe('AuthContext with the production connection manager', () => {
         restoreLocks?.();
         restoreStorage?.();
         vi.unstubAllGlobals();
+    });
+
+    it('reapplies valid E2EE material when the same Account bearer changes its content key', async () => {
+        restoreStorage = installLocalStorageMock().restore;
+        restoreLocks = installWebLockManagerMock().restore;
+        vi.stubGlobal('window', { location: { origin: 'https://origin.example.test' } });
+        vi.stubGlobal('document', {});
+        const token = 'e30.eyJzdWIiOiJhY2NvdW50LWEifQ.same-bearer';
+        const credentialsFor = (seed: number) => {
+            const pair = tweetnacl.box.keyPair.fromSecretKey(new Uint8Array(32).fill(seed));
+            const material = createAccountScopedCryptoMaterialSnapshotV1({ accountEncryptionMode: 'e2ee',
+                material: { type: 'dataKey', machineKey: pair.secretKey }, dataKeyPublicKey: pair.publicKey });
+            return { credentials: { token, encryption: { publicKey: encodeBase64(pair.publicKey), machineKey: encodeBase64(pair.secretKey) } },
+                fingerprint: convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1(material.contentPublicKeyFingerprint) };
+        };
+        const original = credentialsFor(7);
+        const refreshed = credentialsFor(8);
+        let binding = original;
+        const mode = createDeferred<Response>();
+        let holdMode = false;
+        const { setRuntimeFetch } = await import('@/utils/system/runtimeFetch');
+        setRuntimeFetch(async input => {
+            const url = new URL(String(input));
+            if (url.origin !== 'https://material.example.test') throw new Error(`Unexpected Home: ${url.origin}`);
+            if (url.pathname === '/health' || url.pathname === '/v1/auth/ping') return Response.json({ ok: true });
+            if (url.pathname === '/v1/account/encryption') return holdMode ? mode.promise : Response.json({ mode: 'e2ee', updatedAt: 1 });
+            if (url.pathname === '/v1/account/encryption/currentness') return Response.json({ mode: 'e2ee', version: 1,
+                signingKeyFingerprint: null, contentKeyFingerprint: binding.fingerprint, updatedAt: 1,
+                recipientEnvelopeReadiness: { status: 'available' } });
+            if (url.pathname === '/v2/account/settings') return Response.json({ content: null, version: 0 });
+            if (url.pathname === AUTHORING_MEMORY_ROUTE_V1) return Response.json(AuthoringMemoryListResponseV1Schema.parse({ rows: [] }));
+            if (url.pathname === `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`) return Response.json(ProjectAccountRowListResponseV1Schema.parse({
+                status: 'listed', coverage: 'complete', rows: [],
+            }));
+            if (url.pathname === '/v1/features') return Response.json(createRootLayoutFeaturesResponse());
+            return new Response('{}', { status: 404 });
+        });
+        const profiles = await import('@/sync/domains/server/serverProfiles');
+        const home = await profiles.upsertServerProfile({ serverUrl: 'https://material.example.test' });
+        await profiles.setActiveServerId(home.id, { scope: 'device' });
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        expect(await TokenStorage.setCredentialsForServerUrl(home.serverUrl, { serverId: home.id }, original.credentials)).toBe(true);
+        const connection = await import('@/sync/runtime/orchestration/connectionManager');
+        await connection.switchConnectionToActiveServer();
+        const { storage } = await import('@/sync/domains/state/storage');
+        storage.getState().activateProfileScope({ serverId: profiles.resolveServerProfileScopeIdForIdentifier(home.id), accountId: 'account-a' });
+        const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        if (!lifetime) throw new Error('Expected current E2EE Account owner');
+        binding = refreshed;
+        expect(await TokenStorage.setCredentialsForServerUrl(home.serverUrl, { serverId: home.id }, refreshed.credentials)).toBe(true);
+        holdMode = true;
+        const switching = connection.switchConnectionToActiveServer();
+        try {
+            await flushHookEffects({ cycles: 30 });
+            expect(lifetime.isCurrent()).toBe(false);
+            mode.resolve(Response.json({ mode: 'e2ee', updatedAt: 1 }));
+            expect(await switching).toEqual(refreshed.credentials);
+            expect(connection.isAppliedActiveServerRuntimeAvailable()).toBe(true);
+        } finally {
+            mode.resolve(Response.json({ mode: 'e2ee', updatedAt: 1 }));
+            await switching;
+        }
+    });
+
+    it('retires changed same-Home credentials before disclosure and recaptures Auth without retiring an identical write', async () => {
+        restoreStorage = installLocalStorageMock().restore;
+        restoreLocks = installWebLockManagerMock().restore;
+        vi.stubGlobal('window', { location: { origin: 'https://origin.example.test' } });
+        vi.stubGlobal('document', {});
+        const mode = createDeferred<Response>();
+        let holdMode = false;
+        const { setRuntimeFetch } = await import('@/utils/system/runtimeFetch');
+        setRuntimeFetch(async input => {
+            const url = new URL(String(input));
+            if (url.origin !== 'https://credential.example.test') throw new Error(`Unexpected Home: ${url.origin}`);
+            if (url.pathname === '/health' || url.pathname === '/v1/auth/ping') return Response.json({ ok: true });
+            if (url.pathname === '/v1/account/encryption') return holdMode ? mode.promise : Response.json({ mode: 'plain', updatedAt: 1 });
+            if (url.pathname === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
+            if (url.pathname === '/v2/account/settings') return Response.json({ content: null, version: 0 });
+            if (url.pathname === AUTHORING_MEMORY_ROUTE_V1) return Response.json(AuthoringMemoryListResponseV1Schema.parse({ rows: [] }));
+            if (url.pathname === `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`) return Response.json(createPlainProjectAccountRowListFixture());
+            if (url.pathname === '/v1/features') return Response.json(createRootLayoutFeaturesResponse({ features: {
+                encryption: { plaintextStorage: { enabled: true } }, e2ee: { keylessAccounts: { enabled: true } },
+            } }));
+            return new Response('{}', { status: 404 });
+        });
+        const profiles = await import('@/sync/domains/server/serverProfiles');
+        const home = await profiles.upsertServerProfile({ serverUrl: 'https://credential.example.test' });
+        await profiles.setActiveServerId(home.id, { scope: 'device' });
+        const original = { token: 'e30.eyJzdWIiOiJhY2NvdW50LWEifQ.original' };
+        const refreshed = { token: 'e30.eyJzdWIiOiJhY2NvdW50LWEifQ.refreshed' };
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        expect(await TokenStorage.setCredentialsForServerUrl(home.serverUrl, { serverId: home.id }, original)).toBe(true);
+        const connection = await import('@/sync/runtime/orchestration/connectionManager');
+        await connection.switchConnectionToActiveServer();
+        const { storage } = await import('@/sync/domains/state/storage');
+        storage.getState().activateProfileScope({ serverId: profiles.resolveServerProfileScopeIdForIdentifier(home.id), accountId: 'account-a' });
+        const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        if (!lifetime) throw new Error('Expected current Account owner');
+        const { AuthProvider, getCurrentAuth } = await import('./AuthContext');
+        const screen = await renderScreen(React.createElement(AuthProvider, {
+            initialCredentials: original, children: React.createElement(React.Fragment, null),
+        }));
+        const reapplied = createDeferred<void>();
+        const release = connection.subscribeAppliedActiveServerRuntimeAvailability(available => {
+            if (available) reapplied.resolve();
+        });
+        try {
+            await act(async () => {
+                expect(await TokenStorage.setCredentialsForServerUrl(home.serverUrl, { serverId: home.id }, { ...original })).toBe(true);
+            });
+            expect(captureActiveServerAccountScopeLifetime()).toBe(lifetime);
+            expect(lifetime.isCurrent()).toBe(true);
+            holdMode = true;
+            expect(await TokenStorage.setCredentialsForServerUrl(home.serverUrl, { serverId: home.id }, refreshed)).toBe(true);
+            expect(lifetime.isCurrent()).toBe(false);
+            expect(connection.isAppliedActiveServerRuntimeAvailable()).toBe(false);
+            mode.resolve(Response.json({ mode: 'plain', updatedAt: 1 }));
+            await act(async () => { await reapplied.promise; });
+            await flushHookEffects({ cycles: 30 });
+            expect(getCurrentAuth()).toMatchObject({ isAuthenticated: true, credentials: refreshed });
+            const replacement = captureActiveServerAccountScopeLifetime();
+            expect(replacement).not.toBe(lifetime);
+            expect(replacement?.isCurrent()).toBe(true);
+            expect(replacement?.scope).toEqual(lifetime.scope);
+        } finally {
+            mode.resolve(Response.json({ mode: 'plain', updatedAt: 1 }));
+            release();
+            await screen.unmount();
+        }
     });
 
     it('keeps Home B credentials when B is requested while Home A already-applied credentials are still loading', async () => {

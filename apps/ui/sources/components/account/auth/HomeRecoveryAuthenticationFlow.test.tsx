@@ -39,6 +39,8 @@ async function createRecoveryHome() {
         const url = new URL(String(input));
         state.requests.push(url);
         if (url.origin !== fixture.home.canonicalServerUrl) return new Response('{}', { status: 404 });
+        // The real explicit-Home request owner admits HTTP through its health probe.
+        if (url.pathname === '/health') return Response.json({ status: 'ok' });
         if (url.pathname === '/v1/features' && !state.featureReady) return Response.json({ invalid: true });
         if (url.pathname === '/v1/auth/entry' && !state.entryReady) return Response.json({ v: 999 });
         if (url.pathname === '/v1/features' || url.pathname === '/v1/auth/entry') return fixture.request(url.origin, url.pathname + url.search, init);
@@ -64,7 +66,8 @@ describe('HomeRecoveryAuthenticationFlow', () => {
     it('shows the exact saved Home methods even while another Home is focused', async () => {
         const { selected, fixture, state, focused } = await createRecoveryHome();
         const screen = await renderRecovery(selected.id);
-        await vi.waitFor(() => expect(screen.findByTestId('home-auth-key_challenge-login-keyed')).not.toBeNull());
+        await vi.waitFor(() => expect(screen.findByTestId('home-auth-key_challenge-login-keyed'),
+            `${screen.getTextContent()} ${JSON.stringify(state.requests.map(url => url.href))}`).not.toBeNull());
         const flow = screen.findByType(HomeAuthenticationFlow);
         expect(flow.props.target).toEqual({ kind: 'saved_profile', profileRef: selected.id });
         expect(flow.props.actions).toEqual([expect.objectContaining({

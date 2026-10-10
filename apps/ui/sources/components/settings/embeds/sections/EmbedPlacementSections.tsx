@@ -25,6 +25,7 @@ import { buildSessionFolderWorkspaceTargets, selectAvailableSessionFolders } fro
 import { buildSessionOrganizationListViewState } from '@/sync/domains/session/organization/viewState';
 import { buildSessionOrganizationTagLabelById } from '@/sync/domains/session/organization/tagLabels';
 import { useAllMachines, useSessionOrganizationProjection, useSetting } from '@/sync/store/hooks';
+import { useAcpCatalogForServer } from '@/sync/store/useAcpCatalog';
 import { t } from '@/text';
 
 import { selectEmbedAgentOptions } from '../embedAgentOptions';
@@ -154,7 +155,7 @@ export const EmbedOrganizationSection = React.memo(function EmbedOrganizationSec
  * enabled agents, narrowed to what that computer reports installed (the machine agent inventory).
  */
 function useEmbedAgentOptions(input: Readonly<{ serverId: string | null; machineId: string | null; selectedAgentTargetKey: string | null; refresh: boolean }>) {
-    const acpCatalogSettingsV1 = useSetting('acpCatalogSettingsV1');
+    const { snapshot: acpCatalog } = useAcpCatalogForServer(input.serverId);
     const backendEnabledByTargetKey = useSetting('backendEnabledByTargetKey');
     const inventories = useMachineAgentsByMachine({
         serverId: input.serverId ?? '',
@@ -164,9 +165,9 @@ function useEmbedAgentOptions(input: Readonly<{ serverId: string | null; machine
     const inventory = (input.machineId ? inventories.get(input.machineId) : undefined) ?? EMPTY_MACHINE_AGENTS;
     const entries = React.useMemo(() => getResolvedBackendCatalogEntries({
         enabledAgentIds: getEnabledAgentIds({ backendEnabledByTargetKey }),
-        acpCatalogSettingsV1,
+        acpCatalogSnapshot: acpCatalog?.catalog,
         backendEnabledByTargetKey,
-    }), [acpCatalogSettingsV1, backendEnabledByTargetKey]);
+    }), [acpCatalog, backendEnabledByTargetKey, input.serverId]);
     return React.useMemo(
         () => selectEmbedAgentOptions(entries, inventory, input.selectedAgentTargetKey),
         [entries, input.selectedAgentTargetKey, inventory],
@@ -253,6 +254,7 @@ export const EmbedSessionsSection = React.memo(function EmbedSessionsSection(pro
                             icon: <AgentCatalogIdentityIcon entry={entry.agentCatalogEntry} machineId={create.machineId} serverId={props.serverId} current={false} size={18} />,
                         }))}
                         onSelect={(agentTargetKey) => {
+                            if (props.disabled || !agents.some(entry => entry.backendTargetKey === agentTargetKey)) return;
                             setAgentOpen(false);
                             onChange(setEmbedSessions(draft, { machineId: create.machineId, agentTargetKey }));
                         }}

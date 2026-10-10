@@ -9,6 +9,17 @@ import { AES256Encryption } from '@/sync/encryption/encryptor';
 import { createEncryptionFromAuthCredentials } from './createEncryptionFromAuthCredentials';
 
 describe('createEncryptionFromAuthCredentials', () => {
+    it.each([
+        { token: 'legacy-material-token', secret: encodeBase64(new Uint8Array(31), 'base64url') },
+        { token: 'data-key-material-token', encryption: {
+            publicKey: encodeBase64(new Uint8Array(31)), machineKey: encodeBase64(new Uint8Array(32)),
+        } },
+    ] as const)('classifies malformed Account material as typed unavailable', async credentials => {
+        await expect(createEncryptionFromAuthCredentials(credentials)).rejects.toMatchObject({
+            code: 'encryption-material-unavailable',
+        });
+    });
+
     it('rejects token-only credentials instead of inventing Account encryption material', async () => {
         await expect(createEncryptionFromAuthCredentials({
             token: 'plain-account-token',

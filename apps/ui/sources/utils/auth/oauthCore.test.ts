@@ -3,6 +3,29 @@ import { describe, expect, it } from 'vitest';
 import { parseOauthCallbackUrl } from './oauthCore';
 
 describe('parseOauthCallbackUrl', () => {
+  it('recognizes an explicitly permitted raw authorization code without inventing returned state', () => {
+    expect(parseOauthCallbackUrl({
+      url: '  synthetic-google-code/with+punctuation  ',
+      redirectUri: 'https://antigravity.google/oauth-callback',
+      allowRawAuthorizationCode: true,
+    })).toEqual({ code: 'synthetic-google-code/with+punctuation', rawAuthorizationCode: true });
+    expect(parseOauthCallbackUrl({
+      url: 'synthetic-google-code/with+punctuation',
+      redirectUri: 'https://antigravity.google/oauth-callback',
+    })).toEqual({});
+  });
+
+  it.each([
+    'https://foreign.example/oauth-callback?code=synthetic-code&state=foreign-state',
+    'https://antigravity.google/other?code=synthetic-code&state=foreign-state',
+    '?code=synthetic-code',
+    'code=synthetic-code',
+    'synthetic-code#',
+    'paste this synthetic-code',
+  ])('never interprets a callback or malformed paste as a raw code: %s', (url) => {
+    expect(parseOauthCallbackUrl({ url, redirectUri: 'https://antigravity.google/oauth-callback', allowRawAuthorizationCode: true })).not.toHaveProperty('rawAuthorizationCode');
+  });
+
   it('extracts code/state from a matching redirect URL', () => {
     const res = parseOauthCallbackUrl({
       url: 'http://localhost:54545/callback?code=abc&state=st1',

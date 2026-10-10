@@ -3,7 +3,7 @@ import * as React from 'react';
 import { Platform, View, type NativeSyntheticEvent, type TextInputKeyPressEventData } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import { FieldItem } from '@/components/ui/forms/FieldItem';
+import { FieldItem, type FieldItemProps } from '@/components/ui/forms/FieldItem';
 import { FIELD_BOX_METRICS, fieldBoxShapeStyle, resolveFieldBoxColors } from '@/components/ui/forms/fieldBox';
 import { useListPresentation } from '@/components/ui/lists/listPresentation';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -19,6 +19,7 @@ const REVEAL_TARGET = Platform.select({ ios: 44, android: 48, default: 40 })!;
 export type PasswordFieldProps = Readonly<{
     testID: string;
     label: string;
+    labelStyle?: FieldItemProps['labelStyle'];
     value: string;
     onChangeText: (value: string) => void;
     /**
@@ -70,6 +71,7 @@ export const PasswordField = React.memo(function PasswordField(props: PasswordFi
     return (
         <FieldItem
             label={props.label}
+            labelStyle={props.labelStyle}
             supportingText={props.supportingText
                 ? <Text nativeID={supportingId} testID={supportingId} style={styles.supporting}>{props.supportingText}</Text>
                 : undefined}

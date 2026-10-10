@@ -56,11 +56,17 @@ import { formatApiTokenAccessSummary, buildApiTokenAccessSummaryParts } from '..
  * through untouched.
  */
 
-type Picker = 'actions' | 'targets' | 'models';
+export type ApiTokenGrantPicker = 'actions' | 'targets' | 'models';
 
 export type ApiTokenGrantEditorProps = Readonly<{
     value: ApiTokenGrantV1;
     onChange: (next: ApiTokenGrantV1) => void;
+    /**
+     * The open picker, held by the container whose footer it changes: while a picker is open the
+     * container's primary action is that picker's Done (`ApiTokenGrantPickerDone`, lab T4–T6).
+     */
+    picker: ApiTokenGrantPicker | null;
+    onPickerChange: (picker: ApiTokenGrantPicker | null) => void;
     disabled?: boolean;
     /** Read back in the review line ("Leads dashboard can …"). */
     label: string;
@@ -103,10 +109,22 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
 }));
 
-export const ApiTokenGrantEditor = React.memo(function ApiTokenGrantEditor(props: ApiTokenGrantEditorProps) {
-    const [picker, setPicker] = React.useState<Picker | null>(null);
-    const styles = stylesheet;
+/** The open grant picker of one container; its footer reads it to show the picker's Done. */
+export function useApiTokenGrantPicker() {
+    const [picker, setPicker] = React.useState<ApiTokenGrantPicker | null>(null);
     const close = React.useCallback(() => setPicker(null), []);
+    return { picker, setPicker, close } as const;
+}
+
+/** A picker's Done: the container's one primary while the picker is open. Selections already live in the draft. */
+export function ApiTokenGrantPickerDone(props: Readonly<{ onPress: () => void }>) {
+    return <RoundButton size="normal" title={t('common.done')} testID="api-token-grant-picker-done" onPress={props.onPress} />;
+}
+
+export const ApiTokenGrantEditor = React.memo(function ApiTokenGrantEditor(props: ApiTokenGrantEditorProps) {
+    const { picker, onPickerChange } = props;
+    const styles = stylesheet;
+    const close = React.useCallback(() => onPickerChange(null), [onPickerChange]);
     const testID = props.testID ?? 'api-token-grant-editor';
 
     return (
@@ -117,7 +135,7 @@ export const ApiTokenGrantEditor = React.memo(function ApiTokenGrantEditor(props
                         value={props.value}
                         onChange={props.onChange}
                         disabled={props.disabled}
-                        onOpenPicker={setPicker}
+                        onOpenPicker={onPickerChange}
                     />
                     <ApiTokenGrantWebsitesSection value={props.value} onChange={props.onChange} disabled={props.disabled} />
                     <ApiTokenGrantReview value={props.value} label={props.label} expiresAt={props.expiresAt} />
@@ -144,7 +162,7 @@ type GrantPartProps = Readonly<{
 
 /** Actions, reach and models as value summaries, then the Approve switch. */
 const ApiTokenGrantAccessSection = React.memo(function ApiTokenGrantAccessSection(props: GrantPartProps & Readonly<{
-    onOpenPicker: (picker: Picker) => void;
+    onOpenPicker: (picker: ApiTokenGrantPicker) => void;
 }>) {
     const names = useApiTokenGrantNames();
     const issues = resolveApiTokenGrantDraftIssues(props.value);

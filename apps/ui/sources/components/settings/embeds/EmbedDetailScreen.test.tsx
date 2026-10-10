@@ -45,11 +45,6 @@ vi.mock('react-native-unistyles', async () => {
     return createUnistylesMock();
 });
 
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock();
-});
-
 vi.mock('@/modal', async () => {
     const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
     return createModalModuleMock().module;
@@ -95,15 +90,22 @@ afterEach(async () => {
 });
 
 type Harness = Awaited<ReturnType<typeof createApiTokenSettingsControllerHarness>>;
+const { t } = await import('@/text');
 
-async function renderCreate(harness: Harness) {
+async function renderCreate(harness: Harness, phone = false) {
     const { ApiTokenSettingsScope } = await import('../apiTokens/collection/ApiTokenSettingsScope');
     const { EmbedCreateScreen } = await import('./EmbedDetailScreen');
-    return await renderScreen(
+    const { DestinationInstanceHost } = await import('@/components/appShell/workspace/DestinationInstanceHost');
+    const page = (
         <ApiTokenSettingsScope controller={harness.controller}>
             <EmbedCreateScreen />
-        </ApiTokenSettingsScope>,
+        </ApiTokenSettingsScope>
     );
+    return await renderScreen(phone ? <DestinationInstanceHost tabId="embed-draft"
+        ref={{ kind: 'settings', params: { pageId: 'embeds/new' } }} pathname="/settings/embeds/new"
+        focused visible phone navigation={{ push: runtime.push, replace: runtime.replace, back: () => {} }}>
+        {page}
+    </DestinationInstanceHost> : page);
 }
 
 /** Lets the real controller's requests settle into the mounted screen. */
@@ -123,6 +125,49 @@ function daysFromNow(expiresAt: unknown): number {
 }
 
 describe('Settings → Embeds detail (create, real token controller)', () => {
+    it.each([true, false])('gives the new-embed title to one chrome owner (phone=%s)', async (phone) => {
+        const harness = await createApiTokenSettingsControllerHarness({ mode: 'plain' });
+        const screen = await renderCreate(harness, phone);
+        await until(() => expect(harness.controller.getState().encryptionAvailability).toBe('plain'));
+        const bodyTitles = screen.root.findAll(node => typeof node.type === 'string'
+            && node.props.accessibilityRole === 'header'
+            && node.props.children === t('settingsEmbeds.newTitle'));
+        expect(bodyTitles).toHaveLength(phone ? 0 : 1);
+        expect(screen.getTextContent()).toContain(t('settingsEmbeds.createDescription'));
+        expect(createRequests(harness.requests)).toHaveLength(0);
+    }, 180_000);
+
+    it('keeps phone picker Done after the outgoing page exits and returns to the same draft', async () => {
+        const harness = await createApiTokenSettingsControllerHarness({ mode: 'plain' });
+        const screen = await renderCreate(harness, true);
+        await until(() => expect(harness.controller.getState().encryptionAvailability).toBe('plain'));
+        act(() => { screen.changeTextByTestId('settings-embed-name', 'DSN draft'); });
+        await screen.pressByTestIdAsync('settings-embed-models');
+        await screen.pressByTestIdAsync('api-token-grant-models-scope-only');
+        // The outgoing page is retained until the real transition finishes. Its cleanup must
+        // not erase the current picker's navigation action.
+        await act(async () => { await new Promise(resolve => setTimeout(resolve, 600)); });
+        const done = screen.root.findAll(node => typeof node.type === 'string'
+            && node.props.accessibilityLabel === t('common.done') && typeof node.props.onPress === 'function');
+        expect(done).toHaveLength(1);
+        await act(async () => { done[0]!.props.onPress(); });
+        await until(() => expect(screen.findByTestId('settings-embed-name')?.props.value).toBe('DSN draft'));
+        await act(async () => { await new Promise(resolve => setTimeout(resolve, 600)); });
+        await screen.pressByTestIdAsync('settings-embed-models');
+        await until(() => expect(screen.findByTestId('api-token-grant-models-scope-only')?.props['aria-checked']).toBe(true));
+        expect(runtime.push).not.toHaveBeenCalled();
+        expect(runtime.replace).not.toHaveBeenCalled();
+        expect(createRequests(harness.requests)).toHaveLength(0);
+    }, 180_000);
+
+    it('pushes the narrow preview as the full-page phone preview of the current draft (lab P3)', async () => {
+        const harness = await createApiTokenSettingsControllerHarness({ mode: 'plain' });
+        const screen = await renderCreate(harness, true);
+        await until(() => expect(harness.controller.getState().encryptionAvailability).toBe('plain'));
+        await screen.pressByTestIdAsync('settings-embed-preview-row');
+        await until(() => expect(runtime.previewProps.at(-1)?.presentation).toBe('page'));
+    }, 180_000);
+
     it('creates a plain-account embed key that keeps approvals (default mode only) and never expires by default', async () => {
         const harness = await createApiTokenSettingsControllerHarness({ mode: 'plain' });
         const screen = await renderCreate(harness);
@@ -130,7 +175,7 @@ describe('Settings → Embeds detail (create, real token controller)', () => {
 
         // The preview is reconfigured only by presentation changes, never by typing elsewhere.
         const root = screen.findByTestId('settings-embed-detail-root');
-        act(() => { root?.props.onLayout({ nativeEvent: { layout: { width: 1280, height: 900, x: 0, y: 0 } } }); });
+        await act(async () => { root?.props.onLayout({ nativeEvent: { layout: { width: 1280, height: 900, x: 0, y: 0 } } }); });
         const previewUi = runtime.previewProps.at(-1)?.ui;
         expect(previewUi).toMatchObject({ modelPicker: false });
         act(() => { screen.changeTextByTestId('settings-embed-name', 'Leads dashboard'); });
@@ -141,12 +186,16 @@ describe('Settings → Embeds detail (create, real token controller)', () => {
         // Approving is described for people on the embed's sites, and the key's reach is stated.
         await act(async () => { screen.findByTestId('api-token-grant-approve-switch')!.props.onValueChange(true); });
         const text = screen.getTextContent();
-        expect(text).toContain('settingsEmbeds.capabilities.approveOn');
-        expect(text).not.toContain('settingsApiTokens.grant.approve.on');
+        expect(text).toContain(t('settingsEmbeds.capabilities.approveOn'));
+        expect(text).not.toContain(t('settingsApiTokens.grant.approve.on'));
         expect(screen.findByTestId('settings-embed-key-reach')).toBeTruthy();
 
         await screen.pressByTestIdAsync('settings-embed-create');
-        await until(() => expect(harness.controller.getState().reveal).not.toBeNull());
+        await until(() => {
+            expect(harness.controller.getState().createError,
+                JSON.stringify(harness.requests.map(request => request.path))).toBeNull();
+            expect(harness.controller.getState().reveal).not.toBeNull();
+        });
 
         const { Modal } = await import('@/modal');
         const { ApiTokenCreateModal } = await import('../apiTokens/ApiTokenCreateModal');
@@ -201,7 +250,10 @@ describe('Settings → Embeds detail (create, real token controller)', () => {
         expect(resumed.findByTestId('settings-embed-e2ee-trust')).toBeTruthy();
 
         await resumed.pressByTestIdAsync('settings-embed-create');
-        await until(() => expect(harness.controller.getState().reveal).not.toBeNull());
+        await until(() => {
+            expect(harness.controller.getState().createError).toBeNull();
+            expect(harness.controller.getState().reveal).not.toBeNull();
+        });
         const [created] = createRequests(harness.requests);
         expect(created?.body).toMatchObject({
             label: 'Leads dashboard',

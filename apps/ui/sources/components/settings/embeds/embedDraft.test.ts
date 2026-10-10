@@ -118,6 +118,12 @@ describe('embed draft', () => {
         expect(listEmbedSummaryParts(summaryFor(viewOnly)).map((part) => part.kind)).toEqual(['sites', 'viewOnly']);
     });
 
+    it('never calls approve-only access "View only": approval is its own granted fact', () => {
+        const approveOnly = draft({ access: { ...DEFAULT_EMBED_DRAFT.access, sites: ['https://crm.acme.dev'], send: false, approve: true }, config: DEFAULT_EMBED_DRAFT.config });
+        expect(deriveEmbedAccessFromGrantV1(buildEmbedGrant(approveOnly))).toMatchObject({ send: false, approve: true });
+        expect(listEmbedSummaryParts(summaryFor(approveOnly)).map((part) => part.kind)).toEqual(['sites', 'approve']);
+    });
+
     it('holds "only these models" with none chosen as an issue, never as a grant or an update', () => {
         const original = summaryFor(draft());
         const choosing = { ...readEmbedDraft(original), access: { ...readEmbedDraft(original).access, models: [] } };
