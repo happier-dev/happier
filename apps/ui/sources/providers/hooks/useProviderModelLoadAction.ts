@@ -3,7 +3,8 @@ import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import type { DaemonProviderModelLoadResponseV1 } from '@happier-dev/protocol/rpc';
 
 import { providerModelRowKey } from '@/providers/models/modelRowKey';
-import { cancelProviderModelLoad, loadProviderModel, providerErrorFromRpcFailure } from '@/providers/rpc/client';
+import { providerErrorFromRpcFailure } from '@/providers/actions/client';
+import { useProviderActionClient } from '@/providers/actions/useProviderActionClient';
 import {
     captureActiveServerAccountScopeLifetime,
     type ActiveServerAccountScopeLifetime,
@@ -42,6 +43,7 @@ export function useProviderModelLoadAction(input: Readonly<{
     /** Re-checks an owner-scoped target immediately before dispatching a model load. */
     resolveExecutionTarget?: () => ProviderModelExecutionTarget | null;
 }>) {
+    const { cancelProviderModelLoad, loadProviderModel } = useProviderActionClient(input.serverId);
     const accountLifetime = captureActiveServerAccountScopeLifetime();
     const [loadingModelKey, setLoadingModelKey] = React.useState<string | null>(null);
     const [cancelledProviderMayContinue, setCancelledProviderMayContinue] = React.useState(false);
@@ -197,7 +199,7 @@ export function useProviderModelLoadAction(input: Readonly<{
             if (active.current === operation) active.current = null;
             if (mounted.current && accountStillCurrent()) setLoadingModelKey(null);
         }
-    }, [accountLifetime, input.machineId, input.refresh, input.resolveExecutionTarget, input.serverId]);
+    }, [accountLifetime, loadProviderModel, input.machineId, input.refresh, input.resolveExecutionTarget, input.serverId]);
 
     const cancel = React.useCallback(async (): Promise<ProviderModelLoadUiResult | null> => {
         const operation = active.current;
@@ -225,7 +227,7 @@ export function useProviderModelLoadAction(input: Readonly<{
         } catch {
             return { status: 'cancelled', providerMayContinue: true };
         }
-    }, []);
+    }, [cancelProviderModelLoad]);
 
     return { loadingModelKey, cancelledProviderMayContinue, load, cancel };
 }

@@ -29,19 +29,6 @@ vi.mock('@/components/ui/text/Text', () => ({
     Text: ({ children, ...props }: React.PropsWithChildren<Record<string, unknown>>) => React.createElement('Text', props, children),
 }));
 
-vi.mock('@/constants/Typography', () => ({
-    FontWeights: { regular: '400', semiBold: '500' },
-    getMonoFont: () => 'monospace',
-    Typography: {
-        default: () => ({}),
-        rowTitle: () => ({ fontSize: 16, lineHeight: 20 }),
-        rowMeta: () => ({ fontSize: 14, lineHeight: 18 }),
-        pillLabel: () => ({ fontSize: 12, lineHeight: 16 }),
-        timestamp: () => ({ fontSize: 12, lineHeight: 16 }),
-        keyHint: () => ({ fontSize: 12, lineHeight: 16 }),
-    },
-}));
-
 vi.mock('expo-clipboard', () => ({
     setStringAsync: vi.fn(),
 }));

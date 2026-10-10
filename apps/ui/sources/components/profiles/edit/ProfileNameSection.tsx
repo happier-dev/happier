@@ -7,7 +7,7 @@ import { t } from '@/text';
 
 /**
  * A profile's name (and, for launch profiles that have one, its description) as page field rows:
- * the label on the left and the field beside it, stacked beneath on narrow widths.
+ * full-width fields beneath their labels, so a name can use the page's reading column.
  */
 export function ProfileNameSection(props: Readonly<{
     testIDPrefix: string;
@@ -16,10 +16,10 @@ export function ProfileNameSection(props: Readonly<{
     description?: Readonly<{ value: string; onChange: (description: string) => void }>;
 }>) {
     return (
-        <ItemGroup title={t('profiles.profileName')}>
+        <ItemGroup title={t(props.description ? 'common.details' : 'profiles.profileName')}>
             <Item
                 title={t('common.name')}
-                accessoryLayout="adaptive"
+                accessoryLayout="stacked"
                 showChevron={false}
                 rightElement={(
                     <FieldTextInput

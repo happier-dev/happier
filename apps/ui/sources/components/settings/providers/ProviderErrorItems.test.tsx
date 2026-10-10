@@ -9,9 +9,10 @@ const push = vi.hoisted(() => vi.fn());
 installSettingsViewCommonModuleMocks({
     router: async () => ({ useRouter: () => ({ push }) }),
 });
-vi.mock('@/components/ui/lists/Item', () => ({
-    Item: (props: Record<string, unknown>) => React.createElement('Item', props),
-}));
+const state = (screen: Awaited<ReturnType<typeof renderScreen>>) =>
+    screen.findAll((node) => typeof node.props.title === 'string' && node.props.testID?.startsWith('provider-error:') && 'kind' in node.props)[0];
+const recovery = (screen: Awaited<ReturnType<typeof renderScreen>>) =>
+    screen.findAll((node) => node.props.testID?.startsWith('provider-error-action:') && typeof node.props.onPress === 'function')[0];
 
 describe('ProviderErrorItems', () => {
     afterEach(standardCleanup);
@@ -26,12 +27,13 @@ describe('ProviderErrorItems', () => {
             action: 'add_secret',
             connectionId: 'pc_a',
         }} />);
-        expect(screen.findAllByType('Item').map((item) => item.props.title)).toEqual([
-            'settingsProviders.errors.secretMissingTitle',
-            'settingsProviders.errors.actions.addSecret',
-        ]);
-        expect(screen.findAllByType('Item')[0]?.props.icon.props.name).toBe('warning');
-        await React.act(async () => { await screen.findAllByType('Item')[1]?.props.onPress?.(); });
+        expect(state(screen)?.props).toMatchObject({
+            kind: 'warning',
+            title: 'settingsProviders.errors.secretMissingTitle',
+            reason: 'settingsProviders.errors.secretMissingDescription',
+            action: { label: 'settingsProviders.errors.actions.addSecret' },
+        });
+        await React.act(async () => { await recovery(screen)?.props.onPress?.(); });
         expect(push).toHaveBeenCalledWith('/(app)/settings/providers/pc_a');
     });
 
@@ -45,7 +47,7 @@ describe('ProviderErrorItems', () => {
         />);
 
         // One line, no row chrome: no list Items at all.
-        expect(screen.findAllByType('Item')).toHaveLength(0);
+        expect(state(screen)).toBeUndefined();
         const line = screen.findByTestId('provider-error:provider_rpc_response_invalid');
         expect(line).toBeTruthy();
         expect(screen.getTextContent()).toContain('settingsProviders.errors.rpcResponseInvalidTitle');
@@ -69,7 +71,7 @@ describe('ProviderErrorItems', () => {
             retryable: true,
             action: 'retry',
         }} retry={retry} />);
-        await React.act(async () => { await screen.findAllByType('Item')[1]?.props.onPress?.(); });
+        await React.act(async () => { await recovery(screen)?.props.onPress?.(); });
         expect(retry).toHaveBeenCalledOnce();
     });
 
@@ -84,11 +86,11 @@ describe('ProviderErrorItems', () => {
             connectionId: 'pc_shared',
         }} retry={retry} />);
 
-        expect(screen.findAllByType('Item').map((item) => item.props.title)).toEqual([
-            'settingsProviders.errors.sourceUnavailableTitle',
-            'settingsProviders.errors.actions.retry',
-        ]);
-        await React.act(async () => { await screen.findAllByType('Item')[1]?.props.onPress?.(); });
+        expect(state(screen)?.props).toMatchObject({
+            title: 'settingsProviders.errors.sourceUnavailableTitle',
+            action: { label: 'settingsProviders.errors.actions.retry' },
+        });
+        await React.act(async () => { await recovery(screen)?.props.onPress?.(); });
         expect(retry).toHaveBeenCalledOnce();
         expect(push).not.toHaveBeenCalled();
     });
@@ -105,15 +107,15 @@ describe('ProviderErrorItems', () => {
         }} retry={retry} />);
 
         await React.act(async () => {
-            const action = screen.findAllByType('Item')[1];
+            const action = recovery(screen);
             action?.props.onPress?.();
             action?.props.onPress?.();
             await Promise.resolve();
         });
 
         expect(retry).toHaveBeenCalledOnce();
-        expect(screen.findAllByType('Item')[1]?.props).toMatchObject({
-            loading: true,
+        expect(state(screen)?.props.action).toMatchObject({
+            busy: true,
             disabled: true,
         });
 
@@ -122,11 +124,11 @@ describe('ProviderErrorItems', () => {
             await deferred.promise;
             await Promise.resolve();
         });
-        expect(screen.findAllByType('Item')[1]?.props.loading).toBe(false);
-        expect(screen.findAllByType('Item')[1]?.props.disabled).toBe(false);
+        expect(state(screen)?.props.action.busy).toBe(false);
+        expect(recovery(screen)?.props.disabled).toBe(false);
 
         await React.act(async () => {
-            screen.findAllByType('Item')[1]?.props.onPress?.();
+            recovery(screen)?.props.onPress?.();
             await Promise.resolve();
         });
         expect(retry).toHaveBeenCalledTimes(2);
@@ -146,10 +148,10 @@ describe('ProviderErrorItems', () => {
         }} retry={retry} />);
 
         await React.act(async () => {
-            screen.findAllByType('Item')[1]?.props.onPress?.();
+            recovery(screen)?.props.onPress?.();
             await Promise.resolve();
         });
-        expect(screen.findAllByType('Item')[1]?.props.loading).toBe(true);
+        expect(state(screen)?.props.action.busy).toBe(true);
 
         await React.act(async () => {
             deferred.reject(new Error('recovery failed'));
@@ -160,11 +162,11 @@ describe('ProviderErrorItems', () => {
             }
             await Promise.resolve();
         });
-        expect(screen.findAllByType('Item')[1]?.props.loading).toBe(false);
-        expect(screen.findAllByType('Item')[1]?.props.disabled).toBe(false);
+        expect(state(screen)?.props.action.busy).toBe(false);
+        expect(recovery(screen)?.props.disabled).toBe(false);
 
         await React.act(async () => {
-            screen.findAllByType('Item')[1]?.props.onPress?.();
+            recovery(screen)?.props.onPress?.();
             await Promise.resolve();
         });
         expect(retry).toHaveBeenCalledTimes(2);
@@ -181,13 +183,12 @@ describe('ProviderErrorItems', () => {
             machineId: 'machine-a',
         }} retry={retry} />);
 
-        const items = screen.findAllByType('Item');
-        expect(items.map((item) => item.props.title)).toEqual([
-            'settingsProviders.errors.rpcResponseInvalidTitle',
-            'settingsProviders.errors.actions.retry',
-        ]);
-        expect(items[0]?.props.title).not.toBe('settingsProviders.errors.unreachableTitle');
-        await React.act(async () => { await items[1]?.props.onPress?.(); });
+        expect(state(screen)?.props).toMatchObject({
+            title: 'settingsProviders.errors.rpcResponseInvalidTitle',
+            action: { label: 'settingsProviders.errors.actions.retry' },
+        });
+        expect(state(screen)?.props.title).not.toBe('settingsProviders.errors.unreachableTitle');
+        await React.act(async () => { await recovery(screen)?.props.onPress?.(); });
         expect(retry).toHaveBeenCalledOnce();
     });
 
@@ -203,12 +204,11 @@ describe('ProviderErrorItems', () => {
             machineId: 'machine-a',
         }} retry={replayMutation} />);
 
-        const items = screen.findAllByType('Item');
-        expect(items.map((item) => item.props.title)).toEqual([
-            'settingsProviders.errors.mutationOutcomeUnknownTitle',
-            'settingsProviders.errors.actions.reviewCurrentState',
-        ]);
-        await React.act(async () => { await items[1]?.props.onPress?.(); });
+        expect(state(screen)?.props).toMatchObject({
+            title: 'settingsProviders.errors.mutationOutcomeUnknownTitle',
+            action: { label: 'settingsProviders.errors.actions.reviewCurrentState' },
+        });
+        await React.act(async () => { await recovery(screen)?.props.onPress?.(); });
         expect(push).toHaveBeenCalledWith('/(app)/settings/profiles');
         expect(replayMutation).not.toHaveBeenCalled();
     });
@@ -226,7 +226,7 @@ describe('ProviderErrorItems', () => {
         }} retry={replayMutation} reviewCurrentState={reviewCurrentState} />);
 
         await React.act(async () => {
-            await screen.findAllByType('Item')[1]?.props.onPress?.();
+            await recovery(screen)?.props.onPress?.();
         });
         expect(reviewCurrentState).toHaveBeenCalledOnce();
         expect(replayMutation).not.toHaveBeenCalled();
@@ -245,7 +245,7 @@ describe('ProviderErrorItems', () => {
         }} reviewConnection={reviewConnection} />);
 
         await React.act(async () => {
-            await screen.findAllByType('Item')[1]?.props.onPress?.();
+            await recovery(screen)?.props.onPress?.();
         });
         expect(reviewConnection).toHaveBeenCalledOnce();
         expect(push).not.toHaveBeenCalled();
@@ -259,7 +259,7 @@ describe('ProviderErrorItems', () => {
             machineId: 'machine-a',
         }} reviewConnection={reviewConnection} />);
         await React.act(async () => {
-            await screen.findAllByType('Item')[1]?.props.onPress?.();
+            await recovery(screen)?.props.onPress?.();
         });
         expect(push).toHaveBeenCalledWith('/(app)/settings/providers/pc_ambiguous_create');
         expect(reviewConnection).toHaveBeenCalledOnce();

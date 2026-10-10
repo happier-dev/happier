@@ -1,15 +1,46 @@
 import * as React from 'react';
 import type { DaemonProviderConnectionViewV1 } from '@happier-dev/protocol/rpc';
 
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { FieldValueItem } from '@/components/ui/forms/FieldValueItem';
+import { Switch } from '@/components/ui/forms/Switch';
 import { StatusPill } from '@/components/ui/status/StatusPill';
 import { presentProviderCompatibilityReasons } from '@/providers/connection/compatibilityReasonPresentation';
+import type { ProviderModelPickerVisibility } from '@/providers/hooks/useProviderModelPickerVisibility';
 import { t } from '@/text';
 
 type CompatibilitySummary = DaemonProviderConnectionViewV1['compatibility'][number];
 type Endpoint = DaemonProviderConnectionViewV1['endpoints'][number];
+
+/** "Show in model picker" for one connection: the same Account-wide switch every agent reads. */
+export function ProviderPickerVisibilityRow(props: Readonly<{
+    providerName: string;
+    visibility: ProviderModelPickerVisibility;
+    /** Why this kind of source starts as it does, when the page knows more than the default reason. */
+    description?: string;
+}>): React.ReactElement {
+    const { visibility } = props;
+    const title = t('settingsProvidersCollection.showInPickerTitle');
+    return (
+        <Item
+            testID="provider-connection-picker-visibility"
+            title={title}
+            subtitle={props.description ?? (visibility.defaultReason === 'direct'
+                ? t('settingsProvidersCollection.showInPickerDirect', { provider: props.providerName })
+                : visibility.defaultReason === 'manyModels'
+                    ? t('settingsProvidersCollection.showInPickerManyModels')
+                    : t('settingsProvidersCollection.showInPickerLocal'))}
+            subtitleLines={0}
+            showChevron={false}
+            rightElement={visibility.busy ? <ActivitySpinner size="small" /> : (
+                <Switch accessibilityLabel={title} value={visibility.shown} onValueChange={visibility.setShown} />
+            )}
+            rightElementOutsidePressable
+        />
+    );
+}
 
 export function ProviderCompatibilitySection(props: Readonly<{
     summaries: readonly CompatibilitySummary[];

@@ -6,7 +6,7 @@ import {
     providerSettingsMachineRowKey,
     type ProviderSettingsMachineRowV1,
 } from '@/providers/hooks/targetMachine';
-import { describeProviderConnections, providerErrorFromRpcFailure } from '@/providers/rpc/client';
+import { describeProviderConnections, providerErrorFromRpcFailure } from '@/providers/actions/client';
 import {
     captureActiveServerAccountScopeLifetime,
     type ActiveServerAccountScopeLifetime,
@@ -32,6 +32,7 @@ type ProviderConnectionMachineViewsState = Readonly<{
  */
 export function useProviderConnectionMachineViews(input: Readonly<{
     enabled: boolean;
+    active?: boolean;
     connectionId: string;
     targets: readonly ProviderSettingsMachineRowV1[];
 }>) {
@@ -43,6 +44,8 @@ export function useProviderConnectionMachineViews(input: Readonly<{
         loading: false,
     });
     const generation = React.useRef(0);
+    const activeRef = React.useRef(input.active !== false);
+    activeRef.current = input.active !== false;
     const targetsRef = React.useRef(input.targets);
     targetsRef.current = input.targets;
     const targetsKey = JSON.stringify(
@@ -69,6 +72,7 @@ export function useProviderConnectionMachineViews(input: Readonly<{
     }, [accountLifetime]);
 
     const refresh = React.useCallback(async () => {
+        if (!activeRef.current) return;
         const requestGeneration = ++generation.current;
         const requestStillCurrent = (): boolean => (
             currentAccountLifetimeRef.current === accountLifetime
@@ -133,11 +137,11 @@ export function useProviderConnectionMachineViews(input: Readonly<{
     React.useEffect(() => {
         void refresh();
         return () => { generation.current += 1; };
-    }, [accountLifetime, refresh, scopeKey]);
+    }, [accountLifetime, input.active, refresh, scopeKey]);
 
     return {
         byTargetKey: stateMatchesScope ? state.byTargetKey : {},
-        loading: scopeEnabled && (!stateMatchesScope || state.loading),
+        loading: input.active !== false && scopeEnabled && (!stateMatchesScope || state.loading),
         refresh,
     };
 }

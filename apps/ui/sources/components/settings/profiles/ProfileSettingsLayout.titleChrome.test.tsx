@@ -25,11 +25,22 @@ installSettingsViewCommonModuleMocks({
 const { getStorage } = await import('@/sync/domains/state/storage');
 const { ProfileSettingsLayout } = await import('./ProfileSettingsLayout');
 const { ProfileDefaultEnvironmentScreen } = await import('./ProfileDefaultEnvironmentScreen');
+const { ProfileCollectionRail } = await import('./ProfileCollectionList');
+const { CollectionList } = await import('@/components/ui/lists/collection/CollectionList');
+const { Item } = await import('@/components/ui/lists/Item');
 const { NavigationTitleChromeProvider } = await import('@/components/ui/layout/PageHeader');
 
 describe('Profiles phone title ownership', () => {
     beforeEach(() => {
         getStorage().getState().applySettingsLocal({ useProfiles: false });
+    });
+
+    it('counts the default environment among the choices rendered in the collection', async () => {
+        const screen = await renderScreen(<ProfileCollectionRail />);
+        const rows = screen.findAllByType(Item).filter((row) =>
+            typeof row.props.testID === 'string' && row.props.testID.startsWith('settings.profiles.row.'));
+        expect(rows.some((row) => row.props.testID === 'settings.profiles.row.defaultEnvironment')).toBe(true);
+        expect(screen.findByType(CollectionList).props.count).toBe(rows.length);
     });
 
     it('titles the active child through the collection chrome even when profiles are disabled', async () => {

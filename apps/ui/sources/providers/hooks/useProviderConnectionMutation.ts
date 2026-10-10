@@ -1,17 +1,23 @@
 import * as React from 'react';
 import { createProviderErrorV1, type ProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
-import { DaemonProviderConnectionMutationRequestV1Schema } from '@happier-dev/protocol/rpc';
-import type { z } from 'zod';
+import { PROVIDER_CONNECTION_ACTION_ID_BY_OPERATION_V1, isProviderActionMachineRequiredV1, parseProviderActionRequestV1 } from '@happier-dev/protocol/providers/providerActionsV1';
 
 import { providerRetryRecoveryForError } from '@/providers/connection/recovery';
-import { mutateProviderConnection, providerErrorFromRpcFailure } from '@/providers/rpc/client';
+import { providerErrorFromRpcFailure } from '@/providers/actions/client';
+import type { mutateProviderConnection as MutateProviderConnection } from '@/providers/actions/client';
+import { useProviderActionClient } from '@/providers/actions/useProviderActionClient';
 import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
+import { captureActiveServerAccountScopeLifetime, type ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import type { CustomProviderTemplateV1 } from '@happier-dev/protocol/providers/connections/customTemplateV1';
 
-type ProviderConnectionMutationResult = Awaited<ReturnType<typeof mutateProviderConnection>> | null;
+type ProviderConnectionMutationResult = Awaited<ReturnType<typeof MutateProviderConnection>> | null;
 type ProviderConnectionExecutionTarget = Readonly<{ machineId: string; serverId: string }>;
 type ProviderConnectionMutationScope = Readonly<{
     resolveTarget: () => ProviderConnectionExecutionTarget | null;
     refresh: () => Promise<void>;
+    mutate: ReturnType<typeof useProviderActionClient>['mutateProviderConnection'];
+    serverId: string | null;
+    accountLifetime: ActiveServerAccountScopeLifetime | null;
     revision: number;
 }>;
 type PendingMutationState = Readonly<{
@@ -22,14 +28,18 @@ type PendingMutationState = Readonly<{
 /**
  * Every Provider connection write. A modal, confirmation, or prompt can sit
  * between the render that built a request and the moment it runs, so the
- * canonical target is re-resolved here — immediately before the effect — and a
- * request whose machine no longer matches the live selection is refused rather
- * than issued against a different machine or server.
+ * Account lifetime is checked immediately before the effect. Machine-scoped
+ * actions additionally re-resolve the exact target; Account-only edits need no
+ * machine authorization.
  */
 export function useProviderConnectionMutation(input: Readonly<{
     resolveTarget: () => ProviderConnectionExecutionTarget | null;
+    serverId?: string | null;
     refresh: () => Promise<void>;
 }>) {
+    const capturedServerId = React.useMemo(() => input.serverId ?? input.resolveTarget()?.serverId ?? null, [input.resolveTarget, input.serverId]);
+    const accountLifetime = captureActiveServerAccountScopeLifetime();
+    const { mutateProviderConnection } = useProviderActionClient(capturedServerId);
     const [failure, setFailure] = React.useState<Readonly<{
         error: ProviderErrorV1;
         retry?: () => Promise<void>;
@@ -37,6 +47,9 @@ export function useProviderConnectionMutation(input: Readonly<{
     const activeScope = React.useRef<ProviderConnectionMutationScope>({
         resolveTarget: input.resolveTarget,
         refresh: input.refresh,
+        mutate: mutateProviderConnection,
+        serverId: capturedServerId,
+        accountLifetime,
         revision: 0,
     });
     const [pending, setPending] = React.useState<PendingMutationState>(() => ({
@@ -46,10 +59,15 @@ export function useProviderConnectionMutation(input: Readonly<{
     const inFlightByRequestKey = React.useRef(new Map<string, Readonly<{
         promise: Promise<ProviderConnectionMutationResult> | null;
     }>>());
-    if (activeScope.current.resolveTarget !== input.resolveTarget || activeScope.current.refresh !== input.refresh) {
+    if (activeScope.current.resolveTarget !== input.resolveTarget || activeScope.current.refresh !== input.refresh
+        || activeScope.current.mutate !== mutateProviderConnection || activeScope.current.accountLifetime !== accountLifetime
+        || activeScope.current.serverId !== capturedServerId) {
         activeScope.current = {
             resolveTarget: input.resolveTarget,
             refresh: input.refresh,
+            mutate: mutateProviderConnection,
+            serverId: capturedServerId,
+            accountLifetime,
             revision: activeScope.current.revision + 1,
         };
     }
@@ -66,7 +84,7 @@ export function useProviderConnectionMutation(input: Readonly<{
             ? current
             : { scope, countByKey: new Map() });
         setFailure(null);
-    }, [input.refresh, input.resolveTarget]);
+    }, [accountLifetime, capturedServerId, input.refresh, input.resolveTarget, mutateProviderConnection]);
     const updatePending = React.useCallback((
         scope: ProviderConnectionMutationScope,
         key: string,
@@ -88,13 +106,17 @@ export function useProviderConnectionMutation(input: Readonly<{
         });
     }, []);
     const run = React.useCallback((
-        request: z.input<typeof DaemonProviderConnectionMutationRequestV1Schema>,
+        request: Parameters<typeof MutateProviderConnection>[0]['request'],
         key = `${request.action}:${request.connectionId}`,
     ): Promise<ProviderConnectionMutationResult> => {
         const scope = boundScope;
-        let parsedRequest: z.output<typeof DaemonProviderConnectionMutationRequestV1Schema>;
+        let parsedRequest: typeof request;
+        let requiresMachine: boolean;
         try {
-            parsedRequest = DaemonProviderConnectionMutationRequestV1Schema.parse(request);
+            const action = parseProviderActionRequestV1(PROVIDER_CONNECTION_ACTION_ID_BY_OPERATION_V1[request.action], request);
+            requiresMachine = isProviderActionMachineRequiredV1(action);
+            // The operation map above contains only the connection mutation family.
+            parsedRequest = action.input as typeof request;
         } catch (caught) {
             if (activeScope.current === scope) {
                 const nextError = providerErrorFromRpcFailure(caught, {
@@ -115,7 +137,7 @@ export function useProviderConnectionMutation(input: Readonly<{
         const requestKey = stableJsonStringify([scope.revision, key, parsedRequest]);
         const existing = inFlightByRequestKey.current.get(requestKey);
         if (existing?.promise) return existing.promise;
-        const isCurrentScope = () => activeScope.current === scope;
+        const isCurrentScope = () => activeScope.current === scope && (scope.accountLifetime?.isCurrent() ?? true);
         const errorContext = {
             machineId: parsedRequest.machineId,
             ...('connectionId' in parsedRequest ? { connectionId: parsedRequest.connectionId } : {}),
@@ -129,8 +151,9 @@ export function useProviderConnectionMutation(input: Readonly<{
                 // Re-resolve the canonical target immediately before the write.
                 // A rendered snapshot, or a request a modal delayed, may name a
                 // machine the user has since moved away from.
-                const target = scope.resolveTarget();
-                if (!target || target.machineId !== parsedRequest.machineId) {
+                const target = requiresMachine ? scope.resolveTarget() : null;
+                if (!(scope.accountLifetime?.isCurrent() ?? true)
+                    || requiresMachine && (!target || target.machineId !== parsedRequest.machineId)) {
                     // The user asked for this write, so the refusal is reported
                     // even when the selection has already moved on: a silently
                     // dropped destructive action is indistinguishable from one
@@ -140,7 +163,7 @@ export function useProviderConnectionMutation(input: Readonly<{
                 }
                 let result: Awaited<ReturnType<typeof mutateProviderConnection>>;
                 try {
-                    result = await mutateProviderConnection({ serverId: target.serverId, request: parsedRequest });
+                    result = await scope.mutate({ serverId: target?.serverId ?? scope.serverId, request: parsedRequest });
                 } catch (caught) {
                     if (!isCurrentScope()) return null;
                     const nextError = providerErrorFromRpcFailure(caught, errorContext);
@@ -194,8 +217,15 @@ export function useProviderConnectionMutation(input: Readonly<{
     const clearError = React.useCallback(() => {
         setFailure(null);
     }, []);
+    const updateCustomTemplate = React.useCallback((edit: Readonly<{
+        connectionId: string;
+        expectedRevision: number;
+        template: CustomProviderTemplateV1;
+        displayName?: string;
+    }>, key = `update:${edit.connectionId}`) => run({ action: 'update', ...edit }, key), [run]);
     return {
         run,
+        updateCustomTemplate,
         isPending,
         error: failure?.error ?? null,
         retry: failure?.retry,

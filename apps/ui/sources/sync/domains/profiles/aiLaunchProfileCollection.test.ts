@@ -27,6 +27,13 @@ const future = { v: 99, id: 'future', opaque: { untouched: true } };
 const malformed = { v: 2, id: '', malformed: true };
 
 describe('AI launch profile UI collection', () => {
+    it('preserves private entity state when projecting a slim profile for the legacy editor', () => {
+        const profile = { ...slim, enabled: false, promptStack: [], profileRecordRevision: 7,
+            secretBindings: { TOKEN: 'saved-secret' } };
+        expect(projectAiLaunchProfileForLegacyUi(profile)).toMatchObject({
+            enabled: false, promptStack: [], profileRecordRevision: 7, secretBindings: { TOKEN: 'saved-secret' },
+        });
+    });
     it('hydrates Settings references and shared profiles from readable Artifact bodies without disclosing locked rows', () => {
         const artifact = { id: 'published', isDecrypted: true as const, title: 'Slim',
             header: { title: 'Slim', kind: 'launch-profile.v1', profileId: 'slim', name: 'Slim' },

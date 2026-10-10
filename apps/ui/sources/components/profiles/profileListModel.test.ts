@@ -4,7 +4,7 @@ import { getProfileBackendSubtitle, getProfileSubtitle, type ProfileListStrings 
 import type { AgentId } from '@/agents/catalog/catalog';
 import { installProfilesCommonModuleMocks } from './profilesTestHelpers';
 
-installProfilesCommonModuleMocks();
+installProfilesCommonModuleMocks({ text: async () => vi.importActual('@/text') });
 
 describe('profileListModel', () => {
     const strings: ProfileListStrings = {
@@ -41,14 +41,23 @@ describe('profileListModel', () => {
         const profile = buildProfile({
             compatibility: { claude: true, codex: true, opencode: true, gemini: true, auggie: true, qwen: false, kimi: false },
         });
-        expect(getProfileBackendSubtitle({ profile, enabledAgentIds: ['claude', 'codex'], strings })).toBe('Claude • Codex');
+        expect(getProfileBackendSubtitle({ profile, enabledAgentIds: ['claude', 'codex'], strings })).toBe('Claude · Codex');
+    });
+
+    it('summarizes compatible agents while retaining the first two identities and the remainder count', () => {
+        const profile = buildProfile({ compatibility: { claude: true, codex: true, opencode: true, gemini: true, auggie: true } });
+        const enabledAgentIds: AgentId[] = ['claude', 'codex', 'opencode', 'gemini', 'auggie'];
+        expect(getProfileBackendSubtitle({ profile, enabledAgentIds, strings })).toBe('Claude · Codex · +3 more');
+        expect(getProfileBackendSubtitle({ profile, enabledAgentIds, strings, backendEntries: enabledAgentIds.map(id => ({
+            backendTargetKey: `agent:${id}`, builtInAgentId: id, title: strings.agentLabelById[id]!,
+        })) })).toBe('Claude · Codex · +3 more');
     });
 
     it('skips disabled agents even if compatible', () => {
         const profile = buildProfile({
             compatibility: { claude: true, codex: true, opencode: true, gemini: true, auggie: true, qwen: false, kimi: false },
         });
-        expect(getProfileBackendSubtitle({ profile, enabledAgentIds: ['claude', 'gemini'], strings })).toBe('Claude • Gemini');
+        expect(getProfileBackendSubtitle({ profile, enabledAgentIds: ['claude', 'gemini'], strings })).toBe('Claude · Gemini');
     });
 
     it('returns empty backend subtitle when no enabled compatible agents exist', () => {

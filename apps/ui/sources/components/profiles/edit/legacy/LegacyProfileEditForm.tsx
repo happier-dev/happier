@@ -88,7 +88,7 @@ export function LegacyProfileEditForm(props: LegacyProfileEditFormProps) {
     if (!scopeKey || mountedScope.current !== scopeKey) {
         return <ItemList>{props.header}{catalogAvailability(snapshot?.catalog)}</ItemList>;
     }
-    return <LegacyProfileEditFormReady key={scopeKey} {...props} acpCatalogSnapshot={snapshot?.catalog} />;
+    return <LegacyProfileEditFormReady key={scopeKey} {...props} acpCatalogSnapshot={snapshot?.stale ? undefined : snapshot?.catalog} />;
 }
 
 function LegacyProfileEditFormReady({
@@ -161,7 +161,6 @@ function LegacyProfileEditFormReady({
     const backendEnabledByTargetKey = settings.backendEnabledByTargetKey;
     const backendCatalogAvailable = acpCatalogSnapshot?.status === 'ready';
     const resolvedBackendEntries = React.useMemo(() => {
-        if (!acpCatalogSnapshot || acpCatalogSnapshot.status !== 'ready') return [];
         return getResolvedBackendCatalogEntries({
             enabledAgentIds,
             acpCatalogSnapshot,
@@ -355,7 +354,7 @@ function LegacyProfileEditFormReady({
     const compatibleMachineLoginTargets = React.useMemo(() => {
         return compatibleBackendEntries.flatMap((entry) => {
             const runtimeCarrierAgentId = getRuntimeCarrierAgentIdForEntry(entry);
-            const machineLoginKey = getAgentCore(runtimeCarrierAgentId ?? '')?.cli.machineLoginKey;
+            const machineLoginKey = getAgentCore(runtimeCarrierAgentId ?? '')?.cli?.machineLoginKey;
             if (!machineLoginKey) return [];
             return [{
                 targetKey: resolveProfileBackendTargetKeyForEntry(entry),

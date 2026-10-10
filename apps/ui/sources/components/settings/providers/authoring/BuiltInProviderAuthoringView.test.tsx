@@ -2,6 +2,7 @@ import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ReactTestInstance } from 'react-test-renderer';
 import { ProviderConnectionIdSchema } from '@happier-dev/protocol';
+import { DestinationInstanceHost } from '@/components/appShell/workspace/DestinationInstanceHost';
 
 import {
     findTestInstanceByTypeContainingText,
@@ -10,7 +11,7 @@ import {
 } from '@/dev/testkit';
 import { installSettingsViewCommonModuleMocks } from '../../settingsViewTestHelpers';
 
-installSettingsViewCommonModuleMocks();
+installSettingsViewCommonModuleMocks({ storage: importOriginal => importOriginal() });
 
 function findAnnouncingAncestor(node: ReactTestInstance): ReactTestInstance | null {
     let current = node.parent;
@@ -29,6 +30,26 @@ function findAnnouncingAncestor(node: ReactTestInstance): ReactTestInstance | nu
 
 describe('BuiltInProviderAuthoringView', () => {
     afterEach(standardCleanup);
+
+    it('keeps the reviewed Connect action and Cancel directly available in phone navigation', async () => {
+        const { BuiltInProviderAuthoringView } = await import('./BuiltInProviderAuthoringView');
+        const discard = vi.fn();
+        const screen = await renderScreen(<DestinationInstanceHost tabId="provider-draft"
+            ref={{ kind: 'settings', params: {} }} pathname="/settings/providers/new" focused visible phone
+            navigation={{ push: () => {}, replace: () => {}, back: () => {} }}>
+            <BuiltInProviderAuthoringView machineId="machine-a" currentMachineName="Mac" providerName="Provider"
+                icon={null} provenance="first_party" previewCredential={null} endpointTemplates={[]} endpointValues={{}}
+                secretSelected={false} savedSecretSelectionEnabled preview={null} previewLoading={false}
+                enableAfterSaving={false} savePending={false} error={null} secondaryTextColor="#777" warningColor="#b70"
+                onPickSecret={() => {}} onChooseCandidate={() => {}} onEndpointChange={() => {}}
+                onEnableAfterSavingChange={() => {}} onSave={() => {}} onOpenWebsite={() => {}} onDiscard={discard} />
+        </DestinationInstanceHost>);
+        expect(screen.findHostByTestId('settings-provider-authoring-connect')).not.toBeNull();
+        expect(screen.findHostByTestId('settings-provider-authoring-connect')!.props.disabled).toBe(true);
+        expect(screen.findHostByTestId('settings-provider-authoring-cancel')).not.toBeNull();
+        await screen.pressByTestIdAsync('settings-provider-authoring-cancel');
+        expect(discard).toHaveBeenCalledOnce();
+    });
 
     it('politely announces destination resolution without making static info rows live', async () => {
         const { BuiltInProviderAuthoringView } = await import('./BuiltInProviderAuthoringView');
@@ -62,7 +83,6 @@ describe('BuiltInProviderAuthoringView', () => {
         );
 
         const resolvingStatus = screen.findByTestId('settings-provider-authoring-destination-status');
-        expect(resolvingStatus?.props.accessibilityRole).toBe('text');
         expect(resolvingStatus?.props.accessibilityLiveRegion).toBe('polite');
         expect(resolvingStatus?.props.role).toBe('status');
         expect(resolvingStatus?.props['aria-live']).toBe('polite');

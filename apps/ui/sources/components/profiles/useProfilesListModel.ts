@@ -1,6 +1,7 @@
 import { useAuthoringMemoryField } from '@/sync/domains/state/storage';
 import * as React from 'react';
-import { readProviderSettingsFromAccountSettingsV1 } from '@happier-dev/protocol/providers/settings/readFromAccountSettingsV1';
+import { useProviderSettingsForServer } from '@/providers/hooks/useProviderSettings';
+import { useAcpCatalogForServer } from '@/sync/store/useAcpCatalog';
 
 import { getResolvedBackendCatalogEntries } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
@@ -8,7 +9,7 @@ import { getEnabledAgentIds } from '@/agents/catalog/enabled';
 import type { AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
 import { readProfileEnabledById, type ProfileEnabledById } from '@/sync/domains/profiles/profileEnablement';
 import { resolveVisibleBuiltInLaunchProfiles } from '@/sync/domains/profiles/visibleBuiltInLaunchProfiles';
-import { useSetting } from '@/sync/domains/state/storage';
+import { useCurrentSecretBindingsByProfileIdMutable, useSetting } from '@/sync/domains/state/storage';
 
 import { buildProfilesListGroups, getDefaultProfileListStrings, getProfileSubtitle } from './profileListModel';
 
@@ -25,7 +26,7 @@ export function useProfilesListModel(params: Readonly<{
     machineId: string | null;
     serverId?: string | null;
 }>) {
-    const acpCatalogSettingsV1 = useSetting('acpCatalogSettingsV1');
+    const { snapshot: acpCatalog } = useAcpCatalogForServer(params.serverId);
     const backendEnabledByTargetKey = useSetting('backendEnabledByTargetKey');
     const settingsProfileEnabledByIdRaw = useSetting('profileEnabledById');
     const settingsProfileEnabledById = React.useMemo(
@@ -33,11 +34,8 @@ export function useProfilesListModel(params: Readonly<{
         [settingsProfileEnabledByIdRaw],
     );
     const lastUsedProfile = useAuthoringMemoryField('lastUsedProfile');
-    const secretBindingsByProfileId = useSetting('currentSecretBindingsByProfileId');
-    const providerSettingsV1 = useSetting('providerSettingsV1');
-    const providerMigration = React.useMemo(() => (
-        readProviderSettingsFromAccountSettingsV1({ providerSettingsV1 }).settings.migration
-    ), [providerSettingsV1]);
+    const [secretBindingsByProfileId] = useCurrentSecretBindingsByProfileIdMutable();
+    const providerMigration = useProviderSettingsForServer(params.serverId).migration;
     const profileEnabledById = params.profileEnabledById ?? settingsProfileEnabledById;
 
     const enabledAgentIds = React.useMemo(() => {
@@ -52,14 +50,14 @@ export function useProfilesListModel(params: Readonly<{
     const resolvedBackendEntries = React.useMemo(() => {
         return getResolvedBackendCatalogEntries({
             enabledAgentIds,
-            acpCatalogSettingsV1,
+            acpCatalogSnapshot: acpCatalog?.catalog,
             backendEnabledByTargetKey,
             discoveredBackendIds: daemonMergedProjection.inputs?.discoveredBackendIds ?? undefined,
             mergedProviderProjectionById: daemonMergedProjection.inputs?.mergedProviderProjectionById ?? null,
             mergedBackendProjectionById: daemonMergedProjection.inputs?.mergedBackendProjectionById ?? null,
         });
     }, [
-        acpCatalogSettingsV1,
+        acpCatalog,
         backendEnabledByTargetKey,
         daemonMergedProjection.inputs?.discoveredBackendIds,
         daemonMergedProjection.inputs?.mergedBackendProjectionById,

@@ -3,48 +3,18 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createProviderErrorV1 } from '@happier-dev/protocol';
 
-import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { renderScreen } from '@/dev/testkit/render/renderScreen';
+import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
+import { createProviderSettingsAccountHarness } from '@/dev/testkit/harness/providerSettingsHarness';
+import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 
 const machineRpcWithServerScope = vi.hoisted(() => vi.fn());
-type TestAccountLifetime = Readonly<{
-    isCurrent(): boolean;
-    onRetire(cancel: () => void): Readonly<{ dispose(): void }>;
-}>;
-const activeAccountLifetime = vi.hoisted(() => {
-    const current: { value: TestAccountLifetime | null } = { value: null };
-    return {
-        current,
-        create() {
-            let retired = false;
-            const retirements = new Set<() => void>();
-            const lifetime: TestAccountLifetime = {
-                isCurrent: () => !retired,
-                onRetire(cancel) {
-                    if (retired) {
-                        cancel();
-                        return { dispose() {} };
-                    }
-                    retirements.add(cancel);
-                    return { dispose: () => retirements.delete(cancel) };
-                },
-            };
-            return {
-                lifetime,
-                retire() {
-                    retired = true;
-                    for (const cancel of [...retirements]) cancel();
-                    retirements.clear();
-                },
-            };
-        },
-    };
-});
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({ machineRpcWithServerScope }));
-vi.mock('@/sync/domains/scope/activeServerAccountScope', () => ({
-    captureActiveServerAccountScopeLifetime: () => activeAccountLifetime.current.value,
-}));
+const account = createProviderSettingsAccountHarness();
+let serverId = '';
+let otherServerId = '';
 
-import { useProviderModelLoadAction } from './useProviderModelLoadAction';
+const { useProviderModelLoadAction } = await import('./useProviderModelLoadAction');
 
 function createDeferred<T>() {
     let resolve!: (value: T) => void;
@@ -53,11 +23,15 @@ function createDeferred<T>() {
 }
 
 describe('useProviderModelLoadAction', () => {
-    afterEach(() => {
-        activeAccountLifetime.current.value = null;
+    afterEach(async () => {
         standardCleanup();
+        await account.reset();
     });
-    beforeEach(() => machineRpcWithServerScope.mockReset());
+    beforeEach(async () => {
+        machineRpcWithServerScope.mockReset();
+        serverId = (await account.restore({ waivedActions: ['providers.models.load', 'providers.models.cancel_load'] })).serverId;
+        otherServerId = await account.addHome({ name: 'Other Provider Home', serverUrl: 'https://provider-settings-other.test', accountId: 'account-a', active: false });
+    });
 
     it('keeps mounted load state functional through the StrictMode effect replay', async () => {
         let resolveLoad!: (value: { status: 'loaded'; source: 'requested' }) => void;
@@ -65,7 +39,7 @@ describe('useProviderModelLoadAction', () => {
         const value: { current: ReturnType<typeof useProviderModelLoadAction> | null } = { current: null };
         function Harness() {
             value.current = useProviderModelLoadAction({
-                machineId: 'machine-a', serverId: 'server-a', refresh: async () => true,
+                machineId: 'machine-a', serverId, refresh: async () => true,
             });
             return React.createElement('View');
         }
@@ -77,6 +51,7 @@ describe('useProviderModelLoadAction', () => {
             await Promise.resolve();
         });
         expect(value.current?.loadingModelKey).toBe(JSON.stringify(['provider-model', 'pc_a', 'model-a']));
+        await waitForHomeGovernance(() => expect(machineRpcWithServerScope).toHaveBeenCalledOnce());
 
         await act(async () => {
             resolveLoad({ status: 'loaded', source: 'requested' });
@@ -86,16 +61,13 @@ describe('useProviderModelLoadAction', () => {
     });
 
     it('clears Account A model-load state and refuses its late settlement after Account B mounts', async () => {
-        const accountA = activeAccountLifetime.create();
-        const accountB = activeAccountLifetime.create();
-        activeAccountLifetime.current.value = accountA.lifetime;
         const loadResult = createDeferred<{ status: 'loaded'; source: 'requested' }>();
         machineRpcWithServerScope.mockReturnValueOnce(loadResult.promise);
         const refresh = vi.fn(async () => true);
         const value: { current: ReturnType<typeof useProviderModelLoadAction> | null } = { current: null };
         function Harness() {
             value.current = useProviderModelLoadAction({
-                machineId: 'machine-a', serverId: 'server-a', refresh,
+                machineId: 'machine-a', serverId, refresh,
             });
             return React.createElement('View');
         }
@@ -107,18 +79,19 @@ describe('useProviderModelLoadAction', () => {
             await Promise.resolve();
         });
         expect(value.current?.loadingModelKey).not.toBeNull();
+        await waitForHomeGovernance(() => expect(machineRpcWithServerScope).toHaveBeenCalledOnce());
 
         let staleCancelResult: unknown;
         await act(async () => {
-            activeAccountLifetime.current.value = accountB.lifetime;
-            accountA.retire();
+            await account.restore({ accountId: 'account-b' });
             staleCancelResult = await value.current!.cancel();
             await rendered.update(<Harness />);
         });
 
         expect(value.current?.loadingModelKey).toBeNull();
         expect(value.current?.cancelledProviderMayContinue).toBe(false);
-        expect(staleCancelResult).toEqual({ status: 'cancelled', providerMayContinue: true });
+        // Restoring Account B has already settled the retired local operation.
+        expect(staleCancelResult).toBeNull();
         expect(machineRpcWithServerScope).toHaveBeenCalledTimes(1);
         await expect(pending).resolves.toEqual({ status: 'cancelled', providerMayContinue: true });
 
@@ -132,7 +105,7 @@ describe('useProviderModelLoadAction', () => {
         const refresh = vi.fn(async () => true);
         const value: { current: ReturnType<typeof useProviderModelLoadAction> | null } = { current: null };
         function Harness() {
-            value.current = useProviderModelLoadAction({ machineId: 'machine-a', serverId: 'server-a', refresh });
+            value.current = useProviderModelLoadAction({ machineId: 'machine-a', serverId, refresh });
             return React.createElement('View');
         }
         await renderScreen(<Harness />);
@@ -151,7 +124,7 @@ describe('useProviderModelLoadAction', () => {
         const refresh = vi.fn(async () => false);
         const value: { current: ReturnType<typeof useProviderModelLoadAction> | null } = { current: null };
         function Harness() {
-            value.current = useProviderModelLoadAction({ machineId: 'machine-a', serverId: 'server-a', refresh });
+            value.current = useProviderModelLoadAction({ machineId: 'machine-a', serverId, refresh });
             return React.createElement('View');
         }
         await renderScreen(<Harness />);
@@ -161,6 +134,7 @@ describe('useProviderModelLoadAction', () => {
             pending = value.current!.load('pc_a', 'model-a');
             await Promise.resolve();
         });
+        await waitForHomeGovernance(() => expect(machineRpcWithServerScope).toHaveBeenCalledOnce());
         const loadSignal = machineRpcWithServerScope.mock.calls[0]?.[0]?.signal as AbortSignal | undefined;
         expect(loadSignal?.aborted).toBe(false);
 
@@ -187,7 +161,7 @@ describe('useProviderModelLoadAction', () => {
         const refresh = vi.fn(async () => true);
         const value: { current: ReturnType<typeof useProviderModelLoadAction> | null } = { current: null };
         function Harness() {
-            value.current = useProviderModelLoadAction({ machineId: 'machine-a', serverId: 'server-a', refresh });
+            value.current = useProviderModelLoadAction({ machineId: 'machine-a', serverId, refresh });
             return React.createElement('View');
         }
         await renderScreen(<Harness />);
@@ -215,7 +189,7 @@ describe('useProviderModelLoadAction', () => {
         const refresh = vi.fn(async () => false);
         const value: { current: ReturnType<typeof useProviderModelLoadAction> | null } = { current: null };
         function Harness() {
-            value.current = useProviderModelLoadAction({ machineId: 'machine-a', serverId: 'server-a', refresh });
+            value.current = useProviderModelLoadAction({ machineId: 'machine-a', serverId, refresh });
             return React.createElement('View');
         }
         await renderScreen(<Harness />);
@@ -241,7 +215,7 @@ describe('useProviderModelLoadAction', () => {
         const refresh = vi.fn(async () => { throw new Error('refresh offline'); });
         const value: { current: ReturnType<typeof useProviderModelLoadAction> | null } = { current: null };
         function Harness() {
-            value.current = useProviderModelLoadAction({ machineId: 'machine-a', serverId: 'server-a', refresh });
+            value.current = useProviderModelLoadAction({ machineId: 'machine-a', serverId, refresh });
             return React.createElement('View');
         }
         await renderScreen(<Harness />);
@@ -256,7 +230,7 @@ describe('useProviderModelLoadAction', () => {
         const refresh = vi.fn(async () => false);
         const value: { current: ReturnType<typeof useProviderModelLoadAction> | null } = { current: null };
         function Harness() {
-            value.current = useProviderModelLoadAction({ machineId: 'machine-a', serverId: 'server-a', refresh });
+            value.current = useProviderModelLoadAction({ machineId: 'machine-a', serverId, refresh });
             return React.createElement('View');
         }
         await renderScreen(<Harness />);
@@ -270,9 +244,9 @@ describe('useProviderModelLoadAction', () => {
         function Harness() {
             value.current = useProviderModelLoadAction({
                 machineId: 'machine-a',
-                serverId: 'server-a',
+                serverId,
                 refresh: async () => true,
-                resolveExecutionTarget: () => ({ machineId: 'machine-b', serverId: 'server-b' }),
+                resolveExecutionTarget: () => ({ machineId: 'machine-b', serverId: otherServerId }),
             });
             return React.createElement('View');
         }
@@ -296,7 +270,7 @@ describe('useProviderModelLoadAction', () => {
         function Harness() {
             value.current = useProviderModelLoadAction({
                 machineId: 'machine-a',
-                serverId: 'server-a',
+                serverId,
                 refresh: async () => true,
                 resolveExecutionTarget: () => null,
             });
@@ -323,16 +297,18 @@ describe('useProviderModelLoadAction', () => {
         // The machine did not change, so the load must follow the freshly
         // resolved routing id — the same contract every other Provider effect
         // holds — instead of reporting the endpoint unavailable.
+        const { setServerProfileIdentityForUrl } = await import('@/sync/domains/server/serverProfiles');
+        await setServerProfileIdentityForUrl('https://provider-settings-account.test', 'srv_provider_settings');
         machineRpcWithServerScope.mockResolvedValueOnce({ status: 'loaded', source: 'requested' });
         const value: { current: ReturnType<typeof useProviderModelLoadAction> | null } = { current: null };
         function Harness() {
             value.current = useProviderModelLoadAction({
                 machineId: 'machine-a',
-                serverId: 'server-a',
+                serverId,
                 refresh: async () => true,
                 resolveExecutionTarget: () => ({
                     machineId: 'machine-a',
-                    serverId: 'server-a-reconnected',
+                    serverId: 'srv_provider_settings',
                 }),
             });
             return React.createElement('View');
@@ -344,7 +320,7 @@ describe('useProviderModelLoadAction', () => {
 
         expect(result).toEqual({ status: 'loaded', source: 'requested' });
         expect(machineRpcWithServerScope).toHaveBeenCalledWith(expect.objectContaining({
-            serverId: 'server-a-reconnected',
+            serverId: 'srv_provider_settings',
         }));
     });
 });

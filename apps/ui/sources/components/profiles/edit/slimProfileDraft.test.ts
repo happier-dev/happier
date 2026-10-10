@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import { ProviderConnectionIdSchema } from '@happier-dev/protocol';
+import type { AiLaunchProfile } from '@happier-dev/protocol/profiles/read';
+import { StoredLaunchProfileV2Schema } from '@happier-dev/protocol/profiles/v2/schema';
 import { buildSlimProfileSave, isSlimProfileReservedEnvironmentAuthorityReady } from './slimProfileDraft';
 
 const base = {
@@ -11,6 +13,34 @@ const base = {
 };
 
 describe('buildSlimProfileSave', () => {
+    it('edits an admitted V2 body without losing private attachments or row and Artifact revision evidence', () => {
+        const profile = { ...base, artifactId: 'shared-profile-document',
+            revision: { headerVersion: 3, bodyVersion: 4 }, profileRecordRevision: 7,
+            enabled: false, secretBindings: { TOKEN: 'happier:shared-secret:v1:token-resource' },
+            promptStack: [{ id: 'private-prompt', ref: { kind: 'doc', artifactId: 'prompt-document' },
+                enabled: true, placement: 'system_append' }],
+        } satisfies AiLaunchProfile;
+        expect(buildSlimProfileSave(profile, {
+            name: 'Edited profile', description: '', extraEnvironmentVariables: [],
+        }, () => 10)).toMatchObject({ status: 'success', profile: {
+            name: 'Edited profile', enabled: false, promptStack: profile.promptStack,
+            secretBindings: profile.secretBindings, profileRecordRevision: 7,
+            artifactId: profile.artifactId, revision: profile.revision, updatedAt: 10,
+        } });
+    });
+
+    it('retains admitted stored environment rows beyond the new-profile authoring bound', () => {
+        const profile = { ...StoredLaunchProfileV2Schema.parse({ ...base,
+            extraEnvironmentVariables: Array.from({ length: 257 }, (_, index) => ({ name: `SAFE_${index}`, value: '1' })),
+        }), profileRecordRevision: 7 };
+        const result = buildSlimProfileSave(profile, { name: 'Renamed existing profile', description: '',
+            extraEnvironmentVariables: profile.extraEnvironmentVariables }, () => 10);
+        expect(result.status).toBe('success');
+        if (result.status !== 'success') throw new Error(result.message);
+        expect(result.profile.extraEnvironmentVariables).toEqual(profile.extraEnvironmentVariables);
+        expect(result.profile).toMatchObject({ profileRecordRevision: 7, updatedAt: 10 });
+    });
+
     it('persists sparse coding prompt behavior overrides without copying account defaults', () => {
         expect(buildSlimProfileSave(base, {
             name: 'Profile A',

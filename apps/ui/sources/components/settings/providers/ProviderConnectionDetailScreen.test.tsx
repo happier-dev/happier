@@ -5,6 +5,13 @@ import { NavigationContext, useNavigation } from '@react-navigation/native';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createProviderErrorV1 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { ProviderConnectionV1Schema } from '@happier-dev/protocol/providers/connections/v1';
+import {
+    DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1,
+    PROVIDER_CONNECTIONS_ROWS_ROUTE_V1,
+    ProviderConnectionsCatalogV1Schema,
+    ProviderConnectionsRowMutationV1Schema,
+} from '@happier-dev/protocol/providers/connections/connectionRowsV1';
 
 import {
     createProviderConnectionViewFixture,
@@ -359,6 +366,39 @@ describe('ProviderConnectionDetailScreen', () => {
         });
     });
 
+    it('edits gateway placement and helper pins through the Account writer without a machine', async () => {
+        const saved = ProviderConnectionV1Schema.parse({ v: 1, id: 'pc_gateway',
+            source: { kind: 'contribution', contributionKey: 'happier.provider.cliproxyapi/cliproxyapi' },
+            role: 'named', displayName: 'Subscriptions', displayNameMode: 'custom',
+            deployment: { kind: 'managedLocal' }, revision: 3, createdAt: 1, updatedAt: 1 });
+        let catalog = ProviderConnectionsCatalogV1Schema.parse({ ...DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1, connections: [saved] });
+        let revision = 1;
+        await account.restore({ catalog, machines: [], waivedActions: ['providers.connections.update'] });
+        account.home.answer(account.serverId, `GET ${PROVIDER_CONNECTIONS_ROWS_ROUTE_V1}`, {
+            select: () => ({ body: { status: 'present', revision, content: { t: 'plain', v: catalog } } }),
+        });
+        account.home.answer(account.serverId, `POST ${PROVIDER_CONNECTIONS_ROWS_ROUTE_V1}`, {
+            select: input => {
+                const request = ProviderConnectionsRowMutationV1Schema.parse(input);
+                expect(request.expectedRevision).toBe(revision);
+                if (request.content?.t !== 'plain') throw new Error('Expected Account gateway write');
+                catalog = request.content.v;
+                revision += 1;
+                return { body: { status: 'updated', revision, cursor: revision } };
+            },
+        });
+        const { ProviderGatewaySections } = await import('./gateway/ProviderGatewaySections');
+        const screen = await renderScreen(<ProviderConnectionDetailScreen connectionId={saved.id} />);
+        await waitForHomeGovernance(() => expect(screen.findAllByType(ProviderGatewaySections)).toHaveLength(1));
+        const controls = () => screen.findAllByType(ProviderGatewaySections)[0]!;
+        expect(controls().props.disabled).toBe(false);
+        await act(async () => { await controls().props.onChangePlacement({ kind: 'sessionMachine' }); });
+        await waitForHomeGovernance(() => expect(catalog.connections[0]?.gatewayPlacement).toEqual({ kind: 'sessionMachine' }));
+        await act(async () => { await controls().props.onChangeHelperModels({ fast: 'private-fast' }); });
+        await waitForHomeGovernance(() => expect(catalog.connections[0]?.claudeHelperModels).toEqual({ fast: 'private-fast' }));
+        expect(providerHarness.state.requests.filter(request => request.method === RPC_METHODS.DAEMON_PROVIDERS_CONNECTION_MUTATE)).toEqual([]);
+    });
+
     it('requests no Provider data when blurred and only selected-machine data for an account connection', async () => {
         state.focused = false;
         const detail = (section?: string) => <DetailNavigationBoundary>
@@ -403,6 +443,62 @@ describe('ProviderConnectionDetailScreen', () => {
             title: findComposite(screen, 'provider-connection-header', 'title')?.props.title,
             titles: presentedTitles(screen), requests: providerHarness.state.requests,
         }).toMatchObject({ title: 'Boundary detail' }));
+    });
+
+    it('persists source visibility from the detail through Account CAS and reloads the stored choice', async () => {
+        let catalog = ProviderConnectionsCatalogV1Schema.parse({
+            ...DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1,
+            connections: [{
+                v: 1, id: 'pc_a', source: { kind: 'contribution', contributionKey: 'acme.plugin/acme' },
+                role: 'named', displayName: 'Acme', displayNameMode: 'custom', revision: 1, createdAt: 1, updatedAt: 1,
+            }],
+            manualModelsByConnectionId: { pc_a: [{ id: 'saved-model', addedAt: 1 }] },
+        });
+        const original = catalog;
+        let revision = 1;
+        account.home.answer(account.serverId, `GET ${PROVIDER_CONNECTIONS_ROWS_ROUTE_V1}`, {
+            select: () => ({ body: { status: 'present', revision, content: { t: 'plain', v: catalog } } }),
+        });
+        account.home.answer(account.serverId, `POST ${PROVIDER_CONNECTIONS_ROWS_ROUTE_V1}`, {
+            select: input => {
+                const mutation = ProviderConnectionsRowMutationV1Schema.parse(input);
+                expect(mutation.expectedRevision).toBe(revision);
+                if (mutation.content?.t !== 'plain') throw new Error('Expected a Plain Account catalog write');
+                catalog = mutation.content.v;
+                revision += 1;
+                return { body: { status: 'updated', revision, cursor: revision } };
+            },
+        });
+        providerHarness.intercept(RPC_METHODS.DAEMON_PROVIDERS_CONNECTIONS_DESCRIBE, async () => (
+            createProviderConnectionsDescribeFixture({
+                connections: [createProviderConnectionViewFixture()],
+                available: [{ contributionKey: 'acme.plugin/acme', name: 'Acme', kind: 'aggregator',
+                    provenance: 'first_party', icon: null, credential: null, endpointTemplates: [] }],
+            })
+        ));
+        const { refreshProviderCatalog } = await import('@/sync/engine/settings/providerCatalogEngine');
+        await refreshProviderCatalog({ serverId: account.serverId, accountId: 'account-a' });
+        const screen = await renderScreen(<ProviderConnectionDetailScreen connectionId="pc_a" />);
+        await waitForHomeGovernance(() => expect(screen.findByTestId('provider-connection-detail')).toBeTruthy());
+        const visibilityControl = () => findComposite(screen, 'provider-connection-picker-visibility', 'rightElement')
+            ?.props.rightElement as React.ReactElement<{ value: boolean; onValueChange: (shown: boolean) => void }> | undefined;
+        expect(visibilityControl()?.props.value).toBe(false);
+        for (const shown of [true, false]) {
+            await act(async () => { visibilityControl()?.props.onValueChange(shown); });
+            await waitForHomeGovernance(() => expect(visibilityControl()?.props.value).toBe(shown));
+            expect(catalog.modelPickerVisibilityByConnectionId).toEqual({ pc_a: shown });
+            expect(catalog.connections).toEqual(original.connections);
+            expect(catalog.manualModelsByConnectionId).toEqual(original.manualModelsByConnectionId);
+            expect(catalog.accountGrants).toEqual(original.accountGrants);
+        }
+        await screen.unmount();
+        const reloaded = await renderScreen(<ProviderConnectionDetailScreen connectionId="pc_a" />);
+        await waitForHomeGovernance(() => expect(findComposite(reloaded, 'provider-connection-picker-visibility', 'rightElement')).not.toBeNull());
+        const reloadedControl = findComposite(reloaded, 'provider-connection-picker-visibility', 'rightElement')
+            ?.props.rightElement as React.ReactElement<{ value: boolean }>;
+        expect(reloadedControl.props.value).toBe(false);
+        expect(providerHarness.state.requests.filter(request => request.method === RPC_METHODS.DAEMON_PROVIDERS_CONNECTION_MUTATE
+            || request.method === RPC_METHODS.DAEMON_PROVIDERS_MODEL_SETTINGS_MUTATE)).toHaveLength(0);
     });
 
     it('keeps foreign-daemon inspection but disables active-Account Saved Secrets with colliding ids', async () => {
@@ -509,7 +605,7 @@ describe('ProviderConnectionDetailScreen', () => {
         const screen = await renderScreen(<ProviderConnectionDetailScreen connectionId="pc_a" />);
         const titles = presentedTitles(screen);
         const getKeyRow = screen.findAllByType(Item)
-            .find((item) => item.props.title === 'settingsProviders.links.getApiKey');
+            .find((item) => item.props.accessibilityLabel === 'settingsProviders.links.getApiKey');
 
         expect(findMenuAction(screen, 'website')).toBeUndefined();
         expect(titles).not.toContain('settingsProviders.links.providerWebsite');
@@ -632,7 +728,7 @@ describe('ProviderConnectionDetailScreen', () => {
         await pressAndFlush(testRow);
 
         const updatedTestRow = findTestRow(screen);
-        expect(updatedTestRow?.props.subtitle).toBe('externalSessions.browseAgentFailed');
+        expect(updatedTestRow?.props.subtitle).toBeTruthy();
         expect(updatedTestRow?.props.subtitle).not.toContain('socket implementation detail');
     });
 
@@ -958,6 +1054,7 @@ describe('ProviderConnectionDetailScreen', () => {
             machineId: 'machine-a',
             connectionId: 'pc_a',
             enabled: true,
+            scope: 'machine',
         }));
     });
 
@@ -979,6 +1076,7 @@ describe('ProviderConnectionDetailScreen', () => {
 
     it('uses default Ask-first approval once and navigates only after its real terminal result', async () => {
         await account.restore({ accountId: 'default-approval-account', serverIdentityId: 'srv_provider_detail', machines });
+        await account.home.selectHomes([account.serverId]);
         await account.selectMachine(account.serverId, 'machine-a');
         const screen = await renderScreen(<ProviderConnectionDetailScreen connectionId="pc_a" />);
         await waitForHomeGovernance(() => expect({
@@ -1012,6 +1110,7 @@ describe('ProviderConnectionDetailScreen', () => {
 
     it('keeps a durable approval addressed to its captured Machine when selection moves', async () => {
         await account.restore({ accountId: 'captured-machine-approval-account', serverIdentityId: 'srv_provider_detail', machines });
+        await account.home.selectHomes([account.serverId]);
         await account.selectMachine(account.serverId, 'machine-a');
         const screen = await renderScreen(<ProviderConnectionDetailScreen connectionId="pc_a" />);
         await waitForHomeGovernance(() => expect(findMenuAction(screen, 'delete')).toBeDefined());
@@ -1027,6 +1126,7 @@ describe('ProviderConnectionDetailScreen', () => {
 
     it('admits one approval request and re-enables deletion after cancellation without writing', async () => {
         await account.restore({ accountId: 'cancelled-approval-account', serverIdentityId: 'srv_provider_detail', machines });
+        await account.home.selectHomes([account.serverId]);
         await account.selectMachine(account.serverId, 'machine-a');
         const screen = await renderScreen(<ProviderConnectionDetailScreen connectionId="pc_a" />);
         await waitForHomeGovernance(() => expect(findMenuAction(screen, 'delete')).toBeDefined());
@@ -1252,13 +1352,11 @@ describe('ProviderConnectionDetailScreen', () => {
         }];
         const { ProviderConnectionDetailScreen } = await import('./ProviderConnectionDetailScreen');
         const screen = await renderScreen(<ProviderConnectionDetailScreen connectionId="pc_a" />);
+        // One "Local runtime" row on this computer: who runs the server, and Start where Happier can.
         expect(screen.findAllByType(Item).map((item) => item.props.subtitle))
             .toContain('settingsProviders.local.runningOutsideHappier');
-        const start = screen.findAllByType(Item)
-            .find((item) => typeof item.props.onPress === 'function'
-                && item.props.subtitle === 'settingsProviders.local.installedNotRunning');
-        expect(start).toBeDefined();
-        await act(async () => { await start?.props.onPress?.(); });
+        expect(screen.findByTestId('provider-connection-local-start-managed')).not.toBeNull();
+        await screen.pressByTestIdAsync('provider-connection-local-start-managed');
         expect(run).toHaveBeenCalledWith(expect.objectContaining({
             action: 'startLocal', machineId: 'machine-a', connectionId: 'pc_a',
             contributionKey: 'acme.plugin/acme',

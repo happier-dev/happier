@@ -1,8 +1,9 @@
 import * as React from 'react';
 import type { ProviderErrorV1 } from '@happier-dev/protocol';
-import type { DaemonProviderModelRowV1 } from '@happier-dev/protocol/rpc';
+import type { DaemonProviderModelRowV1, DaemonProviderModelsResponseV1 } from '@happier-dev/protocol/rpc';
 
-import { describeProviderConnectionModels, providerErrorFromRpcFailure } from '@/providers/rpc/client';
+import { providerErrorFromRpcFailure } from '@/providers/actions/client';
+import { useProviderActionClient } from '@/providers/actions/useProviderActionClient';
 import {
     captureActiveServerAccountScopeLifetime,
     type ActiveServerAccountScopeLifetime,
@@ -10,15 +11,17 @@ import {
 
 export function useProviderConnectionModels(input: Readonly<{
     enabled: boolean;
+    active?: boolean;
     machineId: string | null;
     serverId: string | null;
     connectionId: string;
 }>) {
+    const { describeProviderConnectionModels, ready } = useProviderActionClient(input.serverId);
     const accountLifetime = captureActiveServerAccountScopeLifetime();
     const [models, setModels] = React.useState<readonly DaemonProviderModelRowV1[]>([]);
     const [connectionRevision, setConnectionRevision] = React.useState<number | null>(null);
     const [manualModelPolicy, setManualModelPolicy] = React.useState<'allowed' | 'catalog-only' | null>(null);
-    const [modelLoadAction, setModelLoadAction] = React.useState<'available' | 'descriptor_absent' | 'feature_disabled' | null>(null);
+    const [modelLoadAction, setModelLoadAction] = React.useState<Extract<DaemonProviderModelsResponseV1, { status: 'success' }>['modelLoadAction'] | null>(null);
     const [error, setError] = React.useState<ProviderErrorV1 | null>(null);
     const [loading, setLoading] = React.useState(false);
     const [stateScopeKey, setStateScopeKey] = React.useState<string | null>(null);
@@ -26,6 +29,8 @@ export function useProviderConnectionModels(input: Readonly<{
         ActiveServerAccountScopeLifetime | null
     >(null);
     const generation = React.useRef(0);
+    const activeRef = React.useRef(input.active !== false);
+    activeRef.current = input.active !== false;
     const currentAccountLifetimeRef = React.useRef(accountLifetime);
     currentAccountLifetimeRef.current = accountLifetime;
     const stateAccountLifetimeRef = React.useRef(stateAccountLifetime);
@@ -54,13 +59,14 @@ export function useProviderConnectionModels(input: Readonly<{
     }, [accountLifetime]);
 
     const refreshWithResult = React.useCallback(async () => {
+        if (!activeRef.current) return null;
         const requestGeneration = ++generation.current;
         const requestStillCurrent = (): boolean => (
             currentAccountLifetimeRef.current === accountLifetime
             && (accountLifetime?.isCurrent() ?? true)
         );
         if (!requestStillCurrent()) return null;
-        if (!input.enabled || !input.machineId || !input.connectionId) {
+        if (!input.enabled || !input.connectionId) {
             stateAccountLifetimeRef.current = accountLifetime;
             stateScopeKeyRef.current = scopeKey;
             setStateAccountLifetime(accountLifetime);
@@ -73,6 +79,7 @@ export function useProviderConnectionModels(input: Readonly<{
             setLoading(false);
             return null;
         }
+        if (!ready) return null;
         if (
             stateScopeKeyRef.current !== scopeKey
             || stateAccountLifetimeRef.current !== accountLifetime
@@ -90,7 +97,7 @@ export function useProviderConnectionModels(input: Readonly<{
         setLoading(true);
         try {
             const result = await describeProviderConnectionModels({
-                machineId: input.machineId,
+                ...(input.machineId ? { machineId: input.machineId } : {}),
                 serverId: input.serverId,
                 connectionId: input.connectionId,
             });
@@ -113,7 +120,7 @@ export function useProviderConnectionModels(input: Readonly<{
             if (generation.current !== requestGeneration || !requestStillCurrent()) return null;
             const error = providerErrorFromRpcFailure(caught, {
                 connectionId: input.connectionId,
-                machineId: input.machineId,
+                ...(input.machineId ? { machineId: input.machineId } : {}),
             });
             stateAccountLifetimeRef.current = accountLifetime;
             stateScopeKeyRef.current = scopeKey;
@@ -124,7 +131,7 @@ export function useProviderConnectionModels(input: Readonly<{
         } finally {
             if (generation.current === requestGeneration && requestStillCurrent()) setLoading(false);
         }
-    }, [accountLifetime, input.connectionId, input.enabled, input.machineId, input.serverId, scopeKey]);
+    }, [accountLifetime, describeProviderConnectionModels, ready, input.connectionId, input.enabled, input.machineId, input.serverId, scopeKey]);
 
     const refresh = React.useCallback(async (): Promise<void> => {
         await refreshWithResult();
@@ -147,18 +154,18 @@ export function useProviderConnectionModels(input: Readonly<{
         }
         void refreshWithResult();
         return () => { generation.current += 1; };
-    }, [accountLifetime, refreshWithResult, scopeKey]);
+    }, [accountLifetime, input.active, refreshWithResult, scopeKey]);
 
     const stateMatchesScope = stateScopeKey === scopeKey
         && stateAccountLifetime === accountLifetime;
-    const scopeEnabled = Boolean(input.enabled && input.machineId && input.connectionId);
+    const scopeEnabled = Boolean(input.enabled && input.connectionId);
     return {
         models: stateMatchesScope ? models : [],
         connectionRevision: stateMatchesScope ? connectionRevision : null,
         manualModelPolicy: stateMatchesScope ? manualModelPolicy : null,
         modelLoadAction: stateMatchesScope ? modelLoadAction : null,
         error: stateMatchesScope ? error : null,
-        loading: scopeEnabled && (!stateMatchesScope || loading),
+        loading: input.active !== false && scopeEnabled && (!ready || !stateMatchesScope || loading),
         refresh,
         refreshWithResult,
     };

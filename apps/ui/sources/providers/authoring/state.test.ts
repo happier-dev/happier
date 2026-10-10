@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildCustomProviderTemplate, createCustomProviderDraft, updateCustomProviderDraftPreset } from './state';
+import { buildCustomProviderTemplate, createCustomProviderDraft, updateCustomProviderDraftAdvanced, updateCustomProviderDraftPreset } from './state';
 
 describe('custom provider authoring state', () => {
     it('builds an OpenAI-compatible probe template through the canonical normalizer', () => {
@@ -109,5 +109,18 @@ describe('custom provider authoring state', () => {
             { endpointTemplateId: 'openai-responses', path: '/fallback-models' },
             { endpointTemplateId: 'anthropic', path: '/model-catalog' },
         ] });
+    });
+
+    it('retains custom credential transport and manual catalog through presentation changes', () => {
+        const simple: ReturnType<typeof createCustomProviderDraft> = {
+            ...createCustomProviderDraft('openai-chat'), name: 'Gateway', baseUrl: 'https://gateway.example.test/v1',
+            credentialStyle: 'custom-header', credentialHeader: 'X-Gateway-Key', catalog: 'manual',
+        };
+        const advanced = updateCustomProviderDraftAdvanced(simple, true);
+        expect(buildCustomProviderTemplate(advanced)).toMatchObject({
+            credential: { transports: [{ destination: { kind: 'httpHeader', name: 'x-gateway-key', format: 'raw' } }] },
+            catalog: { source: 'manual' },
+        });
+        expect(buildCustomProviderTemplate(updateCustomProviderDraftAdvanced(advanced, false))).toEqual(buildCustomProviderTemplate(simple));
     });
 });

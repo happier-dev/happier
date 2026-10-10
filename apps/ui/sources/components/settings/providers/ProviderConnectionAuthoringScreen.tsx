@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { providerConnectionDetailRoute } from './collection/providerCollectionModel';
 import { useIsFocused } from '@/components/appShell/workspace/destinationRoute';
 import type { TextInput } from 'react-native';
 import { useNavigation, useRouter } from '@/components/appShell/workspace/destinationRoute';
@@ -31,16 +32,12 @@ import {
 import { useProviderSettingsTarget } from '@/providers/hooks/targetMachine';
 import { useProviderConnectionMutation } from '@/providers/hooks/useProviderConnectionMutation';
 import { useProviderConnections } from '@/providers/hooks/useProviderConnections';
-import {
-    describeProviderConnections,
-    probeProviderDraft,
-    providerErrorFromRpcFailure,
-} from '@/providers/rpc/client';
+import { providerErrorFromRpcFailure } from '@/providers/actions/client';
+import { useProviderActionClient } from '@/providers/actions/useProviderActionClient';
 import { useAllMachines, useSetting } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 import { getMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
 import { ProviderFeatureAvailabilityNotice, useProviderFeatureAvailability } from './ProviderFeatureAvailability';
-import { useActiveUnsavedChangesGuard } from '@/utils/navigation/useActiveUnsavedChangesGuard';
 import { useUnsavedChangesBeforeRemoveGuard } from '@/utils/navigation/useUnsavedChangesBeforeRemoveGuard';
 import { promptUnsavedChangesAlert } from '@/utils/ui/promptUnsavedChangesAlert';
 import { BuiltInProviderAuthoringView } from './authoring/BuiltInProviderAuthoringView';
@@ -149,6 +146,7 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
         selectedTargetServerMatchesActiveAccount,
         serverId,
     } = providerTarget;
+    const { describeProviderConnections, probeProviderDraft } = useProviderActionClient(serverId);
     const focused = useIsFocused();
     const query = useProviderConnections({ enabled, active: focused, machineId, serverId });
     const refreshConnections = React.useCallback(async (): Promise<void> => {
@@ -156,6 +154,7 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
     }, [query.refresh]);
     const mutation = useProviderConnectionMutation({
         resolveTarget: resolveCurrentTarget,
+        serverId,
         refresh: refreshConnections,
     });
     const connectionId = React.useRef(`pc_${randomUUID()}`).current;
@@ -355,7 +354,7 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
     React.useEffect(() => {
         const generation = authoringPreviewGenerationRef.current + 1;
         authoringPreviewGenerationRef.current = generation;
-        if (!accountStillCurrent() || !enabled || !props.contributionKey || !machineId) {
+        if (!accountStillCurrent() || !enabled || !props.contributionKey) {
             setAuthoringPreview(null);
             setAuthoringPreviewError(null);
             setAuthoringPreviewLoading(false);
@@ -369,7 +368,7 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
         }
         setAuthoringPreviewLoading(true);
         void describeProviderConnections({
-            machineId,
+            ...(machineId ? { machineId } : {}),
             serverId,
             authoringPreview: {
                 connectionId,
@@ -387,7 +386,7 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
             }
             if (!result.authoringPreview) {
                 setAuthoringPreviewError(createProviderErrorV1('provider_endpoint_unavailable', {
-                    connectionId, machineId,
+                    connectionId, ...(machineId ? { machineId } : {}),
                 }));
                 return;
             }
@@ -395,9 +394,9 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
         }).catch((caught) => {
             if (!accountStillCurrent() || authoringPreviewGenerationRef.current !== generation) return;
             setAuthoringPreviewLoading(false);
-            setAuthoringPreviewError(providerErrorFromRpcFailure(caught, { connectionId, machineId }));
+            setAuthoringPreviewError(providerErrorFromRpcFailure(caught, { connectionId, ...(machineId ? { machineId } : {}) }));
         });
-    }, [accountLifetime, accountStillCurrent, authoringPreviewRefreshNonce, connectionId, contributionDisplayName, contributionEndpointOverridesKey, contributionEndpointsComplete, enabled, machineId, props.contributionKey, selectedCandidateId, serverId]);
+    }, [accountLifetime, accountStillCurrent, describeProviderConnections, authoringPreviewRefreshNonce, connectionId, contributionDisplayName, contributionEndpointOverridesKey, contributionEndpointsComplete, enabled, machineId, props.contributionKey, selectedCandidateId, serverId]);
     const retryAuthoringPreview = React.useCallback(async (): Promise<void> => {
         if (!accountStillCurrent()) return;
         setAuthoringPreviewRefreshNonce((current) => current + 1);
@@ -409,6 +408,7 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
         secretPickerModalIdRef.current = Modal.show({
             component: SavedSecretPickerModal,
             props: {
+                scope: accountLifetime?.scope ?? null,
                 selectedId: secretId,
                 onSelectId: (selectedId) => {
                     secretPickerModalIdRef.current = null;
@@ -418,7 +418,7 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
             chrome: { kind: 'card', title: t('settingsProviders.detail.pickSecretTitle'), dimensions: { size: 'lg' } },
             closeOnBackdrop: true,
         });
-    }, [accountStillCurrent, closeSecretPicker, secretId, selectedTargetServerMatchesActiveAccount]);
+    }, [accountLifetime, accountStillCurrent, closeSecretPicker, secretId, selectedTargetServerMatchesActiveAccount]);
 
     const reviewConnectionDraft = React.useCallback(() => {
         if (!accountStillCurrent()) return;
@@ -429,7 +429,7 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
     }, [accountStillCurrent, mutation.clearError]);
 
     const save = React.useCallback(async (): Promise<boolean> => {
-        if (!accountStillCurrent() || !machineId) return false;
+        if (!accountStillCurrent()) return false;
         setLocalError(null);
         setManualModelsError(null);
         setInvalidField(null);
@@ -471,7 +471,7 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
                 if (authoringPreview?.status !== 'resolved') return null;
                 return {
                     action: 'createContribution' as const,
-                    machineId, connectionId, contributionKey: props.contributionKey,
+                    ...(machineId ? { machineId } : {}), connectionId, contributionKey: props.contributionKey,
                     displayName: contributionDisplayName, savedSecretId: effectiveSecretId, enable: enableAfterSaving,
                     authoringReview: {
                         candidateId: authoringPreview.candidateId,
@@ -482,7 +482,7 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
                 };
             })() : {
                 action: 'createCustom' as const,
-                machineId, connectionId, template: buildCustomProviderTemplate(draft),
+                ...(machineId ? { machineId } : {}), connectionId, template: buildCustomProviderTemplate(draft),
                 manualModels: manualModels.accepted.map((id) => ({ id })),
                 savedSecretId: draftRequiresApiKey ? effectiveSecretId : null, enable: enableAfterSaving,
             };
@@ -491,7 +491,8 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
             if (accountStillCurrent() && result?.status === 'success' && 'connection' in result) {
                 isDirtyRef.current = false;
                 ignoreUnsavedGuardRef.current = true;
-                router.replace(`/(app)/settings/providers/${result.connection.connectionId}` as never);
+                // A catalog provider opens on its detail, which may close the setup with one note.
+                router.replace(`${providerConnectionDetailRoute(result.connection.connectionId)}${props.contributionKey ? '?connected=1' : ''}` as never);
                 return true;
             }
         } catch {
@@ -558,7 +559,7 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
                 machineId,
             }));
         }
-    }, [accountStillCurrent, connectionId, draft, draftRequiresApiKey, effectiveSecretId, machineId, props.contributionKey, resolveCurrentTarget]);
+    }, [accountStillCurrent, probeProviderDraft, connectionId, draft, draftRequiresApiKey, effectiveSecretId, machineId, props.contributionKey, resolveCurrentTarget]);
 
     const requestUnsavedChangesDecision = React.useCallback(async () => {
         if (!accountStillCurrent()) return 'keepEditing' as const;
@@ -588,18 +589,6 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
         continueOnSave: false,
         onContinue: continueNavigation,
         tag: 'ProviderConnectionAuthoringScreen.beforeRemove',
-    });
-    useActiveUnsavedChangesGuard({
-        navigation,
-        guard: React.useMemo(() => ({
-            isDirtyRef,
-            ignoreRef: ignoreUnsavedGuardRef,
-            requestDecision: requestUnsavedChangesDecision,
-            onDiscard: discardAuthoringDraft,
-            onSave: save,
-            continueOnSave: false,
-            tag: 'ProviderConnectionAuthoringScreen.shellGuard',
-        }), [discardAuthoringDraft, requestUnsavedChangesDecision, save]),
     });
 
     const presets = React.useMemo<readonly DropdownMenuItem[]>(() => PRESETS.map((id) => ({
@@ -641,6 +630,7 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
         await mutation.retry();
     }, [accountStillCurrent, mutation.retry]);
 
+    // A custom endpoint is tested on one computer before it is saved; its editor keeps that scope.
     const contextBar = (
         <MachineAdministrationContextBar
             label={t('settingsProvidersCollection.machineScopeLabel')}
@@ -648,15 +638,10 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
             testIDPrefix="settings.providers.administration.target"
         />
     );
-    if (availabilityPresentation || !machineId) {
+    if (availabilityPresentation) {
         return (
             <ItemList>
-                {contextBar}
-                <ItemGroup>
-                    {availabilityPresentation
-                        ? <ProviderFeatureAvailabilityNotice presentation={availabilityPresentation} />
-                        : <Item mode="info" title={t('settingsProviders.noMachine')} subtitle={t('settingsProviders.noMachineDescription')} />}
-                </ItemGroup>
+                <ItemGroup><ProviderFeatureAvailabilityNotice presentation={availabilityPresentation} /></ItemGroup>
             </ItemList>
         );
     }
@@ -669,27 +654,25 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
             : undefined;
     const localEndpoint = localEndpointHint(draft);
     const targetMachine = machines.find((machine) => machine.id === machineId);
-    const currentMachineName = getMachineDisplayName(targetMachine) ?? machineId;
+    const currentMachineName = getMachineDisplayName(targetMachine) ?? machineId ?? '';
 
     if (props.contributionKey) {
         const previewCredential = authoringPreview?.credential ?? contribution?.credential ?? null;
         return (
             <BuiltInProviderAuthoringView
-                contextBar={contextBar}
                 nameField={(
-                    <ItemGroup>
-                        <ProviderFieldRow
-                            ref={nameFieldRef}
-                            testID="settings-provider-authoring-name"
-                            title={t('settingsProviders.authoring.name')}
-                            placeholder={t('settingsProviders.authoring.namePlaceholder')}
-                            value={contributionDisplayName ?? ''}
-                            editable={!mutation.isPending('save')}
-                            onChangeText={(name) => {
-                                if (accountStillCurrent()) setContributionDisplayName(name);
-                            }}
-                        />
-                    </ItemGroup>
+                    <ProviderFieldRow
+                        ref={nameFieldRef}
+                        testID="settings-provider-authoring-name"
+                        title={t('settingsProviders.authoring.name')}
+                        optional
+                        placeholder={contribution?.name ?? t('settingsProviders.authoring.namePlaceholder')}
+                        value={contributionDisplayName ?? ''}
+                        editable={!mutation.isPending('save')}
+                        onChangeText={(name) => {
+                            if (accountStillCurrent()) setContributionDisplayName(name);
+                        }}
+                    />
                 )}
                 machineId={machineId}
                 currentMachineName={currentMachineName}

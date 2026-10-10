@@ -1,6 +1,5 @@
 import { isLaunchProfileV2, type AiLaunchProfile } from '@happier-dev/protocol/profiles/read';
-import { readProviderSettingsFromAccountSettingsV1 } from '@happier-dev/protocol/providers/settings/readFromAccountSettingsV1';
-import type { ProviderSettingsMigrationPendingConflictV1 } from '@happier-dev/protocol/providers/settings/v1';
+import type { ProviderSettingsMigrationPendingConflictV1, ProviderSettingsV1 } from '@happier-dev/protocol/providers/settings/v1';
 
 const RETAINED_LEGACY_PROFILE_IDS = new Set(['azure-openai', 'gemini-api-key', 'gemini-vertex']);
 
@@ -8,15 +7,14 @@ export type ProfileMigrationStatus = 'review' | 'conflict' | 'retained';
 
 export function resolveProfileMigrationConflict(input: Readonly<{
     profileId: string;
-    providerSettings: unknown;
+    providerSettings: ProviderSettingsV1 | null | undefined;
 }>): ProviderSettingsMigrationPendingConflictV1 | null {
-    const read = readProviderSettingsFromAccountSettingsV1({ providerSettingsV1: input.providerSettings });
-    return read.settings.migration?.pendingConflicts.find((entry) => entry.sourceProfileId === input.profileId) ?? null;
+    return input.providerSettings?.migration?.pendingConflicts.find((entry) => entry.sourceProfileId === input.profileId) ?? null;
 }
 
 export function resolveProfileMigrationStatus(input: Readonly<{
     profile: AiLaunchProfile;
-    providerSettings: unknown;
+    providerSettings: ProviderSettingsV1 | null | undefined;
 }>): ProfileMigrationStatus | null {
     if (isLaunchProfileV2(input.profile)) return null;
     const conflict = resolveProfileMigrationConflict({ profileId: input.profile.id, providerSettings: input.providerSettings });
@@ -24,6 +22,5 @@ export function resolveProfileMigrationStatus(input: Readonly<{
         return 'conflict';
     }
     if (RETAINED_LEGACY_PROFILE_IDS.has(input.profile.id)) return 'retained';
-    const read = readProviderSettingsFromAccountSettingsV1({ providerSettingsV1: input.providerSettings });
-    return read.settings.migration?.pendingCustomProfileIds.includes(input.profile.id) ? 'review' : null;
+    return input.providerSettings?.migration?.pendingCustomProfileIds.includes(input.profile.id) ? 'review' : null;
 }

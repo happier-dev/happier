@@ -2,7 +2,8 @@ import * as React from 'react';
 import type { ProviderErrorV1, SessionModelSelectionV1, SessionProviderBindingMetadataV1 } from '@happier-dev/protocol';
 import type { DaemonProviderBindingStatusResponseV1 } from '@happier-dev/protocol/rpc';
 
-import { describeProviderBindingStatus, providerErrorFromRpcFailure } from '@/providers/rpc/client';
+import { providerErrorFromRpcFailure } from '@/providers/actions/client';
+import { useProviderActionClient } from '@/providers/actions/useProviderActionClient';
 import {
     captureActiveServerAccountScopeLifetime,
     type ActiveServerAccountScopeLifetime,
@@ -28,6 +29,7 @@ export function useProviderBindingStatus(input: Readonly<{
     selectionIntentPresent?: boolean;
     launchBinding: SessionProviderBindingMetadataV1 | null;
 }>) {
+    const { describeProviderBindingStatus, ready } = useProviderActionClient(input.serverId);
     const accountLifetime = captureActiveServerAccountScopeLifetime();
     const [state, setState] = React.useState<ProviderBindingStatusState>({
         scopeKey: null,
@@ -114,6 +116,7 @@ export function useProviderBindingStatus(input: Readonly<{
             });
             return;
         }
+        if (!ready) return;
         setState((current) => current.scopeKey === scopeKey
             && current.accountLifetime === accountLifetime
             ? { ...current, loading: true }
@@ -150,7 +153,7 @@ export function useProviderBindingStatus(input: Readonly<{
                     : current);
             }
         }
-    }, [accountLifetime, bindingKey, input.enabled, input.machineId, input.selectionIntentPresent, input.serverId, scopeKey, selectionKey]);
+    }, [accountLifetime, describeProviderBindingStatus, ready, bindingKey, input.enabled, input.machineId, input.selectionIntentPresent, input.serverId, scopeKey, selectionKey]);
 
     React.useEffect(() => {
         void refresh();
@@ -160,7 +163,7 @@ export function useProviderBindingStatus(input: Readonly<{
     return {
         status: stateMatchesScope ? state.status : null,
         error: stateMatchesScope ? state.error : null,
-        loading: requestable && (!stateMatchesScope || state.loading),
+        loading: requestable && (!ready || !stateMatchesScope || state.loading),
         refresh,
     };
 }

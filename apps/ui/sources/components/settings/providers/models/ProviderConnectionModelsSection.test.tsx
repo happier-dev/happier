@@ -221,6 +221,19 @@ function modelSegments(): ReadonlyArray<{ key: string }> {
     return (legendList.props?.data ?? []).filter((row) => row.key.startsWith('models:rows:'));
 }
 
+/** Error pages now use the real shared state card, not a pair of Item rows. */
+function presentedTitles(screen: Awaited<ReturnType<typeof renderScreen>>) {
+    const errors = screen.findAll(node => typeof node.props.testID === 'string'
+        && node.props.testID.startsWith('provider-error:') && typeof node.props.title === 'string');
+    return [...screen.findAllByType('Item').map(item => item.props.title),
+        ...errors.flatMap(node => [node.props.title, node.props.action?.label].filter(Boolean))];
+}
+
+function findProviderRecoveryAction(screen: Awaited<ReturnType<typeof renderScreen>>, label: string) {
+    return screen.findAll(node => node.props.accessibilityRole === 'button'
+        && node.props.accessibilityLabel === label && typeof node.props.onPress === 'function')[0];
+}
+
 describe('ProviderConnectionModelsSection', () => {
     afterEach(standardCleanup);
     beforeEach(() => {
@@ -388,7 +401,7 @@ describe('ProviderConnectionModelsSection', () => {
         const screen = await renderScreen(<ModelsSectionHost connectionId="pc_a" />);
 
         expect(screen.findAllByType('InlineAddExpander')).toHaveLength(0);
-        expect(screen.findAllByType('Item').map((item) => item.props.title))
+        expect(presentedTitles(screen))
             .toContain('settingsProviders.models.providerManagedTitle');
     });
 
@@ -405,7 +418,7 @@ describe('ProviderConnectionModelsSection', () => {
         const failed = await renderScreen(<ModelsSectionHost connectionId="pc_a" />);
         expect(renderedModelRowCount(failed)).toBe(0);
         expect(failed.findByTestId('provider-model-manager.empty')).toBeNull();
-        expect(failed.findAllByType('Item').map((item) => item.props.title))
+        expect(presentedTitles(failed))
             .toContain('settingsProviders.errors.unreachableTitle');
     });
 
@@ -494,7 +507,7 @@ describe('ProviderConnectionModelsSection', () => {
         await act(async () => { await screen.findByType(ProviderModelManager).props.onResetVisibility?.(); });
 
         expect(alert).not.toHaveBeenCalled();
-        expect(screen.findAllByType('Item').map((item) => item.props.title)).toContain('settingsProviders.errors.actions.retry');
+        expect(presentedTitles(screen)).toContain('settingsProviders.errors.actions.retry');
     });
 
     it('shows initial transport failure and preserves stale rows when a later refresh fails', async () => {
@@ -506,9 +519,9 @@ describe('ProviderConnectionModelsSection', () => {
         const initialFailure = await renderScreen(<ModelsSectionHost connectionId="pc_a" />);
 
         expect(renderedModelRowCount(initialFailure)).toBe(0);
-        expect(initialFailure.findAllByType('Item').map((item) => item.props.title))
+        expect(presentedTitles(initialFailure))
             .toContain('settingsProviders.errors.unreachableTitle');
-        expect(initialFailure.findAllByType('Item').map((item) => item.props.title))
+        expect(presentedTitles(initialFailure))
             .toContain('settingsProviders.errors.actions.retry');
 
         await act(async () => { initialFailure.tree.unmount(); });
@@ -523,7 +536,7 @@ describe('ProviderConnectionModelsSection', () => {
         await act(async () => { await refreshButton?.props.onPress?.(); });
         expect(renderedModelRowCount(staleFailure)).toBe(1);
         expect(staleFailure.findByType(ProviderModelManager).props.groups[0].rows).toHaveLength(1);
-        expect(staleFailure.findAllByType('Item').map((item) => item.props.title))
+        expect(presentedTitles(staleFailure))
             .toContain('settingsProviders.errors.unreachableTitle');
     });
 
@@ -538,12 +551,11 @@ describe('ProviderConnectionModelsSection', () => {
         expect(refresh).toHaveBeenCalledOnce();
         expect(sectionState(screen).errorRetry).toBeUndefined();
         expect(sectionState(screen).errorReviewCurrentState).toEqual(expect.any(Function));
-        const titles = screen.findAllByType('Item').map((item) => item.props.title);
+        const titles = presentedTitles(screen);
         expect(titles).toContain('settingsProviders.errors.mutationOutcomeUnknownTitle');
         expect(titles).toContain('settingsProviders.errors.actions.reviewCurrentState');
         await act(async () => {
-            await screen.findAllByType('Item')
-                .find((item) => item.props.title === 'settingsProviders.errors.actions.reviewCurrentState')
+            await findProviderRecoveryAction(screen, 'settingsProviders.errors.actions.reviewCurrentState')
                 ?.props.onPress?.();
         });
         expect(mutate).toHaveBeenCalledOnce();
@@ -562,11 +574,10 @@ describe('ProviderConnectionModelsSection', () => {
         expect(modelsRequestCount).toBe(2);
         expect(refresh).toHaveBeenCalledOnce();
         expect(sectionState(screen).errorRetry).toBeUndefined();
-        expect(screen.findAllByType('Item').map((item) => item.props.title))
+        expect(presentedTitles(screen))
             .toContain('settingsProviders.errors.actions.reviewCurrentState');
         await act(async () => {
-            await screen.findAllByType('Item')
-                .find((item) => item.props.title === 'settingsProviders.errors.actions.reviewCurrentState')
+            await findProviderRecoveryAction(screen, 'settingsProviders.errors.actions.reviewCurrentState')
                 ?.props.onPress?.();
         });
         expect(mutate).toHaveBeenCalledOnce();
@@ -736,11 +747,10 @@ describe('ProviderConnectionModelsSection', () => {
         expect(modelsRequestCount).toBe(2);
         expect(refresh).toHaveBeenCalledOnce();
         expect(sectionState(screen).errorRetry).toBeUndefined();
-        expect(screen.findAllByType('Item').map((item) => item.props.title))
+        expect(presentedTitles(screen))
             .toContain('settingsProviders.errors.actions.reviewCurrentState');
         await act(async () => {
-            await screen.findAllByType('Item')
-                .find((item) => item.props.title === 'settingsProviders.errors.actions.reviewCurrentState')
+            await findProviderRecoveryAction(screen, 'settingsProviders.errors.actions.reviewCurrentState')
                 ?.props.onPress?.();
         });
         expect(mutate).toHaveBeenCalledOnce();
@@ -762,11 +772,10 @@ describe('ProviderConnectionModelsSection', () => {
         expect(modelsRequestCount).toBe(2);
         expect(refresh).toHaveBeenCalledOnce();
         expect(sectionState(screen).errorRetry).toBeUndefined();
-        expect(screen.findAllByType('Item').map((item) => item.props.title))
+        expect(presentedTitles(screen))
             .toContain('settingsProviders.errors.actions.reviewCurrentState');
         await act(async () => {
-            await screen.findAllByType('Item')
-                .find((item) => item.props.title === 'settingsProviders.errors.actions.reviewCurrentState')
+            await findProviderRecoveryAction(screen, 'settingsProviders.errors.actions.reviewCurrentState')
                 ?.props.onPress?.();
         });
         expect(mutate).toHaveBeenCalledOnce();
@@ -787,11 +796,10 @@ describe('ProviderConnectionModelsSection', () => {
         expect(modelsRequestCount).toBe(2);
         expect(refresh).toHaveBeenCalledOnce();
         expect(sectionState(screen).errorRetry).toBeUndefined();
-        expect(screen.findAllByType('Item').map((item) => item.props.title))
+        expect(presentedTitles(screen))
             .toContain('settingsProviders.errors.actions.reviewCurrentState');
         await act(async () => {
-            await screen.findAllByType('Item')
-                .find((item) => item.props.title === 'settingsProviders.errors.actions.reviewCurrentState')
+            await findProviderRecoveryAction(screen, 'settingsProviders.errors.actions.reviewCurrentState')
                 ?.props.onPress?.();
         });
         expect(mutate).toHaveBeenCalledOnce();
@@ -831,7 +839,7 @@ describe('ProviderConnectionModelsSection', () => {
         });
 
         expect(alert).not.toHaveBeenCalled();
-        expect(screen.findAllByType('Item').map((item) => item.props.title))
+        expect(presentedTitles(screen))
             .toContain('settingsProviders.errors.actions.retry');
     });
 

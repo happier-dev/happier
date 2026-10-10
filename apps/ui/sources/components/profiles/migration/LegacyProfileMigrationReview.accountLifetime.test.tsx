@@ -39,7 +39,7 @@ describe('Provider legacy review captured Account', () => {
         const onClose = vi.fn(() => { if (modalId) Modal.hide(modalId); });
         const profile = AIBackendProfileSchema.parse({ id: 'deepseek', name: 'Original Account profile',
             environmentVariables: [{ name: 'OPENAI_BASE_URL', value: 'https://api.deepseek.test/v1', isSecret: false }] });
-        const screen = await renderScreen(<ModalProvider />);
+        const screen = await renderScreen(<ModalProvider>{null}</ModalProvider>);
         await act(async () => {
             modalId = Modal.show({ component: LegacyProfileMigrationReview, props: {
                 machineId: 'machine-shared', serverId, profile, secretBindings: {}, onConfirmed, onClose,

@@ -2,8 +2,30 @@ import React from 'react';
 import { vi } from 'vitest';
 
 import type { ExpoRouterParams } from '@/dev/testkit/mocks/router';
+import type { AcpCatalogRecordV1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 
 type ModuleFactory = () => unknown | Promise<unknown>;
+
+/** Publishes the real scoped row; Settings mocks do not supply catalog authority. */
+export async function publishProfileEditFormAcpCatalogFixture(record: AcpCatalogRecordV1) {
+    const [{ getStorage }, { getActiveServerId }, catalog, engine] = await Promise.all([
+        import('@/sync/domains/state/storageStore'),
+        import('@/sync/domains/server/serverProfiles'),
+        import('@/sync/store/settings/acpCatalogSnapshot'),
+        import('@/sync/engine/settings/acpCatalogEngine'),
+    ]);
+    const previousScope = getStorage().getState().settingsScope;
+    const scope = { serverId: getActiveServerId(), accountId: 'profile-editor-fixture' };
+    engine.resetAcpCatalogEngineForTests();
+    catalog.resetAcpCatalogSnapshotsForTests();
+    getStorage().setState({ settingsScope: scope });
+    catalog.applyAcpCatalogSnapshot(scope, { status: 'ready', revision: 1, record }, true);
+    return () => {
+        engine.resetAcpCatalogEngineForTests();
+        catalog.resetAcpCatalogSnapshotsForTests();
+        getStorage().setState({ settingsScope: previousScope });
+    };
+}
 
 type InstallProfileEditFormModuleMocksOptions = Readonly<{
     reactNative?: ModuleFactory;

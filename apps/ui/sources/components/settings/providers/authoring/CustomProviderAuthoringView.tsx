@@ -9,19 +9,18 @@ import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropd
 import { Switch } from '@/components/ui/forms/Switch';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
 import { PageHeaderMarkSlot } from '@/components/ui/layout/PageHeaderMarkSlot';
-import { PageHeaderMenu } from '@/components/ui/layout/PageHeaderEntityParts';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
-import type { CustomProviderDraft } from '@/providers/authoring/state';
+import { updateCustomProviderDraftAdvanced, type CustomProviderDraft } from '@/providers/authoring/state';
 import { ProviderIcon } from '@/providers/connection/ProviderIcon';
 import { t } from '@/text';
 import { ProviderErrorItems } from '../ProviderErrorItems';
 import { ProviderFieldRow } from './ProviderFieldRow';
-import { ProviderHeaderActions, ProviderProbeResult, ProviderSavedSecretControl } from '../ProviderPageParts';
+import { ProviderProbeResult, ProviderSavedSecretControl } from '../ProviderPageParts';
 
 export type CustomProviderAuthoringViewModel = Readonly<{
-    machineId: string;
+    machineId: string | null;
     currentMachineName: string;
     draft: CustomProviderDraft;
     presets: readonly DropdownMenuItem[];
@@ -104,35 +103,31 @@ export function CustomProviderAuthoringView(props: Readonly<{
                 details={probeResult ? (
                     <ProviderProbeResult testID="settings-provider-authoring-probe-result" text={probeResult} failed={false} />
                 ) : undefined}
-                actions={(
-                    <ProviderHeaderActions>
-                        {model.draftHasProbe ? (
-                            <RoundButton
-                                testID="settings-provider-authoring-test"
-                                size="small"
-                                display="secondary"
-                                title={t('settingsProvidersCollection.test')}
-                                accessibilityLabel={t('settingsProviders.detail.testConnection')}
-                                loading={model.probeState === 'probing'}
-                                disabled={saveBlocked}
-                                onPress={actions.onTest}
-                            />
-                        ) : null}
-                        <RoundButton
-                            testID="settings-provider-authoring-save"
-                            size="small"
-                            title={t('common.save')}
-                            accessibilityLabel={t('settingsProviders.authoring.save')}
-                            loading={model.savePending}
-                            disabled={saveBlocked}
-                            onPress={actions.onSave}
-                        />
-                        <PageHeaderMenu
-                            testID="settings-provider-authoring-menu"
-                            actions={[{ id: 'discard', title: t('settingsProvidersCollection.discard'), onSelect: actions.onDiscard }]}
-                        />
-                    </ProviderHeaderActions>
-                )}
+                primaryAction={{
+                    testID: 'settings-provider-authoring-save',
+                    title: t('common.save'),
+                    loading: model.savePending,
+                    disabled: saveBlocked,
+                    onPress: actions.onSave,
+                }}
+                cancelAction={{
+                    testID: 'settings-provider-authoring-cancel',
+                    title: t('common.cancel'),
+                    disabled: model.savePending,
+                    onPress: actions.onDiscard,
+                }}
+                actions={model.draftHasProbe ? (
+                    <RoundButton
+                        testID="settings-provider-authoring-test"
+                        size="small"
+                        display="secondary"
+                        title={t('settingsProvidersCollection.test')}
+                        accessibilityLabel={t('settingsProviders.detail.testConnection')}
+                        loading={model.probeState === 'probing'}
+                        disabled={saveBlocked || model.machineId === null}
+                        onPress={actions.onTest}
+                    />
+                ) : undefined}
             />
 
             {model.error ? (
@@ -207,7 +202,7 @@ export function CustomProviderAuthoringView(props: Readonly<{
                     subtitle={draft.advanced ? t('settingsProviders.authoring.advancedSetupEnabled') : t('settingsProviders.authoring.advancedSetupDisabled')}
                     subtitleLines={0}
                     showChevron={false}
-                    rightElement={<Switch testID="settings-provider-authoring-advanced" accessibilityLabel={t('settingsProviders.authoring.advancedSetup')} value={draft.advanced} onValueChange={(advanced) => actions.onDraftChange((current) => ({ ...current, advanced }))} />}
+                    rightElement={<Switch testID="settings-provider-authoring-advanced" accessibilityLabel={t('settingsProviders.authoring.advancedSetup')} value={draft.advanced} onValueChange={(advanced) => actions.onDraftChange((current) => updateCustomProviderDraftAdvanced(current, advanced))} />}
                     rightElementOutsidePressable
                 />
             </ItemGroup>
@@ -305,13 +300,15 @@ export function CustomProviderAuthoringView(props: Readonly<{
                     <Item
                         mode="info"
                         title={t('settingsProviders.authoring.localAddressTitle')}
-                        subtitle={t('settingsProviders.authoring.localAddressDescription', { machine: model.currentMachineName, endpoint: model.localEndpoint })}
+                        subtitle={model.machineId
+                            ? t('settingsProviders.authoring.localAddressDescription', { machine: model.currentMachineName, endpoint: model.localEndpoint })
+                            : t('settingsProvidersCollection.localNoComputer')}
                         subtitleLines={0}
                     />
                 ) : null}
                 <Item
                     title={t('settingsProviders.authoring.enableAfterSaving')}
-                    subtitle={model.localEndpoint ? t('settingsProviders.authoring.enableOnCurrentMachine') : t('settingsProviders.authoring.enableAccountWide')}
+                    subtitle={t('settingsProviders.authoring.enableAccountWide')}
                     subtitleLines={0}
                     showChevron={false}
                     rightElement={<Switch testID="settings-provider-authoring-enable-after-save" accessibilityLabel={t('settingsProviders.authoring.enableAfterSaving')} value={model.enableAfterSaving} onValueChange={actions.onEnableAfterSavingChange} />}

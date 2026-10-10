@@ -445,6 +445,28 @@ describe('ProviderConnectionsSettingsScreen', () => {
         expect(findConnectionRow(large, 'pc_a')?.props.selected).toBe(true);
     });
 
+    it('groups admitted gateways in the Providers rail without relabeling an ordinary managed source', async () => {
+        const { CollectionListGroupLabel } = await import('@/components/ui/lists/collection/CollectionList');
+        state.describeReply = { data: createProviderConnectionsDescribeFixture({ connections: [
+            createProviderConnectionViewFixture({ connectionId: 'pc_gateway', displayName: 'Subscriptions',
+                contributionKey: 'example.gateway/native', deployment: { kind: 'managedLocal', targetMachineId: 'machine-a', effects: null },
+                managedLocalOption: { targetMachineId: 'machine-a', connectedAccountPurposes: [
+                    { purpose: 'upstream', service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, required: false },
+                ] } }),
+            createProviderConnectionViewFixture({ connectionId: 'pc_local', displayName: 'Local models',
+                contributionKey: 'example.local/native', deployment: { kind: 'managedLocal', targetMachineId: 'machine-a', effects: null },
+                managedLocalOption: { targetMachineId: 'machine-a', connectedAccountPurposes: [] } }),
+        ] }) };
+        const { ProviderConnectionsSettingsScreen } = await import('./ProviderConnectionsSettingsScreen');
+        const screen = await renderScreen(<ProviderConnectionsSettingsScreen variant="rail" selectedConnectionId="pc_gateway" />);
+        await waitForHomeGovernance(() => expect(findConnectionRow(screen, 'pc_gateway')).not.toBeNull());
+        expect(screen.findAllByType(CollectionListGroupLabel).map(node => ({ title: node.props.title, count: node.props.count })))
+            .toContainEqual({ title: 'settingsProvidersCollection.gateway.railGroup', count: 1 });
+        expect(findConnectionRow(screen, 'pc_gateway')?.props.selected).toBe(true);
+        expect(findConnectionRow(screen, 'pc_gateway')?.props.subtitle).toBe('settingsProvidersCollection.gateway.managedFromConnectedServices');
+        expect(findConnectionRow(screen, 'pc_local')?.props.subtitle).not.toBe('settingsProvidersCollection.gateway.managedFromConnectedServices');
+    });
+
     it('does not leave a dirty editor when another connection is selected until its guard permits navigation', async () => {
         const { ProviderConnectionsSettingsScreen } = await import('./ProviderConnectionsSettingsScreen');
         const screen = await renderScreen(<ProviderConnectionsSettingsScreen />);
@@ -505,7 +527,7 @@ describe('ProviderConnectionsSettingsScreen', () => {
         expect(findConnectionRow(screen, 'pc_a')?.props.selected).toBe(true);
     });
 
-    it('lets the setup prerequisite own the page when no machine can supply a provider rail', async () => {
+    it('keeps the provider rail beside a detail with no machine, reading nothing until one is chosen', async () => {
         navigationState.pathname = '/settings/providers';
         navigationState.params = {};
         await account.publishMachines(account.serverId, []);
@@ -515,7 +537,8 @@ describe('ProviderConnectionsSettingsScreen', () => {
             screen.findByTestId('settings-providers-layout')?.props.onLayout({ nativeEvent: { layout: { width: 1200 } } });
             await flushHookEffects();
         });
-        expect(screen.findByTestId('settings-providers-screen')).toBeNull();
+        // The collection is Account data: its rail never waits for a machine to exist.
+        expect(screen.findByTestId('settings-providers-screen')).not.toBeNull();
         expect(screen.findByTestId('settings-providers-detail-pane')?.props.accessibilityElementsHidden).toBe(false);
         expect(screen.findByTestId('provider-draft')).not.toBeNull();
         expect(providerHarness.state.requests).toHaveLength(0);
@@ -580,11 +603,10 @@ describe('ProviderConnectionsSettingsScreen', () => {
         expect(navigationState.navigatorMounts).toBe(1);
     });
 
-    it('keeps the machine chip beside the unavailable notice when Providers is unavailable', async () => {
+    it('says Providers is unavailable without reading a machine', async () => {
         await account.publishFeatures(account.serverId, createRootLayoutFeaturesResponse({ features: { providers: { enabled: false } } }));
         const { ProviderSettingsIndex } = await import('./ProviderSettingsIndex');
         const screen = await renderInCollectionLayout(<ProviderSettingsIndex />, 'split');
-        expect(screen.findByTestId('settings.providers.administration.target.chip')).not.toBeNull();
         expect(screen.findAllByType(Item).map((item) => item.props.title)).toContain('settingsProviders.unavailable');
         expect(providerHarness.state.requests).toHaveLength(0);
     });
@@ -625,7 +647,8 @@ describe('ProviderConnectionsSettingsScreen', () => {
         const screen = presentation === 'landing'
             ? await renderInCollectionLayout(<ProviderSettingsIndex />, 'split')
             : await renderScreen(<ProviderConnectionsSettingsScreen variant="page" />);
-        const setupId = 'settings-providers-invitation-machines';
+        // With no machine to choose, the computer section leads to setting one up.
+        const setupId = 'settings.providers.administration.target.setUp';
         expect(screen.findHostByTestId(setupId)).not.toBeNull();
         setActiveUnsavedChangesGuard({ isDirtyRef: { current: true }, requestDecision: async () => 'keepEditing', tag: 'provider-prerequisite-test' });
         await screen.pressByTestIdAsync(setupId);

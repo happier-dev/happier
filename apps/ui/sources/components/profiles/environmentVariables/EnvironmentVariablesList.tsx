@@ -10,6 +10,7 @@ import { t } from '@/text';
 import { useEnvironmentVariables } from '@/hooks/server/useEnvironmentVariables';
 import { parseEnvVarTemplate } from '@/utils/profiles/envVarTemplate';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { Text, TextInput } from '@/components/ui/text/Text';
 
 
@@ -211,6 +212,14 @@ export function EnvironmentVariablesList({
                 title={t('profiles.environmentVariables.title')}
                 description={t('profilesPage.environmentDescription')}
                 surface="none"
+                actionLayout="adaptive"
+                action={<SectionActionButton
+                    testID="profile-environment-add"
+                    title={t('profiles.environmentVariables.addVariable')}
+                    icon="plus"
+                    expanded={isAddExpanded}
+                    onPress={() => setIsAddExpanded((current) => !current)}
+                />}
             >
             {environmentVariables.length > 0 && (
                 <View>
@@ -267,12 +276,11 @@ export function EnvironmentVariablesList({
                 </View>
             )}
 
-            </ItemGroup>
-            <ItemGroup>
                 <InlineAddExpander
                     isOpen={isAddExpanded}
                     onOpenChange={setIsAddExpanded}
                     title={t('profiles.environmentVariables.addVariable')}
+                    trigger={null}
                     onCancel={resetAddDraft}
                     onSave={handleAddVariable}
                     saveDisabled={!newVarName.trim()}

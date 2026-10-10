@@ -46,6 +46,19 @@ describe('toggleFavoriteProfileId', () => {
 });
 
 describe('buildProfileGroups', () => {
+    it('lists profiles shared with the reader in their own group, apart from the reader\'s own', () => {
+        const own = buildCustomProfile({ id: 'own', name: 'Own', compatibility: { claude: true, codex: true, gemini: true } });
+        const shared = { ...buildCustomProfile({ id: 'theirs', name: 'Theirs', compatibility: { claude: true, codex: true, gemini: true } }), shared: true };
+        const favoriteShared = { ...buildCustomProfile({ id: 'pinned', name: 'Pinned', compatibility: { claude: true, codex: true, gemini: true } }), shared: true };
+
+        const groups = buildProfileGroups({ customProfiles: [own, shared, favoriteShared], favoriteProfileIds: ['pinned'] });
+
+        expect(groups.customProfiles.map((profile) => profile.id)).toEqual(['own']);
+        expect(groups.sharedProfiles.map((profile) => profile.id)).toEqual(['theirs']);
+        // A favorite stays where the reader put it.
+        expect(groups.favoriteProfiles.map((profile) => profile.id)).toEqual(['pinned']);
+    });
+
     it('filters favoriteIds to resolvable profiles (preserves default environment favorite)', () => {
         const customProfiles = [
             buildCustomProfile({

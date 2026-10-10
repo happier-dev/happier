@@ -22,6 +22,8 @@ export function ProviderConnectionModelsPage(props: Readonly<{
     header: React.ReactElement;
     footer: React.ReactElement;
     revealOnMount: boolean;
+    /** Each new value scrolls the page to the Models section (the Connection section's Models row). */
+    revealRequest?: number;
     onRequestClose: () => void;
 }>): React.ReactElement {
     const { models } = props;
@@ -142,6 +144,7 @@ export function ProviderConnectionModelsPage(props: Readonly<{
                     ? t('settingsProvidersCollection.modelsShown', { shown: models.shownModelCount, total: models.modelCount })
                     : null,
                 revealOnMount: props.revealOnMount,
+                revealRequest: props.revealRequest,
                 testID: 'provider-connection-detail',
             }}
         />

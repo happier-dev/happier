@@ -105,6 +105,42 @@ export function updateCustomProviderDraftPreset(
     };
 }
 
+/** Switching presentation carries the selected endpoint's editable values with it. */
+export function updateCustomProviderDraftAdvanced(
+    draft: CustomProviderDraft,
+    advanced: boolean,
+): CustomProviderDraft {
+    if (draft.advanced === advanced) return draft;
+    if (advanced) {
+        return {
+            ...draft,
+            advanced,
+            endpoints: draft.endpoints.map((endpoint) => endpoint.protocol === draft.protocol ? {
+                ...endpoint,
+                enabled: true,
+                baseUrl: draft.baseUrl,
+                requiresApiKey: draft.requiresApiKey,
+                credentialStyle: draft.credentialStyle,
+                credentialHeader: draft.credentialHeader,
+                probePathsText: draft.catalog === 'probe' ? draft.modelsPath : '',
+            } : endpoint),
+        };
+    }
+    const endpoint = draft.endpoints.find((candidate) => candidate.protocol === draft.protocol);
+    return {
+        ...draft,
+        advanced,
+        ...(endpoint ? {
+            baseUrl: endpoint.baseUrl,
+            requiresApiKey: endpoint.requiresApiKey,
+            credentialStyle: endpoint.credentialStyle,
+            credentialHeader: endpoint.credentialHeader,
+            catalog: endpoint.probePathsText.trim() ? 'probe' as const : 'manual' as const,
+            modelsPath: endpoint.probePathsText,
+        } : {}),
+    };
+}
+
 function parsePublicHeaders(value: string): Readonly<Record<string, string>> {
     const result: Record<string, string> = Object.create(null) as Record<string, string>;
     const names = new Set<string>();

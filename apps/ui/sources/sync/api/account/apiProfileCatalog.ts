@@ -2,7 +2,7 @@ import {
     PROFILE_ROWS_ROUTE_V1, PROFILE_RECORDS_ROUTE_V1, PROFILE_REFERENCE_GUARD_ROUTE_V1, ProfileReferenceGuardReadResponseV1Schema, ProfileRowsListResponseV1Schema,
     ProfileRowMutationResponseV1Schema, ProfileRowMutationV1Schema, sealProfileRecordContentV1, ProfileSecretPromotionRequiredError,
     parseProfileRecordForMutationV1,
-    type ProfileRecordV1, type ProfileRowMutationV1,
+    type ProfileRecordV1, type ProfileRowMutationV1, type ProfileRowsListResponseV1,
 } from '@happier-dev/protocol/profiles/profileRecordV1';
 import { loadProfileCatalogV1, type ProfileCatalogSnapshotV1 } from '@happier-dev/protocol/profiles/profileCatalogV1';
 import type { AccountScopedCryptoMaterial } from '@happier-dev/protocol/crypto/accountScopedCipher';
@@ -20,7 +20,7 @@ import { transferLegacyProfilesV1, cleanupTransferredProfileSourcesV1,
 import { normalizeAccountSettingsHistoryAfterTransfer } from '@/sync/engine/settings/accountSettingsHistoryRestore';
 import type { ArtifactSharingResourceV1 } from '@happier-dev/protocol/artifacts/artifactSharingV1';
 import { readAccountSettingsBaseline } from '@/sync/engine/settings/accountSettingsBaseline';
-import { sealAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { sealAccountSettingsCleanup } from '@/sync/engine/settings/sealAccountSettingsCleanup';
 import { parseSavedSecretCatalogReferenceV1 } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
 import { readSavedSecretCatalogInContext } from './apiSavedSecretCatalog';
 import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
@@ -41,7 +41,7 @@ export class ProfileRowOperationError extends Error {
 
 export type ProfileAccountContext = Awaited<ReturnType<typeof import('@/sync/ops/actions/actionAccountContext').captureLazyActionAccountContext>>;
 
-async function admitProfileAccount<T>(context: ProfileAccountContext,
+export async function admitProfileAccount<T>(context: ProfileAccountContext,
     operation: (context: ProfileAccountContext, mode: 'plain' | 'e2ee', material: AccountScopedCryptoMaterial | null) => Promise<T>): Promise<T> {
     const { encryption } = await context.resolveAccountEncryption();
     const storage = await resolveAccountStorageContext(context.credentials, { encryption, request: context.request });
@@ -77,11 +77,17 @@ async function readResponse(context: ProfileAccountContext, path: string, signal
 
 /** Full opened inventory; partial data can be displayed but cannot authorize a write or conversion. */
 async function readCapturedProfileCatalog(context: ProfileAccountContext, mode: 'plain' | 'e2ee', material: AccountScopedCryptoMaterial | null,
-    signal?: AbortSignal, readSource?: () => Promise<unknown>): Promise<ProfileCatalogSnapshotV1> {
+    signal?: AbortSignal, readSource?: () => Promise<unknown>, onPage?: (page: ProfileRowsListResponseV1) => void): Promise<ProfileCatalogSnapshotV1> {
     const catalog = await loadProfileCatalogV1({ mode, material, signal,
         ...(readSource ? { readSource } : {}),
-        readPage: async cursor => ProfileRowsListResponseV1Schema.parse(await readResponse(context,
-            `${PROFILE_ROWS_ROUTE_V1}${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`, signal)),
+        readPage: async cursor => {
+            const page = ProfileRowsListResponseV1Schema.parse(await readResponse(context,
+                `${PROFILE_ROWS_ROUTE_V1}${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`, signal));
+            // Exact row readback consumers observe the same page the canonical
+            // loader admits; this observation alone is never a complete census.
+            onPage?.(page);
+            return page;
+        },
         readReferenceGuard: async () => ProfileReferenceGuardReadResponseV1Schema.parse(await readResponse(context,
             PROFILE_REFERENCE_GUARD_ROUTE_V1, signal)),
         readTransfer: async () => ProfileTransferRowReadResponseV1Schema.parse(await readResponse(context,
@@ -299,9 +305,9 @@ export async function mutateProfileRow(scope: ServerAccountScope, mutation: Prof
 
 /** Actions reuse their admitted context; this never acquires a second Home or credential capture. */
 export async function readProfileCatalogInContext(context: ProfileAccountContext, signal?: AbortSignal,
-    options?: Readonly<{ readSourceBaseline: true }>): Promise<ProfileCatalogSnapshotV1> {
+    options?: Readonly<{ readSourceBaseline?: true; onPage?: (page: ProfileRowsListResponseV1) => void }>): Promise<ProfileCatalogSnapshotV1> {
     try { return await admitProfileAccount(context, (captured, mode, material) => readCapturedProfileCatalog(captured, mode, material, signal,
-        options?.readSourceBaseline ? async () => (await readProfileTransferSourceInContext(captured)).source.raw : undefined)); }
+        options?.readSourceBaseline ? async () => (await readProfileTransferSourceInContext(captured)).source.raw : undefined, options?.onPage)); }
     catch (error) { return catalogFailure(error, signal); }
 }
 export async function readProfileCatalogProjectionInContext(context: ProfileAccountContext, signal?: AbortSignal): Promise<ProfileCatalogProjection> {
@@ -318,14 +324,6 @@ type ProfileSealInput = Omit<ProfileWriteInput, 'operation'> & Readonly<{
     operation: Exclude<ProfileRowMutationV1['operation'], 'remove'>;
     settingsCleanup?: ProfileRowMutationV1['settingsCleanup'];
 }>;
-function sealProfileSettingsCleanup(mode: 'plain' | 'e2ee', material: AccountScopedCryptoMaterial | null,
-    version: number, raw: Readonly<Record<string, unknown>>): NonNullable<ProfileRowMutationV1['settingsCleanup']> {
-    if (mode === 'plain') return { expectedSettingsVersion: version, nextSettings: { t: 'plain', v: raw } };
-    if (!material) throw new ProfileRowOperationError('encryption-material-unavailable');
-    return { expectedSettingsVersion: version, nextSettings: { t: 'encrypted', c: sealAccountScopedBlobCiphertext({
-        kind: 'account_settings', material, payload: raw, randomBytes: getRandomBytes,
-    }) } };
-}
 function readProfileMutationReferences(record: ProfileRecordV1, artifactsById: ReadonlyMap<string, ArtifactSharingResourceV1>) {
     const bindings = readEffectiveProfileSecretBindingsV1(record, { artifactsById });
     if (!bindings) throw new ProfileRowOperationError('invalid-reference');
@@ -369,7 +367,8 @@ async function writeCapturedProfileRecord(context: ProfileAccountContext, mode: 
         context.assertCurrent();
         const prepared = prepareBuiltinProfileAttachmentV1(record, baseline.raw ?? {});
         record = prepared.record;
-        settingsCleanup = sealProfileSettingsCleanup(mode, material, baseline.version, prepared.nextSettings);
+        if (mode === 'e2ee' && !material) throw new ProfileRowOperationError('encryption-material-unavailable');
+        settingsCleanup = sealAccountSettingsCleanup(mode, material, baseline.version, prepared.nextSettings);
     }
     const artifactsById = record.definition.kind === 'artifact'
         ? await loadAiLaunchProfileArtifacts([record], { read: (id, options) => context.workflowArtifacts.read(id, options) }, signal)
@@ -477,7 +476,7 @@ async function deleteCapturedProfileRecord(context: ProfileAccountContext, mode:
             context.assertCurrent();
             const raw = removeProfilePreferenceReferencesV1(baseline.raw ?? {}, input.id, input.previousDefinition);
             if (JSON.stringify(raw) !== JSON.stringify(baseline.raw ?? {})) {
-                settingsCleanup = sealProfileSettingsCleanup(mode, material, baseline.version, raw);
+                settingsCleanup = sealAccountSettingsCleanup(mode, material, baseline.version, raw);
             }
         }
         return mutateWithContext(context, {

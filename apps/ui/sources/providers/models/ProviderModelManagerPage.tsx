@@ -18,6 +18,8 @@ import {
 } from '@/components/ui/selectionList';
 import { VirtualizedList, type VirtualizedListRef } from '@/components/ui/lists/virtualized';
 import { Text } from '@/components/ui/text/Text';
+import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
+import type { ProviderModelManagerSection } from './ProviderModelManager';
 import { useSessionCockpitBottomChromeHeight } from '@/components/workspaceCockpit/session/SessionCockpitChromeRegistry';
 import { t } from '@/text';
 
@@ -40,6 +42,8 @@ export type ProviderModelManagerPageHost = Readonly<{
     summary?: string | null;
     /** Scroll the Models section to the top once, when the page opens on it. */
     revealOnMount?: boolean;
+    /** Each new value scrolls the Models section to the top, as a row that leads to it asks. */
+    revealRequest?: number;
     testID?: string;
 }>;
 
@@ -53,9 +57,11 @@ export const MODEL_ROWS_PER_SEGMENT = 16;
 
 export function ProviderModelManagerPage(props: Readonly<{
     host: ProviderModelManagerPageHost;
-    sections: readonly SelectionListSection[];
+    sections: readonly ProviderModelManagerSection[];
     modelCount: number;
     actions: React.ReactNode;
+    /** One sheet per section, led by its source's header (Agent → Models). */
+    grouped?: boolean;
     onShowAll?: () => void;
     onHideAll?: () => void;
     onResetVisibility?: () => void;
@@ -66,13 +72,15 @@ export function ProviderModelManagerPage(props: Readonly<{
     const [query, setQuery] = React.useState('');
     const { host } = props;
 
-    const options = React.useMemo((): readonly SelectionListOption[] => {
-        const filtered = filterSelectionListSections(
-            props.sections.map((section) => ({ kind: 'static' as const, ...section })),
-            query,
-        );
-        return filtered.flatMap((section) => section.kind === 'static' ? section.options : []);
-    }, [props.sections, query]);
+    const filteredSections = React.useMemo((): readonly SelectionListSection[] => filterSelectionListSections(
+        props.sections.map((section) => ({ kind: 'static' as const, ...section })),
+        query,
+    ).flatMap((section) => section.kind === 'static' ? [section] : []), [props.sections, query]);
+    const options = React.useMemo(
+        (): readonly SelectionListOption[] => filteredSections.flatMap((section) => section.options),
+        [filteredSections],
+    );
+    const grouped = props.grouped === true;
 
     const menuActions = React.useMemo((): PageHeaderMenuAction[] => [
         ...(props.onHideAll ? [{
@@ -101,13 +109,49 @@ export function ProviderModelManagerPage(props: Readonly<{
             return [{
                 key: 'models:empty',
                 render: () => (
-                    <ItemGroup virtualizedSegment={{ first: false, last: !hasSummary }}>
+                    <ItemGroup virtualizedSegment={{ first: grouped, last: grouped || !hasSummary }}>
                         <Item testID="provider-model-manager.empty" mode="info" title={emptyTitle} showChevron={false} />
                     </ItemGroup>
                 ),
             }];
         }
         const segments: PageRow[] = [];
+        if (grouped) {
+            // Each source is its own sheet: its header row, then its models in segments.
+            const sourcesById = new Map(props.sections.map((section) => [section.id, section]));
+            for (const section of filteredSections) {
+                const source = sourcesById.get(section.id);
+                segments.push({
+                    key: `models:source:${section.id}`,
+                    render: () => (
+                        <ItemGroup virtualizedSegment={{ first: true, last: false }}>
+                            <Item
+                                testID={`provider-model-manager.source:${section.id}`}
+                                title={section.title ?? ''}
+                                subtitle={source?.description}
+                                subtitleLines={0}
+                                showChevron={false}
+                                rightElement={source?.headerAccessory ?? undefined}
+                                rightElementOutsidePressable
+                            />
+                        </ItemGroup>
+                    ),
+                });
+                for (let start = 0; start < section.options.length; start += MODEL_ROWS_PER_SEGMENT) {
+                    const segment = section.options.slice(start, start + MODEL_ROWS_PER_SEGMENT);
+                    const last = start + MODEL_ROWS_PER_SEGMENT >= section.options.length;
+                    segments.push({
+                        key: `models:rows:${section.id}:${segment[0]!.id}`,
+                        render: () => (
+                            <ItemGroup virtualizedSegment={{ first: false, last }}>
+                                {segment.map((option) => <ProviderModelPageRow key={option.id} option={option} />)}
+                            </ItemGroup>
+                        ),
+                    });
+                }
+            }
+            return segments;
+        }
         for (let start = 0; start < options.length; start += MODEL_ROWS_PER_SEGMENT) {
             const segment = options.slice(start, start + MODEL_ROWS_PER_SEGMENT);
             const last = !hasSummary && start + MODEL_ROWS_PER_SEGMENT >= options.length;
@@ -121,7 +165,7 @@ export function ProviderModelManagerPage(props: Readonly<{
             });
         }
         return segments;
-    }, [emptyTitle, hasSummary, listing, options]);
+    }, [emptyTitle, filteredSections, grouped, hasSummary, listing, options, props.sections]);
 
     const rows = React.useMemo((): readonly PageRow[] => {
         const controls: PageRow = {
@@ -130,7 +174,8 @@ export function ProviderModelManagerPage(props: Readonly<{
                 <ItemGroup
                     title={host.title}
                     description={host.description}
-                    virtualizedSegment={{ first: true, last: false }}
+                    // Grouped by source, the controls are their own sheet above the source sheets.
+                    virtualizedSegment={{ first: true, last: grouped }}
                 >
                     {host.leadingRows}
                     <SectionContentRow>
@@ -154,7 +199,7 @@ export function ProviderModelManagerPage(props: Readonly<{
             return [controls, {
                 key: 'models:state',
                 render: () => (
-                    <ItemGroup virtualizedSegment={{ first: false, last: true }}>{host.contentState}</ItemGroup>
+                    <ItemGroup virtualizedSegment={{ first: grouped, last: true }}>{host.contentState}</ItemGroup>
                 ),
             }];
         }
@@ -162,7 +207,7 @@ export function ProviderModelManagerPage(props: Readonly<{
         return [controls, ...modelSegments, {
             key: 'models:summary',
             render: () => (
-                <ItemGroup virtualizedSegment={{ first: false, last: true }}>
+                <ItemGroup virtualizedSegment={{ first: grouped, last: true }}>
                     <SectionContentRow>
                         <View style={styles.summary}>
                             <Text
@@ -188,7 +233,7 @@ export function ProviderModelManagerPage(props: Readonly<{
                 </ItemGroup>
             ),
         }];
-    }, [hasSummary, host.contentState, host.description, host.leadingRows, host.summary, host.title, listing, menuActions, modelSegments, props.actions, props.modelCount, props.onShowAll, query, theme.colors.text.secondary]);
+    }, [grouped, hasSummary, host.contentState, host.description, host.leadingRows, host.summary, host.title, listing, menuActions, modelSegments, props.actions, props.modelCount, props.onShowAll, query, theme.colors.text.secondary]);
 
     const revealOnMount = host.revealOnMount === true;
     React.useEffect(() => {
@@ -199,6 +244,15 @@ export function ProviderModelManagerPage(props: Readonly<{
         }, 250);
         return () => clearTimeout(timer);
     }, [revealOnMount]);
+    const revealRequest = host.revealRequest ?? 0;
+    // Read at reveal time: only a new request moves the page, never a changed motion preference.
+    const reducedMotionRef = React.useRef(false);
+    reducedMotionRef.current = useReducedMotionPreference();
+    React.useEffect(() => {
+        if (revealRequest === 0) return;
+        // The page is already laid out: move to the section the way a scroll would.
+        void listRef.current?.scrollToIndex({ index: 0, animated: !reducedMotionRef.current, viewPosition: 0 });
+    }, [revealRequest]);
 
     const renderRow = React.useCallback(({ item }: Readonly<{ item: PageRow }>) => item.render(), []);
 

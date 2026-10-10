@@ -1,7 +1,8 @@
 import * as React from 'react';
 import type { DaemonProviderConnectionsDescribeResponseV1 } from '@happier-dev/protocol/rpc';
 
-import { describeProviderConnections, providerErrorFromRpcFailure } from '@/providers/rpc/client';
+import { providerErrorFromRpcFailure } from '@/providers/actions/client';
+import { useProviderActionClient } from '@/providers/actions/useProviderActionClient';
 import {
     captureActiveServerAccountScopeLifetime,
     type ActiveServerAccountScopeLifetime,
@@ -17,7 +18,7 @@ type ProviderConnectionsState = Readonly<{
 }>;
 
 type ConnectionReader = Readonly<{
-    machineId: string;
+    machineId: string | null;
     serverId: string | null;
     accountLifetime: ActiveServerAccountScopeLifetime | null;
     read: () => Promise<Success | null | undefined>;
@@ -35,6 +36,7 @@ export function useProviderConnections(input: Readonly<{
     serverId: string | null;
     connectionId?: string;
 }>) {
+    const { describeProviderConnections, ready } = useProviderActionClient(input.serverId);
     const active = input.active ?? true;
     const activeRef = React.useRef(active);
     activeRef.current = active;
@@ -57,10 +59,10 @@ export function useProviderConnections(input: Readonly<{
     ]);
     const stateMatchesScope = state.scopeKey === scopeKey
         && state.accountLifetime === accountLifetime;
-    const scopeEnabled = Boolean(input.enabled && input.machineId);
+    const scopeEnabled = input.enabled;
     const data = stateMatchesScope ? state.data : null;
     const error = stateMatchesScope ? state.error : null;
-    const loading = active && scopeEnabled && (!stateMatchesScope || state.loading);
+    const loading = active && scopeEnabled && (!ready || !stateMatchesScope || state.loading);
 
     React.useEffect(() => {
         const registration = accountLifetime?.onRetire(() => {
@@ -81,10 +83,11 @@ export function useProviderConnections(input: Readonly<{
             && (accountLifetime?.isCurrent() ?? true)
         );
         if (!requestStillCurrent()) return null;
-        if (!input.enabled || !input.machineId) {
+        if (!input.enabled) {
             setState({ scopeKey, accountLifetime, data: null, error: null, loading: false });
             return null;
         }
+        if (!ready) return null;
         const machineId = input.machineId;
         const serverId = input.serverId;
         setState((current) => current.scopeKey === scopeKey
@@ -93,7 +96,7 @@ export function useProviderConnections(input: Readonly<{
             : { scopeKey, accountLifetime, data: null, error: null, loading: true });
         try {
             const result = await describeProviderConnections({
-                machineId,
+                ...(machineId ? { machineId } : {}),
                 serverId,
                 ...(input.connectionId ? { connectionId: input.connectionId } : {}),
             });
@@ -122,7 +125,7 @@ export function useProviderConnections(input: Readonly<{
                     ? current.data
                     : null,
                 error: providerErrorFromRpcFailure(caught, {
-                    machineId,
+                    ...(machineId ? { machineId } : {}),
                     ...(input.connectionId ? { connectionId: input.connectionId } : {}),
                 }),
                 loading: true,
@@ -136,10 +139,10 @@ export function useProviderConnections(input: Readonly<{
                     : current);
             }
         }
-    }, [accountLifetime, input.connectionId, input.enabled, input.machineId, input.serverId, scopeKey]);
+    }, [accountLifetime, describeProviderConnections, ready, input.connectionId, input.enabled, input.machineId, input.serverId, scopeKey]);
 
     React.useEffect(() => {
-        const reader = active && input.enabled && input.machineId
+        const reader = active && input.enabled
             ? { machineId: input.machineId, serverId: input.serverId, accountLifetime, read }
             : null;
         if (reader) activeReaders.add(reader);
@@ -157,7 +160,7 @@ export function useProviderConnections(input: Readonly<{
 
     const refresh = React.useCallback(async () => {
         const ownRead = read();
-        if (input.enabled && input.machineId
+        if (input.enabled
             && currentAccountLifetimeRef.current === accountLifetime
             && (accountLifetime?.isCurrent() ?? true)) {
             // Invoke private reads, never peer refreshes, so this cannot recurse.

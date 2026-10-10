@@ -293,7 +293,7 @@ describe('ProviderConnectionAuthoringScreen', () => {
             title: findComposite(screen, 'settings-provider-authoring-header', 'title')?.props.title,
             titles: screen.findAllByType(Item).map(item => item.props.title),
             requests: providerHarness.state.requests,
-        }).toMatchObject({ title: 'Boundary provider' }));
+        }).toMatchObject({ title: expect.stringContaining('Boundary provider') }));
     });
 
     it('edits a built-in connection name in the shared draft and writes it only on Connect', async () => {
@@ -360,7 +360,7 @@ describe('ProviderConnectionAuthoringScreen', () => {
         );
 
         const getKeyRow = screen.findAllByType(Item)
-            .find((item) => item.props.title === 'settingsProviders.links.getApiKey');
+            .find((item) => item.props.accessibilityLabel === 'settingsProviders.links.getApiKey');
         expect(getKeyRow?.props.accessibilityLabel).toBe('settingsProviders.links.getApiKey');
         expect(getKeyRow?.props.onPress).toBeUndefined();
         await React.act(async () => {
@@ -525,10 +525,15 @@ describe('ProviderConnectionAuthoringScreen', () => {
 
         await React.act(async () => {
             await account.restore({ accountId: 'account-b', serverIdentityId: 'srv_provider_screen', machines: [machine] });
+            // A fresh Account may view several saved Homes. This case owns one
+            // eligible Home, not the fail-closed Home-context availability arm.
+            await account.home.selectHomes([account.serverId]);
             await account.selectMachine(account.serverId, 'machine-a');
         });
 
         expect(modalHide).toHaveBeenCalledWith('provider-secret-picker');
+        // Observe the successor's eligible editor, not the availability notice.
+        await waitForHomeGovernance(() => expect(nameField()).toBeDefined());
         expect(nameField()?.props.value).toBe('');
         expect(screen.findAllByType(FieldTextInput)
             .find((field) => field.props.accessibilityLabel === 'settingsProviders.authoring.baseUrl')?.props.value).toBe('');
@@ -584,12 +589,14 @@ describe('ProviderConnectionAuthoringScreen', () => {
                 endpointOverrides: [{ endpointTemplateId: 'chat', baseUrl: 'https://account-a.example/v1' }],
             }),
         }));
+        const accountARequestCount = providerHarness.state.requests.length;
 
         // The incumbent reset retires Account A's lifetime, then Account B
         // mounts on the same route. The changed displayName prop forces the
         // memoized screen to re-run under B's freshly captured lifetime.
         await React.act(async () => {
             await account.restore({ accountId: 'account-b', serverIdentityId: 'srv_provider_screen', machines: [machine] });
+            await account.home.selectHomes([account.serverId]);
             await account.selectMachine(account.serverId, 'machine-a');
         });
 
@@ -599,17 +606,21 @@ describe('ProviderConnectionAuthoringScreen', () => {
                 displayName="account-b-render"
             />,
         );
-        await flushHookEffects({ cycles: 1, turns: 2 });
+        const accountBPreviews = () => providerHarness.state.requests.slice(accountARequestCount).filter(request =>
+            request.accountId === 'account-b'
+            && request.method === RPC_METHODS.DAEMON_PROVIDERS_CONNECTIONS_DESCRIBE
+            && typeof request.payload === 'object' && request.payload !== null
+            && Object.hasOwn(request.payload, 'authoringPreview'));
+        await waitForHomeGovernance(() => expect(accountBPreviews().length).toBeGreaterThan(0));
 
-        // B's preview request is rebuilt from reset state: it carries none of
-        // Account A's endpoint buffer, candidate, or display name.
-        expect(describeProviderConnections).toHaveBeenLastCalledWith(expect.objectContaining({
-            authoringPreview: expect.objectContaining({
+        // Check every actual Account B outward preview, not a historical A call.
+        for (const request of accountBPreviews()) {
+            expect(request.payload).toMatchObject({ authoringPreview: {
                 selectedCandidateId: null,
                 displayName: null,
                 endpointOverrides: [],
-            }),
-        }));
+            } });
+        }
     });
 
     it('shows the Provider website independently from credential metadata', async () => {
@@ -1580,7 +1591,7 @@ describe('ProviderConnectionAuthoringScreen', () => {
             await new Promise((resolve) => setTimeout(resolve, 0));
         });
         expect(presentedTitles(screen))
-            .toContain('externalSessions.operationStatusFailed');
+            .toContain('settingsProviders.errors.genericTitle');
         expect(presentedTitles(screen))
             .toContain('settingsProviders.errors.actions.reviewConnection');
         expect(run).not.toHaveBeenCalled();

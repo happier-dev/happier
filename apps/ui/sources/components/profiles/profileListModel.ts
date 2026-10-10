@@ -51,16 +51,16 @@ export function getProfileBackendSubtitle(params: {
                 parts.push(entry.title);
             }
         }
-        return parts.length > 0 ? parts.join(' • ') : '';
-    }
-
-    for (const agentId of params.enabledAgentIds) {
+    } else for (const agentId of params.enabledAgentIds) {
         if (isProfileCompatibleWithAgent(params.profile, agentId)) {
             const label = params.strings.agentLabelById[agentId];
             if (label) parts.push(label);
         }
     }
-    return parts.length > 0 ? parts.join(' • ') : '';
+    // The identity line names two compatible Agents, then counts the rest. Keep both catalog
+    // paths under this owner so the rail and Share subtitle cannot drift into long inventories.
+    return [...parts.slice(0, 2), ...(parts.length > 2
+        ? [t('shareSheet.profileAgentsMore', { count: parts.length - 2 })] : [])].join(' · ');
 }
 
 export function getProfileSubtitle(params: {

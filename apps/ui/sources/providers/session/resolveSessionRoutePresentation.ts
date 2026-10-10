@@ -7,13 +7,14 @@ import type { PluginProjectionV2 } from '@happier-dev/protocol/daemon/contributi
 import type { PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import { resolveSavedSecretSlotBindingIdV1 } from '@happier-dev/protocol/providers/settings/operationsV1';
 import { t } from '@/text';
+import type { DaemonProviderModelProjectionGroupV1 } from '@happier-dev/protocol/rpc';
 
 export type RouteSelection = ProviderBoundModelRef | SessionModelRefV2 | null;
 export type ProviderRouteSource = Readonly<{
     connectionId: string; providerName: string; connectionName: string;
     connectionRole: 'default' | 'named'; connectionDisplayNameMode: 'automatic' | 'custom';
     suppressedConnectedServiceIds?: readonly string[];
-}>;
+}> & Partial<Pick<DaemonProviderModelProjectionGroupV1, 'authorization' | 'rows'>>;
 export type SessionRoute = Readonly<
     { kind: 'unknown' } |
     { kind: 'native'; sourceLabel: string; authSource: 'native' | 'connected' | 'mixed' | 'unknown'; connectedCount: number; modelId: string | null } |

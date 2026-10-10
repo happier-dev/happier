@@ -71,6 +71,41 @@ describe('ProviderModelManager', () => {
         expect(sections.map((section) => section.id)).not.toContain('current');
     });
 
+    it('groups an agent list by source in picker order, keeping hidden models in their source and tagging the default', () => {
+        const sections = buildProviderModelManagerSections({
+            scope: { kind: 'agent', agentTargetKey: 'agent:happier.agent.codex/codex' },
+            nativeModels: [
+                { id: 'native-visible', name: 'Native Visible', hidden: false },
+                { id: 'native-hidden', name: 'Native Hidden', hidden: true },
+            ],
+            groups: [group(2, 'pc_a'), group(1, 'pc_b')],
+            showHidden: false,
+            onSetVisibility: () => {},
+            grouping: {
+                nativeTitle: 'Codex',
+                nativeDescription: 'Codex’s own models.',
+                connectionDescription: 'Shown in every agent that can run it.',
+                defaultRef: { providerConnectionId: 'pc_a', modelId: 'model-1' },
+            },
+        });
+
+        expect(sections.map((section) => section.id)).toEqual(['source:native', 'source:pc_a', 'source:pc_b']);
+        // A hidden model stays in its source, switched off, instead of moving to a Hidden group.
+        expect(sections.map((section) => section.options.map((option) => option.label))).toEqual([
+            ['Native Visible', 'Native Hidden'],
+            ['Model 0', 'Model 1'],
+            ['Model 0'],
+        ]);
+        expect(sections[1]?.title).toBe('Gateway · Work');
+        expect(sections[1]?.description).toBe('Shown in every agent that can run it.');
+        // The source header names the connection once; its rows do not repeat it.
+        expect(sections[1]?.options[1]?.subtitle ?? '').not.toContain('Gateway · Work');
+        const isDefault = (option: (typeof sections)[number]['options'][number]) =>
+            (option.rightAccessory as React.ReactElement<{ isDefault?: boolean }>).props.isDefault === true;
+        expect(sections[1]?.options.map(isDefault)).toEqual([false, true]);
+        expect(sections[2]?.options.map(isDefault)).toEqual([false]);
+    });
+
     it('does not repeat the connection on every row of that connection\'s own list', () => {
         const [available] = buildProviderModelManagerSections({
             scope: { kind: 'connection', connectionId: 'pc_a' },
@@ -82,6 +117,58 @@ describe('ProviderModelManager', () => {
         const subtitle = available?.options.find((option) => option.label === 'Model 1')?.subtitle ?? '';
         expect(subtitle).toContain('model-1');
         expect(subtitle).not.toContain('Gateway · Work');
+    });
+
+    it('shows favorite stars only for exact Agent, source and model refs beside the default tag', async () => {
+        const agentTargetKey = 'agent:happier.agent.codex/codex';
+        const sections = buildProviderModelManagerSections({
+            scope: { kind: 'agent', agentTargetKey },
+            nativeModels: [{ id: 'model-1', name: 'Native model', hidden: false }],
+            groups: [group(2, 'pc_a'), group(2, 'pc_b')],
+            showHidden: true,
+            onSetVisibility: () => {},
+            grouping: {
+                nativeTitle: 'Codex', nativeDescription: 'Native models', connectionDescription: 'Shown sources',
+                defaultRef: { providerConnectionId: 'pc_a', modelId: 'model-1' },
+                favoriteRefs: [
+                    { agentTargetKey, providerConnectionId: 'pc_a', modelId: 'model-1' },
+                    { agentTargetKey: 'agent:another.plugin/codex', providerConnectionId: 'pc_b', modelId: 'model-1' },
+                ],
+            },
+        });
+        const native = await renderScreen(sections[0]!.options[0]!.rightAccessory as React.ReactElement);
+        const favorite = await renderScreen(sections[1]!.options[1]!.rightAccessory as React.ReactElement);
+        const otherSource = await renderScreen(sections[2]!.options[1]!.rightAccessory as React.ReactElement);
+        expect(favorite.getTextContent()).toContain('★');
+        expect(favorite.findByTestId('provider-model-manager.default')).not.toBeNull();
+        expect(native.getTextContent()).not.toContain('★');
+        expect(otherSource.getTextContent()).not.toContain('★');
+    });
+
+    it('sets a default from the source row without changing model visibility', async () => {
+        const onSetDefault = vi.fn();
+        const onSetVisibility = vi.fn();
+        const sections = buildProviderModelManagerSections({
+            scope: { kind: 'agent', agentTargetKey: 'agent:happier.agent.codex/codex' },
+            nativeModels: [], groups: [group(2, 'pc_a'), group(2, 'pc_b')], showHidden: true,
+            onSetVisibility,
+            grouping: {
+                nativeTitle: 'Codex', nativeDescription: 'Native models', connectionDescription: 'Shown sources',
+                defaultRef: { providerConnectionId: 'pc_a', modelId: 'model-1' },
+                onSetDefault,
+            },
+        });
+        const selected = await renderScreen(sections[0]!.options[1]!.rightAccessory as React.ReactElement);
+        expect(selected.findByTestId('provider-model-manager.set-default')).toBeNull();
+        const other = await renderScreen(sections[1]!.options[1]!.rightAccessory as React.ReactElement);
+        const control = other.findAllByTestId('provider-model-manager.set-default')
+            .find(node => typeof node.props.onPress === 'function');
+        expect(control).toBeDefined();
+        await other.pressByTestId('provider-model-manager.set-default');
+        expect(onSetDefault).toHaveBeenCalledWith({
+            agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: 'pc_b', modelId: 'model-1',
+        });
+        expect(onSetVisibility).not.toHaveBeenCalled();
     });
 
     it('announces the action each model row will perform, including connection identity', () => {

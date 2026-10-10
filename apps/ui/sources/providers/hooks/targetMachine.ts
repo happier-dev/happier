@@ -132,8 +132,10 @@ export function useProviderSettingsTarget(): ProviderSettingsTargetV1 {
         selection,
         machineId: executionTarget?.machine.id ?? null,
         serverId: executionTarget?.serverId ?? null,
-        selectedTargetServerMatchesActiveAccount: selection.selectedTargetServerMatchesActiveAccount,
+        selectedTargetServerMatchesActiveAccount: selection.selectedTarget === null
+            ? accountLifetime?.isCurrent() === true
+            : selection.selectedTargetServerMatchesActiveAccount,
         machineRows,
         resolveCurrentTarget,
-    }), [executionTarget, machineRows, resolveCurrentTarget, selection]);
+    }), [accountLifetime, executionTarget, machineRows, resolveCurrentTarget, selection]);
 }

@@ -39,7 +39,7 @@ function matchesQuery(profile: AIBackendProfile, query: string): boolean {
 }
 
 /**
- * The rail beside a profile's detail: favorites, your profiles and the built-in ones, with the draft
+ * The rail beside a profile's detail: favorites, your profiles, the ones shared with you and the built-in ones, with the draft
  * of a new profile on top while it is open. Selection comes from the route; switching profiles
  * replaces the shown detail (its unsaved-changes guard runs first).
  */
@@ -63,7 +63,7 @@ export const ProfileCollectionRail = React.memo(function ProfileCollectionRail()
         if (selectedProfileId) recordProfileCollectionVisit(selectedProfileId);
     }, [selectedProfileId]);
 
-    const total = model.groups.favoriteProfiles.length + model.groups.customProfiles.length + model.groups.builtInProfiles.length;
+    const total = model.groups.favoriteProfiles.length + model.groups.customProfiles.length + model.groups.sharedProfiles.length + model.groups.builtInProfiles.length;
     const searchable = total > SEARCH_THRESHOLD;
     // The no-profile choice sits where the pickers show it: among favorites, or with the built-in ones.
     const defaultEnvironmentFavorite = model.groups.favoriteIds.has('');
@@ -72,6 +72,7 @@ export const ProfileCollectionRail = React.memo(function ProfileCollectionRail()
     const sections = [
         { id: 'favorites', title: t('profiles.groups.favorites'), profiles: model.groups.favoriteProfiles, defaultEnvironment: defaultEnvironmentFavorite },
         { id: 'custom', title: t('profiles.groups.custom'), profiles: model.groups.customProfiles, defaultEnvironment: false },
+        { id: 'shared', title: t('roles.profiles.sharedWithYouTitle'), profiles: model.groups.sharedProfiles, defaultEnvironment: false },
         { id: 'builtIn', title: t('profiles.groups.builtIn'), profiles: model.groups.builtInProfiles, defaultEnvironment: !defaultEnvironmentFavorite },
     ].map((section) => ({
         ...section,
@@ -83,7 +84,8 @@ export const ProfileCollectionRail = React.memo(function ProfileCollectionRail()
         <CollectionList
             testID="settings.profiles.rail"
             title={t('settingsFeatures.profiles')}
-            count={total}
+            // The machine environment and an open draft are collection choices too.
+            count={total + 1 + (selection.kind === 'draft' ? 1 : 0)}
             headerAction={(
                 <IconButton
                     testID="settings.profiles.rail.add"

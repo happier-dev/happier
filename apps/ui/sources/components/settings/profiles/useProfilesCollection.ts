@@ -1,6 +1,9 @@
 import { useAiLaunchProfiles } from '@/sync/store/useAiLaunchProfiles';
+import { useProfileCatalog } from '@/sync/store/useProfileCatalog';
+import { useProviderSettings } from '@/providers/hooks/useProviderSettings';
 import * as React from 'react';
 import type { AiLaunchProfile } from '@happier-dev/protocol';
+import { isBuiltInAiLaunchProfileV1 } from '@happier-dev/protocol/profiles/read';
 import type { Settings } from '@/sync/domains/settings/settings';
 
 import { resolveProfileMigrationStatus } from '@/components/profiles/migration/status';
@@ -18,35 +21,35 @@ import {
     getBuiltInProfile,
     isProfileEnabled,
     readProfileEnabledById,
-    setProfileEnabledOverride,
 } from '@/sync/domains/profiles/profileUtils';
 import {
     useCurrentSecretBindingsByProfileIdMutable,
     useSetting,
     useSettingMutable,
 } from '@/sync/domains/state/storage';
-import { useDeleteAiLaunchProfile } from '@/sync/store/settingsWriters';
+import { requireUpdatedProfileOperation, useAccountSettingsScope, useDeleteAiLaunchProfile, useProfileOperations } from '@/sync/store/settingsWriters';
 import { t } from '@/text';
 import { getSecretSatisfaction } from '@/utils/secrets/secretSatisfaction';
+import { getStorage } from '@/sync/domains/state/storageStore';
 
 export type ProfileMigrationStatus = ReturnType<typeof resolveProfileMigrationStatus>;
 
 export type ProfilesCollection = {
     useProfiles: Settings['useProfiles'];
     setUseProfiles: ReturnType<typeof useSettingMutable<'useProfiles'>>[1];
-    rawProfiles: Settings['profiles'];
+    catalog: ReturnType<typeof useProfileCatalog>;
     launchProfiles: ReturnType<typeof useAiLaunchProfiles>;
     profiles: ReturnType<typeof projectAiLaunchProfileForLegacyUi>[];
     favoriteProfileIds: Settings['favoriteProfiles'];
     setFavoriteProfileIds: ReturnType<typeof useSettingMutable<'favoriteProfiles'>>[1];
     profileEnabledById: ReturnType<typeof readProfileEnabledById>;
-    providerSettingsV1: Settings['providerSettingsV1'];
+    providerSettings: ReturnType<typeof useProviderSettings>;
     secretBindingsByProfileId: ReturnType<typeof useCurrentSecretBindingsByProfileIdMutable>[0];
     administrationTargetSelection: ReturnType<typeof useMachineAdministrationTargetSelection>;
     executionTarget: ReturnType<ReturnType<typeof useMachineAdministrationTargetSelection>['resolveExecutionTarget']>;
     resolveProfile: (profileId: string) => AiLaunchProfile | null;
     isEnabled: (profile: AIBackendProfile) => boolean;
-    setEnabled: (profile: AIBackendProfile, enabled: boolean) => void;
+    setEnabled: (profile: AIBackendProfile, enabled: boolean) => Promise<void>;
     isFavorite: (profileId: string) => boolean;
     toggleFavorite: (profileId: string) => void;
     migrationStatusOf: (profileId: string) => ProfileMigrationStatus | null;
@@ -59,21 +62,23 @@ export type ProfilesCollection = {
 /**
  * Settings › Profiles state shared by the collection's list, rail and detail: the saved profiles,
  * favorites, which profiles are offered, the machine the page manages, and the operations on a
- * profile. Each operation writes through its existing settings owner.
+ * profile. Entity edits use the canonical Profile operation; ordinary preferences retain their owner.
  */
 export function useProfilesCollection(): ProfilesCollection {
     const [useProfiles, setUseProfiles] = useSettingMutable('useProfiles');
-    // Retained settings bytes stay opaque until the canonical profile reader admits them.
-    const rawProfiles = useSetting('profiles');
-    const launchProfiles = useAiLaunchProfiles(rawProfiles);
+    const launchProfiles = useAiLaunchProfiles();
+    const scope = useAccountSettingsScope();
+    const catalog = useProfileCatalog(scope);
+    const operations = useProfileOperations();
     const profiles = React.useMemo(() => launchProfiles.map(projectAiLaunchProfileForLegacyUi), [launchProfiles]);
     const [favoriteProfileIds, setFavoriteProfileIds] = useSettingMutable('favoriteProfiles');
-    const [profileEnabledByIdRaw, setProfileEnabledById] = useSettingMutable('profileEnabledById');
+    const profileEnabledByIdRaw = useSetting('profileEnabledById');
+    const settingsVersion = getStorage()(state => state.settingsVersion);
     const profileEnabledById = React.useMemo(
         () => readProfileEnabledById(profileEnabledByIdRaw),
         [profileEnabledByIdRaw],
     );
-    const providerSettingsV1 = useSetting('providerSettingsV1');
+    const providerSettings = useProviderSettings(scope);
     const [secrets, setSecrets] = useSavedSecretsMutable();
     const [secretBindingsByProfileId, setSecretBindingsByProfileId] = useCurrentSecretBindingsByProfileIdMutable();
     const deleteAiLaunchProfile = useDeleteAiLaunchProfile();
@@ -102,9 +107,18 @@ export function useProfilesCollection(): ProfilesCollection {
         (profile: AIBackendProfile) => isProfileEnabled(profile, profileEnabledById),
         [profileEnabledById],
     );
-    const setEnabled = React.useCallback((profile: AIBackendProfile, enabled: boolean) => {
-        setProfileEnabledById(setProfileEnabledOverride(profileEnabledByIdRaw, profile, enabled));
-    }, [profileEnabledByIdRaw, setProfileEnabledById]);
+    const setEnabled = React.useCallback(async (profile: AIBackendProfile, enabled: boolean) => {
+        const source = launchProfiles.find(entry => entry.id === profile.id);
+        if (!operations) throw new Error('Profile Account is unavailable');
+        if (isBuiltInAiLaunchProfileV1(source ?? profile) && source?.profileRecordRevision === undefined) {
+            if (settingsVersion === null) throw new Error('Account settings version is unavailable');
+            requireUpdatedProfileOperation(await operations.setEnabled({ subject: { kind: 'builtin', id: profile.id },
+                enabled, expectedSettingsVersion: settingsVersion }));
+            return;
+        }
+        requireUpdatedProfileOperation(await operations.setEnabled({ id: profile.id, enabled,
+            expectedRevision: source?.profileRecordRevision }));
+    }, [launchProfiles, operations, settingsVersion]);
 
     const isFavorite = React.useCallback(
         (profileId: string) => favoriteProfileIds.includes(profileId),
@@ -116,8 +130,8 @@ export function useProfilesCollection(): ProfilesCollection {
 
     const migrationStatusOf = React.useCallback((profileId: string): ProfileMigrationStatus | null => {
         const actual = launchProfiles.find((entry) => entry.id === profileId);
-        return actual ? resolveProfileMigrationStatus({ profile: actual, providerSettings: providerSettingsV1 }) : null;
-    }, [launchProfiles, providerSettingsV1]);
+        return actual ? resolveProfileMigrationStatus({ profile: actual, providerSettings }) : null;
+    }, [launchProfiles, providerSettings]);
 
     /** What a row adds to its line: offered or not, and a pending provider migration. */
     const describeStatus = React.useCallback((profile: AIBackendProfile): string | null => {
@@ -133,6 +147,7 @@ export function useProfilesCollection(): ProfilesCollection {
 
     /** Deletes a saved profile after confirming; resolves `true` when it was deleted. */
     const requestDelete = React.useCallback(async (profile: Readonly<{ id: string; name: string }>): Promise<boolean> => {
+        const expectedRevision = launchProfiles.find(entry => entry.id === profile.id)?.profileRecordRevision;
         const confirmed = await Modal.confirm(
             t('profiles.delete.title'),
             t('profiles.delete.message', { name: profile.name }),
@@ -140,28 +155,33 @@ export function useProfilesCollection(): ProfilesCollection {
         );
         if (!confirmed) return false;
         try {
-            await deleteAiLaunchProfile(profile.id);
+            const result = await deleteAiLaunchProfile(profile.id, expectedRevision);
+            if (result.status === 'updated' && result.authoringMemoryCleanup) {
+                Modal.alert(t('common.error'), result.authoringMemoryCleanup.reason);
+            }
         } catch (error) {
             Modal.alert(t('common.error'), error instanceof Error ? error.message : t('common.error'));
             return false;
         }
         return true;
-    }, [deleteAiLaunchProfile]);
+    }, [deleteAiLaunchProfile, launchProfiles]);
 
     const openSecretModal = React.useCallback((profile: AIBackendProfile, envVarName?: string) => {
         const requiredSecretNames = getRequiredSecretEnvVarNames(profile);
         const requiredSecretName = (envVarName ?? requiredSecretNames[0] ?? '').trim().toUpperCase();
         if (!requiredSecretName) return;
 
-        const handleResolve = (result: SecretRequirementModalResult) => {
+        const handleResolve = async (result: SecretRequirementModalResult) => {
             if (result.action !== 'selectSaved') return;
-            setSecretBindingsByProfileId({
+            try { await setSecretBindingsByProfileId({
                 ...secretBindingsByProfileId,
                 [profile.id]: {
                     ...(secretBindingsByProfileId[profile.id] ?? {}),
                     [requiredSecretName]: result.secretId,
                 },
-            });
+            }); } catch (error) {
+                Modal.alert(t('common.error'), error instanceof Error ? error.message : t('common.error'));
+            }
         };
 
         Modal.show({
@@ -218,13 +238,13 @@ export function useProfilesCollection(): ProfilesCollection {
     return {
         useProfiles,
         setUseProfiles,
-        rawProfiles,
+        catalog,
         launchProfiles,
         profiles,
         favoriteProfileIds,
         setFavoriteProfileIds,
         profileEnabledById,
-        providerSettingsV1,
+        providerSettings,
         secretBindingsByProfileId,
         administrationTargetSelection,
         executionTarget,

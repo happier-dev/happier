@@ -5,7 +5,7 @@ import { useUnistyles } from 'react-native-unistyles';
 import { Platform, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
-import { Item } from '@/components/ui/lists/Item';
+import { SurfaceStateCard, type SurfaceStateSize } from '@/components/ui/surfaces/SurfaceStateCard';
 import { presentProviderError, presentProviderRecoveryAction } from '@/providers/connection/errorPresentation';
 import { dispatchProviderRecoveryAction } from '@/providers/connection/recovery';
 import { t } from '@/text';
@@ -18,12 +18,14 @@ import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactive
 export const ProviderErrorItems = React.memo(function ProviderErrorItems(props: Readonly<{
     error: unknown;
     /**
-     * `'rows'` (default): the settings anatomy — a titled info row with its description, and the
-     * recovery action as a row beneath. `'line'`: one compact line inside a picker — the severity
+     * `'rows'` (default): one shared surface state with its cause and recovery.
+     * `'line'`: one compact line inside a picker — the severity
      * glyph (its tooltip and accessible name carry the description), the title, and the recovery
      * action as an icon-only control.
      */
     presentation?: 'rows' | 'line';
+    /** Rails use the shared compact state; page errors keep the enclosing surface's size. */
+    size?: SurfaceStateSize;
     retry?: () => void | Promise<void>;
     loadModel?: () => void | Promise<void>;
     reviewAndRestart?: () => void | Promise<void>;
@@ -115,28 +117,23 @@ export const ProviderErrorItems = React.memo(function ProviderErrorItems(props: 
         );
     }
 
-    return (
-        <>
-            <View accessibilityLiveRegion="polite">
-                <Item
-                    testID={typedError.success ? `provider-error:${typedError.data.code}` : 'provider-error:unknown'}
-                    mode="info"
-                    title={t(presentation.titleKey)}
-                    subtitle={t(presentation.descriptionKey)}
-                    icon={<Icon name={iconName} size={29} color={iconColor} />}
-                />
-            </View>
-            {actionPresentation && typedError.success ? (
-                <Item
-                    testID={typedError.success ? `provider-error-action:${typedError.data.code}` : 'provider-error-action:unknown'}
-                    title={t(actionPresentation.titleKey)}
-                    loading={recoveryPending}
-                    disabled={recoveryPending}
-                    onPress={() => void runRecovery()}
-                />
-            ) : null}
-        </>
-    );
+    const code = typedError.success ? typedError.data.code : 'unknown';
+    return <SurfaceStateCard
+        testID={`provider-error:${code}`}
+        size={props.size}
+        kind={presentation.severity === 'danger' ? 'error' : presentation.severity === 'warning' ? 'warning' : 'unavailable'}
+        title={t(presentation.titleKey)}
+        reason={t(presentation.descriptionKey)}
+        diagnosticCode={code}
+        accessibilitySemantics="status"
+        action={actionPresentation && typedError.success ? {
+            testID: `provider-error-action:${code}`,
+            label: t(actionPresentation.titleKey),
+            busy: recoveryPending,
+            disabled: recoveryPending,
+            onPress: runRecovery,
+        } : undefined}
+    />;
 });
 
 const lineStyles = StyleSheet.create((theme) => ({

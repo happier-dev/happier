@@ -17,6 +17,22 @@ function resolveProvidersChildRoute(pathname: string): string {
     return pathname.endsWith('/models') ? '[connectionId]/models' : '[connectionId]';
 }
 
+const ProviderCollectionPaneClaimContext = React.createContext<((claimed: boolean) => void) | null>(null);
+
+/**
+ * The collection's landing says it shows a whole-page state (the invitation to add a first
+ * provider, or what must happen first), so the page owns the pane: no rail column beside it to
+ * repeat the state or to clip it. Released when the landing leaves or lands on a provider.
+ */
+export function useClaimProviderCollectionPane(claimed: boolean): void {
+    const claim = React.useContext(ProviderCollectionPaneClaimContext);
+    React.useEffect(() => {
+        if (!claim) return;
+        claim(claimed);
+        return () => claim(false);
+    }, [claim, claimed]);
+}
+
 /**
  * Providers as a collection beside the selected connection. Wide: the provider rail beside the
  * detail stack. Narrow: the detail stack alone, whose index page lists the providers and pushes
@@ -24,17 +40,33 @@ function resolveProvidersChildRoute(pathname: string): string {
  */
 export const ProviderSettingsLayout = React.memo(function ProviderSettingsLayout() {
     return (
-        <SettingsCollectionLayout
-            navigator="providers"
-            rootPathname={PROVIDERS_COLLECTION_ROUTE}
-            resolveChildRoute={resolveProvidersChildRoute}
-            rail={<ProviderCollectionRail />}
-            railWidthPx={PROVIDER_RAIL_WIDTH_PX}
-            detailMinWidthPx={PROVIDER_DETAIL_MIN_WIDTH_PX}
-            testID="settings-providers"
-        />
+        <ProviderCollectionPane>
+            {(landingOwnsPane) => (
+                <SettingsCollectionLayout
+                    navigator="providers"
+                    rootPathname={PROVIDERS_COLLECTION_ROUTE}
+                    resolveChildRoute={resolveProvidersChildRoute}
+                    rail={landingOwnsPane ? null : <ProviderCollectionRail />}
+                    railWidthPx={PROVIDER_RAIL_WIDTH_PX}
+                    detailMinWidthPx={PROVIDER_DETAIL_MIN_WIDTH_PX}
+                    testID="settings-providers"
+                />
+            )}
+        </ProviderCollectionPane>
     );
 });
+
+/** Holds whether the landing has claimed the whole pane, for the layout around it. */
+export function ProviderCollectionPane(props: Readonly<{
+    children: (landingOwnsPane: boolean) => React.ReactNode;
+}>) {
+    const [landingOwnsPane, setLandingOwnsPane] = React.useState(false);
+    return (
+        <ProviderCollectionPaneClaimContext.Provider value={setLandingOwnsPane}>
+            {props.children(landingOwnsPane)}
+        </ProviderCollectionPaneClaimContext.Provider>
+    );
+}
 
 /** The rail beside a provider's detail; it reads while the Providers navigator is focused. */
 const ProviderCollectionRail = React.memo(function ProviderCollectionRail() {

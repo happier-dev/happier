@@ -11,7 +11,7 @@ import type { ProviderCatalogCryptoAdmission } from '@/sync/store/settings/provi
 import type { LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
-import { resolveAccountStorageContext } from '@/sync/encryption/accountStorageContext';
+import { classifyAccountStorageReadFailure, resolveAccountStorageContext } from '@/sync/encryption/accountStorageContext';
 import { readAccountSettingsBaseline } from '@/sync/engine/settings/accountSettingsBaseline';
 import { normalizeAccountSettingsHistoryAfterTransfer } from '@/sync/engine/settings/accountSettingsHistoryRestore';
 import { importLegacySavedSecretsInContext } from '@/sync/ops/settings/savedSecretResourceOperations';
@@ -38,14 +38,15 @@ async function withAccount<T>(scope: ServerAccountScope, signal: AbortSignal | u
     } finally { context.dispose(); }
 }
 function failure(error: unknown, signal?: AbortSignal): Extract<ProviderConnectionsCatalogSnapshotV1, { status: 'unavailable' }> {
-    if (signal?.aborted) return { status: 'unavailable', reason: 'cancelled' };
-    const code = error instanceof Error ? 'code' in error ? error.code : error.message : undefined;
-    if (code === 'scope-retired' || code === 'action_account_scope_changed' || code === 'action_home_not_found') return { status: 'unavailable', reason: 'scope-retired' };
-    if (code === 'unauthorized' || code === 'action_home_signed_out') return { status: 'unavailable', reason: 'unauthorized' };
-    if (code === 'forbidden' || code === 'unsupported' || code === 'account-mode-mismatch' || code === 'encryption-material-unavailable') return { status: 'unavailable', reason: code };
-    if (code === 'account_storage_currentness_unavailable' || code === 'account_encryption_currentness_unavailable') return { status: 'unavailable', reason: 'encryption-material-unavailable' };
-    if (error instanceof Error && error.name === 'ZodError') return { status: 'unavailable', reason: 'invalid-stored-content' };
-    return { status: 'unavailable', reason: 'unreachable' };
+    return { status: 'unavailable', reason: classifyAccountStorageReadFailure(error, signal) };
+}
+async function projectCatalogForCurrentMode<TCatalog extends ProviderConnectionsCatalogSnapshotV1>(
+    context: LazyActionAccountContext, catalog: TCatalog, mode: 'plain' | 'e2ee',
+) {
+    const { encryption } = await context.resolveAccountEncryption();
+    const current = await resolveAccountStorageContext(context.credentials, { encryption, request: context.request });
+    context.assertCurrent();
+    return current.mode === mode ? catalog : { status: 'unavailable', reason: 'account-mode-mismatch' } as const;
 }
 type ReadPublication = Readonly<{
     onReady?: (catalog: ProviderConnectionsCatalogSnapshotV1, isCurrent: () => boolean) => void;
@@ -63,6 +64,15 @@ export async function readProviderCatalogRowInContext(context: LazyActionAccount
     const row = ProviderConnectionsRowReadResponseV1Schema.safeParse(await response.json().catch(() => null));
     context.assertCurrent(); return row.success ? row.data : { status: 'unavailable', reason: 'invalid-stored-content' };
 }
+/** A semantic mutation reads admitted authority without activating or cleaning an inactive source. */
+export async function readProviderCatalogForMutationInContext(context: LazyActionAccountContext,
+    signal?: AbortSignal): Promise<ProviderConnectionsCatalogSnapshotV1> {
+    try {
+        return await admit(context, async (mode, material) => projectCatalogForCurrentMode(context,
+            await loadProviderConnectionsCatalogV1({ mode, material, signal,
+                readRow: () => readProviderCatalogRowInContext(context, signal) }), mode));
+    } catch (error) { return failure(error, signal); }
+}
 export function readProviderCatalogInContext(context: LazyActionAccountContext, signal: AbortSignal | undefined,
     publication: ProviderCatalogImportOptions): Promise<ProviderConnectionsCatalogImportResultV1>;
 export function readProviderCatalogInContext(context: LazyActionAccountContext, signal?: AbortSignal,
@@ -75,12 +85,8 @@ export async function readProviderCatalogInContext(context: LazyActionAccountCon
                 contentPublicKeyFingerprint: createAccountScopedCryptoMaterialSnapshotV1({ accountEncryptionMode: mode, material }).contentPublicKeyFingerprint,
             } : null);
             const scope = { serverId: context.serverId, accountId: context.accountId };
-            const project = async <TCatalog extends ProviderConnectionsCatalogSnapshotV1>(catalog: TCatalog) => {
-                const { encryption } = await context.resolveAccountEncryption();
-                const current = await resolveAccountStorageContext(context.credentials, { encryption, request: context.request });
-                context.assertCurrent();
-                return current.mode === mode ? catalog : { status: 'unavailable', reason: 'account-mode-mismatch' } as const;
-            };
+            const project = <TCatalog extends ProviderConnectionsCatalogSnapshotV1>(catalog: TCatalog) =>
+                projectCatalogForCurrentMode(context, catalog, mode);
             const loadInput: Omit<ProviderConnectionsCatalogImportInputV1, 'importConnection'> = { mode, material, signal,
                 readRow: () => readProviderCatalogRowInContext(context, signal),
                 hasPendingCleanup: publication?.hasPendingCleanup,

@@ -9,6 +9,7 @@ import type {
 
 import { Switch } from '@/components/ui/forms/Switch';
 import { IconButton } from '@/components/ui/buttons/IconButton';
+import { StatusPill } from '@/components/ui/status/StatusPill';
 import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import {
     SelectionListScreen,
@@ -53,6 +54,8 @@ function ModelVisibilityAccessory(props: Readonly<{
     label: string;
     visible: boolean;
     disabled: boolean;
+    /** New sessions start on this model. */
+    isDefault?: boolean;
     onVisibleChange: (visible: boolean) => void;
     onRemove?: () => void;
     onShowOnly?: () => void;
@@ -63,6 +66,7 @@ function ModelVisibilityAccessory(props: Readonly<{
     const actionLabel = (action: string) => `${props.label}, ${action}`;
     return (
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            {props.isDefault ? <ModelDefaultTag /> : null}
             {props.onCancelLoad ? (
                 <IconButton
                     testID="provider-model-manager.cancel-load"
@@ -123,6 +127,34 @@ function ModelVisibilityAccessory(props: Readonly<{
         </View>
     );
 }
+
+/** "Default": the model new sessions start on. Never shares a control with showing or hiding it. */
+function ModelDefaultTag(): React.ReactElement {
+    return <StatusPill testID="provider-model-manager.default" variant="info" hideDot label={t('settingsAgents.detailPage.modelsDefaultTag')} />;
+}
+
+/**
+ * One sheet per model source, in picker order (Agent → Models): the agent's own models, then each
+ * Provider connection. Hidden models stay listed in their source with their switch off.
+ */
+export type ProviderModelManagerSourceGrouping = Readonly<{
+    nativeTitle: string;
+    nativeDescription: string;
+    connectionDescription: string;
+    /** The agent's default model, tagged where it is listed. */
+    defaultRef: Readonly<{ providerConnectionId: string | null; modelId: string }> | null;
+    /**
+     * A source's own control in its header: the Account-wide "Show in model picker" switch that the
+     * R1 owner supplies. Nothing is drawn for a source it does not answer.
+     */
+    renderSourceAccessory?: (connectionId: string) => React.ReactNode;
+}>;
+
+/** A section as the page draws it: a source sheet may lead with its description and control. */
+export type ProviderModelManagerSection = SelectionListSection & Readonly<{
+    description?: string;
+    headerAccessory?: React.ReactNode;
+}>;
 
 export type ProviderModelManagerScope =
     | Readonly<{ kind: 'agent'; agentTargetKey: string }>
@@ -257,14 +289,24 @@ export function buildProviderModelManagerSections(input: Readonly<{
     onCancelModelLoad?: () => void;
     onOpenConnection?: (connectionId: string) => void;
     loadingModelKey?: string | null;
-}>): readonly SelectionListSection[] {
+    grouping?: ProviderModelManagerSourceGrouping;
+}>): readonly ProviderModelManagerSection[] {
     const agentScope = input.scope.kind === 'agent' ? input.scope : null;
+    const grouping = agentScope ? input.grouping : undefined;
+    // Grouped by source, a hidden model stays in its source with its switch off.
+    const showHidden = input.showHidden || grouping !== undefined;
+    const defaultRef = grouping?.defaultRef ?? null;
+    const isDefault = (providerConnectionId: string | null, modelId: string) => defaultRef !== null
+        && defaultRef.providerConnectionId === providerConnectionId
+        && defaultRef.modelId === modelId;
+    const nativeOptions: SelectionListOption[] = [];
+    const sourceSections: ProviderModelManagerSection[] = [];
     const availableOptions: SelectionListOption[] = [];
     const hiddenOptions: SelectionListOption[] = [];
     const manualOptions: SelectionListOption[] = [];
     if (agentScope) {
         for (const model of input.nativeModels) {
-            if (model.hidden && !input.showHidden) continue;
+            if (model.hidden && !showHidden) continue;
             const ref: ModelVisibilityRefV1 = {
                 scope: 'agent', agentTargetKey: agentScope.agentTargetKey,
                 providerConnectionId: null, modelId: model.id,
@@ -276,27 +318,32 @@ export function buildProviderModelManagerSections(input: Readonly<{
                 accessibilityLabel: `${model.name}, ${modelVisibilityActionLabel(model.hidden)}`,
                 rightAccessoryOutsidePressable: true,
                 rightAccessory: (
-                    <Switch
-                        compact
-                        value={!model.hidden}
-                        accessibilityLabel={model.name}
-                        onValueChange={(visible) => input.onSetVisibility(ref, !visible)}
-                    />
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                        {isDefault(null, model.id) ? <ModelDefaultTag /> : null}
+                        <Switch
+                            compact
+                            value={!model.hidden}
+                            accessibilityLabel={model.name}
+                            onValueChange={(visible) => input.onSetVisibility(ref, !visible)}
+                        />
+                    </View>
                 ),
                 onSelect: () => input.onSetVisibility(ref, !model.hidden),
             };
-            (model.hidden ? hiddenOptions : availableOptions).push(option);
+            if (grouping) nativeOptions.push(option);
+            else (model.hidden ? hiddenOptions : availableOptions).push(option);
         }
     }
 
     for (const group of input.groups) {
         if (input.scope.kind === 'connection' && group.connectionId !== input.scope.connectionId) continue;
         const connectionId = ProviderConnectionIdSchema.parse(group.connectionId);
+        const groupOptions: SelectionListOption[] = [];
         for (const row of group.rows) {
             const hiddenForScope = input.scope.kind === 'agent'
                 ? row.visibility === 'hidden_agent' || row.visibility === 'hidden_all_agents' || row.visibility === 'hidden_current_selection'
                 : row.visibility === 'hidden_all_agents';
-            if (hiddenForScope && !input.showHidden) continue;
+            if (hiddenForScope && !showHidden) continue;
             const lockedByConnectionScope = input.scope.kind === 'agent' && row.visibility === 'hidden_all_agents';
             const ref: ModelVisibilityRefV1 = agentScope
                 ? {
@@ -308,8 +355,9 @@ export function buildProviderModelManagerSections(input: Readonly<{
                 modelId: row.ref.modelId,
                 name: row.descriptor.name,
                 description: row.descriptor.description,
-                // A connection's own list already names it; only the agent-wide list needs it per row.
-                contextLabel: input.scope.kind === 'agent' ? providerModelConnectionTitle(group) : undefined,
+                // A connection's own list already names it; only the agent-wide list needs it per row,
+                // and a list grouped by source says it once, in the source's header.
+                contextLabel: input.scope.kind === 'agent' && !grouping ? providerModelConnectionTitle(group) : undefined,
                 authorization: group.authorization,
                 compatibility: row.compatibility,
                 endpointHealth: row.endpointHealth,
@@ -336,6 +384,7 @@ export function buildProviderModelManagerSections(input: Readonly<{
                         label={`${presentation.label}, ${providerModelConnectionTitle(group)}`}
                         visible={!hiddenForScope}
                         disabled={lockedByConnectionScope}
+                        isDefault={isDefault(group.connectionId, row.ref.modelId)}
                         onVisibleChange={(visible) => input.onSetVisibility(ref, !visible)}
                         onShowOnly={!lockedByConnectionScope && input.onShowOnly
                             ? () => input.onShowOnly?.(ref)
@@ -357,13 +406,39 @@ export function buildProviderModelManagerSections(input: Readonly<{
                     ? () => input.onOpenConnection?.(group.connectionId)
                     : () => input.onSetVisibility(ref, !hiddenForScope),
             };
-            const target = hiddenForScope
-                ? hiddenOptions
-                : row.sources.manual
-                    ? manualOptions
-                    : availableOptions;
+            const target = grouping
+                ? groupOptions
+                : hiddenForScope
+                    ? hiddenOptions
+                    : row.sources.manual
+                        ? manualOptions
+                        : availableOptions;
             target.push(option);
         }
+        if (grouping) {
+            sourceSections.push({
+                id: `source:${group.connectionId}`,
+                title: providerModelConnectionTitle(group),
+                description: grouping.connectionDescription,
+                headerAccessory: grouping.renderSourceAccessory?.(group.connectionId),
+                options: groupOptions,
+                count: groupOptions.length,
+                virtualization: 'auto',
+            });
+        }
+    }
+    if (grouping) {
+        return [
+            {
+                id: 'source:native',
+                title: grouping.nativeTitle,
+                description: grouping.nativeDescription,
+                options: nativeOptions,
+                count: nativeOptions.length,
+                virtualization: 'auto',
+            },
+            ...sourceSections,
+        ].filter((section) => section.options.length > 0);
     }
     return [
         { id: 'available', title: t('settingsProviders.models.available'), options: availableOptions },
@@ -398,6 +473,8 @@ export function ProviderModelManager(props: Readonly<{
      * full-route list. The page still virtualizes: only the rows near the viewport mount.
      */
     page?: ProviderModelManagerPageHost;
+    /** Agent lists only: one sheet per source instead of shown / hidden / added groups. */
+    grouping?: ProviderModelManagerSourceGrouping;
     testID?: string;
 }>): React.ReactElement {
     const scopeIdentity = props.scope.kind === 'agent'
@@ -443,7 +520,9 @@ export function ProviderModelManager(props: Readonly<{
         ...(canCancelModelLoad ? { onCancelModelLoad } : {}),
         ...(canOpenConnection ? { onOpenConnection } : {}),
         loadingModelKey: props.loadingModelKey,
+        ...(props.grouping ? { grouping: props.grouping } : {}),
     }), [
+        props.grouping,
         canLoadModel,
         canCancelModelLoad,
         canOpenConnection,
@@ -468,6 +547,7 @@ export function ProviderModelManager(props: Readonly<{
                 sections={sections}
                 modelCount={groups.reduce((count, group) => count + group.rows.length, nativeModels.length)}
                 actions={props.headerActions}
+                grouped={props.grouping !== undefined && props.scope.kind === 'agent'}
                 onShowAll={props.onShowAll}
                 onHideAll={props.onHideAll}
                 onResetVisibility={props.onResetVisibility}

@@ -1,8 +1,8 @@
 import {
-    LaunchProfileV2Schema,
     validateLaunchProfileV2ReservedEnvironment,
     type LaunchProfileV2,
 } from '@happier-dev/protocol/profiles/v2/schema';
+import { AiLaunchProfileV1Schema, isLaunchProfileV2, type AiLaunchProfileSourceV1 } from '@happier-dev/protocol/profiles/read';
 
 export type SlimProfileEditableDraft = Readonly<{
     name: string;
@@ -29,7 +29,7 @@ export type SlimProfileEditableDraft = Readonly<{
 }>;
 
 export type SlimProfileSaveResult =
-    | Readonly<{ status: 'success'; profile: LaunchProfileV2 }>
+    | Readonly<{ status: 'success'; profile: LaunchProfileV2 & AiLaunchProfileSourceV1 }>
     | Readonly<{ status: 'error'; field: 'name' | 'description' | 'extraEnvironmentVariables'; message: string }>;
 
 export function isSlimProfileReservedEnvironmentAuthorityReady(input: Readonly<{
@@ -40,7 +40,7 @@ export function isSlimProfileReservedEnvironmentAuthorityReady(input: Readonly<{
 }
 
 export function buildSlimProfileSave(
-    profile: LaunchProfileV2,
+    profile: LaunchProfileV2 & AiLaunchProfileSourceV1,
     draft: SlimProfileEditableDraft,
     now: () => number = Date.now,
     reservedEnvironmentVariableNames: ReadonlySet<string> = new Set(),
@@ -54,7 +54,10 @@ export function buildSlimProfileSave(
             message: 'Reserved environment validation is unavailable until a machine is connected',
         };
     }
-    const parsed = LaunchProfileV2Schema.safeParse({
+    // The canonical opened-profile schema retains admitted StoredV2 body and
+    // source evidence without allowing unknown carriers into the edit result.
+    // Creating a new logical row still uses its strict persistence owner.
+    const parsed = AiLaunchProfileV1Schema.safeParse({
         ...profile,
         name: draft.name.trim(),
         ...(draft.description.trim().length > 0 ? { description: draft.description.trim() } : { description: undefined }),
@@ -73,6 +76,7 @@ export function buildSlimProfileSave(
         updatedAt: now(),
     });
     if (parsed.success) {
+        if (!isLaunchProfileV2(parsed.data)) return { status: 'error', field: 'name', message: 'Invalid V2 profile' };
         try {
             validateLaunchProfileV2ReservedEnvironment(parsed.data, reservedEnvironmentVariableNames);
             return { status: 'success', profile: parsed.data };

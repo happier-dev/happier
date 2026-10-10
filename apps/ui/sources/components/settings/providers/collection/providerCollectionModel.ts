@@ -1,6 +1,7 @@
-import { canonicalizeProviderContributionKeyV1 } from '@happier-dev/protocol/providers/contribution-identity';
+import { canonicalizeProviderContributionKeyV1, areProviderContributionKeysEqualV1 } from '@happier-dev/protocol/providers/contribution-identity';
 import type { ProviderDiscoveryCandidateV1 } from '@happier-dev/protocol/providers/detection/v1';
-import type { DaemonProviderConnectionsDescribeResponseV1 } from '@happier-dev/protocol/rpc';
+import type { DaemonProviderConnectionsDescribeResponseV1, DaemonProviderConnectionViewV1 } from '@happier-dev/protocol/rpc';
+import type { ProviderConnectionV1 } from '@happier-dev/protocol/providers/connections/v1';
 
 import {
     presentProviderConnection,
@@ -20,6 +21,7 @@ const TROUBLE_STATUSES: ReadonlySet<ProviderConnectionPresentationStatus> = new 
 
 export type ProviderCollectionConnectionRow = Readonly<{
     connectionId: string;
+    detailRoute: string;
     title: string;
     /** The provider behind a named connection ("OpenRouter" for "Personal"); empty when it is the title. */
     provenance: string;
@@ -29,6 +31,8 @@ export type ProviderCollectionConnectionRow = Readonly<{
     trouble: boolean;
     /** Turned off everywhere: dimmed in the list, still selectable. */
     off: boolean;
+    /** A gateway is configured from Connected services; this collection lists it and opens the same detail. */
+    gateway: boolean;
 }>;
 
 /** A local model server on the managed machine that is not a connection yet. */
@@ -69,6 +73,7 @@ function presentConnectionRow(connection: Connection): ProviderCollectionConnect
     const presentation = presentProviderConnection(connection);
     return {
         connectionId: connection.connectionId,
+        detailRoute: providerConnectionDetailRoute(connection.connectionId),
         title: presentation.title,
         provenance: presentation.subtitle,
         modelCount: presentation.modelCount,
@@ -76,6 +81,7 @@ function presentConnectionRow(connection: Connection): ProviderCollectionConnect
         status: presentation.status,
         trouble: TROUBLE_STATUSES.has(presentation.status),
         off: presentation.status === 'disabled',
+        gateway: (readProviderGatewayViewDeclarations(connection)?.length ?? 0) > 0,
     };
 }
 
@@ -148,6 +154,58 @@ const providerVisits = createHappierCollectionVisitMemory<string>();
 export const recordProviderCollectionVisit = providerVisits.record;
 export const readLastVisitedProviderConnectionId = providerVisits.read;
 
+/** Both Settings collections open the one Provider connection detail. */
+export function providerConnectionDetailRoute(connectionId: string): string {
+    return `/(app)/settings/providers/${encodeURIComponent(connectionId)}`;
+}
+
+export type ProviderGatewayCollectionRow = Readonly<{
+    connectionId: string;
+    title: string;
+    detailRoute: string;
+    revision: number;
+}>;
+
+/** Immutable vendor declarations distinguish a gateway from other managed sources such as Ollama. */
+export function readProviderGatewayPurposeDeclarations(
+    saved: ProviderConnectionV1,
+    view: DaemonProviderConnectionViewV1,
+): NonNullable<DaemonProviderConnectionViewV1['managedLocalOption']>['connectedAccountPurposes'] | null {
+    if (saved.id !== view.connectionId || saved.deployment.kind !== 'managedLocal' || saved.source.kind !== 'contribution'
+        || !view.contributionKey
+        || !areProviderContributionKeysEqualV1(saved.source.contributionKey, view.contributionKey)) return null;
+    return readProviderGatewayViewDeclarations(view);
+}
+
+/** The projection's half of that rule, for a list that holds only the machine's view of a connection. */
+export function readProviderGatewayViewDeclarations(
+    view: DaemonProviderConnectionViewV1,
+): NonNullable<DaemonProviderConnectionViewV1['managedLocalOption']>['connectedAccountPurposes'] | null {
+    if (view.deployment.kind !== 'managedLocal' || view.sourceStatus !== 'available' || !view.managedLocalOption
+        || !view.contributionKey) return null;
+    return view.managedLocalOption.connectedAccountPurposes;
+}
+
+/** No managed candidates is authoritative empty; otherwise every immutable declaration must be admitted. */
+export function areProviderGatewayDeclarationsKnown(input: Readonly<{
+    connections: readonly ProviderConnectionV1[];
+    views: readonly DaemonProviderConnectionViewV1[] | null;
+}>): boolean {
+    return input.connections.every(connection => connection.deployment.kind !== 'managedLocal'
+        || Boolean(input.views?.some(view => readProviderGatewayPurposeDeclarations(connection, view) !== null)));
+}
+
+/** Saved identity comes from the Account; eligibility comes from its admitted contribution projection. */
+export function buildProviderGatewayCollection(input: Readonly<{
+    connections: readonly ProviderConnectionV1[];
+    views: readonly DaemonProviderConnectionViewV1[];
+}>): readonly ProviderGatewayCollectionRow[] {
+    return input.connections
+        .filter(connection => input.views.some(view => (readProviderGatewayPurposeDeclarations(connection, view)?.length ?? 0) > 0))
+        .map(connection => ({ connectionId: connection.id, title: connection.displayName,
+            detailRoute: providerConnectionDetailRoute(connection.id), revision: connection.revision }));
+}
+
 /** The query value that opens a connection's detail on its Models section. */
 export const PROVIDER_CONNECTION_MODELS_SECTION = 'models';
 
@@ -157,5 +215,5 @@ export const PROVIDER_CONNECTION_MODELS_SECTION = 'models';
  */
 export function providerConnectionModelsRoute(connectionId: string, options: Readonly<{ add?: boolean }> = {}): string {
     const add = options.add ? '&add=1' : '';
-    return `/(app)/settings/providers/${encodeURIComponent(connectionId)}?section=${PROVIDER_CONNECTION_MODELS_SECTION}${add}`;
+    return `${providerConnectionDetailRoute(connectionId)}?section=${PROVIDER_CONNECTION_MODELS_SECTION}${add}`;
 }

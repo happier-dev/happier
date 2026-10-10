@@ -20,7 +20,6 @@ import { useCurrentSecretBindingsByProfileIdMutable } from '@/sync/store/hooks';
 import { useProfilePromptStack } from '@/sync/store/useProfilePromptStack';
 import { isProfileEnabled, readProfileEnabledById } from '@/sync/domains/profiles/profileEnablement';
 import { settingsParse } from '@/sync/domains/settings/settings';
-import { readRetainedSecretBindingsByProfileId } from '@/sync/domains/settings/secretBindings';
 import { TokenStorage, type AuthCredentials } from '@/auth/storage/tokenStorage';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
@@ -129,9 +128,7 @@ describe('Profile collection entity projection', () => {
         getStorage().setState({ settings: settingsParse({ profiles: [profile], secretBindingsByProfileId: {
             [profile.id]: { TOKEN: 'happier:shared-secret:v1:retained-token' },
         } }) });
-        expect(readRetainedSecretBindingsByProfileId(getStorage().getState().settings)).toEqual({
-            [profile.id]: { TOKEN: 'happier:shared-secret:v1:retained-token' },
-        });
+        expect(getStorage().getState().settings).not.toHaveProperty('secretBindingsByProfileId');
         const hook = await renderHook(useCurrentSecretBindingsByProfileIdMutable);
         expect(hook.getCurrent()[0]).toEqual({ [profile.id]: bindings });
         await hook.unmount();
@@ -414,7 +411,7 @@ describe('Profile editor entity writer', () => {
         const admittedRecord = record;
         const next = [{ ...record.promptStack[0], enabled: false }];
         const hook = await renderHook(() => useProfilePromptStack(profile.id));
-        const pending = hook.getCurrent().setEntries(next);
+        const pending = hook.getCurrent().update({ kind: 'set_enabled', entryId: record.promptStack[0]!.id, enabled: false });
         let settled = false;
         void pending.then(() => { settled = true; }, () => { settled = true; });
         await Promise.resolve();
@@ -444,7 +441,7 @@ describe('Profile editor entity writer', () => {
         mutation.mockResolvedValue(Response.json({ status: 'conflict', revision: 9 }, { status: 409 }));
         const admittedRecord = record;
         const hook = await renderHook(() => useProfilePromptStack(profile.id));
-        await expect(hook.getCurrent().setEntries([])).rejects.toBeInstanceOf(Error);
+        await expect(hook.getCurrent().update({ kind: 'detach', entryId: record.promptStack[0]!.id })).rejects.toBeInstanceOf(Error);
         await hook.rerender();
         expect(hook.getCurrent().entries).toEqual(admittedRecord.promptStack);
         expect(getProfileCatalogSnapshot(homeScope)?.data).toEqual([{ record: admittedRecord, revision: 7 }]);
@@ -674,7 +671,9 @@ describe('Profile editor entity writer', () => {
             content: { t: 'plain', v: { definition: { kind: 'artifact', artifactId: resource.artifactId },
                 secretBindings: {}, promptStack: [] } },
         });
-        expect(artifactWrites).not.toHaveBeenCalled();
+        // The canonical membership writer may re-read the granted revision;
+        // only an Artifact mutation would violate this reference-only save.
+        expect(artifactWrites.mock.calls.filter(([url]) => !String(url).endsWith('/v1/artifacts/read'))).toEqual([]);
         expect(settingsWrites).not.toHaveBeenCalled();
         await editor.unmount();
         await source.unmount();
@@ -744,7 +743,7 @@ describe('Profile editor entity writer', () => {
         expect(hook.getCurrent()[0][profile.id]?.TOKEN).toBeUndefined();
         expect(getProfileCatalogSnapshot(homeScope)?.data).toMatchObject([{ revision: 8,
             record: { secretBindings: { TOKEN: null }, definition: { kind: 'artifact', artifactId: artifact.id } } }]);
-        expect(artifactWrites).not.toHaveBeenCalled();
+        expect(artifactWrites.mock.calls.filter(([url]) => !String(url).endsWith('/v1/artifacts/read'))).toEqual([]);
         expect(settingsWrites).not.toHaveBeenCalled();
         expect(artifacts.get(artifact.id)?.body).toBe(artifact.body);
         await hook.unmount();

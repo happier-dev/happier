@@ -6,28 +6,32 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
     createProviderConnectionsDescribeFixture,
     createProviderConnectionViewFixture,
-    flushHookEffects,
-    renderHook,
-    renderScreen,
-    standardCleanup,
-} from '@/dev/testkit';
-import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+    createProviderSettingsAccountHarness,
+} from '@/dev/testkit/harness/providerSettingsHarness';
+import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
+import { renderHook } from '@/dev/testkit/hooks/renderHook';
+import { renderScreen } from '@/dev/testkit/render/renderScreen';
+import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 
 const machineRpcWithServerScope = vi.hoisted(() => vi.fn());
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({ machineRpcWithServerScope }));
-installDisconnectedServerSocketBoundary();
-let accountConnection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | null = null;
+const account = createProviderSettingsAccountHarness();
+let serverId = '';
+let otherServerId = '';
 
-import { useProviderConnections } from './useProviderConnections';
-import { useProviderConnectionMutation } from './useProviderConnectionMutation';
+const { useProviderConnections } = await import('./useProviderConnections');
+const { useProviderConnectionMutation } = await import('./useProviderConnectionMutation');
 
 describe('useProviderConnections', () => {
     afterEach(async () => {
         standardCleanup();
-        await accountConnection?.dispose();
-        accountConnection = null;
+        await account.reset();
     });
-    beforeEach(() => { machineRpcWithServerScope.mockReset(); });
+    beforeEach(async () => {
+        machineRpcWithServerScope.mockReset();
+        serverId = (await account.restore({ waivedActions: ['providers.connections.delete'] })).serverId;
+        otherServerId = await account.addHome({ name: 'Other Provider Home', serverUrl: 'https://provider-settings-other.test', accountId: 'account-a', active: false });
+    });
 
     it('refreshes visible peers after a same-route mutation and refreshes hidden projections only when revealed', async () => {
         let connectionExists = true;
@@ -40,12 +44,12 @@ describe('useProviderConnections', () => {
                 connections: connectionExists ? [createProviderConnectionViewFixture({ connectionId: 'pc_a' })] : [],
             });
         });
-        const resolveTarget = () => ({ machineId: 'machine-a', serverId: 'server-a' });
+        const resolveTarget = () => ({ machineId: 'machine-a', serverId });
         const hook = await renderHook(({ visible }: { visible: boolean }) => {
             const list = useProviderConnections({ enabled: true, active: visible, ...resolveTarget() });
             const detail = useProviderConnections({ enabled: true, ...resolveTarget(), connectionId: 'pc_a' });
-            const otherServer = useProviderConnections({ enabled: true, machineId: 'machine-a', serverId: 'server-b' });
-            const otherMachine = useProviderConnections({ enabled: true, machineId: 'machine-b', serverId: 'server-a' });
+            const otherServer = useProviderConnections({ enabled: true, machineId: 'machine-a', serverId: otherServerId });
+            const otherMachine = useProviderConnections({ enabled: true, machineId: 'machine-b', serverId });
             const refresh = React.useCallback(async () => { await detail.refresh(); }, [detail.refresh]);
             const mutation = useProviderConnectionMutation({ resolveTarget, refresh });
             return { list, detail, otherServer, otherMachine, mutation };
@@ -61,7 +65,7 @@ describe('useProviderConnections', () => {
         expect(hook.getCurrent().otherServer.data?.connections).toHaveLength(1);
         expect(hook.getCurrent().otherMachine.data?.connections).toHaveLength(1);
         expect(machineRpcWithServerScope.mock.calls.map(([request]) => request)).toHaveLength(3);
-        expect(machineRpcWithServerScope.mock.calls.every(([request]) => request.machineId === 'machine-a' && request.serverId === 'server-a')).toBe(true);
+        expect(machineRpcWithServerScope.mock.calls.every(([request]) => request.machineId === 'machine-a' && request.serverId === serverId)).toBe(true);
 
         await hook.rerender({ visible: false });
         connectionExists = true;
@@ -78,7 +82,7 @@ describe('useProviderConnections', () => {
         const hook = await renderHook(() => useProviderConnections({
             enabled: false,
             machineId: 'machine-a',
-            serverId: 'server-a',
+            serverId,
         }));
 
         expect(hook.getCurrent()).toMatchObject({ data: null, error: null, loading: false });
@@ -95,8 +99,8 @@ describe('useProviderConnections', () => {
             return createProviderConnectionsDescribeFixture({ connections: [] });
         });
         const hook = await renderHook(() => {
-            useProviderConnections({ enabled: true, machineId: 'machine-a', serverId: 'server-a' });
-            return useProviderConnections({ enabled: true, machineId: 'machine-a', serverId: 'server-a', connectionId: 'pc_a' });
+            useProviderConnections({ enabled: true, machineId: 'machine-a', serverId });
+            return useProviderConnections({ enabled: true, machineId: 'machine-a', serverId, connectionId: 'pc_a' });
         });
         holdCollection = true;
         let completed = false;
@@ -120,7 +124,7 @@ describe('useProviderConnections', () => {
         machineRpcWithServerScope.mockImplementationOnce(() => new Promise(() => undefined));
         const hook = await renderHook(
             ({ machineId }: { machineId: string }) => useProviderConnections({
-                enabled: true, machineId, serverId: 'server-a',
+                enabled: true, machineId, serverId,
             }),
             { initialProps: { machineId: 'machine-a' } },
         );
@@ -149,14 +153,14 @@ describe('useProviderConnections', () => {
             return React.createElement('View');
         }
         const screen = await renderScreen(
-            <Harness machineId="machine-a" serverId="server-a" connectionId="pc_a" />,
+            <Harness machineId="machine-a" serverId={serverId} connectionId="pc_a" />,
         );
         expect(observations.at(-1)?.connectionId).toBe('pc_a');
 
         for (const next of [
-            { machineId: 'machine-b', serverId: 'server-a', connectionId: 'pc_a' },
-            { machineId: 'machine-b', serverId: 'server-b', connectionId: 'pc_a' },
-            { machineId: 'machine-b', serverId: 'server-b', connectionId: 'pc_b' },
+            { machineId: 'machine-b', serverId, connectionId: 'pc_a' },
+            { machineId: 'machine-b', serverId: otherServerId, connectionId: 'pc_a' },
+            { machineId: 'machine-b', serverId: otherServerId, connectionId: 'pc_b' },
         ]) {
             const scope = `${next.serverId}/${next.machineId}/${next.connectionId}`;
             await screen.update(<Harness {...next} />);
@@ -167,7 +171,6 @@ describe('useProviderConnections', () => {
     });
 
     it('clears Account A, rejects its late read, and starts one Account B read when routing ids stay equal', async () => {
-        accountConnection = await restoreServerAccountForTest({ serverUrl: 'https://provider-lifetime.test', accountId: 'account-a' });
         let resolveA!: (value: unknown) => void;
         let resolveB!: (value: unknown) => void;
         machineRpcWithServerScope
@@ -176,14 +179,13 @@ describe('useProviderConnections', () => {
         const hook = await renderHook(() => useProviderConnections({
             enabled: true,
             machineId: 'machine-a',
-            serverId: 'server-a',
+            serverId,
         }));
         const refreshFromAccountA = hook.getCurrent().refresh;
         expect(machineRpcWithServerScope).toHaveBeenCalledTimes(1);
 
         await act(async () => {
-            await accountConnection!.dispose();
-            accountConnection = await restoreServerAccountForTest({ serverUrl: 'https://provider-lifetime.test', accountId: 'account-b' });
+            await account.restore({ accountId: 'account-b' });
             await hook.rerender();
         });
 
@@ -217,7 +219,7 @@ describe('useProviderConnections', () => {
             }))
             .mockRejectedValueOnce(new Error('offline'));
         const hook = await renderHook(() => useProviderConnections({
-            enabled: true, machineId: 'machine-a', serverId: 'server-a',
+            enabled: true, machineId: 'machine-a', serverId,
         }));
         await act(async () => { await hook.getCurrent().refresh(); });
         expect(hook.getCurrent()).toMatchObject({
@@ -236,7 +238,7 @@ describe('useProviderConnections', () => {
         });
 
         const hook = await renderHook(() => useProviderConnections({
-            enabled: true, machineId: 'machine-a', serverId: 'server-a',
+            enabled: true, machineId: 'machine-a', serverId,
         }));
 
         expect(hook.getCurrent()).toMatchObject({

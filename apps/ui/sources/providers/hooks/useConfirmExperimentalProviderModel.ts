@@ -6,7 +6,8 @@ import type {
     SessionModelPickerExperimentalConfirmation,
     SessionModelPickerExperimentalConfirmationController,
 } from '@/components/sessions/modelPicker/SessionModelPicker';
-import { mutateProviderModelSettings, providerErrorFromRpcFailure } from '@/providers/rpc/client';
+import { providerErrorFromRpcFailure } from '@/providers/actions/client';
+import { useProviderActionClient } from '@/providers/actions/useProviderActionClient';
 import { providerErrorRequestsRetry } from '@/providers/connection/recovery';
 import { t } from '@/text';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
@@ -18,6 +19,7 @@ export function useConfirmExperimentalProviderModel(input: Readonly<{
     agentTargetKey: string | null;
     refresh: () => Promise<unknown>;
 }>): SessionModelPickerExperimentalConfirmationController {
+    const { mutateProviderModelSettings } = useProviderActionClient(input.serverId);
     const accountLifetime = captureActiveServerAccountScopeLifetime();
     const scopeKey = JSON.stringify([
         input.enabled,
@@ -68,7 +70,6 @@ export function useConfirmExperimentalProviderModel(input: Readonly<{
     ): Promise<boolean> => {
         if (
             !input.enabled
-            || !input.machineId
             || !input.agentTargetKey
             || confirmation.agentTargetKey !== input.agentTargetKey
         ) return false;
@@ -87,7 +88,7 @@ export function useConfirmExperimentalProviderModel(input: Readonly<{
                 serverId: input.serverId,
                 request: {
                     action: 'confirmExperimental',
-                    machineId: input.machineId,
+                    ...(input.machineId ? { machineId: input.machineId } : {}),
                     connectionId: confirmation.connectionId,
                     expectedConnectionRevision: confirmation.expectedConnectionRevision,
                     agentTargetKey: confirmation.agentTargetKey,
@@ -99,7 +100,7 @@ export function useConfirmExperimentalProviderModel(input: Readonly<{
             if (!isCurrentScope()) return false;
             const error = providerErrorFromRpcFailure(caught, {
                 connectionId: confirmation.connectionId,
-                machineId: input.machineId,
+                ...(input.machineId ? { machineId: input.machineId } : {}),
             });
             if (error.code === 'provider_rpc_mutation_outcome_unknown') {
                 try {
@@ -126,13 +127,13 @@ export function useConfirmExperimentalProviderModel(input: Readonly<{
         try {
             await input.refresh();
         } catch {
-            // The daemon already committed the confirmation. A stale presentation
+            // The Account already committed the confirmation. A stale presentation
             // must not invite a duplicate mutation or block the requested selection.
         }
         if (!isCurrentScope()) return false;
         commitSelection();
         return true;
-    }, [accountLifetime, input.agentTargetKey, input.enabled, input.machineId, input.refresh, input.serverId, scopeKey]);
+    }, [accountLifetime, mutateProviderModelSettings, input.agentTargetKey, input.enabled, input.machineId, input.refresh, input.serverId, scopeKey]);
 
     const runPending = React.useCallback(async (operation: () => Promise<boolean>): Promise<boolean> => {
         const attemptId = pendingAttemptId.current + 1;

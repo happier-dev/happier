@@ -1,62 +1,33 @@
 import { act } from 'react-test-renderer';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createProviderErrorV1, ProviderConnectionIdSchema } from '@happier-dev/protocol';
 
-import { createDeferred, renderHook } from '@/dev/testkit';
+import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
+import { renderHook } from '@/dev/testkit/hooks/renderHook';
+import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
+import { createProviderSettingsAccountHarness } from '@/dev/testkit/harness/providerSettingsHarness';
+import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 
 const confirmSpy = vi.hoisted(() => vi.fn());
 const alertSpy = vi.hoisted(() => vi.fn());
 const machineRpcWithServerScope = vi.hoisted(() => vi.fn());
 const commitSelectionSpy = vi.hoisted(() => vi.fn());
-type TestAccountLifetime = Readonly<{
-    isCurrent(): boolean;
-    onRetire(cancel: () => void): Readonly<{ dispose(): void }>;
-}>;
-const activeAccountLifetime = vi.hoisted(() => {
-    const current: { value: TestAccountLifetime | null } = { value: null };
-    return {
-        current,
-        create() {
-            let retired = false;
-            const retirements = new Set<() => void>();
-            const lifetime: TestAccountLifetime = {
-                isCurrent: () => !retired,
-                onRetire(cancel) {
-                    if (retired) {
-                        cancel();
-                        return { dispose() {} };
-                    }
-                    retirements.add(cancel);
-                    return { dispose: () => retirements.delete(cancel) };
-                },
-            };
-            return {
-                lifetime,
-                retire() {
-                    retired = true;
-                    for (const cancel of [...retirements]) cancel();
-                    retirements.clear();
-                },
-            };
-        },
-    };
+
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({ spies: { confirm: confirmSpy, alert: alertSpy } }).module;
 });
 
-vi.mock('@/modal', () => ({
-    Modal: {
-        confirm: confirmSpy,
-        alert: alertSpy,
-    },
-}));
-
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({ machineRpcWithServerScope }));
-vi.mock('@/sync/domains/scope/activeServerAccountScope', () => ({
-    captureActiveServerAccountScopeLifetime: () => activeAccountLifetime.current.value,
-}));
+const account = createProviderSettingsAccountHarness();
+let serverId = '';
+let otherServerId = '';
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock();
+});
 
 const confirmation = {
     kind: 'confirm-experimental',
@@ -69,14 +40,19 @@ const confirmation = {
     modelName: 'Experimental model',
 } as const;
 
+// Warm the real Sync module after the transport leaves are installed, not inside a test hook's budget.
+await loadSyncSingletonForTests();
+
 describe('useConfirmExperimentalProviderModel', () => {
-    beforeEach(() => {
+    beforeEach(async () => {
         confirmSpy.mockReset();
         alertSpy.mockReset();
         machineRpcWithServerScope.mockReset();
         commitSelectionSpy.mockReset();
-        activeAccountLifetime.current.value = null;
+        serverId = (await account.restore({ waivedActions: ['providers.models.experimental.confirm'] })).serverId;
+        otherServerId = await account.addHome({ name: 'Other Provider Home', serverUrl: 'https://provider-settings-other.test', accountId: 'account-a', active: false });
     });
+    afterEach(async () => { standardCleanup(); await account.reset(); });
 
     it('keeps authoring pending until the confirmed selection is committed', async () => {
         confirmSpy.mockResolvedValueOnce(true);
@@ -88,7 +64,7 @@ describe('useConfirmExperimentalProviderModel', () => {
         const hook = await renderHook(() => useConfirmExperimentalProviderModel({
             enabled: true,
             machineId: 'machine-a',
-            serverId: 'server-a',
+            serverId,
             agentTargetKey: 'agent:happier.agent.codex/codex',
             refresh,
         }));
@@ -125,14 +101,14 @@ describe('useConfirmExperimentalProviderModel', () => {
                 agentTargetKey: 'agent:happier.agent.codex/codex',
                 refresh,
             }),
-            { initialProps: { machineId: 'machine-a', serverId: 'server-a' } },
+            { initialProps: { machineId: 'machine-a', serverId } },
         );
 
         let pending!: Promise<boolean>;
         act(() => {
             pending = hook.getCurrent().confirm(confirmation, commitSelectionSpy);
         });
-        await hook.rerender({ machineId: 'machine-b', serverId: 'server-b' });
+        await hook.rerender({ machineId: 'machine-b', serverId: otherServerId });
         await act(async () => modalResult.resolve(true));
 
         await expect(pending).resolves.toBe(false);
@@ -141,9 +117,6 @@ describe('useConfirmExperimentalProviderModel', () => {
     });
 
     it('does not dispatch Account A confirmation after Account B mounts with identical routing ids', async () => {
-        const accountA = activeAccountLifetime.create();
-        const accountB = activeAccountLifetime.create();
-        activeAccountLifetime.current.value = accountA.lifetime;
         const modalResult = createDeferred<boolean>();
         confirmSpy.mockReturnValueOnce(modalResult.promise);
         const refresh = vi.fn(async () => {});
@@ -151,7 +124,7 @@ describe('useConfirmExperimentalProviderModel', () => {
         const hook = await renderHook(() => useConfirmExperimentalProviderModel({
             enabled: true,
             machineId: 'machine-a',
-            serverId: 'server-a',
+            serverId,
             agentTargetKey: 'agent:happier.agent.codex/codex',
             refresh,
         }));
@@ -159,8 +132,7 @@ describe('useConfirmExperimentalProviderModel', () => {
         let pending!: Promise<boolean>;
         act(() => { pending = hook.getCurrent().confirm(confirmation, commitSelectionSpy); });
         await act(async () => {
-            activeAccountLifetime.current.value = accountB.lifetime;
-            accountA.retire();
+            await account.restore({ accountId: 'account-b' });
             await hook.rerender();
         });
         await act(async () => modalResult.resolve(true));
@@ -182,7 +154,7 @@ describe('useConfirmExperimentalProviderModel', () => {
             (props: { agentTargetKey: string }) => useConfirmExperimentalProviderModel({
                 enabled: true,
                 machineId: 'machine-a',
-                serverId: 'server-a',
+                serverId,
                 agentTargetKey: props.agentTargetKey,
                 refresh,
             }),
@@ -211,7 +183,7 @@ describe('useConfirmExperimentalProviderModel', () => {
             (props: { enabled: boolean }) => useConfirmExperimentalProviderModel({
                 enabled: props.enabled,
                 machineId: 'machine-a',
-                serverId: 'server-a',
+                serverId,
                 agentTargetKey: 'agent:happier.agent.codex/codex',
                 refresh,
             }),
@@ -246,16 +218,15 @@ describe('useConfirmExperimentalProviderModel', () => {
                 agentTargetKey: 'agent:happier.agent.codex/codex',
                 refresh,
             }),
-            { initialProps: { machineId: 'machine-a', serverId: 'server-a' } },
+            { initialProps: { machineId: 'machine-a', serverId } },
         );
 
         let pending!: Promise<boolean>;
         act(() => {
             pending = hook.getCurrent().confirm(confirmation, commitSelectionSpy);
         });
-        await act(async () => Promise.resolve());
-        expect(machineRpcWithServerScope).toHaveBeenCalledTimes(1);
-        await hook.rerender({ machineId: 'machine-b', serverId: 'server-b' });
+        await waitForHomeGovernance(() => expect(machineRpcWithServerScope).toHaveBeenCalledTimes(1));
+        await hook.rerender({ machineId: 'machine-b', serverId: otherServerId });
         await act(async () => mutationResult.resolve({ status: 'success' }));
 
         await expect(pending).resolves.toBe(false);
@@ -274,7 +245,7 @@ describe('useConfirmExperimentalProviderModel', () => {
         const hook = await renderHook(() => useConfirmExperimentalProviderModel({
             enabled: true,
             machineId: 'machine-a',
-            serverId: 'server-a',
+            serverId,
             agentTargetKey: 'agent:happier.agent.codex/codex',
             refresh: vi.fn(async () => {}),
         }));
@@ -296,7 +267,7 @@ describe('useConfirmExperimentalProviderModel', () => {
         const hook = await renderHook(() => useConfirmExperimentalProviderModel({
             enabled: true,
             machineId: 'machine-a',
-            serverId: 'server-a',
+            serverId,
             agentTargetKey: 'agent:happier.agent.codex/codex',
             refresh,
         }));
@@ -325,7 +296,7 @@ describe('useConfirmExperimentalProviderModel', () => {
         const hook = await renderHook(() => useConfirmExperimentalProviderModel({
             enabled: true,
             machineId: 'machine-a',
-            serverId: 'server-a',
+            serverId,
             agentTargetKey: 'agent:happier.agent.codex/codex',
             refresh,
         }));
@@ -359,7 +330,7 @@ describe('useConfirmExperimentalProviderModel', () => {
                 agentTargetKey: 'agent:happier.agent.codex/codex',
                 refresh: vi.fn(async () => {}),
             }),
-            { initialProps: { machineId: 'machine-a', serverId: 'server-a' } },
+            { initialProps: { machineId: 'machine-a', serverId } },
         );
         await act(async () => {
             await hook.getCurrent().confirm(confirmation, commitSelectionSpy);
@@ -367,7 +338,7 @@ describe('useConfirmExperimentalProviderModel', () => {
         const capturedRetry = hook.getCurrent().retry;
         expect(capturedRetry).toBeTypeOf('function');
 
-        await hook.rerender({ machineId: 'machine-b', serverId: 'server-b' });
+        await hook.rerender({ machineId: 'machine-b', serverId: otherServerId });
         await act(async () => {
             await expect(capturedRetry?.()).resolves.toBe(false);
         });
@@ -388,7 +359,7 @@ describe('useConfirmExperimentalProviderModel', () => {
         const hook = await renderHook(() => useConfirmExperimentalProviderModel({
             enabled: true,
             machineId: 'machine-a',
-            serverId: 'server-a',
+            serverId,
             agentTargetKey: 'agent:happier.agent.codex/codex',
             refresh: vi.fn(async () => {}),
         }));

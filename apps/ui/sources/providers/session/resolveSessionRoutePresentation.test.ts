@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { t } from '@/text';
-import { presentSessionRouteChip, resolveSessionRoutePresentation } from './resolveSessionRoutePresentation';
+import { presentNativeRouteSourceLabel, presentSessionRouteChange, presentSessionRouteChip, resolveSessionRoutePresentation } from './resolveSessionRoutePresentation';
 
 describe('session route presentation', () => {
     it('names only the selected Provider credential and omits an auth-free selected route', async () => {
@@ -76,5 +76,13 @@ describe('session route presentation', () => {
             transitionPending: true, sources: [source], native: { ...pool, connectedCount: 1 } });
         expect(presentSessionRouteChip(switching, pool)).toEqual({
             label: t('connectedServices.authChip.nowVia', { source: 'Claude: Work pool' }), changePending: true });
+        // The popover's Now / Next lines name both ends, and stay silent while either is unknown.
+        expect(presentSessionRouteChange(switching, pool)).toEqual({
+            now: 'Claude: Work pool · opus', next: 'DeepSeek · deepseek-v4', nowSource: 'Claude: Work pool' });
+        expect(presentSessionRouteChange(running, pool)).toBeNull();
+        expect(presentSessionRouteChange(draft, pool)).toBeNull();
+        // The picker heading names a connected account or pool, and keeps its default for the Agent's own sign-in.
+        expect(presentNativeRouteSourceLabel(pool)).toBe('Claude: Work pool');
+        expect(presentNativeRouteSourceLabel({ label: 'Native', authSource: 'native' })).toBeNull();
     });
 });

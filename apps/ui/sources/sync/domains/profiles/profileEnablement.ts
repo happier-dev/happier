@@ -1,4 +1,6 @@
 import type { AccountSettingsDefaults } from '@happier-dev/protocol';
+import { readAiLaunchProfileEnabledV1 } from '@happier-dev/protocol/profiles/read';
+import { setProfileEnabledOverrideV1 } from '@happier-dev/protocol/profiles/profileOperations';
 
 import type { AIBackendProfile } from './profileCompatibility';
 
@@ -6,7 +8,8 @@ export type ProfileEnabledById = Record<string, boolean>;
 
 type ProfileEnabledByIdRaw = AccountSettingsDefaults['profileEnabledById'];
 
-type ProfileEnablementInput = Pick<AIBackendProfile, 'id'> & Partial<Pick<AIBackendProfile, 'defaultEnabled'>>;
+type ProfileEnablementInput = Pick<AIBackendProfile, 'id'> & Partial<Pick<AIBackendProfile, 'defaultEnabled' | 'isBuiltIn'>>
+    & Readonly<{ enabled?: boolean; artifactId?: string }>;
 
 /**
  * `profileEnabledById` is a retained Account JSON root. Profile consumers use
@@ -29,9 +32,7 @@ export function isProfileEnabled(
     profile: ProfileEnablementInput,
     profileEnabledById: ProfileEnabledById | null | undefined,
 ): boolean {
-    const override = profileEnabledById?.[profile.id];
-    if (typeof override === 'boolean') return override;
-    return profile.defaultEnabled !== false;
+    return readAiLaunchProfileEnabledV1(profile, profileEnabledById ?? {});
 }
 
 export function setProfileEnabledOverride(
@@ -39,14 +40,5 @@ export function setProfileEnabledOverride(
     profile: ProfileEnablementInput,
     enabled: boolean,
 ): ProfileEnabledByIdRaw {
-    const next: ProfileEnabledByIdRaw = { ...(profileEnabledById ?? {}) };
-    const defaultEnabled = profile.defaultEnabled !== false;
-
-    if (enabled === defaultEnabled) {
-        delete next[profile.id];
-        return next;
-    }
-
-    next[profile.id] = enabled;
-    return next;
+    return setProfileEnabledOverrideV1(profileEnabledById, profile, enabled);
 }

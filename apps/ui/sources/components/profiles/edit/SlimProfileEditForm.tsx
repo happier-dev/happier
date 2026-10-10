@@ -20,11 +20,11 @@ export type SlimProfileEditFormProps = Readonly<{
     profile: LaunchProfileV2;
     machineId: string | null;
     serverId?: string | null;
-    onSave: (profile: LaunchProfileV2) => boolean;
+    onSave: (profile: LaunchProfileV2) => boolean | Promise<boolean>;
     onCancel: () => void;
     onDirtyChange?: (isDirty: boolean) => void;
     containerStyle?: ViewStyle;
-    saveRef?: React.MutableRefObject<(() => boolean) | null>;
+    saveRef?: React.MutableRefObject<(() => boolean | Promise<boolean>) | null>;
     /**
      * The host's page header (entity header with Save). When present the host owns saving and
      * leaving, so the editor renders no action row of its own.

@@ -16,13 +16,14 @@ import {
     DaemonProviderModelLoadRequestV1Schema,
     DaemonProviderModelLoadResponseV1Schema,
     DaemonProviderProfileMigrationPreviewRequestV1Schema,
+    DaemonProviderProfileMigrationPrepareSourceRequestV1Schema,
+    DaemonProviderProfileMigrationPrepareSourceResponseV1Schema,
     DaemonProviderProfileMigrationPreviewResponseV1Schema,
     DaemonProviderProfileMigrationConfirmRequestV1Schema,
     DaemonProviderProfileMigrationConfirmResponseV1Schema,
     DaemonProviderProfileMigrationConflictConfirmRequestV1Schema,
     DaemonProviderProfileMigrationConflictConfirmResponseV1Schema,
     RPC_METHODS,
-    RPC_ERROR_CODES,
     type DaemonProviderConnectionMutationResponseV1,
     type DaemonProviderConnectionsDescribeResponseV1,
     type DaemonProviderProbeResponseV1,
@@ -33,19 +34,16 @@ import {
     type DaemonProviderModelsResponseV1,
     type DaemonProviderModelLoadResponseV1,
     type DaemonProviderProfileMigrationPreviewResponseV1,
+    type DaemonProviderProfileMigrationPrepareSourceResponseV1,
     type DaemonProviderProfileMigrationConfirmResponseV1,
     type DaemonProviderProfileMigrationConflictConfirmResponseV1,
 } from '@happier-dev/protocol/rpc';
-import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
-import { createProviderErrorV1, ProviderErrorV1Schema, type ProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import { createProviderErrorV1, ProviderErrorV1Schema, providerErrorFromRpcFailure } from '@happier-dev/protocol/providers/errors';
+export { providerErrorFromRpcFailure } from '@happier-dev/protocol/providers/errors';
 import type { CustomProviderTemplateV1 } from '@happier-dev/protocol/providers/connections/customTemplateV1';
 import type { z } from 'zod';
 
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
-import {
-    isMachineRpcTimeoutError,
-    MACHINE_RPC_TIMEOUT_ERROR_CODE,
-} from '@/sync/runtime/orchestration/serverScopedRpc/machineRpcTimeoutError';
 
 type ProviderRpcErrorContext = Readonly<{
     connectionId?: string;
@@ -102,53 +100,6 @@ function modelSettingsMutationConnectionId(
                 : undefined;
         }
     }
-}
-
-/**
- * The single UI boundary for failures thrown before a Provider RPC can return
- * its typed response union. Never surface transport messages as domain codes.
- */
-export function providerErrorFromRpcFailure(
-    caught: unknown,
-    context: Readonly<{ connectionId?: string; machineId?: string; sourceProfileId?: string }> = {},
-): ProviderErrorV1 {
-    const typed = ProviderErrorV1Schema.safeParse(caught);
-    if (typed.success) return typed.data;
-
-    const rpcErrorCode = readRpcErrorCode(caught);
-    const transportCode = caught && typeof caught === 'object' && 'code' in caught
-        ? (typeof caught.code === 'string' ? caught.code : undefined)
-        : undefined;
-    const message = caught instanceof Error ? caught.message : undefined;
-
-    if (rpcErrorCode === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE || rpcErrorCode === RPC_ERROR_CODES.METHOD_NOT_FOUND) {
-        return createProviderErrorV1('agent_unavailable', context);
-    }
-    if (isMachineRpcTimeoutError(caught)
-        || transportCode === MACHINE_RPC_TIMEOUT_ERROR_CODE
-        || transportCode === 'ETIMEDOUT'
-        || transportCode === 'TIMEOUT'
-        || rpcErrorCode === MACHINE_RPC_TIMEOUT_ERROR_CODE
-        || rpcErrorCode === 'RPC_TIMEOUT') {
-        return createProviderErrorV1('agent_timeout', context);
-    }
-    if (rpcErrorCode === 'machine_offline'
-        || rpcErrorCode === 'MACHINE_ENCRYPTION_UNAVAILABLE'
-        || transportCode === 'machine_offline'
-        || transportCode === 'ENETUNREACH'
-        || transportCode === 'EHOSTUNREACH'
-        || transportCode === 'ENETDOWN'
-        || transportCode === 'ECONNREFUSED'
-        || transportCode === 'ENOTFOUND'
-        || transportCode === 'EAI_AGAIN'
-        || transportCode === 'ECONNRESET'
-        || transportCode === 'ERR_NETWORK'
-        || transportCode === 'OFFLINE'
-        || message === 'Socket not connected'
-        || message?.includes('Machine encryption not found')) {
-        return createProviderErrorV1('machine_offline', context);
-    }
-    return createProviderErrorV1('agent_error', context);
 }
 
 export async function describeProviderConnections(input: Readonly<{
@@ -241,6 +192,8 @@ export async function describeProviderModels(input: Readonly<{
     mode?: 'picker' | 'management';
     forceRefresh?: true;
     currentSelection?: z.input<typeof DaemonProviderModelProjectionRequestV1Schema>['currentSelection'];
+    sourceConnectionId?: string;
+    favoriteSelections?: z.input<typeof DaemonProviderModelProjectionRequestV1Schema>['favoriteSelections'];
 }>): Promise<DaemonProviderModelProjectionResponseV1> {
     const payload = DaemonProviderModelProjectionRequestV1Schema.parse({
         machineId: input.machineId,
@@ -248,6 +201,8 @@ export async function describeProviderModels(input: Readonly<{
         ...(input.mode ? { mode: input.mode } : {}),
         ...(input.forceRefresh ? { forceRefresh: true as const } : {}),
         ...(input.currentSelection ? { currentSelection: input.currentSelection } : {}),
+        ...(input.sourceConnectionId ? { sourceConnectionId: input.sourceConnectionId } : {}),
+        ...(input.favoriteSelections ? { favoriteSelections: input.favoriteSelections } : {}),
     });
     return await requestProviderRpcResponse(DaemonProviderModelProjectionResponseV1Schema, 'read', {
         machineId: payload.machineId,
@@ -365,8 +320,29 @@ export async function describeProviderBindingStatus(input: Readonly<{
     }));
 }
 
+/** May promote credentials, so an uncertain transport result is never retried as a read. */
+export async function prepareLegacyProfileMigrationSource(input: Readonly<{
+    serverId: string | null;
+    accountId?: string;
+    signal?: AbortSignal;
+    request: z.input<typeof DaemonProviderProfileMigrationPrepareSourceRequestV1Schema>;
+}>): Promise<DaemonProviderProfileMigrationPrepareSourceResponseV1> {
+    const payload = DaemonProviderProfileMigrationPrepareSourceRequestV1Schema.parse(input.request);
+    return await requestProviderRpcResponse(DaemonProviderProfileMigrationPrepareSourceResponseV1Schema, 'mutation', {
+        machineId: payload.machineId,
+    }, () => machineRpcWithServerScope<unknown, typeof payload>({
+        machineId: payload.machineId, serverId: input.serverId,
+        ...(input.accountId ? { accountId: input.accountId } : {}),
+        ...(input.signal ? { signal: input.signal } : {}),
+        method: RPC_METHODS.DAEMON_PROVIDERS_PROFILE_MIGRATION_PREPARE_SOURCE, payload,
+    }));
+}
+
 export async function previewLegacyProfileMigration(input: Readonly<{
     serverId: string | null;
+    accountId?: string;
+    signal?: AbortSignal;
+    onDispatched?: () => void;
     request: z.input<typeof DaemonProviderProfileMigrationPreviewRequestV1Schema>;
 }>): Promise<DaemonProviderProfileMigrationPreviewResponseV1> {
     const payload = DaemonProviderProfileMigrationPreviewRequestV1Schema.parse(input.request);
@@ -377,12 +353,18 @@ export async function previewLegacyProfileMigration(input: Readonly<{
         machineId: payload.machineId,
         serverId: input.serverId,
         method: RPC_METHODS.DAEMON_PROVIDERS_PROFILE_MIGRATION_PREVIEW,
+        accountId: input.accountId,
+        signal: input.signal,
+        onDispatched: input.onDispatched,
         payload,
     }));
 }
 
 export async function confirmLegacyProfileMigration(input: Readonly<{
     serverId: string | null;
+    accountId?: string;
+    signal?: AbortSignal;
+    onDispatched?: () => void;
     request: z.input<typeof DaemonProviderProfileMigrationConfirmRequestV1Schema>;
 }>): Promise<DaemonProviderProfileMigrationConfirmResponseV1> {
     const payload = DaemonProviderProfileMigrationConfirmRequestV1Schema.parse(input.request);
@@ -393,12 +375,18 @@ export async function confirmLegacyProfileMigration(input: Readonly<{
         machineId: payload.machineId,
         serverId: input.serverId,
         method: RPC_METHODS.DAEMON_PROVIDERS_PROFILE_MIGRATION_CONFIRM,
+        accountId: input.accountId,
+        signal: input.signal,
+        onDispatched: input.onDispatched,
         payload,
     }));
 }
 
 export async function confirmLegacyProfileMigrationConflict(input: Readonly<{
     serverId: string | null;
+    accountId?: string;
+    signal?: AbortSignal;
+    onDispatched?: () => void;
     request: z.input<typeof DaemonProviderProfileMigrationConflictConfirmRequestV1Schema>;
 }>): Promise<DaemonProviderProfileMigrationConflictConfirmResponseV1> {
     const payload = DaemonProviderProfileMigrationConflictConfirmRequestV1Schema.parse(input.request);
@@ -409,6 +397,9 @@ export async function confirmLegacyProfileMigrationConflict(input: Readonly<{
         machineId: payload.machineId,
         serverId: input.serverId,
         method: RPC_METHODS.DAEMON_PROVIDERS_PROFILE_MIGRATION_CONFLICT_CONFIRM,
+        accountId: input.accountId,
+        signal: input.signal,
+        onDispatched: input.onDispatched,
         payload,
     }));
 }

@@ -1,11 +1,12 @@
 import * as React from 'react';
-import { readProviderSettingsFromAccountSettingsV1 } from '@happier-dev/protocol/providers/settings/readFromAccountSettingsV1';
+import { useProviderSettingsForServer } from '@/providers/hooks/useProviderSettings';
 import type { LaunchProfileV2 } from '@happier-dev/protocol/profiles/v2/schema';
 import type { ProviderBoundModelRef } from '@happier-dev/protocol/providers/model-selection';
 import type { DaemonProviderCurrentSelectionRecoveryV1 } from '@happier-dev/protocol/rpc';
 import { getAgentStaticModels } from '@happier-dev/agents';
 
 import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
+import { AgentIcon } from '@/agents/registry/AgentIcon';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { SafeIonicons } from '@/components/ui/icons/SafeIonicons';
 import { Item } from '@/components/ui/lists/Item';
@@ -25,7 +26,6 @@ import { useConfirmExperimentalProviderModel } from '@/providers/hooks/useConfir
 import { useProviderModelProjection } from '@/providers/hooks/useProviderModelProjection';
 import { getPermissionModeLabelForAgentType, getPermissionModeOptionsForAgentType } from '@/sync/domains/permissions/permissionModeOptions';
 import type { PermissionMode } from '@/sync/domains/permissions/permissionTypes';
-import { useSettingsSelector } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 import { resolveProfileBackendTargetKeyForEntry } from './profileBackendEntryStorage';
 
@@ -77,9 +77,7 @@ export function SlimProfileRoutingFields(props: Readonly<{
         scopeKind: 'spawn',
         serverId: props.serverId,
     });
-    const settings = useSettingsSelector((settings) => ({
-        providerSettingsV1: settings.providerSettingsV1,
-    }));
+    const providerSettings = useProviderSettingsForServer(props.serverId);
     const [openPermissionTarget, setOpenPermissionTarget] = React.useState<string | null>(null);
     const [openPersistenceTarget, setOpenPersistenceTarget] = React.useState<string | null>(null);
     const [agentOpen, setAgentOpen] = React.useState(false);
@@ -113,9 +111,9 @@ export function SlimProfileRoutingFields(props: Readonly<{
         }
     }, [selectedEntry]);
     const hiddenNativeModelKeys = React.useMemo(() => hiddenModelVisibilityKeys(
-        readProviderSettingsFromAccountSettingsV1(settings).settings,
+        providerSettings,
         { providersFeatureEnabled: providersEnabled },
-    ), [providersEnabled, settings]);
+    ), [providersEnabled, providerSettings]);
     const preferredModelFieldLabel = t('profiles.preferredModel.title');
     const preferredModelPresentation = React.useMemo(() => {
         const selected = props.preferredModelSelection?.ref ?? null;
@@ -214,9 +212,9 @@ export function SlimProfileRoutingFields(props: Readonly<{
             />
             <Item
                 title={preferredModelFieldLabel}
-                subtitle={preferredModelPresentation.subtitle}
+                subtitle={props.preferredAgentTargetKey ? preferredModelPresentation.subtitle : t('profilesPage.modelRequiresAgent')}
                 detail={preferredModelPresentation.detail}
-                accessibilityLabel={preferredModelPresentation.accessibilityLabel}
+                accessibilityLabel={props.preferredAgentTargetKey ? preferredModelPresentation.accessibilityLabel : `${preferredModelFieldLabel}. ${t('profilesPage.modelRequiresAgent')}`}
                 disabled={!props.preferredAgentTargetKey}
                 loading={projection.loading}
                 onPress={openModelPicker}
@@ -241,6 +239,7 @@ export function SlimProfileRoutingFields(props: Readonly<{
                     selectedId={selected ?? '__account__'}
                     itemTrigger={{
                         title: entry.title,
+                        icon: <AgentIcon agentId={agentId} size={22} />,
                         subtitle: selected ? getPermissionModeLabelForAgentType(agentId, selected as PermissionMode) : t('profiles.defaultPermissions.useAccountDefault'),
                         showSelectedDetail: false,
                         showSelectedSubtitle: false,

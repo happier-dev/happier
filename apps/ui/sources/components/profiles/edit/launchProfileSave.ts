@@ -1,59 +1,58 @@
-import { isLaunchProfileV2, type AiLaunchProfile } from '@happier-dev/protocol/profiles/read';
+import { isBuiltInAiLaunchProfileV1, isLaunchProfileV2, type AiLaunchProfile } from '@happier-dev/protocol/profiles/read';
+import { PublishableLaunchProfileV1Schema } from '@happier-dev/protocol/launchProfiles/launchProfileArtifactV1';
+import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
+import { projectNativeJsonValueForTransport, sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 
-import {
-    appendAiLaunchProfile,
-    readUiAiLaunchProfiles,
-    replaceAiLaunchProfile,
-} from '@/sync/domains/profiles/aiLaunchProfileCollection';
-import type { AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
-import { convertBuiltInProfileToCustom } from '@/sync/domains/profiles/profileMutations';
-import { DEFAULT_PROFILES, getBuiltInProfileNameKey } from '@/sync/domains/profiles/profileUtils';
+import { randomUUID } from '@/platform/randomUUID';
 
 /**
  * A built-in profile is never edited in place: saving it creates a custom copy ("Save as").
  */
 export function isBuiltInLaunchProfile(profile: AiLaunchProfile): boolean {
-    return (!isLaunchProfileV2(profile) && profile.isBuiltIn === true)
-        || DEFAULT_PROFILES.some((builtIn) => builtIn.id === profile.id)
-        || getBuiltInProfileNameKey(profile.id) !== null;
+    return isBuiltInAiLaunchProfileV1(profile);
 }
 
 export type LaunchProfileSaveResolution =
-    | Readonly<{ status: 'ok'; profile: AiLaunchProfile; profiles: readonly unknown[]; created: boolean }>
-    | Readonly<{ status: 'error'; reason: 'nameRequired' | 'duplicateName' }>;
+    | Readonly<{ status: 'ok'; profile: AiLaunchProfile; created: boolean }>
+    | Readonly<{ status: 'error'; reason: 'nameRequired' }>;
 
 /**
- * The one decision for saving a launch profile, wherever it is edited (Settings › Profiles and the
- * new-session profile editor): a name is required, names are unique among saved profiles and never
- * reuse a built-in name, a built-in profile saves as a new custom copy, and an unknown id is added.
+ * Prepare editor identity and timestamps only. The canonical Profile operation owns
+ * inventory completeness, uniqueness, supported creation shapes and persistence.
  */
 export function resolveLaunchProfileSave(params: Readonly<{
     profile: AiLaunchProfile;
-    rawProfiles: unknown;
-    builtInNames: readonly string[];
+    currentProfile?: AiLaunchProfile;
+    exists: boolean;
     now: () => number;
 }>): LaunchProfileSaveResolution {
     const name = params.profile.name?.trim() ?? '';
     if (!name) return { status: 'error', reason: 'nameRequired' };
 
     const builtIn = isBuiltInLaunchProfile(params.profile);
-    const candidate: AiLaunchProfile = builtIn
-        ? convertBuiltInProfileToCustom(params.profile as AIBackendProfile)
-        : params.profile;
-    const saved = readUiAiLaunchProfiles(params.rawProfiles);
-    const takenByAnother = saved.some((entry) => entry.id !== candidate.id && entry.name.trim() === name);
-    if (takenByAnother || params.builtInNames.includes(name)) {
-        return { status: 'error', reason: 'duplicateName' };
+    const timestamp = params.now();
+    // Historical definitions retain their routing/auth requirements. The row owner
+    // refuses unsupported legacy creation instead of guessing a V2 conversion.
+    const candidate: AiLaunchProfile = builtIn ? { ...params.profile, id: randomUUID(),
+        ...(!isLaunchProfileV2(params.profile) ? { isBuiltIn: false } : {}),
+        profileRecordRevision: undefined, artifactId: undefined, revision: undefined,
+        shared: undefined, viewOnly: undefined, createdAt: timestamp } : params.profile;
+    let updatedAt = timestamp;
+    const current = params.currentProfile;
+    // Forms stamp even unchanged saves; reference membership must not become a body edit.
+    if (candidate.artifactId && current?.artifactId === candidate.artifactId && current.id === candidate.id) {
+        const bodySchema = createStoredReadSchema(PublishableLaunchProfileV1Schema);
+        const previous = bodySchema.safeParse(current);
+        const next = bodySchema.safeParse({ ...candidate, name });
+        if (previous.success && next.success && sameStrictJsonValue(
+            projectNativeJsonValueForTransport(previous.data),
+            projectNativeJsonValueForTransport({ ...next.data, updatedAt: previous.data.updatedAt }),
+        )) updatedAt = previous.data.updatedAt;
     }
-
-    const exists = saved.some((entry) => entry.id === candidate.id);
-    const profile = { ...candidate, updatedAt: params.now() } as AiLaunchProfile;
+    const profile = { ...candidate, name, updatedAt };
     return {
         status: 'ok',
         profile,
-        profiles: exists
-            ? replaceAiLaunchProfile(params.rawProfiles, candidate.id, profile)
-            : appendAiLaunchProfile(params.rawProfiles, profile),
-        created: !exists,
+        created: builtIn || !params.exists,
     };
 }

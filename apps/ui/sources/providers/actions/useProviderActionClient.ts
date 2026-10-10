@@ -61,6 +61,7 @@ export function useProviderActionClient(serverId: string | null, initiatingLifet
             loadProviderModel: bind(client.loadProviderModel),
             cancelProviderModelLoad: bind(client.cancelProviderModelLoad),
             mutateProviderModelSettings: bind(client.mutateProviderModelSettings),
+            setProviderModelPickerVisibility: bind(client.setProviderModelPickerVisibility),
             describeProviderBindingStatus: bind(client.describeProviderBindingStatus),
             prepareLegacyProfileMigrationSource: bind(client.prepareLegacyProfileMigrationSource),
             previewLegacyProfileMigration: bind(client.previewLegacyProfileMigration),

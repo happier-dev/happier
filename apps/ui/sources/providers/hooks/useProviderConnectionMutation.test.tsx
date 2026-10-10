@@ -6,22 +6,28 @@ import type { z } from 'zod';
 
 import {
     createProviderConnectionViewFixture,
-    renderHook,
-    standardCleanup,
-} from '@/dev/testkit';
+    createProviderSettingsAccountHarness,
+} from '@/dev/testkit/harness/providerSettingsHarness';
+import { renderHook } from '@/dev/testkit/hooks/renderHook';
+import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
+import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { PROVIDER_CONNECTION_ACTION_ID_BY_OPERATION_V1 } from '@happier-dev/protocol/providers/providerActionsV1';
 
 const machineRpcWithServerScope = vi.hoisted(() => vi.fn());
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({ machineRpcWithServerScope }));
 
-import { useProviderConnectionMutation } from './useProviderConnectionMutation';
+const account = createProviderSettingsAccountHarness();
+let serverId = '';
+let otherServerId = '';
+const { useProviderConnectionMutation } = await import('./useProviderConnectionMutation');
 
 /**
  * Stable per-server target resolvers. The hook treats a new resolver identity
  * as a new scope, so a suite that wants the SAME scope across renders must pass
  * the same function, exactly like the Provider target owner does.
  */
-const resolveTargetOnServerA = () => ({ machineId: 'machine-a', serverId: 'server-a' });
-const resolveTargetOnServerB = () => ({ machineId: 'machine-a', serverId: 'server-b' });
+const resolveTargetOnServerA = () => ({ machineId: 'machine-a', serverId });
+const resolveTargetOnServerB = () => ({ machineId: 'machine-a', serverId: otherServerId });
 
 function createDeferred<T>() {
     let resolve!: (value: T) => void;
@@ -39,8 +45,15 @@ function isKeyPending(result: PendingPresentation, key: string): boolean {
 }
 
 describe('useProviderConnectionMutation', () => {
-    afterEach(standardCleanup);
-    beforeEach(() => machineRpcWithServerScope.mockReset());
+    afterEach(async () => { standardCleanup(); await account.reset(); });
+    beforeEach(async () => {
+        machineRpcWithServerScope.mockReset();
+        const waivedActions = Object.values(PROVIDER_CONNECTION_ACTION_ID_BY_OPERATION_V1);
+        const settings = { actionsSettingsV1: { v: 1, actions: {}, approvalWaivedSurfaces: Object.fromEntries(waivedActions.map(id => [id, ['ui']])) } };
+        serverId = (await account.restore({ settings })).serverId;
+        otherServerId = await account.addHome({ name: 'Other Provider Home', serverUrl: 'https://provider-settings-other.test', accountId: 'account-a', active: false });
+        account.home.answer(otherServerId, '/v2/account/settings', { body: { version: 1, content: { t: 'plain', v: settings } } });
+    });
 
     it('reconciles after a commit-then-reject transport failure without exposing a replay', async () => {
         const events: string[] = [];
@@ -106,8 +119,7 @@ describe('useProviderConnectionMutation', () => {
             await Promise.resolve();
         });
 
-        expect(machineRpcWithServerScope).toHaveBeenCalledOnce();
-
+        await waitForHomeGovernance(() => expect(machineRpcWithServerScope).toHaveBeenCalledOnce());
         await act(async () => {
             deferred.resolve({ status: 'success', action: 'delete', deletedConnectionId: 'pc_a' });
             await Promise.all([first, duplicate]);
@@ -121,13 +133,15 @@ describe('useProviderConnectionMutation', () => {
         // modal captured stays the current one, its request coalesces with an
         // identical concurrent one, and the write follows the routing id the
         // target resolves to at effect time rather than the rendered snapshot.
+        const { setServerProfileIdentityForUrl } = await import('@/sync/domains/server/serverProfiles');
+        await setServerProfileIdentityForUrl('https://provider-settings-account.test', 'srv_provider_settings');
         const deferred = createDeferred<Readonly<{
             status: 'success';
             action: 'delete';
             deletedConnectionId: string;
         }>>();
         machineRpcWithServerScope.mockReturnValueOnce(deferred.promise);
-        const selected = { current: { machineId: 'machine-a', serverId: 'server-a' } };
+        const selected = { current: { machineId: 'machine-a', serverId } };
         const resolveTarget = () => selected.current;
         const refresh = vi.fn(async () => undefined);
         const hook = await renderHook(
@@ -139,7 +153,7 @@ describe('useProviderConnectionMutation', () => {
         );
         const capturedUnderA = hook.getCurrent().run;
 
-        selected.current = { machineId: 'machine-a', serverId: 'server-a-reconnected' };
+        selected.current = { machineId: 'machine-a', serverId: 'srv_provider_settings' };
         await hook.rerender({ unrelated: 1 });
         const currentRun = hook.getCurrent().run;
 
@@ -164,7 +178,7 @@ describe('useProviderConnectionMutation', () => {
         expect(fromCurrentCallback).toBe(fromCapturedCallback);
         expect(machineRpcWithServerScope).toHaveBeenCalledOnce();
         expect(machineRpcWithServerScope).toHaveBeenCalledWith(expect.objectContaining({
-            serverId: 'server-a-reconnected',
+            serverId: 'srv_provider_settings',
         }));
         expect(currentRun).toBe(capturedUnderA);
         expect(refresh).toHaveBeenCalledOnce();
@@ -175,12 +189,12 @@ describe('useProviderConnectionMutation', () => {
         // targets while the confirmation was open. Issuing the captured request
         // now would either delete on the wrong machine or combine the old
         // machine id with the new server's routing.
-        const selected = { current: { machineId: 'machine-a', serverId: 'server-a' } };
+        const selected = { current: { machineId: 'machine-a', serverId } };
         const resolveTarget = () => selected.current;
         const refresh = vi.fn(async () => undefined);
         const hook = await renderHook(() => useProviderConnectionMutation({ resolveTarget, refresh }));
 
-        selected.current = { machineId: 'machine-b', serverId: 'server-b' };
+        selected.current = { machineId: 'machine-b', serverId: otherServerId };
         await act(async () => {
             await hook.getCurrent().run({
                 action: 'delete',
@@ -205,7 +219,7 @@ describe('useProviderConnectionMutation', () => {
         // so a machine-id-only check still matches — and the write would be
         // issued against the other server's daemon.
         const live = {
-            current: { serverIdentityId: 'srv_a', machineId: 'machine-a', serverId: 'server-a' },
+            current: { serverIdentityId: 'srv_a', machineId: 'machine-a', serverId },
         };
         // Mirrors the Provider target owner's `resolveCurrentTarget`: it
         // re-resolves the live selection and returns null once that selection
@@ -233,7 +247,7 @@ describe('useProviderConnectionMutation', () => {
         );
         const capturedWhileTargetingIdentityA = hook.getCurrent().run;
 
-        live.current = { serverIdentityId: 'srv_b', machineId: 'machine-a', serverId: 'server-b' };
+        live.current = { serverIdentityId: 'srv_b', machineId: 'machine-a', serverId: otherServerId };
         await hook.rerender({ resolveTarget: resolveOnIdentityB });
 
         await act(async () => {
@@ -256,7 +270,9 @@ describe('useProviderConnectionMutation', () => {
         // The device-local routing id of the selected server identity can be
         // replaced while a modal is open. The write must follow the freshly
         // resolved routing id, not the one captured at render.
-        const selected = { current: { machineId: 'machine-a', serverId: 'server-a' } };
+        const { setServerProfileIdentityForUrl } = await import('@/sync/domains/server/serverProfiles');
+        await setServerProfileIdentityForUrl('https://provider-settings-account.test', 'srv_provider_settings');
+        const selected = { current: { machineId: 'machine-a', serverId } };
         const resolveTarget = () => selected.current;
         const refresh = vi.fn(async () => undefined);
         machineRpcWithServerScope.mockResolvedValueOnce({
@@ -264,7 +280,7 @@ describe('useProviderConnectionMutation', () => {
         });
         const hook = await renderHook(() => useProviderConnectionMutation({ resolveTarget, refresh }));
 
-        selected.current = { machineId: 'machine-a', serverId: 'server-a-reconnected' };
+        selected.current = { machineId: 'machine-a', serverId: 'srv_provider_settings' };
         await act(async () => {
             await hook.getCurrent().run({
                 action: 'delete',
@@ -274,7 +290,7 @@ describe('useProviderConnectionMutation', () => {
         });
 
         expect(machineRpcWithServerScope).toHaveBeenCalledWith(expect.objectContaining({
-            serverId: 'server-a-reconnected',
+            serverId: 'srv_provider_settings',
         }));
         expect(hook.getCurrent().error).toBeNull();
     });
@@ -445,6 +461,7 @@ describe('useProviderConnectionMutation', () => {
             }, 'shared');
             await Promise.resolve();
         });
+        await waitForHomeGovernance(() => expect(machineRpcWithServerScope).toHaveBeenCalledOnce());
 
         await hook.rerender({ resolveTarget: resolveTargetOnServerB, refresh: refreshB });
         let firstCurrentShared!: Promise<unknown>;
@@ -462,6 +479,7 @@ describe('useProviderConnectionMutation', () => {
             }, 'other');
             await Promise.resolve();
         });
+        await waitForHomeGovernance(() => expect(machineRpcWithServerScope).toHaveBeenCalledTimes(4));
 
         const observedPending = [[
             isKeyPending(hook.getCurrent(), 'shared'),

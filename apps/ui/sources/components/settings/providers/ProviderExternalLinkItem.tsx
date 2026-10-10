@@ -32,11 +32,7 @@ export function ProviderExternalLinkItem(props: Readonly<{
 
     return (
         <Item
-            title={label}
-            accessibilityLabel={label}
-            mode="info"
-            style={{ paddingVertical: 0 }}
-            rightElement={(
+            title={(
                 <HappierLink
                     label={label}
                     onPress={open}
@@ -45,7 +41,9 @@ export function ProviderExternalLinkItem(props: Readonly<{
                     {label}
                 </HappierLink>
             )}
-            rightElementOutsidePressable
+            accessibilityLabel={label}
+            mode="info"
+            style={{ paddingVertical: 0 }}
         />
     );
 }

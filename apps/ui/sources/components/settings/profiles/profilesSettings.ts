@@ -1,3 +1,4 @@
+import { defaultEnvironmentShowFirstStorage } from '@happier-dev/protocol/actions/settings/accountSettingBindings';
 import { defineSettingsPage } from '@/components/settings/catalog/settingDeclarations';
 
 import { DEFAULT_ENVIRONMENT_ROUTE } from './profileCollectionRoutes';
@@ -15,9 +16,8 @@ export const PROFILES_SETTINGS = defineSettingsPage({
             titleKey: 'profilesPage.pickerSection',
             settings: {
                 showFirst: {
-                    titleKey: 'profilesPage.showFirst',
-                    descriptionKey: 'profilesPage.showFirstDescription',
-                    keywordKeys: ['profiles.noProfile', 'profiles.groups.favorites'],
+                    storage: defaultEnvironmentShowFirstStorage,
+
                 },
             },
         },

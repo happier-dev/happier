@@ -5,6 +5,8 @@ import { IconButton } from '@/components/ui/buttons/IconButton';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { ProviderIcon } from '@/providers/connection/ProviderIcon';
 import { t } from '@/text';
+import { SettingAnchor } from '@/components/settings/shell/SettingRow';
+import { PROVIDERS_SETTINGS } from '../providersSettings';
 
 import type { ProviderAvailableContribution } from './providerCollectionModel';
 
@@ -54,7 +56,7 @@ export const AddProviderMenu = React.memo(function AddProviderMenu(props: Readon
             category: t('settingsProvidersCollection.menuCatalogCategory'),
         })),
     ], [includeCustom, props.available, theme.colors.text.secondary]);
-    return (
+    const menu = (
         <DropdownMenu
             testID="settings-providers-add-menu"
             open={open}
@@ -88,5 +90,10 @@ export const AddProviderMenu = React.memo(function AddProviderMenu(props: Readon
                 />
             )}
         />
+    );
+    return (
+        <SettingAnchor setting={PROVIDERS_SETTINGS.settings.add}>
+            {includeCustom ? <SettingAnchor setting={PROVIDERS_SETTINGS.settings.custom}>{menu}</SettingAnchor> : menu}
+        </SettingAnchor>
     );
 });

@@ -4,6 +4,15 @@ import { createProviderErrorV1, ProviderErrorCodeV1Schema } from '@happier-dev/p
 import { presentProviderError, presentProviderRecoveryAction } from './errorPresentation';
 
 describe('provider error presentation', () => {
+    it('presents direct Run inheritance as a credential selection requirement', () => {
+        expect(presentProviderError('provider_run_credential_selection_required')).toMatchObject({
+            titleKey: 'settingsProviders.errors.runCredentialRequiredTitle',
+            descriptionKey: 'settingsProviders.errors.runCredentialRequiredDescription',
+            action: 'choose_connection', severity: 'warning',
+        });
+        expect(presentProviderError('provider_credential_transport_unavailable').titleKey)
+            .toBe('settingsProviders.errors.credentialUnsupportedTitle');
+    });
     it.each([
         ['model_not_granted', 'session.pendingMessages.admissionRejected.modelNotGranted', 'settingsProviders.errors.actions.chooseModel', 'choose_model'],
         ['permission_mode_not_granted', 'session.pendingMessages.admissionRejected.permissionModeNotGranted', 'settingsProviders.errors.actions.reviewAccountGrant', 'review_account_grant'],
@@ -77,10 +86,10 @@ describe('provider error presentation', () => {
     });
 
     it.each([
-        ['machine_offline', 'newSession.machineOfflineInlineTitle', 'newSession.machineOfflineInlineBody', 'retry'],
-        ['agent_unavailable', 'newSession.daemonRpcUnavailableTitle', 'newSession.actionMethodUnavailable', 'review_connection'],
-        ['agent_timeout', 'newSession.sessionTimeout', 'externalSessions.browseAgentTimedOut', 'retry'],
-        ['agent_error', 'externalSessions.operationStatusFailed', 'externalSessions.browseAgentFailed', 'review_connection'],
+        ['machine_offline', 'settingsProviders.errors.machineOfflineTitle', 'settingsProviders.errors.machineOfflineDescription', 'retry'],
+        ['agent_unavailable', 'settingsProviders.errors.machineUnavailableTitle', 'settingsProviders.errors.machineUnavailableDescription', 'review_connection'],
+        ['agent_timeout', 'settingsProviders.errors.machineTimeoutTitle', 'settingsProviders.errors.machineTimeoutDescription', 'retry'],
+        ['agent_error', 'settingsProviders.errors.genericTitle', 'settingsProviders.errors.genericDescription', 'review_connection'],
     ] as const)('presents %s with distinct transport guidance', (code, titleKey, descriptionKey, action) => {
         expect(presentProviderError(createProviderErrorV1(code))).toEqual(expect.objectContaining({
             titleKey,

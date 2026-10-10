@@ -102,6 +102,10 @@ const PRESENTATIONS = Object.freeze({
         titleKey: 'settingsProviders.errors.credentialUnsupportedTitle',
         descriptionKey: 'settingsProviders.errors.credentialUnsupportedDescription',
     },
+    provider_run_credential_selection_required: {
+        titleKey: 'settingsProviders.errors.runCredentialRequiredTitle',
+        descriptionKey: 'settingsProviders.errors.runCredentialRequiredDescription',
+    },
     provider_endpoint_unavailable: {
         titleKey: 'settingsProviders.errors.unreachableTitle',
         descriptionKey: 'settingsProviders.errors.unreachableDescription',
@@ -111,20 +115,20 @@ const PRESENTATIONS = Object.freeze({
         descriptionKey: 'settingsProviders.errors.machineUnavailableDescription',
     },
     machine_offline: {
-        titleKey: 'newSession.machineOfflineInlineTitle',
-        descriptionKey: 'newSession.machineOfflineInlineBody',
+        titleKey: 'settingsProviders.errors.machineOfflineTitle',
+        descriptionKey: 'settingsProviders.errors.machineOfflineDescription',
     },
     agent_unavailable: {
-        titleKey: 'newSession.daemonRpcUnavailableTitle',
-        descriptionKey: 'newSession.actionMethodUnavailable',
+        titleKey: 'settingsProviders.errors.machineUnavailableTitle',
+        descriptionKey: 'settingsProviders.errors.machineUnavailableDescription',
     },
     agent_timeout: {
-        titleKey: 'newSession.sessionTimeout',
-        descriptionKey: 'externalSessions.browseAgentTimedOut',
+        titleKey: 'settingsProviders.errors.machineTimeoutTitle',
+        descriptionKey: 'settingsProviders.errors.machineTimeoutDescription',
     },
     agent_error: {
-        titleKey: 'externalSessions.operationStatusFailed',
-        descriptionKey: 'externalSessions.browseAgentFailed',
+        titleKey: 'settingsProviders.errors.genericTitle',
+        descriptionKey: 'settingsProviders.errors.genericDescription',
     },
     provider_probe_capacity_exhausted: {
         titleKey: 'settingsProviders.errors.probeCapacityTitle',

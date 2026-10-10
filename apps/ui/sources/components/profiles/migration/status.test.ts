@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { AIBackendProfileSchema, LaunchProfileV2Schema } from '@happier-dev/protocol';
+import { AIBackendProfileSchema } from '@happier-dev/protocol/profiles/backendProfileSchema';
+import { LaunchProfileV2Schema } from '@happier-dev/protocol/profiles/v2/schema';
 
 import { resolveProfileMigrationStatus } from './status';
 
@@ -12,7 +13,7 @@ describe('profile migration presentation status', () => {
                 v: 1, connections: [], connectionTombstones: [], accountGrants: [], machineGrants: [],
                 secretBindingsByConnectionId: {}, manualModelsByConnectionId: {}, modelVisibilityByRef: {},
                 experimentalBindingConfirmations: [], defaultsByAgentTargetKey: {},
-                migration: { v: 1, completedSources: [], pendingCustomProfileIds: ['custom-a'] },
+                migration: { v: 1, completedSources: [], pendingCustomProfileIds: ['custom-a'], pendingConflicts: [] },
             },
         })).toBe('review');
     });
@@ -34,7 +35,7 @@ describe('profile migration presentation status', () => {
                 v: 1, connections: [], connectionTombstones: [], accountGrants: [], machineGrants: [],
                 secretBindingsByConnectionId: {}, manualModelsByConnectionId: {}, modelVisibilityByRef: {},
                 experimentalBindingConfirmations: [], defaultsByAgentTargetKey: {},
-                migration: { v: 1, completedSources: [], pendingCustomProfileIds: ['custom-a'] },
+                migration: { v: 1, completedSources: [], pendingCustomProfileIds: ['custom-a'], pendingConflicts: [] },
             },
         })).toBeNull();
     });

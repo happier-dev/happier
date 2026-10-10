@@ -2,60 +2,28 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { renderScreen } from '@/dev/testkit/render/renderScreen';
+import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
+import { createProviderSettingsAccountHarness } from '@/dev/testkit/harness/providerSettingsHarness';
 import { createProviderErrorV1, ProviderConnectionIdSchema } from '@happier-dev/protocol';
 
 const describeProviderBindingStatus = vi.hoisted(() => vi.fn());
-type TestAccountLifetime = Readonly<{
-    isCurrent(): boolean;
-    onRetire(cancel: () => void): Readonly<{ dispose(): void }>;
-}>;
-const activeAccountLifetime = vi.hoisted(() => {
-    const current: { value: TestAccountLifetime | null } = { value: null };
-    return {
-        current,
-        create() {
-            let retired = false;
-            const cancellations = new Set<() => void>();
-            const lifetime: TestAccountLifetime = {
-                isCurrent: () => !retired,
-                onRetire(cancel) {
-                    if (retired) {
-                        cancel();
-                        return { dispose() {} };
-                    }
-                    cancellations.add(cancel);
-                    return { dispose: () => cancellations.delete(cancel) };
-                },
-            };
-            return {
-                lifetime,
-                retire() {
-                    if (retired) return;
-                    retired = true;
-                    for (const cancel of [...cancellations]) cancel();
-                    cancellations.clear();
-                },
-            };
-        },
-    };
-});
-vi.mock('@/providers/rpc/client', () => ({
-    describeProviderBindingStatus,
-    providerErrorFromRpcFailure: (_caught: unknown, context: Readonly<Record<string, unknown>>) =>
-        createProviderErrorV1('provider_endpoint_unavailable', context),
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
+    machineRpcWithServerScope: (request: Readonly<{ payload: unknown }>) => describeProviderBindingStatus(request.payload),
 }));
-vi.mock('@/sync/domains/scope/activeServerAccountScope', () => ({
-    captureActiveServerAccountScopeLifetime: () => activeAccountLifetime.current.value,
-}));
+const account = createProviderSettingsAccountHarness();
+let serverId = '';
 
-import { useProviderBindingStatus } from './useProviderBindingStatus';
+const { useProviderBindingStatus } = await import('./useProviderBindingStatus');
 
 describe('useProviderBindingStatus', () => {
-    beforeEach(() => { describeProviderBindingStatus.mockReset(); });
-    afterEach(() => {
-        activeAccountLifetime.current.value = null;
+    beforeEach(async () => {
+        describeProviderBindingStatus.mockReset();
+        serverId = (await account.restore()).serverId;
+    });
+    afterEach(async () => {
         standardCleanup();
+        await account.reset();
     });
     it('clears a successful binding status immediately when its machine scope changes', async () => {
         let resolveB!: (value: unknown) => void;
@@ -75,7 +43,7 @@ describe('useProviderBindingStatus', () => {
         };
         function Harness(props: { machineId: string }) {
             value.current = useProviderBindingStatus({
-                enabled: true, machineId: props.machineId, serverId: 'server-a', selection, launchBinding,
+                enabled: true, machineId: props.machineId, serverId, selection, launchBinding,
             });
             return React.createElement('View');
         }
@@ -88,9 +56,6 @@ describe('useProviderBindingStatus', () => {
     });
 
     it('clears Account A, rejects its late status, and starts one Account B read when routing ids stay equal', async () => {
-        const accountA = activeAccountLifetime.create();
-        const accountB = activeAccountLifetime.create();
-        activeAccountLifetime.current.value = accountA.lifetime;
         let resolveA!: (value: unknown) => void;
         let resolveB!: (value: unknown) => void;
         describeProviderBindingStatus
@@ -122,7 +87,7 @@ describe('useProviderBindingStatus', () => {
         };
         function Harness() {
             value.current = useProviderBindingStatus({
-                enabled: true, machineId: 'machine-a', serverId: 'server-a', selection, launchBinding,
+                enabled: true, machineId: 'machine-a', serverId, selection, launchBinding,
             });
             return React.createElement('View');
         }
@@ -130,8 +95,7 @@ describe('useProviderBindingStatus', () => {
         expect(describeProviderBindingStatus).toHaveBeenCalledTimes(1);
 
         await act(async () => {
-            activeAccountLifetime.current.value = accountB.lifetime;
-            accountA.retire();
+            await account.restore({ accountId: 'account-b' });
             await screen.update(<Harness />);
         });
 
@@ -152,7 +116,7 @@ describe('useProviderBindingStatus', () => {
 
     it('does not call the daemon without one exact provider-bound launch tuple', async () => {
         function Harness() {
-            useProviderBindingStatus({ enabled: true, machineId: 'machine-a', serverId: 'server-a', selection: null, launchBinding: null });
+            useProviderBindingStatus({ enabled: true, machineId: 'machine-a', serverId, selection: null, launchBinding: null });
             return React.createElement('View');
         }
         await renderScreen(<Harness />);
@@ -164,7 +128,7 @@ describe('useProviderBindingStatus', () => {
         const value: { current: ReturnType<typeof useProviderBindingStatus> | null } = { current: null };
         function Harness() {
             value.current = useProviderBindingStatus({
-                enabled: true, machineId: 'machine-a', serverId: 'server-a',
+                enabled: true, machineId: 'machine-a', serverId,
                 selection: {
                     v: 1, updatedAt: 2,
                     ref: { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: ProviderConnectionIdSchema.parse('pc_next'), modelId: 'next' },
@@ -192,7 +156,7 @@ describe('useProviderBindingStatus', () => {
             value.current = useProviderBindingStatus({
                 enabled: true,
                 machineId: 'machine-a',
-                serverId: 'server-a',
+                serverId,
                 selection: {
                     v: 1,
                     updatedAt: 2,
@@ -236,7 +200,7 @@ describe('useProviderBindingStatus', () => {
             value.current = useProviderBindingStatus({
                 enabled: true,
                 machineId: 'machine-a',
-                serverId: 'server-a',
+                serverId,
                 selection: null,
                 selectionIntentPresent: true,
                 launchBinding: {
@@ -263,7 +227,7 @@ describe('useProviderBindingStatus', () => {
             value.current = useProviderBindingStatus({
                 enabled: true,
                 machineId: 'machine-a',
-                serverId: 'server-a',
+                serverId,
                 selectionIntentPresent: true,
                 selection: {
                     v: 1, updatedAt: 2,
@@ -285,7 +249,7 @@ describe('useProviderBindingStatus', () => {
         expect(value.current).toMatchObject({
             status: null,
             loading: false,
-            error: createProviderErrorV1('provider_endpoint_unavailable', {
+            error: createProviderErrorV1('agent_error', {
                 connectionId: 'pc_launch',
                 machineId: 'machine-a',
             }),

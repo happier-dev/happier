@@ -1,12 +1,14 @@
 import React from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { AIBackendProfileSchema, type AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
 import { buildBackendTargetKey, buildBackendTargetKeyV2 } from '@happier-dev/protocol';
-import { renderScreen } from '@/dev/testkit';
+import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { AcpCatalogRecordV1Schema } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 import {
     installProfileEditFormModuleMocks,
     resetProfileEditFormTestState,
+    publishProfileEditFormAcpCatalogFixture,
 } from './profileEditFormTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -22,9 +24,10 @@ const capture = vi.hoisted(() => ({
 
 const settingsState = {
     opencodeBackendMode: 'server',
-    acpCatalogSettingsV1: {
-        v: 2 as const,
-        backends: [
+};
+const catalogRecord = AcpCatalogRecordV1Schema.parse({
+        v: 1,
+        definitions: [
             {
                 id: 'custom-backend',
                 name: 'custom-backend',
@@ -36,8 +39,10 @@ const settingsState = {
                 updatedAt: 1,
             },
         ],
-    },
-};
+});
+let disposeCatalog: (() => void) | undefined;
+beforeEach(async () => { disposeCatalog = await publishProfileEditFormAcpCatalogFixture(catalogRecord); });
+afterEach(() => { standardCleanup(); disposeCatalog?.(); disposeCatalog = undefined; });
 
 installProfileEditFormModuleMocks({
     storageModule: async () => {
