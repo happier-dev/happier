@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AccountSettingsSchema, type ActionExecutorDeps } from '@happier-dev/protocol';
+import { ComputerSecretFillRequestV1Schema } from '@happier-dev/protocol/computer/v1';
 
 import { configuration } from '@/configuration';
 import { createBrowserAutomationCdpAdapter } from '@/daemon/browser/automation/adapters/cdp';
@@ -19,8 +20,12 @@ vi.mock('axios', () => ({ default: {
 
 afterEach(resetActiveAccountSettingsSnapshotForTests);
 
-describe('ApiClient confidential Browser preparation', () => {
-  it.each([true, false])('delivers only producer-qualified headless fills without requiring native containment (qualified=%s)', async qualified => {
+describe('ApiClient confidential target preparation', () => {
+  it.each([
+    { qualified: true, native: false },
+    { qualified: false, native: false },
+    { qualified: true, native: true },
+  ])('delivers only qualified Browser fills and refuses unsupported native fields ($qualified, native=$native)', async ({ qualified, native }) => {
     const token = `header.${Buffer.from(JSON.stringify({ sub: 'account' })).toString('base64url')}.signature`;
     const api = await ApiClient.create({ token, encryption: { type: 'legacy', secret: new Uint8Array(32) } });
     const view = { browserSessionId: 'browser', viewId: 'view' };
@@ -51,21 +56,35 @@ describe('ApiClient confidential Browser preparation', () => {
       readHostIdentity: async () => ({ serverIdentityId: 'verified-home', machineId: 'machine' }),
     };
     const execute = api.createConfidentialSecretFillExecutor(preparation);
-    const args: Parameters<NonNullable<ActionExecutorDeps['confidentialSecretFill']>>[0] = {
-      actionId: 'browser.automation.secret.fill',
-      request: { serverId: configuration.activeServerId, machineId: 'machine', sessionId: 'session', purpose: 'Sign in',
+    const scope = { serverId: configuration.activeServerId, machineId: 'machine', sessionId: 'session', purpose: 'Sign in' };
+    const binding = native ? {
+      actionId: 'computer.secret.fill' as const,
+      request: ComputerSecretFillRequestV1Schema.parse({ ...scope,
+        sourceId: 'native-window', target: { kind: 'window', displayId: 'primary', pid: 123, windowId: 456 },
+        captureId: 'capture', geometry: { captureWidth: 100, captureHeight: 100, nativeWidth: 100, nativeHeight: 100,
+          originX: 0, originY: 0, scaleX: 1, scaleY: 1, crop: { x: 0, y: 0, width: 100, height: 100 } },
+        field: { fieldId: 'password', focusId: 'focus' },
+      }),
+    } : {
+      actionId: 'browser.automation.secret.fill' as const,
+      request: { ...scope,
         ...view, tabId: 'tab', frameId: 'frame', documentId: 'document', navigationGeneration: 0,
         origin: 'https://example.test', field: { fieldId: '1', focusId: '1', locator: '#password' },
       },
+    };
+    const args: Parameters<NonNullable<ActionExecutorDeps['confidentialSecretFill']>>[0] = {
+      ...binding,
       choice: { kind: 'once', value: 'D26-API-FIXTURE' }, submit: false, accountEncryptionMode: 'plain',
       context: { authority: 'present_user', runtimeAccountId: 'account', serverIdentityId: 'verified-home' },
       isCurrent: async () => true,
     };
     try {
-      expect(await execute(args)).toEqual(qualified
-        ? { status: 'filled', code: 'filled' }
-        : { status: 'refused', code: 'observation_unavailable' });
-      expect(effects).toEqual(qualified ? ['D26-API-FIXTURE', 'finished'] : ['finished']);
+      const result = await execute(args);
+      expect(result).toEqual(native ? { status: 'refused', code: 'field_verification_unsupported' }
+        : qualified ? { status: 'filled', code: 'filled' }
+          : { status: 'refused', code: 'observation_unavailable' });
+      expect(JSON.stringify(result)).not.toContain('D26-API-FIXTURE');
+      expect(effects).toEqual(native ? [] : qualified ? ['D26-API-FIXTURE', 'finished'] : ['finished']);
     } finally { service.dispose(); }
   });
 });
