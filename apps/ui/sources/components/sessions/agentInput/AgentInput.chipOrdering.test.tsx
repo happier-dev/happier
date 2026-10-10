@@ -67,23 +67,11 @@ vi.mock('@/hooks/ui/useKeyboardHeight', () => ({
     useKeyboardHeight: () => 0,
 }));
 
-vi.mock('@/agents/catalog/catalog', () => ({
+vi.mock('@/agents/catalog/catalog', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/agents/catalog/catalog')>(),
     getAgentIconSvgXml: () => null,
     getAgentIconSource: () => null,
     getAgentIconTintColor: () => undefined,
-    AGENT_IDS: ['codex', 'claude', 'opencode', 'gemini'],
-    DEFAULT_AGENT_ID: 'codex',
-    resolveAgentIdFromFlavor: () => null,
-    getAgentCore: () => ({
-        displayNameKey: 'agents.codex',
-        toolRendering: { hideUnknownToolsByDefault: false },
-        ui: { agentPickerIconName: 'terminal-outline' },
-    }),
-    getAgentBehavior: (agentId: string) => ({
-        sessionUsage: {
-            contextUsageBadge: agentId === 'gemini' ? 'hidden' : agentId === 'codex' ? 'reportedOnly' : 'derived',
-        },
-    }),
 }));
 
 vi.mock('@/sync/domains/models/modelOptions', () => ({
@@ -175,17 +163,15 @@ vi.mock('@/components/sessions/pickers/OptionPickerOverlay', () => ({
     OptionPickerOverlay: () => null,
 }));
 
-vi.mock('@/sync/domains/sessionControl/sessionModeControl', () => ({
-    computeSessionModePickerControl: () => null,
-}));
 
 vi.mock('@/sync/domains/sessionControl/configOptionsControl', () => ({
     computeSessionConfigOptionControls: () => null,
 }));
 
+const { AgentInput } = await import('./AgentInput');
+
 describe('AgentInput (chip ordering)', () => {
     it('keeps the engine controls grouped ahead of permission in wrap layout', async () => {
-        const { AgentInput } = await import('./AgentInput');
 
         let tree: renderer.ReactTestRenderer | undefined;
         tree = (await renderScreen(React.createElement(AgentInput, {
@@ -236,7 +222,6 @@ describe('AgentInput (chip ordering)', () => {
     }, 90_000);
 
     it('keeps machine on the secondary wrap row after the send button and before path/resume', async () => {
-        const { AgentInput } = await import('./AgentInput');
 
         let tree: renderer.ReactTestRenderer | undefined;
         tree = (await renderScreen(React.createElement(AgentInput, {
@@ -284,7 +269,6 @@ describe('AgentInput (chip ordering)', () => {
     }, 90_000);
 
     it('keeps recipient ahead of delivery in the primary wrap row', async () => {
-        const { AgentInput } = await import('./AgentInput');
 
         let tree: renderer.ReactTestRenderer | undefined;
         tree = (await renderScreen(React.createElement(AgentInput, {
@@ -295,6 +279,7 @@ describe('AgentInput (chip ordering)', () => {
                     autocompleteKinds: [],
                     autocompleteSuggestions: async () => [],
                     onPermissionClick: () => {},
+                    agentType: 'codex',
                     extraActionChips: [
                         {
                             key: 'participants-recipient',

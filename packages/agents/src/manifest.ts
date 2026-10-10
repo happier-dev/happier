@@ -629,4 +629,28 @@ export const AGENTS_CORE = {
             nativeImageGeneration: NO_NATIVE_IMAGE_GENERATION,
         },
     },
+    codebuddy: {
+        id: 'codebuddy',
+        cliSubcommand: 'codebuddy',
+        detectKey: providerDetectKey('codebuddy'),
+        flavorAliases: ['codebuddy-code'],
+        cloudConnect: null,
+        connectedServices: null,
+        resume: { vendorResume: 'supported', vendorResumeIdField: 'codebuddySessionId' },
+        sessionStorage: { direct: false, persisted: true },
+        // CodeBuddy Code 2.162.0 advertises `loadSession` but not ACP `sessionCapabilities.list`.
+        sessionCapabilities: {
+            sessionListing: 'unsupported',
+            sessionFork: { conversation: 'unsupported', fromMessage: 'unsupported' },
+            sessionRollback: { conversation: 'unsupported' },
+        },
+        handoff: { vendorStateTransfer: 'unsupported' },
+        localControl: { supported: true, topology: 'exclusive', attachStrategy: 'tmux' },
+        tools: { delivery: 'native_mcp', support: 'experimental' },
+        media: {
+            acceptsImageInput: 'experimental',
+            emitsSessionMedia: GENERIC_SESSION_MEDIA_OUTPUT,
+            nativeImageGeneration: NO_NATIVE_IMAGE_GENERATION,
+        },
+    },
 } as const satisfies Record<AgentId, AgentCore>;

@@ -5,7 +5,10 @@ import { computePendingSessionModeOverrideApplication } from './permission/permi
 
 export function createSessionModeOverrideSynchronizer(params: Readonly<{
   session: { getMetadataSnapshot: () => Metadata | null };
-  runtime: { setSessionMode: (modeId: string) => Promise<void> };
+  runtime: {
+    setSessionMode: (modeId: string) => Promise<void>;
+    clearSessionModeOverride?: () => Promise<void>;
+  };
   isStarted: () => boolean;
   autoApplyFromMetadata?: boolean;
 }>): {
@@ -27,14 +30,6 @@ export function createSessionModeOverrideSynchronizer(params: Readonly<{
     if (!params.isStarted()) return Promise.resolve(true);
 
     const next = pending;
-    // Empty modeId is a "clear override" sentinel (normalized from modeId="default" in metadata).
-    // Not all runtimes support dynamically resetting to a provider default, so treat this as a
-    // no-op apply while still advancing lastAppliedUpdatedAt so we don't retry forever.
-    if (next.modeId === '') {
-      lastAppliedUpdatedAt = next.updatedAt;
-      pending = null;
-      return Promise.resolve(true);
-    }
     const attempt =
       next.updatedAt === lastAttemptedUpdatedAt
         ? lastAttemptNumber + 1
@@ -51,8 +46,11 @@ export function createSessionModeOverrideSynchronizer(params: Readonly<{
       attempt,
     });
 
-    applyingPromise = params.runtime
-      .setSessionMode(next.modeId)
+    // Runtimes without a clear hook preserve their existing provider policy.
+    const apply = next.modeId === ''
+      ? params.runtime.clearSessionModeOverride?.() ?? Promise.resolve()
+      : params.runtime.setSessionMode(next.modeId);
+    applyingPromise = apply
       .then(() => {
         // Only advance lastAppliedUpdatedAt on success so failures can retry.
         lastAppliedUpdatedAt = next.updatedAt;

@@ -122,6 +122,26 @@ export const BUILT_IN_ACP_CONFIG: Readonly<Partial<Record<AgentId, BuiltInAcpCon
     promptImageSupport: 'yes',
     mcpServers: 'pass',
   },
+  codebuddy: {
+    agentId: 'codebuddy',
+    launcher: { command: providerLauncherCommand('codebuddy'), args: ['--acp'] },
+    transportProfile: 'generic',
+    supportsLoadSession: true,
+    supportsModes: 'yes',
+    supportsModels: 'yes',
+    promptImageSupport: 'yes',
+    mcpServers: 'pass',
+    // Mode ids accepted by CodeBuddy Code 2.162.0 `session/set_mode`.
+    permissionModeMapping: {
+      default: null,
+      // `dontAsk` runs safe read-only actions and denies everything that would prompt; the
+      // generic ACP permission handler relays prompts and does not deny writes on its own.
+      'read-only': 'dontAsk',
+      'safe-yolo': 'auto',
+      yolo: 'bypassPermissions',
+      plan: 'plan',
+    },
+  },
 });
 
 export function hasBuiltInAcpConfig(agentId: AgentId): boolean {

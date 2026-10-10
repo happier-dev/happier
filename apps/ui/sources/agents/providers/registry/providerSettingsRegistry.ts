@@ -21,6 +21,7 @@ import { GROK_PROVIDER_SETTINGS_PLUGIN } from '../grok/settings/plugin';
 import { AGY_PROVIDER_SETTINGS_PLUGIN } from '../agy/settings/plugin';
 import { FX_PROVIDER_SETTINGS_PLUGIN } from '../fx/settings/plugin';
 import { DROID_PROVIDER_SETTINGS_PLUGIN } from '../droid/settings/plugin';
+import { CODEBUDDY_PROVIDER_SETTINGS_PLUGIN } from '../codebuddy/settings/plugin';
 
 function isTranslationRef(value: unknown): value is Readonly<{ key: string }> {
     return Boolean(
@@ -160,6 +161,7 @@ export const PROVIDER_SETTINGS_PLUGINS = [
     AGY_PROVIDER_SETTINGS_PLUGIN,
     FX_PROVIDER_SETTINGS_PLUGIN,
     DROID_PROVIDER_SETTINGS_PLUGIN,
+    CODEBUDDY_PROVIDER_SETTINGS_PLUGIN,
 ] as const satisfies readonly ProviderSettingsPlugin[];
 
 assertProviderSettingsPluginsValid(PROVIDER_SETTINGS_PLUGINS);

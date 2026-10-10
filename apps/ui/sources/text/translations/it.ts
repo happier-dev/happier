@@ -1508,6 +1508,7 @@ export const it: TranslationStructure = {
       agySubtitleExperimental: "CLI Antigravity (sperimentale)",
       fxSubtitleExperimental: "FX CLI (sperimentale)",
       droidSubtitleExperimental: "Factory Droid CLI (sperimentale)",
+      codebuddySubtitleExperimental: "CodeBuddy Code CLI (sperimentale)",
       customAcpSubtitleExperimental: "CLI ACP personalizzata (sperimentale)",
       grokSubtitleExperimental: "Grok Build CLI (sperimentale)",
       piSubtitleExperimental: "Pi CLI (sperimentale)",
@@ -4634,6 +4635,7 @@ export const it: TranslationStructure = {
             agy: { title: 'Antigravity' },
             fx: { title: "FX" },
             droid: { title: "Factory Droid" },
+            codebuddy: { title: "CodeBuddy" },
             grok: {
                 title: "Grok Build"
             },
@@ -6890,7 +6892,9 @@ export const it: TranslationStructure = {
     fxSessionId: "ID sessione FX",
     fxSessionIdCopied: "ID sessione FX copiato negli appunti",
     droidSessionId: "ID sessione Factory Droid",
+    codebuddySessionId: "ID sessione CodeBuddy",
     droidSessionIdCopied: "ID sessione Factory Droid copiato negli appunti",
+    codebuddySessionIdCopied: "ID sessione CodeBuddy copiato negli appunti",
     customAcpSessionId: "ID sessione ACP personalizzata",
     grokSessionId: "ID sessione Grok",
     grokSessionIdCopied: "ID sessione Grok copiato negli appunti",
@@ -7106,6 +7110,8 @@ export const it: TranslationStructure = {
     permissionMode: {
       title: "MODALITÀ PERMESSI",
       effectiveLabel: ({ label }: { label: string }) => `Effettivo: ${label}`,
+      nativeModeOverrides: ({ mode }: { mode: string }) => `La modalità agente ${mode} ha priorità su questa impostazione dei permessi. Cancella la selezione di Modalità per usare i permessi.`,
+            usePermissionSetting: 'Usa l’impostazione dei permessi',
       default: "Predefinito",
       readOnly: "Sola lettura",
       acceptEdits: "Accetta modifiche",
@@ -7136,6 +7142,7 @@ export const it: TranslationStructure = {
       agy: 'Antigravity',
       fx: "FX",
       droid: "Factory Droid",
+      codebuddy: "CodeBuddy",
       customAcp: "ACP personalizzato",
       pi: "Pi",
       copilot: "Copilot",

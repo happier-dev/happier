@@ -11,6 +11,10 @@ import {
 import { serializeActionSpec } from './actionCatalog.js';
 import { ActionApprovalSchema, ActionOperationDeclarationV1Schema, ActionSpecSchema, ActionSurfaceSchema, getActionSpec, isActionSpecSurfacedOn, listActionSpecs, listActionSpecsForSurface, listVoicePromptHotPathSpecs, resolveActionApprovalFlow } from './actionSpecs.js';
 
+it('accepts the existing empty mode id to clear a native override', () => {
+  expect(getActionSpec('session.mode.set').inputSchema.safeParse({ modeId: '' }).success).toBe(true);
+});
+
 const RESULT_REQUIRED_BLOCKING_ACTION_IDS = [
   'action.spec.search',
   'action.spec.get',

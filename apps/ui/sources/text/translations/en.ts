@@ -4028,6 +4028,9 @@ export const en = {
             droid: {
                 title: "Factory Droid"
             },
+            codebuddy: {
+                title: "CodeBuddy"
+            },
             grok: {
                 title: "Grok Build"
             },
@@ -6200,7 +6203,9 @@ export const en = {
         fxSessionId: 'FX Session ID',
         fxSessionIdCopied: 'FX Session ID copied to clipboard',
         droidSessionId: 'Factory Droid Session ID',
+        codebuddySessionId: 'CodeBuddy Session ID',
         droidSessionIdCopied: 'Factory Droid Session ID copied to clipboard',
+        codebuddySessionIdCopied: 'CodeBuddy Session ID copied to clipboard',
         customAcpSessionId: 'Custom ACP Session ID',
         grokSessionId: "Grok Session ID",
         grokSessionIdCopied: "Grok Session ID copied to clipboard",
@@ -6411,6 +6416,8 @@ export const en = {
         permissionMode: {
             title: 'PERMISSION MODE',
             effectiveLabel: ({ label }: { label: string }) => `Effective: ${label}`,
+            nativeModeOverrides: ({ mode }: { mode: string }) => `Agent Mode ${mode} overrides this permission setting. Clear the Mode override to use the permission setting.`,
+            usePermissionSetting: 'Use permission setting',
             default: 'Default',
             readOnly: 'Read Only',
             acceptEdits: 'Accept Edits',
@@ -6440,6 +6447,7 @@ export const en = {
             devin: 'Devin',
             fx: 'FX',
             droid: 'Factory Droid',
+            codebuddy: 'CodeBuddy',
             customAcp: 'Custom ACP',
             pi: 'Pi',
             copilot: 'Copilot',
@@ -10603,6 +10611,7 @@ settingsSession: {
             agySubtitleExperimental: 'Antigravity CLI (experimental)',
             fxSubtitleExperimental: 'FX CLI (experimental)',
             droidSubtitleExperimental: 'Factory Droid CLI (experimental)',
+            codebuddySubtitleExperimental: 'CodeBuddy Code CLI (experimental)',
             customAcpSubtitleExperimental: 'Custom ACP CLI (experimental)',
             grokSubtitleExperimental: "Grok Build CLI (experimental)",
             piSubtitleExperimental: 'Pi CLI (experimental)',

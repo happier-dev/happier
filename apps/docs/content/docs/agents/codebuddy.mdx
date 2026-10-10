@@ -1,0 +1,66 @@
+---
+title: CodeBuddy Code CLI (experimental)
+description: Run Tencent CodeBuddy Code through Happier with ACP sessions, dynamic models, permission modes, resume, execution runs, and experimental image prompts and MCP tools.
+---
+
+Happier runs your locally installed CodeBuddy Code CLI through
+`codebuddy --acp`. The ordinary `codebuddy` command remains the interactive
+terminal surface. WorkBuddy does not ship a separate ACP command, so Happier
+has one CodeBuddy agent rather than a separate WorkBuddy agent.
+
+## What you need first
+
+Install CodeBuddy Code with the
+[official quickstart](https://www.codebuddy.ai/docs/cli/quickstart):
+
+```bash
+npm install -g @tencent-ai/codebuddy-code
+```
+
+Then start `codebuddy` on the machine where Happier runs and sign in with
+`/login`. You can instead provide `CODEBUDDY_API_KEY` in the runtime
+environment. Accounts on the China or iOA editions also set
+`CODEBUDDY_INTERNET_ENVIRONMENT` as described in CodeBuddy's documentation.
+
+## Start and resume sessions
+
+```bash
+happier codebuddy
+```
+
+Happier supports fresh and resumed sessions, cancellation, execution runs, and
+the models and modes CodeBuddy advertises through ACP. Image prompts and
+Happier MCP tools are experimental for CodeBuddy. Happier does not copy a static
+model list.
+
+Happier permission modes map onto CodeBuddy's own modes, and CodeBuddy enforces
+them:
+
+- **Default** keeps your CodeBuddy permission settings.
+- **Read Only Mode** uses `dontAsk`: safe actions and anything you pre-approved
+  in CodeBuddy's permission settings run, and everything that would need
+  approval is denied without a prompt.
+- **Auto** uses `auto`: CodeBuddy's classifier approves safe actions and denies
+  risky ones.
+- **YOLO** uses `bypassPermissions`.
+- **Plan Mode** uses `plan`.
+
+An explicit approval mode chosen under **Mode** takes precedence over this
+mapping, including after resume. The permission picker shows CodeBuddy's
+reported mode and explains the override. Choose **Use permission setting** in Mode to clear the override and use the
+current mapped permission setting again. **Default** leaves CodeBuddy's own
+policy in place. See [Session modes](/sessions/session-modes).
+
+CodeBuddy does not advertise ACP session listing, so Happier resumes sessions it
+started but cannot browse sessions created directly in the CodeBuddy terminal.
+
+## When it goes wrong
+
+- Run `codebuddy --version` in the same environment as the Happier daemon.
+- Reopen `codebuddy` and run `/login` to repair sign-in, or verify `CODEBUDDY_API_KEY` is present.
+- If a model is missing, confirm that CodeBuddy advertises it to ACP for your account.
+
+## Related
+
+- [Agent capabilities](/agents/capabilities)
+- [Provider authentication](/agents/provider-authentication)

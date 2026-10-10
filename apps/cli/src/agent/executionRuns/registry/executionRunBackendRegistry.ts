@@ -34,6 +34,7 @@ const REGISTRY: Record<string, ExecutionRunBackendDescriptor> = {
   agy: { factory: createCatalogDefinedExecutionRunBackendFactory('agy') },
   fx: { factory: createCatalogDefinedExecutionRunBackendFactory('fx') },
   droid: { factory: createCatalogDefinedExecutionRunBackendFactory('droid') },
+  codebuddy: { factory: createCatalogDefinedExecutionRunBackendFactory('codebuddy') },
 };
 
 // Aliases: UI/agents may reference provider IDs that are distinct from the execution-run backend ID.

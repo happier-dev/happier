@@ -82,6 +82,7 @@ type RuntimeForLoop = {
   getSessionId: () => string | null;
   cancel: () => Promise<void>;
   setSessionMode: (modeId: string) => Promise<void>;
+  clearSessionModeOverride?: () => Promise<void>;
   setSessionConfigOption: (configId: string, value: string | number | boolean | null) => Promise<void>;
   setSessionModel: (modelId: string) => Promise<void>;
 };

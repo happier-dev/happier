@@ -174,6 +174,14 @@ export const AGENT_AUTH_PROBE_CONFIG: Readonly<Record<AgentId, AgentAuthProbeCon
     backgroundChecks: 'manual_only',
     envVars: ['FACTORY_API_KEY'],
   },
+  codebuddy: {
+    agentId: 'codebuddy',
+    binaryNames: [getProviderCliRuntimeSpec('codebuddy').binaryName],
+    statusCommand: null,
+    parser: 'unknown',
+    backgroundChecks: 'manual_only',
+    envVars: ['CODEBUDDY_API_KEY'],
+  },
 });
 
 export function getAgentAuthProbeConfig(

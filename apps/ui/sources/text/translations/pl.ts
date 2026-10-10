@@ -4323,6 +4323,7 @@ export const pl: TranslationStructure = {
             agy: { title: 'Antigravity' },
             fx: { title: "FX" },
             droid: { title: "Factory Droid" },
+            codebuddy: { title: "CodeBuddy" },
             grok: {
                 title: "Grok Build"
             },
@@ -6565,7 +6566,9 @@ export const pl: TranslationStructure = {
     fxSessionId: "ID sesji FX",
     fxSessionIdCopied: "ID sesji FX skopiowane do schowka",
     droidSessionId: "ID sesji Factory Droid",
+    codebuddySessionId: "ID sesji CodeBuddy",
     droidSessionIdCopied: "ID sesji Factory Droid skopiowane do schowka",
+    codebuddySessionIdCopied: "ID sesji CodeBuddy skopiowane do schowka",
     customAcpSessionId: "ID sesji niestandardowego ACP",
     grokSessionId: "ID sesji Grok",
     grokSessionIdCopied: "ID sesji Grok skopiowane do schowka",
@@ -6784,6 +6787,8 @@ export const pl: TranslationStructure = {
     permissionMode: {
       title: "TRYB UPRAWNIEŃ",
       effectiveLabel: ({ label }: { label: string }) => `Obowiązuje: ${label}`,
+      nativeModeOverrides: ({ mode }: { mode: string }) => `Tryb agenta ${mode} ma pierwszeństwo przed tym ustawieniem uprawnień. Usuń wybór trybu, aby użyć ustawienia uprawnień.`,
+            usePermissionSetting: 'Użyj ustawienia uprawnień',
       default: "Domyślny",
       readOnly: "Tylko do odczytu",
       acceptEdits: "Akceptuj edycje",
@@ -6814,6 +6819,7 @@ export const pl: TranslationStructure = {
       agy: 'Antigravity',
       fx: "FX",
       droid: "Factory Droid",
+      codebuddy: "CodeBuddy",
       customAcp: "Custom ACP",
       pi: "Pi",
       copilot: "Copilot",
@@ -11265,6 +11271,7 @@ settingsSession: {
       agySubtitleExperimental: "Antigravity CLI (eksperymentalne)",
       fxSubtitleExperimental: "FX CLI (eksperymentalne)",
       droidSubtitleExperimental: "Factory Droid CLI (eksperymentalne)",
+      codebuddySubtitleExperimental: "CodeBuddy Code CLI (eksperymentalne)",
       customAcpSubtitleExperimental: "Niestandardowy ACP CLI (eksperymentalne)",
       grokSubtitleExperimental: "Grok Build CLI (eksperymentalne)",
       piSubtitleExperimental: "Pi CLI (eksperymentalne)",

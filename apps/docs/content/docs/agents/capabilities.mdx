@@ -14,7 +14,7 @@ rather than the state of things whenever someone last updated a wiki page. A
 dash means the agent does not support that capability, not that Happier has not
 got to it yet.
 
-3 of the 18 agents are marked Stable: Claude, Codex, OpenCode.
+3 of the 19 agents are marked Stable: Claude, Codex, OpenCode.
 The rest are Experimental — they work, and people use them daily, but their
 integration is younger and more likely to change. Availability of an agent is
 separate from availability of a feature; see
@@ -42,6 +42,7 @@ separate from availability of a feature; see
 | **Antigravity** | `happier agy` | Experimental | Queried from the agent, custom ids allowed | Vendor recipe |
 | **FX** | `happier fx` | Experimental | Queried from the agent | Vendor recipe |
 | **Factory Droid** | `happier droid` | Experimental | Queried from the agent | Vendor recipe |
+| **CodeBuddy** | `happier codebuddy` | Experimental | Queried from the agent | `@tencent-ai/codebuddy-code` |
 
 Where the managed-install column names a package, Happier can install the agent
 for you from the machine's detail screen. Where it says the vendor's own
@@ -52,7 +53,7 @@ that speaks the Agent Client Protocol, so its row describes the adapter rather
 than a particular vendor. See [Custom ACP](/agents/custom-acp).
 
 Several subcommands accept aliases, so the name you already have in your fingers
-usually works: `codex` also answers to `codex-acp`, `codex-mcp`, `openai`, `gpt`; `opencode` also answers to `open-code`; `qwen` also answers to `qwen-code`; `kimi` also answers to `kimi-cli`; `kilo` also answers to `kilocode`; `kiro` also answers to `kiro-cli`; `devin` also answers to `devin-cli`; `customAcp` also answers to `custom-acp`; `pi` also answers to `pi-coding-agent`; `copilot` also answers to `github-copilot`, `copilot-cli`; `cursor` also answers to `cursor-agent`; `grok` also answers to `grok-build`, `grok-cli`; `droid` also answers to `factory-droid`.
+usually works: `codex` also answers to `codex-acp`, `codex-mcp`, `openai`, `gpt`; `opencode` also answers to `open-code`; `qwen` also answers to `qwen-code`; `kimi` also answers to `kimi-cli`; `kilo` also answers to `kilocode`; `kiro` also answers to `kiro-cli`; `devin` also answers to `devin-cli`; `customAcp` also answers to `custom-acp`; `pi` also answers to `pi-coding-agent`; `copilot` also answers to `github-copilot`, `copilot-cli`; `cursor` also answers to `cursor-agent`; `grok` also answers to `grok-build`, `grok-cli`; `droid` also answers to `factory-droid`; `codebuddy` also answers to `codebuddy-code`.
 
 ## Sessions
 
@@ -79,6 +80,7 @@ work everywhere. They do not.
 | **Antigravity** | Yes | — | — | — | — |
 | **FX** | Yes | — | — | — | Yes |
 | **Factory Droid** | Yes | — | — | — | — |
+| **CodeBuddy** | Yes | — | — | — | — |
 
 "Resume by agent session ID" means Happier can pass a saved agent-owned ID back
 to that agent. It does not establish that the interactive terminal and ACP use
@@ -119,6 +121,7 @@ continuation paths.
 | **Antigravity** | — | — | — | — |
 | **FX** | — | Agent modes, from the agent | Yes | — |
 | **Factory Droid** | — | Agent modes, from the agent | Yes | — |
+| **CodeBuddy** | — | Agent modes, from the agent | Yes | — |
 
 Steering is what lets you add a correction to a turn already in flight instead
 of interrupting it. Where an agent cannot steer, Happier interrupts and resends,
@@ -153,6 +156,7 @@ mode. Codex, for instance, reaches `plan` through the Mode control.
 | **Antigravity** | Yes | Experimental | — | Yes (`native_mcp`) | — |
 | **FX** | Yes | Yes | — | Yes (`native_mcp`) | — |
 | **Factory Droid** | Yes | Experimental | — | Yes (`native_mcp`) | — |
+| **CodeBuddy** | Yes | Experimental | — | Experimental (`native_mcp`) | — |
 
 Two of these columns describe what an integration **declares**, not what Happier
 enforces, and the distinction matters if you are deciding whether to attach a
@@ -192,6 +196,7 @@ some declarations to lag the runtime.
 | **Antigravity** | Agent-managed | Manual only |
 | **FX** | `VERCEL_OIDC_TOKEN`, `AI_GATEWAY_API_KEY` | Manual only |
 | **Factory Droid** | `FACTORY_API_KEY` | Manual only |
+| **CodeBuddy** | `CODEBUDDY_API_KEY` | Manual only |
 
 Agents whose background checks are manual only are not re-probed on a timer.
 Whether a manual refresh can resolve a status depends on the agent's configured

@@ -1153,6 +1153,7 @@ export function makeAcpPermissionOutsideWorkspaceScenario(params: {
               const requestedPath =
                 reqs[0]?.payload?.options?.input?.filepath ??
                 reqs[0]?.payload?.options?.input?.filePath ??
+                reqs[0]?.payload?.options?.input?.file_path ??
                 reqs[0]?.payload?.options?.input?.path ??
                 reqs[0]?.payload?.options?.input?.metadata?.filepath ??
                 reqs[0]?.payload?.options?.toolCall?.content?.find((entry: any) => typeof entry?.path === 'string')?.path ??

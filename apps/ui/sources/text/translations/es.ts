@@ -4290,6 +4290,7 @@ export const es: TranslationStructure = {
             agy: { title: 'Antigravity' },
             fx: { title: "FX" },
             droid: { title: "Factory Droid" },
+            codebuddy: { title: "CodeBuddy" },
             grok: {
                 title: "Grok Build"
             },
@@ -6548,7 +6549,9 @@ export const es: TranslationStructure = {
     fxSessionId: "ID de sesión de FX",
     fxSessionIdCopied: "ID de sesión de FX copiado al portapapeles",
     droidSessionId: "ID de sesión de Factory Droid",
+    codebuddySessionId: "ID de sesión de CodeBuddy",
     droidSessionIdCopied: "ID de sesión de Factory Droid copiado al portapapeles",
+    codebuddySessionIdCopied: "ID de sesión de CodeBuddy copiado al portapapeles",
     customAcpSessionId: "ID de sesión de ACP personalizado",
     grokSessionId: "ID de sesión de Grok",
     grokSessionIdCopied: "ID de sesión de Grok copiado al portapapeles",
@@ -6766,6 +6769,8 @@ export const es: TranslationStructure = {
     permissionMode: {
       title: "MODO DE PERMISOS",
       effectiveLabel: ({ label }: { label: string }) => `Efectivo: ${label}`,
+      nativeModeOverrides: ({ mode }: { mode: string }) => `El modo del agente ${mode} tiene prioridad sobre este permiso. Borra la selección de Modo para usar el permiso.`,
+            usePermissionSetting: 'Usar el ajuste de permisos',
       default: "Por defecto",
       readOnly: "Solo lectura",
       acceptEdits: "Aceptar ediciones",
@@ -6796,6 +6801,7 @@ export const es: TranslationStructure = {
       agy: 'Antigravity',
       fx: "FX",
       droid: "Factory Droid",
+      codebuddy: "CodeBuddy",
       customAcp: "ACP personalizado",
       pi: "Pi",
       copilot: "Copilot",
@@ -11264,6 +11270,7 @@ settingsSession: {
       agySubtitleExperimental: "CLI de Antigravity (experimental)",
       fxSubtitleExperimental: "CLI de FX (experimental)",
       droidSubtitleExperimental: "CLI de Factory Droid (experimental)",
+      codebuddySubtitleExperimental: "CLI de CodeBuddy Code (experimental)",
       customAcpSubtitleExperimental: "CLI de ACP personalizado (experimental)",
       grokSubtitleExperimental: "CLI de Grok Build (experimental)",
       piSubtitleExperimental: "CLI de Pi (experimental)",

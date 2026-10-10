@@ -1,6 +1,7 @@
-export function createCircularSafeJsonReplacer(): (key: string, value: unknown) => unknown {
-    const seen = new WeakSet<object>();
-    return (_key: string, value: unknown): unknown => {
+export function createCircularSafeJsonReplacer(): (this: unknown, key: string, value: unknown) => unknown {
+    // Only objects on the current path are cycles; the same object reached through siblings is shared data.
+    const ancestors: object[] = [];
+    return function (this: unknown, _key: string, value: unknown): unknown {
         if (typeof value === 'bigint') {
             return `${value.toString()}n`;
         }
@@ -14,8 +15,9 @@ export function createCircularSafeJsonReplacer(): (key: string, value: unknown) 
         }
 
         if (typeof value === 'object' && value !== null) {
-            if (seen.has(value)) return '[Circular]';
-            seen.add(value);
+            while (ancestors.length > 0 && ancestors[ancestors.length - 1] !== this) ancestors.pop();
+            if (ancestors.includes(value)) return '[Circular]';
+            ancestors.push(value);
 
             const record = value as Record<string, unknown>;
             const stack = typeof record.stack === 'string' ? record.stack : undefined;

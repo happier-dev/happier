@@ -27,6 +27,9 @@ describe('providers: contract matrix (harness)', () => {
     { id: 'cursor', envVar: 'HAPPIER_E2E_PROVIDER_CURSOR', timeoutMs: 2_400_000 },
     { id: 'grok', envVar: 'HAPPIER_E2E_PROVIDER_GROK', timeoutMs: 2_400_000 },
     { id: 'agy', envVar: 'HAPPIER_E2E_PROVIDER_AGY', timeoutMs: 1_200_000 },
+    { id: 'fx', envVar: 'HAPPIER_E2E_PROVIDER_FX', timeoutMs: 1_200_000 },
+    { id: 'droid', envVar: 'HAPPIER_E2E_PROVIDER_DROID', timeoutMs: 1_200_000 },
+    { id: 'codebuddy', envVar: 'HAPPIER_E2E_PROVIDER_CODEBUDDY', timeoutMs: 1_200_000 },
   ] as const;
 
   const providersEnabled = (process.env.HAPPIER_E2E_PROVIDERS ?? '').toString().trim() === '1';
@@ -34,9 +37,12 @@ describe('providers: contract matrix (harness)', () => {
 
   it('includes provider-specific ACP integrations in the opt-in provider matrix', () => {
     expect(providerEnvVars.map((provider) => provider.id)).toContain('agy');
+    expect(providerEnvVars.map((provider) => provider.id)).toContain('codebuddy');
     expect(providerEnvVars.map((provider) => provider.id)).toContain('cursor');
     expect(providerEnvVars.map((provider) => provider.id)).toContain('cursor_acp_stub');
     expect(providerEnvVars.map((provider) => provider.id)).toContain('devin');
+    expect(providerEnvVars.map((provider) => provider.id)).toContain('droid');
+    expect(providerEnvVars.map((provider) => provider.id)).toContain('fx');
     expect(providerEnvVars.map((provider) => provider.id)).toContain('grok');
     expect(providerEnvVars.map((provider) => provider.id)).toContain('grok_acp_stub');
   });

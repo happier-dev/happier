@@ -272,6 +272,8 @@ export type AcpRuntime = Readonly<{
    * No-op when unsupported or when the session has not been started/loaded.
    */
   setSessionMode: (modeId: string) => Promise<void>;
+  /** Restore the backend's mapped permission policy when a native mode override is cleared. */
+  clearSessionModeOverride?: () => Promise<void>;
   /**
    * Request a provider-native ACP session model change when supported.
    * No-op when unsupported or when the session has not been started/loaded.
@@ -318,6 +320,7 @@ export type AcpRuntimeBackend = Omit<AgentBackend, 'waitForResponseComplete'> & 
    * Optional provider-native ACP session mode change (e.g. "plan" vs "code").
    */
   setSessionMode?: (sessionId: string, modeId: string) => Promise<void>;
+  clearSessionModeOverride?: (sessionId: string) => Promise<void>;
   /**
    * Optional provider-native ACP session model change (UNSTABLE in ACP; may be unsupported).
    */
@@ -2354,6 +2357,12 @@ export function createAcpRuntime(params: {
 
     async setSessionMode(modeId: string): Promise<void> {
       await applySessionModeControl(modeId);
+    },
+
+    async clearSessionModeOverride(): Promise<void> {
+      if (!sessionId) return;
+      const b = await ensureBackend();
+      await b.clearSessionModeOverride?.(sessionId);
     },
 
     async setSessionModel(modelId: string): Promise<void> {

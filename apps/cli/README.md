@@ -100,6 +100,7 @@ subcommand starts Claude Code.
 | `happier agy` | Antigravity | Experimental |
 | `happier fx` | FX | Experimental |
 | `happier droid` | Factory Droid | Experimental |
+| `happier codebuddy` | CodeBuddy | Experimental |
 
 Experimental agents are enabled per-account in the app and may change without a
 deprecation window. Each agent needs its own vendor CLI installed and
@@ -152,7 +153,7 @@ happier gemini project get          # Show current Google Cloud Project ID
 
 ### Session Options (agent commands)
 
-These flags are accepted by every agent command in the table above (`codex`, `gemini`, `opencode`, `kimi`, `devin`, `agy`, `fx`, `droid` and the rest). Which of them actually take effect is capability-driven: `--agent-mode` and `--model` apply only where the provider advertises modes or models over ACP.
+These flags are accepted by every agent command in the table above (`codex`, `gemini`, `opencode`, `kimi`, `devin`, `agy`, `fx`, `droid`, `codebuddy` and the rest). Which of them actually take effect is capability-driven: `--agent-mode` and `--model` apply only where the provider advertises modes or models over ACP.
 
 - `--permission-mode <mode>` - Permission intent: `read_only`, `default`, `auto`, or `yolo` (compatible aliases accepted)
 - `--permission-mode-updated-at <unix-ms>` - Optional timestamp (ms) for ordering permission changes across devices

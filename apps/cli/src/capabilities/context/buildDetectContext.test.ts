@@ -28,6 +28,7 @@ function makeDetectCliSnapshot(): DetectCliSnapshot {
       agy: makeUnavailableCliEntry(),
       fx: makeUnavailableCliEntry(),
       droid: makeUnavailableCliEntry(),
+      codebuddy: makeUnavailableCliEntry(),
     },
     tmux: { available: false },
     windowsTerminal: { available: false },

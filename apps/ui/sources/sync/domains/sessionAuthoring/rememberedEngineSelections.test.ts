@@ -5,6 +5,23 @@ import { readRememberedEngineSelection, upsertRememberedEngineSelection } from '
 describe('rememberedEngineSelections opaque identifiers', () => {
     const target = { kind: 'builtInAgent', agentId: 'cursor' } as const;
 
+    it.each(['default', null] as const)('round-trips native mode %s independently from the default model', (acpSessionModeId) => {
+        const stored = upsertRememberedEngineSelection({
+            selectionsByScope: {},
+            serverId: null,
+            backendTarget: target,
+            selection: { modelId: 'default', acpSessionModeId },
+            updatedAt: 1,
+        });
+
+        expect(readRememberedEngineSelection({
+            enabled: true,
+            selectionsByScope: stored,
+            serverId: null,
+            backendTarget: target,
+        })).toMatchObject({ modelId: null, acpSessionModeId });
+    });
+
     it('preserves exact nonblank model and mode identifiers', () => {
         const stored = upsertRememberedEngineSelection({
             selectionsByScope: {},

@@ -100,7 +100,7 @@ function normalizeSessionModeIdForEntry(
     sessionModeId: string | null | undefined,
 ): string | null {
     if (!backendEntrySupportsSessionModeSelection(entry)) return null;
-    return readNonBlankSessionControlIdentifier(sessionModeId) ?? 'default';
+    return readNonBlankSessionControlIdentifier(sessionModeId);
 }
 
 function areEngineSelectionsEqual(left: EngineSelectionLike, right: EngineSelectionLike): boolean {

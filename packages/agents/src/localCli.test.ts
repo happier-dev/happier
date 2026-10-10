@@ -60,6 +60,14 @@ describe('AGENT_LOCAL_CLI_CONFIG', () => {
     expect(getAgentLocalCliConfig('droid')).toMatchObject({ authLaunches: [{ command: 'droid', args: [] }] });
   });
 
+  it('signs CodeBuddy Code in through its interactive /login command', () => {
+    expect(getAgentLocalCliConfig('codebuddy')).toMatchObject({
+      machineLoginKey: 'codebuddy',
+      authSupport: 'login_terminal',
+      authLaunches: [{ kind: 'primary', command: 'codebuddy', args: [], initialInput: '/login\r' }],
+    });
+  });
+
   it('keeps Claude login launch metadata centralized', () => {
     expect(getAgentLocalCliConfig('claude')).toMatchObject({
       detectKey: 'claude',

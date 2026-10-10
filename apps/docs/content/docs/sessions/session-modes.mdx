@@ -39,7 +39,19 @@ That means these combinations are valid:
 - **Mode = Plan** + **Permission = Read Only**
 - **Mode = Build** + **Permission = YOLO**
 
-Mode does **not** replace permissions.
+Behavioral modes such as Build and Plan do not replace permissions. Some ACP
+agents also expose approval presets through **Mode**. In development builds,
+an explicit approval-preset selection takes precedence over the permission-mode
+mapping for these agents. Changing **Permissions** preserves that explicit
+selection, including after resume.
+
+The permission picker shows the agent's reported native policy and explains
+when a Mode selection overrides the permission setting. A pending selection is
+shown separately from the reported policy. Clearing the Mode override returns
+to the current permission mapping when the agent declares one. If the agent has
+a native **Default** mode and a permission-mode mapping, choose **Use permission
+setting** to clear the override and keep **Default** available as a native choice. **Default**
+keeps the agent's own policy; it does not promise to reset its native settings.
 
 ## Plan mode
 

@@ -423,6 +423,17 @@ export const AGENT_MODEL_CONFIG: Readonly<Record<AgentId, AgentModelConfig>> = O
     defaultMode: 'default',
     allowedModes: ['default'],
   },
+  codebuddy: {
+    supportsSelection: true,
+    supportsFreeform: false,
+    nonAcpApplyScope: 'next_prompt',
+    acpApplyBehavior: 'set_model',
+    acpModelConfigOptionId: 'model',
+    acpModelSetMethod: 'config_option',
+    dynamicProbe: 'auto',
+    defaultMode: 'default',
+    allowedModes: ['default'],
+  },
 });
 
 export function getAgentModelConfig(agentId: AgentId): AgentModelConfig {

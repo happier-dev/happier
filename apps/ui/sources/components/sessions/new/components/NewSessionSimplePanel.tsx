@@ -24,7 +24,7 @@ import { AgentInput } from '@/components/sessions/agentInput';
 import { AttachmentFilePicker } from '@/components/sessions/attachments/AttachmentFilePicker';
 import { PopoverBoundaryProvider } from '@/components/ui/popover';
 import { t } from '@/text';
-import type { AcpConfigOptionOverridesV1 } from '@happier-dev/protocol';
+import { resolveRequestedSessionModeId, type AcpConfigOptionOverridesV1 } from '@happier-dev/protocol';
 import type { HandleCreateSessionOptions } from '../hooks/useCreateNewSession';
 import { useNewSessionAttachmentsController } from '@/components/sessions/new/attachments/useNewSessionAttachmentsController';
 import { isMobileLayoutWidth } from '@/components/sessions/layout/isMobileLayoutWidth';
@@ -527,7 +527,7 @@ function NewSessionSimplePanelComposer({
                         acpSessionModeOptionsOverrideProbe={props.acpSessionModeProbe}
                         onAcpSessionModeChange={
                             (props.acpSessionModeOptions?.length ?? 0) > 0 && props.setAcpSessionModeId
-                                ? (modeId) => props.setAcpSessionModeId?.(modeId === 'default' ? null : modeId)
+                                ? (modeId) => props.setAcpSessionModeId?.(resolveRequestedSessionModeId(modeId, props.acpSessionModeOptions) || null)
                                 : undefined
                         }
                         acpConfigOptionsOverride={props.acpConfigOptions}

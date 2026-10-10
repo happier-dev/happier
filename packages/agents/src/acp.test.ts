@@ -17,7 +17,28 @@ const devinAgentId = 'devin' as AgentId;
 
 describe('built-in ACP config', () => {
   it('keeps the built-in ACP allowlist explicit and drift-free', () => {
-    expect(Object.keys(BUILT_IN_ACP_CONFIG).sort()).toEqual(['agy', 'customAcp', 'devin', 'droid', 'fx', 'kimi', 'kiro']);
+    expect(Object.keys(BUILT_IN_ACP_CONFIG).sort()).toEqual(['agy', 'codebuddy', 'customAcp', 'devin', 'droid', 'fx', 'kimi', 'kiro']);
+  });
+
+  it('declares CodeBuddy Code through its probed `--acp` contract and native permission modes', () => {
+    expect(getBuiltInAcpConfig('codebuddy')).toEqual({
+      agentId: 'codebuddy',
+      launcher: { command: 'codebuddy', args: ['--acp'] },
+      transportProfile: 'generic',
+      supportsLoadSession: true,
+      supportsModes: 'yes',
+      supportsModels: 'yes',
+      promptImageSupport: 'yes',
+      mcpServers: 'pass',
+      permissionModeMapping: {
+        default: null,
+        'read-only': 'dontAsk',
+        'safe-yolo': 'auto',
+        yolo: 'bypassPermissions',
+        plan: 'plan',
+      },
+    });
+    expect(isAcpSessionListingDeclared('codebuddy')).toBe(false);
   });
 
   it('declares FX and Factory Droid through provider-advertised generic ACP controls', () => {

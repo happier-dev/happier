@@ -29,6 +29,7 @@ import {
     extractCanonicalInputFromHappierToolsShellBridge,
     resolveCanonicalToolNameFromHappierToolsShellBridge,
 } from './happierToolsShellBridgeCanonicalization';
+import { extractDeferredToolExecutionCall } from './deferredToolExecutionCanonicalization';
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -90,6 +91,10 @@ export function canonicalizeToolNameV2(opts: {
     const lower = name.toLowerCase();
     const shellBridgeCanonical = resolveCanonicalToolNameFromHappierToolsShellBridge(opts.toolInput);
     if (shellBridgeCanonical) return shellBridgeCanonical;
+    const deferredCall = extractDeferredToolExecutionCall(opts.toolInput);
+    if (deferredCall) {
+        return canonicalizeToolNameV2({ ...opts, toolName: deferredCall.toolName, toolInput: deferredCall.params });
+    }
     const record = asRecord(opts.toolInput) ?? {};
     const titleCandidate =
         typeof (record as any).title === 'string'
@@ -307,7 +312,10 @@ export function normalizeToolCallInputV2(opts: {
     canonicalToolName: string;
     rawInput: unknown;
 }): unknown {
-    const effectiveRawInput = extractCanonicalInputFromHappierToolsShellBridge(opts.rawInput) ?? opts.rawInput;
+    const effectiveRawInput =
+        extractCanonicalInputFromHappierToolsShellBridge(opts.rawInput)
+        ?? extractDeferredToolExecutionCall(opts.rawInput)?.params
+        ?? opts.rawInput;
 
     if (opts.canonicalToolName.startsWith('mcp__')) {
         const normalized = normalizeMcpInput(opts.canonicalToolName, effectiveRawInput);

@@ -17,6 +17,95 @@ function buildMetadata(overrides: Partial<Metadata> = {}): Metadata {
 }
 
 describe('describeEffectivePermissionMode', () => {
+    it('does not describe generic Plan as an explicit native approval override', () => {
+        const res = describeEffectivePermissionMode({
+            agentType: 'codebuddy', selectedMode: 'plan', applyTiming: 'next_prompt',
+            metadata: buildMetadata({
+                permissionMode: 'plan',
+                sessionModesV1: {
+                    v: 1, provider: 'codebuddy', updatedAt: 1, currentModeId: 'auto',
+                    availableModes: [{ id: 'auto', name: 'Auto' }, { id: 'plan', name: 'Plan' }],
+                },
+            }),
+        });
+        expect(res.effectiveMode).toBe('plan');
+        expect(reasonCodes(res)).not.toContain('native_mode_overrides_permissions');
+        expect(reasonCodes(res)).not.toContain('native_mode_pending');
+        expect(reasonCodes(res)).toContain('applies_on_next_message');
+    });
+
+    it.each(['codebuddy', 'devin', 'fx'] as const)('describes %s native policy without treating the permission selection as applied', (agentType) => {
+        const res = describeEffectivePermissionMode({
+            agentType,
+            selectedMode: 'read-only',
+            applyTiming: 'immediate',
+            metadata: buildMetadata({
+                sessionModesV1: {
+                    v: 1, provider: agentType, updatedAt: 2, currentModeId: 'unrestricted',
+                    availableModes: [{ id: 'unrestricted', name: 'Unrestricted' }],
+                },
+                sessionModeOverrideV1: { v: 1, updatedAt: 1, modeId: 'unrestricted' },
+            }),
+        });
+        expect(res).toMatchObject({ effectiveMode: 'read-only', nativeModeLabel: 'Unrestricted' });
+        expect(reasonCodes(res)).toContain('native_mode_overrides_permissions');
+        expect(reasonCodes(res)).not.toContain('read_only_enforced_by_tool_gating');
+    });
+
+    it('keeps the reported policy visible while a native override is pending', () => {
+        const res = describeEffectivePermissionMode({
+            agentType: 'codebuddy', selectedMode: 'read-only', applyTiming: 'immediate',
+            metadata: buildMetadata({
+                sessionModesV1: {
+                    v: 1, provider: 'codebuddy', updatedAt: 1, currentModeId: 'dontAsk',
+                    availableModes: [{ id: 'dontAsk', name: 'No prompts' }, { id: 'bypassPermissions', name: 'Bypass permissions' }],
+                },
+                sessionModeOverrideV1: { v: 1, updatedAt: 2, modeId: 'bypassPermissions' },
+            }),
+        });
+        expect(res).toMatchObject({ nativeModeLabel: 'No prompts' });
+        expect(res.reasons).toContainEqual({ code: 'native_mode_pending', params: { from: 'No prompts', to: 'Bypass permissions' } });
+    });
+
+    it('uses a declared ACP plan mapping instead of claiming an unsupported permission fallback', () => {
+        const res = describeEffectivePermissionMode({
+            agentType: 'codebuddy', selectedMode: 'plan', metadata: buildMetadata(), applyTiming: 'immediate',
+        });
+        expect(res.effectiveMode).toBe('plan');
+        expect(reasonCodes(res)).not.toContain('plan_not_supported_for_provider');
+        expect(res.reasons).not.toContainEqual({ code: 'mode_mapped_for_provider', params: { providerMode: 'dontAsk' } });
+    });
+
+    it('stops describing override precedence after an explicit clear', () => {
+        const res = describeEffectivePermissionMode({
+            agentType: 'codebuddy', selectedMode: 'read-only', applyTiming: 'immediate',
+            metadata: buildMetadata({
+                sessionModesV1: {
+                    v: 1, provider: 'codebuddy', updatedAt: 3, currentModeId: 'dontAsk',
+                    availableModes: [{ id: 'dontAsk', name: 'No prompts' }],
+                },
+                sessionModeOverrideV1: { v: 1, updatedAt: 2, modeId: '' },
+            }),
+        });
+        expect(res).toMatchObject({ nativeModeLabel: 'No prompts' });
+        expect(reasonCodes(res)).not.toContain('native_mode_overrides_permissions');
+    });
+
+    it.each(['codebuddy', 'opencode'] as const)('does not borrow an unrelated or behavioral native mode for %s permissions', (agentType) => {
+        const res = describeEffectivePermissionMode({
+            agentType, selectedMode: 'read-only', applyTiming: 'immediate',
+            metadata: buildMetadata({
+                sessionModesV1: {
+                    v: 1, provider: 'opencode', updatedAt: 2, currentModeId: 'build',
+                    availableModes: [{ id: 'build', name: 'Build' }],
+                },
+                sessionModeOverrideV1: { v: 1, updatedAt: 1, modeId: 'build' },
+            }),
+        });
+        expect(res.nativeModeLabel).toBeUndefined();
+        expect(reasonCodes(res)).not.toContain('native_mode_overrides_permissions');
+    });
+
     it('fails closed to read-only for codex-like plan and emits reason codes', () => {
         const res = describeEffectivePermissionMode({
             agentType: 'codex',

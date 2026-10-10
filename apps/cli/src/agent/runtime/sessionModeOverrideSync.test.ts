@@ -2,9 +2,37 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createSessionModeOverrideSynchronizer } from './sessionModeOverrideSync';
 import { logger } from '@/ui/logger';
+import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 
 describe('createSessionModeOverrideSynchronizer', () => {
   afterEach(() => vi.restoreAllMocks());
+  it('retries a failed clear before acknowledging its metadata timestamp', async () => {
+    let attempts = 0;
+    const runtime = {
+      // Provider-control boundary: keep synchronization and override parsing real.
+      setSessionMode: async () => {},
+      clearSessionModeOverride: async () => {
+        attempts += 1;
+        if (attempts === 1) throw new Error('provider unavailable');
+      },
+    };
+    const sync = createSessionModeOverrideSynchronizer({
+      session: { getMetadataSnapshot: () => createTestMetadata({
+        sessionModeOverrideV1: { v: 1, updatedAt: 11, modeId: null },
+      }) },
+      runtime,
+      isStarted: () => true,
+      autoApplyFromMetadata: false,
+    });
+    sync.syncFromMetadata();
+    expect(await sync.flushPendingAfterStartWithOutcome()).toBe(false);
+    sync.syncFromMetadata();
+    expect(await sync.flushPendingAfterStartWithOutcome()).toBe(true);
+    sync.syncFromMetadata();
+    expect(await sync.flushPendingAfterStartWithOutcome()).toBe(true);
+    expect(attempts).toBe(2);
+  });
+
   it('queues pending overrides before runtime start and applies after start', async () => {
     let started = false;
     const setSessionMode = vi.fn(async (_modeId: string) => {});

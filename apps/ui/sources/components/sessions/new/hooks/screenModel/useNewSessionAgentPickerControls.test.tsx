@@ -6,6 +6,7 @@ import { installNewSessionScreenModelCommonModuleMocks } from '../newSessionScre
 import type { AccountProfile, ConnectedServiceBindingsV1 } from '@happier-dev/protocol';
 
 import { useNewSessionAgentPickerControls } from './useNewSessionAgentPickerControls';
+import { buildRememberedEngineSelectionScopeKey } from '@/sync/domains/sessionAuthoring/rememberedEngineSelections';
 
 const modalMockState = vi.hoisted(() => ({
     alert: vi.fn(),
@@ -495,7 +496,7 @@ describe('useNewSessionAgentPickerControls', () => {
         expect(setModelMode).toHaveBeenCalledTimes(1);
         expect(setModelMode).toHaveBeenCalledWith('gpt-5.5');
         expect(setAcpSessionModeId).toHaveBeenCalledTimes(1);
-        expect(setAcpSessionModeId).toHaveBeenCalledWith('default');
+        expect(setAcpSessionModeId).toHaveBeenCalledWith(null);
         expect(setSessionConfigOptionOverrides).toHaveBeenCalledWith(expect.objectContaining({
             overrides: {
                 context: {
@@ -508,7 +509,7 @@ describe('useNewSessionAgentPickerControls', () => {
             codexEntry.target,
             expect.objectContaining({
                 modelId: 'gpt-5.5',
-                acpSessionModeId: 'default',
+                acpSessionModeId: null,
                 sessionConfigOptionOverrides: expect.objectContaining({
                     overrides: {
                         context: {
@@ -859,6 +860,38 @@ describe('useNewSessionAgentPickerControls', () => {
             v: expectedConnectedServices.v,
             bindingsByServiceId: expect.objectContaining(expectedConnectedServices.bindingsByServiceId),
         }));
+    });
+
+    it('keeps an unselected native mode unset when selecting a new engine', async () => {
+        const setAcpSessionModeId = vi.fn();
+        const hook = await renderHook(() => useNewSessionAgentPickerControls(buildAgentPickerHookParams({
+            setAcpSessionModeId,
+        })));
+
+        hook.getCurrent().handleAgentPickerSelect('agent:codex');
+
+        expect(setAcpSessionModeId).toHaveBeenCalledWith(null);
+        await hook.unmount();
+    });
+
+    it.each([null, 'default'] as const)('restores a remembered native mode without rewriting %s', async (acpSessionModeId) => {
+        const params = buildAgentPickerHookParams();
+        const entry = params.resolvedBackendEntries[1]!;
+        const setAcpSessionModeId = vi.fn();
+        const scopeKey = buildRememberedEngineSelectionScopeKey({ serverId: 'server-1', backendTarget: entry.target });
+        const hook = await renderHook(() => useNewSessionAgentPickerControls(buildAgentPickerHookParams({
+            setAcpSessionModeId,
+            rememberEngineSelectionsEnabled: true,
+            rememberedEngineSelectionServerId: 'server-1',
+            rememberedEngineSelectionsByScope: {
+                [scopeKey]: { modelId: null, acpSessionModeId, sessionConfigOptionOverrides: null, updatedAt: 1 },
+            },
+        })));
+
+        hook.getCurrent().handleAgentPickerSelect(entry.targetKey);
+
+        expect(setAcpSessionModeId).toHaveBeenCalledWith(acpSessionModeId);
+        await hook.unmount();
     });
 
     it('clears ACP session mode when selecting a backend that does not expose session modes', async () => {

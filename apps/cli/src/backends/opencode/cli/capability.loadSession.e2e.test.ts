@@ -44,6 +44,7 @@ function makeCliSnapshot(overrides: Partial<DetectCliSnapshot['clis']>): DetectC
       agy: makeUnavailableCliEntry(),
       fx: makeUnavailableCliEntry(),
       droid: makeUnavailableCliEntry(),
+      codebuddy: makeUnavailableCliEntry(),
       ...overrides,
     },
     tmux: { available: false },

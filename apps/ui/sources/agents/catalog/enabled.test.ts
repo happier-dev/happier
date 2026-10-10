@@ -47,16 +47,16 @@ describe('agents/enabled', () => {
     });
 
     it('returns enabled agent ids in display order', () => {
-        expect(getEnabledAgentIds({ backendEnabledByTargetKey: {} })).toEqual(['claude', 'codex', 'opencode', 'gemini', 'auggie', 'qwen', 'kimi', 'kilo', 'kiro', 'devin', 'customAcp', 'pi', 'copilot', 'cursor', 'grok', 'fx', 'droid', 'agy']);
+        expect(getEnabledAgentIds({ backendEnabledByTargetKey: {} })).toEqual(['claude', 'codex', 'opencode', 'gemini', 'auggie', 'qwen', 'kimi', 'kilo', 'kiro', 'devin', 'customAcp', 'pi', 'copilot', 'cursor', 'grok', 'fx', 'droid', 'codebuddy', 'agy']);
         expect(getEnabledAgentIds({
             backendEnabledByTargetKey: {
                 [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'gemini' })]: false,
                 [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'auggie' })]: false,
             },
-        })).toEqual(['claude', 'codex', 'opencode', 'qwen', 'kimi', 'kilo', 'kiro', 'devin', 'customAcp', 'pi', 'copilot', 'cursor', 'grok', 'fx', 'droid', 'agy']);
+        })).toEqual(['claude', 'codex', 'opencode', 'qwen', 'kimi', 'kilo', 'kiro', 'devin', 'customAcp', 'pi', 'copilot', 'cursor', 'grok', 'fx', 'droid', 'codebuddy', 'agy']);
     });
 
     it('ignores unknown backend ids in the toggle map', () => {
-        expect(getEnabledAgentIds({ backendEnabledByTargetKey: { unknownAgent: false } })).toEqual(['claude', 'codex', 'opencode', 'gemini', 'auggie', 'qwen', 'kimi', 'kilo', 'kiro', 'devin', 'customAcp', 'pi', 'copilot', 'cursor', 'grok', 'fx', 'droid', 'agy']);
+        expect(getEnabledAgentIds({ backendEnabledByTargetKey: { unknownAgent: false } })).toEqual(['claude', 'codex', 'opencode', 'gemini', 'auggie', 'qwen', 'kimi', 'kilo', 'kiro', 'devin', 'customAcp', 'pi', 'copilot', 'cursor', 'grok', 'fx', 'droid', 'codebuddy', 'agy']);
     });
 });

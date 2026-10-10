@@ -196,6 +196,7 @@ describe('AGENTS', () => {
     expect(requireCatalogEntry('devin').getCliCommandHandler).toBeTypeOf('function');
     expect(requireCatalogEntry('fx' as never).getCliCommandHandler).toBeTypeOf('function');
     expect(requireCatalogEntry('droid' as never).getCliCommandHandler).toBeTypeOf('function');
+    expect(requireCatalogEntry('codebuddy').getCliCommandHandler).toBeTypeOf('function');
   });
 
   it('registers Cursor through provider-owned ACP, auth, detect, and preflight hooks', async () => {

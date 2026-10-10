@@ -110,3 +110,51 @@ describe('normalizeToolCallV2', () => {
     });
   });
 });
+
+describe('normalizeToolCallV2 (deferred tool execution wrapper)', () => {
+  const deferredCall = (toolName: string, params: Record<string, unknown>) => ({
+    toolName,
+    params,
+    locations: [],
+    description: 'DeferExecuteTool',
+    _acp: { kind: 'other', title: 'DeferExecuteTool', rawInput: { toolName, params } },
+  });
+
+  it('normalizes a deferred Happier MCP call as the inner tool with its params as input', () => {
+    const normalized = normalizeToolCallV2({
+      protocol: 'acp',
+      provider: 'codebuddy',
+      toolName: 'other',
+      rawInput: deferredCall('mcp__happier__change_title', { title: 'Renamed' }),
+    });
+
+    expect(normalized.canonicalToolName).toBe('change_title');
+    expect(normalized.input).toMatchObject({
+      title: 'Renamed',
+      _happier: expect.objectContaining({ rawToolName: 'other', canonicalToolName: 'change_title' }),
+    });
+  });
+
+  it('normalizes a deferred custom MCP call as that MCP tool', () => {
+    const normalized = normalizeToolCallV2({
+      protocol: 'acp',
+      provider: 'codebuddy',
+      toolName: 'other',
+      rawInput: deferredCall('mcp__github__search_issues', { query: 'is:open' }),
+    });
+
+    expect(normalized.canonicalToolName).toBe('mcp__github__search_issues');
+    expect(normalized.input).toMatchObject({ query: 'is:open' });
+  });
+
+  it('keeps the generic identity while the inner tool name has not streamed yet', () => {
+    const normalized = normalizeToolCallV2({
+      protocol: 'acp',
+      provider: 'codebuddy',
+      toolName: 'other',
+      rawInput: { ...deferredCall('', {}), params: undefined },
+    });
+
+    expect(normalized.canonicalToolName).toBe('other');
+  });
+});

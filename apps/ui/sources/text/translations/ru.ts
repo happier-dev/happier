@@ -4244,6 +4244,7 @@ export const ru: TranslationStructure = {
             agy: { title: 'Antigravity' },
             fx: { title: "FX" },
             droid: { title: "Factory Droid" },
+            codebuddy: { title: "CodeBuddy" },
             grok: {
                 title: "Grok Build"
             },
@@ -5519,7 +5520,9 @@ export const ru: TranslationStructure = {
     fxSessionId: "ID сессии FX",
     fxSessionIdCopied: "ID сессии FX скопирован в буфер обмена",
     droidSessionId: "ID сессии Factory Droid",
+    codebuddySessionId: "ID сессии CodeBuddy",
     droidSessionIdCopied: "ID сессии Factory Droid скопирован в буфер обмена",
+    codebuddySessionIdCopied: "ID сессии CodeBuddy скопирован в буфер обмена",
     customAcpSessionId: "ID пользовательской ACP-сессии",
     grokSessionId: "ID сессии Grok",
     grokSessionIdCopied: "ID сессии Grok скопирован в буфер обмена",
@@ -6767,6 +6770,8 @@ export const ru: TranslationStructure = {
     permissionMode: {
       title: "РЕЖИМ РАЗРЕШЕНИЙ",
       effectiveLabel: ({ label }: { label: string }) => `Эффективно: ${label}`,
+      nativeModeOverrides: ({ mode }: { mode: string }) => `Режим агента ${mode} имеет приоритет над этой настройкой разрешений. Сбросьте выбор режима, чтобы использовать настройку разрешений.`,
+            usePermissionSetting: 'Использовать настройку разрешений',
       default: "По умолчанию",
       readOnly: "Только чтение",
       acceptEdits: "Принимать правки",
@@ -6797,6 +6802,7 @@ export const ru: TranslationStructure = {
       agy: 'Antigravity',
       fx: "FX",
       droid: "Factory Droid",
+      codebuddy: "CodeBuddy",
       customAcp: "Пользовательский АКП",
       pi: "Pi",
       copilot: "Copilot",
@@ -11175,6 +11181,7 @@ settingsSession: {
       agySubtitleExperimental: "Antigravity CLI (экспериментально)",
       fxSubtitleExperimental: "FX CLI (экспериментально)",
       droidSubtitleExperimental: "Factory Droid CLI (экспериментально)",
+      codebuddySubtitleExperimental: "CodeBuddy Code CLI (экспериментально)",
       customAcpSubtitleExperimental: "Пользовательский ACP CLI (экспериментально)",
       grokSubtitleExperimental: "Grok Build CLI (экспериментально)",
       piSubtitleExperimental: "Pi CLI (экспериментально)",

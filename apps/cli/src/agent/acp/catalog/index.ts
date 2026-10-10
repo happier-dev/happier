@@ -7,4 +7,5 @@ export const BUILT_IN_CATALOG_DEFINED_ACP_AGENTS = {
   kiro: createCatalogDefinedAcpEntry('kiro'),
   fx: createCatalogDefinedAcpEntry('fx'),
   droid: createCatalogDefinedAcpEntry('droid'),
-} as const satisfies Record<'customAcp' | 'kiro' | 'fx' | 'droid', AgentCatalogEntry>;
+  codebuddy: createCatalogDefinedAcpEntry('codebuddy'),
+} as const satisfies Record<'customAcp' | 'kiro' | 'fx' | 'droid' | 'codebuddy', AgentCatalogEntry>;

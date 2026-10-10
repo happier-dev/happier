@@ -205,7 +205,8 @@ function normalizePermissionInputCandidate(value: unknown): Record<string, unkno
   const record = asRecord(value);
   if (!record) return null;
 
-  if ('content' in record) {
+  // A string `content` is tool data (e.g. a Write tool's file text), not a nested command.
+  if ('content' in record && typeof record.content !== 'string') {
     const nestedContent = normalizePermissionInputCandidate(record.content);
     if (nestedContent) return nestedContent;
   }

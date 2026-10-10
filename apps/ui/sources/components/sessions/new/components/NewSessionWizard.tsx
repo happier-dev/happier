@@ -45,7 +45,7 @@ import { isMachineOnline } from '@/utils/sessions/machineUtils';
 import type { HandleCreateSessionOptions } from '../hooks/useCreateNewSession';
 import { buildNewSessionProfileSelectionPopover } from '@/components/sessions/new/components/buildNewSessionProfileSelectionPopover';
 import { NewSessionProfilesBrowserContent } from '@/components/sessions/new/components/NewSessionProfilesBrowserContent';
-import type { AcpConfigOptionOverridesV1 } from '@happier-dev/protocol';
+import { resolveRequestedSessionModeId, type AcpConfigOptionOverridesV1 } from '@happier-dev/protocol';
 import { useNewSessionAttachmentsController } from '@/components/sessions/new/attachments/useNewSessionAttachmentsController';
 import { isMobileLayoutWidth } from '@/components/sessions/layout/isMobileLayoutWidth';
 import {
@@ -603,7 +603,7 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                                         acpSessionModeOptionsOverrideProbe={props.agent.acpSessionModeProbe}
                                         onAcpSessionModeChange={
                                             (props.agent.acpSessionModeOptions?.length ?? 0) > 0 && props.agent.setAcpSessionModeId
-                                                ? (modeId) => props.agent.setAcpSessionModeId?.(modeId === 'default' ? null : modeId)
+                                                ? (modeId) => props.agent.setAcpSessionModeId?.(resolveRequestedSessionModeId(modeId, props.agent.acpSessionModeOptions) || null)
                                                 : undefined
                                         }
                                         acpConfigOptionsOverride={props.agent.acpConfigOptions}

@@ -191,6 +191,15 @@ export const AGENT_LOCAL_CLI_CONFIG: Readonly<Record<AgentId, AgentLocalCliConfi
     authSupport: 'login_terminal',
     authLaunches: [{ kind: 'primary', args: [] }],
   }),
+  codebuddy: createAgentLocalCliConfig('codebuddy', {
+    machineLoginKey: 'codebuddy',
+    authSupport: 'login_terminal',
+    authLaunches: [{
+      kind: 'primary',
+      args: [],
+      initialInput: '/login\r',
+    }],
+  }),
 });
 
 export function getAgentLocalCliConfig(agentId: AgentId): AgentLocalCliConfig {

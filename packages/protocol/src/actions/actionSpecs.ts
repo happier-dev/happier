@@ -947,7 +947,8 @@ const SessionUserActionAnswerInputSchema = z.object({
 
 const SessionModeSetInputSchema = z.object({
   sessionId: z.string().min(1).optional(),
-  modeId: z.string().min(1),
+  // An empty id clears the override; native `default` remains a provider mode.
+  modeId: z.string(),
 }).passthrough();
 
 const SessionPrimaryTargetInputSchema = z.object({

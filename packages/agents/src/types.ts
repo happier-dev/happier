@@ -7,7 +7,7 @@ import {
 } from '@happier-dev/protocol';
 import type { AnyAgentRuntimeKindsManifest } from './runtimeKinds.js';
 
-export const AGENT_IDS = ['claude', 'codex', 'opencode', 'gemini', 'auggie', 'qwen', 'kimi', 'kilo', 'kiro', 'devin', 'customAcp', 'pi', 'copilot', 'cursor', 'grok', 'agy', 'fx', 'droid'] as const;
+export const AGENT_IDS = ['claude', 'codex', 'opencode', 'gemini', 'auggie', 'qwen', 'kimi', 'kilo', 'kiro', 'devin', 'customAcp', 'pi', 'copilot', 'cursor', 'grok', 'agy', 'fx', 'droid', 'codebuddy'] as const;
 export type AgentId = (typeof AGENT_IDS)[number];
 
 export const PERMISSION_MODES = SESSION_PERMISSION_MODES;
@@ -82,7 +82,8 @@ export type VendorResumeIdField =
     | 'grokSessionId'
     | 'agySessionId'
     | 'fxSessionId'
-    | 'droidSessionId';
+    | 'droidSessionId'
+    | 'codebuddySessionId';
 
 export type CloudVendorKey = 'openai' | 'anthropic' | 'gemini';
 export type CloudConnectTargetStatus = 'wired' | 'experimental';

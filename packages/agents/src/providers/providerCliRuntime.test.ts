@@ -139,6 +139,16 @@ describe('PROVIDER_CLI_RUNTIME_SPECS', () => {
     expect(JSON.stringify(getProviderCliRuntimeSpec('droid').manualInstallRecipes)).toContain('app.factory.ai/cli');
   });
 
+  it('declares CodeBuddy Code as a system-first CLI Happier can install from its npm package', () => {
+    expect(getProviderCliRuntimeSpec('codebuddy')).toMatchObject({
+      id: 'codebuddy',
+      binaryName: 'codebuddy',
+      sourcePreferenceDefault: 'system-first',
+      managedInstall: { kind: 'managed_package', packageName: '@tencent-ai/codebuddy-code', binaryName: 'codebuddy' },
+      manualInstallKind: 'command',
+    });
+  });
+
   /**
    * Factory's published Windows installer (`https://app.factory.ai/cli/windows`, observed
    * 2026-09-12 at CLI 0.218.1) resolves x64 / x64-baseline / arm64 from one script and copies

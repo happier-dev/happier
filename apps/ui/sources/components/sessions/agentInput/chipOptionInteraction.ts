@@ -46,7 +46,7 @@ export function resolveChipOptionInteraction<T extends string>(params: Readonly<
     }
 
     const nextOptionId = selectable[(currentIndex + 1) % selectable.length] ?? selectable[0]!;
-    if (!nextOptionId || nextOptionId === params.currentOptionId) {
+    if (nextOptionId === undefined || nextOptionId === params.currentOptionId) {
         return {
             kind: 'none',
             selectableOptionIds: selectable,

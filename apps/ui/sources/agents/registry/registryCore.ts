@@ -34,6 +34,7 @@ import { GROK_CORE } from '@/agents/providers/grok/core';
 import { AGY_CORE } from '@/agents/providers/agy/core';
 import { FX_CORE } from '@/agents/providers/fx/core';
 import { DROID_CORE } from '@/agents/providers/droid/core';
+import { CODEBUDDY_CORE } from '@/agents/providers/codebuddy/core';
 
 export type { AgentId };
 
@@ -232,6 +233,7 @@ export const AGENTS_CORE = Object.freeze({
     grok: GROK_CORE,
     fx: FX_CORE,
     droid: DROID_CORE,
+    codebuddy: CODEBUDDY_CORE,
     agy: AGY_CORE,
 }) satisfies Readonly<Record<string, AgentCoreConfig>>;
 

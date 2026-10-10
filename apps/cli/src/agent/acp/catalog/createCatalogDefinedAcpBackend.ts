@@ -11,6 +11,7 @@ export type CatalogDefinedAcpBackendOptions = AgentFactoryOptions & Readonly<{
   mcpServers?: Record<string, McpServerConfig>;
   permissionHandler?: AcpPermissionHandler;
   permissionMode?: PermissionMode;
+  getPermissionMode?: () => PermissionMode | null | undefined;
   prepareProcessLaunch?: AcpBackendOptions['prepareProcessLaunch'];
   sessionModelAdapter?: AcpBackendOptions['sessionModelAdapter'];
   launch?: Readonly<{ command: string; args: readonly string[] }>;
@@ -46,17 +47,24 @@ export function createCatalogDefinedAcpBackend(
     declaredSessionLoadSupport: config.supportsLoadSession,
   });
 
-  const permissionMode = options.permissionMode ?? 'default';
-  const sessionModeId = config.permissionModeMapping?.[permissionMode] ?? null;
-  if (!sessionModeId) return backend;
+  if (!config.permissionModeMapping) return backend;
 
   const configurable = backend as AgentBackend & {
     setSessionMode?: (sessionId: SessionId, modeId: string) => Promise<void>;
+    clearSessionModeOverride?: (sessionId: SessionId) => Promise<void>;
   };
   if (typeof configurable.setSessionMode !== 'function') return backend;
 
+  const applyPermissionMode = async (sessionId: SessionId): Promise<void> => {
+    const permissionMode = options.getPermissionMode?.() ?? options.permissionMode ?? 'default';
+    const sessionModeId = config.permissionModeMapping?.[permissionMode] ?? null;
+    // A null mapping delegates to provider policy; it does not imply a native reset token.
+    if (sessionModeId) await configurable.setSessionMode?.(sessionId, sessionModeId);
+  };
+  configurable.clearSessionModeOverride = applyPermissionMode;
+
   const applyMode = async (result: StartSessionResult): Promise<StartSessionResult> => {
-    await configurable.setSessionMode?.(result.sessionId, sessionModeId);
+    await applyPermissionMode(result.sessionId);
     return result;
   };
 
@@ -78,7 +86,7 @@ export function createCatalogDefinedAcpBackend(
     const loadSessionWithReplayCapture = backend.loadSessionWithReplayCapture.bind(backend);
     configurable.loadSessionWithReplayCapture = async (sessionId: SessionId) => {
       const result = await loadSessionWithReplayCapture(sessionId);
-      await configurable.setSessionMode?.(result.sessionId, sessionModeId);
+      await applyPermissionMode(result.sessionId);
       return result;
     };
   }

@@ -39,6 +39,17 @@ describe('extractPermissionInputWithFallback', () => {
     ).toEqual({ command: "bash -lc 'echo hi'" });
   });
 
+  it('keeps write inputs whose content field is the file text', () => {
+    const rawInput = { file_path: '/tmp/outside/a.txt', content: 'OUTSIDE_DEFAULT_E2E' };
+    expect(
+      extractPermissionInputWithFallback(
+        { toolCall: { kind: 'edit', rawInput } },
+        'call_write',
+        new Map(),
+      ),
+    ).toEqual(rawInput);
+  });
+
   it('uses toolCallId fallback when params input is empty', () => {
     expect(
       extractPermissionInputWithFallback(

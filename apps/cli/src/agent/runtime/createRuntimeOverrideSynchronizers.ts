@@ -6,6 +6,7 @@ import { logger } from '@/ui/logger';
 
 type AcpRuntimeOverrideTarget = {
   setSessionMode: (modeId: string) => Promise<void>;
+  clearSessionModeOverride?: () => Promise<void>;
   setSessionConfigOption: (configId: string, valueId: string) => Promise<void>;
   setSessionModel: (modelId: string) => Promise<void>;
 };

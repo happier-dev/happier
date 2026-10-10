@@ -27,7 +27,7 @@ export type CatalogProviderSessionIdentityPublication =
 
 /** Backend options a pre-spawn resolver may contribute — everything except the host-owned fields. */
 export type CatalogBackendOptionsBeforeSpawn<TBackendOptions extends object> =
-  Partial<Omit<TBackendOptions, 'cwd' | 'mcpServers' | 'permissionHandler' | 'permissionMode' | 'happierSessionId'>>;
+  Partial<Omit<TBackendOptions, 'cwd' | 'mcpServers' | 'permissionHandler' | 'permissionMode' | 'getPermissionMode' | 'happierSessionId'>>;
 
 type CatalogAcpProviderRuntimeParams<TBackendOptions extends object> = {
   provider: Parameters<typeof createCatalogAcpBackend>[0];
@@ -41,7 +41,7 @@ type CatalogAcpProviderRuntimeParams<TBackendOptions extends object> = {
   onThinkingChange: (thinking: boolean) => void;
   processEnv?: NodeJS.ProcessEnv;
   getSessionOpenAbortSignal?: () => AbortSignal | undefined;
-  backendOptions?: Omit<TBackendOptions, 'cwd' | 'mcpServers' | 'permissionHandler' | 'permissionMode' | 'happierSessionId'>;
+  backendOptions?: Omit<TBackendOptions, 'cwd' | 'mcpServers' | 'permissionHandler' | 'permissionMode' | 'getPermissionMode' | 'happierSessionId'>;
   /**
    * Additional backend options resolved inside `ensureBackend`, immediately before the
    * backend process is constructed and spawned — for options (e.g. a resolved system
@@ -49,7 +49,7 @@ type CatalogAcpProviderRuntimeParams<TBackendOptions extends object> = {
    * runtime-construction time.
    *
    * The returned shape is the same host-excluded subset as {@link backendOptions}:
-   * `cwd`, `mcpServers`, `permissionHandler`, `permissionMode`, and `happierSessionId`
+   * `cwd`, `mcpServers`, `permissionHandler`, `permissionMode`, `getPermissionMode`, and `happierSessionId`
    * are owned by the runtime and cannot be overridden here (the merge applies them last
    * as defense in depth). Rejection propagates and prevents the spawn.
    */
@@ -131,6 +131,13 @@ export function createCatalogProviderAcpRuntime<TBackendOptions extends object =
     return params.sessionIdentity;
   })();
 
+  const getPermissionMode = () => params.resolvePermissionMode
+    ? params.resolvePermissionMode({
+        getPermissionMode: params.getPermissionMode,
+        session: params.session,
+      })
+    : params.getPermissionMode?.();
+
   return createAcpRuntime({
     provider: params.provider,
     directory: params.directory,
@@ -171,12 +178,7 @@ export function createCatalogProviderAcpRuntime<TBackendOptions extends object =
         }
       : {}),
     ensureBackend: async () => {
-      const permissionModeRaw = params.resolvePermissionMode
-        ? params.resolvePermissionMode({
-            getPermissionMode: params.getPermissionMode,
-            session: params.session,
-          })
-        : params.getPermissionMode?.();
+      const permissionModeRaw = getPermissionMode();
       const permissionMode = typeof permissionModeRaw === 'string' ? permissionModeRaw : undefined;
 
       const resolvedBackendOptions = params.resolveBackendOptionsBeforeSpawn
@@ -191,6 +193,7 @@ export function createCatalogProviderAcpRuntime<TBackendOptions extends object =
         mcpServers: params.mcpServers,
         permissionHandler: params.permissionHandler,
         permissionMode,
+        getPermissionMode,
         happierSessionId: params.session.sessionId,
         ...(params.processEnv ? { env: params.processEnv } : {}),
       } as unknown as TBackendOptions);

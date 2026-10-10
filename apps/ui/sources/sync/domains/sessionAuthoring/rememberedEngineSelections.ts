@@ -78,7 +78,7 @@ export function upsertRememberedEngineSelection(params: Readonly<{
     const scopeKey = buildRememberedEngineSelectionScopeKey(params);
     next[scopeKey] = {
         modelId: normalizeOptionalString(params.selection.modelId),
-        acpSessionModeId: normalizeOptionalString(params.selection.acpSessionModeId),
+        acpSessionModeId: readNonBlankSessionControlIdentifier(params.selection.acpSessionModeId),
         sessionConfigOptionOverrides: params.selection.sessionConfigOptionOverrides ?? null,
         updatedAt: params.updatedAt,
     };
