@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { mountThroughReactNativeWeb } from '../../rnwMount.testSupport.js';
 import type { HappierCapsuleColors, HappierCapsuleHost } from '../status/capsuleHost.js';
-import { HappierStatusCapsule } from '../status/StatusCapsule.js';
+import { HappierIdentityCapsule, HappierStatusCapsule } from '../status/StatusCapsule.js';
 import {
   HAPPIER_INSTANT_AGENT_CURSOR_MOTION,
   HappierAgentCursor,
@@ -294,11 +294,11 @@ describe('HappierStatusCapsule', () => {
     }
   });
 
-  it('stands inline in flow as an identity capsule, with its leading mark, never through the dock', () => {
+  it('names an identity in flow with its leading mark, never through the dock and never as a live region', () => {
     const { host } = createHost();
     const mounted = mountThroughReactNativeWeb(
       <div data-testid="row">
-        <HappierStatusCapsule placement="inline" text="fly-bot-1" leading={<span data-testid="dot" />}
+        <HappierIdentityCapsule name="fly-bot-1" leading={<span data-testid="dot" />}
           colors={COLORS} host={host} testID="s" />
       </div>,
     );
@@ -309,6 +309,8 @@ describe('HappierStatusCapsule', () => {
       // In flow: no docked (leaving-aware) wrapper and no absolute dock positioning.
       expect(mounted.container.querySelector('[data-leaving]')).toBeNull();
       expect(capsule.parentElement?.getAttribute('data-testid')).toBe('row');
+      // A name is not an event: assistive technology is not interrupted when it renders.
+      expect(mounted.container.querySelector('[aria-live]')).toBeNull();
     } finally {
       mounted.unmount();
     }

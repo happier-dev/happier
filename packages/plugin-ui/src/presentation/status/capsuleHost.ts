@@ -23,9 +23,10 @@ export type HappierCapsuleHost = Readonly<{
   /**
    * The floating material. `low` sits over a page as a quiet note; `high` floats the presence capsule.
    * With `reshape`, the material is drawn behind the content and travels to the content's new size when
-   * it changes (the content itself lays out at once); `testID` then names the content box.
+   * it changes (the content itself lays out at once); `testID` then names the content box. With
+   * `fill`, the material is only a backing: it fills the box it is placed in and holds no content.
    */
-  Surface: ComponentType<Readonly<{ elevation: 'low' | 'high'; reshape?: boolean; testID: string; children: ReactNode }>>;
+  Surface: ComponentType<Readonly<{ elevation: 'low' | 'high'; reshape?: boolean; fill?: boolean; testID: string; children: ReactNode }>>;
   /**
    * Places a docked capsule on the edge of the surface it narrates and owns its arrival and its leave
    * (Happier: the overlay motion its popovers use). It stays mounted while it leaves and renders

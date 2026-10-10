@@ -20,13 +20,8 @@ export type HappierStatusCapsuleProps = HappierStatusCapsuleContent & Readonly<{
    * blinking it off); while it leaves it keeps its last words and takes no presses.
    */
   visible?: boolean;
-  /**
-   * `dock` (default) drops it over the top edge of a page or a stream. `inline` stands in flow among
-   * other floating capsules: the identity a floating viewer names (its Machine, with a status dot).
-   */
+  /** `dock` (default) drops it over the top edge of a page or a stream. `inline` stands in flow. */
   placement?: 'dock' | 'inline';
-  /** A mark before the sentence (a status dot); never a second sentence. */
-  leading?: ReactNode;
   colors: HappierCapsuleColors;
   host: HappierCapsuleHost;
   testID: string;
@@ -81,7 +76,6 @@ export function HappierStatusCapsule(props: HappierStatusCapsuleProps): ReactEle
           aria-live="polite"
         >
           {shown.busy ? <host.Spinner color={props.colors.secondaryText} /> : null}
-          {props.leading ?? null}
           <host.Text role="meta" color={props.colors.text} numberOfLines={1} style={TEXT_STYLE}>{shown.text}</host.Text>
           {shown.action ? (
             <host.Button
@@ -102,4 +96,31 @@ export function HappierStatusCapsule(props: HappierStatusCapsuleProps): ReactEle
   }
   if (!visible) return null;
   return <View style={DOCK_STYLE}>{renderCapsule(false)}</View>;
+}
+
+export type HappierIdentityCapsuleProps = Readonly<{
+  /** The name of what a floating surface shows or runs on (its Machine). */
+  name: string;
+  /** A mark before the name (a status dot). */
+  leading?: ReactNode;
+  colors: HappierCapsuleColors;
+  host: HappierCapsuleHost;
+  testID: string;
+}>;
+
+/**
+ * A name on the floating material, in flow among a floating frame's controls: which Machine a viewer
+ * shows, with its status dot. It states identity, not an event, so it is plain text to assistive
+ * technology and never a live region (a status capsule announces; a name must not).
+ */
+export function HappierIdentityCapsule(props: HappierIdentityCapsuleProps): ReactElement {
+  const { host } = props;
+  return (
+    <host.Surface elevation="low" testID={props.testID}>
+      <View style={[CAPSULE_STYLE, CAPSULE_TEXT_ONLY_STYLE]}>
+        {props.leading ?? null}
+        <host.Text role="meta" color={props.colors.text} numberOfLines={1} style={TEXT_STYLE}>{props.name}</host.Text>
+      </View>
+    </host.Surface>
+  );
 }
