@@ -231,7 +231,7 @@ describe('createStablePluginExecService', () => {
             const pending = io.run({ command: process.execPath, cwd: root, env: {}, args: ['-e', [
                 'const cp=require("node:child_process"),fs=require("node:fs");',
                 'const child=cp.spawn(process.execPath,["-e","setInterval(()=>{},1000)"],{stdio:"ignore"});child.unref();',
-                'fs.writeFileSync(process.argv[1],JSON.stringify([process.pid,child.pid]));process.stdout.write("{}");',
+                'fs.writeFileSync(process.argv[1],JSON.stringify([process.pid,child.pid]));process.stdout.write("{}");process.stderr.write("native-stderr");',
             ].join(''), pidsPath] });
             // Observe rejection even when an earlier assertion fails, without
             // changing the real IO/process owner outcome.
@@ -244,7 +244,7 @@ describe('createStablePluginExecService', () => {
                 });
                 await expect(waitForProcessExit(pids[0]!)).resolves.toBe(true);
                 const result = await pending;
-                expect(result).toEqual({ exitCode: 0, stdout: '{}' });
+                expect(result).toEqual({ exitCode: 0, stdout: '{}', stderr: 'native-stderr' });
                 // A successful native result must follow full owned-resource
                 // cleanup; an already-dead launcher is not its proof.
                 if (process.platform === 'linux') {
