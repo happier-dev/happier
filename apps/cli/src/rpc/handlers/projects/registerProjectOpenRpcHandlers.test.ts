@@ -424,6 +424,13 @@ describe('Project Open RPC', () => {
       const opened = await register(RPC_METHODS.PROJECTS_OPEN, runtime)(input, context);
       expect(opened, JSON.stringify(post.mock.calls.map(([url]) => url))).toMatchObject({ kind: 'opened', directory: root, setup: 'approvalRequired',
         workspace: { serverId: 'home', machineId: 'machine', rootPath: root }, facts: { source: { sourceId: source.id, revision: 1 } } });
+      post.mockClear();
+      const wrongHome = { ...authorization, requesterHttpProjection: {
+        ...authorization.requesterHttpProjection, serverIdentityId: 'another-home',
+      } } satisfies ExternalActionExecutionAuthorizationV1;
+      expect(await register(RPC_METHODS.PROJECTS_OPEN, runtime)(input, { ...context,
+        callerInputAuthorization: wrongHome })).toEqual({ kind: 'refused', code: 'requester_authority_unavailable' });
+      expect(post).not.toHaveBeenCalled();
       current = false;
       post.mockClear();
       expect(await register(RPC_METHODS.PROJECTS_OPEN, runtime)(input, context)).toEqual({ kind: 'refused', code: 'requester_authority_unavailable' });
