@@ -1,12 +1,14 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { decodeBase64, encodeBase64 } from '../crypto/base64.js';
+import { computeCanonicalDomainSeparatedDigest } from '../crypto/canonicalDigest.js';
 
-const KeysetCursorPayloadV1Schema = z.object({
+const KeysetCursorPayloadV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   q: z.string().min(1),
   p: z.array(z.union([z.string(), z.number()])).min(1).max(4),
-}).strict();
+}).strict());
 
 export const KEYSET_CURSOR_MAX_LENGTH_V1 = 512;
 const KEYSET_CURSOR_ENCODER = new TextEncoder();
@@ -18,12 +20,17 @@ export type KeysetCursorPartsDecodeV1 =
   | Readonly<{ status: 'ok'; parts: readonly KeysetCursorPartV1[] }>
   | Readonly<{ status: 'invalid' }>;
 
-/** The single query-bound keyset cursor codec used by Home and Team pages. */
+/** Bind the complete query without putting its unbounded filters into the cursor. */
+function queryBinding(queryKey: string): string {
+  return computeCanonicalDomainSeparatedDigest('happier-keyset-cursor-query-v1', [queryKey]);
+}
+
+/** The single query-bound keyset cursor codec used by server collection pages. */
 export function encodeKeysetCursorV1(input: Readonly<{
   queryKey: string;
   parts: readonly KeysetCursorPartV1[];
 }>): string {
-  const payload = JSON.stringify({ v: 1, q: input.queryKey, p: input.parts });
+  const payload = JSON.stringify({ v: 1, q: queryBinding(input.queryKey), p: input.parts });
   return encodeBase64(KEYSET_CURSOR_ENCODER.encode(payload), 'base64url');
 }
 
@@ -36,7 +43,7 @@ export function decodeKeysetCursorV1(value: string, queryKey: string): KeysetCur
     return { status: 'invalid' };
   }
   const payload = KeysetCursorPayloadV1Schema.safeParse(candidate);
-  if (!payload.success || payload.data.q !== queryKey) return { status: 'invalid' };
+  if (!payload.success || payload.data.q !== queryBinding(queryKey)) return { status: 'invalid' };
   return { status: 'ok', parts: payload.data.p };
 }
 
