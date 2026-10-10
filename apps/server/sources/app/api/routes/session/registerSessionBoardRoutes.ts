@@ -5,6 +5,7 @@ import {
     SessionBoardMutationResultV1Schema,
     SessionBoardErrorV1Schema,
     SessionBoardFeatureGateErrorV1Schema,
+    sessionBoardMutationUsesLayoutV1,
     type SessionBoardMutationV1,
 } from "@happier-dev/protocol/sessions/board";
 import type { FastifyError, FastifyReply, FastifyRequest } from "fastify";
@@ -56,8 +57,12 @@ export function isSessionBoardExternalActionEffectAllowed(input: Readonly<{
 
 export function registerSessionBoardRoutes(app: Fastify) {
     const rateLimit = resolveApiHotEndpointRateLimit(process.env, "session.board");
+    const gateBoardLayout = createServerFeatureGatePreHandler("sessions.board");
     app.put(SESSION_BOARD_MUTATION_SERVER_TRANSPORT_V1.path, {
-        preHandler: [app.authenticate, createServerFeatureGatePreHandler("sessions.board")],
+        preHandler: [app.authenticate, async (request: FastifyRequest<{ Body: SessionBoardMutationV1 }>, reply) => {
+            // Fastify's strict body validation runs before preHandler admission.
+            if (sessionBoardMutationUsesLayoutV1(request.body)) return gateBoardLayout(request, reply);
+        }],
         config: {
             rateLimit,
             restrictedCredentialBinding: { scope: "session", session: "params.sessionId" },

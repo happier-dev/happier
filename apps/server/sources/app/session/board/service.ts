@@ -32,7 +32,7 @@ async function mutateSessionBoardAttempt(
 ): Promise<SessionBoardMutationOutcome> {
     try {
         return await inTx(async tx => {
-            const records = await resolveSessionBoardRecordsInTx(tx, params);
+            const records = await resolveSessionBoardRecordsInTx(tx, { ...params, requiresLayout: sessionBoardMutationUsesLayoutV1(mutation) });
             if (!records.ok) throw new BoardMutationFailure({
                 error: records.code === "plugin_session_record_feature_disabled" ? "not_found" : "session_board_forbidden",
             });
