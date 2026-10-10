@@ -54,6 +54,16 @@ export const LEGEND_NATIVE_RUNTIME_BUILDS = Object.freeze(['react-native.mjs', '
  */
 export const LEGEND_PATCH_MARKERS = Object.freeze([
     {
+        id: 'physical-reader-mvcp-baseline',
+        marker: 'getCachedVisibleRange(ctx, scroll, scroll + state.scrollLength)',
+        minOccurrences: 1,
+        builds: ['react-native.web.mjs', 'react-native.web.js', 'react.mjs', 'react.js'],
+        defect: 'Browser user scrolling can advance before its throttled scroll event. Applying '
+            + 'row measurement deltas to the stale modeled offset rolls the physical reader backward.',
+        evidence: 'sources/components/sessions/transcript/viewport/shell/renderer/legendListRenderer.real.integration.test.tsx (preserves physical user scroll progress when measurements precede its scroll event); real-account cold transcript reproduced on 2026-10-08',
+        removeWhen: 'upstream bases DOM MVCP measurement adjustment on current physical reader position before changing geometry',
+    },
+    {
         id: 'settled-geometry-tail-maintenance',
         marker: 'if (getContentSize(ctx) !== previousContentSize) {\n    doMaintainScrollAtEnd(ctx);',
         minOccurrences: 1,
