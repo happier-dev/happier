@@ -1,5 +1,6 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
-import { SessionListResultSchema, SessionListMetadataUpgradeRequiredCountSchema } from '../control/listResult.js';
+import { SessionListResultSchema, SessionListMetadataUpgradeRequiredCountSchema, SessionListBotFilterUnavailableCountSchema } from '../control/listResult.js';
 
 import {
   SESSION_AWARENESS_PROJECTION_VERSION_V1,
@@ -24,10 +25,10 @@ export const SESSION_LIST_SUMMARY_VIEW_V1 = 'summary' as const;
  */
 export const SESSION_LIST_QUERY_RESULT_VERSION_V1 = 1 as const;
 
-export const SessionListViewV1Schema = z.enum([
+export const SessionListViewV1Schema = lazyZodSchema(() => z.enum([
   SESSION_LIST_SUMMARY_VIEW_V1,
   SESSION_LIST_AWARENESS_VIEW_V1,
-]);
+]));
 export type SessionListViewV1 = z.infer<typeof SessionListViewV1Schema>;
 
 /** The typed unsupported-view failure every awareness caller must be able to distinguish. */
@@ -52,6 +53,7 @@ const SessionListAttentionContinuationFieldsV1 = {
 const SessionListActionResultMarkerFieldsV1 = {
   queryVersion: z.literal(SESSION_LIST_QUERY_RESULT_VERSION_V1).optional(),
   metadataUpgradeRequiredCount: SessionListMetadataUpgradeRequiredCountSchema.optional(),
+  botFilterUnavailableCount: SessionListBotFilterUnavailableCountSchema.optional(),
   ...SessionListAttentionContinuationFieldsV1,
 } as const;
 
@@ -98,22 +100,23 @@ type SessionListRequiredAttentionContinuationInputV1 = Readonly<{
   attentionHasNext: boolean;
 }>;
 
-const SessionListRequiredAttentionContinuationFieldsV1Schema = z.object({
+const SessionListRequiredAttentionContinuationFieldsV1Schema = lazyZodSchema(() => z.object({
   attentionNextCursor: SessionListAttentionContinuationFieldsV1.attentionNextCursor.unwrap(),
   attentionHasNext: SessionListAttentionContinuationFieldsV1.attentionHasNext.unwrap(),
-}).passthrough();
+}).passthrough());
 
-export const SessionAwarenessListResultV1Schema = z.object({
+export const SessionAwarenessListResultV1Schema = lazyZodSchema(() => z.object({
     view: z.literal(SESSION_LIST_AWARENESS_VIEW_V1),
     projectionVersion: z.literal(SESSION_AWARENESS_PROJECTION_VERSION_V1),
     sessions: z.array(SessionAwarenessProjectionV1Schema),
     nextCursor: z.string().min(1).nullable(),
     hasNext: z.boolean(),
     metadataUpgradeRequiredCount: SessionListMetadataUpgradeRequiredCountSchema.optional(),
+    botFilterUnavailableCount: SessionListBotFilterUnavailableCountSchema.optional(),
     ...SessionListAttentionContinuationFieldsV1,
   })
   .strict()
-  .superRefine(requireAttentionContinuationPair);
+  .superRefine(requireAttentionContinuationPair));
 export type SessionAwarenessListResultV1 = Readonly<
   Omit<z.infer<typeof SessionAwarenessListResultV1Schema>, 'sessions'> & {
     sessions: readonly SessionAwarenessProjectionV1[];
@@ -122,7 +125,7 @@ export type SessionAwarenessListResultV1 = Readonly<
 
 // Released UI hosts return a smaller summary than CLI hosts. Keep that read seam separate
 // from awareness, including its optional retained-window preview and qualified display context.
-const LegacyUiSessionListResultSchema = z.object({
+const LegacyUiSessionListResultSchema = lazyZodSchema(() => z.object({
   ok: z.literal(true).optional(),
   sessions: z.array(z.object({
     id: z.string().min(1),
@@ -139,9 +142,9 @@ const LegacyUiSessionListResultSchema = z.object({
   })),
   nextCursor: z.string().nullable(),
   hasNext: z.boolean().optional(),
-}).passthrough();
+}).passthrough());
 
-const SummarySessionListActionResultSchema = z.union([
+const SummarySessionListActionResultSchema = lazyZodSchema(() => z.union([
   SessionListResultSchema,
   LegacyUiSessionListResultSchema,
 ]).and(z.object({
@@ -151,19 +154,19 @@ const SummarySessionListActionResultSchema = z.union([
     context.addIssue({ code: 'custom', message: 'A marked result must satisfy the awareness contract' });
   }
   requireQueryMarkedAttentionContinuation(value, context);
-});
+}));
 
-export const SessionListActionResultV1Schema = z.union([
+export const SessionListActionResultV1Schema = lazyZodSchema(() => z.union([
   SessionAwarenessListResultV1Schema,
   SummarySessionListActionResultSchema,
-]);
+]));
 
 /**
  * The conditional result contract for the non-ignorable strict `query` input. An older
  * passthrough host can accept the input while silently dropping it, so the marker is mandatory
  * before any current consumer may read the returned rows.
  */
-export const SessionListQueryActionResultV1Schema = z.union([
+export const SessionListQueryActionResultV1Schema = lazyZodSchema(() => z.union([
   // Awareness did not exist before the strict query host. Its closed representation marker is
   // therefore the proof for this branch; adding `queryVersion` would create a second marker.
   // Unlike predecessor/no-query awareness, a strict query must prove both page families.
@@ -176,7 +179,7 @@ export const SessionListQueryActionResultV1Schema = z.union([
     attentionNextCursor: SessionListRequiredAttentionContinuationFieldsV1Schema.shape.attentionNextCursor,
     attentionHasNext: SessionListRequiredAttentionContinuationFieldsV1Schema.shape.attentionHasNext,
   }).passthrough()),
-]);
+]));
 export type SessionListQueryActionResultV1 = Readonly<z.infer<typeof SessionListQueryActionResultV1Schema>>;
 
 export function markSessionListQueryResultV1<
@@ -198,6 +201,7 @@ export function buildSessionAwarenessListResultV1(params: Readonly<{
   nextCursor: string | null;
   hasNext: boolean;
   metadataUpgradeRequiredCount?: number;
+  botFilterUnavailableCount?: number;
 }> & SessionListAttentionContinuationInputV1): SessionAwarenessListResultV1 {
   return {
     view: SESSION_LIST_AWARENESS_VIEW_V1,
@@ -207,6 +211,9 @@ export function buildSessionAwarenessListResultV1(params: Readonly<{
     hasNext: params.hasNext,
     ...(params.metadataUpgradeRequiredCount !== undefined
       ? { metadataUpgradeRequiredCount: params.metadataUpgradeRequiredCount }
+      : {}),
+    ...(params.botFilterUnavailableCount !== undefined
+      ? { botFilterUnavailableCount: params.botFilterUnavailableCount }
       : {}),
     ...(params.attentionNextCursor !== undefined && params.attentionHasNext !== undefined
       ? {
@@ -229,11 +236,11 @@ export function parseSessionAwarenessListResultV1(value: unknown): SessionAwaren
  * booleans below are DERIVED from awareness so this stays an adapter, not a second status owner
  * (AWI-10).
  */
-export const SessionActivityCompatibilityMessageCountsV1Schema = z.object({
+export const SessionActivityCompatibilityMessageCountsV1Schema = lazyZodSchema(() => z.object({
   total: z.number().int().nonnegative(),
   assistant: z.number().int().nonnegative(),
   user: z.number().int().nonnegative(),
-}).strict();
+}).strict());
 export type SessionActivityCompatibilityMessageCountsV1 = Readonly<
   z.infer<typeof SessionActivityCompatibilityMessageCountsV1Schema>
 >;
@@ -261,7 +268,7 @@ export type SessionActivityCompatibilityFactsV1 = Readonly<{
 }>;
 
 /** Exact successful shape emitted by the released UI host. */
-export const SessionActivityCompatibilityUiResultV1Schema = z.object({
+export const SessionActivityCompatibilityUiResultV1Schema = lazyZodSchema(() => z.object({
   ok: z.literal(true),
   sessionId: z.string().min(1),
   presence: z.string().nullable(),
@@ -279,7 +286,7 @@ export const SessionActivityCompatibilityUiResultV1Schema = z.object({
   pendingCount: z.number().int().nonnegative().optional(),
   pendingPermissionRequestCount: z.number().int().nonnegative().optional(),
   pendingUserActionRequestCount: z.number().int().nonnegative().optional(),
-}).strict();
+}).strict());
 
 /**
  * Exact successful shape emitted by the released CLI host. It cannot observe the UI-only
@@ -287,7 +294,7 @@ export const SessionActivityCompatibilityUiResultV1Schema = z.object({
  * to fabricate those facts. This shape is present in both server-v0.2.11 and the moving 0.2
  * predecessor.
  */
-export const SessionActivityCompatibilityCliResultV1Schema = z.object({
+export const SessionActivityCompatibilityCliResultV1Schema = lazyZodSchema(() => z.object({
   ok: z.literal(true),
   sessionId: z.string().min(1),
   active: z.boolean(),
@@ -295,12 +302,12 @@ export const SessionActivityCompatibilityCliResultV1Schema = z.object({
   pendingCount: z.number().int().nonnegative(),
   pendingPermissionRequestCount: z.number().int().nonnegative(),
   pendingUserActionRequestCount: z.number().int().nonnegative(),
-}).strict();
+}).strict());
 
-export const SessionActivityCompatibilityResultV1Schema = z.union([
+export const SessionActivityCompatibilityResultV1Schema = lazyZodSchema(() => z.union([
   SessionActivityCompatibilityUiResultV1Schema,
   SessionActivityCompatibilityCliResultV1Schema,
-]);
+]));
 export type SessionActivityCompatibilityUiResultV1 = Readonly<
   Omit<z.infer<typeof SessionActivityCompatibilityUiResultV1Schema>, 'permissionRequestIds'> & {
     permissionRequestIds?: readonly string[];
@@ -322,10 +329,10 @@ export type SessionActivityCompatibilityResultV1 = Readonly<
  * ignores `view` and answers with its digest cannot be read as awareness — the same false-success
  * protection the marked list result provides (AWI-09), without a second single-Session envelope.
  */
-export const SessionActivityActionResultV1Schema = z.union([
+export const SessionActivityActionResultV1Schema = lazyZodSchema(() => z.union([
   SessionAwarenessProjectionV1Schema,
   SessionActivityCompatibilityResultV1Schema,
-]);
+]));
 export type SessionActivityActionResultV1 = Readonly<
   SessionAwarenessProjectionV1 | SessionActivityCompatibilityResultV1
 >;

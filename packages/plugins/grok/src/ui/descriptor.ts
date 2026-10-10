@@ -28,7 +28,7 @@ export const GROK_UI_DESCRIPTOR = Object.freeze({
     },
     toolRendering: { hideUnknownToolsByDefault: true },
     picker: {
-      iconName: 'flash-outline',
+      iconName: 'lightning',
       iconScale: 1.25,
       cliGlyph: 'G',
       cliGlyphScale: 1.25,

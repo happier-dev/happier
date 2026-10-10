@@ -47,7 +47,7 @@ const codexAcpInstallableDescriptorBase = ManagedDependencyDescriptorSchema.pars
     update: 'not_required',
   },
   ui: {
-    iconName: 'swap-horizontal-outline',
+    iconName: 'arrows-left-right',
   },
   stability: {
     experimental: true,

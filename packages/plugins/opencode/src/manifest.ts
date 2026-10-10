@@ -230,7 +230,7 @@ export const OPENCODE_PLUGIN = definePlugin({
           externalLinkedTakeover: { writerSafety: 'unsupported' },
           sources: [{
             sourceKind: 'opencodeServer',
-            contentSearch: false,
+            contentSearch: true,
             schema: { fields: [
               { name: 'kind', kind: 'literal', value: 'opencodeServer' },
               { name: 'baseUrl', kind: 'unknown', optional: true },

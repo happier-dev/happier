@@ -1,3 +1,5 @@
+import { extractToolResultBlocksFromSdkMessage } from '../../remote/sdk/streamEvents.js';
+
 import { sleep } from '@happier-dev/plugin-sdk/async';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import type {
@@ -29,7 +31,7 @@ import type { ClaudeUnifiedTerminalWorkspaceTrustPolicy } from '../../../../agen
 import { createClaudeRuntimeActivityPublisher } from '../../shared/runtimeActivityPublisher.js';
 import type { ClaudeSettingSourceV2 } from '@happier-dev/plugin-sdk/first-party/claude';
 import { readClaudeNativeCommands } from '../../../transcripts/nativeCommands.js';
-import { buildClaudeSettingSourcesArgs, resolveClaudeLaunchSettingsOverlayArgs } from '../../launchSettings.js';
+import { buildClaudeSettingSourcesArgs, resolveClaudeLaunchSettingsOverlayArgs, type ClaudeHelperModelEnv } from '../../launchSettings.js';
 import { randomUUID } from 'node:crypto';
 import { resolveClaudeTerminalHostDisposeIntent } from './terminalHostDisposeIntent.js';
 import { materializeClaudeStartupInstructions } from '../../startupInstructions.js';
@@ -41,6 +43,7 @@ import { buildDefaultPermissionHookResponse } from '../../../hooks/protocol.js';
 import { resolveClaudePermissionHookCeilingMs } from '../../../hooks/permissionHookTimeout.js';
 import { createClaudeStatuslineApplier } from '../../../statusline/apply.js';
 import {
+  readClaudeAssistantModelId,
   readClaudeMainChainAssistantModelId,
   type ClaudeEffectiveModelEvidence,
   type ClaudeEffectiveModelEvidenceSubscription,
@@ -96,9 +99,8 @@ import {
 } from './tuiControls/dialogRegistry.js';
 import { createClaudePermissionHookHandler } from '../../shared/permissionHookHandler.js';
 import { createClaudeUnifiedPromptEchoSuppressor } from './promptEchoSuppression.js';
-import { normalizeClaudeActivityStatusSignal } from '../../../activityStatus.js';
 import { readClaudeJsonlRowTimestampMs } from '../../../transcripts/jsonlReplaySuppression.js';
-import { parseClaudeTaskNotification } from '../../../transcripts/taskNotification.js';
+import { readClaudeTaskLifecycleEnvelope } from '../../../transcripts/taskNotification.js';
 import { createClaudeUnifiedTerminalOriginLocalIdAllocator } from './terminalOriginLocalIds.js';
 import { buildClaudeJsonlProviderFactLocalIdFromParts } from '../../../transcripts/providerFactIdentity.js';
 import { isClaudeComposerCaptureStyleUnavailablePlaceholderCandidate } from './composerCaptureClassification.js';
@@ -389,6 +391,7 @@ export type ClaudeUnifiedTerminalTurnOperationsParams = Readonly<{
   happierSessionId: string;
   hostPreference: TerminalHostPreference;
   launchEnv: Readonly<Record<string, string>>;
+  helperModelEnv?: ClaudeHelperModelEnv;
   settingSources?: readonly ClaudeSettingSourceV2[];
   supportsEffort?: boolean;
   supportsSystemPromptSnapshotOff?: boolean;
@@ -483,7 +486,7 @@ type ClaudeUnifiedPromptDeliveryBlockerClear = Readonly<{
 export type ClaudeUnifiedTerminalNativeRuntime = ClaudeRuntimeTurnOperations & Readonly<{
   prepareTerminalPresentation: NonNullable<AgentSessionRuntime['prepareTerminalPresentation']>;
   promptCustody: 'unified_terminal';
-  observeSourceTranscript(input: Readonly<{ providerSessionId: string; sourceId: string; row: JsonValue }>): Promise<void>;
+  observeSourceTranscript(input: Readonly<{ providerSessionId: string; sourceId: string; row: JsonValue; phase?: 'initial_replay' }>): Promise<void>;
   retirePendingInputs(localIds: readonly string[], turnId: string): void;
   subscribeEffectiveModel: ClaudeEffectiveModelEvidenceSubscription;
   subscribeUsageObservation: ClaudeUsageObservationSubscription;
@@ -681,12 +684,7 @@ function readTaskNotificationTranscriptIdentity(row: unknown): Readonly<{
   uuid: string;
 }> | null {
   if (!isRecord(row) || row.type !== 'user' || row.isSidechain === true) return null;
-  const origin = isRecord(row.origin) ? row.origin : null;
-  const message = isRecord(row.message) ? row.message : null;
-  const content = readNonEmptyString(message?.content);
-  if (readNonEmptyString(origin?.kind) !== 'task-notification' && !isClaudeTaskNotificationPromptText(content)) {
-    return null;
-  }
+  if (readClaudeTaskLifecycleEnvelope(row)?.subtype !== 'task_notification') return null;
   const sessionId = readClaudeProviderIdentityValue(row.session_id)
     ?? readClaudeProviderIdentityValue(row.sessionId);
   const uuid = readNonEmptyString(row.uuid);
@@ -842,6 +840,29 @@ export function createClaudeUnifiedTerminalTurnOperations(
     if (!observation) return;
     for (const listener of usageObservationListeners) listener(observation);
   };
+  const pendingNativeStarts: Array<Readonly<{
+    providerSessionId: string; payload: Readonly<Record<string, unknown>>; observedAt: number;
+  }>> = [];
+  function noteRequiredSourceHistoryLost(): void {
+    pendingNativeStarts.length = 0;
+    providerActivityLedger.noteObservationLost();
+    publishProviderTaskInventory('source-baseline-failed');
+  }
+  function observeNativeWorkflowHook(
+    providerSessionId: string, payload: Readonly<Record<string, unknown>>, observedAt: number, startupReplay?: true,
+  ): void {
+    workflowRuntime.observeTranscriptMessage({ ...payload, session_id: providerSessionId }, {
+      authenticatedHook: true, observedAt, ...(startupReplay ? { startupReplay } : {}),
+    });
+  }
+  function flushPendingNativeStarts(providerSessionId: string): void {
+    if (providerTranscriptPublisher.readSourceFollowReadiness() !== 'ready') return;
+    for (const receipt of pendingNativeStarts.splice(0)) {
+      if (receipt.providerSessionId === providerSessionId) {
+        observeNativeWorkflowHook(providerSessionId, receipt.payload, receipt.observedAt, true);
+      }
+    }
+  }
   const providerTranscriptPublisher = createClaudeUnifiedProviderTranscriptPublisher({
     ctx: params.ctx,
     historicalProviderSessionId: params.launchIntent?.kind === 'resume_native'
@@ -852,6 +873,20 @@ export function createClaudeUnifiedTerminalTurnOperations(
       if (observation) await nativeRuntime.observeTerminalLifecycle(observation);
     },
     onObserveRow: async (row, observation) => {
+      if (observation.projectedTaskResult) {
+        for (const result of extractToolResultBlocksFromSdkMessage(observation.projectedTaskResult)) {
+          publishClaudeUnifiedRuntimeEvent({
+            handlers, logger: params.ctx.logger,
+            event: { kind: 'tool-result', sessionId: params.happierSessionId, emittedAtMs: Date.now(),
+              toolCallId: result.toolUseId, output: result.output,
+              ...(result.isError === undefined ? {} : { isError: result.isError }) },
+          });
+        }
+      }
+      if (observation.phase === 'initial_replay') {
+        workflowRuntime.observeTranscriptMessage(row, { historicalReplay: true });
+        return;
+      }
       const commands = readClaudeNativeCommands(row);
       if (commands !== null) {
         publishClaudeUnifiedRuntimeEvent({
@@ -881,7 +916,9 @@ export function createClaudeUnifiedTerminalTurnOperations(
       if (row.type === 'assistant' && row.message?.usage) {
         publishUsageObservation(buildClaudeAssistantUsageObservation({
           nativeRecordId: row.uuid,
-          modelId: readAssistantModelId(row) ?? verifiedModelId ?? launchModelId,
+          inferenceId: readClaudeProviderIdentityValue(row.message.id),
+          nativeSessionId: readClaudeProviderIdentityValue(row.session_id) ?? readClaudeProviderIdentityValue(row.sessionId),
+          modelId: readClaudeAssistantModelId(row),
           modelSource,
           ...(observedAtMs === undefined ? {} : { observedAtMs }),
           usage: row.message.usage,
@@ -908,12 +945,11 @@ export function createClaudeUnifiedTerminalTurnOperations(
         modelId: readAssistantModelId(row),
       });
       // ONE raw channel, two provider-clean sources: goal status + workflow activity.
-      observeProviderTaskActivity(row);
       if (!observation.historicalReplay) {
-        observeProviderTaskNotificationTerminal(row, observation.providerSessionId);
+        observeProviderTaskActivity(row, observation.providerSessionId);
       }
       goalRuntime.source.observeTranscriptMessage(row);
-      const workflowObservation = workflowRuntime.observeTranscriptMessage(row);
+      const workflowObservation = workflowRuntime.observeTranscriptMessage(row, { historicalReplay: observation.historicalReplay });
       if (workflowObservation.terminalRunIds.length > 0) {
         observeProviderTaskTerminalCompletionWhenReady();
       }
@@ -1122,7 +1158,10 @@ export function createClaudeUnifiedTerminalTurnOperations(
       requestedResumeProviderSessionId
       && knownProviderSession.providerSessionId !== requestedResumeProviderSessionId
     ) return;
-    const bindResult = await providerTranscriptPublisher.bindKnownLiveTranscript(knownProviderSession);
+    const bindResult = await providerTranscriptPublisher.bindKnownLiveTranscript(knownProviderSession).catch(error => {
+      noteRequiredSourceHistoryLost();
+      throw error;
+    });
     knownProviderSessionBound = bindResult.status === 'bound' || bindResult.status === 'unchanged';
     if (
       bindResult.status === 'bound'
@@ -1136,6 +1175,7 @@ export function createClaudeUnifiedTerminalTurnOperations(
         reason: 'claude-unified-known-resume-transcript',
       });
     }
+    if (knownProviderSessionBound) flushPendingNativeStarts(knownProviderSession.providerSessionId);
   }
 
   async function observeRetainedProviderIdentity(providerSessionId: string | null): Promise<boolean> {
@@ -1889,6 +1929,7 @@ export function createClaudeUnifiedTerminalTurnOperations(
             permissionMode: mapToClaudePermissionMode(launchPermissionMode),
             launchSettings: settingsOverlay,
             workspaceWrites: launchWorkspaceWrites,
+            helperModelEnv: params.helperModelEnv,
           }), params.launchIntent ?? { kind: 'new_session' }),
           cwd: params.directory,
           env: params.launchEnv,
@@ -1913,9 +1954,18 @@ export function createClaudeUnifiedTerminalTurnOperations(
         lifecycle: { kind: 'session', sessionId: params.happierSessionId },
         sessionHookSecret: hookSecret,
         onSessionHook: async (providerSessionId, payload) => {
+          const observedAt = Date.now();
+          const lifecycle = readClaudeTaskLifecycleEnvelope(payload);
+          const bufferedNativeStart = lifecycle?.knownOnly === true && lifecycle.resumed === true
+            && providerTranscriptPublisher.readSourceFollowReadiness() !== 'ready';
+          if (bufferedNativeStart) {
+            pendingNativeStarts.push({ providerSessionId, payload, observedAt });
+          } else if (lifecycle) {
+            observeNativeWorkflowHook(providerSessionId, payload, observedAt);
+          }
           // Runtime Activity observes the authenticated hook before identity/sidechain routing.
           // SubagentStart may refresh only an admitted ID; SubagentStop may clear only its exact ID.
-          observeProviderTaskActivity(payload, providerSessionId);
+          if (!bufferedNativeStart) observeProviderTaskActivity(payload, providerSessionId);
           const lifecycleObservation = mapClaudeUnifiedHookLifecyclePayload(payload, params.happierSessionId);
           if (lifecycleObservation) {
             await nativeRuntime.observeTerminalLifecycle(lifecycleObservation);
@@ -1967,7 +2017,13 @@ export function createClaudeUnifiedTerminalTurnOperations(
           } else if (hookEventName === 'UserPromptSubmit') {
             pendingTaskNotificationReaction = null;
           }
-          const bindResult = await providerTranscriptPublisher.bindFromSessionHook(providerSessionId, payload);
+          let bindResult: Awaited<ReturnType<typeof providerTranscriptPublisher.bindFromSessionHook>>;
+          try { bindResult = await providerTranscriptPublisher.bindFromSessionHook(providerSessionId, payload); }
+          catch (error) {
+            noteRequiredSourceHistoryLost();
+            params.ctx.logger.warn('[ClaudeUnifiedTerminal] ordered source transcript baseline failed', { error });
+            throw error;
+          }
           if (
             bindResult.status === 'bound'
             || bindResult.status === 'unchanged'
@@ -1991,7 +2047,10 @@ export function createClaudeUnifiedTerminalTurnOperations(
               });
             }
           }
-          if (hookEventName === 'SessionStart') sessionStartObservedForReadiness = true;
+          if (hookEventName === 'SessionStart') {
+            flushPendingNativeStarts(providerSessionId);
+            sessionStartObservedForReadiness = true;
+          }
           if (hookEventName === 'PostToolUse' && state.handle) {
             // Claude can keep working behind a short-lived nonblocking overlay (for example an LSP
             // recommendation). The authenticated primary hook is an event-driven observation edge;
@@ -2041,6 +2100,9 @@ export function createClaudeUnifiedTerminalTurnOperations(
               const bindResult = await providerTranscriptPublisher.bindKnownLiveTranscript({
                 providerSessionId: statuslineProviderSessionId,
                 transcriptPath: statuslineProviderTranscriptPath,
+              }).catch(error => {
+                noteRequiredSourceHistoryLost();
+                throw error;
               });
               if (
                 !state.providerSessionId
@@ -2457,41 +2519,6 @@ export function createClaudeUnifiedTerminalTurnOperations(
     observeClaudeProviderTaskActivity({
       row,
       ...(providerSessionId ? { providerSessionId } : {}),
-      ledger: providerActivityLedger,
-      runtimeActivityPublisher,
-      logger: params.ctx.logger,
-      logPrefix: '[ClaudeUnifiedTerminal]',
-    });
-  }
-
-  function observeProviderTaskNotificationTerminal(
-    row: unknown,
-    providerSessionId: string,
-  ): void {
-    const notification = parseClaudeTaskNotification(row);
-    if (
-      !notification?.taskId
-      || (
-        notification.sourceSessionId !== undefined
-        && notification.sourceSessionId !== providerSessionId
-      )
-    ) return;
-    const status = normalizeClaudeActivityStatusSignal(notification.status, 'task_notification');
-    const terminalStatus = status === 'complete'
-      ? 'completed' as const
-      : status === 'failed'
-        ? 'failed' as const
-        : status === 'cancelled'
-          ? 'stopped' as const
-          : null;
-    if (!terminalStatus) return;
-    applyClaudeProviderTaskActivity({
-      activity: {
-        type: 'terminal',
-        terminalStatus,
-        sessionId: providerSessionId,
-        taskId: notification.taskId,
-      },
       ledger: providerActivityLedger,
       runtimeActivityPublisher,
       logger: params.ctx.logger,
@@ -4008,6 +4035,7 @@ export function createClaudeUnifiedTerminalTurnOperations(
     },
     async disposeProviderSession(reason) {
       state.disposed = true;
+      pendingNativeStarts.length = 0;
       usageObservationListeners.clear();
       stopReadinessWake();
       clearQueuedBannerCustodyTimers();

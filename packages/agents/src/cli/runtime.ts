@@ -98,8 +98,9 @@ export type AgentCliRuntimeSpec = Readonly<{
 
 export function projectAgentCliRuntimeSpec(
   agentId: BundledAgentId,
-  cli: AgentDefinitionCliMetadata,
-): AgentCliRuntimeSpec {
+  cli: AgentDefinitionCliMetadata | undefined,
+): AgentCliRuntimeSpec | null {
+  if (!cli) return null;
   const { executable, install } = cli;
   return Object.freeze({
     id: agentId,
@@ -136,24 +137,22 @@ export function projectAgentCliRuntimeSpec(
 const AUTHORED_AGENT_CLI_RUNTIME_SPECS = {
 } as const satisfies Partial<Record<BundledAgentId, AgentCliRuntimeSpec>>;
 
-export const CANONICAL_AGENT_CLI_RUNTIME_SPECS: Readonly<Record<BundledAgentId, AgentCliRuntimeSpec>> =
-  mergeAuthoredWithGeneratedAgentFacts<AgentCliRuntimeSpec>({
+export const CANONICAL_AGENT_CLI_RUNTIME_SPECS: Readonly<Record<BundledAgentId, AgentCliRuntimeSpec | null>> =
+  mergeAuthoredWithGeneratedAgentFacts<AgentCliRuntimeSpec, null>({
     authored: AUTHORED_AGENT_CLI_RUNTIME_SPECS,
     label: 'agent CLI runtime spec',
     readGenerated: (definition, agentId) => projectAgentCliRuntimeSpec(agentId, definition.cli),
+    resolveMissing: () => null,
   });
 
-export const AGENT_CLI_RUNTIME_SPECS: Readonly<Record<BundledAgentId, AgentCliRuntimeSpec>> = CANONICAL_AGENT_CLI_RUNTIME_SPECS;
+export const AGENT_CLI_RUNTIME_SPECS = CANONICAL_AGENT_CLI_RUNTIME_SPECS;
 
 /**
  * Read the generated CLI runtime spec of a bundled Agent.
  *
- * The record is exhaustive over `AGENT_IDS` only. An externally installed Agent
- * ships its own CLI metadata in its plugin manifest, so this accessor reports a
- * typed unavailable for it rather than pretending a bundled spec exists.
+ * Catalog-driven Agents do not declare a fixed native CLI. An externally
+ * installed Agent has no bundled facts. Both report typed unavailable.
  */
-export function getAgentCliRuntimeSpec(id: BundledAgentId): AgentCliRuntimeSpec;
-export function getAgentCliRuntimeSpec(id: AgentId): AgentCliRuntimeSpec | null;
 export function getAgentCliRuntimeSpec(id: AgentId): AgentCliRuntimeSpec | null {
   return readBundledAgentFact(AGENT_CLI_RUNTIME_SPECS, id);
 }
@@ -173,7 +172,7 @@ export function getAgentCliBinaryNames(
   ];
 }
 
-const AGENT_CLI_SETUP_SUPPORTED_IDS: ReadonlyArray<BundledAgentId> = AGENT_IDS;
+const AGENT_CLI_SETUP_SUPPORTED_IDS: ReadonlyArray<BundledAgentId> = AGENT_IDS.filter(id => AGENT_CLI_RUNTIME_SPECS[id] !== null);
 
 export function getAgentCliSetupSupportedIds(): ReadonlyArray<BundledAgentId> {
   return [...AGENT_CLI_SETUP_SUPPORTED_IDS];
@@ -183,7 +182,7 @@ export function getAgentCliSetupRecommendedIds(): ReadonlyArray<BundledAgentId> 
   return AGENT_CLI_SETUP_SUPPORTED_IDS
     .map((agentId) => ({
       agentId,
-      order: AGENT_CLI_RUNTIME_SPECS[agentId].setupRecommendation?.order,
+      order: AGENT_CLI_RUNTIME_SPECS[agentId]?.setupRecommendation?.order,
     }))
     .filter((entry): entry is { agentId: BundledAgentId; order: number } =>
       typeof entry.order === 'number',

@@ -251,7 +251,7 @@ describe('Phase 0 permission skipping issue', () => {
             }
         };
 
-        reducer(state, [], agentState);
+        reducer(state, [], agentState, [], { mainHistoryStartLoaded: true });
         const msg = Array.from(state.messages.values()).find(m => m.tool?.permission?.id === 'tool1');
         expect(msg).toBeDefined();
         expect(msg?.tool?.permission?.status).toBe('approved');

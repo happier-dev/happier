@@ -22,7 +22,7 @@ export const OH_MY_PI_UI_DESCRIPTOR = Object.freeze({
       hideUnknownToolsByDefault: false,
     },
     picker: {
-      iconName: 'planet-outline',
+      iconName: 'globe',
       iconScale: 0.9,
       cliGlyph: 'OMP',
       cliGlyphScale: 1.0,

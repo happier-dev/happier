@@ -536,6 +536,7 @@ export type {
   HandoffExportRequestV1,
   HandoffExportResultV1,
   HandoffExportSessionMetadataV1,
+  HandoffExistingStateRequestV1,
   HandoffFailureCodeV1,
   HandoffImportRequestV1,
   HandoffImportResultV1,

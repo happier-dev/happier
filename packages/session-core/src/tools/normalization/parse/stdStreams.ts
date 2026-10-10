@@ -24,6 +24,7 @@ function readFirstNumber(obj: Record<string, unknown>, keys: readonly string[]):
 }
 
 function readContentText(obj: Record<string, unknown>): string | undefined {
+    if (typeof obj.content === 'string') return obj.content;
     if (!Array.isArray(obj.content)) return undefined;
     let text = '';
     for (const item of obj.content) {

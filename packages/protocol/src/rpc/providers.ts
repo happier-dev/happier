@@ -5,8 +5,10 @@ import { ProviderConnectionIdSchema, ProviderContributionKeySchema, ProviderLoca
 import { BackendTargetKeyV2Schema } from '../backends/targets/backendTargetRefV2.js';
 import { CustomProviderTemplateV1Schema } from '../providers/connections/customTemplateV1.js';
 import {
+  ProviderClaudeHelperModelsV1Schema,
   ProviderConnectionPurposeBindingDefaultsV1Schema,
   ProviderEndpointOverrideV1Schema,
+  ProviderGatewayPlacementV1Schema,
 } from '../providers/connections/v1.js';
 import { ProviderErrorV1Schema } from '../providers/errors.js';
 import {
@@ -193,7 +195,7 @@ export const DaemonProviderModelsResponseV1Schema = lazyZodSchema(() => z.discri
     connectionId: ProviderConnectionIdSchema,
     connectionRevision: z.number().int().nonnegative(),
     manualModelPolicy: z.enum(['allowed', 'catalog-only']),
-    modelLoadAction: z.enum(['available', 'descriptor_absent', 'feature_disabled']),
+    modelLoadAction: z.enum(['available', 'descriptor_absent', 'feature_disabled', 'machine_required']),
     models: z.array(DaemonProviderModelRowV1Schema).max(50_000),
   }).strict(),
   z.object({ status: z.literal('error'), error: ProviderErrorV1Schema }).strict(),
@@ -250,6 +252,11 @@ export type DaemonProviderConnectionsDescribeRequestV1 = z.infer<typeof DaemonPr
 
 const ProviderConnectionRpcRuntimeSummaryV1Schema = lazyZodSchema(() => z.object({
   health: ProviderConnectionSummaryHealthV1Schema,
+  // Process custody and peer reachability are separate from endpoint probe health.
+  gateway: z.object({
+    status: z.enum(['not_checked', 'idle', 'running']),
+    reachability: z.enum(['not_checked', 'reachable', 'unreachable']),
+  }).strict().optional(),
   modelCount: z.number().int().nonnegative().max(50_000).nullable(),
   checkedAt: z.number().finite().nonnegative().nullable(),
   endpoints: z.array(z.object({
@@ -277,7 +284,7 @@ const DaemonProviderAuthoringEndpointV1Schema = lazyZodSchema(() => z.object({
   endpointTemplateId: z.string().trim().min(1).max(128),
   protocol: ProviderWireProtocolSchema,
   normalizedUrl: ProviderRpcDisplayEndpointUrlV1Schema,
-  locality: z.enum(['public', 'private', 'loopback']),
+  locality: z.enum(['public', 'private', 'loopback', 'unknown']),
   scope: z.enum(['account', 'machine']),
 }).strict());
 
@@ -330,6 +337,7 @@ export const DaemonProviderContributionAuthoringPreviewV1Schema = lazyZodSchema(
     credential: DaemonProviderAuthoringCredentialV1Schema.nullable(),
     fingerprint: ProviderAuthoringReviewFingerprintV1Schema,
     revision: z.number().int().nonnegative(),
+    verification: z.literal('declaration').optional(),
   }).strict().superRefine((value, ctx) => {
     if ((value.scope === 'machine') !== (value.machineId !== null)) {
       ctx.addIssue({ code: 'custom', path: ['machineId'], message: 'Review scope and machine identity disagree' });
@@ -402,7 +410,7 @@ const DaemonProviderConnectionDeploymentV1Schema = lazyZodSchema(() => z.discrim
   }).strict(),
   z.object({
     kind: z.literal('managedLocal'),
-    targetMachineId: ProviderMachineIdSchema,
+    targetMachineId: ProviderMachineIdSchema.nullable(),
     effects: z.object({
       implementationIdentity: asProtocolZod(PluginContributionIdentityV1Schema),
       protocols: z.array(ProviderWireProtocolSchema).min(1).max(16),
@@ -455,8 +463,10 @@ export const DaemonProviderConnectionViewV1Schema = lazyZodSchema(() => z.object
     label: z.string().trim().min(1).max(128),
   }).strict().nullable().default(null),
   deployment: DaemonProviderConnectionDeploymentV1Schema.default({ kind: 'external' }),
+  gatewayPlacement: ProviderGatewayPlacementV1Schema.optional(),
+  claudeHelperModels: ProviderClaudeHelperModelsV1Schema.optional(),
   managedLocalOption: z.object({
-    targetMachineId: ProviderMachineIdSchema,
+    targetMachineId: ProviderMachineIdSchema.nullable(),
     connectedAccountPurposes: z.array(
       DaemonProviderManagedConnectedAccountPurposeDeclarationV1Schema,
     ).max(32),
@@ -472,6 +482,13 @@ export const DaemonProviderConnectionViewV1Schema = lazyZodSchema(() => z.object
   probeObservationIdentity: ProviderProbeObservationIdentityV1Schema.nullable().default(null),
   runtime: ProviderConnectionRpcRuntimeSummaryV1Schema,
 }).strict().superRefine((value, context) => {
+  for (const field of ['gatewayPlacement', 'claudeHelperModels'] as const) {
+    if (value[field] !== undefined && (value.deployment.kind !== 'managedLocal' || value.contributionKey === null)) {
+      context.addIssue({
+        code: 'custom', path: [field], message: 'Gateway configuration requires a managed contribution connection',
+      });
+    }
+  }
   if (value.managedLocalOption !== null && value.contributionKey === null) {
     context.addIssue({
       code: 'custom',
@@ -562,7 +579,10 @@ export const DaemonProviderConnectionMutationRequestV1Schema = lazyZodSchema(() 
     expectedRevision: z.number().int().nonnegative(),
     displayName: z.string().trim().min(1).max(128).optional(),
     displayNameMode: z.enum(['automatic', 'custom']).optional(),
+    template: CustomProviderTemplateV1Schema.optional(),
     deployment: DaemonProviderConnectionDeploymentUpdateV1Schema.optional(),
+    gatewayPlacement: ProviderGatewayPlacementV1Schema.nullable().optional(),
+    claudeHelperModels: ProviderClaudeHelperModelsV1Schema.nullable().optional(),
   }).strict(),
   ProviderConnectionMutationBaseV1Schema.extend({
     action: z.literal('setEndpointOverride'),
@@ -674,6 +694,9 @@ export const DaemonProviderModelProjectionRequestV1Schema = lazyZodSchema(() => 
   }).strict().optional(),
   connectedAccountTarget: QualifiedConnectedAccountPurposeBindingTargetV1Schema.optional(),
   mode: z.enum(['picker', 'management']).optional(),
+  /** Presentation scope; selecting a source alone never mutates session intent. */
+  sourceConnectionId: ProviderConnectionIdSchema.optional(),
+  favoriteSelections: z.array(ProviderBoundModelRefSchema).optional(),
   /** Internal current-observation read used by bounded Pool fanout. It must not
    * schedule Provider refresh/materialization on every candidate Machine. */
   refreshPolicy: z.literal('current_only').optional(),
@@ -684,6 +707,10 @@ export const DaemonProviderModelProjectionRequestV1Schema = lazyZodSchema(() => 
   if (value.currentSelection && value.currentSelection.agentTargetKey !== value.agentTargetKey) {
     ctx.addIssue({ code: 'custom', path: ['currentSelection', 'agentTargetKey'], message: 'Current selection belongs to another agent target' });
   }
+  value.favoriteSelections?.forEach((ref, index) => {
+    if (ref.agentTargetKey !== value.agentTargetKey) ctx.addIssue({ code: 'custom',
+      path: ['favoriteSelections', index, 'agentTargetKey'], message: 'Favorite belongs to another agent target' });
+  });
   if (value.application && value.application.agentTargetKey !== value.agentTargetKey) {
     ctx.addIssue({ code: 'custom', path: ['application', 'agentTargetKey'], message: 'Application belongs to another agent target' });
   }
@@ -840,7 +867,7 @@ export const DaemonProviderModelProjectionGroupV1Schema = lazyZodSchema(() => z.
     connectionSecurityFingerprint: ProviderConnectionSecurityFingerprintV1Schema,
   }).strict().optional(),
   sourceRevision: z.string().trim().min(1).max(512).optional(),
-  modelLoadAction: z.enum(['available', 'descriptor_absent', 'feature_disabled']),
+  modelLoadAction: z.enum(['available', 'descriptor_absent', 'feature_disabled', 'machine_required']),
   modelLoadPreflightPolicy: z.enum(['advisory', 'required']).nullable().optional(),
   authorization: z.union([
     z.object({ authorized: z.literal(true) }).strict(),
@@ -980,11 +1007,28 @@ export type DaemonProviderModelProjectionRefreshFailureV1 = z.infer<
   typeof DaemonProviderModelProjectionRefreshFailureV1Schema
 >;
 
+/**
+ * A source switched off for the model picker that still offers this Agent compatible models.
+ * Ordinary browse names it so it stays reachable; browsing it explicitly projects its rows.
+ */
+export const DaemonProviderModelProjectionHiddenSourceV1Schema = lazyZodSchema(() => z.object({
+  connectionId: ProviderConnectionIdSchema,
+  providerName: z.string().trim().min(1).max(128),
+  connectionName: z.string().trim().min(1).max(128),
+  connectionRole: z.enum(['default', 'named']),
+  connectionDisplayNameMode: z.enum(['automatic', 'custom']),
+  // Withheld rows only: zero when every compatible model is retained as an exception.
+  modelCount: z.number().int().nonnegative(),
+}).strict());
+export type DaemonProviderModelProjectionHiddenSourceV1 = z.infer<typeof DaemonProviderModelProjectionHiddenSourceV1Schema>;
+
 export const DaemonProviderModelProjectionResponseV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
   z.object({
     status: z.literal('success'),
     agentTargetKey: BackendTargetKeyV2Schema,
     groups: z.array(DaemonProviderModelProjectionGroupV1Schema),
+    /** Additive presentation fact; older readers ignore it, older daemons omit it. */
+    hiddenSources: z.array(DaemonProviderModelProjectionHiddenSourceV1Schema).optional(),
     currentSelectionRecovery: DaemonProviderCurrentSelectionRecoveryV1Schema.nullable().optional(),
     refreshFailures: z.array(DaemonProviderModelProjectionRefreshFailureV1Schema).optional(),
   }).strict(),

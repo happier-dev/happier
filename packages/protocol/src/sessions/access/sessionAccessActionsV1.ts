@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { PrincipalRefV1Schema } from '../../teams/principal.js';
@@ -6,7 +7,7 @@ import { RequiredSessionTeamCredentialV1Schema, SessionAccessGrantsListRequestV1
 import { buildStoredContentPublicShareUrlV1 } from '../../sharing/storedContentPublicShareV1.js';
 
 /** Public logical input: recipient envelopes are materialized by the host crypto owner. */
-export const SessionAccessGrantSetActionInputV1Schema = z.object({
+export const SessionAccessGrantSetActionInputV1Schema = lazyZodSchema(() => z.object({
   ...SessionAccessGrantsListRequestV1Schema.shape,
   subject: PrincipalRefV1Schema,
   accessLevel: SessionAccessLevelV1Schema,
@@ -17,14 +18,15 @@ export const SessionAccessGrantSetActionInputV1Schema = z.object({
   if (!parsed.success) for (const issue of parsed.error.issues) {
     context.addIssue({ code: 'custom', path: issue.path, message: issue.message });
   }
-});
+}));
 
-export const SessionPublicLinkCreateActionInputV1Schema = z.object({
+export const SessionPublicLinkCreateActionInputV1Schema = lazyZodSchema(() => z.object({
   ...SessionAccessGrantsListRequestV1Schema.shape,
   expiresAt: z.number().optional(),
   maxUses: z.number().int().positive().optional(),
   isConsentRequired: z.boolean().optional(),
-}).strict();
+  networkOff: z.boolean().optional(),
+}).strict());
 
 /**
  * Publication reads contain settings only. Approved creation adds the complete
@@ -38,20 +40,21 @@ export const SessionPublicLinkCreateActionInputV1Schema = z.object({
  * Ambiguous create/rotate settlement belongs to the physical request
  * executor's exact value-idempotent replay.
  */
-export const SessionPublicLinkSettingsV1Schema = z.object({
+export const SessionPublicLinkSettingsV1Schema = lazyZodSchema(() => z.object({
   id: z.string().min(1),
   expiresAt: z.number().nullable(),
   maxUses: z.number().int().positive().nullable(),
   useCount: z.number().int().nonnegative(),
   isConsentRequired: z.boolean(),
+  networkOff: z.boolean().optional(),
   updatedAt: z.number(),
   keyDerivation: z.enum(['fragment_v1', 'legacy_token_v1']).optional(),
   isolatedOrigin: z.string().url().optional(),
-}).strict();
+}).strict());
 export type SessionPublicLinkSettingsV1 = z.infer<typeof SessionPublicLinkSettingsV1Schema>;
-export const SessionPublicLinkGetActionResultV1Schema = SessionPublicLinkSettingsV1Schema.nullable();
-export const SessionPublicLinkCreateActionResultV1Schema = SessionPublicLinkSettingsV1Schema.extend({ url: z.string().url() }).strict();
-export const SessionPublicLinkRemoveActionResultV1Schema = z.object({ changed: z.boolean() }).strict();
+export const SessionPublicLinkGetActionResultV1Schema = lazyZodSchema(() => SessionPublicLinkSettingsV1Schema.nullable());
+export const SessionPublicLinkCreateActionResultV1Schema = lazyZodSchema(() => SessionPublicLinkSettingsV1Schema.extend({ url: z.string().url() }).strict());
+export const SessionPublicLinkRemoveActionResultV1Schema = lazyZodSchema(() => z.object({ changed: z.boolean() }).strict());
 
 /** The released owner route is additive; project only explicitly public settings. */
 export function projectSessionPublicLinkActionResultV1(value: unknown): SessionPublicLinkSettingsV1 | null {
@@ -60,8 +63,9 @@ export function projectSessionPublicLinkActionResultV1(value: unknown): SessionP
     isolatedOrigin: z.string().url().optional(),
   }).loose().parse(value);
   if (response.publicShare === null) return null;
-  const { id, expiresAt, maxUses, useCount, isConsentRequired, updatedAt, keyDerivation } = response.publicShare;
+  const { id, expiresAt, maxUses, useCount, isConsentRequired, networkOff, updatedAt, keyDerivation } = response.publicShare;
   return { id, expiresAt, maxUses, useCount, isConsentRequired, updatedAt,
+    ...(networkOff !== undefined ? { networkOff } : {}),
     ...(keyDerivation ? { keyDerivation } : {}),
     ...(response.isolatedOrigin ? { isolatedOrigin: response.isolatedOrigin } : {}),
   };

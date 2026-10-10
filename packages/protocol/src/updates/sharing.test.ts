@@ -1,8 +1,22 @@
 import { describe, expect, it } from 'vitest';
 
-import { SessionEndAckResponseSchema, UpdateBodySchema } from './index.js';
+import { SessionEndAckResponseSchema, UpdateBodySchema, EphemeralUpdateSchema } from './index.js';
 
 describe('updates sharing', () => {
+  it('accepts only content-free installed Machine usage source wakes', () => {
+    const wake = { type: 'usage-sources-invalidated', machineId: 'machine', installationId: 'installation' };
+    expect(EphemeralUpdateSchema.parse(wake)).toEqual(wake);
+    expect(EphemeralUpdateSchema.safeParse({ ...wake, root: '/private/source' }).success).toBe(false);
+    expect(EphemeralUpdateSchema.safeParse({ ...wake, sourceId: 'private-source' }).success).toBe(false);
+    expect(EphemeralUpdateSchema.safeParse({ ...wake, installationId: '' }).success).toBe(false);
+  });
+  it('accepts only exact content-free requester activation hints on the existing ephemeral carrier', () => {
+    const hint = { type: 'pending-activation-requested', target: { homeId: 'home', accountId: 'requester', sessionId: 'session', machineId: 'machine', installationId: 'installation' }, requestId: 'pending', requestedAt: 1, pendingVersion: 1 };
+    expect(EphemeralUpdateSchema.parse(hint)).toEqual(hint);
+    expect(EphemeralUpdateSchema.safeParse({ ...hint, seq: 42 }).success).toBe(false);
+    expect(EphemeralUpdateSchema.safeParse({ ...hint, prompt: 'private' }).success).toBe(false);
+    expect(EphemeralUpdateSchema.safeParse({ ...hint, target: { ...hint.target, bearer: 'private' } }).success).toBe(false);
+  });
   it('validates private Artifact revision metadata separately from public content updates', () => {
     const update = { t: 'update-artifact', artifactId: 'artifact', body: { value: 'AQIDBA==', version: 2 } };
     expect(UpdateBodySchema.safeParse({ ...update, provenance: 'AQIDBA==', provenanceDataEncryptionKey: 'AQIDBA==' }).success).toBe(true);

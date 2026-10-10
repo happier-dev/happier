@@ -15,10 +15,14 @@ const FIELD_CAPABILITY_PATH = {
   'intent.model': ['intent', 'model'],
   'intent.role': ['intent', 'role'],
   'intent.sessionRoles': ['intent', 'sessionRoles'],
+  'intent.memoryEnabled': ['intent', 'memoryEnabled'],
+  'intent.voicePreference': ['intent', 'voicePreference'],
+  'intent.context': ['intent', 'context'],
   'intent.permissionMode': ['intent', 'permissionMode'],
   'intent.acpSessionMode': ['intent', 'acpSessionMode'],
   'intent.acpConfigOption': ['intent', 'acpConfigOption'],
   'display.title': ['display', 'title'],
+  'display.bot': ['display', 'bot'],
   'runtime.workState': ['runtime', 'workState'],
   'runtime.activity': ['runtime', 'activity'],
   'runtime.externalAgent': ['runtime', 'externalAgent'],
@@ -27,13 +31,18 @@ const FIELD_CAPABILITY_PATH = {
   'runtime.sessionRunner': ['runtime', 'sessionRunner'],
   'view.readState': ['view', 'readState'],
   'view.attention': ['view', 'attention'],
+  'view.transcriptToolCalls': ['view', 'transcriptToolCalls'],
 } as const satisfies Record<SessionStateFieldId, readonly [SessionStateFieldFamily, string]>;
 
 const DEFERRED_PROVIDER_SYNC_FIELDS = new Set<SessionStateFieldId>([
   'intent.role',
   'intent.sessionRoles',
+  'intent.memoryEnabled',
+  'intent.voicePreference',
+  'intent.context',
   'view.readState',
   'view.attention',
+  'view.transcriptToolCalls',
 ]);
 
 export function getSessionStateFieldCapability(

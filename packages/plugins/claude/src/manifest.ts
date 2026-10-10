@@ -33,6 +33,7 @@ import { readClaudeMcpConfigServers } from './agent/mcp/configServers.js';
 import {
   CLAUDE_PROVIDER_BINDING_ADAPTER_V1,
   CLAUDE_PROVIDER_OWNED_ENV_KEYS,
+  CLAUDE_PROVIDER_HELPER_ENV_KEYS,
 } from './agent/providerBinding/adapter.js';
 import { CLAUDE_PREFLIGHT_CATALOGS } from './agent/preflight/catalogs.js';
 import { createClaudeAgentRuntime } from './agent/runtime/nativeRuntime.js';
@@ -147,6 +148,7 @@ export const CLAUDE_PLUGIN = definePlugin({
           { kind: 'systemTool', id: 'claude-cli' },
         ], envKeys: [
           ...CLAUDE_PROVIDER_OWNED_ENV_KEYS,
+          ...CLAUDE_PROVIDER_HELPER_ENV_KEYS,
           'CLAUDE_CONFIG_DIR',
           'CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS',
           'CLAUDE_CODE_SDK_HAS_OAUTH_REFRESH',
@@ -216,6 +218,8 @@ export const CLAUDE_PLUGIN = definePlugin({
     'claude-subscription': {
       declaration: {
         title: 'Claude',
+        // Claude Pro/Max web billing, not the separate Anthropic API account.
+        billingUrl: 'https://claude.ai/settings/billing',
         authentication: {
           defaultModeId: CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1
             .setupToken.authenticationModeId,
@@ -245,6 +249,7 @@ export const CLAUDE_PLUGIN = definePlugin({
     anthropic: {
       declaration: {
         title: 'Anthropic API key',
+        billingUrl: 'https://platform.claude.com/settings/billing',
         authentication: {
           defaultModeId: 'api-key',
           modes: [{
@@ -311,6 +316,7 @@ export const CLAUDE_PLUGIN = definePlugin({
           auth: {
             support: 'login_terminal',
             machineLoginKey: 'claude-code',
+            nonInteractiveStatusProbe: true,
             environmentVariables: ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN'],
             credentialPaths: ['~/.claude/.credentials.json', '~/.claude/.claude.json'],
             loginLaunches: [{ kind: 'primary', args: [], initialInput: '/login\r' }],
@@ -395,18 +401,8 @@ export const CLAUDE_PLUGIN = definePlugin({
           },
           authIsolation: {
             suppressConnectedServiceIds: ['claude-subscription', 'anthropic'],
-            ownedEnvKeys: [
-              'ANTHROPIC_BASE_URL',
-              'ANTHROPIC_CUSTOM_HEADERS',
-              'ANTHROPIC_API_KEY',
-              'ANTHROPIC_AUTH_TOKEN',
-              'ANTHROPIC_OAUTH_TOKEN',
-              CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1.setupToken.environmentKey,
-              'CLAUDE_CODE_OAUTH_REFRESH_TOKEN',
-              'CLAUDE_CODE_OAUTH_SCOPES',
-              'CLAUDE_CODE_SETUP_TOKEN',
-              'CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY',
-            ],
+            ownedEnvKeys: [...CLAUDE_PROVIDER_OWNED_ENV_KEYS],
+            optionalOwnedEnvKeys: [...CLAUDE_PROVIDER_HELPER_ENV_KEYS],
           },
           materialization: 'spawnEnv',
           applyPolicy: 'live',
@@ -433,6 +429,34 @@ export const CLAUDE_PLUGIN = definePlugin({
       },
       factory: createClaudeAgentRuntime,
       preflightSessionControls: { catalogs: CLAUDE_PREFLIGHT_CATALOGS },
+      cliAuth: {
+        async detectAuthStatus({ runDeclaredSystemToolCommand }) {
+          // Claude Code 2.1.292 observes CLAUDE_CONFIG_DIR and native credential
+          // custody through this noninteractive command. Use the host probe budget.
+          const result = await runDeclaredSystemToolCommand({
+            toolId: 'claude-cli', args: ['auth', 'status', '--json'],
+          });
+          if (result.exitCode !== 0 && result.exitCode !== 1) {
+            return { state: 'unknown', reason: 'probe_failed', source: 'command' };
+          }
+          try {
+            const status: unknown = JSON.parse(result.stdout);
+            if (!status || typeof status !== 'object' || Array.isArray(status)) {
+              return { state: 'unknown', reason: 'probe_failed', source: 'command' };
+            }
+            const loggedIn = Reflect.get(status, 'loggedIn');
+            if (loggedIn === true && result.ok && result.exitCode === 0) {
+              return { state: 'logged_in', source: 'command' };
+            }
+            if (loggedIn === false) {
+              return { state: 'logged_out', reason: 'missing_credentials', source: 'command' };
+            }
+          } catch {
+            // Unavailable or malformed probe evidence is not a sign-out.
+          }
+          return { state: 'unknown', reason: 'probe_failed', source: 'command' };
+        },
+      },
       connectedAccountLaunch: {
         switchContinuity: {
           continuityMode: 'restart_same_home',
@@ -456,6 +480,7 @@ export const CLAUDE_PLUGIN = definePlugin({
         }],
         stateSharingDescriptor: AGENT_STATE_SHARING_DESCRIPTOR,
         continuity: {
+          generationApplicationScope: 'shared_group_auth_surface',
           nativeAuthCodec: createClaudeConnectedAccountNativeAuthCodec(),
           runtimeAuthAdapter: createClaudeConnectedServiceRuntimeAuthAdapter(),
         },

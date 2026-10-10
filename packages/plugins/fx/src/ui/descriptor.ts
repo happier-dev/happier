@@ -27,7 +27,7 @@ export const FX_UI_DESCRIPTOR = Object.freeze({
     flavorAliases: ['fx', 'vercel-fx'], permissions: { modeGroup: 'codexLike', promptProtocol: 'codexDecision' },
     resume: { uiVendorResumeIdLabelKey: 'sessionInfo.fxSessionId', uiVendorResumeIdCopiedKey: 'sessionInfo.fxSessionIdCopied' },
     localControl: true, toolRendering: { hideUnknownToolsByDefault: false },
-    picker: { iconName: 'flash-outline', cliGlyph: 'FX', cliGlyphScale: 1, profileCompatibilityGlyphScale: 1, iconScale: 1.15 },
+    picker: { iconName: 'lightning', cliGlyph: 'FX', cliGlyphScale: 1, profileCompatibilityGlyphScale: 1, iconScale: 1.15 },
     avatarOverlay: { circleScale: 0.35, iconScaleRatio: 0.22 }, icon: { assetId: 'fx' },
   },
   capabilityStates: { mcpDelivery: 'supported', modelSelection: 'experimental', resume: 'supported' },

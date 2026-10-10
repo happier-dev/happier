@@ -1,19 +1,19 @@
 import { describe, expect, it } from 'vitest';
 
 import { RPC_METHODS, SESSION_RPC_METHODS } from './methods.js';
-import { isSessionActionRpcMethodV1 } from './socket.js';
 import {
   CURRENT_SESSION_PRESENTATION_ACK_RPC_METHOD,
   CURRENT_SESSION_PRESENTATION_BIND_RPC_METHOD,
   CURRENT_SESSION_PRESENTATION_UNBIND_RPC_METHOD,
 } from '../sessions/presentation/currentSessionPresentationV1.js';
 import {
+  isSessionActionRpcMethodV1,
   isSocketRpcCurrentSessionPresentationOriginAuthorizationContext,
   parseSocketRpcAuthorizationContext,
   resolveSocketRpcSessionWriteAuthorization,
   resolveSocketRpcSessionWriteAuthorizationMethod,
   resolveSocketRpcSessionAuthorization,
-} from './index.js';
+} from './socket.js';
 
 /**
  * Lane 05.4 §14: a shared collaborator's Session-owned Run control is admitted by
@@ -65,6 +65,31 @@ describe('Session-control RPC write classification', () => {
       });
     }
     expect(resolveSocketRpcSessionAuthorization('session-1:session.unlisted')).toBeNull();
+  });
+
+  it('keeps SCM workspace routing independent of optional private Session authority', () => {
+    for (const method of [RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE, RPC_METHODS.SCM_DIFF_SUMMARY_RESULT_LIST,
+      RPC_METHODS.SCM_DIFF_SUMMARY_RESULT_READ, RPC_METHODS.SCM_DIFF_SUMMARY_RESULT_EDIT,
+      RPC_METHODS.SCM_DIFF_SUMMARY_RESULT_UNDO, RPC_METHODS.SCM_DIFF_SUMMARY_RESULT_DELETE,
+      RPC_METHODS.SCM_DIFF_SUMMARY_RESULT_CLEAR, RPC_METHODS.SCM_DIFF_SUMMARY_REVIEWED_MARK,
+      RPC_METHODS.SCM_DIFF_SUMMARY_REVIEWED_UNMARK, 'scm.diffSummary.commitPlan.accept',
+      'scm.diffSummary.commitPlan.stop', 'scm.diffSummary.commitPlan.includeHookChanges',
+      'scm.diffSummary.commitPlan.cancel', 'scm.diffSummary.commitPlan.recover',
+    ]) {
+      expect(resolveSocketRpcSessionAuthorization(`machine-1:${method}`)).toEqual({
+        method, authority: 'readTranscript', routeToSessionOwnerDaemon: false, optionalSessionScope: true,
+      });
+      expect(resolveSocketRpcSessionWriteAuthorization(`machine-1:${method}`)).toBeNull();
+    }
+    for (const method of [RPC_METHODS.SCM_DIFF_SUMMARY_GENERATE, RPC_METHODS.SCM_DIFF_SUMMARY_REFINE,
+      RPC_METHODS.SCM_DIFF_SUMMARY_DISCUSS, RPC_METHODS.SCM_DIFF_SUMMARY_ADD_OUTPUTS,
+    ]) {
+      expect(resolveSocketRpcSessionAuthorization(`machine-1:${method}`)).toEqual({
+        method, authority: 'submitAgentInput', routeToSessionOwnerDaemon: false, optionalSessionScope: true,
+      });
+    }
+    expect(resolveSocketRpcSessionAuthorization('machine-1:scm.diffSummary.unlisted')).toBeNull();
+    expect(resolveSocketRpcSessionAuthorization(`machine-1:${RPC_METHODS.SCM_DIFF_READ}`)).toBeNull();
   });
   it('admits Run start and explicit resume under submitAgentInput on the owner daemon', () => {
     for (const method of [SESSION_RPC_METHODS.EXECUTION_RUN_START, SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE]) {

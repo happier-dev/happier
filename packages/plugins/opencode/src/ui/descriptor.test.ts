@@ -28,7 +28,8 @@ function collectNoExecuteViolations(value: unknown, path = 'descriptor'): string
     if (key === 'source' && typeof child === 'string') {
       violations.push(`${path}.${key}: executable projection source`);
     }
-    if (typeof child === 'string' && /#[0-9a-fA-F]{3,8}\b/.test(child)) {
+    // Agent identity hues are the approved catalog-owned color exception.
+    if (path !== 'descriptor.identityColor' && typeof child === 'string' && /#[0-9a-fA-F]{3,8}\b/.test(child)) {
       violations.push(`${path}.${key}: raw color literal`);
     }
     return [...violations, ...collectNoExecuteViolations(child, `${path}.${key}`)];

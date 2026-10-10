@@ -1,4 +1,6 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
+import { createStoredReadSchema } from '../../json/storedReadSchema.js';
 
 import { SessionIdSchema, TurnIdSchema } from '../idsV1.js';
 import { isProjectedSessionStalledV1 } from '../awareness/runtime.js';
@@ -17,41 +19,41 @@ import { isProjectedSessionStalledV1 } from '../awareness/runtime.js';
 
 export const SESSION_FOLLOW_DELIVERED_TURN_STATUSES_V1 = ['completed', 'failed', 'cancelled'] as const;
 export type SessionFollowDeliveredTurnStatusV1 = (typeof SESSION_FOLLOW_DELIVERED_TURN_STATUSES_V1)[number];
-export const SessionFollowDeliveredTurnStatusV1Schema = z.enum(SESSION_FOLLOW_DELIVERED_TURN_STATUSES_V1);
+export const SessionFollowDeliveredTurnStatusV1Schema = lazyZodSchema(() => z.enum(SESSION_FOLLOW_DELIVERED_TURN_STATUSES_V1));
 
-export const SessionFollowTerminalTurnV1Schema = z
+export const SessionFollowTerminalTurnV1Schema = lazyZodSchema(() => z
   .object({
     id: TurnIdSchema,
     status: SessionFollowDeliveredTurnStatusV1Schema,
   })
-  .strict();
+  .strict());
 export type SessionFollowTerminalTurnV1 = z.infer<typeof SessionFollowTerminalTurnV1Schema>;
 
 /** A deliverable own-turn fact, including presence loss before terminal completion. */
-export const SessionFollowObservedTurnV1Schema = SessionFollowTerminalTurnV1Schema.extend({
+export const SessionFollowObservedTurnV1Schema = lazyZodSchema(() => SessionFollowTerminalTurnV1Schema.extend({
   status: z.enum([...SESSION_FOLLOW_DELIVERED_TURN_STATUSES_V1, 'stalled']),
-});
+}));
 export type SessionFollowObservedTurnV1 = z.infer<typeof SessionFollowObservedTurnV1Schema>;
 
-const FrontierSequenceSchema = z.number().int().min(0);
+const FrontierSequenceSchema = lazyZodSchema(() => z.number().int().min(0));
 
-export const SessionFollowFrontierV1Schema = z
+export const SessionFollowFrontierV1Schema = lazyZodSchema(() => z
   .object({
     transcriptSeq: FrontierSequenceSchema,
     readyEventSeq: FrontierSequenceSchema,
     agentStateVersion: FrontierSequenceSchema,
     turn: SessionFollowObservedTurnV1Schema.nullable(),
   })
-  .strict();
+  .strict());
 export type SessionFollowFrontierV1 = z.infer<typeof SessionFollowFrontierV1Schema>;
 
-const PersistedSessionFollowFrontierV1Schema = z.object({
+const PersistedSessionFollowFrontierV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   transcriptSeq: FrontierSequenceSchema,
   readyEventSeq: FrontierSequenceSchema,
   agentStateVersion: FrontierSequenceSchema,
   turn: SessionFollowObservedTurnV1Schema.nullable(),
-}).strict();
+}).strict());
 
 export function encodePersistedSessionFollowFrontierV1(frontier: SessionFollowFrontierV1): string {
   const value = SessionFollowFrontierV1Schema.parse(frontier);
@@ -60,7 +62,7 @@ export function encodePersistedSessionFollowFrontierV1(frontier: SessionFollowFr
 
 export function parsePersistedSessionFollowFrontierV1(value: string): SessionFollowFrontierV1 | null {
   try {
-    const parsed = PersistedSessionFollowFrontierV1Schema.safeParse(JSON.parse(value));
+    const parsed = createStoredReadSchema(PersistedSessionFollowFrontierV1Schema).safeParse(JSON.parse(value));
     if (!parsed.success) return null;
     const { v: _version, ...frontier } = parsed.data;
     return frontier;

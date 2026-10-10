@@ -1,4 +1,5 @@
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
+import { expandHomePath, resolveHomeDirFromEnvironment } from '@happier-dev/plugin-sdk/fs';
 import type {
   AgentRuntimeHandoffSurface,
   AgentTerminalSessionStateUpdate,
@@ -9,9 +10,13 @@ import {
   CodexSessionHandoffBundleValidationError,
 } from './bundle.js';
 import { resolveCodexNativeTranscriptPathCandidate } from '../../../rollout/discovery/nativeSessionLog.js';
-import { readExactCodexProviderSessionId } from '../../../../protocol/runtimeDescriptorV1.js';
-import { exportCodexSessionBundle } from './export.js';
+import { buildCodexAgentRuntimeDescriptor, readCanonicalCodexAgentRuntimeDescriptorV1, readExactCodexProviderSessionId } from '../../../../protocol/runtimeDescriptorV1.js';
+import { resolveConfiguredCodexHomePath } from '../../../rollout/discovery/homeEntries.js';
+import { resolveCodexRuntimeHomeEnvironment } from '../../../auth/services/state/sharing/files.js';
+import { resolveExistingCodexIndexedRolloutPath } from '../../../auth/services/state/sharing/reconcileResumeRolloutPath.js';
+import { exportCodexSessionBundle, resolveCodexSource } from './export.js';
 import { importCodexSessionBundle } from './import.js';
+import type { CodexExternalSessionSource } from '../external/models.js';
 
 export const codexHandoffSurface = {
   evaluateAvailability: ({ sessionId, metadata }) => {
@@ -108,6 +113,67 @@ export const codexHandoffSurface = {
         ok: false,
         code: 'target_import_failed',
         message: error instanceof Error ? error.message : 'Codex handoff import failed',
+      };
+    }
+  },
+  resolveExistingState: async (params, context) => {
+    try {
+      context.signal.throwIfAborted();
+      const providerSessionId = readExactCodexProviderSessionId(params.sessionId);
+      const descriptor = readCanonicalCodexAgentRuntimeDescriptorV1(params.metadata.runtimeDescriptorV1);
+      if (!providerSessionId || !descriptor?.backendMode) {
+        return { ok: false, code: 'bundle_invalid', message: 'Codex existing-state handoff requires native identity and supported runtime metadata' };
+      }
+      const env = params.environmentVariables === undefined ? process.env : params.environmentVariables;
+      const codexHome = resolveConfiguredCodexHomePath(env);
+      const homeDir = resolveHomeDirFromEnvironment(env);
+      const environmentVariables = resolveCodexRuntimeHomeEnvironment({
+        env,
+        codexHome,
+        cwd: params.targetDirectory,
+        expandHomePath: rawPath => expandHomePath(rawPath, homeDir),
+      });
+      const indexedPath = await resolveExistingCodexIndexedRolloutPath({
+        processEnv: environmentVariables,
+        cwd: params.targetDirectory,
+        vendorResumeId: providerSessionId,
+        signal: context.signal,
+      });
+      context.signal.throwIfAborted();
+      if (!indexedPath) {
+        return { ok: false, code: 'existing_session_state_unavailable', message: 'Codex native session is unavailable on the target; enable Transfer session data' };
+      }
+      const affinity: CodexExternalSessionSource = resolveCodexSource(params.metadata) ?? { kind: 'codexHome', home: 'user' };
+      const { homePath: _sourceHomePath, ...portableAffinity } = affinity;
+      const source: CodexExternalSessionSource = affinity.home === 'connectedService'
+        ? portableAffinity
+        : { kind: 'codexHome' as const, home: 'user' as const, homePath: codexHome };
+      const runtimeDescriptor = buildCodexAgentRuntimeDescriptor({
+        backendMode: descriptor.backendMode,
+        providerSessionId,
+        home: source.home,
+        connectedServiceId: source.connectedServiceId,
+        connectedServiceProfileId: source.connectedServiceProfileId,
+        connectedServiceGroupId: source.connectedServiceGroupId,
+        homePath: codexHome,
+      });
+      const sessionStateUpdates: AgentTerminalSessionStateUpdate[] = [
+        { fieldId: 'identity.runtimeDescriptor', value: runtimeDescriptor },
+        { fieldId: 'identity.providerSessionId', value: providerSessionId },
+      ];
+      return {
+        ok: true,
+        value: {
+          providerSessionId,
+          source,
+          launch: { directory: params.targetDirectory, environmentVariables, sessionStateUpdates },
+        },
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        code: 'target_import_failed',
+        message: error instanceof Error ? error.message : 'Codex existing-state handoff failed',
       };
     }
   },

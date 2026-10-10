@@ -1378,6 +1378,7 @@ describe('createOpenCodeServerClient (OpenCode V2 beta dialect)', () => {
           data: { 'child / running': { type: 'running' } },
         });
       }
+      if (input.pathAndQuery.includes('/message')) return createJsonResponse({ data: [{ id: 'idle-completed', type: 'idle', outcome: 'succeeded', time: { created: 12 } }], cursor: {} });
       if (input.pathAndQuery.includes('cursor=')) {
         return createJsonResponse({
           data: [
@@ -1409,10 +1410,27 @@ describe('createOpenCodeServerClient (OpenCode V2 beta dialect)', () => {
         },
     ]);
 
-    expect(requests).toHaveLength(3);
+    expect(requests).toHaveLength(4);
     expect(requests[0]?.pathAndQuery).toBe('/api/session?directory=%2Frepo');
     expect(requests[1]?.pathAndQuery).toBe('/api/session?cursor=+cursor+%2F+2+');
     expect(requests[2]?.pathAndQuery).toBe('/api/session/active');
+  });
+
+  it('uses persisted V2 child execution outcomes instead of treating every inactive child as successful', async () => {
+    const request = vi.fn<ManagedServiceHandle['request']>(async (input) => {
+      if (input.pathAndQuery === '/api/session/active') return createJsonResponse({ data: {} });
+      if (input.pathAndQuery.includes('/message')) {
+        const outcome = input.pathAndQuery.includes('failed-child') ? 'failed' : input.pathAndQuery.includes('aborted-child') ? 'interrupted' : 'succeeded';
+        return createJsonResponse({ data: [{ id: 'idle-outcome', type: 'idle', outcome, time: { created: 12 } }], cursor: {} });
+      }
+      return createJsonResponse({ data: ['done-child', 'failed-child', 'aborted-child'].map((id) => ({ id, parentID: 'parent-1' })), cursor: {} });
+    });
+    const client = createClient({ request, directory: '/repo', dialect: 'v2' });
+    await expect(client.sessionChildInventory({ parentSessionId: 'parent-1' })).resolves.toEqual([
+      { info: { id: 'done-child', parentID: 'parent-1' }, status: 'completed' },
+      { info: { id: 'failed-child', parentID: 'parent-1' }, status: 'failed' },
+      { info: { id: 'aborted-child', parentID: 'parent-1' }, status: 'aborted' },
+    ]);
   });
 
   it('pages V2 session messages in order and normalizes them into the projection shape', async () => {

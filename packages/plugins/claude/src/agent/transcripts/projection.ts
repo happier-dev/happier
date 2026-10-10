@@ -1,3 +1,5 @@
+import { projectClaudeTaskNotificationToolResult } from './taskNotification.js';
+
 import {
     AgentExternalSessionTranscriptRawRecordSchema,
     type AgentExternalSessionTranscriptItem,
@@ -196,13 +198,20 @@ function projectClaudeJsonlLine(params: Readonly<{
     // File paths stay private paging state; transcript item ids are source-local and recipient-safe.
     const { id: stableId, createdAtMs } = readClaudeJsonlLineIdentity(params);
 
-    const classification = classifyClaudeNativeTranscriptRow(params.lineValue);
+    const classification = classifyClaudeNativeTranscriptRow(projectClaudeTaskNotificationToolResult(params.lineValue) ?? params.lineValue);
     const localId = classification.row
         ? buildClaudeJsonlProviderFactLocalId(classification.row, {
             fileRelPath: params.fileRelPath,
             lineStartOffsetBytes: params.lineStartOffsetBytes,
         })
         : null;
+    if (classification.content.kind === 'peer_message') {
+        const raw = createClaudeAgentMessageRaw(classification.content.text);
+        return raw ? {
+            items: [{ id: stableId, localId, createdAtMs, messageRole: 'agent', raw }],
+            withheldEveryPart: false,
+        } : noItems;
+    }
     if (
         classification.rawType
         && classification.rawType !== 'user'

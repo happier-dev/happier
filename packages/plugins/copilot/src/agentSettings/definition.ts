@@ -8,7 +8,7 @@ export const COPILOT_AGENT_SETTINGS_CONTRIBUTION = {
   scope: 'account',
   fields: [],
   presentation: {
-    icon: { ionName: 'logo-github', color: { kind: 'theme', token: 'blue' } },
+    icon: { ionName: 'github-logo', color: { kind: 'theme', token: 'blue' } },
     subagentSections: [],
     sections: [],
   },

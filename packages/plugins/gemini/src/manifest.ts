@@ -141,7 +141,7 @@ export const GEMINI_PLUGIN = definePlugin({
       connectedAccountLaunch: {
         switchContinuity: {
           continuityMode: 'restart_same_home',
-          supportedTransitions: ['native_to_connected', 'connected_to_connected'],
+          supportedTransitions: ['native_to_connected', 'connected_to_connected', 'same_connected_group'],
         },
         fileEnvironmentUses: [{
           purpose: 'model_upstream',
@@ -157,6 +157,7 @@ export const GEMINI_PLUGIN = definePlugin({
         ],
         stateSharingDescriptor: geminiConnectedServiceStateSharingDescriptor,
         continuity: {
+          generationApplicationScope: 'per_session_runtime',
           runtimeAuthAdapter: createGeminiConnectedServiceRuntimeAuthAdapter(),
         },
       },

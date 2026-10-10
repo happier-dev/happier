@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
 import { StoredJsonContentEnvelopeSchema } from '../../storage/storedJsonContentEnvelope.js';
+import { createStoredReadSchema } from '../../json/storedReadSchema.js';
+import { SessionOrganizationPinSchema, SessionOrganizationPinStoredSchema } from './pins.js';
+import { SessionOrganizationOrderEntryStoredSchema, SessionOrganizationLabelStoredSchema } from './ordering.js';
 import {
   CreateOrUpdateSessionOrganizationFolderRequestSchema,
   CreateOrUpdateSessionOrganizationTagRequestSchema,
@@ -32,6 +35,44 @@ import {
 } from './index.js';
 
 describe('session organization protocol contracts', () => {
+  it('reads retained pins as list-only, drops stored extras and keeps explicit memberships', () => {
+    // Current ../0.2 at 37a6541578749067b49d4579be8c752c9591b8c8 (these paths clean):
+    // packages/protocol/src/sessionOrganization/pins.ts and the UI setSessionPin writer
+    // emit only sessionId, sortKey and pinnedAt; no implicit rail membership exists.
+    const stored = SessionOrganizationPinStoredSchema;
+    expect(stored.parse({ sessionId: 's1', sortKey: 'a', pinnedAt: 10, future: true }))
+      .toEqual({ sessionId: 's1', sortKey: 'a', pinnedAt: 10, listPinned: true, railPinned: false });
+    expect(stored.parse({ sessionId: 's1', sortKey: 'a', pinnedAt: 10, listPinned: false, railPinned: true, future: true }))
+      .toMatchObject({ listPinned: false, railPinned: true });
+    expect(stored.safeParse({ sessionId: 's1', sortKey: 'a', pinnedAt: 10, listPinned: 'true' }).success).toBe(false);
+    expect(stored.safeParse({ sessionId: 's1', sortKey: 'a', pinnedAt: 10, listPinned: false, railPinned: false }).success).toBe(false);
+    expect(SessionOrganizationPinSchema.safeParse({ sessionId: 's1', sortKey: 'a', pinnedAt: 10, listPinned: true, railPinned: false, future: true }).success).toBe(false);
+  });
+
+  it('projects known stored order and label fields while mutation ingress remains closed', () => {
+    const order = { scopeKind: 'pinned', scopeKey: 'root', itemKind: 'session', itemKey: 's1', sortKey: 'a' };
+    expect(SessionOrganizationOrderEntryStoredSchema.parse({ ...order, future: true })).toEqual(order);
+    const label = { labelKind: 'workspace', scopeKey: 'w1', display: { t: 'plain', v: { label: 'Work' }, future: true }, archivedAt: null, createdAt: 1, updatedAt: 2 };
+    expect(SessionOrganizationLabelStoredSchema.parse({ ...label, future: true })).toEqual({ ...label, display: { t: 'plain', v: { label: 'Work' } } });
+    expect(SetSessionPinRequestSchema.safeParse({ pinned: true, surface: 'rail' }).success).toBe(true);
+    expect(SetSessionPinRequestSchema.safeParse({ pinned: true, surface: 'other' }).success).toBe(false);
+    expect(SetSessionPinRequestSchema.safeParse({ pinned: true, surface: 'rail', future: true }).success).toBe(false);
+  });
+
+  it('projects retained pin leaves once at the persisted snapshot response boundary', () => {
+    const response = createStoredReadSchema(SessionOrganizationSnapshotResponseSchema).parse({
+      snapshot: {
+        schemaVersion: SESSION_ORGANIZATION_SNAPSHOT_VERSION,
+        version: 1,
+        pins: [{ sessionId: 's1', sortKey: 'a', pinnedAt: 10, future: true }],
+        folders: [], folderAssignments: [], tags: [], tagAssignments: [], orderEntries: [], labels: [],
+        future: true,
+      },
+      future: true,
+    });
+    expect(response.snapshot.pins).toEqual([{ sessionId: 's1', sortKey: 'a', pinnedAt: 10, listPinned: true, railPinned: false }]);
+    expect(Object.keys(response)).toEqual(['snapshot']);
+  });
   it('uses the canonical stored JSON content envelope for private display content', () => {
     expect(SessionOrganizationContentEnvelopeSchema.parse({ t: 'plain', v: { name: 'Work' } }))
       .toEqual(StoredJsonContentEnvelopeSchema.parse({ t: 'plain', v: { name: 'Work' } }));
@@ -178,7 +219,7 @@ describe('session organization protocol contracts', () => {
       snapshot: {
         schemaVersion: SESSION_ORGANIZATION_SNAPSHOT_VERSION,
         version: 2,
-        pins: [{ sessionId: 'session_1', sortKey: 'pin-a', pinnedAt: 10 }],
+        pins: [{ sessionId: 'session_1', sortKey: 'pin-a', pinnedAt: 10, listPinned: true, railPinned: false }],
         folders: [
           {
             folderId: 'folder_1',

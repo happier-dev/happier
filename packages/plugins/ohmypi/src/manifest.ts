@@ -119,7 +119,7 @@ export const OH_MY_PI_PLUGIN = definePlugin({
             externalLinkedTakeover: { writerSafety: 'unsupported' },
             sources: [{
               sourceKind: 'ohMyPiAgentDir',
-              contentSearch: false,
+              contentSearch: true,
               schema: {
                 fields: [
                   { kind: 'literal', name: 'kind', value: 'ohMyPiAgentDir' },
@@ -154,6 +154,7 @@ export const OH_MY_PI_PLUGIN = definePlugin({
       connectedAccountLaunch: {
         stateSharingDescriptor: ohMyPiConnectedServiceStateSharingDescriptor,
         continuity: {
+          generationApplicationScope: 'per_session_runtime',
           verifyResumeReachable: verifyResumeReachableOhMyPi,
         },
       },

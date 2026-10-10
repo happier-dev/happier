@@ -76,6 +76,7 @@ export function runToolCallsPhase(params: Readonly<{
                         // Update existing message with tool execution details
                         const message = state.messages.get(existingMessageId);
                         if (message?.tool) {
+                            if (msg.meta) message.meta = { ...(message.meta ?? {}), ...msg.meta };
                             message.realID = msg.id;
                             const runtimeSnapshotKind = readRuntimeFullToolSnapshotKind(msg);
                             const incomingSeq = normalizeTranscriptSeq(msg.seq);

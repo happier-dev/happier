@@ -4,7 +4,9 @@ import { basename, join } from 'node:path';
 
 import {
   scanJsonlSessionFile,
+  ExternalSessionContentSearchYield,
 } from '@happier-dev/plugin-sdk/sessions/file-stores';
+import type { AgentExternalSessionCandidate } from '@happier-dev/plugin-sdk/sessions/external';
 import {
   deriveExternalSessionActivity,
   HAPPIER_BASE_SYSTEM_PROMPT_ATTACHMENTS_V1,
@@ -22,6 +24,7 @@ export type OhMyPiExternalSessionCandidate = Readonly<{
   updatedAtMs: number;
   createdAtMs?: number;
   activity?: ReturnType<typeof deriveExternalSessionActivity>;
+  match?: AgentExternalSessionCandidate['match'];
   details: Readonly<{
     workingDirectory: string | null;
     agentDir: string;
@@ -412,6 +415,8 @@ export async function listOhMyPiSessionCandidates(params: Readonly<{
   searchTerm?: string;
   signal?: AbortSignal;
   resultBudget?: OhMyPiCandidateResultBudget;
+  searchCandidate?: (candidate: OhMyPiExternalSessionCandidate) => Promise<OhMyPiExternalSessionCandidate | null>;
+  checkWork?: () => void;
 }>): Promise<Readonly<{
   candidates: OhMyPiExternalSessionCandidate[];
   nextCursor: string | null;
@@ -423,7 +428,7 @@ export async function listOhMyPiSessionCandidates(params: Readonly<{
   const agentDir = resolveOhMyPiAgentDir({ source: params.source, env });
   const sessionsRoot = await resolveOhMyPiSessionsRoot({ source: params.source, env });
   const searchTerm = typeof params.searchTerm === 'string'
-    ? params.searchTerm.trim().toLowerCase()
+    ? params.searchCandidate ? params.searchTerm : params.searchTerm.trim().toLowerCase()
     : '';
   const limit = Math.max(1, Math.trunc(params.limit));
   const decoded = params.cursor ? decodeCandidateCursor(params.cursor) : null;
@@ -583,19 +588,26 @@ export async function listOhMyPiSessionCandidates(params: Readonly<{
           let identityToken: string;
           let candidate: OhMyPiExternalSessionCandidate | null = null;
           if (phase === 'scan') {
-            const inspected = await inspectCandidateFile({
-              filePath,
-              sessionRoot: rootPath,
-              agentDir,
-              env,
-              searchTerm,
-            }).catch((error: unknown) => {
-              if (error instanceof OhMyPiCandidateSourceChangedError) throw error;
-              return null;
-            });
-            if (!inspected) continue;
-            identityToken = inspected.identityToken;
-            candidate = inspected.candidate;
+            try {
+              params.checkWork?.();
+              const inspected = await inspectCandidateFile({
+                filePath,
+                sessionRoot: rootPath,
+                agentDir,
+                env,
+                searchTerm: params.searchCandidate ? '' : searchTerm,
+              }).catch((error: unknown) => {
+                if (error instanceof OhMyPiCandidateSourceChangedError) throw error;
+                return null;
+              });
+              if (!inspected) continue;
+              identityToken = inspected.identityToken;
+              candidate = inspected.candidate;
+              if (candidate && params.searchCandidate) candidate = await params.searchCandidate(candidate);
+            } catch (error) {
+              if (!(error instanceof ExternalSessionContentSearchYield)) throw error;
+              return { candidates, nextCursor: cursorBeforeCandidate, searchIncomplete: true };
+            }
           } else {
             const metadata = await lstat(filePath).catch(() => null);
             if (!metadata?.isFile() || metadata.isSymbolicLink()) {

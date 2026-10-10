@@ -193,13 +193,13 @@ export const CODEX_PLUGIN = definePlugin({
                   },
                 ],
               },
-              // OpenAI Codex rust-v0.147.0's checksum-pinned x64 Windows package
-              // expands to 370,442,135 bytes, including one 298,668,336-byte
-              // executable. The 384 MiB ceilings retain bounded headroom without
-              // weakening the shared archive, path, or compression-ratio guards.
+              // The verified rust-v0.161.0 Linux package includes voice resources
+              // beyond the two installed executables and exceeds 384 MiB total.
+              // Reuse the manifest schema's 512 MiB expanded archive ceiling;
+              // retain the 384 MiB file ceiling for the observed native binaries.
               archiveExtractionLimits: {
                 maxFileBytes: 384 * 1024 * 1024,
-                maxExpandedBytes: 384 * 1024 * 1024,
+                maxExpandedBytes: 512 * 1024 * 1024,
               },
             },
             manual: { kind: 'command' },
@@ -345,6 +345,7 @@ export const CODEX_PLUGIN = definePlugin({
         },
         stateSharingDescriptor: AGENT_STATE_SHARING_DESCRIPTOR,
         continuity: {
+          generationApplicationScope: 'per_session_runtime',
           nativeAuthCodec: createCodexConnectedAccountNativeAuthCodec(),
           runtimeAuthAdapter: createCodexConnectedServiceRuntimeAuthAdapter(),
           verifyResumeReachable: verifyResumeReachableCodex,

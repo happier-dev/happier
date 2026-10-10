@@ -24,6 +24,29 @@ import {
 } from '../index.js';
 
 describe('DaemonExecutionRunMarkerSchema', () => {
+  it('preserves the host-resolved selection through marker writes, stored reads and public listings', () => {
+    const resolvedSelection = {
+      source: 'inherited', modelId: 'applied-model',
+      modelSelection: { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: 'parent-provider', modelId: 'applied-model' },
+      connectedServices: null,
+    } as const;
+    const marker = { pid: 123, happySessionId: 'session_1', runId: 'run_selection', callId: 'call_1', sidechainId: 'side_1',
+      intent: 'delegate', backendTarget: { kind: 'backend', backendId: 'codex' }, status: 'running', startedAtMs: 1, updatedAtMs: 1,
+      resolvedSelection };
+    const stored = DaemonExecutionRunMarkerOwnerWriteSchema.parse(marker);
+    const read = DaemonExecutionRunMarkerPersistenceReadSchema.parse(stored);
+    expect(DaemonExecutionRunListResponseSchema.parse({ runs: [read] }).runs[0]).toMatchObject({ resolvedSelection });
+    expect(DaemonExecutionRunMarkerOwnerWriteSchema.safeParse({ ...marker,
+      resolvedSelection: { ...resolvedSelection, accessToken: 'must-not-be-admitted' },
+    }).success).toBe(false);
+    expect(DaemonExecutionRunMarkerOwnerWriteSchema.safeParse({ ...marker,
+      resolvedSelection: { ...resolvedSelection, modelId: 'pending-model' },
+    }).success).toBe(false);
+    const { resolvedSelection: _selection, ...predecessorMarker } = marker;
+    expect(DaemonExecutionRunMarkerPersistenceReadSchema.parse(predecessorMarker))
+      .not.toHaveProperty('resolvedSelection');
+  });
+
   it('binds broker authority lookup to one Home, Machine, Account, Run occurrence, and nonce', () => {
     const request = {
       v: 1 as const,

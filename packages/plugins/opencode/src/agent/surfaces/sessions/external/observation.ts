@@ -108,6 +108,13 @@ function buildResourceKey(source: NormalizedOpenCodeObservationSource): string {
   return resourceKey;
 }
 
+/** Source-wide accounting and linked Session observation share the endpoint. */
+export function describeOpenCodeAccountingSource(source: AgentExternalSessionsResolvedIdentity['source'],
+  env: Readonly<Record<string, string | undefined>>) {
+  return { resourceKey: buildResourceKey(normalizedSourceOrThrow({ source, remoteSessionId: '', linkData: {} }, env)),
+    changeObservation: 'observe_resource' as const };
+}
+
 function parseResourceKey(resourceKey: string): Readonly<{
   mode: 'managed' | 'external';
   endpointIdentity: string;
@@ -220,9 +227,15 @@ function readEventTranscriptChange(event: OpenCodeGlobalEvent):
     directory: string;
     remoteSessionId: string;
   }>
-  | Readonly<{ kind: 'reconcile' }>
+  | Readonly<{ kind: 'reconcile'; nativeSessionId?: string }>
   | null {
   const payload = readEventPayload(event);
+  const directory = normalizeString(event.directory);
+  const remoteSessionId = readNonBlankOpaqueIdentifier(payload.properties?.sessionID)
+    ?? readNonBlankOpaqueIdentifier(asRecord(payload.properties?.session)?.id)
+    ?? readNonBlankOpaqueIdentifier(asRecord(payload.properties?.part)?.sessionID)
+    ?? readNonBlankOpaqueIdentifier(asRecord(payload.properties?.info)?.sessionID)
+    ?? '';
   if (
     payload.type !== 'session.updated'
     && payload.type !== 'message.updated'
@@ -230,17 +243,11 @@ function readEventTranscriptChange(event: OpenCodeGlobalEvent):
     && payload.type !== 'message.part.created'
     && payload.type !== 'message.part.delta'
   ) {
-    return null;
+    return remoteSessionId ? { kind: 'reconcile', nativeSessionId: remoteSessionId } : null;
   }
-  const directory = normalizeString(event.directory);
-  const remoteSessionId = readNonBlankOpaqueIdentifier(payload.properties?.sessionID)
-    ?? readNonBlankOpaqueIdentifier(asRecord(payload.properties?.session)?.id)
-    ?? readNonBlankOpaqueIdentifier(asRecord(payload.properties?.part)?.sessionID)
-    ?? readNonBlankOpaqueIdentifier(asRecord(payload.properties?.info)?.sessionID)
-    ?? '';
   return directory && remoteSessionId
     ? { kind: 'correlated', directory, remoteSessionId }
-    : { kind: 'reconcile' };
+    : { kind: 'reconcile', ...(remoteSessionId ? { nativeSessionId: remoteSessionId } : {}) };
 }
 
 function retrievalFailedFact(observedAtMs: number): ExternalAgentObservationLeafFact {
@@ -313,16 +320,18 @@ export function createOpenCodeExternalSessionObservationContribution(params: Rea
             request.requestReconcile();
             return;
           }
+          // The native V1 keepalive is an event frame, not a source change.
+          if (readEventPayload(event).type === 'server.heartbeat') return;
           const transcriptChange = readEventTranscriptChange(event);
           if (transcriptChange?.kind === 'correlated') {
             request.requestTranscriptRefresh(buildLinkKey(
               transcriptChange.directory,
               transcriptChange.remoteSessionId,
-            ));
+            ), transcriptChange.remoteSessionId);
             return;
           }
           if (transcriptChange?.kind === 'reconcile') {
-            request.requestReconcile();
+            request.requestReconcile(transcriptChange.nativeSessionId);
             return;
           }
           request.requestReconcile();

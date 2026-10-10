@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
+import { SessionPermissionAnsweringClientCategoryV1Schema } from '@happier-dev/protocol/sessions/permissions/respondRpcParamsV1';
 
 const AgentStateObjectSchema = z.object({
     controlledByUser: z.boolean().nullish(),
@@ -31,6 +32,8 @@ const AgentStateObjectSchema = z.object({
         arguments: z.any(),
         createdAt: z.number().nullish(),
         completedAt: z.number().nullish(),
+        turnId: z.string().trim().min(1).optional().catch(undefined),
+        answeringClientCategory: SessionPermissionAnsweringClientCategoryV1Schema.optional().catch(undefined),
         status: z.enum(['canceled', 'denied', 'approved']),
         reason: z.string().nullish(),
         mode: z.string().nullish(),

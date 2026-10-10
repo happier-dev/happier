@@ -14,6 +14,51 @@ const titlePermissions = {
 };
 
 describe('resolveClaudeNativeLaunchSettings', () => {
+  it.each([null, 'https://external.example.test'])(
+    'extracts only helper pins from the existing managed launch environment for %s',
+    async (normalizedUrl) => {
+      const result = await resolveClaudeNativeLaunchSettings({
+        settings: { get: () => null, snapshot: async () => ({ values: {} }) },
+        launchEnv: {
+          ANTHROPIC_DEFAULT_HAIKU_MODEL: 'managed-helper',
+          ANTHROPIC_AUTH_TOKEN: 'never-copy-to-settings',
+        },
+        includeAdvancedOptions: false,
+        providerBinding: {
+          upstream: { protocol: 'anthropic', normalizedUrl, credential: 'apiKey' },
+        },
+      });
+      expect(result.helperModelEnv).toEqual(normalizedUrl === null
+        ? { ANTHROPIC_DEFAULT_HAIKU_MODEL: 'managed-helper' }
+        : undefined);
+    },
+  );
+
+  it.each(['interactive_terminal', 'noninteractive_sdk'] as const)(
+    'keeps managed helper pins in one scoped settings overlay without changing definitions for %s',
+    (interactionKind) => {
+      const definitions = { reviewer: { description: 'Review changes', model: 'explicit-full-model-id', prompt: 'Review carefully' } };
+      const helperModelEnv = {
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: 'selected-model',
+        ANTHROPIC_DEFAULT_SONNET_MODEL: 'explicit-default',
+        ANTHROPIC_DEFAULT_OPUS_MODEL: 'selected-model',
+      };
+      const args = resolveClaudeLaunchSettingsOverlayArgs({
+        args: ['--agents', JSON.stringify(definitions), '--settings', JSON.stringify({
+          env: { ANTHROPIC_DEFAULT_HAIKU_MODEL: 'native-file-pin', UNRELATED: 'preserved' },
+        })],
+        interactionKind,
+        permissionMode: 'default',
+        launchSettings: {},
+        helperModelEnv,
+      });
+      expect(args.filter((arg) => arg === '--settings')).toHaveLength(1);
+      const settings = JSON.parse(args[args.indexOf('--settings') + 1] ?? '{}');
+      expect(settings.env).toEqual({ ...helperModelEnv, UNRELATED: 'preserved' });
+      expect(JSON.parse(args[args.indexOf('--agents') + 1] ?? '{}')).toEqual(definitions);
+    },
+  );
+
   it.each(['interactive_terminal', 'noninteractive_sdk'] as const)(
     'denies native workspace writes under bypass for %s while keeping Happier tools available',
     (interactionKind) => {
@@ -122,6 +167,7 @@ describe('resolveClaudeNativeLaunchSettings', () => {
       await rm(settingsDir, { recursive: true, force: true });
     }
   });
+
 
   it('inherits the host user identity required by local Claude auth unless explicitly unset', () => {
     expect(resolveClaudeNativeBaseLaunchEnvironment({

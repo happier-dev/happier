@@ -44,25 +44,26 @@ export type CodexAppServerEvent =
     }>)
   | (CodexAppServerEventBase & Readonly<{
       kind: 'message-delta';
-      turnId: string;
+      turnId?: string;
+      messageId?: string;
       delta: unknown;
     }>)
   | (CodexAppServerEventBase & Readonly<{
       kind: 'tool-call';
-      turnId: string;
+      turnId?: string;
       toolCallId: string;
       toolName: string;
       toolInput: unknown;
     }>)
   | (CodexAppServerEventBase & Readonly<{
       kind: 'tool-progress';
-      turnId: string;
+      turnId?: string;
       toolCallId: string;
       progress: unknown;
     }>)
   | (CodexAppServerEventBase & Readonly<{
       kind: 'tool-result';
-      turnId: string;
+      turnId?: string;
       toolCallId: string;
       output: unknown;
       isError?: boolean;

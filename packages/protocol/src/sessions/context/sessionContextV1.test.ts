@@ -3,6 +3,18 @@ import { buildSessionInstructionsContextIntentV1 } from '../../actions/sessionSt
 import { admitSessionContextIntentV1, readSessionMemoryEnabledV1, SessionContextIntentV1Schema, writeSessionContextIntentV1ToMetadata } from './sessionContextV1.js';
 
 describe('Session context field owner', () => {
+  it('does not rewrite Session metadata for already-applied list intents', () => {
+    const metadata = { work: { memoryEnabled: false, promptStack: [
+      { id: 'first', ref: { kind: 'doc' as const, artifactId: 'first' }, enabled: false, placement: 'system_append' as const, maxChars: 3000 },
+      { id: 'second', ref: { kind: 'doc' as const, artifactId: 'second' }, enabled: true, placement: 'composer_insert' as const },
+    ], sessionRolesV1: { notes: 'Retain Notes' } } };
+    for (const intent of [
+      { kind: 'set_enabled' as const, entryId: 'first', enabled: false },
+      { kind: 'set_budget' as const, entryId: 'first', maxChars: 3000 },
+      { kind: 'detach' as const, entryId: 'absent' },
+      { kind: 'reorder' as const, entryId: 'first', siblingId: 'second', position: 'before' as const },
+    ]) expect(writeSessionContextIntentV1ToMetadata(metadata, intent)).toBe(metadata);
+  });
   it('requires a PromptDoc for reserved Session Instructions while admitting ordinary memory context', async () => {
     const intent = buildSessionInstructionsContextIntentV1({ kind: 'doc', artifactId: 'selected', serverId: 'home-2' });
     const readMemoryHeader = async () => ({ header: { v: 1, kind: 'memory_doc.v1', title: 'Memory' } });

@@ -9,7 +9,8 @@ import {
 import { mergeAuthoredWithGeneratedAgentFacts } from './definitions/generatedFacts.js';
 import type { ProviderConnectedServicesAdapter } from './runtime/adjunctAdapters/types.js';
 
-export const DEFAULT_AGENT_ID: BundledAgentId = 'claude';
+export { DEFAULT_AGENT_ID } from '@happier-dev/protocol/agents/defaultAgent';
+import { DEFAULT_AGENT_ID } from '@happier-dev/protocol/agents/defaultAgent';
 
 const AUTHORED_CANONICAL_AGENTS_CORE = {} as const satisfies Partial<Record<CanonicalAgentId, AgentCore>>;
 

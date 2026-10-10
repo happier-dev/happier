@@ -6,7 +6,7 @@ import { AGENT_IDS } from '../types.js';
 import { LEGACY_CONFIGURED_BACKEND_SENTINEL_ID } from '../compat/legacyConfiguredBackend.js';
 import {
   CANONICAL_AGENT_CLI_RUNTIME_SPECS,
-  getAgentCliRuntimeSpec,
+  getAgentCliRuntimeSpec as readAgentCliRuntimeSpec,
   getAgentCliSetupRecommendedIds,
   getAgentCliSetupSupportedIds,
   type AgentCliRuntimeSpec,
@@ -15,10 +15,24 @@ import {
 import * as legacyCustomAcpCompat from '../compat/customAcp.js';
 import { getAgentCliRuntimeSpecForLookupId } from './runtimeLookup.js';
 
+function getAgentCliRuntimeSpec(id: AgentCliRuntimeSpec['id']): AgentCliRuntimeSpec {
+  const spec = readAgentCliRuntimeSpec(id);
+  if (!spec) throw new Error(`Expected native CLI metadata for ${id}`);
+  return spec;
+}
+
 describe('AGENT_CLI_RUNTIME_SPECS', () => {
+  it('does not invent native CLI facts when an Agent has no declared executable', () => {
+    expect(agentCliRuntimeModule.projectAgentCliRuntimeSpec('codex', undefined)).toBeNull();
+  });
+
   it('projects canonical runtime specs from bundled native CLI metadata', () => {
     for (const providerId of AGENT_IDS) {
-      expect(BUNDLED_AGENT_DEFINITIONS_BY_ID[providerId]).toHaveProperty('cli');
+      if (!BUNDLED_AGENT_DEFINITIONS_BY_ID[providerId].cli) {
+        expect(readAgentCliRuntimeSpec(providerId)).toBeNull();
+        expect(getAgentCliSetupSupportedIds()).not.toContain(providerId);
+        continue;
+      }
       expect(BUNDLED_AGENT_DEFINITIONS_BY_ID[providerId]).not.toHaveProperty('agentCliRuntime');
       expect(getAgentCliRuntimeSpec(providerId).id).toBe(providerId);
     }

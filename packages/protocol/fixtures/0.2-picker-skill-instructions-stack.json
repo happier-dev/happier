@@ -1,0 +1,98 @@
+{
+  "provenance": {
+    "head": "37a6541578749067b49d4579be8c752c9591b8c8",
+    "paths": [
+      "packages/protocol/src/promptLibrary/promptStacksV1.ts",
+      "packages/protocol/src/promptLibrary/promptPlacementV1.ts",
+      "apps/ui/sources/components/settings/prompts/stacks/PromptStackPromptPickerScreen.tsx",
+      "openclaw/happier-session-control/skills/happier-session-control/SKILL.md"
+    ],
+    "status": "",
+    "diff": "",
+    "capture": "Execute the real picker readStackEntries/writeStackEntries/add callback with deterministic UUID and setting/router boundaries.",
+    "capturedAt": "2026-10-08",
+    "captureCommand": "node /tmp/happier-d2-capture-predecessor-picker.mjs",
+    "artifactBasis": "Real predecessor SKILL.md bytes in a skills.skill_md_v1 bundle, with neighboring prompt_doc.v2 artifacts at the inspected predecessor header/body contract."
+  },
+  "stacks": {
+    "v": 1,
+    "surfaces": {
+      "coding": [
+        {
+          "id": "before-entry",
+          "ref": {
+            "kind": "doc",
+            "artifactId": "before-doc"
+          },
+          "enabled": true,
+          "placement": "system_append",
+          "editPolicy": "user_only"
+        },
+        {
+          "id": "skill-entry",
+          "ref": {
+            "kind": "bundle",
+            "artifactId": "session-control-skill"
+          },
+          "enabled": true,
+          "placement": "skill_instructions",
+          "editPolicy": "user_only"
+        },
+        {
+          "id": "after-entry",
+          "ref": {
+            "kind": "doc",
+            "artifactId": "after-doc"
+          },
+          "enabled": true,
+          "placement": "system_append",
+          "editPolicy": "user_only"
+        }
+      ],
+      "voice": [],
+      "profilesById": {}
+    }
+  },
+  "artifacts": [
+    {
+      "id": "before-doc",
+      "revision": {
+        "headerVersion": 2,
+        "bodyVersion": 3
+      },
+      "header": {
+        "v": 1,
+        "kind": "prompt_doc.v2",
+        "title": "Before skill"
+      },
+      "body": "{\"v\":1,\"markdown\":\"Before the skill: preserve the working tree.\",\"createdAtMs\":1,\"updatedAtMs\":2}"
+    },
+    {
+      "id": "session-control-skill",
+      "revision": {
+        "headerVersion": 4,
+        "bodyVersion": 5
+      },
+      "header": {
+        "v": 1,
+        "kind": "prompt_bundle.v2",
+        "title": "Happier session control",
+        "bundleSchemaId": "skills.skill_md_v1"
+      },
+      "body": "{\"v\":1,\"entries\":[{\"path\":\"SKILL.md\",\"contentKind\":\"utf8\",\"contentBase64\":\"LS0tCm5hbWU6IGhhcHBpZXItc2Vzc2lvbi1jb250cm9sCmRlc2NyaXB0aW9uOiBNYW5hZ2UgSGFwcGllciBzZXNzaW9ucyAobGlzdC9zdGF0dXMvc2VuZC93YWl0L2hpc3Rvcnkvc3RvcCArIGV4ZWN1dGlvbiBydW5zKSB2aWEgdGhlIGhhcHBpZXIgQ0xJIEpTT04gY29udHJhY3QuCm1ldGFkYXRhOiB7Im9wZW5jbGF3Ijp7InJlcXVpcmVzIjp7ImJpbnMiOlsiaGFwcGllciJdfSwiaG9tZXBhZ2UiOiJodHRwczovL2dpdGh1Yi5jb20vaGFwcGllci1kZXYvaGFwcGllciJ9fQotLS0KCiMgSGFwcGllciBTZXNzaW9uIENvbnRyb2wgKENMSSBKU09OKQoKVGhpcyBza2lsbCBlbmFibGVzIGFuIGFnZW50IGZyYW1ld29yayAoZm9yIGV4YW1wbGUgT3BlbkNsYXcpIHRvIGNvbnRyb2wgSGFwcGllciBzZXNzaW9ucyB1c2luZyB0aGUgKipleGlzdGluZyoqIGBoYXBwaWVyYCBDTEkgaW4gYC0tanNvbmAgbW9kZS4KCiMjIFByZXJlcXVpc2l0ZXMKCi0gVGhlIGBoYXBwaWVyYCBDTEkgaXMgaW5zdGFsbGVkIGFuZCBhdXRoZW50aWNhdGVkLgotIElmIHVzaW5nIG11bHRpcGxlIHNlcnZlcnMvcHJvZmlsZXMsIHBhc3Mgc2VydmVyIHNlbGVjdGlvbiBmbGFncyAqKmJlZm9yZSoqIGBzZXNzaW9uYCAocHJlZml4LW9ubHkpOgogIC0gYGhhcHBpZXIgLS1zZXJ2ZXIgPHByb2ZpbGUtaWQtb3ItbmFtZT4gc2Vzc2lvbiBsaXN0IC0tanNvbmAKICAtIGBoYXBwaWVyIC0tc2VydmVyLXVybCA8dXJsPiAtLXdlYmFwcC11cmwgPHVybD4gc2Vzc2lvbiBsaXN0IC0tanNvbmAKCiMjIENvbnRyYWN0CgpBbGwgSlNPTiBvdXRwdXRzIGFyZSBhIHB1cmUtc3Rkb3V0IGVudmVsb3BlOgoKYGBganNvbgp7ICJ2IjogMSwgIm9rIjogdHJ1ZSwgImtpbmQiOiAiLi4uIiwgImRhdGEiOiB7fSB9CmBgYAoKb3I6CgpgYGBqc29uCnsgInYiOiAxLCAib2siOiBmYWxzZSwgImtpbmQiOiAiLi4uIiwgImVycm9yIjogeyAiY29kZSI6ICIuLi4iIH0gfQpgYGAKCkNvbW1vbiBlcnJvciBjb2RlcyB0byBoYW5kbGU6CgotIGBub3RfYXV0aGVudGljYXRlZGA6IHJ1biBgaGFwcGllciBhdXRoIGxvZ2luYCBvbiB0aGUgaG9zdCAob3IgbW91bnQvcHJvdmlkZSBhIHZhbGlkIGBIQVBQSUVSX0hPTUVfRElSYCkuCi0gYHNlc3Npb25faWRfYW1iaWd1b3VzYDogcGljayBkZXRlcm1pbmlzdGljYWxseSBmcm9tIGBlcnJvci5jYW5kaWRhdGVzYCAocHJlZmVyIGV4YWN0IGlkOyBvdGhlcndpc2UgYXNrIHRoZSB1c2VyKS4KLSBgc2Vzc2lvbl9ub3RfZm91bmRgOiBjYWxsIGBoYXBwaWVyIHNlc3Npb24gbGlzdCAtLWpzb25gIGFuZCByZXRyeS4KLSBgdW5zdXBwb3J0ZWRgOiBmZWF0dXJlIGRpc2FibGVkIGJ5IHNlcnZlciBwb2xpY3kgb3IgYmFja2VuZCBkb2VzbuKAmXQgc3VwcG9ydCB0aGUgcmVxdWVzdGVkIGludGVudC4KCiMjIEF1dGggQ29tbWFuZHMgKEpTT04pCgpDaGVjayBhdXRoIHN0YXR1cyB3aXRob3V0IHNjcmFwaW5nIGh1bWFuIG91dHB1dDoKCmBgYGJhc2gKaGFwcGllciBhdXRoIHN0YXR1cyAtLWpzb24KYGBgCgojIyBTZXNzaW9uIENvbW1hbmRzCgpMaXN0IHNlc3Npb25zOgoKYGBgYmFzaApoYXBwaWVyIHNlc3Npb24gbGlzdCAtLWpzb24KYGBgCgpJbnNwZWN0IHNlc3Npb24gc3RhdHVzIChzZXJ2ZXIgc25hcHNob3QpOgoKYGBgYmFzaApoYXBwaWVyIHNlc3Npb24gc3RhdHVzIDxzZXNzaW9uLWlkLW9yLXByZWZpeD4gLS1qc29uCmBgYAoKSW5zcGVjdCBzZXNzaW9uIHN0YXR1cyB3aXRoIGEgYmVzdC1lZmZvcnQgbGl2ZSByZWZyZXNoOgoKYGBgYmFzaApoYXBwaWVyIHNlc3Npb24gc3RhdHVzIDxzZXNzaW9uLWlkLW9yLXByZWZpeD4gLS1saXZlIC0tanNvbgpgYGAKCkNyZWF0ZS9sb2FkIGEgc2Vzc2lvbiBieSB0YWc6CgpgYGBiYXNoCmhhcHBpZXIgc2Vzc2lvbiBjcmVhdGUgLS10YWcgPHRhZz4gLS1qc29uCmBgYAoKU2VuZCBhIG1lc3NhZ2UgdG8gYSBzZXNzaW9uOgoKYGBgYmFzaApoYXBwaWVyIHNlc3Npb24gc2VuZCA8c2Vzc2lvbi1pZC1vci1wcmVmaXg+ICI8bWVzc2FnZT4iIC0tanNvbgpgYGAKClNlbmQgYSBtZXNzYWdlIGFuZCB3YWl0IHVudGlsIHRoZSBzZXNzaW9uIGlzIGlkbGU6CgpgYGBiYXNoCmhhcHBpZXIgc2Vzc2lvbiBzZW5kIDxzZXNzaW9uLWlkLW9yLXByZWZpeD4gIjxtZXNzYWdlPiIgLS13YWl0IC0tdGltZW91dCAzMDAgLS1qc29uCmBgYAoKV2FpdCBmb3IgYSBzZXNzaW9uIHRvIGJlY29tZSBpZGxlOgoKYGBgYmFzaApoYXBwaWVyIHNlc3Npb24gd2FpdCA8c2Vzc2lvbi1pZC1vci1wcmVmaXg+IC0tdGltZW91dCAzMDAgLS1qc29uCmBgYAoKU3RvcCBhIHNlc3Npb246CgpgYGBiYXNoCmhhcHBpZXIgc2Vzc2lvbiBzdG9wIDxzZXNzaW9uLWlkLW9yLXByZWZpeD4gLS1qc29uCmBgYAoKUmVhZCBzZXNzaW9uIGhpc3RvcnkgKGNvbXBhY3QgaXMgcmVjb21tZW5kZWQgZm9yIHByb21wdCBzdHVmZmluZyk6CgpgYGBiYXNoCmhhcHBpZXIgc2Vzc2lvbiBoaXN0b3J5IDxzZXNzaW9uLWlkLW9yLXByZWZpeD4gLS1saW1pdCA1MCAtLWZvcm1hdCBjb21wYWN0IC0tanNvbgpgYGAKCiMjIEV4ZWN1dGlvbiBSdW4gQ29tbWFuZHMKClN0YXJ0IGFuIGV4ZWN1dGlvbiBydW46CgpgYGBiYXNoCmhhcHBpZXIgc2Vzc2lvbiBydW4gc3RhcnQgPHNlc3Npb24taWQtb3ItcHJlZml4PiAtLWludGVudCByZXZpZXcgLS1iYWNrZW5kIGNsYXVkZSAtLWpzb24KYGBgCgpMaXN0IHJ1bnMgZm9yIGEgc2Vzc2lvbjoKCmBgYGJhc2gKaGFwcGllciBzZXNzaW9uIHJ1biBsaXN0IDxzZXNzaW9uLWlkLW9yLXByZWZpeD4gLS1qc29uCmBgYAoKR2V0IGEgcnVuOgoKYGBgYmFzaApoYXBwaWVyIHNlc3Npb24gcnVuIGdldCA8c2Vzc2lvbi1pZC1vci1wcmVmaXg+IDxydW4taWQ+IC0taW5jbHVkZS1zdHJ1Y3R1cmVkIC0tanNvbgpgYGAKClNlbmQgaW5wdXQgdG8gYSBydW46CgpgYGBiYXNoCmhhcHBpZXIgc2Vzc2lvbiBydW4gc2VuZCA8c2Vzc2lvbi1pZC1vci1wcmVmaXg+IDxydW4taWQ+ICI8bWVzc2FnZT4iIC0tanNvbgpgYGAKClN0b3AgYSBydW46CgpgYGBiYXNoCmhhcHBpZXIgc2Vzc2lvbiBydW4gc3RvcCA8c2Vzc2lvbi1pZC1vci1wcmVmaXg+IDxydW4taWQ+IC0tanNvbgpgYGAKCkV4ZWN1dGUgYW4gYWN0aW9uIG9uIGEgcnVuOgoKYGBgYmFzaApoYXBwaWVyIHNlc3Npb24gcnVuIGFjdGlvbiA8c2Vzc2lvbi1pZC1vci1wcmVmaXg+IDxydW4taWQ+IDxhY3Rpb24taWQ+IC0taW5wdXQtanNvbiAnPGpzb24+JyAtLWpzb24KYGBgCgpXYWl0IGZvciBhIHJ1biB0byBmaW5pc2g6CgpgYGBiYXNoCmhhcHBpZXIgc2Vzc2lvbiBydW4gd2FpdCA8c2Vzc2lvbi1pZC1vci1wcmVmaXg+IDxydW4taWQ+IC0tdGltZW91dCAzMDAgLS1qc29uCmBgYAoKU3RyZWFtIHR1cm4gSU8gZm9yIGEgc3RyZWFtaW5nIHJ1biAoZS5nLiBgaW50ZW50PXZvaWNlX2FnZW50YCk6CgpgYGBiYXNoCmhhcHBpZXIgc2Vzc2lvbiBydW4gc3RyZWFtLXN0YXJ0IDxzZXNzaW9uLWlkLW9yLXByZWZpeD4gPHJ1bi1pZD4gIjxtZXNzYWdlPiIgLS1qc29uCmhhcHBpZXIgc2Vzc2lvbiBydW4gc3RyZWFtLXJlYWQgPHNlc3Npb24taWQtb3ItcHJlZml4PiA8cnVuLWlkPiA8c3RyZWFtLWlkPiAtLWN1cnNvciAwIC0tanNvbgpoYXBwaWVyIHNlc3Npb24gcnVuIHN0cmVhbS1jYW5jZWwgPHNlc3Npb24taWQtb3ItcHJlZml4PiA8cnVuLWlkPiA8c3RyZWFtLWlkPiAtLWpzb24KYGBgCgojIyBTZXJ2ZXIgQ29tbWFuZHMgKEpTT04pCgpMaXN0IHNlcnZlciBwcm9maWxlczoKCmBgYGJhc2gKaGFwcGllciBzZXJ2ZXIgbGlzdCAtLWpzb24KYGBgCgpDdXJyZW50IGFjdGl2ZSBzZXJ2ZXI6CgpgYGBiYXNoCmhhcHBpZXIgc2VydmVyIGN1cnJlbnQgLS1qc29uCmBgYAoKQWRkIGEgc2VydmVyIHByb2ZpbGUgbm9uLWludGVyYWN0aXZlbHk6CgpgYGBiYXNoCmhhcHBpZXIgc2VydmVyIGFkZCAtLW5hbWUgIk15IFNlcnZlciIgLS1zZXJ2ZXItdXJsIGh0dHBzOi8vZXhhbXBsZS5jb20gLS13ZWJhcHAtdXJsIGh0dHBzOi8vZXhhbXBsZS5jb20gLS11c2UgLS1qc29uCmBgYAoKU3dpdGNoIGFjdGl2ZSBzZXJ2ZXI6CgpgYGBiYXNoCmhhcHBpZXIgc2VydmVyIHVzZSA8aWQtb3ItbmFtZT4gLS1qc29uCmBgYAoKUmVtb3ZlIGEgc2VydmVyIHByb2ZpbGU6CgpgYGBiYXNoCmhhcHBpZXIgc2VydmVyIHJlbW92ZSA8aWQtb3ItbmFtZT4gLS1mb3JjZSAtLWpzb24KYGBgCgpQcm9iZSBzZXJ2ZXIgcmVhY2hhYmlsaXR5L3ZlcnNpb246CgpgYGBiYXNoCmhhcHBpZXIgc2VydmVyIHRlc3QgWzxpZC1vci1uYW1lPl0gLS1qc29uCmBgYAoKU2V0IGEgb25lLW9mZiBjdXN0b20gc2VydmVyIGFzIGFjdGl2ZToKCmBgYGJhc2gKaGFwcGllciBzZXJ2ZXIgc2V0IC0tc2VydmVyLXVybCBodHRwczovL2V4YW1wbGUuY29tIC0td2ViYXBwLXVybCBodHRwczovL2V4YW1wbGUuY29tIC0tanNvbgpgYGAKCg==\"}],\"createdAtMs\":1,\"updatedAtMs\":2}"
+    },
+    {
+      "id": "after-doc",
+      "revision": {
+        "headerVersion": 6,
+        "bodyVersion": 7
+      },
+      "header": {
+        "v": 1,
+        "kind": "prompt_doc.v2",
+        "title": "After skill"
+      },
+      "body": "{\"v\":1,\"markdown\":\"After the skill: report the checks actually run.\",\"createdAtMs\":1,\"updatedAtMs\":2}"
+    }
+  ]
+}

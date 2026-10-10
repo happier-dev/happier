@@ -220,9 +220,20 @@ describe('createClaudeNativeRuntime', () => {
       launchEnvironment: { values: { CLAUDE_CONFIG_DIR: '/isolated/selected-claude' }, unset: ['ANTHROPIC_API_KEY'] },
     }, { settings: selectedContext.services.settings, features: selectedContext.session.services.features });
     expect(retainedSelection).toEqual(selected);
+    const helperPins = {
+      ANTHROPIC_DEFAULT_HAIKU_MODEL: 'gateway-fast',
+      ANTHROPIC_DEFAULT_SONNET_MODEL: 'gateway-selected',
+      ANTHROPIC_DEFAULT_OPUS_MODEL: 'gateway-strongest',
+    };
     const session = await runtime.sessions.open({
       kind: 'resume', sessionId: 'selected-session', cwd: '/tmp/claude-project', providerSessionId: 'provider-claude',
       runtimeDescriptorV1: selected.runtimeDescriptorV1,
+      launchEnvironment: { values: helperPins, unset: [] },
+      providerBinding: {
+        connectionId: 'pc_selected_claude', model: { id: 'gateway-selected', name: 'Selected' },
+        upstream: { protocol: 'anthropic', normalizedUrl: null, credential: 'apiKey' },
+        materialization: { v: 1, kind: 'spawnEnv' },
+      },
     }, selectedContext);
     try {
       if (unifiedTerminalEnabled) {
@@ -233,10 +244,19 @@ describe('createClaudeNativeRuntime', () => {
       const prepare = session.prepareTerminalPresentation;
       expect(prepare).toEqual(expect.any(Function));
       if (typeof prepare !== 'function') throw new Error('Selected Session terminal preparation is unavailable');
-      const result: unknown = await prepare.call(session, { modelSelection: null });
+      const result = await prepare.call(session, { modelSelection: null });
       expect(result).toMatchObject(unifiedTerminalEnabled
         ? { kind: 'managed_terminal', handle: terminal.handle }
         : { kind: 'terminal_launch', plan: { argv: expect.arrayContaining(['--resume', 'provider-claude', '--plugin-dir', '/tmp/happier-claude-hook-plugin']) } });
+      const args = unifiedTerminalEnabled
+        ? vi.mocked(terminal.service.createOrAttachHost).mock.calls[0]?.[0].launch?.args
+        : result.kind === 'terminal_launch'
+          ? result.plan.argv
+          : undefined;
+      if (!args) throw new Error('Selected native launch arguments are unavailable');
+      const nativeSettings = JSON.parse(args[args.indexOf('--settings') + 1] ?? '{}');
+      expect(nativeSettings.env).toEqual(helperPins);
+      expect(Object.keys(nativeSettings.env)).not.toContain('ANTHROPIC_AUTH_TOKEN');
     } finally { await session.dispose('session_closed'); }
   });
 
@@ -1731,6 +1751,7 @@ describe('createClaudeNativeRuntime', () => {
     } satisfies ClaudeUsageObservation;
     const ids: string[] = [];
     const observedTimes: number[] = [];
+    const accounting: unknown[] = [];
     for (const kind of ['create', 'resume'] as const) {
       const native = createNativeOperations('session-usage-reopen');
       const request = kind === 'resume'
@@ -1741,12 +1762,14 @@ describe('createClaudeNativeRuntime', () => {
         if (event.kind === 'usage-observed') {
           ids.push(event.observationId);
           observedTimes.push(event.emittedAtMs);
+          accounting.push(event.accounting);
         }
       });
-      native.publishUsage({ ...observation, nativeRecordId: 'native-assistant-1', observedAtMs: 100 });
-      native.publishUsage({ ...observation, nativeRecordId: kind === 'create' ? 'native-assistant-2' : 'native-assistant-3' });
-      native.publishUsage({ ...observation, nativeRecordId: 'native-assistant-1', observedAtMs: 100 });
-      native.publishUsage(observation);
+      const witnessed = { ...observation, nativeSessionId: 'native-message-session', inferenceId: 'shared-request-message' };
+      native.publishUsage({ ...witnessed, nativeRecordId: 'native-assistant-1', observedAtMs: 100 });
+      native.publishUsage({ ...witnessed, nativeRecordId: kind === 'create' ? 'native-assistant-2' : 'native-assistant-3' });
+      native.publishUsage({ ...witnessed, nativeRecordId: 'native-assistant-1', observedAtMs: 100 });
+      native.publishUsage(witnessed);
       await session.dispose();
     }
     expect(ids[0]).toBe(ids[2]);
@@ -1760,6 +1783,21 @@ describe('createClaudeNativeRuntime', () => {
     expect(observedTimes[2]).toBe(100);
     expect(observedTimes[4]).toBe(100);
     expect(observedTimes[6]).toBe(100);
+    expect(accounting[0]).toEqual({ nativeSessionId: 'native-message-session', inferenceId: 'shared-request-message', inputIncludesCache: false, outputIncludesReasoning: false });
+    expect(accounting[1]).toEqual(accounting[0]);
+    expect(accounting[2]).toEqual(accounting[0]);
+    expect(accounting[3]).toEqual(accounting[0]);
+    const unidentified = createNativeOperations('host-session-without-native-id');
+    const unknownNativeSession = createClaudeNativeSessionRuntimeFromOperations({
+      ...unidentified.runtime, readProviderIdentity: () => ({ sessionId: null }),
+    }, { kind: 'create', sessionId: 'host-session-without-native-id', cwd: '/repo' }, context);
+    const unknownAccounting: unknown[] = [];
+    unknownNativeSession.watch((event) => {
+      if (event.kind === 'usage-observed') unknownAccounting.push(event.accounting);
+    });
+    unidentified.publishUsage({ ...observation, nativeRecordId: 'known-record' });
+    expect(unknownAccounting).toEqual([{ inputIncludesCache: false, outputIncludesReasoning: false }]);
+    await unknownNativeSession.dispose();
   });
 
   it('routes declared active goal mutations to the live Claude operation and retires the binding on dispose', async () => {

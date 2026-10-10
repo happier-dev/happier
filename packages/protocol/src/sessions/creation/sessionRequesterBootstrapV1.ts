@@ -6,7 +6,7 @@ import { decodeBase64, encodeBase64 } from '../../crypto/base64.js';
 import { sealBoxBundle, openBoxBundleWithSecretKey } from '../../crypto/boxBundle.js';
 import { isValidEd25519PublicKey, ED25519_SECRET_KEY_BYTES } from '../../crypto/ed25519.js';
 import { createCanonicalJsonSigningInput } from '../../crypto/canonicalJson.js';
-import { SessionHandoffPrepareTargetPrivateRequestV1Schema } from '../control/handoff/handoffSchemas.js';
+import { SessionHandoffPrepareTargetPrivateRequestV1Schema, SessionHandoffExistingStateCheckRequestV3Schema } from '../control/handoff/handoffSchemas.js';
 import { ExternalActionExecutionAuthorizationV1Schema, type ExternalActionExecutionAuthorizationV1 } from '../../actions/externalActionApi.js';
 import { computeCanonicalDomainSeparatedDigest } from '../../crypto/canonicalDigest.js';
 import { ManagedWakeTargetV1Schema, type ManagedWakeTargetV1 } from '../../machines/managed/managedIntentV1.js';
@@ -172,10 +172,21 @@ const SessionRequesterHandoffBootstrapOpenedRequestV1Schema = lazyZodSchema(() =
   requesterBootstrap: SessionRequesterCreationContextV1Schema,
 }).strict());
 type OpenedHandoffRequest = Readonly<z.infer<typeof SessionRequesterHandoffBootstrapOpenedRequestV1Schema>>;
-type InstalledRequest = OpenedRequest | OpenedHandoffRequest;
+/** Read-only existing-state inspection shares the same private installed-key carrier. */
+export const SessionRequesterHandoffPreflightBootstrapRpcRequestV1Schema = lazyZodSchema(() => z.object({
+  kind: z.literal('requester_session_handoff_preflight_bootstrap_v1'),
+  input: SessionHandoffExistingStateCheckRequestV3Schema,
+  requesterBootstrap: z.union([SessionRequesterCreationContextV1Schema, SessionRequesterInstallationSealedBootstrapV1Schema]),
+}).strict());
+const SessionRequesterHandoffPreflightBootstrapOpenedRequestV1Schema = lazyZodSchema(() => SessionRequesterHandoffPreflightBootstrapRpcRequestV1Schema.extend({
+  requesterBootstrap: SessionRequesterCreationContextV1Schema,
+}).strict());
+type OpenedHandoffPreflightRequest = Readonly<z.infer<typeof SessionRequesterHandoffPreflightBootstrapOpenedRequestV1Schema>>;
+type InstalledRequest = OpenedRequest | OpenedHandoffRequest | OpenedHandoffPreflightRequest;
 const InstallationPlaintextV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1), machineId: z.string().min(1), installationId: z.string().min(1),
-  request: z.union([SessionRequesterBootstrapOpenedRequestV1Schema, SessionRequesterHandoffBootstrapOpenedRequestV1Schema]),
+  request: z.union([SessionRequesterBootstrapOpenedRequestV1Schema, SessionRequesterHandoffBootstrapOpenedRequestV1Schema,
+    SessionRequesterHandoffPreflightBootstrapOpenedRequestV1Schema]),
 }).strict());
 
 function readInstalledRequestMachineId(request: InstalledRequest): string {
@@ -213,6 +224,12 @@ export function sealSessionRequesterHandoffBootstrapRpcRequestV1(input: Readonly
   return sealInstalledRequest({ ...input, request: SessionRequesterHandoffBootstrapOpenedRequestV1Schema.parse(input.request) });
 }
 
+export function sealSessionRequesterHandoffPreflightBootstrapRpcRequestV1(input: Readonly<{
+  request: OpenedHandoffPreflightRequest; installationId: string; installationPublicKey: Uint8Array; randomBytes(length: number): Uint8Array;
+}>) {
+  return sealInstalledRequest({ ...input, request: SessionRequesterHandoffPreflightBootstrapOpenedRequestV1Schema.parse(input.request) });
+}
+
 /** The host supplies its current local installation, never a caller-selected key. */
 export function openSessionRequesterBootstrapRpcRequestV1(input: Readonly<{
   request: unknown; machineId: string; installationId: string; installationPrivateKey: Uint8Array;
@@ -228,11 +245,19 @@ export function openSessionRequesterHandoffBootstrapRpcRequestV1(input: Readonly
   return request?.kind === 'requester_session_handoff_bootstrap_v1' ? request : null;
 }
 
+export function openSessionRequesterHandoffPreflightBootstrapRpcRequestV1(input: Readonly<{
+  request: unknown; machineId: string; installationId: string; installationPrivateKey: Uint8Array;
+}>): OpenedHandoffPreflightRequest | null {
+  const request = openInstalledRequest(input);
+  return request?.kind === 'requester_session_handoff_preflight_bootstrap_v1' ? request : null;
+}
+
 function openInstalledRequest(input: Readonly<{
   request: unknown; machineId: string; installationId: string; installationPrivateKey: Uint8Array;
 }>): InstalledRequest | null {
   try {
-    const parsed = z.union([SessionRequesterBootstrapRpcRequestV1Schema, SessionRequesterHandoffBootstrapRpcRequestV1Schema]).safeParse(input.request);
+    const parsed = z.union([SessionRequesterBootstrapRpcRequestV1Schema, SessionRequesterHandoffBootstrapRpcRequestV1Schema,
+      SessionRequesterHandoffPreflightBootstrapRpcRequestV1Schema]).safeParse(input.request);
     if (!parsed.success || !('kind' in parsed.data.requesterBootstrap)
       || parsed.data.requesterBootstrap.installationId !== input.installationId
       || (parsed.data.kind === 'requester_session_bootstrap_v1' ? parsed.data.input.executionTarget.machineId

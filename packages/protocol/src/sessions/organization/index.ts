@@ -106,7 +106,9 @@ export {
 export {
   SessionOrganizationLabelKindSchema,
   SessionOrganizationLabelSchema,
+  SessionOrganizationLabelStoredSchema,
   SessionOrganizationOrderEntrySchema,
+  SessionOrganizationOrderEntryStoredSchema,
   SessionOrganizationOrderItemKindSchema,
   SessionOrganizationOrderScopeKindSchema,
   type SessionOrganizationLabel,
@@ -117,8 +119,13 @@ export {
 } from './ordering.js';
 
 export {
+  SESSION_ORGANIZATION_PIN_HTTP_PATH_V1,
+  buildSessionOrganizationPinHttpPathV1,
   SessionOrganizationPinSchema,
+  SessionOrganizationPinStoredSchema,
+  SessionOrganizationPinSurfaceSchema,
   type SessionOrganizationPin,
+  type SessionOrganizationPinSurface,
 } from './pins.js';
 
 export {

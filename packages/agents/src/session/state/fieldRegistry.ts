@@ -3,6 +3,9 @@ import type { SessionStateFieldId } from '@happier-dev/protocol';
 import type { SessionStateFieldDescriptor } from './_types.js';
 
 export const SESSION_STATE_FIELD_REGISTRY = {
+  'intent.memoryEnabled': { id: 'intent.memoryEnabled', class: 'intent', conflictPolicy: 'bindingOwned', deliveryClass: 'durable_required' },
+  'intent.voicePreference': { id: 'intent.voicePreference', class: 'intent', conflictPolicy: 'bindingOwned', deliveryClass: 'durable_required' },
+  'intent.context': { id: 'intent.context', class: 'intent', conflictPolicy: 'bindingOwned', deliveryClass: 'durable_required' },
   'intent.sessionRoles': {
     id: 'intent.sessionRoles',
     class: 'intent',
@@ -57,6 +60,12 @@ export const SESSION_STATE_FIELD_REGISTRY = {
     conflictPolicy: 'timestampedFieldUpdate',
     deliveryClass: 'durable_best_effort',
   },
+  'display.bot': {
+    id: 'display.bot',
+    class: 'display',
+    conflictPolicy: 'timestampedFieldUpdate',
+    deliveryClass: 'durable_best_effort',
+  },
   'runtime.workState': {
     id: 'runtime.workState',
     class: 'runtime',
@@ -104,6 +113,12 @@ export const SESSION_STATE_FIELD_REGISTRY = {
     class: 'view',
     conflictPolicy: 'timestampedFieldUpdate',
     deliveryClass: 'ephemeral_drop_ok',
+  },
+  'view.transcriptToolCalls': {
+    id: 'view.transcriptToolCalls',
+    class: 'view',
+    conflictPolicy: 'bindingOwned',
+    deliveryClass: 'durable_best_effort',
   },
 } satisfies { readonly [F in SessionStateFieldId]: SessionStateFieldDescriptor<F> };
 

@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import {
@@ -9,14 +10,14 @@ import {
 import {
   SessionOrganizationContentEnvelopeSchema,
   SessionOrganizationDisplayStateSchema,
-} from './content.js';
+} from './contentSchemas.js';
 
-const SessionOrganizationSessionIdSchema = z.string().trim().min(1).max(SESSION_ORGANIZATION_MAX_ID_LENGTH);
-const SessionOrganizationTagIdSchema = z.string().trim().min(1).max(SESSION_ORGANIZATION_MAX_ID_LENGTH);
-const SessionOrganizationTagKeySchema = z.string().trim().min(1).max(SESSION_ORGANIZATION_MAX_KEY_LENGTH);
-const SessionOrganizationSortKeySchema = z.string().trim().min(1).max(SESSION_ORGANIZATION_MAX_SORT_KEY_LENGTH);
+const SessionOrganizationSessionIdSchema = lazyZodSchema(() => z.string().trim().min(1).max(SESSION_ORGANIZATION_MAX_ID_LENGTH));
+const SessionOrganizationTagIdSchema = lazyZodSchema(() => z.string().trim().min(1).max(SESSION_ORGANIZATION_MAX_ID_LENGTH));
+const SessionOrganizationTagKeySchema = lazyZodSchema(() => z.string().trim().min(1).max(SESSION_ORGANIZATION_MAX_KEY_LENGTH));
+const SessionOrganizationSortKeySchema = lazyZodSchema(() => z.string().trim().min(1).max(SESSION_ORGANIZATION_MAX_SORT_KEY_LENGTH));
 
-export const SessionOrganizationTagSchema = z
+export const SessionOrganizationTagSchema = lazyZodSchema(() => z
   .object({
     tagId: SessionOrganizationTagIdSchema,
     tagKey: SessionOrganizationTagKeySchema,
@@ -27,13 +28,13 @@ export const SessionOrganizationTagSchema = z
     createdAt: z.number().int().nonnegative(),
     updatedAt: z.number().int().nonnegative(),
   })
-  .strict();
+  .strict());
 export type SessionOrganizationTag = z.infer<typeof SessionOrganizationTagSchema>;
 
-export const SessionTagAssignmentSchema = z
+export const SessionTagAssignmentSchema = lazyZodSchema(() => z
   .object({
     sessionId: SessionOrganizationSessionIdSchema,
     tagIds: z.array(SessionOrganizationTagIdSchema).max(SESSION_ORGANIZATION_MAX_TAGS),
   })
-  .strict();
+  .strict());
 export type SessionTagAssignment = z.infer<typeof SessionTagAssignmentSchema>;

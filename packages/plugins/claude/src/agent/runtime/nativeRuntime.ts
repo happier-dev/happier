@@ -317,20 +317,25 @@ function mapEvent(event: ClaudeProviderEvent): AgentExecutionRunConversationEven
       };
     case 'message-delta': {
       const delta = textDelta(event.delta);
-      return delta ? { kind: event.kind, turnId: event.turnId, ...delta } : null;
+      return delta ? { kind: event.kind, turnId: event.turnId, ...(event.sidechainId ? { sidechainId: event.sidechainId } : {}), ...delta } : null;
     }
     case 'tool-call':
       return {
         kind: event.kind,
         turnId: event.turnId,
+        ...(event.sidechainId ? { sidechainId: event.sidechainId } : {}),
         toolCallId: event.toolCallId,
         toolName: event.toolName,
         input: jsonValue(event.toolInput),
       };
+    case 'mcp-tool-usage':
+      return { kind: event.kind, turnId: event.turnId, window: event.window,
+        coverage: event.coverage, servers: event.servers };
     case 'tool-progress':
       return {
         kind: event.kind,
         turnId: event.turnId,
+        ...(event.sidechainId ? { sidechainId: event.sidechainId } : {}),
         toolCallId: event.toolCallId,
         progress: jsonValue(event.progress),
       };
@@ -338,6 +343,7 @@ function mapEvent(event: ClaudeProviderEvent): AgentExecutionRunConversationEven
       return {
         kind: event.kind,
         turnId: event.turnId,
+        ...(event.sidechainId ? { sidechainId: event.sidechainId } : {}),
         toolCallId: event.toolCallId,
         output: jsonValue(event.output),
         ...(event.isError === true ? { isError: true } : {}),
@@ -360,7 +366,7 @@ function mapEvent(event: ClaudeProviderEvent): AgentExecutionRunConversationEven
     case 'transcript-agent-message-committed': {
       const message = committedMessage(event);
       return message
-        ? { kind: 'transcript-message-committed', messageId: event.localId, ...message }
+        ? { kind: 'transcript-message-committed', messageId: event.localId, ...(event.sidechainId ? { sidechainId: event.sidechainId } : {}), ...message }
         : null;
     }
     case 'session-ended':
@@ -614,9 +620,16 @@ export function createClaudeNativeSessionRuntimeFromOperations(
   const unsubscribeUsageObservation = operations.subscribeUsageObservation?.(
     (observation: ClaudeUsageObservation) => {
       if (disposed) return;
+      const nativeSessionId = readClaudeProviderIdentityValue(observation.nativeSessionId);
       emit({
         kind: 'usage-observed',
         observationId: `claude-usage-${observation.nativeRecordId ?? randomUUID()}`,
+        accounting: {
+          ...(nativeSessionId ? { nativeSessionId } : {}),
+          ...(observation.inferenceId ? { inferenceId: observation.inferenceId } : {}),
+          inputIncludesCache: false,
+          outputIncludesReasoning: false,
+        },
         source: observation.source,
         scope: observation.scope,
         ...(observation.modelId ? { modelId: observation.modelId } : {}),
@@ -711,9 +724,9 @@ export function createClaudeNativeSessionRuntimeFromOperations(
       },
     } : {}),
     ...(runtimeDescriptorV1 ? { runtimeDescriptorV1 } : {}),
-    ...(unifiedPromptAcceptanceOperations?.observeSourceTranscript ? {
+    ...(operations.observeSourceTranscript ? {
       observeSourceTranscript: async (input: Parameters<NonNullable<AgentSessionRuntime['observeSourceTranscript']>>[0]) => {
-        if (!disposed) await unifiedPromptAcceptanceOperations.observeSourceTranscript?.(input);
+        if (!disposed) await operations.observeSourceTranscript?.(input);
       },
     } : {}),
     async connectedServiceApplicationSettled() {
@@ -1273,6 +1286,7 @@ async function openClaudeNativeAgentSdkSession(input: Readonly<{
       processEnv: process.env,
     }),
     includeAdvancedOptions: true,
+    providerBinding: input.request.providerBinding,
   });
   const initialModelId = input.request.providerBinding?.model.id
     ?? input.request.configuration?.model.value
@@ -1294,6 +1308,7 @@ async function openClaudeNativeAgentSdkSession(input: Readonly<{
     permissionEngine: createClaudeNativePermissionEngine(input.context),
     directory: input.request.cwd,
     launchEnv: launchSettings.launchEnv,
+    helperModelEnv: launchSettings.helperModelEnv,
     advancedOptions: launchSettings.advancedOptions,
     settingSources: launchSettings.settingSources,
     permissionMode: input.request.configuration?.permissionIntent.value ?? 'default',
@@ -1332,6 +1347,7 @@ async function openClaudeNativeAgentSdkExecutionRunConversation(input: Readonly<
       processEnv: process.env,
     }),
     includeAdvancedOptions: true,
+    providerBinding: input.request.providerBinding,
   });
   const initialModelId = input.request.providerBinding?.model.id
     ?? input.request.configuration?.model.value
@@ -1353,6 +1369,7 @@ async function openClaudeNativeAgentSdkExecutionRunConversation(input: Readonly<
     permissionEngine: createClaudeNativePermissionEngine(input.context),
     directory: input.request.cwd,
     launchEnv: launchSettings.launchEnv,
+    helperModelEnv: launchSettings.helperModelEnv,
     advancedOptions: launchSettings.advancedOptions,
     settingSources: launchSettings.settingSources,
     permissionMode: input.request.configuration?.permissionIntent.value ?? 'default',

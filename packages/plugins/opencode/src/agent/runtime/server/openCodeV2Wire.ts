@@ -376,6 +376,7 @@ function normalizeV2AssistantContent(params: Readonly<{
         status,
         ...(state?.input === undefined ? {} : { input: state.input }),
         ...(output === undefined ? {} : { output }),
+        ...(state?.metadata === undefined ? {} : { metadata: state.metadata }),
       },
     }];
   });
@@ -416,6 +417,15 @@ export function normalizeOpenCodeV2Message(params: Readonly<{
     ...(time ? { time } : {}),
     ...(record.metadata === undefined ? {} : { metadata: record.metadata }),
   };
+  // Accounting belongs to the native assistant/compaction message, including
+  // messages deliberately omitted from the user-facing transcript.
+  const modelId = readNonBlankOpaqueIdentifier(asRecord(record.model)?.modelID);
+  const accounting = {
+    ...(record.tokens === undefined ? {} : { tokens: record.tokens }),
+    ...(record.cost === undefined ? {} : { cost: record.cost }),
+    ...(modelId ? { modelID: modelId } : {}),
+    ...(['completed', 'failed'].includes(String(record.status)) ? { nativeAccountingComplete: true } : {}),
+  };
 
   if (type === 'user') {
     const text = readSemanticText(record.text);
@@ -438,7 +448,7 @@ export function normalizeOpenCodeV2Message(params: Readonly<{
     // V1 represented a compaction as an assistant message flagged `summary`,
     // which is exactly the `compaction_internal` classification.
     return {
-      info: { ...base, role: 'assistant', sessionID: params.sessionId, summary: true },
+      info: { ...base, ...accounting, role: 'assistant', sessionID: params.sessionId, summary: true },
       parts: [],
     };
   }
@@ -448,6 +458,7 @@ export function normalizeOpenCodeV2Message(params: Readonly<{
     return {
       info: {
         ...base,
+        ...accounting,
         role: 'assistant',
         sessionID: params.sessionId,
         ...(params.precedingUserMessageId ? { parentID: params.precedingUserMessageId } : {}),
@@ -462,7 +473,7 @@ export function normalizeOpenCodeV2Message(params: Readonly<{
     };
   }
 
-  return { info: base, parts: [] };
+  return { info: { ...base, ...(type === 'idle' ? { type, outcome: record.outcome } : {}) }, parts: [] };
 }
 
 /** The ordered timeline, normalized with each assistant anchored to its user. */

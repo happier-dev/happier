@@ -4,6 +4,7 @@ export const OPENCODE_UI_DESCRIPTOR = Object.freeze({
   pluginId: 'opencode',
   agentId: 'opencode',
   version: 1,
+  identityColor: { light: '#4a3aa7', dark: '#9085e9' },
   display: {
     nameKey: 'agentInput.agent.opencode',
     subtitleKey: 'profiles.aiBackend.opencodeSubtitle',
@@ -24,7 +25,7 @@ export const OPENCODE_UI_DESCRIPTOR = Object.freeze({
       hideUnknownToolsByDefault: false,
     },
     picker: {
-      iconName: 'code-slash-outline',
+      iconName: 'code',
       iconScale: 0.9,
       cliGlyph: '</>',
       cliGlyphScale: 1.0,

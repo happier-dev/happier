@@ -31,7 +31,7 @@ import {
   type ExecutionRunInteractionV1,
 } from './executionRunInteractionV1.js';
 import { StrictJsonValueSchema } from '../../json/strictJsonValue.js';
-import { ExecutionRunRequestedConfigurationSchema } from './requestedConfiguration.js';
+import { ExecutionRunRequestedConfigurationSchema, ExecutionRunResolvedSelectionSchema } from './requestedConfiguration.js';
 import {
   ExecutionRunLifecycleV1Schema,
   type ExecutionRunLifecycleV1,
@@ -156,6 +156,7 @@ export const ExecutionRunPublicStateSchema = lazyZodSchema(() => z.object({
   display: ExecutionRunDisplaySchema.optional(),
   launchOrigin: ExecutionRunLaunchOriginSchema.optional(),
   requestedConfiguration: ExecutionRunRequestedConfigurationSchema.optional(),
+  resolvedSelection: ExecutionRunResolvedSelectionSchema.optional(),
   // Policy/class fields are required for client surfaces (e.g. to decide if send/resume controls apply).
   permissionMode: z.string().min(1),
   retentionPolicy: ExecutionRunRetentionPolicySchema,
@@ -282,6 +283,7 @@ export const ExecutionRunStartResponseSchema = lazyZodSchema(() => z.object({
   callId: z.string().min(1),
   sidechainId: z.string().min(1),
   requestedConfiguration: ExecutionRunRequestedConfigurationSchema.optional(),
+  resolvedSelection: ExecutionRunResolvedSelectionSchema.optional(),
   wait: ExecutionRunWaitResultSchema.optional(),
 }).passthrough());
 export type ExecutionRunStartResponse = z.infer<typeof ExecutionRunStartResponseSchema>;

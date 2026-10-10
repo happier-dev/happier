@@ -8,7 +8,7 @@ export const DEVIN_AGENT_SETTINGS_CONTRIBUTION = {
   scope: 'account',
   fields: [],
   presentation: {
-    icon: { ionName: 'hardware-chip-outline', color: { kind: 'theme', token: 'blue' } },
+    icon: { ionName: 'cpu', color: { kind: 'theme', token: 'blue' } },
     subagentSections: [],
     sections: [],
   },

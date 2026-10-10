@@ -13,10 +13,10 @@ export type PreparedSessionDataKeyEnvelopeItemV1 =
   | Readonly<{ kind: 'setup_required'; reason: SessionDataKeyRecipientUnavailableReasonV1 }>
   | Readonly<{ kind: 'invalid_binding' }>;
 
-/** Consumes the authorized worklist; key verification never grants access. */
-export function prepareSessionDataKeyEnvelopeItemV1(params: Readonly<{
+/** Consumes an authorized resource worklist; key verification never grants access. */
+export function prepareResourceDataKeyEnvelopeItemV1(params: Readonly<{
   item: SessionDataKeyEnvelopeItemV1;
-  sessionDataKey: Uint8Array;
+  resourceDataKey: Uint8Array;
   randomBytes: (length: number) => Uint8Array;
 }>): PreparedSessionDataKeyEnvelopeItemV1 {
   const { item } = params;
@@ -37,9 +37,20 @@ export function prepareSessionDataKeyEnvelopeItemV1(params: Readonly<{
   return { kind: 'prepared', entry: {
     recipientAccountId: item.recipientAccountId,
     encryptedDataKey: encodeBase64(sealEncryptedDataKeyEnvelopeV1({
-      dataKey: params.sessionDataKey,
+      dataKey: params.resourceDataKey,
       recipientPublicKey: verified.contentPublicKey,
       randomBytes: params.randomBytes,
     })),
   } };
+}
+
+/** Retained Session caller contract; both resource flows share binding verification and sealing. */
+export function prepareSessionDataKeyEnvelopeItemV1(params: Readonly<{
+  item: SessionDataKeyEnvelopeItemV1;
+  sessionDataKey: Uint8Array;
+  randomBytes: (length: number) => Uint8Array;
+}>): PreparedSessionDataKeyEnvelopeItemV1 {
+  return prepareResourceDataKeyEnvelopeItemV1({
+    item: params.item, resourceDataKey: params.sessionDataKey, randomBytes: params.randomBytes,
+  });
 }

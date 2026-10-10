@@ -1,4 +1,14 @@
 export {
+  AgentExternalSessionAccountingObservationSchema,
+  AgentExternalSessionAccountingSourceSchema,
+  AgentExternalSessionAccountingCoverageSchema,
+  AgentExternalSessionsReadAccountingResultSchema,
+  type AgentExternalSessionAccountingObservation,
+  type AgentExternalSessionAccountingCoverage,
+  type AgentExternalSessionsReadAccountingResult,
+} from './accounting.js';
+
+export {
   ExternalSessionsRpcErrorCodeSchema,
   type ExternalSessionsRpcErrorCode,
 } from './rpcErrorCodes.js';

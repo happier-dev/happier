@@ -1,6 +1,7 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
-import { SessionMessageDeliveryResolutionV1Schema } from '../messages/sessionMessageDeliveryResolutionV1.js';
+import { SessionMessageAcceptedDeliveryContentV1Schema, SessionMessageDeliveryResolutionV1Schema } from '../messages/sessionMessageDeliveryResolutionV1.js';
 import { SessionMessageRoleSchema } from '../messages/sessionMessageRole.js';
 import { PendingLocalIdSchema } from './pendingLocalId.js';
 import { PendingProviderActionSchema } from './pendingProviderAction.js';
@@ -8,24 +9,25 @@ import { PendingRequestedActionV1Schema } from './pendingRequestedActionV1.js';
 
 export const ACCEPTED_PENDING_SETTLEMENT_EVENT_V1 = 'pending-delivery-accepted-v1' as const;
 
-const SettlementIdentityV1Schema = z.string().refine((value) => value.trim().length > 0, {
+const SettlementIdentityV1Schema = lazyZodSchema(() => z.string().refine((value) => value.trim().length > 0, {
   message: 'Settlement identity must not be blank',
-});
+}));
 
-export const AcceptedPendingSettlementRequestV1Schema = z.object({
+export const AcceptedPendingSettlementRequestV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   sessionId: SettlementIdentityV1Schema,
   localId: PendingLocalIdSchema,
-}).strict();
+  acceptedDelivery: SessionMessageAcceptedDeliveryContentV1Schema.optional(),
+}).strict());
 
-const PendingCountV1Schema = z.number().int().nonnegative();
+const PendingCountV1Schema = lazyZodSchema(() => z.number().int().nonnegative());
 const SettlementStateV1Schema = {
   pendingCount: PendingCountV1Schema,
   pendingBlockedCount: PendingCountV1Schema,
   pendingVersion: PendingCountV1Schema,
 } as const;
 
-const AcceptedPendingSettlementMessageV1Schema = z.object({
+const AcceptedPendingSettlementMessageV1Schema = lazyZodSchema(() => z.object({
   id: SettlementIdentityV1Schema,
   seq: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
   localId: PendingLocalIdSchema,
@@ -36,9 +38,9 @@ const AcceptedPendingSettlementMessageV1Schema = z.object({
   deliveryResolution: SessionMessageDeliveryResolutionV1Schema.optional(),
   createdAt: z.number().int().nonnegative(),
   updatedAt: z.number().int().nonnegative(),
-}).strict();
+}).strict());
 
-const AcceptedPendingSettlementSuccessV1Schema = z.discriminatedUnion('didResolve', [
+const AcceptedPendingSettlementSuccessV1Schema = lazyZodSchema(() => z.discriminatedUnion('didResolve', [
   z.object({
     ok: z.literal(true),
     didResolve: z.literal(false),
@@ -51,9 +53,9 @@ const AcceptedPendingSettlementSuccessV1Schema = z.discriminatedUnion('didResolv
     ...SettlementStateV1Schema,
     message: AcceptedPendingSettlementMessageV1Schema,
   }).strict(),
-]);
+]));
 
-const AcceptedPendingSettlementFailureErrorV1Schema = z.enum([
+const AcceptedPendingSettlementFailureErrorV1Schema = lazyZodSchema(() => z.enum([
     'session-not-found',
     'forbidden',
     'invalid-params',
@@ -62,9 +64,9 @@ const AcceptedPendingSettlementFailureErrorV1Schema = z.enum([
     'blocked-by-earlier-pending',
     'transcript-conflict',
     'internal',
-]);
+]));
 
-const AcceptedPendingSettlementFailureV1Schema = z.discriminatedUnion('error', [
+const AcceptedPendingSettlementFailureV1Schema = lazyZodSchema(() => z.discriminatedUnion('error', [
   z.object({
     ok: z.literal(false),
     error: AcceptedPendingSettlementFailureErrorV1Schema,
@@ -75,12 +77,12 @@ const AcceptedPendingSettlementFailureV1Schema = z.discriminatedUnion('error', [
     retryAfterMs: z.number().int().nonnegative(),
     correlationId: z.string().regex(/^[A-Za-z0-9_.:-]{1,160}$/u).optional(),
   }).strict(),
-]);
+]));
 
-export const AcceptedPendingSettlementResponseV1Schema = z.union([
+export const AcceptedPendingSettlementResponseV1Schema = lazyZodSchema(() => z.union([
   AcceptedPendingSettlementSuccessV1Schema,
   AcceptedPendingSettlementFailureV1Schema,
-]);
+]));
 
 export type AcceptedPendingSettlementRequestV1 = z.infer<typeof AcceptedPendingSettlementRequestV1Schema>;
 export type AcceptedPendingSettlementResponseV1 = z.infer<typeof AcceptedPendingSettlementResponseV1Schema>;

@@ -1,10 +1,14 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
+import { readSessionBotV1 } from '../identity/sessionBotV1.js';
 
 import {
     SessionAttentionFilterV1Schema,
+    SessionBotFilterV1Schema,
     SessionAudienceSelectionV1Schema,
     SessionListScopeV1Schema,
     type SessionAttentionFilterV1,
+    type SessionBotFilterV1,
     type SessionListScopeV1,
     type SessionAudienceSelectionV1,
 } from '../listing/query.js';
@@ -12,8 +16,8 @@ import {
 export type QualifiedAudienceSelection = Readonly<{ serverId: string }> & SessionAudienceSelectionV1;
 export type QualifiedTagAddress = Readonly<{ serverId: string; tagId: string }>;
 
-export const SessionListShowV1Schema = z.enum(['sessions', 'runs', 'both']);
-export const SessionListStartedByV1Schema = z.enum(['you', 'triggers', 'agents']);
+export const SessionListShowV1Schema = lazyZodSchema(() => z.enum(['sessions', 'runs', 'both']));
+export const SessionListStartedByV1Schema = lazyZodSchema(() => z.enum(['you', 'triggers', 'agents']));
 
 /** Serializable selection shared by the Sessions list and inline Board filters. */
 export type SessionListFilterV1 = Readonly<{
@@ -21,6 +25,7 @@ export type SessionListFilterV1 = Readonly<{
     startedBy: readonly z.infer<typeof SessionListStartedByV1Schema>[];
     scope: SessionListScopeV1;
     attention: SessionAttentionFilterV1;
+    bot?: SessionBotFilterV1;
     homeServerIds: readonly string[];
     audiences: readonly QualifiedAudienceSelection[];
     tagIds: readonly QualifiedTagAddress[];
@@ -28,6 +33,19 @@ export type SessionListFilterV1 = Readonly<{
 }>;
 
 export type SessionListFilterDefaultsInputV1 = Partial<SessionListFilterV1>;
+
+/** Metadata must already be authorized/opened; a locked candidate is never an ordinary Session. */
+export function matchSessionBotFilterV1(
+    metadata: unknown,
+    filter?: SessionBotFilterV1,
+): 'match' | 'miss' | 'unavailable' {
+    if (filter === undefined) return 'match';
+    if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return 'unavailable';
+    const candidate = (metadata as Readonly<Record<string, unknown>>).bot;
+    const marker = readSessionBotV1(candidate);
+    if (candidate !== undefined && marker === null) return 'unavailable';
+    return (marker !== null) === (filter === 'bot') ? 'match' : 'miss';
+}
 
 function normalizeId(raw: unknown): string {
     return typeof raw === 'string' ? raw.trim() : '';
@@ -109,6 +127,7 @@ export function normalizeSessionListFilterV1(input: SessionListFilterDefaultsInp
         startedBy: [...new Set<SessionListFilterV1['startedBy'][number]>(input.startedBy ?? ['you'])],
         scope: input.scope ?? 'my_work',
         attention: input.attention ?? 'any',
+        ...(input.bot === undefined ? {} : { bot: input.bot }),
         homeServerIds: normalizeSessionListFilterHomeIds(input.homeServerIds),
         audiences: normalizeSessionListFilterAudiences(input.audiences),
         tagIds: normalizeSessionListFilterTagIds(input.tagIds),
@@ -116,24 +135,25 @@ export function normalizeSessionListFilterV1(input: SessionListFilterDefaultsInp
     };
 }
 
-const SelectionIdSchema = z.string().trim().min(1);
-const QualifiedAudienceSelectionSchema = z.discriminatedUnion('kind', [
+const SelectionIdSchema = lazyZodSchema(() => z.string().trim().min(1));
+const QualifiedAudienceSelectionSchema = lazyZodSchema(() => z.discriminatedUnion('kind', [
     SessionAudienceSelectionV1Schema.options[0].extend({ serverId: SelectionIdSchema }).strict(),
     SessionAudienceSelectionV1Schema.options[1].extend({ serverId: SelectionIdSchema }).strict(),
     SessionAudienceSelectionV1Schema.options[2].extend({ serverId: SelectionIdSchema }).strict(),
-]);
+]));
 
 /** V1 selection envelope and nested qualified identities are closed; UI state is never serialized. */
-export const SessionListFilterFieldsV1Schema = z.object({
+export const SessionListFilterFieldsV1Schema = lazyZodSchema(() => z.object({
     show: SessionListShowV1Schema,
     startedBy: z.array(SessionListStartedByV1Schema),
     scope: SessionListScopeV1Schema,
     attention: SessionAttentionFilterV1Schema,
+    bot: SessionBotFilterV1Schema.optional(),
     homeServerIds: z.array(z.string()),
     audiences: z.array(QualifiedAudienceSelectionSchema),
     tagIds: z.array(z.object({ serverId: SelectionIdSchema, tagId: SelectionIdSchema }).strict()),
     source: z.enum(['all', 'persisted', 'direct']),
-}).strict();
+}).strict());
 
-export const SessionListFilterV1Schema = SessionListFilterFieldsV1Schema
-    .transform((value): SessionListFilterV1 => normalizeSessionListFilterV1(value));
+export const SessionListFilterV1Schema = lazyZodSchema(() => SessionListFilterFieldsV1Schema
+    .transform((value): SessionListFilterV1 => normalizeSessionListFilterV1(value)));

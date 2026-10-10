@@ -57,7 +57,7 @@ async function resolveAuthoritativeCodexHomes(params: Readonly<{
   });
 }
 
-function resolveCodexSource(metadata: HandoffExportSessionMetadata): CodexExternalSessionSource | undefined {
+export function resolveCodexSource(metadata: HandoffExportSessionMetadata): CodexExternalSessionSource | undefined {
   const linkedSource = projectAgentExternalSessionSourceToCodex(metadata.externalSessionSource);
   if (linkedSource) return linkedSource;
 

@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { createStoredReadSchema } from '../../json/storedReadSchema.js';
-import { PromptStackEntryV1Schema } from '../../prompts/library/promptStacksV1.js';
+import { applyPromptStackIntentV1, PromptStackEntryV1Schema, PromptStackSetEnabledIntentV1Schema } from '../../prompts/library/promptStacksV1.js';
 import { PromptDocArtifactRefV1Schema, PromptArtifactRefV1Schema } from '../../prompts/library/promptArtifactRefsV1.js';
 import { readSessionBotV1 } from '../identity/sessionBotV1.js';
 import { assertPromptStackArtifactHeaderV1, PromptStackPreparationError, type PromptStackSystemAppendInputV1 } from '../../prompts/library/resolvePromptStackSystemAppendBlocksV1.js';
@@ -22,7 +22,7 @@ export const SessionContextIntentV1Schema = lazyZodSchema(() => z.discriminatedU
   z.object({ kind: z.literal('detach'), entryId: z.string().min(1) }).strict(),
   z.object({ kind: z.literal('reorder'), entryId: z.string().min(1), siblingId: z.string().min(1), position: z.enum(['before', 'after']) }).strict(),
   z.object({ kind: z.literal('set_budget'), entryId: z.string().min(1), maxChars: z.number().int().positive().nullable() }).strict(),
-  z.object({ kind: z.literal('set_enabled'), entryId: z.string().min(1), enabled: z.boolean() }).strict(),
+  PromptStackSetEnabledIntentV1Schema,
   z.object({ kind: z.literal('inherited_enable'), entryId: z.string().min(1), enabled: z.boolean() }).strict(),
 ]));
 export type SessionContextIntentV1 = z.infer<typeof SessionContextIntentV1Schema>;
@@ -89,26 +89,19 @@ export function writeSessionContextIntentV1ToMetadata<T extends Record<string, u
   if (intent.kind === 'attach' || intent.kind === 'set') {
     if (intent.kind === 'attach' && index !== -1) refuse('entry_conflict');
     promptStack = index === -1 ? [...entries, intent.entry] : entries.map((entry, i) => i === index ? intent.entry : entry);
-  } else if (intent.kind === 'detach') {
-    promptStack = entries.filter((entry) => entry.id !== intent.entryId);
   } else {
-    if (index === -1) refuse('entry_not_found');
-    if (intent.kind === 'set_enabled') {
-      promptStack = entries.map((entry, i) => i === index ? { ...entry, enabled: intent.enabled } : entry);
-    } else if (intent.kind === 'set_budget') {
-      promptStack = entries.map((entry, i) => {
-        if (i !== index) return entry;
-        const { maxChars: _previous, ...rest } = entry;
-        return { ...rest, ...(intent.maxChars === null ? {} : { maxChars: intent.maxChars }) };
-      });
-    } else {
-      if (intent.entryId === intent.siblingId) return metadata;
-      const remaining = entries.filter((entry) => entry.id !== intent.entryId);
-      const sibling = remaining.findIndex((entry) => entry.id === intent.siblingId);
-      if (sibling === -1) refuse('entry_not_found');
-      promptStack = [...remaining];
-      promptStack.splice(sibling + (intent.position === 'after' ? 1 : 0), 0, entries[index]!);
+    // Retained Session self-moves are a no-op; ordinary list edits belong to the shared owner.
+    if (intent.kind === 'reorder' && intent.entryId === intent.siblingId) {
+      if (index === -1) refuse('entry_not_found');
+      return metadata;
     }
+    const mutation = applyPromptStackIntentV1({ promptStack: entries }, intent);
+    if (!mutation.ok) return refuse(mutation.errorCode);
+    // A no-op may still carry the canonical retained-role migration; do not drop that transition.
+    const migratedStack = 'promptStack' in work && rawWork !== null && typeof rawWork === 'object'
+      && (!('promptStack' in rawWork) || rawWork.promptStack !== work.promptStack);
+    if (!mutation.changed && !migratedStack) return metadata;
+    promptStack = [...mutation.row.promptStack];
   }
   return { ...metadata, work: { ...work, promptStack: SessionPromptStackV1Schema.parse(promptStack) } };
 }

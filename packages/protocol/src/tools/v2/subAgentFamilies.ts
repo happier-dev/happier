@@ -47,6 +47,16 @@ function readSubAgentToolResultRecord(value: unknown): Record<string, unknown> |
         : null;
 }
 
+/** Read the status carried by a native sub-agent result or its transcript wrapper. */
+export function readSubAgentToolResultStatus(value: unknown): string | null {
+    const record = readSubAgentToolResultRecord(value);
+    if (!record) return null;
+    const status = typeof record.status === 'string' ? record.status.trim().toLowerCase() : null;
+    if (status) return status;
+    return readSubAgentToolResultStatus(record.tool_use_result)
+        ?? readSubAgentToolResultStatus(record.toolUseResult);
+}
+
 /**
  * Does this tool result merely acknowledge that an agent was launched?
  *

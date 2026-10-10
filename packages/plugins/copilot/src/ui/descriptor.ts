@@ -22,7 +22,7 @@ export const COPILOT_UI_DESCRIPTOR = Object.freeze({
       hideUnknownToolsByDefault: true,
     },
     picker: {
-      iconName: 'code-slash-outline',
+      iconName: 'code',
       cliGlyph: 'CP',
       cliGlyphScale: 1.0,
       profileCompatibilityGlyphScale: 1.0,

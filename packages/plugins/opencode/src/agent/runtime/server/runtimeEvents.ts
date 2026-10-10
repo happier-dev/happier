@@ -1,3 +1,5 @@
+import type { AgentSessionRuntimeEvent } from '@happier-dev/plugin-sdk/agents/runtime';
+
 export type OpenCodeRuntimeIssue = Readonly<{
   v: 1;
   code: string;
@@ -39,6 +41,7 @@ type EventBase = Readonly<{ emittedAtMs: number }> & (
 type TurnEventBase = EventBase & Readonly<{ turnId: string }>;
 
 export type OpenCodeRuntimeEvent =
+  | (EventBase & Omit<Extract<AgentSessionRuntimeEvent, { kind: 'usage-observed' }>, 'sequence' | 'sessionId' | 'emittedAtMs'>)
   | (EventBase & Readonly<{ kind: 'model-catalog-observed' }>)
   | (EventBase & Readonly<{ kind: 'mode-catalog-observed' }>)
   | (EventBase & Readonly<{ kind: 'available-commands'; commands: Array<Readonly<{ name: string; description?: string }>> }>)
@@ -47,13 +50,15 @@ export type OpenCodeRuntimeEvent =
   | (TurnEventBase & Readonly<{ kind: 'turn-complete' }>)
   | (TurnEventBase & Readonly<{ kind: 'turn-cancelled'; reason?: string }>)
   | (TurnEventBase & Readonly<{ kind: 'turn-failed'; issue: OpenCodeRuntimeIssue }>)
-  | (TurnEventBase & Readonly<{
+  | (EventBase & Readonly<{
+      turnId?: string;
       kind: 'tool-call';
       toolCallId: string;
       toolName: string;
       toolInput: unknown;
     }>)
-  | (TurnEventBase & Readonly<{
+  | (EventBase & Readonly<{
+      turnId?: string;
       kind: 'tool-result';
       toolCallId: string;
       output: unknown;

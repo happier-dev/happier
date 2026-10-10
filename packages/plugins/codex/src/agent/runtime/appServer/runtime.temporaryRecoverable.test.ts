@@ -1088,6 +1088,29 @@ describe('Codex app-server temporary recoverable turn failures', () => {
         context_window_tokens: 258400,
       }),
     }));
+    expect(events).toContainEqual(expect.objectContaining({
+      kind: 'usage-observed', turnId: 'codex-turn-1',
+    }));
+    emitNotification('thread/tokenUsage/updated', {
+      threadId: 'another-thread', turnId: 'another-native-turn',
+      tokenUsage: { total: { totalTokens: 3, inputTokens: 2, outputTokens: 1 } },
+    });
+
+    const completion = waitForCodexAppServerRuntimeTurnCompletion(runtime);
+    emitNotification('turn/completed', completedTurn('turn-1'));
+    await completion;
+    emitNotification('thread/tokenUsage/updated', {
+      threadId: 'thread-1', turnId: 'turn-1',
+      tokenUsage: {
+        total: { totalTokens: 20020, inputTokens: 20001, cachedInputTokens: 4480, outputTokens: 19, reasoningOutputTokens: 10 },
+        last: { totalTokens: 320, inputTokens: 301, cachedInputTokens: 80, outputTokens: 19, reasoningOutputTokens: 10 },
+        modelContextWindow: 258400,
+      },
+    });
+    const usage = events.filter((event) => event.kind === 'usage-observed');
+    expect(usage).toHaveLength(2);
+    expect(usage[1]).not.toHaveProperty('turnId');
+    await runtime.dispose();
   });
 
   it('keeps Provider-bound token usage but does not apply native Codex pricing', async () => {
@@ -1100,8 +1123,8 @@ describe('Codex app-server temporary recoverable turn failures', () => {
     await runtime.send({ v: 1, text: 'provider usage prompt' }, { turnId: 'codex-turn-provider' });
 
     emitNotification('thread/tokenUsage/updated', {
-      threadId: 'thread-provider',
-      turnId: 'turn-provider',
+      threadId: 'thread-1',
+      turnId: 'turn-1',
       tokenUsage: {
         total: {
           totalTokens: 20_019,
@@ -1125,7 +1148,7 @@ describe('Codex app-server temporary recoverable turn failures', () => {
     expect(usage).toMatchObject({
       kind: 'usage-observed',
       observationId: expect.stringMatching(/^codex-usage:[a-f0-9]{64}$/u),
-      turnId: 'turn-provider',
+      turnId: 'codex-turn-provider',
       source: 'codex-app-server-token-usage',
       scope: 'session_cumulative',
       modelId: 'gpt-5.4',
@@ -1805,6 +1828,54 @@ describe('Codex app-server temporary recoverable turn failures', () => {
     }));
     expect(events.filter((event) => event.kind === 'turn-complete')).toHaveLength(2);
     expect(runtime.isTurnInFlight()).toBe(false);
+  });
+
+  it('keeps raw developer and user input out of the assistant transcript', async () => {
+    const runtime = createCodexNativeAppServerSessionRuntime(createRuntime(), 'session-1');
+    const events: AgentSessionRuntimeEvent[] = [];
+    runtime.watch((event) => events.push(event));
+    await runtime.send({
+      inputIds: ['input-1'],
+      input: { text: 'Reply with exactly QA_HOST_R6_OK.' },
+      delivery: { kind: 'newTurn', turnId: 'host-turn-1' },
+    });
+
+    // Codex 0.161 ResponseItem messages carry their native role; raw events also contain input.
+    for (const role of ['system', 'developer', 'user']) {
+      emitNotification('rawResponseItem/completed', {
+        threadId: 'thread-1', turnId: 'turn-1',
+        item: { id: `raw-${role}`, type: 'message', role,
+          content: [{ type: 'input_text', text: `${role} input must stay private` }] },
+      });
+    }
+    emitNotification('item/agentMessage/delta', {
+      threadId: 'thread-1', turnId: 'turn-1', itemId: 'reply-1', delta: 'QA_HOST_R6_OK',
+    });
+    emitNotification('item/completed', {
+      threadId: 'thread-1', turnId: 'turn-1',
+      item: { id: 'reply-1', type: 'agentMessage', text: 'QA_HOST_R6_OK' },
+    });
+    emitNotification('turn/completed', completedTurn('turn-1'));
+    await expect.poll(() => events.some((event) => event.kind === 'turn-complete')).toBe(true);
+
+    expect(events.filter((event) => event.kind === 'message-delta').map((event) => event.text))
+      .toEqual(['QA_HOST_R6_OK']);
+    expect(events.filter((event) => event.kind === 'transcript-message-committed')).toEqual([]);
+
+    await runtime.send({
+      inputIds: ['input-2'], input: { text: 'next prompt' },
+      delivery: { kind: 'newTurn', turnId: 'host-turn-2' },
+    });
+    emitNotification('rawResponseItem/completed', {
+      threadId: 'thread-1', turnId: 'turn-2',
+      item: { id: 'raw-reply-2', type: 'message', role: 'assistant',
+        content: [{ type: 'output_text', text: 'A genuine raw assistant reply' }] },
+    });
+    emitNotification('turn/completed', completedTurn('turn-2'));
+    await expect.poll(() => events.filter((event) => event.kind === 'turn-complete').length).toBe(2);
+    expect(events.filter((event) => event.kind === 'message-delta').map((event) => event.text))
+      .toEqual(['QA_HOST_R6_OK', 'A genuine raw assistant reply']);
+    await runtime.dispose();
   });
 
   it('does not publish experimental raw response function calls into the typed tool transcript', async () => {
@@ -4672,18 +4743,24 @@ describe('Codex app-server temporary recoverable turn failures', () => {
     await expect(steering).resolves.toEqual({ status: 'accepted' });
   });
 
-  it('projects provider-native user messages once through the canonical transcript event', async () => {
+  it.each([
+    ['happier-input-1'],
+    ['happier-input-1', 'happier-input-2'],
+  ])('projects provider-native user messages once while suppressing echoes for %j', async (...inputIds) => {
     const appServerRuntime = createRuntime();
     const runtime = createCodexNativeAppServerSessionRuntime(appServerRuntime, 'session-1');
     const events: AgentSessionRuntimeEvent[] = [];
     runtime.watch((event) => events.push(event));
 
+    const dispatchedPrompt = '# Session title\nHost instructions\n\nHappier prompt';
     await expect(runtime.send({
-      inputIds: ['happier-input-1'],
-      input: { text: 'Happier prompt' },
+      inputIds,
+      input: { text: dispatchedPrompt },
       delivery: { kind: 'newTurn', turnId: 'host-turn-1' },
     })).resolves.toEqual({ status: 'admitted' });
 
+    const turnStartParams = clientState.requests.find((request) => request.method === 'turn/start')?.params as
+      Readonly<{ clientUserMessageId?: string }>;
     emitNotification('item/started', {
       threadId: 'thread-1',
       turnId: 'turn-1',
@@ -4703,10 +4780,26 @@ describe('Codex app-server temporary recoverable turn failures', () => {
       item: {
         id: 'provider-happier-user-1',
         type: 'userMessage',
-        clientId: 'happier-input-1',
-        content: [{ type: 'text', text: 'Happier prompt' }],
+        clientId: turnStartParams.clientUserMessageId ?? null,
+        content: [{ type: 'text', text: dispatchedPrompt }],
       },
     });
+
+    const steering = runtime.send({
+      inputIds: inputIds.map((id) => `${id}-steer`),
+      input: { text: dispatchedPrompt },
+      delivery: { kind: 'steer', turnId: 'host-turn-1' },
+    });
+    await waitForRequestCount('turn/steer', 1);
+    const turnSteerParams = clientState.requests.find((request) => request.method === 'turn/steer')?.params as
+      Readonly<{ clientUserMessageId?: string }>;
+    emitNotification('item/started', {
+      threadId: 'thread-1', turnId: 'turn-1',
+      item: { id: 'provider-happier-steer-1', type: 'userMessage',
+        clientId: turnSteerParams.clientUserMessageId ?? null,
+        content: [{ type: 'text', text: dispatchedPrompt }] },
+    });
+    await expect(steering).resolves.toEqual({ status: 'admitted' });
 
     expect(events.filter((event) => (
       event.kind === 'transcript-message-committed' && event.role === 'user'
@@ -4719,6 +4812,7 @@ describe('Codex app-server temporary recoverable turn failures', () => {
         turnId: 'host-turn-1',
       }),
     ]);
+    await runtime.dispose();
   });
 
   it('does not leave correlated steer custody pending after its provider turn ends without an echo', async () => {

@@ -8,7 +8,7 @@ export const KILO_AGENT_SETTINGS_CONTRIBUTION = {
   scope: 'account',
   fields: [],
   presentation: {
-    icon: { ionName: 'flash-outline', color: { kind: 'theme', token: 'orange' } },
+    icon: { ionName: 'lightning', color: { kind: 'theme', token: 'orange' } },
     subagentSections: [],
     sections: [],
   },

@@ -18,17 +18,22 @@ describe('AGENT_LOCAL_CLI_CONFIG', () => {
   it('derives canonical Agent local CLI facts from native bundled CLI metadata', () => {
     for (const agentId of AGENT_IDS) {
       const definition = BUNDLED_AGENT_DEFINITIONS_BY_ID[agentId];
-      const launches = definition.cli.auth.loginLaunches.map((launch) => ({
+      const cli = definition.cli;
+      if (!cli) {
+        expect(getAgentLocalCliConfig(agentId)).toBeNull();
+        continue;
+      }
+      const launches = cli.auth.loginLaunches.map((launch) => ({
         ...launch,
-        command: definition.cli.executable.binaryName,
+        command: cli.executable.binaryName,
       }));
 
       expect(definition).not.toHaveProperty('localCli');
       expect(CANONICAL_AGENT_LOCAL_CLI_CONFIG[agentId]).toMatchObject({
         agentId,
-        detectKey: definition.cli.executable.binaryName,
-        machineLoginKey: definition.cli.auth.machineLoginKey ?? definition.cli.executable.binaryName,
-        supportKind: definition.cli.auth.support,
+        detectKey: cli.executable.binaryName,
+        machineLoginKey: cli.auth.machineLoginKey ?? cli.executable.binaryName,
+        supportKind: cli.auth.support,
         loginLaunch: launches.find((launch) => launch.kind === 'primary') ?? null,
         authLaunches: launches,
       });
@@ -83,7 +88,7 @@ describe('AGENT_LOCAL_CLI_CONFIG', () => {
       supportKind: 'unsupported',
       loginLaunch: null,
     });
-    expect(config.machineLoginKey).not.toBe('gemini-cli');
+    expect(config?.machineLoginKey).not.toBe('gemini-cli');
     expect(JSON.stringify(config)).not.toContain('gemini auth');
   });
 

@@ -5,7 +5,7 @@ import { RequesterWorkAttributionV1Schema } from '../machines/requesterWorkAttri
 
 import { ExecutionRunClassSchema, ExecutionRunIntentSchema, ExecutionRunIoModeSchema, ExecutionRunRetentionPolicySchema } from '../execution/runs/runPrimitives.js';
 import { ExecutionRunDisplaySchema, ExecutionRunLaunchOriginSchema, normalizeLegacyExecutionRunBackendTargetInput, ExecutionRunResumeHandleSchema } from '../execution/runs/startRequest.js';
-import { ExecutionRunRequestedConfigurationSchema } from '../execution/runs/requestedConfiguration.js';
+import { ExecutionRunRequestedConfigurationSchema, ExecutionRunResolvedSelectionSchema } from '../execution/runs/requestedConfiguration.js';
 import { ExecutionRunStatusSchema } from '../execution/runs/responseSchemas.js';
 import {
   BackendTargetRefV2Schema,
@@ -31,6 +31,7 @@ import { AGENT_SESSION_RUNTIME_LIMITS_CANDIDATE_V1 } from '../runtime/agentSessi
 import { TeamCredentialDirectMaterialUseV1Schema } from '../teams/credentials/directMaterialV1.js';
 import { TeamCredentialRouteV1Schema } from '../teams/credentials/resourceV1.js';
 import { PluginSourceCustodyV1Schema } from '../plugins/runtime/sourceCustody.js';
+import { ProviderAgentTargetKeySchema, ProviderConnectionIdSchema, ProviderModelIdSchema } from '../providers/ids.js';
 
 /**
  * The Run owner's own accepted provider-model selection, attested with its
@@ -97,6 +98,12 @@ export const SessionExecutionRunBrokerAuthorityRequestV1Schema = lazyZodSchema((
   expectedIntent: ExecutionRunIntentSchema.optional(),
   expectedOccurrenceId: z.string().trim().min(1).max(512).nullable(),
   expectedDirectMaterialUse: TeamCredentialDirectMaterialUseV1Schema.optional(),
+  expectedProviderConnectionModel: z.object({
+    agentId: z.string().trim().min(1).max(MAX_AGENT_ROUTING_ID_BYTES),
+    agentTargetKey: ProviderAgentTargetKeySchema,
+    providerConnectionId: ProviderConnectionIdSchema,
+    modelId: ProviderModelIdSchema,
+  }).strict().optional(),
 }).strict());
 export type SessionExecutionRunBrokerAuthorityRequestV1 = z.infer<
   typeof SessionExecutionRunBrokerAuthorityRequestV1Schema
@@ -399,11 +406,13 @@ const DaemonExecutionRunMarkerBackendIdentitySchema = lazyZodSchema(() => z.prep
 ));
 
 /**
- * Bounded facts required to faithfully project a marker-backed public run.
- * They remain optional for partial predecessor marker reads; such a marker is
- * deliberately not projected because the public-state schema requires all four.
+ * Bounded public run facts. The four policy/class fields remain optional for
+ * predecessor marker reads; a full public-state projection requires all four.
+ * Resolved selection is an optional presentation fact, never reconstructed from omissions.
  */
 const DaemonExecutionRunMarkerPublicStateFieldsSchema = {
+  // Presentation-only echo of the host-admitted choice; never launch authority.
+  resolvedSelection: ExecutionRunResolvedSelectionSchema.optional(),
   permissionMode: z.string().trim().min(1).max(200).optional(),
   runClass: ExecutionRunClassSchema.optional(),
   ioMode: ExecutionRunIoModeSchema.optional(),
@@ -414,7 +423,7 @@ const DaemonExecutionRunMarkerPublicStateFieldsSchema = {
 /**
  * Canonical on-disk marker shape. Marker files are observability/restart hints,
  * not a shadow execution request or runtime snapshot: keep only bounded run
- * identity, public policy/class, status, timing, size, and error-code facts.
+ * identity, public policy/class, safe selection, status, timing, size, and error-code facts.
  */
 const DaemonExecutionRunMarkerFieldsSchema = lazyZodSchema(() => z.object({
   pid: z.number().int().positive(),

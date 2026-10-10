@@ -811,6 +811,18 @@ describe('TranscriptRawRecordV1Schema', () => {
     expect(agentEventLocalIdAttentionImpact('not-an-event')).toBeNull();
   });
 
+  it('does not turn composition evidence into unread or meaningful user activity, including encrypted local-id reads', () => {
+    expect(agentEventAttentionImpact({ type: 'prompt-composition' })).toEqual({
+      affectsUnread: false, affectsMeaningfulActivity: false,
+    });
+    expect(agentEventLocalIdAttentionImpact('prompt-composition:opaque-evidence')).toEqual({
+      affectsUnread: false, affectsMeaningfulActivity: false,
+    });
+    expect(agentEventAttentionImpact({ type: 'message', message: 'actual Agent answer' })).toEqual({
+      affectsUnread: true, affectsMeaningfulActivity: true,
+    });
+  });
+
   it('builds deterministic sanitized agent event local ids', () => {
     expect(buildAgentEventLocalId('agent-quota-wait', [
       'openai-codex',

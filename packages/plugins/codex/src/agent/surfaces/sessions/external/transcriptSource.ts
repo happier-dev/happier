@@ -3,10 +3,11 @@ import { open, stat, type FileHandle } from 'node:fs/promises';
 
 import type { AgentExternalSessionTranscriptItem, AgentExternalSessionsInvocation } from '@happier-dev/plugin-sdk/sessions/external';
 import type { ExecService } from '@happier-dev/plugin-sdk/exec';
-import { createExternalSessionContentMatchSnippet } from '@happier-dev/protocol/sessions/external/contentSearchMatch';
 import {
   readJsonlFileBackwardPage,
   readJsonlFileForwardLines,
+  createExternalSessionContentSearchControl,
+  searchExternalSessionContent,
 } from '@happier-dev/plugin-sdk/sessions/file-stores';
 
 import { createCodexRolloutSemanticTracker } from '../../../rollout/semanticTracker.js';
@@ -103,10 +104,10 @@ export class CodexExternalSessionUnsupportedRolloutRecordError extends Error {
 async function readCodexExternalTranscriptProjection(params: Readonly<{
   streams: readonly CodexExternalTranscriptRolloutStream[];
   maxBytes?: number;
-  query?: string;
+  matchText?: (text: string) => string | null;
 }> & CodexExternalSessionInvocationBounds) {
   // Keep only source identities/ordering and a hit, never every decoded body.
-  type RetainedRecord = Readonly<{ id: string; createdAtMs: number; matchText?: string }>;
+  type RetainedRecord = Readonly<{ id: string; createdAtMs: number; snippet?: string }>;
   const records: RetainedRecord[] = [];
   let partial = false;
   const fileSystem = createCodexExternalSessionJsonlScannerFileSystem(params);
@@ -141,8 +142,8 @@ async function readCodexExternalTranscriptProjection(params: Readonly<{
             ? content.type === 'text' && typeof content.text === 'string' ? content.text
               : content.type === 'codex' && 'data' in content && isTranscriptObject(content.data) && content.data.type === 'message' && typeof content.data.message === 'string' ? content.data.message : null
             : null;
-          const matchText = params.query && text !== null ? createExternalSessionContentMatchSnippet(text, params.query) : null;
-          return { id: item.id, createdAtMs: item.createdAtMs, ...(matchText !== null ? { matchText } : {}) };
+          const snippet = params.matchText && text !== null ? params.matchText(text) : null;
+          return { id: item.id, createdAtMs: item.createdAtMs, ...(snippet !== null ? { snippet } : {}) };
         }), rollbackCount: undefined });
       }
       if (page.reachedEnd) break;
@@ -175,31 +176,14 @@ export async function searchCodexExternalTranscript(params: Readonly<{
 }>> {
   const { streams } = await resolveTranscriptStreams(params);
   if (streams.length === 0) return { partial: true, unsearchable: true };
-  // Keep decoded JavaScript matching authoritative when Unicode case folding
-  // cannot be safely approximated by the rg exclusion prefilter.
-  if (!/[^\x00-\x7F]/.test(params.query.toLowerCase())) {
-    const prefilter = await params.ripgrep.run({
-      args: ['--no-config', '--files-with-matches', '--null', '--ignore-case', '--multiline', '--fixed-strings', '-e', params.query, '-e', '\\'],
-      paths: streams.map((stream) => stream.filePath),
-      signal: params.signal,
-    });
-    // rg is a separate, cancellation-aware process phase, not a sample of
-    // JSONL chunk cost. Start measuring the real decode work at this boundary.
-    params.onProgress?.(true);
-    throwIfCodexExternalSessionInvocationStopped(params);
-    if (!prefilter.stdoutTruncated && prefilter.exitCode !== 0 && prefilter.exitCode !== 1) throw new Error('Codex conversation prefilter failed.');
-    if (!prefilter.stdoutTruncated && !prefilter.stdout.split('\0').some(Boolean)) return { partial: false, unsearchable: false };
-  }
   // A multi-stream transcript has one semantic order; decode all its streams
   // once any stream matches so source ordinals and normalization stay correct.
-  const projection = await readCodexExternalTranscriptProjection({ ...params, streams });
-  for (let messageIndex = 0; messageIndex < projection.records.length; messageIndex += 1) {
-    const item = projection.records[messageIndex]!;
-    if (item.matchText !== undefined) {
-      return { match: { snippet: item.matchText, sourceItemId: item.id, messageIndex }, partial: projection.partial, unsearchable: false };
-    }
-  }
-  return { partial: projection.partial, unsearchable: false };
+  const result = await searchExternalSessionContent({
+    query: params.query, paths: streams.map((stream) => stream.filePath), ripgrep: params.ripgrep,
+    control: params.contentSearchControl ?? createExternalSessionContentSearchControl(params),
+    decode: (matchText) => readCodexExternalTranscriptProjection({ ...params, streams, matchText }),
+  });
+  return { ...result, unsearchable: false };
 }
 
 function encodeBackwardCursor(value: CodexBackwardCursor): string {

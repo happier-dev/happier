@@ -14,6 +14,46 @@ import {
 } from './projection.js';
 
 describe('Claude native transcript semantic projection', () => {
+  it.each([
+    { type: 'attachment', uuid: 'peer-native', attachment: { type: 'queued_command', prompt: '<cross-session-message from="uds:/tmp/sender.sock" from-name="Sender" from-mode="prompting">Delivered</cross-session-message>' } },
+    { type: 'user', uuid: 'peer-sdk-string', origin: { kind: 'peer', from: 'uds:/tmp/sender.sock', name: 'Sender' }, message: { content: 'Delivered' } },
+    { type: 'user', uuid: 'peer-sdk-blocks', origin: { kind: 'peer', from: 'uds:/tmp/sender.sock', name: 'Sender' }, message: { content: [{ type: 'text', text: 'Delivered' }] } },
+  ])('projects native delivered peer content through the recipient-safe owner without human prompt admission', row => {
+    expect(classifyClaudeNativeTranscriptRow(row)).toMatchObject({ visibility: 'visible', messageRole: 'agent',
+      content: { kind: 'peer_message', text: 'From Sender:\n\nDelivered' }, lifecycle: { kind: 'none' } });
+    const [item] = projectClaudeJsonlLineToDirectMessages({ fileRelPath: 'projects/session.jsonl', lineStartOffsetBytes: 4, lineValue: row });
+    expect(item).toMatchObject({ messageRole: 'agent', raw: { role: 'agent', content: { type: 'acp', agentId: 'claude', data: { type: 'message', message: 'From Sender:\n\nDelivered' } } } });
+    expect(item?.userProjection).toBeUndefined();
+    expect(JSON.stringify(item)).not.toContain('uds:/tmp');
+    const native = projectClaudeJsonlLineToRawMessage(row);
+    expect(native).toEqual(row);
+    if (!native) throw new Error('Missing native peer observation');
+    expect(projectClaudeTranscriptRowToProviderPayload({ providerSessionId: 'recipient', row: native, suppressPriorEraTurnClosure: false })).toBeNull();
+  });
+
+  it('never treats native peer text accompanying tool results as human prompt evidence', () => {
+    const row = { type: 'user', uuid: 'peer-tool-results', origin: { kind: 'peer', from: 'uds:/tmp/sender.sock', name: 'Sender' },
+      message: { content: [{ type: 'text', text: 'Tool report' }, { type: 'tool_result', tool_use_id: 'call', content: 'Result' }] } };
+    expect(classifyClaudeNativeTranscriptRow(row)).toMatchObject({ messageRole: 'event', lifecycle: { kind: 'none' },
+      semanticParts: expect.arrayContaining([expect.objectContaining({ kind: 'tool_result', callId: 'call' })]) });
+    expect(projectClaudeJsonlLineToDirectMessages({ fileRelPath: 'session.jsonl', lineStartOffsetBytes: 0, lineValue: row })
+      .some(item => item.userProjection !== undefined)).toBe(false);
+  });
+
+  it('does not promote an explicitly human queued wrapper or an undelivered enqueue to peer content', () => {
+    const prompt = '<cross-session-message from="uds:/tmp/sender.sock" from-name="Sender">Copied</cross-session-message>';
+    for (const row of [
+      { type: 'attachment', uuid: 'human-peer-copy', attachment: { type: 'queued_command', origin: { kind: 'human' }, prompt } },
+      { type: 'queue-operation', operation: 'enqueue', content: prompt },
+    ]) expect(classifyClaudeNativeTranscriptRow(row)).toMatchObject({ visibility: 'hidden', lifecycle: { kind: 'none' } });
+    expect(classifyClaudeNativeTranscriptRow({ type: 'user', uuid: 'ordinary-copy', message: { content: prompt } }).content.kind).toBe('message');
+  });
+
+  it('preserves quoted angle brackets in a native sender name and keeps the whole peer body', () => {
+    expect(classifyClaudeNativeTranscriptRow({ type: 'attachment', uuid: 'peer-angle-name', attachment: { type: 'queued_command',
+      prompt: '<cross-session-message from="uds:/tmp/sender.sock" from-name="<Sender>" from-mode="prompting">First\n\n<code>body</code></cross-session-message>' } })).toMatchObject({ content: { kind: 'peer_message', text: 'From <Sender>:\n\nFirst\n\n<code>body</code>' } });
+  });
+
   it.each(['completed', 'refused'])('treats command lifecycle state %s as a known non-transcript record', (state) => {
     // Claude Agent SDK 0.3.206 added this frame; 0.3.238 added refused.
     const record = { type: 'command_lifecycle', command_uuid: 'command-1', session_id: 'provider-session', state, uuid: 'lifecycle-1' };

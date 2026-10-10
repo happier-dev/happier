@@ -96,6 +96,8 @@ export function normalizeOpenCodeV2Event(type: string, rawData: unknown): OpenCo
   if (!data) return { type, properties: rawData };
 
   switch (type) {
+    case 'session.created':
+      return { type, properties: { sessionID: data.sessionID, info: { ...data, id: data.sessionID } } };
     case 'session.text.started':
       return streamEvent('text', 'started', data);
     case 'session.text.delta':
@@ -114,11 +116,13 @@ export function normalizeOpenCodeV2Event(type: string, rawData: unknown): OpenCo
       return { type: 'session.status', properties: { sessionID: data.sessionID, status: { type: 'busy' } } };
     case 'session.execution.succeeded':
     case 'session.execution.interrupted':
-      return { type: 'session.idle', properties: { sessionID: data.sessionID } };
+      return { type: 'session.idle', properties: { sessionID: data.sessionID,
+        executionOutcome: type === 'session.execution.succeeded' ? 'succeeded' : 'interrupted',
+        ...(data.reason === undefined ? {} : { interruptionReason: data.reason }) } };
     case 'session.execution.failed':
       return {
         type: 'session.error',
-        properties: { sessionID: data.sessionID, error: data.error ?? { message: 'OpenCode V2 execution failed' } },
+        properties: { sessionID: data.sessionID, executionOutcome: 'failed', error: data.error ?? { message: 'OpenCode V2 execution failed' } },
       };
 
     case 'session.retry.scheduled':

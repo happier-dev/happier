@@ -26,7 +26,7 @@ export const DROID_UI_DESCRIPTOR = Object.freeze({
     flavorAliases: ['droid', 'factory', 'factory-droid'], permissions: { modeGroup: 'codexLike', promptProtocol: 'codexDecision' },
     resume: { uiVendorResumeIdLabelKey: 'sessionInfo.droidSessionId', uiVendorResumeIdCopiedKey: 'sessionInfo.droidSessionIdCopied' },
     localControl: true, toolRendering: { hideUnknownToolsByDefault: false },
-    picker: { iconName: 'hardware-chip-outline', cliGlyph: 'DR', cliGlyphScale: 1, profileCompatibilityGlyphScale: 1, iconScale: 1.1 },
+    picker: { iconName: 'cpu', cliGlyph: 'DR', cliGlyphScale: 1, profileCompatibilityGlyphScale: 1, iconScale: 1.1 },
     avatarOverlay: { circleScale: 0.35, iconScaleRatio: 0.22 }, icon: { assetId: 'droid' },
   },
   capabilityStates: { mcpDelivery: 'supported', modelSelection: 'experimental', resume: 'supported' },

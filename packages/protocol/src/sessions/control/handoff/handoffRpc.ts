@@ -6,6 +6,8 @@ export {
   type HandoffTargetReplacementApprovalV1,
 } from './handoffTargetReplacementApprovalV1.js';
 export {
+  SessionHandoffCapabilityV3Schema,
+  type SessionHandoffCapabilityV3,
   SessionHandoffAbortRequestSchema,
   SessionHandoffAbortResponseSchema,
   SessionHandoffCommitRequestSchema,
@@ -23,6 +25,10 @@ export {
   SessionHandoffProgressCheckpointSchema,
   SessionHandoffProgressWarningCodeSchema,
   SessionHandoffStartRequestSchema,
+  SessionHandoffExistingStateCheckRequestV3Schema,
+  SessionHandoffExistingStateCheckResponseV3Schema,
+  type SessionHandoffExistingStateCheckRequestV3,
+  type SessionHandoffExistingStateCheckResponseV3,
   SessionHandoffStartResponseSchema,
   SessionHandoffActionResultV1Schema,
   SessionHandoffStatusGetRequestSchema,
@@ -73,9 +79,11 @@ export {
 export {
   SessionHandoffRecoveryActionSchema,
   SessionHandoffStorageModeSchema,
+  SessionHandoffStateTransferSchema,
   SessionHandoffTransportStrategySchema,
   type SessionHandoffRecoveryAction,
   type SessionHandoffStorageMode,
+  type SessionHandoffStateTransfer,
   type SessionHandoffTransportStrategy,
 } from './handoffTypes.js';
 

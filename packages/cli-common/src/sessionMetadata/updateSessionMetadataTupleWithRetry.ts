@@ -62,6 +62,7 @@ export type SessionMetadataTupleMutationSnapshotV1<M, A> =
 export type SessionMetadataTupleMutationV1<M, A> =
   | Readonly<{
       kind: 'metadata';
+      expectedMetadataRevision?: number;
       update: (metadata: M) => M | Promise<M>;
     }>
   | Readonly<{
@@ -290,12 +291,21 @@ type PreparedSharedEditorMutation<M> = Readonly<{
   sharedMetadataCiphertext: string;
 }>;
 
+function assertReviewedMetadataRevision<M, A>(current: SessionMetadataTupleMutationSnapshotV1<M, A>, mutation: SessionMetadataTupleMutationV1<M, A>): void {
+  if (mutation.kind !== 'metadata' || mutation.expectedMetadataRevision === undefined) return;
+  if (!Number.isSafeInteger(mutation.expectedMetadataRevision) || mutation.expectedMetadataRevision < 0
+    || current.metadataVersion !== mutation.expectedMetadataRevision) {
+    throw createTupleMutationError('Reviewed Session metadata revision changed', 'metadata_tuple_conflict');
+  }
+}
+
 async function prepareLegacyOwnerMigration<M, A>(params: Readonly<{
   current: SessionMetadataLegacyOwnerTupleMutationSnapshotV1<M, A>;
   mutation: SessionMetadataTupleMutationV1<M, A>;
   crypto: SessionMetadataTupleMutationCryptoV1;
 }>): Promise<PreparedOwnerMutation<M, A> | null> {
   const { current, mutation, crypto } = params;
+  assertReviewedMetadataRevision(current, mutation);
   let updatedMetadata = current.value.metadata;
   let updatedAgentState = current.value.agentState;
   if (mutation.kind === 'metadata') {
@@ -408,6 +418,7 @@ async function prepareTupleMutation<M, A>(params: Readonly<{
 > {
   const { current, mutation, crypto } = params;
 
+  assertReviewedMetadataRevision(current, mutation);
   if (current.mode === 'legacy_owner') {
     throw createTupleMutationError(
       'Legacy Session metadata mutation delegate is unavailable',
@@ -638,6 +649,7 @@ export async function updateSessionMetadataTupleWithRetry<M, A>(
 ): Promise<SessionMetadataTupleMutationSnapshotV1<M, A>> {
   const maxAttempts = resolveMaxAttempts(params.maxAttempts);
   let current = params.initialSnapshot;
+  assertReviewedMetadataRevision(current, params.mutation);
 
   params.assertCurrent?.();
 

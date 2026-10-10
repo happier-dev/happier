@@ -38,6 +38,7 @@ describe('runAgentStatePermissionsPhase (updatedPermissions allowlist)', () => {
         },
       } as any,
       incomingToolIds: new Set<string>(),
+      completedRequestHistoryStartAt: 1,
       changed,
       allocateId: () => messageId,
       enableLogging: false,

@@ -33,6 +33,7 @@ export {
   GENERIC_SUBAGENT_TOOL_NAME_ALIASES,
   canonicalizeGenericSubAgentToolName,
   isAsyncSubAgentLaunchToolResult,
+  readSubAgentToolResultStatus,
   isGenericSubAgentToolName,
   isSubAgentTranscriptToolName,
   type LegacySubAgentToolNameAlias,

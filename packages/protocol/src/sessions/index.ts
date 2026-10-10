@@ -48,6 +48,7 @@ export {
   type SessionFoldersV1,
 } from './folders/folderSettings.js';
 export * from './control/index.js';
+export * from './instructions/sessionVoicePreferenceV1.js';
 export * from './turns/index.js';
 export * from './messages/canonicalTurnDiffTool.js';
 export * from './messages/spawnedFirstTurn.js';

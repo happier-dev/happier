@@ -4,10 +4,14 @@ export const SESSION_STATE_FIELD_IDS = [
   'intent.model',
   'intent.role',
   'intent.sessionRoles',
+  'intent.memoryEnabled',
+  'intent.voicePreference',
+  'intent.context',
   'intent.permissionMode',
   'intent.acpSessionMode',
   'intent.acpConfigOption',
   'display.title',
+  'display.bot',
   'runtime.workState',
   'runtime.activity',
   'runtime.externalAgent',
@@ -16,6 +20,7 @@ export const SESSION_STATE_FIELD_IDS = [
   'runtime.sessionRunner',
   'view.readState',
   'view.attention',
+  'view.transcriptToolCalls',
 ] as const;
 
 export const SESSION_STATE_FIELD_CLASSES = [

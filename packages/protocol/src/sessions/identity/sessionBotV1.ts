@@ -10,6 +10,7 @@ export type SessionBotV1 = z.infer<typeof SessionBotV1Schema>;
 export const SessionBotV1StoredSchema = createStoredReadSchema(SessionBotV1Schema);
 
 export function readSessionBotV1(value: unknown): SessionBotV1 | null {
+  if (value == null) return null;
   const parsed = SessionBotV1StoredSchema.safeParse(value);
   return parsed.success ? parsed.data : null;
 }

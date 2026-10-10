@@ -1,7 +1,10 @@
 import type { z } from 'zod';
+import type { SessionBotV1 } from '../identity/sessionBotV1.js';
 
 import type { ModelOverrideV1 } from '../metadata/metadataOverridesV1.js';
 import type { SessionRoleConfigurationV1 } from '../../prompts/roles/sessionRolesSnapshot.js';
+import type { SessionContextIntentV1 } from '../context/sessionContextV1.js';
+import type { SessionVoicePreferenceV1 } from '../instructions/sessionVoicePreferenceV1.js';
 import type { SessionModelSelectionIntentV1 } from '../../providers/selection/v1.js';
 import type { RuntimeDescriptorV1 } from '../metadata/runtimeDescriptorV1.js';
 import type { SessionPermissionMode } from '../metadata/sessionPermissionModes.js';
@@ -58,10 +61,14 @@ export interface SessionStateFieldRegistry {
   'intent.model': { value: SessionModelSelectionIntentReadCompatV1 };
   'intent.role': { value: string };
   'intent.sessionRoles': { value: SessionRoleConfigurationV1 };
+  'intent.memoryEnabled': { value: boolean };
+  'intent.voicePreference': { value: SessionVoicePreferenceV1 | null };
+  'intent.context': { value: SessionContextIntentV1 };
   'intent.permissionMode': { value: PermissionModeIntentV1 };
   'intent.acpSessionMode': { value: AcpSessionModeIntentV1 };
   'intent.acpConfigOption': { value: AcpConfigOptionIntentV1 };
   'display.title': { value: string };
+  'display.bot': { value: SessionBotV1 | null };
   'runtime.workState': { value: SessionWorkStateV1 };
   'runtime.activity': { value: SessionRuntimeActivitySnapshot };
   'runtime.externalAgent': { value: ExternalAgentObservationSnapshotV1 };
@@ -70,6 +77,7 @@ export interface SessionStateFieldRegistry {
   'runtime.sessionRunner': { value: SessionRunnerRuntimeStateV1 };
   'view.readState': { value: ReadStateV1 };
   'view.attention': { value: ExternalSessionAttentionV1 };
+  'view.transcriptToolCalls': { value: boolean | null };
 }
 
 export type SessionStateFieldValue<F extends SessionStateFieldId> =

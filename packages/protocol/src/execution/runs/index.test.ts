@@ -24,6 +24,7 @@ import {
   normalizeLegacyExecutionRunBackendTargetInput,
   readExecutionRunStartRunCreation,
   withExecutionRunStartFailureDetails,
+  projectExecutionRunResolvedSelection,
 } from './index.js';
 import { ReviewFindingSchema } from '../../reviews/ReviewFinding.js';
 import { ReviewFollowUpInputSchema } from '../../reviews/reviewFollowUp.js';
@@ -38,6 +39,47 @@ import { KNOWN_CANONICAL_TOOL_NAMES_V2 } from '../../tools/v2/names.js';
 import type { ExecutionRunAgentIntentInputV1 } from '../../index.js';
 
 describe('executionRuns protocol', () => {
+  it('preserves an explicit native model reset instead of treating it as omitted child input', () => {
+    expect(ExecutionRunStartRequestSchema.safeParse({
+      intent: 'delegate', backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      instructions: 'Use native CLI settings.', modelSelection: null,
+      permissionMode: 'read_only', retentionPolicy: 'ephemeral', runClass: 'bounded', ioMode: 'request_response',
+    })).toMatchObject({ success: true, data: { modelSelection: null } });
+  });
+
+  it('bounds the host-resolved child selection and rejects credential-bearing summary fields', () => {
+    const base = { runId: 'run-1', callId: 'call-1', sidechainId: 'side-1' };
+    const resolvedSelection = {
+      source: 'inherited',
+      modelSelection: { agentTargetKey: 'agent:codex', providerConnectionId: 'connection-1', modelId: 'model-1' },
+      connectedServices: { v: 2, bindingsByServiceId: {
+        'happier.agent.codex/openai-codex': { source: 'connected', selection: 'group', groupId: 'pool-1' },
+      } },
+    };
+    expect(ExecutionRunStartResponseSchema.parse({ ...base, resolvedSelection }).resolvedSelection).toEqual(resolvedSelection);
+    const canonical = ExecutionRunStartResponseSchema.parse({ ...base, resolvedSelection }).resolvedSelection!;
+    expect(projectExecutionRunResolvedSelection(Object.assign({}, canonical, { accessToken: 'secret' }))).toEqual(canonical);
+    expect(projectExecutionRunResolvedSelection({})).toBeUndefined();
+    expect(ExecutionRunStartResponseSchema.safeParse({ ...base, resolvedSelection: {
+      ...resolvedSelection, accessToken: 'must-not-be-disclosed',
+    } }).success).toBe(false);
+    expect(ExecutionRunStartResponseSchema.safeParse({ ...base, resolvedSelection: {
+      ...resolvedSelection, connectedServices: { v: 2, bindingsByServiceId: {
+        'happier.agent.codex/openai-codex': { source: 'connected', selection: 'group', groupId: 'pool-1', accessToken: 'secret' },
+      } },
+    } }).success).toBe(false);
+  });
+
+  it('refuses a native reset competing with an explicit Team model source', () => {
+    expect(ExecutionRunStartRequestSchema.safeParse({
+      intent: 'delegate', backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      instructions: 'Use native CLI settings.', modelSelection: null,
+      teamCredentialModel: { kind: 'team_credential_provider_model', resourceId: 'team-resource', teamId: 'team-1',
+        expectedResourceRevision: 1, deliveryMode: 'brokered', agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'team-model' },
+      permissionMode: 'read_only', retentionPolicy: 'ephemeral', runClass: 'bounded', ioMode: 'request_response',
+    }).success).toBe(false);
+  });
+
   it('round-trips admitted Voice greeting bytes in start and retained state while keeping the welcome input closed', () => {
     const base = { intent: 'voice_agent', backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
       permissionMode: 'read-only', retentionPolicy: 'ephemeral', runClass: 'long_lived', ioMode: 'streaming' };
@@ -261,7 +303,7 @@ describe('executionRuns protocol', () => {
       intent: 'scm_diff_summary', kind: 'scm_diff_summary.v1',
       backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       initialInput: { kind: 'deferred_session_pending' },
-      intentInput: { cwd: '/repo', source: { kind: 'workingTree' }, comparisonId: 'saved-comparison', outputs: ['walkthrough'] },
+      intentInput: { cwd: '/repo', source: { kind: 'workingTree' }, comparisonId: 'a'.repeat(64), outputs: ['walkthrough'] },
       permissionMode: 'read_only', retentionPolicy: 'resumable', runClass: 'long_lived', ioMode: 'streaming',
     } as const;
     expect(ExecutionRunStartRequestSchema.safeParse(narrator).success).toBe(true);
@@ -1046,7 +1088,7 @@ describe('executionRuns protocol', () => {
           source: { kind: 'turnCheckpoint' },
           turnId: 'turn-1',
           checkpointReceiptId: 'checkpoint.diff_computed',
-          comparisonId: 'captured-comparison',
+          comparisonId: 'b'.repeat(64),
         },
       }).success).toBe(true);
   });

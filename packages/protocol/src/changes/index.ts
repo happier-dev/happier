@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { SessionIdSchema } from '../sessions/idsV1.js';
@@ -23,7 +24,7 @@ export {
   type PluginDomainWebhookChangeHint,
 } from './pluginDomain.js';
 
-export const ChangeKindSchema = z.enum([
+export const ChangeKindSchema = lazyZodSchema(() => z.enum([
   'account',
   'automation',
   'artifact',
@@ -39,13 +40,15 @@ export const ChangeKindSchema = z.enum([
   'savedSecretResource',
   'session',
   'share',
-]);
+]));
 
 export type ChangeKind = z.infer<typeof ChangeKindSchema>;
 
 /** AccountChange entity identities for reconstructible Home administration projections. */
 export const HOME_GOVERNANCE_ACCOUNT_CHANGE_ENTITY_ID_V1 = 'home-governance' as const;
 export const TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 = 'teams' as const;
+/** Content-free invalidation for accepted material Provider Account allowance observations. */
+export const PROVIDER_ACCOUNT_USAGE_ACCOUNT_CHANGE_ENTITY_ID_V1 = 'provider-account-usage' as const;
 /**
  * Coalescing identity for the creator's Runner-activation projection.
  *
@@ -57,7 +60,7 @@ export const TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 = 'teams' as const;
 export const EPHEMERAL_RUNNER_ACTIVATION_ACCOUNT_CHANGE_ENTITY_ID_V1 = 'ephemeral-runner-activation' as const;
 
 /** Additive-open advisory hint for the canonical Session Organization owner. */
-export const SessionOrganizationChangeHintSchema = z.object({
+export const SessionOrganizationChangeHintSchema = lazyZodSchema(() => z.object({
   sessionOrganization: z.literal(true),
   scope: z.enum(['pins', 'folders', 'folderAssignments', 'tags', 'tagAssignments', 'order', 'labels', 'attentionStandings']),
   sessionIds: z.array(z.string().trim().min(1)).optional(),
@@ -69,11 +72,11 @@ export const SessionOrganizationChangeHintSchema = z.object({
     scopeKind: z.enum(['pinned', 'folder', 'tag', 'workspace', 'group']),
     scopeKey: z.string().trim().min(1),
   })).optional(),
-}).passthrough();
+}).passthrough());
 
 export type SessionOrganizationChangeHint = z.infer<typeof SessionOrganizationChangeHintSchema>;
 
-export const ChangeEntrySchema = z.object({
+export const ChangeEntrySchema = lazyZodSchema(() => z.object({
   cursor: z.number().int().min(0),
   kind: z.string().trim().min(1),
   entityId: z.string(),
@@ -102,9 +105,25 @@ export const ChangeEntrySchema = z.object({
       });
     }
   }
-});
+}));
 
 export type ChangeEntry = z.infer<typeof ChangeEntrySchema>;
+
+/** Append and revision hints share the existing Session transcript carrier. */
+export function readSessionTranscriptChangeHintV1(
+  change: Readonly<{ kind: string; hint?: unknown }>,
+): Readonly<{ seq: number; messageId?: string }> | null {
+  if (change.kind !== 'session' && change.kind !== 'share') return null;
+  const hint = change.hint;
+  if (!hint || typeof hint !== 'object' || Array.isArray(hint)) return null;
+  const record = hint as Record<string, unknown>;
+  const appended = typeof record.lastMessageSeq === 'number';
+  const seq = appended ? record.lastMessageSeq : record.updatedMessageSeq;
+  if (typeof seq !== 'number' || !Number.isSafeInteger(seq) || seq < 0) return null;
+  const id = appended ? record.lastMessageId : record.updatedMessageId;
+  const messageId = typeof id === 'string' ? id.trim() : '';
+  return messageId ? { seq, messageId } : { seq };
+}
 
 /** The server's existing advisory hint for a durable row revised at unchanged seq. */
 export function readSessionUpdatedMessageChangeHintV1(
@@ -125,10 +144,10 @@ export function readSessionUpdatedMessageChangeHintV1(
  * physical Session deletion. Ordinary Account-relative unavailability (for
  * example share revocation) deliberately carries no such hint.
  */
-export const SessionDeletedChangeHintV1Schema = z.object({
+export const SessionDeletedChangeHintV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   lifecycle: z.literal('deleted'),
-}).strict();
+}).strict());
 
 export type SessionDeletedChangeHintV1 = z.infer<
   typeof SessionDeletedChangeHintV1Schema
@@ -154,20 +173,20 @@ export function readAuthoritativeSessionDeletionChangeV1(
   });
 }
 
-export const SessionAccessWitnessStatusV1Schema = z.enum([
+export const SessionAccessWitnessStatusV1Schema = lazyZodSchema(() => z.enum([
   'available',
   'unavailable',
-]);
+]));
 
 export type SessionAccessWitnessStatusV1 = z.infer<
   typeof SessionAccessWitnessStatusV1Schema
 >;
 
-export const SessionAccessWitnessEntryV1Schema = z.object({
+export const SessionAccessWitnessEntryV1Schema = lazyZodSchema(() => z.object({
   sessionId: z.string().trim().min(1),
   cursor: z.number().int().min(0),
   status: SessionAccessWitnessStatusV1Schema,
-}).strict();
+}).strict());
 
 export type SessionAccessWitnessEntryV1 = z.infer<
   typeof SessionAccessWitnessEntryV1Schema
@@ -179,7 +198,7 @@ export type SessionAccessWitnessEntryV1 = z.infer<
  * page. It is intentionally optional for supported older servers; callers
  * decide which scoped operation must fail closed when it is absent.
  */
-export const SessionAccessWitnessV1Schema = z.object({
+export const SessionAccessWitnessV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   throughCursor: z.number().int().min(0),
   entries: z.array(SessionAccessWitnessEntryV1Schema).max(500),
@@ -200,7 +219,7 @@ export const SessionAccessWitnessV1Schema = z.object({
     }
     sessionIds.add(entry.sessionId);
   }
-});
+}));
 
 export type SessionAccessWitnessV1 = z.infer<typeof SessionAccessWitnessV1Schema>;
 
@@ -209,16 +228,16 @@ export type SessionAccessWitnessV1 = z.infer<typeof SessionAccessWitnessV1Schema
  * change carrier. Callers use it for admission only and never acknowledge its
  * cursor as a consumed change-feed page.
  */
-export const SessionAccessProbeV1Schema = z.object({
+export const SessionAccessProbeV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   sessionId: ChangeSessionIdSchema,
   throughCursor: z.number().int().min(0),
   status: SessionAccessWitnessStatusV1Schema,
-}).strict();
+}).strict());
 
 export type SessionAccessProbeV1 = z.infer<typeof SessionAccessProbeV1Schema>;
 
-export const ChangesResponseSchema = z.object({
+export const ChangesResponseSchema = lazyZodSchema(() => z.object({
   changes: z.array(ChangeEntrySchema),
   nextCursor: z.number().int().min(0),
   sessionAccessWitness: SessionAccessWitnessV1Schema.optional(),
@@ -245,20 +264,20 @@ export const ChangesResponseSchema = z.object({
       });
     }
   }
-});
+}));
 
 export type ChangesResponse = z.infer<typeof ChangesResponseSchema>;
 
-export const CurrentCursorResponseSchema = z.object({
+export const CurrentCursorResponseSchema = lazyZodSchema(() => z.object({
   cursor: z.number().int().min(0),
   changesFloor: z.number().int().min(0),
-}).strict();
+}).strict());
 
 export type CurrentCursorResponse = z.infer<typeof CurrentCursorResponseSchema>;
 
-export const CursorGoneErrorSchema = z.object({
+export const CursorGoneErrorSchema = lazyZodSchema(() => z.object({
   error: z.literal('cursor-gone'),
   currentCursor: z.number().int().min(0),
-}).strict();
+}).strict());
 
 export type CursorGoneError = z.infer<typeof CursorGoneErrorSchema>;

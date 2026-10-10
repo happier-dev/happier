@@ -34,4 +34,13 @@ describe('extractStdStreams', () => {
             content: [{ type: 'image', data: 'aGk=', mimeType: 'image/png' }],
         })).toBeNull();
     });
+
+    it('reads persisted native string content while keeping canonical stdout authoritative', () => {
+        // Native Claude shape observed at seq 12 of cmv22orej0085tm3p0v0vi230;
+        // the current 0.2 producer also preserves this shape without stdout.
+        const content = '/workspace/round4/package.json\n';
+        const result = { content, tool_use_result: { stdout: content, stderr: '' } };
+        expect(extractStdStreams(result)).toEqual({ stdout: content });
+        expect(extractStdStreams({ ...result, stdout: '' })).toEqual({ stdout: '' });
+    });
 });

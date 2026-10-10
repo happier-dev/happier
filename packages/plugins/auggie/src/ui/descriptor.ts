@@ -22,7 +22,7 @@ export const AUGGIE_UI_DESCRIPTOR = Object.freeze({
       hideUnknownToolsByDefault: false,
     },
     picker: {
-      iconName: 'sparkles',
+      iconName: 'sparkle',
       iconScale: 1.15,
       cliGlyph: 'A',
       cliGlyphScale: 1.0,

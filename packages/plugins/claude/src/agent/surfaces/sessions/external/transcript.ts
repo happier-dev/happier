@@ -1,19 +1,23 @@
 import { createHash } from 'node:crypto';
 import { open, stat } from 'node:fs/promises';
-import { createExternalSessionContentMatchSnippet } from '@happier-dev/protocol/sessions/external/contentSearchMatch';
 
 import { defineProtocolJsonValue } from '@happier-dev/plugin-sdk/protocol';
 import type {
     AgentExternalSessionTerminalObservation,
     AgentExternalSessionTranscriptItem,
+    AgentExternalSessionsInvocation,
 } from '@happier-dev/plugin-sdk/sessions/external';
 
 import {
     readJsonlFileBackwardPage,
     readJsonlFileForward,
     type JsonlScannerFileSystem,
+    type ExternalSessionContentSearchControl,
+    searchExternalSessionContent,
 } from '@happier-dev/plugin-sdk/sessions/file-stores';
 
+import { readClaudeTaskLifecycleEnvelope } from '../../../transcripts/taskNotification.js';
+import { parseClaudeWorkflowFacts } from '../../../workflowRecords/correlation.js';
 import { classifyClaudeNativeTranscriptRow, projectClaudeNativeTranscriptObservation } from '../../../transcripts/nativeSemanticProjection.js';
 import {
     projectClaudeJsonlLineRecord,
@@ -71,15 +75,16 @@ type ClaudeSourceItem = AgentExternalSessionTranscriptItem | AgentExternalSessio
 
 const nativeObservationContent = defineProtocolJsonValue();
 
-function projectForwardLine(params: Parameters<typeof projectClaudeJsonlLineRecord>[0], projection?: undefined, activeOffsets?: ReadonlySet<number> | null): ReturnType<typeof projectClaudeJsonlLineRecord>;
-function projectForwardLine(params: Parameters<typeof projectClaudeJsonlLineRecord>[0], projection: 'terminal' | undefined, activeOffsets?: ReadonlySet<number> | null): Readonly<{ disposition: 'mapped' | 'known_non_transcript' | 'unsupported'; items: readonly ClaudeSourceItem[] }>;
-function projectForwardLine(params: Parameters<typeof projectClaudeJsonlLineRecord>[0], projection?: 'terminal', activeOffsets?: ReadonlySet<number> | null): Readonly<{
+function projectForwardLine(params: Parameters<typeof projectClaudeJsonlLineRecord>[0], projection?: undefined, activeOffsets?: ReadonlySet<number> | null, historicalReplay?: boolean): ReturnType<typeof projectClaudeJsonlLineRecord>;
+function projectForwardLine(params: Parameters<typeof projectClaudeJsonlLineRecord>[0], projection: 'terminal' | undefined, activeOffsets?: ReadonlySet<number> | null, historicalReplay?: boolean): Readonly<{ disposition: 'mapped' | 'known_non_transcript' | 'unsupported'; items: readonly ClaudeSourceItem[] }>;
+function projectForwardLine(params: Parameters<typeof projectClaudeJsonlLineRecord>[0], projection?: 'terminal', activeOffsets?: ReadonlySet<number> | null, historicalReplay?: boolean): Readonly<{
     disposition: 'mapped' | 'known_non_transcript' | 'unsupported';
     items: readonly ClaudeSourceItem[];
 }> {
     if (projection !== 'terminal' && activeOffsets && !activeOffsets.has(params.lineStartOffsetBytes)) return { disposition: 'known_non_transcript', items: [] };
     if (projection === 'terminal') {
         const classification = classifyClaudeNativeTranscriptRow(params.lineValue);
+        if (classification.content.kind === 'peer_message') return projectClaudeJsonlLineRecord(params);
         const raw = classification.rawObject;
         const attachment = raw && typeof raw === 'object' && 'attachment' in raw ? raw.attachment : null;
         const queuedCommand = attachment && typeof attachment === 'object' && 'type' in attachment
@@ -88,15 +93,19 @@ function projectForwardLine(params: Parameters<typeof projectClaudeJsonlLineReco
         // ordinary semantic path; the runtime alone decides prompt acceptance.
         const userPrompt = classification.rawType === 'user'
             && !classification.semanticParts.some((part) => part.kind === 'tool_result' || part.kind === 'tool_use');
-        if (userPrompt || classification.rawType === 'queue-operation' || (classification.rawType === 'attachment' && queuedCommand)) {
+        const workflowEvidence = parseClaudeWorkflowFacts(params.lineValue).length > 0;
+        if (readClaudeTaskLifecycleEnvelope(params.lineValue)?.subtype === 'task_notification' || userPrompt || classification.rawType === 'queue-operation' || (classification.rawType === 'attachment' && queuedCommand)) {
             const parsed = nativeObservationContent.safeParse(projectClaudeNativeTranscriptObservation(params.lineValue));
             if (!parsed.success) return { disposition: 'unsupported', items: [] };
             return {
                 disposition: 'mapped',
-                items: [{ ...readClaudeJsonlLineIdentity(params), raw: { role: 'source_observation', content: parsed.data } }],
+                items: [
+                    ...(historicalReplay ? projectClaudeJsonlLineRecord({ ...params, maxItems: undefined }).items : []),
+                    { ...readClaudeJsonlLineIdentity(params), id: `${readClaudeJsonlLineIdentity(params).id}:source_observation`, raw: { role: 'source_observation', content: parsed.data } },
+                ],
             };
         }
-        if (classification.nativeBoundary !== null || classification.lifecycle.kind === 'stop_hook_feedback') {
+        if (workflowEvidence || classification.nativeBoundary !== null || classification.lifecycle.kind === 'stop_hook_feedback') {
             const parsed = nativeObservationContent.safeParse(projectClaudeNativeTranscriptObservation(params.lineValue));
             if (!parsed.success) return { disposition: 'unsupported', items: [] };
             // A lifecycle row is indivisible: publish its visible parts first,
@@ -113,6 +122,22 @@ function projectForwardLine(params: Parameters<typeof projectClaudeJsonlLineReco
         }
     }
     return projectClaudeJsonlLineRecord(params);
+}
+
+function projectHistoricalLine(
+    params: Parameters<typeof projectClaudeJsonlLineRecord>[0], projection: 'terminal' | undefined, selected: boolean,
+): Readonly<{ disposition: 'mapped' | 'known_non_transcript' | 'unsupported'; items: readonly ClaudeSourceItem[] }> {
+    if (selected) return projectForwardLine(params, projection, undefined, true);
+    if (projection !== 'terminal') return { disposition: 'known_non_transcript', items: [] };
+    const classification = classifyClaudeNativeTranscriptRow(params.lineValue);
+    if (classification.sidechain || parseClaudeWorkflowFacts(params.lineValue).length === 0) {
+        return { disposition: 'known_non_transcript', items: [] };
+    }
+    const parsed = nativeObservationContent.safeParse(projectClaudeNativeTranscriptObservation(params.lineValue));
+    if (!parsed.success) return { disposition: 'unsupported', items: [] };
+    const identity = readClaudeJsonlLineIdentity(params);
+    return { disposition: 'mapped', items: [{ ...identity, id: `${identity.id}:source_observation`,
+        raw: { role: 'source_observation', content: parsed.data } }] };
 }
 
 export type ClaudeTranscriptResultBudget = Readonly<{
@@ -192,42 +217,44 @@ export async function searchClaudeExternalTranscript(params: Readonly<{
     query: string;
     maxBytes: number;
     signal?: AbortSignal;
-    fileSystem?: JsonlScannerFileSystem;
-    checkWork?: () => void;
+    ripgrep: AgentExternalSessionsInvocation['ripgrep'];
+    control: ExternalSessionContentSearchControl;
 }>): Promise<Readonly<{ match?: { snippet: string; sourceItemId: string; messageIndex: number }; partial: boolean }>> {
-    const branch = await readClaudeExternalTranscriptBranch(params);
-    let offsetBytes = 0;
-    let messageIndex = 0;
-    let partial = branch.partial;
-    let match: { snippet: string; sourceItemId: string; messageIndex: number } | undefined;
-    while (true) {
-        throwIfAborted(params.signal);
-        const page = await readJsonlFileForward({ filePath: params.filePath, offsetBytes, maxBytes: params.maxBytes, maxItems: Math.max(1, params.maxBytes), fileSystem: params.fileSystem });
-        throwIfAborted(params.signal);
-        partial ||= page.truncated || Boolean(page.diagnostics?.length);
-        for (const line of page.items) {
-            params.checkWork?.();
-            if (branch.offsets && !branch.offsets.has(line.startOffsetBytes)) continue;
-            const projected = projectClaudeJsonlLineRecord({ fileRelPath: params.fileRelPath, lineStartOffsetBytes: line.startOffsetBytes, lineValue: line.value });
-            partial ||= projected.disposition === 'unsupported';
-            for (const item of projected.items) {
-                const content = item.raw.content;
-                const text = isTranscriptObject(content)
-                    ? content.type === 'text' && typeof content.text === 'string' ? content.text
-                        : content.type === 'acp' && 'data' in content && isTranscriptObject(content.data) && content.data.type === 'message' && typeof content.data.message === 'string' ? content.data.message : null
-                    : null;
-                const snippet = !match && text !== null ? createExternalSessionContentMatchSnippet(text, params.query) : null;
-                if (snippet !== null) {
-                    match = { snippet, sourceItemId: item.id, messageIndex };
+    return searchExternalSessionContent({
+        query: params.query, paths: [params.filePath], ripgrep: params.ripgrep, control: params.control,
+        decode: async (matchText) => {
+            const scanParams = { ...params, fileSystem: params.control.fileSystem, checkWork: params.control.checkWork };
+            const branch = await readClaudeExternalTranscriptBranch(scanParams);
+            let offsetBytes = 0;
+            const records: { id: string; snippet?: string }[] = [];
+            let partial = branch.partial;
+            while (true) {
+                throwIfAborted(params.signal);
+                const page = await readJsonlFileForward({ filePath: params.filePath, offsetBytes, maxBytes: params.maxBytes, maxItems: Math.max(1, params.maxBytes), fileSystem: params.control.fileSystem });
+                throwIfAborted(params.signal);
+                partial ||= page.truncated || Boolean(page.diagnostics?.length);
+                for (const line of page.items) {
+                    params.control.checkWork();
+                    if (branch.offsets && !branch.offsets.has(line.startOffsetBytes)) continue;
+                    const projected = projectClaudeJsonlLineRecord({ fileRelPath: params.fileRelPath, lineStartOffsetBytes: line.startOffsetBytes, lineValue: line.value });
+                    partial ||= projected.disposition === 'unsupported';
+                    for (const item of projected.items) {
+                        const content = item.raw.content;
+                        const text = isTranscriptObject(content)
+                            ? content.type === 'text' && typeof content.text === 'string' ? content.text
+                                : content.type === 'acp' && 'data' in content && isTranscriptObject(content.data) && content.data.type === 'message' && typeof content.data.message === 'string' ? content.data.message : null
+                            : null;
+                        const snippet = text !== null ? matchText(text) : null;
+                        records.push({ id: item.id, ...(snippet !== null ? { snippet } : {}) });
+                    }
                 }
-                messageIndex += 1;
+                if (page.reachedEnd) break;
+                if (page.nextOffsetBytes <= offsetBytes) { partial = true; break; }
+                offsetBytes = page.nextOffsetBytes;
             }
-        }
-        if (page.reachedEnd) break;
-        if (page.nextOffsetBytes <= offsetBytes) { partial = true; break; }
-        offsetBytes = page.nextOffsetBytes;
-    }
-    return { ...(match ? { match } : {}), partial };
+            return { records, partial };
+        },
+    });
 }
 
 function isTranscriptObject(value: unknown): value is Readonly<Record<string, unknown>> {
@@ -611,20 +638,21 @@ function projectLines(params: Readonly<{
     lines: ReadonlyArray<Readonly<{ startOffsetBytes: number; value: unknown }>>;
     fileRelPath: string;
     maxItems: number;
+    projection?: 'terminal';
 }>): Readonly<{
-    items: ReturnType<typeof projectClaudeJsonlLineToDirectMessages>;
+    items: ClaudeSourceItem[];
     consumedUnsupportedRecord: boolean;
 }> {
-    const items: ReturnType<typeof projectClaudeJsonlLineToDirectMessages> = [];
+    const items: ClaudeSourceItem[] = [];
     let consumedUnsupportedRecord = false;
     for (const line of params.lines) {
         if (items.length >= params.maxItems) break;
-        const projected = projectClaudeJsonlLineRecord({
+        const projected = projectForwardLine({
             fileRelPath: params.fileRelPath,
             lineStartOffsetBytes: line.startOffsetBytes,
             lineValue: line.value,
             maxItems: params.maxItems - items.length,
-        });
+        }, params.projection, undefined, true);
         if (projected.disposition === 'unsupported') consumedUnsupportedRecord = true;
         for (const item of projected.items) {
             if (items.length >= params.maxItems) break;
@@ -786,8 +814,8 @@ export async function pageClaudeExternalSessionTranscript(params: Readonly<{
         })
         : await readTailCursor(tailParams);
     const maxItems = Math.max(1, Math.trunc(params.maxItems));
-    if (params.resultBudget) {
-        const items: ReturnType<typeof projectClaudeJsonlLineToDirectMessages> = [];
+    if (params.resultBudget || params.projection === 'terminal') {
+        const items: ClaudeSourceItem[] = [];
         let nextEndOffsetBytes = page.items.length === 0
             ? page.nextEndOffsetBytes
             : endOffsetBytes;
@@ -801,15 +829,16 @@ export async function pageClaudeExternalSessionTranscript(params: Readonly<{
             throwIfAborted(params.signal);
             const line = page.items[index];
             if (!line) continue;
-            const selection = params.projection === 'terminal' ? { selected: true, parentUuid: branchParentUuid } : selectClaudeExternalBranchLine(line.value, branchParentUuid);
-            const projected = selection.selected ? projectForwardLine({
+            const selection = selectClaudeExternalBranchLine(line.value, branchParentUuid);
+            const projected = projectHistoricalLine({
                 fileRelPath: resolved.fileRelPath,
                 lineStartOffsetBytes: line.startOffsetBytes,
                 lineValue: line.value,
                 maxItems: maxItems - items.length,
-            }) : { disposition: 'known_non_transcript' as const, items: [] };
+            }, params.projection, selection.selected);
             const mapped = projected.items;
             if (items.length + mapped.length > maxItems) {
+                if (items.length === 0) throw new ClaudeTranscriptResultBudgetTooSmallError('Claude transcript item budget cannot fit one native row.');
                 stoppedBeforeOlderLine = true;
                 break;
             }
@@ -835,7 +864,7 @@ export async function pageClaudeExternalSessionTranscript(params: Readonly<{
                     ? { truncated: true }
                     : {}),
             };
-            if (!params.resultBudget.fits(proposed)) {
+            if (params.resultBudget && !params.resultBudget.fits(proposed)) {
                 if (items.length === 0) {
                     throw new ClaudeTranscriptResultBudgetTooSmallError(
                         'Claude transcript result byte budget cannot fit one item.',
@@ -872,7 +901,7 @@ export async function pageClaudeExternalSessionTranscript(params: Readonly<{
             hasMore,
             ...(cursorMismatch || consumedUnsupportedRecord ? { truncated: true } : {}),
         };
-        if (!params.resultBudget.fits(result)) {
+        if (params.resultBudget && !params.resultBudget.fits(result)) {
             throw new ClaudeTranscriptResultBudgetTooSmallError(
                 'Claude transcript result byte budget cannot fit the page envelope.',
             );
@@ -882,7 +911,7 @@ export async function pageClaudeExternalSessionTranscript(params: Readonly<{
     const selectedOffsets = new Set<number>();
     for (let index = page.items.length - 1; index >= 0; index -= 1) {
         const line = page.items[index]!;
-        const selection = params.projection === 'terminal' ? { selected: true, parentUuid: branchParentUuid } : selectClaudeExternalBranchLine(line.value, branchParentUuid);
+        const selection = selectClaudeExternalBranchLine(line.value, branchParentUuid);
         branchParentUuid = selection.parentUuid;
         if (selection.selected) selectedOffsets.add(line.startOffsetBytes);
     }
@@ -890,6 +919,7 @@ export async function pageClaudeExternalSessionTranscript(params: Readonly<{
         lines: page.items.filter((line) => selectedOffsets.has(line.startOffsetBytes)),
         fileRelPath: resolved.fileRelPath,
         maxItems,
+        ...(params.projection ? { projection: params.projection } : {}),
     });
     const hasMore = !page.reachedStart;
     const nextCursor = hasMore

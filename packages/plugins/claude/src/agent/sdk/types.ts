@@ -26,6 +26,7 @@ export interface SDKAssistantMessage extends SDKMessage {
     parent_tool_use_id?: string | null;
     message: {
         role: 'assistant';
+        id?: string;
         content: Array<{
             type: string;
             text?: string;
@@ -100,6 +101,7 @@ export type QueryPrompt = string | AsyncIterable<SDKMessage>;
 
 export interface QueryOptions extends ClaudeRemoteAdvancedOptions {
     abort?: AbortSignal;
+    allowDangerouslySkipPermissions?: boolean;
     appendSystemPrompt?: string;
     /** Installed Claude native startup transport; never puts this text in argv. */
     appendSystemPromptFile?: boolean;

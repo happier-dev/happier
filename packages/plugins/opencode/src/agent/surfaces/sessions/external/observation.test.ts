@@ -128,6 +128,10 @@ describe('OpenCode External Session observation', () => {
           kind: 'opencodeServer',
           managedEndpoint: true,
         },
+        accountingSource: {
+          resourceKey: expect.stringMatching(/^opencode-resource-v2:managed:[A-Za-z0-9_-]{43}$/u),
+          changeObservation: 'observe_resource',
+        },
       },
     });
     if (!resolvedSource.ok) throw new Error('Expected a managed OpenCode source');
@@ -144,6 +148,7 @@ describe('OpenCode External Session observation', () => {
     expect(descriptor.resourceKey).toMatch(
       /^opencode-resource-v2:managed:[A-Za-z0-9_-]{43}$/u,
     );
+    expect(resolvedSource.value.accountingSource?.resourceKey).toBe(descriptor.resourceKey);
     expect(descriptor.resourceKey.length).toBeLessThanOrEqual(256);
     expect(descriptor.linkKey.length).toBeLessThanOrEqual(256);
     expect(JSON.stringify(descriptor)).not.toContain(baseUrl);
@@ -190,6 +195,10 @@ describe('OpenCode External Session observation', () => {
           baseUrl,
           directory: '/tmp/external-attach',
         },
+        accountingSource: {
+          resourceKey: expect.stringMatching(/^opencode-resource-v2:external:[A-Za-z0-9_-]{43}$/u),
+          changeObservation: 'observe_resource',
+        },
       },
     });
     if (!resolvedSource.ok) throw new Error('Expected a configured external source');
@@ -206,6 +215,7 @@ describe('OpenCode External Session observation', () => {
       now: () => 3_000,
     });
     const descriptor = observation.describeResource(resolvedLink.value);
+    expect(resolvedSource.value.accountingSource?.resourceKey).toBe(descriptor.resourceKey);
     expect(descriptor.resourceKey).toMatch(/^opencode-resource-v2:external:/u);
     const links = [{
       linkKey: descriptor.linkKey,
@@ -627,6 +637,12 @@ describe('OpenCode External Session observation', () => {
       { provenance: 'connection-boundary', connectionGeneration: 1 },
     );
     onEvent?.(
+      { payload: { type: 'server.heartbeat', properties: {} } },
+      { provenance: 'untrusted-observation', connectionGeneration: 1 },
+    );
+    expect(requestReconcile).toHaveBeenCalledTimes(1);
+    expect(requestTranscriptRefresh).not.toHaveBeenCalled();
+    onEvent?.(
       {
         directory: '/tmp/project',
         payload: {
@@ -647,8 +663,8 @@ describe('OpenCode External Session observation', () => {
       { provenance: 'untrusted-observation', connectionGeneration: 1 },
     );
     expect(requestTranscriptRefresh.mock.calls).toEqual([
-      [first.linkKey],
-      [otherDirectory.linkKey],
+      [first.linkKey, 'ses-shared'],
+      [otherDirectory.linkKey, 'ses-shared'],
     ]);
     onEvent?.(
       {
@@ -660,6 +676,7 @@ describe('OpenCode External Session observation', () => {
       { provenance: 'untrusted-observation', connectionGeneration: 1 },
     );
     expect(requestReconcile).toHaveBeenCalledTimes(2);
+    expect(requestReconcile).toHaveBeenLastCalledWith('ses-shared');
     expect(requestTranscriptRefresh).toHaveBeenCalledTimes(2);
     onEvent?.(
       {
@@ -672,6 +689,7 @@ describe('OpenCode External Session observation', () => {
       { provenance: 'untrusted-observation', connectionGeneration: 1 },
     );
     expect(requestReconcile).toHaveBeenCalledTimes(3);
+    expect(requestReconcile).toHaveBeenLastCalledWith('ses-shared');
     onEvent?.(
       {
         directory: '/tmp/project',

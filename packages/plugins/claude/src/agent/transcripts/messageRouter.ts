@@ -1,14 +1,6 @@
 import type { RawJSONLines } from './rawJsonLines.js';
-import { parseClaudeTaskNotification } from './taskNotification.js';
+import { readClaudeTaskLifecycleEnvelope } from './taskNotification.js';
 import { isClaudeInternalTranscriptMessage } from './visibility.js';
-
-function isTaskNotificationUserText(message: RawJSONLines): boolean {
-    if (message.type !== 'user') return false;
-    if ((message as { isSidechain?: unknown }).isSidechain === true) return false;
-    const content = (message as { message?: { content?: unknown } }).message?.content;
-    if (typeof content !== 'string') return false;
-    return /^\s*<task-notification>/i.test(content);
-}
 
 function messageKey(message: RawJSONLines): string {
     if (message.type === 'user') {
@@ -73,8 +65,9 @@ export function createMessageRouter(params: Readonly<{
     }
 
     function maybeRewriteTaskNotificationToToolResult(message: RawJSONLines): RawJSONLines | null | undefined {
-        if (!isTaskNotificationUserText(message)) return message;
-        const notification = parseClaudeTaskNotification(message);
+        if (message.type !== 'user' || (message as { isSidechain?: unknown }).isSidechain === true) return message;
+        const notification = readClaudeTaskLifecycleEnvelope(message);
+        if (notification?.subtype !== 'task_notification') return message;
         if (!notification?.taskId || !notification.result) return null;
 
         const toolUseId = taskToolUseIdByAgentId.get(notification.taskId) ?? null;

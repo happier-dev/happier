@@ -8,7 +8,11 @@ import type {
   AgentExternalSessionsResult,
   AgentExternalSessionsTranscriptPage,
 } from '@happier-dev/plugin-sdk/sessions/external';
+import { createHash } from 'node:crypto';
+import { join } from 'node:path';
+import { discoverAgentAccountingJsonlSource } from '@happier-dev/plugin-sdk/sessions/file-stores';
 import { getAgentExternalSessionsInvocationFailure } from '@happier-dev/plugin-sdk/sessions/external';
+import { readCodexNativeAccounting } from '../../../usage/nativeAccounting.js';
 
 import {
   canonicalizeCodexHomePath,
@@ -274,6 +278,13 @@ export function createCodexExternalSessionsContribution(params: Readonly<{
   };
 
   return Object.freeze({
+    readAccounting(request) {
+      const stopped = getAgentExternalSessionsInvocationFailure(request);
+      if (stopped) return stopped;
+      const env = readEnv();
+      const validation = validateSource({ source: request.source, env });
+      return validation.ok ? readCodexNativeAccounting(request, validation.value.codexSource, env) : validation;
+    },
     async resolveSource(request) {
       const stopped = getAgentExternalSessionsInvocationFailure(request);
       if (stopped) return stopped;
@@ -286,10 +297,18 @@ export function createCodexExternalSessionsContribution(params: Readonly<{
         invocation: request,
       });
       if (!mediaReadRoots.ok) return mediaReadRoots;
+      const roots = mediaReadRoots.value.flatMap((home) => [join(home, 'sessions'), join(home, 'archived_sessions')]);
+      const inventory = await discoverAgentAccountingJsonlSource(roots, request.signal);
       return bounded(
         {
           source: validation.value.publicSource,
           transcriptMediaReadRoots: mediaReadRoots.value,
+          accountingSource: {
+            ...(mediaReadRoots.value.length === 1 ? { rootPath: mediaReadRoots.value[0], rootField: 'homePath' } : {}),
+            resourceKey: `codex:accounting:${createHash('sha256').update(JSON.stringify(roots)).digest('base64url')}`,
+            changeObservation: 'watch_file_changes' as const,
+            watchFileChanges: { files: [...inventory.files], topologyDirectories: [...inventory.topologyDirectories] },
+          },
         },
         request.maxSerializedBytes,
         'Codex source result cannot fit the result byte bound.',

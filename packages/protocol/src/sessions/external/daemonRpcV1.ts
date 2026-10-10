@@ -210,6 +210,7 @@ export const ExternalSessionsCandidatesListResponseSchema = lazyZodSchema(() => 
       nextCursor: z.string().min(1).nullish(),
       searchIncomplete: z.boolean().optional(),
       contentCoverage: ExternalSessionsContentCoverageSchema.optional(),
+      contentCoverageReason: z.literal('standard_search_disabled').optional(),
       /**
        * Positive `linkedSessionId` / `imported` projections are present when
        * known. When this is true, omitted projections are not a negative fact:

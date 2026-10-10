@@ -11,6 +11,7 @@ import type {
   AgentExternalSessionsContribution,
   AgentExternalSessionsFailureCode,
   AgentExternalSessionsResult,
+  AgentExternalSessionsPageTranscriptRequest,
 } from '@happier-dev/plugin-sdk/sessions/external';
 import { AgentExternalSessionTranscriptRawRecordSchema } from '@happier-dev/plugin-sdk/sessions/external';
 import type {
@@ -40,9 +41,15 @@ import {
   readJsonlFileBackwardPage,
   readJsonlFileForward,
   scanJsonlSessionFile,
+  discoverAgentAccountingJsonlSource,
+  createExternalSessionContentSearchControl,
+  ExternalSessionContentSearchYield,
+  searchExternalSessionContent,
+  type JsonlScannerFileSystem,
 } from '@happier-dev/plugin-sdk/sessions/file-stores';
 
 import { buildPiAgentRuntimeDescriptorV1 } from '../../protocol/runtimeDescriptorV1.js';
+import { readPiNativeAccounting } from '../usage/nativeAccounting.js';
 import {
   formatPiExternalSessionFileGeneration,
   isPiSessionFileInside,
@@ -374,8 +381,8 @@ function isLinkData(value: unknown): value is AgentExternalSessionLinkData {
     && Object.values(value).every((entry) => isLinkDataValue(entry, new Set([value])));
 }
 
-function sourceKey(source: Pick<ResolvedPiSource, 'agentDir'>): string {
-  return source.agentDir;
+function sourceKey(source: Pick<ResolvedPiSource, 'agentDir' | 'sessionsRoot'>): string {
+  return JSON.stringify([source.agentDir, source.sessionsRoot]);
 }
 
 function resolvePiSource(params: Readonly<{
@@ -452,6 +459,7 @@ type PiCandidateScanState = {
   readonly sourceGeneration: string;
   readonly sessionsRoot: string;
   readonly searchTerm: string;
+  searchTarget?: 'metadata' | 'content';
   readonly rootDirectory: Dir | null;
   readonly rootGenerations: Map<string, string>;
   currentDirectory: PiCandidateDirectory | null;
@@ -1251,15 +1259,25 @@ export function createPiExternalSessionsContribution(params: Readonly<{
     return scan;
   }
 
-  return Object.freeze({
-    resolveSource(request) {
+  const contribution = Object.freeze({
+    readAccounting(request) {
+      return readPiNativeAccounting(request, readEnv());
+    },
+    async resolveSource(request) {
       const stopped = getAgentExternalSessionsInvocationFailure(request);
       if (stopped) return stopped;
       const resolved = resolvePiSource({ source: request.source, env: readEnv() });
-      return resolved.ok ? ok({ source: resolved.value.source }) : resolved;
+      if (!resolved.ok) return resolved;
+      const inventory = await discoverAgentAccountingJsonlSource([resolved.value.sessionsRoot], request.signal);
+      return ok({ source: resolved.value.source, accountingSource: {
+        rootPath: resolved.value.sessionsRoot, rootField: 'sessionsRoot',
+        resourceKey: `pi:accounting:${createHash('sha256').update(resolved.value.sessionsRoot).digest('base64url')}`,
+        changeObservation: 'watch_file_changes' as const,
+        watchFileChanges: { files: [...inventory.files], topologyDirectories: [...inventory.topologyDirectories] },
+      } });
     },
 
-    async listCandidates(request) {
+    async listCandidates(request): Promise<AgentExternalSessionsResult<AgentExternalSessionsListCandidatesResult>> {
       const stopped = getAgentExternalSessionsInvocationFailure(request);
       if (stopped) return stopped;
       if (!Number.isFinite(request.maxItems) || request.maxItems < 1) {
@@ -1267,7 +1285,12 @@ export function createPiExternalSessionsContribution(params: Readonly<{
       }
       const resolved = resolvePiSource({ source: request.source, env: readEnv() });
       if (!resolved.ok) return resolved;
-      const searchTerm = readOptionalString(request.searchTerm)?.toLowerCase() ?? '';
+      const searchTarget = request.searchTarget ?? 'metadata';
+      const contentSearch = searchTarget === 'content';
+      const searchTerm = contentSearch ? request.searchTerm ?? '' : readOptionalString(request.searchTerm)?.toLowerCase() ?? '';
+      const control = contentSearch ? createExternalSessionContentSearchControl(request) : null;
+      let yielded = false;
+      let partial = false;
       const decodedCursor = request.cursor ? decodeCandidateCursor(request.cursor) : null;
       if (request.cursor && (!decodedCursor || decodedCursor.sourceKey !== sourceKey(resolved.value))) {
         return failed('invalid_request', 'Pi candidate cursor does not match the resolved source.');
@@ -1278,6 +1301,7 @@ export function createPiExternalSessionsContribution(params: Readonly<{
       try {
         if (!decodedCursor) {
           scan = await startCandidateScan(resolved.value, searchTerm);
+          scan.searchTarget = searchTarget;
         } else {
           scan = candidateScansById.get(decodedCursor.scanId) ?? null;
         }
@@ -1301,6 +1325,7 @@ export function createPiExternalSessionsContribution(params: Readonly<{
             || decodedCursor.scanned !== scan.scanned
             || scan.sourceKey !== sourceKey(resolved.value)
             || scan.searchTerm !== searchTerm
+            || (scan.searchTarget ?? 'metadata') !== searchTarget
           )
         ) {
           return failed(
@@ -1341,11 +1366,61 @@ export function createPiExternalSessionsContribution(params: Readonly<{
           const filePath = pendingFilePath ?? await nextCandidateFile(scan, budget, request.signal);
           pendingFilePath = null;
           if (!filePath) break;
-          const candidate = await inspectPiCandidateFile({
-            filePath,
-            fullScanLineLimit: request.maxItems,
-            searchTerm,
-          });
+          let candidate: AgentExternalSessionCandidate | null;
+          try {
+            control?.checkWork();
+            candidate = await inspectPiCandidateFile({
+              filePath,
+              fullScanLineLimit: request.maxItems,
+              searchTerm: contentSearch ? '' : searchTerm,
+            });
+            if (candidate && control) {
+              const remoteSessionId = candidate.remoteSessionId;
+              const searched = await searchExternalSessionContent({
+                query: searchTerm,
+                paths: [filePath],
+                ripgrep: request.ripgrep,
+                control,
+                async decode(matchText) {
+                  const pages: Readonly<{ id: string; snippet?: string }>[][] = [];
+                  let cursor: string | undefined;
+                  do {
+                    control.checkWork();
+                    const page = await contribution.pageTranscript({
+                      ...request,
+                      source: { ...resolved.value.source, sessionFile: filePath },
+                      remoteSessionId,
+                      direction: 'older',
+                      cursor,
+                      scannerFileSystem: control.fileSystem,
+                    });
+                    control.checkWork();
+                    if (!page.ok || page.value.truncated) return { records: [], partial: true };
+                    pages.push(page.value.items.map((item) => {
+                      const content = item.raw.content;
+                      const text = isRecord(content)
+                        ? content.type === 'text' ? content.text
+                          : content.type === 'acp' && 'data' in content && isRecord(content.data) && content.data.type === 'message'
+                            ? content.data.message : null
+                        : null;
+                      const snippet = typeof text === 'string' ? matchText(text) : null;
+                      return { id: item.id, ...(snippet === null ? {} : { snippet }) };
+                    }));
+                    cursor = page.value.nextCursor ?? undefined;
+                  } while (cursor);
+                  return { records: pages.reverse().flat(), partial: false };
+                },
+              });
+              partial ||= searched.partial;
+              candidate = searched.match ? { ...candidate, match: searched.match } : null;
+            }
+          } catch (error) {
+            if (!(error instanceof ExternalSessionContentSearchYield)) throw error;
+            scan.pendingFilePath = filePath;
+            scan.scanned -= 1;
+            yielded = true;
+            break;
+          }
           if (!candidate) continue;
           if (!isLiveCandidateScan(scan)) {
             return failed(
@@ -1366,6 +1441,7 @@ export function createPiExternalSessionsContribution(params: Readonly<{
             candidates: [...candidates, candidate],
             nextCursor,
             ...(searchTerm ? { searchIncomplete: true } : {}),
+            ...(contentSearch ? { contentCoverage: 'partial' as const } : {}),
             ...candidateScanPreparation(scan, searchTerm),
           });
           if (!isAgentExternalSessionsResultWithinByteBudget(proposed, request.maxSerializedBytes)) {
@@ -1381,7 +1457,7 @@ export function createPiExternalSessionsContribution(params: Readonly<{
           candidates.push(candidate);
         }
 
-        if (!scan.complete && !scan.pendingCandidate && !scan.pendingFilePath) {
+        if (!yielded && !scan.complete && !scan.pendingCandidate && !scan.pendingFilePath) {
           const peekBudget: PiCandidateChunkBudget = {
             rootEntries: budget.rootEntries,
             fileEntries: budget.fileEntries,
@@ -1401,7 +1477,8 @@ export function createPiExternalSessionsContribution(params: Readonly<{
             true,
           );
         }
-        const after = getAgentExternalSessionsInvocationFailure(request);
+        request.signal.throwIfAborted();
+        const after = yielded ? null : getAgentExternalSessionsInvocationFailure(request);
         if (after) {
           await retireCandidateScan(scan);
           return after;
@@ -1421,6 +1498,7 @@ export function createPiExternalSessionsContribution(params: Readonly<{
           candidates,
           nextCursor,
           ...(searchTerm && hasMore ? { searchIncomplete: true } : {}),
+          ...(contentSearch ? { contentCoverage: hasMore || partial ? 'partial' as const : 'complete' as const } : {}),
           ...candidateScanPreparation(scan, searchTerm),
         };
         const result = ok(value);
@@ -1539,7 +1617,7 @@ export function createPiExternalSessionsContribution(params: Readonly<{
       });
     },
 
-    async pageTranscript(request) {
+    async pageTranscript(request: AgentExternalSessionsPageTranscriptRequest & Readonly<{ scannerFileSystem?: JsonlScannerFileSystem }>): Promise<AgentExternalSessionsResult<AgentExternalSessionsTranscriptPage>> {
       const stopped = getAgentExternalSessionsInvocationFailure(request);
       if (stopped) return stopped;
       if (request.direction !== 'older') {
@@ -1579,6 +1657,7 @@ export function createPiExternalSessionsContribution(params: Readonly<{
         maxBytes: projection?.nativeMaxSerializedBytes ?? request.maxSerializedBytes,
         maxItems: projection?.nativeMaxItems ?? Math.trunc(request.maxItems),
         maxOversizeLineBytes: projection?.nativeMaxSerializedBytes ?? request.maxSerializedBytes,
+        ...(request.scannerFileSystem ? { fileSystem: request.scannerFileSystem } : {}),
       });
       const afterPage = getAgentExternalSessionsInvocationFailure(request);
       if (afterPage) return afterPage;
@@ -1903,7 +1982,8 @@ export function createPiExternalSessionsContribution(params: Readonly<{
           'Pi transcript result byte budget cannot fit the readAfter envelope.',
         );
     },
-  });
+  } satisfies AgentExternalSessionsContribution);
+  return contribution;
 }
 
 export const piExternalSessionsContribution: AgentExternalSessionsContribution = createPiExternalSessionsContribution();

@@ -24,6 +24,7 @@ const CLAUDE_SYNTHETIC_NO_RESPONSE_TEXT = 'No response requested.';
 export type ClaudeNativeTranscriptContent =
   | Readonly<{ kind: 'none' }>
   | Readonly<{ kind: 'message'; text: string | null }>
+  | Readonly<{ kind: 'peer_message'; text: string }>
   | Readonly<{ kind: 'compact_summary'; text: string }>
   | Readonly<{ kind: 'slash_command'; text: string }>
   | Readonly<{ kind: 'local_command_output'; text: string }>
@@ -110,6 +111,34 @@ function readString(value: unknown): string | null {
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
 }
 
+/** Delivered native peer content only; copied human text and enqueue records are not delivery evidence. */
+export function readClaudeNativePeerMessageText(value: unknown): string | null {
+  if (!isRecord(value)) return null;
+  const attachment = value.type === 'attachment' && isRecord(value.attachment)
+    && value.attachment.type === 'queued_command' ? value.attachment : null;
+  const origin = isRecord(value.origin) ? value.origin
+    : attachment && isRecord(attachment.origin) ? attachment.origin : null;
+  if (attachment && origin && origin.kind !== 'peer') return null;
+  const peerUser = value.type === 'user' && origin?.kind === 'peer';
+  const content = peerUser && isRecord(value.message) ? value.message.content : null;
+  const text = attachment && typeof attachment.prompt === 'string' ? attachment.prompt
+    : typeof content === 'string' ? content
+    : Array.isArray(content) && content.length > 0
+      && content.every((part) => isRecord(part) && part.type === 'text' && typeof part.text === 'string')
+      ? content.map((part) => part.text).join('\n') : null;
+  if (text === null) return null;
+  const wrapper = /^\s*<cross-session-message\b((?:"[^"]*"|'[^']*'|[^'">])*)>([\s\S]*?)<\/cross-session-message>\s*$/i.exec(text);
+  const attributes = new Map<string, string>();
+  if (wrapper) {
+    for (const match of wrapper[1].matchAll(/([\w-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g)) {
+      attributes.set(match[1], match[2] ?? match[3]);
+    }
+  }
+  if (!peerUser && (!wrapper || !readString(attributes.get('from')))) return null;
+  const name = readString(origin?.name) ?? readString(attributes.get('from-name')) ?? 'Peer';
+  return `From ${name}:\n\n${wrapper ? wrapper[2] : text}`;
+}
+
 function readTimestampMs(value: unknown): number | null {
   if (typeof value === 'number' && Number.isFinite(value)) return Math.trunc(value);
   if (typeof value !== 'string' || value.trim().length === 0) return null;
@@ -152,7 +181,14 @@ function readTextContentParts(value: unknown): string | null {
   return parts.length > 0 ? parts.join('') : null;
 }
 
-function readMessageContentParts(value: unknown): readonly ClaudeNativeTranscriptContentPart[] {
+/** Keep native result metadata with its report for every conversation codec. */
+export function withClaudeNativeToolResultMetadata(content: unknown, row: unknown): unknown {
+  if (!isRecord(row)) return content;
+  const metadata = row.toolUseResult ?? row.tool_use_result;
+  return metadata === undefined ? content : { content, tool_use_result: metadata };
+}
+
+function readMessageContentParts(value: unknown, row: RawJSONLines): readonly ClaudeNativeTranscriptContentPart[] {
   const directText = readTextContent(value);
   if (directText !== null) return [{ kind: 'text', text: directText }];
   if (value === undefined) return [];
@@ -212,7 +248,7 @@ function readMessageContentParts(value: unknown): readonly ClaudeNativeTranscrip
         : {
             kind: 'tool_result',
             callId,
-            output: valuePart.content ?? '',
+            output: withClaudeNativeToolResultMetadata(valuePart.content ?? '', row),
             ...(typeof valuePart.is_error === 'boolean' ? { isError: valuePart.is_error } : {}),
           });
       continue;
@@ -281,6 +317,16 @@ export function classifyClaudeNativeTranscriptRow(
   const rawObject = parseJsonlLineValue(lineValue);
   const rawTypeValue = isRecord(rawObject) ? rawObject.type : null;
   const rawType = typeof rawTypeValue === 'string' ? rawTypeValue : null;
+
+  const peerText = readClaudeNativePeerMessageText(rawObject);
+  const peerRow = peerText === null ? null : parseRawJsonLinesObject(rawObject);
+  if (peerText !== null && peerRow) {
+    return {
+      ...createBaseClassification({ rawObject, rawType, row: peerRow, visibility: 'visible',
+        messageRole: 'agent', content: { kind: 'peer_message', text: peerText } }),
+      knownNonTranscriptRecord: false,
+    };
+  }
 
   if (isClaudeInternalEventType(rawType)) {
     return createBaseClassification({
@@ -364,7 +410,7 @@ export function classifyClaudeNativeTranscriptRow(
     visibility: 'visible',
     messageRole: resolveClaudeTranscriptMessageRole(row),
     content: { kind: 'message', text: readTextContentParts(readMessageRecord(row)?.content) },
-    semanticParts: readMessageContentParts(readMessageRecord(row)?.content),
+    semanticParts: readMessageContentParts(readMessageRecord(row)?.content, row),
   });
 
   if (row.type === 'system' && readString((row as Record<string, unknown>).subtype) === 'compact_boundary') {
@@ -397,7 +443,7 @@ export function classifyClaudeNativeTranscriptRow(
     return base;
   }
 
-  if (row.type !== 'user') return base;
+  if (row.type !== 'user' || (isRecord(rawObject) && isRecord(rawObject.origin) && rawObject.origin.kind === 'peer')) return base;
   const text = readTextContentParts(readMessageRecord(row)?.content);
   if (!text) return base;
   if (row.isMeta === true) {

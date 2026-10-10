@@ -427,7 +427,7 @@ describe('Claude unified native-resume lifecycle integration', () => {
     }
   });
 
-  it('opens one canonical foreground turn only after Claude reacts to an ordinary task notification', async () => {
+  it.each([true, false])('uses native provenance to keep copied XML foreground and await native reaction (native: %s)', async (native) => {
     type TranscriptLineHandler = (input: Readonly<{
       line: string;
       sourcePath: string;
@@ -455,14 +455,15 @@ describe('Claude unified native-resume lifecycle integration', () => {
     const terminalHost = createTerminalHostFixture();
     const events = createEventsFixture();
     const ctx = createPluginContextFixture(terminalHost.service, events.service, { transcripts });
-    const envelope = expectRuntimeEnvelope(createClaudeUnifiedTerminalTurnOperations({
+    const runtime = createClaudeUnifiedTerminalTurnOperations({
       ctx,
       directory: '/tmp/claude-project',
       happierSessionId: 'happy-session-task-notification-reaction',
       hostPreference: 'zellij',
       launchEnv: {},
       permissionMode: 'default',
-    }));
+    });
+    const envelope = expectRuntimeEnvelope(runtime);
     const runtimeEvents: Array<{ kind?: string }> = [];
     envelope.operations.subscribeRuntimeEvents((event) => runtimeEvents.push(event));
 
@@ -493,21 +494,24 @@ describe('Claude unified native-resume lifecycle integration', () => {
       expect(runtimeEvents.filter((event) => event.kind === 'turn-start')).toHaveLength(initialTurnStarts);
 
       if (!transcriptLineHandler) throw new Error('provider transcript follow was not bound');
-      await transcriptLineHandler({
-        line: JSON.stringify({
+      const notificationRow = {
           type: 'user',
           uuid: 'notification-row',
           promptId: 'notification-prompt',
           sessionId: 'claude-primary',
           isSidechain: false,
-          origin: { kind: 'task-notification' },
+          ...(native ? { origin: { kind: 'task-notification' } } : {}),
           message: {
             content: '<task-notification><task-id>agent_1</task-id><status>completed</status></task-notification>',
           },
-        }),
+        };
+      await transcriptLineHandler({
+        line: JSON.stringify(notificationRow),
         sourcePath: '/tmp/claude-primary.jsonl',
         sequence: 1,
       });
+      await runtime.observeSourceTranscript({ providerSessionId: 'claude-primary', sourceId: 'notification-row', row: notificationRow });
+      expect(runtimeEvents.filter((event) => event.kind === 'turn-start')).toHaveLength(initialTurnStarts + (native ? 0 : 1));
       await transcriptLineHandler({
         line: JSON.stringify({
           type: 'assistant',

@@ -7,10 +7,32 @@ import {
   SessionLookupByTagsRequestV2Schema,
   SessionLookupByTagsResponseV2Schema,
   V2SessionByIdNotFoundSchema,
+  V2SessionRecordSchema,
   V2SessionResourceAccessResponseSchema,
 } from './contract.js';
 
 describe('sessionControl contract exports', () => {
+  it('normalizes stored Bot owner extensions in Session responses and rejects malformed known identity', () => {
+    const row = {
+      id: 'bot', seq: 1, createdAt: 1, updatedAt: 1, active: false, activeAt: 1,
+      encryptionMode: 'plain', metadataLayoutVersion: 1, metadata: '{"v":1}', metadataVersion: 7,
+      agentState: null, agentStateVersion: 8, dataEncryptionKey: null, share: null,
+      ownerMetadata: { t: 'plain', future: true, v: { v: 1, future: true, work: {
+        bot: { kind: 'bot', future: true }, createdAsBot: true,
+        viewPreferences: { showToolCalls: false, future: true }, future: true,
+      } } },
+    };
+    expect(V2SessionRecordSchema.parse(row).ownerMetadata).toEqual({ t: 'plain', v: { v: 1, work: {
+      bot: { kind: 'bot' }, createdAsBot: true, viewPreferences: { showToolCalls: false },
+    } } });
+    expect(V2SessionRecordSchema.safeParse({ ...row,
+      ownerMetadata: { t: 'plain', v: { v: 1, work: { bot: { kind: 'ordinary' } } } },
+    }).success).toBe(false);
+    const ciphertext = 'oRoBAgMEBQYHCAkKCwwNDg8QERITFBUWFxh8aC0+8+YDECLScN6uQTItPyWVR7XbQA==';
+    expect(V2SessionRecordSchema.parse({ ...row, encryptionMode: 'e2ee',
+      ownerMetadata: { t: 'encrypted', c: ciphertext, future: true },
+    }).ownerMetadata).toEqual({ t: 'encrypted', c: ciphertext });
+  });
   it('preserves both JSON Schema dialects and fluent resource-access projection', () => {
     const reference = z.object({
       accountId: z.string().trim().min(1).max(256),
@@ -572,6 +594,33 @@ describe('sessionControl contract exports', () => {
       pendingBlockedCount: -1,
     });
     expect(invalidBlockedCount.success).toBe(false);
+  });
+
+  it('validates optional Machine binding and canonical permission intent on session summaries', () => {
+    const summary = {
+      id: 'sess_binding',
+      createdAt: 1,
+      updatedAt: 2,
+      active: false,
+      activeAt: 0,
+      encryption: { type: 'dataKey' },
+    };
+    expect(protocol.SessionSummarySchema.safeParse(summary).success).toBe(true);
+    expect(protocol.SessionSummarySchema.safeParse({
+      ...summary,
+      machineId: 'machine-target',
+      permissionMode: 'safe-yolo',
+    }).success).toBe(true);
+    for (const invalid of [
+      { machineId: '' },
+      { machineId: '   ' },
+      { machineId: 1 },
+      { permissionMode: 'unknown' },
+      { permissionMode: 'acceptEdits' },
+      { permissionMode: null },
+    ]) {
+      expect(protocol.SessionSummarySchema.safeParse({ ...summary, ...invalid }).success).toBe(false);
+    }
   });
 
   it('validates public runtime activity projection fields on session summaries', () => {

@@ -4,6 +4,7 @@ import type {
   AgentExternalSessionsContribution,
   AgentExternalSessionsFailureCode,
   AgentExternalSessionsInvocation,
+  AgentExternalSessionsListCandidatesRequest,
   AgentExternalSessionsResult,
 } from '@happier-dev/plugin-sdk/sessions/external';
 import type {
@@ -20,6 +21,12 @@ import {
   isAgentExternalSessionsResultWithinByteBudget,
 } from '@happier-dev/plugin-sdk/sessions/external';
 import { canonicalizePath } from '@happier-dev/plugin-sdk/fs';
+import {
+  createExternalSessionContentSearchControl,
+  ExternalSessionContentSearchYield,
+  readJsonlFileForwardLines,
+  searchExternalSessionContent,
+} from '@happier-dev/plugin-sdk/sessions/file-stores';
 
 import {
   AntigravityCandidateSourceChangedError,
@@ -54,6 +61,7 @@ type FullCandidateSearchCursorV2 = Readonly<{
   brainDir: string;
   sourceGeneration: string;
   searchTerm: string;
+  searchTarget?: 'content';
   /** Directory-scan position the next bounded chunk resumes at. */
   directoryEntryOffset: number;
   /**
@@ -282,9 +290,10 @@ function decodeFullCandidateSearchCursor(raw: string | undefined): FullCandidate
       || typeof record.sourceGeneration !== 'string'
       || record.sourceGeneration.length === 0
       || typeof record.searchTerm !== 'string'
-      || record.searchTerm.trim().length === 0
+      || (record.searchTarget === 'content' ? record.searchTerm.length === 0 : record.searchTerm.trim().length === 0)
       || !Number.isSafeInteger(record.directoryEntryOffset)
-      || (record.directoryEntryOffset as number) < 1
+      || (record.directoryEntryOffset as number) < (record.searchTarget === 'content' ? 0 : 1)
+      || (record.searchTarget !== undefined && record.searchTarget !== 'content')
     ) return null;
     let after: FullCandidateSearchCursorV2['after'];
     if (record.after !== undefined) {
@@ -310,6 +319,7 @@ function decodeFullCandidateSearchCursor(raw: string | undefined): FullCandidate
       brainDir: record.brainDir,
       sourceGeneration: record.sourceGeneration,
       searchTerm: record.searchTerm,
+      ...(record.searchTarget === 'content' ? { searchTarget: 'content' as const } : {}),
       directoryEntryOffset: record.directoryEntryOffset as number,
       ...(after ? { after } : {}),
     };
@@ -430,6 +440,7 @@ function encodeFullCandidateSearchCursor(params: Readonly<{
   brainDir: string;
   sourceGeneration: string;
   searchTerm: string;
+  searchTarget?: 'content';
   directoryEntryOffset: number;
   after?: AgentExternalSessionCandidate;
 }>): string | null {
@@ -449,6 +460,7 @@ function encodeFullCandidateSearchCursor(params: Readonly<{
     brainDir: params.brainDir,
     sourceGeneration: params.sourceGeneration,
     searchTerm: params.searchTerm,
+    ...(params.searchTarget ? { searchTarget: params.searchTarget } : {}),
     directoryEntryOffset: params.directoryEntryOffset,
     ...(after ? { after } : {}),
   });
@@ -463,14 +475,15 @@ function encodeFullCandidateSearchCursor(params: Readonly<{
  * becomes a second candidate index.
  */
 async function listFullCandidateSearch(params: Readonly<{
-  invocation: AgentExternalSessionsInvocation;
+  invocation: AgentExternalSessionsListCandidatesRequest;
   brainDir: string;
   searchTerm: string;
+  searchTarget?: 'content';
   cursor: FullCandidateSearchCursorV2 | null;
   maxItems: number;
 }>): Promise<AgentExternalSessionsResult<AgentExternalSessionsListCandidatesResult>> {
   const limit = Math.trunc(params.maxItems);
-  const after = params.cursor?.after
+  const after = params.searchTarget !== 'content' && params.cursor?.after
     ? fullCandidateSearchAnchorCandidate(params.cursor.after)
     : null;
   const page = await pageAntigravityConversationCandidates({
@@ -482,9 +495,72 @@ async function listFullCandidateSearch(params: Readonly<{
   });
 
   const retained: AgentExternalSessionCandidate[] = [];
+  const control = createExternalSessionContentSearchControl(params.invocation);
+  let partial = false;
+  let yielded = false;
+  let processedOffset = params.cursor?.directoryEntryOffset ?? 0;
   for (const nativeCandidate of page.candidates) {
-    const candidate = toCandidate(nativeCandidate);
-    if (
+    let candidate = toCandidate(nativeCandidate);
+    if (params.searchTarget === 'content') {
+      try {
+        const searched = await searchExternalSessionContent({
+          query: params.searchTerm,
+          paths: [nativeCandidate.transcriptPath],
+          ripgrep: params.invocation.ripgrep,
+          control,
+          async decode(matchText) {
+            const records: { id: string; snippet?: string }[] = [];
+            let offsetBytes = 0;
+            let partial = false;
+            let pendingToolCallIds: readonly string[] = [];
+            while (true) {
+              control.checkWork();
+              const lines = await readJsonlFileForwardLines({ filePath: nativeCandidate.transcriptPath, offsetBytes, maxItems: params.maxItems, maxBytes: params.invocation.maxSerializedBytes, fileSystem: control.fileSystem });
+              control.assertNotYielded();
+              partial ||= lines.truncated || Boolean(lines.diagnostics?.length);
+              partial ||= lines.items.some((line) => !line.value || typeof line.value !== 'object' || Array.isArray(line.value));
+              const projected = projectAntigravityTranscriptRecordGroupsWithCorrelation({
+                conversationId: nativeCandidate.conversationId,
+                pendingToolCallIds,
+                records: lines.items.flatMap((line) => line.value && typeof line.value === 'object' && !Array.isArray(line.value)
+                  ? [{ record: line.value as Record<string, unknown>, startOffsetBytes: line.startOffsetBytes, endOffsetBytes: line.endOffsetBytes }]
+                  : []),
+              });
+              pendingToolCallIds = projected.pendingToolCallIds;
+              for (const group of projected.groups) {
+                partial ||= group.unsupported;
+                for (const item of group.items) {
+                  control.checkWork();
+                  const rawContent = item.raw.content;
+                  const content = rawContent && typeof rawContent === 'object' && !Array.isArray(rawContent)
+                    ? rawContent as Readonly<Record<string, unknown>> : null;
+                  const rawData = content?.type === 'acp' ? content.data : null;
+                  const data = rawData && typeof rawData === 'object' && !Array.isArray(rawData)
+                    ? rawData as Readonly<Record<string, unknown>> : null;
+                  const text = content?.type === 'text' && typeof content.text === 'string' ? content.text
+                    : data?.type === 'message' && typeof data.message === 'string' ? data.message : '';
+                  const snippet = text ? matchText(text) : null;
+                  records.push({ id: item.id, ...(snippet === null ? {} : { snippet }) });
+                }
+              }
+              if (lines.reachedEnd) break;
+              if (lines.nextOffsetBytes <= offsetBytes) { partial = true; break; }
+              offsetBytes = lines.nextOffsetBytes;
+            }
+            return { records, partial };
+          },
+        });
+        partial ||= searched.partial;
+        processedOffset = nativeCandidate.directoryEntryOffset;
+        if (!searched.match) continue;
+        candidate = { ...candidate, match: searched.match };
+      } catch (error) {
+        if (!(error instanceof ExternalSessionContentSearchYield)) throw error;
+        yielded = true;
+        partial = true;
+        break;
+      }
+    } else if (
       !candidate.remoteSessionId.toLowerCase().includes(params.searchTerm)
       && candidate.title?.toLowerCase().includes(params.searchTerm) !== true
     ) {
@@ -506,23 +582,27 @@ async function listFullCandidateSearch(params: Readonly<{
   retained.sort(compareExternalSessionCandidatePrecedence);
 
   const stopped = getAgentExternalSessionsInvocationFailure(params.invocation);
-  if (stopped) return stopped;
+  if (stopped && (!yielded || params.invocation.signal.aborted)) return stopped;
 
-  const exhausted = page.nextDirectoryEntryOffset === null;
+  const exhausted = !yielded && page.nextDirectoryEntryOffset === null;
+  const nextOffset = yielded ? processedOffset : page.nextDirectoryEntryOffset;
   let nextCursor: string | null = null;
-  if (!exhausted && page.nextDirectoryEntryOffset !== null) {
+  if (!exhausted && nextOffset !== null) {
     const sourceGeneration = page.sourceGeneration;
     if (!sourceGeneration) {
       return failed('agent_error', 'Antigravity candidate continuation cannot be represented.', false);
     }
     // The anchor moves to the newest match this chunk served; a chunk without
     // a match carries the previous anchor, or none until a first match serves.
-    const servedAnchor = retained.at(-1) ?? after ?? undefined;
+    // Content walks physical directory offsets. A newer transcript in a later
+    // directory chunk is still unsearched, regardless of its recency.
+    const servedAnchor = params.searchTarget === 'content' ? undefined : retained.at(-1) ?? after ?? undefined;
     nextCursor = encodeFullCandidateSearchCursor({
       brainDir: params.brainDir,
       sourceGeneration,
       searchTerm: params.searchTerm,
-      directoryEntryOffset: page.nextDirectoryEntryOffset,
+      ...(params.searchTarget ? { searchTarget: params.searchTarget } : {}),
+      directoryEntryOffset: nextOffset,
       ...(servedAnchor ? { after: servedAnchor } : {}),
     });
     if (!nextCursor) {
@@ -533,6 +613,7 @@ async function listFullCandidateSearch(params: Readonly<{
   return boundedResult(params.invocation, ok({
     candidates: retained,
     nextCursor,
+    ...(params.searchTarget === 'content' ? { contentCoverage: partial || !exhausted ? 'partial' as const : 'complete' as const } : {}),
     ...(exhausted ? {} : { searchIncomplete: true }),
   }));
 }
@@ -768,8 +849,10 @@ export function createAntigravityExternalSessionsContribution(params: Readonly<{
       if (!Number.isFinite(request.maxItems) || request.maxItems < 1) return failed('invalid_request');
       const validation = await validateSource({ source: request.source, env: readEnv() });
       if (!validation.ok) return boundedResult(request, validation);
-      const searchTerm = request.searchTerm?.trim().toLowerCase() ?? '';
-      const fullSearch = searchTerm.length > 0 && request.searchMode === 'full';
+      const contentSearch = request.searchTarget === 'content';
+      const searchTerm = contentSearch ? request.searchTerm ?? '' : request.searchTerm?.trim().toLowerCase() ?? '';
+      if (contentSearch && !searchTerm) return failed('invalid_request', 'Content search requires a query.');
+      const fullSearch = searchTerm.length > 0 && (request.searchMode === 'full' || contentSearch);
       const fullSearchCursor = fullSearch && request.cursor
         ? decodeFullCandidateSearchCursor(request.cursor)
         : null;
@@ -780,6 +863,7 @@ export function createAntigravityExternalSessionsContribution(params: Readonly<{
           !fullSearchCursor
           || fullSearchCursor.brainDir !== validation.value.brainDir
           || fullSearchCursor.searchTerm !== searchTerm
+          || fullSearchCursor.searchTarget !== (contentSearch ? 'content' : undefined)
         )
       ) {
         return failed('invalid_request', 'Invalid Antigravity full-search candidate cursor.');
@@ -794,6 +878,7 @@ export function createAntigravityExternalSessionsContribution(params: Readonly<{
             invocation: request,
             brainDir: validation.value.brainDir,
             searchTerm,
+            ...(contentSearch ? { searchTarget: 'content' as const } : {}),
             cursor: fullSearchCursor,
             maxItems: request.maxItems,
           });

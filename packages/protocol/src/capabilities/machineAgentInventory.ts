@@ -1,9 +1,10 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 import type { CapabilitiesDetectRequest } from './index.js';
 import type { PluginProjectionV2 } from '../daemon/contributionRegistryProjection.js';
 
-const MachineAgentFactsSchema = z.object({
+const MachineAgentFactsSchema = lazyZodSchema(() => z.object({
   installed: z.boolean(),
   version: z.string().nullable(),
   latestVersion: z.string().nullable(),
@@ -26,25 +27,34 @@ const MachineAgentFactsSchema = z.object({
   dependencies: z.array(z.object({
     key: z.string().min(1), installed: z.boolean(), version: z.string().nullable(),
   }).strict()),
-});
+}));
 
 /** Daemon facts, before connected-account or presentation-state composition. */
-export const MachineAgentInventoryItemSchema = MachineAgentFactsSchema.extend({
+export const MachineAgentInventoryItemSchema = lazyZodSchema(() => MachineAgentFactsSchema.extend({
   agentId: z.string().min(1), title: z.string().min(1),
-}).strict();
+}).strict());
 export type MachineAgentInventoryItem = z.output<typeof MachineAgentInventoryItemSchema>;
 
-export const MachinesAgentsListInputSchema = z.object({
+/** A failed probe carries no installation or readiness facts. */
+export const MachineAgentInventoryUnavailableSchema = lazyZodSchema(() => z.object({
+  agentId: z.string().min(1),
+  reason: z.enum(['missing_result', 'probe_failed', 'invalid_facts']),
+  errorCode: z.string().optional(),
+}).strict());
+export type MachineAgentInventoryUnavailable = z.output<typeof MachineAgentInventoryUnavailableSchema>;
+
+export const MachinesAgentsListInputSchema = lazyZodSchema(() => z.object({
   machineId: z.string().trim().min(1),
   serverId: z.string().trim().min(1).optional(),
   agentId: z.string().trim().min(1).optional(),
   refresh: z.boolean().optional(),
-}).strict();
+}).strict());
 export type MachinesAgentsListInput = z.output<typeof MachinesAgentsListInputSchema>;
 
-export const MachinesAgentsListOutputSchema = z.object({
+export const MachinesAgentsListOutputSchema = lazyZodSchema(() => z.object({
   items: z.array(MachineAgentInventoryItemSchema),
-}).strict();
+  unavailable: z.array(MachineAgentInventoryUnavailableSchema).optional(),
+}).strict());
 export type MachinesAgentsListOutput = z.output<typeof MachinesAgentsListOutputSchema>;
 
 export type MachineAgentInventoryDescriptor = Readonly<{ agentId: string; title: string }>;
@@ -93,20 +103,33 @@ export function projectMachineAgentsDetectResponse(input: Readonly<{
   if (!results || typeof results !== 'object' || Array.isArray(results)) {
     throw new MachineAgentInventoryUnavailableError(input.agents[0]?.agentId ?? 'unknown');
   }
-  const items = input.agents.map(({ agentId, title }) => {
+  const items: MachineAgentInventoryItem[] = [];
+  const unavailable: MachineAgentInventoryUnavailable[] = [];
+  for (const { agentId, title } of input.agents) {
     const result: unknown = Reflect.get(results, `cli.${agentId}`);
-    if (!result || typeof result !== 'object' || Reflect.get(result, 'ok') !== true) {
-      throw new MachineAgentInventoryUnavailableError(agentId);
+    if (!result || typeof result !== 'object' || Array.isArray(result)) {
+      unavailable.push({ agentId, reason: 'missing_result' });
+      continue;
+    }
+    if (Reflect.get(result, 'ok') !== true) {
+      const error: unknown = Reflect.get(result, 'error');
+      const errorCode: unknown = error && typeof error === 'object' ? Reflect.get(error, 'code') : undefined;
+      unavailable.push({ agentId, reason: 'probe_failed', ...(typeof errorCode === 'string' ? { errorCode } : {}) });
+      continue;
     }
     const data: unknown = Reflect.get(result, 'data');
     if (!data || typeof data !== 'object' || Array.isArray(data)) {
-      throw new MachineAgentInventoryUnavailableError(agentId);
+      unavailable.push({ agentId, reason: 'invalid_facts' });
+      continue;
     }
     const parsed = MachineAgentFactsSchema.safeParse({
       ...data, version: Reflect.get(data, 'version') ?? null, latestVersion: Reflect.get(data, 'latestVersion') ?? null,
     });
-    if (!parsed.success) throw new MachineAgentInventoryUnavailableError(agentId);
-    return { agentId, title, ...parsed.data };
-  });
-  return { items };
+    if (!parsed.success) {
+      unavailable.push({ agentId, reason: 'invalid_facts' });
+      continue;
+    }
+    items.push({ agentId, title, ...parsed.data });
+  }
+  return { items, ...(unavailable.length > 0 ? { unavailable } : {}) };
 }

@@ -98,4 +98,8 @@ export const BUNDLED_AGENT_CONTRIBUTION_IDENTITIES_V1: Readonly<Record<
     pluginId: 'happier.review.deepsec',
     localId: 'deepsec',
   }),
+  'custom-acp': Object.freeze({
+    pluginId: 'happier.agent.custom-acp',
+    localId: 'custom-acp',
+  }),
 });

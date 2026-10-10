@@ -1,3 +1,4 @@
+import { readOpenCodeNativeChildOutcome, type OpenCodeNativeChildStatus } from './nativeChildOutcome.js';
 import { formatOpenCodeServerPromptErrorMessage } from './formatOpenCodeServerPromptErrorMessage.js';
 import type { HttpMethod } from '@happier-dev/plugin-sdk/http';
 import {
@@ -174,8 +175,8 @@ export type OpenCodeServerClient = Readonly<{
     auto: boolean;
   }>): Promise<void>;
   sessionStatus(input: Readonly<{ directory?: string | null; sessionId: string }>): Promise<unknown>;
-  sessionChildInventory(input: Readonly<{ parentSessionId: string }>): Promise<
-    readonly Readonly<{ info: unknown; status: 'running' | 'completed' }>[] | null
+  sessionChildInventory(input: Readonly<{ parentSessionId: string; childSessionId?: string }>): Promise<
+    readonly Readonly<{ info: unknown; status: OpenCodeNativeChildStatus | null }>[] | null
   >;
   sessionMessages(input: Readonly<{ directory?: string | null; sessionId: string }>): Promise<readonly unknown[]>;
   sessionTodo(input: Readonly<{ directory?: string | null; sessionId: string }>): Promise<readonly unknown[]>;
@@ -1148,6 +1149,7 @@ export function createOpenCodeServerClient(input: Readonly<{
       }
       const children = sessions.filter((raw) => (
         readNonBlankOpaqueIdentifier(asRecord(raw)?.parentID) === input.parentSessionId
+        && (!input.childSessionId || readNonBlankOpaqueIdentifier(asRecord(raw)?.id) === input.childSessionId)
       ));
       if (children.length === 0) return [];
       const active = readOpenCodeV2ActiveSessionStatusMap(await requestJson({
@@ -1155,15 +1157,13 @@ export function createOpenCodeServerClient(input: Readonly<{
         method: 'GET',
         path: '/api/session/active',
       }));
-      return children.map((info) => {
+      return Promise.all(children.map(async (info) => {
         const childSessionId = readNonBlankOpaqueIdentifier(asRecord(info)?.id);
-        return {
-          info,
-          status: childSessionId && active[childSessionId]
-            ? 'running' as const
-            : 'completed' as const,
-        };
-      });
+        const status = childSessionId && active[childSessionId]
+          ? 'running' as const
+          : childSessionId ? readOpenCodeNativeChildOutcome(await this.sessionMessages({ sessionId: childSessionId })) : null;
+        return { info, status };
+      }));
     },
     async sessionMessages(input) {
       if (isV2) {

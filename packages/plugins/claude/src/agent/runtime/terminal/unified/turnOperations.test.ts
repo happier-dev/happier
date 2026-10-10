@@ -2,6 +2,7 @@ import { readFile, stat } from 'node:fs/promises';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ProviderConnectionIdSchema } from '@happier-dev/protocol';
 import type { AgentSessionRuntimeEvent } from '@happier-dev/protocol/runtime';
+import type { JsonValue } from '@happier-dev/plugin-sdk';
 import type { AgentSessionRuntimeContext } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { ClaudeProviderEvent } from '../../providerEvents.js';
 
@@ -84,6 +85,67 @@ const RESUME_CHOICE_QUESTION = 'How should Claude resume this session?';
 const SAFEGUARD_CHOICE_QUESTION = 'How should Claude continue?';
 
 describe('createClaudeUnifiedTerminalTurnOperations', () => {
+  it.each(['completed', 'failed', 'stopped'] as const)('issue506 publishes cold native task %s only after ordered source delivery', async (status) => {
+    const terminalHost = createTerminalHostFixture();
+    const transcripts = createManualTranscriptFollowFixture();
+    let replayBaseline: (() => Promise<void>) | undefined;
+    const ctx = createPluginContextFixture(terminalHost.service, createEventsFixture().service, {
+      transcripts: { ...transcripts.service, followSource: vi.fn(async () => {
+        await replayBaseline?.();
+        return { dispose: vi.fn(async () => undefined) };
+      }) },
+    });
+    const operations = createClaudeUnifiedTerminalProviderOperations({
+      ctx, directory: '/tmp/claude-project', happierSessionId: 'unified-task-outcome',
+      hostPreference: 'zellij', launchEnv: {}, permissionMode: 'default',
+    });
+    const session = createClaudeNativeSessionRuntimeFromOperations(operations, {
+      kind: 'create', sessionId: 'unified-task-outcome', cwd: '/tmp/claude-project',
+    }, { session: { services: {
+      activeInput: { bind: () => ({ dispose() {} }) }, models: { bind: () => ({ dispose() {} }) },
+    } } } as unknown as AgentSessionRuntimeContext);
+    const events: AgentSessionRuntimeEvent[] = [];
+    const subscription = session.watch(event => events.push(event));
+    const providerSessionId = 'claude-provider-session-1';
+    const ack = { type: 'user', uuid: 'cold-native-ack', session_id: providerSessionId,
+      toolUseResult: { status: 'async_launched', agentId: 'cold-native-child' },
+      message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'cold-agent-tool', content: 'Async agent launched successfully.' }] },
+    };
+    replayBaseline = async () => {
+      await session.observeSourceTranscript?.({ providerSessionId, sourceId: 'history:ack', row: ack, phase: 'initial_replay' });
+      expect(events.filter(event => event.kind === 'tool-result')).toEqual([]);
+    };
+    try {
+      await operations.startProviderSession();
+      const hook = vi.mocked(ctx.agentRuntime.sessionHooks.startServer).mock.calls[0]?.[0].onSessionHook;
+      if (!hook || !session.observeSourceTranscript) throw new Error('native transcript transport was not registered');
+      await hook(providerSessionId, { hook_event_name: 'SessionStart', session_id: providerSessionId,
+        source: 'resume', transcript_path: '/tmp/claude-provider-session-1.jsonl' });
+      const summary = 'Cold native child findings';
+      const xml = `<task-notification><task-id>cold-native-child</task-id><status>${status}</status><summary>${summary}</summary></task-notification>`;
+      const native = { type: 'attachment', uuid: 'ordered-native-terminal', sessionId: providerSessionId,
+        attachment: { type: 'queued_command', commandMode: 'task-notification', prompt: xml } };
+      const copied = { type: 'user', uuid: 'copied-native-terminal', sessionId: providerSessionId, message: { role: 'user', content: xml } };
+      const queue = { type: 'queue-operation', operation: 'enqueue', content: xml, sessionId: providerSessionId };
+      for (const row of [copied, queue, native]) await transcripts.emitRow(row);
+      expect(events.filter(event => event.kind === 'tool-result')).toEqual([]);
+      await session.observeSourceTranscript({ providerSessionId, sourceId: 'live:copied', row: copied });
+      await session.observeSourceTranscript({ providerSessionId, sourceId: 'live:queue', row: queue });
+      expect(events.filter(event => event.kind === 'tool-result')).toEqual([]);
+      await session.observeSourceTranscript({ providerSessionId, sourceId: 'live:native', row: native });
+      const expected = expect.objectContaining({ kind: 'tool-result', toolCallId: 'cold-agent-tool',
+        output: status === 'completed' ? summary : expect.objectContaining({ tool_use_result: expect.objectContaining({ status: status === 'stopped' ? 'cancelled' : 'failed', result: summary }) }),
+        ...(status === 'completed' ? {} : { isError: true }),
+      });
+      expect(events.filter(event => event.kind === 'tool-result')).toEqual([expected]);
+      await session.observeSourceTranscript({ providerSessionId, sourceId: 'live:native', row: native });
+      expect(events.filter(event => event.kind === 'tool-result')).toEqual([expected]);
+    } finally {
+      subscription.dispose();
+      await session.dispose();
+    }
+  });
+
   it('recognizes native generation without turn-start hooks and queues input without interruption', async () => {
     const terminalHost = createTerminalHostFixture();
     terminalHost.service.captureInputState = vi.fn(async () => ({
@@ -488,7 +550,7 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
     return args.some((arg, index) => arg === flag && args[index + 1] === value);
   }
 
-  function createManualTranscriptFollowFixture() {
+  function createManualTranscriptFollowFixture(replayRows: readonly Readonly<Record<string, unknown>>[] = []) {
     type OnLine = (input: Readonly<{
       line: string;
       sourcePath: string;
@@ -505,8 +567,14 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
           dispose: vi.fn(async () => undefined),
         })),
         fileFollow: {
-          follow: vi.fn(async (input: Readonly<{ onLine: OnLine }>) => {
+          follow: vi.fn(async (input: Readonly<{ onLine: OnLine; startAt?: string }>) => {
             onLine = input.onLine;
+            if (input.startAt === 'beginning') {
+              for (const row of replayRows) {
+                sequence += 1;
+                await onLine({ line: JSON.stringify(row), sourcePath: '/tmp/claude-provider-session-1.jsonl', sequence });
+              }
+            }
             return {
               id: 'manual-transcript-follow',
               drainNow: vi.fn(async () => undefined),
@@ -552,6 +620,40 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
     }
   });
 
+  it('attributes sidechain paid usage to its observed model and preserves a failed whole-call summary', async () => {
+    const transcripts = createManualTranscriptFollowFixture();
+    const ctx = createPluginContextFixture(createTerminalHostFixture().service, createEventsFixture().service, { transcripts: transcripts.service });
+    const operations = createClaudeUnifiedTerminalProviderOperations({ ctx, directory: '/tmp/claude-project', happierSessionId: 'happy-sidechain-usage',
+      hostPreference: 'zellij', launchEnv: {}, permissionMode: 'default', initialModelId: 'claude-sonnet-4-6',
+      knownProviderSession: { providerSessionId: 'native-session', transcriptPath: '/tmp/claude-sidechain-usage.jsonl' } });
+    const observations: Array<Readonly<{ source: string; modelId: string | null }>> = [];
+    const effectiveModels: string[] = [];
+    operations.subscribeUsageObservation(observation => observations.push(observation));
+    operations.subscribeEffectiveModel(evidence => effectiveModels.push(evidence.modelId));
+    try {
+      await operations.startProviderSession();
+      await transcripts.emitRow({ type: 'assistant', uuid: 'main-record', sessionId: 'native-session',
+        message: { id: 'main-request', model: 'claude-sonnet-4-6', usage: { input_tokens: 10, output_tokens: 2 } } });
+      await transcripts.emitRow({ type: 'assistant', uuid: 'child-record', sessionId: 'native-session', isSidechain: true, parent_tool_use_id: 'task-tool',
+        message: { id: 'child-request', model: 'claude-haiku-4-5', usage: { input_tokens: 20, output_tokens: 3 } } });
+      await transcripts.emitRow({ type: 'assistant', uuid: 'unknown-child-record', sessionId: 'native-session', isSidechain: true, parent_tool_use_id: 'task-tool',
+        message: { id: 'unknown-child-request', usage: { input_tokens: 5, output_tokens: 1 } } });
+      await transcripts.emitRow({ type: 'result', subtype: 'error_max_turns', uuid: 'failed-summary', session_id: 'native-session', total_cost_usd: 0.2,
+        usage: { input_tokens: 1 }, modelUsage: {
+          'claude-sonnet-4-6': { inputTokens: 10, outputTokens: 2, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 },
+          'claude-haiku-4-5': { inputTokens: 20, outputTokens: 3, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 },
+        } });
+      expect(observations).toEqual([
+        expect.objectContaining({ nativeRecordId: 'main-record', modelId: 'claude-sonnet-4-6' }),
+        expect.objectContaining({ nativeRecordId: 'child-record', inferenceId: 'child-request', modelId: 'claude-haiku-4-5', tokens: expect.objectContaining({ total: 23 }) }),
+        expect.objectContaining({ nativeRecordId: 'unknown-child-record', modelId: null }),
+        expect.objectContaining({ source: 'claude-sdk-result', nativeRecordId: 'failed-summary', modelId: null, tokens: expect.objectContaining({ total: 35 }),
+          cost: expect.objectContaining({ reportedUsd: 0.2, costSource: 'provider_reported_api_equivalent' }) }),
+      ]);
+      expect(effectiveModels).not.toContain('claude-haiku-4-5');
+    } finally { await operations.disposeProviderSession(); }
+  });
+
   it('keeps Provider-bound terminal usage cost unavailable without billing provenance', async () => {
     const terminalHost = createTerminalHostFixture();
     const events = createEventsFixture();
@@ -588,13 +690,20 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
       await transcripts.emitRow({
         type: 'assistant',
         uuid: 'assistant-provider-usage',
+        sessionId: 'provider-session-usage',
         message: {
+          id: 'shared-provider-request',
           model: 'deepseek-ai/DeepSeek-V3.1',
           usage: {
             input_tokens: 100,
             output_tokens: 20,
           },
         },
+      });
+      await transcripts.emitRow({
+        type: 'assistant', uuid: 'assistant-provider-usage-sibling', sessionId: 'provider-session-usage',
+        message: { id: 'shared-provider-request', model: 'deepseek-ai/DeepSeek-V3.1',
+          usage: { input_tokens: 100, output_tokens: 20 } },
       });
       await transcripts.emitRow({
         type: 'result',
@@ -607,7 +716,7 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
           output_tokens: 20,
         },
         modelUsage: {
-          'deepseek-ai/DeepSeek-V3.1': { contextWindow: 128_000 },
+          'deepseek-ai/DeepSeek-V3.1': { inputTokens: 100, outputTokens: 20, cacheReadInputTokens: 0, cacheCreationInputTokens: 0, contextWindow: 128_000 },
         },
       });
 
@@ -615,11 +724,20 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
         expect.objectContaining({
           source: 'claude-assistant-usage',
           nativeRecordId: 'assistant-provider-usage',
+          inferenceId: 'shared-provider-request',
+          nativeSessionId: 'provider-session-usage',
+          cost: null,
+        }),
+        expect.objectContaining({
+          source: 'claude-assistant-usage',
+          nativeRecordId: 'assistant-provider-usage-sibling',
+          inferenceId: 'shared-provider-request',
           cost: null,
         }),
         expect.objectContaining({
           source: 'claude-sdk-result',
           nativeRecordId: 'result-provider-usage',
+          nativeSessionId: 'provider-session-usage',
           cost: null,
         }),
       ]);
@@ -2324,6 +2442,58 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
     }
   });
 
+  it('preserves historical workflow provenance from the initial native transcript follow', async () => {
+    const recordInstant = '2026-01-02T03:04:05.000Z';
+    const transcripts = createManualTranscriptFollowFixture([{
+      type: 'assistant', uuid: 'historical-workflow', session_id: 'claude-provider-session-1', timestamp: recordInstant,
+      message: { content: [{ type: 'tool_use', id: 'wf_historical', name: 'Workflow', input: { script: "export const meta = { name: 'Historical workflow' }" } }] },
+    }, {
+      type: 'system', uuid: 'historical-task-start', session_id: 'claude-provider-session-1',
+      subtype: 'task_started', task_id: 'workflow-task-1', tool_use_id: 'wf_historical', task_type: 'local_workflow',
+    }]);
+    const terminalHost = createTerminalHostFixture();
+    const writeSystemRecord = vi.fn(async () => undefined);
+    const ctx = createPluginContextFixture(terminalHost.service, createEventsFixture().service, {
+      transcripts: transcripts.service, sessionWriteSystemRecord: writeSystemRecord,
+    });
+    const operations = createClaudeUnifiedTerminalProviderOperations({
+      ctx, directory: '/tmp/claude-project', happierSessionId: 'happy-workflow-replay',
+      hostPreference: 'zellij', launchEnv: {}, permissionMode: 'default',
+    });
+    const activityEvents: AgentSessionRuntimeEvent[] = [];
+    operations.subscribeCanonicalAgentSessionEvents((event) => activityEvents.push(event));
+    try {
+      await operations.startProviderSession();
+      const options = (ctx.agentRuntime.sessionHooks.startServer as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as {
+        onSessionHook(providerSessionId: string, payload: Readonly<Record<string, unknown>>): Promise<void>;
+      };
+      // Establish the authenticated identity before the later hook attaches its historical file.
+      await options.onSessionHook('claude-provider-session-1', {
+        hook_event_name: 'SessionStart', session_id: 'claude-provider-session-1', source: 'startup',
+      });
+      await options.onSessionHook('claude-provider-session-1', {
+        hook_event_name: 'SessionStart', session_id: 'claude-provider-session-1', source: 'startup',
+        transcript_path: '/tmp/claude-provider-session-1.jsonl',
+      });
+      expect(activityEvents.some((event) => event.kind === 'runtime-activity-snapshot' && event.state === 'active')).toBe(false);
+      await transcripts.emitRow({
+        type: 'system', uuid: 'live-task-start', session_id: 'claude-provider-session-1',
+        subtype: 'task_started', task_id: 'workflow-task-1', tool_use_id: 'wf_historical', task_type: 'local_workflow',
+      });
+      await vi.waitFor(() => expect(activityEvents.at(-1)).toMatchObject({ state: 'active', activeCount: 1 }));
+      await transcripts.emitRow({
+        type: 'system', uuid: 'live-workflow-progress', session_id: 'claude-provider-session-1',
+        subtype: 'task_progress', task_id: 'workflow-task-1', tool_use_id: 'wf_historical', task_type: 'local_workflow',
+        workflow_progress: [{ type: 'workflow_agent', agentId: 'agent-1', label: 'Researcher', state: 'running' }],
+      });
+      await vi.waitFor(() => {
+        expect(writeSystemRecord).toHaveBeenCalledWith(expect.objectContaining({ payload: expect.objectContaining({
+          runId: 'wf_historical', startedAt: Date.parse(recordInstant),
+        }) }));
+      });
+    } finally { await operations.disposeProviderSession(); }
+  });
+
   it('clears Workflow runtime activity from an exact successful native TaskStop result', async () => {
     const terminalHost = createTerminalHostFixture();
     const events = createEventsFixture();
@@ -2413,6 +2583,135 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
     }
   });
 
+
+
+  it.each(['hook', 'known-resume', 'statusline'] as const)('publishes unknown when required ordered history fails and preserves the admission error (%s)', async (ingress) => {
+    const terminalHost = createTerminalHostFixture();
+    const baselineFailure = new Error('required history unavailable');
+    const transcripts = createManualTranscriptFollowFixture();
+    const followSource = vi.fn(async () => { throw baselineFailure; });
+    const ctx = createPluginContextFixture(terminalHost.service, createEventsFixture().service, {
+      transcripts: { ...transcripts.service, followSource },
+    });
+    const runtime = createClaudeUnifiedTerminalProviderOperations({
+      ctx, directory: '/tmp/claude-project', happierSessionId: 'happy-unified-history-failed',
+      hostPreference: 'zellij', launchEnv: {}, permissionMode: 'default',
+      ...(ingress === 'known-resume' ? { launchIntent: { kind: 'resume_native' as const, providerSessionId: 'claude-provider-session-1' },
+        knownProviderSession: { providerSessionId: 'claude-provider-session-1', transcriptPath: '/tmp/claude-provider-session-1.jsonl' } } : {}),
+    });
+    const activityEvents: AgentSessionRuntimeEvent[] = [];
+    runtime.subscribeCanonicalAgentSessionEvents(event => activityEvents.push(event));
+    try {
+      const admission = (async () => {
+        await runtime.startProviderSession();
+        const hookRequest = vi.mocked(ctx.agentRuntime.sessionHooks.startServer).mock.calls[0]?.[0];
+        if (!hookRequest?.onSessionHook) throw new Error('session hook server was not started');
+        if (ingress === 'statusline') return await hookRequest.onStatuslineUpdate?.({
+          session_id: 'claude-provider-session-1', transcript_path: '/tmp/claude-provider-session-1.jsonl',
+          model: { id: 'claude-fable-5' },
+        });
+        return await hookRequest.onSessionHook('claude-provider-session-1', {
+          hook_event_name: 'SessionStart', session_id: 'claude-provider-session-1', source: 'resume',
+          transcript_path: '/tmp/claude-provider-session-1.jsonl',
+        });
+      })();
+      const admissionOutcome = admission.then(() => null, error => error);
+      await vi.waitFor(() => expect(followSource).toHaveBeenCalled());
+      expect(transcripts.service.fileFollow.follow).toHaveBeenCalled();
+      expect(await admissionOutcome).toBe(baselineFailure);
+      await vi.waitFor(() => expect(activityEvents.at(-1)).toMatchObject({
+        kind: 'runtime-activity-snapshot', state: 'unknown', activeCount: 0,
+      }));
+    } finally { await runtime.disposeProviderSession(); }
+  });
+
+  it('reopens the exact completed workflow child through an authenticated SubagentStart hook', async () => {
+    const terminalHost = createTerminalHostFixture();
+    const historicalRows: JsonValue[] = [{
+      type: 'assistant', session_id: 'claude-provider-session-1', uuid: 'hook-child-launch', timestamp: '2026-01-02T03:04:05.000Z',
+      message: { role: 'assistant', content: ['a', 'b'].map(id => ({ type: 'tool_use', id, name: 'Agent', input: { description: id } })) },
+    }];
+    for (const id of ['a', 'b']) {
+      historicalRows.push(id === 'a' ? { type: 'user', session_id: 'claude-provider-session-1', uuid: `hook-alias-${id}`,
+        timestamp: '2026-01-02T03:04:06.000Z',
+        message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: 'launched' }] },
+        toolUseResult: { status: 'async_launched', agentId: `native-${id}` },
+      } : { type: 'system', subtype: 'task_started', session_id: 'claude-provider-session-1', uuid: `hook-alias-${id}`,
+        timestamp: '2026-01-02T03:04:06.000Z', task_id: `native-${id}`, tool_use_id: id, task_type: 'local_agent',
+      }, { type: 'user', origin: { kind: 'task-notification' }, session_id: 'claude-provider-session-1',
+        timestamp: '2026-01-02T03:04:07.000Z', uuid: `hook-complete-${id}`,
+        message: { content: `<task-notification><task-id>native-${id}</task-id><status>completed</status></task-notification>` },
+      });
+    }
+    const transcripts = createManualTranscriptFollowFixture(historicalRows);
+    const records: unknown[] = [];
+    let replayHistory: (() => Promise<void>) | undefined;
+    const ctx = createPluginContextFixture(terminalHost.service, createEventsFixture().service, {
+      transcripts: { ...transcripts.service, followSource: vi.fn(async () => {
+        await replayHistory?.();
+        return { dispose: vi.fn(async () => undefined) };
+      }) },
+      sessionWriteSystemRecord: vi.fn(async (request: Readonly<{ payload: unknown }>) => { records.push(request.payload); }),
+    });
+    const runtime = createClaudeUnifiedTerminalProviderOperations({
+      ctx, directory: '/tmp/claude-project', happierSessionId: 'happy-unified-hook-resume',
+      hostPreference: 'zellij', launchEnv: {}, permissionMode: 'default',
+    });
+    const activityEvents: AgentSessionRuntimeEvent[] = [];
+    runtime.subscribeCanonicalAgentSessionEvents(event => activityEvents.push(event));
+    try {
+      await runtime.startProviderSession();
+      const hookRequest = vi.mocked(ctx.agentRuntime.sessionHooks.startServer).mock.calls[0]?.[0];
+      if (!hookRequest?.onSessionHook) throw new Error('session hook server was not started');
+      replayHistory = async () => {
+        // The real transport can receive a child restart while ordered historical import is pending.
+        await hookRequest.onSessionHook?.('claude-provider-session-1', {
+          hook_event_name: 'SubagentStart', session_id: 'claude-provider-session-1', agent_id: 'native-a',
+        });
+        for (const [index, row] of historicalRows.entries()) {
+          await runtime.observeSourceTranscript({
+            providerSessionId: 'claude-provider-session-1', sourceId: `history:${index}`, row,
+            phase: 'initial_replay',
+          });
+        }
+        expect(activityEvents.some(event => event.kind === 'runtime-activity-snapshot' && event.state === 'active')).toBe(false);
+        expect(records).toHaveLength(0);
+      };
+      await hookRequest.onSessionHook('claude-provider-session-1', {
+        hook_event_name: 'SessionStart', session_id: 'claude-provider-session-1', source: 'resume',
+        transcript_path: '/tmp/claude-provider-session-1.jsonl',
+      });
+      await vi.waitFor(() => expect(activityEvents.at(-1)).toMatchObject({ state: 'active', activeCount: 1 }));
+      await vi.waitFor(() => expect(records.at(-1)).toMatchObject({
+        status: 'active', agents: [{ id: 'a', status: 'active' }, { id: 'b', status: 'complete' }],
+      }));
+      await hookRequest.onSessionHook('claude-provider-session-1', {
+        hook_event_name: 'SubagentStart', session_id: 'claude-provider-session-1', agent_id: 'unknown-child',
+      });
+      // Unadmitted hook identities create no agent/run and cannot reopen a terminal row.
+      expect(records.at(-1)).toMatchObject({ status: 'active', totalAgents: 2 });
+      await transcripts.emitRow({ type: 'system', subtype: 'task_started', session_id: 'claude-provider-session-1',
+        uuid: 'late-start', task_id: 'native-a', tool_use_id: 'a', task_type: 'local_agent',
+      });
+      expect(records.at(-1)).toMatchObject({ status: 'active' });
+      await transcripts.emitRow({ type: 'system', subtype: 'task_notification', session_id: 'claude-provider-session-1',
+        uuid: 'hook-resumed-complete', task_id: 'native-a', status: 'completed',
+      });
+      await vi.waitFor(() => expect(records.at(-1)).toMatchObject({ status: 'complete', completedAgents: 2 }));
+      await vi.waitFor(() => expect(activityEvents.at(-1)).toMatchObject({ state: 'idle', activeCount: 0 }));
+      // The known foreground sibling resumes its roster without becoming background Activity.
+      await hookRequest.onSessionHook('claude-provider-session-1', {
+        hook_event_name: 'SubagentStart', session_id: 'claude-provider-session-1', agent_id: 'native-b',
+      });
+      await vi.waitFor(() => expect(records.at(-1)).toMatchObject({
+        status: 'active', agents: [{ id: 'a', status: 'complete' }, { id: 'b', status: 'active' }],
+      }));
+      expect(activityEvents.at(-1)).toMatchObject({ state: 'idle', activeCount: 0 });
+
+
+    } finally { await runtime.disposeProviderSession(); }
+  });
+
   it('observes authenticated Agent hooks before sidechain identity routing', async () => {
     const terminalHost = createTerminalHostFixture();
     const events = createEventsFixture();
@@ -2465,6 +2764,12 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
         hook_event_name: 'SubagentStop',
         session_id: 'claude-provider-session-1',
         agent_id: 'agent-1',
+      });
+      expect(runtimeActivityEvents.at(-1)).toMatchObject({ state: 'active', activeCount: 1 });
+      await hookRequest.onSessionHook('claude-provider-session-1', {
+        hook_event_name: 'PostToolUse', session_id: 'claude-provider-session-1',
+        tool_name: 'TaskOutput', tool_input: { task_id: 'agent-1' },
+        tool_response: { retrieval_status: 'success', task: { task_id: 'agent-1', status: 'completed' } },
       });
       await vi.waitFor(() => {
         expect(runtimeActivityEvents.at(-1)).toEqual(expect.objectContaining({
@@ -2689,7 +2994,7 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
     }
   });
 
-  it('keeps transcript-origin inference inert but closes an admitted Bash task from an exact live notification', async () => {
+  it('settles exact admitted tasks only from trusted native notification provenance', async () => {
     const terminalHost = createTerminalHostFixture();
     const events = createEventsFixture();
     const transcripts = createManualTranscriptFollowFixture();
@@ -2716,81 +3021,20 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
     try {
       await runtime.startProviderSession();
 
-      await transcripts.emitRow({
-        type: 'system',
-        uuid: 'task-started-1',
-        subtype: 'task_started',
-        session_id: 'claude-provider-session-1',
-        task_id: 'agent-1',
-        task_type: 'local_workflow',
-      });
-      await transcripts.emitRow({
-        type: 'user',
-        uuid: 'task-origin-completed-1',
-        origin: {
-          kind: 'task-notification',
-          taskId: 'agent-1',
-          status: 'completed',
-        },
-        message: {
-          content: [{ type: 'text', text: 'Task completed' }],
-        },
-      });
-
-      await vi.waitFor(() => {
-        expect(runtimeActivityEvents.at(-1)).toEqual(expect.objectContaining({
-          state: 'active',
-          activeCount: 1,
-        }));
-      });
-
-      await transcripts.emitRow({
-        type: 'system',
-        uuid: 'task-started-2',
-        subtype: 'task_started',
-        session_id: 'claude-provider-session-1',
-        task_id: 'agent-2',
-        task_type: 'local_bash',
-      });
-      await vi.waitFor(() => {
-        expect(runtimeActivityEvents.at(-1)).toEqual(expect.objectContaining({
-          state: 'active',
-          activeCount: 2,
-        }));
-      });
-      await transcripts.emitRow({
-        type: 'queue-operation',
-        operation: 'enqueue',
-        uuid: 'queued-task-completed-wrong-session',
-        sessionId: 'claude-provider-session-other',
-        timestamp: '2026-07-28T16:50:59.000Z',
-        content:
-          '<task-notification><task-id>agent-2</task-id><status>completed</status></task-notification>',
-      });
-      expect(runtimeActivityEvents.at(-1)).toEqual(expect.objectContaining({
-        state: 'active',
-        activeCount: 2,
-      }));
-      await transcripts.emitRow({
-        type: 'queue-operation',
-        operation: 'enqueue',
-        uuid: 'queued-task-completed-2',
-        sessionId: 'claude-provider-session-1',
-        timestamp: '2026-07-28T16:51:00.000Z',
-        content:
-          '<task-notification><task-id>agent-2</task-id><status>completed</status></task-notification>',
-      });
-
-      await vi.waitFor(() => {
-        const activeEvents = runtimeActivityEvents.filter((event) => event.kind === 'runtime-activity-snapshot' && event.state === 'active');
-        const idleEvents = runtimeActivityEvents.filter((event) => event.kind === 'runtime-activity-snapshot' && event.state === 'idle');
-        expect(activeEvents).toHaveLength(3);
-        expect(idleEvents).toHaveLength(1);
-        expect(runtimeActivityEvents.at(-1)).toEqual(expect.objectContaining({
-          state: 'active',
-          activeCount: 1,
-        }));
-      });
+      await transcripts.emitRow({ type: 'system', uuid: 'known-bash-start', subtype: 'task_started',
+        session_id: 'claude-provider-session-1', task_id: 'agent-2', task_type: 'local_bash' });
+      await vi.waitFor(() => expect(runtimeActivityEvents.at(-1)).toMatchObject({ state: 'active', activeCount: 1 }));
+      const xml = '<task-notification><task-id>agent-2</task-id><status>completed</status></task-notification>';
+      await transcripts.emitRow({ type: 'user', uuid: 'copied-terminal-xml',
+        sessionId: 'claude-provider-session-1', message: { content: xml } });
+      expect(runtimeActivityEvents.filter(event => event.kind === 'runtime-activity-snapshot').at(-1)).toMatchObject({ state: 'active', activeCount: 1 });
+      await transcripts.emitRow({ type: 'queue-operation', operation: 'enqueue', uuid: 'bare-queue-terminal',
+        sessionId: 'claude-provider-session-1', timestamp: '2026-07-28T16:51:00.000Z', content: xml });
+      expect(runtimeActivityEvents.filter(event => event.kind === 'runtime-activity-snapshot').at(-1)).toMatchObject({ state: 'active', activeCount: 1 });
+      // Authenticated bound source provides the native session; no isMeta flag is present.
+      await transcripts.emitRow({ type: 'user', uuid: 'native-terminal-xml',
+        origin: { kind: 'task-notification' }, message: { content: xml } });
+      await vi.waitFor(() => expect(runtimeActivityEvents.filter(event => event.kind === 'runtime-activity-snapshot').at(-1)).toMatchObject({ state: 'idle', activeCount: 0 }));
       expect(writeStateField).not.toHaveBeenCalledWith(expect.objectContaining({ fieldId: 'runtime.activity' }));
     } finally {
       await runtime.resetOrDisposeRuntime().catch(() => undefined);
@@ -6541,7 +6785,7 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
       }
     });
 
-    it('reoffers known active work exactly once as a lower bound when the host process exits', async () => {
+    it('projects active provider tasks as unknown when the host process exits', async () => {
       const terminalHost = createTerminalHostFixture();
       const events = createEventsFixture();
       const ctx = createPluginContextFixture(terminalHost.service, events.service);
@@ -6582,14 +6826,16 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
         });
         expect(runtimeActivityEvents.at(-1)).toEqual(expect.objectContaining({
           kind: 'runtime-activity-snapshot',
-          state: 'active',
-          activeCount: 1,
+          state: 'unknown',
+          activeCount: 0,
         }));
 
         await hookRequest.onSessionHook('claude-session-active-exit', {
-          hook_event_name: 'SubagentStop',
+          hook_event_name: 'PostToolUse',
           session_id: 'claude-session-active-exit',
-          agent_id: 'agent-active-at-exit',
+          tool_name: 'TaskOutput',
+          tool_input: { task_id: 'agent-active-at-exit' },
+          tool_response: { retrieval_status: 'success', task: { task_id: 'agent-active-at-exit', status: 'completed' } },
         });
         await vi.waitFor(() => expect(runtimeActivityEvents.at(-1)).toEqual(expect.objectContaining({
           kind: 'runtime-activity-snapshot',

@@ -461,7 +461,7 @@ describe('Pi pure External Sessions contribution leaf', () => {
     expect(JSON.parse(Buffer.from(first.value.nextCursor, 'base64url').toString('utf8'))).toMatchObject({
       v: 2,
       kind: 'piCandidateIndexScan',
-      sourceKey: await realpath(agentDir),
+      sourceKey: JSON.stringify([await realpath(agentDir), await realpath(join(agentDir, 'sessions'))]),
       sourceGeneration: expect.any(String),
       scanned: 1,
     });
@@ -1454,6 +1454,7 @@ describe('Pi pure External Sessions contribution leaf', () => {
         source: {
           kind: 'piAgentDir',
           agentDir: canonicalAgentDir,
+          sessionsRoot: await realpath(join(agentDir, 'sessions')),
           sessionFile: canonicalSessionFile,
         },
         remoteSessionId: 'pi-resume',
@@ -1520,9 +1521,8 @@ describe('Pi pure External Sessions contribution leaf', () => {
       createdAt: '2026-07-21T11:30:00.000Z',
       title: 'Legacy-root Pi session',
     });
-    const contribution = createPiExternalSessionsContribution({
-      env: { PI_CODING_AGENT_SESSION_DIR: join(root, 'legacy-sessions') },
-    });
+    const env = { PI_CODING_AGENT_SESSION_DIR: join(root, 'legacy-sessions') };
+    const contribution = createPiExternalSessionsContribution({ env });
 
     const source = await contribution.resolveSource({
       ...invocation(),
@@ -1530,9 +1530,16 @@ describe('Pi pure External Sessions contribution leaf', () => {
     });
     expect(source).toMatchObject({
       ok: true,
-      value: { source: { kind: 'piAgentDir', agentDir: expect.any(String) } },
+      value: {
+        source: { kind: 'piAgentDir', agentDir: expect.any(String), sessionsRoot: await realpath(join(root, 'legacy-sessions')) },
+        accountingSource: { rootPath: await realpath(join(root, 'legacy-sessions')), rootField: 'sessionsRoot' },
+      },
     });
     if (!source.ok) return;
+
+    // Replaying the resolved source must not follow later ambient root changes.
+    env.PI_CODING_AGENT_SESSION_DIR = join(root, 'other-sessions');
+    await mkdir(env.PI_CODING_AGENT_SESSION_DIR, { recursive: true });
 
     const listed = await contribution.listCandidates({
       ...invocation(),
@@ -1564,13 +1571,14 @@ describe('Pi pure External Sessions contribution leaf', () => {
         source: {
           kind: 'piAgentDir',
           agentDir: source.value.source.agentDir,
+          sessionsRoot: source.value.source.sessionsRoot,
           sessionFile: await realpath(sessionFile),
         },
       },
     });
     if (!linked.ok) return;
     expect(createPiExternalSessionObservationContribution({
-      env: { PI_CODING_AGENT_SESSION_DIR: join(root, 'legacy-sessions') },
+      env,
     }).describeResource(linked.value)).toMatchObject({
       resourceKey: expect.any(String),
     });
@@ -2345,6 +2353,15 @@ describe('Pi pure External Sessions contribution leaf', () => {
     if (!first.ok || !first.value.nextCursor) return;
 
     const secondRoot = await createAgentDir();
+    await expect(firstContribution.listCandidates({
+      ...invocation(),
+      source: { kind: 'piAgentDir', agentDir: firstRoot.agentDir, sessionsRoot: join(secondRoot.agentDir, 'sessions') },
+      cursor: first.value.nextCursor,
+      maxItems: 1,
+    })).resolves.toMatchObject({
+      ok: false,
+      code: 'invalid_request',
+    });
     const secondContribution = createPiExternalSessionsContribution({
       env: { PI_CODING_AGENT_DIR: secondRoot.agentDir },
     });

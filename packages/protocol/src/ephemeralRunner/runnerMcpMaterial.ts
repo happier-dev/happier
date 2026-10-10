@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { resolveManagedSessionMcpSelectionV1 } from '../mcp/servers/resolveManagedSessionMcpSelectionV1.js';
+import type { ResolvedMcpServerV1 } from '../mcp/servers/resolveEffectiveServersV1.js';
 import { SessionMcpSelectionV1Schema, type SessionMcpSelectionV1 } from '../mcp/servers/sessionSelectionV1.js';
 import {
   McpServerCatalogEntryV1Schema,
@@ -125,15 +126,15 @@ function materializeConfig(input: Readonly<{
 }
 
 /**
- * Canonical portable projection of the ordinary MCP selection owner. It binds
- * the selected server/binding revisions and replaces secret references only in
- * creator-held material that is subsequently sealed to the endpoint.
+ * Canonical portable selection for both creator-side resource admission and
+ * materialization. Machine placement and forced-selection refusals stay owned
+ * here rather than being reconstructed by the creator.
  */
-export function resolveRunnerMcpMaterialV1(input: Readonly<{
+export function resolveRunnerMcpSelectionV1(input: Readonly<{
   settings: McpServersSettingsV1;
   selection?: SessionMcpSelectionV1 | null;
-  resolveSavedSecret: (secretId: string) => Readonly<{ value: string; revision: number }> | null;
-}>): { ok: true; material: RunnerMcpMaterialV1 } | RunnerMcpMaterializationFailureV1 {
+}>): Readonly<{ ok: true; settings: McpServersSettingsV1; selection: SessionMcpSelectionV1;
+  selectedServers: readonly ResolvedMcpServerV1[] }> | RunnerMcpMaterializationFailureV1 {
   const settings = McpServersSettingsV1Schema.parse(input.settings);
   const selection = SessionMcpSelectionV1Schema.parse(input.selection ?? {});
   const resolved = resolveManagedSessionMcpSelectionV1(settings, {
@@ -156,9 +157,20 @@ export function resolveRunnerMcpMaterialV1(input: Readonly<{
       valuePath: null,
     };
   }
+  return { ok: true, settings, selection, selectedServers: Object.values(resolved.selectedServersByName) };
+}
 
+/** Materializes exactly the portable selection admitted by the same selection owner. */
+export function resolveRunnerMcpMaterialV1(input: Readonly<{
+  settings: McpServersSettingsV1;
+  selection?: SessionMcpSelectionV1 | null;
+  resolveSavedSecret: (secretId: string) => Readonly<{ value: string; revision: number }> | null;
+}>): { ok: true; material: RunnerMcpMaterialV1 } | RunnerMcpMaterializationFailureV1 {
+  const selected = resolveRunnerMcpSelectionV1(input);
+  if (!selected.ok) return selected;
+  const { settings, selection } = selected;
   const servers: RunnerMcpMaterialV1['servers'][number][] = [];
-  for (const item of Object.values(resolved.selectedServersByName)) {
+  for (const item of selected.selectedServers) {
     const materialized = materializeConfig({ serverId: item.serverId, config: item.config, resolveSavedSecret: input.resolveSavedSecret });
     if (!materialized.ok) return materialized;
     const server = settings.servers.find((candidate) => candidate.id === item.serverId)!;

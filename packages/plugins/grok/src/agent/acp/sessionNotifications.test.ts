@@ -95,7 +95,13 @@ describe('Grok session notifications', () => {
     expect(publishHeadlines).toHaveBeenCalledTimes(1);
   });
 
-  it('routes subagent lifecycle and goal state into existing host services', async () => {
+  it.each([
+    ['completed', 'completed'],
+    ['failed', 'failed'],
+    ['cancelled', 'aborted'],
+    ['stopped', 'aborted'],
+    [undefined, 'completed'],
+  ])('routes finished subagent status %s and goal state into existing host services', async (providerStatus, expectedStatus) => {
     const observe = vi.fn(async (input) => input);
     const publish = vi.fn(async () => ({ status: 'applied', revision: '1', sourceSequence: 1 }));
     const observer = createGrokSessionNotificationObserver({
@@ -118,13 +124,13 @@ describe('Grok session notifications', () => {
     } }, extensionContext);
     await observer({ sessionId: 'parent', update: {
       sessionUpdate: 'subagent_finished', subagent_id: 'sub-1', child_session_id: 'child-1',
-      status: 'completed', tool_calls: 3, turns: 2, duration_ms: 500, tokens_used: 100, output: 'Done',
+      status: providerStatus, tool_calls: 3, turns: 2, duration_ms: 500, tokens_used: 100, output: 'Done',
     } }, extensionContext);
     expect(observe).toHaveBeenNthCalledWith(1, expect.objectContaining({
       observationId: 'grok-native:sub-1', groupId: 'run-1', status: 'running',
     }), expect.anything());
     expect(observe).toHaveBeenNthCalledWith(2, expect.objectContaining({
-      observationId: 'grok-native:sub-1', groupId: 'run-1', status: 'completed',
+      observationId: 'grok-native:sub-1', groupId: 'run-1', status: expectedStatus,
     }), expect.anything());
 
     await observer({ sessionId: 'parent', update: {

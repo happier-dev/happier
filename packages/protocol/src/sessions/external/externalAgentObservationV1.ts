@@ -1,9 +1,10 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { ExternalSessionCompletedBoundaryV1Schema } from './followLifecycleV1.js';
 import { LinkedExternalSessionQualifiedIdentityV1Schema } from './linkedSessionMetadata.js';
 
-const ObservationTimestampMsSchema = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
+const ObservationTimestampMsSchema = lazyZodSchema(() => z.number().int().min(0).max(Number.MAX_SAFE_INTEGER));
 const ObservationExpiryMsSchema = ObservationTimestampMsSchema;
 
 export const EXTERNAL_AGENT_OBSERVATION_METADATA_KEY = 'externalAgentObservationV1';
@@ -22,45 +23,45 @@ export const EXTERNAL_AGENT_OBSERVATION_MAX_LINKS_PER_BATCH_V1 = 256;
 export const EXTERNAL_AGENT_OBSERVATION_MAX_FACTS_PER_LINK_V1 = 16;
 export const EXTERNAL_AGENT_OBSERVATION_MAX_WATCH_FILES_V1 = 32;
 
-export const ExternalAgentObservationStatusV1Schema = z.enum([
+export const ExternalAgentObservationStatusV1Schema = lazyZodSchema(() => z.enum([
   'working',
   'waiting',
   'retrying',
   'idle',
   'recentlyActive',
   'unknown',
-]);
+]));
 
-export const ExternalAgentObservationAxisV1Schema = z.enum([
+export const ExternalAgentObservationAxisV1Schema = lazyZodSchema(() => z.enum([
   'liveness',
   'turn_phase',
   'boundary',
-]);
+]));
 
-export const ExternalAgentObservationEvidenceClassV1Schema = z.enum([
+export const ExternalAgentObservationEvidenceClassV1Schema = lazyZodSchema(() => z.enum([
   'agent_native',
   'file_watch',
   'qualified_hook',
   'process_probe',
   'reconciliation',
-]);
+]));
 
-const ExternalAgentObservationOpaqueKeyV1Schema = z.string()
+const ExternalAgentObservationOpaqueKeyV1Schema = lazyZodSchema(() => z.string()
   .trim()
   .min(1)
-  .max(EXTERNAL_AGENT_OBSERVATION_KEY_MAX_CODE_UNITS_V1);
+  .max(EXTERNAL_AGENT_OBSERVATION_KEY_MAX_CODE_UNITS_V1));
 
 export const ExternalAgentObservationResourceKeyV1Schema =
   ExternalAgentObservationOpaqueKeyV1Schema;
 export const ExternalAgentObservationLinkKeyV1Schema =
   ExternalAgentObservationOpaqueKeyV1Schema;
 
-export const ExternalAgentObservationResourceGroupingV1Schema = z.object({
+export const ExternalAgentObservationResourceGroupingV1Schema = lazyZodSchema(() => z.object({
   resourceKey: ExternalAgentObservationResourceKeyV1Schema,
   linkKey: ExternalAgentObservationLinkKeyV1Schema,
-}).strict();
+}).strict());
 
-function isCanonicalAbsoluteObservationFilePath(value: string): boolean {
+export function isCanonicalAbsoluteObservationFilePath(value: string): boolean {
   if (
     value.length === 0
     || value !== value.trim()
@@ -88,7 +89,7 @@ function isCanonicalAbsoluteObservationFilePath(value: string): boolean {
   return true;
 }
 
-function isCanonicalAbsoluteObservationTopologyDirectoryPath(value: string): boolean {
+export function isCanonicalAbsoluteObservationTopologyDirectoryPath(value: string): boolean {
   if (!isCanonicalAbsoluteObservationFilePath(value)) {
     return false;
   }
@@ -97,7 +98,7 @@ function isCanonicalAbsoluteObservationTopologyDirectoryPath(value: string): boo
     && !/^[/\\]{2}[^/\\]+[/\\][^/\\]+[/\\]?$/u.test(value);
 }
 
-export const ExternalAgentObservationWatchFileChangesV1Schema = z.object({
+export const ExternalAgentObservationWatchFileChangesV1Schema = lazyZodSchema(() => z.object({
   files: z.array(
     z.string().refine(
       isCanonicalAbsoluteObservationFilePath,
@@ -140,15 +141,15 @@ export const ExternalAgentObservationWatchFileChangesV1Schema = z.object({
     }
     seenTopologyDirectories.add(directory);
   });
-});
+}));
 
-const ExternalAgentObservationResourceDescriptorBaseV1Schema = z.object({
+const ExternalAgentObservationResourceDescriptorBaseV1Schema = lazyZodSchema(() => z.object({
   resourceKey: ExternalAgentObservationResourceKeyV1Schema,
   linkKey: ExternalAgentObservationLinkKeyV1Schema,
-});
+}));
 
 export const ExternalAgentObservationResourceDescriptorV1Schema =
-  z.discriminatedUnion('changeObservation', [
+  lazyZodSchema(() => z.discriminatedUnion('changeObservation', [
     ExternalAgentObservationResourceDescriptorBaseV1Schema.extend({
       changeObservation: z.literal('observe_resource'),
     }).strict(),
@@ -159,14 +160,14 @@ export const ExternalAgentObservationResourceDescriptorV1Schema =
     ExternalAgentObservationResourceDescriptorBaseV1Schema.extend({
       changeObservation: z.literal('reconcile_only'),
     }).strict(),
-  ]);
+  ]));
 
-const ExternalAgentObservationLeafFactBaseV1Schema = z.object({
+const ExternalAgentObservationLeafFactBaseV1Schema = lazyZodSchema(() => z.object({
   evidenceClass: ExternalAgentObservationEvidenceClassV1Schema,
   observedAtMs: ObservationTimestampMsSchema,
-});
+}));
 
-export const ExternalAgentObservationLeafFactV1Schema = z.discriminatedUnion('kind', [
+export const ExternalAgentObservationLeafFactV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   ExternalAgentObservationLeafFactBaseV1Schema.extend({
     kind: z.literal('liveness'),
     value: z.enum(['running', 'stopped']),
@@ -206,14 +207,14 @@ export const ExternalAgentObservationLeafFactV1Schema = z.discriminatedUnion('ki
       message: 'Observation expiry cannot precede its observation time.',
     });
   }
-});
+}));
 
-export const ExternalAgentObservationLinkEvidenceV1Schema = z.object({
+export const ExternalAgentObservationLinkEvidenceV1Schema = lazyZodSchema(() => z.object({
   linkKey: ExternalAgentObservationLinkKeyV1Schema,
   facts: z.array(ExternalAgentObservationLeafFactV1Schema)
     .min(1)
     .max(EXTERNAL_AGENT_OBSERVATION_MAX_FACTS_PER_LINK_V1),
-}).strict();
+}).strict());
 
 function rejectDuplicateObservationLinkKeys(
   value: Readonly<{
@@ -249,37 +250,37 @@ function rejectDuplicateObservationLinkKeys(
   });
 }
 
-export const ExternalAgentObservationLinkEvidenceBatchV1Schema = z.object({
+export const ExternalAgentObservationLinkEvidenceBatchV1Schema = lazyZodSchema(() => z.object({
   // Empty observer callbacks carry no fact and are not an event.
   items: z.array(ExternalAgentObservationLinkEvidenceV1Schema)
     .min(1)
     .max(EXTERNAL_AGENT_OBSERVATION_MAX_LINKS_PER_BATCH_V1),
-}).strict().superRefine(rejectDuplicateObservationLinkKeys);
+}).strict().superRefine(rejectDuplicateObservationLinkKeys));
 
-export const ExternalAgentObservationReconcilePurposeV1Schema = z.enum([
+export const ExternalAgentObservationReconcilePurposeV1Schema = lazyZodSchema(() => z.enum([
   'observation_evidence',
   'resource_descriptors',
-]);
+]));
 
-const ExternalAgentObservationReconcileRequestBaseV1Schema = z.object({
+const ExternalAgentObservationReconcileRequestBaseV1Schema = lazyZodSchema(() => z.object({
   // The host skips reconciliation when there are no current requested links.
   linkKeys: z.array(ExternalAgentObservationLinkKeyV1Schema)
     .min(1)
     .max(EXTERNAL_AGENT_OBSERVATION_MAX_LINKS_PER_BATCH_V1),
-});
+}));
 
 export const ExternalAgentObservationReconcileRequestV1Schema =
-  z.discriminatedUnion('purpose', [
+  lazyZodSchema(() => z.discriminatedUnion('purpose', [
     ExternalAgentObservationReconcileRequestBaseV1Schema.extend({
       purpose: z.literal('observation_evidence'),
     }).strict(),
     ExternalAgentObservationReconcileRequestBaseV1Schema.extend({
       purpose: z.literal('resource_descriptors'),
     }).strict(),
-  ]).superRefine(rejectDuplicateObservationLinkKeys);
+  ]).superRefine(rejectDuplicateObservationLinkKeys));
 
 export const ExternalAgentObservationResourceDescriptorOutcomeV1Schema =
-  z.discriminatedUnion('kind', [
+  lazyZodSchema(() => z.discriminatedUnion('kind', [
     z.object({
       kind: z.literal('described'),
       descriptor: ExternalAgentObservationResourceDescriptorV1Schema,
@@ -288,42 +289,42 @@ export const ExternalAgentObservationResourceDescriptorOutcomeV1Schema =
       kind: z.literal('unavailable'),
       linkKey: ExternalAgentObservationLinkKeyV1Schema,
     }).strict(),
-  ]);
+  ]));
 
-const ExternalAgentObservationEvidenceReconcileResultV1Schema = z.object({
+const ExternalAgentObservationEvidenceReconcileResultV1Schema = lazyZodSchema(() => z.object({
   purpose: z.literal('observation_evidence'),
   // Every returned link reports facts, successful-empty, or retrieval failure;
   // a resource-wide empty success is never an implicit outcome.
   outcomes: z.array(ExternalAgentObservationLinkEvidenceV1Schema)
     .min(1)
     .max(EXTERNAL_AGENT_OBSERVATION_MAX_LINKS_PER_BATCH_V1),
-}).strict();
+}).strict());
 
-const ExternalAgentObservationDescriptorReconcileResultV1Schema = z.object({
+const ExternalAgentObservationDescriptorReconcileResultV1Schema = lazyZodSchema(() => z.object({
   purpose: z.literal('resource_descriptors'),
   outcomes: z.array(ExternalAgentObservationResourceDescriptorOutcomeV1Schema)
     .min(1)
     .max(EXTERNAL_AGENT_OBSERVATION_MAX_LINKS_PER_BATCH_V1),
-}).strict();
+}).strict());
 
 export const ExternalAgentObservationReconcileResultV1Schema =
-  z.discriminatedUnion('purpose', [
+  lazyZodSchema(() => z.discriminatedUnion('purpose', [
     ExternalAgentObservationEvidenceReconcileResultV1Schema,
     ExternalAgentObservationDescriptorReconcileResultV1Schema,
-  ]).superRefine(rejectDuplicateObservationLinkKeys);
+  ]).superRefine(rejectDuplicateObservationLinkKeys));
 
-export const ExternalAgentObservationTargetV1Schema = z.object({
+export const ExternalAgentObservationTargetV1Schema = lazyZodSchema(() => z.object({
   qualifiedLinkIdentity: LinkedExternalSessionQualifiedIdentityV1Schema,
   linkGeneration: z.string().trim().min(1).max(2_000),
-}).strict();
+}).strict());
 
-const ExternalAgentObservationEvidenceBaseV1Schema = z.object({
+const ExternalAgentObservationEvidenceBaseV1Schema = lazyZodSchema(() => z.object({
   target: ExternalAgentObservationTargetV1Schema,
   evidenceClass: ExternalAgentObservationEvidenceClassV1Schema.optional(),
   observedAtMs: ObservationTimestampMsSchema,
-});
+}));
 
-export const ExternalAgentObservationEvidenceV1Schema = z.discriminatedUnion('kind', [
+export const ExternalAgentObservationEvidenceV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   ExternalAgentObservationEvidenceBaseV1Schema.extend({
     kind: z.literal('liveness'),
     value: z.enum(['running', 'stopped']),
@@ -387,7 +388,7 @@ export const ExternalAgentObservationEvidenceV1Schema = z.discriminatedUnion('ki
       message: 'Verified process identity requires its start time.',
     });
   }
-});
+}));
 
 export function attachExternalAgentObservationTargetV1(
   target: ExternalAgentObservationTargetV1,
@@ -400,7 +401,7 @@ export function attachExternalAgentObservationTargetV1(
   }));
 }
 
-export const ExternalAgentObservationSnapshotV1Schema = z.object({
+export const ExternalAgentObservationSnapshotV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   qualifiedLinkIdentity: LinkedExternalSessionQualifiedIdentityV1Schema,
   linkGeneration: z.string().trim().min(1).max(2_000),
@@ -432,7 +433,7 @@ export const ExternalAgentObservationSnapshotV1Schema = z.object({
       message: 'Snapshot expiry cannot precede its observation time.',
     });
   }
-});
+}));
 
 export type ExternalAgentObservationStatusV1 = z.infer<
   typeof ExternalAgentObservationStatusV1Schema

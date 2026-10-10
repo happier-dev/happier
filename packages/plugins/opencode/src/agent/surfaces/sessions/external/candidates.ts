@@ -3,6 +3,12 @@ import {
   type AgentExternalSessionCandidate,
   type AgentExternalSessionsManagedEndpointRead,
 } from '@happier-dev/plugin-sdk/sessions/external';
+import {
+  createExternalSessionContentSearchControl,
+  ExternalSessionContentSearchYield,
+  searchExternalSessionContent,
+} from '@happier-dev/plugin-sdk/sessions/file-stores';
+import { projectOpenCodeExternalSessionMessage } from './messages.js';
 
 import {
   buildOpenCodeAgentRuntimeDescriptorV1,
@@ -112,6 +118,109 @@ type OpenCodeCandidateQuery = Readonly<{
   searchMode: 'fast' | 'full';
   searchTerm: string;
 }>;
+
+// V2 tokens resume only at page boundaries. Replay the admitted candidate page
+// and verify its unfinished row when content work yields inside that page.
+type OpenCodeContentCursor = Readonly<{
+  v: 1;
+  kind: 'opencodeContentSearch';
+  query: string;
+  source: string;
+  candidateCursor: string | null;
+  candidateLimit: number;
+  offset: number;
+  pendingSessionId?: string;
+}>;
+
+function decodeContentCursor(raw: string): OpenCodeContentCursor | null {
+  try {
+    const value: unknown = JSON.parse(Buffer.from(raw, 'base64url').toString('utf8'));
+    if (!isRecord(value) || value.v !== 1 || value.kind !== 'opencodeContentSearch'
+      || typeof value.query !== 'string' || typeof value.source !== 'string'
+      || (value.candidateCursor !== null && typeof value.candidateCursor !== 'string')
+      || typeof value.candidateLimit !== 'number' || !Number.isSafeInteger(value.candidateLimit) || value.candidateLimit < 1
+      || typeof value.offset !== 'number' || !Number.isSafeInteger(value.offset) || value.offset < 0
+      || (value.pendingSessionId !== undefined && typeof value.pendingSessionId !== 'string')) return null;
+    return { v: 1, kind: 'opencodeContentSearch', query: value.query, source: value.source, candidateCursor: value.candidateCursor,
+      candidateLimit: value.candidateLimit, offset: value.offset, ...(typeof value.pendingSessionId === 'string' ? { pendingSessionId: value.pendingSessionId } : {}) };
+  } catch { return null; }
+}
+
+async function listOpenCodeContentCandidates(params: Parameters<typeof listOpenCodeSessionCandidates>[0]) {
+  const query = params.searchTerm ?? '';
+  if (!query) throw new Error('OpenCode content search requires a query.');
+  const sourceIdentity = JSON.stringify({ source: params.source, dialect: params.dialect });
+  const cursor = params.cursor ? decodeContentCursor(params.cursor) : null;
+  if (params.cursor && (!cursor || cursor.query !== query || cursor.source !== sourceIdentity)) {
+    throw new Error('OpenCode content cursor is invalid for this source query.');
+  }
+  const control = createExternalSessionContentSearchControl(params);
+  const listed = await listOpenCodeSessionCandidates({ ...params, searchTarget: undefined, searchTerm: undefined, searchMode: undefined,
+    cursor: cursor?.candidateCursor ?? undefined, limit: cursor?.candidateLimit ?? params.limit });
+  let offset = cursor?.offset ?? 0;
+  if (offset > listed.candidates.length || (cursor?.pendingSessionId && listed.candidates[offset]?.remoteSessionId !== cursor.pendingSessionId)) {
+    throw new Error('OpenCode content candidate source changed under its continuation.');
+  }
+  const client = await createOpenCodeExternalSessionClient({ source: params.source, dialect: params.dialect,
+    env: params.env, maxResponseBytes: params.maxBytes, managedEndpointRead: params.managedEndpointRead });
+  const candidates: OpenCodeExternalSessionCandidate[] = [];
+  let partial = false;
+  let yielded = false;
+  try {
+    for (; offset < listed.candidates.length; offset += 1) {
+      if (candidates.length >= params.limit) break;
+      const candidate = listed.candidates[offset]!;
+      try {
+        const searched = await searchExternalSessionContent({ query, control, async decode(matchText) {
+          const pages: { id: string; snippet?: string }[][] = [];
+          let before: string | undefined;
+          let partial = false;
+          while (true) {
+            control.checkWork();
+            const page = await client.sessionMessagesList({ sessionId: candidate.remoteSessionId, limit: params.limit,
+              ...(before ? { before } : {}), signal: params.signal });
+            control.checkWork();
+            const records: { id: string; snippet?: string }[] = [];
+            for (const message of page.items) {
+              control.checkWork();
+              const projected = projectOpenCodeExternalSessionMessage(message, candidate.remoteSessionId);
+              partial ||= projected.disposition === 'unsupported';
+              for (const item of projected.items) {
+                const content = asRecord(item.raw.content);
+                const data = content?.type === 'acp' ? asRecord(content.data) : null;
+                const text = content?.type === 'text' && typeof content.text === 'string' ? content.text
+                  : data?.type === 'message' && typeof data.message === 'string' ? data.message : '';
+                const snippet = text ? matchText(text) : null;
+                records.push({ id: item.id, ...(snippet === null ? {} : { snippet }) });
+              }
+            }
+            pages.unshift(records);
+            if (!page.nextCursor) break;
+            if (before === page.nextCursor) throw new Error('OpenCode message continuation did not advance.');
+            before = page.nextCursor;
+          }
+          return { records: pages.flat(), partial };
+        } });
+        partial ||= searched.partial;
+        if (searched.match) candidates.push({ ...candidate, match: searched.match });
+      } catch (error) {
+        if (!(error instanceof ExternalSessionContentSearchYield)) throw error;
+        yielded = true;
+        partial = true;
+        break;
+      }
+    }
+    const unfinished = offset < listed.candidates.length;
+    const candidateCursor = unfinished ? cursor?.candidateCursor ?? null : listed.nextCursor;
+    const nextCursor = unfinished || candidateCursor !== null
+      ? Buffer.from(JSON.stringify({ v: 1, kind: 'opencodeContentSearch', query, source: sourceIdentity,
+        candidateCursor, candidateLimit: cursor?.candidateLimit ?? params.limit, offset: unfinished ? offset : 0,
+        ...(unfinished ? { pendingSessionId: listed.candidates[offset]?.remoteSessionId } : {}) } satisfies OpenCodeContentCursor), 'utf8').toString('base64url')
+      : null;
+    return { candidates, nextCursor, scanned: listed.scanned, ...(nextCursor ? { searchIncomplete: true } : {}),
+      contentCoverage: partial || nextCursor !== null || yielded ? 'partial' as const : 'complete' as const };
+  } finally { await client.dispose().catch(() => {}); }
+}
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -365,6 +474,8 @@ export async function listOpenCodeSessionCandidates(params: Readonly<{
   maxBytes: number;
   searchTerm?: string;
   searchMode?: 'fast' | 'full';
+  searchTarget?: 'metadata' | 'content';
+  deadlineAtMs?: number;
   signal?: AbortSignal;
   env?: Readonly<Record<string, string | undefined>>;
   managedEndpointRead?: AgentExternalSessionsManagedEndpointRead;
@@ -373,11 +484,13 @@ export async function listOpenCodeSessionCandidates(params: Readonly<{
   nextCursor: string | null;
   scanned: number;
   searchIncomplete?: boolean;
+  contentCoverage?: 'complete' | 'partial';
 }>> {
   if (!Number.isSafeInteger(params.limit) || params.limit < 1) {
     throw new Error('OpenCode candidate page limit must be a positive safe integer.');
   }
   const limit = params.limit;
+  if (params.searchTarget === 'content') return await listOpenCodeContentCandidates(params);
   const searchTerm = typeof params.searchTerm === 'string' ? params.searchTerm.trim() : '';
   const searchMode = params.searchMode === 'full' ? 'full' : 'fast';
   const query: OpenCodeCandidateQuery = { searchMode, searchTerm };

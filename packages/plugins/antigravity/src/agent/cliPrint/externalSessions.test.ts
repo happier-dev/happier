@@ -42,6 +42,82 @@ async function createConversation(
 }
 
 describe('Antigravity external-session pure leaf', () => {
+  it('preserves literal whitespace in a content query', async () => {
+    const home = await mkdir(join(tmpdir(), `antigravity-content-literal-${Date.now()}-`), { recursive: true });
+    const brainDir = join(home, '.gemini', 'antigravity-cli', 'brain');
+    await createConversation(brainDir, 'conversation-content', [JSON.stringify({ id: 'answer', type: 'PLANNER_RESPONSE', text: 'before phrase after' })]);
+    try {
+      const result = await createAntigravityExternalSessionsContribution({ env: { HOME: home } }).listCandidates({ ...invocation(), source: { kind: 'antigravityCliPrint' }, maxItems: 10, searchTarget: 'content', searchTerm: '  phrase  ', ripgrep: { run: async () => ({ exitCode: 0, stdout: 'hit\0', stderr: '' }) } });
+      if (!result.ok) throw new Error(JSON.stringify(result));
+      expect(result).toMatchObject({ ok: true, value: { candidates: [], contentCoverage: 'complete' } });
+    } finally { await rm(home, { recursive: true, force: true }); }
+  });
+  it('reports unreadable matching source records as partial content coverage', async () => {
+    const home = await mkdir(join(tmpdir(), `antigravity-content-unreadable-${Date.now()}-`), { recursive: true });
+    const brainDir = join(home, '.gemini', 'antigravity-cli', 'brain');
+    await createConversation(brainDir, 'conversation-content', [JSON.stringify({ id: 'first', type: 'USER_INPUT', text: 'Unrelated' }), '{"text":"unreadable phrase"']);
+    try {
+      const result = await createAntigravityExternalSessionsContribution({ env: { HOME: home } }).listCandidates({ ...invocation(), source: { kind: 'antigravityCliPrint' }, maxItems: 10, searchTarget: 'content', searchTerm: 'unreadable phrase', ripgrep: { run: async () => ({ exitCode: 0, stdout: 'hit\0', stderr: '' }) } });
+      expect(result).toMatchObject({ ok: true, value: { candidates: [], contentCoverage: 'partial' } });
+    } finally { await rm(home, { recursive: true, force: true }); }
+  });
+  it('continues content scanning when a later directory chunk has a newer static conversation', async () => {
+    const home = await mkdir(join(tmpdir(), `antigravity-content-order-${Date.now()}-`), { recursive: true });
+    const brainDir = join(home, '.gemini', 'antigravity-cli', 'brain');
+    const paths = new Map<string, string>();
+    for (const id of ['conversation-a', 'conversation-b']) paths.set(id, await createConversation(brainDir, id, [JSON.stringify({ id: 'answer', type: 'PLANNER_RESPONSE', text: 'body-only phrase' })]));
+    const order: string[] = [];
+    for await (const entry of await opendir(brainDir)) order.push(entry.name);
+    for (let index = 0; index < order.length; index += 1) await utimes(paths.get(order[index]!)!, new Date(1000 + index * 1000), new Date(1000 + index * 1000));
+    const contribution = createAntigravityExternalSessionsContribution({ env: { HOME: home } });
+    const request = { ...invocation(), source: { kind: 'antigravityCliPrint' }, maxItems: 1, searchTarget: 'content' as const, searchTerm: 'body-only phrase', ripgrep: { run: async () => ({ exitCode: 0, stdout: 'hit\0', stderr: '' }) } };
+    try {
+      const first = await contribution.listCandidates(request);
+      expect(first).toMatchObject({ ok: true, value: { candidates: [{ remoteSessionId: order[0] }], nextCursor: expect.any(String) } });
+      if (!first.ok || !first.value.nextCursor) throw new Error('Expected first content continuation');
+      const second = await contribution.listCandidates({ ...request, cursor: first.value.nextCursor });
+      expect(second).toMatchObject({ ok: true, value: { candidates: [{ remoteSessionId: order[1] }] } });
+    } finally { await rm(home, { recursive: true, force: true }); }
+  });
+  it.each(['body-only phrase', '你好 café'])('searches decoded body content and returns its transcript locator: %s', async (query) => {
+    const home = await mkdir(join(tmpdir(), `antigravity-content-${Date.now()}-`), { recursive: true });
+    const brainDir = join(home, '.gemini', 'antigravity-cli', 'brain');
+    const transcriptPath = await createConversation(brainDir, 'conversation-content', [
+      JSON.stringify({ id: 'first', type: 'USER_INPUT', text: 'An unrelated title' }),
+      JSON.stringify({ id: 'answer', type: 'PLANNER_RESPONSE', text: `Before ${query} after` }),
+      JSON.stringify({ id: 'tool', type: 'PLANNER_RESPONSE', tool_calls: [{ id: 'call', name: query, args: { metadata: query } }] }),
+    ]);
+    const contribution = createAntigravityExternalSessionsContribution({ env: { HOME: home } });
+    const ripgrep = { run: async () => ({ exitCode: 0, stdout: `${transcriptPath}\0`, stderr: '' }) };
+    try {
+      const result = await contribution.listCandidates({ ...invocation(), ripgrep, source: { kind: 'antigravityCliPrint' }, maxItems: 10, searchTarget: 'content', searchTerm: query });
+      expect(result).toMatchObject({ ok: true, value: { contentCoverage: 'complete', candidates: [{ remoteSessionId: 'conversation-content', match: { snippet: expect.stringContaining(query), sourceItemId: 'answer', messageIndex: 1 } }] } });
+      const metadataOnly = await contribution.listCandidates({ ...invocation(), ripgrep, source: { kind: 'antigravityCliPrint' }, maxItems: 10, searchTarget: 'content', searchTerm: 'metadata' });
+      expect(metadataOnly).toMatchObject({ ok: true, value: { candidates: [], contentCoverage: 'complete' } });
+    } finally { await rm(home, { recursive: true, force: true }); }
+  });
+
+  it('yields an unfinished content candidate and binds continuation to the query', async () => {
+    const home = await mkdir(join(tmpdir(), `antigravity-content-yield-${Date.now()}-`), { recursive: true });
+    const brainDir = join(home, '.gemini', 'antigravity-cli', 'brain');
+    await createConversation(brainDir, 'conversation-content', [JSON.stringify({ id: 'answer', type: 'PLANNER_RESPONSE', text: 'body-only phrase' })]);
+    const contribution = createAntigravityExternalSessionsContribution({ env: { HOME: home } });
+    const clock = Date.now;
+    let now = clock();
+    const bounds = { ...invocation(), deadlineAtMs: now + 100 };
+    const ripgrep = { run: async () => { now += 100; return { exitCode: 0, stdout: 'hit\0', stderr: '' }; } };
+    Date.now = () => now;
+    try {
+      const result = await contribution.listCandidates({ ...bounds, ripgrep, source: { kind: 'antigravityCliPrint' }, maxItems: 10, searchTarget: 'content', searchTerm: 'body-only phrase' });
+      expect(result).toMatchObject({ ok: true, value: { candidates: [], contentCoverage: 'partial', nextCursor: expect.any(String) } });
+      if (!result.ok || !result.value.nextCursor) throw new Error('Expected content continuation');
+      Date.now = clock;
+      const changed = await contribution.listCandidates({ ...invocation(), ripgrep, source: { kind: 'antigravityCliPrint' }, maxItems: 10, searchTarget: 'content', searchTerm: 'other', cursor: result.value.nextCursor });
+      expect(changed).toMatchObject({ ok: false, code: 'invalid_request' });
+      const resumed = await contribution.listCandidates({ ...invocation(), ripgrep: { run: async () => ({ exitCode: 0, stdout: 'hit\0', stderr: '' }) }, source: { kind: 'antigravityCliPrint' }, maxItems: 10, searchTarget: 'content', searchTerm: 'body-only phrase', cursor: result.value.nextCursor });
+      expect(resumed).toMatchObject({ ok: true, value: { candidates: [{ match: { sourceItemId: 'answer' } }], contentCoverage: 'complete' } });
+    } finally { Date.now = clock; await rm(home, { recursive: true, force: true }); }
+  });
   it('rejects exact identity and transcript reads through a conversation alias outside the brain root', async () => {
     const home = await mkdir(join(tmpdir(), `antigravity-external-escaped-conversation-${Date.now()}-`), { recursive: true });
     const brainDir = join(home, '.gemini', 'antigravity-cli', 'brain');

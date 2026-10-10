@@ -23,7 +23,7 @@ export const KIRO_UI_DESCRIPTOR = Object.freeze({
       hideUnknownToolsByDefault: false,
     },
     picker: {
-      iconName: 'flash-outline',
+      iconName: 'lightning',
       cliGlyph: 'KR',
       cliGlyphScale: 1.0,
       profileCompatibilityGlyphScale: 1.0,

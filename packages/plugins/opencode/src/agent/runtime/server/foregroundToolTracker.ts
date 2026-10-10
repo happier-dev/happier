@@ -4,6 +4,7 @@ export type OpenCodeToolPart = Readonly<{
   sessionID: string;
   callID: string;
   tool: string;
+  nativeChildLaunch?: true;
   messageID?: string;
   state: Readonly<{
     status: string;

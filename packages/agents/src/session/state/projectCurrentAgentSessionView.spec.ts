@@ -334,3 +334,43 @@ describe('projectCurrentAgentSessionView — state disposition (§8)', () => {
     expect(JSON.stringify(next)).not.toContain('Port the parser to the new decoder');
   });
 });
+
+
+describe('configured ACP current view projection', () => {
+  it('preserves the current configuration when the same Agent is carried', () => {
+    const source = {
+      flavor: 'acp:target-a',
+      acpConfiguredBackendV1: { v: 1, backendId: 'target-a', title: 'A', updatedAt: 1 },
+      customAcpSessionId: 'opaque-a',
+    };
+    const next = projectCurrentAgentSessionView(source, { agentId: 'acp:target-a' });
+    expect(next.acpConfiguredBackendV1).toEqual(source.acpConfiguredBackendV1);
+  });
+
+  it('commits exact target configuration and clears the departing opaque resume identity', () => {
+    const next = projectCurrentAgentSessionView({
+      flavor: 'acp:target-a',
+      acpConfiguredBackendV1: { v: 1, backendId: 'target-a', title: 'A', updatedAt: 1 },
+      customAcpSessionId: 'opaque-a',
+      nativeResumeIdentityV1: { v: 1, vendorResumeId: 'opaque-a' },
+    }, {
+      agentId: 'acp:target-b',
+      configuredBackend: { v: 1, backendId: 'target-b', title: 'B', updatedAt: 2 },
+      agentScopedCurrentState: 'clear',
+    });
+    expect(next.flavor).toBe('acp:target-b');
+    expect(next.acpConfiguredBackendV1).toEqual({ v: 1, backendId: 'target-b', title: 'B', updatedAt: 2 });
+    expect(next.customAcpSessionId).toBeUndefined();
+    expect(next.nativeResumeIdentityV1).toBeUndefined();
+  });
+
+  it('clears the previous configured target when a builtin becomes current', () => {
+    const next = projectCurrentAgentSessionView({
+      flavor: 'acp:target-a',
+      acpConfiguredBackendV1: { v: 1, backendId: 'target-a', title: 'A', updatedAt: 1 },
+      customAcpSessionId: 'opaque-a',
+    }, { agentId: 'codex', agentScopedCurrentState: 'clear' });
+    expect(next.acpConfiguredBackendV1).toBeUndefined();
+    expect(next.customAcpSessionId).toBeUndefined();
+  });
+});

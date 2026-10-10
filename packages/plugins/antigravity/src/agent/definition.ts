@@ -3,6 +3,9 @@ import {
   ANTIGRAVITY_BACKEND_ID,
   ANTIGRAVITY_BINARY_NAME,
 } from './install/cliRuntime.js';
+import { antigravityConnectedAccountLaunch } from './connectedServices/continuity.js';
+
+export const AGENT_STATE_SHARING_DESCRIPTOR = antigravityConnectedAccountLaunch.stateSharingDescriptor;
 
 // The ACP agent declaration carries no static model fallback: Happier ACP
 // sessions run the managed `agy_acp_server`, whose models are negotiated on the
@@ -46,6 +49,6 @@ export const AGENT_DEFINITION = Object.freeze({
   // through the one compatibility reader instead of silently re-enabling a
   // disabled Agent. These ids name settings keys only; no runtime is restored.
   enablementCompatibilityBackendIds: ['antigravity-localharness', 'antigravity-terminal'],
-  sessionModeDescriptor: { source: 'none', semantics: 'none', runtimeSwitch: 'none' },
-  sessionModesKind: 'none',
+  sessionModeDescriptor: { source: 'acp', semantics: 'agent-modes', runtimeSwitch: 'acp-setSessionMode' },
+  sessionModesKind: 'acpAgentModes',
 } as const);

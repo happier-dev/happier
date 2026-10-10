@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import {
@@ -14,23 +15,25 @@ const MAX_PROGRESS_WARNINGS = 50;
 const MAX_RECOVERY_ACTIONS = 50;
 export const SESSION_HANDOFF_PREPARE_TARGET_FAILURE_MESSAGE_MAX_LENGTH = 2_000;
 
-export const SessionHandoffPrepareTargetFailureCodeSchema = z.enum([
+export const SessionHandoffPrepareTargetFailureCodeSchema = lazyZodSchema(() => z.enum([
   'target_identity_conflict',
   'agent_version_unsupported',
-]);
+  'existing_session_state_unavailable',
+  'existing_session_state_unsupported',
+]));
 export type SessionHandoffPrepareTargetFailureCode = z.infer<
   typeof SessionHandoffPrepareTargetFailureCodeSchema
 >;
 
-export const SessionHandoffPrepareTargetFailureSchema = z.object({
+export const SessionHandoffPrepareTargetFailureSchema = lazyZodSchema(() => z.object({
   code: SessionHandoffPrepareTargetFailureCodeSchema,
   message: z.string().min(1).max(SESSION_HANDOFF_PREPARE_TARGET_FAILURE_MESSAGE_MAX_LENGTH).optional(),
-}).strict();
+}).strict());
 export type SessionHandoffPrepareTargetFailure = z.infer<
   typeof SessionHandoffPrepareTargetFailureSchema
 >;
 
-export const SessionHandoffPhaseSchema = z.enum([
+export const SessionHandoffPhaseSchema = lazyZodSchema(() => z.enum([
   'preparing',
   'negotiating_transport',
   'staging_target',
@@ -39,10 +42,10 @@ export const SessionHandoffPhaseSchema = z.enum([
   'importing',
   'resuming',
   'finalizing',
-]);
+]));
 export type SessionHandoffPhase = z.infer<typeof SessionHandoffPhaseSchema>;
 
-export const SessionHandoffStatusCodeSchema = z.enum([
+export const SessionHandoffStatusCodeSchema = lazyZodSchema(() => z.enum([
   'pending',
   'ready_for_cutover',
   'in_progress',
@@ -52,10 +55,10 @@ export const SessionHandoffStatusCodeSchema = z.enum([
   'completed',
   'aborted',
   'failed',
-]);
+]));
 export type SessionHandoffStatusCode = z.infer<typeof SessionHandoffStatusCodeSchema>;
 
-export const SessionHandoffProgressCheckpointSchema = z.enum([
+export const SessionHandoffProgressCheckpointSchema = lazyZodSchema(() => z.enum([
   'scan_source',
   'plan',
   'transfer_blobs',
@@ -63,7 +66,7 @@ export const SessionHandoffProgressCheckpointSchema = z.enum([
   'apply',
   'import_session',
   'finalize',
-]);
+]));
 export type SessionHandoffProgressCheckpoint = z.infer<typeof SessionHandoffProgressCheckpointSchema>;
 
 export const SESSION_HANDOFF_PROGRESS_TIMELINES_V1 = Object.freeze({
@@ -115,21 +118,21 @@ export function resolveSessionHandoffProgressTimeline(
     : SESSION_HANDOFF_PROGRESS_MINIMAL_TIMELINE;
 }
 
-export const SessionHandoffProgressWarningCodeSchema = z.enum([
+export const SessionHandoffProgressWarningCodeSchema = lazyZodSchema(() => z.enum([
   'blocking_divergence_detected',
   'problematic_source_entries',
   'resumed_existing_job',
-]);
+]));
 export type SessionHandoffProgressWarningCode = z.infer<typeof SessionHandoffProgressWarningCodeSchema>;
 
-const SessionHandoffProgressCountsSchema = z
+const SessionHandoffProgressCountsSchema = lazyZodSchema(() => z
   .object({
     files: z.number().int().min(0).optional(),
     bytes: z.number().int().min(0).optional(),
   })
-  .passthrough();
+  .passthrough());
 
-export const SessionHandoffProgressSchema = z
+export const SessionHandoffProgressSchema = lazyZodSchema(() => z
   .object({
     updatedAtMs: z.number().int().min(0),
     checkpoint: SessionHandoffProgressCheckpointSchema,
@@ -155,20 +158,20 @@ export const SessionHandoffProgressSchema = z
     resumable: z.boolean(),
     warnings: z.array(SessionHandoffProgressWarningCodeSchema).max(MAX_PROGRESS_WARNINGS).readonly().optional(),
   })
-  .passthrough();
+  .passthrough());
 export type SessionHandoffProgress = z.infer<typeof SessionHandoffProgressSchema>;
 
-export const SessionHandoffWorkspacePreflightSummarySchema = z
+export const SessionHandoffWorkspacePreflightSummarySchema = lazyZodSchema(() => z
   .object({
     addedPathsCount: z.number().int().min(0),
     changedPathsCount: z.number().int().min(0),
     removedPathsCount: z.number().int().min(0),
     totalBytes: z.number().int().min(0).optional(),
   })
-  .passthrough();
+  .passthrough());
 export type SessionHandoffWorkspacePreflightSummary = z.infer<typeof SessionHandoffWorkspacePreflightSummarySchema>;
 
-export const SessionHandoffStatusSchema = z
+export const SessionHandoffStatusSchema = lazyZodSchema(() => z
   .object({
     handoffId: z.string().min(1).max(MAX_HANDOFF_ID_LENGTH),
     status: SessionHandoffStatusCodeSchema,
@@ -184,5 +187,5 @@ export const SessionHandoffStatusSchema = z
       .default(() => []),
     failure: SessionHandoffPrepareTargetFailureSchema.optional(),
   })
-  .passthrough();
+  .passthrough());
 export type SessionHandoffStatus = z.infer<typeof SessionHandoffStatusSchema>;

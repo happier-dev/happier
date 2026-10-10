@@ -58,7 +58,7 @@ export type OpenCodeExternalSessionListCursor =
 
 export type OpenCodeExternalSessionClient = Readonly<{
   sessionList: (opts: Readonly<{
-    limit: number;
+    limit?: number;
     search?: string;
     cursor?: OpenCodeExternalSessionListCursor;
     signal?: AbortSignal;
@@ -70,7 +70,7 @@ export type OpenCodeExternalSessionClient = Readonly<{
   sessionStatusList: (opts?: Readonly<{ signal?: AbortSignal }>) => Promise<Record<string, { type?: string }>>;
   sessionMessagesList: (opts: Readonly<{
     sessionId: string;
-    limit: number;
+    limit?: number;
     before?: string;
     signal?: AbortSignal;
   }>) => Promise<Readonly<{
@@ -401,11 +401,11 @@ export async function createOpenCodeExternalSessionClient(params: Readonly<{
           buildRequestTarget('/api/session', sourceToken === undefined
             ? {
               ...directoryQuery,
-              limit: String(Math.max(1, Math.trunc(limit))),
+              ...(limit === undefined ? {} : { limit: String(Math.max(1, Math.trunc(limit))) }),
               ...(search ? { search } : {}),
             }
             : {
-              limit: String(Math.max(1, Math.trunc(limit))),
+              ...(limit === undefined ? {} : { limit: String(Math.max(1, Math.trunc(limit))) }),
               cursor: sourceToken,
             }),
           fetchFn,
@@ -439,7 +439,7 @@ export async function createOpenCodeExternalSessionClient(params: Readonly<{
       sessionMessagesList: async ({ sessionId, limit, before, signal }) => {
         const page = readOpenCodeV2MessagePage(await fetchJson<unknown>(
           buildRequestTarget(`/api/session/${encodeURIComponent(sessionId)}/message`, {
-            limit: String(Math.max(1, Math.trunc(limit))),
+            ...(limit === undefined ? {} : { limit: String(Math.max(1, Math.trunc(limit))) }),
             // The opaque cursor carries its own order and the schema refuses to
             // combine the two, so a continuation sends no `order`.
             ...(before ? { cursor: before } : {}),
@@ -467,7 +467,7 @@ export async function createOpenCodeExternalSessionClient(params: Readonly<{
       const sessionCursor = readUpdatedAtMsSessionListCursor(cursor, params.dialect);
       const result = await fetchJsonResponse<unknown>(buildRequestTarget('/experimental/session', {
         ...directoryQuery,
-        limit: String(Math.max(1, Math.trunc(limit))),
+        ...(limit === undefined ? {} : { limit: String(Math.max(1, Math.trunc(limit))) }),
         ...(search ? { search } : {}),
         ...(sessionCursor !== undefined ? { cursor: sessionCursor } : {}),
       }), fetchFn, maxResponseBytes, signal);
@@ -497,7 +497,7 @@ export async function createOpenCodeExternalSessionClient(params: Readonly<{
       const result = await fetchJsonResponse<unknown>(
         buildRequestTarget(`/session/${encodeURIComponent(sessionId)}/message`, {
           ...directoryQuery,
-          limit: String(Math.max(1, Math.trunc(limit))),
+          ...(limit === undefined ? {} : { limit: String(Math.max(1, Math.trunc(limit))) }),
           ...(before ? { before } : {}),
         }),
         fetchFn,

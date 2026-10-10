@@ -97,7 +97,9 @@ function getAgentCliRuntimeSpecForLookupId(agentId: AgentCliLookupId): AgentCliR
   if (legacyCustomAcpCompat.isLegacyCustomAcpAgentId(agentId)) {
     return legacyCustomAcpCompat.getLegacyCustomAcpAgentCliRuntimeSpec();
   }
-  return getAgentCliRuntimeSpec(agentId);
+  // These legacy CLI entrypoints already require a native CLI descriptor;
+  // catalog-only Agents use the nullable catalog reader rather than this contract.
+  return getAgentCliRuntimeSpec(agentId)!;
 }
 
 export function readBackendCliSourcePreferenceForAgent(

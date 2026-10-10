@@ -7,7 +7,7 @@ import {
   SESSION_ORGANIZATION_MAX_LABELS,
   SESSION_ORGANIZATION_MAX_TAGS,
 } from './constants.js';
-import { SessionOrganizationContentEnvelopeSchema } from './content.js';
+import { SessionOrganizationContentEnvelopeSchema } from './contentSchemas.js';
 import { SessionOrganizationLabelKindSchema } from './ordering.js';
 
 const SessionOrganizationMigrationInventoryVersionSchema = z

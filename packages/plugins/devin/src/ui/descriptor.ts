@@ -25,7 +25,7 @@ export const DEVIN_UI_DESCRIPTOR = Object.freeze({
     localControl: true,
     toolRendering: { hideUnknownToolsByDefault: true },
     picker: {
-      iconName: 'hardware-chip-outline',
+      iconName: 'cpu',
       iconScale: 1.1,
       cliGlyph: 'DV',
       cliGlyphScale: 1.0,

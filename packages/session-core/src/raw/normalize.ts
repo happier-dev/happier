@@ -499,8 +499,14 @@ function normalizeRawMessageFromRaw(
         };
 
 			        if (raw.content.type === 'output') {
-            // Skip Meta messages
-            if (raw.content.data.isMeta) {
+            const outputData = raw.content.data as Record<string, unknown>;
+            const outputOrigin = outputData.origin;
+            const nativeTaskNotification = outputOrigin && typeof outputOrigin === 'object'
+                && (outputOrigin as Record<string, unknown>).kind === 'task-notification';
+            const nativeTaskResult = nativeTaskNotification
+                && isOutputUserData(outputData) && Array.isArray(outputData.message.content)
+                && outputData.message.content.some(block => block && typeof block === 'object' && block.type === 'tool_result');
+            if (raw.content.data.isMeta && !nativeTaskResult) {
                 return null;
             }
 
@@ -645,7 +651,7 @@ function normalizeRawMessageFromRaw(
 
                 // Handle regular user messages
                 if (raw.content.data.message && typeof raw.content.data.message.content === 'string') {
-                    if (isClaudeTaskNotificationText(raw.content.data.message.content)) {
+                    if (nativeTaskNotification && isClaudeTaskNotificationText(raw.content.data.message.content)) {
                         return null;
                     }
                     return filterNormalizedEventRoleOutput({

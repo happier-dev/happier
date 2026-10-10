@@ -6,7 +6,7 @@ import { runRuntimeInstallModeDispatch } from './runtimeInstallModeDispatch.js';
 import type { AgentCliInstallPlan } from '../install.js';
 import type { RuntimeInstallLifecycleContext } from './runtimeInstallLifecycleContext.js';
 
-const runtimeSpec = getAgentCliRuntimeSpec('codex');
+const runtimeSpec = getAgentCliRuntimeSpec('codex')!;
 
 const plan: AgentCliInstallPlan = {
     agentId: runtimeSpec.id,

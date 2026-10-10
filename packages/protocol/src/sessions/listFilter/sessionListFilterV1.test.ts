@@ -1,9 +1,30 @@
 import { describe, expect, it } from 'vitest';
 
 import { ScopeActionInputSchemas } from '../../actions/scopeActionFamily.js';
-import { normalizeSessionListFilterV1, SessionListFilterV1Schema } from './sessionListFilterV1.js';
+import { matchSessionBotFilterV1, normalizeSessionListFilterV1, SessionListFilterV1Schema } from './sessionListFilterV1.js';
 
 describe('SessionListFilterV1', () => {
+    it('matches Bot identity only from authorized canonical metadata and distinguishes unavailable metadata', () => {
+        expect(matchSessionBotFilterV1({ bot: { kind: 'bot', future: true } }, 'bot')).toBe('match');
+        expect(matchSessionBotFilterV1({ title: 'Bot', tag: 'bot', pinned: true }, 'bot')).toBe('miss');
+        expect(matchSessionBotFilterV1({}, 'ordinary')).toBe('match');
+        for (const bot of [{ kind: 'ordinary' }, null]) {
+            expect(matchSessionBotFilterV1({ bot }, 'ordinary')).toBe('unavailable');
+            expect(matchSessionBotFilterV1({ bot }, 'bot')).toBe('unavailable');
+        }
+        expect(matchSessionBotFilterV1({ bot: { kind: 'bot' } }, 'ordinary')).toBe('miss');
+        expect(matchSessionBotFilterV1(null, 'ordinary')).toBe('unavailable');
+        expect(matchSessionBotFilterV1(undefined, 'bot')).toBe('unavailable');
+        expect(matchSessionBotFilterV1(null)).toBe('match');
+    });
+    it('retains an optional Bot facet without changing an unset selection', () => {
+        expect(normalizeSessionListFilterV1()).not.toHaveProperty('bot');
+        for (const bot of ['bot', 'ordinary'] as const) {
+            expect(SessionListFilterV1Schema.parse({ ...normalizeSessionListFilterV1(), bot }).bot).toBe(bot);
+            expect(ScopeActionInputSchemas['session.list.view.set'].parse({ filters: { bot } }).filters).toEqual({ bot });
+        }
+        expect(SessionListFilterV1Schema.safeParse({ ...normalizeSessionListFilterV1(), bot: 'pinned' }).success).toBe(false);
+    });
     it('defaults to sessions and runs you started', () => {
         expect(normalizeSessionListFilterV1()).toMatchObject({ show: 'both', startedBy: ['you'] });
     });

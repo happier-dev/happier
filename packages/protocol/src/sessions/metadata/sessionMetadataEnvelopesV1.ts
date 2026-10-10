@@ -1,5 +1,6 @@
 import type { AccountEncryptionMode } from '../../features/payload/capabilities/encryptionCapabilities.js';
 import { createStoredReadSchema } from '../../json/storedReadSchema.js';
+import { migrateRetainedSessionMetadataContextV1 } from '../context/sessionContextV1.js';
 import {
   openAccountScopedBlobCiphertext,
   sealAccountScopedBlobCiphertext,
@@ -50,7 +51,15 @@ export function openSessionOwnerMetadataEnvelopeV1(params: Readonly<{
   envelope: unknown;
   material?: AccountScopedCryptoMaterial | null;
 }>): OpenSessionOwnerMetadataEnvelopeV1Result {
-  const stored = createStoredReadSchema(SessionOwnerMetadataEnvelopeV1Schema).safeParse(params.envelope);
+  let normalized = params.envelope;
+  try {
+    if (normalized && typeof normalized === 'object' && 't' in normalized && normalized.t === 'plain' && 'v' in normalized) {
+      normalized = { ...normalized, v: migrateRetainedSessionMetadataContextV1(normalized.v) };
+    }
+  } catch {
+    return { ok: false, reason: 'invalid_envelope' };
+  }
+  const stored = createStoredReadSchema(SessionOwnerMetadataEnvelopeV1Schema).safeParse(normalized);
   const validated = validateSessionOwnerMetadataEnvelopeForAccountModeV1(
     { ...params, envelope: stored.success ? stored.data : params.envelope },
   );
@@ -86,8 +95,12 @@ export function openSessionOwnerMetadataV1(params: Readonly<{
   ) {
     return null;
   }
-  const parsed = createStoredReadSchema(SessionOwnerMetadataV1Schema).safeParse(opened.value);
-  return parsed.success ? parsed.data : null;
+  try {
+    const parsed = createStoredReadSchema(SessionOwnerMetadataV1Schema).safeParse(migrateRetainedSessionMetadataContextV1(opened.value));
+    return parsed.success ? parsed.data : null;
+  } catch {
+    return null;
+  }
 }
 
 export function rewrapSessionOwnerMetadataV1(params: Readonly<{

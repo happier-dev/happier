@@ -18,7 +18,7 @@ export const PI_AGENT_SETTINGS_CONTRIBUTION = {
     presentation: { control: 'text' },
   }],
   presentation: {
-    icon: { ionName: 'code-slash-outline', color: { kind: 'theme', token: 'green' } },
+    icon: { ionName: 'code', color: { kind: 'theme', token: 'green' } },
     subagentSections: [],
     sections: [{
       id: 'pi-storage',

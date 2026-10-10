@@ -1,5 +1,5 @@
 import { readClaudeSettingSourcesV2, type ClaudeSettingSourceV2 } from '@happier-dev/plugin-sdk/first-party/claude';
-import type { AgentLaunchEnvironment } from '@happier-dev/plugin-sdk/agents/runtime';
+import type { AgentLaunchEnvironment, AgentSessionProviderBinding } from '@happier-dev/plugin-sdk/agents/runtime';
 import { readFileSync } from 'node:fs';
 
 import {
@@ -8,6 +8,9 @@ import {
   type ClaudeRemoteAdvancedOptions,
 } from '../../protocol/remoteSettings.js';
 import { buildClaudeHookSettingsOverlay } from '../hooks/settings.js';
+import { CLAUDE_PROVIDER_HELPER_ENV_KEYS } from '../providerBinding/adapter.js';
+
+export type ClaudeHelperModelEnv = Readonly<Partial<Record<typeof CLAUDE_PROVIDER_HELPER_ENV_KEYS[number], string>>>;
 
 const CLAUDE_AGENT_TEAMS_SETTING_KEY = 'claudeCodeExperimentalAgentTeamsEnabled';
 const CLAUDE_ADVANCED_OPTIONS_SETTING_KEY = 'claudeRemoteAdvancedOptionsJson';
@@ -34,9 +37,11 @@ export function resolveClaudeLaunchSettingsOverlayArgs(input: Readonly<{
   interactionKind: 'interactive_terminal' | 'noninteractive_sdk';
   permissionMode: string | null;
   launchSettings: Readonly<Record<string, unknown>>;
+  helperModelEnv?: ClaudeHelperModelEnv;
   workspaceWrites?: 'allow' | 'deny';
 }>): readonly string[] {
-  if (input.interactionKind !== 'interactive_terminal' && input.workspaceWrites !== 'deny') return input.args;
+  if (input.interactionKind !== 'interactive_terminal' && input.workspaceWrites !== 'deny'
+    && input.helperModelEnv === undefined) return input.args;
 
   // Claude treats bypass selection and acknowledgement as distinct inputs. Happier's YOLO mode
   // is the user's explicit choice, so acknowledge it only in the trusted command-line settings
@@ -92,21 +97,30 @@ export function resolveClaudeLaunchSettingsOverlayArgs(input: Readonly<{
   }
 
   const mergedSettings: Record<string, unknown> = { ...baseSettings, ...launchSettings };
-  const basePermissions = baseSettings.permissions && typeof baseSettings.permissions === 'object' && !Array.isArray(baseSettings.permissions)
-    ? baseSettings.permissions as Record<string, unknown> : {};
-  const existingPermissions = mergedSettings.permissions;
-  const permissions = existingPermissions && typeof existingPermissions === 'object' && !Array.isArray(existingPermissions)
-    ? existingPermissions as Record<string, unknown>
-    : {};
-  const rules = (value: unknown) => Array.isArray(value) ? value.filter((rule): rule is string => typeof rule === 'string') : [];
-  const existingAllow = [...rules(basePermissions.allow), ...rules(permissions.allow)];
-  const deny = [...rules(basePermissions.deny), ...rules(permissions.deny),
-    ...(input.workspaceWrites === 'deny' ? ['Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'Bash'] : [])];
-  mergedSettings.permissions = {
-    ...permissions,
-    allow: [...new Set([...existingAllow, ...(buildClaudeHookSettingsOverlay().permissions?.allow ?? [])])],
-    ...(deny.length ? { deny: [...new Set(deny)] } : {}),
-  };
+  if (input.helperModelEnv !== undefined) {
+    const existingEnv = mergedSettings.env && typeof mergedSettings.env === 'object' && !Array.isArray(mergedSettings.env)
+      ? mergedSettings.env as Record<string, unknown> : {};
+    // Native settings.env overrides inherited process values. Keep admitted helper
+    // pins in the existing session-only command-line overlay, never in a global file.
+    mergedSettings.env = { ...existingEnv, ...input.helperModelEnv };
+  }
+  if (input.interactionKind === 'interactive_terminal' || input.workspaceWrites === 'deny') {
+    const basePermissions = baseSettings.permissions && typeof baseSettings.permissions === 'object' && !Array.isArray(baseSettings.permissions)
+      ? baseSettings.permissions as Record<string, unknown> : {};
+    const existingPermissions = mergedSettings.permissions;
+    const permissions = existingPermissions && typeof existingPermissions === 'object' && !Array.isArray(existingPermissions)
+      ? existingPermissions as Record<string, unknown>
+      : {};
+    const rules = (value: unknown) => Array.isArray(value) ? value.filter((rule): rule is string => typeof rule === 'string') : [];
+    const existingAllow = [...rules(basePermissions.allow), ...rules(permissions.allow)];
+    const deny = [...rules(basePermissions.deny), ...rules(permissions.deny),
+      ...(input.workspaceWrites === 'deny' ? ['Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'Bash'] : [])];
+    mergedSettings.permissions = {
+      ...permissions,
+      allow: [...new Set([...existingAllow, ...(buildClaudeHookSettingsOverlay().permissions?.allow ?? [])])],
+      ...(deny.length ? { deny: [...new Set(deny)] } : {}),
+    };
+  }
   argsWithoutSettings.splice(
     firstSettingsIndex ?? argsWithoutSettings.length,
     0,
@@ -164,10 +178,12 @@ export async function resolveClaudeNativeLaunchSettings(input: Readonly<{
   settings: ClaudeSettingsReader;
   launchEnv: Readonly<Record<string, string>>;
   includeAdvancedOptions: boolean;
+  providerBinding?: Pick<AgentSessionProviderBinding, 'upstream'>;
 }>): Promise<Readonly<{
   launchEnv: Readonly<Record<string, string>>;
   advancedOptions: ClaudeRemoteAdvancedOptions;
   settingSources: readonly ClaudeSettingSourceV2[];
+  helperModelEnv?: ClaudeHelperModelEnv;
 }>> {
   const [agentTeamsEnabled, advancedOptionsJson, settingsSnapshot] = await Promise.all([
     readSetting(input.settings, CLAUDE_AGENT_TEAMS_SETTING_KEY),
@@ -176,7 +192,15 @@ export async function resolveClaudeNativeLaunchSettings(input: Readonly<{
       : Promise.resolve(null),
     input.settings.snapshot(),
   ]);
+  const helperModelEnv: Partial<Record<typeof CLAUDE_PROVIDER_HELPER_ENV_KEYS[number], string>> = {};
+  if (input.providerBinding?.upstream.normalizedUrl === null) {
+    for (const key of CLAUDE_PROVIDER_HELPER_ENV_KEYS) {
+      const value = input.launchEnv[key];
+      if (typeof value === 'string') helperModelEnv[key] = value;
+    }
+  }
   return {
+    ...(Object.keys(helperModelEnv).length ? { helperModelEnv } : {}),
     launchEnv: agentTeamsEnabled === true
       ? {
           ...input.launchEnv,

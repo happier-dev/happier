@@ -20,6 +20,7 @@ export function runMessageToEventConversion({
 }): {
   nonSidechainMessages: NormalizedMessage[];
   incomingToolIds: Set<string>;
+  incomingToolResultIds: Set<string>;
   hasReadyEvent: boolean;
   readyAt: number | null;
   latestReadyEventSeq: number | null;
@@ -48,6 +49,13 @@ export function runMessageToEventConversion({
       continue;
     }
     if (state.messageIds.has(msg.id)) {
+      continue;
+    }
+
+    // Composition is retained usage evidence, not a conversational event. Its
+    // dedicated usage reader opens the raw record independently of these rows.
+    if (msg.role === 'event' && msg.content.type === 'prompt-composition') {
+      state.messageIds.set(msg.id, msg.id);
       continue;
     }
 
@@ -178,11 +186,14 @@ export function runMessageToEventConversion({
 
   // Build a set of incoming tool IDs for quick lookup
   const incomingToolIds = new Set<string>();
+  const incomingToolResultIds = new Set<string>();
   for (const msg of nonSidechainMessages) {
     if (msg.role === 'agent') {
       for (const c of msg.content) {
         if (c.type === 'tool-call') {
           incomingToolIds.add(c.id);
+        } else if (c.type === 'tool-result') {
+          incomingToolResultIds.add(c.tool_use_id);
         }
       }
     }
@@ -191,6 +202,7 @@ export function runMessageToEventConversion({
   return {
     nonSidechainMessages,
     incomingToolIds,
+    incomingToolResultIds,
     hasReadyEvent,
     readyAt,
     latestReadyEventSeq,

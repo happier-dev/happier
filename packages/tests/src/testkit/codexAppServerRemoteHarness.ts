@@ -305,6 +305,7 @@ export async function writeFakeCodexAppServerScript(params: Readonly<{
     '    turnCounter += 1;',
     '    const threadId = msg.params?.threadId ?? "thread-started";',
     '    const input = Array.isArray(msg.params?.input) ? msg.params.input : [];',
+    '    if (configuredRateLimitsSnapshot !== null) process.stdout.write(JSON.stringify({ method: "account/rateLimits/updated", params: configuredRateLimitsSnapshot }) + "\\n");',
     '    const promptText = String(input[0]?.text ?? `prompt-${turnCounter}`);',
     '    const turnId = `turn-${turnCounter}`;',
     '    activeTurnId = turnId;',

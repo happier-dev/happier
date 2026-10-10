@@ -5,6 +5,9 @@ import { StrictJsonValueSchema } from '../../json/strictJsonValue.js';
 import { ExecutionRunResultContractV1Schema } from './resultContractV1.js';
 import { HappierStructuredInputV1Schema } from '../../runtime/input/structuredInputV1.js';
 export {
+  ExecutionRunResolvedSelectionSchema,
+  projectExecutionRunResolvedSelection,
+  type ExecutionRunResolvedSelection,
   ExecutionRunRequestedConfigurationSchema,
   projectExecutionRunRequestedConfiguration,
   type ExecutionRunRequestedConfiguration,

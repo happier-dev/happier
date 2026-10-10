@@ -1,4 +1,13 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
+
+/** The existing native shell family, shared by canonicalization and typed bridge provenance. */
+export function isShellToolNameAlias(name: string): boolean {
+  const lower = name.toLowerCase();
+  return lower === 'execute_command' || lower === 'exec_command'
+    || lower === 'execute' || lower === 'bash' || lower === 'shell'
+    || name === 'GeminiBash' || name === 'CodexBash';
+}
 
 /**
  * Provider tool names for a given canonical tool often differ.
@@ -35,7 +44,7 @@ export const CHANGE_TITLE_TOOL_NAME_ALIASES = [
   'happy_session_title_set',
 ] as const;
 
-export const ChangeTitleToolNameAliasSchema = z.enum(CHANGE_TITLE_TOOL_NAME_ALIASES);
+export const ChangeTitleToolNameAliasSchema = lazyZodSchema(() => z.enum(CHANGE_TITLE_TOOL_NAME_ALIASES));
 export type ChangeTitleToolNameAlias = z.infer<typeof ChangeTitleToolNameAliasSchema>;
 
 const CHANGE_TITLE_TOOL_LIKE_ALIASES = new Set<string>([

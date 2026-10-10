@@ -1,3 +1,5 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
+import { SessionPermissionAnsweringClientCategoryV1Schema } from '../permissions/respondRpcParamsV1.js';
 import { z } from 'zod';
 
 import { ActionIdSchema } from '../../actions/actionIds.js';
@@ -11,14 +13,14 @@ import {
 } from '../permissions/v1.js';
 
 const RequestIdSchema = SessionPermissionRequestIdV1Schema;
-const TimestampSchema = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
+const TimestampSchema = lazyZodSchema(() => z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER));
 
 /** Host confirmations keep their native request kind but always need an approval decision. */
 export function isSessionActionConfirmationRequest(request: Readonly<{ source?: string }>): boolean {
   return request.source === 'happier_action';
 }
 
-export const SessionActionConfirmationResponseTargetV1Schema = z.object({
+export const SessionActionConfirmationResponseTargetV1Schema = lazyZodSchema(() => z.object({
   kind: z.literal('happier_action_confirmation_v1'),
   requestId: RequestIdSchema,
   actionId: ActionIdSchema,
@@ -31,25 +33,25 @@ export const SessionActionConfirmationResponseTargetV1Schema = z.object({
     occurrenceId: z.string().trim().min(1),
     sidechainId: SidechainIdSchema,
   }).strict().optional(),
-}).strict();
+}).strict());
 
-const ArgumentsSchema = z.object({
+const ArgumentsSchema = lazyZodSchema(() => z.object({
   actionId: ActionIdSchema,
   preview: StrictJsonValueSchema,
   sessionId: asProtocolZod(SessionIdSchema),
   turnId: TurnIdSchema,
-}).strict();
+}).strict());
 
-const PresentUserClaimSchema = z.object({
+const PresentUserClaimSchema = lazyZodSchema(() => z.object({
   version: z.literal(1),
   origin: z.literal('presentUser'),
   actor: SessionPermissionAccountUserDecisionActorV1Schema,
   turnId: TurnIdSchema,
   decision: z.enum(['approved', 'denied', 'abort']),
   scope: z.literal('request'),
-}).strict();
+}).strict());
 
-export const SessionActionConfirmationRequestV1Schema = z.object({
+export const SessionActionConfirmationRequestV1Schema = lazyZodSchema(() => z.object({
   tool: z.literal('Happier Action confirmation'),
   kind: z.literal('user_action'),
   arguments: ArgumentsSchema,
@@ -59,9 +61,9 @@ export const SessionActionConfirmationRequestV1Schema = z.object({
   responseTarget: SessionActionConfirmationResponseTargetV1Schema,
   sidechainId: SidechainIdSchema.optional(),
   permissionResponseClaimV1: PresentUserClaimSchema.optional(),
-}).strict();
+}).strict());
 
-export const SessionActionConfirmationCompletedV1Schema = z.object({
+export const SessionActionConfirmationCompletedV1Schema = lazyZodSchema(() => z.object({
   tool: z.literal('Happier Action confirmation'),
   kind: z.literal('user_action'),
   arguments: ArgumentsSchema,
@@ -75,9 +77,10 @@ export const SessionActionConfirmationCompletedV1Schema = z.object({
   responseTarget: SessionActionConfirmationResponseTargetV1Schema,
   sidechainId: SidechainIdSchema.optional(),
   permissionDecisionActorV1: SessionPermissionAccountUserDecisionActorV1Schema.optional(),
-}).strict();
+  answeringClientCategory: SessionPermissionAnsweringClientCategoryV1Schema.optional(),
+}).strict());
 
-export const SessionActionConfirmationsV1Schema = z.object({
+export const SessionActionConfirmationsV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   requests: z.record(RequestIdSchema, SessionActionConfirmationRequestV1Schema),
   completedRequests: z.record(RequestIdSchema, SessionActionConfirmationCompletedV1Schema),
@@ -99,5 +102,5 @@ export const SessionActionConfirmationsV1Schema = z.object({
       });
     }
   }
-});
+}));
 export type SessionActionConfirmationsV1 = z.infer<typeof SessionActionConfirmationsV1Schema>;

@@ -85,6 +85,15 @@ export type HandoffImportRequestV1 = Readonly<{
   targetDirectory: string;
 }>;
 
+/** Read-only native acquisition; the SDK projects this request without private Protocol declarations. */
+export type HandoffExistingStateRequestV1 = Readonly<{
+  sessionId: string;
+  metadata: HandoffExportSessionMetadataV1;
+  targetDirectory: string;
+  /** Complete effective child environment when supplied; absent keys remain absent. */
+  environmentVariables?: Readonly<Record<string, string>>;
+}>;
+
 export type HandoffImportResultV1 = Readonly<{
   providerSessionId: string;
   source?: Readonly<{ kind: string }>;
@@ -134,12 +143,15 @@ export type HandoffFailureCodeV1 =
   | 'target_import_failed'
   | 'target_identity_conflict'
   | 'agent_version_unsupported'
+  | 'existing_session_state_unavailable'
+  | 'existing_session_state_unsupported'
   | 'handoff_failed';
 
 export type HandoffSurfaceV1 = Readonly<{
   evaluateAvailability?: (request: HandoffAvailabilityRequestV1) => AgentSurfaceAvailabilityV1 | Promise<AgentSurfaceAvailabilityV1>;
   exportBundle: (request: HandoffExportRequestV1) => AgentSurfaceResultV1<HandoffExportResultV1, HandoffFailureCodeV1> | Promise<AgentSurfaceResultV1<HandoffExportResultV1, HandoffFailureCodeV1>>;
   importBundle: (request: HandoffImportRequestV1) => AgentSurfaceResultV1<HandoffImportResultV1, HandoffFailureCodeV1> | Promise<AgentSurfaceResultV1<HandoffImportResultV1, HandoffFailureCodeV1>>;
+  resolveExistingState?: (request: HandoffExistingStateRequestV1) => AgentSurfaceResultV1<HandoffImportResultV1, HandoffFailureCodeV1> | Promise<AgentSurfaceResultV1<HandoffImportResultV1, HandoffFailureCodeV1>>;
   extractMediaScannableRecords?: (request: HandoffMediaScannableRecordsRequestV1) => readonly unknown[] | Promise<readonly unknown[]>;
   buildRuntimeLocalMetadata?: (request: HandoffRuntimeLocalMetadataRequestV1) => HandoffRuntimeLocalMetadataV1 | null | Promise<HandoffRuntimeLocalMetadataV1 | null>;
   resolveNativeTranscriptPathCandidate?: (request: HandoffNativeTranscriptPathCandidateRequestV1) => HandoffNativeTranscriptPathCandidateV1 | null | Promise<HandoffNativeTranscriptPathCandidateV1 | null>;

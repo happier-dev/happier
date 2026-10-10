@@ -46,7 +46,7 @@ export function resolveSessionAwarenessEncryptionV1(
  */
 export function isSessionAwarenessContentReadableV1(
   encryption: SessionAwarenessEncryptionV1,
-): boolean {
+): encryption is 'plain' | 'ready' {
   return encryption === 'plain' || encryption === 'ready';
 }
 

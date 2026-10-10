@@ -40,7 +40,8 @@ export function publishOpenCodeToolPartRuntimeEvents(params: Readonly<{
   nowMs?: () => number;
 }>): void {
   const turnId = params.state.activeTurnId;
-  if (!params.state.turnInFlight || !turnId) return;
+  if (!params.part.nativeChildLaunch && (!params.state.turnInFlight || !turnId)) return;
+  const outputScope = params.part.nativeChildLaunch || !turnId ? {} : { turnId };
 
   const callKey = readOpenCodeToolCallKey(params.part);
   const emittedAtMs = params.nowMs?.() ?? Date.now();
@@ -52,7 +53,7 @@ export function publishOpenCodeToolPartRuntimeEvents(params: Readonly<{
     params.publishRuntimeEvent({
       kind: 'tool-call',
       ...projectOpenCodeRuntimeScope(params.scope),
-      turnId,
+      ...outputScope,
       toolCallId: params.part.callID,
       toolName: canonicalizeOpenCodeProjectedMcpToolName(params.part.tool, params.mcpProjection),
       toolInput,
@@ -67,7 +68,7 @@ export function publishOpenCodeToolPartRuntimeEvents(params: Readonly<{
   params.publishRuntimeEvent({
     kind: 'tool-result',
     ...projectOpenCodeRuntimeScope(params.scope),
-    turnId,
+    ...outputScope,
     toolCallId: params.part.callID,
     output: buildOpenCodeToolResultOutput(params.part),
     emittedAtMs,

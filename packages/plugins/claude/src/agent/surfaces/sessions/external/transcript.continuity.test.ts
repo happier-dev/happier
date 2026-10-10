@@ -133,6 +133,20 @@ async function rewriteInPlace(path: string, position: number, replacement: strin
 }
 
 describe('Claude external transcript continuity evidence', () => {
+    it('publishes a delivered peer attachment through the live terminal stream as visible recipient text', async () => {
+        const fixture = await createTranscript(1, 0);
+        const cursor = await mintTailCursor(fixture);
+        await appendFile(fixture.transcriptPath, `${JSON.stringify({ type: 'attachment', uuid: 'live-peer',
+            attachment: { type: 'queued_command', prompt: '<cross-session-message from="uds:/tmp/sender.sock" from-name="Sender">Delivered</cross-session-message>' },
+        })}\n`);
+        const page = await readAfterClaudeExternalSessionTranscript({ source: fixture.source, env: fixture.env,
+            providerSessionId: fixture.remoteSessionId, cursor, projection: 'terminal', maxBytes: 64 * 1024, maxItems: 10 });
+        expect(page.items).toHaveLength(1);
+        expect(page.items[0]).toMatchObject({ raw: { role: 'agent', content: { type: 'acp', agentId: 'claude',
+            data: { type: 'message', message: 'From Sender:\n\nDelivered' } } } });
+        expect(JSON.stringify(page.items)).not.toContain('uds:/tmp');
+    });
+
     it.each(['page', 'pageNewer', 'tail', 'readAfter', 'sourceReset'] as const)('preserves an incomplete tail through %s cursor capture', async (capture) => {
         const fixture = await createTranscript(2, 40);
         const earlierCursor = await mintTailCursor(fixture);

@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest';
 import {
   SessionTranscriptObservationAckV1Schema,
   SessionTranscriptObservationV1Schema,
+  SessionTranscriptObservationV2Schema,
+  SessionHistoricalTranscriptImportV3Schema,
   isRecoveredHistoryTranscriptObservationProvenance,
 } from './transcriptObservationV1.js';
 
@@ -17,6 +19,24 @@ const observation = {
 };
 
 describe('SessionTranscriptObservationV1', () => {
+  it('preserves a child identity and original correlation in the strict historical import epoch', () => {
+    const body = { items: [{ localId: 'child-row', content: { t: 'encrypted', c: 'child-sealed' },
+      surfaceItemReference: { v: 1, itemId: 'child-item', itemRevision: 'ssr1.AAAACHN5c3JlY18xAAAAAQ',
+        sourceAddress: { serverId: 'origin-home', sessionId: 'parent-session' } } }] };
+    expect(SessionHistoricalTranscriptImportV3Schema.parse(body)).toEqual(body);
+    expect(SessionHistoricalTranscriptImportV3Schema.safeParse({ items: [{ ...body.items[0],
+      surfaceItemReference: { ...body.items[0].surfaceItemReference, authorToken: 'forged' } }] }).success).toBe(false);
+  });
+  it('admits a surface association only in the negotiated closed observation epoch', () => {
+    const surfaceItemReference = { v: 1, itemId: 'visual', itemRevision: 'ssr1.AAAACHN5c3JlY18xAAAAAQ',
+      sourceAddress: { serverId: 'home-a', sessionId: 'session-1' } };
+    expect(SessionTranscriptObservationV1Schema.safeParse({ ...observation, surfaceItemReference }).success).toBe(false);
+    expect(SessionTranscriptObservationV2Schema.parse({ ...observation, v: 2, surfaceItemReference }))
+      .toEqual({ ...observation, v: 2, surfaceItemReference });
+    expect(SessionTranscriptObservationV2Schema.safeParse({ ...observation, v: 2,
+      surfaceItemReference: { ...surfaceItemReference, authorToken: 'forged' } }).success).toBe(false);
+  });
+
   it('preserves an exact nonblank local id and explicit content envelope', () => {
     expect(SessionTranscriptObservationV1Schema.parse(observation)).toEqual(observation);
   });

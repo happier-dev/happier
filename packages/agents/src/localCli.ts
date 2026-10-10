@@ -23,27 +23,30 @@ export type AgentLocalCliConfig = Readonly<{
 const AUTHORED_AGENT_LOCAL_CLI_CONFIG = Object.freeze({
 } satisfies Partial<Record<CanonicalAgentId, AgentLocalCliConfig>>);
 
-export const CANONICAL_AGENT_LOCAL_CLI_CONFIG: Readonly<Record<CanonicalAgentId, AgentLocalCliConfig>> =
+export const CANONICAL_AGENT_LOCAL_CLI_CONFIG: Readonly<Record<CanonicalAgentId, AgentLocalCliConfig | null>> =
   mergeAuthoredWithGeneratedAgentFacts({
     authored: AUTHORED_AGENT_LOCAL_CLI_CONFIG,
     label: 'local CLI config',
     readGenerated: (definition, agentId) => {
-      const launches = definition.cli.auth.loginLaunches.map((launch) => ({
+      const cli = definition.cli;
+      if (!cli) return null;
+      const launches = cli.auth.loginLaunches.map((launch) => ({
         ...launch,
-        command: definition.cli.executable.binaryName,
+        command: cli.executable.binaryName,
       }));
       return {
         agentId,
-        detectKey: definition.cli.executable.binaryName,
-        machineLoginKey: definition.cli.auth.machineLoginKey ?? definition.cli.executable.binaryName,
-        supportKind: definition.cli.auth.support,
+        detectKey: cli.executable.binaryName,
+        machineLoginKey: cli.auth.machineLoginKey ?? cli.executable.binaryName,
+        supportKind: cli.auth.support,
         loginLaunch: launches.find((launch) => launch.kind === 'primary') ?? null,
         authLaunches: launches,
       };
     },
+    resolveMissing: () => null,
   });
 
-export const AGENT_LOCAL_CLI_CONFIG: Readonly<Record<CanonicalAgentId, AgentLocalCliConfig>> = CANONICAL_AGENT_LOCAL_CLI_CONFIG;
+export const AGENT_LOCAL_CLI_CONFIG = CANONICAL_AGENT_LOCAL_CLI_CONFIG;
 
 /**
  * Whether each bundled Agent declares an unattended managed CLI install recipe.
@@ -57,7 +60,7 @@ export const CANONICAL_AGENT_MANAGED_CLI_INSTALL_DECLARED: Readonly<Record<Canon
   mergeAuthoredWithGeneratedAgentFacts({
     authored: {},
     label: 'managed CLI install declaration',
-    readGenerated: (definition) => definition.cli.install.managed != null,
+    readGenerated: (definition) => definition.cli?.install.managed != null,
   });
 
 /** Typed unavailable (`false`) for an externally installed Agent with no bundled facts. */
@@ -65,8 +68,6 @@ export function agentDeclaresManagedCliInstall(agentId: AgentId): boolean {
   return readBundledAgentFact(CANONICAL_AGENT_MANAGED_CLI_INSTALL_DECLARED, agentId) ?? false;
 }
 
-export function getAgentLocalCliConfig(agentId: BundledAgentId): AgentLocalCliConfig;
-export function getAgentLocalCliConfig(agentId: AgentId): AgentLocalCliConfig | null;
 export function getAgentLocalCliConfig(agentId: AgentId): AgentLocalCliConfig | null {
   return readBundledAgentFact(AGENT_LOCAL_CLI_CONFIG, agentId);
 }

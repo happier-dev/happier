@@ -68,7 +68,7 @@ export type OpenCodeRuntimeContext = Readonly<{
       permissions: Readonly<{
         requestDecision(
           request: Parameters<AgentSessionRuntimeContext['services']['interactions']['requestApproval']>[0],
-          options?: Readonly<{ signal?: AbortSignal }>,
+          options?: Parameters<AgentSessionRuntimeContext['services']['interactions']['requestApproval']>[1],
         ): Promise<InteractionTransientApprovalResultV1>;
       }>;
     }>;
@@ -216,7 +216,7 @@ export function createOpenCodeRuntimeContext(
           requestDecision: (approvalRequest, options) => requestOpenCodeApprovalWithSignal({
             request: approvalRequest,
             signal: options?.signal,
-            requestApproval: (request) => context.services.interactions.requestApproval(request),
+            requestApproval: (request) => context.services.interactions.requestApproval(request, options),
           }),
         },
       },

@@ -2,8 +2,27 @@ import { describe, expect, it } from 'vitest';
 
 import * as protocol from '../../index.js';
 import { normalizeLegacyContinueWithReplayRpcParamsInput } from './compat/continueWithReplayRpcParamsCompat.js';
+import { buildBackendTargetKeyV2, BackendTargetKeyV2InputSchema, parseBackendTargetKeyV2 } from './backendTargetRefV2.js';
 
 describe('BackendTargetRefV2 compatibility', () => {
+  it('roundtrips distinct configured definition keys under the same real Agent contribution', () => {
+    const identity = { pluginId: 'happier.agent.custom-acp', localId: 'custom-acp' };
+    const a = { kind: 'agent' as const, identity, definitionId: 'review-a' };
+    const b = { kind: 'agent' as const, identity, definitionId: 'review-b' };
+    const aKey = buildBackendTargetKeyV2(a);
+    const bKey = buildBackendTargetKeyV2(b);
+    expect(aKey).not.toBe(bKey);
+    expect(parseBackendTargetKeyV2(aKey)).toEqual(a);
+    expect(parseBackendTargetKeyV2(bKey)).toEqual(b);
+    expect(buildBackendTargetKeyV2({ kind: 'backend', backendId: 'review-a', configuredBackendId: 'review-a' })).toBe(aKey);
+  });
+  it('keys an installed Agent routing ref by its contribution identity without collapsing configured instances', () => {
+    const backendId = 'acme.review/reviewer';
+    expect(buildBackendTargetKeyV2({ kind: 'backend', backendId })).toBe(`agent:${backendId}`);
+    expect(BackendTargetKeyV2InputSchema.parse(`backend:${backendId}`)).toBe(`agent:${backendId}`);
+    expect(buildBackendTargetKeyV2({ kind: 'backend', backendId, configuredBackendId: 'instance-1' }))
+      .toBe('agent:happier.agent.custom-acp/custom-acp:definition:instance-1');
+  });
   it('exports additive V2 backend target schemas and helpers', () => {
     expect(typeof (protocol as any).BackendTargetRefV2Schema?.safeParse).toBe('function');
     expect(typeof (protocol as any).BackendTargetKeyV2Schema?.safeParse).toBe('function');
@@ -108,7 +127,7 @@ describe('BackendTargetRefV2 compatibility', () => {
       'agent:happier.agent.claude/claude',
     );
     expect((protocol as any).BackendTargetKeyV2InputSchema.parse('acpBackend:claude')).toBe(
-      'backend:claude:configured:claude',
+      'agent:happier.agent.custom-acp/custom-acp:definition:claude',
     );
   });
 

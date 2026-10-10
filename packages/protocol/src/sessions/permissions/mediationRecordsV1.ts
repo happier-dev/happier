@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 import { asProtocolZod } from "../../plugins/actions/internalProtocolZodAdapter.js";
 
@@ -13,11 +14,12 @@ import {
   SessionPermissionSettlementIdV1Schema,
 } from './v1.js';
 
-export const SESSION_PERMISSION_SYSTEM_RECORD_NAMESPACE = 'permission' as const;
-export const SESSION_PERMISSION_SYSTEM_RECORD_KINDS = [
-  'remote_settlement.v1',
-  'remote_grant.v1',
-] as const;
+import {
+  SESSION_PERMISSION_SYSTEM_RECORD_KINDS,
+  SESSION_PERMISSION_SYSTEM_RECORD_NAMESPACE,
+} from './permissionSystemRecordKinds.js';
+
+export { SESSION_PERMISSION_SYSTEM_RECORD_KINDS, SESSION_PERMISSION_SYSTEM_RECORD_NAMESPACE };
 
 /**
  * The bounded System Record locator for a mediation row's causal
@@ -43,8 +45,8 @@ function boundedNfcIdentifier(maxBytes: number, label: string) {
 
 const SessionPermissionToolIdentifierV1Schema = boundedNfcIdentifier(1_024, 'Permission tool identifiers');
 
-export const SessionPermissionMediationRecordLocatorV1Schema = z.string()
-  .regex(/^pmr1\.[A-Za-z0-9_-]{43}$/u, 'Expected a canonical mediation row locator');
+export const SessionPermissionMediationRecordLocatorV1Schema = lazyZodSchema(() => z.string()
+  .regex(/^pmr1\.[A-Za-z0-9_-]{43}$/u, 'Expected a canonical mediation row locator'));
 export type SessionPermissionMediationRecordLocatorV1 = z.infer<
   typeof SessionPermissionMediationRecordLocatorV1Schema
 >;
@@ -55,11 +57,11 @@ export type SessionPermissionMediationRecordLocatorV1 = z.infer<
  * turn/request portion; the host route and Session-system-record row carry
  * the Session scope.
  */
-export const SessionPermissionMediationRecordIdentityV1Schema = z.object({
+export const SessionPermissionMediationRecordIdentityV1Schema = lazyZodSchema(() => z.object({
   sessionId: asProtocolZod(SessionIdSchema),
   turnId: TurnIdSchema,
   requestId: SessionPermissionRequestIdV1Schema,
-}).strict();
+}).strict());
 export type SessionPermissionMediationRecordIdentityV1 = z.infer<
   typeof SessionPermissionMediationRecordIdentityV1Schema
 >;
@@ -81,7 +83,7 @@ export function deriveSessionPermissionMediationRecordLocatorV1(
   );
 }
 
-export const SessionPermissionRemoteRevocationActorV1Schema = z.discriminatedUnion('kind', [
+export const SessionPermissionRemoteRevocationActorV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('accountUser'),
     accountId: boundedNfcIdentifier(191, 'Account ids'),
@@ -90,12 +92,12 @@ export const SessionPermissionRemoteRevocationActorV1Schema = z.discriminatedUni
     kind: z.literal('mediatorPlugin'),
     pluginId: asProtocolZod(PluginIdSchema),
   }).strict(),
-]);
+]));
 export type SessionPermissionRemoteRevocationActorV1 = z.infer<
   typeof SessionPermissionRemoteRevocationActorV1Schema
 >;
 
-const SessionPermissionRemoteMediationEffectV1Schema = z.discriminatedUnion('kind', [
+const SessionPermissionRemoteMediationEffectV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('allowOnce') }).strict(),
   z.object({ kind: z.literal('deny') }).strict(),
   z.object({
@@ -106,7 +108,7 @@ const SessionPermissionRemoteMediationEffectV1Schema = z.discriminatedUnion('kin
       identifier: SessionPermissionToolIdentifierV1Schema,
     }).strict(),
   }).strict(),
-]);
+]));
 export type SessionPermissionRemoteMediationEffectV1 = z.infer<
   typeof SessionPermissionRemoteMediationEffectV1Schema
 >;
@@ -230,10 +232,10 @@ export type SessionPermissionRemoteGrantRecordV1 = z.infer<
   typeof SessionPermissionRemoteGrantRecordV1Schema
 >;
 
-export const SessionPermissionRemoteMediationRecordV1Schema = z.union([
+export const SessionPermissionRemoteMediationRecordV1Schema = lazyZodSchema(() => z.union([
   SessionPermissionRemoteSettlementRecordV1Schema,
   SessionPermissionRemoteGrantRecordV1Schema,
-]);
+]));
 export type SessionPermissionRemoteMediationRecordV1 = z.infer<
   typeof SessionPermissionRemoteMediationRecordV1Schema
 >;

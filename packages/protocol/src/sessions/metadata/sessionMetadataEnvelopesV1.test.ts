@@ -60,6 +60,49 @@ import {
 } from './sessionMetadataEnvelopesV1.js';
 
 describe('metadata schema consumer contracts', () => {
+  it('retains runner generation facts through private owner metadata and the attach compatibility view', () => {
+    const metadata = { hostPid: 321, hostProcessStartTimeMs: 123456, hostProcessInstanceFingerprint: 'linux:123456' };
+    const owner = createSessionOwnerMetadataV1({ metadata });
+    expect(owner).toMatchObject({ ok: true, ownerMetadata: { runtime: metadata } });
+    if (!owner.ok) throw new Error('Runtime identity rejected');
+    const sharedMetadata = projectSessionSharedMetadataV1({ metadata });
+    expect(sharedMetadata).not.toHaveProperty('hostProcessStartTimeMs');
+    expect(projectSessionOwnerCompatibilityViewV1({ sharedMetadata, ownerMetadata: owner.ownerMetadata }))
+      .toMatchObject(metadata);
+  });
+
+  it.each(['plain', 'e2ee'] as const)('round-trips a private %s Session voice preference without disclosing it', (accountMode) => {
+    const voicePreference = { providerContributionId: 'happier.xai/realtime', settingFieldPath: 'voice', value: { kind: 'custom', id: 'my-voice' } };
+    const metadata = { work: { voicePreference, sessionRolesV1: { overrides: {}, sessionRoles: {}, notes: 'Keep notes' } } };
+    const created = createSessionOwnerMetadataV1({ metadata });
+    expect(created).toMatchObject({ ok: true, ownerMetadata: { work: { voicePreference } } });
+    if (!created.ok) throw new Error('Preference rejected');
+    const envelope = accountMode === 'plain' ? { t: 'plain', v: created.ownerMetadata } : { t: 'encrypted', c: sealAccountScopedBlobCiphertext({
+      kind: 'session_owner_metadata', material: material(7), payload: created.ownerMetadata, randomBytes: deterministicRandomBytes(3),
+    }) };
+    const opened = openSessionOwnerMetadataEnvelopeV1({ accountMode, envelope, material: material(7) });
+    expect(opened).toMatchObject({ ok: true, ownerMetadata: { work: { voicePreference, sessionRolesV1: metadata.work.sessionRolesV1 } } });
+    expect(projectSessionSharedMetadataV1({ metadata })).not.toHaveProperty('work');
+  });
+  it.each(['plain', 'e2ee'] as const)('migrates retained %s role memory into the owning Session stack without losing Notes or context siblings', (accountMode) => {
+    const privateWork = { memoryEnabled: false, promptStack: [{ id: 'keep', ref: { kind: 'doc', artifactId: 'keep' }, enabled: true, placement: 'system_append' }],
+      sessionRolesV1: { overrides: {}, sessionRoles: {}, notes: 'Keep notes', memoryDocRef: { kind: 'doc', artifactId: 'legacy-doc' } } };
+    const stored = { v: 1, work: privateWork };
+    const envelope = accountMode === 'plain' ? { t: 'plain', v: stored } : { t: 'encrypted', c: sealAccountScopedBlobCiphertext({
+      kind: 'session_owner_metadata', material: material(7), payload: stored, randomBytes: deterministicRandomBytes(3),
+    }) };
+    const opened = openSessionOwnerMetadataEnvelopeV1({ accountMode, envelope, material: material(7) });
+    expect(opened.ok).toBe(true);
+    if (!opened.ok) return;
+    expect(opened.ownerMetadata.work?.sessionRolesV1).toEqual({ overrides: {}, sessionRoles: {}, notes: 'Keep notes' });
+    expect(opened.ownerMetadata.work?.memoryEnabled).toBe(false);
+    expect(opened.ownerMetadata.work?.promptStack?.map((entry) => [entry.id, entry.ref])).toEqual([
+      ['keep', { kind: 'doc', artifactId: 'keep' }], ['session.legacy-role-memory', { kind: 'doc', artifactId: 'legacy-doc' }],
+    ]);
+    const created = createSessionOwnerMetadataV1({ metadata: { work: privateWork } });
+    expect(created.ok).toBe(true);
+    if (created.ok) expect(created.ownerMetadata.work).toEqual(opened.ownerMetadata.work);
+  });
   it('preserves both JSON Schema dialects and classic fluent derivatives', () => {
     const reference = z.object({
       machineId: z.string().trim().min(1).max(256),
@@ -95,6 +138,64 @@ function deterministicRandomBytes(seed: number): (length: number) => Uint8Array 
   return (length) => Uint8Array.from({ length }, () => next++ & 0xff);
 }
 
+describe('Bot identity metadata', () => {
+  it('round-trips private tool visibility without disclosing it in shared metadata', () => {
+    const metadata = { path: '/private/project', work: { viewPreferences: { showToolCalls: false },
+      sessionRolesV1: { overrides: {}, sessionRoles: {}, notes: 'Keep' } } };
+    const created = createSessionOwnerMetadataV1({ metadata });
+    expect(created).toMatchObject({ ok: true, ownerMetadata: { work: { viewPreferences: { showToolCalls: false } } } });
+    if (!created.ok) throw new Error('View preference rejected');
+    expect(projectSessionOwnerCompatibilityViewV1({ sharedMetadata: projectSessionSharedMetadataV1({ metadata }), ownerMetadata: created.ownerMetadata })).toMatchObject(metadata);
+    expect(projectSessionSharedMetadataV1({ metadata })).not.toHaveProperty('work');
+  });
+  it('round-trips Bot creation facts while sharing only the reversible marker', () => {
+    const bot = { kind: 'bot' as const };
+    const sessionRolesV1 = { overrides: {}, sessionRoles: {}, notes: 'Keep these instructions' };
+    const metadata = { bot, createdAsBot: true, work: { sessionRolesV1 }, path: '/private/project',
+      summary: { text: 'Existing name', updatedAt: 12 },
+      sessionInitialPromptV1: { v: 1 as const, text: 'Original remit', mode: 'append' as const, createdAtMs: 1 } };
+    const created = createSessionOwnerMetadataV1({ metadata });
+    expect(created).toMatchObject({ ok: true, ownerMetadata: { work: { bot, createdAsBot: true, sessionRolesV1 } } });
+    if (!created.ok) throw new Error('Bot facts were rejected');
+    const shared = projectSessionSharedMetadataV1({ metadata });
+    expect(shared).toMatchObject({ bot, summary: metadata.summary });
+    expect(shared).not.toHaveProperty('createdAsBot');
+    expect(shared).not.toHaveProperty('work');
+    expect(shared).not.toHaveProperty('path');
+    const opened = openSessionOwnerMetadataEnvelopeV1({ accountMode: 'plain',
+      envelope: createPlainSessionOwnerMetadataEnvelopeV1(created.ownerMetadata) });
+    expect(opened.ok).toBe(true);
+    if (!opened.ok) throw new Error('Bot owner envelope unavailable');
+    expect(projectSessionOwnerCompatibilityViewV1({ sharedMetadata: shared, ownerMetadata: opened.ownerMetadata }))
+      .toMatchObject(metadata);
+  });
+
+  it('drops additive stored identity fields through shared and owner conversion while keeping ingress strict', () => {
+    const owner = { v: 1, work: { bot: { kind: 'bot', future: true }, createdAsBot: true, future: true }, future: true };
+    const shared = { v: 1, bot: { kind: 'bot', future: true }, future: true };
+    expect(projectSessionOwnerCompatibilityViewV1({ sharedMetadata: shared, ownerMetadata: owner }))
+      .toMatchObject({ bot: { kind: 'bot' }, createdAsBot: true });
+    expect(SessionOwnerMetadataV1Schema.safeParse(owner).success).toBe(false);
+    expect(SessionSharedMetadataV1Schema.safeParse(shared).success).toBe(false);
+    expect(parseSessionOwnerMetadataEnvelopeV1(JSON.stringify({ t: 'plain', v: owner })))
+      .toEqual({ t: 'plain', v: { v: 1, work: { bot: { kind: 'bot' }, createdAsBot: true } } });
+    expect(parseSessionOwnerMetadataEnvelopeV1(JSON.stringify({ t: 'plain', v: { v: 1, work: { bot: { kind: 'ordinary' } } } })))
+      .toBeNull();
+  });
+
+  it('opens additive encrypted Bot work without losing the private memory baseline', () => {
+    const ownerMetadata = { v: 1, work: { bot: { kind: 'bot', future: true }, memoryEnabled: false, future: true } };
+    const envelope = { t: 'encrypted', c: sealAccountScopedBlobCiphertext({ kind: 'session_owner_metadata',
+      material: material(7), payload: ownerMetadata, randomBytes: deterministicRandomBytes(3) }) };
+    const opened = openSessionOwnerMetadataEnvelopeV1({ accountMode: 'e2ee', material: material(7), envelope });
+    expect(opened).toEqual({ ok: true, ownerMetadata: { v: 1, work: { bot: { kind: 'bot' }, memoryEnabled: false } } });
+    if (!opened.ok) throw new Error('Bot owner envelope unavailable');
+    const domain = projectSessionOwnerCompatibilityViewV1({ sharedMetadata: { v: 1 }, ownerMetadata: opened.ownerMetadata });
+    expect(domain).toMatchObject({ bot: { kind: 'bot' }, work: { memoryEnabled: false } });
+    expect(projectSessionSharedMetadataV1({ metadata: domain })).toEqual({ v: 1, bot: { kind: 'bot' } });
+  });
+});
+
 describe('native mode catalog compatibility', () => {
   it('admits known choices with unknown current through the complete owner envelope without weakening strict V1', () => {
     const state = { v: 2 as const, agentId: 'opencode', updatedAt: 1, currentModeId: null, availableModes: [{ id: 'custom', name: 'Custom' }] };
@@ -115,11 +216,51 @@ describe('native mode catalog compatibility', () => {
 });
 
 describe('session role owner metadata', () => {
+  it('retains context entries and local inherited switches in the private owner envelope', () => {
+    const entry = { id: 'session.instructions', ref: { kind: 'doc' as const, artifactId: 'instructions' },
+      enabled: true, placement: 'system_append' as const };
+    const created = createSessionOwnerMetadataV1({ metadata: { work: {
+      promptStack: [entry], memoryEnabled: false, disabledInheritedEntryIds: ['account.context'],
+      sessionRolesV1: { overrides: {}, sessionRoles: {}, notes: 'Keep notes' },
+    } } });
+    expect(created.ok).toBe(true);
+    if (!created.ok) throw new Error('Owner context unavailable');
+    expect(created.ownerMetadata.work).toMatchObject({ promptStack: [entry], memoryEnabled: false,
+      disabledInheritedEntryIds: ['account.context'], sessionRolesV1: { notes: 'Keep notes' } });
+    const domain = projectSessionOwnerCompatibilityViewV1({ sharedMetadata: { v: 1 }, ownerMetadata: created.ownerMetadata });
+    expect(domain).toHaveProperty('work.promptStack', [entry]);
+    expect(projectSessionSharedMetadataV1({ metadata: domain })).not.toHaveProperty('work');
+  });
+  it.each(['plain', 'e2ee'] as const)('keeps stored %s authoring origin private and restores its qualified destination without extras', (accountMode) => {
+    const authoringOriginV1 = { kind: 'project', accountId: 'account-a',
+      workspace: { serverId: 'server-a', workspaceId: 'workspace-a', machineId: 'machine-a', rootPath: '/original' },
+      page: 'scripts' };
+    const ownerMetadata = { v: 1, work: { authoringOriginV1: { ...authoringOriginV1, future: true,
+      workspace: { ...authoringOriginV1.workspace, future: true } } } };
+    const envelope = accountMode === 'plain' ? { t: 'plain', v: ownerMetadata } : {
+      t: 'encrypted', c: sealAccountScopedBlobCiphertext({ kind: 'session_owner_metadata', material: material(7),
+        payload: ownerMetadata, randomBytes: deterministicRandomBytes(3) }),
+    };
+    const opened = openSessionOwnerMetadataEnvelopeV1({ accountMode, envelope,
+      ...(accountMode === 'e2ee' ? { material: material(7) } : {}) });
+    expect(opened).toEqual({ ok: true, ownerMetadata: { v: 1, work: { authoringOriginV1 } } });
+    if (!opened.ok) throw new Error('Expected stored authoring origin');
+    const domain = projectSessionOwnerCompatibilityViewV1({
+      sharedMetadata: projectSessionSharedMetadataV1({ metadata: {} }), ownerMetadata: opened.ownerMetadata,
+    });
+    expect(domain.work?.authoringOriginV1).toEqual(authoringOriginV1);
+    const written = createSessionOwnerMetadataV1({ metadata: domain });
+    expect(written).toMatchObject({ ok: true, ownerMetadata: { work: { authoringOriginV1 } } });
+    expect(SessionOwnerMetadataV1Schema.safeParse(ownerMetadata).success).toBe(false);
+    expect(projectSessionSharedMetadataV1({ metadata: domain })).not.toHaveProperty('work');
+    expect(projectSessionSharedMetadataV1({ metadata: domain })).not.toHaveProperty('authoringOriginV1');
+    expect(openSessionOwnerMetadataEnvelopeV1({ accountMode: 'plain', envelope: {
+      t: 'plain', v: { v: 1, work: { authoringOriginV1: { ...authoringOriginV1, workspace: { machineId: 'machine-a' } } } },
+    } }).ok).toBe(false);
+  });
   it.each(['plain', 'e2ee'] as const)('opens stored %s owner role metadata with additive fields without weakening mode or write admission', (accountMode) => {
-    const sessionRolesV1 = { roleId: 'builder', overrides: {}, sessionRoles: {}, notes: 'Keep stored role notes',
-      memoryDocRef: { kind: 'doc', artifactId: 'memory' } };
-    const ownerMetadata = { v: 1, work: { sessionRolesV1: { ...sessionRolesV1, future: true,
-      memoryDocRef: { ...sessionRolesV1.memoryDocRef, future: true } } } };
+    const sessionRolesV1 = { roleId: 'builder', overrides: {}, sessionRoles: {}, notes: 'Keep stored role notes' };
+    const ownerMetadata = { v: 1, work: { sessionRolesV1: { ...sessionRolesV1, future: true } } };
     const envelope = accountMode === 'plain' ? { t: 'plain', v: ownerMetadata } : {
       t: 'encrypted', c: sealAccountScopedBlobCiphertext({ kind: 'session_owner_metadata', material: material(7),
         payload: ownerMetadata, randomBytes: deterministicRandomBytes(3) }),
@@ -147,7 +288,7 @@ describe('session role owner metadata', () => {
     expect(shared.publicAgentState?.completedRequests.read).toEqual({ tool: 'Read', createdAt: 100, completedAt: 200, status: 'approved', permissionDecisionClaimV1: claim });
   });
   it('preserves the current role binding and private role snapshot through canonical metadata normalization', () => {
-    const sessionRolesV1 = { overrides: {}, sessionRoles: {}, notes: 'Lead instructions', memoryDocRef: { kind: 'doc' as const, artifactId: 'private-memory' } };
+    const sessionRolesV1 = { overrides: {}, sessionRoles: {}, notes: 'Lead instructions' };
     const created = createSessionOwnerMetadataV1({ metadata: writeSessionRoleIdV1ToMetadata({ work: { sessionRolesV1 } }, 'orchestrator') });
     expect(created.ok).toBe(true);
     if (!created.ok) throw new Error('Producer role metadata rejected');
@@ -1601,20 +1742,20 @@ describe('session metadata privacy envelopes v1', () => {
     });
     expect(sharedMetadata).toEqual(sharedBefore);
     expect(ownerMetadata).toEqual(ownerBefore);
-    expect(() => projectSessionOwnerCompatibilityViewV1({
+    expect(projectSessionOwnerCompatibilityViewV1({
       sharedMetadata: {
         ...sharedMetadata,
         path: '/injected-private-path',
       },
       ownerMetadata,
-    })).toThrow();
-    expect(() => projectSessionOwnerCompatibilityViewV1({
+    })).toEqual(projectSessionOwnerCompatibilityViewV1({ sharedMetadata, ownerMetadata }));
+    expect(projectSessionOwnerCompatibilityViewV1({
       sharedMetadata,
       ownerMetadata: {
         ...ownerMetadata,
         futurePrivateAuthority: 'must-not-drop',
       },
-    })).toThrow();
+    })).toEqual(projectSessionOwnerCompatibilityViewV1({ sharedMetadata, ownerMetadata }));
   });
 
   it('strictly rejects unknown or private-looking fields at both envelope boundaries', () => {
@@ -3726,13 +3867,53 @@ describe('native-session vendor resume keys track the generated Agent projection
 
   it('round-trips every generated vendor resume id field through nativeSession', () => {
     for (const field of GENERATED_VENDOR_RESUME_ID_FIELDS) {
+      const nativeId = `  ${field}/会話+\n==  `;
       const created = createSessionOwnerMetadataV1({
-        metadata: { [field]: `${field}-native-1` },
+        metadata: { [field]: nativeId },
       });
       expect(created.ok).toBe(true);
       if (!created.ok) continue;
       expect(created.ownerMetadata.nativeSession)
-        .toMatchObject({ [field]: `${field}-native-1` });
+        .toMatchObject({ [field]: nativeId });
+      const sharedMetadata = projectSessionSharedMetadataV1({ metadata: { [field]: nativeId } });
+      expect(sharedMetadata).not.toHaveProperty(field);
+      const projected = projectSessionOwnerCompatibilityViewV1({
+        sharedMetadata,
+        ownerMetadata: created.ownerMetadata,
+      });
+      expect(projected).toMatchObject({ [field]: nativeId });
+      const recreated = createSessionOwnerMetadataV1({ metadata: projected });
+      expect(recreated).toMatchObject({
+        ok: true,
+        ownerMetadata: { nativeSession: { [field]: nativeId } },
+      });
     }
+  });
+
+  it('retains bounded opaque validation for every generated vendor resume id field', () => {
+    for (const field of GENERATED_VENDOR_RESUME_ID_FIELDS) {
+      for (const value of [42, {}, '', ' \n ', 'x'.repeat(2_001)]) {
+        expect(createSessionOwnerMetadataV1({ metadata: { [field]: value } }).ok)
+          .toBe(false);
+        expect(SessionOwnerMetadataV1Schema.safeParse({
+          v: 1,
+          nativeSession: { [field]: value },
+        }).success).toBe(false);
+      }
+      expect(createSessionOwnerMetadataV1({ metadata: { [field]: null } }).ok)
+        .toBe(true);
+    }
+  });
+
+  it('does not admit arbitrary plugin resume keys or host fields into nativeSession', () => {
+    for (const field of ['installedPluginSessionId', 'path']) {
+      expect(SessionOwnerMetadataV1Schema.safeParse({
+        v: 1,
+        nativeSession: { [field]: 'native-1' },
+      }).success).toBe(false);
+    }
+    expect(createSessionOwnerMetadataV1({
+      metadata: { installedPluginSessionId: 'native-1' },
+    }).ok).toBe(false);
   });
 });

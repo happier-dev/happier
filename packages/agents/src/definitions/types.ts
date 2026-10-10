@@ -13,7 +13,7 @@ export type AgentCatalogDefinition = Readonly<{
   sessionModeDescriptor: AgentSessionModeDescriptor;
   sessionModesKind: AgentSessionModesKind;
   modelConfig: AgentModelConfig | null;
-  localCli: AgentLocalCliConfig;
+  localCli: AgentLocalCliConfig | null;
 }>;
 
 /**

@@ -10,6 +10,7 @@ import { NonBlankOpaqueIdentifierSchema } from '../../../strings/opaqueIdentifie
 
 import {
   SessionHandoffStorageModeSchema,
+  SessionHandoffStateTransferSchema,
   SessionHandoffTransportStrategySchema,
 } from './handoffTypes.js';
 import {
@@ -35,6 +36,16 @@ const MAX_TRANSFER_ID_LENGTH = 512;
 const MAX_MANIFEST_HASH_LENGTH = 256;
 const MAX_PREFERRED_TRANSPORT_STRATEGIES = 4;
 const MAX_ATTEMPT_ID_LENGTH = 256;
+
+/** Additive read projection; only explicit true capability flags admit optional modes. */
+export const SessionHandoffCapabilityV3Schema = lazyZodSchema(() => z.object({
+  protocolVersion: z.literal(3),
+  atomicTargetResume: z.boolean(),
+  targetCleanup: z.boolean(),
+  sameMachineHandoff: z.unknown().transform((value) => value === true),
+  existingState: z.unknown().transform((value) => value === true),
+}));
+export type SessionHandoffCapabilityV3 = z.infer<typeof SessionHandoffCapabilityV3Schema>;
 
 const LEGACY_HANDOFF_TRANSFER_INLINE_FIELDS = [
   'workspaceManifestHash',
@@ -196,6 +207,51 @@ const SessionHandoffResumePlanSchema = lazyZodSchema(() => z
   }));
 export type SessionHandoffResumePlan = z.infer<typeof SessionHandoffResumePlanSchema>;
 
+/** One policy owner shared by the public Action and daemon request boundaries. */
+export function refineSessionHandoffStateTransferV3(
+  value: Readonly<{
+    stateTransfer?: 'transfer' | 'existing';
+    targetDirectory?: Readonly<{ kind: string }>;
+    workspaceAction?: Readonly<{ kind: string }>;
+    handoffMetadataV2?: Record<string, unknown>;
+  }>,
+  context: z.RefinementCtx,
+): void {
+  if (value.stateTransfer !== 'existing') return;
+  if (value.targetDirectory?.kind === 'managed') {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ['targetDirectory'], message: 'Existing session state requires an existing target directory' });
+  }
+  if (value.workspaceAction && value.workspaceAction.kind !== 'none') {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ['workspaceAction'], message: 'Existing session state requires workspaceAction none' });
+  }
+  for (const key of ['agentBundleTransferPublication', 'providerBundleTransferPublication', 'workspaceSeedTransferPublication', 'workspaceReplicationManifestTransferPublication'] as const) {
+    if (value.handoffMetadataV2 && Object.prototype.hasOwnProperty.call(value.handoffMetadataV2, key)) {
+      context.addIssue({ code: z.ZodIssueCode.custom, path: ['handoffMetadataV2', key], message: 'Existing session state cannot publish transferred state' });
+    }
+  }
+}
+
+/** Read-only target admission before any source quiescence or transfer effect. */
+export const SessionHandoffExistingStateCheckRequestV3Schema = lazyZodSchema(() => z.object({
+  sessionId: z.string().min(1).max(MAX_HANDOFF_ID_LENGTH),
+  sourceMachineId: z.string().min(1).max(MAX_MACHINE_ID_LENGTH),
+  targetMachineId: z.string().min(1).max(MAX_MACHINE_ID_LENGTH),
+  targetPath: z.string().min(1).max(MAX_PATH_LENGTH),
+  sourceSessionStorageMode: SessionHandoffStorageModeSchema,
+  targetSessionStorageMode: SessionHandoffStorageModeSchema.optional(),
+}).strict());
+export type SessionHandoffExistingStateCheckRequestV3 = z.infer<typeof SessionHandoffExistingStateCheckRequestV3Schema>;
+
+export const SessionHandoffExistingStateCheckResponseV3Schema = lazyZodSchema(() => z.discriminatedUnion('ok', [
+  z.object({ ok: z.literal(true) }).strict(),
+  z.object({
+    ok: z.literal(false),
+    errorCode: z.string().min(1),
+    error: z.string().min(1).max(SESSION_HANDOFF_PREPARE_TARGET_FAILURE_MESSAGE_MAX_LENGTH).optional(),
+  }).strict(),
+]));
+export type SessionHandoffExistingStateCheckResponseV3 = z.infer<typeof SessionHandoffExistingStateCheckResponseV3Schema>;
+
 export const SessionHandoffStartRequestSchema = lazyZodSchema(() => z
   .object({
     sessionId: z.string().min(1).max(MAX_HANDOFF_ID_LENGTH),
@@ -206,6 +262,7 @@ export const SessionHandoffStartRequestSchema = lazyZodSchema(() => z
     /** Host-derived Account Home scope for daemon-owned relationship creation. */
     accountServerId: z.string().trim().min(1).max(MAX_HANDOFF_ID_LENGTH).optional(),
     sessionStorageMode: SessionHandoffStorageModeSchema,
+    stateTransfer: SessionHandoffStateTransferSchema.optional(),
     preferredTransportStrategies: z
       .array(SessionHandoffTransportStrategySchema)
       .min(1)
@@ -221,6 +278,7 @@ export const SessionHandoffStartRequestSchema = lazyZodSchema(() => z
     }
   })
   .superRefine(rejectLegacyInlineTransferFields)
+  .superRefine(refineSessionHandoffStateTransferV3)
   .superRefine(rejectRetiredWorkspaceActionFields));
 export type SessionHandoffStartRequest = z.infer<typeof SessionHandoffStartRequestSchema>;
 
@@ -235,6 +293,7 @@ const SessionHandoffPrepareTargetFieldsSchema = lazyZodSchema(() => z
     negotiatedTransportStrategy: SessionHandoffTransportStrategySchema,
     allowServerRoutedFallback: z.boolean().optional(),
     sourceSessionStorageMode: SessionHandoffStorageModeSchema,
+    stateTransfer: SessionHandoffStateTransferSchema.optional(),
     targetSessionStorageMode: SessionHandoffStorageModeSchema.optional(),
     targetPath: z.string().max(MAX_PATH_LENGTH).default(''),
     /** Repository materialization root for a git_worktree handoff. */
@@ -252,6 +311,10 @@ const SessionHandoffPrepareTargetFieldsSchema = lazyZodSchema(() => z
 function refineSessionHandoffPrepareTargetRequest(
   value: z.infer<typeof SessionHandoffPrepareTargetFieldsSchema>, context: z.RefinementCtx,
 ): void {
+    refineSessionHandoffStateTransferV3(value, context);
+    if (value.stateTransfer === 'existing' && !value.sessionId) {
+      context.addIssue({ code: z.ZodIssueCode.custom, path: ['sessionId'], message: 'Existing session state requires exact Session identity' });
+    }
     if (value.targetDirectory?.kind === 'managed') {
       for (const field of ['operationId', 'sessionId'] as const) {
         if (!value[field]) context.addIssue({ code: z.ZodIssueCode.custom, path: [field], message: 'Managed handoff requires target allocation identity' });
@@ -401,6 +464,7 @@ const SessionHandoffPrepareTargetResultGetFailureResponseSchema = lazyZodSchema(
       'awaiting_user_resume',
       'reconciliation_required',
       'workspace_sync_update_required',
+      'handoff_existing_state_update_required',
     ]),
     error: z
       .string()

@@ -12,6 +12,7 @@ type BundledAgentDefinition = AgentDefinition;
 export const BUNDLED_AGENT_NATIVE_HOME_ENVIRONMENT_KEYS: readonly string[] = Object.freeze([
   "CLAUDE_CONFIG_DIR",
   "CODEX_HOME",
+  "GEMINI_HOME",
   "PI_CODING_AGENT_DIR"
 ]);
 
@@ -23,6 +24,7 @@ export const BUNDLED_AGENT_DEFINITION_IDS: readonly string[] = Object.freeze([
   "codex",
   "copilot",
   "cursor",
+  "custom-acp",
   "devin",
   "droid",
   "fx",
@@ -154,11 +156,11 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
     "antigravity"
   ],
   "sessionModeDescriptor": {
-    "runtimeSwitch": "none",
-    "semantics": "none",
-    "source": "none"
+    "runtimeSwitch": "acp-setSessionMode",
+    "semantics": "agent-modes",
+    "source": "acp"
   },
-  "sessionModesKind": "none",
+  "sessionModesKind": "acpAgentModes",
   "settingsBackendId": "antigravity"
 }) as const),
   "auggie": Object.freeze(({
@@ -261,6 +263,7 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
         }
       ],
       "machineLoginKey": "claude-code",
+      "nonInteractiveStatusProbe": true,
       "support": "login_terminal"
     },
     "displayName": "Claude Code CLI",
@@ -1143,7 +1146,7 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
           ]
         },
         "archiveExtractionLimits": {
-          "maxExpandedBytes": 402653184,
+          "maxExpandedBytes": 536870912,
           "maxFileBytes": 402653184
         },
         "assetNameByPlatform": {
@@ -1649,6 +1652,56 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
       }
     ],
     "supportsFreeform": true,
+    "supportsSelection": true
+  },
+  "sessionModeDescriptor": {
+    "runtimeSwitch": "acp-setSessionMode",
+    "semantics": "agent-modes",
+    "source": "acp"
+  },
+  "sessionModesKind": "acpAgentModes"
+}) as const),
+  "custom-acp": Object.freeze(({
+  "core": {
+    "cliSubcommand": "custom-acp",
+    "cloudConnect": null,
+    "connectedServices": null,
+    "detectKey": "custom-acp",
+    "flavorAliases": [],
+    "handoff": {
+      "vendorStateTransfer": "unsupported"
+    },
+    "id": "custom-acp",
+    "resume": {
+      "vendorResume": "supported",
+      "vendorResumeIdField": "acpSessionId"
+    },
+    "sessionCapabilities": {
+      "sessionFork": {
+        "conversation": "unsupported",
+        "fromMessage": "unsupported"
+      },
+      "sessionListing": "unsupported",
+      "sessionRollback": {
+        "conversation": "unsupported"
+      }
+    },
+    "sessionStorage": {
+      "direct": false,
+      "persisted": true
+    },
+    "tools": {
+      "delivery": "native_mcp",
+      "support": "experimental"
+    }
+  },
+  "id": "custom-acp",
+  "modelConfig": {
+    "allowedModes": [
+      "default"
+    ],
+    "defaultMode": "default",
+    "nonAcpApplyScope": "next_prompt",
     "supportsSelection": true
   },
   "sessionModeDescriptor": {

@@ -64,6 +64,83 @@ function invocation(overrides: Partial<{
 }
 
 describe('OpenCode public External Sessions contribution', () => {
+  it('preserves literal whitespace in a content query', async () => {
+    stubV1ServerFetch(async (input) => new Response(JSON.stringify(new URL(input).pathname === '/experimental/session'
+      ? [{ id: 'content-session', title: 'Unrelated', time: { updated: 3 } }]
+      : [{ info: { id: 'answer', role: 'assistant', time: { created: 2 } }, parts: [{ type: 'text', text: 'before phrase after' }] }])));
+    const result = await createOpenCodeExternalSessionsContribution({ env }).listCandidates({ ...invocation(), source, maxItems: 10, searchTarget: 'content', searchTerm: '  phrase  ' });
+    expect(result).toMatchObject({ ok: true, value: { candidates: [], contentCoverage: 'complete' } });
+  });
+  it.each(['body-only phrase', '你好 café'])('searches decoded messages instead of titles: %s', async (query) => {
+    stubV1ServerFetch(async (input) => {
+      const path = new URL(input).pathname;
+      const body = path === '/experimental/session'
+        ? [{ id: 'content-session', title: 'Unrelated', time: { updated: 3 } }]
+        : [{ info: { id: 'first', role: 'user', time: { created: 1 } }, parts: [{ type: 'text', text: 'Unrelated title' }] },
+          { info: { id: 'answer', role: 'assistant', time: { created: 2 } }, parts: [{ type: 'text', text: `Before ${query} after` }, { type: 'reasoning', text: 'secret metadata' }] }];
+      return new Response(JSON.stringify(body), { headers: { 'content-type': 'application/json' } });
+    });
+    const contribution = createOpenCodeExternalSessionsContribution({ env });
+    const result = await contribution.listCandidates({ ...invocation(), source, maxItems: 10, searchTarget: 'content', searchTerm: query });
+    expect(result).toMatchObject({ ok: true, value: { contentCoverage: 'complete', candidates: [{ remoteSessionId: 'content-session', match: { snippet: expect.stringContaining(query), sourceItemId: expect.stringContaining('answer'), messageIndex: 1 } }] } });
+    const metadataOnly = await contribution.listCandidates({ ...invocation(), source, maxItems: 10, searchTarget: 'content', searchTerm: 'secret metadata' });
+    expect(metadataOnly).toMatchObject({ ok: true, value: { candidates: [], contentCoverage: 'complete' } });
+  });
+
+  it('yields content work without losing a candidate and rejects a changed content query', async () => {
+    const clock = Date.now;
+    let now = clock();
+    let yieldRead = true;
+    stubV1ServerFetch(async (input) => {
+      const path = new URL(input).pathname;
+      if (path === '/experimental/session') return new Response(JSON.stringify([{ id: 'content-session', title: 'Unrelated', time: { updated: 3 } }]));
+      if (yieldRead) now += 100;
+      return new Response(JSON.stringify([{ info: { id: 'answer', role: 'assistant', time: { created: 2 } }, parts: [{ type: 'text', text: 'body-only phrase' }] }]));
+    });
+    const contribution = createOpenCodeExternalSessionsContribution({ env });
+    const bounds = { ...invocation(), deadlineAtMs: now + 100 };
+    Date.now = () => now;
+    try {
+      const result = await contribution.listCandidates({ ...bounds, source, maxItems: 10, searchTarget: 'content', searchTerm: 'body-only phrase' });
+      expect(result).toMatchObject({ ok: true, value: { candidates: [], contentCoverage: 'partial', nextCursor: expect.any(String) } });
+      if (!result.ok || !result.value.nextCursor) throw new Error('Expected content continuation');
+      Date.now = clock;
+      yieldRead = false;
+      const changed = await contribution.listCandidates({ ...invocation(), source, maxItems: 10, searchTarget: 'content', searchTerm: 'other', cursor: result.value.nextCursor });
+      expect(changed).toMatchObject({ ok: false });
+      const resumed = await contribution.listCandidates({ ...invocation(), source, maxItems: 10, searchTarget: 'content', searchTerm: 'body-only phrase', cursor: result.value.nextCursor });
+      expect(resumed).toMatchObject({ ok: true, value: { candidates: [{ match: { sourceItemId: expect.stringContaining('answer') } }], contentCoverage: 'complete' } });
+    } finally { Date.now = clock; }
+  });
+
+  it('resumes inside a V2 source-token page without dropping or repeating sessions', async () => {
+    const clock = Date.now;
+    let now = clock();
+    let yieldSecond = true;
+    vi.stubGlobal('fetch', async (input: string | URL | Request) => {
+      const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url);
+      if (url.pathname === '/api/info') return new Response(JSON.stringify({ version: '2.0.15', pid: 123, urls: [], paths: { tmp: '/tmp' } }));
+      if (url.pathname === '/api/session') return new Response(JSON.stringify({ data: url.searchParams.has('cursor') ? []
+        : ['first-session', 'second-session'].map((id, index) => ({ id, title: 'Unrelated', time: { created: 1, updated: 3 - index }, location: { directory: '/tmp/project' } })), cursor: url.searchParams.has('cursor') ? {} : { next: 'vendor-next' } }));
+      if (url.pathname.includes('second-session') && yieldSecond) now += 100;
+      return new Response(JSON.stringify({ data: [{ id: 'answer', type: 'user', text: 'body-only phrase', time: { created: 2 } }], cursor: {} }));
+    });
+    const contribution = createOpenCodeExternalSessionsContribution({ env });
+    const bounds = { ...invocation(), deadlineAtMs: now + 100 };
+    Date.now = () => now;
+    try {
+      const first = await contribution.listCandidates({ ...bounds, source, maxItems: 2, searchTarget: 'content', searchTerm: 'body-only phrase' });
+      expect(first).toMatchObject({ ok: true, value: { candidates: [{ remoteSessionId: 'first-session' }], contentCoverage: 'partial', nextCursor: expect.any(String) } });
+      if (!first.ok || !first.value.nextCursor) throw new Error('Expected V2 content continuation');
+      Date.now = clock;
+      yieldSecond = false;
+      const resumed = await contribution.listCandidates({ ...invocation(), source, maxItems: 1, searchTarget: 'content', searchTerm: 'body-only phrase', cursor: first.value.nextCursor });
+      expect(resumed).toMatchObject({ ok: true, value: { candidates: [{ remoteSessionId: 'second-session' }], nextCursor: expect.any(String) } });
+      if (!resumed.ok || !resumed.value.nextCursor) throw new Error('Expected vendor continuation');
+      const end = await contribution.listCandidates({ ...invocation(), source, maxItems: 1, searchTarget: 'content', searchTerm: 'body-only phrase', cursor: resumed.value.nextCursor });
+      expect(end).toMatchObject({ ok: true, value: { candidates: [], nextCursor: null, contentCoverage: 'complete' } });
+    } finally { Date.now = clock; }
+  });
   afterEach(() => {
     vi.unstubAllGlobals();
   });

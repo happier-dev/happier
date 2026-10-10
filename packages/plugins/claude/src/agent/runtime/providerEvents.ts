@@ -24,6 +24,13 @@ const ProviderTurnEventBaseSchema = ProviderEventBaseSchema.extend({
 });
 
 export const ClaudeProviderEventSchema = z.discriminatedUnion('kind', [
+  ProviderTurnEventBaseSchema.extend({
+    kind: z.literal('mcp-tool-usage'),
+    window: z.object({ startMs: z.number().int().nonnegative(), endMs: z.number().int().nonnegative() }).strict(),
+    coverage: z.enum(['complete', 'partial']),
+    servers: z.array(z.object({ serverName: z.string().min(1), toolCallCount: z.number().int().nonnegative(),
+      schemaBytes: z.number().int().nonnegative().nullable() }).strict()),
+  }).strict(),
   ProviderEventBaseSchema.extend({
     kind: z.literal('available-commands'),
     commands: z.array(z.object({ name: z.string(), description: z.string().optional() })),
@@ -60,11 +67,13 @@ export const ClaudeProviderEventSchema = z.discriminatedUnion('kind', [
   }),
   ProviderEventBaseSchema.extend({
     kind: z.literal('message-delta'),
+    sidechainId: providerIdentity().optional(),
     turnId: z.string().trim().min(1),
     delta: z.unknown(),
   }),
   ProviderEventBaseSchema.extend({
     kind: z.literal('tool-call'),
+    sidechainId: providerIdentity().optional(),
     turnId: z.string().trim().min(1),
     toolCallId: providerIdentity(),
     toolName: z.string().trim().min(1),
@@ -72,13 +81,15 @@ export const ClaudeProviderEventSchema = z.discriminatedUnion('kind', [
   }),
   ProviderEventBaseSchema.extend({
     kind: z.literal('tool-progress'),
+    sidechainId: providerIdentity().optional(),
     turnId: z.string().trim().min(1),
     toolCallId: providerIdentity(),
     progress: z.unknown(),
   }),
   ProviderEventBaseSchema.extend({
     kind: z.literal('tool-result'),
-    turnId: z.string().trim().min(1),
+    sidechainId: providerIdentity().optional(),
+    turnId: z.string().trim().min(1).optional(),
     toolCallId: providerIdentity(),
     output: z.unknown(),
     isError: z.boolean().optional(),
@@ -91,6 +102,7 @@ export const ClaudeProviderEventSchema = z.discriminatedUnion('kind', [
   }),
   ProviderEventBaseSchema.extend({
     kind: z.literal('transcript-agent-message-committed'),
+    sidechainId: providerIdentity().optional(),
     agentId: z.string().trim().min(1),
     localId: z.string().trim().min(1),
     body: z.unknown(),

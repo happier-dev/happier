@@ -675,6 +675,53 @@ describe('Codex app-server realtime V3 adapter', () => {
     expect(request).not.toHaveProperty('voice');
   });
 
+  it('delivers current prepared instructions additively before each reused-thread realtime attempt', async () => {
+    const fixture = createClientFixture();
+    const conversation = createConversation(fixture);
+    for (const instructions of ['First bound persona', 'Edited bound persona']) {
+      const startPromise = conversation.start({
+        transport: { kind: 'webrtc', offerSdp: 'offer' },
+        systemAppendBlocks: [instructions, 'Current conversational notes'],
+      });
+      await vi.waitFor(() => expect(fixture.request).toHaveBeenCalledWith(
+        'thread/realtime/start', expect.any(Object),
+      ));
+      const started = await settleSuccessfulStart(fixture, startPromise);
+      const calls = fixture.request.mock.calls;
+      const startIndex = calls.map(([method]) => method).lastIndexOf('thread/realtime/start');
+      expect(calls[startIndex - 1]?.[0]).toBe('thread/realtime/appendText');
+      expect(calls[startIndex - 1]?.[1]).toEqual({
+        threadId: 'thread-1', role: 'developer', text: `${instructions}\n\nCurrent conversational notes`,
+      });
+      const start = calls[startIndex]?.[1];
+      for (const field of ['prompt', 'initialItems', 'model', 'voice']) expect(start).not.toHaveProperty(field);
+      const stopPromise = started.handle.stop();
+      await vi.waitFor(() => expect(fixture.request).toHaveBeenCalledWith('thread/realtime/stop', { threadId: 'thread-1' }));
+      fixture.publish('thread/realtime/closed', { threadId: 'thread-1', reason: 'requested' });
+      await stopPromise;
+      fixture.request.mockClear();
+    }
+  });
+
+  it('refuses native admission when developer context fails and keeps the thread retryable', async () => {
+    let failContext = true;
+    const fixture = createClientFixture({ request: async method => {
+      if (method === 'experimentalFeature/list') return featurePage([{ name: 'realtime_conversation', enabled: true }]);
+      if (method === 'thread/realtime/appendText' && failContext) throw new Error('context transport unavailable');
+      return {};
+    } });
+    const conversation = createConversation(fixture);
+    const input = { transport: { kind: 'webrtc' as const, offerSdp: 'offer' }, systemAppendBlocks: ['Required persona'] };
+    await expect(conversation.start(input)).resolves.toMatchObject({
+      status: 'unavailable', diagnostic: { code: 'codex_realtime_context_unavailable' },
+    });
+    expect(fixture.request.mock.calls.some(([method]) => method === 'thread/realtime/start')).toBe(false);
+    failContext = false;
+    const retried = conversation.start(input);
+    await vi.waitFor(() => expect(fixture.request).toHaveBeenCalledWith('thread/realtime/start', expect.any(Object)));
+    await settleSuccessfulStart(fixture, retried);
+  });
+
   it('keeps the V3 negotiation deadline at the attempt owner while preserving caller cancellation', async () => {
     const fixture = createClientFixture();
     const conversation = createConversation(fixture);

@@ -23,11 +23,16 @@ import {
     ClaudeCandidateSourceChangedError,
     listClaudeExternalSessionCandidates as listClaudeJsonlSessionCandidates,
 } from './candidates.js';
+import { readClaudeNativeAccounting } from '../../../usage/nativeAccounting.js';
+import { createHash } from 'node:crypto';
+import { join } from 'node:path';
+import { discoverAgentAccountingJsonlSource } from '@happier-dev/plugin-sdk/sessions/file-stores';
 import { isSafeClaudeJsonlPathSegment, resolveClaudeJsonlSessionFile } from './files.js';
 import {
     projectClaudeExternalSessionSource,
     validateClaudeExternalSessionSource,
     type ClaudeExternalSessionSource,
+    resolveClaudeConfigDir,
 } from './source.js';
 import {
     ClaudeTranscriptInvalidCursorError,
@@ -257,11 +262,25 @@ export function createClaudeExternalSessionsContribution(params: Readonly<{
     const readEnv = () => params.env ?? process.env;
 
     return Object.freeze({
-        resolveSource(request) {
+        readAccounting(request) {
+            const stopped = invocationFailure(request);
+            if (stopped) return stopped;
+            const env = readEnv();
+            const validation = validateSource({ source: request.source, env });
+            return validation.ok ? readClaudeNativeAccounting(request, validation.value.legacySource, env) : validation;
+        },
+        async resolveSource(request) {
             const stopped = invocationFailure(request);
             if (stopped) return stopped;
             const validation = validateSource({ source: request.source, env: readEnv() });
-            return validation.ok ? ok({ source: validation.value.publicSource }) : validation;
+            if (!validation.ok) return validation;
+            const rootPath = resolveClaudeConfigDir({ source: validation.value.legacySource, env: readEnv() });
+            const inventory = await discoverAgentAccountingJsonlSource([join(rootPath, 'projects')], request.signal);
+            return ok({ source: validation.value.publicSource, accountingSource: {
+                rootPath, rootField: 'configDir', resourceKey: `claude:accounting:${createHash('sha256').update(rootPath).digest('base64url')}`,
+                changeObservation: 'watch_file_changes' as const,
+                watchFileChanges: { files: [...inventory.files], topologyDirectories: [...inventory.topologyDirectories] },
+            } });
         },
 
         async listCandidates(request) {

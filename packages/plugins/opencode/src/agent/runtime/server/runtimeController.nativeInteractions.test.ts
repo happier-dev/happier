@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { OpenCodeServerClient } from './openCodeServerClient.js';
 import type { OpenCodeRuntimeContext } from './runtimeContext.js';
 import { createOpenCodeServerRuntime } from './runtime.js';
+import { normalizeOpenCodeV2Messages } from './openCodeV2Wire.js';
 
 const readyMcpRegistration = Promise.resolve({
   requiredHappier: { status: 'ready' as const },
@@ -120,6 +121,33 @@ async function createRuntime(params: Readonly<{
 }
 
 describe('OpenCode native interactions', () => {
+  it('captures settled V2 compaction accounting from native history before the lifecycle early return', async () => {
+    const client = createClient();
+    const runtime = await createRuntime({ client, dialect: 'v2', askQuestions: vi.fn(async () => ({ status: 'cancelled' as const })) });
+    const events: unknown[] = [];
+    const dispose = runtime.subscribeRuntimeEvents((event) => events.push(event));
+    vi.mocked(client.sessionMessages).mockResolvedValue(normalizeOpenCodeV2Messages([{ id: 'v2-paid', type: 'compaction',
+      status: 'completed', model: { providerID: 'anthropic', modelID: 'sonnet' }, time: { created: 100, completed: 200 },
+      cost: 0.2, tokens: { input: 10, output: 5, reasoning: 2, cache: { read: 3, write: 4 } } }], 'provider-session-1'));
+    await runtime.handleProviderEvent({ type: 'session.next.compaction.ended', properties: { sessionID: 'provider-session-1', messageID: 'v2-paid' } });
+    expect(events.filter((value) => value && typeof value === 'object' && Reflect.get(value, 'kind') === 'usage-observed'))
+      .toMatchObject([{ accounting: { nativeSessionId: 'provider-session-1', inferenceId: 'v2-paid', outputIncludesReasoning: false, historyComplete: false },
+        tokens: { total: 24, output: 5, reasoning: 2 }, cost: { estimatedUsd: 0.2 } }]);
+    dispose(); await runtime.resetOrDisposeRuntime();
+  });
+  it('publishes paid compaction accounting before transcript suppression without step duplication', async () => {
+    const runtime = await createRuntime({ client: createClient(), askQuestions: vi.fn(async () => ({ status: 'cancelled' as const })) });
+    const events: unknown[] = [];
+    const dispose = runtime.subscribeRuntimeEvents((event) => events.push(event));
+    const event = { type: 'message.updated', properties: { info: { id: 'paid-compaction', sessionID: 'provider-session-1',
+      role: 'assistant', summary: true, modelID: 'sonnet', cost: 0.2, time: { created: 100, completed: 200 },
+      tokens: { input: 10, output: 5, reasoning: 2, cache: { read: 3, write: 4 } } } } };
+    await runtime.handleProviderEvent(event);
+    await runtime.handleProviderEvent(event);
+    expect(events.filter((value) => value && typeof value === 'object' && Reflect.get(value, 'kind') === 'usage-observed'))
+      .toMatchObject([{ accounting: { nativeSessionId: 'provider-session-1', inferenceId: 'paid-compaction', historyComplete: false }, tokens: { total: 22 }, cost: { estimatedUsd: 0.2 } }]);
+    dispose(); await runtime.resetOrDisposeRuntime();
+  });
   it('translates a provider question through the host owner and replies exactly once', async () => {
     const client = createClient();
     const askQuestions = vi.fn(async (request) => ({

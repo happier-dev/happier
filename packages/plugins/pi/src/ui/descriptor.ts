@@ -3,6 +3,7 @@ export const PI_UI_DESCRIPTOR = Object.freeze({
   pluginId: 'pi',
   agentId: 'pi',
   version: 1,
+  identityColor: { light: '#e87ba4', dark: '#d55181' },
   display: {
     nameKey: 'agentInput.agent.pi',
     subtitleKey: 'profiles.aiBackend.piSubtitleExperimental',
@@ -25,7 +26,7 @@ export const PI_UI_DESCRIPTOR = Object.freeze({
       hideUnknownToolsByDefault: true,
     },
     picker: {
-      iconName: 'code-slash-outline',
+      iconName: 'code',
       iconScale: 0.9,
       cliGlyph: 'PI',
       cliGlyphScale: 1.0,

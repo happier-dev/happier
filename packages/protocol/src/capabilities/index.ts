@@ -1,5 +1,8 @@
 import { parseQualifiedPluginContributionKey } from '../plugins/contributionIdentity.js';
 
+export * from './probedCatalogOption.js';
+export * from './agentProbeObservation.js';
+
 export type CapabilityKind = 'cli' | 'tool' | 'dep';
 
 // Capability IDs are namespaced strings returned by the daemon.
@@ -78,6 +81,7 @@ export {
 
 export {
   MachineAgentInventoryItemSchema,
+  MachineAgentInventoryUnavailableSchema,
   MachinesAgentsListInputSchema,
   MachinesAgentsListOutputSchema,
   buildMachineAgentsDetectRequest,
@@ -85,6 +89,7 @@ export {
   projectMachineAgentsDetectResponse,
   MachineAgentInventoryUnavailableError,
   type MachineAgentInventoryItem,
+  type MachineAgentInventoryUnavailable,
   type MachineAgentInventoryDescriptor,
   type MachinesAgentsListInput,
   type MachinesAgentsListOutput,

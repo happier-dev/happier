@@ -863,7 +863,7 @@ describe('installAgentCli vendor_recipe execution gating', () => {
         archiveEntries: expectedCodexArchiveEntries(),
         archiveExtractionLimits: {
           maxFileBytes: 384 * 1024 * 1024,
-          maxExpandedBytes: 384 * 1024 * 1024,
+          maxExpandedBytes: 512 * 1024 * 1024,
         },
       });
       expect(extractCall?.outputDir).toContain(join('tools', 'providers', 'codex', '.tmp'));

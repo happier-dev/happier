@@ -21,7 +21,7 @@ export const OH_MY_PI_AGENT_SETTINGS_CONTRIBUTION = {
     presentation: { control: 'text' },
   }],
   presentation: {
-    icon: { ionName: 'code-slash-outline', color: { kind: 'theme', token: 'orange' } },
+    icon: { ionName: 'code', color: { kind: 'theme', token: 'orange' } },
     subagentSections: [],
     sections: [{
       id: 'ohmypi-storage',

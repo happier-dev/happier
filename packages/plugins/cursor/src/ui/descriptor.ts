@@ -23,7 +23,7 @@ export const CURSOR_UI_DESCRIPTOR = Object.freeze({
       hideUnknownToolsByDefault: true,
     },
     picker: {
-      iconName: 'code-slash-outline',
+      iconName: 'code',
       cliGlyph: 'CU',
       cliGlyphScale: 1.0,
       profileCompatibilityGlyphScale: 1.0,

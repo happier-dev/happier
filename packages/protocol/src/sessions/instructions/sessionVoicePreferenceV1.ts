@@ -5,6 +5,21 @@ import { VoiceProviderIdSchema, VoiceProviderSettingsJsonValueV1Schema, type Voi
 import type { VoiceProviderContribution } from '../../plugins/contributions/voiceProviders.js';
 import { VoiceProviderSettingsPresentationPathSchema } from '../../plugins/contributions/voiceProviders.js';
 import { compilePluginJsonSchema, isValidPluginJsonSchemaValue } from '../../plugins/actions/jsonSchemaValidation.js';
+import { BUILT_IN_VOICE_SETTINGS_REGISTRY_ENTRIES } from '../../voice/settings/builtInRegistry.js';
+
+export { BUILT_IN_LOCAL_NEURAL_VOICE_DECLARATION, BUILT_IN_LOCAL_NEURAL_VOICE_PROVIDER_ID } from '../../voice/settings/builtInRegistry.js';
+/** Voice-field admission is shared by plugin declarations and trusted host engines.
+ * Host engines are not plugins and do not declare plugin HTTP request/format fields. */
+export type SessionVoiceDeclarationV1 = Readonly<{
+  kind: VoiceProviderContribution['kind'];
+  settings?: VoiceProviderContribution['settings'];
+  catalogs?: Extract<VoiceProviderContribution, { kind: 'speech' }>['catalogs'];
+}>;
+/** Built-in declaration admission does not activate plugins or wake a Voice computer. */
+export function readBuiltInSessionVoiceDeclarationV1(providerContributionId: string): SessionVoiceDeclarationV1 | null {
+  return BUILT_IN_VOICE_SETTINGS_REGISTRY_ENTRIES.find(entry =>
+    entry.sessionVoice?.providerContributionId === providerContributionId)?.sessionVoice?.declaration ?? null;
+}
 
 /** One provider-declared voice setting. Declaration/value admission belongs to the current provider. */
 export const SessionVoicePreferenceV1Schema = lazyZodSchema(() => z.object({
@@ -43,7 +58,7 @@ export type SessionVoiceSettingFieldV1 = Readonly<{
 
 /** The declaration, not a provider-id table, owns the voice field and its value grammar. */
 export function readSessionVoiceSettingFieldV1(
-  declaration: VoiceProviderContribution, path?: string,
+  declaration: SessionVoiceDeclarationV1, path?: string,
 ): SessionVoiceSettingFieldV1 | null {
   const fields = (declaration.settings?.presentation?.fields ?? [])
     .filter(field => field.kind === 'voice_catalog' || field.kind === 'remote_voice')
@@ -73,7 +88,7 @@ export function readSessionVoiceSettingValueV1(
 
 export type DeclaredSessionVoicePreferenceInputV1 = Readonly<{
   providerContributionId: string;
-  declaration: VoiceProviderContribution;
+  declaration: SessionVoiceDeclarationV1;
   providerConfig: VoiceProviderSettingsJsonValueV1;
   preference: SessionVoicePreferenceV1 | null;
 }>;

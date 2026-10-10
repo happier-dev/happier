@@ -22,10 +22,14 @@ export function applyToolResultUpdateToReducerMessage(params: Readonly<{
   if (!message.tool) return;
 
   if (meta) {
-    message.meta = {
+    const nextMeta = {
       ...(message.meta ?? {}),
       ...meta,
     };
+    if (JSON.stringify(nextMeta) !== JSON.stringify(message.meta)) {
+      message.meta = nextMeta;
+      changed.add(messageId);
+    }
   }
 
   const isApprovedPlaceholder =

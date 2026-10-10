@@ -1,5 +1,6 @@
 export type { ConnectedServiceId } from '@happier-dev/protocol';
 import { SESSION_PERMISSION_MODES } from '@happier-dev/protocol/sessions/metadata/permission-modes';
+import type { SessionNativeVendorResumeIdFieldV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import {
     type ConnectedServiceId,
     type ConnectedServicesProviderConfigSharingModeV1,
@@ -80,25 +81,7 @@ export type AgentSessionCapabilities = Readonly<{
     }>;
 }>;
 
-export type VendorResumeIdField =
-    | 'claudeSessionId'
-    | 'codexSessionId'
-    | 'geminiSessionId'
-    | 'grokSessionId'
-    | 'opencodeSessionId'
-    | 'auggieSessionId'
-    | 'qwenSessionId'
-    | 'kimiSessionId'
-    | 'kiloSessionId'
-    | 'kiroSessionId'
-    | 'devinSessionId'
-    | 'droidSessionId'
-    | 'cursorSessionId'
-    | 'fxSessionId'
-    | 'ohMyPiSessionId'
-    | 'piSessionId'
-    | 'antigravitySessionId'
-    | 'copilotSessionId';
+export type VendorResumeIdField = SessionNativeVendorResumeIdFieldV1;
 
 export type CloudVendorKey = 'openai' | 'anthropic' | 'gemini';
 export type CloudConnectTargetStatus = 'wired' | 'experimental';

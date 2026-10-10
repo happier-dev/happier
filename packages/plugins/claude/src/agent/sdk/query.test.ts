@@ -424,6 +424,50 @@ describe('Claude plugin SDK query', () => {
         });
     });
 
+    it('acknowledges live permission controls and rejects provider failure or disposal', async () => {
+        const { ctx, stream } = createContextFixture();
+        const sdkQuery = query(ctx, { prompt: prompt() });
+        const requestFor = async (mode: string) => {
+            await vi.waitFor(() => expect(stream.written).toContainEqual(expect.objectContaining({
+                type: 'control_request', request_id: expect.any(String),
+                request: { subtype: 'set_permission_mode', mode },
+            })));
+            const record = stream.written.find(value => {
+                const request = (value as { request?: { subtype?: string; mode?: string } }).request;
+                return request?.subtype === 'set_permission_mode' && request.mode === mode;
+            }) as { request_id: string };
+            return record.request_id;
+        };
+        try {
+            let acknowledged = false;
+            const bypass = sdkQuery.setPermissionMode('bypassPermissions').then(() => { acknowledged = true; });
+            const bypassRequestId = await requestFor('bypassPermissions');
+            expect(acknowledged).toBe(false);
+            await stream.emit({ type: 'control_response', response: {
+                subtype: 'success', request_id: bypassRequestId, response: {},
+            } });
+            await bypass;
+            expect(acknowledged).toBe(true);
+
+            const restore = sdkQuery.setPermissionMode('default');
+            const restored = expect(restore).rejects.toThrow('permission change refused');
+            const restoreRequestId = await requestFor('default');
+            await stream.emit({ type: 'control_response', response: {
+                subtype: 'error', request_id: restoreRequestId, error: 'permission change refused',
+            } });
+            await restored;
+
+            const pending = sdkQuery.setPermissionMode('acceptEdits');
+            const cancelled = expect(pending).rejects.toThrow('disposed before control response');
+            await requestFor('acceptEdits');
+            await sdkQuery.dispose();
+            await cancelled;
+            expect(stream.written.filter(value => (value as { type?: string }).type === 'user')).toHaveLength(1);
+        } finally {
+            await sdkQuery.dispose();
+        }
+    });
+
     it('requests and resolves Claude live context usage through the SDK control channel', async () => {
         const { ctx, spawnClient, stream } = createContextFixture();
         const sdkQuery = query(ctx, { prompt: prompt() });

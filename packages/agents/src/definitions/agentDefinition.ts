@@ -40,7 +40,8 @@ export type AgentDefinition = Readonly<{
    * Agent's defaults or as proof that the runtime cannot select a model.
    */
   modelConfig?: AgentModelConfig | null;
-  cli: AgentDefinitionCliMetadata;
+  /** Absent when executable and auth selection belong to configured definitions. */
+  cli?: AgentDefinitionCliMetadata;
   /**
    * Read-forward only for flat Session identity metadata written by released
    * cli-v0.2.0@526aa0d and cli-v0.2.1@b1d15a8. Current writers use

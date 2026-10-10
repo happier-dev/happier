@@ -94,7 +94,7 @@ describe('createMessageRouter', () => {
         expect(emitted).toEqual([]);
     });
 
-    it('rewrites task notification text into the matching tool result', () => {
+    it('preserves copied XML and rewrites only native task notifications into the matching tool result', () => {
         const emitted: RawJSONLines[] = [];
         const router = createMessageRouter({
             onMessage: (message) => emitted.push(message),
@@ -114,12 +114,15 @@ describe('createMessageRouter', () => {
                 ],
             },
         } as RawJSONLines);
+        const copied = {
+            type: 'user', uuid: 'copied-task-notification',
+            message: { content: '<task-notification><task-id>task-1</task-id><result>done</result></task-notification>' },
+        } satisfies RawJSONLines;
+        router.emitSessionMessage(copied, true);
+        expect(emitted).toEqual([copied]);
+        emitted.length = 0;
         router.emitSessionMessage({
-            type: 'user',
-            uuid: 'task-notification',
-            message: {
-                content: '<task-notification><task-id>task-1</task-id><result>done</result></task-notification>',
-            },
+            ...copied, uuid: 'task-notification', origin: { kind: 'task-notification' },
         }, true);
 
         expect(emitted).toHaveLength(1);

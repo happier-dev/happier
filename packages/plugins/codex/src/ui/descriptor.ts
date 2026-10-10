@@ -3,6 +3,7 @@ export const CODEX_UI_DESCRIPTOR = Object.freeze({
   pluginId: 'codex',
   agentId: 'codex',
   version: 1,
+  identityColor: { light: '#2a78d6', dark: '#3987e5' },
   display: {
     nameKey: 'agentInput.agent.codex',
     subtitleKey: 'profiles.aiBackend.codexSubtitle',
@@ -23,7 +24,7 @@ export const CODEX_UI_DESCRIPTOR = Object.freeze({
       hideUnknownToolsByDefault: false,
     },
     picker: {
-      iconName: 'terminal-outline',
+      iconName: 'terminal',
       cliGlyph: '꩜',
       cliGlyphScale: 0.92,
       profileCompatibilityGlyphScale: 0.82,
@@ -70,7 +71,6 @@ export const CODEX_UI_DESCRIPTOR = Object.freeze({
             keyPrefix: 'codex:connected-service',
             labelKey: 'externalSessions.browseSourceCodexConnectedServices',
             labelParams: { service: 'OpenAI Codex' },
-          detailSettingsKey: { scope: 'host', localId: 'connectedServicesProfileLabelByKey' },
             source: { kind: 'codexHome', home: 'connectedService' },
             serviceIdField: 'connectedServiceId',
             profileIdField: 'connectedServiceProfileId',

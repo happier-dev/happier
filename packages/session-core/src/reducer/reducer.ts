@@ -566,7 +566,17 @@ function collectMetadataUpdatedMessages(state: ReducerState, changed: Set<string
     return { messages, reducerStateChanged: sidechainChanged || undefined };
 }
 
-export function reducer(state: ReducerState, messages: NormalizedMessage[], agentState?: AgentState | null, metadataUpdates: readonly TranscriptMessageMetadataUpdate[] = []): ReducerResult {
+export type ReducerSessionContext = Readonly<{
+    mainHistoryStartLoaded?: boolean;
+}>;
+
+export function reducer(
+    state: ReducerState,
+    messages: NormalizedMessage[],
+    agentState?: AgentState | null,
+    metadataUpdates: readonly TranscriptMessageMetadataUpdate[] = [],
+    context?: ReducerSessionContext,
+): ReducerResult {
     if (messages.length === 0 && !agentState && metadataUpdates.length > 0) {
         const changed = new Set<string>();
         reconcileTranscriptMetadata(state, metadataUpdates, changed);
@@ -611,10 +621,14 @@ export function reducer(state: ReducerState, messages: NormalizedMessage[], agen
     let lastMainMessageId: string | null = null;
     let lastMainMessageSeq: number | null = null;
     let lastMainMessageCreatedAt: number | null = null;
+    let completedRequestHistoryStartAt: number | null = null;
     for (const [mid, m] of state.messages) {
         if (sidechainMessageIds.has(mid)) continue;
 
         const nextSeq = normalizeTranscriptSeq(m.seq);
+        if ((nextSeq !== null || m.realID !== null) && Number.isFinite(m.createdAt)) {
+            completedRequestHistoryStartAt = Math.min(completedRequestHistoryStartAt ?? m.createdAt, m.createdAt);
+        }
 
         if (lastMainMessageId === null) {
             lastMainMessageId = mid;
@@ -732,6 +746,11 @@ export function reducer(state: ReducerState, messages: NormalizedMessage[], agen
     // isn't resolved yet (otherwise subagent tool execution leaks into the main timeline).
     let nonSidechainMessages = tracedMessages.filter(msg => !msg.sidechainId && !msg.isSidechain);
     const sidechainMessages = tracedMessages.filter(msg => msg.sidechainId);
+    for (const message of nonSidechainMessages) {
+        if (Number.isFinite(message.createdAt)) {
+            completedRequestHistoryStartAt = Math.min(completedRequestHistoryStartAt ?? message.createdAt, message.createdAt);
+        }
+    }
 
     if (DEBUG_MESSAGE_DECRYPT) {
         const isSidechainCount = tracedMessages.filter((m) => m.isSidechain).length;
@@ -775,6 +794,9 @@ export function reducer(state: ReducerState, messages: NormalizedMessage[], agen
 	        state,
 	        agentState,
 	        incomingToolIds,
+	        incomingToolResultIds: conversion.incomingToolResultIds,
+	        completedRequestHistoryStartAt,
+	        mainHistoryStartLoaded: context?.mainHistoryStartLoaded,
 	        changed,
 	        allocateId,
 	        enableLogging: ENABLE_LOGGING,

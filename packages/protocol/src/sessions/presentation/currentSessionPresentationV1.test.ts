@@ -5,6 +5,7 @@ import {
   CurrentSessionPresentationBindV1Schema,
   CurrentSessionPresentationBindResultV1Schema,
   CurrentSessionPresentationIntentV1Schema,
+  CurrentSessionPresentationAuthorIntentV1Schema,
   CurrentSessionPresentationActionInputV1Schema,
   CurrentSessionPresentationStateV1Schema,
   CurrentSessionPresentationUnbindV1Schema,
@@ -20,6 +21,32 @@ const owner = (pluginId: string, invocationId: string) => ({
 });
 
 describe('current-session presentation wire contract', () => {
+  it('admits only semantic Computer/Browser viewer operations through both transported unions', () => {
+    const intents = [
+      { kind: 'viewer.open', source: 'computer' },
+      { kind: 'viewer.open', source: 'browser' },
+      { kind: 'viewer.close' },
+      { kind: 'viewer.source.select', source: 'computer' },
+      { kind: 'viewer.source.select', source: 'browser' },
+      { kind: 'viewer.expand' },
+      { kind: 'viewer.restore' },
+    ];
+    for (const schema of [CurrentSessionPresentationIntentV1Schema, CurrentSessionPresentationAuthorIntentV1Schema]) {
+      for (const intent of intents) {
+        expect(schema.parse(intent)).toEqual(intent);
+        for (const fields of [
+          { sessionId: 'another-session' }, { clientId: 'another-client' },
+          { targetId: 'another-target' }, { operationId: 'author-operation' },
+          { corner: 'br' }, { width: 400 }, { dock: true }, { size: { width: 400 } },
+        ]) expect(schema.safeParse({ ...intent, ...fields }).success).toBe(false);
+      }
+      for (const intent of [
+        { kind: 'viewer.float' }, { kind: 'viewer.dock' },
+        { kind: 'viewer.corner.set', corner: 'br' }, { kind: 'viewer.size.set', width: 400 },
+        { kind: 'viewer.open', source: 'capture' }, { kind: 'viewer.source.select' },
+      ]) expect(schema.safeParse(intent).success).toBe(false);
+    }
+  });
   it('keeps widget instance mutations behind qualified widget Actions, not author presentation', () => {
     const instance = { v: 1, id: 'copy-a', definition: { kind: 'builtin', id: 'session_summary' }, bindings: {} };
     const intents = [

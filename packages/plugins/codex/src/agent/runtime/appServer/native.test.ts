@@ -47,6 +47,7 @@ import {
   openCodexNativeAppServerSession,
 } from './native.js';
 import type { CodexAppServerEvent, CodexAppServerSession } from './core.js';
+import { handleTokenUsageNotification } from '../../usage/handleTokenUsageNotification.js';
 
 function createAppServerSession(): Readonly<{
   runtime: Parameters<typeof createCodexNativeAppServerSessionRuntime>[0];
@@ -648,6 +649,7 @@ describe('createCodexNativeAppServerSessionRuntime', () => {
       source: 'codex-app-server-token-usage',
       scope: 'session_cumulative',
       modelId: 'gpt-5.4',
+      accounting: { inputIncludesCache: true, outputIncludesReasoning: true },
       tokens: {
         input: 20_001,
         output: 18,
@@ -680,6 +682,7 @@ describe('createCodexNativeAppServerSessionRuntime', () => {
       source: 'codex-app-server-token-usage',
       scope: 'session_cumulative',
       modelId: 'gpt-5.4',
+      accounting: { inputIncludesCache: true, outputIncludesReasoning: true },
       tokens: {
         input: 20_001,
         output: 18,
@@ -701,6 +704,32 @@ describe('createCodexNativeAppServerSessionRuntime', () => {
         source: 'provider_turn',
       },
     });
+  });
+
+  it('admits the real usage codec once without turning its display body into another host transcript', () => {
+    const appServer = createAppServerSession();
+    const runtime = createCodexNativeAppServerSessionRuntime(appServer.runtime, 'session-1');
+    const events: AgentSessionRuntimeEvent[] = [];
+    runtime.watch((event) => events.push(event));
+    handleTokenUsageNotification({
+      sessionId: 'session-1',
+      notificationParams: { threadId: 'native-thread', turnId: 'native-turn', tokenUsage: {
+        total: { inputTokens: 100, cachedInputTokens: 40, outputTokens: 20, reasoningOutputTokens: 5 },
+      } },
+      now: () => 42,
+      emit(message, observation) {
+        appServer.publish({ kind: 'transcript-agent-message-committed', sessionId: 'session-1',
+          emittedAtMs: 42, agentId: 'codex', localId: message.id, body: message });
+        if (observation) appServer.publish({ ...observation, sessionId: 'session-1', emittedAtMs: 42 });
+      },
+    });
+    expect(events.filter((event) => event.kind === 'usage-observed')).toEqual([
+      expect.objectContaining({
+        tokens: { input: 100, output: 20, cacheRead: 40, cacheWrite: 0, reasoning: 5, total: 120 },
+        accounting: { nativeSessionId: 'native-thread', inputIncludesCache: true, outputIncludesReasoning: true },
+      }),
+    ]);
+    expect(events.some((event) => event.kind === 'transcript-message-committed')).toBe(false);
   });
 
   it('sanitizes pre-admission send rejection while retaining bounded runtime-auth classification', async () => {

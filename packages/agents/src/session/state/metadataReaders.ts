@@ -11,6 +11,8 @@ import {
 } from './bindings/intent.js';
 import { MODEL_OVERRIDE_KEY, MODEL_SELECTION_INTENT_KEY } from './bindings/metadataKeys.js';
 
+export { readAcpConfigOptionIntentFromMetadata, readAcpSessionModeIntentFromMetadata, readPermissionModeIntentFromMetadata } from './bindings/intent.js';
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   return value as Record<string, unknown>;

@@ -153,6 +153,28 @@ describe('SessionRuntimeUsageLimitDetailsV1Schema', () => {
 });
 
 describe('SessionRuntimeIssueV1Schema', () => {
+  it('normalizes persisted AGY account and quota references while retaining generic recovery details', () => {
+    const issue = SessionRuntimeIssueV1Schema.parse({
+      v: 1, scope: 'primary_session', status: 'failed', code: 'usage_limit', source: 'usage_limit',
+      occurredAt: 1000, sanitizedPreview: 'Selected account reached its quota',
+      usageLimit: {
+        v: 1, resetAtMs: 9000, retryAfterMs: 8000, quotaScope: 'account', recoverability: 'switch_account',
+        connectedService: { serviceId: 'antigravity', profileId: 'selected-account', groupId: 'account-pool', groupExhausted: true },
+        quotaSnapshotRef: { serviceId: 'antigravity', profileId: 'selected-account', groupId: 'account-pool', fetchedAtMs: 1200 },
+        effectiveMeterId: 'model-window', effectiveRemainingPct: 0, recoveryDecision: 'switching',
+      },
+    });
+    const qualifiedServiceKey = 'happier.agent.antigravity/antigravity-account';
+    expect(issue).toMatchObject({ status: 'failed', occurredAt: 1000, sanitizedPreview: 'Selected account reached its quota',
+      usageLimit: {
+        resetAtMs: 9000, retryAfterMs: 8000, quotaScope: 'account', recoverability: 'switch_account',
+        connectedService: { serviceId: qualifiedServiceKey, profileId: 'selected-account', groupId: 'account-pool', groupExhausted: true },
+        quotaSnapshotRef: { serviceId: qualifiedServiceKey, profileId: 'selected-account', groupId: 'account-pool', fetchedAtMs: 1200 },
+        effectiveMeterId: 'model-window', effectiveRemainingPct: 0, recoveryDecision: 'switching',
+      },
+    });
+  });
+
   it('accepts dependency failure runtime issues', () => {
     const parsed = SessionRuntimeIssueV1Schema.safeParse({
       v: 1,

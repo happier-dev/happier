@@ -1,13 +1,12 @@
 import {
   createSessionOwnerMetadataV1,
-  ExternalSessionOperationProgressV1Schema,
-  projectExternalSessionOperationSharedPresentationV1,
   projectSessionSharedMetadataV1,
   type SessionOwnerMetadataEnvelopeV1,
   type SessionOwnerMetadataV1,
   type SessionMetadataTuplePatchV1,
   type SessionSharedMetadataV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import { ExternalSessionOperationProgressV1Schema, projectExternalSessionOperationSharedPresentationV1 } from '@happier-dev/protocol/sessions/external/operationV1';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -99,6 +98,21 @@ function legacyOwnerSnapshot(params: Readonly<{
 }
 
 describe('updateSessionMetadataTupleWithRetry', () => {
+  it('refuses a stale reviewed metadata revision before effects and never rebases it after a conflict', async () => {
+    const initial = ownerSnapshot({ metadataVersion: 2 });
+    let writes = 0;
+    const update = (metadata: Metadata) => ({ ...metadata, summary: { text: 'reviewed', updatedAt: 2 } });
+    const commit = async () => { writes += 1; return { result: 'conflict' as const,
+      currentSnapshot: ownerSnapshot({ metadataVersion: 3 }) }; };
+    await expect(updateSessionMetadataTupleWithRetry({ initialSnapshot: initial,
+      mutation: { kind: 'metadata', expectedMetadataRevision: 1, update }, crypto: cryptoAdapter(), commit }))
+      .rejects.toMatchObject({ code: 'metadata_tuple_conflict' });
+    expect(writes).toBe(0);
+    await expect(updateSessionMetadataTupleWithRetry({ initialSnapshot: initial,
+      mutation: { kind: 'metadata', expectedMetadataRevision: 2, update }, crypto: cryptoAdapter(), commit }))
+      .rejects.toMatchObject({ code: 'metadata_tuple_conflict' });
+    expect(writes).toBe(1);
+  });
   it('atomically seals complete operation progress for the owner and only its shared presentation', async () => {
     const progress = ExternalSessionOperationProgressV1Schema.parse({
       v: 1,

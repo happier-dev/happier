@@ -443,6 +443,10 @@ export const GENERATED_EXTERNAL_SESSIONS_SOURCE_DECLARATIONS = [
         {
           "field": "agentDir",
           "kind": "field"
+        },
+        {
+          "field": "sessionsRoot",
+          "kind": "field"
         }
       ]
     },
@@ -458,6 +462,13 @@ export const GENERATED_EXTERNAL_SESSIONS_SOURCE_DECLARATIONS = [
           "max": 10000,
           "min": 1,
           "name": "agentDir",
+          "nullish": true
+        },
+        {
+          "kind": "string",
+          "max": 10000,
+          "min": 1,
+          "name": "sessionsRoot",
           "nullish": true
         },
         {

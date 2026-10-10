@@ -9,7 +9,7 @@ import { getAgentCliRuntimeSpec, type AgentCliRuntimeSpec } from './runtime.js';
 
 export function getAgentCliRuntimeSpecForLookupId(
   id: LegacyConfiguredBackendLookupId,
-): AgentCliRuntimeSpec | LegacyConfiguredBackendAgentCliRuntimeSpec {
+): AgentCliRuntimeSpec | LegacyConfiguredBackendAgentCliRuntimeSpec | null {
   if (id === LEGACY_CONFIGURED_BACKEND_SENTINEL_ID) {
     return getLegacyConfiguredBackendAgentCliRuntimeSpec();
   }

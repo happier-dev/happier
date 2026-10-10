@@ -70,6 +70,21 @@ function reviewedLegacyProfileMapping() {
 }
 
 describe('provider machine RPC contracts', () => {
+  it('admits revision-checked gateway configuration edits and explicit reset through the existing update request', () => {
+    const request = {
+      action: 'update', connectionId: 'pc_gateway', machineId: 'machine-a', expectedRevision: 2,
+      gatewayPlacement: { kind: 'machine', machineId: 'hub-a' },
+      claudeHelperModels: { fast: 'fast-model', strongest: 'strong-model' },
+    } as const;
+    expect(DaemonProviderConnectionMutationRequestV1Schema.parse(request)).toEqual(request);
+    expect(DaemonProviderConnectionMutationRequestV1Schema.parse({
+      ...request, gatewayPlacement: null, claudeHelperModels: null,
+    })).toMatchObject({ gatewayPlacement: null, claudeHelperModels: null });
+    expect(DaemonProviderConnectionMutationRequestV1Schema.safeParse({
+      ...request, gatewayPlacement: { kind: 'machine', machineId: 'hub-a', port: 8317 },
+    }).success).toBe(false);
+  });
+
   it('preserves classic JSON Schema projection for concrete and composed RPC requests', () => {
     const identity = z.object({
       connectionId: ProviderConnectionIdSchema,
@@ -439,6 +454,10 @@ describe('provider machine RPC contracts', () => {
       manualModels: [{ id: 'anthropic/model-a', name: 'Model A' }],
     };
     expect(DaemonProviderConnectionMutationRequestV1Schema.parse(custom)).toEqual(custom);
+    const editCustom = { action: 'update', connectionId: custom.connectionId, expectedRevision: 2, template: custom.template };
+    expect(DaemonProviderConnectionMutationRequestV1Schema.parse(editCustom)).toEqual(editCustom);
+    expect(DaemonProviderConnectionMutationRequestV1Schema.safeParse({ ...editCustom,
+      template: { ...custom.template, trustedCapabilities: true } }).success).toBe(false);
     expect(DaemonProviderConnectionMutationRequestV1Schema.safeParse({
       ...custom, manualModels: [{ id: 'same' }, { id: 'same' }],
     }).success).toBe(false);

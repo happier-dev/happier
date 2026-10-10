@@ -16,7 +16,7 @@ import {
 } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import type { OpenCodeRuntimeTurnOperations } from './operations.js';
-import { asRecord, normalizeString } from './openCodeParsing.js';
+import { asRecord, normalizeString, readNonBlankOpaqueIdentifier } from './openCodeParsing.js';
 import { normalizeOpenCodeSkills } from './skills.js';
 import type { OpenCodeRuntimeEvent, OpenCodeRuntimeIssue } from './runtimeEvents.js';
 import {
@@ -67,6 +67,10 @@ function mapIssue(issue: OpenCodeRuntimeIssue) {
 function mapRuntimeEvent(
   event: Exclude<OpenCodeRuntimeEvent, { kind: 'model-catalog-observed' | 'mode-catalog-observed' }>,
 ): NativeEventInput | null {
+  if (event.kind === 'usage-observed') {
+    const { sessionId: _sessionId, executionRunId: _executionRunId, emittedAtMs: _emittedAtMs, ...usage } = event;
+    return usage;
+  }
   if (event.kind === 'available-commands') {
     return { kind: 'available-commands', commands: event.commands };
   }
@@ -97,7 +101,7 @@ function mapRuntimeEvent(
   if (event.kind === 'tool-call') {
     return {
       kind: 'tool-call',
-      turnId: event.turnId,
+      ...(event.turnId ? { turnId: event.turnId } : {}),
       toolCallId: event.toolCallId,
       toolName: event.toolName,
       input: toRuntimeJson(event.toolInput),
@@ -106,7 +110,7 @@ function mapRuntimeEvent(
   if (event.kind === 'tool-result') {
     return {
       kind: 'tool-result',
-      turnId: event.turnId,
+      ...(event.turnId ? { turnId: event.turnId } : {}),
       toolCallId: event.toolCallId,
       output: toRuntimeJson(event.output),
       ...(event.isError === undefined ? {} : { isError: event.isError }),
@@ -163,13 +167,26 @@ function mapRuntimeEvent(
     };
   }
   const body = asRecord(event.body);
-  const message = normalizeString(body?.message);
+  const sidechainId = readNonBlankOpaqueIdentifier(body?.sidechainId);
+  const sidechain = sidechainId ? { sidechainId } : {};
+  const toolCallId = readNonBlankOpaqueIdentifier(body?.callId);
+  if (body?.type === 'tool-call' && toolCallId) {
+    const toolName = normalizeString(body.name);
+    if (!toolName) return null;
+    return { kind: 'tool-call', toolCallId, toolName, input: toRuntimeJson(body.input), ...sidechain };
+  }
+  if (body?.type === 'tool-result' && toolCallId) {
+    return { kind: 'tool-result', toolCallId, output: toRuntimeJson(body.output), ...sidechain,
+      ...(typeof body.isError === 'boolean' ? { isError: body.isError } : {}) };
+  }
+  const message = typeof body?.message === 'string' ? body.message : '';
   if (!message) return null;
   return {
     kind: 'transcript-message-committed',
     messageId: event.localId,
-    role: 'assistant',
+    role: body?.type === 'thinking' ? 'reasoning' : 'assistant',
     text: message,
+    ...sidechain,
   };
 }
 

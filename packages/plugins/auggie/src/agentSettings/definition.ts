@@ -8,7 +8,7 @@ export const AUGGIE_AGENT_SETTINGS_CONTRIBUTION = {
   scope: 'account',
   fields: [],
   presentation: {
-    icon: { ionName: 'sparkles-outline', color: { kind: 'theme', token: 'green' } },
+    icon: { ionName: 'sparkle', color: { kind: 'theme', token: 'green' } },
     subagentSections: [],
     sections: [],
   },

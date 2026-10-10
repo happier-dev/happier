@@ -11,7 +11,8 @@ import { ExecutionRunPublicStateSchema } from '../execution/runs/responseSchemas
 import { SessionMessageAttentionImpactSchema } from '../sessions/messages/transcriptRawRecordV1.js';
 import { SessionMessageRoleSchema } from '../sessions/messages/sessionMessageRole.js';
 import { SessionMessageAccountActorV1Schema } from '../sessions/messages/sessionMessageAccountActorV1.js';
-import { SessionInputAdmissionReceiptV1Schema } from '../sessions/messages/sessionInputAdmission.js';
+import { SessionInputAdmissionReceiptV1Schema, PendingActivationRequestedEphemeralV1Schema } from '../sessions/messages/sessionInputAdmission.js';
+import { UsageSourcesInvalidationV1Schema } from '../usage/usageSources.js';
 import { SessionMessageDeliveryResolutionV1Schema } from '../sessions/messages/sessionMessageDeliveryResolutionV1.js';
 import { SessionTranscriptObservationProvenanceV1Schema } from '../sessions/messages/transcriptObservationV1.js';
 import { SessionStoredMessageContentSchema } from '../sessions/messages/sessionStoredMessageContent.js';
@@ -29,6 +30,10 @@ import { SessionOwnerMetadataEnvelopeV1Schema } from '../sessions/metadata/sessi
 import { PendingActivationAuthorizationV1Schema } from '../sessions/pending/pendingActivationAuthorizationV1.js';
 import { ParticipantExecutionRunRecipientRoutingIdentityV1Schema } from '../messages/structured/participantMessageV1.js';
 import { ActivityMessageReferenceV2Schema } from '../push/activityRemoteAlert.js';
+import { MachineKeyBasisV1Schema } from '../machines/machineContentKeyTransitionV1.js';
+import { AccessibleMachineAccessV1Schema } from '../machines/machineAccessV1.js';
+import { ManagedWakeTargetV1Schema } from '../machines/managed/managedIntentV1.js';
+import { DevcontainerChildProjectionV1Schema } from '../machines/managed/devcontainerV1.js';
 
 const TimestampMsSchema = lazyZodSchema(() => z.number().int().min(0));
 const Base64Schema = lazyZodSchema(() => z.string());
@@ -167,6 +172,7 @@ export const UpdateBodySchema = lazyZodSchema(() => z.discriminatedUnion('t', [
     meaningfulActivityAt: TimestampMsSchema.optional(),
     pendingActivationRequestId: z.string().trim().min(1).optional(),
     pendingActivationAuthorization: PendingActivationAuthorizationV1Schema.nullable().optional(),
+    managedWakeTargetV1: z.optional(ManagedWakeTargetV1Schema),
   }).passthrough(),
   z.object({
     t: z.literal('automation-upsert'),
@@ -197,6 +203,7 @@ export const UpdateBodySchema = lazyZodSchema(() => z.discriminatedUnion('t', [
     attempt: z.number().int().min(0).optional(),
     /** Exact machine wake for persisted Workflow cancellation custody. */
     workflowControl: z.enum(['cancel_requested', 'review_resolved']).optional(),
+    managedWakeTargetV1: z.optional(ManagedWakeTargetV1Schema),
   }).passthrough(),
   z.object({
     t: z.literal('automation-run-state-changed'),
@@ -236,6 +243,10 @@ export const UpdateBodySchema = lazyZodSchema(() => z.discriminatedUnion('t', [
   }).passthrough(),
   z.object({
     t: z.literal('new-machine'),
+    devcontainerChild: z.optional(z.nullable(DevcontainerChildProjectionV1Schema)),
+    access: AccessibleMachineAccessV1Schema.optional(),
+    keyBasis: MachineKeyBasisV1Schema.optional(),
+    storageMode: z.enum(['plain', 'e2ee']).optional(),
     kind: MachineKindFromLegacyProjectionSchema.optional(),
     machineId: z.string(),
     seq: z.number().int().min(0),
@@ -251,9 +262,14 @@ export const UpdateBodySchema = lazyZodSchema(() => z.discriminatedUnion('t', [
   }).passthrough(),
   z.object({
     t: z.literal('update-machine'),
+    devcontainerChild: z.optional(z.nullable(DevcontainerChildProjectionV1Schema)),
+    access: AccessibleMachineAccessV1Schema.optional(),
+    keyBasis: MachineKeyBasisV1Schema.optional(),
+    storageMode: z.enum(['plain', 'e2ee']).optional(),
+    dataEncryptionKey: Base64Schema.nullable().optional(),
     machineId: z.string(),
     metadata: VersionedStringSchema.optional(),
-    daemonState: VersionedStringSchema.optional(),
+    daemonState: VersionedNullableStringSchema.optional(),
     activeAt: TimestampMsSchema.optional(),
     active: z.boolean().optional(),
     revokedAt: TimestampMsSchema.nullable().optional(),
@@ -444,6 +460,7 @@ export const SessionPersonalEventEphemeralV1Schema = lazyZodSchema(() => z.discr
 export type SessionPersonalEventEphemeralV1 = z.infer<typeof SessionPersonalEventEphemeralV1Schema>;
 
 export const EphemeralUpdateSchema = lazyZodSchema(() => z.discriminatedUnion('type', [
+  PendingActivationRequestedEphemeralV1Schema,
   // Hottest live event first: delta ticks stream at the live cadence (~25Hz per active segment).
   z.object({
     type: z.literal('transcript-stream-segment-delta'),
@@ -468,6 +485,7 @@ export const EphemeralUpdateSchema = lazyZodSchema(() => z.discriminatedUnion('t
     message: TranscriptStreamSegmentEphemeralMessageSchema,
   }).passthrough(),
   ExternalSessionTranscriptInvalidationV1Schema,
+  UsageSourcesInvalidationV1Schema,
   z.object({
     type: z.literal('machine-activity'),
     id: z.string(),
@@ -476,7 +494,8 @@ export const EphemeralUpdateSchema = lazyZodSchema(() => z.discriminatedUnion('t
   }).passthrough(),
   z.object({
     type: z.literal('usage'),
-    id: z.string(),
+    // Native Account accounting has no Happier Session; it wakes Account readers.
+    id: z.string().nullable(),
     key: z.string(),
     tokens: z.record(z.string(), z.number()),
     cost: z.record(z.string(), z.number()),

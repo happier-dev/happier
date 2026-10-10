@@ -18,6 +18,22 @@ const diagnostic = {
   severity: 'warning',
 } as const;
 
+it('retains explicit incomplete native accounting without admitting untyped history evidence', () => {
+  const event = { kind: 'usage-observed', sequence: 1, sessionId: 'session', emittedAtMs: 1,
+    observationId: 'usage', source: 'native', scope: 'session_cumulative', tokens: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, reasoning: 0, total: 2 },
+    accounting: { nativeSessionId: 'native-session', historyComplete: false } };
+  expect(AgentSessionRuntimeEventV1Schema.safeParse(event).success).toBe(true);
+  expect(AgentSessionRuntimeEventV1Schema.safeParse({ ...event, accounting: { ...event.accounting, historyComplete: 'false' } }).success).toBe(false);
+});
+
+it('admits the typed native Session accounting witness while keeping its envelope closed', () => {
+  const event = { kind: 'usage-observed', sequence: 1, sessionId: 'session', emittedAtMs: 1,
+    observationId: 'usage', source: 'native', scope: 'turn_delta', tokens: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, reasoning: 0, total: 2 },
+    accounting: { nativeSessionId: 'native-session', inferenceId: 'native-generation' } };
+  expect(AgentSessionRuntimeEventV1Schema.safeParse(event).success).toBe(true);
+  expect(AgentSessionRuntimeEventV1Schema.safeParse({ ...event, accounting: { ...event.accounting, path: '/private' } }).success).toBe(false);
+});
+
 describe('Agent session VB4 open inputs', () => {
   const configuration = {
     mode: { value: null, updatedAtMs: 11 },
@@ -450,6 +466,17 @@ describe('AgentSessionRuntimeEventV1Schema', () => {
       scope: 'turn_delta',
       tokens: { input: 1, output: 1, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 2 },
       sidechainId: 'not-legal-here',
+    }).success).toBe(false);
+
+    const inference = {
+      kind: 'usage-observed', sequence: 1, sessionId: 'session-1', emittedAtMs: 1,
+      observationId: 'observation-1', source: 'provider', scope: 'turn_delta',
+      tokens: { input: 1, output: 1, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 2 },
+      accounting: { nativeSessionId: 'native-session', inferenceId: 'native-generation', inputIncludesCache: true, outputIncludesReasoning: true },
+    };
+    expect(AgentSessionRuntimeEventV1Schema.safeParse(inference).success).toBe(true);
+    expect(AgentSessionRuntimeEventV1Schema.safeParse({
+      ...inference, accounting: { ...inference.accounting, path: '/private/path' },
     }).success).toBe(false);
 
     expect(AgentSessionRuntimeEventV1Schema.safeParse({

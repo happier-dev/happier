@@ -173,6 +173,25 @@ describe('Claude candidate conversation search', () => {
         expect(page.candidates[0]?.match).toMatchObject({ snippet: 'İstanbul', messageIndex: 0 });
         expect(page.contentCoverage).toBe('complete');
     });
+    it('accepts the ASCII prefilter miss at a Unicode lowercase expansion', async () => {
+        const params = await corpus();
+        await writeFile(join(params.source.configDir, 'projects', 'project', 'session.jsonl'), JSON.stringify({
+            type: 'user', uuid: 'unicode-ascii', parentUuid: null, message: { role: 'user', content: 'prefix skİ suffix' },
+        }) + '\n');
+        const page = await listClaudeExternalSessionCandidates({ ...params, searchTerm: 'ski' });
+        expect(page.candidates).toEqual([]);
+        expect(page.contentCoverage).toBe('complete');
+    });
+    it('matches decoded NUL text without passing NUL through process arguments', async () => {
+        const params = await corpus();
+        const query = 'body\u0000needle';
+        await writeFile(join(params.source.configDir, 'projects', 'project', 'session.jsonl'), JSON.stringify({
+            type: 'user', uuid: 'nul-body', parentUuid: null, message: { role: 'user', content: query },
+        }) + '\n');
+        const page = await listClaudeExternalSessionCandidates({ ...params, searchTerm: query });
+        expect(page.candidates[0]?.match).toMatchObject({ snippet: query, messageIndex: 0 });
+        expect(page.contentCoverage).toBe('complete');
+    });
     it('keeps a large decoded body hit within the invocation payload budget', async () => {
         const params = await corpus();
         const query = '  large café\n"needle"  ';

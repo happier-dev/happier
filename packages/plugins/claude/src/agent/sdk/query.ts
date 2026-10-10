@@ -174,6 +174,7 @@ function buildClaudeArgs(prompt: QueryPrompt, options: QueryOptions = {}): strin
     if (options.continue) args.push('--continue');
     if (options.resume) args.push('--resume', options.resume);
     if (options.strictMcpConfig) args.push('--strict-mcp-config');
+    if (options.allowDangerouslySkipPermissions === true) args.push('--allow-dangerously-skip-permissions');
     if (options.permissionMode && options.permissionMode !== 'default') {
         args.push('--permission-mode', options.permissionMode);
     }
@@ -450,6 +451,10 @@ export class ClaudeSdkQuery implements AsyncIterableIterator<SDKMessage> {
             throw new Error('Claude SDK get_context_usage returned an invalid response.');
         }
         return response as ClaudeSdkContextUsageResponse;
+    }
+
+    async setPermissionMode(mode: NonNullable<QueryOptions['permissionMode']>): Promise<void> {
+        await this.requestControl({ subtype: 'set_permission_mode', mode });
     }
 
     async stopTask(taskId: string): Promise<void> {

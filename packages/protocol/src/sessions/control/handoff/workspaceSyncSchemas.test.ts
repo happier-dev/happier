@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
+import tweetnacl from 'tweetnacl';
+import { encodeBase64 } from '../../../crypto/base64.js';
 
 import { zodSchemaToJsonSchemaObject } from '../../../actions/actionInputJsonSchema.js';
 
@@ -9,6 +11,7 @@ import {
   deriveWorkspaceSyncConflictAsidePaths,
   deriveWorkspaceSyncConflictOperationId,
   HandoffTargetReplacementPreflightV1Schema,
+  HandoffTargetReplacementPreflightResultV1Schema,
   HandoffWorkspaceActionV1Schema,
   HandoffWorkspaceOutcomeV1Schema,
   ReadWorkspaceSyncFileV1Schema,
@@ -49,6 +52,25 @@ const contentPolicyInput = {
 const contentPolicy = { ...contentPolicyInput, policyDigest: computeWorkspaceSyncPolicyDigest(contentPolicyInput) };
 
 describe('workspace sync protocol schemas', () => {
+  it('preserves coincident cross-owner copy locators until target qualification while relationships stay graph-local', () => {
+    const operation = { v: 1, operationId: 'qualified-copy', controllerMachineId: 'physical-source',
+      alphaWorkspaceRefId: 'coincident-row', betaWorkspaceRefId: 'coincident-row', contentPolicy };
+    const prepare = { v: 1, bootstrapOperationId: operation.operationId,
+      owner: { kind: 'copy_once', operation }, targetWorkspaceRefId: 'coincident-row',
+      endpointRole: 'beta', policyDigest: contentPolicy.policyDigest, createIfMissing: true,
+      targetBootstrap: 'materialize_from_source_workspace' };
+    // The SOURCE row and logical TARGET row belong to independent Accounts.
+    // This wire carries locators, not enough placement to equate the roots.
+    expect(WorkspaceSyncTargetBootstrapPrepareV1Schema.parse(prepare)).toEqual(prepare);
+    const relationship = { v: operation.v, controllerMachineId: operation.controllerMachineId,
+      alphaWorkspaceRefId: operation.alphaWorkspaceRefId, betaWorkspaceRefId: operation.betaWorkspaceRefId,
+      contentPolicy, relationshipId: 'graph-local-relationship',
+      mode: 'keep_synced', enabled: true, createdAtMs: 1, updatedAtMs: 1 };
+    expect(WorkspaceSyncRelationshipV1Schema.safeParse(relationship).success).toBe(false);
+    expect(WorkspaceSyncRelationshipV1Schema.parse({ ...relationship, betaWorkspaceRefId: 'another-row' }))
+      .toEqual({ ...relationship, betaWorkspaceRefId: 'another-row' });
+  });
+
   it('preserves classic JSON Schema projection and fluent request composition', () => {
     const request = z.object({
       relationshipId: z.string().trim().min(1).max(256),
@@ -482,7 +504,7 @@ describe('workspace sync protocol schemas', () => {
       unexpected: true,
     }).success).toBe(false);
 
-    expect(WorkspaceSyncRuntimeEventV1Schema.parse({
+    expect(WorkspaceSyncRuntimeEventV1Schema.safeParse({
       v: 1,
       readiness: {
         engine: { state: 'ready' },
@@ -502,14 +524,7 @@ describe('workspace sync protocol schemas', () => {
         conflictCount: 0,
         lastCycleObservedAtMs: null,
       },
-    })).toMatchObject({
-      v: 1,
-      readiness: {
-        engine: { state: 'ready' },
-        carrier: { state: 'unavailable', errorCode: 'machine_carrier_unavailable' },
-      },
-      status: { state: 'paused' },
-    });
+    }).success).toBe(false);
     expect(WorkspaceSyncRuntimeEventV1Schema.parse({
       v: 1,
       readiness: {
@@ -780,6 +795,16 @@ describe('workspace sync protocol schemas', () => {
       policyDigest: 'a'.repeat(64),
     };
     expect(WorkspaceSyncTargetBootstrapPrepareResultV1Schema.parse(result)).toEqual(result);
+    // Installation-sealed child routing returns the actual physical writer's
+    // authenticated key for retained cleanup, not a filesystem path or grant.
+    const physicalEndpoint = { machineId: 'physical-target-parent', installationId: 'target-parent-installation',
+      installationPublicKey: encodeBase64(tweetnacl.sign.keyPair().publicKey, 'base64url') };
+    expect(WorkspaceSyncTargetBootstrapPrepareResultV1Schema.parse({ ...result, physicalEndpoint }))
+      .toEqual({ ...result, physicalEndpoint });
+    expect(WorkspaceSyncTargetBootstrapPrepareResultV1Schema.safeParse({ ...result,
+      physicalEndpoint: { ...physicalEndpoint, installationPublicKey: 'invalid' } }).success).toBe(false);
+    expect(WorkspaceSyncTargetBootstrapPrepareResultV1Schema.safeParse({ ...result,
+      physicalEndpoint: { ...physicalEndpoint, role: 'manage' } }).success).toBe(false);
     expect(WorkspaceSyncTargetBootstrapPrepareResultV1Schema.safeParse({ ...result, rootPath: '/leaked/path' }).success).toBe(false);
     expect(WorkspaceSyncTargetBootstrapPrepareResultV1Schema.safeParse({ ...result, handle: { ownerId: 'leaked' } }).success).toBe(false);
     expect(WorkspaceSyncTargetBootstrapPrepareResultV1Schema.safeParse({ ...result, manifestDigest: 'c'.repeat(64) }).success).toBe(false);
@@ -926,6 +951,31 @@ describe('workspace sync protocol schemas', () => {
       ...request,
       activatesExactMirror: 'yes',
     }).success).toBe(false);
+  });
+
+  it('retains the physical installation endpoint before preparation without changing chosen-target approval', () => {
+    const physicalEndpoint = { machineId: 'physical-target-parent', installationId: 'target-parent-installation',
+      installationPublicKey: encodeBase64(tweetnacl.sign.keyPair().publicKey, 'base64url') };
+    const approval = { v: 1, consequences: ['replace_nonempty_workspace_target'], serverId: 'srv_target_home',
+      machineId: 'chosen-target-child', canonicalRoot: '/child/project', rootFingerprint: 'b'.repeat(64),
+      operationId: 'target-workspace-operation' };
+    for (const result of [{ type: 'not_required' }, { type: 'approval_required', approval }]) {
+      // Ordinary preflight responses remain unchanged. The optional witness
+      // addresses cleanup if a later preparation acknowledgement is lost.
+      expect(HandoffTargetReplacementPreflightResultV1Schema.parse(result)).toEqual(result);
+      expect(HandoffTargetReplacementPreflightResultV1Schema.parse({ ...result, physicalEndpoint }))
+        .toEqual({ ...result, physicalEndpoint });
+      expect(HandoffTargetReplacementPreflightResultV1Schema.safeParse({ ...result,
+        physicalEndpoint: { ...physicalEndpoint, installationPublicKey: 'invalid' } }).success).toBe(false);
+      expect(HandoffTargetReplacementPreflightResultV1Schema.safeParse({ ...result,
+        physicalEndpoint: { ...physicalEndpoint, role: 'manage' } }).success).toBe(false);
+      const targetWorkspace = { id: 'physical-target-row', serverId: approval.serverId,
+        machineId: physicalEndpoint.machineId, rootPath: '/host/project', projectKey: 'target-project', createdAtMs: 1 };
+      expect(HandoffTargetReplacementPreflightResultV1Schema.parse({ ...result, physicalEndpoint, targetWorkspace }))
+        .toEqual({ ...result, physicalEndpoint, targetWorkspace });
+      expect(HandoffTargetReplacementPreflightResultV1Schema.safeParse({ ...result,
+        targetWorkspace: { ...targetWorkspace, rootPath: '' } }).success).toBe(false);
+    }
   });
 
   it('carries the committed workspace outcome as one strict terminal result', () => {

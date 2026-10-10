@@ -37,11 +37,14 @@ describe('SessionFollowFrontierV1', () => {
     expect(parsed.success).toBe(false);
   });
 
-  it('round-trips only the strict versioned persisted Voice frontier', () => {
-    const frontier = { transcriptSeq: 3, readyEventSeq: 2, agentStateVersion: 1, turn: null };
+  it('drops additive persisted Voice frontier fields but refuses corrupt known frontier facts', () => {
+    const frontier = { transcriptSeq: 3, readyEventSeq: 2, agentStateVersion: 1, turn: { id: 'turn-1', status: 'completed' as const } };
     expect(parsePersistedSessionFollowFrontierV1(encodePersistedSessionFollowFrontierV1(frontier))).toEqual(frontier);
     expect(parsePersistedSessionFollowFrontierV1(JSON.stringify(frontier))).toBeNull();
-    expect(parsePersistedSessionFollowFrontierV1(JSON.stringify({ v: 1, ...frontier, future: true }))).toBeNull();
+    expect(parsePersistedSessionFollowFrontierV1(JSON.stringify({ v: 1, ...frontier, future: true,
+      turn: { ...frontier.turn, future: true } }))).toEqual(frontier);
+    expect(parsePersistedSessionFollowFrontierV1(JSON.stringify({ v: 1, ...frontier, transcriptSeq: -1 }))).toBeNull();
+    expect(parsePersistedSessionFollowFrontierV1(JSON.stringify({ v: 1, ...frontier, turn: { id: 'turn-1', status: 'running' } }))).toBeNull();
   });
 
   it('rejects a partially present terminal turn', () => {

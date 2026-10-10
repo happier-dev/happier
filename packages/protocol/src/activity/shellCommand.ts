@@ -1,4 +1,5 @@
 import { maybeParseJson } from './parseJson.js';
+import { isShellToolNameAlias } from '../tools/v2/aliases.js';
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -7,7 +8,6 @@ function asRecord(value: unknown): UnknownRecord | null {
   return value as UnknownRecord;
 }
 
-const SHELL_LIKE_TOOL_NAMES = new Set(['bash', 'execute', 'shell']);
 const GENERIC_EXECUTE_TITLES = new Set([
   'execute',
   'shell',
@@ -42,8 +42,8 @@ function normalizeTitleSourcedCommand(value: unknown): string | null {
 function isShellLikeToolCall(value: UnknownRecord): boolean {
   const kind = typeof value.kind === 'string' ? value.kind.trim().toLowerCase() : '';
   if (kind === 'execute') return true;
-  const toolName = typeof value.toolName === 'string' ? value.toolName.trim().toLowerCase() : '';
-  return SHELL_LIKE_TOOL_NAMES.has(toolName);
+  const toolName = typeof value.toolName === 'string' ? value.toolName.trim() : '';
+  return isShellToolNameAlias(toolName);
 }
 
 function extractCommandArrayLike(value: unknown): string[] | null {

@@ -4,6 +4,9 @@ import type {
   SessionMetadata,
 } from '@happier-dev/protocol';
 
+import { readAcpConfiguredBackendV1FromMetadata, type AcpConfiguredBackendV1 } from '@happier-dev/protocol/sessions/metadata/acpConfiguredBackendV1';
+import { readLegacyConfiguredAcpBackendId } from '@happier-dev/protocol/backends/targets/compat/customAcp';
+
 import type { AgentId } from '../../types.js';
 import { getAgentResumeConfig } from '../../manifest.js';
 import { writeProviderSessionIdSessionState } from './bindings/providerSessionId.js';
@@ -26,6 +29,8 @@ export type CurrentAgentSessionViewStatePolicyV1 = 'carry' | 'clear';
 export type ProjectCurrentAgentSessionViewParamsV1 = Readonly<{
   /** The Agent this Session's current view must declare. */
   agentId: AgentId;
+  /** The configured target metadata resolved from the exact current Account definition. */
+  configuredBackend?: AcpConfiguredBackendV1 | null;
   /**
    * Native resume identity for the target, or `null`/omitted for a fresh
    * target. The target's own runtime republishes its session-log path on its
@@ -138,6 +143,15 @@ export function projectCurrentAgentSessionView<TMetadata extends SessionMetadata
       'identity.runtimeDescriptor',
     ) as Record<string, unknown>;
   }
+
+  const previousConfiguredBackend = readAcpConfiguredBackendV1FromMetadata(metadata);
+  const configuredBackend = params.configuredBackend === undefined
+    ? (params.agentScopedCurrentState !== 'clear'
+      && previousConfiguredBackend?.backendId === readLegacyConfiguredAcpBackendId(params.agentId)
+        ? previousConfiguredBackend : null)
+    : params.configuredBackend;
+  delete next.acpConfiguredBackendV1;
+  if (configuredBackend) next.acpConfiguredBackendV1 = configuredBackend;
 
   const vendorResumeIdMetadataKey = getAgentResumeConfig(params.agentId)?.vendorResumeIdField ?? null;
   const nativeResumeIdentity = params.nativeResumeIdentity ?? null;

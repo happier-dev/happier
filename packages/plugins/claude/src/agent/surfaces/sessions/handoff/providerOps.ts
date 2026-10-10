@@ -11,6 +11,8 @@ import {
 import { ClaudeSessionBundleSchema } from './types.js';
 import { resolveClaudeProjectId } from './path.js';
 import { readClaudeProviderIdentityValue } from '../../../../protocol/providerIdentity.js';
+import { resolveClaudeJsonlSessionFile } from '../external/files.js';
+import { resolveCanonicalConfiguredClaudeConfigDir } from '../external/source.js';
 
 /** Canonicalizes the Happier-owned directory facts below; never a vendor id. */
 function readNonEmptyString(value: unknown): string | null {
@@ -36,6 +38,37 @@ export const claudeHandoffSurface = {
                 ...(workingDirectory
                     ? { projectId: resolveClaudeProjectId(workingDirectory) }
                     : {}),
+            },
+        };
+    },
+    resolveExistingState: async (params, context) => {
+        context.signal.throwIfAborted();
+        const providerSessionId = readClaudeProviderIdentityValue(params.sessionId);
+        if (!providerSessionId) {
+            return { ok: false, code: 'existing_session_state_unavailable', message: 'Claude session state is not available on the target' };
+        }
+        const env = params.environmentVariables ?? process.env;
+        const configDir = resolveCanonicalConfiguredClaudeConfigDir({ env });
+        const file = await resolveClaudeJsonlSessionFile({
+            source: { kind: 'claudeConfig', configDir },
+            env,
+            remoteSessionId: providerSessionId,
+            signal: context.signal,
+        });
+        context.signal.throwIfAborted();
+        if (!file) {
+            return { ok: false, code: 'existing_session_state_unavailable', message: 'Claude session state is not available on the target' };
+        }
+        return {
+            ok: true,
+            value: {
+                providerSessionId,
+                source: { kind: 'claudeConfig', configDir, projectId: file.projectId },
+                launch: {
+                    directory: params.targetDirectory,
+                    environmentVariables: { CLAUDE_CONFIG_DIR: configDir },
+                    sessionStateUpdates: [{ fieldId: 'identity.providerSessionId', value: providerSessionId }],
+                },
             },
         };
     },

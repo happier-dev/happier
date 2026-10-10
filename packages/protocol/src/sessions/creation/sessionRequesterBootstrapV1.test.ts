@@ -16,6 +16,29 @@ const request = {
 } as const;
 
 describe('requester bootstrap installation confidentiality', () => {
+  it('seals a read-only handoff preflight without transfer custody and refuses changed Session input', () => {
+    const preflight = { kind: 'requester_session_handoff_preflight_bootstrap_v1', input: {
+      sessionId: 'same-session', sourceMachineId: 'source', targetMachineId: 'machine',
+      sourceSessionStorageMode: 'persisted', targetPath: '/destination',
+    }, requesterBootstrap: request.requesterBootstrap } as const;
+    const seal = Reflect.get(bootstrap, 'sealSessionRequesterHandoffPreflightBootstrapRpcRequestV1');
+    const open = Reflect.get(bootstrap, 'openSessionRequesterHandoffPreflightBootstrapRpcRequestV1');
+    expect(typeof seal).toBe('function');
+    expect(typeof open).toBe('function');
+    if (typeof seal !== 'function' || typeof open !== 'function') throw new Error('Missing private preflight carrier');
+    const installation = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(3));
+    const sealed = seal({ request: preflight, installationId: 'installation',
+      installationPublicKey: installation.publicKey, randomBytes: tweetnacl.randomBytes });
+    expect(JSON.stringify(sealed)).not.toContain(request.requesterBootstrap.credentials.token);
+    expect(JSON.stringify(sealed)).not.toContain(request.requesterBootstrap.credentials.secret);
+    const read = (value: unknown, installationId = 'installation') => open({ request: value, machineId: 'machine',
+      installationId, installationPrivateKey: installation.secretKey });
+    expect(read(sealed)).toEqual(preflight);
+    expect(read(sealed, 'replacement')).toBeNull();
+    expect(read({ ...sealed, input: { ...preflight.input, sessionId: 'another-session' } })).toBeNull();
+    expect(bootstrap.openSessionRequesterHandoffBootstrapRpcRequestV1({ request: sealed, machineId: 'machine',
+      installationId: 'installation', installationPrivateKey: installation.secretKey })).toBeNull();
+  });
   it('seals the existing-Session handoff on the same installed-key carrier without changing its identity', () => {
     const handoff = { kind: 'requester_session_handoff_bootstrap_v1', input: {
       handoffId: 'handoff', operationId: 'operation', sessionId: 'same-session',

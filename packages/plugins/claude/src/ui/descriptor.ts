@@ -4,6 +4,7 @@ export const CLAUDE_UI_DESCRIPTOR = Object.freeze({
   pluginId: 'happier.agent.claude',
   agentId: 'claude',
   version: 1,
+  identityColor: { light: '#eb6834', dark: '#d95926' },
   display: {
     nameKey: 'agentInput.agent.claude',
     subtitleKey: 'profiles.aiBackend.claudeSubtitle',
@@ -42,7 +43,7 @@ export const CLAUDE_UI_DESCRIPTOR = Object.freeze({
       hideUnknownToolsByDefault: false,
     },
     picker: {
-      iconName: 'sparkles-outline',
+      iconName: 'sparkle',
       iconScale: 1.1,
       cliGlyph: '✳︎',
       cliGlyphScale: 1.0,
@@ -273,10 +274,10 @@ export const CLAUDE_UI_DESCRIPTOR = Object.freeze({
         slot: 'sessionSubagents.teammateDetailsTab',
         surfaceId: 'subagent-details',
         resourceKind: 'claudeSubagentLauncher',
-        iconName: 'people',
+        iconName: 'users',
         tab: {
           keyPrefix: 'claude-subagent-launcher',
-          titleKey: 'session.subagents.panel.launchTeammateAction',
+          titleKey: 'session.subagents.panel.claudeTeamTitle',
           subtitleKey: 'session.subagents.panel.launchClaudeTeamsSubtitle',
         },
       },

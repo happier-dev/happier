@@ -22,6 +22,9 @@ import { sessionWorkStateBinding } from './workState.js';
 import { sessionRoleBinding, sessionRoleConfigurationBinding } from './role.js';
 import { sessionUsageLimitRecoveryBinding } from './usageLimitRecovery.js';
 import { summaryTextBinding } from './summaryText.js';
+import { sessionBotBinding } from './sessionIdentity.js';
+import { sessionMemoryEnabledBinding, sessionContextBinding, sessionVoicePreferenceBinding } from './context.js';
+import { transcriptToolCallsBinding } from './transcriptToolCalls.js';
 import {
   getLegacyProviderSessionIdMetadataKeys,
   getAgentNativeSessionLogPathMetadataKeys,
@@ -34,10 +37,15 @@ const SESSION_STATE_METADATA_BINDINGS = {
   'intent.model': modelIntentBinding,
   'intent.role': sessionRoleBinding,
   'intent.sessionRoles': sessionRoleConfigurationBinding,
+  'intent.memoryEnabled': sessionMemoryEnabledBinding,
+  'intent.voicePreference': sessionVoicePreferenceBinding,
+  'intent.context': sessionContextBinding,
   'intent.permissionMode': permissionModeIntentBinding,
   'intent.acpSessionMode': acpSessionModeIntentBinding,
   'intent.acpConfigOption': acpConfigOptionIntentBinding,
   'display.title': summaryTextBinding,
+  'display.bot': sessionBotBinding,
+  'view.transcriptToolCalls': transcriptToolCallsBinding,
   'runtime.workState': sessionWorkStateBinding,
   'runtime.activity': runtimeActivityBinding,
   'runtime.externalAgent': externalAgentObservationBinding,
@@ -89,6 +97,8 @@ export function clearSessionStateFieldFromMetadata(
       delete next.agentRuntimeDescriptorV1;
       break;
     case 'identity.providerSessionId':
+      delete next.nativeResumeIdentityV1;
+      delete next.customAcpSessionId;
       for (const key of getLegacyProviderSessionIdMetadataKeys()) {
         delete next[key];
       }
@@ -113,6 +123,8 @@ export function clearSessionStateFieldFromMetadata(
       break;
     case 'intent.role':
       return sessionRoleBinding.write(metadata, { value: null });
+    case 'intent.voicePreference':
+      return sessionVoicePreferenceBinding.write(metadata, { value: null });
     case 'intent.sessionRoles':
       return sessionRoleConfigurationBinding.write(metadata, { value: { overrides: {}, sessionRoles: {}, notes: '' } });
     case 'intent.acpConfigOption':
@@ -122,6 +134,10 @@ export function clearSessionStateFieldFromMetadata(
     case 'display.title':
       delete next.summary;
       break;
+    case 'display.bot':
+      return sessionBotBinding.write(metadata, { value: null });
+    case 'view.transcriptToolCalls':
+      return transcriptToolCallsBinding.write(metadata, { value: null });
     case 'runtime.workState':
       delete next.sessionWorkStateV1;
       break;

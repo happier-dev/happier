@@ -1,4 +1,8 @@
 import {
+  createExternalSessionContentSearchControl,
+  searchExternalSessionContent,
+} from '@happier-dev/plugin-sdk/sessions/file-stores';
+import {
   AgentExternalSessionTranscriptRawRecordSchema,
   compareExternalSessionCandidatePrecedence,
   getAgentExternalSessionsInvocationFailure as invocationFailure,
@@ -278,6 +282,7 @@ function mapCandidate(candidate: Readonly<{
   createdAtMs?: number;
   archived?: boolean;
   details?: unknown;
+  match?: AgentExternalSessionCandidate['match'];
 }>): AgentExternalSessionCandidate {
   const details = isPlainObject(candidate.details) ? candidate.details : null;
   const sessionFilePath = typeof details?.sessionFilePath === 'string'
@@ -290,6 +295,7 @@ function mapCandidate(candidate: Readonly<{
     ...(candidate.createdAtMs !== undefined ? { createdAtMs: candidate.createdAtMs } : {}),
     ...(candidate.archived !== undefined ? { archived: candidate.archived } : {}),
     ...(sessionFilePath ? { linkData: { sessionFilePath } } : {}),
+    ...(candidate.match ? { match: candidate.match } : {}),
   };
 }
 
@@ -305,12 +311,14 @@ function candidateResultFits(params: Readonly<{
   searchIncomplete: boolean | undefined;
   preparation: Readonly<{ kind: 'building_candidate_index'; scanned: number }> | undefined;
   maxSerializedBytes?: number;
+  contentSearch?: boolean;
 }>): boolean {
   return params.maxSerializedBytes === undefined || serializedByteLength(ok({
     candidates: params.candidates,
     nextCursor: params.nextCursor,
     ...(params.searchIncomplete !== undefined ? { searchIncomplete: params.searchIncomplete } : {}),
     ...(params.preparation !== undefined ? { preparation: params.preparation } : {}),
+    ...(params.contentSearch ? { contentCoverage: 'complete' } : {}),
   })) <= params.maxSerializedBytes;
 }
 
@@ -413,31 +421,95 @@ export function createOhMyPiExternalSessionsContribution(params: Readonly<{
       const env = readEnv();
       const validation = validateSource({ source: request.source, env });
       if (!validation.ok) return validation;
+      const contentSearch = request.searchTarget === 'content';
+      const query = request.searchTerm ?? '';
+      const sourceKey = JSON.stringify(validation.value.publicSource);
+      const wrapCursor = (cursor: string | null) => contentSearch && cursor
+        ? Buffer.from(JSON.stringify({ v: 1, kind: 'ohMyPiContentSearch', query, sourceKey, cursor }), 'utf8').toString('base64url')
+        : cursor;
+      let cursor = request.cursor;
+      if (contentSearch && cursor) {
+        let parsed: unknown;
+        try { parsed = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')); } catch { parsed = null; }
+        if (!isPlainObject(parsed) || parsed.v !== 1 || parsed.kind !== 'ohMyPiContentSearch'
+          || parsed.query !== query || parsed.sourceKey !== sourceKey || typeof parsed.cursor !== 'string') {
+          return failed('invalid_request', 'Oh My Pi content cursor does not match this query and source.');
+        }
+        cursor = parsed.cursor;
+      }
+      const control = contentSearch ? createExternalSessionContentSearchControl(request) : null;
+      let partial = false;
       try {
         const listed = await listOhMyPiSessionCandidates({
           source: validation.value.legacySource,
           env,
-          cursor: request.cursor,
+          cursor,
           limit: request.maxItems,
           searchTerm: request.searchTerm,
           signal: request.signal,
+          ...(control ? {
+            checkWork: control.checkWork,
+            async searchCandidate(candidate: OhMyPiExternalSessionCandidate) {
+              const searched = await searchExternalSessionContent({
+                query,
+                paths: [candidate.details.sessionFilePath],
+                ripgrep: request.ripgrep,
+                control,
+                async decode(matchText) {
+                  const pages: Readonly<{ id: string; snippet?: string }>[][] = [];
+                  let transcriptCursor: string | undefined;
+                  do {
+                    control.checkWork();
+                    const page = await pageOhMyPiSessionTranscript({
+                      source: validation.value.legacySource,
+                      env,
+                      providerSessionId: candidate.remoteSessionId,
+                      sessionFilePath: candidate.details.sessionFilePath,
+                      direction: 'older',
+                      cursor: transcriptCursor,
+                      maxBytes: request.maxSerializedBytes,
+                      maxItems: request.maxItems,
+                      scannerFileSystem: control.fileSystem,
+                    });
+                    control.checkWork();
+                    if (page.truncated) return { records: [], partial: true };
+                    pages.push(page.items.map((item) => {
+                      const content = isPlainObject(item.raw.content) ? item.raw.content : null;
+                      const data = isPlainObject(content?.data) ? content.data : null;
+                      const text = content?.type === 'text' ? content.text
+                        : content?.type === 'acp' && data?.type === 'message' ? data.message : null;
+                      const snippet = typeof text === 'string' ? matchText(text) : null;
+                      return { id: item.id, ...(snippet === null ? {} : { snippet }) };
+                    }));
+                    transcriptCursor = page.nextCursor ?? undefined;
+                  } while (transcriptCursor);
+                  return { records: pages.reverse().flat(), partial: false };
+                },
+              });
+              partial ||= searched.partial;
+              return searched.match ? { ...candidate, match: searched.match } : null;
+            },
+          } : {}),
           resultBudget: {
             fits(candidates, nextCursor, searchIncomplete, preparation) {
               return candidateResultFits({
                 candidates: candidates.map(mapCandidate),
-                nextCursor,
+                nextCursor: wrapCursor(nextCursor),
                 searchIncomplete,
                 preparation,
                 maxSerializedBytes: request.maxSerializedBytes,
+                contentSearch,
               });
             },
           },
         });
-        const after = invocationFailure(request);
+        request.signal.throwIfAborted();
+        const after = contentSearch && listed.searchIncomplete ? null : invocationFailure(request);
         if (after) return after;
         const value = {
           candidates: listed.candidates.map(mapCandidate),
-          nextCursor: listed.nextCursor,
+          nextCursor: wrapCursor(listed.nextCursor),
+          ...(contentSearch ? { contentCoverage: listed.nextCursor || partial ? 'partial' as const : 'complete' as const } : {}),
           ...(listed.searchIncomplete !== undefined
             ? { searchIncomplete: listed.searchIncomplete }
             : {}),

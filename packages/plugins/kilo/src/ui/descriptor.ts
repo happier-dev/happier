@@ -22,7 +22,7 @@ export const KILO_UI_DESCRIPTOR = Object.freeze({
       hideUnknownToolsByDefault: true,
     },
     picker: {
-      iconName: 'code-slash-outline',
+      iconName: 'code',
       cliGlyph: 'KL',
       cliGlyphScale: 1.0,
       profileCompatibilityGlyphScale: 1.0,

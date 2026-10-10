@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 import { createStoredReadSchema } from '../../json/storedReadSchema.js';
 import { asProtocolZod } from "../../plugins/actions/internalProtocolZodAdapter.js";
@@ -15,19 +16,19 @@ import {
   ComposerTransactionV1Schema,
 } from '../../plugins/ui/composer.js';
 
-const IdentifierSchema = z.string().trim().min(1).max(256);
-const PresentationTextSchema = z.string().max(16_384);
-const PresentationIndexSchema = z.number().int().nonnegative().safe();
+const IdentifierSchema = lazyZodSchema(() => z.string().trim().min(1).max(256));
+const PresentationTextSchema = lazyZodSchema(() => z.string().max(16_384));
+const PresentationIndexSchema = lazyZodSchema(() => z.number().int().nonnegative().safe());
 
 export { SESSION_COMPANION_BUILTIN_ITEM_IDS };
-const CompanionFrameStyleSchema = z.enum(['card', 'plain']);
+const CompanionFrameStyleSchema = lazyZodSchema(() => z.enum(['card', 'plain']));
 
-export const SessionCompanionPresentationItemRefV1Schema = z.discriminatedUnion('kind', [
+export const SessionCompanionPresentationItemRefV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('builtin'), id: z.enum(SESSION_COMPANION_BUILTIN_ITEM_IDS), frameStyle: CompanionFrameStyleSchema.optional() }).strict(),
   z.object({ kind: z.literal('widget'), widgetId: SessionSurfaceItemIdSchema, frameStyle: CompanionFrameStyleSchema.optional() }).strict(),
   z.object({ kind: z.literal('pane'), paneId: IdentifierSchema, frameStyle: CompanionFrameStyleSchema.optional() }).strict(),
   z.object({ kind: z.literal('instance'), instance: WidgetInstanceV1Schema, frameStyle: CompanionFrameStyleSchema.optional() }).strict(),
-]);
+]));
 export type SessionCompanionPresentationItemRefV1 = z.infer<
   typeof SessionCompanionPresentationItemRefV1Schema
 >;
@@ -38,7 +39,7 @@ export const SessionCompanionPresentationItemRefV1StoredSchema = createStoredRea
  * stay in the Board Action owner; this wire can only reveal or arrange facts
  * that the exact mounted Session adapter independently resolves as readable.
  */
-export const CurrentSessionPresentationIntentV1Schema = z.discriminatedUnion('kind', [
+export const CurrentSessionPresentationIntentV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('chat.return') }).strict(),
   z.object({ kind: z.literal('board.open'), mode: z.enum(['beside_chat', 'focus']) }).strict(),
   z.object({ kind: z.literal('board.view.select'), viewId: IdentifierSchema }).strict(),
@@ -80,21 +81,26 @@ export const CurrentSessionPresentationIntentV1Schema = z.discriminatedUnion('ki
     density: z.enum(['compact', 'comfortable']),
   }).strict(),
   z.object({ kind: z.literal('companion.open_full') }).strict(),
-]);
+  z.object({ kind: z.literal('viewer.open'), source: z.enum(['computer', 'browser']) }).strict(),
+  z.object({ kind: z.literal('viewer.close') }).strict(),
+  z.object({ kind: z.literal('viewer.source.select'), source: z.enum(['computer', 'browser']) }).strict(),
+  z.object({ kind: z.literal('viewer.expand') }).strict(),
+  z.object({ kind: z.literal('viewer.restore') }).strict(),
+]));
 export type CurrentSessionPresentationIntentV1 = z.infer<
   typeof CurrentSessionPresentationIntentV1Schema
 >;
 
 /** Authors arrange readable Session facts; instance mutations use qualified widgets.* Actions. */
-export const SessionCompanionPresentationAuthorItemRefV1Schema = z.discriminatedUnion('kind', [
+export const SessionCompanionPresentationAuthorItemRefV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   SessionCompanionPresentationItemRefV1Schema.options[0],
   SessionCompanionPresentationItemRefV1Schema.options[1],
   SessionCompanionPresentationItemRefV1Schema.options[2],
-]);
+]));
 export type SessionCompanionPresentationAuthorItemRefV1 = z.infer<typeof SessionCompanionPresentationAuthorItemRefV1Schema>;
 
 /** The public author subset shares the host's canonical validators, not its instance transport capability. */
-export const CurrentSessionPresentationAuthorIntentV1Schema = z.discriminatedUnion('kind', [
+export const CurrentSessionPresentationAuthorIntentV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   CurrentSessionPresentationIntentV1Schema.options[0],
   CurrentSessionPresentationIntentV1Schema.options[1],
   CurrentSessionPresentationIntentV1Schema.options[2],
@@ -110,16 +116,21 @@ export const CurrentSessionPresentationAuthorIntentV1Schema = z.discriminatedUni
   CurrentSessionPresentationIntentV1Schema.options[14],
   CurrentSessionPresentationIntentV1Schema.options[15],
   CurrentSessionPresentationIntentV1Schema.options[16],
-]);
+  CurrentSessionPresentationIntentV1Schema.options[17],
+  CurrentSessionPresentationIntentV1Schema.options[18],
+  CurrentSessionPresentationIntentV1Schema.options[19],
+  CurrentSessionPresentationIntentV1Schema.options[20],
+  CurrentSessionPresentationIntentV1Schema.options[21],
+]));
 export type CurrentSessionPresentationAuthorIntentV1 = z.infer<typeof CurrentSessionPresentationAuthorIntentV1Schema>;
 
-export const CurrentSessionPresentationIntentResultV1Schema = z.discriminatedUnion('status', [
+export const CurrentSessionPresentationIntentResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
   z.object({ status: z.literal('applied') }).strict(),
   z.object({ status: z.literal('unchanged') }).strict(),
   z.object({ status: z.literal('unavailable') }).strict(),
   z.object({ status: z.literal('notCurrent') }).strict(),
   z.object({ status: z.literal('invalidTarget') }).strict(),
-]);
+]));
 export type CurrentSessionPresentationIntentResultV1 = z.infer<
   typeof CurrentSessionPresentationIntentResultV1Schema
 >;
@@ -130,31 +141,31 @@ export type CurrentSessionPresentationIntentResultV1 = z.infer<
  * deliberately absent: the Action host stamps both so input cannot retarget a
  * different Session or manufacture an idempotency key.
  */
-export const CurrentSessionPresentationActionInputV1Schema = z.object({
+export const CurrentSessionPresentationActionInputV1Schema = lazyZodSchema(() => z.object({
   intent: CurrentSessionPresentationAuthorIntentV1Schema,
-}).strict();
+}).strict());
 export type CurrentSessionPresentationActionInputV1 = z.infer<
   typeof CurrentSessionPresentationActionInputV1Schema
 >;
 
 /** Acknowledged success from the incumbent current-Session presentation owner. */
-export const CurrentSessionPresentationActionResultV1Schema = z.discriminatedUnion('status', [
+export const CurrentSessionPresentationActionResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
   z.object({ status: z.literal('applied'), revision: IdentifierSchema }).strict(),
   z.object({ status: z.literal('unchanged'), revision: IdentifierSchema }).strict(),
-]);
+]));
 export type CurrentSessionPresentationActionResultV1 = z.infer<
   typeof CurrentSessionPresentationActionResultV1Schema
 >;
 
-export const CurrentSessionPresentationBindV1Schema = z.object({
+export const CurrentSessionPresentationBindV1Schema = lazyZodSchema(() => z.object({
   clientId: IdentifierSchema,
   focused: z.boolean(),
   draftRevision: z.number().int().nonnegative(),
-}).strict();
+}).strict());
 
 export type CurrentSessionPresentationBindV1 = z.infer<typeof CurrentSessionPresentationBindV1Schema>;
 
-export const CurrentSessionPresentationBindResultV1Schema = z.discriminatedUnion('status', [
+export const CurrentSessionPresentationBindResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
   z.object({
     status: z.literal('bound'),
     sessionId: IdentifierSchema,
@@ -165,19 +176,19 @@ export const CurrentSessionPresentationBindResultV1Schema = z.discriminatedUnion
     status: z.literal('rejected'),
     reason: z.enum(['notCurrent', 'unavailable']),
   }).strict(),
-]);
+]));
 
 export type CurrentSessionPresentationBindResultV1 = z.infer<typeof CurrentSessionPresentationBindResultV1Schema>;
 
-export const CurrentSessionPresentationUnbindV1Schema = z.object({
+export const CurrentSessionPresentationUnbindV1Schema = lazyZodSchema(() => z.object({
   clientId: IdentifierSchema,
-}).strict();
+}).strict());
 
 export type CurrentSessionPresentationUnbindV1 = z.infer<typeof CurrentSessionPresentationUnbindV1Schema>;
 
-export const CurrentSessionPresentationUnbindResultV1Schema = z.object({
+export const CurrentSessionPresentationUnbindResultV1Schema = lazyZodSchema(() => z.object({
   status: z.enum(['retired', 'ignored']),
-}).strict();
+}).strict());
 
 export type CurrentSessionPresentationUnbindResultV1 = z.infer<
   typeof CurrentSessionPresentationUnbindResultV1Schema
@@ -188,7 +199,7 @@ export type CurrentSessionPresentationUnbindResultV1 = z.infer<
  * transaction. Other transaction shapes stay available only through the
  * Composer owner, never through this presentation compatibility command.
  */
-const CurrentSessionPresentationComposerReplaceTransactionV1Schema = ComposerTransactionV1Schema.superRefine(
+const CurrentSessionPresentationComposerReplaceTransactionV1Schema = lazyZodSchema(() => ComposerTransactionV1Schema.superRefine(
   (transaction, context) => {
     if (transaction.operations.length === 1 && transaction.operations[0]?.kind === 'text.set') return;
     context.addIssue({
@@ -197,9 +208,9 @@ const CurrentSessionPresentationComposerReplaceTransactionV1Schema = ComposerTra
       message: 'composer.replace requires exactly one Composer text.set operation.',
     });
   },
-);
+));
 
-const CurrentSessionPresentationCommandV1Schema = z.discriminatedUnion('kind', [
+const CurrentSessionPresentationCommandV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({
     id: IdentifierSchema,
     clientId: IdentifierSchema,
@@ -219,20 +230,20 @@ const CurrentSessionPresentationCommandV1Schema = z.discriminatedUnion('kind', [
     kind: z.literal('presentation.apply'),
     intent: CurrentSessionPresentationIntentV1Schema,
   }).strict(),
-]);
+]));
 
 /**
  * The host-stamped owner of a transient current-Session presentation record.
  * Plugin authors supply only their local key; invocation and Session hosts add
  * the exact contribution, immutable generation, invocation, and Session facts.
  */
-export const CurrentSessionPresentationOwnerV1Schema = z.object({
+export const CurrentSessionPresentationOwnerV1Schema = lazyZodSchema(() => z.object({
   pluginId: asProtocolZod(PluginIdSchema),
   contributionId: asProtocolZod(PluginContributionLocalIdSchema),
   generationId: IdentifierSchema,
   invocationId: IdentifierSchema,
   sessionId: IdentifierSchema,
-}).strict();
+}).strict());
 export type CurrentSessionPresentationOwnerV1 = z.infer<typeof CurrentSessionPresentationOwnerV1Schema>;
 
 export function sameCurrentSessionPresentationOwnerV1(
@@ -264,22 +275,22 @@ export function currentSessionPresentationEntryIdentityV1(
   ]);
 }
 
-const CurrentSessionPresentationStatusV1Schema = z.object({
+const CurrentSessionPresentationStatusV1Schema = lazyZodSchema(() => z.object({
   localKey: IdentifierSchema,
   text: PresentationTextSchema,
   owner: CurrentSessionPresentationOwnerV1Schema,
   revision: z.number().int().nonnegative(),
-}).strict();
+}).strict());
 
-const CurrentSessionPresentationWidgetV1Schema = z.object({
+const CurrentSessionPresentationWidgetV1Schema = lazyZodSchema(() => z.object({
   localKey: IdentifierSchema,
   placement: z.enum(['beforeComposer', 'afterComposer']),
   lines: z.array(PresentationTextSchema).max(32),
   owner: CurrentSessionPresentationOwnerV1Schema,
   revision: z.number().int().nonnegative(),
-}).strict();
+}).strict());
 
-export const CurrentSessionPresentationStateV1Schema = z.object({
+export const CurrentSessionPresentationStateV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   hostNonce: IdentifierSchema,
   revision: z.number().int().nonnegative(),
@@ -307,12 +318,12 @@ export const CurrentSessionPresentationStateV1Schema = z.object({
   };
   rejectDuplicateLocalKey(value.statuses, 'statuses');
   rejectDuplicateLocalKey(value.widgets, 'widgets');
-});
+}));
 
 export type CurrentSessionPresentationStateV1 = z.infer<typeof CurrentSessionPresentationStateV1Schema>;
 export type CurrentSessionPresentationCommandV1 = NonNullable<CurrentSessionPresentationStateV1['command']>;
 
-export const CurrentSessionPresentationAckV1Schema = z.object({
+export const CurrentSessionPresentationAckV1Schema = lazyZodSchema(() => z.object({
   hostNonce: IdentifierSchema,
   clientId: IdentifierSchema,
   commandId: IdentifierSchema,
@@ -320,7 +331,7 @@ export const CurrentSessionPresentationAckV1Schema = z.object({
     ComposerTransactionResultV1Schema,
     CurrentSessionPresentationIntentResultV1Schema,
   ]),
-}).strict();
+}).strict());
 
 export type CurrentSessionPresentationAckV1 = z.infer<typeof CurrentSessionPresentationAckV1Schema>;
 
@@ -328,3 +339,4 @@ export const CURRENT_SESSION_PRESENTATION_AGENT_STATE_KEY = 'currentSessionPrese
 export const CURRENT_SESSION_PRESENTATION_BIND_RPC_METHOD = 'session.presentation.bind' as const;
 export const CURRENT_SESSION_PRESENTATION_ACK_RPC_METHOD = 'session.presentation.ack' as const;
 export const CURRENT_SESSION_PRESENTATION_UNBIND_RPC_METHOD = 'session.presentation.unbind' as const;
+export const CURRENT_SESSION_PRESENTATION_APPLY_RPC_METHOD = 'session.presentation.apply' as const;

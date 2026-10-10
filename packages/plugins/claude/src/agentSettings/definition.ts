@@ -429,7 +429,7 @@ export const CLAUDE_AGENT_SETTINGS_CONTRIBUTION = {
   scope: 'account',
   fields: CLAUDE_AGENT_SETTINGS_FIELDS,
   presentation: {
-    icon: { ionName: 'sparkles-outline', color: { kind: 'theme', token: 'orange' } },
+    icon: { ionName: 'sparkle', color: { kind: 'theme', token: 'orange' } },
     subagentSections: [
       {
         id: 'claude-teams',
@@ -452,7 +452,7 @@ export const CLAUDE_AGENT_SETTINGS_CONTRIBUTION = {
               key: 'subAgentGuidance.settings.agents.claude.openSubtitle',
               fallback: 'Manage Agent Teams and other Claude-specific subagent behavior.',
             },
-            iconIonName: 'sparkles-outline',
+            iconIonName: 'sparkle',
           },
         ],
       },

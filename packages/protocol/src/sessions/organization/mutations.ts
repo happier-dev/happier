@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import {
@@ -15,7 +16,7 @@ import {
   SESSION_ORGANIZATION_TAG_DELETE_ASSIGNMENT_BEHAVIORS,
   SESSION_ORGANIZATION_TAG_DELETE_ASSIGNMENTS_DEFAULT,
 } from './constants.js';
-import { SessionOrganizationContentEnvelopeSchema } from './content.js';
+import { SessionOrganizationContentEnvelopeSchema } from './contentSchemas.js';
 import {
   SessionFolderAssignmentMutationResultSchema,
   SessionFolderAssignmentSchema,
@@ -23,53 +24,54 @@ import {
 } from './folders.js';
 import { SessionOrganizationOrderEntrySchema, SessionOrganizationOrderItemKindSchema, SessionOrganizationOrderScopeKindSchema } from './ordering.js';
 import { SessionOrganizationLabelKindSchema, SessionOrganizationLabelSchema } from './ordering.js';
-import { SessionOrganizationPinSchema } from './pins.js';
+import { SessionOrganizationPinSchema, SessionOrganizationPinSurfaceSchema } from './pins.js';
 import { SessionOrganizationTagSchema, SessionTagAssignmentSchema } from './tags.js';
 
-const SessionOrganizationIdSchema = z.string().trim().min(1).max(SESSION_ORGANIZATION_MAX_ID_LENGTH);
-const SessionOrganizationKeySchema = z.string().trim().min(1).max(SESSION_ORGANIZATION_MAX_KEY_LENGTH);
-const SessionOrganizationSortKeySchema = z.string().trim().min(1).max(SESSION_ORGANIZATION_MAX_SORT_KEY_LENGTH);
+const SessionOrganizationIdSchema = lazyZodSchema(() => z.string().trim().min(1).max(SESSION_ORGANIZATION_MAX_ID_LENGTH));
+const SessionOrganizationKeySchema = lazyZodSchema(() => z.string().trim().min(1).max(SESSION_ORGANIZATION_MAX_KEY_LENGTH));
+const SessionOrganizationSortKeySchema = lazyZodSchema(() => z.string().trim().min(1).max(SESSION_ORGANIZATION_MAX_SORT_KEY_LENGTH));
 
-export const SetSessionPinRequestSchema = z
+export const SetSessionPinRequestSchema = lazyZodSchema(() => z
   .object({
     pinned: z.boolean(),
+    surface: SessionOrganizationPinSurfaceSchema.optional(),
     sortKey: SessionOrganizationSortKeySchema.nullable().optional(),
   })
-  .strict();
+  .strict());
 export type SetSessionPinRequest = z.infer<typeof SetSessionPinRequestSchema>;
 
-export const SetSessionPinResponseSchema = z
+export const SetSessionPinResponseSchema = lazyZodSchema(() => z
   .object({
     pin: SessionOrganizationPinSchema.nullable(),
   })
-  .strict();
+  .strict());
 export type SetSessionPinResponse = z.infer<typeof SetSessionPinResponseSchema>;
 
-const ReorderSessionOrganizationEntrySchema = z
+const ReorderSessionOrganizationEntrySchema = lazyZodSchema(() => z
   .object({
     itemKind: SessionOrganizationOrderItemKindSchema,
     itemKey: SessionOrganizationKeySchema,
     sortKey: SessionOrganizationSortKeySchema,
   })
-  .strict();
+  .strict());
 
-export const ReorderSessionOrganizationRequestSchema = z
+export const ReorderSessionOrganizationRequestSchema = lazyZodSchema(() => z
   .object({
     scopeKind: SessionOrganizationOrderScopeKindSchema,
     scopeKey: SessionOrganizationKeySchema,
     entries: z.array(ReorderSessionOrganizationEntrySchema).max(SESSION_ORGANIZATION_MAX_ORDER_ENTRIES_PER_SCOPE),
   })
-  .strict();
+  .strict());
 export type ReorderSessionOrganizationRequest = z.infer<typeof ReorderSessionOrganizationRequestSchema>;
 
-export const ReorderSessionOrganizationResponseSchema = z
+export const ReorderSessionOrganizationResponseSchema = lazyZodSchema(() => z
   .object({
     orderEntries: z.array(SessionOrganizationOrderEntrySchema),
   })
-  .strict();
+  .strict());
 export type ReorderSessionOrganizationResponse = z.infer<typeof ReorderSessionOrganizationResponseSchema>;
 
-export const CreateOrUpdateSessionOrganizationFolderRequestSchema = z
+export const CreateOrUpdateSessionOrganizationFolderRequestSchema = lazyZodSchema(() => z
   .object({
     folderId: SessionOrganizationIdSchema.optional(),
     folderKey: SessionOrganizationKeySchema,
@@ -78,158 +80,158 @@ export const CreateOrUpdateSessionOrganizationFolderRequestSchema = z
     sortKey: SessionOrganizationSortKeySchema.nullable(),
     display: SessionOrganizationContentEnvelopeSchema.nullable(),
   })
-  .strict();
+  .strict());
 export type CreateOrUpdateSessionOrganizationFolderRequest = z.infer<typeof CreateOrUpdateSessionOrganizationFolderRequestSchema>;
 
-export const CreateOrUpdateSessionOrganizationFolderResponseSchema = z
+export const CreateOrUpdateSessionOrganizationFolderResponseSchema = lazyZodSchema(() => z
   .object({
     folder: SessionOrganizationFolderSchema,
   })
-  .strict();
+  .strict());
 export type CreateOrUpdateSessionOrganizationFolderResponse = z.infer<typeof CreateOrUpdateSessionOrganizationFolderResponseSchema>;
 
-export const DeleteSessionOrganizationFolderRequestSchema = z
+export const DeleteSessionOrganizationFolderRequestSchema = lazyZodSchema(() => z
   .object({
     folderId: SessionOrganizationIdSchema,
     assignmentBehavior: z.enum(SESSION_ORGANIZATION_FOLDER_DELETE_ASSIGNMENT_BEHAVIORS).default(SESSION_ORGANIZATION_FOLDER_DELETE_ASSIGNMENTS_DEFAULT),
   })
-  .strict();
+  .strict());
 export type DeleteSessionOrganizationFolderRequest = z.infer<typeof DeleteSessionOrganizationFolderRequestSchema>;
 
-export const DeleteSessionOrganizationFolderResponseSchema = z
+export const DeleteSessionOrganizationFolderResponseSchema = lazyZodSchema(() => z
   .object({
     deletedFolderIds: z.array(SessionOrganizationIdSchema),
     assignmentTargetFolderId: SessionOrganizationIdSchema.nullable(),
     affectedAssignmentCount: z.number().int().nonnegative(),
   })
-  .strict();
+  .strict());
 export type DeleteSessionOrganizationFolderResponse = z.infer<typeof DeleteSessionOrganizationFolderResponseSchema>;
 
-export const SetSessionFolderAssignmentRequestSchema = z
+export const SetSessionFolderAssignmentRequestSchema = lazyZodSchema(() => z
   .object({
     folderId: SessionOrganizationIdSchema.nullable(),
   })
-  .strict();
+  .strict());
 export type SetSessionFolderAssignmentRequest = z.infer<typeof SetSessionFolderAssignmentRequestSchema>;
 
 export const SetSessionFolderAssignmentResponseSchema = SessionFolderAssignmentMutationResultSchema;
 export type SetSessionFolderAssignmentResponse = z.infer<typeof SetSessionFolderAssignmentResponseSchema>;
 
-export const MoveSessionFolderAssignmentsRequestSchema = z
+export const MoveSessionFolderAssignmentsRequestSchema = lazyZodSchema(() => z
   .object({
     fromFolderIds: z.array(SessionOrganizationIdSchema).min(1).max(SESSION_ORGANIZATION_MAX_ASSIGNMENTS_PER_MUTATION),
     toFolderId: SessionOrganizationIdSchema.nullable(),
   })
-  .strict();
+  .strict());
 export type MoveSessionFolderAssignmentsRequest = z.infer<typeof MoveSessionFolderAssignmentsRequestSchema>;
 
-export const MoveSessionFolderAssignmentsResponseSchema = z
+export const MoveSessionFolderAssignmentsResponseSchema = lazyZodSchema(() => z
   .object({
     assignments: z.array(SessionFolderAssignmentMutationResultSchema),
     affectedCount: z.number().int().nonnegative(),
     toFolderId: SessionOrganizationIdSchema.nullable(),
   })
-  .strict();
+  .strict());
 export type MoveSessionFolderAssignmentsResponse = z.infer<typeof MoveSessionFolderAssignmentsResponseSchema>;
 
-export const SessionFolderAssignmentListRequestSchema = z
+export const SessionFolderAssignmentListRequestSchema = lazyZodSchema(() => z
   .object({
     sessionIds: z.array(SessionOrganizationIdSchema).min(1).max(SESSION_ORGANIZATION_MAX_ASSIGNMENTS_PER_MUTATION),
   })
-  .strict();
+  .strict());
 export type SessionFolderAssignmentListRequest = z.infer<typeof SessionFolderAssignmentListRequestSchema>;
 
-export const SessionFolderAssignmentListResponseSchema = z
+export const SessionFolderAssignmentListResponseSchema = lazyZodSchema(() => z
   .object({
     assignments: z.array(SessionFolderAssignmentSchema),
   })
-  .strict();
+  .strict());
 export type SessionFolderAssignmentListResponse = z.infer<typeof SessionFolderAssignmentListResponseSchema>;
 
-export const CreateOrUpdateSessionOrganizationTagRequestSchema = z
+export const CreateOrUpdateSessionOrganizationTagRequestSchema = lazyZodSchema(() => z
   .object({
     tagId: SessionOrganizationIdSchema.optional(),
     tagKey: SessionOrganizationKeySchema,
     sortKey: SessionOrganizationSortKeySchema.nullable(),
     display: SessionOrganizationContentEnvelopeSchema.nullable(),
   })
-  .strict();
+  .strict());
 export type CreateOrUpdateSessionOrganizationTagRequest = z.infer<typeof CreateOrUpdateSessionOrganizationTagRequestSchema>;
 
-export const CreateOrUpdateSessionOrganizationTagResponseSchema = z
+export const CreateOrUpdateSessionOrganizationTagResponseSchema = lazyZodSchema(() => z
   .object({
     tag: SessionOrganizationTagSchema,
   })
-  .strict();
+  .strict());
 export type CreateOrUpdateSessionOrganizationTagResponse = z.infer<typeof CreateOrUpdateSessionOrganizationTagResponseSchema>;
 
-export const DeleteSessionOrganizationTagRequestSchema = z
+export const DeleteSessionOrganizationTagRequestSchema = lazyZodSchema(() => z
   .object({
     tagId: SessionOrganizationIdSchema,
     assignmentBehavior: z.enum(SESSION_ORGANIZATION_TAG_DELETE_ASSIGNMENT_BEHAVIORS).default(SESSION_ORGANIZATION_TAG_DELETE_ASSIGNMENTS_DEFAULT),
   })
-  .strict();
+  .strict());
 export type DeleteSessionOrganizationTagRequest = z.infer<typeof DeleteSessionOrganizationTagRequestSchema>;
 
-export const DeleteSessionOrganizationTagResponseSchema = z
+export const DeleteSessionOrganizationTagResponseSchema = lazyZodSchema(() => z
   .object({
     tagId: SessionOrganizationIdSchema,
     removedAssignmentCount: z.number().int().nonnegative(),
   })
-  .strict();
+  .strict());
 export type DeleteSessionOrganizationTagResponse = z.infer<typeof DeleteSessionOrganizationTagResponseSchema>;
 
-export const SetSessionTagAssignmentsRequestSchema = z
+export const SetSessionTagAssignmentsRequestSchema = lazyZodSchema(() => z
   .object({
     tagIds: z.array(SessionOrganizationIdSchema).max(SESSION_ORGANIZATION_MAX_ASSIGNMENTS_PER_MUTATION),
   })
-  .strict();
+  .strict());
 export type SetSessionTagAssignmentsRequest = z.infer<typeof SetSessionTagAssignmentsRequestSchema>;
 
 export const SetSessionTagAssignmentsResponseSchema = SessionTagAssignmentSchema;
 export type SetSessionTagAssignmentsResponse = z.infer<typeof SetSessionTagAssignmentsResponseSchema>;
 
-export const UpsertSessionOrganizationLabelRequestSchema = z
+export const UpsertSessionOrganizationLabelRequestSchema = lazyZodSchema(() => z
   .object({
     labelKind: SessionOrganizationLabelKindSchema,
     scopeKey: SessionOrganizationKeySchema,
     display: SessionOrganizationContentEnvelopeSchema.nullable(),
   })
-  .strict();
+  .strict());
 export type UpsertSessionOrganizationLabelRequest = z.infer<typeof UpsertSessionOrganizationLabelRequestSchema>;
 
-export const UpsertSessionOrganizationLabelResponseSchema = z
+export const UpsertSessionOrganizationLabelResponseSchema = lazyZodSchema(() => z
   .object({
     label: SessionOrganizationLabelSchema,
   })
-  .strict();
+  .strict());
 export type UpsertSessionOrganizationLabelResponse = z.infer<typeof UpsertSessionOrganizationLabelResponseSchema>;
 
-export const DeleteSessionOrganizationLabelRequestSchema = z
+export const DeleteSessionOrganizationLabelRequestSchema = lazyZodSchema(() => z
   .object({
     labelKind: SessionOrganizationLabelKindSchema,
     scopeKey: SessionOrganizationKeySchema,
   })
-  .strict();
+  .strict());
 export type DeleteSessionOrganizationLabelRequest = z.infer<typeof DeleteSessionOrganizationLabelRequestSchema>;
 
-export const DeleteSessionOrganizationLabelResponseSchema = z
+export const DeleteSessionOrganizationLabelResponseSchema = lazyZodSchema(() => z
   .object({
     labelKind: SessionOrganizationLabelKindSchema,
     scopeKey: SessionOrganizationKeySchema,
     archived: z.boolean(),
   })
-  .strict();
+  .strict());
 export type DeleteSessionOrganizationLabelResponse = z.infer<typeof DeleteSessionOrganizationLabelResponseSchema>;
 
-const ImportLegacySessionOrganizationPinSchema = z
+const ImportLegacySessionOrganizationPinSchema = lazyZodSchema(() => z
   .object({
     sessionId: SessionOrganizationIdSchema,
     sortKey: SessionOrganizationSortKeySchema.nullable().optional(),
   })
-  .strict();
+  .strict());
 
-export const ImportLegacySessionOrganizationRequestSchema = z
+export const ImportLegacySessionOrganizationRequestSchema = lazyZodSchema(() => z
   .object({
     pins: z.array(ImportLegacySessionOrganizationPinSchema).max(SESSION_ORGANIZATION_MAX_PINNED_SESSIONS).default([]),
     folders: z.array(CreateOrUpdateSessionOrganizationFolderRequestSchema).max(SESSION_ORGANIZATION_MAX_FOLDERS).default([]),
@@ -238,10 +240,10 @@ export const ImportLegacySessionOrganizationRequestSchema = z
     orderEntries: z.array(SessionOrganizationOrderEntrySchema).max(SESSION_ORGANIZATION_MAX_ORDER_ENTRIES_PER_SCOPE).default([]),
     labels: z.array(UpsertSessionOrganizationLabelRequestSchema).max(SESSION_ORGANIZATION_MAX_LABELS).default([]),
   })
-  .strict();
+  .strict());
 export type ImportLegacySessionOrganizationRequest = z.infer<typeof ImportLegacySessionOrganizationRequestSchema>;
 
-export const ImportLegacySessionOrganizationResponseSchema = z
+export const ImportLegacySessionOrganizationResponseSchema = lazyZodSchema(() => z
   .object({
     imported: z
       .object({
@@ -253,5 +255,5 @@ export const ImportLegacySessionOrganizationResponseSchema = z
       })
       .strict(),
   })
-  .strict();
+  .strict());
 export type ImportLegacySessionOrganizationResponse = z.infer<typeof ImportLegacySessionOrganizationResponseSchema>;

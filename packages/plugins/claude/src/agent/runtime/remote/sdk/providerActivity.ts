@@ -1,3 +1,4 @@
+import { readClaudeTaskLifecycleEnvelope } from '../../../transcripts/taskNotification.js';
 import { readClaudeProviderIdentityValue } from '../../../../protocol/providerIdentity.js';
 import { normalizeClaudeAgentSdkProviderTaskId } from './providerTaskStatus.js';
 import type { SDKHookResponseMessage } from '../../../sdk/types.js';
@@ -6,9 +7,10 @@ export type ClaudeProviderTaskIdentity = Readonly<{ sessionId: string; taskId: s
 export type ClaudeProviderTaskActivity =
   | (ClaudeProviderTaskIdentity & Readonly<{
     type: 'started';
-    admission?: 'launch' | 'resume';
+    admission?: 'launch' | 'resume' | 'known-resume';
+    confirmsActivity?: false;
   }>)
-  | (ClaudeProviderTaskIdentity & Readonly<{ type: 'progress' }>)
+  | (ClaudeProviderTaskIdentity & Readonly<{ type: 'progress'; confirmsActivity?: false }>)
   | (ClaudeProviderTaskIdentity & Readonly<{
     type: 'terminal';
     terminalStatus?: 'completed' | 'failed' | 'stopped';
@@ -83,13 +85,6 @@ function readTaskId(row: Readonly<Record<string, unknown>>): string | null {
   );
 }
 
-function isFailedToolResponse(response: Readonly<Record<string, unknown>>): boolean {
-  if (response.success === false || response.is_error === true || response.isError === true) return true;
-  if (response.error !== undefined && response.error !== null) return true;
-  const status = normalizedString(response.status)?.toLowerCase();
-  return status === 'failed' || status === 'error' || status === 'denied' || status === 'rejected';
-}
-
 function readHookTaskActivity(
   row: Readonly<Record<string, unknown>>,
   contextualSessionId?: string,
@@ -109,45 +104,20 @@ function readHookTaskActivity(
   }
   if (eventName === 'SubagentStart') {
     return sidechainAgentId
-      ? { type: 'progress', sessionId, taskId: sidechainAgentId }
+      ? { type: 'started', admission: 'known-resume', sessionId, taskId: sidechainAgentId }
       : null;
   }
   if (eventName === 'SubagentStop') {
     return sidechainAgentId
-      ? { type: 'terminal', terminalStatus: 'stopped', sessionId, taskId: sidechainAgentId }
+      ? { type: 'progress', sessionId, taskId: sidechainAgentId }
       : null;
   }
-  if (eventName !== 'PostToolUse' || sidechainAgentId) return null;
+  if (eventName !== 'PostToolUse') return null;
+  if (sidechainAgentId) return { type: 'progress', sessionId, taskId: sidechainAgentId };
 
   const toolName = readToolName(row);
   const response = readToolResponse(row);
   if (!toolName || !response) return null;
-
-  if (toolName === 'Agent') {
-    if (response.status === 'async_launched') {
-      const taskId = normalizeClaudeAgentSdkProviderTaskId(response.agentId ?? response.agent_id);
-      return taskId ? { type: 'started', admission: 'launch', sessionId, taskId } : null;
-    }
-    if (response.status === 'remote_launched') {
-      const taskId = normalizeClaudeAgentSdkProviderTaskId(response.taskId ?? response.task_id);
-      return taskId ? { type: 'started', admission: 'launch', sessionId, taskId } : null;
-    }
-    return null;
-  }
-
-  if (toolName === 'Workflow') {
-    if (response.status !== 'async_launched' && response.status !== 'remote_launched') return null;
-    const taskId = normalizeClaudeAgentSdkProviderTaskId(response.taskId);
-    return taskId ? { type: 'started', admission: 'launch', sessionId, taskId } : null;
-  }
-
-  if (toolName === 'SendMessage') {
-    if (isFailedToolResponse(response)) return null;
-    const taskId = normalizeClaudeAgentSdkProviderTaskId(
-      response.resumedAgentId ?? response.resumed_agent_id,
-    );
-    return taskId ? { type: 'started', admission: 'resume', sessionId, taskId } : null;
-  }
 
   const input = readToolInput(row);
   const requestedTaskId = input ? readTaskId(input) : null;
@@ -215,6 +185,21 @@ function readStrictClaudeProviderTaskActivity(
 ): ClaudeProviderTaskActivity | null {
   const row = record(value);
   if (!row) return null;
+  const envelope = readClaudeTaskLifecycleEnvelope(row);
+  if (envelope?.taskId && !(row.type === 'system' && (row.subtype === 'task_started' || row.subtype === 'task_notification'))) {
+    const sessionId = envelope.sourceSessionId ?? readClaudeProviderIdentityValue(contextualSessionId);
+    if (sessionId) {
+      const taskId = envelope.taskId;
+      const status = envelope.status;
+      const terminal = status === 'complete' ? 'completed' : status === 'failed' ? 'failed'
+        : status === 'cancelled' ? 'stopped' : null;
+      if (envelope.subtype === 'async-launch') return { type: 'started', admission: 'launch', sessionId, taskId };
+      if (envelope.resumed) return { type: 'started', admission: envelope.knownOnly ? 'known-resume' : 'resume', sessionId, taskId };
+      if (terminal) return { type: 'terminal', terminalStatus: terminal, sessionId, taskId };
+      if (status === 'active') return { type: 'progress', sessionId, taskId,
+        ...(envelope.subtype === 'handback' || envelope.knownOnly ? { confirmsActivity: false as const } : {}) };
+    }
+  }
   const hookActivity = readHookTaskActivity(row, contextualSessionId);
   if (hookActivity) return hookActivity;
   if (row.type !== 'system') return null;
@@ -223,7 +208,8 @@ function readStrictClaudeProviderTaskActivity(
   const taskId = normalizeClaudeAgentSdkProviderTaskId(row.task_id);
   if (!sessionId || !taskId) return null;
   if (row.subtype === 'task_started') {
-    if (row.task_type !== 'local_workflow' && row.task_type !== 'local_bash') return null;
+    if (row.task_type !== 'local_workflow' && row.task_type !== 'local_bash'
+      && !(row.task_type === 'local_agent' && row.is_backgrounded === true)) return null;
     return { type: 'started', admission: 'launch', sessionId, taskId };
   }
   if (row.subtype === 'task_progress') return { type: 'progress', sessionId, taskId };
@@ -318,6 +304,8 @@ function keyOf(identity: ClaudeProviderTaskIdentity): string {
 export function createClaudeProviderActivityLedger(options?: ClaudeProviderActivityLedgerOptions) {
   type LedgerEntry = ClaudeProviderTaskIdentity & Readonly<{
     phase: 'active' | 'terminal_before_confirmation';
+    observed: boolean;
+    backgroundConfirmed: boolean;
   }>;
   const entries = new Map<string, LedgerEntry>();
   let observationGapFree = true;
@@ -326,9 +314,9 @@ export function createClaudeProviderActivityLedger(options?: ClaudeProviderActiv
     .filter((entry) => entry.phase === 'active');
 
   const getSnapshot = (): ClaudeProviderActivitySnapshot => {
-    const activeCount = activeEntries().length;
+    const activeCount = activeEntries().filter((entry) => entry.observed).length;
     if (activeCount > 0) return { state: 'active', activeCount };
-    return observationGapFree
+    return observationGapFree && activeEntries().length === 0
       ? { state: 'idle', activeCount: 0 }
       : { state: 'unknown', activeCount: 0 };
   };
@@ -350,6 +338,8 @@ export function createClaudeProviderActivityLedger(options?: ClaudeProviderActiv
             sessionId: activity.sessionId,
             taskId: activity.taskId,
             phase: 'terminal_before_confirmation',
+            observed: false,
+            backgroundConfirmed: true,
           });
         } else {
           if (!current) {
@@ -357,22 +347,32 @@ export function createClaudeProviderActivityLedger(options?: ClaudeProviderActiv
               sessionId: activity.sessionId,
               taskId: activity.taskId,
               phase: 'terminal_before_confirmation',
+              observed: false,
+              backgroundConfirmed: false,
             });
           }
           return false;
         }
       } else if (activity.type === 'progress') {
-        return false;
+        if (activity.confirmsActivity === false) return false;
+        const current = entries.get(key);
+        if (current?.phase !== 'active' || current.observed) return false;
+        entries.set(key, { ...current, observed: true });
       } else {
         const current = entries.get(key);
-        if (current?.phase === 'active') return false;
-        if (current?.phase === 'terminal_before_confirmation' && activity.admission !== 'resume') {
+        if (activity.admission === 'known-resume' && (!current || !current.backgroundConfirmed)) return false;
+        if (current?.phase === 'active' && current.observed) return false;
+        if (current?.phase === 'terminal_before_confirmation' && activity.admission !== 'resume' && activity.admission !== 'known-resume') {
+          // A late real launch proves background membership without undoing its settled outcome.
+          if (!current.backgroundConfirmed) entries.set(key, { ...current, backgroundConfirmed: true });
           return false;
         }
         entries.set(key, {
           sessionId: activity.sessionId,
           taskId: activity.taskId,
           phase: 'active',
+          observed: activity.confirmsActivity !== false,
+          backgroundConfirmed: true,
         });
       }
       notifyIfChanged(previous);
@@ -394,6 +394,11 @@ export function createClaudeProviderActivityLedger(options?: ClaudeProviderActiv
     noteObservationLost(): void {
       const previous = getSnapshot();
       observationGapFree = false;
+      // Unresolved identities remain available for exact task operations. Only fresh native
+      // evidence about an individual task can restore its current activity after observer loss.
+      for (const [key, entry] of entries) {
+        if (entry.phase === 'active') entries.set(key, { ...entry, observed: false });
+      }
       notifyIfChanged(previous);
     },
   });

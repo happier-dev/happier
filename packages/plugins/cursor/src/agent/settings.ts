@@ -99,7 +99,7 @@ export const CURSOR_AGENT_SETTINGS_CONTRIBUTION = {
   }],
   presentation: {
     icon: {
-      ionName: 'code-slash-outline',
+      ionName: 'code',
       color: { kind: 'theme', token: 'green' },
     },
     sections: [{

@@ -11,7 +11,6 @@ export * from './lifecycle/spawnHooks.js';
 export * from './lifecycle/acpSpawnPrerequisites.js';
 export * from './lifecycle/preflight/sessionControls.js';
 export * from './usage/tokenCountMessage.js';
-export * from './usage/pricing.js';
 export * from './rollout/semanticTracker.js';
 export * from './rollout/projection/actions.js';
 export * from './rollout/projection/messages.js';

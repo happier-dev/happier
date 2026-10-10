@@ -20,4 +20,14 @@ describe('PendingRequestedActionV1', () => {
     expect(() => normalizePendingRequestedActionV1({ v: 1, kind: 'interrupt_and_send' }))
       .toThrow('Malformed non-null Pending requested action');
   });
+
+  it('binds reset start to an accepted B witness without admitting copied protected schedule fields', () => {
+    const reset = { source: { bindingKind: 'account', ref: { service: { pluginId: 'happier.agent.codex', localId: 'openai' }, accountId: 'account' } },
+      recordId: 'paug_v1_abcdefgh', meterId: 'weekly', witness: { id: 'accepted-history-entry', observedAtMs: 1000 } };
+    const requestedAction = { v: 1, kind: 'reset_start', reset };
+    expect(PendingRequestedActionV1Schema.parse(requestedAction)).toEqual(requestedAction);
+    expect(PendingRequestedActionV1Schema.safeParse({ ...requestedAction, reset: { ...reset, resetAtMs: 2000 } }).success).toBe(false);
+    expect(PendingRequestedActionV1Schema.safeParse({ ...requestedAction, reset: { ...reset, witness: { ...reset.witness, latest: true } } }).success).toBe(false);
+    expect(PendingRequestedActionV1Schema.safeParse({ v: 1, kind: 'reset_start' }).success).toBe(false);
+  });
 });

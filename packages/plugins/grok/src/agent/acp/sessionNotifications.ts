@@ -224,11 +224,11 @@ function unwrapSessionNotification(value: unknown): JsonObject | null {
   return current;
 }
 
-function mapSubagentStatus(value: unknown): 'running' | 'completed' | 'failed' | 'aborted' {
-  if (value === 'completed') return 'completed';
+function mapSubagentTerminalStatus(value: unknown): 'completed' | 'failed' | 'aborted' {
   if (value === 'failed') return 'failed';
-  if (value === 'cancelled' || value === 'aborted') return 'aborted';
-  return 'running';
+  if (value === 'cancelled' || value === 'aborted' || value === 'stopped') return 'aborted';
+  // The finished notification establishes settlement even when no status is included.
+  return 'completed';
 }
 
 function mapGoalStatus(value: unknown): 'active' | 'paused' | 'blocked' | 'complete' | 'cancelled' | 'unknown' {
@@ -342,7 +342,7 @@ export function createGrokSessionNotificationObserver(params: Readonly<{
       const baseDetail = subagentDetailById.get(subagentId) ?? {
         origin: 'agent', kind: 'native', agentRef: { agentId: 'grok', agentKind: 'subagent' }, label: subagentId,
       };
-      const status = update.sessionUpdate === 'subagent_finished' ? mapSubagentStatus(update.status) : 'running';
+      const status = update.sessionUpdate === 'subagent_finished' ? mapSubagentTerminalStatus(update.status) : 'running';
       const groupId = string((asRecord(baseDetail.agentMetadata))?.workflowRunId) ?? undefined;
       const subagentObserver = params.context.session.services.subagents;
       await subagentObserver.observe({

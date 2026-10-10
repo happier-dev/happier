@@ -8,6 +8,7 @@ import type {
 } from '@happier-dev/protocol';
 import { ProviderBoundModelRefSchema, SessionModelSelectionIntentV1Schema } from '@happier-dev/protocol/providers/model-selection';
 import { SessionModelSelectionV2Schema } from '@happier-dev/protocol/providers/selection/v2';
+import type { SessionModelMutationExpectedV1, SessionModelMutationReversalV1, SessionModelMutationScopeV1 } from '@happier-dev/protocol/sessions/control/modelTransitionV1';
 
 import type { SessionStateFieldWriteValue } from './_types.js';
 import {
@@ -133,18 +134,67 @@ export function applyModelIntentSessionMetadata<TMetadata extends SessionMetadat
 export function createModelIntentMetadataCasCandidate(input: Readonly<{
   selection: ProviderBoundModelRef;
   nowMs?: () => number;
+  captureBefore?: boolean;
+  /** Live owner capture requires durable intent to match its proven active tuple. */
+  requiredBefore?: ProviderBoundModelRef;
+  ownerScope?: SessionModelMutationScopeV1;
+  expected?: Extract<SessionModelMutationExpectedV1, { owner: 'inactive' }>;
 }>): Readonly<{
   update<TMetadata extends SessionMetadata>(metadata: TMetadata): TMetadata;
-  readState(): Readonly<{ accepted: boolean; updatedAt: number | null }>;
+  readState(): Readonly<{ accepted: boolean; updatedAt: number | null; refusal?: 'conflict' | 'unsupported';
+    reversal?: Extract<SessionModelMutationReversalV1, { owner: 'inactive' }> }>;
 }> {
   const selection = ProviderBoundModelRefSchema.parse(input.selection);
   const nowMs = input.nowMs ?? Date.now;
   let updatedAt: number | null = null;
   let accepted = false;
+  let refusal: 'conflict' | 'unsupported' | undefined;
+  let reversal: Extract<SessionModelMutationReversalV1, { owner: 'inactive' }> | undefined;
 
   return Object.freeze({
     update<TMetadata extends SessionMetadata>(metadata: TMetadata): TMetadata {
       accepted = false;
+      refusal = undefined;
+      reversal = undefined;
+      const canonicalBefore = SessionModelSelectionIntentV1Schema.safeParse(metadata.modelSelectionIntentV1);
+      if (input.captureBefore || input.expected) {
+        const ownerScope = input.ownerScope;
+        if (!ownerScope) {
+          refusal = input.expected ? 'conflict' : 'unsupported';
+          return metadata;
+        }
+        if (input.expected && (input.expected.scope.serverId !== ownerScope.serverId
+          || input.expected.scope.accountId !== ownerScope.accountId
+          || input.expected.scope.sessionId !== ownerScope.sessionId)) {
+          refusal = 'conflict';
+          return metadata;
+        }
+        // V2/legacy/absent intent needs its own exact restoration contract.
+        // Ordinary writes retain their established compatibility behavior.
+        if (!canonicalBefore.success || canonicalBefore.data.selection === null || metadata.modelSelectionIntentV2 !== undefined) {
+          refusal = input.expected ? 'conflict' : 'unsupported';
+          return metadata;
+        }
+        // The Session setter re-derives the Agent target rather than accepting
+        // it from the caller. Do not promise an inverse it cannot express.
+        if (canonicalBefore.data.selection.agentTargetKey !== selection.agentTargetKey) {
+          refusal = input.expected ? 'conflict' : 'unsupported';
+          return metadata;
+        }
+        if (input.requiredBefore && (canonicalBefore.data.selection.agentTargetKey !== input.requiredBefore.agentTargetKey
+          || canonicalBefore.data.selection.providerConnectionId !== input.requiredBefore.providerConnectionId
+          || canonicalBefore.data.selection.modelId !== input.requiredBefore.modelId)) {
+          refusal = 'conflict';
+          return metadata;
+        }
+        if (input.expected && (canonicalBefore.data.updatedAt !== input.expected.updatedAt
+          || canonicalBefore.data.selection.agentTargetKey !== input.expected.selection.agentTargetKey
+          || canonicalBefore.data.selection.providerConnectionId !== input.expected.selection.providerConnectionId
+          || canonicalBefore.data.selection.modelId !== input.expected.selection.modelId)) {
+          refusal = 'conflict';
+          return metadata;
+        }
+      }
       const current = readModelIntentFromMetadata(metadata);
       updatedAt ??= Math.max(
         nowMs(),
@@ -167,9 +217,12 @@ export function createModelIntentMetadataCasCandidate(input: Readonly<{
         && persistedSelection.agentTargetKey === selection.agentTargetKey
         && persistedSelection.providerConnectionId === selection.providerConnectionId
         && persistedSelection.modelId === selection.modelId;
+      if (accepted && input.captureBefore && canonicalBefore.success && canonicalBefore.data.selection !== null && input.ownerScope) {
+        reversal = { owner: 'inactive', scope: input.ownerScope, before: canonicalBefore.data.selection, applied: selection, updatedAt };
+      }
       return next;
     },
-    readState: () => ({ accepted, updatedAt }),
+    readState: () => ({ accepted, updatedAt, ...(refusal ? { refusal } : {}), ...(reversal ? { reversal } : {}) }),
   });
 }
 

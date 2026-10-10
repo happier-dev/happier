@@ -106,6 +106,17 @@ export type RepositoryCheckpointTurnMetadata = Readonly<{
   unavailableReason?: string;
 }>;
 
+/** Exact checkpoint/commit content correspondence, never an authorship claim. */
+export type RepositoryCheckpointCommitEvidence = Readonly<{
+  sessionId: string;
+  turnId: string;
+  repositoryKey: string;
+  checkpointRef: string;
+  checkpointCommitSha: string;
+  commitSha: string;
+  attributionScope: CheckpointAttributionScope;
+}>;
+
 export type TurnChangeSet = Readonly<{
   sessionId: string;
   turnId: string;

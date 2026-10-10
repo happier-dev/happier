@@ -43,6 +43,11 @@ export const GENERATED_SESSION_PRESENTATION_COMPAT_V1 = Object.freeze([
     vendorResumeIdField: 'cursorSessionId',
   }),
   Object.freeze({
+    agentId: 'custom-acp',
+    flavorAliases: Object.freeze(['custom-acp']),
+    vendorResumeIdField: 'acpSessionId',
+  }),
+  Object.freeze({
     agentId: 'devin',
     flavorAliases: Object.freeze(['devin', 'devin-cli']),
     vendorResumeIdField: 'devinSessionId',

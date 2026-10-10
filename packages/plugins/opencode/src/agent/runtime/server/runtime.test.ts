@@ -4,7 +4,7 @@ import {
   createAgentSessionRuntimeHarness,
   type AgentSessionRuntimeHarness,
 } from '@happier-dev/plugin-sdk/testing';
-import type { AgentSessionModelsSource } from '@happier-dev/plugin-sdk/agents/runtime';
+import type { AgentRuntimeContext, AgentSessionModelsSource } from '@happier-dev/plugin-sdk/agents/runtime';
 import { AgentSessionRuntimeEventSchema, type AgentSessionRuntimeEvent } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { ManagedServiceSnapshot } from '@happier-dev/plugin-sdk/managed-services';
 
@@ -13,9 +13,10 @@ import type { OpenCodeRuntimeEvent } from './runtimeEvents.js';
 import { createOpenCodeSessionRuntime } from './sessionRuntime.js';
 import { createOpenCodeServerRuntime } from './runtime.js';
 import type { OpenCodeServerClient } from './openCodeServerClient.js';
+import { normalizeOpenCodeV2Event } from './openCodeV2EventAdapter.js';
 import { OpenCodeSseHttpError } from './openCodeSse.js';
 import { OpenCodeServerUnsupportedOperationError } from './openCodeServerClient.js';
-import type { OpenCodeRuntimeContext } from './runtimeContext.js';
+import { createOpenCodeRuntimeContext, type OpenCodeRuntimeContext } from './runtimeContext.js';
 
 const readyMcpRegistration = Promise.resolve({
   requiredHappier: { status: 'ready' as const },
@@ -661,6 +662,7 @@ describe('createOpenCodeServerRuntime', () => {
         },
         label: 'Inspect the runtime',
         agentMetadata: { parentProviderSessionId: 'ses-1' },
+        transcript: { parentSessionId: 'happy-session-1', sidechainId: 'child / Session-01' },
       },
     }]);
   });
@@ -760,7 +762,7 @@ describe('createOpenCodeServerRuntime', () => {
     const client = createClientFixture();
     client.sessionChildInventory.mockResolvedValue([{
       info: { id: 'background-child', parentID: 'ses-1', title: 'Background child' },
-      status: 'completed',
+      status: null,
     }]);
     const runtime = await createStartedRuntime({ ctx, client });
 
@@ -787,6 +789,158 @@ describe('createOpenCodeServerRuntime', () => {
     expect(observations).toEqual([
       expect.objectContaining({ observationId: 'background-child', status: 'running' }),
     ]);
+  });
+
+  it.each(['succeeded', 'failed', 'interrupted'] as const)('routes late child output and attention and terminal %s without opening the parent turn', async (outcome) => {
+    const observations: unknown[] = [];
+    const { ctx, runtimeEvents, harness } = createContextFixture({ onSubagentObservation: async (value) => { observations.push(value); return value; } });
+    const client = createClientFixture();
+    const runtime = await createStartedRuntime({ ctx, client, harness });
+    const nativeEvents: AgentSessionRuntimeEvent[] = [];
+    const nativeRuntime = createNativeSessionRuntimeForTest(runtime);
+    nativeRuntime.watch((event) => nativeEvents.push(AgentSessionRuntimeEventSchema.parse(event)));
+    const created = normalizeOpenCodeV2Event('session.created', { sessionID: 'late-child', parentID: 'ses-1', title: 'Late child' });
+    await runtime.handleProviderEvent({ payload: { type: created.type, properties: created.properties } });
+    client.sessionChildInventory.mockResolvedValue([{ info: { id: 'late-child', parentID: 'ses-1' }, status: 'running' }]);
+    runtime.beginTurnLifecycle('parent-launch-turn');
+    const launch = { sessionID: 'ses-1', assistantMessageID: 'parent-tool-message', id: 'native-launch' };
+    for (const [type, data] of [
+      ['session.tool.input.started', { ...launch, name: 'subagent' }],
+      ['session.tool.called', { ...launch, input: { agent: 'explore', prompt: 'Work', background: true }, executed: true }],
+      ['session.tool.progress', { ...launch, metadata: { sessionID: 'late-child', status: 'running' } }],
+    ] as const) {
+      const normalized = normalizeOpenCodeV2Event(type, data);
+      await runtime.handleProviderEvent({ payload: { type: normalized.type, properties: normalized.properties } });
+    }
+    expect(nativeEvents).toContainEqual(expect.objectContaining({ kind: 'tool-call', toolCallId: 'native-launch', toolName: 'subagent', input: { agent: 'explore', prompt: 'Work', background: true } }));
+    expect(nativeEvents.find((event) => event.kind === 'tool-call' && event.toolCallId === 'native-launch')).not.toHaveProperty('turnId');
+    await runtime.cancelTurn();
+    const parentTurnEvents = runtimeEvents.filter((value) => value.kind.startsWith('turn-'));
+    const launchAck = normalizeOpenCodeV2Event('session.tool.success', { ...launch,
+      content: [{ type: 'text', text: 'launch acknowledged' }], metadata: { sessionID: 'late-child', status: 'running' }, executed: true });
+    await runtime.handleProviderEvent({ payload: { type: launchAck.type, properties: launchAck.properties } });
+    expect(nativeEvents).toContainEqual(expect.objectContaining({ kind: 'tool-result', toolCallId: 'native-launch' }));
+    expect(nativeEvents.find((event) => event.kind === 'tool-result' && event.toolCallId === 'native-launch')).not.toHaveProperty('turnId');
+    await runtime.handleProviderEvent({ payload: { type: 'message.part.updated', properties: { part: {
+      id: 'late-part', type: 'text', sessionID: 'late-child', messageID: 'legacy-child-message', text: 'Legacy child output',
+    } } } });
+    await runtime.handleProviderEvent({ payload: { type: 'question.asked', properties: {
+      id: 'child-question', sessionID: 'late-child', questions: [{ question: 'Continue?', options: [] }],
+    } } });
+    expect(client.questionReject).toHaveBeenCalledWith({ sessionId: 'late-child', requestId: 'child-question' });
+    await runtime.handleProviderEvent({ payload: { type: 'permission.asked', properties: {
+      id: 'child-permission', sessionID: 'late-child', permission: 'bash', patterns: ['echo child'],
+    } } });
+    expect(client.permissionReply).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 'late-child', requestId: 'child-permission', reply: 'once' }));
+    const textEnded = normalizeOpenCodeV2Event('session.text.ended', {
+      sessionID: 'late-child', assistantMessageID: 'late-message', ordinal: 0, text: 'Late child output',
+    });
+    await runtime.handleProviderEvent({ payload: { type: textEnded.type, properties: textEnded.properties } });
+    expect(nativeEvents).toContainEqual(expect.objectContaining({ kind: 'transcript-message-committed', text: 'Late child output', sidechainId: 'late-child' }));
+    const childTool = { sessionID: 'late-child', assistantMessageID: 'child-tool-message', id: 'child-native-tool' };
+    for (const [type, data] of [
+      ['session.tool.input.started', { ...childTool, name: 'bash' }],
+      ['session.tool.called', { ...childTool, input: { command: 'echo child' }, executed: true }],
+      ['session.tool.success', { ...childTool, content: [{ type: 'text', text: 'child tool output' }], executed: true }],
+    ] as const) {
+      const normalized = normalizeOpenCodeV2Event(type, data);
+      await runtime.handleProviderEvent({ payload: { type: normalized.type, properties: normalized.properties } });
+    }
+    expect(runtimeEvents).toContainEqual(expect.objectContaining({ kind: 'transcript-agent-message-committed',
+      body: expect.objectContaining({ type: 'tool-result', callId: 'child-native-tool', output: 'child tool output', sidechainId: 'late-child' }) }));
+    for (const delta of [' Partial ', 'child', ' child ']) {
+      const normalized = normalizeOpenCodeV2Event('session.text.delta', {
+        sessionID: 'late-child', assistantMessageID: 'unfinished-child-message', ordinal: 0, delta,
+      });
+      await runtime.handleProviderEvent({ payload: { type: normalized.type, properties: normalized.properties } });
+    }
+    const terminal = normalizeOpenCodeV2Event(`session.execution.${outcome}`, { sessionID: 'late-child', reason: 'user', error: { message: 'Child failed' } });
+    await runtime.handleProviderEvent({ payload: { type: terminal.type, properties: terminal.properties } });
+    expect(observations.at(-1)).toEqual(expect.objectContaining({ observationId: 'late-child',
+      status: outcome === 'succeeded' ? 'completed' : outcome === 'failed' ? 'failed' : 'aborted' }));
+    expect(runtimeEvents).toContainEqual(expect.objectContaining({ kind: 'transcript-agent-message-committed',
+      body: expect.objectContaining({ message: 'Late child output', sidechainId: 'late-child' }) }));
+    expect(nativeEvents).toContainEqual(expect.objectContaining({ kind: 'transcript-message-committed',
+      text: ' Partial child child ', sidechainId: 'late-child' }));
+    expect(nativeEvents).toContainEqual(expect.objectContaining({ kind: 'tool-result', toolCallId: 'child-native-tool',
+      output: 'child tool output', sidechainId: 'late-child' }));
+    expect(runtimeEvents.filter((value) => value.kind.startsWith('turn-'))).toEqual(parentTurnEvents);
+    // Replayed launch ACK cannot revive a child with a later authoritative terminal event.
+    client.sessionChildInventory.mockResolvedValue([{ info: { id: 'late-child', parentID: 'ses-1' }, status: 'completed' }]);
+    await runtime.handleProviderEvent({ payload: { type: 'message.part.updated', properties: { part: {
+      type: 'tool', sessionID: 'ses-1', messageID: 'parent-tool-message', callID: 'native-launch', tool: 'subagent',
+      state: { status: 'completed', metadata: { sessionID: 'late-child', status: 'running' } },
+    } } } });
+    expect(observations.at(-1)).toEqual(expect.objectContaining({ status: outcome === 'succeeded' ? 'completed' : outcome === 'failed' ? 'failed' : 'aborted' }));
+    expect(nativeEvents.filter((event) => event.kind === 'tool-call' && event.toolCallId === 'native-launch')).toHaveLength(1);
+    expect(nativeEvents.filter((event) => event.kind === 'tool-result' && event.toolCallId === 'native-launch')).toHaveLength(1);
+    await runtime.handleProviderEvent({ payload: { type: 'session.idle', properties: { sessionID: 'unrelated-child', executionOutcome: 'succeeded' } } });
+    expect(observations.some((value) => (value as { observationId: string }).observationId === 'unrelated-child')).toBe(false);
+  });
+
+  it.each(['parent-cancel', 'child-terminal'] as const)('keeps a pending child question scoped to its own lifetime (%s)', async (boundary) => {
+    const { ctx } = createContextFixture();
+    let answer!: (value: Awaited<ReturnType<typeof ctx.ui.askQuestions>>) => void;
+    let questionLifetime: 'turn' | 'occurrence' | undefined;
+    let questionSignal: AbortSignal | undefined;
+    vi.mocked(ctx.ui.askQuestions).mockImplementation((_request, options) => {
+      questionLifetime = options?.lifetime;
+      questionSignal = options?.signal;
+      return new Promise((resolve) => { answer = resolve; });
+    });
+    let approve!: (value: Awaited<ReturnType<AgentRuntimeContext['services']['interactions']['requestApproval']>>) => void;
+    let approvalLifetime: 'turn' | 'occurrence' | undefined;
+    let approvalSignal: AbortSignal | undefined;
+    const requestApproval: AgentRuntimeContext['services']['interactions']['requestApproval'] = (_request, options) => {
+      approvalLifetime = options?.lifetime;
+      approvalSignal = options?.signal;
+      return new Promise((resolve) => { approve = resolve; });
+    };
+    // The host SDK is a process boundary; keep the real provider context and approval cancellation adapter beneath it.
+    const hostContext = { signal: ctx.abort.signal, services: {
+      exec: ctx.exec, logger: ctx.logger, managedServices: ctx.managedServices, storage: ctx.storage,
+      interactions: { askQuestions: ctx.ui.askQuestions, requestApproval },
+    } } as unknown as AgentRuntimeContext;
+    const providerContext = createOpenCodeRuntimeContext({ kind: 'create', sessionId: 'happy-session-1', cwd: '/repo' }, hostContext);
+    const client = createClientFixture();
+    const runtime = await createStartedRuntime({ ctx: { ...ctx, ui: providerContext.ui, sessions: {
+      ...ctx.sessions, current: { ...ctx.sessions.current, permissions: providerContext.sessions.current.permissions },
+    } }, client });
+    runtime.beginTurnLifecycle('parent-turn');
+    await runtime.handleProviderEvent({ payload: { type: 'session.created', properties: { info: { id: 'waiting-child', parentID: 'ses-1' } } } });
+    const questionWork = runtime.handleProviderEvent({ payload: { type: 'question.asked', properties: {
+      id: 'waiting-question', sessionID: 'waiting-child', questions: [{ question: 'Continue?', options: [] }],
+    } } });
+    const permissionWork = runtime.handleProviderEvent({ payload: { type: 'permission.asked', properties: {
+      id: 'waiting-permission', sessionID: 'waiting-child', permission: 'bash', patterns: ['echo child'],
+    } } });
+    await flushMicrotasks();
+    if (boundary === 'parent-cancel') await runtime.cancelTurn();
+    else {
+      const terminal = normalizeOpenCodeV2Event('session.execution.succeeded', { sessionID: 'waiting-child' });
+      await runtime.handleProviderEvent({ payload: { type: terminal.type, properties: terminal.properties } });
+      const resume = normalizeOpenCodeV2Event('session.execution.started', { sessionID: 'waiting-child' });
+      await runtime.handleProviderEvent({ payload: { type: resume.type, properties: resume.properties } });
+    }
+    answer({ requestId: 'waiting-question', kind: 'questions', status: 'answered',
+      answers: { 'waiting-question:0': { kind: 'text', value: 'Continue' } } });
+    approve({ requestId: 'waiting-permission', kind: 'approval', status: 'approved', persistence: 'once' });
+    await Promise.all([questionWork, permissionWork]);
+    expect(approvalLifetime).toBe('occurrence');
+    expect(approvalSignal?.aborted).toBe(boundary === 'child-terminal');
+    expect(questionLifetime).toBe('occurrence');
+    expect(questionSignal?.aborted).toBe(boundary === 'child-terminal');
+    if (boundary === 'parent-cancel') {
+      expect(client.questionReply).toHaveBeenCalledWith({ sessionId: 'waiting-child', requestId: 'waiting-question', answers: [['Continue']] });
+      expect(client.sessionAbort).toHaveBeenCalledWith({ sessionId: 'ses-1' });
+      expect(client.permissionReply).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 'waiting-child', requestId: 'waiting-permission', reply: 'once' }));
+    } else {
+      expect(client.permissionReply).not.toHaveBeenCalled();
+      expect(client.questionReply).not.toHaveBeenCalled();
+      expect(client.questionReject).not.toHaveBeenCalled();
+      expect(client.sessionAbort).not.toHaveBeenCalled();
+      await runtime.cancelTurn();
+    }
   });
 
   it('publishes native todo updates through the registered runtime work-state field', async () => {

@@ -106,6 +106,7 @@ export function readOpenCodeToolPart(value: unknown): OpenCodeToolPart | null {
     sessionID,
     callID,
     tool,
+    ...(tool === 'task' || tool === 'subagent' ? { nativeChildLaunch: true as const } : {}),
     ...(messageID ? { messageID } : {}),
     state: {
       status,

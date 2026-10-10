@@ -5,6 +5,7 @@ import { AgentModelOptionOverrideRuleReadSchema } from '@happier-dev/protocol/mo
 import { SessionOwnerModeCatalogV2Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { SessionWorkspaceLocationV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionWorkspaceLocationV1';
 import { SessionForkFilesNotCopiedV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
+import { SessionForkVisualCopyV1Schema, SessionForkVisualsV1Schema } from '@happier-dev/protocol/sessions/board/forkVisualCopies';
 import { createAgentRuntimeFacetsV1Schema } from '@happier-dev/protocol/sessions/metadata/agentRuntimeFacetsV1';
 import { createAcpConfigOptionOverridesV1Schema, createAcpSessionModeOverrideV1Schema, createModelOverrideV1Schema, normalizeCodexBackendMode } from '@happier-dev/protocol/sessions/metadata/overrides';
 import { createSessionPermissionModeSchema } from '@happier-dev/protocol/sessions/metadata/permission-modes';
@@ -265,12 +266,14 @@ const MetadataObjectSchema = lazyZodSchema(() => z.object({
         strategy: z.string(),
         requestId: z.string().optional(),
         filesNotCopied: SessionForkFilesNotCopiedV1Schema.optional(),
+        visualCopies: z.array(SessionForkVisualCopyV1Schema).optional(),
         agentHint: z.object({
             agentId: z.string().optional(),
             backendMode: z.string().optional(),
             agentSessionId: z.string().optional(),
         }).optional(),
     }).optional(),
+    forkVisualsV1: SessionForkVisualsV1Schema.optional(),
     /**
      * Hidden replay seed applied exactly once to the first real user prompt.
      */

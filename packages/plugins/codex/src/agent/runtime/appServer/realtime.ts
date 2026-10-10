@@ -573,6 +573,26 @@ export function createCodexAppServerRealtimeConversation(params: Readonly<{
       }
       if (attempt) return { status: 'busy' };
 
+      const contextText = (input.systemAppendBlocks ?? []).join('\n\n');
+      if (contextText.length > 0) {
+        try {
+          const response = await waitForCodexOperationOrAbort(client.request('thread/realtime/appendText', {
+            threadId, role: 'developer', text: contextText,
+          }, { ...(options?.signal ? { signal: options.signal } : {}), timeoutMs: null }), options?.signal);
+          if (response === CODEX_OPERATION_ABORTED) return { status: 'aborted' };
+          if (!isExactEmptyResponse(response)) throw new Error('Invalid Codex context response');
+        } catch {
+          if (options?.signal?.aborted) return { status: 'aborted' };
+          return { status: 'unavailable', diagnostic: diagnostic('codex_realtime_context_unavailable',
+            'Codex Realtime Voice could not admit current Session instructions.') };
+        }
+        if (options?.signal?.aborted) return { status: 'aborted' };
+        if (params.isDisposed() || params.isRuntimeExited?.() === true || params.getThreadId() !== threadId) {
+          return { status: 'unavailable', diagnostic: diagnostic('codex_realtime_thread_changed',
+            'The selected Codex Agent session changed before Realtime Voice startup.') };
+        }
+      }
+
       let settleResult!: (result: AgentSessionRealtimeStartResult) => void;
       const resultPromise = new Promise<AgentSessionRealtimeStartResult>((resolve) => {
         settleResult = resolve;

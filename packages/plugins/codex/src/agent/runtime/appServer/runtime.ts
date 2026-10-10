@@ -113,6 +113,7 @@ import {
   hasCodexAppServerCollaborationMode,
   resolveCodexAppServerCollaborationModeSelection,
 } from './state/controls.js';
+import { createCodexNativeChildObserver, type NativeChildProjectionContext } from './nativeChildren.js';
 import { projectCodexAppServerToolEventsFromNotification } from './projection/toolEvents.js';
 import {
   extractCodexGeneratedMediaCandidate,
@@ -121,11 +122,10 @@ import {
 import {
   buildThreadConfigOverrideParams,
   buildThreadServiceTierParams,
-  isCodexTurnInterruptedStatus,
   readNormalizedProviderEventItemType,
   readProviderEventItemId,
   readProviderEventItemRecord,
-  readCodexTurnStatus,
+  readCodexTerminalOutcome,
   readModelId,
   readProviderEventTurnId,
   readServiceTier,
@@ -322,6 +322,7 @@ export type CodexAppServerRuntimeHost = Readonly<{
     accountId: string | null;
   }>): Promise<unknown>;
   accountUsage?: CodexAppServerAccountUsageService;
+  subagents?: AgentSessionRuntimeContext['session']['services']['subagents'];
   ui?: Pick<AgentSessionRuntimeContext['services']['interactions'], 'requestApproval' | 'askQuestions'>;
   sendUserMessage?(request: Readonly<{ idempotencyKey: string; text: string; toolCallId: string }>): Promise<void>;
   mcp?: Pick<
@@ -1498,18 +1499,21 @@ export function createCodexAppServerRuntime(
     });
   };
 
-  const observeAssistantReasoningNotification = (method: string, notificationParams: unknown): boolean => {
+  const observeAssistantReasoningNotification = (
+    method: string,
+    notificationParams: unknown,
+    childContext?: NativeChildProjectionContext,
+  ): boolean => {
     const activeTurn = pendingTurn;
-    if (!activeTurn || !notificationMatchesPendingTurn(notificationParams)) return false;
-    const context = {
-      sidechainId: null,
-      streamScopeId: activeTurn.sessionTurnId,
-    };
+    if (!childContext && !notificationMatchesPendingTurn(notificationParams)) return false;
+    const context = childContext ?? (activeTurn ? { sidechainId: null, streamScopeId: activeTurn.sessionTurnId } : null);
+    if (!context) return false;
+    const projector = childContext?.projector ?? assistantReasoningProjector;
     const itemId = readProviderEventItemId(notificationParams)
-      ?? `${method}:${activeTurn.agentTurnId ?? activeTurn.sessionTurnId}`;
+      ?? `${method}:${context.streamScopeId}`;
     if (method === 'item/agentMessage/delta') {
       const text = readProviderEventText(notificationParams, ['delta', 'text']);
-      return assistantReasoningProjector.observeStreamUpdate({
+      return projector.observeStreamUpdate({
         type: 'assistant-text-delta',
         itemId,
         text,
@@ -1517,22 +1521,26 @@ export function createCodexAppServerRuntime(
     }
     if (method === 'item/reasoning/summaryTextDelta' || method === 'item/reasoning/textDelta') {
       const text = readProviderEventText(notificationParams, ['delta', 'text']);
-      return assistantReasoningProjector.observeStreamUpdate({
+      return projector.observeStreamUpdate({
         type: 'reasoning-delta',
         itemId,
         text,
       }, context);
     }
     if (method === 'rawResponseItem/completed') {
+      // Raw Responses items include developer/system/user input as well as model output.
+      // Only the native assistant message is a user-facing fallback for typed item events.
+      if (readNormalizedProviderEventItemType(notificationParams) !== 'message'
+        || readProviderEventItemRole(notificationParams) !== 'assistant') return false;
       const text = readProviderEventText(notificationParams, ['text', 'message', 'outputText', 'output_text']);
-      return assistantReasoningProjector.observeStreamUpdate({
+      return projector.observeStreamUpdate({
         type: 'assistant-raw-final',
         itemId: readProviderEventItemId(notificationParams),
         text,
       }, context);
     }
     if (method !== 'item/completed') return false;
-    if (handleAsyncQuestionNotification?.(notificationParams)) {
+    if (!childContext && handleAsyncQuestionNotification?.(notificationParams)) {
       return true;
     }
     const itemType = readNormalizedProviderEventItemType(notificationParams);
@@ -1540,7 +1548,7 @@ export function createCodexAppServerRuntime(
     const text = readProviderEventText(notificationParams, ['text', 'message', 'outputText', 'output_text']);
     if (!text) return false;
     if (itemType?.includes('reasoning') || itemType?.includes('thinking')) {
-      return assistantReasoningProjector.observeStreamUpdate({
+      return projector.observeStreamUpdate({
         type: 'reasoning-final',
         itemId,
         text,
@@ -1553,7 +1561,7 @@ export function createCodexAppServerRuntime(
       || itemType === 'message'
       || itemType?.includes('outputmessage')
     ) {
-      return assistantReasoningProjector.observeStreamUpdate({
+      return projector.observeStreamUpdate({
         type: 'assistant-text-final',
         itemId,
         text,
@@ -1561,6 +1569,15 @@ export function createCodexAppServerRuntime(
     }
     return false;
   };
+
+  const nativeChildren = createCodexNativeChildObserver({
+    parentThreadId: () => threadId,
+    subagents: params.host.subagents,
+    logger: params.host.logger,
+    publish: publishRuntimeEvent,
+    observeReasoning: observeAssistantReasoningNotification,
+    readFailureMessage: (notificationParams) => createErrorFromAppServerNotification(notificationParams, null).message,
+  });
 
   const publishToolEventsFromNotification = (method: string, notificationParams: unknown): boolean => {
     const activeTurn = pendingTurn;
@@ -1703,7 +1720,7 @@ export function createCodexAppServerRuntime(
     settlePendingTurnAgentTurnIdObservation(activeTurn);
     clearPendingTurnCompletionTimer();
     flushAssistantReasoningProjection(
-      status === 'interrupted' || isCodexTurnInterruptedStatus(readCodexTurnStatus(notificationParams))
+      status === 'interrupted' || readCodexTerminalOutcome('turn/completed', notificationParams) === 'interrupted'
         ? 'abort'
         : 'turn-end',
     );
@@ -1715,7 +1732,7 @@ export function createCodexAppServerRuntime(
     clearPendingHappierTitleToolNamesForTurn(activeTurn.sessionTurnId);
     terminalPendingTurnFailure = null;
     setActive(false);
-    if (status === 'interrupted' || isCodexTurnInterruptedStatus(readCodexTurnStatus(notificationParams))) {
+    if (status === 'interrupted' || readCodexTerminalOutcome('turn/completed', notificationParams) === 'interrupted') {
       publishRuntimeEvent({
         kind: 'turn-cancelled',
         turnId: activeTurn.sessionTurnId,
@@ -1852,7 +1869,7 @@ export function createCodexAppServerRuntime(
   const completePendingTurn = (status: 'completed' | 'interrupted', notificationParams: unknown): void => {
     if (!pendingTurn) return;
     if (!canSettleTerminalPendingTurn(notificationParams)) return;
-    if (status === 'interrupted' || isCodexTurnInterruptedStatus(readCodexTurnStatus(notificationParams))) {
+    if (status === 'interrupted' || readCodexTerminalOutcome('turn/completed', notificationParams) === 'interrupted') {
       finishPendingTurn(status, notificationParams);
       return;
     }
@@ -1938,8 +1955,8 @@ export function createCodexAppServerRuntime(
   };
 
   const handleTurnCompletedNotification = (notificationParams: unknown): void => {
-    const status = readCodexTurnStatus(notificationParams);
-    if (status === 'failed') {
+    const outcome = readCodexTerminalOutcome('turn/completed', notificationParams);
+    if (outcome === 'failed') {
       if (!canSettleTerminalPendingTurn(notificationParams)) return;
       const failure = createErrorFromAppServerNotification(
         notificationParams,
@@ -1948,7 +1965,7 @@ export function createCodexAppServerRuntime(
       failPendingTurn(failure);
       return;
     }
-    completePendingTurn('completed', notificationParams);
+    completePendingTurn(outcome === 'interrupted' ? 'interrupted' : 'completed', notificationParams);
   };
 
   const handleTurnInterruptedNotification = (notificationParams: unknown): void => {
@@ -2016,6 +2033,7 @@ export function createCodexAppServerRuntime(
       void recordProviderAccountUsageSnapshot(notificationParams, { operationIdentity: null });
     });
     if (params.happierSessionId !== undefined) nextClient.registerNotificationHandler('thread/tokenUsage/updated', (notificationParams) => {
+      if (readThreadId(notificationParams) !== threadId) return;
       handleTokenUsageNotification({
         notificationParams,
         sessionId: runtimeTargetId,
@@ -2029,7 +2047,19 @@ export function createCodexAppServerRuntime(
             body: message,
             meta: { source: 'codex-app-server-token-usage' },
           });
-          if (observation) publishRuntimeEvent(observation);
+          if (observation) {
+            // The usage codec identifies native records; canonical turn scope belongs
+            // to the admitted host turn, never Codex's native turn id. Late cumulative
+            // observations remain session-scoped after that turn has retired.
+            const { turnId: _nativeTurnId, ...sessionObservation } = observation;
+            const hostTurnId = pendingTurn && notificationMatchesPendingTurn(notificationParams)
+              ? pendingTurn.sessionTurnId
+              : null;
+            publishRuntimeEvent({
+              ...sessionObservation,
+              ...(hostTurnId ? { turnId: hostTurnId } : {}),
+            });
+          }
         },
       });
     });
@@ -2056,16 +2086,23 @@ export function createCodexAppServerRuntime(
         });
       });
     });
-    nextClient.registerNotificationHandler('turn/started', (notificationParams) => {
+    nextClient.registerNotificationHandler('thread/started', nativeChildren.registerProvenance);
+    nextClient.registerNotificationHandler('turn/started', (notificationParams): void | Promise<void> => {
+      const childNotification = nativeChildren.observe('turn/started', notificationParams);
+      if (childNotification) return childNotification;
       adoptProviderTurnFromActivity(notificationParams, {
         allowUnownedAdoption: true,
       });
     });
-    nextClient.registerNotificationHandler('turn/completed', (notificationParams) => {
+    nextClient.registerNotificationHandler('turn/completed', (notificationParams): void | Promise<void> => {
+      const childNotification = nativeChildren.observe('turn/completed', notificationParams);
+      if (childNotification) return childNotification;
       if (deferTerminalNotificationUntilTurnStartAcknowledged('turn/completed', notificationParams)) return;
       handleTurnCompletedNotification(notificationParams);
     });
-    nextClient.registerNotificationHandler('turn/interrupted', (notificationParams) => {
+    nextClient.registerNotificationHandler('turn/interrupted', (notificationParams): void | Promise<void> => {
+      const childNotification = nativeChildren.observe('turn/interrupted', notificationParams);
+      if (childNotification) return childNotification;
       if (deferTerminalNotificationUntilTurnStartAcknowledged('turn/interrupted', notificationParams)) return;
       handleTurnInterruptedNotification(notificationParams);
     });
@@ -2103,7 +2140,9 @@ export function createCodexAppServerRuntime(
       'item/completed',
       'rawResponseItem/completed',
     ]) {
-      nextClient.registerNotificationHandler(method, (notificationParams) => {
+      nextClient.registerNotificationHandler(method, (notificationParams): void | Promise<void> => {
+        const childNotification = nativeChildren.observe(method, notificationParams);
+        if (childNotification) return childNotification;
         if (!adoptProviderTurnFromActivity(notificationParams, {
           allowUnownedAdoption: method === 'item/agentMessage/delta'
             || method === 'turn/diff/updated'
@@ -2560,6 +2599,9 @@ export function createCodexAppServerRuntime(
         }),
         threadId: activeThreadId,
         input: turnInput,
+        ...(pendingProviderPrompt.localInputIds[0]
+          ? { clientUserMessageId: pendingProviderPrompt.localInputIds[0] }
+          : {}),
         ...(currentModelId ? { model: currentModelId } : {}),
         ...(effectiveReasoningEffort ? { effort: effectiveReasoningEffort } : {}),
         ...(hasServiceTierOverride
@@ -2702,9 +2744,7 @@ export function createCodexAppServerRuntime(
     assertActiveTurnSteerable();
     const userMessageSeq = readRuntimeUserMessageSeq(options);
     const pendingProviderPrompt = trackPendingProviderPrompt(message, options, true);
-    const clientUserMessageId = pendingProviderPrompt.localInputIds.length === 1
-      ? pendingProviderPrompt.localInputIds[0]
-      : null;
+    const clientUserMessageId = pendingProviderPrompt.localInputIds[0] ?? null;
     const steerInput = buildCodexAppServerTurnInput({
       text: message,
       ...(input.structuredInput === undefined ? {} : { structuredInput: input.structuredInput }),

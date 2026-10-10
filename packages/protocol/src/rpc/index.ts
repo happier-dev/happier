@@ -41,6 +41,9 @@ export {
   type SocketRpcActionApiServerOriginAuthorizationContext,
   type SocketRpcCurrentSessionPresentationOriginAuthorizationContext,
   ACTION_API_SERVER_ORIGIN,
+  MACHINE_ACCESS_LOSS_SERVER_ORIGIN,
+  LOCAL_SERVICES_PREVIEW_ADMISSION_SERVER_ORIGIN,
+  type SocketRpcLocalServicesPreviewAdmissionServerOriginAuthorizationContext,
   type SocketRpcSessionAuthorizationContext,
   type SocketRpcAuthorizationContext,
   type SocketRpcSessionWriteAuthorityV1,
@@ -55,6 +58,7 @@ export {
   isSocketRpcAutomationReplyHandoffServerOriginAuthorizationContext,
   isSocketRpcSessionServerStartServerOriginAuthorizationContext,
   isSocketRpcActionApiServerOriginAuthorizationContext,
+  isSocketRpcLocalServicesPreviewAdmissionServerOriginAuthorizationContext,
   isSocketRpcCurrentSessionPresentationOriginAuthorizationContext,
   parseSocketRpcAuthorizationContext,
 } from './socket.js';

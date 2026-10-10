@@ -6,6 +6,7 @@ import type { AgentExternalSessionsInvocation } from '@happier-dev/plugin-sdk/se
 import { searchCodexExternalTranscript } from './transcriptSource.js';
 import { raceWithTimeout } from '@happier-dev/plugin-sdk/async';
 import { findExternalSessionContentMatchRange } from '@happier-dev/protocol/sessions/external/contentSearchMatch';
+import { createExternalSessionContentSearchControl, ExternalSessionContentSearchYield } from '@happier-dev/plugin-sdk/sessions/file-stores';
 
 import {
   createCodexNativeAppServerClient,
@@ -53,8 +54,6 @@ import type {
   CodexExternalSessionSource,
 } from './models.js';
 import {
-  CodexExternalSessionContentSearchYield,
-  createCodexContentSearchInvocationBounds,
   mapCodexExternalSessionWorkWithConcurrency,
   throwIfCodexExternalSessionInvocationStopped,
   type CodexExternalSessionInvocationBounds,
@@ -1014,8 +1013,9 @@ export async function listCodexSessionCandidates(input: Readonly<{
   /** Include internal threads (approval reviewers, spawned sub-agents). Absent: top-level sessions only. */
   includeThreads?: boolean;
 }> & CodexExternalSessionInvocationBounds): Promise<CodexCandidateListPage> {
-  const params = input.searchTarget === 'content'
-    ? { ...input, ...createCodexContentSearchInvocationBounds(input) }
+  const contentSearchControl = input.searchTarget === 'content' ? createExternalSessionContentSearchControl(input) : undefined;
+  const params = contentSearchControl
+    ? { ...input, contentSearchControl, onProgress: contentSearchControl.checkWork }
     : input;
   throwIfCodexExternalSessionInvocationStopped(params);
   const searchTerm = typeof params.searchTerm === 'string' ? (params.searchTarget === 'content' ? params.searchTerm : params.searchTerm.trim()).toLowerCase() : '';
@@ -1175,7 +1175,7 @@ export async function listCodexSessionCandidates(input: Readonly<{
           processedRows += 1;
           longestRowMs = Math.max(longestRowMs, Date.now() - startedAtMs);
         } catch (error) {
-          if (!(error instanceof CodexExternalSessionContentSearchYield)) throw error;
+          if (!(error instanceof ExternalSessionContentSearchYield)) throw error;
           break;
         }
       }
@@ -1229,7 +1229,7 @@ export async function listCodexSessionCandidates(input: Readonly<{
     }
     return result;
   } catch (error) {
-    if (!(error instanceof CodexExternalSessionContentSearchYield)) throw error;
+    if (!(error instanceof ExternalSessionContentSearchYield)) throw error;
     const result: CodexCandidateListPage = {
       candidates: [],
       nextCursor: encodeCodexExternalSessionIndexCursor({ ...cursor, search }),

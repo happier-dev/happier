@@ -19,6 +19,8 @@ import { createSessionMessageMetaSchema } from './sessionMessageMeta.js';
 import type { SessionMessageMeta } from './sessionMessageMeta.js';
 import { AgentIdV1Schema } from '../../agents/agentIdV1.js';
 import { WorkerUpdateV1Schema, SessionWorkerPublishInputV1Schema, refineWorkerDeliverableResultV1 } from '../relations/workerUpdateV1.js';
+import { UsagePromptCompositionSchema } from '../../usage/coach/usagePromptComposition.js';
+import { UsageMcpBindingUsageSchema } from '../../usage/coach/usageMcpBindingUsage.js';
 
 const UsageDataSchema = lazyZodSchema(() => z
   .object({
@@ -652,6 +654,8 @@ export type TerminalComposerDraftBlockedReasonV1 =
   z.infer<typeof TerminalComposerDraftBlockedReasonV1Schema>;
 
 const AgentEventSchema = lazyZodSchema(() => z.discriminatedUnion('type', [
+  z.object({ type: z.literal('mcp-binding-usage'), usage: UsageMcpBindingUsageSchema }).strict(),
+  z.object({ type: z.literal('prompt-composition'), composition: UsagePromptCompositionSchema }).strict(),
   z.object({ type: z.literal('switch'), mode: z.enum(['local', 'remote']) }).passthrough(),
   z
     .object({
@@ -1093,6 +1097,8 @@ export const SESSION_MESSAGE_NO_USER_ATTENTION_IMPACT: SessionMessageAttentionIm
 });
 
 const AGENT_EVENT_TYPES_WITHOUT_USER_ATTENTION = new Set<TranscriptRawAgentEventV1['type']>([
+  'mcp-binding-usage',
+  'prompt-composition',
   'connected-service-account-switch',
   'connected-service-account-switch-deferral',
   'connected-service-account-switch-deferral-completed',

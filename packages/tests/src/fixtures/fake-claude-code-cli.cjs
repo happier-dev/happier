@@ -157,6 +157,7 @@ safeAppendJsonl(logPath, {
   ts: Date.now(),
   cwd: process.cwd(),
   argv,
+  claudeConfigDir: resolveClaudeConfigDir(),
   mcpConfigs,
   mergedMcpServers,
   environmentAttestation: captureEnvironmentAttestation(),

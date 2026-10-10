@@ -10,7 +10,7 @@ describe('Devin UI projection source', () => {
       subtitleKey: 'profiles.aiBackend.devinSubtitleExperimental',
       permissions: { modeGroup: 'codexLike', promptProtocol: 'codexDecision' },
       localControl: true,
-      picker: { iconName: 'hardware-chip-outline', cliGlyph: 'DV' },
+      picker: { iconName: 'cpu', cliGlyph: 'DV' },
     });
     expect(DEVIN_UI_DESCRIPTOR.assets.svgIcon).toMatchObject({
       assetId: 'devin',

@@ -61,7 +61,7 @@ export const CODEX_AGENT_SETTINGS_CONTRIBUTION = {
     },
   ],
   presentation: {
-    icon: { ionName: 'terminal-outline', color: { kind: 'theme', token: 'blue' } },
+    icon: { ionName: 'terminal', color: { kind: 'theme', token: 'blue' } },
     subagentSections: [],
     sections: [
       {

@@ -11,6 +11,83 @@ async function loadHandoffModule() {
 }
 
 describe('session handoff schemas', () => {
+  it('negotiates existing state only through the V3 epoch and explicit true flags', async () => {
+    const mod = await loadHandoffModule();
+    expect(mod).toHaveProperty('SessionHandoffCapabilityV3Schema');
+    if ('error' in mod) return;
+    const capability = { protocolVersion: 3, atomicTargetResume: true, targetCleanup: true, sameMachineHandoff: true, existingState: true };
+    expect(mod.SessionHandoffCapabilityV3Schema.parse(capability)).toEqual(capability);
+    // Current ../0.2 e087d15a2f0cce1de6de8ef0895d9c8bcc035056 handoffSchemas.ts
+    // advertises the same copy policy through protocolVersion:2, not the V3 owner.
+    expect(mod.SessionHandoffCapabilityV3Schema.safeParse({ ...capability, protocolVersion: 2 }).success).toBe(false);
+    for (const existingState of [undefined, false, 'true', 1, null]) {
+      expect(mod.SessionHandoffCapabilityV3Schema.parse({ ...capability, existingState }).existingState).toBe(false);
+    }
+    expect(mod.SessionHandoffCapabilityV3Schema.parse({ ...capability, extraPresentation: true })).not.toHaveProperty('extraPresentation');
+  });
+
+  it('admits existing state only with exact target identity and no transfer work', async () => {
+    const mod = await loadHandoffModule();
+    expect(mod).not.toHaveProperty('error');
+    if ('error' in mod) return;
+    const start = {
+      sessionId: 'session_1', sourceMachineId: 'source', targetMachineId: 'target',
+      sessionStorageMode: 'persisted', preferredTransportStrategies: ['direct_peer'],
+      stateTransfer: 'existing', workspaceAction: { kind: 'none' },
+    };
+    const prepare = {
+      handoffId: 'handoff_1', sessionId: 'session_1', sourceMachineId: 'source', targetMachineId: 'target',
+      sourceSessionStorageMode: 'persisted', negotiatedTransportStrategy: 'direct_peer', targetPath: '/repo',
+      stateTransfer: 'existing', workspaceAction: { kind: 'none' },
+    };
+    expect(mod.SessionHandoffStartRequestSchema.parse(start)).toMatchObject({ stateTransfer: 'existing' });
+    expect(mod.SessionHandoffPrepareTargetRequestSchema.parse(prepare)).toMatchObject({ sessionId: 'session_1', stateTransfer: 'existing' });
+    for (const [schema, request] of [[mod.SessionHandoffStartRequestSchema, start], [mod.SessionHandoffPrepareTargetRequestSchema, prepare]] as const) {
+      expect(schema.safeParse({ ...request, stateTransfer: 'unknown' }).success).toBe(false);
+      expect(schema.safeParse({ ...request, workspaceAction: { kind: 'copy_once', contentPolicy: {
+        v: 1, selection: 'git_worktree', extraIgnorePatterns: [], extraIncludePatterns: [], policyDigest: gitWorktreePolicyDigest,
+      } } }).success).toBe(false);
+    }
+    expect(mod.SessionHandoffPrepareTargetRequestSchema.safeParse({ ...prepare, sessionId: undefined }).success).toBe(false);
+    for (const publicationKey of ['agentBundleTransferPublication', 'providerBundleTransferPublication', 'workspaceSeedTransferPublication', 'workspaceReplicationManifestTransferPublication']) {
+      expect(mod.SessionHandoffPrepareTargetRequestSchema.safeParse({ ...prepare, handoffMetadataV2: {
+        [publicationKey]: { transferId: 'bundle', sizeBytes: 1, manifestHash: 'hash' },
+      } }).success).toBe(false);
+    }
+  });
+
+  it('refuses the pinned predecessor workspace carrier instead of silently reinterpreting existing state', () => {
+    // Prospective ../0.2 e087d15a2f0cce1de6de8ef0895d9c8bcc035056, current handoffSchemas.ts
+    // and its carries-explicit-existing-state fixture, observed dirty Action changes 2026-10-10.
+    const predecessor = {
+      sessionId: 'session_1', sourceMachineId: 'source', targetMachineId: 'target',
+      sessionStorageMode: 'persisted', preferredTransportStrategies: ['direct_peer'],
+      stateTransfer: 'existing', workspaceTransfer: { enabled: false, conflictPolicy: 'replace_existing' },
+    };
+    expect(SessionHandoffStartRequestSchema.safeParse(predecessor).success).toBe(false);
+  });
+
+  it('refuses existing state in a newly allocated managed directory before either daemon phase', () => {
+    const identity = { operationId: 'operation', sessionId: 'session', sourceMachineId: 'source', targetMachineId: 'target',
+      stateTransfer: 'existing', workspaceAction: { kind: 'none' }, targetDirectory: { kind: 'managed' } };
+    expect(SessionHandoffStartRequestSchema.safeParse({ ...identity, sessionStorageMode: 'persisted',
+      preferredTransportStrategies: ['direct_peer'] }).success).toBe(false);
+    expect(SessionHandoffPrepareTargetRequestSchema.safeParse({ ...identity, handoffId: 'handoff',
+      sourceSessionStorageMode: 'persisted', negotiatedTransportStrategy: 'direct_peer', endpointCandidates: [] }).success).toBe(false);
+  });
+
+  it('validates read-only existing-state checks and preserves the actionable absence failure', async () => {
+    const mod = await loadHandoffModule();
+    expect(mod).not.toHaveProperty('error');
+    if ('error' in mod) return;
+    const request = { sessionId: 'session_1', sourceMachineId: 'source', targetMachineId: 'target', targetPath: '/repo', sourceSessionStorageMode: 'persisted' };
+    expect(mod.SessionHandoffExistingStateCheckRequestV3Schema.parse(request)).toEqual(request);
+    expect(mod.SessionHandoffExistingStateCheckRequestV3Schema.safeParse({ ...request, stateTransfer: 'transfer' }).success).toBe(false);
+    const failure = { ok: false, errorCode: 'existing_session_state_unavailable', error: 'Turn on session data transfer' };
+    expect(mod.SessionHandoffExistingStateCheckResponseV3Schema.parse(failure)).toEqual(failure);
+    expect(mod.SessionHandoffPrepareTargetResultGetResponseSchema.parse(failure)).toEqual(failure);
+  });
+
   it('requires managed target identity while accepting daemon-selected paths', () => {
     const request = {
       handoffId: 'handoff_managed', operationId: 'operation_managed', sessionId: 'session_managed',

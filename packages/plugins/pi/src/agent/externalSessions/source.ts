@@ -18,7 +18,8 @@ function readOptionalString(value: unknown): string | null {
  * Resolves the source identity every Pi external-session leaf consumes. A
  * canonicalized configured agent directory remains paired with the descriptor's
  * selected session root, which may be a legacy env or settings location rather
- * than `<agentDir>/sessions`.
+ * than `<agentDir>/sessions`. Resolved sources pin that physical root so replay
+ * does not acquire another history scope when ambient configuration changes.
  */
 export function resolvePiExternalSessionSource(params: Readonly<{
   source: AgentExternalSessionSource;
@@ -33,17 +34,20 @@ export function resolvePiExternalSessionSource(params: Readonly<{
   const agentDir = requestedAgentDir
     ? canonicalizePathSync(requestedAgentDir)
     : configured.agentDir;
-  const sessionsRoot = agentDir === configured.agentDir
-    ? configured.sessionsRoot
-    : resolveSessionFileStoreDirsSync({
-      product: PI_SESSION_FILE_STORE_DESCRIPTOR_V1,
-      grantedRoot: {
-        v: 1,
-        productId: PI_SESSION_FILE_STORE_DESCRIPTOR_V1.productId,
-        agentDir,
-        grantedBy: 'host-config',
-      },
-    }).sessionsRoot;
+  const requestedSessionsRoot = readOptionalString(params.source.sessionsRoot);
+  const sessionsRoot = requestedSessionsRoot
+    ? canonicalizePathSync(requestedSessionsRoot)
+    : agentDir === configured.agentDir
+      ? configured.sessionsRoot
+      : resolveSessionFileStoreDirsSync({
+        product: PI_SESSION_FILE_STORE_DESCRIPTOR_V1,
+        grantedRoot: {
+          v: 1,
+          productId: PI_SESSION_FILE_STORE_DESCRIPTOR_V1.productId,
+          agentDir,
+          grantedBy: 'host-config',
+        },
+      }).sessionsRoot;
   const sessionFile = readOptionalString(params.source.sessionFile);
   const canonicalSessionFile = sessionFile ? canonicalizePathSync(sessionFile) : null;
   return {
@@ -52,6 +56,7 @@ export function resolvePiExternalSessionSource(params: Readonly<{
     source: {
       kind: 'piAgentDir',
       agentDir,
+      sessionsRoot,
       ...(canonicalSessionFile ? { sessionFile: canonicalSessionFile } : {}),
     },
   };

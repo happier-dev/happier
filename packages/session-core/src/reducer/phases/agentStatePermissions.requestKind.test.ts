@@ -12,7 +12,7 @@ describe('runAgentStatePermissionsPhase (request kind)', () => {
       permissionDecisionClaimV1: { version: 1 as const, origin: 'approvalReviewer' as const, scope: 'request' as const, decision: 'approved' as const }, permissionDecisionActorV1: { kind: 'approvalReviewer' } };
     const run = () => runAgentStatePermissionsPhase({ state,
       agentState: { controlledByUser: null, requests: {}, completedRequests: { read: completed } },
-      incomingToolIds: new Set<string>(), changed, allocateId: () => 'read-message', enableLogging: false });
+      incomingToolIds: new Set<string>(), mainHistoryStartLoaded: true, changed, allocateId: () => 'read-message', enableLogging: false });
     run();
     const tool = state.messages.get('read-message')!.tool!;
     tool.startedAt = 150;

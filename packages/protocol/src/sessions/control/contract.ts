@@ -56,7 +56,7 @@ import {
 } from '../metadata/sessionWorkspaceLocationV1.js';
 import {
   SessionMetadataRecipientProjectionV1Schema,
-  SessionOwnerMetadataEnvelopeV1Schema,
+  StoredSessionOwnerMetadataEnvelopeV1Schema,
   type SessionOwnerMetadataEnvelopeV1,
 } from '../metadata/sessionMetadataSchemasV1.js';
 import {
@@ -426,7 +426,7 @@ export const V2SessionRecordSchema = lazyZodSchema(() => z
     metadataVersion: z.number().int().nonnegative(),
     metadataLayoutVersion: z.number().int().nonnegative().optional(),
     ownerMetadata:
-      SessionOwnerMetadataEnvelopeV1Schema.nullable().optional(),
+      StoredSessionOwnerMetadataEnvelopeV1Schema.nullable().optional(),
     agentState: z.string().nullable().optional(),
     agentStateVersion: z.number().int().nonnegative().optional(),
     lastViewedSessionSeq: z.number().int().nonnegative().nullable().optional(),

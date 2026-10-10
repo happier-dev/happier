@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { createSentFromSchema } from '../../sentFrom.js';
@@ -17,6 +18,7 @@ import {
 import { VendorPluginMentionV1Schema } from '../../runtime/input/vendorPluginMentionV1.js';
 import { SkillMentionV1Schema } from '../../runtime/input/skillMentionV1.js';
 import { ExecutionRunInputTurnV1Schema } from '../../execution/runs/responseSchemas.js';
+import { SessionForkVisualOriginV1Schema } from '../board/forkVisualCopies.js';
 import {
   SESSION_INPUT_AUTHORITY_META_KEY,
   SESSION_INPUT_REQUEST_META_KEY,
@@ -40,7 +42,7 @@ const SESSION_USER_MESSAGE_DELIVERY_INTENTS = new Set<SessionUserMessageDelivery
 ]);
 
 /** Optional segment details are best-effort; only the version and kind identify a segment. */
-export const SessionMessageStreamSegmentV1Schema = z.object({
+export const SessionMessageStreamSegmentV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   segmentKind: z.enum(['assistant', 'thinking']),
   segmentLocalId: z.string().min(1).nullish().catch(undefined),
@@ -48,7 +50,7 @@ export const SessionMessageStreamSegmentV1Schema = z.object({
   startedAtMs: z.number().nullish().catch(undefined),
   updatedAtMs: z.number().nullish().catch(undefined),
   interruptedReason: z.string().optional().catch(undefined),
-}).strict();
+}).strict());
 
 export const SESSION_USER_MESSAGE_DELIVERY_INTENT_META_KEY = 'happierDeliveryIntentV1';
 export const SESSION_TOOL_ANSWER_DELIVERY_KIND = 'tool-answer-delivery.v1';
@@ -117,6 +119,7 @@ export function createSessionMessageMetaSchema(zod: typeof z) {
       allowedTools: zod.array(zod.string()).nullable().optional(),
       disallowedTools: zod.array(zod.string()).nullable().optional(),
       displayText: zod.string().optional(),
+      forkVisualOriginV1: SessionForkVisualOriginV1Schema.optional().catch(undefined),
       [SESSION_MESSAGE_PROVENANCE_META_KEY]: SessionMessageProvenanceSchema.optional(),
       [SESSION_INPUT_REQUEST_META_KEY]: SessionInputRequestSchema.optional(),
       [SESSION_INPUT_AUTHORITY_META_KEY]: SessionInputAuthoritySchema.optional(),

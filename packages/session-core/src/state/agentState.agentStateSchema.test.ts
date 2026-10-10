@@ -3,6 +3,21 @@ import { describe, expect, it } from 'vitest';
 import { AgentStateSchema } from "./agentState.js";
 
 describe('AgentStateSchema', () => {
+    it('retains witnessed completion identity and client category without inventing historical facts', () => {
+        const parsed = AgentStateSchema.parse({ completedRequests: {
+            current: { tool: 'Write', arguments: {}, createdAt: 100, completedAt: 200,
+                status: 'approved', turnId: 'turn-1', answeringClientCategory: 'ios' },
+            historical: { tool: 'Read', arguments: {}, createdAt: 50, completedAt: 60, status: 'approved' },
+            malformed: { tool: 'Read', arguments: {}, createdAt: 50, completedAt: 60, status: 'approved', answeringClientCategory: 'account-user' },
+        } });
+        expect(parsed.completedRequests?.current).toMatchObject({
+            turnId: 'turn-1', createdAt: 100, completedAt: 200, answeringClientCategory: 'ios',
+        });
+        expect(parsed.completedRequests?.historical).not.toHaveProperty('turnId');
+        expect(parsed.completedRequests?.historical).not.toHaveProperty('answeringClientCategory');
+        expect(parsed.completedRequests?.malformed.answeringClientCategory).toBeUndefined();
+    });
+
     it('parses JSON strings for backward compatibility', () => {
         const parsed = AgentStateSchema.safeParse(JSON.stringify({ controlledByUser: true }));
         expect(parsed.success).toBe(true);

@@ -4,6 +4,13 @@ import { AGENT_DEFINITION } from './definition.js';
 import { PLUGIN_MANIFEST } from '../manifest.js';
 
 describe('Antigravity agent definition', () => {
+  it('admits negotiated ACP modes without inventing static choices', () => {
+    expect(AGENT_DEFINITION).toMatchObject({
+      sessionModeDescriptor: { source: 'acp', semantics: 'agent-modes', runtimeSwitch: 'acp-setSessionMode' },
+      sessionModesKind: 'acpAgentModes',
+    });
+    expect(AGENT_DEFINITION.core).not.toHaveProperty('sessionModes');
+  });
   it('keeps provider identity and backend ownership as definition data', () => {
     expect(JSON.parse(JSON.stringify(AGENT_DEFINITION))).toEqual(AGENT_DEFINITION);
     expect(AGENT_DEFINITION).toMatchObject({

@@ -166,6 +166,13 @@ export function isCodexTurnInterruptedStatus(status: string | null): boolean {
     || status === 'aborted';
 }
 
+export function readCodexTerminalOutcome(method: string, value: unknown): 'completed' | 'failed' | 'interrupted' {
+  if (method !== 'turn/completed') return 'interrupted';
+  const status = readCodexTurnStatus(value);
+  if (status === 'failed') return 'failed';
+  return isCodexTurnInterruptedStatus(status) ? 'interrupted' : 'completed';
+}
+
 export function buildThreadServiceTierParams(
   currentServiceTier: string | null,
   hasServiceTierOverride: boolean,

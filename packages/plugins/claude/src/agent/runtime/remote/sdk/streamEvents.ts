@@ -1,4 +1,5 @@
 import type { SDKMessage } from '../../../sdk/types.js';
+import { withClaudeNativeToolResultMetadata } from '../../../transcripts/nativeSemanticProjection.js';
 import { redactBugReportSensitiveText, trimBugReportTextToMaxBytes } from '@happier-dev/plugin-sdk';
 import {
     containsDefinitiveClaudeOAuthRevocationEvidence,
@@ -233,7 +234,7 @@ export function extractToolResultBlocksFromSdkMessage(message: unknown): ClaudeS
         if (!toolUseId) continue;
         blocks.push({
             toolUseId,
-            output: readClaudeSdkToolResultOutput(block.content),
+            output: withClaudeNativeToolResultMetadata(readClaudeSdkToolResultOutput(block.content), record),
             ...(typeof block.is_error === 'boolean' ? { isError: block.is_error } : {}),
         });
     }

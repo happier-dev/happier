@@ -34,6 +34,7 @@ export function buildGrokAcpRuntimeDefinition(
     auth: {
       selectMethod: (context) => selectGrokAuthentication(context, launchEnvironment),
     },
+    permissions: { scope: 'session' as const },
     parameterizedModelPicker: true,
     acceptsVerifiedImageInput: true,
     toolNameInference: createAcpToolNameInferencePreset(),

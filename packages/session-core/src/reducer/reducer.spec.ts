@@ -14,6 +14,27 @@ import {
 } from "../testkit/sessionAgentTransitionFixtures.js";
 
 describe('reducer', () => {
+    it('keeps prompt-composition evidence out of the conversational transcript', () => {
+        const state = createReducer();
+        const composition: NormalizedMessage = {
+            id: 'composition-row', seq: 2, localId: null, createdAt: 1001, role: 'event', isSidechain: false,
+            content: { type: 'prompt-composition', composition: {
+                v: 1, evidenceId: 'composition', sessionId: 'session', turnId: null, inputId: 'input',
+                observedAtMs: 1001, boundary: 'host_pre_dispatch', deliveryKind: 'newTurn', coverage: 'host_only',
+                components: [], nativePrefix: null, contextWindowTokens: null,
+            } },
+        };
+        const user: NormalizedMessage = {
+            id: 'user-row', seq: 1, localId: null, createdAt: 1000, role: 'user', isSidechain: false,
+            content: { type: 'text', text: 'List the files' },
+        };
+        const result = reducer(state, [user, composition]);
+        expect(result.messages.map((message) => message.kind)).toEqual(['user-text']);
+        expect(reducer(state, [composition]).messages).toEqual([]);
+        // The retained usage reader consumes this evidence independently of conversational rows.
+        expect(composition.content).toMatchObject({ type: 'prompt-composition', composition: { evidenceId: 'composition' } });
+    });
+
     it('retains exact Home actor identity and reconciles actor-only authoritative updates', () => {
         const state = createReducer();
         const initial: NormalizedMessage = {
@@ -1833,7 +1854,7 @@ describe('reducer', () => {
                 }
             };
 
-            const result1 = reducer(state, [], agentState);
+            const result1 = reducer(state, [], agentState, [], { mainHistoryStartLoaded: true });
             expect(result1.messages).toHaveLength(1);
 
             // Then receive the actual tool call from the agent
@@ -1972,7 +1993,7 @@ describe('reducer', () => {
                 }
             };
 
-            const result1 = reducer(state, [], agentState);
+            const result1 = reducer(state, [], agentState, [], { mainHistoryStartLoaded: true });
             expect(result1.messages).toHaveLength(2);
 
             // Store the message IDs
@@ -2046,7 +2067,7 @@ describe('reducer', () => {
             };
 
             // First call - should create messages
-            const result1 = reducer(state, [], agentState);
+            const result1 = reducer(state, [], agentState, [], { mainHistoryStartLoaded: true });
             expect(result1.messages).toHaveLength(2);
 
             // Verify the messages were created
@@ -2256,7 +2277,7 @@ describe('reducer', () => {
             };
 
             // Process permissions
-            const result1 = reducer(state, [], agentState);
+            const result1 = reducer(state, [], agentState, [], { mainHistoryStartLoaded: true });
             expect(result1.messages).toHaveLength(2);
 
             // Both should be separate messages
@@ -3298,7 +3319,7 @@ describe('reducer', () => {
                 }
             ];
 
-            const result = reducer(state, messages, agentState);
+            const result = reducer(state, messages, agentState, [], { mainHistoryStartLoaded: true });
 
             // Should create: 1 user, 1 agent text, 1 tool from permission request,
             // 1 tool from completed permission, 1 new tool call

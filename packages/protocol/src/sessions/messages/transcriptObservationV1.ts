@@ -1,22 +1,45 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { PendingLocalIdSchema } from '../pending/pendingLocalId.js';
 import { SessionMessageRoleSchema } from './sessionMessageRole.js';
 import { SessionStoredMessageContentSchema } from './sessionStoredMessageContent.js';
 import { SessionTranscriptSourceTimestampMsSchema } from './transcriptSourceTimestampV1.js';
+import { SessionSurfaceItemIdSchema } from '../board/ids.js';
+import { SessionSystemRecordRevisionSchema } from '../system/records/sessionSystemRecordRevision.js';
 
 export const SESSION_TRANSCRIPT_OBSERVATION_CAPABILITY_V1 = 'session-transcript-observation-v1' as const;
+export const SESSION_TRANSCRIPT_OBSERVATION_CAPABILITY_V2 = 'session-transcript-observation-v2' as const;
 export const SESSION_TRANSCRIPT_OBSERVATION_CAPABILITY_EVENT_V1 = 'transcript-observation-capability-v1' as const;
 export const SESSION_TRANSCRIPT_OBSERVATION_EVENT_V1 = 'transcript-observation-v1' as const;
 
-const NonBlankStringSchema = z.string().refine((value) => value.trim().length > 0, {
+const NonBlankStringSchema = lazyZodSchema(() => z.string().refine((value) => value.trim().length > 0, {
   message: 'Expected a non-blank string',
-});
+}));
 
-export const SessionTranscriptObservationProvenanceV1Schema = z.object({
+/** Owning Session is the observation's Session. The original address is presentation correlation only. */
+export const SessionTranscriptSurfaceItemReferenceV1Schema = lazyZodSchema(() => z.object({
+  v: z.literal(1),
+  itemId: SessionSurfaceItemIdSchema,
+  itemRevision: SessionSystemRecordRevisionSchema,
+  sourceAddress: z.object({ serverId: NonBlankStringSchema, sessionId: NonBlankStringSchema }).strict(),
+}).strict());
+export type SessionTranscriptSurfaceItemReferenceV1 = z.infer<typeof SessionTranscriptSurfaceItemReferenceV1Schema>;
+
+/** The v3 operation epoch preserves acknowledged child identities in historical imports. */
+export const SessionHistoricalTranscriptImportV3Schema = lazyZodSchema(() => z.object({
+  items: z.array(z.object({
+    localId: z.string().trim().min(1),
+    content: SessionStoredMessageContentSchema,
+    messageRole: SessionMessageRoleSchema.optional(),
+    surfaceItemReference: SessionTranscriptSurfaceItemReferenceV1Schema.optional(),
+  }).strict()).min(1).max(500),
+}).strict());
+
+export const SessionTranscriptObservationProvenanceV1Schema = lazyZodSchema(() => z.object({
   kind: z.literal('non_dependent'),
   source: z.enum(['background', 'external', 'sidechain', 'history']),
-}).strict();
+}).strict());
 
 export type SessionTranscriptObservationProvenanceV1 = z.infer<typeof SessionTranscriptObservationProvenanceV1Schema>;
 
@@ -27,7 +50,7 @@ export function isRecoveredHistoryTranscriptObservationProvenance(
   return provenance.success && provenance.data.source === 'history';
 }
 
-export const SessionTranscriptObservationV1Schema = z.object({
+const SessionTranscriptObservationBodyV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   sessionId: NonBlankStringSchema,
   localId: PendingLocalIdSchema,
@@ -38,7 +61,9 @@ export const SessionTranscriptObservationV1Schema = z.object({
   updatedAt: SessionTranscriptSourceTimestampMsSchema,
   provenance: SessionTranscriptObservationProvenanceV1Schema,
   sessionEventType: z.literal('ready').optional(),
-}).strict().superRefine((value, context) => {
+}).strict());
+
+function refineObservationTimestamps(value: { createdAt: number; updatedAt: number }, context: z.RefinementCtx) {
   if (value.updatedAt < value.createdAt) {
     context.addIssue({
       code: z.ZodIssueCode.custom,
@@ -46,11 +71,26 @@ export const SessionTranscriptObservationV1Schema = z.object({
       message: 'updatedAt must not precede createdAt',
     });
   }
-});
+}
+
+export const SessionTranscriptObservationV1Schema = lazyZodSchema(() =>
+  SessionTranscriptObservationBodyV1Schema.superRefine(refineObservationTimestamps));
+
+export const SessionTranscriptObservationV2Schema = lazyZodSchema(() =>
+  SessionTranscriptObservationBodyV1Schema.extend({ v: z.literal(2),
+    surfaceItemReference: SessionTranscriptSurfaceItemReferenceV1Schema.optional(),
+  }).superRefine(refineObservationTimestamps));
+
+export const SessionTranscriptObservationInputSchema = lazyZodSchema(() =>
+  z.union([SessionTranscriptObservationV1Schema, SessionTranscriptObservationV2Schema]));
+
+export const SessionTranscriptObservationCapabilityRequestSchema = lazyZodSchema(() => z.object({
+  v: z.union([z.literal(1), z.literal(2)]), sessionId: NonBlankStringSchema,
+}).strict());
 
 export type SessionTranscriptObservationV1 = z.infer<typeof SessionTranscriptObservationV1Schema>;
 
-export const SessionTranscriptObservationCapabilityAckV1Schema = z.discriminatedUnion('ok', [
+export const SessionTranscriptObservationCapabilityAckV1Schema = lazyZodSchema(() => z.discriminatedUnion('ok', [
   z.object({
     ok: z.literal(true),
     capability: z.literal(SESSION_TRANSCRIPT_OBSERVATION_CAPABILITY_V1),
@@ -59,9 +99,14 @@ export const SessionTranscriptObservationCapabilityAckV1Schema = z.discriminated
     ok: z.literal(false),
     error: z.enum(['forbidden', 'unsupported', 'invalid_session', 'internal']),
   }).strict(),
-]);
+]));
 
-export const SessionTranscriptObservationAckV1Schema = z.union([
+export const SessionTranscriptObservationCapabilityAckSchema = lazyZodSchema(() => z.union([
+  SessionTranscriptObservationCapabilityAckV1Schema,
+  z.object({ ok: z.literal(true), capability: z.literal(SESSION_TRANSCRIPT_OBSERVATION_CAPABILITY_V2) }).strict(),
+]));
+
+export const SessionTranscriptObservationAckV1Schema = lazyZodSchema(() => z.union([
   z.object({
     ok: z.literal(true),
     status: z.literal('observed'),
@@ -76,7 +121,7 @@ export const SessionTranscriptObservationAckV1Schema = z.union([
     ok: z.literal(false),
     error: z.enum(['forbidden', 'invalid_observation', 'internal']),
   }).strict(),
-]);
+]));
 
 export type SessionTranscriptObservationCapabilityAckV1 = z.infer<typeof SessionTranscriptObservationCapabilityAckV1Schema>;
 export type SessionTranscriptObservationAckV1 = z.infer<typeof SessionTranscriptObservationAckV1Schema>;

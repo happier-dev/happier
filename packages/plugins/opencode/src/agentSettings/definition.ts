@@ -160,7 +160,7 @@ export const OPENCODE_AGENT_SETTINGS_CONTRIBUTION: PluginSettingsContribution = 
     },
   ],
   presentation: {
-    icon: { ionName: 'code-slash-outline', color: { kind: 'theme', token: 'blue' } },
+    icon: { ionName: 'code', color: { kind: 'theme', token: 'blue' } },
     subagentSections: [],
     sections: [
       {

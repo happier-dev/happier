@@ -1,3 +1,13 @@
+export const MACHINE_RPC_TIMEOUT_ERROR_CODE = 'MACHINE_RPC_TIMEOUT';
+
+export function isMachineRpcTimeoutError(error: unknown): boolean {
+  return Boolean(
+    error
+    && typeof error === 'object'
+    && (error as { code?: unknown }).code === MACHINE_RPC_TIMEOUT_ERROR_CODE,
+  );
+}
+
 export const RPC_ERROR_CODES = {
   UPDATE_REQUIRED: 'RPC_UPDATE_REQUIRED',
   METHOD_NOT_AVAILABLE: 'RPC_METHOD_NOT_AVAILABLE',

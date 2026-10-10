@@ -23,7 +23,7 @@ export const ANTIGRAVITY_UI_DESCRIPTOR = Object.freeze({
     localControl: true,
     toolRendering: { hideUnknownToolsByDefault: false },
     picker: {
-      iconName: 'rocket-outline',
+      iconName: 'rocket',
       cliGlyph: 'AG',
       cliGlyphScale: 0.92,
       profileCompatibilityGlyphScale: 0.92,

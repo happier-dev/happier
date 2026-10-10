@@ -226,6 +226,7 @@ export function createCodexNativeAppServerRuntimeHost(params: Readonly<{
       return JSON.parse(new TextDecoder().decode(response.body)) as unknown;
     },
     accountUsage,
+    subagents: params.context.session.services.subagents,
     ...(currentSession ? {
       setTitle: async (title) => {
         await currentSession.setDisplayTitle(title, { signal: params.context.signal });
@@ -445,29 +446,32 @@ function mapCodexAppServerEvent(event: CodexAppServerEvent): NativeSessionEventI
     case 'message-delta': {
       const delta = readTextDelta(event.delta);
       return delta
-        ? { kind: 'message-delta', turnId: event.turnId, channel: delta.channel, text: delta.text }
+        ? { kind: 'message-delta', ...(event.turnId ? { turnId: event.turnId } : {}), ...(event.messageId ? { messageId: event.messageId } : {}), channel: delta.channel, text: delta.text, ...(event.sidechainId ? { sidechainId: event.sidechainId } : {}) }
         : null;
     }
     case 'tool-call':
       return {
         kind: 'tool-call',
-        turnId: event.turnId,
+        ...(event.turnId ? { turnId: event.turnId } : {}),
         toolCallId: event.toolCallId,
+        ...(event.sidechainId ? { sidechainId: event.sidechainId } : {}),
         toolName: event.toolName,
         input: toJsonValue(event.toolInput),
       };
     case 'tool-progress':
       return {
         kind: 'tool-progress',
-        turnId: event.turnId,
+        ...(event.turnId ? { turnId: event.turnId } : {}),
         toolCallId: event.toolCallId,
+        ...(event.sidechainId ? { sidechainId: event.sidechainId } : {}),
         progress: toJsonValue(event.progress),
       };
     case 'tool-result':
       return {
         kind: 'tool-result',
-        turnId: event.turnId,
+        ...(event.turnId ? { turnId: event.turnId } : {}),
         toolCallId: event.toolCallId,
+        ...(event.sidechainId ? { sidechainId: event.sidechainId } : {}),
         output: toJsonValue(event.output),
         ...(event.isError === true ? { isError: true } : {}),
       };
@@ -482,6 +486,7 @@ function mapCodexAppServerEvent(event: CodexAppServerEvent): NativeSessionEventI
         ? {
             kind: 'transcript-message-committed',
             messageId: event.localId,
+            ...(event.sidechainId ? { sidechainId: event.sidechainId } : {}),
             role: message.role,
             text: message.text,
           }
@@ -502,6 +507,7 @@ function mapCodexAppServerEvent(event: CodexAppServerEvent): NativeSessionEventI
         ...(event.turnId ? { turnId: event.turnId } : {}),
         source: event.source,
         scope: event.scope,
+        ...(event.accounting ? { accounting: event.accounting } : {}),
         ...(event.modelId ? { modelId: event.modelId } : {}),
         ...(event.tokens ? { tokens: event.tokens } : {}),
         ...(event.cost ? { cost: event.cost } : {}),

@@ -1060,6 +1060,93 @@ describe('Claude native External Sessions contribution', () => {
         expect(second.value.items[0]?.id).not.toBe(first.value.items[0]?.id);
     });
 
+    it.each(['completed', 'failed', 'stopped'] as const)('issue506 projects authenticated queued task %s beside unchanged native evidence', async (status) => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-claude-task-outcome-'));
+        roots.push(root);
+        const configDir = join(root, '.claude');
+        const remoteSessionId = 'queued-task-outcome';
+        const source = { kind: 'claudeConfig', configDir, projectId: 'task-outcome' };
+        const transcriptPath = await createTranscript({ configDir, projectId: source.projectId, remoteSessionId, title: 'existing' });
+        const contribution = createClaudeExternalSessionsContribution({ env: { HAPPIER_CLAUDE_CONFIG_DIR: configDir } });
+        const tail = await contribution.pageTranscript({ ...invocation(), source, remoteSessionId, direction: 'older', maxItems: 10 });
+        if (!tail.ok || !tail.value.tailCursor) throw new Error('expected task outcome cursor');
+        const timestamp = '2026-06-08T00:02:00.000Z';
+        const xml = `<task-notification><task-id>native-child</task-id><tool-use-id>agent-launch-tool</tool-use-id><status>${status}</status><summary>Native child findings</summary></task-notification>`;
+        const notification = {
+            type: 'attachment', uuid: 'native-queued-terminal', sessionId: remoteSessionId, timestamp,
+            attachment: { type: 'queued_command', commandMode: 'task-notification', prompt: xml,
+                origin: { kind: 'task-notification', taskId: 'native-child', toolUseId: 'agent-launch-tool', status } },
+        };
+        const copied = { type: 'user', uuid: 'copied-terminal', sessionId: remoteSessionId, timestamp, message: { role: 'user', content: xml } };
+        const bareQueue = { type: 'queue-operation', operation: 'enqueue', content: xml, sessionId: remoteSessionId, timestamp };
+        await appendFile(transcriptPath, [copied, bareQueue, notification].map(row => JSON.stringify(row)).join('\n') + '\n');
+        const result = await contribution.readAfterTranscript({ ...invocation(), source, remoteSessionId, cursor: tail.value.tailCursor, maxItems: 50 });
+        if (!result.ok || result.value.outcome !== 'advanced') throw new Error('expected queued task outcome');
+        const outcomes = result.value.items.filter(item => item.raw.role === 'agent');
+        expect(outcomes).toEqual([expect.objectContaining({ raw: {
+            role: 'agent', content: expect.objectContaining({ data: expect.objectContaining({
+                type: 'tool-result', callId: 'agent-launch-tool',
+                output: status === 'completed' ? expect.anything() : expect.objectContaining({ tool_use_result: expect.objectContaining({ status: status === 'stopped' ? 'cancelled' : 'failed', result: 'Native child findings' }) }),
+                isError: status !== 'completed',
+            }) }),
+        } })]);
+        expect(JSON.stringify(outcomes)).toContain('Native child findings');
+        const terminal = await contribution.readAfterTranscript({ ...invocation(), source, remoteSessionId, cursor: tail.value.tailCursor, projection: 'terminal', maxItems: 50 });
+        if (!terminal.ok || terminal.value.outcome !== 'advanced') throw new Error('expected ordered native observations');
+        expect(terminal.value.items.filter(item => item.raw.role === 'source_observation').map(item => item.raw.content)).toEqual([copied, bareQueue, notification]);
+        expect(terminal.value.items.filter(item => item.raw.role === 'agent')).toEqual([]);
+        expect(await contribution.readAfterTranscript({ ...invocation(), source, remoteSessionId, cursor: result.value.nextCursor, projection: 'terminal', maxItems: 50 }))
+            .toEqual({ ok: true, value: { outcome: 'already_current' } });
+    });
+
+    it('retains native async agent alias evidence beside ordered terminal history', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-claude-native-agent-history-'));
+        roots.push(root);
+        const configDir = join(root, '.claude');
+        const remoteSessionId = 'native-agent-history';
+        const source = { kind: 'claudeConfig', configDir, projectId: 'agent-history' };
+        const transcriptPath = await createTranscript({ configDir, projectId: source.projectId, remoteSessionId, title: 'existing' });
+        const contribution = createClaudeExternalSessionsContribution({ env: { HAPPIER_CLAUDE_CONFIG_DIR: configDir } });
+        const tail = await contribution.pageTranscript({ ...invocation(), source, remoteSessionId, direction: 'older', maxItems: 10 });
+        if (!tail.ok || !tail.value.tailCursor) throw new Error('expected native history cursor');
+        const rows = [{
+            type: 'assistant', uuid: 'native-agent-launch', parentUuid: `${source.projectId}-user`, session_id: remoteSessionId, timestamp: '2026-06-08T00:02:00.000Z',
+            message: { content: [{ type: 'tool_use', id: 'agent-tool', name: 'Agent', input: { description: 'worker' } }] },
+        }, {
+            type: 'user', uuid: 'native-agent-alias', parentUuid: 'native-agent-launch', session_id: remoteSessionId, timestamp: '2026-06-08T00:02:01.000Z',
+            message: { content: [{ type: 'tool_result', tool_use_id: 'agent-tool', content: 'launched' }] },
+            toolUseResult: { status: 'async_launched', agentId: 'native-child' },
+        }];
+        await appendFile(transcriptPath, rows.map(row => JSON.stringify(row)).join('\n') + '\n');
+        const current = await contribution.readAfterTranscript({
+            ...invocation(), source, remoteSessionId, cursor: tail.value.tailCursor, projection: 'terminal', maxItems: 50,
+        });
+        if (!current.ok || current.value.outcome !== 'advanced') throw new Error('expected current native rows');
+        expect(current.value.items.filter(item => item.raw.role === 'source_observation').map(item => item.raw.content)).toEqual(rows);
+        const history = await contribution.pageTranscript({
+            ...invocation(), source, remoteSessionId, direction: 'older', projection: 'terminal', maxItems: 50,
+        });
+        if (!history.ok) throw new Error('expected ordered terminal history');
+        const aliasEvidence = history.value.items.filter(item => item.raw.role === 'source_observation'
+            && rows.some(row => item.raw.content && typeof item.raw.content === 'object'
+                && 'uuid' in item.raw.content && item.raw.content.uuid === row.uuid));
+        expect(aliasEvidence.map(item => item.raw.content)).toEqual(rows);
+        // Claude keeps the detached child alive while the parent rewinds onto another branch.
+        await appendFile(transcriptPath, JSON.stringify({ type: 'assistant', uuid: 'current-branch',
+            parentUuid: `${source.projectId}-user`, session_id: remoteSessionId,
+            timestamp: '2026-06-08T00:03:00.000Z', message: { content: [{ type: 'text', text: 'current branch answer' }] },
+        }) + '\n');
+        const branched = await contribution.pageTranscript({
+            ...invocation(), source, remoteSessionId, direction: 'older', projection: 'terminal', maxItems: 50,
+        });
+        if (!branched.ok) throw new Error('expected branch history');
+        expect(branched.value.items.filter(item => item.raw.role === 'source_observation'
+            && rows.some(row => row.uuid === (item.raw.content as { uuid?: string }).uuid)).map(item => item.raw.content)).toEqual(rows);
+        const visible = branched.value.items.filter(item => item.raw.role !== 'source_observation');
+        expect(JSON.stringify(visible)).toContain('current branch answer');
+        expect(JSON.stringify(visible)).not.toContain('agent-tool');
+    });
+
     it.each([false, true])('preserves ordered native observations only for terminal reads (bounded: %s)', async (bounded) => {
         const root = await mkdtemp(join(tmpdir(), 'happier-claude-terminal-observations-'));
         roots.push(root);

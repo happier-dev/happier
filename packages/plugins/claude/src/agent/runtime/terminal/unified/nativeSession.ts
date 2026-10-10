@@ -232,6 +232,7 @@ export async function openClaudeNativeUnifiedTerminalSession(
       processEnv: process.env,
     })),
     includeAdvancedOptions: false,
+    providerBinding: input.request.providerBinding,
   });
   const launchEnv = resolveClaudeUnifiedTerminalLaunchEnvironment(launchSettings.launchEnv);
   const initialModelId = input.request.providerBinding?.model.id
@@ -262,6 +263,7 @@ export async function openClaudeNativeUnifiedTerminalSession(
     hostPreference: readClaudeTerminalRuntimeSelection(input.request.runtimeDescriptorV1)?.host
       ?? readHostPreference(hostSetting),
     launchEnv,
+    helperModelEnv: launchSettings.helperModelEnv,
     settingSources: launchSettings.settingSources,
     supportsEffort: input.supportsEffort === true,
     supportsSystemPromptSnapshotOff: input.supportsSystemPromptSnapshotOff === true,

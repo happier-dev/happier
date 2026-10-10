@@ -359,7 +359,15 @@ const LifecycleSchemas = [
 
 const OutputSchemas = [
   lazyZodSchema(() => z.object({
+    ...TurnEventBaseShape, kind: z.literal('mcp-tool-usage'),
+    window: z.object({ startMs: z.number().int().nonnegative().safe(), endMs: z.number().int().nonnegative().safe() }).strict(),
+    coverage: z.enum(['complete', 'partial']),
+    servers: z.array(z.object({ serverName: exactString(NAME_MAX), toolCallCount: z.number().int().nonnegative().safe(),
+      schemaBytes: z.number().int().nonnegative().safe().nullable() }).strict()),
+  }).strict()),
+  lazyZodSchema(() => z.object({
     ...TurnEventBaseShape,
+    turnId: HostIdSchema.optional(),
     kind: z.literal('message-delta'),
     messageId: ProviderIdSchema.optional(),
     channel: z.enum(['assistant', 'reasoning']),
@@ -368,6 +376,7 @@ const OutputSchemas = [
   }).strict()),
   lazyZodSchema(() => z.object({
     ...TurnEventBaseShape,
+    turnId: HostIdSchema.optional(),
     kind: z.literal('tool-call'),
     toolCallId: ProviderIdSchema,
     toolName: exactString(NAME_MAX),
@@ -376,6 +385,7 @@ const OutputSchemas = [
   }).strict()),
   lazyZodSchema(() => z.object({
     ...TurnEventBaseShape,
+    turnId: HostIdSchema.optional(),
     kind: z.literal('tool-progress'),
     toolCallId: ProviderIdSchema,
     progress: AgentRuntimeEventJsonValueV1Schema,
@@ -383,6 +393,7 @@ const OutputSchemas = [
   }).strict()),
   lazyZodSchema(() => z.object({
     ...TurnEventBaseShape,
+    turnId: HostIdSchema.optional(),
     kind: z.literal('tool-result'),
     toolCallId: ProviderIdSchema,
     output: AgentRuntimeEventJsonValueV1Schema,
@@ -399,6 +410,7 @@ const OutputSchemas = [
   }).strict()),
   lazyZodSchema(() => z.object({
     ...TurnEventBaseShape,
+    turnId: HostIdSchema.optional(),
     kind: z.literal('file-edit'),
     editId: ProviderIdSchema,
     path: z.string().max(PATH_MAX),
@@ -422,6 +434,13 @@ const OutputSchemas = [
     source: exactString(SOURCE_MAX),
     scope: z.enum(['turn_delta', 'session_cumulative', 'session_final']),
     modelId: exactString(MODEL_ID_MAX).optional(),
+    accounting: z.object({
+      nativeSessionId: ProviderIdSchema.optional(),
+      inferenceId: ProviderIdSchema.optional(),
+      inputIncludesCache: z.boolean().optional(),
+      outputIncludesReasoning: z.boolean().optional(),
+      historyComplete: z.boolean().optional(),
+    }).strict().optional(),
     ...UsageMeasurementShape,
   }).strict().refine(
     (value) => value.tokens !== undefined || value.cost !== undefined || value.context !== undefined,

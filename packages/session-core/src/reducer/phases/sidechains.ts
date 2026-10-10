@@ -8,6 +8,8 @@ import { readStreamSegmentMetaV1 } from "../helpers/streamSegmentMeta.js";
 import { upsertStreamSegmentSnapshotMessage } from "../helpers/upsertStreamSegmentSnapshotMessage.js";
 import { restoreSubagentToolFromSyntheticInterruption } from "../helpers/subagentInterruption.js";
 import { normalizeTranscriptSeq } from "../../messages/transcriptOrdering.js";
+import { drainAndApplyOrphanToolResultsToMessage } from "../helpers/drainAndApplyOrphanToolResultsToMessage.js";
+import { resolveSidechainPermissionMirror, resolveSidechainToolMessage } from "./toolResults.js";
 import { canExtendSidechainMessage, findSidechainMergeTarget, insertSidechainMessageInChronology } from "../helpers/sidechainChronology.js";
 
 export function runSidechainsPhase(params: Readonly<{
@@ -274,7 +276,7 @@ export function runSidechainsPhase(params: Readonly<{
                     // Map sidechain tool separately to avoid overwriting permission mapping
                     state.sidechainToolIdToMessageId.set(c.id, mid);
                 } else if (c.type === 'tool-result') {
-                    // Process tool result in sidechain - update BOTH messages
+                    // Apply the scoped child result and its permission-only mirror.
                     const toolResult = {
                         tool_use_id: c.tool_use_id,
                         content: c.content,
@@ -283,7 +285,7 @@ export function runSidechainsPhase(params: Readonly<{
                     };
 
                     // Update the sidechain tool message
-                    const sidechainMessageId = state.sidechainToolIdToMessageId.get(c.tool_use_id);
+                    const sidechainMessageId = resolveSidechainToolMessage(state, c.tool_use_id, sidechainId)?.messageId;
                     if (sidechainMessageId != null) {
                         const sidechainMessage = state.messages.get(sidechainMessageId);
                         if (sidechainMessage && sidechainMessage.tool) {
@@ -299,10 +301,10 @@ export function runSidechainsPhase(params: Readonly<{
                     }
 
                     // Also update the main permission message if it exists
-                    const permissionMessageId = state.toolIdToMessageId.get(c.tool_use_id);
+                    const permissionMessageId = resolveSidechainPermissionMirror(state, c.tool_use_id);
                     if (permissionMessageId != null) {
                         const permissionMessage = state.messages.get(permissionMessageId);
-                        if (permissionMessage && permissionMessage.tool) {
+                        if (permissionMessage?.tool?.permission) {
                             applyToolResultUpdateToReducerMessage({
                                 message: permissionMessage,
                                 messageId: permissionMessageId,
@@ -331,5 +333,16 @@ export function runSidechainsPhase(params: Readonly<{
         }
     }
 
+    // Register every child in the batch before consuming unscoped outcomes, so colliding siblings
+    // cannot make the first registered child look like the sole owner.
+    for (const toolUseId of state.orphanToolResults.keys()) {
+        if (state.toolIdToMessageId.has(toolUseId)) continue;
+        const sidechain = resolveSidechainToolMessage(state, toolUseId);
+        if (!sidechain) continue;
+        drainAndApplyOrphanToolResultsToMessage({ state, toolUseId, messageId: sidechain.messageId, changed });
+        const parentId = state.toolIdToMessageId.get(sidechain.sidechainId);
+        if (parentId) changed.add(parentId);
+        stateChanged = true;
+    }
     return stateChanged;
 }

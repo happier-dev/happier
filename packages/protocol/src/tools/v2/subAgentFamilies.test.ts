@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { readSubAgentToolResultStatus } from './index.js';
 
 import {
     isAsyncSubAgentLaunchToolResult,
@@ -48,5 +49,15 @@ describe('isAsyncSubAgentLaunchToolResult', () => {
         expect(isAsyncSubAgentLaunchToolResult(null)).toBe(false);
         expect(isAsyncSubAgentLaunchToolResult([{ status: 'async_launched' }])).toBe(false);
         expect(isAsyncSubAgentLaunchToolResult('{ not json')).toBe(false);
+    });
+});
+
+
+describe('readSubAgentToolResultStatus public projection', () => {
+    it('reads terminal statuses through serialized native wrappers', () => {
+        expect(readSubAgentToolResultStatus(JSON.stringify({ tool_use_result: JSON.stringify({ status: ' Stopped ' }) }))).toBe('stopped');
+        expect(readSubAgentToolResultStatus({ toolUseResult: { status: 'cancelled' } })).toBe('cancelled');
+        expect(readSubAgentToolResultStatus('Findings from agent')).toBeNull();
+        expect(readSubAgentToolResultStatus('{ not json')).toBeNull();
     });
 });

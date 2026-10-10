@@ -11,5 +11,5 @@ import { isBundledAgentId, type AgentId } from './types.js';
 export function isAgentCliAuthBackgroundCheckSafe(agentId: AgentId): boolean {
   if (!isBundledAgentId(agentId)) return false;
   const definition = BUNDLED_AGENT_DEFINITIONS_BY_ID[agentId];
-  return definition !== undefined && isPluginAgentCliAuthBackgroundCheckSafe(definition.cli);
+  return definition?.cli !== undefined && isPluginAgentCliAuthBackgroundCheckSafe(definition.cli);
 }

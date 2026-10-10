@@ -37,6 +37,8 @@ import {
   resolveOpenCodeExternalSessionsManagedService,
 } from './managedServer.js';
 import { pageOpenCodeTranscript } from './pageTranscript.js';
+import { readOpenCodeNativeAccounting } from '../../../usage/nativeAccounting.js';
+import { describeOpenCodeAccountingSource } from './observation.js';
 import {
   readAfterOpenCodeTranscript,
   type OpenCodeExternalReadAfterOutcome,
@@ -141,6 +143,7 @@ function mapCandidate(candidate: OpenCodeExternalSessionCandidate): AgentExterna
     remoteSessionId: candidate.remoteSessionId,
     ...(candidate.title ? { title: candidate.title } : {}),
     updatedAtMs: candidate.updatedAtMs,
+    ...(candidate.match ? { match: candidate.match } : {}),
     ...(candidate.createdAtMs !== undefined ? { createdAtMs: candidate.createdAtMs } : {}),
     ...(candidate.archived !== undefined ? { archived: candidate.archived } : {}),
     ...(isLinkDataValue(candidate.runtimeDescriptor, new Set())
@@ -350,6 +353,13 @@ export function createOpenCodeExternalSessionsContribution(params: Readonly<{
   const readEnv = () => params.env ?? process.env;
 
   return Object.freeze({
+    async readAccounting(request) {
+      const stopped = invocationFailure(request); if (stopped) return stopped;
+      const validation = validateSource({ source: request.source, env: readEnv() });
+      if (!validation.ok) return validation;
+      try { return await readOpenCodeNativeAccounting(request, validation.value.source, await resolveRequestDialect(validation.value.source, request)); }
+      catch { return invocationFailure(request) ?? ok({ outcome: 'read_failed' as const }); }
+    },
     resolveManagedEndpointService(request) {
       return resolveOpenCodeExternalSessionsManagedService(request);
     },
@@ -360,7 +370,8 @@ export function createOpenCodeExternalSessionsContribution(params: Readonly<{
       const validation = validateSource({ source: request.source, env: readEnv() });
       return bounded(
         request,
-        validation.ok ? ok({ source: validation.value.agentSource }) : validation,
+        validation.ok ? ok({ source: validation.value.agentSource,
+          accountingSource: describeOpenCodeAccountingSource(validation.value.agentSource, readEnv()) }) : validation,
         'OpenCode source result exceeds the host byte bound.',
       );
     },
@@ -382,16 +393,19 @@ export function createOpenCodeExternalSessionsContribution(params: Readonly<{
           maxBytes: request.maxSerializedBytes,
           searchTerm: request.searchTerm,
           searchMode: request.searchMode,
+          searchTarget: request.searchTarget,
+          deadlineAtMs: request.deadlineAtMs,
           signal: request.signal,
           env,
           managedEndpointRead: request.managedEndpointRead,
         });
         const after = invocationFailure(request);
-        if (after) return after;
+        if (after && (listed.contentCoverage !== 'partial' || request.signal.aborted)) return after;
         const candidates = listed.candidates.map(mapCandidate);
         const value = {
           candidates,
           nextCursor: listed.nextCursor,
+          ...(listed.contentCoverage ? { contentCoverage: listed.contentCoverage } : {}),
           ...(listed.searchIncomplete ? { searchIncomplete: true } : {}),
         };
         const success = ok(value);

@@ -19,7 +19,7 @@ export type ClaudeActivityStatusSignal =
 
 export function normalizeClaudeActivityStatusSignal(status: unknown, type?: string): ClaudeActivityStatusSignal {
   if (status === 'completed' || status === 'complete' || status === 'done') return 'complete';
-  if (status === 'stopped' || status === 'cancelled' || status === 'canceled') return 'cancelled';
+  if (status === 'stopped' || status === 'cancelled' || status === 'canceled' || status === 'killed') return 'cancelled';
   if (status === 'failed' || status === 'error') return 'failed';
   if (status === 'blocked') return 'blocked';
   if (status === 'pending') return 'pending';
@@ -78,4 +78,35 @@ export function isTerminalClaudeAgentSdkProviderTaskStatus(status: unknown): boo
     default:
       return false;
   }
+}
+
+const CLAUDE_AGENT_LAUNCH_ACKNOWLEDGEMENT_STATUSES = new Set(['async_launched', 'remote_launched']);
+
+function readClaudeToolResultRecord(value: unknown): Record<string, unknown> | null {
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (trimmed.length === 0) return null;
+    const first = trimmed[0];
+    if (first !== '{' && first !== '[') return null;
+    try {
+      return readClaudeToolResultRecord(JSON.parse(trimmed) as unknown);
+    } catch {
+      return null;
+    }
+  }
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+/** Async launch acknowledgements describe live work, including serialized/wrapped results. */
+export function isClaudeAsyncAgentLaunchToolResult(value: unknown): boolean {
+  const record = readClaudeToolResultRecord(value);
+  if (!record) return false;
+
+  const status = normalizeClaudeAgentSdkProviderTaskStatus(record.status);
+  if (status !== null && CLAUDE_AGENT_LAUNCH_ACKNOWLEDGEMENT_STATUSES.has(status)) return true;
+
+  return isClaudeAsyncAgentLaunchToolResult(record.tool_use_result)
+    || isClaudeAsyncAgentLaunchToolResult(record.toolUseResult);
 }

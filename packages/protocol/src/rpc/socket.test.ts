@@ -2,6 +2,37 @@ import { describe, expect, it } from 'vitest';
 import * as socketProtocol from './socket.js';
 import { RPC_METHODS } from './methods.js';
 
+it('admits turn abort under its own Action while retaining submit-input capability', () => {
+  expect(socketProtocol.resolveSocketRpcSessionAuthorization('session-a:abort')).toMatchObject({
+    authority: 'submitAgentInput', actionId: 'session.turn.cancel', routeToSessionOwnerDaemon: true,
+  });
+});
+
+it('admits optional exact Session read proof on PR evidence without changing Machine routing', () => {
+  for (const method of [RPC_METHODS.SCM_PULL_REQUEST_LIST, RPC_METHODS.SCM_PULL_REQUEST_GET]) {
+    expect(socketProtocol.resolveSocketRpcSessionAuthorization(`machine:${method}`)).toMatchObject({
+      authority: 'readTranscript', optionalSessionScope: true, routeToSessionOwnerDaemon: false,
+    });
+  }
+});
+
+it('keeps Machine access-loss custody server-origin private and closed', () => {
+  const marker = { kind: 'machine.accessLoss.serverOrigin' };
+  expect(socketProtocol.isSocketRpcMachineAccessLossServerOriginAuthorizationContext(marker)).toBe(true);
+  expect(socketProtocol.isSocketRpcMachineAccessLossServerOriginAuthorizationContext({ ...marker, subjectAccountId: 'bob' })).toBe(false);
+  expect(socketProtocol.parseSocketRpcAuthorizationContext(marker)).toBeNull();
+});
+
+it('preserves the predecessor Session-write shape and rejects additional authority fields', () => {
+  const authorization = { kind: 'session.write', sessionId: ' session-a ' };
+  expect(socketProtocol.parseSocketRpcAuthorizationContext(authorization))
+    .toEqual({ kind: 'session.write', sessionId: 'session-a' });
+  expect(socketProtocol.parseSocketRpcAuthorizationContext({ ...authorization, accountId: 'other-account' }))
+    .toBeNull();
+  expect(socketProtocol.parseSocketRpcAuthorizationContext(Object.assign([], authorization))).toBeNull();
+  expect(socketProtocol.parseSocketRpcAuthorizationContext(Object.create(authorization))).toBeNull();
+});
+
 import {
   SOCKET_RPC_EVENTS,
   SocketRpcCancellationPayloadSchema,

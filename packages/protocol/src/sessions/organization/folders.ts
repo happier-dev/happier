@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import {
@@ -8,14 +9,14 @@ import {
 import {
   SessionOrganizationContentEnvelopeSchema,
   SessionOrganizationDisplayStateSchema,
-} from './content.js';
+} from './contentSchemas.js';
 
-const SessionOrganizationFolderIdSchema = z.string().trim().min(1).max(SESSION_ORGANIZATION_MAX_ID_LENGTH);
-const SessionOrganizationFolderKeySchema = z.string().trim().min(1).max(SESSION_ORGANIZATION_MAX_KEY_LENGTH);
-const SessionOrganizationSessionIdSchema = z.string().trim().min(1).max(SESSION_ORGANIZATION_MAX_ID_LENGTH);
-const SessionOrganizationSortKeySchema = z.string().trim().min(1).max(SESSION_ORGANIZATION_MAX_SORT_KEY_LENGTH);
+const SessionOrganizationFolderIdSchema = lazyZodSchema(() => z.string().trim().min(1).max(SESSION_ORGANIZATION_MAX_ID_LENGTH));
+const SessionOrganizationFolderKeySchema = lazyZodSchema(() => z.string().trim().min(1).max(SESSION_ORGANIZATION_MAX_KEY_LENGTH));
+const SessionOrganizationSessionIdSchema = lazyZodSchema(() => z.string().trim().min(1).max(SESSION_ORGANIZATION_MAX_ID_LENGTH));
+const SessionOrganizationSortKeySchema = lazyZodSchema(() => z.string().trim().min(1).max(SESSION_ORGANIZATION_MAX_SORT_KEY_LENGTH));
 
-export const SessionOrganizationFolderSchema = z
+export const SessionOrganizationFolderSchema = lazyZodSchema(() => z
   .object({
     folderId: SessionOrganizationFolderIdSchema,
     folderKey: SessionOrganizationFolderKeySchema,
@@ -28,21 +29,21 @@ export const SessionOrganizationFolderSchema = z
     createdAt: z.number().int().nonnegative(),
     updatedAt: z.number().int().nonnegative(),
   })
-  .strict();
+  .strict());
 export type SessionOrganizationFolder = z.infer<typeof SessionOrganizationFolderSchema>;
 
-export const SessionFolderAssignmentSchema = z
+export const SessionFolderAssignmentSchema = lazyZodSchema(() => z
   .object({
     sessionId: SessionOrganizationSessionIdSchema,
     folderId: SessionOrganizationFolderIdSchema,
   })
-  .strict();
+  .strict());
 export type SessionFolderAssignment = z.infer<typeof SessionFolderAssignmentSchema>;
 
-export const SessionFolderAssignmentMutationResultSchema = z
+export const SessionFolderAssignmentMutationResultSchema = lazyZodSchema(() => z
   .object({
     sessionId: SessionOrganizationSessionIdSchema,
     folderId: SessionOrganizationFolderIdSchema.nullable(),
   })
-  .strict();
+  .strict());
 export type SessionFolderAssignmentMutationResult = z.infer<typeof SessionFolderAssignmentMutationResultSchema>;

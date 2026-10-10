@@ -1,7 +1,7 @@
 /**
- * Canonical owner of one in-memory Session data-key preparation pass.
+ * Canonical owner of one in-memory resource data-key preparation pass.
  *
- * Recipient-preparation flows — the current Session's Team/Group audience and a Team/Group
+ * Recipient-preparation flows — Session and Machine Team/Group audiences and a Team/Group
  * membership's eligible history — page bounded server work, seal one page at a time, commit it
  * atomically, and count only what the server committed. That loop, not the crypto, is what they
  * share, so it lives here once instead of being reimplemented per flow. Sealing itself stays with

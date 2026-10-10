@@ -14,6 +14,7 @@ import {
   type ClaudeNativeTranscriptRowClassification,
 } from '../../../transcripts/nativeSemanticProjection.js';
 import { mapClaudeUnifiedTranscriptLifecyclePayload } from './lifecycleEvents.js';
+import { createClaudeTaskNotificationToolResultProjector, readClaudeTaskLifecycleEnvelope } from '../../../transcripts/taskNotification.js';
 import { parseRawJsonLinesObject, parseRawJsonLinesLine } from '../../../transcripts/parseRawJsonLines.js';
 import { createClaudeJsonlResetReplaySuppressor } from '../../../transcripts/jsonlReplaySuppression.js';
 import type { RawJSONLines } from '../../../transcripts/rawJsonLines.js';
@@ -39,7 +40,7 @@ export type ClaudeUnifiedProviderTranscriptPublisher = Readonly<{
     providerSessionId: string;
     transcriptPath: string;
   }>): Promise<ClaudeUnifiedProviderTranscriptBindResult>;
-  observeSourceTranscript(input: Readonly<{ providerSessionId: string; sourceId: string; row: JsonValue }>): Promise<void>;
+  observeSourceTranscript(input: Readonly<{ providerSessionId: string; sourceId: string; row: JsonValue; phase?: 'initial_replay' }>): Promise<void>;
   drainNow(): Promise<void>;
   dispose(options?: Readonly<{ drainTimeoutMs?: number }>): Promise<void>;
 }>;
@@ -62,6 +63,8 @@ export type ClaudeUnifiedProviderTranscriptPublisherParams = Readonly<{
     observation: Readonly<{
       providerSessionId: string;
       historicalReplay: boolean;
+      phase?: 'initial_replay';
+      projectedTaskResult?: RawJSONLines;
     }>,
   ) => void | Promise<void>;
 }>;
@@ -71,6 +74,7 @@ type TranscriptBinding = Readonly<{
   transcriptPath: string;
   queuedCommandEvidence: NativeQueuedCommandEvidenceState;
   observedSourceIds: Set<string>;
+  taskNotificationProjector: ReturnType<typeof createClaudeTaskNotificationToolResultProjector>;
   sourceReplay: 'historical' | 'fresh';
 }> & {
   sourceFollowHandle: Readonly<{ dispose(): Promise<void> }> | null;
@@ -334,6 +338,7 @@ export function projectClaudeTranscriptRowToProviderPayload(params: Readonly<{
   // including sanitized compact/command rows. External Sessions may still render
   // those rows through its distinct direct-message contract.
   if (classification.sidechain) return null;
+  if (readClaudeTaskLifecycleEnvelope(params.row)?.subtype === 'task_notification') return null;
 
   if (classification.content.kind === 'compact_summary') {
     return withOptionalTurnId(normalizedRow, {
@@ -500,6 +505,7 @@ export function createClaudeUnifiedProviderTranscriptPublisher(
     providerSessionId: string;
     sourceId: string;
     row: JsonValue;
+    phase?: 'initial_replay';
   }>): Promise<void> {
     const activeBinding = binding;
     if (
@@ -510,6 +516,17 @@ export function createClaudeUnifiedProviderTranscriptPublisher(
     ) return;
     const rowSessionId = readClaudeProviderIdentityValue(input.row.sessionId);
     if (rowSessionId && rowSessionId !== activeBinding.providerSessionId) return;
+    if (input.phase === 'initial_replay') {
+      const row = parseRawJsonLinesObject(input.row);
+      if (row) {
+        activeBinding.taskNotificationProjector.project(row);
+        await params.onObserveRow?.(row, {
+          providerSessionId: activeBinding.providerSessionId, historicalReplay: true, phase: 'initial_replay',
+        });
+      }
+      activeBinding.observedSourceIds.add(input.sourceId);
+      return;
+    }
     const operation = readNativeQueuedCommandOperation(input.row);
     if (operation) {
       observeNativeQueuedCommandOperation({ binding: activeBinding, operation });
@@ -525,6 +542,18 @@ export function createClaudeUnifiedProviderTranscriptPublisher(
     }
     const row = parseRawJsonLinesObject(input.row);
     if (!row) return;
+    const fact = readClaudeTaskLifecycleEnvelope(row);
+    if (fact) {
+      const projectedTaskResult = activeBinding.taskNotificationProjector.project(row);
+      await params.onObserveRow?.(row, {
+        providerSessionId: activeBinding.providerSessionId, historicalReplay: false,
+        ...(projectedTaskResult ? { projectedTaskResult } : {}),
+      });
+      if (fact.subtype === 'task_notification' || projectedTaskResult) {
+        activeBinding.observedSourceIds.add(input.sourceId);
+        return;
+      }
+    }
     const payload = projectClaudeTranscriptRowToProviderPayload({
       providerSessionId: activeBinding.providerSessionId,
       row,
@@ -680,6 +709,7 @@ export function createClaudeUnifiedProviderTranscriptPublisher(
       transcriptPath,
       queuedCommandEvidence: createNativeQueuedCommandEvidenceState(),
       observedSourceIds: new Set<string>(),
+      taskNotificationProjector: createClaudeTaskNotificationToolResultProjector(),
       sourceReplay: input.initialResumeCatchUp || trustedProviderSessionId === params.historicalProviderSessionId
         ? 'historical' : 'fresh',
       sourceFollowHandle: null,

@@ -3,6 +3,7 @@ export const GEMINI_UI_DESCRIPTOR = Object.freeze({
   pluginId: 'gemini',
   agentId: 'gemini',
   version: 1,
+  identityColor: { light: '#1baf7a', dark: '#199e70' },
   display: {
     nameKey: 'agentInput.agent.gemini',
     subtitleKey: 'profiles.aiBackend.geminiSubtitleExperimental',
@@ -20,7 +21,7 @@ export const GEMINI_UI_DESCRIPTOR = Object.freeze({
     },
     toolRendering: { hideUnknownToolsByDefault: true },
     picker: {
-      iconName: 'planet-outline',
+      iconName: 'globe',
       cliGlyph: '✦︎',
       cliGlyphScale: 1.0,
       profileCompatibilityGlyphScale: 0.88,
