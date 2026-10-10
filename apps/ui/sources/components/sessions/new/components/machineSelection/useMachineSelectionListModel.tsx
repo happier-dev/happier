@@ -406,7 +406,7 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
         handlersRef.current.onOpenManagedPresets?.();
     }, []);
     const selectManagedMachine = React.useCallback((offerId: string) => {
-        if (handlersRef.current.purpose !== 'session') return;
+        if (handlersRef.current.purpose !== 'session' && handlersRef.current.purpose !== 'finite') return;
         const offer = handlersRef.current.managedMachines?.find((candidate) => candidate.id === offerId);
         if (!offer || offer.disabled) return;
         if (offer.draft) handlersRef.current.onSelectManagedMachine?.(offer.draft);
@@ -600,8 +600,8 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
         const poolGroups = params.poolGroups ?? [];
         const hasPools = poolGroups.some((group) => group.pools.length > 0);
         const temporaryComputers = purpose === 'session' ? params.temporaryComputers ?? [] : [];
-        const managedMachines = purpose === 'session' ? params.managedMachines ?? [] : [];
-        const managedOptionId = purpose === 'session' && params.selectedManagedMachine
+        const managedMachines = purpose === 'session' || purpose === 'finite' ? params.managedMachines ?? [] : [];
+        const managedOptionId = (purpose === 'session' || purpose === 'finite') && params.selectedManagedMachine
             ? managedMachineSelectionOptionId(params.selectedManagedMachine.selection)
             : null;
         const managedMachineSection: SelectionListSectionDescriptor | null = managedMachines.length > 0

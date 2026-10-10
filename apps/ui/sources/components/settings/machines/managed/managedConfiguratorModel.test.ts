@@ -6,6 +6,8 @@ import { writeInputPath } from '@happier-dev/protocol/inputs/inputFieldRuntime';
 import { FlyLaunchQueryV1Schema, FlyLaunchV1Schema } from '../../../../../../../packages/plugins/machine-fly/src/machine/schemas';
 import { CRABBOX_PLUGIN } from '../../../../../../../packages/plugins/machine-crabbox/src/manifest';
 import { CUA_PLUGIN } from '../../../../../../../packages/plugins/machine-cua/src/manifest';
+import { DEVCONTAINER_PLUGIN } from '../../../../../../../packages/plugins/devcontainer/src/manifest';
+import { resolveEffectiveActionInputFields } from '@happier-dev/protocol/actions/actionInputHintsRuntime';
 import { createManagedConfiguratorDraft, refreshManagedConfiguratorOptions, selectManagedConfiguratorChoice, selectManagedConfiguratorDimension, managedConfiguratorDimensionSelection, managedConfiguratorDimensionChoices, managedConfiguratorFacts, managedConfiguratorAcquireInput, managedConfiguratorOptionsSelectors, setManagedConfiguratorOptionsSelectors, managedConfiguratorCredentialSelections } from './managedConfiguratorModel';
 
 const descriptor = MachineProvisionerContributionV1Schema.parse({
@@ -23,6 +25,20 @@ const options = { choices: [
 ] };
 
 describe('managed configurator draft owner', () => {
+    it('admits a Devcontainer review query entered through its declared shared Action fields', () => {
+        const descriptor = MachineProvisionerContributionV1Schema.parse(DEVCONTAINER_PLUGIN.manifest.contributes.machineProvisioners?.[0]);
+        const action = DEVCONTAINER_PLUGIN.manifest.contributes.actions.find(action => action.id === descriptor.actions.options)!;
+        const values = { workspaceFolder: '/projects/source', configPath: '/projects/source/.devcontainer/devcontainer.json' };
+        let selectors: unknown = {};
+        for (const field of resolveEffectiveActionInputFields(action, {})) {
+            selectors = writeInputPath(selectors, field.path, values[field.path as keyof typeof values]);
+        }
+        const draft = setManagedConfiguratorOptionsSelectors(createManagedConfiguratorDraft({
+            provisioner: { contribution: { pluginId: DEVCONTAINER_PLUGIN.manifest.id, localId: descriptor.id }, occurrenceId: 'devcontainer', descriptor },
+            controller, name: 'Project child',
+        }), selectors as Readonly<Record<string, unknown>>);
+        expect(managedConfiguratorOptionsSelectors(draft, action.inputSchema!)).toEqual(values);
+    });
     it('qualifies saved BYOC recipes using the current selected native variant, with descriptor fallback', () => {
         const descriptor = MachineProvisionerContributionV1Schema.parse(CUA_PLUGIN.manifest.contributes.machineProvisioners?.find(entry => entry.id === 'byoc'));
         const byoc = { contribution: { pluginId: CUA_PLUGIN.manifest.id, localId: descriptor.id }, occurrenceId: 'byoc', descriptor };

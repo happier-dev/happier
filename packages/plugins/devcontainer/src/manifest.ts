@@ -63,6 +63,10 @@ export const DEVCONTAINER_PLUGIN = definePlugin({
   actions: {
     options: { ...defaults, title: 'Review Devcontainer effects', dangerLevel: 'safe',
       inputSchema: DevcontainerReviewQuerySchema, resultSchema: MachineProvisionerOptionsResultV1Schema,
+      inputHints: { fields: [
+        { path: 'workspaceFolder', title: 'Workspace folder on the controller', widget: 'text', required: true },
+        { path: 'configPath', title: 'Devcontainer configuration path on the controller', widget: 'text', required: true },
+      ] },
       async run(input, context) {
         const reviewed = await readDevcontainerEffectReview(await nativeTools(context), input);
         return { choices: [{ id: reviewed.launch.configPath, title: 'Devcontainer', available: true, ...reviewed }] };

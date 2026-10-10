@@ -168,7 +168,7 @@ function firstStaticOption(model: ReturnType<typeof UseMachineSelectionListModel
 }
 
 describe('useMachineSelectionListModel', () => {
-    it('keeps managed recipe selection separate from published artifacts and exact machines', async () => {
+    it.each(['session', 'finite'] as const)('keeps %s managed recipe selection separate from published artifacts and exact machines', async purpose => {
         const fixture = createFixture();
         const handlers = makeHandlers();
         const selection = { kind: 'preset', homeId: 'server-a', id: 'recipe', revision: 3 } as const;
@@ -189,6 +189,7 @@ describe('useMachineSelectionListModel', () => {
         const onOpenManagedPresets = vi.fn();
         const rendered = await renderHook(() => useMachineSelectionListModel({
             ...buildParams(fixture, handlers),
+            purpose,
             temporaryComputers: [{ serverId: 'server-a', artifactTarget: 'darwin-arm64', selected: false,
                 workspace: null, packageExpiresAt: 12345, onSelect: artifactSelect }],
             managedMachines: [{ id: 'managed-machine:server-a:preset:recipe:3', homeId: 'server-a', kind: 'preset',
@@ -202,7 +203,7 @@ describe('useMachineSelectionListModel', () => {
         const managed = model.rootStep.sections.find((section) => section.id === 'managed-machines');
         const published = model.rootStep.sections.find((section) => section.id === 'temporary-computer');
         expect(managed?.kind).toBe('static');
-        expect(published?.title).toBe('newSession.temporaryComputer.publishedTitle');
+        expect(published?.title).toBe(purpose === 'session' ? 'newSession.temporaryComputer.publishedTitle' : undefined);
         if (managed?.kind !== 'static') throw new Error('expected a managed recipe section');
         expect(managed.options.map((row) => row.id)).toEqual([
             'managed-machine:server-a:preset:recipe:3', 'managed-machine:server-a:one-off',
