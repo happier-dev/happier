@@ -1,7 +1,7 @@
 import chalk from 'chalk';
 
 import { printJsonEnvelope } from '@/cli/output/jsonEnvelope';
-import { readMcpServersSettingsFromAccountSettings } from '@/mcp/servers/readMcpServersSettingsFromAccountSettings';
+import { McpServerCatalogUnavailableError, readMcpServersSettingsFromAccountSettings } from '@/mcp/servers/readMcpServersSettingsFromAccountSettings';
 import { loadFreshMcpAccountSettingsContext } from '../loadFreshMcpAccountSettingsContext';
 
 import type { McpCommandDeps } from '../deps';
@@ -26,7 +26,7 @@ function summarizeMcpServersForJson(settings: ReturnType<typeof readMcpServersSe
 
 export async function cmdMcpServersList(
   argv: string[],
-  deps: McpCommandDeps,
+  deps: Pick<McpCommandDeps, 'readStoredCredentials' | 'bootstrapAccountSettingsContext'>,
   opts: Readonly<{ json: boolean }>,
 ): Promise<void> {
   const credentials = await deps.readStoredCredentials();
@@ -41,7 +41,10 @@ export async function cmdMcpServersList(
   }
 
   const ctx = await loadFreshMcpAccountSettingsContext(credentials, deps);
-  const mcpSettings = readMcpServersSettingsFromAccountSettings(ctx.settings);
+  const mcpSettings = readMcpServersSettingsFromAccountSettings(ctx);
+  if (!await ctx.operationContext.isCurrent()) {
+    throw new McpServerCatalogUnavailableError('scope-retired');
+  }
 
   if (opts.json) {
     await printJsonEnvelope({ ok: true, kind: 'mcp_servers_list', data: summarizeMcpServersForJson(mcpSettings) });

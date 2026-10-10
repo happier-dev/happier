@@ -9,6 +9,7 @@ import {
 } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
 import { markAccountChanged } from '@/app/changes/markAccountChanged';
 import { acquireAccountEncryptionTransitionFenceInTx } from '@/app/encryption/accountEncryptionTransition';
+import { openPlainAccountSettingsDbValue } from '@/app/encryption/accountSettingsStorage';
 import { writeAccountSettingsInTx } from '@/app/accountSettings/writeAccountSettingsInTx';
 import { inTx, type Tx } from '@/storage/inTx';
 import type { TeamOperationAuthenticationContext } from '@/app/teams/actorContext';
@@ -78,12 +79,28 @@ export async function mutateConnectedAccountCatalogRowInTx(tx: Tx, input: Mutati
     if (mutation.settingsMutation && fence.account.settingsVersion !== mutation.settingsMutation.expectedSettingsVersion) {
         return { status: 'settings-conflict', revision: fence.account.settingsVersion };
     }
-    const references = mutation.content?.t === 'plain'
+    const rowReferences = mutation.content?.t === 'plain'
         ? mutation.content.v.key === 'configurations'
-            ? [...new Set(listConnectedConfigurationCatalogSavedSecretRefsV1(mutation.content.v.value).map(reference => reference.secretId))]
+            ? listConnectedConfigurationCatalogSavedSecretRefsV1(mutation.content.v.value).map(reference => reference.secretId)
             : []
-        : mutation.content === null ? [] : mutation.referencedSavedSecretIds;
-    if (mutation.content?.t === 'plain' && (references.length !== mutation.referencedSavedSecretIds.length
+        : [];
+    const pairedReferences: string[] = [];
+    if (fence.account.currentness.encryptionMode === 'plain' && mutation.settingsMutation?.content?.t === 'plain') {
+        const current = openPlainAccountSettingsDbValue({ accountId, dbValue: fence.account.settings });
+        const { listSavedSecretVoiceCredentialMutationReferencesV1, AccountSettingsSavedSecretMutationError } =
+            await import('@happier-dev/protocol/account/settings/savedSecretMutationOwner');
+        try {
+            pairedReferences.push(...listSavedSecretVoiceCredentialMutationReferencesV1(
+                current?.t === 'plain' ? current.v : {}, mutation.settingsMutation.content.v,
+                { requestedReferences: mutation.referencedSavedSecretIds }));
+        } catch (error) {
+            if (error instanceof AccountSettingsSavedSecretMutationError) return { status: 'invalid-reference' };
+            throw error;
+        }
+    }
+    const references = fence.account.currentness.encryptionMode === 'plain'
+        ? [...new Set([...rowReferences, ...pairedReferences])] : mutation.referencedSavedSecretIds;
+    if (fence.account.currentness.encryptionMode === 'plain' && (references.length !== mutation.referencedSavedSecretIds.length
         || references.some(reference => !mutation.referencedSavedSecretIds.includes(reference)))) return { status: 'invalid-reference' };
     const { validateSavedSecretResourceReferencesInTx } = await import('@/app/account/savedSecrets/savedSecretResourceService');
     if (!await validateSavedSecretResourceReferencesInTx(tx, { accountId, authentication, references,

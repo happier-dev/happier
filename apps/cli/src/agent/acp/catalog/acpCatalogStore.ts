@@ -30,7 +30,7 @@ export function createCliAcpCatalogStore(input: Readonly<{
   const base = (operation?.serverHttpBaseUrl ?? resolveServerHttpBaseUrl()).replace(/\/+$/, '');
   const scopeKey = runWithServerHttpBaseUrl(base, () => resolveAccountSettingsScopeKey(input.credentials));
   const lifetimeToken = getActiveAccountSettingsSnapshotLifetimeToken();
-  let capturedSource: Awaited<ReturnType<typeof readAccountSettingsV2Raw>> | undefined;
+  let capturedSource: (Awaited<ReturnType<typeof readAccountSettingsV2Raw>> & Readonly<{ mode: 'plain' | 'e2ee' }>) | undefined;
   const snapshot = () => operation ? operation.readSnapshot() : getActiveAccountSettingsSnapshot();
   const assertCurrent = () => {
     input.signal?.throwIfAborted();
@@ -87,7 +87,7 @@ export function createCliAcpCatalogStore(input: Readonly<{
       if (!await operation.replaceAccountSettings(next)) throw new AcpCatalogUnavailableError('scope-retired');
     } else commitActiveAccountSettingsSnapshot(next);
     if (snapshot()?.settingsVersion !== source.version) throw new AcpCatalogUnavailableError('source-stale');
-    capturedSource = source;
+    capturedSource = { ...source, mode: storage.mode };
     return source;
   };
   const readCatalog = async (): Promise<AcpCatalogSnapshotV1> => {
@@ -173,18 +173,36 @@ export function createCliAcpCatalogStore(input: Readonly<{
           if (expectation?.expectedRevision !== undefined && expectation.expectedRevision !== 'absent') {
             return { status: 'conflict' as const, revision: -1 };
           }
-          if (sourceSettingsExpectation !== undefined && sourceSettingsExpectation !== capturedSource.version) {
+          if ((expectation?.expectedRevision === 'absent' || sourceSettingsExpectation !== undefined)
+            && sourceSettingsExpectation !== capturedSource.version) {
             return { status: 'settings-conflict' as const, revision: capturedSource.version };
           }
           const { importLegacySavedSecretsForOperation } = await import('@/settings/secrets/hydrateSavedSecretCatalog');
           const imported = await runWithServerHttpBaseUrl(base, () => importLegacySavedSecretsForOperation({
             expectedScopeKey: scopeKey, signal: input.signal, operationContext: operation,
+            ...(expectation?.expectedRevision === 'absent' ? { sourceExpectation: {
+              mode: capturedSource.mode, raw: capturedSource.raw, version: capturedSource.version,
+            } } : {}),
           }));
           await admitCurrent();
-          if (imported.status !== 'complete') throw new AcpCatalogUnavailableError('saved-secret-unavailable');
+          if (imported.status !== 'complete') {
+            if (imported.reason === 'conflict' && expectation?.expectedRevision === 'absent') {
+              // A diagnostic read reports the conflicting source; it grants no
+              // authority to promote it or apply the originally captured draft.
+              const conflicting = await readCatalog();
+              if (conflicting.status === 'ready' && typeof conflicting.revision === 'number') {
+                return { status: 'conflict' as const, revision: conflicting.revision };
+              }
+              return { status: 'settings-conflict' as const, revision: capturedSource.version };
+            }
+            throw new AcpCatalogUnavailableError('saved-secret-unavailable');
+          }
           // This operation's acknowledged promotion advances its admitted
           // source expectation; a later foreign source change still conflicts.
-          if (sourceSettingsExpectation !== undefined) sourceSettingsExpectation = snapshot()?.settingsVersion;
+          if (sourceSettingsExpectation !== undefined) {
+            if (imported.sourceSettingsVersion === undefined) throw new AcpCatalogUnavailableError('source-stale');
+            sourceSettingsExpectation = imported.sourceSettingsVersion;
+          }
           // Only the acknowledged original source may supply the next baseline.
           // A concurrently admitted row wins this fresh read without overwrite.
           observed = await readCatalog();

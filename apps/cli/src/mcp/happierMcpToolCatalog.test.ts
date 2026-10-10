@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
 import { ActionsSettingsV1Schema, getActionSpec, listActionSpecs } from '@happier-dev/protocol';
-import { RUNTIME_ACTION_IDS_V1 } from '@happier-dev/protocol/actions';
 
 import { listBuiltInHappierTools } from '@/agent/tools/happierTools/listBuiltInHappierTools';
 import { HAPPIER_MCP_TOOL_CATALOG, HAPPIER_MCP_TOOL_CATALOG_NAMES } from './happierMcpToolCatalog';
@@ -52,7 +51,7 @@ describe('HAPPIER_MCP_TOOL_CATALOG_NAMES', () => {
     expect(directSessionAgentNames).not.toContain('subagents_delegate_start');
   });
 
-  it('does not project fail-closed runtime actions as MCP tools', () => {
+  it('projects backed Local Services operations and keeps answering-client Copy/Open out of headless MCP tools', () => {
     const mcpToolNames = new Set(HAPPIER_MCP_TOOL_CATALOG_NAMES);
     const directMcpToolNames = new Set(listBuiltInHappierTools({
       surface: 'mcp',
@@ -60,16 +59,20 @@ describe('HAPPIER_MCP_TOOL_CATALOG_NAMES', () => {
       actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, actions: {} }),
     }).map((tool) => tool.name));
 
-    for (const runtimeActionId of RUNTIME_ACTION_IDS_V1) {
-      const spec = getActionSpec(runtimeActionId);
-      expect(spec.surfaces.mcp).toBe(false);
-      if (spec.bindings?.mcpToolName) {
-        expect(mcpToolNames.has(spec.bindings.mcpToolName)).toBe(false);
-        expect(directMcpToolNames.has(spec.bindings.mcpToolName)).toBe(false);
-      }
+    for (const actionId of ['localServices.launcher.start', 'localServices.actions.stopManaged',
+      'localServices.actions.restartManaged', 'localServices.actions.forget', 'localServices.actions.terminateDetected'] as const) {
+      const spec = getActionSpec(actionId);
+      expect(spec.surfaces.mcp, actionId).toBe(true);
+      expect(mcpToolNames.has(spec.bindings?.mcpToolName ?? ''), actionId).toBe(true);
+      expect(directMcpToolNames.has(spec.bindings?.mcpToolName ?? ''), actionId).toBe(true);
     }
-    expect(mcpToolNames.has('browser_navigate')).toBe(false);
-    expect(directMcpToolNames.has('browser_navigate')).toBe(false);
+    for (const actionId of ['localServices.actions.copyUrl', 'localServices.actions.openPreview'] as const) {
+      const spec = getActionSpec(actionId);
+      expect(spec.surfaces.mcp).toBe(false);
+      const name = spec.bindings?.mcpToolName ?? actionId.replaceAll('.', '_');
+      expect(mcpToolNames.has(name)).toBe(false);
+      expect(directMcpToolNames.has(name)).toBe(false);
+    }
   });
 
   it('reuses ActionSpec inputSchema objects for mcp start actions (no schema drift)', () => {

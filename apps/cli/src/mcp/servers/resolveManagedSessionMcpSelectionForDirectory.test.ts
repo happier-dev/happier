@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { McpServersSettingsV1Schema } from '@happier-dev/protocol';
+import { McpServersSettingsV1Schema } from '@happier-dev/protocol/mcp/servers/settingsV1';
 
 import { resolveManagedSessionMcpSelectionForDirectory } from './resolveManagedSessionMcpSelectionForDirectory';
 

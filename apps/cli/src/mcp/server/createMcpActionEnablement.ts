@@ -1,6 +1,7 @@
 import { getActionRequiredServerFeatureId } from '@happier-dev/protocol/actions/actionRequiredServerFeature';
 import { isActionEnabledByActionsSettings } from '@happier-dev/protocol/actions/actionSettings';
 import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
+import { isActionEnabledWithSessionMemory } from '@happier-dev/protocol/actions/actionSurfaceAvailability';
 import type { AccountSettings, ActionId, ActionSurfaces } from '@happier-dev/protocol';
 
 import { resolveCliFeatureDecision } from '@/features/featureDecisionService';
@@ -46,6 +47,8 @@ export function createMcpActionEnablementWithServerFeatureAvailability(params: R
   surface: keyof ActionSurfaces;
   hasAuthenticatedRuntime: boolean;
   authorityScope?: 'account' | 'session';
+  /** Supplied only by a bound Session host; evaluated again for each call. */
+  readSessionMemoryEnabled?: () => boolean;
   readServerFeaturesSnapshot: () => CliServerFeaturesSnapshot | undefined;
   env?: NodeJS.ProcessEnv;
 }>): (id: ActionId) => boolean {
@@ -54,6 +57,7 @@ export function createMcpActionEnablementWithServerFeatureAvailability(params: R
     surface: params.surface,
   });
   return (id) => {
+    if (!isActionEnabledWithSessionMemory(id, params.readSessionMemoryEnabled?.())) return false;
     if (!isEnabledByPolicy(id)) return false;
     const featureId = getActionRequiredServerFeatureId(id);
     if (featureId === null) return true;

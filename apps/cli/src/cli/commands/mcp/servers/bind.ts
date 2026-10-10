@@ -4,18 +4,19 @@ import { hasFlag, readFlagValue } from '@/cli/commands/shared/argvFlags';
 import { printJsonEnvelope } from '@/cli/output/jsonEnvelope';
 import { readMcpServersSettingsFromAccountSettings } from '@/mcp/servers/readMcpServersSettingsFromAccountSettings';
 
-import { McpServersSettingsV1Schema } from '@happier-dev/protocol/mcp/servers/settingsV1';
+import { createCliMcpServerStore } from '@/settings/mcp/mcpServerStore';
+import { loadFreshMcpAccountSettingsContext } from '../loadFreshMcpAccountSettingsContext';
 
 import type { McpCommandDeps } from '../deps';
 import {
   createInvalidArgumentsError,
-  reportMcpServersAccountSettingsMutation,
+  reportMcpServerCatalogMutation,
 } from './errors';
 import { cmd, fail } from '@happier-dev/cli-common/output';
 
 export async function cmdMcpServersBind(
   argv: string[],
-  deps: McpCommandDeps,
+  deps: Pick<McpCommandDeps, 'readStoredCredentials' | 'bootstrapAccountSettingsContext' | 'randomUUID' | 'nowMs'>,
   opts: Readonly<{ json: boolean }>,
 ): Promise<void> {
   const credentials = await deps.readStoredCredentials();
@@ -38,40 +39,24 @@ export async function cmdMcpServersBind(
 
   const bindingId = deps.randomUUID();
   const now = deps.nowMs();
-  const context = await deps.bootstrapAccountSettingsContext({
-    credentials,
-    mode: 'blocking',
-    refresh: 'force',
-  });
-  const current = readMcpServersSettingsFromAccountSettings(
-    context.rawSettings ?? context.settings,
-  );
+  const context = await loadFreshMcpAccountSettingsContext(credentials, deps);
+  const current = readMcpServersSettingsFromAccountSettings(context);
   const server = current.servers.find((candidate) => (
     candidate.id === serverRef || candidate.name === serverRef
   )) ?? null;
   if (!server) throw createInvalidArgumentsError(`MCP server not found: ${serverRef}`);
-  const next = McpServersSettingsV1Schema.parse({
-    ...current,
-    bindings: [
-      ...current.bindings,
-      {
-        id: bindingId,
-        serverId: server.id,
-        enabled: true,
-        target: { t: 'allMachines' },
-        createdAt: now,
-        updatedAt: now,
-      },
-    ],
-  });
-
-  const mutation = await deps.updateAccountSettingsV2WithRetry({
-    credentials,
-    mutation: {
-      operations: [{ op: 'set', key: 'mcpServersSettingsV1', value: next }],
+  const mutation = createCliMcpServerStore({ credentials }).mutate({
+    kind: 'binding-create',
+    binding: {
+      id: bindingId,
+      serverId: server.id,
+      enabled: true,
+      target: { t: 'allMachines' },
+      createdAt: now,
+      updatedAt: now,
     },
-  });
-  if (!await reportMcpServersAccountSettingsMutation(mutation, {
+  }, context.mcpServerCatalog.revision, context.mcpServerCatalog);
+  if (!await reportMcpServerCatalogMutation(mutation, {
     kind: 'mcp_servers_bind',
     json: opts.json,
   })) return;

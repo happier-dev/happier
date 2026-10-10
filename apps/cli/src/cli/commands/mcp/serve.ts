@@ -96,7 +96,9 @@ export async function runMcpServeCommand(
         kind: 'unavailable' as const,
         code: 'daemon_unavailable',
       }));
-  const { mcp } = deps.createExternalMcpServer({
+  const createExternalMcpServer = deps.createExternalMcpServer
+    ?? (await import('@/mcp/createExternalMcpServer')).createExternalMcpServer;
+  const { mcp } = createExternalMcpServer({
     credentials,
     defaultSessionId,
     machineId,

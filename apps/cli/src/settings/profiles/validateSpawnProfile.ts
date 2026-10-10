@@ -1,5 +1,7 @@
-import { isLaunchProfileV2, isHistoricalBuiltInAiLaunchProfileIdV1, readAiLaunchProfileCollection } from '@happier-dev/protocol/profiles/read';
-import { readProviderSettingsFromAccountSettingsV1 } from '@happier-dev/protocol/providers/settings/readFromAccountSettingsV1';
+import { isLaunchProfileV2 } from '@happier-dev/protocol/profiles/read';
+import type { ProfileCatalogSnapshotV1 } from '@happier-dev/protocol/profiles/profileCatalogV1';
+import { ProfileCatalogUnavailableError, readProfileCollectionFromAccountSnapshot,
+  type AccountSettingsProfilesSnapshot } from './readProfilesFromAccountSettings';
 import type { LaunchProfileV2, AiLaunchProfileSourceV1, ArtifactSharingResourceV1 } from '@happier-dev/protocol';
 import { validateLaunchProfileV2ReservedEnvironment } from '@happier-dev/protocol/profiles/v2/schema';
 
@@ -35,10 +37,15 @@ export function resolveCanonicalSpawnProfile(input: Readonly<{
   rawSettings: Readonly<Record<string, unknown>> | null | undefined;
   profileId: string | null | undefined;
   artifactsById?: ReadonlyMap<string, ArtifactSharingResourceV1>;
+  profileCatalog?: ProfileCatalogSnapshotV1;
+  /** The same scoped, lifetime-admitted async read used to select the Profile. */
+  profilesSnapshot?: AccountSettingsProfilesSnapshot;
+  /** Present-but-undefined pins a predecessor or grant-only Profile, with no private membership row. */
+  expectedProfileRecordRevision?: number;
 }>): CanonicalSpawnProfileResolution {
-  const profileId = input.profileId?.trim() ?? '';
+  const profileId = input.profileId ?? '';
   if (!profileId) return { ok: true, kind: 'none' };
-  if (!input.rawSettings) {
+  if (!input.rawSettings && !input.profileCatalog) {
     return {
       ok: false,
       reason: 'profile_overlay_mismatch',
@@ -46,8 +53,14 @@ export function resolveCanonicalSpawnProfile(input: Readonly<{
     };
   }
 
-  const rawProfiles = input.rawSettings.profiles;
-  const collection = readAiLaunchProfileCollection(rawProfiles, input.artifactsById ? { artifactsById: input.artifactsById, includeShared: true } : undefined);
+  let collection;
+  try {
+    collection = readProfileCollectionFromAccountSnapshot(input.rawSettings, input.artifactsById, input.profileCatalog);
+  } catch (error) {
+    if (!(error instanceof ProfileCatalogUnavailableError)) throw error;
+    return { ok: false, reason: 'profile_overlay_mismatch', message: error.message };
+  }
+  const rawProfiles = collection.raw;
   const rawMatches = (Array.isArray(rawProfiles) ? rawProfiles : [])
     .filter((entry) => rawProfileId(entry) === profileId);
   const parsedMatches = collection.entries.filter(
@@ -56,10 +69,17 @@ export function resolveCanonicalSpawnProfile(input: Readonly<{
   );
   const matchingCount = rawMatches.length + parsedMatches.filter((entry) => rawProfileId(entry.raw) !== profileId).length;
   if (matchingCount === 0) {
-    if (RETAINED_LEGACY_PROFILE_IDS.has(profileId)) return { ok: true, kind: 'legacy' };
-    const completed = readProviderSettingsFromAccountSettingsV1(input.rawSettings)
-      .settings.migration?.completedSources.some((outcome) => outcome.sourceProfileId === profileId) === true;
-    if (isHistoricalBuiltInAiLaunchProfileIdV1(profileId) && !completed) return { ok: true, kind: 'legacy' };
+    const destinationAuthority = input.profileCatalog?.status === 'ready' && input.profileCatalog.source === 'destination';
+    if (destinationAuthority && input.expectedProfileRecordRevision === undefined && input.profilesSnapshot) {
+      const visible = input.profilesSnapshot.visibleProfiles.filter(profile => profile.id === profileId);
+      const profile = visible.length === 1 ? visible[0] : undefined;
+      if (profile && !isLaunchProfileV2(profile) && profile.profileRecordRevision === undefined
+        && profile.enabled !== false && input.profilesSnapshot.enabledByProfileId[profileId] !== false) {
+        return { ok: true, kind: 'legacy' };
+      }
+    }
+    if (!destinationAuthority && input.expectedProfileRecordRevision === undefined && RETAINED_LEGACY_PROFILE_IDS.has(profileId)) return { ok: true, kind: 'legacy' };
+    const completed = input.profilesSnapshot?.terminalMigratedProfileIds?.has(profileId) === true;
     return {
       ok: false,
       reason: 'profile_overlay_mismatch',
@@ -76,6 +96,11 @@ export function resolveCanonicalSpawnProfile(input: Readonly<{
     };
   }
   const profile = parsedMatches[0]!.profile;
+  if (Object.hasOwn(input, 'expectedProfileRecordRevision')
+    && profile.profileRecordRevision !== input.expectedProfileRecordRevision) {
+    return { ok: false, reason: 'profile_overlay_mismatch', message: `Launch profile '${profileId}' changed after selection` };
+  }
+  if (profile.enabled === false) return { ok: false, reason: 'profile_overlay_mismatch', message: `Launch profile '${profileId}' is disabled` };
   return isLaunchProfileV2(profile)
     ? { ok: true, kind: 'slim', profile }
     : { ok: true, kind: 'legacy' };
@@ -90,6 +115,8 @@ export function validateSpawnProfileEnvironment(input: Readonly<{
   rawSettings: Readonly<Record<string, unknown>> | null | undefined;
   profileId: string | null | undefined;
   artifactsById?: ReadonlyMap<string, ArtifactSharingResourceV1>;
+  profileCatalog?: ProfileCatalogSnapshotV1;
+  profilesSnapshot?: AccountSettingsProfilesSnapshot;
   providedEnvironmentVariables: Readonly<Record<string, string>>;
   reservedEnvironmentVariableNames: ReadonlySet<string>;
 }>): SpawnProfileValidationResult {

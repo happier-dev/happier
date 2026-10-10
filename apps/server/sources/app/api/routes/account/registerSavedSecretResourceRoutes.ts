@@ -74,6 +74,9 @@ function decodeEnvelopes(
         : null;
 }
 
+// Entity catalog routes consume the same wire-to-native envelope boundary.
+export { decodeEnvelopes as decodeSavedSecretResourceEnvelopes };
+
 export function registerSavedSecretResourceRoutes(app: Fastify): void {
     // Personal resource management does not require Teams. The resource owner
     // still gates every Team-derived audience/access arm before admitting it.
@@ -91,7 +94,7 @@ export function registerSavedSecretResourceRoutes(app: Fastify): void {
                 tx,
                 request.userId,
                 authentication,
-            ));
+            ), { readOnly: true });
             return reply.send({ resources: [...resources] });
         } catch {
             return reply.code(500).send({ error: "internal" });
@@ -108,7 +111,7 @@ export function registerSavedSecretResourceRoutes(app: Fastify): void {
                 tx,
                 request.userId,
                 authentication,
-            ));
+            ), { readOnly: true });
             return reply.send({
                 resources: rows.map((row) => {
                     if (!("resourceId" in row)) return { entry: row.entry };
@@ -150,7 +153,7 @@ export function registerSavedSecretResourceRoutes(app: Fastify): void {
             resourceId: parsed.data.resourceId,
             cursor: parsed.data.cursor,
             limit: parsed.data.limit,
-        }));
+        }), { readOnly: true });
         if (!result.ok) {
             if (result.error === "forbidden") {
                 return reply.code(403).send({ error: result.error });

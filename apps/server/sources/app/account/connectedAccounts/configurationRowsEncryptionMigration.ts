@@ -1,19 +1,28 @@
 import { CONNECTED_CONFIGURATION_ACCOUNT_ROW_PREFIX_V1, CONNECTED_PURPOSE_ACCOUNT_ROW_PREFIX_V1,
     buildConnectedAccountCatalogPhysicalKeyV1, parseConnectedAccountCatalogPhysicalKeyV1,
+    parseConnectedAccountCatalogMigrationContentV1, assertConnectedAccountCatalogContentForModeV1,
     type ConnectedAccountCatalogKeyV1, type AccountEncryptionMigrateConnectedConfigurationsDirectiveV1,
+    type StoredConnectedAccountCatalogContentV1,
 } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
 import type { Tx } from '@/storage/inTx';
 import { listReservedAccountScopedKvRowsInTx, migrateReservedAccountScopedKvRowsForAccountModeInTx,
     matchReservedAccountScopedKvRowsAccountMigrationPostStateInTx } from '@/app/kv/reservedAccountScopedKvRow';
-import { connectedAccountCatalogRowDomain, markConnectedAccountCatalogRowChangedInTx } from './configurationRows';
+import type { ReservedAccountScopedKvRowDomain } from '@/app/kv/reservedAccountScopedKvRow';
+import { markConnectedAccountCatalogRowChangedInTx } from './configurationRows';
 
 type Params = Readonly<{ accountId: string; key: ConnectedAccountCatalogKeyV1; toMode: 'plain' | 'e2ee';
     directive?: AccountEncryptionMigrateConnectedConfigurationsDirectiveV1 }>;
 function migrationParams(input: Params) {
     const physicalKey = buildConnectedAccountCatalogPhysicalKeyV1(input.key);
+    const domain: ReservedAccountScopedKvRowDomain<StoredConnectedAccountCatalogContentV1> = {
+        label: `Connected Account ${input.key} conversion`,
+        parseStoredEnvelope: value => parseConnectedAccountCatalogMigrationContentV1(value, input.key),
+        parseCandidateEnvelope: value => parseConnectedAccountCatalogMigrationContentV1(value, input.key),
+        assertEnvelopeForMode: (content, mode) => assertConnectedAccountCatalogContentForModeV1(content, mode, input.key),
+    };
     return { accountId: input.accountId, toMode: input.toMode,
         physicalPrefix: input.key === 'configurations' ? CONNECTED_CONFIGURATION_ACCOUNT_ROW_PREFIX_V1 : CONNECTED_PURPOSE_ACCOUNT_ROW_PREFIX_V1,
-        domain: connectedAccountCatalogRowDomain(input.key),
+        domain,
         isPhysicalKey: (key: string) => parseConnectedAccountCatalogPhysicalKeyV1(key) === input.key,
         items: input.directive?.content ? [{ physicalKey, revision: input.directive.expectedRevision, envelope: input.directive.content }] : [],
     };

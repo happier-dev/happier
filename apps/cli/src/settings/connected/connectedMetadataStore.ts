@@ -4,13 +4,14 @@ import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
 import { AccountSettingsV2GetResponseSchema, AccountSettingsV2UpdateResponseSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { AgentExecutionTargetV1Schema } from '@happier-dev/protocol/agents/executionTargetV1';
 import { classifyHomeDomainHttpMutationFailureV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
 import { loadConnectedMetadataCatalogV1, type ConnectedMetadataCatalogV1, type ConnectedMetadataSourceTransferV1 } from '@happier-dev/protocol/connect/connectedMetadataCatalogV1';
 import {
   ConnectedPresentationRowReadResponseV1Schema, ConnectedAcknowledgementsRowReadResponseV1Schema,
   ConnectedPresentationRowMutationV1Schema, ConnectedAcknowledgementsRowMutationV1Schema,
   ConnectedMetadataRowMutationResponseV1Schema, sealConnectedPresentationContentV1, sealConnectedAcknowledgementsContentV1,
-  applyConnectedPresentationMutationV1, applyConnectedAcknowledgementMutationV1, removeConnectedMetadataSubjectV1,
+  applyConnectedPresentationMutationV1, applyConnectedSubscriptionPriceMutationV1, applyConnectedAcknowledgementMutationV1, removeConnectedMetadataSubjectV1,
   removeLegacyConnectedMetadataSubjectV1,
   CONNECTED_PRESENTATION_ROWS_ROUTE_V1, CONNECTED_ACKNOWLEDGEMENTS_ROWS_ROUTE_V1,
   connectedEntitySubjectKeyV1, type ConnectedPresentationRecordV1, type ConnectedAcknowledgementsRecordV1,
@@ -124,8 +125,11 @@ export function createCliConnectedMetadataStore(input: MetadataStoreInput) {
   };
   const readInventory = async (): Promise<LegacyConnectedMetadataInventoryV1> => {
     const profile = AccountProfileSchema.parse(await request('/v1/account/profile'));
-    const agents = [...readAgentCatalogSnapshot().agentDefinitionsById.entries()].flatMap(([legacyAgentId, agent]) =>
-      agent.identity ? [{ legacyAgentId, agentTargetKey: buildBackendTargetKeyV2({ kind: 'agent', identity: agent.identity }) }] : []);
+    const agents = [...readAgentCatalogSnapshot().agentDefinitionsById.entries()].flatMap(([legacyAgentId, agent]) => {
+      const target = AgentExecutionTargetV1Schema.safeParse({ kind: 'agent', identity: agent.identity });
+      // Contribution templates without a configured definition are not legacy executable targets.
+      return target.success ? [{ legacyAgentId, agentTargetKey: buildBackendTargetKeyV2(target.data) }] : [];
+    });
     return {
       entities: [...profile.connectedAccountsV4.map(({ ref }) => ({ kind: 'account' as const, account: ref })),
         ...profile.connectedAccountGroupsV4.map(({ ref }) => ({ kind: 'group' as const, ...ref }))], agents,
@@ -208,7 +212,8 @@ export function createCliConnectedMetadataStore(input: MetadataStoreInput) {
     if (result.status !== 'updated') throw Object.assign(new Error('Connected metadata mutation not acknowledged'), { code: result.status });
   };
   return {
-    assertCurrent, readCatalog: (onReady?: (catalog: ConnectedMetadataCatalogV1) => void) => readCatalog(onReady), readInventory,
+    assertCurrent, readCatalog: (onReady?: (catalog: ConnectedMetadataCatalogV1) => void) => readCatalog(onReady),
+    readAdmittedCatalog: () => readCatalog(undefined, false), readInventory,
     prepareCleanup: async (subject: QualifiedConnectedEntityRef): Promise<PreparedCleanup> => {
       // Establish row authority before the credential/group identity can disappear.
       const catalog = await readCatalog();
@@ -227,6 +232,22 @@ export function createCliConnectedMetadataStore(input: MetadataStoreInput) {
       }
       const catalog = requirePresentation(await readCatalog());
       const record = applyConnectedPresentationMutationV1(catalog.record, value);
+      if (isDeepStrictEqual(record, catalog.record)) return;
+      requireUpdated(await writePresentation({ record, expectedRevision: catalog.revision }));
+      await publishAfterMutation();
+    },
+    setSubscriptionPrice: async (value: Readonly<{ account: import('@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence').QualifiedConnectedAccountRef;
+      price: Omit<import('@happier-dev/protocol/connect/accountSubscription').ProviderAccountSubscriptionMonthlyPriceV1, 'enteredAtMs'> | null }>) => {
+      const profile = AccountProfileSchema.parse(await request('/v1/account/profile'));
+      const subject = { kind: 'account' as const, account: value.account };
+      if (profile.connectedAccountsV4.filter(candidate => connectedEntitySubjectKeyV1({ kind: 'account', account: candidate.ref }) === connectedEntitySubjectKeyV1(subject)).length !== 1) {
+        throw Object.assign(new Error('Connected metadata subject unavailable'), { code: 'connected_metadata_subject_unavailable' });
+      }
+      const admitted = await readCatalog(undefined, false);
+      const catalog = requirePresentation(admitted.presentation.status === 'unavailable' && admitted.presentation.reason === 'authority-not-confirmed'
+        ? await readCatalog() : admitted);
+      const record = applyConnectedSubscriptionPriceMutationV1(catalog.record, { account: value.account,
+        price: value.price ? { ...value.price, enteredAtMs: Date.now() } : null });
       if (isDeepStrictEqual(record, catalog.record)) return;
       requireUpdated(await writePresentation({ record, expectedRevision: catalog.revision }));
       await publishAfterMutation();

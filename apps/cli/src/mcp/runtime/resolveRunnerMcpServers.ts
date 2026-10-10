@@ -8,6 +8,7 @@ import { readSessionMcpSelectionV1FromMetadata } from '@happier-dev/protocol/mcp
 import { isSharedSavedSecretReferenceV1 } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
 import { SESSION_RUN_PROMPT_READ_ACTION_IDS_V1 } from '@happier-dev/protocol/sessions/messages/sessionInputPromptContextV1';
 import type { AccountSettings, ActionExecutorDeps, SessionRunPromptReadActionIdV1 } from '@happier-dev/protocol';
+import type { UsageMcpBindingIdentity } from '@happier-dev/protocol/usage/coach/usageMcpBindingUsage';
 
 import { McpServerCatalogUnavailableError, readMcpServersSettingsFromAccountSettings } from '../servers/readMcpServersSettingsFromAccountSettings';
 import { resolveManagedSessionMcpSelectionForDirectory } from '../servers/resolveManagedSessionMcpSelectionForDirectory';
@@ -76,6 +77,12 @@ function createRunScopedMcpSessionView(
     // admitted Session transport's immutable Home binding explicitly so a
     // Run-scoped MCP view cannot fall back to ambient Home configuration.
     getServerBinding: () => session.getServerBinding(),
+    ...(session.getEphemeralStreamConnectionEpoch
+      ? { getEphemeralStreamConnectionEpoch: () => session.getEphemeralStreamConnectionEpoch!() } : {}),
+    ...(session.isDaemonPluginCatalogSignalReady
+      ? { isDaemonPluginCatalogSignalReady: () => session.isDaemonPluginCatalogSignalReady!() } : {}),
+    ...(session.subscribeDaemonPluginCatalogChanges
+      ? { subscribeDaemonPluginCatalogChanges: (listener: Parameters<NonNullable<HappyMcpSessionClient['subscribeDaemonPluginCatalogChanges']>>[0]) => session.subscribeDaemonPluginCatalogChanges!(listener) } : {}),
     ...(session.getBackendTarget ? { getBackendTarget: () => session.getBackendTarget!() } : {}),
     ...(session.getMetadataSnapshot ? { getMetadataSnapshot: () => session.getMetadataSnapshot!() } : {}),
     ...(session.getMachineAdmissionTransport
@@ -171,7 +178,8 @@ export async function resolveRunnerMcpServers(params: Readonly<{
     stop: () => void;
   };
   mcpServers: Record<string, McpServerConfig>;
-  }>> {
+  mcpBindingIdentities?: Readonly<Record<string, UsageMcpBindingIdentity>>;
+}>> {
   const env = params.env ?? process.env;
   const accountCredentials = Object.hasOwn(params, 'accountCredentials')
     ? params.accountCredentials ?? null
@@ -214,6 +222,7 @@ export async function resolveRunnerMcpServers(params: Readonly<{
     throw new McpServerCatalogUnavailableError('scope-retired');
   }
   let mcpSettings = accountCredentials ? readMcpServersSettingsFromAccountSettings(accountSnapshot) : null;
+  let mcpCatalog = accountSnapshot?.mcpServerCatalog;
   let resolvedSelection: ReturnType<typeof resolveManagedSessionMcpSelectionForDirectory> | null = null;
   if (mcpSettings && accountCredentials) {
     const selection = readSessionMcpSelectionV1FromMetadata(params.sessionMetadata ?? null);
@@ -260,6 +269,7 @@ export async function resolveRunnerMcpServers(params: Readonly<{
       savedSecretResources = admitted.savedSecretResources;
       savedSecretCatalogState = admitted.savedSecretCatalogState;
       mcpSettings = readMcpServersSettingsFromAccountSettings({ ...admitted, mcpServerCatalog: admitted.mcpServerCatalog ?? accountSnapshot?.mcpServerCatalog });
+      mcpCatalog = admitted.mcpServerCatalog ?? accountSnapshot?.mcpServerCatalog;
     }
     resolvedSelection = resolveManagedSessionMcpSelectionForDirectory({
       settings: mcpSettings,
@@ -338,6 +348,19 @@ export async function resolveRunnerMcpServers(params: Readonly<{
   }
 
   const merged = mergeWithBuiltInHappierMcpServer({ builtIn: builtIn.mcpServers, extra: params.resolvedMcpServers ?? materialized.mcpServers });
+  const mcpBindingIdentities: Record<string, UsageMcpBindingIdentity> = {};
+  if (!params.resolvedMcpServers && mcpCatalog?.status === 'ready' && mcpCatalog.authority === 'active'
+      && typeof mcpCatalog.revision === 'number') {
+    for (const name of Object.keys(materialized.mcpServers)) {
+      const item = resolvedSelection.itemsByName[name];
+      if (!item?.selected || !item.bindingId) continue;
+      const binding = mcpSettings.bindings.find(row => row.id === item.bindingId && row.serverId === item.serverId);
+      const server = mcpSettings.servers.find(row => row.id === item.serverId);
+      if (!binding?.enabled || !server) continue;
+      mcpBindingIdentities[name] = { serverId: server.id, bindingId: binding.id,
+        serverRevision: server.updatedAt, bindingRevision: binding.updatedAt, catalogRevision: mcpCatalog.revision };
+    }
+  }
   return {
     happierMcpServer: {
       ...builtIn.happierMcpServer,
@@ -346,5 +369,6 @@ export async function resolveRunnerMcpServers(params: Readonly<{
       },
     },
     mcpServers: merged,
+    mcpBindingIdentities,
   };
 }

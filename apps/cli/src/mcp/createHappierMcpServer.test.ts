@@ -12,6 +12,12 @@ import { createSessionRecordFixture, createAccountEncryptionCurrentnessFixture }
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 import { createHappierMcpServer } from '@/mcp/createHappierMcpServer';
 import { resolveRunnerMcpServers } from '@/mcp/runtime/resolveRunnerMcpServers';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
+import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
+import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
+import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
+import * as daemonControlClient from '@/daemon/controlClient';
 
 const env = process.env;
 
@@ -19,6 +25,54 @@ const getTestServerBinding = () => ({
   serverId: 'test-home',
   serverUrl: 'https://test-home.example.test',
 } as const);
+
+async function installAccountCatalogDaemonTransport(params: Readonly<{
+  sessionId: string;
+  readMetadata: () => Readonly<Record<string, unknown>> | null;
+  mode?: 'plain' | 'e2ee';
+}>) {
+  const mode = params.mode ?? 'plain';
+  const secret = new Uint8Array(32).fill(17);
+  const credentials = { token: 'catalog-test-token', encryption: mode === 'plain' ? null : { type: 'legacy' as const, secret } };
+  const app = fastify();
+  const restore = installAxiosFastifyAdapter({ app, origin: getTestServerBinding().serverUrl });
+  let sessionReads = 0;
+  app.get('/v1/account/encryption/currentness', async () => createAccountEncryptionCurrentnessFixture({ mode }));
+  app.get('/v2/sessions/:sessionId', async (_request, reply) => {
+    sessionReads += 1;
+    const metadata = params.readMetadata();
+    if (!metadata) return reply.code(404).send({ error: 'not_found' });
+    return { session: createSessionRecordFixture({ id: params.sessionId, encryptionMode: mode,
+      metadata: mode === 'plain' ? JSON.stringify(metadata) : encodeBase64(encrypt(secret, 'legacy', metadata)),
+    }) };
+  });
+  const executor = createCliActionExecutorFromCredentials({
+    credentials, serverId: getTestServerBinding().serverId, serverApiUrl: getTestServerBinding().serverUrl,
+    pluginActionExecutionOwner: 'current_process',
+    actionsSettingsProvider: createActionSettingsProvider({ accountSettings: accountSettingsParse({}) }),
+    resolveServerFeaturesSnapshot: async () => ({ status: 'ready', provenance: 'authenticated',
+      features: FeaturesResponseSchema.parse({ features: {}, capabilities: {} }) }),
+  });
+  // Only daemon IPC and Home HTTP are substituted. The credentialed daemon
+  // catalog, current Session metadata opening and availability stay real.
+  vi.spyOn(daemonControlClient, 'requestDaemonPluginActionExecution').mockImplementation(async (request) => {
+    const result = await executor.execute(ActionIdSchema.parse(request.actionId), request.input, {
+      surface: request.surface, authority: 'account_automation', actionCaller: { kind: 'host' },
+      ...(request.defaultSessionId ? { defaultSessionId: request.defaultSessionId } : {}),
+    });
+    return { matched: true, result: result.ok
+      ? { ok: true, result: StrictJsonValueSchema.parse(result.result) }
+      : { ok: false, errorCode: result.errorCode, error: result.error } };
+  });
+  return { executor, getSessionReads: () => sessionReads, close: async () => { restore(); await app.close(); } };
+}
+
+const catalogHostTurn = {
+  getWorkDepth: () => 0,
+  getHostTurnWorkDepth: (turnId: string) => turnId === 'catalog-turn' ? 0 : undefined,
+  getActiveTurnPermissionWitness: () => ({ turnId: 'catalog-turn',
+    causalPermissionAuthority: { kind: 'admittedSessionInputV1' as const, admittedPermissionCeiling: 'yolo' as const } }),
+};
 
 function resetEnvironment() {
   process.env = { ...env };
@@ -42,6 +96,157 @@ describe('createHappierMcpServer real host admission', () => {
   // so compilation cannot outlive a test and overlap its HTTP adapter lifetime.
   beforeEach(resetEnvironment);
   afterEach(unmockCaseModules);
+  afterEach(() => vi.restoreAllMocks());
+
+  it('keeps descriptive catalog reads at the bound Session host policy owner', async () => {
+    delete process.env.HAPPIER_AGENT_RUNTIME_DAEMON_SERVICE_AUTHORITY_FILE;
+    const sessionId = 'c111111111111111111111111';
+    const daemon = await installAccountCatalogDaemonTransport({ sessionId,
+      readMetadata: () => ({ ...createTestMetadata(), work: { memoryEnabled: false } }),
+    });
+    const runtime = createHappierMcpServer({
+      sessionId,
+      getServerBinding: getTestServerBinding,
+      rpcHandlerManager: new RpcHandlerManager({ scopePrefix: sessionId, encryptionMode: 'plain' }),
+      updateMetadata() {},
+      getMetadataSnapshot: () => ({ ...createTestMetadata(), work: { memoryEnabled: false } }),
+      ...catalogHostTurn,
+    });
+    try {
+      await expect(runtime.executeTool({ toolName: 'action_spec_get', args: { id: 'memory.search' } }))
+        .resolves.toEqual(expect.objectContaining({ ok: true,
+          result: expect.objectContaining({ actionSpec: expect.objectContaining({ id: 'memory.search' }) }),
+        }));
+      const search = await runtime.executeTool({ toolName: 'action_spec_search', args: { query: 'memory', limit: 100 } });
+      expect(search).toEqual(expect.objectContaining({ ok: true }));
+      if (search.ok) {
+        const result = z.object({ actionSpecs: z.array(z.object({ id: z.string() })) }).parse(search.result);
+        expect(result.actionSpecs.map((spec) => spec.id)).toContain('memory.search');
+      }
+    } finally { await runtime.mcp.close(); await daemon.close(); }
+  });
+
+  it.each(['plain', 'e2ee'] as const)('uses live Session memory choice for direct tools, discovery and generic write admission (%s)', async (mode) => {
+    let memoryEnabled = true;
+    const actionsSettingsV1 = { v: 1, actions: {
+      'memory.remember': { toolExposureModes: { agent: 'direct' } },
+      'memory.update': { toolExposureModes: { agent: 'direct' } },
+      'memory.forget': { toolExposureModes: { agent: 'direct' } },
+    } };
+    const sessionId = 'c222222222222222222222222';
+    const daemon = await installAccountCatalogDaemonTransport({ sessionId, mode,
+      readMetadata: () => ({ ...createTestMetadata(), work: { memoryEnabled } }),
+    });
+    const client = {
+      sessionId,
+      getServerBinding: getTestServerBinding,
+      rpcHandlerManager: new RpcHandlerManager({ scopePrefix: sessionId, encryptionMode: 'plain' }),
+      updateMetadata() {},
+      getMetadataSnapshot: () => ({ ...createTestMetadata(), work: { memoryEnabled } }),
+      ...catalogHostTurn,
+    };
+    const runtime = createHappierMcpServer(client, { accountSettings: accountSettingsParse({ actionsSettingsV1 }) });
+    const execute = (toolName: string, args: unknown) => runtime.executeTool({ toolName, args });
+    try {
+      expect(runtime.toolNames).toEqual(expect.arrayContaining(['memory_remember', 'memory_update', 'memory_forget']));
+      await expect(execute('action_spec_get', { id: 'memory.remember' })).resolves.toEqual(expect.objectContaining({
+        ok: true, result: expect.objectContaining({ actionSpec: expect.objectContaining({ id: 'memory.remember' }) }),
+      }));
+      memoryEnabled = false;
+      for (const id of ['memory.remember', 'memory.update', 'memory.forget'] as const) {
+        await expect(execute('action_spec_get', { id })).resolves.toMatchObject({ ok: false, errorCode: 'action_disabled' });
+        await expect(execute('action_execute', { actionId: id, input: {} })).resolves.toMatchObject({ ok: false, errorCode: 'action_disabled' });
+        await expect(execute(id.replace('.', '_'), {})).resolves.toMatchObject({ ok: false, errorCode: 'action_disabled' });
+      }
+      const search = await execute('action_spec_search', { query: 'memory', limit: 100 });
+      expect(search).toEqual(expect.objectContaining({ ok: true }));
+      if (search.ok) {
+        const result = z.object({ actionSpecs: z.array(z.object({ id: z.string() })) }).parse(search.result);
+        const ids = result.actionSpecs.map((spec) => spec.id);
+        for (const id of ['memory.remember', 'memory.update', 'memory.forget']) expect(ids).not.toContain(id);
+      }
+      const refreshed = createHappierMcpServer(client, { accountSettings: accountSettingsParse({ actionsSettingsV1 }) });
+      try {
+        for (const name of ['memory_remember', 'memory_update', 'memory_forget']) expect(refreshed.toolNames).not.toContain(name);
+        expect(refreshed.toolNames).toContain('change_title');
+      } finally { await refreshed.mcp.close(); }
+      memoryEnabled = true;
+      await expect(execute('action_spec_get', { id: 'memory.remember' })).resolves.toMatchObject({
+        ok: true, result: { actionSpec: { id: 'memory.remember' } },
+      });
+    } finally { await runtime.mcp.close(); await daemon.close(); }
+  });
+
+  it('refuses catalog disclosure when bound Session metadata is unavailable without restricting unbound Account discovery', async () => {
+    const sessionId = 'c333333333333333333333333';
+    const daemon = await installAccountCatalogDaemonTransport({ sessionId, readMetadata: () => null });
+    try {
+      await expect(daemon.executor.execute('action.spec.get', { id: 'memory.remember' }, { surface: 'mcp' }))
+        .resolves.toEqual(expect.objectContaining({ ok: true }));
+      expect(daemon.getSessionReads()).toBe(0);
+      for (const actionId of ['action.spec.get', 'action.spec.search'] as const) {
+        await expect(daemon.executor.execute(actionId, actionId === 'action.spec.get' ? { id: 'memory.remember' } : { query: 'memory' },
+          { surface: 'agent', defaultSessionId: sessionId, actionCaller: { kind: 'host' } }))
+          .resolves.toEqual(expect.objectContaining({ ok: false, errorCode: 'target_unavailable' }));
+      }
+    } finally { await daemon.close(); }
+  });
+
+  it('refuses native memory windows on credentialless Session-bound MCP before transport', async () => {
+    const manager = new RpcHandlerManager({ scopePrefix: 'bound-session', encryptionMode: 'plain' });
+    const requests: unknown[] = [];
+    manager.registerHandler(RPC_METHODS.DAEMON_MEMORY_GET_WINDOW, async request => {
+      requests.push(request);
+      return { v: 1, snippets: [], citations: [], externalSnippets: [] };
+    });
+    const runtime = createHappierMcpServer({ sessionId: 'bound-session', rpcHandlerManager: manager,
+      updateMetadata() {}, getServerBinding: getTestServerBinding,
+      getCurrentSessionLocation: () => ({ machineId: 'machine-1', path: '/repo' }),
+    }, { credentials: null, accountSettings: accountSettingsParse({ actionsSettingsV1: { v: 1, actions: {
+      'memory.get_window': { toolExposureModes: { agent: 'direct' } },
+    } } }) });
+    try {
+      expect(await runtime.executeTool({ toolName: 'memory_get_window', args: {
+        machineId: 'machine-1', source: { type: 'external_transcript', agentId: 'pi', sourceKey: 'local', nativeSessionId: 'native' },
+        sourceItemId: 'message',
+      } })).toMatchObject({ ok: false, errorCode: 'not_authenticated' });
+      expect(requests).toEqual([]);
+    } finally { await runtime.mcp.close(); }
+  });
+
+  it.each(['mixed-corpus', 'documents-only'] as const)('keeps credentialless %s searches within the MCP-bound Session', async (selection) => {
+    const manager = new RpcHandlerManager({ scopePrefix: 'bound-session', encryptionMode: 'plain' });
+    const queries: unknown[] = [];
+    manager.registerHandler(RPC_METHODS.DAEMON_MEMORY_SEARCH, async (query: unknown) => {
+      queries.push(query);
+      return { v: 1, ok: true, documents: { state: 'ready' }, hits: [
+        { sessionId: 'bound-session', seqFrom: 1, seqTo: 1, createdAtFromMs: 1, createdAtToMs: 1, summary: 'readable', score: 1 },
+        { sessionId: 'foreign-session', seqFrom: 1, seqTo: 1, createdAtFromMs: 1, createdAtToMs: 1, summary: 'private transcript', score: 1 },
+        { type: 'artifact', ref: { kind: 'doc', serverId: 'test-home', artifactId: 'doc-1' },
+          revision: { headerVersion: 1, bodyVersion: 1 }, location: 'document', summary: 'private document', score: 1 },
+      ] };
+    });
+    const runtime = createHappierMcpServer({
+      sessionId: 'bound-session', rpcHandlerManager: manager, updateMetadata() {},
+      getServerBinding: getTestServerBinding,
+      getCurrentSessionLocation: () => ({ machineId: 'machine-1', path: '/repo' }),
+    }, { credentials: null, accountSettings: accountSettingsParse({ actionsSettingsV1: { v: 1, actions: {
+      'memory.search': { toolExposureModes: { agent: 'direct' } },
+    } } }) });
+    try {
+      const result = await runtime.executeTool({ toolName: 'memory_search', args: {
+        query: { v: 1, query: 'private', scope: { type: 'global' }, mode: 'deep',
+          corpora: selection === 'mixed-corpus' ? ['sessions', 'documents'] : ['documents'] },
+      } });
+      expect(result).toEqual({ ok: true, result: {
+        v: 1, ok: true, hits: selection === 'mixed-corpus' ? [{ sessionId: 'bound-session', seqFrom: 1, seqTo: 1,
+          createdAtFromMs: 1, createdAtToMs: 1, summary: 'readable', score: 1 }] : [], documents: { state: 'unavailable' },
+      } });
+      expect(queries).toHaveLength(selection === 'mixed-corpus' ? 1 : 0);
+      expect(JSON.stringify(result)).not.toContain('private transcript');
+      expect(JSON.stringify(result)).not.toContain('private document');
+    } finally { await runtime.mcp.close(); }
+  });
 
   it('returns the daemon authority refusal for an advertised Account Action from a session-scoped runtime', async () => {
     delete process.env.HAPPIER_AGENT_RUNTIME_DAEMON_SERVICE_AUTHORITY_FILE;

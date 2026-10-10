@@ -1,6 +1,6 @@
 import type { StoredCredentials } from '@/persistence';
+import { parseSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import {
-  deriveSettingsSecretsReadKeysForCredentials,
   resolveMcpValueRefPlaintext,
 } from '@/mcp/servers/resolveMcpValueRefPlaintext';
 import {
@@ -19,21 +19,22 @@ export function materializeConfiguredAcpEnvironment(params: Readonly<{
   savedSecretResources?: readonly SavedSecretCatalogResourceInputV1[];
 }>): Record<string, string> {
   const processEnv = params.processEnv ?? process.env;
-  const settingsSecretsReadKeys = deriveSettingsSecretsReadKeysForCredentials(params.credentials);
   const savedSecretMaterializer = createSavedSecretMaterializerV1({
     accountSettings: params.accountSettings,
-    settingsSecretsReadKeys,
+    settingsSecretsReadKeys: [],
     resources: params.savedSecretResources,
   });
 
   const env: Record<string, string> = {};
   for (const [envKey, valueRef] of Object.entries(params.backend.env)) {
+    if (valueRef.t === 'savedSecret' && parseSavedSecretRefV1(valueRef.secretId)?.kind !== 'shared_resource') {
+      throw new SavedSecretResolutionError({
+        status: 'repair_required', reference: valueRef.secretId, consumer: 'acp', field: `env:${envKey}`,
+      });
+    }
     const resolved = resolveMcpValueRefPlaintext({
       valueRef,
-      savedSecretsById: new Map(),
       savedSecretMaterializer,
-      settingsSecretsKey: null,
-      settingsSecretsReadKeys,
       processEnv,
     });
     if (

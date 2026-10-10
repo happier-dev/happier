@@ -1,6 +1,7 @@
 import { readSessionMcpSelectionV1FromMetadata } from '@happier-dev/protocol/mcp/servers/sessionSelectionV1';
 import type { AccountSettings, McpServerCatalogEntryV1, PluginExecutionScopeV1, ResolvedMcpServerV1, SessionMcpSelectionV1 } from '@happier-dev/protocol';
 import { readMcpServersSettingsFromAccountSettings } from './readMcpServersSettingsFromAccountSettings';
+import type { ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { resolveManagedSessionMcpSelectionForDirectory } from './resolveManagedSessionMcpSelectionForDirectory';
 import type {
   McpSessionResolutionInput,
@@ -12,6 +13,7 @@ import type {
 export type ResolvePluginMcpServersForSessionParams = Readonly<{
   input: McpSessionResolutionInput;
   accountSettings: AccountSettings | null;
+  accountSettingsSnapshot?: ActiveAccountSettingsSnapshot | null;
   machineId: string;
   directory: string;
   sessionMetadata?: unknown;
@@ -93,7 +95,7 @@ export function resolvePluginMcpServersForSession(
   const scope = createScope(params.input, directory);
   if (!scope) return Object.freeze([]);
 
-  const settings = readMcpServersSettingsFromAccountSettings(params.accountSettings);
+  const settings = readMcpServersSettingsFromAccountSettings(params.accountSettingsSnapshot ?? null);
   const selection = params.selection === undefined
     ? readSessionMcpSelectionV1FromMetadata(params.sessionMetadata)
     : params.selection;
@@ -120,7 +122,7 @@ export function resolvePluginMcpServersForExecutionScope(
   const machineId = readTrimmedString(params.machineId);
   if (!params.accountSettings || !directory || !machineId) return Object.freeze([]);
 
-  const settings = readMcpServersSettingsFromAccountSettings(params.accountSettings);
+  const settings = readMcpServersSettingsFromAccountSettings(params.accountSettingsSnapshot ?? null);
   const resolvedSelection = resolveManagedSessionMcpSelectionForDirectory({
     settings,
     machineId,

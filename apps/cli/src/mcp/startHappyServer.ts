@@ -5,7 +5,6 @@ import { logger } from "@/ui/logger";
 import { createHappierMcpServer } from "@/mcp/createHappierMcpServer";
 import {
     listAdmittedSessionRunReadActionIds,
-    listBuiltInHappierTools,
 } from "@/agent/tools/happierTools/listBuiltInHappierTools";
 import type { RpcHandlerManagerLike } from "@/api/rpc/types";
 import type { Metadata } from "@/api/types";
@@ -14,7 +13,6 @@ import { configuration } from "@/configuration";
 import type { StoredCredentials } from '@/persistence';
 import type { AgentCompositionToolSelection } from '@/plugins/runtime/hooks/execution/dispatchAgentTurnHooks';
 import {
-    projectOccurrenceBoundExecutablePluginToolCatalog,
     type ProjectedPluginToolCatalogEntry,
 } from '@/plugins/runtime/toolCatalog';
 import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
@@ -27,10 +25,8 @@ import type {
 } from '@happier-dev/protocol';
 import type { RuntimeActiveTurnPermissionWitness } from '@/agent/runtime/turns/runtimeTurnOperations';
 import {
-    createMcpActionEnablementWithServerFeatureAvailability,
     createMcpActionSettingsProvider,
 } from '@/mcp/server/createMcpActionEnablement';
-import { readDaemonPluginCatalog } from '@/daemon/controlClient';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { z } from 'zod';
 import type { RuntimeActionSettingsProvider } from '@/settings/actionsSettingsProvider';
@@ -38,6 +34,7 @@ import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient'
 import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
 import type { SessionClientServerBinding } from '@/api/session/client/transport/sessionClientTransport';
 import { DaemonPluginToolCatalogUnavailableError } from './pluginToolCatalogError';
+import { createSessionMcpToolInventory } from './server/sessionMcpToolInventory';
 
 const NativeAgentToolCallRequestV1Schema = z.strictObject({
     toolName: z.string().trim().min(1).max(256),
@@ -79,6 +76,9 @@ export type HappyMcpSessionClient = {
     /** Full host admission identity for the existing authenticated daemon channel. */
     getActiveTurnAdmissionWitness?(): import('@/plugins/runtime/invocation/services/types').AgentInvocationTurnAdmissionWitness | null;
     getRuntimeLifetimeSignal?(): AbortSignal | null | undefined;
+    getEphemeralStreamConnectionEpoch?: import('@/api/session/sessionClient').ApiSessionClient['getEphemeralStreamConnectionEpoch'];
+    subscribeDaemonPluginCatalogChanges?: import('@/api/session/sessionClient').ApiSessionClient['subscribeDaemonPluginCatalogChanges'];
+    isDaemonPluginCatalogSignalReady?: import('@/api/session/sessionClient').ApiSessionClient['isDaemonPluginCatalogSignalReady'];
     getServerFeaturesSnapshot?(): CliServerFeaturesSnapshot | undefined;
     getSessionActionConfirmationBinding?(): import('@/session/actions/approvals/sessionActionConfirmation').SessionActionConfirmationRuntimeBinding | null;
     confirmSessionAction?: import('@/api/session/sessionClient').ApiSessionClient['confirmSessionAction'];
@@ -160,25 +160,10 @@ export function filterPluginToolsForActiveAgentComposition(
 
 async function readCurrentPluginToolCatalog(
     client: HappyMcpSessionClient,
-    pluginRuntimeRegistryLease?: PluginRuntimeRegistryLease,
+    inventory: ReturnType<typeof createSessionMcpToolInventory>,
 ): Promise<readonly ProjectedPluginToolCatalogEntry[]> {
-    if (pluginRuntimeRegistryLease) {
-        return filterPluginToolsForActiveAgentComposition(
-            projectOccurrenceBoundExecutablePluginToolCatalog(
-                pluginRuntimeRegistryLease.registry,
-            ),
-            client.getActiveAgentCompositionToolSelection?.() ?? null,
-        );
-    }
-    const daemonCatalog = await readDaemonPluginCatalog().catch(() => ({
-        kind: 'unavailable' as const,
-        code: 'daemon_unavailable',
-    }));
-    if (daemonCatalog.kind !== 'available') {
-        throw new DaemonPluginToolCatalogUnavailableError();
-    }
     return filterPluginToolsForActiveAgentComposition(
-        daemonCatalog.tools,
+        await inventory.readPluginToolCatalog(),
         client.getActiveAgentCompositionToolSelection?.() ?? null,
     );
 }
@@ -194,6 +179,12 @@ export function registerHappierSessionAgentToolRpc(
             ? resolveAccountSettingsScopeKeyForToken(opts.credentials.token)
             : null,
     });
+    const readToolInventory = createSessionMcpToolInventory({
+        client, actionSettingsProvider,
+        hasAuthenticatedRuntime: (opts?.sessionCredentials ?? opts?.credentials ?? null) !== null,
+        authorityScope: opts?.authorityScope, requiredDirectActionIds: opts?.requiredDirectActionIds,
+        pluginRuntimeRegistryLease: opts?.pluginRuntimeRegistryLease,
+    });
     client.rpcHandlerManager.registerHandler(
         SESSION_RPC_METHODS.SESSION_AGENT_TOOL_CALL_V1,
         async (raw) => {
@@ -207,7 +198,7 @@ export function registerHappierSessionAgentToolRpc(
             }
             let pluginToolCatalog: readonly ProjectedPluginToolCatalogEntry[];
             try {
-                pluginToolCatalog = await readCurrentPluginToolCatalog(client, opts?.pluginRuntimeRegistryLease);
+                pluginToolCatalog = await readCurrentPluginToolCatalog(client, readToolInventory);
             } catch (error) {
                 if (!(error instanceof DaemonPluginToolCatalogUnavailableError)) throw error;
                 return { ok: false as const, errorCode: error.code, error: error.message };
@@ -221,6 +212,7 @@ export function registerHappierSessionAgentToolRpc(
                 accountSettings: opts?.accountSettings ?? null,
                 getAccountSettings: opts?.getAccountSettings ?? null,
                 pluginToolCatalog,
+                toolInventory: readToolInventory(pluginToolCatalog),
                 ...(opts?.pluginRuntimeRegistryLease
                     ? { pluginRuntimeRegistryLease: opts.pluginRuntimeRegistryLease }
                     : {}),
@@ -244,8 +236,7 @@ export async function startHappyServer(
     client: HappyMcpSessionClient,
     opts?: HappySessionToolRuntimeOptions,
 ) {
-    // Do not eagerly construct an MCP server on startup; only snapshot the names.
-    // Full server creation is done per request inside the handler.
+    // Transports remain request-local; reuse the bridge's admitted inventory.
     const actionSettingsProvider = opts?.actionsSettingsProvider ?? createMcpActionSettingsProvider({
         accountSettings: opts?.accountSettings ?? null,
         getAccountSettings: opts?.getAccountSettings ?? null,
@@ -253,24 +244,17 @@ export async function startHappyServer(
             ? resolveAccountSettingsScopeKeyForToken(opts.credentials.token)
             : null,
     });
-    const isActionEnabled = createMcpActionEnablementWithServerFeatureAvailability({
-        actionSettingsProvider,
-        surface: 'agent',
+    const readToolInventory = createSessionMcpToolInventory({
+        client, actionSettingsProvider,
         hasAuthenticatedRuntime: (opts?.sessionCredentials ?? opts?.credentials ?? null) !== null,
         authorityScope: opts?.authorityScope,
-        readServerFeaturesSnapshot: () => client.getServerFeaturesSnapshot?.(),
-    });
-    const initialPluginToolCatalog = await readCurrentPluginToolCatalog(
-        client,
-        opts?.pluginRuntimeRegistryLease,
-    );
-    const toolsSnapshot = listBuiltInHappierTools({
-        surface: 'agent',
-        isActionEnabled,
-        actionsSettings: actionSettingsProvider.getActionsSettings(),
-        pluginToolCatalog: initialPluginToolCatalog,
         requiredDirectActionIds: opts?.requiredDirectActionIds,
+        pluginRuntimeRegistryLease: opts?.pluginRuntimeRegistryLease,
     });
+    const initialPluginToolCatalog = await readCurrentPluginToolCatalog(client, readToolInventory)
+        .catch(error => { readToolInventory.dispose(); throw error; });
+    const initialToolInventory = readToolInventory(initialPluginToolCatalog);
+    const toolsSnapshot = initialToolInventory.tools;
     const toolNamesSnapshot = toolsSnapshot.map((tool) => tool.name);
     const supportedSessionReadActions = listAdmittedSessionRunReadActionIds(toolsSnapshot);
     const keepAliveIntervalMs = configuration.mcpSseKeepAliveIntervalMs;
@@ -293,7 +277,7 @@ export async function startHappyServer(
             // POST requests still bind the current executable catalog.
             pluginToolCatalog = req.method === 'GET'
                 ? initialPluginToolCatalog
-                : await readCurrentPluginToolCatalog(client, opts?.pluginRuntimeRegistryLease);
+                : await readCurrentPluginToolCatalog(client, readToolInventory);
         } catch (error) {
             stopKeepAlive();
             logger.debug('[happierMCP] Plugin catalog unavailable', { error: 'daemon_plugin_catalog_unavailable' });
@@ -323,6 +307,7 @@ export async function startHappyServer(
             accountSettings: opts?.accountSettings ?? null,
             getAccountSettings: opts?.getAccountSettings ?? null,
             pluginToolCatalog,
+            toolInventory: req.method === 'GET' ? initialToolInventory : readToolInventory(pluginToolCatalog),
             ...(opts?.pluginRuntimeRegistryLease
                 ? { pluginRuntimeRegistryLease: opts.pluginRuntimeRegistryLease }
                 : {}),
@@ -388,6 +373,7 @@ export async function startHappyServer(
         supportedSessionReadActions,
         stop: () => {
             logger.debug('[happierMCP] Stopping server');
+            readToolInventory.dispose();
             server.close();
         }
     }

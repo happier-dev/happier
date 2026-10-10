@@ -106,8 +106,6 @@ describe.runIf(process.platform !== 'win32')('materializeMcpServerConfigRecord p
       const resolved = resolveEffectiveServersV1(settings, { machineId: 'm1', directory: badCwd });
       const materialized = await materializeMcpServerConfigRecord({
         resolved,
-        settingsSecretsKey: null,
-        savedSecretsById: new Map(),
         processEnv: { HOME: goodHome, HAPPIER_PNPM_BIN: fakePnpmPath },
         tmpDir: root,
         deps: {

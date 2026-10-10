@@ -12,7 +12,7 @@ import { createChangeTitleToolHandler } from '@/agent/tools/happierTools/createC
 import { dispatchBuiltInHappierTool } from '@/agent/tools/happierTools/dispatchBuiltInHappierTool';
 import type { HappierBuiltInToolDispatchResult } from '@/agent/tools/happierTools/types';
 import { normalizeExecutionRunRpcPayload } from '@/session/services/executionRuns';
-import { registerHappierMcpBuiltInTools } from '@/mcp/server/registerHappierMcpBuiltInTools';
+import { registerHappierMcpBuiltInTools, type HappierMcpToolInventory } from '@/mcp/server/registerHappierMcpBuiltInTools';
 import {
   readStoredCredentialsForServerId,
   sameStoredCredentials,
@@ -37,7 +37,7 @@ import type { ActionId, AccountSettings, ActionExecutorDeps, BackendTargetRefV2 
 import { getActionSpec, isActionSpecSurfacedOn } from '@happier-dev/protocol/actions/actionSpecs';
 import { normalizeServerIdentityIdCapability } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
-import { MemorySearchResultV1Schema } from '@happier-dev/protocol/memory/memorySearch';
+import { isMemorySessionSearchHitV1, negotiateMemorySearchV1 } from '@happier-dev/protocol/memory/memorySearch';
 import { MemoryWindowV1Schema } from '@happier-dev/protocol/memory/memoryWindow';
 import type { MemorySearchResultV1, MemoryWindowV1, SessionStateCapabilitiesV1 } from '@happier-dev/protocol';
 import { createSessionStateSyncEngine } from '@happier-dev/agents';
@@ -56,6 +56,7 @@ import { createAccountServerActionDeps } from '@/api/accountServerActionDeps';
 import { createSessionFollowActionDeps } from '@/api/sessionFollowActionDeps';
 import { createSessionFollowSourceKeyPreparationAfterSet } from '@/agent/runtime/session/follow/createSessionFollowSourceKeyPreparationAfterSet';
 import { createSessionAccountActionExecutor } from '@/mcp/runtime/createSessionAccountActionExecutor';
+import { readSessionMemoryEnabledV1 } from '@happier-dev/protocol/sessions/context/sessionContextV1';
 
 const MCP_SESSION_STATE_CAPABILITIES: SessionStateCapabilitiesV1 = {
   display: {
@@ -64,6 +65,7 @@ const MCP_SESSION_STATE_CAPABILITIES: SessionStateCapabilitiesV1 = {
       happierToProvider: { supported: false },
       providerToHappier: { supported: false },
     },
+    bot: { supported: true, happierToProvider: { supported: false }, providerToHappier: { supported: false } },
   },
 };
 
@@ -108,9 +110,9 @@ function resolveLiveClientLocation(client: HappyMcpSessionClient): Readonly<{
   return client.getCurrentSessionLocation?.() ?? null;
 }
 
-async function writeMcpSessionTitleMetadata(params: Readonly<{
+async function writeMcpSessionStateFieldMetadata(params: Readonly<{
   client: HappyMcpSessionClient;
-  title: string;
+  write: Parameters<NonNullable<ActionExecutorDeps['sessionStateFieldSet']>>[0];
   metadataReason: string;
 }>): Promise<boolean> {
   const engine = createSessionStateSyncEngine({
@@ -125,11 +127,10 @@ async function writeMcpSessionTitleMetadata(params: Readonly<{
   });
   const result = await engine.writeHappierField({
     sessionId: params.client.sessionId,
-    fieldId: 'display.title',
-    value: {
-      title: params.title,
-      staleBehavior: 'bump-if-value-changed',
-    },
+    fieldId: params.write.fieldId,
+    value: params.write.fieldId === 'display.title'
+      ? { title: params.write.value, staleBehavior: 'bump-if-value-changed' }
+      : params.write.value,
     reason: 'user-mutation',
     metadataReason: params.metadataReason,
     mirrorToProvider: false,
@@ -153,6 +154,7 @@ export function createHappierMcpServer(
     /** Exact caller-owned registry lease for daemonless scoped runtimes. */
     pluginRuntimeRegistryLease?: PluginRuntimeRegistryLease;
     requiredDirectActionIds?: readonly ActionId[];
+    toolInventory?: HappierMcpToolInventory;
     sessionInputVia?: 'action' | 'mcp';
   }>,
 ): {
@@ -192,6 +194,7 @@ export function createHappierMcpServer(
     surface: toolSurface,
     hasAuthenticatedRuntime: sessionCredentials !== null,
     authorityScope: opts?.authorityScope,
+    readSessionMemoryEnabled: () => readSessionMemoryEnabledV1(client.getMetadataSnapshot?.()),
     readServerFeaturesSnapshot: () => client.getServerFeaturesSnapshot?.(),
   });
   const isActionApprovalRequired = createMcpActionApprovalRequirement({
@@ -439,13 +442,13 @@ export function createHappierMcpServer(
               : {}),
           })
         : {}),
-      sessionTitleSet: async ({ sessionId, title }) => {
+      sessionStateFieldSet: async (write) => {
+        const { sessionId, value, fieldId } = write;
         const normalizedSessionId = String(sessionId ?? '').trim();
         if (!normalizedSessionId) {
           return { ok: false as const, errorCode: 'invalid_parameters' as const, error: 'invalid_parameters' as const };
         }
-        const normalizedTitle = String(title ?? '').trim();
-        if (!normalizedTitle) {
+        if (fieldId === 'display.title' && !value.trim()) {
           return { ok: false as const, errorCode: 'invalid_parameters' as const, error: 'invalid_parameters' as const };
         }
         if (normalizedSessionId !== client.sessionId) {
@@ -453,16 +456,16 @@ export function createHappierMcpServer(
         }
 
         try {
-          const ok = await writeMcpSessionTitleMetadata({
+          const ok = await writeMcpSessionStateFieldMetadata({
             client,
-            title: normalizedTitle,
-            metadataReason: 'mcp-session-title-set',
+            write,
+            metadataReason: `mcp-${write.actionId}`,
           });
           if (!ok) {
             return { ok: false as const, errorCode: 'metadata_update_failed' as const, error: 'metadata_update_failed' as const };
           }
         } catch (error) {
-          logger.debug('[mcp] Failed to update title metadata via session-scoped bridge', {
+          logger.debug('[mcp] Failed to update registered metadata via session-scoped bridge', {
             sessionId: normalizedSessionId,
             error,
           });
@@ -472,7 +475,7 @@ export function createHappierMcpServer(
         return {
           ok: true as const,
           sessionId: normalizedSessionId,
-          title: normalizedTitle,
+          ...(fieldId === 'display.title' ? { title: value } : { bot: value }),
           metadataUpdated: true as const,
         };
       },
@@ -492,20 +495,27 @@ export function createHappierMcpServer(
           // the daemon already bound to their session. Authenticated callers keep
           // the canonical machine-aware dependencies from createCliActionDeps.
           daemonMemorySearch: async ({ query, signal }): Promise<MemorySearchResultV1> => {
-            const res = await sessionScopedRpc(RPC_METHODS.DAEMON_MEMORY_SEARCH, query);
-            signal?.throwIfAborted();
-            const result = MemorySearchResultV1Schema.parse(res);
+            const result = await negotiateMemorySearchV1({
+              query,
+              // This bridge has Session transport, not Account document-read authority.
+              readDocumentSearchSupport: async () => false,
+              search: async (request) => await sessionScopedRpc(RPC_METHODS.DAEMON_MEMORY_SEARCH, request),
+              ...(signal ? { signal } : {}),
+            });
             return result.ok
               ? {
                   ...result,
-                  hits: result.hits.filter((hit) => isSessionBoundMemoryTarget({
+                  hits: result.hits.filter((hit) => isMemorySessionSearchHitV1(hit) && isSessionBoundMemoryTarget({
                     boundSessionId: client.sessionId,
                     requestedSessionId: hit.sessionId,
                   })),
                 }
               : result;
           },
-          daemonMemoryGetWindow: async ({ sessionId, seqFrom, seqTo }): Promise<MemoryWindowV1> => {
+          daemonMemoryGetWindow: async (request): Promise<MemoryWindowV1> => {
+            if (request.source !== undefined) throw Object.assign(
+              new Error('Native memory windows require authenticated Machine access'), { code: 'not_authenticated' as const });
+            const { sessionId, seqFrom, seqTo } = request;
             if (!isSessionBoundMemoryTarget({
               boundSessionId: client.sessionId,
               requestedSessionId: sessionId,
@@ -610,6 +620,7 @@ export function createHappierMcpServer(
     },
     pluginToolCatalog: opts?.pluginToolCatalog,
     requiredDirectActionIds: opts?.requiredDirectActionIds,
+    actionToolNameToId: opts?.toolInventory?.actionToolNameToId,
     defaultSessionMachineId: sessionLocation?.machineId ?? null,
   });
 
@@ -639,6 +650,7 @@ export function createHappierMcpServer(
     getActionsSettings: readActionsSettings,
     pluginToolCatalog: opts?.pluginToolCatalog,
     requiredDirectActionIds: opts?.requiredDirectActionIds,
+    toolInventory: opts?.toolInventory,
     deps: toolDeps,
   });
 

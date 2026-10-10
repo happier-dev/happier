@@ -6,7 +6,7 @@ import { openEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/enc
 import { openSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
 import { convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
 import { SharedSavedSecretPromoteInputV1Schema } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
-import { deriveSavedSecretImportResourceIdV1 } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
+import { deriveSavedSecretImportResourceIdV1, readSavedSecretTransferSourceV1 } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
 import { AccountSettingsPersistedObjectSchema } from '@happier-dev/protocol/account/settings/accountSettingsPersistedObject';
 import { AccountSettingsV2HistoryMutationRequestSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
 import { deriveSettingsSecretsKeySetV1, encryptSecretStringV1 } from '@happier-dev/protocol/crypto/settingsSecretStringsV1';
@@ -19,6 +19,8 @@ import { CONNECTED_ACCOUNT_CATALOG_ROWS_ROUTE_V1, sealConnectedAccountCatalogCon
 import { ACP_CATALOG_ROWS_ROUTE_V1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 import { PROVIDER_CONNECTIONS_ROWS_ROUTE_V1 } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
 import { MCP_SERVER_CATALOG_ROWS_ROUTE_V1 } from '@happier-dev/protocol/mcp/servers/serverRowsV1';
+import { PROMPT_LIBRARY_ROWS_ROUTE_V1 } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
+import { CONNECTED_PRESENTATION_ROWS_ROUTE_V1, CONNECTED_ACKNOWLEDGEMENTS_ROWS_ROUTE_V1 } from '@happier-dev/protocol/connect/connectedAccountPresentationRowsV1';
 import { REMOTE_HOST_ROWS_ROUTE_V1, REMOTE_HOST_ACCOUNT_CIPHER_KIND_V1, RemoteHostCatalogRecordV1Schema,
   sealRemoteHostCatalogContentV1, openRemoteHostCatalogContentV1 } from '@happier-dev/protocol/remoteHosts/remoteHostRecordV1';
 import { NOTIFICATION_CHANNELS_ROUTE_V1, NOTIFICATION_CHANNELS_CIPHER_KIND_V1, NotificationChannelCatalogRecordV1Schema,
@@ -48,6 +50,265 @@ describe('SavedSecret material-demand legacy import', () => {
   afterEach(() => {
     resetActiveAccountSettingsSnapshotForTests();
     vi.unstubAllGlobals();
+  });
+
+  it.each([['plain', 'chat'], ['e2ee', 'chat'], ['plain', 'nonchat'], ['e2ee', 'nonchat'],
+    ['plain', 'bound-personal'], ['e2ee', 'bound-personal'], ['plain', 'mixed'], ['e2ee', 'mixed'],
+    ['plain', 'mixed-source-drift'], ['e2ee', 'mixed-source-drift']] as const)(
+    'promotes original inline Voice in one full source transaction: %s %s', async (mode, origin) => {
+    const token = `e30.${Buffer.from(JSON.stringify({ sub: 'inline-account' })).toString('base64url')}.signature`;
+    const credentials: StoredCredentials = { token, encryption: mode === 'plain' ? null : { type: 'legacy', secret: new Uint8Array(32).fill(4) } };
+    const material = credentials.encryption;
+    const scopeKey = resolveAccountSettingsScopeKeyForToken(token);
+    const encryptedValue = material ? { _isSecretValue: true as const,
+      encryptedValue: encryptSecretStringV1('inline-private', deriveSettingsSecretsKeySetV1(material).writeKey,
+        length => new Uint8Array(length).fill(12)) } : { _isSecretValue: true as const, value: 'inline-private' };
+    const mixed = origin === 'mixed' || origin === 'mixed-source-drift';
+    const boundPersonal = origin === 'bound-personal';
+    const originalSecret = { id: 'custom-eleven-credential', name: 'Personal Eleven credential', kind: 'apiKey' as const,
+      createdAt: 7, updatedAt: 9, encryptedValue };
+    const neighborRef = 'happier:shared-secret:v1:neighbor-chat';
+    const neighborValue = material ? { _isSecretValue: true as const,
+      encryptedValue: encryptSecretStringV1('neighbor-private', deriveSettingsSecretsKeySetV1(material).writeKey,
+        length => new Uint8Array(length).fill(13)) } : { _isSecretValue: true as const, value: 'neighbor-private' };
+    const originalRaw = { preferredLanguage: 'fr', harmlessSibling: { preserved: true },
+      ...(boundPersonal ? { secrets: [originalSecret] } : {}), voice: origin === 'chat'
+      ? { adapters: { local_conversation: { agent: { openaiCompat: { chatApiKey: encryptedValue } } } } }
+      : { providerId: 'realtime_elevenlabs',
+        ...(mixed ? { credentialBindings: [{ providerId: 'openai_compat', credentialBindings: { account: { chat_api_key: neighborRef } } }] } : {}),
+        ...(boundPersonal ? { credentialBindings: [{ providerId: 'realtime_elevenlabs',
+          credentialBindings: { account: { api_key: originalSecret.id } } }] } : {}),
+        adapters: { realtime_elevenlabs: { billingMode: 'byo', byo: { apiKey: encryptedValue, agentId: 'kept-agent' } },
+          ...(mixed ? { local_conversation: { agent: { openaiCompat: { chatApiKey: neighborValue } } } } : {}) } } };
+    const originalSource = readSavedSecretTransferSourceV1(originalRaw);
+    const receipt = origin === 'chat' ? originalSource.legacyChatCredential : originalSource.legacyVoiceCredentials?.[0];
+    if (receipt?.source.kind !== 'personal-saved-secret') throw new Error('fixture_missing_original_inline_receipt');
+    expect(originalSource.secrets).toEqual(boundPersonal ? [originalSecret] : []);
+    if (boundPersonal) expect(receipt.source.secretId).toBe(originalSecret.id);
+    expect(receipt.encryptedValue).toBe(encryptedValue);
+    const resourceId = deriveSavedSecretImportResourceIdV1({ accountId: 'inline-account', source: receipt.source });
+    const resourceRef = `happier:shared-secret:v1:${resourceId}`;
+    let raw: Readonly<Record<string, unknown>> = originalRaw;
+    let version = 4;
+    const content = (): AccountSettingsStoredContentEnvelope => material ? { t: 'encrypted',
+      c: sealAccountScopedBlobCiphertext({ kind: 'account_settings', material, payload: raw,
+        randomBytes: length => new Uint8Array(length).fill(11) }) } : { t: 'plain', v: raw };
+    const context = createInvocationSavedSecretOperationContextV1({ credentials, serverHttpBaseUrl: 'https://inline-home.example',
+      snapshot: { source: 'network', settings: AccountSettingsSchema.parse(raw), rawSettings: raw, settingsVersion: 4,
+        loadedAtMs: 1, scopeKey, settingsSecretsReadKeys: deriveSettingsSecretsReadKeysForCredentials(credentials) }, isCurrent: async () => true });
+    const resources: unknown[] = [];
+    if (mixed) resources.push({ resourceId: 'neighbor-chat', encryptionMode: 'plain', recipientEnvelope: null,
+      storedContent: { t: 'plain', v: { v: 1, name: 'Neighbor Chat', kind: 'apiKey', value: 'neighbor-private' } },
+      entry: { ref: neighborRef, source: 'shared_resource', relationship: 'owner', ownerAccountId: 'inline-account',
+        name: 'Neighbor Chat', kind: 'apiKey', revision: 7, materialStatus: 'ready',
+        capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true } } });
+    const applied: ReturnType<typeof SharedSavedSecretPromoteInputV1Schema.parse>[] = [];
+    const historyObservedPromotions: number[] = [];
+    const unexpectedReads: string[] = [];
+    let historySourceChurn = false;
+    vi.stubGlobal('fetch', vi.fn<typeof fetch>(async () => Response.json(FeaturesResponseSchema.parse({
+      features: { teams: { enabled: true } }, capabilities: {} }))));
+    vi.mocked(axios.get).mockImplementation(async url => {
+      expect(new URL(String(url)).origin).toBe('https://inline-home.example');
+      const path = new URL(String(url)).pathname;
+      if (path === '/v1/account/encryption/currentness') return { status: 200, data: { mode, version: 1, settingsVersion: version,
+        signingKeyFingerprint: null, contentKeyFingerprint: material ? convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1(
+          createAccountScopedCryptoMaterialSnapshotV1({ accountEncryptionMode: 'e2ee', material }).contentPublicKeyFingerprint) : null,
+        updatedAt: 1, recipientEnvelopeReadiness: mode === 'plain' ? { status: 'unavailable', reason: 'plain_account' } : { status: 'available' } } };
+      if (path === '/v1/account/encryption') return { status: 200, data: { mode, updatedAt: 1 } };
+      if (path === '/v2/account/settings') return { status: 200, data: { version, content: content() } };
+      if (path === '/v2/account/settings/history') {
+        historyObservedPromotions.push(applied.length);
+        if (origin === 'mixed-source-drift' && !historySourceChurn) {
+          raw = { ...raw, preferredLanguage: 'de' }; version++; historySourceChurn = true;
+        }
+        return { status: 200, data: { snapshots: [] } };
+      }
+      if (path === PROFILE_ROWS_ROUTE_V1) return { status: 200, data: { status: 'listed', rows: [], nextCursor: null,
+        complete: true, diagnostics: [], referenceGuardRevision: 3, transferControl: { status: 'absent' } } };
+      if (path === PROFILE_REFERENCE_GUARD_ROUTE_V1) return { status: 200, data: { status: 'ready', revision: 3 } };
+      if (path === PROFILE_TRANSFER_ROUTE_V1 || path === MCP_SERVER_CATALOG_ROWS_ROUTE_V1 || path === ACP_CATALOG_ROWS_ROUTE_V1
+        || path === PROVIDER_CONNECTIONS_ROWS_ROUTE_V1 || path === `${CONNECTED_ACCOUNT_CATALOG_ROWS_ROUTE_V1}/configurations`
+        || path === `${CONNECTED_ACCOUNT_CATALOG_ROWS_ROUTE_V1}/purposes` || path === REMOTE_HOST_ROWS_ROUTE_V1
+        || path === NOTIFICATION_CHANNELS_ROUTE_V1 || path === CONNECTED_PRESENTATION_ROWS_ROUTE_V1
+        || path === CONNECTED_ACKNOWLEDGEMENTS_ROWS_ROUTE_V1) return { status: 200, data: { status: 'absent' } };
+      if (path === PROMPT_LIBRARY_ROWS_ROUTE_V1) return { status: 200, data: { status: 'listed', rows: [] } };
+      if (path === '/v1/artifacts') return { status: 200, data: [] };
+      if (path === '/v1/account/saved-secrets/resources/materials') return { status: 200, data: { resources } };
+      unexpectedReads.push(path); throw new Error(`Unexpected inline fixture read ${path}`);
+    });
+    vi.mocked(axios.post).mockImplementation(async (url, body) => {
+      expect(String(url)).toBe('https://inline-home.example/v1/account/saved-secrets/resources/promote');
+      const mutation = SharedSavedSecretPromoteInputV1Schema.parse(body);
+      expect(mutation.resourceId).toBe(resourceId);
+      if (boundPersonal) expect(mutation.personalSecretPromotions).toEqual([{ personalSecretId: originalSecret.id, resourceId }]);
+      else expect(mutation.personalSecretPromotions).toBeUndefined();
+      expect(mutation.displayName).toBe(boundPersonal ? originalSecret.name : receipt.displayName);
+      expect(mutation.kind).toBe(boundPersonal ? originalSecret.kind : receipt.kind);
+      expect(mutation.expectedSettingsVersion).toBe(4);
+      expect(mutation.referenceCensus).toMatchObject({ accountMode: mode, profileTransferRevision: 'absent',
+        profiles: { referenceGuardRevision: 3, rows: [] }, catalogs: { mcp: 'absent', acp: 'absent', providerConnections: 'absent',
+          connectedConfigurations: 'absent', connectedPurposes: 'absent' },
+        remoteHosts: { revision: 'absent', resourceRefs: [] }, notificationChannels: { revision: 'absent', resourceRefs: [] } });
+      expect(mutation.profileMutations).toEqual([]);
+      if (mutation.nextSettings?.t === 'plain') raw = mutation.nextSettings.v;
+      else if (mutation.nextSettings?.t === 'encrypted' && material) raw = AccountSettingsPersistedObjectSchema.parse(
+        openAccountScopedBlobCiphertext({ kind: 'account_settings', material, ciphertext: mutation.nextSettings.c })?.value);
+      else throw new Error('fixture_missing_atomic_settings');
+      if (boundPersonal) expect(raw.secrets).toEqual([]);
+      else expect(raw).not.toHaveProperty('secrets');
+      if (origin === 'chat') expect(raw).toEqual(originalRaw);
+      else {
+        expect(raw).not.toHaveProperty('voice.adapters.realtime_elevenlabs.byo.apiKey');
+        expect(raw).toHaveProperty('voice.adapters.realtime_elevenlabs.byo.agentId', 'kept-agent');
+        if (mixed) expect(raw).toHaveProperty('voice.adapters.local_conversation.agent.openaiCompat.chatApiKey', neighborValue);
+        expect(raw).toMatchObject({ voiceSettingsV1: { credentialBindings: [{
+          contribution: { pluginId: 'happier.voice.elevenlabs', localId: 'realtime-elevenlabs' }, credentialSlotId: 'api_key',
+          credentialSource: { kind: 'savedSecret' }, credentialBindings: { account: { api_key: resourceRef } },
+        }] } });
+        version = 5;
+      }
+      applied.push(mutation);
+      const envelope = mutation.keyEnvelopes?.[0];
+      resources.push({ resourceId, encryptionMode: mutation.encryptionMode, storedContent: mutation.storedContent,
+        recipientEnvelope: envelope ? { encryptedDataKey: envelope.encryptedDataKey,
+          recipientContentPublicKeyFingerprint: envelope.recipientContentPublicKeyFingerprint } : null,
+        entry: { ref: resourceRef, source: 'shared_resource', relationship: 'owner', ownerAccountId: 'inline-account',
+          name: mutation.displayName, kind: mutation.kind, revision: 1, materialStatus: 'ready',
+          capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true } } });
+      return { status: 200, data: { resourceId, settingsVersion: version } };
+    });
+    const refresh = () => runWithServerHttpBaseUrl('https://unrelated-home.example', () => refreshSavedSecretCatalogForOperation({
+      expectedScopeKey: scopeKey, operationContext: context, refreshCatalog: true }));
+    const snapshot = await refresh();
+    expect(unexpectedReads).toEqual([]);
+    expect(applied).toHaveLength(1);
+    expect(historyObservedPromotions).not.toHaveLength(0);
+    expect(historyObservedPromotions.every(count => count === 1)).toBe(true);
+    expect(snapshot.savedSecretLegacyImport).toMatchObject({ status: origin === 'mixed-source-drift' ? 'pending' : 'complete' });
+    if (origin === 'mixed-source-drift') expect(historySourceChurn).toBe(true);
+    expect(snapshot.rawSettings).toMatchObject({ preferredLanguage: 'fr', harmlessSibling: { preserved: true } });
+    expect(createSavedSecretMaterializerFromSnapshotV1(snapshot, { isCurrent: () => context.readSnapshot() === snapshot }).resolve(resourceRef))
+      .toMatchObject({ status: 'ready', source: 'shared_resource', value: 'inline-private' });
+    const repeated = await refresh();
+    expect(applied).toHaveLength(1);
+    expect(repeated.savedSecretLegacyImport).toMatchObject({ status: origin === 'mixed-source-drift' ? 'pending' : 'complete' });
+    if (origin !== 'mixed-source-drift') expect(repeated.rawSettings).toEqual(raw);
+  });
+
+  it.each([['plain', 'matching', 'chat'], ['e2ee', 'matching', 'chat'], ['plain', 'different-material', 'chat'], ['e2ee', 'different-material', 'chat'],
+    ['plain', 'changed-source', 'chat'], ['e2ee', 'changed-source', 'chat'], ['plain', 'use-disabled', 'chat'],
+    ['plain', 'history-source-drift', 'chat'], ['e2ee', 'history-source-drift', 'chat'],
+    ['plain', 'history-resource-absence', 'chat'], ['e2ee', 'history-resource-absence', 'chat'],
+    ['plain', 'matching', 'nonchat'], ['e2ee', 'matching', 'nonchat'],
+    ['plain', 'different-material', 'nonchat'], ['e2ee', 'different-material', 'nonchat'],
+    ['plain', 'history-resource-absence', 'nonchat'], ['e2ee', 'history-resource-absence', 'nonchat']] as const)(
+    'admits original inline Voice with no raw secrets only against matching owned material and source: %s %s %s', async (mode, variant, origin) => {
+    const token = `e30.${Buffer.from(JSON.stringify({ sub: 'chat-account' })).toString('base64url')}.signature`;
+    const credentials: StoredCredentials = { token, encryption: mode === 'plain' ? null : { type: 'legacy', secret: new Uint8Array(32).fill(4) } };
+    const material = credentials.encryption;
+    const scopeKey = resolveAccountSettingsScopeKeyForToken(token);
+    const resourceRef = 'happier:shared-secret:v1:existing-chat';
+    const secretString = (value: string) => material ? { _isSecretValue: true as const,
+      encryptedValue: encryptSecretStringV1(value, deriveSettingsSecretsKeySetV1(material).writeKey,
+        length => new Uint8Array(length).fill(12)) } : { _isSecretValue: true as const, value };
+    const source = (value: string) => ({ preferredLanguage: 'fr', voice: origin === 'chat' ? {
+      credentialBindings: [{ providerId: 'openai_compat', credentialBindings: { account: { chat_api_key: resourceRef } } }],
+      adapters: { local_conversation: { agent: { openaiCompat: { chatApiKey: secretString(value) } } } },
+    } : {
+      credentialBindings: [{ providerId: 'realtime_elevenlabs', credentialBindings: { account: { api_key: resourceRef } } }],
+      adapters: { realtime_elevenlabs: { byo: { apiKey: secretString(value), agentId: 'kept-agent' } } },
+    } });
+    const originalRaw = source('original-chat-private');
+    let currentRaw = variant === 'changed-source' ? source('newer-chat-private') : originalRaw;
+    let currentVersion = variant === 'changed-source' ? 5 : 4;
+    const content = (): AccountSettingsStoredContentEnvelope => material ? { t: 'encrypted',
+      c: sealAccountScopedBlobCiphertext({ kind: 'account_settings', material, payload: currentRaw,
+        randomBytes: length => new Uint8Array(length).fill(11) }) } : { t: 'plain', v: currentRaw };
+    // This receipt describes the original carrier, not a synthetic personal SavedSecret record.
+    const transferSource = readSavedSecretTransferSourceV1(originalRaw);
+    expect(transferSource).toMatchObject({ secrets: [], complete: true });
+    const receipt = origin === 'chat' ? transferSource.legacyChatCredential : transferSource.legacyVoiceCredentials?.[0];
+    expect(receipt).toMatchObject({ source: { kind: 'existing-resource-reference', resourceRef } });
+    const context = createInvocationSavedSecretOperationContextV1({ credentials, serverHttpBaseUrl: 'https://chat-home.example',
+      snapshot: { source: 'network', settings: AccountSettingsSchema.parse(originalRaw), rawSettings: originalRaw,
+        settingsVersion: 4, loadedAtMs: 1, scopeKey, settingsSecretsReadKeys: deriveSettingsSecretsReadKeysForCredentials(credentials) },
+      isCurrent: async () => true });
+    vi.stubGlobal('fetch', vi.fn<typeof fetch>(async () => Response.json(FeaturesResponseSchema.parse({
+      features: { teams: { enabled: true } }, capabilities: {} }))));
+    const unexpectedReads: string[] = [];
+    let historySourceDriftObserved = false;
+    // A ready row with use:false is a defensive inconsistent-metadata input,
+    // not the actual Home owned-Resource absence response used below.
+    let resourceUse = variant !== 'use-disabled';
+    let historyUseWithdrawalObserved = false;
+    vi.mocked(axios.get).mockImplementation(async url => {
+      expect(new URL(String(url)).origin).toBe('https://chat-home.example');
+      const path = new URL(String(url)).pathname;
+      if (path === '/v1/account/encryption/currentness') return { status: 200, data: { mode, version: 1,
+        settingsVersion: currentVersion, signingKeyFingerprint: null, contentKeyFingerprint: material
+          ? convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1(
+            createAccountScopedCryptoMaterialSnapshotV1({ accountEncryptionMode: 'e2ee', material }).contentPublicKeyFingerprint) : null,
+        updatedAt: 1, recipientEnvelopeReadiness: mode === 'plain' ? { status: 'unavailable', reason: 'plain_account' } : { status: 'available' } } };
+      if (path === '/v1/account/encryption') return { status: 200, data: { mode, updatedAt: 1 } };
+      if (path === '/v2/account/settings') return { status: 200, data: { version: currentVersion, content: content() } };
+      if (path === '/v2/account/settings/history') {
+        if (variant === 'history-source-drift') {
+          currentRaw = source('newer-chat-private');
+          currentVersion = 5;
+          historySourceDriftObserved = true;
+        }
+        if (variant === 'history-resource-absence') {
+          resourceUse = false;
+          historyUseWithdrawalObserved = true;
+        }
+        return { status: 200, data: { snapshots: [] } };
+      }
+      if (path === PROFILE_ROWS_ROUTE_V1) return { status: 200, data: { status: 'listed', rows: [], nextCursor: null,
+        complete: true, diagnostics: [], referenceGuardRevision: 3, transferControl: { status: 'absent' } } };
+      if (path === PROFILE_REFERENCE_GUARD_ROUTE_V1) return { status: 200, data: { status: 'ready', revision: 3 } };
+      if (path === PROFILE_TRANSFER_ROUTE_V1 || path === MCP_SERVER_CATALOG_ROWS_ROUTE_V1 || path === ACP_CATALOG_ROWS_ROUTE_V1
+        || path === PROVIDER_CONNECTIONS_ROWS_ROUTE_V1 || path === `${CONNECTED_ACCOUNT_CATALOG_ROWS_ROUTE_V1}/configurations`
+        || path === `${CONNECTED_ACCOUNT_CATALOG_ROWS_ROUTE_V1}/purposes` || path === REMOTE_HOST_ROWS_ROUTE_V1
+        || path === NOTIFICATION_CHANNELS_ROUTE_V1 || path === CONNECTED_PRESENTATION_ROWS_ROUTE_V1
+        || path === CONNECTED_ACKNOWLEDGEMENTS_ROWS_ROUTE_V1) return { status: 200, data: { status: 'absent' } };
+      if (path === PROMPT_LIBRARY_ROWS_ROUTE_V1) return { status: 200, data: { status: 'listed', rows: [] } };
+      if (path === '/v1/artifacts') return { status: 200, data: [] };
+      if (path === '/v1/account/saved-secrets/resources/materials') return { status: 200, data: { resources: historyUseWithdrawalObserved ? [] : [{
+        resourceId: 'existing-chat', encryptionMode: 'plain', recipientEnvelope: null,
+        storedContent: { t: 'plain', v: { v: 1, name: 'Voice: openai_compat', kind: 'apiKey',
+          value: variant === 'different-material' ? 'different-resource-private' : 'original-chat-private' } },
+        entry: { ref: resourceRef, source: 'shared_resource', relationship: 'owner', ownerAccountId: 'chat-account',
+          name: 'Voice: openai_compat', kind: 'apiKey', revision: 7, materialStatus: 'ready',
+          capabilities: { use: resourceUse, rename: true, rotate: true, manageAccess: true, delete: true } },
+      }] } };
+      unexpectedReads.push(path);
+      throw new Error(`Unexpected Chat fixture read ${path}`);
+    });
+    vi.mocked(axios.post).mockImplementation(async url => { throw new Error(`Unexpected Chat fixture write ${new URL(String(url)).pathname}`); });
+    const snapshot = await runWithServerHttpBaseUrl('https://unrelated-home.example', () => refreshSavedSecretCatalogForOperation({
+      expectedScopeKey: scopeKey, operationContext: context, refreshCatalog: true,
+      ...(variant === 'history-resource-absence' ? {} : { references: [{ ref: resourceRef, revision: 7 }] }) }));
+    expect(unexpectedReads).toEqual([]);
+    if (variant === 'history-source-drift') expect(historySourceDriftObserved).toBe(true);
+    if (variant === 'history-resource-absence') expect(historyUseWithdrawalObserved).toBe(true);
+    if (variant === 'matching') expect(snapshot.savedSecretLegacyImport).toEqual({ status: 'complete' });
+    else expect(snapshot.savedSecretLegacyImport).toMatchObject({ status: 'pending' });
+    if (variant !== 'changed-source' && variant !== 'history-source-drift') {
+      expect(snapshot.rawSettings).toEqual(originalRaw);
+      expect(snapshot.settingsVersion).toBe(4);
+    }
+    expect(snapshot.rawSettings).not.toHaveProperty('secrets');
+    const resolved = createSavedSecretMaterializerFromSnapshotV1(snapshot, { isCurrent: () => context.readSnapshot() === snapshot }).resolve(resourceRef);
+    expect(resolved).toMatchObject(historyUseWithdrawalObserved ? { status: 'forbidden' }
+      : { status: 'ready', source: 'shared_resource', value: variant === 'different-material'
+        ? 'different-resource-private' : 'original-chat-private' });
+    if (historyUseWithdrawalObserved) {
+      await expect(savedSecretOperations.readSavedSecretCatalogForOperation({ expectedScopeKey: scopeKey,
+        operationContext: context, references: [{ ref: resourceRef, revision: 7 }], refreshCatalog: true }))
+        .rejects.toMatchObject({ reason: 'reference_stale', reference: resourceRef });
+    }
+    expect(axios.post).not.toHaveBeenCalled();
   });
 
   it.each(['plain', 'e2ee'] as const)('selects two new %s secrets in one catalog transaction despite unrelated Settings drift', async mode => {
@@ -81,14 +342,27 @@ describe('SavedSecret material-demand legacy import', () => {
       throw new Error(`Unexpected fixture read ${path}`);
     });
     let observed: ReturnType<typeof SharedSavedSecretPromoteInputV1Schema.parse> | undefined;
-    vi.mocked(axios.post).mockImplementation(async (url, body) => {
+    vi.mocked(axios.post).mockImplementation(async (url, body, options) => {
       expect(String(url)).toBe('https://batch-home.example/v1/account/saved-secrets/resources/promote');
+      expect(options?.headers).toMatchObject({ 'X-Captured-Action': 'approved-batch' });
+      expect(options?.headers).not.toHaveProperty('Authorization');
       observed = SharedSavedSecretPromoteInputV1Schema.parse(body);
       return { status: 200, data: { resourceId: observed.resourceId, settingsVersion: 9 } };
     });
     const result = await savedSecretOperations.promoteSavedSecretsWithConnectedAccountCatalog({ credentials, operationContext: context,
-      preparedSavedSecrets, connectedAccountCatalog: { expectedRevision: 7, record } });
+      preparedSavedSecrets, connectedAccountCatalog: { expectedRevision: 7, record },
+      authorizeRequest: request => {
+        if (request.method !== 'GET') {
+          expect(request.path).toBe('/v1/account/saved-secrets/resources/promote');
+          expect(SharedSavedSecretPromoteInputV1Schema.safeParse(request.body).success).toBe(true);
+        }
+        return { 'X-Captured-Action': 'approved-batch' };
+      } });
     expect(result).toMatchObject({ status: 'applied', settingsVersion: 9 });
+    expect(await savedSecretOperations.promoteSavedSecretsWithConnectedAccountCatalog({ credentials, operationContext: context,
+      preparedSavedSecrets, connectedAccountCatalog: { expectedRevision: 7, record }, authorizeRequest: () => null }))
+      .toEqual({ status: 'unavailable' });
+    expect(axios.post).toHaveBeenCalledTimes(1);
     if (!observed) throw new Error('fixture_missing_atomic_request');
     const ids = preparedSavedSecrets.map(secret => deriveSavedSecretImportResourceIdV1({ accountId: 'batch-account',
       source: { kind: 'personal-saved-secret', secretId: secret.id } }));
@@ -169,6 +443,9 @@ describe('SavedSecret material-demand legacy import', () => {
   it.each([['plain', false, 'ambient'], ['e2ee', false, 'ambient'], ['plain', true, 'ambient'], ['e2ee', true, 'ambient'],
     ['plain', false, 'invocation'], ['e2ee', false, 'invocation'], ['plain', false, 'invocation-native-artifact'],
     ['plain', false, 'invocation-native-artifact-projection'],
+    ['plain', false, 'invocation-missing-native-artifact'],
+    ['plain', false, 'invocation-colliding-personal-id'], ['e2ee', false, 'invocation-colliding-personal-id'],
+    ['plain', false, 'invocation-pinned-source'], ['plain', false, 'invocation-pinned-resource-withdrawal'],
     ['plain', false, 'invocation-history-retry'], ['e2ee', false, 'invocation-history-retry'],
     ['plain', false, 'invocation-active-connected'], ['e2ee', false, 'invocation-active-connected'],
     ['plain', false, 'invocation-invalid-active-connected'],
@@ -186,7 +463,11 @@ describe('SavedSecret material-demand legacy import', () => {
     const scopeKey = resolveAccountSettingsScopeKeyForToken(token);
     const invocation = custody !== 'ambient';
     const inheritedArtifactBindings = custody === 'invocation-native-artifact';
-    const nativeArtifact = inheritedArtifactBindings || custody === 'invocation-native-artifact-projection';
+    const collidingPersonalId = custody === 'invocation-colliding-personal-id';
+    const pinnedImport = custody === 'invocation-pinned-source' || custody === 'invocation-pinned-resource-withdrawal';
+    const withdrawPinnedResource = custody === 'invocation-pinned-resource-withdrawal';
+    const missingNativeArtifact = custody === 'invocation-missing-native-artifact';
+    const nativeArtifact = inheritedArtifactBindings || custody === 'invocation-native-artifact-projection' || missingNativeArtifact;
     const inference = custody === 'invocation-inference-history-retry';
     const historyRetry = custody === 'invocation-history-retry' || inference;
     const invalidActiveConnected = custody === 'invocation-invalid-active-connected';
@@ -216,7 +497,7 @@ describe('SavedSecret material-demand legacy import', () => {
       : sealNotificationChannelCatalogContentV1({ mode, material, record: notificationRecord });
     if (partialRemoteHost) expect(openRemoteHostCatalogContentV1({ mode, material, content: remoteHostContent }).status).toBe('partial');
     if (partialNotification) expect(openNotificationChannelCatalogContentV1({ mode, material, content: notificationContent }).status).toBe('partial');
-    const legacy = { id: 'old-token', name: 'Legacy token', kind: 'token' as const,
+    const legacy = { id: collidingPersonalId ? inheritedRef : 'old-token', name: 'Legacy token', kind: 'token' as const,
       encryptedValue: material ? { _isSecretValue: true as const,
         encryptedValue: encryptSecretStringV1('fixture-private', deriveSettingsSecretsKeySetV1(material).writeKey,
           length => new Uint8Array(length).fill(12)) }
@@ -245,7 +526,7 @@ describe('SavedSecret material-demand legacy import', () => {
       environmentVariables: [], envVarRequirements: [{ name: 'TOKEN', kind: 'secret' }], createdAt: 1, updatedAt: 1 },
       secretBindings: { TOKEN: legacy.id, ...(inheritedArtifactBindings ? { SECOND: inheritedRef, MASKED: maskedRef } : {}) } });
     let version = 4;
-    const resources: unknown[] = inheritedArtifactBindings || activeConnected || activeReferenceCatalogs ? [{ resourceId: 'inherited', encryptionMode: 'plain', recipientEnvelope: null,
+    const resources: unknown[] = inheritedArtifactBindings || activeConnected || activeReferenceCatalogs || collidingPersonalId ? [{ resourceId: 'inherited', encryptionMode: 'plain', recipientEnvelope: null,
       storedContent: { t: 'plain', v: { v: 1, name: 'Inherited', kind: 'token', value: 'inherited-private' } },
       entry: { ref: inheritedRef, source: 'shared_resource', relationship: activeConnected ? 'recipient' : 'owner',
         ownerAccountId: activeConnected ? 'shared-source' : 'import-account',
@@ -285,15 +566,19 @@ describe('SavedSecret material-demand legacy import', () => {
       if (path === '/v1/account/encryption/currentness') return { status: 200, data: { ...currentness, settingsVersion: version } };
       if (path === '/v1/account/encryption') return { status: 200, data: { mode, updatedAt: 1 } };
       if (path === '/v2/account/settings') return { status: 200, data: { version, content: storedSettings() } };
-      if (path === '/v2/account/settings/history') return { status: 200, data: { snapshots: [{ version: 4,
+      if (path === '/v2/account/settings/history') {
+        if (withdrawPinnedResource) resources.splice(0);
+        return { status: 200, data: { snapshots: [{ version: 4,
         createdAt: '2026-01-01T00:00:00.000Z', contentKind: mode === 'plain' ? 'plain' : 'encrypted',
         byteLength: JSON.stringify(retained).length }] } };
+      }
       if (path === '/v2/account/settings/history/4') return { status: 200, data: { version: 4,
         createdAt: '2026-01-01T00:00:00.000Z', content: retained } };
       if (path === PROFILE_REFERENCE_GUARD_ROUTE_V1) return { status: 200, data: { status: 'ready', revision: referenceGuardRevision } };
       if (path === PROFILE_TRANSFER_ROUTE_V1) return { status: 200, data: { status: 'absent' } };
       if (path === PROFILE_ROWS_ROUTE_V1) return { status: 200, data: { status: 'listed', rows: profileRows, nextCursor: null,
         complete: true, diagnostics: [], referenceGuardRevision, transferControl: { status: 'absent' } } };
+      if (path === '/v1/artifacts/selected' && missingNativeArtifact) return { status: 404, data: { error: 'not_found' } };
       if (path === '/v1/artifacts/selected') return { status: 200, data: { id: 'selected', ownerAccountId: 'foreign-account',
         access: 'view', encryptionMode: 'plain', headerVersion: 2, bodyVersion: 4,
         header: encodePlainArtifactStoredContent({ kind: 'launch-profile.v1', profileId: 'p', name: 'Selected' }),
@@ -358,10 +643,55 @@ describe('SavedSecret material-demand legacy import', () => {
         loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey: resolveAccountSettingsScopeKeyForToken(ambientCredentials.token) }
       : sourceSnapshot);
     const ambientBefore = getActiveAccountSettingsSnapshot();
+    if (missingNativeArtifact) {
+      await expect(savedSecretOperations.captureSavedSecretSourcePreparationForOperation({
+        credentials, expectedScopeKey: scopeKey, operationContext,
+      })).rejects.toThrow();
+      expect(axios.post).not.toHaveBeenCalled();
+      expect(raw).toBe(sourceSnapshot.rawSettings);
+      expect(getActiveAccountSettingsSnapshot()).toBe(ambientBefore);
+    }
+    if (operationContext && (activeReferenceCatalogs || deletedReferenceCatalogs)) {
+      const originalRaw = raw;
+      const capture = () => savedSecretOperations.captureSavedSecretSourcePreparationForOperation({
+        credentials, expectedScopeKey: scopeKey, operationContext,
+      });
+      if (partialNotification || partialRemoteHost) {
+        await expect(capture()).rejects.toThrow();
+      } else {
+        const preparation = await capture();
+        expect(preparation.rawSettings).toEqual(originalRaw);
+        expect(preparation.source).toMatchObject({ raw: originalRaw, version: 4, mode });
+        expect(preparation.referenceCensus).toMatchObject({ accountMode: mode,
+          remoteHosts: { revision: 8, resourceRefs: activeReferenceCatalogs ? [inheritedRef] : [] },
+          notificationChannels: { revision: 9, resourceRefs: activeReferenceCatalogs ? [inheritedRef] : [] },
+        });
+        expect(preparation.referenceCatalogs.remoteHostRecords).toEqual(deletedReferenceCatalogs ? null : remoteHostRecord.hosts);
+        expect(preparation.referenceCatalogs.notificationChannels).toEqual(deletedReferenceCatalogs ? null : notificationRecord);
+        expect(preparation.savedSecretRevisions).toEqual(activeReferenceCatalogs
+          ? [{ resourceId: 'inherited', expectedRevision: 7 }] : []);
+      }
+      expect(raw).toBe(originalRaw);
+      expect(version).toBe(4);
+      expect(axios.post).not.toHaveBeenCalled();
+      expect(getActiveAccountSettingsSnapshot()).toBe(ambientBefore);
+    }
     const refresh = () => runWithServerHttpBaseUrl(invocation ? 'https://unrelated-home.example' : 'https://import-home.example', () =>
       refreshSavedSecretCatalogForOperation({ expectedScopeKey: scopeKey, refreshCatalog: true, operationContext }));
-    await refresh();
-    if (invalidActiveConnected || partialNotification || partialRemoteHost) {
+    const firstSnapshot = pinnedImport
+      ? await savedSecretOperations.refreshSavedSecretCatalogForOperation({ expectedScopeKey: scopeKey, refreshCatalog: true, operationContext,
+          sourceExpectation: { mode, raw: sourceSnapshot.rawSettings, version: sourceSnapshot.settingsVersion } })
+      : await refresh();
+    if (pinnedImport) {
+      expect(applied).toHaveLength(1);
+      if (withdrawPinnedResource) expect(firstSnapshot.savedSecretLegacyImport).toMatchObject({ status: 'pending' });
+      else expect(firstSnapshot.savedSecretLegacyImport).toEqual({ status: 'complete', sourceSettingsVersion: 5,
+        verifiedReferences: [{ source: { kind: 'personal-saved-secret', secretId: legacy.id },
+          resourceRef: `happier:shared-secret:v1:${applied[0]!.resourceId}`, revision: 1 }] });
+      expect(getActiveAccountSettingsSnapshot()).toBe(ambientBefore);
+      return;
+    }
+    if (invalidActiveConnected || partialNotification || partialRemoteHost || missingNativeArtifact) {
       expect(applied).toHaveLength(0);
       expect(axios.post).not.toHaveBeenCalled();
       expect(operationContext?.readSnapshot()?.rawSettings).toEqual(raw);

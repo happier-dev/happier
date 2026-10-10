@@ -17,7 +17,7 @@ export function registerPromptLibraryRoutes(app: Fastify): void {
   app.get(`${PROMPT_LIBRARY_ROWS_ROUTE_V1}/:key`, { preHandler: app.authenticate, config,
     schema: { params, response: { 200: asServerProtocolZod(PromptLibraryRowReadResponseV1Schema), 500: internal } },
   }, async (request, reply) => {
-    try { return reply.send(await inTx(tx => readPromptLibraryRowInTx(tx, { accountId: request.userId, key: request.params.key }))); }
+    try { return reply.send(await inTx(tx => readPromptLibraryRowInTx(tx, { accountId: request.userId, key: request.params.key }), { readOnly: true })); }
     catch { return reply.code(500).send({ error: 'internal' }); }
   });
   app.post(`${PROMPT_LIBRARY_ROWS_ROUTE_V1}/:key`, { preHandler: app.authenticate, config,
@@ -32,7 +32,7 @@ export function registerPromptLibraryRoutes(app: Fastify): void {
   app.get(PROMPT_LIBRARY_ROWS_ROUTE_V1, { preHandler: app.authenticate, config,
     schema: { response: { 200: asServerProtocolZod(PromptLibraryRowsListResponseV1Schema), 500: internal } },
   }, async (request, reply) => {
-    try { return reply.send(await inTx(tx => listPromptLibraryRowsInTx(tx, { accountId: request.userId }))); }
+    try { return reply.send(await inTx(tx => listPromptLibraryRowsInTx(tx, { accountId: request.userId }), { readOnly: true })); }
     catch { return reply.code(500).send({ error: 'internal' }); }
   });
 }

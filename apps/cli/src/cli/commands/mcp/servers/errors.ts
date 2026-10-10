@@ -1,7 +1,5 @@
 
-import type {
-  AccountSettingsMutationResult,
-} from '@/settings/accountSettings/updateAccountSettingsV2WithRetry';
+import type { McpServerCatalogRowMutationResponseV1 } from '@happier-dev/protocol/mcp/servers/serverRowsV1';
 import { printJsonEnvelope } from '@/cli/output/jsonEnvelope';
 import { fail } from '@happier-dev/cli-common/output';
 
@@ -20,62 +18,33 @@ export function createInvalidArgumentsError(message: string): Error & { code: 'i
   return createMcpServersCommandError('invalid_arguments', message) as Error & { code: 'invalid_arguments' };
 }
 
-function isSettledAccountSettingsSuccess(
-  result: AccountSettingsMutationResult,
-): result is Extract<AccountSettingsMutationResult, Readonly<{
-  status: 'applied' | 'satisfied' | 'unchanged';
-}>> {
-  return result.status === 'applied'
-    || result.status === 'satisfied'
-    || result.status === 'unchanged';
-}
-
-function redactAccountSettingsMutationFailure(
-  result: Exclude<AccountSettingsMutationResult, Readonly<{
-    status: 'applied' | 'satisfied' | 'unchanged';
-  }>>,
-): Readonly<Record<string, string | boolean | number>> {
-  switch (result.status) {
-    case 'conflict':
-      return { status: result.status, currentVersion: result.currentVersion };
-    case 'outcomeUnknown':
-      return { status: result.status, lastKnownVersion: result.lastKnownVersion };
-    case 'cancelled':
-      return { status: result.status, submitted: result.submitted };
-    case 'locked':
-    case 'invalid':
-      return { status: result.status, reason: result.reason };
-    case 'unavailable':
-      return { status: result.status, retryable: result.retryable };
-  }
-}
-
-function accountSettingsFailureCode(result: Exclude<AccountSettingsMutationResult, Readonly<{
-  status: 'applied' | 'satisfied' | 'unchanged';
-}>>): string {
-  switch (result.status) {
-    case 'conflict': return 'account_settings_conflict';
-    case 'outcomeUnknown': return 'account_settings_outcome_unknown';
-    case 'cancelled': return 'account_settings_cancelled';
-    case 'locked': return 'account_settings_locked';
-    case 'invalid': return 'account_settings_invalid';
-    case 'unavailable': return 'account_settings_unavailable';
-  }
-}
-
-/**
- * MCP mutators use the shared Settings owner but retain a CLI-visible
- * settlement record. The record deliberately omits the full Account Settings
- * projection so a failed mutation cannot disclose unrelated configuration.
- */
-export async function reportMcpServersAccountSettingsMutation(
-  result: AccountSettingsMutationResult,
+/** Report only the canonical row settlement, never the catalog or server rejection details. */
+export async function reportMcpServerCatalogMutation(
+  mutation: Promise<McpServerCatalogRowMutationResponseV1>,
   input: Readonly<{ kind: string; json: boolean }>,
 ): Promise<boolean> {
-  if (isSettledAccountSettingsSuccess(result)) return true;
-
-  const settlement = redactAccountSettingsMutationFailure(result);
-  const code = accountSettingsFailureCode(result);
+  let code: string;
+  let settlement: Readonly<{ status: string; revision?: number }>;
+  try {
+    const result = await mutation;
+    if (result.status === 'updated') return true;
+    code = `mcp_catalog_${result.status.replaceAll('-', '_')}`;
+    settlement = { status: result.status, ...('revision' in result ? { revision: result.revision } : {}) };
+  } catch (error) {
+    const causeCode = error !== null && typeof error === 'object' && 'code' in error ? error.code : undefined;
+    if (causeCode === 'outcome_unknown') {
+      code = 'mcp_catalog_outcome_unknown';
+      settlement = { status: 'outcomeUnknown' };
+    } else if (typeof causeCode === 'string' && [
+      'scope-retired', 'mcp_catalog_unavailable', 'cancelled', 'not_dispatched', 'unauthorized', 'forbidden', 'unsupported',
+      'unreachable', 'invalid-reference', 'account-mode-mismatch', 'encryption-material-unavailable',
+    ].includes(causeCode)) {
+      code = causeCode.startsWith('mcp_catalog_') ? causeCode : `mcp_catalog_${causeCode.replaceAll('-', '_')}`;
+      settlement = { status: causeCode };
+    } else {
+      throw error;
+    }
+  }
   if (input.json) {
     await printJsonEnvelope({
       ok: false,
@@ -83,7 +52,7 @@ export async function reportMcpServersAccountSettingsMutation(
       error: { code, settlement },
     }, { exitCode: 1 });
   } else {
-    console.error(fail(`MCP Servers Settings mutation did not settle: ${result.status}`));
+    console.error(fail(`MCP catalog mutation did not settle: ${settlement.status}`));
     process.exitCode = 1;
   }
   return false;

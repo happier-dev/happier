@@ -3,6 +3,7 @@ import { logger as defaultLogger } from '@/ui/logger';
 
 import { getActiveAccountSettingsSnapshot } from './activeAccountSettingsSnapshot';
 import { refreshAccountSettingsForMinimumVersion } from './refreshAccountSettingsForMinimumVersion';
+import { hydrateNotificationChannelCatalogForActiveAccount } from '@/settings/notifications/hydrateNotificationChannelCatalog';
 
 type WarmLogger = Readonly<{
   debug: (message: string, error?: unknown) => void;
@@ -18,8 +19,8 @@ type WarmDeps = NonNullable<Parameters<typeof refreshAccountSettingsForMinimumVe
  * `account-settings-changed` hint, so after every daemon restart all
  * `getActiveAccountSettingsSnapshot()` consumers (switch continuity, resume prompts,
  * materializers) silently degraded. Call this at daemon startup and on machine-socket
- * (re)connect; when a scope-matching network/cache snapshot is already active it is a cheap
- * no-op. An empty fallback is not readiness and must remain retryable.
+ * (re)connect. Independent row revisions are reobserved even when preferences
+ * are already warm. An empty fallback is not readiness and remains retryable.
  *
  * Fail-open by design: a failure is logged and reported as `false`, never thrown — the
  * retryable settings-unavailable continuity outcome covers the window until a later
@@ -45,6 +46,7 @@ export async function warmActiveAccountSettingsSnapshotBestEffort(params: Readon
     if (context.source === 'none') {
       throw new Error('Account settings warm completed without an available snapshot');
     }
+    await hydrateNotificationChannelCatalogForActiveAccount({ credentials: params.credentials });
     return true;
   } catch (error) {
     logger.debug('[accountSettings] Failed to warm active account-settings snapshot (non-fatal)', error);

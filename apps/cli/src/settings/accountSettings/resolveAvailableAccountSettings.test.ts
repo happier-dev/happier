@@ -10,6 +10,7 @@ import {
 } from './activeAccountSettingsSnapshot';
 import { resolveAvailableAccountSettings } from './resolveAvailableAccountSettings';
 import { resolveAccountSettingsScopeKey } from './accountSettingsScopeKey';
+import { createActionSettingsProvider } from '../actionsSettingsProvider';
 
 function credentials(token: string): Credentials {
   return {
@@ -51,5 +52,26 @@ describe('resolveAvailableAccountSettings', () => {
     expect(getActiveAccountSettingsSnapshot()?.scopeKey).toBe(
       resolveAccountSettingsScopeKey(accountA),
     );
+  });
+
+  it('does not treat source-none defaults as a readable Account creation preference', async () => {
+    const account = credentials('account-without-readable-settings');
+    process.env.HAPPIER_ACCOUNT_SETTINGS_MODE = 'never';
+    const resolved = await resolveAvailableAccountSettings({ credentials: account });
+    expect(getActiveAccountSettingsSnapshot()).toMatchObject({ source: 'none', scopeKey: resolveAccountSettingsScopeKey(account) });
+    expect(resolved).toBeNull();
+    expect(await resolveAvailableAccountSettings({ credentials: account })).toBeNull();
+    expect(createActionSettingsProvider({ scopeKey: resolveAccountSettingsScopeKey(account) }).getAccountSettings()).toBeNull();
+  });
+
+  it('admits default-on upkeep after a readable Account snapshot establishes stored absence', async () => {
+    const account = credentials('account-with-readable-empty-settings');
+    const settings = accountSettingsParse({ memoryUseInNewBots: false });
+    setActiveAccountSettingsSnapshot({ source: 'network', settings,
+      rawSettings: { memoryUseInNewBots: false }, settingsVersion: 0, loadedAtMs: 1,
+      settingsSecretsReadKeys: [], scopeKey: resolveAccountSettingsScopeKey(account) });
+    expect(await resolveAvailableAccountSettings({ credentials: account })).toBe(settings);
+    expect(createActionSettingsProvider({ scopeKey: resolveAccountSettingsScopeKey(account) }).getAccountSettings())
+      .toMatchObject({ memoryUpkeepInNewBots: true, memoryUseInNewBots: false });
   });
 });

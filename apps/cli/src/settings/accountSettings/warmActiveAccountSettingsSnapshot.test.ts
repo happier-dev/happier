@@ -1,5 +1,10 @@
 import { accountSettingsParse } from '@happier-dev/protocol';
 import { describe, expect, it, vi } from 'vitest';
+import axios from 'axios';
+import { NotificationChannelRecordV1Schema } from '@happier-dev/protocol/account/settings/notificationChannelRecordV1';
+import { getActiveAccountSettingsSnapshot, resetActiveAccountSettingsSnapshotForTests,
+  setActiveAccountSettingsSnapshot } from './activeAccountSettingsSnapshot';
+import { resolveAccountSettingsScopeKey } from './accountSettingsScopeKey';
 
 import type { Credentials } from '@/persistence';
 import type { AccountSettingsContext } from './bootstrapAccountSettingsContext';
@@ -24,6 +29,31 @@ function createContext(settingsVersion: number): AccountSettingsContext {
 }
 
 describe('warmActiveAccountSettingsSnapshotBestEffort', () => {
+  it('warms the real notification catalog despite an unchanged preference version', async () => {
+    const credentials = { token: `e30.${Buffer.from(JSON.stringify({ sub: 'notification-warm-account' })).toString('base64url')}.signature`,
+      encryption: null };
+    const settings = accountSettingsParse({});
+    setActiveAccountSettingsSnapshot({ source: 'network', settings, rawSettings: {}, settingsVersion: 7, loadedAtMs: 1,
+      settingsSecretsReadKeys: [], scopeKey: resolveAccountSettingsScopeKey(credentials) });
+    const channel = NotificationChannelRecordV1Schema.parse({ v: 1, id: 'retained-warm-channel', kind: 'webhook', topics: {},
+      url: 'http://127.0.0.1/notification', signingSecretRef: null });
+    // HTTP is the only substituted boundary: warm/refresh/publication and row opening remain real.
+    const get = vi.spyOn(axios, 'get').mockImplementation(async input => {
+      const path = new URL(String(input)).pathname;
+      if (path === '/v1/account/encryption/currentness') return { status: 200, data: { mode: 'plain', version: 1,
+        settingsVersion: 7, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
+      if (path === '/v1/account/entity-rows/notification-channels') return { status: 200, data: {
+        status: 'present', revision: 8, content: { t: 'plain', v: { v: 1, channels: [channel] } } } };
+      if (path === '/v2/account/settings') return { status: 200, data: { content: { t: 'plain', v: {} }, version: 7 } };
+      if (path === '/v2/account/settings/history') return { status: 200, data: { snapshots: [] } };
+      throw new Error(`Unexpected notification warm boundary: ${path}`);
+    });
+    try {
+      await expect(warmActiveAccountSettingsSnapshotBestEffort({ credentials })).resolves.toBe(true);
+      expect(getActiveAccountSettingsSnapshot()).toMatchObject({ settingsVersion: 7,
+        notificationChannelCatalog: { status: 'ready', revision: 8, channels: [channel] } });
+    } finally { get.mockRestore(); resetActiveAccountSettingsSnapshotForTests(); }
+  });
   // Incident Jun-11 H-A / FIX-1a: the daemon's in-memory account-settings snapshot used to stay
   // NULL until the first spawn hint / settings-changed hint, so every policy decision after a
   // daemon restart (continuity, resume prompts, materializers) silently degraded. Startup and

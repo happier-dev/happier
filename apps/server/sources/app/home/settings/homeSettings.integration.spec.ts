@@ -191,6 +191,21 @@ describe("Home settings owner", () => {
         ]);
     });
 
+    it("stores registry policy settings not owned by the governance document", async () => {
+        const owner = await createAccount("owner");
+        const result = await setHomeSettings({
+            actorAccountId: owner,
+            write: { expectedRevision: 0, values: {
+                AUTH_SIGNUP_PROVIDERS: ["github"],
+                HAPPIER_FEATURE_ENCRYPTION__DEFAULT_ACCOUNT_MODE: "plain",
+            } },
+        });
+        expect(result.status).toBe("applied");
+        const env = await readHomeConfigEnv({});
+        expect(env.AUTH_SIGNUP_PROVIDERS).toBe("github");
+        expect(env.HAPPIER_FEATURE_ENCRYPTION__DEFAULT_ACCOUNT_MODE).toBe("plain");
+    });
+
     it("applies stored restart values at the next start and ignores an out-of-bounds value or an unreadable secret with its reason", async () => {
         const owner = await createAccount("owner");
         await setHomeSettings({
@@ -253,7 +268,7 @@ describe("Home settings owner", () => {
             write: {
                 expectedRevision: 1,
                 values: { METRICS_PORT: 9292, HAPPIER_SERVER_LOG_LEVEL: "debug", HAPPIER_AUTH_EMAIL_SMTP_HOST: "smtp.home.test" },
-                secrets: { S3_SECRET_KEY: { clear: true } },
+                secrets: { S3_SECRET_KEY: { replace: "replacement-secret" } },
             },
         });
         expect(edited.status).toBe("applied");
@@ -286,7 +301,7 @@ describe("Home settings owner", () => {
         expect(discards).toEqual(expect.arrayContaining([
             { secret: false, key: "METRICS_PORT", from: 9292, to: 9191 },
             { secret: false, key: "HAPPIER_SERVER_LOG_LEVEL", from: "debug", to: null },
-            { secret: true, key: "S3_SECRET_KEY", from: "unset", to: "set" },
+            { secret: true, key: "S3_SECRET_KEY", from: "set", to: "set" },
         ]));
         expect(discards).toHaveLength(3);
 

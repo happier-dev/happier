@@ -28,7 +28,7 @@ describe('loadStartupHomeEnv', () => {
         expect(log.mock.calls[0]![0]).toContain('METRICS_PORT');
         expect(log.mock.calls[0]![0]).not.toContain('redis://cache');
 
-        const rows = projectHomeSettings({ registry: REGISTRY, env: {}, persisted: stored.values, persistedSecretKeys: ['REDIS_URL'], startup });
+        const rows = projectHomeSettings({ registry: REGISTRY, env: {}, persisted: stored.values, persistedSecretKeys: ['REDIS_URL'], persistedRestartSecrets: stored.secrets, startup });
         const byKey = Object.fromEntries(rows.map((row) => [row.key, row]));
         expect(byKey.METRICS_PORT).toMatchObject({ value: 9191, source: 'home', applied: { value: 9191, pending: false } });
         expect(byKey.REDIS_URL).toMatchObject({ value: null, secretSet: true, applied: { value: null, pending: false } });
@@ -69,5 +69,19 @@ describe('loadStartupHomeEnv', () => {
         const startup = await loadStartupHomeEnv({ env: {}, readStored: async () => ({ values: {}, secrets: {} }), registry: REGISTRY, log: vi.fn(), now: () => NOW });
         const rows = projectHomeSettings({ registry: REGISTRY, env: {}, persisted: { METRICS_PORT: 9191 }, persistedSecretKeys: [], startup });
         expect(rows.find((row) => row.key === 'METRICS_PORT')).toMatchObject({ value: 9191, applied: { value: 9090, pending: true } });
+    });
+
+    it('compares restart secret values privately, including replacement, removal and deployment locks', async () => {
+        const secret = 'startup-secret';
+        const startup = await loadStartupHomeEnv({ env: {}, readStored: async () => ({ values: {}, secrets: { S3_SECRET_KEY: secret } }), registry: REGISTRY, log: () => {}, now: () => NOW });
+        for (const [current, pending] of [[secret, false], ['replacement-secret', true], [null, true]] as const) {
+            const rows = projectHomeSettings({ registry: REGISTRY, env: {}, persisted: {}, persistedSecretKeys: current ? ['S3_SECRET_KEY'] : [], persistedRestartSecrets: current ? { S3_SECRET_KEY: current } : {}, startup });
+            expect(rows.find((row) => row.key === 'S3_SECRET_KEY')).toMatchObject({ value: null, applied: { value: null, pending } });
+            expect(JSON.stringify(rows)).not.toContain(secret);
+            expect(JSON.stringify(rows)).not.toContain('replacement-secret');
+        }
+        const locked = await loadStartupHomeEnv({ env: { S3_SECRET_KEY: 'deployment-secret' }, readStored: async () => ({ values: {}, secrets: { S3_SECRET_KEY: secret } }), registry: REGISTRY, log: () => {}, now: () => NOW });
+        const rows = projectHomeSettings({ registry: REGISTRY, env: locked.deploymentEnv, persisted: {}, persistedSecretKeys: ['S3_SECRET_KEY'], persistedRestartSecrets: { S3_SECRET_KEY: 'replacement-secret' }, startup: locked });
+        expect(rows.find((row) => row.key === 'S3_SECRET_KEY')).toMatchObject({ value: null, fixed: true, applied: { value: null, pending: false } });
     });
 });

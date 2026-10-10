@@ -1,13 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
-  encryptSecretStringV1,
+  formatSharedSavedSecretRefV1,
   sealSavedSecretResourceStoredContentV1,
   type SavedSecret,
   type SavedSecretCatalogResourceV1,
 } from '@happier-dev/protocol';
 
-import { deriveSettingsSecretsKeyForCredentials } from '@/settings/secrets/settingsSecretsKey';
-import type { Credentials, TokenOnlyCredentials } from '@/persistence';
 import type { SavedSecretCatalogResourceInputV1 } from '@/settings/secrets/savedSecretCatalog';
 
 import type { ResolvedConfiguredAcpBackend } from './resolveBackend';
@@ -47,7 +45,6 @@ function savedSecret(encryptedValue: SavedSecret['encryptedValue']): SavedSecret
 
 describe('materializeConfiguredAcpEnvironment', () => {
   it.each([
-    ['missing', 'personal_missing', null],
     ['temporarily_unavailable', 'happier:shared-secret:v1:resource_1', 'temporarily_unavailable'],
     ['forbidden', 'happier:shared-secret:v1:resource_1', 'access_removed'],
     ['repair_required', 'happier:shared-secret:v1:resource_1', 'update_required'],
@@ -59,7 +56,7 @@ describe('materializeConfiguredAcpEnvironment', () => {
     secretId,
     materialStatus,
   ) => {
-    const savedSecretResources: SavedSecretCatalogResourceInputV1[] = materialStatus === null ? [] : [{
+    const savedSecretResources: SavedSecretCatalogResourceInputV1[] = [{
       resourceId: 'resource_1',
       ownerAccountId: 'owner',
       displayName: 'shared',
@@ -93,58 +90,25 @@ describe('materializeConfiguredAcpEnvironment', () => {
     }
   });
 
-  it('reads plaintext Saved Secrets with token-only credentials and no fabricated key', () => {
-    const credentials: TokenOnlyCredentials = {
+  it('refuses a personal source credential instead of falling back to the legacy Settings root', () => {
+    const credentials = {
       token: 'token-only',
       encryption: null,
     };
 
-    expect(materializeConfiguredAcpEnvironment({
+    expect(() => materializeConfiguredAcpEnvironment({
       backend: backend('secret-acp'),
       accountSettings: {
         secrets: [savedSecret({ _isSecretValue: true, value: 'plain-account-secret' })],
       },
       credentials,
       processEnv: {},
-    })).toEqual({
-      ACP_TOKEN: 'plain-account-secret',
-    });
-  });
-
-  it('keeps encrypted Saved Secrets unavailable without their real E2EE material', () => {
-    const e2eeCredentials: Credentials = {
-      token: 'e2ee',
-      encryption: { type: 'legacy', secret: new Uint8Array(32).fill(5) },
-    };
-    const encryptedValue = encryptSecretStringV1(
-      'retained-e2ee-secret',
-      deriveSettingsSecretsKeyForCredentials(e2eeCredentials),
-      (length) => new Uint8Array(length).fill(2),
-    );
-    const accountSettings = {
-      secrets: [savedSecret({ _isSecretValue: true, encryptedValue })],
-    };
-
-    try {
-      materializeConfiguredAcpEnvironment({
-        backend: backend('secret-acp'),
-        accountSettings,
-        credentials: { token: 'token-only', encryption: null },
-        processEnv: {},
-      });
-      throw new Error('expected configured ACP materialization to fail');
-    } catch (error) {
-      expect(error).toMatchObject({ status: 'temporarily_unavailable', consumer: 'acp' });
-    }
-    expect(accountSettings.secrets[0]?.encryptedValue).toEqual({
-      _isSecretValue: true,
-      encryptedValue,
-    });
+    })).toThrow(expect.objectContaining({ code: 'saved_secret_resolution_failed', status: 'repair_required', consumer: 'acp' }));
   });
 
   it('materializes a shared Saved Secret through the configured ACP launch owner', () => {
     const resourceId = 'shared-acp-resource';
-    const secretId = `happier:shared-secret:v1:${resourceId}`;
+    const secretId = formatSharedSavedSecretRefV1(resourceId);
 
     expect(materializeConfiguredAcpEnvironment({
       backend: backend(secretId),

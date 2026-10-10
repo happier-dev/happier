@@ -18,7 +18,7 @@ export function registerMcpServerCatalogRoutes(app: Fastify): void {
     app.get(MCP_SERVER_CATALOG_ROWS_ROUTE_V1, { preHandler: app.authenticate, config,
         schema: { response: { 200: asServerProtocolZod(McpServerCatalogRowReadResponseV1Schema), 500: internal } },
     }, async (request, reply) => {
-        try { return reply.send(await inTx(tx => readMcpServerCatalogRowInTx(tx, { accountId: request.userId }))); }
+        try { return reply.send(await inTx(tx => readMcpServerCatalogRowInTx(tx, { accountId: request.userId }), { readOnly: true })); }
         catch { return reply.code(500).send({ error: 'internal' }); }
     });
     app.post(MCP_SERVER_CATALOG_ROWS_ROUTE_V1, { preHandler: app.authenticate, config,

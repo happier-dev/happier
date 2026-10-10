@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import {
+  accountSettingsParse,
   sealAccountScopedBlobCiphertext,
   type AccountSettingsStoredContentEnvelope,
   type AccountSettingsV2UpdateResponse,
@@ -34,6 +35,42 @@ const callbackRetryMustBeAccepted: UpdateAccountSettingsV2WithRetryParams = call
 void callbackRetryMustBeAccepted;
 
 describe('updateAccountSettingsV2WithRetry canonical mutation contract', () => {
+  it('writes sparse depth against retained additive fields without dropping the raw neighbors', async () => {
+    const raw = { machineAdministrationSelectionsV1: { v: 1, pluginExecutionOriginsByPluginId: {}, targetsByKey: {} },
+      futureSetting: { keep: true } };
+    const updateSettings = vi.fn(async (): Promise<AccountSettingsV2UpdateResponse> => ({ success: true, version: 403 }));
+    const result = await updateAccountSettingsV2WithRetry({
+      credentials: createTokenOnlyCredentials(),
+      mutation: { operations: [{ op: 'set', key: 'workDepthLimit', value: 4 }] },
+      deps: { fetchSettings: async () => ({ content: { t: 'plain', v: raw }, version: 402 }),
+        resolveAccountEncryptionMode: async () => 'plain', updateSettings },
+    });
+    expect(result).toMatchObject({ status: 'applied', version: 403 });
+    expect(updateSettings).toHaveBeenCalledWith({ expectedVersion: 402,
+      content: { t: 'plain', v: { ...raw, workDepthLimit: 4 } } });
+  });
+  it.each([
+    { label: 'default-only depth', raw: { showLineNumbers: true }, status: 'applied', posts: 1 },
+    { label: 'persisted same depth', raw: { showLineNumbers: true, workDepthLimit: 4 }, status: 'unchanged', posts: 0 },
+  ] as const)('distinguishes effective depth4 from the raw CAS baseline: $label', async ({ raw, status, posts }) => {
+    expect(accountSettingsParse(raw).workDepthLimit).toBe(4);
+    const updateSettings = vi.fn(async (): Promise<AccountSettingsV2UpdateResponse> => ({ success: true, version: 5 }));
+    const result = await updateAccountSettingsV2WithRetry({
+      credentials: createTokenOnlyCredentials(),
+      mutation: { operations: [{ op: 'set', key: 'workDepthLimit', value: 4 }] },
+      deps: {
+        fetchSettings: async () => ({ content: { t: 'plain', v: raw }, version: 4 }),
+        resolveAccountEncryptionMode: async () => 'plain',
+        updateSettings,
+      },
+    });
+    expect(result).toMatchObject({ status });
+    expect(updateSettings).toHaveBeenCalledTimes(posts);
+    if (posts) expect(updateSettings).toHaveBeenCalledWith({
+      expectedVersion: 4, content: { t: 'plain', v: { ...raw, workDepthLimit: 4 } },
+    });
+  });
+
   it('fails closed before mutation or POST when persisted E2EE mode disagrees with plain content', async () => {
     const updateSettings = vi.fn(async (): Promise<AccountSettingsV2UpdateResponse> => ({
       success: true,

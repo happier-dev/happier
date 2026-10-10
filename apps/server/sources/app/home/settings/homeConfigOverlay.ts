@@ -192,14 +192,16 @@ function appliedAtStart(
     entry: ServerConfigEntry,
     startup: StartupHomeEnv,
     current: Readonly<{ value: ServerConfigValue | null; secretSet?: boolean }>,
+    persistedRestartSecrets: Readonly<Record<string, string | Readonly<{ unreadable: true }>>>,
 ): NonNullable<HomeSettingProjection['applied']> {
     const ignoredReason = Object.prototype.hasOwnProperty.call(startup.snapshot.ignored, entry.key)
         ? startup.snapshot.ignored[entry.key]
         : undefined;
     const reason = ignoredReason ? { ignoredReason } : {};
     if (entry.sensitivity === 'secret') {
-        const appliedSet = readServerConfigRaw(startup.env, entry) !== null;
-        return { value: null, pending: appliedSet !== (current.secretSet ?? false), ...reason };
+        const applied = readServerConfigRaw(startup.env, entry)?.raw ?? null;
+        const currentSecret = readServerConfigRaw(startup.deploymentEnv, entry)?.raw ?? persistedRestartSecrets[entry.key] ?? null;
+        return { value: null, pending: applied !== currentSecret, ...reason };
     }
     const value = resolveHomeSetting(entry, startup.env, {}).value;
     return { value, pending: JSON.stringify(value) !== JSON.stringify(current.value), ...reason };
@@ -247,6 +249,8 @@ export function projectHomeSettings(params: Readonly<{
     env: ServerConfigEnv;
     persisted: PersistedHomeSettingValues;
     persistedSecretKeys: readonly string[];
+    /** Opened restart secrets stay private; only their identity comparison is projected. */
+    persistedRestartSecrets?: Readonly<Record<string, string | Readonly<{ unreadable: true }>>>;
     startup?: StartupHomeEnv | null;
 }>): HomeSettingProjection[] {
     const registry = params.registry ?? SERVER_CONFIG_REGISTRY;
@@ -275,6 +279,6 @@ export function projectHomeSettings(params: Readonly<{
             row = { ...base, ...resolveHomeSetting(entry, params.env, params.persisted) };
         }
         if (!params.startup || entry.apply !== 'restart') return row;
-        return { ...row, applied: appliedAtStart(entry, params.startup, row) };
+        return { ...row, applied: appliedAtStart(entry, params.startup, row, params.persistedRestartSecrets ?? {}) };
     });
 }

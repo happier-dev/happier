@@ -1,6 +1,7 @@
 import * as privacyKit from "privacy-kit";
 import {
     readHomeAuthenticationPolicyV1,
+    isHomeGovernanceSettingKey,
     validateHomeSettingsWrite,
     type HomeSettingEntryV1,
     type HomeSettingsInvalidReasonV1,
@@ -157,7 +158,9 @@ export function buildHomeConfigEnvFromRecord(
  * the values this process started with. No process cache: every replica reads the same row.
  */
 export async function readHomeConfigEnv(base: ServerConfigEnv = process.env): Promise<ServerConfigEnv> {
-    const [record, policyValues] = await Promise.all([readHomeSettings(), readHomeAuthenticationPolicyValues(db)]);
+    const [record, policyValues] = await inTx(tx => Promise.all([
+        readHomeSettingsInTx(tx), readHomeAuthenticationPolicyValues(tx),
+    ]), { readOnly: true });
     return buildHomeConfigEnvFromRecord(base, record, SERVER_CONFIG_REGISTRY, policyValues);
 }
 
@@ -216,6 +219,7 @@ async function projectRecordInTx(
         env: readHomeDeploymentEnv(),
         persisted: { ...record.values, ...policyValues },
         persistedSecretKeys: Object.keys(record.sealedSecrets),
+        persistedRestartSecrets: openHomeSettingSecrets(record, Object.keys(record.sealedSecrets).filter((key) => registry[key]?.apply === "restart")),
         startup,
     }).map((row) => ({ ...row }));
     // The same overlay a request would read, answered by the canonical feature decision engine.
@@ -246,7 +250,7 @@ export async function readHomeSettingsProjectionInTx(
  * state but are never stored here (U4 routes their writes to the governance document).
  */
 function isGovernanceRoutedEntry(entry: ServerConfigEntry): boolean {
-    return entry.section === "policies" && (entry.family !== undefined || entry.group === "signup");
+    return isHomeGovernanceSettingKey(entry.key);
 }
 
 /**

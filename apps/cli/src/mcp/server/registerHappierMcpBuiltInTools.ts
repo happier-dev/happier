@@ -1,11 +1,10 @@
-import { listBuiltInHappierTools, type BuiltInHappierToolsSurface } from '@/agent/tools/happierTools/listBuiltInHappierTools';
+import { createHappierToolInventory, type HappierToolInventory, type BuiltInHappierToolsSurface } from '@/agent/tools/happierTools/listBuiltInHappierTools';
 import { dispatchBuiltInHappierTool } from '@/agent/tools/happierTools/dispatchBuiltInHappierTool';
 import { createPluginJsonSchemaZodObjectAdapter } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import { zodSchemaToJsonSchemaObject } from '@happier-dev/protocol/actions/actionInputJsonSchema';
 import type { ActionId, ActionsSettingsV1, ApprovalRequestOriginV1, BrowserScreenshotMediaReferenceV1 } from '@happier-dev/protocol';
 import { BrowserScreenshotMediaReferenceV1Schema } from '@happier-dev/protocol/browser/context/v1';
 import { SessionImageMediaReferenceV1Schema } from '@happier-dev/protocol/sessions/media/imageReferenceV1';
-import { createActionToolNameToIdMap } from '@/agent/tools/happierTools/actionToolCatalog';
 import type { HappierBuiltInToolDefinition } from '@/agent/tools/happierTools/types';
 import { z } from 'zod';
 import type { ProjectedPluginToolCatalogEntry } from '@/plugins/runtime/toolCatalog';
@@ -24,6 +23,14 @@ const MCP_TOOL_PROGRESS_KEEPALIVE_INTERVAL_MS = 15_000;
 
 export type ToolRegistrar<TExtra = unknown> = Readonly<{
     registerTool: (name: string, meta: unknown, handler: (args: unknown, extra?: TExtra) => Promise<unknown>) => void;
+}>;
+
+export type HappierMcpToolInventory = HappierToolInventory & Readonly<{
+    registrations: readonly Readonly<{
+        tool: HappierBuiltInToolDefinition;
+        actionId: string | null;
+        meta: unknown;
+    }>[];
 }>;
 
 type DispatchDeps = Parameters<typeof dispatchBuiltInHappierTool>[0]['deps'];
@@ -199,6 +206,37 @@ function readBrowserResultMedia(value: unknown): readonly BrowserScreenshotMedia
     return [...references.values()];
 }
 
+/** Bind presentation schemas once for the exact Session and admitted inventory. */
+export function prepareHappierMcpToolInventory(params: Readonly<{
+    inventory: HappierToolInventory;
+    sessionId: string;
+    sessionMachineId?: string | null;
+    pluginToolCatalog?: readonly ProjectedPluginToolCatalogEntry[];
+}>): HappierMcpToolInventory {
+    return {
+        ...params.inventory,
+        registrations: params.inventory.tools.map(tool => {
+            const actionId = params.inventory.actionToolNameToId.get(tool.name) ?? null;
+            const pluginToolMcpMeta = buildPluginToolMcpMeta(tool);
+            const annotations = resolveMcpToolAnnotations(tool);
+            const meta = {
+                description: tool.description,
+                title: tool.title,
+                inputSchema: toMcpToolInputSchema({
+                    actionId, inputSchema: tool.inputSchema, sessionId: params.sessionId,
+                    sessionMachineId: params.sessionMachineId, pluginToolCatalog: params.pluginToolCatalog,
+                }),
+                ...(tool.outputSchema === undefined ? {} : {
+                    outputSchema: toMcpToolObjectSchema(tool.outputSchema, 'outputSchema'),
+                }),
+                ...(annotations === undefined ? {} : { annotations }),
+                ...(pluginToolMcpMeta === undefined ? {} : { _meta: pluginToolMcpMeta }),
+            };
+            return { tool, actionId, meta };
+        }),
+    };
+}
+
 export function registerHappierMcpBuiltInTools(
     server: ToolRegistrar,
     params: Readonly<{
@@ -210,6 +248,7 @@ export function registerHappierMcpBuiltInTools(
         getActionsSettings?: (() => ActionsSettingsV1 | null) | null;
         pluginToolCatalog?: readonly ProjectedPluginToolCatalogEntry[];
         requiredDirectActionIds?: readonly ActionId[];
+        toolInventory?: HappierMcpToolInventory;
         deps: DispatchDeps;
         resolveSessionId?: (toolArgs: unknown) => string;
     }>,
@@ -219,43 +258,24 @@ export function registerHappierMcpBuiltInTools(
     const isActionEnabled = params.deps.isActionEnabled ?? (() => true);
     const readActionsSettings = () => params.getActionsSettings?.() ?? params.actionsSettings ?? null;
     const actionsSettings = readActionsSettings();
-    const enabledTools = listBuiltInHappierTools({
-        surface: params.surface,
-        isActionEnabled,
-        actionsSettings,
+    const inventory = params.toolInventory ?? prepareHappierMcpToolInventory({
+        sessionId: params.sessionId,
+        sessionMachineId: params.sessionMachineId,
         pluginToolCatalog: params.pluginToolCatalog,
-        requiredDirectActionIds: params.requiredDirectActionIds,
+        inventory: createHappierToolInventory({
+            surface: params.surface,
+            isActionEnabled,
+            actionsSettings,
+            pluginToolCatalog: params.pluginToolCatalog,
+            requiredDirectActionIds: params.requiredDirectActionIds,
+        }),
     });
-    const actionToolNameToId = createActionToolNameToIdMap({
-        surface: params.surface,
-        isActionEnabled,
-        actionsSettings,
-        pluginToolCatalog: params.pluginToolCatalog,
-        requiredDirectActionIds: params.requiredDirectActionIds,
-    });
+    const { tools: enabledTools } = inventory;
 
-    for (const tool of enabledTools) {
-        const actionId = actionToolNameToId.get(tool.name) ?? null;
-        const pluginToolMcpMeta = buildPluginToolMcpMeta(tool);
-        const annotations = resolveMcpToolAnnotations(tool);
+    for (const { tool, actionId, meta } of inventory.registrations) {
         server.registerTool(
             tool.name,
-            {
-                description: tool.description,
-                title: tool.title,
-                inputSchema: toMcpToolInputSchema({
-                    actionId,
-                    inputSchema: tool.inputSchema,
-                    sessionId: params.sessionId,
-                    sessionMachineId: params.sessionMachineId,
-                    pluginToolCatalog: params.pluginToolCatalog,
-                }),
-                ...(tool.outputSchema === undefined ? {} : {
-                    outputSchema: toMcpToolObjectSchema(tool.outputSchema, 'outputSchema'),
-                }),
-                ...(annotations === undefined ? {} : { annotations }),
-                ...(pluginToolMcpMeta === undefined ? {} : { _meta: pluginToolMcpMeta }),
-            },
+            meta,
             async (args: unknown, extra?: unknown) => {
                 const stopProgressKeepalive = startMcpToolProgressKeepalive(extra);
                 try {

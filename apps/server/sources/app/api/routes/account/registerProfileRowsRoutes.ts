@@ -28,7 +28,7 @@ export function registerProfileRowsRoutes(app: Fastify): void {
     app.get(PROFILE_REFERENCE_GUARD_ROUTE_V1, {
         preHandler: app.authenticate, config,
         schema: { response: { 200: asServerProtocolZod(ProfileReferenceGuardReadResponseV1Schema) } },
-    }, async (request, reply) => reply.send(await inTx(tx => readProfileReferenceGuardInTx(tx, { accountId: request.userId }))));
+    }, async (request, reply) => reply.send(await inTx(tx => readProfileReferenceGuardInTx(tx, { accountId: request.userId }), { readOnly: true })));
     app.get(PROFILE_ROWS_ROUTE_V1, {
         preHandler: app.authenticate, config,
         schema: { querystring: z.object({ cursor: z.string().refine(value => parseProfilePhysicalKey(value) !== null, 'Invalid Profile cursor').optional(), limit: z.coerce.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional() }).strict(),
@@ -36,11 +36,11 @@ export function registerProfileRowsRoutes(app: Fastify): void {
     }, async (request, reply) => reply.send(await inTx(tx => listProfileRowsInTx(tx, { accountId: request.userId,
         ...(request.query.cursor === undefined ? {} : { cursor: request.query.cursor }),
         ...(request.query.limit === undefined ? {} : { limit: request.query.limit }),
-    }))));
+    }), { readOnly: true })));
     app.post(PROFILE_RECORD_READ_ROUTE_V1, {
         preHandler: app.authenticate, config,
         schema: { body: asServerProtocolZod(ProfileRowReadRequestV1Schema), response: { 200: asServerProtocolZod(ProfileRowReadResponseV1Schema), 400: invalidParams } },
-    }, async (request, reply) => reply.send(await inTx(tx => readProfileRowInTx(tx, { accountId: request.userId, id: request.body.id }))));
+    }, async (request, reply) => reply.send(await inTx(tx => readProfileRowInTx(tx, { accountId: request.userId, id: request.body.id }), { readOnly: true })));
     app.post(PROFILE_RECORDS_ROUTE_V1, {
         preHandler: app.authenticate, config,
         schema: { body: asServerProtocolZod(ProfileRowMutationV1Schema),

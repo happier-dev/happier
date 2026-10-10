@@ -15,7 +15,7 @@ export function registerConfiguredAgentRowsRoutes(app: Fastify): void {
     app.get(ACP_CATALOG_ROWS_ROUTE_V1, { preHandler: app.authenticate, config,
         schema: { response: { 200: asServerProtocolZod(AcpCatalogRowReadResponseV1Schema), 500: internal } },
     }, async (request, reply) => {
-        try { return reply.send(await inTx(tx => readConfiguredAgentCatalogRowInTx(tx, { accountId: request.userId }))); }
+        try { return reply.send(await inTx(tx => readConfiguredAgentCatalogRowInTx(tx, { accountId: request.userId }), { readOnly: true })); }
         catch { return reply.code(500).send({ error: 'internal' }); }
     });
     app.post(ACP_CATALOG_ROWS_ROUTE_V1, { preHandler: app.authenticate, config,

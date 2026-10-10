@@ -131,8 +131,8 @@ See: [Server → Setup & bootstrap policy](/self-hosting/setup-and-bootstrap-pol
 
 - SSH host-key trust prompts should be reviewed carefully the first time you connect.
 - A prompt about a *changed* host key is different: the stored key for that host no longer matches. In the CLI, `--yes` trusts a first-use host but never a changed key — confirm it interactively after you know why it changed, or pin the exact new `known_hosts` line with `--trusted-host-key <line>`.
-- When secret material is supported by your server/build policy, it is stored in your synced account
-  settings. On an E2EE account it is encrypted on your device before it is sent; on a plaintext
-  account it is stored in a form the Happier server can read. See [Encryption](/security/encryption).
+- When secret material is supported by your server/build policy, saved passwords and private keys
+  are private Account data. On an E2EE account they are encrypted on your device before they are sent; on a plaintext
+  account they are stored in a form the Happier server can read. See [Encryption](/security/encryption).
 - If you don’t want a host saved long-term, keep “Save this host” disabled and use one-time SSH inputs.
 - Remote hosts are separate from Homes: they describe how to reach a machine over SSH, not which stable Home identity the CLI targets.

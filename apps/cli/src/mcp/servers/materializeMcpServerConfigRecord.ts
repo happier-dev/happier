@@ -26,7 +26,6 @@ import { removeWrittenMcpRuntimeConfigFile, writeSecureMcpRuntimeConfigFile } fr
 import {
   type McpServerCatalogEntryV1,
   type ResolveEffectiveServersV1Result,
-  type SecretStringV1,
 } from '@happier-dev/protocol';
 import {
   SavedSecretResolutionError,
@@ -191,10 +190,7 @@ async function materializeRemoteServer(params: Readonly<{
 
 export async function materializeMcpServerConfigRecord(params: Readonly<{
   resolved: ResolveEffectiveServersV1Result;
-  savedSecretsById: ReadonlyMap<string, SecretStringV1>;
   savedSecretMaterializer?: SavedSecretMaterializerV1;
-  settingsSecretsKey: Uint8Array | null;
-  settingsSecretsReadKeys?: ReadonlyArray<Uint8Array | null | undefined>;
   processEnv?: NodeJS.ProcessEnv;
   tmpDir: string | null;
   strictMode?: boolean;
@@ -230,10 +226,7 @@ export async function materializeMcpServerConfigRecord(params: Readonly<{
       for (const [envKey, valueRef] of Object.entries(server.env)) {
         const resolved = resolveMcpValueRefPlaintext({
           valueRef,
-          savedSecretsById: params.savedSecretsById,
           savedSecretMaterializer: params.savedSecretMaterializer,
-          settingsSecretsKey: params.settingsSecretsKey,
-          settingsSecretsReadKeys: params.settingsSecretsReadKeys,
           processEnv,
         });
         if (
@@ -307,10 +300,7 @@ export async function materializeMcpServerConfigRecord(params: Readonly<{
       for (const [headerKey, valueRef] of Object.entries(server.remote.headers)) {
         const resolved = resolveMcpValueRefPlaintext({
           valueRef,
-          savedSecretsById: params.savedSecretsById,
           savedSecretMaterializer: params.savedSecretMaterializer,
-          settingsSecretsKey: params.settingsSecretsKey,
-          settingsSecretsReadKeys: params.settingsSecretsReadKeys,
           processEnv,
         });
         if (

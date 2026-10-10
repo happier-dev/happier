@@ -5,15 +5,150 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
 import { Server } from 'socket.io';
 import { describe, expect, it } from 'vitest';
+import { z } from 'zod';
 import { ACTION_IDS, encodeBase64, getActionSpec, normalizeActionsSettingsV1, RPC_METHODS, SOCKET_RPC_EVENTS, V2SessionByIdResponseSchema } from '@happier-dev/protocol';
 import { createExternalMcpServer } from './createExternalMcpServer';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createCliActionExecutorHarness } from '@/session/actions/createCliActionExecutorHarness';
+import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
+import { DaemonLocalServiceLauncherStartResponseV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
+import { createLocalServiceActionConfirmationNonceV1, LocalServiceActionRequestV1Schema,
+  LocalServiceActionResultV1Schema } from '@happier-dev/protocol/local/services/actions/v1';
+import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
+import { configuration } from '@/configuration';
+import { ApprovalRequestV2Schema, type ApprovalRequestV2 } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
+import { ARTIFACT_PLAIN_DATA_KEY_MARKER, decodePlainArtifactStoredContent,
+  encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 
 // HTTP and Socket.IO are the Home/daemon system boundary. MCP, placement,
 // target reconciliation, Machine codec and RPC client all run unchanged.
 describe('standalone MCP machine placement', () => {
+  it.each([
+    ['localServices.launcher.start', 'localServices_launcher_start'],
+    ['localServices.actions.stopManaged', 'localServices_actions_stopManaged'],
+  ] as const)('routes named %s through current Machine transport under an explicit Account MCP approval setting', async (actionId, toolName) => {
+    const requests: Array<{ method: string; params: unknown }> = [];
+    const approvalRequests: ApprovalRequestV2[] = [];
+    let approvalArtifact: Readonly<{ id: string; header: string; body: string; dataEncryptionKey: string;
+      ownerAccountId: string; access: 'owner'; encryptionMode: 'plain'; headerVersion: number; bodyVersion: number;
+      seq: number; createdAt: number; updatedAt: number }> | null = null;
+    const review = DaemonLocalServiceLauncherStartResponseV1Schema.parse({ protocolVersion: 1, machineId: 'addressed-machine',
+      targetId: 'project-service:selected', status: 'denied', reasonCode: 'project_service_effect_review_required',
+      reviewedEffect: { command: 'current remote declaration' }, reviewedEffectDigest: 'a'.repeat(64),
+      snapshot: { v: 1, machineId: 'addressed-machine', updatedAt: 1, targets: [] } });
+    const stopped = LocalServiceActionResultV1Schema.parse({ v: 1, requestId: 'stop-selected', action: 'stop_managed',
+      status: 'denied', reasonCode: 'managed_service_stop_unavailable', auditEvents: [] });
+    const receipt = actionId === 'localServices.launcher.start' ? review : stopped;
+    const http = createServer(async (request, response) => {
+      response.setHeader('content-type', 'application/json');
+      if (request.url === '/v1/machines/addressed-machine') {
+        response.end(JSON.stringify({ machine: { id: 'addressed-machine', kind: 'persistent', storageMode: 'plain',
+          dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER, revokedAt: null, replacedByMachineId: null } }));
+      } else if (request.url === '/v1/account/encryption/currentness') {
+        response.end(JSON.stringify({ mode: 'plain', version: 1, updatedAt: 1, signingKeyFingerprint: null, contentKeyFingerprint: null }));
+      } else if (request.url === '/v1/account/encryption') {
+        response.end(JSON.stringify({ mode: 'plain', updatedAt: 1 }));
+      } else if (request.method === 'POST' && request.url === '/v1/artifacts') {
+        // Genuine HTTP persistence/decision boundary. The codec, approval
+        // header/body validation, policy and blocking waiter stay real.
+        const chunks: Buffer[] = [];
+        for await (const chunk of request) chunks.push(Buffer.from(chunk));
+        const written = z.object({ id: z.string(), header: z.string(), body: z.string(),
+          dataEncryptionKey: z.literal(ARTIFACT_PLAIN_DATA_KEY_MARKER) }).passthrough()
+          .parse(JSON.parse(Buffer.concat(chunks).toString('utf8')));
+        const decoded = z.object({ body: z.string() }).parse(decodePlainArtifactStoredContent(written.body));
+        const approval = ApprovalRequestV2Schema.parse(JSON.parse(decoded.body));
+        approvalRequests.push(approval);
+        const rejected = ApprovalRequestV2Schema.parse({ ...approval, status: 'rejected',
+          updatedAtMs: approval.updatedAtMs + 1, decision: { kind: 'reject', decidedAtMs: approval.updatedAtMs + 1 } });
+        approvalArtifact = { id: written.id,
+          header: encodePlainArtifactStoredContent(buildApprovalRequestArtifactHeaderV1(rejected)),
+          body: encodePlainArtifactStoredContent({ body: JSON.stringify(rejected) }),
+          dataEncryptionKey: written.dataEncryptionKey, ownerAccountId: 'owner', access: 'owner', encryptionMode: 'plain',
+          headerVersion: 2, bodyVersion: 2, seq: 2, createdAt: 1, updatedAt: 2 };
+        response.end(JSON.stringify({ id: written.id, headerVersion: 1, bodyVersion: 1 }));
+      } else if (request.method === 'GET' && approvalArtifact && request.url === `/v1/artifacts/${approvalArtifact.id}`) {
+        response.end(JSON.stringify(approvalArtifact));
+      } else { response.statusCode = 404; response.end('{}'); }
+    });
+    const daemon = new Server(http, { path: '/v1/updates/' });
+    daemon.on('connection', socket => socket.on(SOCKET_RPC_EVENTS.CALL, (request, ack) => {
+      requests.push(request); ack({ ok: true, result: receipt });
+    }));
+    http.listen(0, '127.0.0.1'); await once(http, 'listening');
+    const address = http.address();
+    if (!address || typeof address === 'string') throw new Error('Missing Home address');
+    const endpoint = `http://127.0.0.1:${address.port}`;
+    const env = createEnvKeyScope(['HAPPIER_ACTIONS_SETTINGS_V1']);
+    // A supported, explicit per-Action Account choice, not a test-only global bypass.
+    env.patch({ HAPPIER_ACTIONS_SETTINGS_V1: JSON.stringify({ v: 1,
+      approvalWaivedSurfaces: { [actionId]: ['mcp'] },
+      actions: Object.fromEntries(ACTION_IDS.map(id => [id, { enabled: id === actionId }])) }) });
+    const createStandaloneServer = () => runWithServerHttpBaseUrl(endpoint, () => createExternalMcpServer({
+      credentials: { token: `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`, encryption: null, credentialProvenance: 'stored_session' },
+      machineId: 'other-local-machine', daemonControlTarget: null,
+      serverFeaturesSnapshot: { status: 'ready', features: FeaturesResponseSchema.parse({ features: {
+        localServices: { enabled: true, inventory: { enabled: true }, launcher: { enabled: true },
+          actions: { enabled: true }, managed: { enabled: true } },
+        browser: { enabled: true, viewTargets: { enabled: true } },
+      }, capabilities: {} }) },
+    }));
+    const { mcp } = createStandaloneServer();
+    const client = new Client({ name: 'service-machine-placement-test', version: '1' });
+    const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
+    await mcp.connect(serverTransport); await client.connect(clientTransport);
+    try {
+      const startInput = { machineId: 'addressed-machine', targetId: 'project-service:selected',
+        workspace: { serverId: configuration.activeServerId, machineId: 'addressed-machine', workspaceId: 'accepted', rootPath: '/accepted' },
+        declaration: { workspaceRefId: 'accepted', selection: { kind: 'manifest', name: 'web' } } };
+      const reviewedStop = LocalServiceActionRequestV1Schema.parse({ requestId: 'stop-selected', action: 'stop_managed',
+        confirmationNonce: 'placeholder', target: { kind: 'managed_service', managedServiceId: 'actual-owned-instance',
+          machineId: 'addressed-machine', workspaceId: 'accepted', cwd: '/accepted/web',
+          declaration: { workspaceRefId: 'accepted', selection: { kind: 'manifest', name: 'web' } } } });
+      const input = actionId === 'localServices.launcher.start' ? startInput
+        : { ...reviewedStop, confirmationNonce: createLocalServiceActionConfirmationNonceV1(reviewedStop) };
+      const result = CallToolResultSchema.parse(await client.callTool({ name: toolName, arguments: input }));
+      const content = result.content.find(entry => entry.type === 'text');
+      expect(result.isError, content?.type === 'text' ? content.text : JSON.stringify(result)).not.toBe(true);
+      expect(content?.type === 'text' ? JSON.parse(content.text) : null).toEqual(receipt);
+      expect(requests).toEqual([expect.objectContaining({ method: `addressed-machine:${getActionSpec(actionId).bindings?.rpcMethod}`,
+        params: { v: 1, kind: 'targeted_action_rpc', input, target: { kind: 'machine', machineId: 'addressed-machine' },
+          defaultSessionId: 'cli-global' } })]);
+      if (actionId === 'localServices.actions.stopManaged') {
+        // A newly constructed standalone host captures the current Account
+        // settings. Tool exposure must not waive the Action's default approval.
+        env.patch({ HAPPIER_ACTIONS_SETTINGS_V1: JSON.stringify({ v: 1,
+          actions: Object.fromEntries(ACTION_IDS.map(id => [id, { enabled: id === actionId }])) }) });
+        const { mcp: askFirstMcp } = createStandaloneServer();
+        const askFirstClient = new Client({ name: 'service-machine-approval-test', version: '1' });
+        const [askFirstServerTransport, askFirstClientTransport] = InMemoryTransport.createLinkedPair();
+        await askFirstMcp.connect(askFirstServerTransport); await askFirstClient.connect(askFirstClientTransport);
+        try {
+          const refused = CallToolResultSchema.parse(await askFirstClient.callTool({ name: toolName, arguments: input }));
+          const refusal = refused.content.find(entry => entry.type === 'text');
+          const publicRefusal: unknown = refusal?.type === 'text' ? JSON.parse(refusal.text) : null;
+          expect(refused.isError, JSON.stringify(publicRefusal)).toBe(true);
+          expect(publicRefusal, JSON.stringify(publicRefusal)).toMatchObject({
+            errorCode: 'approval_rejected',
+          });
+          expect(approvalRequests).toHaveLength(1);
+          expect(approvalRequests[0]).toMatchObject({ actionId, status: 'open', requestedSurface: 'mcp' });
+          expect(approvalRequests[0]?.actionArgs).toEqual(input);
+          expect(approvalRequests[0]?.executionOriginV1).toMatchObject({
+            serverId: configuration.activeServerId, machineId: 'addressed-machine', actionId,
+          });
+          expect(requests).toHaveLength(1);
+        } finally {
+          await askFirstClient.close(); await askFirstMcp.close();
+        }
+      }
+    } finally {
+      await client.close(); await mcp.close();
+      await new Promise<void>(resolve => daemon.close(() => resolve())); env.restore();
+    }
+  });
   it('retains canonical approval refusal before the Machine effect when no approval carrier is available', async () => {
     const credentials = { token: 'test-account', encryption: null, credentialProvenance: 'stored_session' } as const;
     const { executor } = createCliActionExecutorHarness({

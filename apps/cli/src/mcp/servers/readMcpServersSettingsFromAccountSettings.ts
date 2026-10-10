@@ -1,23 +1,20 @@
-/**
- * MCP settings access (account settings)
- *
- * Reads the server-synced MCP servers settings blob from the account settings object.
- * Invalid payloads are treated as empty settings (fail-closed on config).
- */
-
-import { McpServersSettingsV1Schema } from '@happier-dev/protocol/mcp/servers/settingsV1';
+import { readMcpServersFromCatalogSnapshotV1 } from '@happier-dev/protocol/mcp/servers/serverCatalogV1';
 import type { McpServersSettingsV1 } from '@happier-dev/protocol';
+import type { ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 
-function emptySettings(): McpServersSettingsV1 {
-  return { v: 1, strictMode: false, servers: [], bindings: [] };
+export class McpServerCatalogUnavailableError extends Error {
+  readonly code = 'mcp_catalog_unavailable';
+  constructor(readonly reason: string) {
+    super('MCP server catalog is unavailable');
+    this.name = 'McpServerCatalogUnavailableError';
+  }
 }
 
-export function readMcpServersSettingsFromAccountSettings(settingsLike: unknown): McpServersSettingsV1 {
-  const rec = settingsLike && typeof settingsLike === 'object' && !Array.isArray(settingsLike)
-    ? (settingsLike as Record<string, unknown>)
-    : null;
-  const raw = rec?.mcpServersSettingsV1;
-  if (!raw) return emptySettings();
-  const parsed = McpServersSettingsV1Schema.safeParse(raw);
-  return parsed.success ? parsed.data : emptySettings();
+/** Runtime admission never falls back to a retained Settings root. */
+export function readMcpServersSettingsFromAccountSettings(snapshot: ActiveAccountSettingsSnapshot | null): McpServersSettingsV1 {
+  if (!snapshot?.mcpServerCatalog) throw new McpServerCatalogUnavailableError('catalog-unobserved');
+  const read = readMcpServersFromCatalogSnapshotV1({ snapshot: snapshot.mcpServerCatalog,
+    strictMode: snapshot.settings.mcpServersStrictMode === true });
+  if (read.status !== 'ready') throw new McpServerCatalogUnavailableError(read.reason);
+  return read.settings;
 }

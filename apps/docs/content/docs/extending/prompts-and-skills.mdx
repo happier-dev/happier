@@ -82,7 +82,9 @@ Use the favourite control on a library prompt to keep it close at hand.
 current account on the device. Search older history on demand, with progress
 and **Stop**. Loaded results are not the complete account history: global
 coverage stays partial because archived/shared inventory completeness cannot
-be established. Your Up-arrow history navigation is unchanged. Session-only
+be established. To keep a **Sent before** entry, use its favourite control to
+name and save it in place as a library prompt. Your Up-arrow history navigation
+is unchanged. Session-only
 shortcuts are available in an addressed session, but not in new-session or
 Home composers.
 
@@ -96,15 +98,21 @@ On phone, long-press the message and choose the same action. Name the prompt;
 the favourite option starts on. Expand the optional slash-shortcut field to
 give it a token such as `/review`. **Save** creates a library prompt with the
 message's text, and the optional shortcut inserts that prompt. **Cancel**
-stores nothing. Attachment-only messages have no Save as prompt action.
+stores nothing. Attachment-only or unsupported structured messages have no
+Save as prompt action. If the prompt saves but its shortcut cannot be added,
+Happier tells you; the saved prompt remains in the library.
 
 ### Choose which message actions appear
 
 In **Settings → Transcript → Message actions**, switch individual committed
-message actions on or off, including **Save as prompt**. A switched-off action
-is absent from both the row and its menus. Pending-message recovery controls
-remain available. If you switch Pin off, existing pin indicators still let
-you unpin those messages.
+message actions on or off: **Copy**, **Fork**, **Rollback**, **Select**, **Pin**,
+**Save as prompt**, **Make this repeatable**, and **Plugin actions**. Each switch
+controls eligible actions; turning one on does not make it available for an
+ineligible message. A switched-off action is absent from both the row and its
+menus. When Workflows are available, **Make this repeatable** adds a draft
+request to turn an eligible assistant message into a reusable workflow; you
+choose when to send it. Pending-message recovery controls remain available. If you
+switch Pin off, existing pin indicators still let you unpin those messages.
 
 ### Actions for prompts
 
@@ -116,13 +124,37 @@ shared library operations. `prompt_doc.get` reads content; invocation list
 and resolve Actions use the same shortcut availability rules as the composer.
 Creation through an Agent follows the Action's approval policy.
 
+In this development contract, `prompt_doc.get` also returns the document's current
+revision. A reviewed `prompt_doc.update` can include that revision as
+`expectedRevision`: if another edit changed the document after review, the update
+conflicts rather than applying the reviewed change to a new version. Read the
+current document and review the change again. The write also checks for competing
+changes during execution. Omitting the reviewed revision preserves that write-time
+check, but cannot protect an earlier preview.
+
+Prompt edits use ordinary Actions approval. Automation defaults to **Ask first**;
+an explicit **Allowed** setting applies to the exact Action and surface across
+every Session using it. It is not a separate Bot permission. A required approval
+is a human decision, and approval alone does not mean the content has saved.
+See [Inbox and approvals](/sessions/inbox-and-approvals).
+
 `ui.prompts.picker.open` opens an eligible mounted composer's picker; it does
 not read prompt text or create a prompt. It is a client display Action and is
-discoverable to Agents, without an agent-to-client delivery path yet. It is
-not exposed as an MCP tool. Likewise, `ui.find` and `session.pending.next`
-control mounted-client presentation/navigation, rather than unattended
-search. Agent/MCP calls without a reachable client adapter return unavailable
-instead of reporting success.
+available to Agents through the connected app; it remains excluded from MCP.
+`ui.find` and `session.pending.next` are available to Agents and MCP for
+mounted-client Find and pending-request navigation. These Actions are delivered
+to an app connected to the addressed machine and run through its usual Action
+executor. The picker does not select, insert or send a prompt on the Agent's
+behalf.
+
+Without a connected app, the picker and Find return **unavailable** with reason
+`noClient`; Next returns **unavailable**. With an app connected but no eligible
+composer, the picker returns `noEligibleComposer`; Find similarly distinguishes
+`noMountedSurface` from zero matches. Approval-required Actions wait for the
+required decision before delivery; rejection or cancellation prevents
+execution. A connection lost after dispatch can leave the outcome uncertain.
+See [Agent Search and Find](/organize/search#let-an-agent-use-search-and-find)
+for the related search Actions.
 
 ### Skills
 
@@ -229,6 +261,76 @@ That means:
 
 - starting a session from the app and from the CLI uses the same prompt-building logic
 - profile-linked additions and surface-linked additions compose consistently
+
+### Context preparation (0.3 development)
+
+The development context resolver composes Account, the Session's own Profile,
+Source/Project and Session additions in that order. Coding preparation places
+them before the Session's Role and Notes. A Source-backed Project uses its
+Source's context attachments as the Project layer; a Project without a Source
+uses the Session owner's personal Project additions. The CLI
+coding and Voice adapters and the app's stack reader share this resolver. Worker
+Sessions use their own selected Profile and Project context, without copying the
+Lead's Session additions or switches for inherited entries. Explicit worker
+Profile selections are saved with the new Session.
+
+These are unreleased development contracts. The visual Project Context and Session
+Work editors are being integrated; this section does not describe a released
+editor workflow or completed runtime validation.
+
+In these development Context surfaces, the memory section's **+** can save the
+first fact for an Account or writable Project without an existing memory document.
+If attaching the new document conflicts, the fact remains saved and the surface
+keeps that exact document visible with a conflict notice; it does not retry by
+creating another fact.
+
+Each preparation reads the current library documents from their addressed Home
+and Account. An older reference without a Home qualifier still uses its owner's
+Home. A saved reference does not grant access, and a cached display copy cannot
+replace the current document. Existing skill additions retain their placement
+and load their root `SKILL.md` between neighboring additions.
+
+Changes apply at the next supported coding preparation or bound Voice preparation.
+An already-prepared turn or Voice attempt keeps its installed instructions; this
+does not promise a mid-turn update or support for every Voice carrier. Sharing a
+Session or belonging to its Source does not share its owner's documents. A
+separate document grant permits the content that grant covers; without it, the
+document remains owner-private.
+
+When a Session preparation supplies memory-off, memory documents are identified
+from their headers and skipped before their bodies load; ordinary instructions
+and skills remain usable. Switching off an inherited entry affects that Session
+only. An empty document is valid. A definitively missing optional entry is skipped;
+a missing required entry prevents preparation until it is repaired or detached.
+Wrong-kind, unreadable or malformed content also prevents preparation. Temporary
+read failures remain pending instead of silently supplying empty or stale
+instructions. Session Instructions uses one enabled, required Session entry;
+detaching it leaves its document in the library. Its Work editor is still being
+integrated.
+
+In the current development behavior, each nonempty memory block names its
+document, context layer and saved reference. The always-loaded part contains the
+memory index: active, unexpired key facts and topic titles with one-line summaries.
+Facts render on single lines with an `id:` key and available source/date information.
+Topic detail and archive facts are not included in that prompt block.
+
+An optional `maxChars` budget selects complete index entries; it does not cut facts
+mid-line or budget the source label. Without a budget, the complete eligible index
+loads. Existing flat facts/archive documents and index-only documents remain
+readable through the same memory adapter. Index and topics remain inside one
+document, with its existing sharing permissions—not separate topic documents.
+
+Account memory preferences apply when creating a Session: ordinary Sessions
+default off and Bots default on, unless creation supplies an explicit choice.
+The Settings Action anchors are `prompts.memoryUseInNewSessions` and
+`prompts.memoryUseInNewBots`. Changing a default does not change existing Sessions'
+memory choices.
+
+Development context writes use the metadata revision the caller reviewed. If that
+revision is stale, the write refuses instead of silently applying the change to
+a newer Session. The CLI retains its queued intent and reviewed revision for
+explicit review after a conflict. This is not a claim that the deferred visual
+Work editor already provides draft recovery.
 
 ### Recommended usage
 

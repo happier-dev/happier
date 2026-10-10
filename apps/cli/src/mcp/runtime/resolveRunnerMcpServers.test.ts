@@ -49,6 +49,18 @@ function resolve(input: Readonly<{ snapshot: ActiveAccountSettingsSnapshot | nul
 }
 
 describe('resolveRunnerMcpServers catalog admission', () => {
+  it('returns identities from the actual selected and materialized catalog entries', async () => {
+    const captured = snapshot([{ ...server('docs'), updatedAt: 10 }]);
+    if (captured.mcpServerCatalog?.status !== 'ready') throw new Error('Expected ready fixture');
+    captured.mcpServerCatalog.catalog.bindings[0]!.updatedAt = 20;
+    const resolved = await resolve({ snapshot: captured });
+    try {
+      expect(resolved.mcpBindingIdentities).toEqual({ docs: {
+        serverId: 'docs', bindingId: 'binding-docs', serverRevision: 10, bindingRevision: 20, catalogRevision: 2,
+      } });
+      expect(resolved.mcpServers.docs).toBeDefined();
+    } finally { resolved.happierMcpServer.stop(); }
+  });
   it('refuses ordinary Account material after retirement while the real bridge listener is starting', async () => {
     // Credential disk I/O is the persistence boundary used by ordinary Home
     // admission; it supplies the same credentials as the real active owner.

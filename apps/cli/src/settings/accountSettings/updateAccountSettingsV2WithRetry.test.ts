@@ -2,6 +2,7 @@ import axios from 'axios';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { configuration } from '@/configuration';
+import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import type { Credentials, StoredCredentials, TokenOnlyCredentials } from '@/persistence';
 import {
   ACCOUNT_SETTINGS_MAX_ENCRYPTED_CIPHERTEXT_UTF8_BYTES,
@@ -21,6 +22,9 @@ import {
   updateAccountSettingsV2WithRetry,
 } from './updateAccountSettingsV2WithRetry';
 import type { AccountSettingsCache } from './accountSettingsCache';
+import * as settingsContentOwner from './updateAccountSettingsV2WithRetry';
+import { AccountSettingsV2UpdateRequestSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
+import { PROFILE_TRANSFER_ROUTE_V1, ProfileTransferRowReadResponseV1Schema } from '@happier-dev/protocol/profiles/profileTransferV1';
 import {
   deriveSettingsSecretsKeyForCredentials,
   deriveSettingsSecretsReadKeysForCredentials,
@@ -67,6 +71,128 @@ function mutableConfigurationForTest(): {
 }
 
 describe('updateAccountSettingsV2WithRetry', () => {
+  it.each(['immutable', 'callback'] as const)('reuses a validated unchanged plain baseline for less CPU than parsing its bytes twice (%s)', async (kind) => {
+    const credentials = createTokenOnlyCredentialsStub();
+    const raw = { schemaVersion: 6, reviewPromptLikedApp: false, unrelated: { retained: true } };
+    const deps = {
+        // Only Account HTTP/cache boundaries are replaced; opener, mutation,
+        // encryption-mode admission and schema parsing remain real.
+        fetchSettings: async () => ({ content: { t: 'plain' as const, v: raw }, version: 5 }),
+        resolveAccountEncryptionMode: resolvePlainAccountEncryptionMode,
+        updateSettings: async () => { throw new Error('Unchanged Settings must not be submitted'); },
+        writeCache: async () => {},
+      };
+    const update = () => kind === 'immutable'
+      ? updateAccountSettingsV2WithRetry({ credentials, deps,
+        mutation: { operations: [{ op: 'set', key: 'reviewPromptLikedApp', value: false }] } })
+      : updateAccountSettingsV2OnceAgainstLatest({ credentials, deps, mutate: (value) => value });
+    expect(await update()).toMatchObject({ status: 'unchanged', version: 5,
+      settings: { reviewPromptLikedApp: false, unrelated: { retained: true } } });
+    for (let warm = 0; warm < 20; warm += 1) { await update(); accountSettingsParse(raw); accountSettingsParse(raw); }
+    const samples = [];
+    for (let sample = 0; sample < 3; sample += 1) {
+      const currentStarted = process.cpuUsage();
+      for (let iteration = 0; iteration < 200; iteration += 1) await update();
+      const current = process.cpuUsage(currentStarted);
+      const previousStarted = process.cpuUsage();
+      for (let iteration = 0; iteration < 200; iteration += 1) { accountSettingsParse(raw); accountSettingsParse(raw); }
+      const previous = process.cpuUsage(previousStarted);
+      samples.push({ current: current.user + current.system, previous: previous.user + previous.system });
+    }
+    const median = (values: number[]) => values.sort((a, b) => a - b)[1];
+    const currentCpuUs = median(samples.map(sample => sample.current));
+    const repeatedParseCpuUs = median(samples.map(sample => sample.previous));
+    console.info(JSON.stringify({ currentCpuUs, repeatedParseCpuUs }));
+    expect(currentCpuUs).toBeLessThan(repeatedParseCpuUs * 0.8);
+  });
+
+  it.each([false, 'malformed'] as const)('revalidates an in-place callback mutation against the retained baseline (%s)', async value => {
+    const submitted: unknown[] = [];
+    const result = await updateAccountSettingsV2OnceAgainstLatest({
+      credentials: createTokenOnlyCredentialsStub(),
+      mutate: raw => {
+        raw.reviewPromptLikedApp = value;
+        return raw;
+      },
+      deps: {
+        fetchSettings: async () => ({ content: { t: 'plain', v: { reviewPromptLikedApp: true } }, version: 5 }),
+        resolveAccountEncryptionMode: resolvePlainAccountEncryptionMode,
+        updateSettings: async request => {
+          submitted.push(request);
+          return { success: true, version: 6 };
+        },
+        writeCache: async () => {},
+      },
+    });
+    // Legacy fields retain the canonical parser's permissive projection;
+    // this optimization must neither reuse stale validation nor tighten it.
+    expect(result).toMatchObject({ status: 'applied', version: 6, settings: {
+      reviewPromptLikedApp: accountSettingsParse({ reviewPromptLikedApp: value }).reviewPromptLikedApp,
+    } });
+    expect(submitted).toEqual([{ expectedVersion: 5, content: { t: 'plain', v: { reviewPromptLikedApp: value } } }]);
+  });
+
+  it.each(['owner cutover', 'one-shot mutation'] as const)('refuses a captured %s when Profile authority activates without a Settings version advance', async operation => {
+    const credentials = createTokenOnlyCredentialsStub();
+    const raw = { profiles: [{ v: 2, id: 'retained', name: 'Retained', createdAt: 1, updatedAt: 1 }], favoriteProfiles: ['retained'] };
+    let persisted: Readonly<Record<string, unknown>> = raw;
+    let transferRevision: number | 'absent' = 'absent';
+    // Only HTTP is replaced: the incumbent raw opener, canonical request schema
+    // and source writer stay real. The boundary models the server's transfer CAS.
+    vi.spyOn(axios, 'get').mockImplementation(async input => {
+      expect(new URL(String(input)).origin).toBe('https://profile-home.test');
+      const path = new URL(String(input)).pathname;
+      if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
+      if (path === '/v2/account/settings') return { status: 200, data: { content: { t: 'plain', v: persisted }, version: 4 } };
+      if (path === PROFILE_TRANSFER_ROUTE_V1) return { status: 200, data: { status: 'absent' } };
+      throw new Error(`Unexpected owner cutover read: ${path}`);
+    });
+    vi.spyOn(axios, 'post').mockImplementation(async (input, body) => {
+      expect(new URL(String(input)).origin).toBe('https://profile-home.test');
+      expect(new URL(String(input)).pathname).toBe('/v2/account/settings');
+      const request = AccountSettingsV2UpdateRequestSchema.parse(body);
+      if (request.expectedProfileTransferRevision !== undefined && request.expectedProfileTransferRevision !== transferRevision) {
+        return { status: 409, data: { success: false, error: 'profile-transfer-mismatch', currentProfileTransferRevision: transferRevision } };
+      }
+      if (request.content?.t !== 'plain') throw new Error('Expected keyless plain cutover');
+      persisted = request.content.v;
+      return { status: 200, data: { success: true, version: 5 } };
+    });
+    await runWithServerHttpBaseUrl('https://profile-home.test', async () => {
+      const captured = ProfileTransferRowReadResponseV1Schema.parse((await axios.get(`https://profile-home.test${PROFILE_TRANSFER_ROUTE_V1}`)).data);
+      if (captured.status !== 'absent') throw new Error('Expected absent transfer control capture');
+      const source = await settingsContentOwner.readAccountSettingsV2Raw({ credentials });
+      transferRevision = 2;
+      if (operation === 'owner cutover') {
+        const input = { credentials, expectedVersion: source.version, envelopeKind: source.envelopeKind,
+          expectedProfileTransferRevision: 'absent' as const, raw: { favoriteProfiles: ['retained'] } };
+        const result = await settingsContentOwner.replaceAccountSettingsV2RawForOwnerCutover(input);
+        expect(result).toEqual({ success: false, error: 'profile-transfer-mismatch', currentProfileTransferRevision: 2 });
+      } else {
+        const input = { credentials, expectedVersion: source.version, expectedProfileTransferRevision: 'absent' as const,
+          mutate: (latest: Readonly<Record<string, unknown>>) => ({ ...latest, favoriteProfiles: [] }) };
+        const result = await updateAccountSettingsV2Once(input);
+        expect(result).toEqual({ status: 'unavailable', retryable: false, reason: 'profile-transfer-mismatch' });
+      }
+      expect(persisted).toEqual(raw);
+    });
+  });
+  it('prepares composite Settings content through the incumbent secret normalization and envelope owner', () => {
+    const prepare = 'prepareAccountSettingsV2Content' in settingsContentOwner ? settingsContentOwner.prepareAccountSettingsV2Content : undefined;
+    expect(typeof prepare).toBe('function');
+    if (typeof prepare !== 'function') throw new Error('missing_composite_settings_preparation');
+    const raw = { opaque: { kept: true }, customSecret: { _isSecretValue: true, value: 'private-fixture' } };
+    expect(prepare({ credentials: createTokenOnlyCredentialsStub(), raw, envelopeKind: 'plain' })).toEqual({ t: 'plain', v: raw });
+    const credentials = createLegacyCredentialsStub();
+    const encrypted = prepare({ credentials, raw, envelopeKind: 'encrypted', randomBytes: length => new Uint8Array(length).fill(3) });
+    expect(encrypted.t).toBe('encrypted');
+    const opened = encrypted.t === 'encrypted' ? openAccountScopedBlobCiphertext({ kind: 'account_settings',
+      material: credentials.encryption, ciphertext: encrypted.c }) : null;
+    expect(opened?.value).toMatchObject({ opaque: raw.opaque, customSecret: { _isSecretValue: true, encryptedValue: { t: 'enc-v1' } } });
+    expect(decryptSecretValueWithKeysV1((opened?.value as typeof raw | undefined)?.customSecret,
+      deriveSettingsSecretsReadKeysForCredentials(credentials))).toBe('private-fixture');
+    expect(() => prepare({ credentials: createTokenOnlyCredentialsStub(), raw, envelopeKind: 'encrypted' })).toThrow();
+  });
   it('retires only a committed legacy authoring key at the observed exact version', async () => {
     const raw = { lastUsedProfile: 'legacy', recentMachinePaths: [], futureSetting: { keep: true } };
     const writes: Array<{ expectedVersion: number; content: AccountSettingsStoredContentEnvelope | null }> = [];

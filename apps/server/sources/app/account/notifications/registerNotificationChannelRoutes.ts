@@ -21,7 +21,7 @@ export function registerNotificationChannelRoutes(app: Fastify): void {
   app.get(NOTIFICATION_CHANNELS_ROUTE_V1, { preHandler: app.authenticate, config,
     schema: { response: { 200: asServerProtocolZod(NotificationChannelCatalogReadResponseV1Schema), 500: internal } },
   }, async (request, reply) => {
-    try { return reply.send(await inTx(tx => readNotificationChannelCatalogInTx(tx, { accountId: request.userId }))); }
+    try { return reply.send(await inTx(tx => readNotificationChannelCatalogInTx(tx, { accountId: request.userId }), { readOnly: true })); }
     catch { return reply.code(500).send({ error: 'internal' }); }
   });
   app.post(NOTIFICATION_CHANNELS_ROUTE_V1, { preHandler: app.authenticate, config,

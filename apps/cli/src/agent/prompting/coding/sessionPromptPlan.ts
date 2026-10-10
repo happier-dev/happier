@@ -7,16 +7,29 @@ import { resolveAgentToolsDelivery } from '@/agent/tools/happierTools/runtime/re
 import { resolveCliFeatureDecision } from '@/features/featureDecisionService';
 import { resolvePluginPromptAssetBlocks, resolvePluginToolPromptContributions } from '@/plugins/runtime/hooks/execution/dispatchAgentTurnHooks';
 import { resolveEffectiveCodingPromptPlan } from './resolveEffectiveCodingPrompt';
+import { prepareSessionPromptStackInputs } from './sessionPromptStack';
+import { getActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshotLifetimeToken, isActiveAccountSettingsSnapshotLifetimeCurrent } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import type { PromptStackAdmittedEntryV1 } from '@happier-dev/protocol/prompts/library/resolvePromptStackSystemAppendBlocksV1';
+import { createPromptCompositionScope, type PromptPlanComposition } from '../promptComposition';
 
-export type SessionPromptPlanResolver = ((args?: Readonly<{
+type SessionPromptPlanResolveArgs = Readonly<{
   baseOverride?: string | null;
   excludePluginIds?: readonly string[];
   signal?: AbortSignal;
-}>) => Promise<string>) & Readonly<{
+}>;
+export type SessionPromptPlanWithAdmittedInventory = Readonly<{
+  text: string;
+  admittedEntries: readonly PromptStackAdmittedEntryV1[];
+}>;
+export type SessionPromptPlanResolver = {
+  (args: SessionPromptPlanResolveArgs & Readonly<{ includeAdmittedInventory: true }>): Promise<SessionPromptPlanWithAdmittedInventory>;
+  (args?: SessionPromptPlanResolveArgs): Promise<string>;
+} & Readonly<{
   /** Current full-plan identity, retained by this producer across native runtime replacement. */
   readStartupInstructions?: () => AgentSessionStartupInstructionsV1 | null;
   /** Policy from the same current prepared plan, unavailable after a failed preparation. */
   readCodingPromptBehavior?: () => CodingPromptBehaviorV1 | null;
+  readComposition?: () => PromptPlanComposition | null;
 }>;
 
 /** One full-plan producer for native startup and immediately-before-dispatch revisions. */
@@ -35,11 +48,22 @@ export function createSessionPromptPlanResolver(params: Readonly<{
   let resolvedText: string | null = null;
   let revision = params.opts.agentSessionStartupInstructionsV1?.revision ?? 1;
   let startupInstructions: AgentSessionStartupInstructionsV1 | null = null;
-  let preparedBehavior: Readonly<{ settings: unknown; profileId: string | null; behavior: CodingPromptBehaviorV1 }> | null = null;
-  const resolve: SessionPromptPlanResolver = async ({ baseOverride, excludePluginIds, signal = new AbortController().signal } = {}) => {
+  const compositionScope = createPromptCompositionScope();
+  let composition: PromptPlanComposition | null = null;
+  let preparedBehavior: Readonly<{ accountSnapshot: ReturnType<typeof getActiveAccountSettingsSnapshot>; settings: unknown;
+    profileId: string | null; behavior: CodingPromptBehaviorV1 }> | null = null;
+  const accountScopeKey = params.opts.accountSettingsContext?.scopeKey;
+  const accountLifetimeToken = getActiveAccountSettingsSnapshotLifetimeToken();
+  const accountContext = {
+    scopeKey: accountScopeKey ?? null, lifetimeToken: accountLifetimeToken,
+  };
+  async function resolve(args: SessionPromptPlanResolveArgs & Readonly<{ includeAdmittedInventory: true }>): Promise<SessionPromptPlanWithAdmittedInventory>;
+  async function resolve(args?: SessionPromptPlanResolveArgs): Promise<string>;
+  async function resolve({ baseOverride, excludePluginIds, includeAdmittedInventory, signal = new AbortController().signal }:
+    SessionPromptPlanResolveArgs & Readonly<{ includeAdmittedInventory?: boolean }> = {}): Promise<string | SessionPromptPlanWithAdmittedInventory> {
     preparedBehavior = null;
-    // Each preparation observes current document content; dedupe only within this plan.
-    const cache = new Map<string, string | null>();
+    composition = null;
+    signal.throwIfAborted();
     const executionRunsFeatureEnabled = resolveCliFeatureDecision({
       featureId: 'execution.runs', env: process.env,
     }).state === 'enabled';
@@ -56,12 +80,16 @@ export function createSessionPromptPlanResolver(params: Readonly<{
             excludePluginIds ? { excludePluginIds } : undefined,
           ),
         };
-    const settings = params.opts.accountSettingsContext?.settings ?? null;
-    const profileId = params.session.getMetadataSnapshot()?.profileId ?? null;
+    const preparedStack = await prepareSessionPromptStackInputs({
+      credentials: params.opts.credentials, metadata: params.session.getMetadataSnapshot(), sessionId: params.session.sessionId,
+      machineId: params.machineId, directory: params.directory, signal,
+      accountContext: { ...accountContext, settings: params.opts.accountSettingsContext?.settings ?? null },
+    });
+    const { accountSnapshot: currentAccount, assertCurrentAccount, ...stackInputs } = preparedStack;
+    const { settings, profileId } = stackInputs;
     const plan = await resolveEffectiveCodingPromptPlan({
-      credentials: params.opts.credentials,
-      settings,
-      profileId,
+      ...stackInputs,
+      compositionScope,
       signal,
       baseOverride,
       roleContext: await params.resolveRoleContext?.(signal),
@@ -76,11 +104,18 @@ export function createSessionPromptPlanResolver(params: Readonly<{
       memoryRecallGuidanceEnabled: params.memoryRecallGuidanceEnabled,
       toolPromptContributions: promptContributions.toolPromptContributions,
       promptAssetBlocks: promptContributions.promptAssetBlocks,
-      cache,
+    }).catch((error: unknown) => {
+      signal.throwIfAborted();
+      // Failed preparation can carry private admission facts from the retired Account.
+      assertCurrentAccount();
+      throw error;
     });
     signal.throwIfAborted();
+    // A document response may outlive the Account admission that requested it.
+    assertCurrentAccount();
     const text = plan.text.trim().normalize('NFC');
-    preparedBehavior = { settings, profileId, behavior: plan.codingPromptBehavior };
+    preparedBehavior = { accountSnapshot: currentAccount, settings, profileId, behavior: plan.codingPromptBehavior };
+    composition = plan.composition;
     if (text !== resolvedText) {
       if (resolvedText !== null) revision += 1;
       startupInstructions = text ? AgentSessionStartupInstructionsV1Schema.parse({
@@ -88,11 +123,16 @@ export function createSessionPromptPlanResolver(params: Readonly<{
       }) : null;
       resolvedText = text;
     }
-    return text;
-  };
-  return Object.assign(resolve, { readStartupInstructions: () => startupInstructions,
-    readCodingPromptBehavior: () => preparedBehavior
-      && preparedBehavior.settings === (params.opts.accountSettingsContext?.settings ?? null)
-      && preparedBehavior.profileId === (params.session.getMetadataSnapshot()?.profileId ?? null)
-      ? preparedBehavior.behavior : null });
+    return includeAdmittedInventory ? { text, admittedEntries: plan.admittedEntries } : text;
+  }
+  const isPreparedPlanCurrent = () => preparedBehavior !== null
+    && (!accountScopeKey || (preparedBehavior.accountSnapshot === getActiveAccountSettingsSnapshot()
+      && getActiveAccountSettingsSnapshotLifetimeToken() === accountLifetimeToken))
+    && preparedBehavior.settings === (accountScopeKey ? getActiveAccountSettingsSnapshot()?.settings : params.opts.accountSettingsContext?.settings ?? null)
+    && preparedBehavior.profileId === (params.session.getMetadataSnapshot()?.profileId ?? null);
+  return Object.assign(resolve, { readStartupInstructions: () => !accountScopeKey
+      || isActiveAccountSettingsSnapshotLifetimeCurrent({ scopeKey: accountScopeKey, lifetimeToken: accountLifetimeToken })
+      ? startupInstructions : null,
+    readCodingPromptBehavior: () => isPreparedPlanCurrent() ? preparedBehavior?.behavior ?? null : null,
+    readComposition: () => isPreparedPlanCurrent() ? composition : null });
 }

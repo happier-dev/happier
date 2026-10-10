@@ -8,19 +8,19 @@ import { resolveEffectiveCodingPromptBehaviorV1 } from '@happier-dev/protocol/pr
 import type { CodingPromptBehaviorV1, PromptBlockV1, PromptPlanV1, SessionRolePromptContextV1, AgentSessionStartupInstructionsV1 } from '@happier-dev/protocol';
 
 import type { StoredCredentials } from '@/persistence';
+import type { ProfileCatalogSnapshotV1 } from '@happier-dev/protocol/profiles/profileCatalogV1';
+import type { AiLaunchProfile } from '@happier-dev/protocol/profiles/read';
+import type { PromptStackAdmittedEntryV1 } from '@happier-dev/protocol/prompts/library/resolvePromptStackSystemAppendBlocksV1';
 import { resolveCliMemoryRecallGuidanceEnabled } from '@/agent/prompts/library/resolveCliMemoryRecallGuidanceEnabled';
 import {
   resolveCliPromptStackSystemAppendBlocks,
-  type PromptArtifactRecord,
+  type CliPromptStackSystemAppendInput,
 } from '@/agent/prompts/library/resolveCliPromptStackSystemAppendBlocks';
 import { resolveCodingProviderBehaviorBlocks } from './providerPromptBehaviorRegistry';
 import { resolveCodingToolDeliveryBlocks } from './toolDeliveryPromptRegistry';
-import { loadAccountLaunchProfileArtifacts } from '@/settings/profiles/readProfilesFromAccountSettings';
-import { readAiLaunchProfileCollection } from '@happier-dev/protocol/profiles/read';
+import { loadAccountLaunchProfileArtifacts, readProfileCollectionFromAccountSnapshot, readProfileSettingsForAccount } from '@/settings/profiles/readProfilesFromAccountSettings';
 import { isSessionAgentChangeTitleToolAvailable } from '@/agent/tools/happierTools/resolveSessionNativeToolBridge';
-
-type FetchPromptArtifactRecord = (artifactId: string) => Promise<PromptArtifactRecord | null>;
-export type { PromptArtifactRecord };
+import { createPromptCompositionScope, measurePromptPlanComposition, type PromptCompositionScope, type PromptPlanComposition } from '../promptComposition';
 
 type ToolPromptContribution = Readonly<{
   pluginId?: string | null;
@@ -44,10 +44,13 @@ type AgentCompositionPromptArgs = Readonly<{
   }>[];
 }>;
 
-type ResolveEffectiveCodingPromptArgs = Readonly<{
+export type ResolveEffectiveCodingPromptArgs = Omit<CliPromptStackSystemAppendInput, 'surface' | 'settings' | 'profileId'> & Readonly<{
   credentials?: StoredCredentials;
   settings: Record<string, unknown> | null | undefined;
   profileId: string | null | undefined;
+  profileCatalog?: ProfileCatalogSnapshotV1;
+  /** Already admitted Profile; null is authoritative absence. */
+  currentProfile?: AiLaunchProfile | null;
   baseOverride?: string | null;
   roleContext?: SessionRolePromptContextV1 | null;
   startupInstructions?: AgentSessionStartupInstructionsV1;
@@ -60,6 +63,7 @@ type ResolveEffectiveCodingPromptArgs = Readonly<{
   toolDeliveryDirectory?: string | null;
   memoryMachineId?: string | null;
   sessionTitleToolAvailable?: boolean;
+  createdAsBot?: boolean;
   toolPromptContributions?: readonly ToolPromptContribution[];
   /**
    * Already-qualified, policy-approved, generation-bound prompt asset blocks.
@@ -67,9 +71,8 @@ type ResolveEffectiveCodingPromptArgs = Readonly<{
    * them into the canonical coding prompt plan.
    */
   promptAssetBlocks?: readonly PromptBlockV1[];
-  cache?: Map<string, string | null>;
-  fetchPromptArtifactRecord?: FetchPromptArtifactRecord;
   signal?: AbortSignal;
+  compositionScope?: PromptCompositionScope;
 }>;
 
 /**
@@ -261,6 +264,8 @@ export async function resolveEffectiveCodingPromptPlan(
   text: string;
   diagnostics: ReturnType<typeof buildPromptPlanDiagnosticsV1>;
   codingPromptBehavior: CodingPromptBehaviorV1;
+  admittedEntries: readonly PromptStackAdmittedEntryV1[];
+  composition: PromptPlanComposition;
 }>> {
   const settings = args.settings && typeof args.settings === 'object' && !Array.isArray(args.settings)
     ? args.settings
@@ -271,15 +276,24 @@ export async function resolveEffectiveCodingPromptPlan(
   // the tool-delivery appendix are composed from this one fact, so a profile
   // can never be honored on one and silently ignored on the other.
   const profileId = args.profileId?.trim() ?? '';
-  const inlineSelectedProfile = readAiLaunchProfileCollection(settings.profiles).entries
-    .some(entry => entry.kind !== 'opaque' && entry.profile.id === profileId);
-  const artifactsById = args.credentials && profileId && Object.hasOwn(settings, 'profiles') && !inlineSelectedProfile
-    ? await loadAccountLaunchProfileArtifacts(settings, args.credentials, args.signal) : undefined;
+  const profileCatalog = args.profileCatalog ?? (args.currentProfile === undefined && args.credentials && profileId
+    ? await (await import('@/settings/profiles/hydrateProfileCatalog')).refreshActiveProfileCatalog({ credentials: args.credentials, signal: args.signal })
+    : undefined);
+  const profileSettings = args.credentials && profileCatalog
+    ? readProfileSettingsForAccount({ settings, credentials: args.credentials, profileCatalog }) : settings;
+  const artifactsById = args.currentProfile === undefined && args.credentials && profileId
+    ? await loadAccountLaunchProfileArtifacts(profileSettings, args.credentials, args.signal, profileCatalog) : undefined;
+  const selectedProfiles = args.currentProfile === undefined && profileId ? readProfileCollectionFromAccountSnapshot(profileSettings, artifactsById, profileCatalog).entries
+    .filter((entry) => entry.kind !== 'opaque' && entry.profile.id === profileId) : [];
+  const selectedEntry = selectedProfiles.length === 1 ? selectedProfiles[0] : null;
+  const selectedProfile = args.currentProfile !== undefined ? args.currentProfile
+    : selectedEntry && selectedEntry.kind !== 'opaque' ? selectedEntry.profile : null;
+  if (selectedProfile?.enabled === false) throw Object.assign(new Error('The selected Profile is disabled'), { code: 'profile_disabled' });
   args.signal?.throwIfAborted();
   const codingPromptBehavior = resolveEffectiveCodingPromptBehaviorV1({
     settings,
     profileId: args.profileId,
-    artifactsById,
+    selectedProfile,
   });
   const promptSettings: Record<string, unknown> = {
     ...settings,
@@ -290,31 +304,32 @@ export async function resolveEffectiveCodingPromptPlan(
     behavior: codingPromptBehavior,
     toolDelivery,
   });
-  const cache = args.cache ?? new Map<string, string | null>();
-  const memoryRecallGuidanceEnabled =
+  const memoryRecallGuidanceEnabled = args.memoryEnabled !== false && (
     typeof args.memoryRecallGuidanceEnabled === 'boolean'
       ? args.memoryRecallGuidanceEnabled
-      : await resolveCliMemoryRecallGuidanceEnabled();
+      : await resolveCliMemoryRecallGuidanceEnabled());
 
+  const sessionTitleToolAvailable = args.sessionTitleToolAvailable ?? isSessionAgentChangeTitleToolAvailable({
+    accountSettings: settings, codingPromptBehavior,
+  });
   const basePlan = buildCodingSessionPromptPlanBaseV1({
     settings: basePromptSettings,
     base: args.baseOverride === null ? '' : args.baseOverride,
     executionRunsFeatureEnabled: args.executionRunsFeatureEnabled === true,
     memoryRecallGuidanceEnabled,
-    sessionTitleToolAvailable: args.sessionTitleToolAvailable ?? isSessionAgentChangeTitleToolAvailable({
-      accountSettings: settings, codingPromptBehavior,
-    }),
+    sessionTitleToolAvailable,
+    createdAsBot: args.createdAsBot,
   });
-  const stackBlocks = await resolveCliPromptStackSystemAppendBlocks({
+  const stackResult = await resolveCliPromptStackSystemAppendBlocks({
+    ...args,
     surface: 'coding',
     credentials: args.credentials,
     settings,
     profileId: args.profileId,
-    cache,
-    fetchPromptArtifactRecord: args.fetchPromptArtifactRecord,
+    profileEntries: args.profileEntries ?? selectedProfile?.promptStack ?? [],
   });
 
-  const promptStackBlocks: PromptBlockV1[] = stackBlocks.map((text, index) => ({
+  const promptStackBlocks: PromptBlockV1[] = stackResult.blocks.map((text, index) => ({
     id: `prompt_stack.${index + 1}`,
     scope: 'user_prompt',
     text,
@@ -333,6 +348,8 @@ export async function resolveEffectiveCodingPromptPlan(
       sessionId,
       directory,
       settings: promptSettings,
+      sessionTitleToolAvailable,
+      createdAsBot: args.createdAsBot,
       memoryRecallGuidance: {
         enabled: memoryRecallGuidanceEnabled,
         machineId: args.memoryMachineId ?? null,
@@ -344,13 +361,13 @@ export async function resolveEffectiveCodingPromptPlan(
     modality: 'coding',
     blocks: [
       ...basePlan.blocks,
+      ...promptStackBlocks,
       ...(roleInstructions
         ? [{ id: 'session.role_instructions', scope: 'session' as const,
             text: roleInstructions }] : []),
       ...(args.startupInstructions
         ? [{ id: 'caller.startup_instructions', scope: 'session' as const,
             text: args.startupInstructions.instructions }] : []),
-      ...promptStackBlocks,
       ...providerBehaviorBlocks,
       ...(args.promptAssetBlocks ?? []),
       ...toolPromptBlocks,
@@ -360,7 +377,9 @@ export async function resolveEffectiveCodingPromptPlan(
 
   return {
     plan,
+    composition: measurePromptPlanComposition(plan, args.compositionScope ?? createPromptCompositionScope()),
     codingPromptBehavior,
+    admittedEntries: stackResult.admittedEntries,
     text: renderPromptPlanV1(plan),
     diagnostics: buildPromptPlanDiagnosticsV1(plan),
   };

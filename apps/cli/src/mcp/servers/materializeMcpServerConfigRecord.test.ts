@@ -88,9 +88,7 @@ describe('materializeMcpServerConfigRecord', () => {
 
     const promise = materializeMcpServerConfigRecord({
       resolved: resolveEffectiveServersV1(settings, { machineId: 'm1', directory: '/repo' }),
-      savedSecretsById: new Map(),
       savedSecretMaterializer,
-      settingsSecretsKey: null,
       processEnv: {},
       tmpDir: null,
       strictMode: false,
@@ -149,9 +147,7 @@ describe('materializeMcpServerConfigRecord', () => {
 
     await expect(materializeMcpServerConfigRecord({
       resolved: resolveEffectiveServersV1(settings, { machineId: 'm1', directory: '/repo' }),
-      savedSecretsById: new Map(),
       savedSecretMaterializer,
-      settingsSecretsKey: null,
       processEnv: {},
       tmpDir: null,
       strictMode: false,
@@ -184,8 +180,6 @@ describe('materializeMcpServerConfigRecord', () => {
     const resolved = resolveEffectiveServersV1(settings, { machineId: 'm1', directory: '/repo' });
     const out = await materializeMcpServerConfigRecord({
       resolved,
-      settingsSecretsKey: null,
-      savedSecretsById: new Map(),
       processEnv: { TOKEN: 'sk-test' },
       tmpDir: null,
     });
@@ -221,10 +215,10 @@ describe('materializeMcpServerConfigRecord', () => {
     const resolved = resolveEffectiveServersV1(settings, { machineId: 'm1', directory: '/repo' });
     const out = await materializeMcpServerConfigRecord({
       resolved,
-      settingsSecretsKey,
-      savedSecretsById: new Map([
-        ['sec1', { _isSecretValue: true as const, encryptedValue: enc }],
-      ]),
+      savedSecretMaterializer: createSavedSecretMaterializerV1({
+        accountSettings: { secrets: [{ id: 'sec1', encryptedValue: { _isSecretValue: true, encryptedValue: enc } }] },
+        settingsSecretsReadKeys: [settingsSecretsKey],
+      }),
       processEnv: {},
       tmpDir: null,
     });
@@ -260,11 +254,10 @@ describe('materializeMcpServerConfigRecord', () => {
     const resolved = resolveEffectiveServersV1(settings, { machineId: 'm1', directory: '/repo' });
     const out = await materializeMcpServerConfigRecord({
       resolved,
-      settingsSecretsKey: canonicalSettingsKey,
-      settingsSecretsReadKeys: [canonicalSettingsKey, legacySettingsKey],
-      savedSecretsById: new Map([
-        ['sec1', { _isSecretValue: true as const, encryptedValue: enc }],
-      ]),
+      savedSecretMaterializer: createSavedSecretMaterializerV1({
+        accountSettings: { secrets: [{ id: 'sec1', encryptedValue: { _isSecretValue: true, encryptedValue: enc } }] },
+        settingsSecretsReadKeys: [canonicalSettingsKey, legacySettingsKey],
+      }),
       processEnv: {},
       tmpDir: null,
     });
@@ -294,8 +287,6 @@ describe('materializeMcpServerConfigRecord', () => {
 
     const nonStrict = await materializeMcpServerConfigRecord({
       resolved,
-      settingsSecretsKey: new Uint8Array(32).fill(1),
-      savedSecretsById: new Map(),
       processEnv: {},
       tmpDir: null,
       strictMode: false,
@@ -306,8 +297,6 @@ describe('materializeMcpServerConfigRecord', () => {
     await expect(
       materializeMcpServerConfigRecord({
         resolved,
-        settingsSecretsKey: new Uint8Array(32).fill(1),
-        savedSecretsById: new Map(),
         processEnv: {},
         tmpDir: null,
         strictMode: true,
@@ -343,10 +332,10 @@ describe('materializeMcpServerConfigRecord', () => {
       const resolved = resolveEffectiveServersV1(settings, { machineId: 'm1', directory: '/repo' });
       const out = await materializeMcpServerConfigRecord({
         resolved,
-        settingsSecretsKey,
-        savedSecretsById: new Map([
-          ['sec1', { _isSecretValue: true as const, encryptedValue: enc }],
-        ]),
+        savedSecretMaterializer: createSavedSecretMaterializerV1({
+          accountSettings: { secrets: [{ id: 'sec1', encryptedValue: { _isSecretValue: true, encryptedValue: enc } }] },
+          settingsSecretsReadKeys: [settingsSecretsKey],
+        }),
         processEnv: {},
         tmpDir: dir,
         deps: {
@@ -402,8 +391,6 @@ describe('materializeMcpServerConfigRecord', () => {
       const resolved = resolveEffectiveServersV1(settings, { machineId: 'm1', directory: '/repo' });
       const out = await materializeMcpServerConfigRecord({
         resolved,
-        settingsSecretsKey: null,
-        savedSecretsById: new Map(),
         processEnv: { HOME: '/safe-home', TOKEN: 'sk-test', HAPPIER_PNPM_BIN: fakePnpmPath },
         tmpDir: dir,
       });
@@ -477,8 +464,6 @@ describe('materializeMcpServerConfigRecord', () => {
       const resolved = resolveEffectiveServersV1(settings, { machineId: 'm1', directory: '/repo/worktree' });
       const out = await materializeMcpServerConfigRecord({
         resolved,
-        settingsSecretsKey: null,
-        savedSecretsById: new Map(),
         processEnv: { HOME: '/safe-home', HAPPIER_PNPM_BIN: fakePnpmPath },
         tmpDir: dir,
       });
@@ -521,8 +506,6 @@ describe('materializeMcpServerConfigRecord', () => {
 
       const out = await materializeMcpServerConfigRecord({
         resolved,
-        settingsSecretsKey: null,
-        savedSecretsById: new Map(),
         processEnv: { PATH: '', HAPPIER_HOME_DIR: join(dir, 'home'), HAPPIER_MANAGED_PNPM_BOOTSTRAP: '0' },
         tmpDir: null,
         strictMode: false,
@@ -570,8 +553,6 @@ describe('materializeMcpServerConfigRecord', () => {
       await expect(
         materializeMcpServerConfigRecord({
           resolved,
-          settingsSecretsKey: null,
-          savedSecretsById: new Map(),
           processEnv: { PATH: '', HAPPIER_HOME_DIR: join(dir, 'home'), HAPPIER_MANAGED_PNPM_BOOTSTRAP: '0' },
           tmpDir: null,
           strictMode: true,

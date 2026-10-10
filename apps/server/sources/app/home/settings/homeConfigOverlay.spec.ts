@@ -1,4 +1,4 @@
-import { composeServerConfigRegistry, defineServerConfigRegistry, readServerConfig, serializeServerConfigValue, validateServerConfigValue } from '@happier-dev/protocol';
+import { HomeSettingsProjectionV1Schema, composeServerConfigRegistry, defineServerConfigRegistry, readServerConfig, serializeServerConfigValue, validateServerConfigValue } from '@happier-dev/protocol';
 import { describe, expect, it } from 'vitest';
 
 import { SERVER_CONFIG_REGISTRY } from '@/config/serverConfigRegistry';
@@ -66,6 +66,14 @@ describe('buildHomeConfigEnv', () => {
 });
 
 describe('projectHomeSettings', () => {
+    it('projects the complete server registry through the strict settings wire contract', () => {
+        const entries = projectHomeSettings({ registry: SERVER_CONFIG_REGISTRY, env: {}, persisted: {}, persistedSecretKeys: [] });
+        const projection = { revision: 0, startedAt: null, entries };
+        expect(HomeSettingsProjectionV1Schema.parse(projection)).toEqual(projection);
+        const displayName = entries.find((entry) => entry.key === 'HAPPIER_HOME_DISPLAY_NAME');
+        expect(displayName?.declaration?.bounds).toEqual(SERVER_CONFIG_REGISTRY.HAPPIER_HOME_DISPLAY_NAME.bounds);
+    });
+
     it('never carries a secret value, only whether one is set', () => {
         const projection = projectHomeSettings({
             registry: REGISTRY,

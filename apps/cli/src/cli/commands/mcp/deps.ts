@@ -1,10 +1,9 @@
 import { randomUUID } from 'node:crypto';
 
 import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
-import { updateAccountSettingsV2WithRetry } from '@/settings/accountSettings/updateAccountSettingsV2WithRetry';
 import { detectProviderMcpServers } from '@/mcp/providerDetection/detectProviderMcpServers';
 import { probeMcpStdioServerTools } from '@/mcp/servers/probeMcpStdioServerTools';
-import { createExternalMcpServer } from '@/mcp/createExternalMcpServer';
+import type { createExternalMcpServer } from '@/mcp/createExternalMcpServer';
 import { readStoredCredentials, type StoredCredentials } from '@/persistence';
 import { ensureMachineIdForCredentials } from '@/ui/auth';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
@@ -15,20 +14,17 @@ import {
   fetchServerFeaturesSnapshot,
   observeServerFeaturesSnapshot,
 } from '@/features/serverFeaturesClient';
-import { hydrateSavedSecretCatalog } from '@/settings/secrets/hydrateSavedSecretCatalog';
 
 export type McpCommandDeps = Readonly<{
   env?: NodeJS.ProcessEnv;
   readStoredCredentials: () => Promise<StoredCredentials | null>;
   bootstrapAccountSettingsContext: typeof bootstrapAccountSettingsContext;
-  hydrateSavedSecretCatalog?: typeof hydrateSavedSecretCatalog;
-  updateAccountSettingsV2WithRetry: typeof updateAccountSettingsV2WithRetry;
   ensureMachineIdForCredentials: typeof ensureMachineIdForCredentials;
   detectProviderMcpServers: typeof detectProviderMcpServers;
   probeMcpStdioServerTools: typeof probeMcpStdioServerTools;
   randomUUID: () => string;
   nowMs: () => number;
-  createExternalMcpServer: typeof createExternalMcpServer;
+  createExternalMcpServer?: typeof createExternalMcpServer;
   readDaemonPluginCatalog?: typeof readDaemonPluginCatalog;
   resolveLiveDaemonControlTargetForServer?: typeof resolveLiveDaemonControlTargetForServer;
   fetchServerFeaturesSnapshot?: typeof fetchServerFeaturesSnapshot;
@@ -41,14 +37,12 @@ export function resolveMcpCommandDeps(overrides?: Partial<McpCommandDeps>): McpC
     env: overrides?.env ?? process.env,
     readStoredCredentials: overrides?.readStoredCredentials ?? readStoredCredentials,
     bootstrapAccountSettingsContext: overrides?.bootstrapAccountSettingsContext ?? bootstrapAccountSettingsContext,
-    hydrateSavedSecretCatalog: overrides?.hydrateSavedSecretCatalog ?? hydrateSavedSecretCatalog,
-    updateAccountSettingsV2WithRetry: overrides?.updateAccountSettingsV2WithRetry ?? updateAccountSettingsV2WithRetry,
     ensureMachineIdForCredentials: overrides?.ensureMachineIdForCredentials ?? ensureMachineIdForCredentials,
     detectProviderMcpServers: overrides?.detectProviderMcpServers ?? detectProviderMcpServers,
     probeMcpStdioServerTools: overrides?.probeMcpStdioServerTools ?? probeMcpStdioServerTools,
     randomUUID: overrides?.randomUUID ?? randomUUID,
     nowMs: overrides?.nowMs ?? (() => Date.now()),
-    createExternalMcpServer: overrides?.createExternalMcpServer ?? createExternalMcpServer,
+    createExternalMcpServer: overrides?.createExternalMcpServer,
     readDaemonPluginCatalog: overrides?.readDaemonPluginCatalog ?? readDaemonPluginCatalog,
     resolveLiveDaemonControlTargetForServer:
       overrides?.resolveLiveDaemonControlTargetForServer ?? resolveLiveDaemonControlTargetForServer,

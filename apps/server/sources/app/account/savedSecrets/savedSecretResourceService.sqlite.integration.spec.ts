@@ -205,6 +205,35 @@ describe("Saved Secret resource service (SQLite integration)", () => {
         expect(await db.userKVStore.findUnique({ where: { accountId_key: { accountId: owner.id, key } }, select: { version: true } })).toEqual({ version: 1 });
     });
 
+    it.each([true, false])('accepts an opaque personal declaration only with actual source custody (retained: %s)', async retained => {
+        const existingId = 'independent-existing-resource';
+        const personalSecretId = formatSharedSavedSecretRefV1(existingId);
+        const raw = { secrets: retained ? [{ id: personalSecretId, name: 'Retained personal', kind: 'token',
+            encryptedValue: { _isSecretValue: true, value: 'legacy-value' }, createdAt: 1, updatedAt: 2 }] : [] };
+        const owner = await db.account.create({ data: { encryptionMode: 'plain',
+            settings: JSON.stringify({ t: 'plain', v: raw }) }, select: { id: true } });
+        const create = (resourceId: string, value: string) => ({ accountId: owner.id, resourceId,
+            displayName: 'Token', kind: 'token' as const, encryptionMode: 'plain' as const,
+            storedContent: { t: 'plain' as const, v: { v: 1 as const, name: 'Token', kind: 'token' as const, value } } });
+        expect(await inTx(tx => createSavedSecretResourceInTx(tx, create(existingId, 'independent-value')))).toMatchObject({ ok: true });
+        const resourceId = deriveSavedSecretImportResourceIdV1({ accountId: owner.id,
+            source: { kind: 'personal-saved-secret', secretId: personalSecretId } });
+        const input = { ...create(resourceId, 'legacy-value'), expectedSettingsVersion: 0,
+            nextSettings: { t: 'plain' as const, v: { secrets: [] } }, profileMutations: [],
+            personalSecretPromotions: [{ personalSecretId, resourceId }],
+            referenceCensus: { accountMode: 'plain' as const,
+                profiles: { referenceGuardRevision: 'absent' as const, rows: [] } } };
+        expect(await inTx(tx => promoteSavedSecretResourceInTx(tx, input))).toEqual(retained
+            ? { ok: true, value: { resourceId, settingsVersion: 1 } }
+            : { ok: false, error: 'references_invalid' });
+        expect(await db.savedSecretResource.count()).toBe(retained ? 2 : 1);
+        expect(await db.savedSecretResource.findUnique({ where: { id: existingId } })).toMatchObject({ revision: 1 });
+        const source = await db.account.findUniqueOrThrow({ where: { id: owner.id } });
+        expect(source.settingsVersion).toBe(retained ? 1 : 0);
+        expect(openPlainAccountSettingsDbValue({ accountId: owner.id, dbValue: source.settings }))
+            .toEqual({ t: 'plain', v: { secrets: retained ? [] : raw.secrets } });
+    });
+
     it('promotes a genuine ACP source credential, activates its original catalog and cleans Settings in one transaction', async () => {
         // Observed predecessor 37a6541578749067b49d4579be8c752c9591b8c8;
         // transferAcpCatalogV2.test.ts pins the complete predecessor producer vector.

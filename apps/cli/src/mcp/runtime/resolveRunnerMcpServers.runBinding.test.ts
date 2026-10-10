@@ -18,7 +18,9 @@ import type { HappyMcpSessionClient } from '@/mcp/startHappyServer';
 import {
   resetActiveAccountSettingsSnapshotForTests,
   setActiveAccountSettingsSnapshot,
+  getActiveAccountSettingsSnapshot,
 } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { McpServerCatalogV1Schema } from '@happier-dev/protocol/mcp/servers/serverRowsV1';
 import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { resolveRunnerMcpServers } from './resolveRunnerMcpServers';
 
@@ -55,10 +57,9 @@ describe('Session-owned Run MCP binding', () => {
     const token = 'runtime-test-token';
     const resourceId = 'revoked-run-mcp-resource';
     const ref = formatSavedSecretCatalogReferenceV1({ kind: 'shared_resource', id: resourceId });
-    const accountSettings = accountSettingsParse({
-      mcpServersSettingsV1: {
+    const accountSettings = accountSettingsParse({ mcpServersStrictMode: true });
+    const catalog = McpServerCatalogV1Schema.parse({
         v: 1,
-        strictMode: true,
         servers: [{
           id: 'shared-run-server',
           name: 'shared-run-server',
@@ -76,7 +77,6 @@ describe('Session-owned Run MCP binding', () => {
           createdAt: 1,
           updatedAt: 1,
         }],
-      },
     });
     const staleResource = {
       resourceId,
@@ -101,6 +101,7 @@ describe('Session-owned Run MCP binding', () => {
       scopeKey: resolveAccountSettingsScopeKeyForToken(token),
       savedSecretCatalogState: 'ready',
       savedSecretResources: [staleResource],
+      mcpServerCatalog: { status: 'ready', authority: 'active', revision: 3, diagnostics: [], catalog },
     });
     persistenceMocks.readStoredCredentials.mockResolvedValue({ token, encryption: null });
     vi.mocked(axios.get).mockResolvedValue({ status: 200, data: { resources: [] } });
@@ -109,6 +110,7 @@ describe('Session-owned Run MCP binding', () => {
       session: {} as HappyMcpSessionClient,
       credentials: { token, encryption: null },
       accountSettings,
+      accountSettingsSnapshot: getActiveAccountSettingsSnapshot(),
       savedSecretResources: [staleResource],
       machineId: 'machine-a',
       directory: '/run/a',
@@ -194,6 +196,10 @@ describe('Session-owned Run MCP binding', () => {
       accountSettings: accountSettingsParse({ actionsSettingsV1: {
         v: 1, actions: { 'session.activity.get': { approvalRequiredSurfaces: ['agent'] } },
       } }),
+      accountSettingsSnapshot: { source: 'network', settings: accountSettingsParse({}), settingsVersion: 1,
+        loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey: resolveAccountSettingsScopeKeyForToken('runtime-test-token'),
+        mcpServerCatalog: { status: 'ready', authority: 'active', revision: 1, diagnostics: [],
+          catalog: { v: 1, servers: [], bindings: [] } } },
       machineId: 'machine-a', directory: '/run/a',
       resolvedMcpServers: { extra: { command: 'authorized-tool', env: { SECRET: 'already-resolved' } } },
       executionRun: {

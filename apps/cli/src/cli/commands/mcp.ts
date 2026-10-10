@@ -5,7 +5,6 @@ import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
 import type { EphemeralResolvedServerSelection } from '@/server/serverSelection';
 
 import { resolveMcpCommandDeps, type McpCommandDeps } from './mcp/deps';
-import { runMcpServeCommand } from './mcp/serve';
 import { runMcpServersSubcommand } from './mcp/servers/subcommands';
 import { fail } from '@happier-dev/cli-common/output';
 
@@ -74,6 +73,7 @@ export async function handleMcpCommand(
         console.log('happier --server <saved-home> mcp serve [--session <session-id>]  # pin one Home for this process');
         return;
       }
+      const { runMcpServeCommand } = await import('./mcp/serve');
       await runMcpServeCommand(args, resolvedDeps, explicitServerSelection);
       return;
     }

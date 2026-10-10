@@ -1,6 +1,7 @@
 import type { ServerConfigEnv } from "@happier-dev/protocol";
 
 import { readHomeConfigEnv } from "./homeSettings";
+import { composeHomeConfigEnv, readHomeConfigEnvOrigin } from './homeConfigOverlay';
 
 /**
  * The request-scoped configuration overlay (plan `2026-09-26-home-owner-console` §3.1
@@ -17,12 +18,26 @@ import { readHomeConfigEnv } from "./homeSettings";
  */
 const overlays = new WeakMap<object, Promise<ServerConfigEnv>>();
 
-export function readRequestHomeEnv(request: object): Promise<ServerConfigEnv> {
+export function readRequestHomeEnv(
+    request: object,
+    options?: Readonly<{ inferred: Readonly<Record<string, string>> }>,
+): Promise<ServerConfigEnv> {
     let overlay = overlays.get(request);
     if (!overlay) {
         overlay = readHomeConfigEnv(process.env);
         overlays.set(request, overlay);
         // A failed read is not memoized: the next reader retries instead of replaying the failure.
+        overlay.catch(() => overlays.delete(request));
+    }
+    if (options) {
+        // Reach can finish inference after authentication first read this snapshot. Recompose
+        // through the same precedence owner, retaining the captured rows rather than reading again.
+        overlay = overlay.then((env) => {
+            const origin = readHomeConfigEnvOrigin(env);
+            if (!origin) throw new Error('Request Home environment has no configuration origin');
+            return composeHomeConfigEnv({ ...origin, inferred: options.inferred }, { snapshot: true });
+        });
+        overlays.set(request, overlay);
         overlay.catch(() => overlays.delete(request));
     }
     return overlay;

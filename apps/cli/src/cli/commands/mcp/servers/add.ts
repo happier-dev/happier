@@ -2,18 +2,17 @@ import chalk from 'chalk';
 
 import { readFlagValue } from '@/cli/commands/shared/argvFlags';
 import { printJsonEnvelope } from '@/cli/output/jsonEnvelope';
-import { readMcpServersSettingsFromAccountSettings } from '@/mcp/servers/readMcpServersSettingsFromAccountSettings';
-
-import { McpServersSettingsV1Schema } from '@happier-dev/protocol/mcp/servers/settingsV1';
+import { createCliMcpServerStore } from '@/settings/mcp/mcpServerStore';
 
 import type { McpCommandDeps } from '../deps';
 import { readRepeatedFlagValues } from '../argv';
-import { reportMcpServersAccountSettingsMutation } from './errors';
+import { reportMcpServerCatalogMutation } from './errors';
+import { loadFreshMcpAccountSettingsContext } from '../loadFreshMcpAccountSettingsContext';
 import { cmd, fail } from '@happier-dev/cli-common/output';
 
 export async function cmdMcpServersAdd(
   argv: string[],
-  deps: McpCommandDeps,
+  deps: Pick<McpCommandDeps, 'readStoredCredentials' | 'bootstrapAccountSettingsContext' | 'randomUUID' | 'nowMs'>,
   opts: Readonly<{ json: boolean }>,
 ): Promise<void> {
   const credentials = await deps.readStoredCredentials();
@@ -38,40 +37,21 @@ export async function cmdMcpServersAdd(
 
   const id = deps.randomUUID();
   const now = deps.nowMs();
-  const context = await deps.bootstrapAccountSettingsContext({
-    credentials,
-    mode: 'blocking',
-    refresh: 'force',
-  });
-  const current = readMcpServersSettingsFromAccountSettings(
-    context.rawSettings ?? context.settings,
-  );
-  if (current.servers.some((server) => server.name === name)) {
-    throw new Error(`MCP server name already exists: ${name}`);
-  }
-  const next = McpServersSettingsV1Schema.parse({
-    ...current,
-    servers: [
-      ...current.servers,
-      {
-        id,
-        name,
-        transport: 'stdio',
-        stdio: { command, args },
-        env: {},
-        createdAt: now,
-        updatedAt: now,
-      },
-    ],
-  });
-
-  const mutation = await deps.updateAccountSettingsV2WithRetry({
-    credentials,
-    mutation: {
-      operations: [{ op: 'set', key: 'mcpServersSettingsV1', value: next }],
+  const context = await loadFreshMcpAccountSettingsContext(credentials, deps);
+  const mutation = createCliMcpServerStore({ credentials }).mutate({
+    kind: 'server-create',
+    entry: {
+      id,
+      name,
+      transport: 'stdio',
+      stdio: { command, args },
+      env: {},
+      createdAt: now,
+      updatedAt: now,
     },
-  });
-  if (!await reportMcpServersAccountSettingsMutation(mutation, {
+    bindings: [],
+  }, context.mcpServerCatalog.revision, context.mcpServerCatalog);
+  if (!await reportMcpServerCatalogMutation(mutation, {
     kind: 'mcp_servers_add',
     json: opts.json,
   })) return;

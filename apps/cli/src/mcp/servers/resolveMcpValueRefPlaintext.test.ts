@@ -34,18 +34,21 @@ function resource(
 }
 
 describe('resolveMcpValueRefPlaintext', () => {
+  it('refuses a SavedSecret reference without the admitted catalog materializer', () => {
+    expect(resolveMcpValueRefPlaintext({
+      valueRef: { t: 'savedSecret', secretId: sharedRef },
+      processEnv: {},
+    })).toEqual({ status: 'temporarily_unavailable' });
+  });
+
   it('keeps literal expansion behavior unchanged', () => {
     expect(resolveMcpValueRefPlaintext({
       valueRef: { t: 'literal', v: 'Bearer ${TOKEN}' },
-      savedSecretsById: new Map(),
-      settingsSecretsKey: null,
       processEnv: { TOKEN: 'literal-value' },
     })).toEqual({ status: 'ready', value: 'Bearer literal-value' });
 
     expect(resolveMcpValueRefPlaintext({
       valueRef: { t: 'literal', v: '${MISSING}' },
-      savedSecretsById: new Map(),
-      settingsSecretsKey: null,
       processEnv: {},
     })).toEqual({ status: 'literal_unavailable' });
   });
@@ -68,9 +71,7 @@ describe('resolveMcpValueRefPlaintext', () => {
 
     expect(resolveMcpValueRefPlaintext({
       valueRef: { t: 'savedSecret', secretId },
-      savedSecretsById: new Map(),
       savedSecretMaterializer,
-      settingsSecretsKey: null,
       processEnv: {},
     })).toEqual({ status: expectedStatus });
   });

@@ -10,8 +10,8 @@ export async function resolveAvailableAccountSettings(params: Readonly<{
 }>): Promise<AccountSettings | null> {
   const credentials = params.credentials ?? null
   const active = getActiveAccountSettingsSnapshot()
-  if (!credentials) return active?.settings ?? null
-  if (active?.scopeKey === resolveAccountSettingsScopeKey(credentials)) return active.settings
+  if (!credentials) return active && active.source !== 'none' ? active.settings : null
+  if (active?.scopeKey === resolveAccountSettingsScopeKey(credentials) && active.source !== 'none') return active.settings
 
   try {
     const ctx = await bootstrapAccountSettingsContext({
@@ -19,7 +19,7 @@ export async function resolveAvailableAccountSettings(params: Readonly<{
       mode: 'fast',
       refresh: 'auto',
     })
-    return ctx.settings
+    return ctx.source === 'none' ? null : ctx.settings
   } catch {
     return null
   }

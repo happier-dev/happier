@@ -1,9 +1,25 @@
 import { describe, expect, it } from 'vitest';
-import { AIBackendProfileSchema } from '@happier-dev/protocol';
+import { AIBackendProfileSchema } from '@happier-dev/protocol/profiles/backendProfileSchema';
 
 import { ProviderProfileSetupRequiredError, RemovedLegacyProfileError, resolveProfileForAgent } from './resolveProfileForAgent';
 
 describe('resolveProfileForAgent', () => {
+  it('refuses a disabled destination profile by id or name', () => {
+    const profile = { v: 2 as const, id: 'focused', name: 'Focused', extraEnvironmentVariables: [],
+      defaultPermissionModeByTargetKey: {}, defaultPersistenceModeByTargetKey: {}, compatibilityByTargetKey: {},
+      enabled: false, profileRecordRevision: 4, createdAt: 1, updatedAt: 1 };
+    for (const query of [profile.id, profile.name]) {
+      expect(() => resolveProfileForAgent({ agentId: 'claude', query, customProfiles: [profile] }))
+        .toThrow(expect.objectContaining({ code: 'profile_disabled' }));
+    }
+  });
+  it('launches the exact retained legacy identity instead of its trimmed neighbor', () => {
+    const retained = AIBackendProfileSchema.parse({ id: ' retained-id ', name: 'Retained', environmentVariables: [] });
+    const neighbor = AIBackendProfileSchema.parse({ id: 'retained-id', name: 'Neighbor', environmentVariables: [] });
+    expect(resolveProfileForAgent({ agentId: 'claude', query: retained.id, customProfiles: [neighbor, retained] }))
+      .toEqual(retained);
+  });
+
   it('returns a stable removed-placeholder diagnostic with default-environment guidance', () => {
     for (const id of [
       'anthropic', 'Anthropic (Default)',
@@ -54,8 +70,25 @@ describe('resolveProfileForAgent', () => {
       defaultPersistenceModeByTargetKey: {}, defaultPersistenceModeByAgent: {},
       createdAt: 0, updatedAt: 0, version: '1.0.0',
     });
-    expect(resolveProfileForAgent({ agentId: 'claude', query: 'deepseek', customProfiles: [visibleLegacy] }))
+    expect(resolveProfileForAgent({ agentId: 'claude', query: 'deepseek', customProfiles: [visibleLegacy],
+      terminalMigratedProfileIds: new Set() }))
       .toEqual(visibleLegacy);
+  });
+
+  it('requires known Provider migration facts only for the affected retained legacy selection', () => {
+    const retained = AIBackendProfileSchema.parse({ id: 'deepseek', name: 'Retained DeepSeek', environmentVariables: [] });
+    const slim = { v: 2 as const, id: 'modern', name: 'Modern', extraEnvironmentVariables: [],
+      defaultPermissionModeByTargetKey: {}, defaultPersistenceModeByTargetKey: {}, compatibilityByTargetKey: {},
+      createdAt: 1, updatedAt: 1 };
+    for (const query of [retained.id, retained.name]) {
+      expect(() => resolveProfileForAgent({ agentId: 'claude', query, customProfiles: [retained, slim] }))
+        .toThrow(expect.objectContaining({ code: 'provider_settings_invalid' }));
+      expect(resolveProfileForAgent({ agentId: 'claude', query, customProfiles: [retained, slim],
+        terminalMigratedProfileIds: new Set() })).toEqual(retained);
+      expect(() => resolveProfileForAgent({ agentId: 'claude', query, customProfiles: [retained, slim],
+        terminalMigratedProfileIds: new Set([retained.id]) })).toThrow(expect.objectContaining({ code: 'legacy_profile_migrated' }));
+    }
+    expect(resolveProfileForAgent({ agentId: 'claude', query: slim.id, customProfiles: [retained, slim] })).toEqual(slim);
   });
 
   it('prefers a retained slim profile by id or name after its legacy source migrated', () => {

@@ -3,8 +3,20 @@ import type {
   AcpBackendCapabilitiesV1,
   McpValueRefV1,
 } from '@happier-dev/protocol';
+import type { AcpBackendDefinitionV1, AcpConfiguredRuntimeV1 } from '@happier-dev/protocol/acp/catalog/settingsV1';
+import type { AcpCatalogSnapshotV1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 
-import { readAcpCatalogSettingsFromAccountSettings } from '../readAcpCatalogSettingsFromAccountSettings';
+export class AcpCatalogUnavailableError extends Error {
+  readonly code = 'ACP_CATALOG_UNAVAILABLE';
+  constructor(readonly reason: string, readonly revision?: number) { super(`Configured ACP catalog is unavailable: ${reason}`); }
+}
+
+export function requireReadyAcpCatalog(catalog: AcpCatalogSnapshotV1 | undefined): Extract<AcpCatalogSnapshotV1, { status: 'ready' }> {
+  if (!catalog || catalog.status !== 'ready') {
+    throw new AcpCatalogUnavailableError(!catalog ? 'catalog-unobserved' : 'reason' in catalog ? catalog.reason : 'loading');
+  }
+  return catalog;
+}
 
 export type ResolvedConfiguredAcpBackend = Readonly<{
   backendId: string;
@@ -19,12 +31,11 @@ export type ResolvedConfiguredAcpBackend = Readonly<{
   capabilities: AcpBackendCapabilitiesV1;
   defaultMode?: string;
   defaultModel?: string;
+  runtime?: AcpConfiguredRuntimeV1;
 }>;
 
-type AccountSettingsConfiguredAcpBackend = ReturnType<typeof readAcpCatalogSettingsFromAccountSettings>['backends'][number];
-
 function materializeConfiguredAcpBackendFromAccountSettingsEntry(
-  backend: AccountSettingsConfiguredAcpBackend,
+  backend: AcpBackendDefinitionV1,
 ): ResolvedConfiguredAcpBackend {
   const backendRecord = backend as Record<string, unknown>;
   const defaultMode = typeof backendRecord.defaultMode === 'string' ? backendRecord.defaultMode : undefined;
@@ -43,22 +54,25 @@ function materializeConfiguredAcpBackendFromAccountSettingsEntry(
     capabilities: backend.capabilities,
     defaultMode,
     defaultModel,
+    runtime: backend.runtime,
   };
 }
 
 export function resolveConfiguredAcpBackendFromAccountSettings(
-  settings: Readonly<Record<string, unknown>>,
+  _settings: Readonly<Record<string, unknown>>,
   backendId: string,
+  catalogSnapshot?: AcpCatalogSnapshotV1,
 ): ResolvedConfiguredAcpBackend | null {
-  const acpCatalog = readAcpCatalogSettingsFromAccountSettings(settings);
-  const backend = acpCatalog.backends.find((entry) => entry.id === backendId) ?? null;
+  const acpCatalog = requireReadyAcpCatalog(catalogSnapshot);
+  const backend = acpCatalog.record.definitions.find((entry) => entry.id === backendId) ?? null;
   return backend ? materializeConfiguredAcpBackendFromAccountSettingsEntry(backend) : null;
 }
 
 export async function listConfiguredAcpBackendsFromAccountSettings(params: Readonly<{
   settings: Readonly<Record<string, unknown>>;
+  catalogSnapshot?: AcpCatalogSnapshotV1;
 }>): Promise<ReadonlyArray<ResolvedConfiguredAcpBackend>> {
-  return readAcpCatalogSettingsFromAccountSettings(params.settings)
-    .backends
+  return requireReadyAcpCatalog(params.catalogSnapshot)
+    .record.definitions
     .map((backend) => materializeConfiguredAcpBackendFromAccountSettingsEntry(backend));
 }

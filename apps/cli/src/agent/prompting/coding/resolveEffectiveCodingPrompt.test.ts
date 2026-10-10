@@ -1,44 +1,28 @@
 import { describe, expect, it } from 'vitest';
 
-import { BUILT_IN_ROLES_V1, accountSettingsParse, deriveBoxPublicKeyFromSeed, sealEncryptedDataKeyEnvelopeV1, renderSessionRoleBlockV1,
+import { BUILT_IN_ROLES_V1, deriveBoxPublicKeyFromSeed, renderSessionRoleBlockV1,
   resolveRoleSelectionV1, snapshotSessionRolesAtSpawnV1 } from '@happier-dev/protocol';
 import { createSessionRoleContext } from '@/session/roles/sessionRoleContext';
 
-import { ARTIFACT_ENCRYPTION_MATERIAL_UNAVAILABLE } from '@/api/artifacts/accountArtifactStore';
-import { encodeBase64, encryptWithDataKey } from '@/api/encryption';
+import { ArtifactEncryptionMaterialUnavailableError } from '@/api/artifacts/accountArtifactStore';
+import type { PromptLibraryStoredArtifact } from '@happier-dev/protocol/prompts/library/promptLibraryActionOperations';
 import type { Credentials, StoredCredentials } from '@/persistence';
+import { readAiLaunchProfileCollection } from '@happier-dev/protocol/profiles/read';
+import type { ProfileCatalogSnapshotV1 } from '@happier-dev/protocol/profiles/profileCatalogV1';
+import { buildMemoryRecallGuidanceBlockV1 } from '@happier-dev/protocol/prompts/memoryRecallGuidanceV1';
 
 import {
   resolveAgentCompositionPromptText,
   resolveEffectiveCodingPromptPlan,
   resolveEffectiveCodingPromptText,
-  type PromptArtifactRecord,
 } from './resolveEffectiveCodingPrompt';
 
 function createPromptDocArtifactRecord(params: Readonly<{
-  artifactId: string;
-  markdown: string;
-  recipientPublicKey: Uint8Array;
-}>): PromptArtifactRecord {
-  const dataKey = new Uint8Array(32).fill(7);
-  const encryptedDataKey = sealEncryptedDataKeyEnvelopeV1({
-    dataKey,
-    recipientPublicKey: params.recipientPublicKey,
-    randomBytes: (size) => new Uint8Array(size).fill(3),
-  });
-
-  return {
-    id: params.artifactId,
-    body: encodeBase64(encryptWithDataKey({
-      body: JSON.stringify({
-        v: 1,
-        markdown: params.markdown,
-        createdAtMs: 1,
-        updatedAtMs: 1,
-      }),
-    }, dataKey)),
-    dataEncryptionKey: encodeBase64(encryptedDataKey),
-  };
+  artifactId: string; markdown: string; recipientPublicKey: Uint8Array;
+}>): PromptLibraryStoredArtifact {
+  return { id: params.artifactId, header: { v: 1, kind: 'prompt_doc.v2', title: params.artifactId },
+    revision: { headerVersion: 1, bodyVersion: 1 },
+    body: JSON.stringify({ v: 1, markdown: params.markdown, createdAtMs: 1, updatedAtMs: 1 }) };
 }
 
 type DataKeyCredentials = Credentials & {
@@ -58,20 +42,112 @@ function createCredentials(): DataKeyCredentials {
 }
 
 describe('resolveEffectiveCodingPromptText', () => {
+  it('projects duplicate instruction injections as opaque non-overlapping bytes rather than retaining their text or source path', async () => {
+    const text = 'PRIVATE duplicate instruction 🦉 /private/repo';
+    const result = await resolveEffectiveCodingPromptPlan({ settings: {}, profileId: null,
+      baseOverride: null, memoryRecallGuidanceEnabled: false, sessionTitleToolAvailable: false,
+      promptAssetBlocks: [
+        { id: 'plugin_prompt_asset./private/repo/one', scope: 'user_prompt', text },
+        { id: 'plugin_prompt_asset./private/repo/two', scope: 'user_prompt', text },
+      ],
+    });
+    expect(result).toHaveProperty('composition');
+    const composition = result.composition;
+    const duplicate = composition.components.filter(component => component.byteLength === Buffer.byteLength(text));
+    expect(duplicate).toHaveLength(2);
+    expect(duplicate[0]!.digest).toBe(duplicate[1]!.digest);
+    expect(duplicate[0]!.sourceId).not.toBe(duplicate[1]!.sourceId);
+    expect(duplicate.every(component => component.overlap === 'none' && component.kind === 'instructions')).toBe(true);
+    expect(JSON.stringify(composition)).not.toMatch(/PRIVATE|\/private\/repo/);
+  });
+  it.each(['native_mcp', 'shell_bridge'] as const)('withdraws automatic memory guidance from the canonical %s base and tool appendix when Session memory is off', async toolDelivery => {
+    const args = { settings: {}, profileId: null, memoryRecallGuidanceEnabled: true,
+      toolDelivery, toolDeliverySessionId: 'memory-choice', toolDeliveryDirectory: '/repo' };
+    const enabled = await resolveEffectiveCodingPromptPlan({ ...args, memoryEnabled: true });
+    expect(enabled.text).toContain(buildMemoryRecallGuidanceBlockV1('generic'));
+    const disabled = await resolveEffectiveCodingPromptPlan({ ...args, memoryEnabled: false });
+    expect(disabled.text).not.toContain(buildMemoryRecallGuidanceBlockV1('generic'));
+    expect(disabled.plan.blocks.some(block => block.id === 'coding.memory_recall')).toBe(false);
+    if (toolDelivery === 'shell_bridge') {
+      expect(disabled.text).not.toContain('memory_search');
+      expect(disabled.text).not.toContain('memory_get_window');
+    }
+  });
+  it('keeps one created-Bot focus rule and persona title policy through the shell bridge', async () => {
+    const text = await resolveEffectiveCodingPromptText({
+      settings: {}, profileId: null, createdAsBot: true, memoryRecallGuidanceEnabled: false,
+      toolDelivery: 'shell_bridge', toolDeliverySessionId: 'fresh-bot', toolDeliveryDirectory: '/tmp/project',
+    });
+    expect(text).toMatch(/persona name/i);
+    expect(text).toMatch(/preserve[\s\S]*explicit[\s\S]*name/i);
+    expect(text.match(/one concise focus question/gi)).toHaveLength(1);
+    expect(text).not.toContain('task changes significantly');
+    expect(text).toContain('--tool');
+    expect(text).toContain('change_title');
+  });
+
+  it('keeps shell-bridge Bot focus guidance without requesting an unavailable title tool', async () => {
+    const text = await resolveEffectiveCodingPromptText({
+      settings: {}, profileId: null, createdAsBot: true, memoryRecallGuidanceEnabled: false,
+      toolDelivery: 'shell_bridge', toolDeliverySessionId: 'fresh-bot', toolDeliveryDirectory: '/tmp/project',
+      sessionTitleToolAvailable: false,
+    });
+    expect(text.match(/one concise focus question/gi)).toHaveLength(1);
+    expect(text).not.toContain('change_title');
+    expect(text).not.toMatch(/rename the session/i);
+  });
+  it('places the four-layer stack before Role and Notes and retains caller startup content', async () => {
+    const roleContext = { role: { ...BUILT_IN_ROLES_V1.builder, roleId: 'builder' }, notes: 'CURRENT_SESSION_NOTES' };
+    const entry = { id: 'session-context', ref: { kind: 'doc' as const, artifactId: 'context' }, enabled: true, placement: 'system_append' as const };
+    const result = await resolveEffectiveCodingPromptPlan({ settings: {}, profileId: null, currentProfile: null,
+      baseOverride: 'BASE', memoryRecallGuidanceEnabled: false, roleContext, sessionEntries: [entry],
+      startupInstructions: { v: 1, id: 'caller', revision: 1, instructions: 'CALLER_STARTUP' },
+      readArtifact: async () => createPromptDocArtifactRecord({ artifactId: 'context', markdown: 'CURRENT_STACK', recipientPublicKey: new Uint8Array() }) });
+    expect(result.text.indexOf('CURRENT_STACK')).toBeGreaterThan(result.text.indexOf('BASE'));
+    expect(result.text.indexOf(roleContext.role.instructions)).toBeGreaterThan(result.text.indexOf('CURRENT_STACK'));
+    expect(result.text.indexOf('CURRENT_SESSION_NOTES')).toBeGreaterThan(result.text.indexOf('CURRENT_STACK'));
+    expect(result.text).toContain('CALLER_STARTUP');
+  });
+  it('publishes admitted entries beside the coding plan produced from those entries', async () => {
+    const entry = { id: 'selected', ref: { kind: 'doc' as const, artifactId: 'context', serverId: 'context-home' },
+      enabled: true, required: true, placement: 'system_append' as const };
+    const result = await resolveEffectiveCodingPromptPlan({ settings: {}, profileId: null, currentProfile: null,
+      baseOverride: 'BASE', memoryRecallGuidanceEnabled: false, sessionEntries: [entry],
+      readArtifact: async () => createPromptDocArtifactRecord({ artifactId: 'context', markdown: 'CURRENT_STACK', recipientPublicKey: new Uint8Array() }) });
+    expect(result.text).toContain('CURRENT_STACK');
+    expect(result).toHaveProperty('admittedEntries', [{ entryId: 'selected', layer: 'session', scope: null,
+      ref: entry.ref, revision: { headerVersion: 1, bodyVersion: 1 }, outcome: 'ready' }]);
+  });
+  it('composes coding behavior from the destination Profile instead of stale Settings', async () => {
+    const profile = { v: 2 as const, id: 'focused', name: 'Focused', extraEnvironmentVariables: [],
+      defaultPermissionModeByTargetKey: {}, defaultPersistenceModeByTargetKey: {}, compatibilityByTargetKey: {},
+      codingPromptBehaviorOverrides: { responseOptions: 'disabled' as const }, createdAt: 1, updatedAt: 1 };
+    const profileCatalog = { status: 'ready', source: 'destination', authority: 'active', controlRevision: 1,
+      control: { revision: 1, record: { v: 1, phase: 'active', sourceSettingsVersion: 1, migratedLogicalRevision: 1, inventory: [] } },
+      records: [{ revision: 4,
+      record: { v: 1, id: profile.id, enabled: true, promptStack: [], secretBindings: {},
+        definition: { kind: 'inline', profile } } }], referenceGuardRevision: 4, diagnostics: [] } satisfies ProfileCatalogSnapshotV1;
+    const args = { settings: { codingPromptBehaviorV1: { v: 1, sessionTitleUpdates: 'initial', responseOptions: 'agent' },
+      profiles: [{ ...profile, codingPromptBehaviorOverrides: { sessionTitleUpdates: 'disabled' } }] },
+      profileId: profile.id, profileCatalog, baseOverride: null, memoryRecallGuidanceEnabled: false };
+    const plan = await resolveEffectiveCodingPromptPlan(args);
+    expect(plan.codingPromptBehavior).toEqual({ v: 1, sessionTitleUpdates: 'initial', responseOptions: 'disabled' });
+  });
+
   it('composes the first child prompt from its complete spawn role snapshot rather than changed Account instructions', async () => {
     const selected = resolveRoleSelectionV1({ roleId: 'builder',
       settingsOverrides: { builder: { roleId: 'builder', instructionsOverride: 'Accepted worker task.' } },
       defaultEngine: { agentTargetKey: 'agent:happier.agent.codex/codex' } });
     if (!selected.ok) throw new Error('Builder fixture must resolve');
-    const snapshot = snapshotSessionRolesAtSpawnV1({ leadSessionId: 'lead', sameAccount: false,
+    const snapshot = snapshotSessionRolesAtSpawnV1({ leadSessionId: 'lead',
       roles: { builder: selected.selection }, notes: 'Stay in the assigned files.' });
     const context = createSessionRoleContext({
       readMetadata: () => ({ work: { sessionRolesV1: { ...snapshot, roleId: 'builder' } } }),
       readOrganization: async () => ({ reportsTo: { sessionId: 'lead' } }),
       readRoleSources: async () => [],
-      readSettings: () => accountSettingsParse({ rolesV1: { overrides: {
+      readAccountRoleOverrides: () => ({ status: 'ready', overrides: {
         builder: { roleId: 'builder', instructionsOverride: 'Changed Account instructions.' },
-      } } }),
+      } }),
       readDefaultEngine: () => ({ agentTargetKey: 'agent:happier.agent.codex/codex' }),
     });
     const roleContext = await context.resolvePromptContext();
@@ -92,7 +168,7 @@ describe('resolveEffectiveCodingPromptText', () => {
   it('composes role, callable roles, notes, worker and caller startup content into the same session plan', async () => {
     const roleContext = { role: { ...BUILT_IN_ROLES_V1.orchestrator, roleId: 'orchestrator' },
       availableRoles: [{ ...BUILT_IN_ROLES_V1.builder, roleId: 'builder' }], notes: 'CURRENT_NOTES',
-      worker: { leadSessionId: 'lead', taskBoundary: 'TASK_BOUNDARY', memoryDocRef: { kind: 'doc' as const, artifactId: 'memory' } } };
+      worker: { leadSessionId: 'lead', taskBoundary: 'TASK_BOUNDARY' } };
     const resolved = await resolveEffectiveCodingPromptPlan({ credentials: createCredentials(), settings: {}, profileId: null,
       baseOverride: 'BASE', memoryRecallGuidanceEnabled: false, roleContext,
       startupInstructions: { v: 1, id: 'voice.test', revision: 1, instructions: 'VOICE_CALLER_INSTRUCTIONS' },
@@ -111,7 +187,6 @@ describe('resolveEffectiveCodingPromptText', () => {
     expect(step.plan.blocks.some((block) => block.id === 'session.role_instructions')).toBe(false);
   });
   it('fails typed before composing a prompt that selected a retained encrypted Artifact without key material', async () => {
-    const artifactRecipientKey = new Uint8Array(32).fill(9);
     const credentials: StoredCredentials = {
       token: 'token-only',
       encryption: null,
@@ -138,19 +213,13 @@ describe('resolveEffectiveCodingPromptText', () => {
       profileId: null,
       baseOverride: 'BASE',
       memoryRecallGuidanceEnabled: false,
-      fetchPromptArtifactRecord: async () =>
-        createPromptDocArtifactRecord({
-          artifactId: 'private-prompt',
-          markdown: 'Must not be silently omitted',
-          recipientPublicKey:
-            deriveBoxPublicKeyFromSeed(artifactRecipientKey),
-        }),
+      readArtifact: async () => { throw new ArtifactEncryptionMaterialUnavailableError(); },
     })).rejects.toMatchObject({
-      code: ARTIFACT_ENCRYPTION_MATERIAL_UNAVAILABLE,
+      status: 'attachment_unavailable', reason: 'locked',
     });
   });
 
-  it('decrypts referenced prompt docs and caches artifact bodies across calls', async () => {
+  it('reads referenced prompt docs again for each preparation', async () => {
     const machineKey = new Uint8Array(32).fill(9);
     const publicKey = deriveBoxPublicKeyFromSeed(machineKey);
     const credentials: Credentials = {
@@ -162,7 +231,7 @@ describe('resolveEffectiveCodingPromptText', () => {
       },
     };
 
-    const artifactById: Record<string, PromptArtifactRecord> = {
+    const artifactById: Record<string, PromptLibraryStoredArtifact> = {
       d1: createPromptDocArtifactRecord({
         artifactId: 'd1',
         markdown: 'Hello from coding',
@@ -175,8 +244,6 @@ describe('resolveEffectiveCodingPromptText', () => {
       }),
     };
 
-    let fetchCount = 0;
-    const cache = new Map<string, string | null>();
     const settings = {
       promptStacksV1: {
         v: 1,
@@ -211,31 +278,33 @@ describe('resolveEffectiveCodingPromptText', () => {
       credentials,
       settings,
       profileId: 'p1',
+      currentProfile: null,
+      profileEntries: settings.promptStacksV1.surfaces.profilesById.p1,
       baseOverride: 'BASE',
-      cache,
-      fetchPromptArtifactRecord: async (artifactId: string) => {
-        fetchCount += 1;
-        return artifactById[artifactId] ?? null;
+      memoryRecallGuidanceEnabled: false,
+      readArtifact: async (ref) => {
+        return artifactById[ref.artifactId] ?? null;
       },
       executionRunsFeatureEnabled: false,
     });
 
+    artifactById.d1 = createPromptDocArtifactRecord({ artifactId: 'd1', markdown: 'Current coding text', recipientPublicKey: publicKey });
     const second = await resolveEffectiveCodingPromptText({
       credentials,
       settings,
       profileId: 'p1',
+      currentProfile: null,
+      profileEntries: settings.promptStacksV1.surfaces.profilesById.p1,
       baseOverride: 'BASE',
-      cache,
-      fetchPromptArtifactRecord: async (artifactId: string) => {
-        fetchCount += 1;
-        return artifactById[artifactId] ?? null;
+      memoryRecallGuidanceEnabled: false,
+      readArtifact: async (ref) => {
+        return artifactById[ref.artifactId] ?? null;
       },
       executionRunsFeatureEnabled: false,
     });
 
     expect(first).toBe('BASE\n\nHello from coding\n\nHello from profile');
-    expect(second).toBe(first);
-    expect(fetchCount).toBe(2);
+    expect(second).toBe('BASE\n\nCurrent coding text\n\nHello from profile');
   });
 
   it('appends memory recall guidance when explicitly enabled', async () => {
@@ -257,7 +326,7 @@ describe('resolveEffectiveCodingPromptText', () => {
       baseOverride: 'BASE',
       executionRunsFeatureEnabled: false,
       memoryRecallGuidanceEnabled: true,
-      fetchPromptArtifactRecord: async () => null,
+      readArtifact: async () => null,
     });
 
     expect(out).toContain('BASE');
@@ -285,7 +354,7 @@ describe('resolveEffectiveCodingPromptText', () => {
       baseOverride: 'BASE',
       executionRunsFeatureEnabled: false,
       agentId: 'codex',
-      fetchPromptArtifactRecord: async () => null,
+      readArtifact: async () => null,
     });
 
     expect(out).toContain('BASE');
@@ -301,7 +370,7 @@ describe('resolveEffectiveCodingPromptText', () => {
       profileId: null,
       baseOverride: 'BASE',
       executionRunsFeatureEnabled: false,
-      fetchPromptArtifactRecord: async () => null,
+      readArtifact: async () => null,
       toolPromptContributions: [
         {
           id: 'acme.audit',
@@ -446,7 +515,7 @@ describe('resolveEffectiveCodingPromptText', () => {
       toolDelivery: 'shell_bridge',
       toolDeliverySessionId: 's1',
       toolDeliveryDirectory: '/tmp/worktree',
-      fetchPromptArtifactRecord: async () => null,
+      readArtifact: async () => null,
     });
 
     expect(out).not.toContain('You are an AI assistant');
@@ -463,7 +532,7 @@ describe('resolveEffectiveCodingPromptText', () => {
       profileId: null,
       executionRunsFeatureEnabled: false,
       toolDelivery: 'unsupported',
-      fetchPromptArtifactRecord: async () => null,
+      readArtifact: async () => null,
     });
 
     expect(out).toContain('# Attachments');
@@ -489,7 +558,7 @@ describe('resolveEffectiveCodingPromptText', () => {
       toolDelivery: 'shell_bridge',
       toolDeliverySessionId: 's1',
       toolDeliveryDirectory: '/tmp/worktree',
-      fetchPromptArtifactRecord: async () => null,
+      readArtifact: async () => null,
     });
 
     expect(out).toContain('Happier tools are available through the CLI bridge');
@@ -520,12 +589,12 @@ describe('resolveEffectiveCodingPromptText', () => {
       toolDelivery: 'shell_bridge',
       toolDeliverySessionId: 's1',
       toolDeliveryDirectory: '/tmp/worktree',
-      fetchPromptArtifactRecord: async () => null,
+      readArtifact: async () => null,
     });
 
-    expect(out).toContain('rename the session before replying');
-    expect(out).not.toContain('# Session title');
-    expect(out).not.toContain('MUST call the change_title tool once');
+    expect(out).toContain('before you respond to the first user message');
+    expect(out).toContain('MUST call the change_title tool once');
+    expect(out.match(/# Session title/g)).toHaveLength(1);
     expect(out).not.toContain('Prefer "mcp__happier__change_title"');
     expect(out).not.toContain('again if the task changes significantly');
   });
@@ -544,7 +613,7 @@ describe('resolveEffectiveCodingPromptText', () => {
       },
       profileId: null,
       executionRunsFeatureEnabled: false,
-      fetchPromptArtifactRecord: async () => null,
+      readArtifact: async () => null,
     });
 
     expect(out).toContain('# Attachments');
@@ -561,7 +630,7 @@ describe('resolveEffectiveCodingPromptText', () => {
       settings: {},
       profileId: null,
       memoryRecallGuidanceEnabled: false,
-      fetchPromptArtifactRecord: async () => null,
+      readArtifact: async () => null,
       promptAssetBlocks: [{
         id: 'plugin_prompt_asset.acme.prompts/instructions',
         scope: 'session',
@@ -597,13 +666,20 @@ describe('resolveEffectiveCodingPromptText launch-profile coding prompt override
     };
   }
 
+  function currentProfileWithOverrides(overrides: unknown) {
+    const selected = readAiLaunchProfileCollection(settingsWithProfile(overrides).profiles).entries[0];
+    if (!selected || selected.kind === 'opaque') throw new Error('Expected a readable admitted Profile fixture');
+    return selected.profile;
+  }
+
   it('applies a sparse profile override over the account coding prompt default', async () => {
     const out = await resolveEffectiveCodingPromptText({
       credentials: createCredentials(),
       settings: settingsWithProfile({ sessionTitleUpdates: 'disabled', responseOptions: 'disabled' }),
+      currentProfile: currentProfileWithOverrides({ sessionTitleUpdates: 'disabled', responseOptions: 'disabled' }),
       profileId: 'focused',
       executionRunsFeatureEnabled: false,
-      fetchPromptArtifactRecord: async () => null,
+      readArtifact: async () => null,
     });
 
     expect(out).toContain('# Attachments');
@@ -615,9 +691,10 @@ describe('resolveEffectiveCodingPromptText launch-profile coding prompt override
     const out = await resolveEffectiveCodingPromptText({
       credentials: createCredentials(),
       settings: settingsWithProfile({ responseOptions: 'disabled' }),
+      currentProfile: currentProfileWithOverrides({ responseOptions: 'disabled' }),
       profileId: 'focused',
       executionRunsFeatureEnabled: false,
-      fetchPromptArtifactRecord: async () => null,
+      readArtifact: async () => null,
     });
 
     expect(out).toContain('# Session title');
@@ -630,7 +707,7 @@ describe('resolveEffectiveCodingPromptText launch-profile coding prompt override
       settings: settingsWithProfile({ sessionTitleUpdates: 'disabled', responseOptions: 'disabled' }),
       profileId: null,
       executionRunsFeatureEnabled: false,
-      fetchPromptArtifactRecord: async () => null,
+      readArtifact: async () => null,
     });
 
     expect(out).toContain('# Session title');
@@ -638,39 +715,39 @@ describe('resolveEffectiveCodingPromptText launch-profile coding prompt override
   });
 
   it('reaches the shell-bridge tool appendix, while the base plan keeps its tool-delivery constraint', async () => {
-    const out = await resolveEffectiveCodingPromptText({
+    const result = await resolveEffectiveCodingPromptPlan({
       credentials: createCredentials(),
       settings: settingsWithProfile({ sessionTitleUpdates: 'initial' }),
+      currentProfile: currentProfileWithOverrides({ sessionTitleUpdates: 'initial' }),
       profileId: 'focused',
       executionRunsFeatureEnabled: false,
       toolDelivery: 'shell_bridge',
       toolDeliverySessionId: 's1',
       toolDeliveryDirectory: '/tmp/worktree',
-      fetchPromptArtifactRecord: async () => null,
+      readArtifact: async () => null,
     });
+    const out = result.text;
 
-    // The profile's `initial` mode reaches the appendix that owns title guidance.
-    // Asserted on a MODE-UNIQUE substring: 'rename the session before replying' is
-    // emitted by BOTH the `initial` and `ongoing` appendix branches, so asserting it
-    // would pass whether or not the profile override reached the appendix at all —
-    // it would have proven only that some title guidance exists.
-    expect(out).toContain("Based on the user's first message");
+    // The resolved Profile mode reaches the shared title owner through the appendix.
+    expect(out).toContain('before you respond to the first user message');
     // The account default is `ongoing`; its branch must NOT be the one that landed.
-    expect(out).not.toContain('(and again if the task changes significantly)');
-    // ...and the base plan still suppresses its own title section under shell bridge.
-    expect(out).not.toContain('# Session title');
+    expect(out).not.toContain('task changes significantly');
+    expect(out.match(/# Session title/g)).toHaveLength(1);
+    // The base suppresses native-tool instructions; the shared title policy renders in the bridge appendix.
+    expect(result.plan.blocks.find((block) => block.id === 'coding.base')?.text).not.toContain('# Session title');
   });
 
   it('suppresses shell-bridge title guidance when the profile disables it', async () => {
     const out = await resolveEffectiveCodingPromptText({
       credentials: createCredentials(),
       settings: settingsWithProfile({ sessionTitleUpdates: 'disabled' }),
+      currentProfile: currentProfileWithOverrides({ sessionTitleUpdates: 'disabled' }),
       profileId: 'focused',
       executionRunsFeatureEnabled: false,
       toolDelivery: 'shell_bridge',
       toolDeliverySessionId: 's1',
       toolDeliveryDirectory: '/tmp/worktree',
-      fetchPromptArtifactRecord: async () => null,
+      readArtifact: async () => null,
     });
 
     expect(out).toContain('Happier tools are available through the CLI bridge');
@@ -682,10 +759,11 @@ describe('resolveEffectiveCodingPromptText launch-profile coding prompt override
     const out = await resolveEffectiveCodingPromptText({
       credentials: createCredentials(),
       settings: settingsWithProfile({ sessionTitleUpdates: 'initial' }),
+      currentProfile: currentProfileWithOverrides({ sessionTitleUpdates: 'initial' }),
       profileId: 'focused',
       executionRunsFeatureEnabled: false,
       toolDelivery: 'native_extension',
-      fetchPromptArtifactRecord: async () => null,
+      readArtifact: async () => null,
     });
 
     expect(out).toContain('# Session title');

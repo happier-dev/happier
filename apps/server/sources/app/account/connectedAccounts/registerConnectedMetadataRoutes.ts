@@ -27,13 +27,13 @@ export function registerConnectedMetadataRoutes(app: Fastify): void {
     app.get(CONNECTED_PRESENTATION_ROWS_ROUTE_V1, { preHandler: app.authenticate, config,
         schema: { response: { 200: asServerProtocolZod(ConnectedPresentationRowReadResponseV1Schema), 500: internal } },
     }, async (request, reply) => {
-        try { return reply.send(await inTx(tx => readConnectedPresentationRowInTx(tx, { accountId: request.userId }))); }
+        try { return reply.send(await inTx(tx => readConnectedPresentationRowInTx(tx, { accountId: request.userId }), { readOnly: true })); }
         catch { return reply.code(500).send({ error: 'internal' }); }
     });
     app.get(CONNECTED_ACKNOWLEDGEMENTS_ROWS_ROUTE_V1, { preHandler: app.authenticate, config,
         schema: { response: { 200: asServerProtocolZod(ConnectedAcknowledgementsRowReadResponseV1Schema), 500: internal } },
     }, async (request, reply) => {
-        try { return reply.send(await inTx(tx => readConnectedAcknowledgementsRowInTx(tx, { accountId: request.userId }))); }
+        try { return reply.send(await inTx(tx => readConnectedAcknowledgementsRowInTx(tx, { accountId: request.userId }), { readOnly: true })); }
         catch { return reply.code(500).send({ error: 'internal' }); }
     });
     app.post(CONNECTED_PRESENTATION_ROWS_ROUTE_V1, { preHandler: app.authenticate, config,

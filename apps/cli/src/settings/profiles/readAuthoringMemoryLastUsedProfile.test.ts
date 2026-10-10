@@ -1,7 +1,7 @@
 import axios from 'axios';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { openAccountScopedBlobCiphertext, sealAccountScopedBlobCiphertext } from '@happier-dev/protocol';
-import { readAuthoringMemoryLastUsedProfile } from './readAuthoringMemoryLastUsedProfile';
+import { clearAuthoringMemoryLastUsedProfileIfEqual, readAuthoringMemoryLastUsedProfile } from './readAuthoringMemoryLastUsedProfile';
 
 describe('CLI authoring-memory profile read', () => {
   afterEach(() => vi.restoreAllMocks());
@@ -87,6 +87,29 @@ describe('CLI authoring-memory profile read', () => {
     get.mockResolvedValueOnce({ status: 200, data: { mode: 'e2ee', updatedAt: 1 } })
       .mockResolvedValueOnce({ status: 200, data: { status: 'present', revision: 1, content: { t: 'plain', v: 'profile-a' } } });
     await expect(readAuthoringMemoryLastUsedProfile({ token: 't', encryption: null })).rejects.toThrow();
+    expect(post).not.toHaveBeenCalled();
+  });
+  it('refuses unavailable E2EE material even when the destination and legacy Settings are absent', async () => {
+    vi.spyOn(axios, 'get').mockImplementation(async (url) => {
+      if (String(url).endsWith('/v1/account/encryption')) return { status: 200, data: { mode: 'e2ee', updatedAt: 1 } };
+      if (String(url).endsWith('/v2/account/settings')) return { status: 200, data: { content: null, version: 1 } };
+      return { status: 200, data: { status: 'absent' } };
+    });
+    const post = vi.spyOn(axios, 'post');
+    await expect(readAuthoringMemoryLastUsedProfile({ token: 't', encryption: null })).rejects.toThrow();
+    expect(post).not.toHaveBeenCalled();
+  });
+  it('does not clear a tombstone or a newer Profile choice', async () => {
+    const get = vi.spyOn(axios, 'get');
+    const post = vi.spyOn(axios, 'post');
+    for (const row of [
+      { status: 'deleted', revision: 2 },
+      { status: 'present', revision: 3, content: { t: 'plain', v: 'newer-profile' } },
+    ]) {
+      get.mockResolvedValueOnce({ status: 200, data: { mode: 'plain', updatedAt: 1 } })
+        .mockResolvedValueOnce({ status: 200, data: row });
+      await clearAuthoringMemoryLastUsedProfileIfEqual({ token: 't', encryption: null }, 'old-profile');
+    }
     expect(post).not.toHaveBeenCalled();
   });
 });

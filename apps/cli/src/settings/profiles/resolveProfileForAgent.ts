@@ -57,6 +57,15 @@ export class ProviderProfileSetupRequiredError extends Error {
   }
 }
 
+export class ProviderProfileMigrationFactsUnavailableError extends Error {
+  readonly code = 'provider_settings_invalid' as const;
+
+  constructor(readonly profileId: string) {
+    super(`Provider migration facts are unavailable for retained profile "${profileId}".`);
+    this.name = 'ProviderProfileMigrationFactsUnavailableError';
+  }
+}
+
 const PROVIDER_MIGRATION_SOURCE_IDS = new Set<string>(PROVIDER_MIGRATION_SOURCE_PROFILE_IDS);
 
 function migrationSourceProfileIdForQuery(query: string): string | null {
@@ -74,6 +83,11 @@ export function resolveProfileForAgent(params: Readonly<{
   customProfiles: ReadonlyArray<CliAiLaunchProfile>;
   terminalMigratedProfileIds?: ReadonlySet<string>;
 }>): CliAiLaunchProfile {
+  const queriedProfile = params.customProfiles.find((profile) => profile.id === params.query)
+    ?? params.customProfiles.find((profile) => profile.name.toLocaleLowerCase() === params.query.toLocaleLowerCase());
+  if (queriedProfile?.enabled === false) {
+    throw Object.assign(new Error(`Profile "${queriedProfile.name}" (${queriedProfile.id}) is disabled.`), { code: 'profile_disabled' });
+  }
   const removedLegacyProfileId = resolveRemovedLegacyProfileId(params.query);
   if (removedLegacyProfileId) {
     throw new RemovedLegacyProfileError(removedLegacyProfileId);
@@ -127,6 +141,9 @@ export function resolveProfileForAgent(params: Readonly<{
   const profile = resolved.profile;
   if (isRemovedLegacyProfileId(profile.id)) {
     throw new RemovedLegacyProfileError(profile.id);
+  }
+  if (PROVIDER_MIGRATION_SOURCE_IDS.has(profile.id) && params.terminalMigratedProfileIds === undefined) {
+    throw new ProviderProfileMigrationFactsUnavailableError(profile.id);
   }
   if (params.terminalMigratedProfileIds?.has(profile.id)) {
     throw new MigratedLegacyProfileError(profile.id);

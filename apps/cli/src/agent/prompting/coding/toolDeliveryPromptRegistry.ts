@@ -12,6 +12,8 @@ export function resolveCodingToolDeliveryBlocks(args: Readonly<{
     machineId?: string | null;
   }>;
   settings?: Record<string, unknown> | null | undefined;
+  sessionTitleToolAvailable?: boolean;
+  createdAsBot?: boolean;
 }>): PromptBlockV1[] {
   if (args.delivery !== 'shell_bridge') return [];
 
@@ -23,6 +25,8 @@ export function resolveCodingToolDeliveryBlocks(args: Readonly<{
         sessionId: args.sessionId,
         directory: args.directory,
         sessionTitleUpdatesMode: resolveCodingPromptSessionTitleUpdatesModeV1(args.settings),
+        sessionTitleToolAvailable: args.sessionTitleToolAvailable,
+        createdAsBot: args.createdAsBot,
         memoryRecallGuidance: args.memoryRecallGuidance,
       }),
     },

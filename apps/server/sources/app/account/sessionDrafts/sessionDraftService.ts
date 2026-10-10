@@ -29,7 +29,6 @@ import { eventRouter } from "@/app/events/eventRouter";
 import { applyUserKvMutationsInTx } from "@/app/kv/kvMutate";
 import { buildSessionAccessWhere } from "@/app/session/access/sessionAccessWhere";
 import type { SessionAccessAuthentication } from "@/app/session/access/sessionAccessAuthentication";
-import { db } from "@/storage/db";
 import { afterTx, inTx, type Tx } from "@/storage/inTx";
 
 import {
@@ -480,7 +479,7 @@ export async function readSessionDraft(params: Readonly<{
     epoch?: SessionDraftAddressEpoch;
     authentication: SessionAccessAuthentication;
 }>): Promise<SessionDraftReadServiceResult> {
-    return await inTx((tx) => readSessionDraftInTx(tx, params));
+    return await inTx((tx) => readSessionDraftInTx(tx, params), { readOnly: true });
 }
 
 /**
@@ -497,75 +496,79 @@ export async function listSessionDrafts(params: Readonly<{
     addressKinds?: readonly SessionDraftAddressKindV2[];
     authentication: SessionAccessAuthentication;
 }>): Promise<SessionDraftListResponseV2> {
-    const epoch = params.epoch ?? "v1";
-    const selectedKinds = epoch === "v2" && params.addressKinds
-        ? new Set<SessionDraftAddressKindV2>(params.addressKinds)
-        : null;
-    const limit = params.limit ?? 50;
-    const collected: SessionDraftRecordV2[] = [];
-    let afterPhysicalKey = params.after
-        ? `${ACCOUNT_SESSION_DRAFT_KV_PREFIX}${params.after}`
-        : undefined;
-    while (collected.length <= limit) {
-        const rows = await db.userKVStore.findMany({
-            where: {
-                accountId: params.accountId,
-                key: {
-                    startsWith: ACCOUNT_SESSION_DRAFT_KV_PREFIX,
-                    ...(afterPhysicalKey ? { gt: afterPhysicalKey } : {}),
+    return await inTx(async (tx) => {
+        const epoch = params.epoch ?? "v1";
+        const selectedKinds = epoch === "v2" && params.addressKinds
+            ? new Set<SessionDraftAddressKindV2>(params.addressKinds)
+            : null;
+        const limit = params.limit ?? 50;
+        const collected: SessionDraftRecordV2[] = [];
+        let afterPhysicalKey = params.after
+            ? `${ACCOUNT_SESSION_DRAFT_KV_PREFIX}${params.after}`
+            : undefined;
+        while (collected.length <= limit) {
+            const rows = await tx.userKVStore.findMany({
+                where: {
+                    accountId: params.accountId,
+                    key: {
+                        startsWith: ACCOUNT_SESSION_DRAFT_KV_PREFIX,
+                        ...(afterPhysicalKey ? { gt: afterPhysicalKey } : {}),
+                    },
+                    value: { not: null },
                 },
-                value: { not: null },
-            },
-            orderBy: { key: "asc" },
-            take: 100,
-            select: SESSION_DRAFT_ROW_SELECT,
-        });
-        if (rows.length === 0) break;
-        afterPhysicalKey = rows[rows.length - 1]!.key;
-        const candidates: Array<{
-            row: SessionDraftKvRow;
-            address: SessionDraftAddressV2;
-        }> = [];
-        for (const row of rows) {
-            const address = parseSessionDraftPhysicalKey(row.key);
-            if (!address) continue;
-            if (epoch === "v1" && !isSessionDraftAddressV1(address)) continue;
-            if (selectedKinds && !selectedKinds.has(address.kind)) continue;
-            candidates.push({ row, address });
-        }
-        const sessionIds = candidates.flatMap(({ address }) => (
-            isAccountOwnedDraftAddressV2(address) ? [] : [address.sessionId]
-        ));
-        const reachableSessions = new Set(sessionIds.length === 0 ? [] : (await inTx(async (tx) => {
-            const accessWhere = await buildSessionAccessWhere({
-                tx,
-                accountId: params.accountId,
-                capability: "readTranscript",
-                mode: "effective_access_v1",
-                authentication: params.authentication,
+                orderBy: { key: "asc" },
+                take: 100,
+                select: SESSION_DRAFT_ROW_SELECT,
             });
-            return await tx.session.findMany({
-                where: { AND: [{ id: { in: sessionIds } }, accessWhere] },
-                select: { id: true },
-            });
-        })).map((session) => session.id));
-        for (const { row, address } of candidates) {
-            if (!isAccountOwnedDraftAddressV2(address) && !reachableSessions.has(address.sessionId)) continue;
-            const record = mapRow(row, address);
-            if (epoch === "v1" && !isSessionDraftContentV1(record.content)) continue;
-            collected.push(record);
-            if (collected.length > limit) break;
+            if (rows.length === 0) break;
+            afterPhysicalKey = rows[rows.length - 1]!.key;
+            const candidates: Array<{
+                row: SessionDraftKvRow;
+                address: SessionDraftAddressV2;
+            }> = [];
+            for (const row of rows) {
+                const address = parseSessionDraftPhysicalKey(row.key);
+                if (!address) continue;
+                if (epoch === "v1" && !isSessionDraftAddressV1(address)) continue;
+                if (selectedKinds && !selectedKinds.has(address.kind)) continue;
+                candidates.push({ row, address });
+            }
+            const sessionIds = candidates.flatMap(({ address }) => (
+                isAccountOwnedDraftAddressV2(address) ? [] : [address.sessionId]
+            ));
+            let reachableSessions = new Set<string>();
+            if (sessionIds.length > 0) {
+                const accessWhere = await buildSessionAccessWhere({
+                    tx,
+                    accountId: params.accountId,
+                    capability: "readTranscript",
+                    mode: "effective_access_v1",
+                    authentication: params.authentication,
+                });
+                const sessions = await tx.session.findMany({
+                    where: { AND: [{ id: { in: sessionIds } }, accessWhere] },
+                    select: { id: true },
+                });
+                reachableSessions = new Set(sessions.map((session) => session.id));
+            }
+            for (const { row, address } of candidates) {
+                if (!isAccountOwnedDraftAddressV2(address) && !reachableSessions.has(address.sessionId)) continue;
+                const record = mapRow(row, address);
+                if (epoch === "v1" && !isSessionDraftContentV1(record.content)) continue;
+                collected.push(record);
+                if (collected.length > limit) break;
+            }
+            if (collected.length > limit || rows.length < 100) break;
         }
-        if (collected.length > limit || rows.length < 100) break;
-    }
-    const items = collected.slice(0, limit);
-    const last = collected.length > limit && items.length > 0 ? items[items.length - 1]!.address : null;
-    const nextAfter = last === null
-        ? undefined
-        : epoch === "v1" && isSessionDraftAddressV1(last)
-            ? canonicalSessionDraftAddressV1(last)
-            : canonicalSessionDraftAddressV2(last);
-    return { items, ...(nextAfter ? { nextAfter } : {}) };
+        const items = collected.slice(0, limit);
+        const last = collected.length > limit && items.length > 0 ? items[items.length - 1]!.address : null;
+        const nextAfter = last === null
+            ? undefined
+            : epoch === "v1" && isSessionDraftAddressV1(last)
+                ? canonicalSessionDraftAddressV1(last)
+                : canonicalSessionDraftAddressV2(last);
+        return { items, ...(nextAfter ? { nextAfter } : {}) };
+    }, { readOnly: true });
 }
 
 export async function mutateSessionDraft(params: Readonly<{

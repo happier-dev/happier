@@ -21,7 +21,7 @@ export function registerConnectedAccountConfigurationRowsRoutes(app: Fastify): v
     app.get(`${CONNECTED_ACCOUNT_CATALOG_ROWS_ROUTE_V1}/:key`, { preHandler: app.authenticate, config,
         schema: { params, response: { 200: asServerProtocolZod(ConnectedAccountCatalogRowReadResponseV1Schema), 500: internal } },
     }, async (request, reply) => {
-        try { return reply.send(await inTx(tx => readConnectedAccountCatalogRowInTx(tx, { accountId: request.userId, key: request.params.key }))); }
+        try { return reply.send(await inTx(tx => readConnectedAccountCatalogRowInTx(tx, { accountId: request.userId, key: request.params.key }), { readOnly: true })); }
         catch { return reply.code(500).send({ error: 'internal' }); }
     });
     app.post(`${CONNECTED_ACCOUNT_CATALOG_ROWS_ROUTE_V1}/:key`, { preHandler: app.authenticate, config,

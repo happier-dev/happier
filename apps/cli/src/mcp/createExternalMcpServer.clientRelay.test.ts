@@ -1,21 +1,28 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
 import { ACTION_IDS, getActionSpec, normalizeActionsSettingsV1, SignedRootActionIdSchema, UiActionDispatchRequestV1Schema, V2SessionByIdResponseSchema } from '@happier-dev/protocol';
+import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
+import { getUsageQueryKey, normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
+import { UsageCoachDismissInputSchema, UsageCoachPreferenceResultSchema } from '@happier-dev/protocol/usage/coach/coachActions';
+import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { createDaemonControlApp } from '@/daemon/controlServer';
 import { createDaemonExternalActionTargetResolver } from '@/daemon/externalActions/daemonExternalActionTargetResolver';
 import { createCliActionExecutorHarness } from '@/session/actions/createCliActionExecutorHarness';
 import { createClientActionReverseDispatcher } from '@/session/actions/clientActionReverseDispatch';
 import { configuration } from '@/configuration';
+import { writeStoredCredentialsForServerId } from '@/persistence';
 import { createExternalMcpServer } from './createExternalMcpServer';
 
 const credentials = { token: 'mcp-test-token', encryption: null, credentialProvenance: 'stored_session' } as const;
 const workspace = { ok: true, tabs: [], groups: [], splits: [], rootNodeId: 'main', focusedGroupId: 'main', maximizedGroupId: null };
 
 describe('standalone MCP client Action admission', () => {
+  afterEach(() => vi.unstubAllEnvs());
+
   it('keeps every MCP client Action in the existing signed Account admission vocabulary', () => {
     const ids = ACTION_IDS.filter(id => getActionSpec(id).executionPlacement === 'client' && getActionSpec(id).surfaces.mcp);
     expect(ids.length).toBeGreaterThan(0);
@@ -25,6 +32,26 @@ describe('standalone MCP client Action admission', () => {
   it.each([true, false])('delivers through the exact daemon and preserves MCP authority (connected=%s)', async connected => {
     const admitted: unknown[] = [];
     const daemonAdmissions: unknown[] = [];
+    const homeSessionLookups: string[] = [];
+    const coachQuery = normalizeUsageQuery({ session: 'mcp-session-active' });
+    const coachInput = { query: coachQuery, evidenceKey: 'relay-coach-evidence', dismissed: true };
+    const coachResult = UsageCoachPreferenceResultSchema.parse({
+      kind: 'preference_updated', evidenceKey: coachInput.evidenceKey, dismissed: true,
+    });
+    // This is the persisted Account declaration parsed by the real settings
+    // owner, not an approval token or an executor admission override.
+    const accountSettings = accountSettingsParse({ actionsSettingsV1: {
+      v: 1, actions: {}, approvalWaivedSurfaces: { 'usage.coach.dismiss': ['mcp'] },
+    } });
+    const waivedSettings = normalizeActionsSettingsV1(accountSettings.actionsSettingsV1);
+    let reviewedSettings = normalizeActionsSettingsV1({});
+    vi.stubEnv('HAPPIER_ACTIONS_SETTINGS_V1', JSON.stringify(waivedSettings));
+    if (!SignedRootActionIdSchema.safeParse('usage.coach.dismiss').success) {
+      throw new Error('Coach dismissal is not admitted by the existing signed Account vocabulary');
+    }
+    // vitestSetup owns this process's temporary Home. Persist the genuine
+    // credential fixture so a missing relay is not masked by a retired lease.
+    await writeStoredCredentialsForServerId(configuration.activeServerId, credentials);
     let clientAvailable = connected;
     let primarySessionId: string | null = 'canonical-session';
     // The Home HTTP service is a network boundary. Session parsing, Account
@@ -37,6 +64,7 @@ describe('standalone MCP client Action admission', () => {
         response.end(JSON.stringify({ mode: 'plain', version: 1, updatedAt: 1,
           signingKeyFingerprint: null, contentKeyFingerprint: null }));
       } else if (path.startsWith('/v2/sessions/')) {
+        homeSessionLookups.push(path);
         response.end(JSON.stringify(V2SessionByIdResponseSchema.parse({ session: {
           id: decodeURIComponent(path.slice('/v2/sessions/'.length)), seq: 1, createdAt: 1, updatedAt: 1,
           active: true, activeAt: 1, encryptionMode: 'plain', metadataVersion: 1,
@@ -57,12 +85,13 @@ describe('standalone MCP client Action admission', () => {
         const request = UiActionDispatchRequestV1Schema.parse(raw);
         admitted.push(request);
         options.onIssued();
-        const result = request.actionId === 'widgets.instance.inputs.get' ? {
+        const result = request.actionId === 'widgets.item.inputs.get' ? {
           ref: typeof request.input === 'object' && request.input !== null ? Reflect.get(request.input, 'ref') : undefined,
           bindings: {},
         }
           : request.actionId === 'ui.find' ? { status: 'idle' }
           : request.actionId === 'session.pending.next' ? { status: 'none' }
+          : request.actionId === 'usage.coach.dismiss' ? coachResult
           : request.actionId === 'session.target.primary.set' ? { ok: true, status: 'ok',
             sessionId: primarySessionId, serverId: primarySessionId ? configuration.activeServerId : null,
             address: primarySessionId ? { sessionId: primarySessionId, serverId: configuration.activeServerId } : null } : workspace;
@@ -75,7 +104,7 @@ describe('standalone MCP client Action admission', () => {
       serverHttpBaseUrl: `http://127.0.0.1:${homeAddress.port}`,
       // A reviewed runtime with no Account approval carrier fails closed for
       // danger Actions, without reaching an external service in this test.
-      actionsSettingsProvider: { getActionsSettings: () => normalizeActionsSettingsV1({}) },
+      actionsSettingsProvider: { getActionsSettings: () => reviewedSettings },
     }, { clientActionExecute });
     const app = createDaemonControlApp({
       getChildren: () => [], machineId: 'mcp-machine', controlToken: 'private-mcp-control',
@@ -94,9 +123,9 @@ describe('standalone MCP client Action admission', () => {
     await app.listen({ host: '127.0.0.1', port: 0 });
     const address = app.server.address();
     if (!address || typeof address === 'string') throw new Error('Missing daemon address');
-    const { mcp } = createExternalMcpServer({ credentials, defaultSessionId: 'mcp-session-active', machineId: 'mcp-machine',
+    const { mcp } = runWithServerHttpBaseUrl(`http://127.0.0.1:${homeAddress.port}`, () => createExternalMcpServer({ credentials, defaultSessionId: 'mcp-session-active', machineId: 'mcp-machine',
       daemonControlTarget: { pid: process.pid, httpPort: address.port, controlToken: 'private-mcp-control' },
-    });
+    }));
     const client = new Client({ name: 'standalone-client-relay-test', version: '1' });
     const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
     await mcp.connect(serverTransport);
@@ -116,12 +145,12 @@ describe('standalone MCP client Action admission', () => {
       const ref = { surface: { serverId: configuration.activeServerId, accountId: 'viewer',
         owner: { kind: 'companion', sessionId: 'mcp-session-active' } }, instanceId: 'checks' };
       const companion = CallToolResultSchema.parse(await client.callTool({ name: 'action_execute', arguments: {
-        actionId: 'widgets.instance.inputs.get', input: { ref },
+        actionId: 'widgets.item.inputs.get', input: { ref },
       } }));
       const companionText = companion.content.find(entry => entry.type === 'text');
       if (!companionText || companionText.type !== 'text') throw new Error('Missing Companion result');
       expect(JSON.parse(companionText.text)).toMatchObject(connected ? { ref, bindings: {} } : { errorCode: 'unavailable' });
-      if (connected) expect(admitted.at(-1)).toMatchObject({ actionId: 'widgets.instance.inputs.get', context: { defaultSessionId: 'mcp-session-active' } });
+      if (connected) expect(admitted.at(-1)).toMatchObject({ actionId: 'widgets.item.inputs.get', context: { defaultSessionId: 'mcp-session-active' } });
       if (connected) for (const request of admitted) expect(request).toMatchObject({ context: {
         surface: 'mcp', authority: 'account_automation', defaultSessionId: 'mcp-session-active', defaultSessionMachineId: 'mcp-machine',
       } });
@@ -133,6 +162,38 @@ describe('standalone MCP client Action admission', () => {
       expect(JSON.parse(approvalText.text)).toMatchObject({ errorCode: 'approvals_not_supported' });
       expect(daemonAdmissions).toContainEqual(expect.objectContaining({ actionId: 'session.draft.delete', surface: 'mcp' }));
       expect(admitted).toHaveLength(connected ? 4 : 0);
+
+      const dismissCoach = async () => {
+        const response = CallToolResultSchema.parse(await client.callTool({ name: 'usage_coach_dismiss', arguments: coachInput }));
+        const text = response.content.find(entry => entry.type === 'text');
+        if (!text || text.type !== 'text') throw new Error('Missing Coach dismissal result');
+        return JSON.parse(text.text) as unknown;
+      };
+      // The daemon owns admission even when the originating MCP environment
+      // permits the Action: without the reviewed Account waiver it refuses.
+      const noWaiverResult = await dismissCoach();
+      const coachAdmissionsBeforeWaiver = admitted.filter(raw => UiActionDispatchRequestV1Schema.parse(raw).actionId === 'usage.coach.dismiss');
+      reviewedSettings = waivedSettings;
+      const homeLookupsBeforeCoach = homeSessionLookups.length;
+      const dismissed = await dismissCoach();
+      expect.soft(dismissed).toEqual(connected ? coachResult : { errorCode: 'unavailable', error: 'noClient' });
+      expect.soft(noWaiverResult).toMatchObject({ errorCode: 'approvals_not_supported' });
+      expect(coachAdmissionsBeforeWaiver).toEqual([]);
+      expect(daemonAdmissions).toContainEqual(expect.objectContaining({
+        actionId: 'usage.coach.dismiss', surface: 'mcp', target: { kind: 'session', sessionId: 'mcp-session-active' },
+      }));
+      expect(homeSessionLookups.slice(homeLookupsBeforeCoach)).toContain('/v2/sessions/mcp-session-active');
+      const coachAdmissions = admitted.filter(raw => UiActionDispatchRequestV1Schema.parse(raw).actionId === 'usage.coach.dismiss');
+      expect(coachAdmissions).toHaveLength(connected ? 1 : 0);
+      if (connected) {
+        const request = UiActionDispatchRequestV1Schema.parse(coachAdmissions[0]);
+        expect(request).toMatchObject({ input: { evidenceKey: coachInput.evidenceKey, dismissed: true }, context: {
+          surface: 'mcp', authority: 'account_automation', actionCaller: { kind: 'host' },
+          defaultSessionId: 'mcp-session-active', defaultSessionMachineId: 'mcp-machine',
+          externalActionTarget: { kind: 'session', sessionId: 'mcp-session-active' },
+        } });
+        expect(getUsageQueryKey(UsageCoachDismissInputSchema.parse(request.input).query)).toBe(getUsageQueryKey(coachQuery));
+      }
       if (connected) {
         const selected = CallToolResultSchema.parse(await client.callTool({ name: 'session_target_primary_set', arguments: {
           sessionId: 'requested-session', serverId: configuration.activeServerId,

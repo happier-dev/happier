@@ -72,7 +72,7 @@ export function registerPluginAccountSettingsRoutes(app: Fastify): void {
             const result = await inTx(async (tx) => await readPluginDeclarativeSettingsInTx(tx, {
                 accountId: request.userId,
                 pluginId: request.params.pluginId,
-            }));
+            }), { readOnly: true });
             const response = readResponseForStorageResult(result);
             if (response === null) {
                 return reply.code(503).send(unavailable());

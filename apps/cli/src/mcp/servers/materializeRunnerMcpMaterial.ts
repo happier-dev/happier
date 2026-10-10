@@ -22,8 +22,6 @@ export async function materializeRunnerMcpMaterial(input: Readonly<{
   }]));
   const result = await materializeMcpServerConfigRecord({
     resolved: { directory: input.directory, strictMode: material.strictMode, serversByName },
-    savedSecretsById: new Map(),
-    settingsSecretsKey: null,
     processEnv: input.processEnv,
     tmpDir: input.tmpDir,
     strictMode: material.strictMode,

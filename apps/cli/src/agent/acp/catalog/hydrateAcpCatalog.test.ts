@@ -36,7 +36,8 @@ const record = (command: string) => AcpCatalogRecordV1Schema.parse({ v: 1, defin
 const currentness = { mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 };
 
 describe('ACP Account catalog hydration', () => {
-  it('promotes the original personal source before atomically transferring ACP and applying its numeric edit', async () => {
+  it.each(['unchanged', 'foreign-source', 'missing-source-cas'] as const)('promotes only the captured personal ACP source before its numeric edit (%s)', async scenario => {
+    const sourceChangedBeforeImport = scenario === 'foreign-source';
     const original = record('original-personal-source');
     const secret = { id: 'personal-acp-token', name: 'ACP credential', kind: 'apiKey',
       encryptedValue: { _isSecretValue: true, value: 'private-source-value' }, createdAt: 1, updatedAt: 1 };
@@ -58,6 +59,8 @@ describe('ACP Account catalog hydration', () => {
     let resourceId: string | null = null;
     const resources: unknown[] = [];
     const events: string[] = [];
+    let editStarted = false;
+    let editSourceReads = 0;
     vi.spyOn(persistence, 'readStoredCredentials').mockResolvedValue(credentials);
     vi.spyOn(axios, 'get').mockImplementation(async input => {
       const path = new URL(String(input)).pathname;
@@ -65,8 +68,15 @@ describe('ACP Account catalog hydration', () => {
       if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
       if (path === '/v1/account/entity-rows/acp') return { status: 200, data: catalog
         ? { status: 'present', revision, content: { t: 'plain', v: catalog } } : { status: 'absent' } };
-      if (path === '/v2/account/settings') { events.push(`source:${settingsVersion}`); return { status: 200,
-        data: { version: settingsVersion, content: { t: 'plain', v: raw } } }; }
+      if (path === '/v2/account/settings') {
+        if (editStarted && ++editSourceReads === 2 && sourceChangedBeforeImport) {
+          raw = { ...raw, acpCatalogSettingsV1: { v: 2, backends: original.definitions.map(backend => ({ ...backend,
+            command: 'foreign-source-edit', env: { API_TOKEN: { t: 'savedSecret', secretId: secret.id } } })) } };
+          settingsVersion = 8;
+        }
+        events.push(`source:${settingsVersion}`);
+        return { status: 200, data: { version: settingsVersion, content: { t: 'plain', v: raw } } };
+      }
       if (path === PROFILE_ROWS_ROUTE_V1) return { status: 200, data: { status: 'listed', rows: [], nextCursor: null,
         complete: true, diagnostics: [], referenceGuardRevision: 3, transferControl: { status: 'absent' } } };
       if (path === PROFILE_REFERENCE_GUARD_ROUTE_V1) return { status: 200, data: { status: 'ready', revision: 3 } };
@@ -81,14 +91,14 @@ describe('ACP Account catalog hydration', () => {
       const path = new URL(String(input)).pathname;
       if (path === '/v1/account/saved-secrets/resources/promote') {
         const mutation = SharedSavedSecretPromoteInputV1Schema.parse(body);
-        expect(mutation).toMatchObject({ expectedSettingsVersion: 7, personalSecretPromotions: [{ personalSecretId: secret.id }],
+        expect(mutation).toMatchObject({ expectedSettingsVersion: settingsVersion, personalSecretPromotions: [{ personalSecretId: secret.id }],
           referenceCensus: { accountMode: 'plain', catalogs: { acp: 'absent' } } });
         expect(mutation.catalogMutations?.acp).toBeUndefined();
         if (mutation.nextSettings?.t !== 'plain') throw new Error('Expected original Plain source promotion');
         raw = mutation.nextSettings.v;
         resourceId = mutation.resourceId;
         sharedRef = `happier:shared-secret:v1:${resourceId}`;
-        expect(raw).toMatchObject({ secrets: [], acpCatalogSettingsV1: { backends: [{ command: original.definitions[0].command,
+        expect(raw).toMatchObject({ secrets: [], acpCatalogSettingsV1: { backends: [{ command: sourceChangedBeforeImport ? 'foreign-source-edit' : original.definitions[0].command,
           env: { API_TOKEN: { t: 'savedSecret', secretId: sharedRef } } }] } });
         resources.push({ resourceId, encryptionMode: 'plain', storedContent: mutation.storedContent, recipientEnvelope: null,
           entry: { ref: sharedRef, source: 'shared_resource', relationship: 'owner', ownerAccountId: 'acp-personal-source-owner',
@@ -103,10 +113,10 @@ describe('ACP Account catalog hydration', () => {
         expect(mutation.savedSecretRevisions).toEqual([{ resourceId, expectedRevision: 1 }]);
         if (mutation.content.t !== 'plain') throw new Error('Expected Plain ACP destination');
         if (revision === -1) {
-          expect(events.slice(events.indexOf('promote') + 1)).toContain('source:8');
-          expect(mutation).toMatchObject({ expectedRevision: 'absent', source: 'predecessor', sourceSettingsVersion: 8,
-            settingsCleanup: { expectedSettingsVersion: 8, nextSettings: { t: 'plain', v: { themePreference: 'dark', secrets: [] } } },
-            content: { v: { definitions: [{ command: original.definitions[0].command }] } } });
+          expect(events.slice(events.indexOf('promote') + 1)).toContain(`source:${settingsVersion}`);
+          expect(mutation).toMatchObject({ expectedRevision: 'absent', source: 'predecessor', sourceSettingsVersion: settingsVersion,
+            settingsCleanup: { expectedSettingsVersion: settingsVersion, nextSettings: { t: 'plain', v: { themePreference: 'dark', secrets: [] } } },
+            content: { v: { definitions: [{ command: sourceChangedBeforeImport ? 'foreign-source-edit' : original.definitions[0].command }] } } });
           if (mutation.settingsCleanup?.nextSettings.t !== 'plain') throw new Error('Expected atomic source cleanup');
           raw = mutation.settingsCleanup.nextSettings.v;
           settingsVersion += 1;
@@ -126,12 +136,29 @@ describe('ACP Account catalog hydration', () => {
     }, { expectedRevision: 'absent', sourceSettingsVersion: 6 });
     expect(stale).toEqual({ status: 'settings-conflict', revision: 7 });
     expect(events).not.toContain('promote');
+    if (scenario === 'missing-source-cas') {
+      const missing = await createCliAcpCatalogStore({ credentials }).updateCatalog(() => ({ v: 2, backends: [] }),
+        { expectedRevision: 'absent' });
+      expect(missing).toEqual({ status: 'settings-conflict', revision: 7 });
+      expect(events.filter(event => ['promote', 'transfer', 'edit'].includes(event))).toEqual([]);
+      expect(catalog).toBeNull();
+      expect(raw).toMatchObject({ secrets: [secret] });
+      return;
+    }
+    editStarted = true;
     const result = await createCliAcpCatalogStore({ credentials }).updateCatalog(current => {
-      expect(current).toMatchObject({ backends: [{ command: original.definitions[0].command,
+      if (!sourceChangedBeforeImport) expect(current).toMatchObject({ backends: [{ command: original.definitions[0].command,
         env: { API_TOKEN: { t: 'savedSecret', secretId: sharedRef } } }] });
       return { v: 2, backends: original.definitions.map(backend => ({ ...backend, command: 'edited-after-transfer',
         env: { API_TOKEN: { t: 'savedSecret', secretId: sharedRef } } })) };
     }, { expectedRevision: 'absent', sourceSettingsVersion: 7 });
+    if (sourceChangedBeforeImport) {
+      expect(result).toEqual({ status: 'settings-conflict', revision: 8 });
+      expect(events.filter(event => ['promote', 'transfer', 'edit'].includes(event))).toEqual([]);
+      expect(catalog).toBeNull();
+      expect(raw).toMatchObject({ secrets: [secret], acpCatalogSettingsV1: { backends: [{ command: 'foreign-source-edit' }] } });
+      return;
+    }
     expect(result).toMatchObject({ status: 'updated', revision: 1 });
     expect(events.filter(event => ['promote', 'transfer', 'edit'].includes(event))).toEqual(['promote', 'transfer', 'edit']);
     expect(raw).toEqual({ themePreference: 'dark', secrets: [] });

@@ -156,6 +156,46 @@ If the CLI is running non-interactively and a required secret is still missing, 
 
 Required config environment variables must already exist in the shell environment for local CLI starts.
 
+## Share a launch profile in 0.3 development
+
+In **unreleased 0.3 development source**, open a saved profile's menu in
+**Settings → Profiles** and choose **Share…**. Save or discard pending edits
+first. Happier publishes its saved definition as a launch-profile document,
+then opens the same document share sheet used for roles and workflows.
+Choose people, Teams or Groups and the access level your own grant permits.
+Publishing alone does not grant another person access.
+
+The private profile record now references that shared definition. Private
+prompt attachments and your Saved Secret bindings stay private; sharing the
+definition does not publish them. A recipient still needs a compatible Agent
+and their own usable startup configuration. The current source reads granted
+profiles into profile choices; the dedicated **Shared with you** Settings
+group is still being integrated, so do not depend on that group to find one.
+
+Published profiles contain requirements and variable names, never environment
+values. Publication refuses **any nonempty environment value**, including a
+value marked as ordinary configuration, with `profile_contains_secret_values`.
+Remove inline values and satisfy the requirements from machine configuration
+or authorized Saved Secrets before retrying. Existing shared documents can
+carry Saved Secret references, but a reference never shares the secret itself.
+
+**Send a copy** in the share sheet exports the opened profile document as
+JSON. It is independent of live sharing and does not copy private attachments,
+private bindings or credentials. Review the file before sending it; later
+edits are not synchronized to a copy. A pending publication approval is not a
+completed publication: finish approval and reopen **Share…** after execution.
+
+### The same sharing tasks through Actions
+
+`launch_profiles.publish` publishes a saved profile by `profileId` and returns
+its `artifactId`. Grant management uses `artifact.access.grants.list`, `.set`
+and `.remove`, with the document's normal owner/admin authority and Action
+approval. Profile setup uses the `profiles.*` family; reading/exporting the
+published definition uses `artifact.read`. File export itself is a client
+effect, so CLI and agent callers use their authorized file tools after the
+read. See the [host Action reference](/plugins/api/host-actions) for exact
+fields and surfaces, and [Roles](/agents/roles) for role sharing.
+
 ## Saved secrets and bindings
 
 Profiles work best with saved secrets:

@@ -91,7 +91,7 @@ export function registerRemoteHostCatalogRoutes(app: Fastify): void {
   const config = { rateLimit: resolveApiHotEndpointRateLimit(process.env, 'account.settings') };
   app.get(REMOTE_HOST_ROWS_ROUTE_V1, { preHandler: app.authenticate, config,
     schema: { response: { 200: asServerProtocolZod(RemoteHostCatalogRowReadResponseV1Schema) } },
-  }, async (request, reply) => reply.send(await inTx(tx => readRemoteHostCatalogRowInTx(tx, { accountId: request.userId }))));
+  }, async (request, reply) => reply.send(await inTx(tx => readRemoteHostCatalogRowInTx(tx, { accountId: request.userId }), { readOnly: true })));
   app.post(REMOTE_HOST_ROWS_ROUTE_V1, { preHandler: [app.authenticate, async (request, reply) => {
     if (request.body.savedSecretResources?.length) return requirePresentUser(request, reply);
   }], config,

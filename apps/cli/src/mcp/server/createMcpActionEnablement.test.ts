@@ -38,6 +38,27 @@ function createEnablement(snapshot: CliServerFeaturesSnapshot | undefined) {
 }
 
 describe('Lane 10 Action feature availability', () => {
+  it('reads the current host Session memory choice while preserving standalone Account and unrelated Actions', () => {
+    let memoryEnabled = false;
+    const policy = {
+      actionSettingsProvider: createMcpActionSettingsProvider({ accountSettings: null }),
+      surface: 'agent' as const,
+      hasAuthenticatedRuntime: true,
+      readServerFeaturesSnapshot: () => undefined,
+      env: {},
+    };
+    const bound = createMcpActionEnablementWithServerFeatureAvailability({
+      ...policy, readSessionMemoryEnabled: () => memoryEnabled,
+    });
+    for (const id of ['memory.remember', 'memory.update', 'memory.forget'] as const) {
+      expect(bound(id), id).toBe(false);
+      expect(createMcpActionEnablementWithServerFeatureAvailability({ ...policy, surface: 'mcp' })(id), id).toBe(true);
+    }
+    expect(bound('session.title.set')).toBe(true);
+    memoryEnabled = true;
+    for (const id of ['memory.remember', 'memory.update', 'memory.forget'] as const) expect(bound(id), id).toBe(true);
+  });
+
   it('uses automation availability for native browser navigation even when sidecar is enabled', () => {
     const snapshot = (enabled: boolean) => readySnapshot({ browser: {
       enabled: true, viewTargets: { enabled: true }, internal: { enabled: true }, sidecar: { enabled: true }, automation: { enabled },
