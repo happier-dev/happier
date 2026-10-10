@@ -1,15 +1,12 @@
 import type {
     UsageAnalyticsQueryRequest,
     UsageAnalyticsQueryResponse,
-    UsageObservationCost,
-    UsageObservationTokens,
 } from "@happier-dev/protocol";
 
 import type { UsageMessageCounts } from "./loadUsageMessageStatsForQuery";
 import type { ScopedUsageContribution } from "./resolveScopedUsageContributions";
-import { resolveUsageBucketBounds as resolveBucketBounds, resolveUsageCalendarInstant, resolveUsageContributionDimensionKey } from "@happier-dev/protocol";
-import { addUsageTokens, createEmptyUsageCost, createEmptyUsageTokens } from "../usageMetrics";
-import { addUsageCostForMode, resolveEffectiveUsageCostUsd, resolveUsageCostMode, withEffectiveUsageCost } from "./resolveUsageCostMode";
+import { buildUsageLeaderList, resolveUsageBucketBounds as resolveBucketBounds, resolveUsageCalendarInstant, resolveUsageContributionDimensionKey, type UsageLeaderDimension } from "@happier-dev/protocol";
+import { resolveUsageCostMode } from "./resolveUsageCostMode";
 
 type UsageEventRow = Pick<
     ScopedUsageContribution,
@@ -29,11 +26,6 @@ type UsageEventRow = Pick<
 
 type UsageLeaderGroup = NonNullable<UsageAnalyticsQueryResponse["leaders"]>;
 type UsageAnalyticsLeader = NonNullable<NonNullable<UsageLeaderGroup["agents"]>[number]>;
-type UsageAnalyticsLeaderAggregate = UsageAnalyticsLeader & {
-    tokens: UsageObservationTokens;
-    cost: UsageObservationCost;
-    totalTokens: number;
-};
 type UsageInsights = NonNullable<UsageAnalyticsQueryResponse["insights"]>;
 type UsageActivity = NonNullable<UsageAnalyticsQueryResponse["activity"]>;
 type UsageTimeline = NonNullable<UsageAnalyticsQueryResponse["modelTimeline"]>;
@@ -63,53 +55,11 @@ export function deriveEngineKey(row: UsageEventRow): string | null {
 function buildLeaderList(
     rows: UsageEventRow[],
     topLimit: number,
-    resolveKey: (row: UsageEventRow) => string | null,
+    dimension: UsageLeaderDimension,
     requestedMode: UsageAnalyticsQueryRequest["costMode"],
 ): UsageAnalyticsLeader[] | undefined {
-    const grouped = new Map<string, UsageAnalyticsLeaderAggregate>();
-    const mode = resolveUsageCostMode(requestedMode);
-
-    for (const row of rows) {
-        const key = resolveKey(row) ?? "unknown";
-        const existing = grouped.get(key) ?? {
-            key,
-            label: key,
-            eventCount: 0,
-            tokens: createEmptyUsageTokens(),
-            cost: createEmptyUsageCost(),
-            totalTokens: 0,
-        } satisfies UsageAnalyticsLeaderAggregate;
-        existing.eventCount += row.contributingEventIds.length;
-        existing.totalTokens += row.tokens.total;
-        existing.tokens = addUsageTokens(existing.tokens, row.tokens);
-        existing.cost = addUsageCostForMode(existing.cost, row.cost, mode);
-        grouped.set(key, existing);
-    }
-
-    if (grouped.size === 0) {
-        return undefined;
-    }
-
-    return Array.from(grouped.values())
-        .sort((left, right) => {
-            if (right.totalTokens !== left.totalTokens) {
-                return right.totalTokens - left.totalTokens;
-            }
-            const leftCost = resolveEffectiveUsageCostUsd(left.cost, mode);
-            const rightCost = resolveEffectiveUsageCostUsd(right.cost, mode);
-            if (rightCost !== leftCost) {
-                return rightCost - leftCost;
-            }
-            if (right.eventCount !== left.eventCount) {
-                return right.eventCount - left.eventCount;
-            }
-            return left.key.localeCompare(right.key);
-        })
-        .slice(0, topLimit)
-        .map(({ totalTokens: _totalTokens, ...leader }) => ({
-            ...leader,
-            cost: withEffectiveUsageCost(leader.cost, mode),
-        }));
+    return buildUsageLeaderList(rows.map(row => ({ ...row, eventCount: row.contributingEventIds.length })),
+        dimension, topLimit, resolveUsageCostMode(requestedMode));
 }
 
 export function buildUsageLeaders(
@@ -118,12 +68,12 @@ export function buildUsageLeaders(
     requestedMode?: UsageAnalyticsQueryRequest["costMode"],
 ): UsageLeaderGroup | undefined {
     const leaders: UsageLeaderGroup = {
-        agents: buildLeaderList(rows, topLimit, (row) => resolveUsageContributionDimensionKey(row, "agent"), requestedMode),
-        models: buildLeaderList(rows, topLimit, (row) => resolveUsageContributionDimensionKey(row, "model"), requestedMode),
-        sessions: buildLeaderList(rows, topLimit, (row) => resolveUsageContributionDimensionKey(row, "session"), requestedMode),
-        projects: buildLeaderList(rows, topLimit, (row) => resolveUsageContributionDimensionKey(row, "project"), requestedMode),
-        workspaces: buildLeaderList(rows, topLimit, (row) => resolveUsageContributionDimensionKey(row, "workspace"), requestedMode),
-        engines: buildLeaderList(rows, topLimit, deriveEngineKey, requestedMode),
+        agents: buildLeaderList(rows, topLimit, "agent", requestedMode),
+        models: buildLeaderList(rows, topLimit, "model", requestedMode),
+        sessions: buildLeaderList(rows, topLimit, "session", requestedMode),
+        projects: buildLeaderList(rows, topLimit, "project", requestedMode),
+        workspaces: buildLeaderList(rows, topLimit, "workspace", requestedMode),
+        engines: buildLeaderList(rows, topLimit, "engine", requestedMode),
     };
 
     return Object.values(leaders).some((value) => value && value.length > 0) ? leaders : undefined;
@@ -285,38 +235,24 @@ function buildTimeline(
     rows: UsageEventRow[],
     granularity: UsageAnalyticsQueryRequest["granularity"],
     topLimit: number,
-    resolveKey: (row: UsageEventRow) => string | null,
+    dimension: UsageLeaderDimension,
     timeZoneOffsetMinutes: number,
     requestedMode: UsageAnalyticsQueryRequest["costMode"],
 ): UsageTimeline | undefined {
-    const mode = resolveUsageCostMode(requestedMode);
     const buckets = new Map<number, {
         bucketStartMs: number;
         bucketEndMs: number;
-        leaders: Map<string, UsageAnalyticsLeaderAggregate>;
+        rows: UsageEventRow[];
     }>();
 
     for (const row of rows) {
-        const key = resolveKey(row) ?? "unknown";
         const bounds = resolveBucketBounds(granularity, row.observedAt.getTime(), timeZoneOffsetMinutes);
         const bucket = buckets.get(bounds.bucketStartMs) ?? {
             bucketStartMs: bounds.bucketStartMs,
             bucketEndMs: bounds.bucketEndMs,
-            leaders: new Map<string, UsageAnalyticsLeaderAggregate>(),
+            rows: [],
         };
-        const existing = bucket.leaders.get(key) ?? {
-            key,
-            label: key,
-            eventCount: 0,
-            totalTokens: 0,
-            tokens: createEmptyUsageTokens(),
-            cost: createEmptyUsageCost(),
-        } satisfies UsageAnalyticsLeaderAggregate;
-        existing.eventCount += row.contributingEventIds.length;
-        existing.totalTokens += row.tokens.total;
-        existing.tokens = addUsageTokens(existing.tokens, row.tokens);
-        existing.cost = addUsageCostForMode(existing.cost, row.cost, mode);
-        bucket.leaders.set(key, existing);
+        bucket.rows.push(row);
         buckets.set(bounds.bucketStartMs, bucket);
     }
 
@@ -329,29 +265,7 @@ function buildTimeline(
         .map((bucket) => ({
             bucketStartMs: bucket.bucketStartMs,
             bucketEndMs: bucket.bucketEndMs,
-            leaders: Array.from(bucket.leaders.entries())
-                .sort((left, right) => {
-                    if (right[1].totalTokens !== left[1].totalTokens) {
-                        return right[1].totalTokens - left[1].totalTokens;
-                    }
-                    const leftCost = resolveEffectiveUsageCostUsd(left[1].cost, mode);
-                    const rightCost = resolveEffectiveUsageCostUsd(right[1].cost, mode);
-                    if (rightCost !== leftCost) {
-                        return rightCost - leftCost;
-                    }
-                    if (right[1].eventCount !== left[1].eventCount) {
-                        return right[1].eventCount - left[1].eventCount;
-                    }
-                    return left[0].localeCompare(right[0]);
-                })
-                .slice(0, topLimit)
-                .map(([, leader]) => ({
-                    key: leader.key,
-                    label: leader.label,
-                    eventCount: leader.eventCount,
-                    tokens: leader.tokens,
-                    cost: withEffectiveUsageCost(leader.cost, mode),
-                })),
+            leaders: buildLeaderList(bucket.rows, topLimit, dimension, requestedMode) ?? [],
         }));
 }
 
@@ -362,7 +276,7 @@ export function buildUsageModelTimeline(
     timeZoneOffsetMinutes = 0,
     requestedMode?: UsageAnalyticsQueryRequest["costMode"],
 ): UsageTimeline | undefined {
-    return buildTimeline(rows, granularity, topLimit, (row) => row.modelId, timeZoneOffsetMinutes, requestedMode);
+    return buildTimeline(rows, granularity, topLimit, "model", timeZoneOffsetMinutes, requestedMode);
 }
 
 export function buildUsageEngineTimeline(
@@ -372,5 +286,5 @@ export function buildUsageEngineTimeline(
     timeZoneOffsetMinutes = 0,
     requestedMode?: UsageAnalyticsQueryRequest["costMode"],
 ): UsageTimeline | undefined {
-    return buildTimeline(rows, granularity, topLimit, deriveEngineKey, timeZoneOffsetMinutes, requestedMode);
+    return buildTimeline(rows, granularity, topLimit, "engine", timeZoneOffsetMinutes, requestedMode);
 }

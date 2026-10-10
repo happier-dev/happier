@@ -125,7 +125,7 @@ export function buildUsageResultProjection(input: UsageResultProjectionInput): {
             const provider = ProviderContributionKeySchema.safeParse(metadata && Reflect.get(metadata, "providerId"));
             const connection = ProviderConnectionIdSchema.safeParse(metadata && Reflect.get(metadata, "providerConnectionId"));
             return {
-                id: row.id, observedAtMs: row.observedAt.getTime(), sessionId: row.sessionId, turnId: row.turnId,
+                id: row.id, eventCount: row.contributingEventIds.length, observedAtMs: row.observedAt.getTime(), sessionId: row.sessionId, turnId: row.turnId,
                 agentId: row.agentId, modelId: row.modelId, backendMode: row.backendMode, machineId: row.machineId ?? null, projectKey: row.projectKey,
                 providerId: provider.success ? provider.data : null,
                 providerConnectionId: connection.success ? connection.data : null,

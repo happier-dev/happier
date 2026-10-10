@@ -18,12 +18,12 @@ describe("usage cost basis", () => {
         expect(combined.effectiveUsd).toBeUndefined();
         expect(resolveEffectiveUsageCostUsd(combined, "auto")).toBe(0);
     });
-    it("does not recover an explicit reported basis after API-equivalent money is mixed in", () => {
+    it("retains vendor-reported API-equivalent money as a reported fact", () => {
         const reported = { reportedUsd: 1, estimatedUsd: 0, currency: "USD", costSource: "provider_reported" as const };
         const equivalent = { reportedUsd: 2, estimatedUsd: 0, currency: "USD", costSource: "provider_reported_api_equivalent" as const };
         const mixed = addUsageCostForMode(addUsageCostForMode(reported, equivalent, "reported"), reported, "reported");
-        expect(withEffectiveUsageCost(mixed, "reported").effectiveUsd).toBeUndefined();
-        expect(resolveEffectiveUsageCostUsd(mixed, "reported")).toBe(0);
+        expect(withEffectiveUsageCost(mixed, "reported").effectiveUsd).toBe(4);
+        expect(resolveEffectiveUsageCostUsd(mixed, "reported")).toBe(4);
     });
     it("does not forget an unpriced population when the priced population was free", () => {
         const free = { reportedUsd: 0, estimatedUsd: 0, currency: "USD", costSource: "provider_reported" as const };
