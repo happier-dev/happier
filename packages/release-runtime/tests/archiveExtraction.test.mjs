@@ -6,7 +6,7 @@ import { syncBuiltinESMExports } from 'node:module';
 import zlib from 'node:zlib';
 import { chmod, link, lstat, mkdir, mkdtemp, readFile, readdir, readlink, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import { deflateRawSync, gzipSync } from 'node:zlib';
 
 import * as tar from 'tar';
@@ -913,6 +913,133 @@ test('extractArchivePayloadToDirectory rejects gzip decompression bombs without 
     );
     await assert.rejects(stat(extractDir), { code: 'ENOENT' });
   } finally {
+    await rm(rootDir, { recursive: true, force: true });
+  }
+});
+
+test('extractArchivePayloadToDirectory settles a tar staging-directory filesystem error', { timeout: 2000 }, async (t) => {
+  const rootDir = await mkdtemp(join(tmpdir(), 'release-runtime-extract-cwd-error-'));
+  try {
+    const archivePath = join(rootDir, 'payload.tar.gz');
+    const extractDir = join(rootDir, 'extract');
+    await writeFile(archivePath, createTarGzip([{ name: 'file.txt', contents: 'payload' }]));
+    const originalStat = fs.stat;
+    // Inject a real filesystem boundary failure; tar still owns conversion to
+    // CwdError and its native error/entry/reservation lifecycle.
+    t.mock.method(fs, 'stat', (target, ...args) => {
+      if (!relative(rootDir, String(target)).startsWith('.extract.extract-')) {
+        return originalStat(target, ...args);
+      }
+      const error = Object.assign(new Error('staging stat failed'), { code: 'EIO' });
+      queueMicrotask(() => args.at(-1)(error));
+    });
+    await assert.rejects(
+      extractArchivePayloadToDirectory({ archiveName: 'payload.tar.gz', archivePath, extractDir }),
+      { name: 'CwdError', code: 'EIO' },
+    );
+    assert.deepEqual((await readdir(rootDir)).filter((name) => name.includes('.extract-')), []);
+    await assert.rejects(stat(extractDir), { code: 'ENOENT' });
+  } finally {
+    await rm(rootDir, { recursive: true, force: true });
+  }
+});
+
+test('extractArchivePayloadToDirectory settles a tar parser abort before removing staging', { timeout: 2000 }, async () => {
+  const rootDir = await mkdtemp(join(tmpdir(), 'release-runtime-extract-parser-abort-'));
+  try {
+    const damagedGzip = createTarGzip([
+      { name: 'file.txt', contents: 'payload' },
+    ]);
+    damagedGzip[damagedGzip.length - 8] ^= 0xff;
+    const archivePath = join(rootDir, 'payload.tar.gz');
+    const extractDir = join(rootDir, 'extract');
+    // The outer gzip is valid. Its damaged inner gzip reaches tar's own
+    // decompressor, whose parser abort does not emit Unpack's finish event.
+    await writeFile(archivePath, gzipSync(damagedGzip));
+
+    await assert.rejects(
+      extractArchivePayloadToDirectory({ archiveName: 'payload.tar.gz', archivePath, extractDir }),
+      { code: 'Z_DATA_ERROR', tarCode: 'TAR_ABORT' },
+    );
+    assert.deepEqual((await readdir(rootDir)).filter((name) => name.includes('.extract-')), []);
+    await assert.rejects(stat(extractDir), { code: 'ENOENT' });
+    await rename(archivePath, join(rootDir, 'closed.tar.gz'));
+  } finally {
+    await rm(rootDir, { recursive: true, force: true });
+  }
+});
+
+test('extractArchivePayloadToDirectory drains accepted and queued entries after a real tar parser abort', { timeout: 2000 }, async (t) => {
+  const rootDir = await mkdtemp(join(tmpdir(), 'release-runtime-extract-parser-drain-'));
+  let releaseStat;
+  t.after(() => releaseStat?.());
+  try {
+    // A small valid tar spans two of the decompressor's 16 KiB output chunks.
+    // The existing ratio limit accepts the first chunk, then aborts the parser
+    // on the second, after it accepted the file and queued directory entries.
+    const innerGzip = createTarGzip([
+      { name: './accepted/file.txt', contents: 'payload' },
+      ...Array.from({ length: 64 }, (_, index) => ({
+        name: `./accepted/dir-${index}/`,
+        type: '5',
+      })),
+    ]);
+    const archivePath = join(rootDir, 'payload.tar.gz');
+    const extractDir = join(rootDir, 'extract');
+    await writeFile(archivePath, gzipSync(innerGzip));
+
+    let onAbort;
+    const aborted = new Promise((resolveAborted) => { onAbort = resolveAborted; });
+    let acceptedFile = false;
+    const originalEmit = tar.Unpack.prototype.emit;
+    // Observe native events without changing tar's parsing or event delivery.
+    t.mock.method(tar.Unpack.prototype, 'emit', function (event, ...args) {
+      if (event === 'entry' && args[0].path === './accepted/file.txt') acceptedFile = true;
+      if (event === 'abort') onAbort();
+      return Reflect.apply(originalEmit, this, [event, ...args]);
+    });
+    let onStat;
+    const statReached = new Promise((resolveStat) => { onStat = resolveStat; });
+    const originalStat = fs.stat;
+    // Hold the real OS callback so accepted extraction work remains pending
+    // while the genuine parser-abort event is observed.
+    t.mock.method(fs, 'stat', (...args) => {
+      const callback = args.at(-1);
+      return originalStat(...args.slice(0, -1), (...result) => {
+        if (!releaseStat) {
+          let released = false;
+          releaseStat = () => {
+            if (released) return;
+            released = true;
+            callback(...result);
+          };
+          onStat();
+        } else {
+          callback(...result);
+        }
+      });
+    });
+    const extraction = extractArchivePayloadToDirectory({
+      archiveName: 'payload.tar.gz', archivePath, extractDir,
+      limits: { maxCompressionRatio: (24 * 1024) / innerGzip.length },
+    });
+    let settled = false;
+    extraction.then(() => { settled = true; }, () => { settled = true; });
+    const rejection = assert.rejects(extraction, (error) => {
+      assert.equal(error.tarCode, 'TAR_ABORT');
+      assert.match(error.message, /max decompression ratio/iu);
+      return true;
+    });
+    await Promise.all([aborted, statReached]);
+    assert.equal(acceptedFile, true);
+    await new Promise((resolveTurn) => setTimeout(resolveTurn, 25));
+    assert.equal(settled, false);
+    releaseStat();
+    await rejection;
+    assert.deepEqual((await readdir(rootDir)).filter((name) => name.includes('.extract-')), []);
+    await assert.rejects(stat(extractDir), { code: 'ENOENT' });
+  } finally {
+    releaseStat?.();
     await rm(rootDir, { recursive: true, force: true });
   }
 });
