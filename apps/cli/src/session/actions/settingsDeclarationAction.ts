@@ -83,7 +83,13 @@ export function createCliSettingsDeclarationAction(params: Readonly<{
     if (declaration.sensitive || storage.access === 'sensitive') return refuse('setting_sensitive');
     if (actionId === 'settings.set' && storage.access === 'read_only') return refuse('setting_read_only');
     if (storage.prerequisite === 'ui_platform') return { ...refuse('setting_value_unavailable'), details: { prerequisite: storage.prerequisite } };
-    const requested = actionId === 'settings.set' ? SettingsDeclarationActionInputSchemasV1[actionId].parse(input) : undefined;
+    const resetValue = actionId === 'settings.reset'
+      ? readBuiltInAccountSettingValueV1(declaration, accountSettingsParse({}))
+      : undefined;
+    if (actionId === 'settings.reset' && resetValue === undefined) return refuse('setting_reset_unsupported');
+    const requested = actionId === 'settings.set' ? SettingsDeclarationActionInputSchemasV1[actionId].parse(input)
+      : actionId === 'settings.reset' ? { ...SettingsDeclarationActionInputSchemasV1[actionId].parse(input), value: resetValue! }
+      : undefined;
     if (storage.scope === 'home' || storage.scope === 'team') {
       if (requested?.expectedSettingsVersion !== undefined || requested?.reversal || 'includeVersion' in parsed && parsed.includeVersion) return refuse('setting_conditional_mutation_unsupported');
       const binding = readPortableDomainSettingBindingV1(declaration);
@@ -135,7 +141,7 @@ export function createCliSettingsDeclarationAction(params: Readonly<{
       const settings = projectAccount(raw);
       return catalogBinding ? catalogBinding.read(settings) : readBuiltInAccountSettingValueV1(declaration, settings);
     };
-    if (actionId === 'settings.set' && requested) {
+    if (requested) {
       if (requested.reversal) return await executeCliScalarSettingReversal({ declaration, requested,
         credentials, serverId: params.serverId, signal: context.signal, isCredentialCurrent: params.isCredentialCurrent });
       const value = catalogBinding ? catalogBinding.parse(requested.value) : parseBuiltInAccountSettingValueV1(declaration, requested.value);

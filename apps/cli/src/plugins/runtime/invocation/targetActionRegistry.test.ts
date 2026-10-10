@@ -95,6 +95,34 @@ function createRegistry(
 }
 
 describe('target action invocation registry', () => {
+    it('exposes the existing host correlation identity and distinguishes independent Actions', async () => {
+        const contexts: PluginInvocationContext[] = [];
+        const correlations: string[] = [];
+        const services = createUnavailablePluginServicesFactory();
+        const registry = createRegistry({
+            createServices: (seed, binding) => {
+                correlations.push(seed.correlationId);
+                return services(seed, binding);
+            },
+            actions: [{ ...action(), handler: async (_input, context) => {
+                contexts.push(context);
+                return { echoed: 'executed' };
+            } }],
+        });
+        try {
+            for (let attempt = 0; attempt < 2; attempt += 1) {
+                await expect(registry.invoke({
+                    pluginId: 'acme.alpha', localId: 'run', input: { value: 'x' }, surface: 'cli',
+                })).resolves.toMatchObject({ status: 'executed' });
+            }
+            expect(contexts.map(context => context.invocationId)).toEqual(correlations);
+            expect(contexts[0]!.invocationId).toBeTruthy();
+            expect(contexts[1]!.invocationId).not.toBe(contexts[0]!.invocationId);
+        } finally {
+            registry.dispose();
+        }
+    });
+
     it('executes a waived dangerous agent Action without a present-user requester', async () => {
         const registry = createRegistry({ actions: [{
             ...action({ dangerLevel: 'destructive', surfaces: ['agent'], confirmation: { title: 'Delete' } }),

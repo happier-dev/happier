@@ -104,7 +104,12 @@ export type TargetActionCurrentIntentRequest = Readonly<{
 }>;
 
 export type TargetActionCurrentIntentResult = Readonly<
-  | { status: 'approved'; fingerprint: string }
+  | {
+    status: 'approved';
+    fingerprint: string;
+    /** Durable identity when approval is Artifact-owned. */
+    artifactId?: string;
+  }
   | { status: 'deferred'; artifactId: string }
   | { status: 'rejected' | 'unavailable'; code: string }
 >;

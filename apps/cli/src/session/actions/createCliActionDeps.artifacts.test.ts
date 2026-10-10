@@ -293,7 +293,8 @@ describe('Account Artifact Actions through the real CLI host composition', () =>
       header: { kind: 'html' }, uploadPath: 'document.html' }, { ...context, presentUserConfirmation: { actionId: 'artifact.update' } }))
       .resolves.toEqual({ ok: true, result: { artifactId, revision: { headerVersion: 2, bodyVersion: 2 } } });
     const read = await executor.execute('artifact.get', { artifactId }, context);
-    expect(read).toMatchObject({ ok: true, result: { artifact: { header: { kind: 'html' }, body: '<h1>Published HTML</h1>' } } });
+    expect(read).toMatchObject({ ok: true, result: { artifact: { header: { kind: 'html' },
+      body: { mime: 'text/html', sizeBytes: Buffer.byteLength('<h1>Published HTML</h1>') } } } });
     expect(read).not.toHaveProperty('result.previewUrl');
     expect(read).not.toHaveProperty('result.previewError');
     const published = await executor.execute('artifact.publish_from_file', { path: 'document.html' },

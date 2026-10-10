@@ -81,6 +81,22 @@ Action front door or that its host has the required dependency: those callers
 must still migrate through the admitted execution path, not invoke its RPC
 transport directly.
 
+The Session Run detail controls and review follow-up use mounted Action admission
+on the captured Home and Account. Resume supplies `resume: true` to
+`execution.run.ensure`; cancel-turn retains the exact occurrence and turn ids,
+and review follow-up retains its finding, thread and reply ids. Pending approval
+is not a completed control operation. Account quiet-hours and device overrides
+use their existing `settings.set` declaration anchors and setting owners.
+
+`session.draft.append { sessionId, text, sourceSessionId? }` is a client-placed
+intent on the Session's existing initial-prompt handoff owner. It returns
+`{ status: 'appended', sessionId, createdAtMs }` only after the captured Account's
+metadata write, or `{ status: 'unavailable' }` when that owner cannot accept it.
+It appends to the destination composer and never sends a message. The Run-result
+caller applies the existing template first and reveals/focuses the composer only
+after append succeeds. This is a 0.3 development-source contract, not a released
+availability claim.
+
 #### Roles, reporting and input observation
 
 The development role owner is Protocol's
@@ -815,6 +831,12 @@ Retained Workflow channel ids remain destination ids. The existing
 Settings-based editor described above has not yet completed its catalog-consumer validation;
 row readiness alone does not certify editor migration or signing-source cleanup.
 
+`notifications.desktop.permission.read/request` uses the answering desktop’s existing
+notification plugin. Request requires present-user authority; Agent and MCP discovery
+does not authorize automation to spend an OS permission prompt. The result reports
+the permission observed after the request, not a notification-delivery guarantee.
+These client-local declarations do not add a CLI, daemon or server permission path.
+
 `app.updates.*` observes and invokes the answering app’s existing platform update owner through
 `useAppUpdateStatus`. The mounted shell summary keeps these operations available when the Updates
 page closes; retiring the last consumer makes them unavailable. Update, Retry and Restart require
@@ -870,6 +892,19 @@ Removal clears defaults through `removeAgentConnectedAccountDefaultsForDeletedTa
 the server acknowledges the exact incarnation and an authoritative reread confirms absence;
 a recreated same-ref pool retains its default. Action discovery, surfaces and approval
 remain owned by the ordinary registry.
+
+Mounted Agent default selectors submit closed intents through
+`connectedServices.accounts.purposeDefault.set`: the choice is a personal account,
+pool, shared Team resource or the Agent's own login. An optional declared `purpose`
+changes only that purpose; omitting it changes the service's declared purposes.
+New-account suggestions use `onlyIfUnset`, checked inside the existing catalog
+mutation so acceptance cannot overwrite an intervening default. The original
+account/pool star Actions retain their exact target semantics. Resource setup uses
+`connectedServices.purposes.default.set` with its captured Home, Machine, qualified
+purpose and personal target. UI and CLI admission read the selected Machine's
+installed Resource declaration and the existing target resolver; the persisted
+choice remains a preference, not a permission grant. All writes retain the
+ordinary purpose catalog revision check and predecessor-carrier retirement.
 
 The development Protocol contract separates personal Account/group labels from a pool's
 definition name: `accounts.rename` and `labels.set/reset` share the presentation-row writer,
@@ -1869,6 +1904,12 @@ An embed's Send grant includes current-turn cancellation, and an abort-only
 grant does not authorize sending messages or stopping the Session process.
 Permission decisions continue through `session.permission.respond` and retain
 their separate approval authority.
+
+The development `session.permission_mode.set` input carries `applyTiming`.
+The authenticated client executor retains `next_prompt` as local next-input intent;
+the CLI executor cannot retain that client intent and returns `unsupported_action`
+before any read or write. It never silently treats delayed intent as immediate.
+Embedded next-prompt selection is consequently unsupported by the CLI transport.
 
 Three fields on a spec row are stamped by the host and never accepted from Action input. Together
 they decide who may invoke an Action, where it runs, and how it reaches the Home.

@@ -30,7 +30,7 @@ describe('target action current-intent adapter', () => {
     if (!stored.request) throw new Error('approval_not_created');
     stored.request = { ...stored.request, status: 'approved', updatedAtMs: 2, decision: { kind: 'approve', decidedAtMs: 2 } };
     onChange();
-    await expect(pending).resolves.toEqual({ status: 'approved', fingerprint: 'a'.repeat(64) });
+    await expect(pending).resolves.toEqual({ status: 'approved', fingerprint: 'a'.repeat(64), artifactId: 'approval-other-device' });
     expect(dispose).toHaveBeenCalledTimes(1);
   });
 
@@ -44,7 +44,7 @@ describe('target action current-intent adapter', () => {
     await expect(adapter({
       action: { qualifiedId: 'acme.alpha/actions/run', pluginId: 'acme.alpha', localId: 'run', occurrenceId: '7', sourceCustody: developmentCustody, dangerLevel: 'destructive', scopes: ['global'], surfaces: ['cli'], hostAccess: [], input: { x: 1 }, policyFingerprint: 'b'.repeat(64), confirmation: { title: 'Run action' } },
       fingerprint: 'a'.repeat(64), surface: 'cli',
-    })).resolves.toEqual({ status: 'approved', fingerprint: 'a'.repeat(64) });
+    })).resolves.toEqual({ status: 'approved', fingerprint: 'a'.repeat(64), artifactId: 'approval-1' });
     expect(stored).toMatchObject({ kind: 'plugin_target_action', qualifiedActionId: 'acme.alpha/actions/run', sourceCustody: developmentCustody, policyFingerprint: 'b'.repeat(64) });
     expect(stored).not.toHaveProperty('occurrenceId');
   });
@@ -86,7 +86,7 @@ describe('target action current-intent adapter', () => {
         },
       },
       fingerprint: 'a'.repeat(64), surface: 'ui',
-    })).resolves.toEqual({ status: 'approved', fingerprint: 'a'.repeat(64) });
+    })).resolves.toEqual({ status: 'approved', fingerprint: 'a'.repeat(64), artifactId: 'approval-confirmation-1' });
 
     expect(stored).toMatchObject({
       summary: 'Start a new baseline',
@@ -123,7 +123,7 @@ describe('target action current-intent adapter', () => {
         policyFingerprint: 'b'.repeat(64), approvalRequiredByActionSettings: true,
       },
       fingerprint: 'a'.repeat(64), surface: 'cli',
-    })).resolves.toEqual({ status: 'approved', fingerprint: 'a'.repeat(64) });
+    })).resolves.toEqual({ status: 'approved', fingerprint: 'a'.repeat(64), artifactId: 'approval-settings-required-1' });
 
     expect(stored).toMatchObject({
       qualifiedActionId: 'acme.alpha/actions/run',

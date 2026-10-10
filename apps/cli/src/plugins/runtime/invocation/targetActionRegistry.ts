@@ -616,6 +616,7 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                         contribution: seed.contribution,
                         surface: seed.surface,
                         invokedAtMs: lifetime.invokedAtMs,
+                        invocationId: seed.correlationId,
                         ...(seed.caller ? { caller: seed.caller } : {}),
                         ...(seed.session ? { session: seed.session } : {}),
                         ...(seed.messageAction ? { messageAction: seed.messageAction } : {}),
@@ -712,9 +713,9 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                 result: unavailable('plugin_action_generation_retired', 'Plugin action occurrence is no longer current'),
             });
             let operationProgress = invocation.operationProgress;
-            const correlationId = randomUUID();
+            let correlationId = randomUUID();
             const lifetime = createPluginInvocationLifetime(invocation.signal);
-            const diagnosticScope = Object.freeze({
+            let diagnosticScope = Object.freeze({
                 pluginId: indexed.registration.pluginId,
                 occurrenceId: indexed.registration.occurrenceId,
                 correlationId,
@@ -858,7 +859,18 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                     ...(invocation.signal ? { signal: invocation.signal } : {}),
                     ...(invocation.replayPlacement ? { replayPlacement: invocation.replayPlacement } : {}),
                     ...(invocation.requireCurrentIntent === true ? { requireCurrentIntent: true as const } : {}),
-                    ...(invocation.requestCurrentIntent ? { requestCurrentIntent: invocation.requestCurrentIntent } : {}),
+                    ...(invocation.requestCurrentIntent ? {
+                        requestCurrentIntent: async (request: TargetActionCurrentIntentRequest) => {
+                            const result = await invocation.requestCurrentIntent!(request);
+                            if (result.status === 'approved' && result.fingerprint === request.fingerprint
+                                && result.artifactId !== undefined) {
+                                // Approval custody, not this preparation attempt, owns replay identity.
+                                correlationId = result.artifactId;
+                                diagnosticScope = Object.freeze({ ...diagnosticScope, correlationId });
+                            }
+                            return result;
+                        },
+                    } : {}),
             });
             if (prepared.kind === 'settled') {
                 await complete();

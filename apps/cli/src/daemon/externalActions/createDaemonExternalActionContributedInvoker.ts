@@ -339,7 +339,7 @@ export function createDaemonExternalActionContributedApprovalReplay(input: Reado
                 ...currentIntent,
                 executionOriginV1: origin,
               })
-                ? { status: 'approved', fingerprint: currentIntent.fingerprint }
+                ? { status: 'approved', fingerprint: currentIntent.fingerprint, artifactId }
                 : { status: 'unavailable', code: 'plugin_action_current_intent_mismatch' }
             ),
             context: {

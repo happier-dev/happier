@@ -23,6 +23,8 @@ In 0.3 development source, client-placed host Actions invoked through an admitte
 
 Opening the OS file picker inside a standalone third-party embed frame is an explicit parity exclusion in the 0.3 development contract. Choosing local files remains a human UI interaction; agents attach files through the existing attachment Actions instead. The connected-app reverse channel does not address that frame, and no frame recipient identity or additional Composer reference is introduced for picker delivery. See [embedded attachments](/extending/embed#appearance-and-controls).
 
+Home continuation parity in the 0.3 development contract is authenticated-only: once the Account is authenticated, choosing a Home, retrying or refreshing, stopping the wait, relinking and opening Home are agent-requestable, human-decided operations. Bootstrap without a Home Account is an explicit UI-only exclusion because no agent exists before authentication. Key, credential and QR acquisition remain human-only and never enter Action input.
+
 Authority comes from the admitted invocation, never from Session content. A plugin running on someone's Session runtime keeps its own host-stamped principal no matter who wrote the latest message: the newest input author is correlation, and neither a `requestedBy`-style field nor input authorship delegates that person's Account. Host operations a plugin performs on a Session are recorded with the actual admitted execution Account plus Agent producer provenance, so an Agent post is visibly Agent-produced rather than attributed to the person who asked for it. Confirmation is a separate decision from authorization: an approval, or an explicit user waiver where the Action policy permits one, can satisfy the Action's confirmation requirement, but it never grants missing Session access, surface enablement, or endpoint consent.
 
 Bundled and externally installed plugins reach these Actions through the same `activate(api)` ABI, the same public SDK services seam, and the same Account Action settings. Trust is a user decision, not a packaging one: there is no smaller allowlist for an external plugin and no host-internal import that makes a first-party example work. Two surface distinctions are worth knowing before you pick a call site:
@@ -142,6 +144,22 @@ No field hints are published. Use the typed input accepted by `execute`.
 ### Input guidance
 
 No field hints are published. Use the typed input accepted by `execute`.
+
+## `account.home_continuation.invoke`
+
+**Continue Home connection** — Request an exact mounted authenticated Account continuation: choose a Home, retry, refresh, stop waiting, relink or open the enrolled Home. A human in that Account decides; key, credential and QR acquisition remain human-only.
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Request admission: `human_approval` — eligible host Agent, MCP and plugin callers may request human approval; API-token callers receive `present_user_required`.
+- Decision/effect authority: `present_user` — approval and the authorized effect require host-stamped present-user authority; request admission does not authorize self-approval.
+- Also surfaced on: `ui`, `agent`, `mcp`.
+
+### Input guidance
+
+- `operation` (text, required): Continuation step
+- `commandId` (text, required): Current mounted command
+- `homeServerIdentityId` (text): Chosen Home identity (choose only)
 
 ## `account.password.change`
 
@@ -10390,7 +10408,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - Approval: `required` result; `deferred` flow.
 - Request admission: `account_automation` — subject to surface, access, grant and approval policy.
 - Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
-- Also surfaced on: `ui`, `agent`, `cli`, `api`.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
 
@@ -10418,7 +10436,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - Approval: `required` result; `deferred` flow.
 - Request admission: `account_automation` — subject to surface, access, grant and approval policy.
 - Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
-- Also surfaced on: `ui`, `agent`, `cli`, `api`.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
 
@@ -11008,6 +11026,22 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `sessionId` (text): Session id
 - `discussionId` (text, required): Discussion id
+
+## `session.draft.append`
+
+**Append to a Session draft** — Persist an append handoff for the exact Session composer on the invoking Home. Preserves existing draft text and never submits a message.
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
+- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
+- Also surfaced on: `ui`, `agent`, `mcp`, `api`.
+
+### Input guidance
+
+- `sessionId` (text, required): Destination Session
+- `text` (text, required): Draft text
+- `sourceSessionId` (text): Source Session
 
 ## `session.draft.delete`
 
@@ -13006,7 +13040,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - Approval: `required` result; `blocking` flow.
 - Request admission: `account_automation` — subject to surface, access, grant and approval policy.
 - Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
-- Also surfaced on: `ui`, `cli`, `rpc`, `agent`, `mcp`, `api`.
+- Also surfaced on: `ui`, `cli`, `rpc`, `agent`, `mcp`, `voice`, `api`.
 
 ### Input guidance
 
@@ -13020,7 +13054,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - Approval: `required` result; `blocking` flow.
 - Request admission: `account_automation` — subject to surface, access, grant and approval policy.
 - Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
-- Also surfaced on: `ui`, `rpc`, `agent`, `mcp`, `api`.
+- Also surfaced on: `ui`, `rpc`, `agent`, `mcp`, `voice`, `api`.
 
 ### Input guidance
 
@@ -13034,11 +13068,25 @@ No field hints are published. Use the typed input accepted by `execute`.
 - Approval: `required` result; `blocking` flow.
 - Request admission: `account_automation` — subject to surface, access, grant and approval policy.
 - Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
-- Also surfaced on: `ui`, `cli`, `rpc`, `agent`, `mcp`, `api`.
+- Also surfaced on: `ui`, `cli`, `rpc`, `agent`, `mcp`, `voice`, `api`.
 
 ### Input guidance
 
 - `pageId` (text): Settings page
+
+## `settings.reset`
+
+**Reset a declared setting** — Discover declared settings, read or change bound preferences, or request a declared operation through its canonical owner. Operations retain their human interaction and credential trust requirements. Local preferences belong to the answering client.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
+- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
+- Also surfaced on: `ui`, `cli`, `rpc`, `agent`, `mcp`, `voice`, `api`.
+
+### Input guidance
+
+- `anchor` (text, required): Setting
 
 ## `settings.set`
 
@@ -13048,7 +13096,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - Approval: `required` result; `blocking` flow.
 - Request admission: `account_automation` — subject to surface, access, grant and approval policy.
 - Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
-- Also surfaced on: `ui`, `cli`, `rpc`, `agent`, `mcp`, `api`.
+- Also surfaced on: `ui`, `cli`, `rpc`, `agent`, `mcp`, `voice`, `api`.
 
 ### Input guidance
 
@@ -14580,6 +14628,20 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `sessionId` (text): Session id
 
+## `ui.voice_global.brief.close`
+
+**Close Voice brief** — Use the answering client’s existing Voice lifecycle, input, recovery and Inbox Brief owners. Mutations require the captured attempt identity; navigation cannot retarget them. Spoken requests cannot decide approvals.
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
+- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
+- Also surfaced on: `ui`, `agent`, `mcp`, `api`.
+
+### Input guidance
+
+- `expectedAttemptId` (text): Voice conversation
+
 ## `ui.voice_global.brief.request`
 
 **Brief me** — Use the answering client’s existing Voice lifecycle, input, recovery and Inbox Brief owners. Mutations require the captured attempt identity; navigation cannot retarget them. Spoken requests cannot decide approvals.
@@ -14621,6 +14683,20 @@ No field hints are published. Use the typed input accepted by `execute`.
 ### Input guidance
 
 - `expectedAttemptId` (text): Voice conversation
+
+## `ui.voice_global.companion.reveal`
+
+**Reveal Companion Voice section** — Use the answering client’s existing Voice lifecycle, input, recovery and Inbox Brief owners. Mutations require the captured attempt identity; navigation cannot retarget them. Spoken requests cannot decide approvals.
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
+- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
+- Also surfaced on: `ui`, `agent`, `mcp`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
 
 ## `ui.voice_global.dismiss`
 
@@ -14665,6 +14741,34 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `target` (json): Where Voice would start
 
+## `ui.voice_global.glance.close`
+
+**Close Voice glance** — Use the answering client’s existing Voice lifecycle, input, recovery and Inbox Brief owners. Mutations require the captured attempt identity; navigation cannot retarget them. Spoken requests cannot decide approvals.
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
+- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
+- Also surfaced on: `ui`, `agent`, `mcp`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `ui.voice_global.glance.open`
+
+**Open Voice glance** — Use the answering client’s existing Voice lifecycle, input, recovery and Inbox Brief owners. Mutations require the captured attempt identity; navigation cannot retarget them. Spoken requests cannot decide approvals.
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
+- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
+- Also surfaced on: `ui`, `agent`, `mcp`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
 ## `ui.voice_global.hold_begin`
 
 **Begin Voice hold-to-talk** — Use the answering client’s existing Voice lifecycle, input, recovery and Inbox Brief owners. Mutations require the captured attempt identity; navigation cannot retarget them. Spoken requests cannot decide approvals.
@@ -14706,6 +14810,35 @@ No field hints are published. Use the typed input accepted by `execute`.
 ### Input guidance
 
 - `expectedAttempt` (text, required): Voice conversation
+
+## `ui.voice_global.open_conversation`
+
+**Open Voice conversation** — Use the answering client’s existing Voice lifecycle, input, recovery and Inbox Brief owners. Mutations require the captured attempt identity; navigation cannot retarget them. Spoken requests cannot decide approvals.
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
+- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
+- Also surfaced on: `ui`, `agent`, `mcp`, `api`.
+
+### Input guidance
+
+- `expectedAttempt` (text, required): Voice conversation
+
+## `ui.voice_global.position.set`
+
+**Position Voice Island or Orb** — Use the answering client’s existing Voice lifecycle, input, recovery and Inbox Brief owners. Mutations require the captured attempt identity; navigation cannot retarget them. Spoken requests cannot decide approvals.
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
+- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
+- Also surfaced on: `ui`, `agent`, `mcp`, `api`.
+
+### Input guidance
+
+- `x` (number, required): Horizontal position
+- `y` (number, required): Vertical position
 
 ## `ui.voice_global.recover`
 
@@ -14750,6 +14883,34 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `expectedAttempt` (text, required): Voice conversation
 - `muted` (boolean, required): Muted
 
+## `ui.voice_global.setup.close`
+
+**Close Voice setup** — Use the answering client’s existing Voice lifecycle, input, recovery and Inbox Brief owners. Mutations require the captured attempt identity; navigation cannot retarget them. Spoken requests cannot decide approvals.
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
+- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
+- Also surfaced on: `ui`, `agent`, `mcp`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `ui.voice_global.setup.open`
+
+**Expand Voice setup** — Use the answering client’s existing Voice lifecycle, input, recovery and Inbox Brief owners. Mutations require the captured attempt identity; navigation cannot retarget them. Spoken requests cannot decide approvals.
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
+- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
+- Also surfaced on: `ui`, `agent`, `mcp`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
 ## `ui.voice_global.start`
 
 **Start Voice conversation** — Use the answering client’s existing Voice lifecycle, input, recovery and Inbox Brief owners. Mutations require the captured attempt identity; navigation cannot retarget them. Spoken requests cannot decide approvals.
@@ -14764,6 +14925,20 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `target` (json, required): Where Voice starts — Everywhere in the app, or one session.
 - `expectedAttempt` (json, required): Current Voice conversation — Empty when none is running.
+
+## `ui.voice_global.transcript.set_visible`
+
+**Show or hide Voice transcript** — Use the answering client’s existing Voice lifecycle, input, recovery and Inbox Brief owners. Mutations require the captured attempt identity; navigation cannot retarget them. Spoken requests cannot decide approvals.
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
+- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
+- Also surfaced on: `ui`, `agent`, `mcp`, `api`.
+
+### Input guidance
+
+- `visible` (boolean, required): Transcript visible
 
 ## `ui.voice_global.turn_control`
 

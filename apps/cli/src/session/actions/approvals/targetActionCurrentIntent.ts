@@ -124,7 +124,7 @@ export function createTargetActionCurrentIntentAdapter(deps: Readonly<{
       return { status: 'unavailable', code: 'plugin_action_current_intent_mismatch' };
     }
     return result.decision === 'approve'
-      ? { status: 'approved', fingerprint }
+      ? { status: 'approved', fingerprint, artifactId }
       : { status: 'rejected', code: PLUGIN_ACTION_CURRENT_INTENT_REJECTED_CODE };
   };
 }
