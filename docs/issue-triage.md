@@ -102,7 +102,7 @@ Choose `needs:*` separately by the next substantive human action. To retain `nee
 
 Preserve an existing higher verified `stage:*` instead of downgrading it. These are disposition rules, not new mutation authority: apply the exact or bounded standing authorization rules below and in `.agents/skills/happier-github-ops`; without authority, include the complete label proposal in the handoff.
 
-The release workflows own normal advancement. Before binding a candidate they snapshot only the open issue stages proven by the selected source topology: a current-`dev` nightly snapshots source, `dev` → `preview` snapshots source/dev, `preview` → `main` snapshots preview, and direct `dev` → `main` snapshots source/dev. After the existing post-promotion verification succeeds, they re-read each snapshotted issue and advance only issues that remain open at the expected earlier stage:
+The release workflows own normal advancement. Before binding a candidate they snapshot only the open issue stages proven by the selected source topology: a current-`dev` nightly snapshots source, `dev` → `preview` snapshots source/dev, `preview` → `main` snapshots preview, direct `dev` → `main` snapshots source/dev, and the coordinated `dev` → preview + main path snapshots source/dev/preview once. After post-promotion verification and canonical terminal channel completion succeed, they re-read each snapshotted issue and advance only issues that remain open at the expected earlier stage. The coordinated path records the highest completed channel: production completion advances to stable; preview completion alone advances source/dev issues to preview. Failure of the other channel does not erase verified availability:
 
 ```text
 ordinary current-dev nightly: stage:source  -> stage:dev
@@ -110,7 +110,19 @@ preview release:             stage:dev     -> stage:preview
 stable release:              stage:preview -> stage:stable
 ```
 
-Issues labeled after a snapshot wait for the next matching release. Failed or dry-run releases move nothing. A nightly resume or a manually selected non-`dev` source also moves nothing because its older candidate cannot safely represent the current source queue. Reconciliation is idempotent, preserves unrelated labels, tolerates an add-before-remove partial retry, and skips closed issues or issues whose stage was manually changed. It never comments, closes, reopens, assigns, or edits other fields.
+Issues labeled after a snapshot wait for the next matching release. Failed channels and dry-run releases move nothing. Standalone desktop or store retries do not establish canonical channel completion and cannot advance stages. A nightly resume or a manually selected non-`dev` source also moves nothing because its older candidate cannot safely represent the current source queue. Reconciliation is idempotent, preserves unrelated labels, tolerates an add-before-remove partial retry, and skips closed issues or issues whose stage was manually changed. It never comments, closes, reopens, assigns, or edits other fields.
+
+Pinned release snapshots intersect the still-open stage queue with correction
+references in the exact candidate's cumulative commit ancestry. Use a `Refs`,
+`Fixes`, `Closes` or `Resolves` line identifying the current complete correction;
+qualified references must name this repository. Older references remain eligible
+after target branch promotion, including a resumed partial release. Issues with
+newer reference-bearing work between the candidate and the bound current dev
+source stay queued: an older partial reference cannot prove the complete
+correction. Candidates outside canonical dev ancestry fail closed. Issues without
+candidate references remain queued with an explicit provenance diagnostic; a
+manually applied stage label does not replace candidate inclusion evidence.
+Current-dev nightlies retain their whole-queue contract.
 
 This also covers a channel bypass: a preview release can move a still-`stage:source` issue directly to `stage:preview`, and an authorized direct `dev` → `main` release can move any snapshotted earlier-stage issue to `stage:stable`. Higher-channel availability subsumes the skipped lower channel; it does not require a synthetic lower-channel release.
 

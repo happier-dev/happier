@@ -28,8 +28,14 @@ test('the top-level release authority owns combined dispatch and one shared sour
   assert.equal(production.with.authorized_promotion_source_sha, '${{ inputs.authorized_promotion_source_sha }}');
   assert.equal(release.jobs.source_validation.with.base_refs, "${{ inputs.environment == 'preview-and-production' && 'preview,main' || inputs.environment == 'preview' && 'preview' || 'main' }}");
   const advance = release.jobs.advance_release_issues;
-  assert.match(advance.if, /needs\.release_preview\.result == 'success'/u);
-  assert.match(advance.if, /needs\.release_production\.result == 'success'/u);
+  assert.match(advance.if, /needs\.release_preview\.outputs\.release_complete == 'true' \|\| needs\.release_production\.outputs\.release_complete == 'true'/u);
+  assert.doesNotMatch(advance.if, /needs\.release_(?:preview|production)\.result/u);
+  assert.ok(release.jobs.snapshot_release_issues.outputs.preview_issues_json);
+  const snapshotStep = release.jobs.snapshot_release_issues.steps.find(step => step.id === 'snapshot');
+  assert.equal(snapshotStep.env.CANDIDATE_SHA, '${{ needs.release_preflight.outputs.source_sha }}');
+  for (const line of snapshotStep.run.split('\n').filter(line => line.includes('reconcile-issue-stage.mjs snapshot'))) {
+    assert.match(line, /--candidate-sha "\$CANDIDATE_SHA"/u);
+  }
   assert.equal(release.jobs.release_single.uses, './.github/workflows/release-channel.yml');
 });
 
@@ -59,11 +65,26 @@ test('channel publication consumes shared source evidence without duplicating so
   assert.equal(release.on.workflow_dispatch.inputs.validation_profile.default, 'auto');
   assert.match(release.jobs.resolve_validation_profile.steps.find(step => step.id === 'resolve').env.VALIDATION_PROFILE, /preview-and-production.*stable.*integrated/u);
   const advance = release.jobs.advance_release_issues;
-  assert.match(advance.if, /needs\.release_preview\.outputs\.release_verified == 'true'/u);
-  assert.match(advance.if, /needs\.release_production\.outputs\.release_verified == 'true'/u);
-  const reconcile = advance.steps.find(step => step.name === 'Advance the initially eligible issues directly to stable').run;
-  assert.match(reconcile, /--from-stage "stage:source"[\s\S]*--to-stage "stage:stable"/u);
-  assert.match(reconcile, /--from-stage "stage:dev"[\s\S]*--to-stage "stage:stable"/u);
+  const reconcile = advance.steps.find(step => step.env?.TO_STAGE);
+  assert.equal(reconcile.env.TO_STAGE, "${{ needs.release_production.outputs.release_complete == 'true' && 'stage:stable' || 'stage:preview' }}");
+  const evaluate = (expression, needs, dryRun = false) => Function('needs', 'inputs', 'always',
+    `return ${expression.slice(3, -2).trim()};`)(needs, { dry_run: dryRun, environment: 'preview-and-production' }, () => true);
+  for (const [previewComplete, productionComplete, expectedStage] of [
+    ['false', 'false', null], ['true', 'false', 'stage:preview'],
+    ['false', 'true', 'stage:stable'], ['true', 'true', 'stage:stable'],
+  ]) {
+    const needs = {
+      snapshot_release_issues: { outputs: { eligible: 'true' } },
+      release_preview: { result: previewComplete === 'true' ? 'success' : 'failure', outputs: { release_complete: previewComplete } },
+      release_production: { result: productionComplete === 'true' ? 'success' : 'failure', outputs: { release_complete: productionComplete } },
+    };
+    assert.equal(evaluate(advance.if, needs), expectedStage !== null);
+    assert.equal(evaluate(advance.if, needs, true), false, 'dry runs never advance even when channel evidence is complete');
+    if (expectedStage) assert.equal(evaluate(reconcile.env.TO_STAGE, needs), expectedStage);
+  }
+  assert.match(reconcile.run, /--from-stage "stage:source"[\s\S]*--to-stage "\$TO_STAGE"/u);
+  assert.match(reconcile.run, /--from-stage "stage:dev"[\s\S]*--to-stage "\$TO_STAGE"/u);
+  assert.match(reconcile.run, /if \[ "\$TO_STAGE" = "stage:stable" \]; then[\s\S]*--from-stage "stage:preview"[\s\S]*--to-stage "\$TO_STAGE"/u);
   await assert.rejects(readFile(join(repoRoot, '.github/workflows/release-preview-and-production.yml')), { code: 'ENOENT' });
 });
 
