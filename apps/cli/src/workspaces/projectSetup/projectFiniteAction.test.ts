@@ -35,6 +35,12 @@ import type { PtyExitEvent, PtyProcess, PtySpawnParams } from '@/terminal/pty/pr
 import { createProjectFiniteAction, type ProjectFiniteActionRuntime } from './projectFiniteAction';
 import { createProjectNativeEnvironmentIoForHost } from '@/plugins/runtime/invocation/services/exec';
 import * as processTreeBoundary from '@/agent/runtime/process/killProcessTree';
+import { admitRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
+import { projectExternalActionRequesterHttpAuthorization } from '@/api/externalActionExecutionAuthorization';
+import nacl from 'tweetnacl';
+import { ApiMachineClient } from '@/api/apiMachine';
+import { reviewProjectSetupEffect } from './projectSetupPreparation';
+import { createProjectSetupSuccessStore } from './projectSetupSuccess';
 
 const turn = () => new Promise<void>(resolve => setImmediate(resolve));
 // The Home HTTP boundary publishes this fixture Account identity; it is not caller-supplied Action authority.
@@ -92,7 +98,8 @@ describe('authenticated finite Project Action owner', () => {
         });
         managers.push(terminalSessions);
         let sequence = 0;
-        const operationRuntime = createHostActionOperationRuntime({ machineId: 'machine', resolveAccountId: async () => 'owner',
+        const operationRuntime = createHostActionOperationRuntime({ machineId: 'machine', custodyBinding: { serverId: 'home', installationId: 'installation' },
+            resolveAccountId: async () => 'owner',
             generateOperationId: () => ++sequence === 1 ? 'operation' : `operation-${sequence}` });
         let allowAdHoc = false;
         let workersEnabled = false;
@@ -315,6 +322,42 @@ describe('authenticated finite Project Action owner', () => {
         await expect(access(join(h.root, '.happier/project.json'))).rejects.toMatchObject({ code: 'ENOENT' });
     });
 
+    it('keeps primary native preparation truthful without reporting a worker copy before launch', async () => {
+        const h = await harness();
+        const scope = { accountId: 'owner', machineId: 'machine' };
+        const resolveTool = h.runtime.nativeIo.resolveTool;
+        let continueTool!: () => void;
+        const toolAllowed = new Promise<void>(resolve => { continueTool = resolve; });
+        let toolPending = false;
+        // Hold the external installed-tool boundary after dequeue revalidation; all
+        // native preparation, reservation and snapshot logic remains real.
+        vi.spyOn(h.runtime.nativeIo, 'resolveTool').mockImplementation(async (tool, request) => {
+            if (h.runtime.workerAdmission.dependencies().some(entry => entry.operationId === 'operation' && entry.state === 'copying')) {
+                toolPending = true;
+                await toolAllowed;
+            }
+            return resolveTool(tool, request);
+        });
+        try {
+            expect(await h.rpcInvoke('projects.script.run', { workspace: h.address,
+                selection: { kind: 'native', source: { kind: 'native', tool: 'make', file: 'Makefile', target: 'check' } } }))
+                .toMatchObject({ operation: { operationId: 'operation' } });
+            await expect.poll(() => toolPending).toBe(true);
+            const preparing = h.operationRuntime.store.get(scope, 'operation');
+            expect.soft(preparing).toMatchObject({ state: 'accepted', progress: { kind: 'phase', phase: 'preparing' },
+                domainRef: { machineId: 'machine', workspaceRefId: 'accepted', cwd: h.root } });
+            expect(preparing?.domainRef).not.toHaveProperty('terminalId');
+            expect(h.spawned).toEqual([]);
+            continueTool();
+            await expect.poll(() => h.spawned.length).toBe(1);
+            h.spawned[0]!.pty.exit(0);
+            await expect.poll(() => h.operationRuntime.store.get(scope, 'operation')?.state).toBe('succeeded');
+        } finally {
+            continueTool();
+            h.operationRuntime.runner.cancel(scope, 'operation');
+        }
+    });
+
     it('refuses raw caller authority, missing/stale transport admission, and foreign requester credentials before network or process effects', async () => {
         const h = await harness();
         const input = { workspace: h.address, phase: 'setup' };
@@ -333,12 +376,133 @@ describe('authenticated finite Project Action owner', () => {
         expect(h.get).not.toHaveBeenCalled(); expect(h.post).not.toHaveBeenCalled(); expect(h.spawned).toEqual([]);
     });
 
+    it.each(['native', 'secret-exec'] as const)('runs an admitted restricted requester on a different custodian without borrowing the owner Account (%s)', async kind => {
+        const h = await harness(kind === 'secret-exec' ? { version: 1,
+            environmentVariables: [{ name: 'API_KEY', kind: 'secret', required: true }] } : undefined);
+        const actionId = kind === 'native' ? 'projects.script.run' : 'projects.compute.exec';
+        h.allowAdHoc();
+        const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-proof', binding: {
+            accountId: 'bob', principalId: 'bob', credentialId: 'pat', custodianAccountId: 'owner', accountEncryptionMode: 'plain',
+            serverIdentityId: 'stable-home', machineId: 'machine', installationId: 'installation', actionId,
+            requestId: 'request', requestEnvelopeDigest: 'a'.repeat(43), target: { kind: 'machine', machineId: 'machine' },
+            grant: { v: 1, actions: { families: [], ids: [actionId] }, targets: { sessions: [], machines: ['machine'] },
+                approve: false, origins: [], models: null, permissionModes: null, create: null },
+        } });
+        h.get.mockImplementation(async (url: string) => {
+            if (url.endsWith('/v1/account/profile')) return { status: 200, data: { id: 'bob' } };
+            if (url.endsWith('/v2/account/settings')) return { status: 200, data: { content: { t: 'plain', v: { secrets: [{
+                id: 'bob-key', name: 'Requester key', kind: 'token', createdAt: 1, updatedAt: 1,
+                encryptedValue: { _isSecretValue: true, value: 'bob-private-value' },
+            }] } }, version: 1 } };
+            return { status: 200, data: { mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
+        });
+        const admitted = await admitRequesterAccountActionContext({ authorization, credentials: { token: 'bob', encryption: null },
+            serverId: 'home', serverIdentityId: 'stable-home', serverHttpBaseUrl: 'https://home.example', isCurrent: async () => true });
+        if (!admitted) throw new Error('Requester custody not admitted');
+        const keys = nacl.sign.keyPair();
+        // Home verification and row IO are HTTP boundaries; custody/crypto/finite logic remain real.
+        const rowPost = h.post.getMockImplementation()!;
+        h.post.mockImplementation(async (url, body, options) => String(url).endsWith('/verify')
+            ? { status: 200, data: { ok: true } } : rowPost(url, body, options));
+        const carrier = await projectExternalActionRequesterHttpAuthorization({ authorization: admitted.authorization,
+            serverId: 'home', serverIdentityId: 'stable-home', serverHttpBaseUrl: 'https://home.example',
+            target: authorization.binding.target, installationId: 'installation', privateKey: keys.secretKey, isCurrent: admitted.isCurrent });
+        if (!carrier) throw new Error('Requester HTTP custody not admitted');
+        const { credentials: _owner, ...ports } = h.runtime;
+        const runtime: ProjectFiniteActionRuntime = { ...ports, accountId: 'bob', accountAuthorization: carrier, isCurrent: admitted.isCurrent };
+        const ingress: RpcHandlerContext = { ...h.context, callerInputAuthorization: carrier,
+            callerInputConstraints: { models: null, permissionModes: null },
+            machineAdmission: { ...h.context.machineAdmission!, actorAccountId: 'bob' } };
+        const result = await createProjectFiniteAction(runtime, ingress)({ actionId,
+            input: kind === 'native' ? { workspace: h.address,
+                selection: { kind: 'native', source: { kind: 'native', tool: 'make', file: 'Makefile', target: 'check' } } }
+                : { workspace: h.address, executable: '/managed/checked', argv: [], cwd: h.root,
+                    environmentBindings: { v: 1, bindings: { API_KEY: { ref: 'bob-key' } } } },
+            context: { serverId: 'home', authority: 'account_automation', actionRequestId: 'request' } });
+        expect(result).toMatchObject({ operation: { scope: { accountId: 'bob' } } });
+        await admitted.dispose();
+        expect(await admitted.isCurrent()).toBe(true);
+        await expect.poll(() => h.spawned.length).toBe(1);
+        if (kind === 'secret-exec') expect(h.spawned[0]!.params.options.env?.API_KEY).toBe('bob-private-value');
+        expect(JSON.stringify(result)).not.toContain('bob-private-value');
+        expect(h.post.mock.calls.filter(([url]) => !String(url).endsWith('/verify')).every(([, , options]) =>
+            options?.headers?.Authorization === undefined)).toBe(true);
+        h.spawned[0]!.pty.exit(0);
+        await expect.poll(() => h.operationRuntime.store.get({ accountId: 'bob', machineId: 'machine' }, 'operation')?.state).toBe('succeeded');
+        expect(await admitted.isCurrent()).toBe(false);
+    });
+
+    it('uses the installed readiness owner for current bytes and withdraws readiness on requester retirement', async () => {
+        const h = await harness();
+        const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-proof', binding: {
+            accountId: 'bob', principalId: 'bob', credentialId: 'pat', custodianAccountId: 'owner', accountEncryptionMode: 'plain',
+            serverIdentityId: 'stable-home', machineId: 'machine', installationId: 'installation', actionId: 'projects.inspect',
+            requestId: 'request', requestEnvelopeDigest: 'a'.repeat(43), target: { kind: 'machine', machineId: 'machine' },
+            grant: { v: 1, actions: { families: [], ids: ['projects.inspect'] }, targets: { sessions: [], machines: ['machine'] },
+                approve: false, origins: [], models: null, permissionModes: null, create: null },
+        } });
+        h.get.mockImplementation(async (url: string) => {
+            if (url.endsWith('/v1/account/profile')) return { status: 200, data: { id: 'bob' } };
+            if (url.endsWith('/v2/account/settings')) return { status: 200, data: { content: { t: 'plain', v: {} }, version: 1 } };
+            return { status: 200, data: { mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
+        });
+        const admitted = await admitRequesterAccountActionContext({ authorization, credentials: { token: 'bob', encryption: null },
+            serverId: 'home', serverIdentityId: 'stable-home', serverHttpBaseUrl: 'https://home.example', isCurrent: async () => true });
+        if (!admitted) throw new Error('Requester custody not admitted');
+        const rowPost = h.post.getMockImplementation()!;
+        h.post.mockImplementation(async (url, body, options) => String(url).endsWith('/verify')
+            ? { status: 200, data: { ok: true } } : rowPost(url, body, options));
+        const carrier = await projectExternalActionRequesterHttpAuthorization({ authorization: admitted.authorization,
+            serverId: 'home', serverIdentityId: 'stable-home', serverHttpBaseUrl: 'https://home.example', target: authorization.binding.target,
+            installationId: 'installation', privateKey: nacl.sign.keyPair().secretKey, isCurrent: admitted.isCurrent });
+        if (!carrier) throw new Error('Requester HTTP custody not admitted');
+        const { credentials: _owner, ...ports } = h.runtime;
+        const runtime: ProjectFiniteActionRuntime = { ...ports, accountId: 'bob', accountAuthorization: carrier, isCurrent: admitted.isCurrent };
+        const ingress: RpcHandlerContext = { ...h.context, callerInputAuthorization: carrier,
+            callerInputConstraints: { models: null, permissionModes: null },
+            machineAdmission: { ...h.context.machineAdmission!, actorAccountId: 'bob' } };
+        // Install the real runtime fixture as constructor state; unrelated sockets/Session registration are outside this inspection.
+        const client: ApiMachineClient = Object.assign(Object.create(ApiMachineClient.prototype), {
+            machine: { id: 'machine' }, machineRpcWorkingDirectory: h.root,
+            filesystemAccessPolicy: { kind: 'restrictedRoots', roots: [h.root] },
+            rpcLifecycleRegistrations: [{ resolveProjectFiniteRuntime: async () => runtime }],
+        });
+        const action = Reflect.apply(client.createProjectDefinitionAction, client, ['home', ingress]);
+        const inspect = () => action({ actionId: 'projects.inspect', input: { workspace: h.address }, context: { serverId: 'home' } });
+        expect(await inspect()).toMatchObject({ setupReadiness: { kind: 'notRequired' } });
+        await mkdir(join(h.root, '.happier'));
+        const save = (manifest: unknown) => writeFile(join(h.root, '.happier/project.json'), JSON.stringify(manifest));
+        await save({ version: 1, workspace: { setup: [{ kind: 'command', command: 'echo setup' }] } });
+        expect(await inspect()).toMatchObject({ setupReadiness: { kind: 'unprepared' } });
+        const workspace = h.workspaceRefs[0]!;
+        const reviewed = await reviewProjectSetupEffect({ workspace, projectAssociation: { workspace, project: { serverId: 'home', projectId: 'project' } },
+            requester: { authorization: carrier, effectActionId: 'projects.inspect', serverHttpBaseUrl: runtime.serverHttpBaseUrl },
+            purpose: 'setup', platform: { os: 'linux', arch: 'x64' }, nativeIo: h.runtime.nativeIo });
+        if (reviewed.kind !== 'reviewed') throw new Error(reviewed.code);
+        await createProjectSetupSuccessStore({ homeDir: h.runtime.successHomeDir! }).recordCompletion({ serverId: 'home', machineId: 'machine', workspaceRefId: workspace.id },
+            { v: 1, workspaceRefId: workspace.id, completedAtMs: 123, ...reviewed.plan.successBasis });
+        expect(await inspect()).toMatchObject({ setupReadiness: { kind: 'current', completedAtMs: 123 } });
+        await save({ version: 1, workspace: { setup: [{ kind: 'command', command: 'echo changed' }] } });
+        expect(await inspect()).toMatchObject({ setupReadiness: { kind: 'unprepared' } });
+        await save({ version: 1, environmentVariables: [{ name: 'UNBOUND', kind: 'config', required: true }] });
+        expect(await inspect()).toMatchObject({ setupReadiness: { kind: 'needsReview', code: 'project_environment_binding_unavailable' } });
+        expect(h.post.mock.calls.filter(([url]) => !String(url).endsWith('/verify')).every(([, , options]) =>
+            options?.headers?.Authorization === undefined)).toBe(true);
+        await admitted.dispose();
+        expect(await inspect()).toMatchObject({ setupReadiness: { kind: 'unknown', code: 'project_requester_credentials_unavailable' } });
+        expect(h.spawned).toEqual([]);
+    });
+
     it('keeps setup-effect consent distinct from an already-approved invocation and returns only reviewed data', async () => {
         const h = await harness({ version: 1, workspace: { setup: [{ kind: 'command', command: 'echo setup' }] } });
         const result = await h.invoke('projects.script.run', { workspace: h.address, selection: { kind: 'native', source: { kind: 'native', tool: 'make', file: 'Makefile', target: 'check' } } });
         expect(result).toMatchObject({ operation: { operationId: 'operation' } });
         const scope = { accountId: 'owner', machineId: 'machine' };
         await expect.poll(() => h.operationRuntime.store.get(scope, 'operation')?.setupReview?.code).toBe('project_setup_consent_required');
+        const preparing = h.operationRuntime.store.get(scope, 'operation');
+        expect(preparing).toMatchObject({ state: 'accepted', progress: { kind: 'phase', phase: 'setup' },
+            domainRef: { purpose: 'script', machineId: 'machine', workspaceRefId: 'accepted', cwd: h.root } });
+        expect(preparing?.domainRef).not.toHaveProperty('terminalId');
         const reviewed = ProjectSetupConsentFailureDetailsV1Schema.parse(h.operationRuntime.store.get(scope, 'operation')!.setupReview);
         // This contract compares consent intent, not concurrent operation-id
         // allocation. Admit each original request before asserting its receipt.
@@ -498,7 +662,7 @@ describe('authenticated finite Project Action owner', () => {
         }
     });
 
-    it('publishes reserved preparation after leaving the queue without claiming a process has launched', async () => {
+    it('publishes observed copying after leaving the queue without claiming a process has launched', async () => {
         const h = await harness(portableNativeManifest, 1, 'source-machine');
         await h.addWorkerTarget();
         const input = { workspace: h.address,
@@ -520,7 +684,7 @@ describe('authenticated finite Project Action owner', () => {
         await expect.poll(() => h.runtime.workerAdmission.dependencies().find(entry => entry.operationId === 'operation-2')?.state).toBe('copying');
         expect(h.spawned).toHaveLength(1);
         const preparing = h.operationRuntime.store.get(scope, 'operation-2');
-        expect(preparing).toMatchObject({ state: 'accepted', progress: { kind: 'phase', phase: 'preparing', label: expect.any(String) } });
+        expect(preparing).toMatchObject({ state: 'accepted', progress: { kind: 'phase', phase: 'copying', label: expect.any(String) } });
         expect(preparing!.revision).toBeGreaterThan(queued!.revision);
         expect(preparing?.progress).not.toHaveProperty('current');
         expect(preparing?.progress).not.toHaveProperty('total');
@@ -683,6 +847,11 @@ describe('authenticated finite Project Action owner', () => {
             choice: { kind: 'workers', destination: { kind: 'machine', machineId: 'machine' } } };
         expect(await h.rpcInvoke('projects.script.run', sourceInput)).toMatchObject({ operation: { operationId: 'operation', domainRef: { workspaceRefId: target.id } } });
         await expect.poll(() => h.runtime.workerAdmission.dependencies({ workspaceRefId: h.address.workspaceId, relationshipId: 'source-worker' })[0]?.state).toBe('copying');
+        const copying = h.operationRuntime.store.get({ accountId: 'owner', machineId: 'machine' }, 'operation');
+        expect.soft(copying).toMatchObject({ state: 'accepted', progress: { kind: 'phase', phase: 'copying' },
+            domainRef: { purpose: 'script', machineId: 'machine', workspaceRefId: target.id, cwd: target.rootPath,
+                sourceWorkspace: h.address, script: { name: 'checked' } } });
+        expect(copying?.domainRef).not.toHaveProperty('terminalId');
         expect(h.spawned).toEqual([]);
         h.continueCopy();
         await expect.poll(() => h.spawned.length).toBe(1);
