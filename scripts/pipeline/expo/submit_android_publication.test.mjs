@@ -52,7 +52,6 @@ test('production Android refuses missing Play credentials before any EAS submiss
   assert.doesNotMatch(result.stdout, /eas-cli@.*submit/);
 });
 
-
 test('misaligned native AAB fails before local or cloud upload and store writes', (t) => {
   for (const cloud of [false, true]) {
     const { result, calls, restored } = submissionFixture(t, { cloud, misaligned: true });
@@ -77,6 +76,16 @@ test('nonproduction local, exact cloud and latest cloud submissions cannot bypas
   assert.ok(upload.args.includes('--id') && upload.args.includes('exact-build'));
   assert.equal(upload.args.includes('--latest'), false);
   assert.equal(calls.some((call) => call.kind === 'http' && call.url.includes('androidpublisher')), false);
+});
+
+test('invalid prerelease Android artifacts do not prevent a requested iOS submission', (t) => {
+  const { result, calls, restored } = submissionFixture(t, { nonproduction: true, cloud: true, latest: true, misaligned: true, platform: 'all' });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /LOAD alignment 4096/u);
+  const uploads = calls.filter((call) => call.kind === 'eas' && call.args.includes('submit'));
+  assert.equal(uploads.length, 1);
+  assert.equal(uploads[0].args[uploads[0].args.indexOf('--platform') + 1], 'ios');
+  assert.equal(restored, true);
 });
 
 test('a newer pending latest build never causes upload of the older finished binary', (t) => {
