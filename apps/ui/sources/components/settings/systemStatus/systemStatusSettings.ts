@@ -7,12 +7,12 @@ export const SYSTEM_STATUS_SETTINGS = defineSettingsPage({
         currentServer: {
             titleKey: 'systemStatus.sections.currentServer',
             settings: {
-                activeHomeHealth: { titleKey: 'systemStatus.server.activeHomeHealth' },
+                activeHomeHealth: {},
             },
         },
         page: {
             settings: {
-                copyJson: { titleKey: 'systemStatus.actions.copyJson', descriptionKey: 'systemStatus.actions.copyJsonSubtitle' },
+                copyJson: {},
             },
         },
     },

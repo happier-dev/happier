@@ -7,12 +7,12 @@ export const DIAGNOSIS_SETTINGS = defineSettingsPage({
         overview: {
             titleKey: 'diagnosis.sections.overview',
             settings: {
-                activeServer: { titleKey: 'diagnosis.overview.activeServer' },
+                activeServer: {},
             },
         },
         page: {
             settings: {
-                copyReport: { titleKey: 'diagnosis.actions.copyReport', descriptionKey: 'diagnosis.actions.copyReportSubtitle' },
+                copyReport: {},
             },
         },
     },

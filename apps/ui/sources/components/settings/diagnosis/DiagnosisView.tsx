@@ -288,11 +288,6 @@ export const DiagnosisView = React.memo(function DiagnosisView() {
         }
     });
 
-    React.useEffect(() => {
-        parsePasted();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []);
-
     const cachedAttributionCount = React.useMemo(() => {
         const list = machineListByServerId[activeServerSnapshot.serverId];
         if (!Array.isArray(list)) return 0;
