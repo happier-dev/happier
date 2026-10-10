@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { View, type LayoutChangeEvent } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import type { MachineLiveStreamInputControlKindV1 } from '@happier-dev/protocol';
+import type { ComputerGrantStatusV1, MachineLiveStreamInputControlKindV1 } from '@happier-dev/protocol';
 
 import {
     buildBrowserStreamSidebandControl,
@@ -24,6 +24,8 @@ import { Typography } from '@/constants/Typography';
 import type { BrowserCopresence } from '@/sync/domains/browser/automation/copresence';
 import type { LiveStreamInputGesture } from '@/sync/domains/machines/peer/mediation/stream/inputGesture';
 import { t } from '@/text';
+
+import { ComputerPermissionCard, type ComputerOpenSettingsState } from './ComputerPermissionCard';
 
 /** The person's gestures W7's native source turns into input: click and keys (no drag yet). */
 const SCREEN_INPUT_KINDS: ReadonlySet<MachineLiveStreamInputControlKindV1> = new Set(['tap', 'keyboard_text', 'keyboard_key']);
@@ -75,6 +77,12 @@ const stylesheet = StyleSheet.create((theme) => ({
         flex: 1,
         justifyContent: 'center',
     },
+    // The last picture stays, dimmed, while the stream is paused: never a blank box.
+    pausedScrim: {
+        ...StyleSheet.absoluteFillObject,
+        backgroundColor: theme.colors.overlay.scrimSoft,
+        pointerEvents: 'none',
+    },
 }));
 
 export type ComputerScreenViewerProps = Readonly<{
@@ -99,8 +107,75 @@ export type ComputerScreenViewerProps = Readonly<{
     onStopSharing: () => void;
     /** Phone and narrow panes: the capsule spans the frame in thumb reach. */
     compact?: boolean;
+    /**
+     * `bar` names the window above the picture (the Details pane). `none`: the picture is the
+     * viewer; its frame's floating controls carry the identity and the window options.
+     */
+    chrome?: 'bar' | 'none';
+    /** The machine allows watching but denies mouse and keyboard (its OS input grant). */
+    inputDenied?: boolean;
+    /** The machine's presence, when known: an unreachable machine is the cause said in the picture. */
+    machineOnline?: boolean;
+    /**
+     * The machine's OS grants for the shared source. While screen capture is not granted there is no
+     * picture to show, and the picture says which permission to allow and where.
+     */
+    grants?: ComputerGrantStatusV1 | null;
+    openSettings?: ComputerOpenSettingsState;
+    onOpenSettings?: (permission: 'capture' | 'input') => void;
+    /** Re-read the machine's grants and the selection (the permission card's Check again). */
+    onRefresh?: () => void;
+    /**
+     * The viewer presentation draws the presence capsule below the picture itself; the picture then
+     * reports whether it is up and its own size, so the viewer can shape and arbitrate around it.
+     */
+    onPictureChange?: (picture: ComputerScreenPicture) => void;
     testID?: string;
 }>;
+
+export type ComputerScreenPicture = Readonly<{
+    up: boolean;
+    size: Readonly<{ width: number; height: number }> | null;
+}>;
+
+/** What the agent is doing on the shared window, in this surface's words. */
+export function resolveComputerAgentTitle(props: Pick<ComputerScreenViewerProps, 'presence' | 'agent' | 'agentActing' | 'access' | 'appName' | 'targetTitle'>): string | undefined {
+    if (props.presence.kind !== 'agent') return undefined;
+    const agentName = props.agent.name;
+    const agentTarget = props.appName ?? props.targetTitle ?? t('computerUse.viewer.tabFallback');
+    return props.agentActing
+        ? t('computerUse.viewer.agentUsing', { agent: agentName, target: agentTarget })
+        : t(props.access === 'see' ? 'computerUse.viewer.agentCanSee' : 'computerUse.viewer.agentCanUse', { agent: agentName, target: agentTarget });
+}
+
+/** Screen capture is not granted on the machine, so the picture is the permission card. */
+export function computerCaptureNeedsPermission(props: Pick<ComputerScreenViewerProps, 'shared' | 'grants'>): boolean {
+    return props.shared && props.grants != null && props.grants.capture !== 'granted';
+}
+
+/**
+ * Who acts on the shared window and the one control that changes it, for the presence capsule
+ * wherever it is drawn (over the pane's picture, below the viewer's). While the machine denies input
+ * the person can only watch: the capsule says so once and offers no Take control.
+ */
+export function resolveComputerPresenceCapsule(
+    props: Pick<ComputerScreenViewerProps, 'presence' | 'agent' | 'agentActing' | 'access' | 'appName' | 'targetTitle' | 'checking' | 'inputDenied' | 'onTakeControl' | 'onHandBack' | 'onCheckAgain'>,
+): Omit<BrowserPresenceCapsuleProps, 'testID' | 'compact' | 'placement'> {
+    return {
+        presence: props.presence,
+        agent: props.agent,
+        agentTitle: resolveComputerAgentTitle(props),
+        agentNote: props.inputDenied ? t('computerUse.viewer.controlNotAllowed') : undefined,
+        checking: props.checking,
+        onTakeControl: props.inputDenied ? undefined : props.onTakeControl,
+        onHandBack: props.onHandBack,
+        onCheckAgain: props.onCheckAgain,
+    };
+}
+
+function formatFrameTime(atMs: number): string {
+    return new Date(atMs).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
 
 function ViewerStreamInput(props: Readonly<{
     input: NonNullable<BrowserStreamedSurfaceRuntime['input']>;
@@ -155,9 +230,17 @@ export function ComputerScreenViewer(props: ComputerScreenViewerProps): React.Re
     const target = props.targetTitle ?? t('computerUse.viewer.tabFallback');
     const machine = props.machineName ?? '';
     const agentName = props.agent.name;
-    const agentTarget = props.appName ?? target;
     const [menuOpen, setMenuOpen] = React.useState(false);
+    const onPictureChange = props.onPictureChange;
+    const frameWidth = frameSize?.width;
+    const frameHeight = frameSize?.height;
+    React.useEffect(() => {
+        onPictureChange?.({ up: pictureUp, size: frameWidth && frameHeight ? { width: frameWidth, height: frameHeight } : null });
+    }, [frameHeight, frameWidth, onPictureChange, pictureUp]);
 
+    const pausedAtMs = playerState?.lastFrameAtMs;
+    const onRetryStream = props.stream?.onRetry;
+    const needsPermission = computerCaptureNeedsPermission(props);
     const stage = !props.shared ? (
         <View style={stylesheet.centered} testID={`${testID}-not-shared`}>
             <SurfaceStateCard
@@ -168,12 +251,34 @@ export function ComputerScreenViewer(props: ComputerScreenViewerProps): React.Re
                 action={{ label: t('computerUse.request.choose'), onPress: props.onChooseWindow }}
             />
         </View>
+    ) : needsPermission && props.grants && props.onOpenSettings ? (
+        <View style={stylesheet.centered} testID={`${testID}-permission`}>
+            <ComputerPermissionCard
+                machineName={machine}
+                grants={props.grants}
+                openSettings={props.openSettings ?? 'idle'}
+                onOpenSettings={props.onOpenSettings}
+                onCheckAgain={props.onRefresh ?? props.onCheckAgain}
+                testID={`${testID}-permission-card`}
+            />
+        </View>
+    ) : props.machineOnline === false && !pictureUp ? (
+        // Watching is passive: it never wakes the machine, so the way back is the machine's own.
+        <View style={stylesheet.centered} testID={`${testID}-offline`}>
+            <SurfaceStateCard
+                kind="unavailable"
+                iconName="moon"
+                title={t('computerUse.viewer.offlineTitle', { machine })}
+                reason={t('computerUse.viewer.offlineBody')}
+            />
+        </View>
     ) : surfaceState === 'connecting' || (props.stream?.connecting && surfaceState === 'unavailable') ? (
         <View style={stylesheet.centered} testID={`${testID}-connecting`}>
             <SurfaceStateCard
                 kind="loading"
-                title={t('computerUse.viewer.connectingTitle', { target })}
-                reason={machine ? t('computerUse.viewer.connectingBody', { machine }) : undefined}
+                title={machine
+                    ? t('computerUse.viewer.openingTitle', { target, machine })
+                    : t('computerUse.viewer.connectingTitle', { target })}
             />
         </View>
     ) : surfaceState === 'ended' ? (
@@ -208,15 +313,25 @@ export function ComputerScreenViewer(props: ComputerScreenViewerProps): React.Re
                     testID={`${testID}-input`}
                 />
             ) : null}
+            {surfaceState === 'stalled' ? <View style={stylesheet.pausedScrim} testID={`${testID}-paused-scrim`} /> : null}
             {surfaceState === 'stalled' ? (
-                <BrowserFrameStatusCapsule testID={`${testID}-stalled`} text={t('computerUse.viewer.stalled')} busy />
+                <BrowserFrameStatusCapsule
+                    testID={`${testID}-stalled`}
+                    text={pausedAtMs
+                        ? t('computerUse.viewer.paused', { time: formatFrameTime(pausedAtMs) })
+                        : t('computerUse.viewer.stalled')}
+                    busy={playerState.phase === 'reconnecting'}
+                    action={onRetryStream && playerState.phase !== 'reconnecting'
+                        ? { label: t('common.retry'), onPress: onRetryStream }
+                        : undefined}
+                />
             ) : null}
         </View>
     );
 
     return (
         <View style={stylesheet.root} testID={testID}>
-            <View style={stylesheet.bar}>
+            {props.chrome === 'none' ? null : <View style={stylesheet.bar}>
                 <Icon
                     name={props.targetKind === 'display' ? 'desktop' : 'browsers'}
                     size={ICON_SIZE.md}
@@ -255,7 +370,7 @@ export function ComputerScreenViewer(props: ComputerScreenViewerProps): React.Re
                         )}
                     />
                 ) : null}
-            </View>
+            </View>}
             <View style={stylesheet.stage} onLayout={onLayout}>
                 {stage}
                 {pictureUp && props.presence.kind === 'agent' ? (
@@ -266,21 +381,11 @@ export function ComputerScreenViewer(props: ComputerScreenViewerProps): React.Re
                         testID={`${testID}-agent-cursor`}
                     />
                 ) : null}
-                {props.shared ? (
+                {props.shared && props.chrome !== 'none' && !needsPermission ? (
                     <BrowserPresenceCapsule
                         testID={`${testID}-presence`}
-                        presence={props.presence}
-                        agent={props.agent}
-                        agentTitle={props.presence.kind !== 'agent'
-                            ? undefined
-                            : props.agentActing
-                                ? t('computerUse.viewer.agentUsing', { agent: agentName, target: agentTarget })
-                                : t(props.access === 'see' ? 'computerUse.viewer.agentCanSee' : 'computerUse.viewer.agentCanUse', { agent: agentName, target: agentTarget })}
+                        {...resolveComputerPresenceCapsule(props)}
                         compact={props.compact}
-                        checking={props.checking}
-                        onTakeControl={props.onTakeControl}
-                        onHandBack={props.onHandBack}
-                        onCheckAgain={props.onCheckAgain}
                     />
                 ) : null}
             </View>

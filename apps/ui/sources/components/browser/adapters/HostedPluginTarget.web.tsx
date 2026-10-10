@@ -10,6 +10,7 @@ import {
     type UiSurfaceNetworkOriginV1,
 } from '@happier-dev/protocol/plugins/ui';
 import * as React from 'react';
+import type { ArtifactHtmlBundleV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
 
 import {
     resolvePluginHostedWebIframeSandbox,
@@ -84,20 +85,20 @@ export function HostedPluginTarget(props: Readonly<{
     diagnostics?: BrowserDiagnosticsEngineBridgeConfig;
     networkOrigins?: readonly UiSurfaceNetworkOriginV1[];
     externalHttpLinks?: boolean;
-}> & WebIframeSource): React.ReactElement {
+}> & (Readonly<{ bundle: ArtifactHtmlBundleV1; url?: never }> | Readonly<{ url: string; bundle?: never }>)): React.ReactElement {
     const sandbox = props.sandbox ?? DEFAULT_HOSTED_PLUGIN_SANDBOX;
     const security = props.security ?? DEFAULT_HOSTED_PLUGIN_SECURITY;
-    const opaqueArtifactFrame = props.opaqueArtifactFrame === true || props.html !== undefined;
-    const source = React.useMemo<WebIframeSource>(() => props.html === undefined
+    const opaqueArtifactFrame = props.opaqueArtifactFrame === true || props.bundle !== undefined;
+    const source = React.useMemo<WebIframeSource>(() => props.bundle === undefined
         ? { url: props.url }
-        : { html: buildHostedHtmlDocument(props.html, props.bootstrapConfig, {
+        : { html: buildHostedHtmlDocument(props.bundle, props.bootstrapConfig, {
             networkOrigins: props.networkOrigins,
             externalHttpLinks: props.externalHttpLinks,
-        }) }, [props.url, props.html, props.bootstrapConfig, props.externalHttpLinks, props.networkOrigins]);
+        }) }, [props.url, props.bundle, props.bootstrapConfig, props.externalHttpLinks, props.networkOrigins]);
     const [artifactFrameRevoked, setArtifactFrameRevoked] = React.useState(false);
     React.useEffect(() => {
         setArtifactFrameRevoked(false);
-    }, [opaqueArtifactFrame, props.navigationKey, props.url, props.html]);
+    }, [opaqueArtifactFrame, props.navigationKey, props.url, props.bundle]);
     const webMessageBridge = React.useMemo(() => {
         const bridge = props.bridge;
         if (!bridge) return undefined;
@@ -131,7 +132,7 @@ export function HostedPluginTarget(props: Readonly<{
         props.onUnexpectedNavigation?.();
     }, [opaqueArtifactFrame, props.onUnexpectedNavigation]);
 
-    if (artifactFrameRevoked || (props.html === undefined && !canLoadHostedPluginTargetUrl({ security, url: props.url }))) {
+    if (artifactFrameRevoked || (props.bundle === undefined && !canLoadHostedPluginTargetUrl({ security, url: props.url }))) {
         return (
             <BrowserViewFrame
                 engine={{
@@ -158,7 +159,7 @@ export function HostedPluginTarget(props: Readonly<{
         : buildPluginHostedWebStaticAssetContentSecurityPolicyV1(security, {
             frameAncestors: resolveHostDocumentOrigin(),
         });
-    const resolvedSandbox = props.html !== undefined ? DEFAULT_HOSTED_PLUGIN_SANDBOX : resolveHostedPluginWebSandboxPolicy({
+    const resolvedSandbox = props.bundle !== undefined ? DEFAULT_HOSTED_PLUGIN_SANDBOX : resolveHostedPluginWebSandboxPolicy({
         sandbox,
         security,
         url: props.url,

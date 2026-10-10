@@ -1,4 +1,5 @@
 import type { HappierAgentPageRect, HappierPresenceTakeControlResult } from '@happier-dev/plugin-ui/presentation';
+import { BrowserCommandDispatchResultV1Schema, type ActionExecuteResult, type BrowserCommandV1 } from '@happier-dev/protocol';
 import * as React from 'react';
 
 import { getAgentCore, type AgentId } from '@/agents/catalog/catalog';
@@ -10,9 +11,17 @@ import type { BrowserControlViewState } from '@/sync/domains/browser/control';
 import { isDaemonAuthoritativeBrowserView } from '@/sync/domains/browser/control/commands';
 import { t } from '@/text';
 
+import { BrowserFrameStatusCapsule } from '@/components/browser/frame/BrowserFrameStatusCapsule';
+import {
+    usePublishSessionViewerPresence,
+    usePublishSessionViewerSourceFacts,
+    useSessionViewerBodyPresentation,
+    type SessionViewerPresence,
+    type SessionViewerSourceNavigation,
+} from '@/components/sessions/viewer/SessionViewerController';
+
 import { BrowserAgentCursor } from './BrowserAgentCursor';
 import { BrowserPresenceCapsule } from './BrowserPresenceCapsule';
-import type { BrowserDaemonControlCommandSender } from '@/sync/domains/browser/control/machineRpc';
 
 /**
  * The session whose agent drives this browser. The leaf reads the session's agent (for its mark and
@@ -66,23 +75,27 @@ export function useBrowserSessionAgentIdentity(agent: BrowserShellAgentPresence 
  * The presence capsule's data leaf. It alone subscribes to the automation owner, so a controller
  * change or a finished action re-renders this capsule and not the browser chrome around it.
  *
- * Take control and Hand back go straight to the controller owner (`recordHumanInput`,
- * `releaseHumanControl`): the takeover interrupts the agent's in-flight mutating action there, and
- * the owner refuses the agent's next one until the person hands the page back.
+ * Take control and Hand back use the host's Browser Action ingress. The existing runtime adapter
+ * reaches the controller owner; only its authoritative evidence changes who controls the page.
  */
 export function BrowserShellPresence(props: Readonly<{
     view: BrowserControlViewState;
     /** The in-app automation owner, for views the app renders itself. */
     controlService: BrowserAutomationControlService | null;
-    sendDaemonCommand?: BrowserDaemonControlCommandSender;
+    onCommand?: (command: BrowserCommandV1) => void | Promise<ActionExecuteResult>;
     agent: BrowserShellAgentPresence | null;
     /** Where the page is drawn when it does not fill the frame (a fitted stream). */
     pageRect?: HappierAgentPageRect | null;
     compact?: boolean;
+    /** In the Session viewer: the page's Back, Forward and Reload, offered in the viewer's menu. */
+    viewerNavigation?: SessionViewerSourceNavigation | null;
+    /** Closing the page is what ends a confidential hold (the source owner drops it with the page). */
+    onClosePage?: () => void;
     nowMs?: () => number;
     testID: string;
 }>): React.ReactElement | null {
     const { controlService, view } = props;
+    const inViewer = useSessionViewerBodyPresentation() === 'viewer';
     // A daemon-owned view's controller is the daemon's (its `controllerChanged` events, ingested into
     // the view state); an in-app view's is the in-app automation owner. One projection, two owners,
     // never a third copy here.
@@ -115,28 +128,36 @@ export function BrowserShellPresence(props: Readonly<{
     );
 
     const nowMs = props.nowMs;
-    const takeControl = React.useCallback(() => {
-        if (daemonOwned) {
-            if (!props.sendDaemonCommand) return { status: 'failed' } satisfies HappierPresenceTakeControlResult;
-            return props.sendDaemonCommand({ kind: 'takeControl', commandId: `take-control:${view.viewId}:${nowMs?.() ?? Date.now()}`, ...viewKey })
-                .then((result): HappierPresenceTakeControlResult => ({ status: result.ok
-                    ? result.result.status === 'dispatched' ? 'accepted' : 'failed'
-                    : result.reason === 'unavailable' ? 'failed' : 'unknown' }));
-        }
-        controlService?.recordHumanInput({
-            ...viewKey,
-            inputKind: 'takeover',
-            occurredAtMs: nowMs?.() ?? Date.now(),
-        });
-    }, [controlService, daemonOwned, nowMs, props.sendDaemonCommand, view.viewId, viewKey]);
+    const takeControl = React.useCallback(async (): Promise<HappierPresenceTakeControlResult> => {
+        const result = await props.onCommand?.({ kind: 'takeControl', commandId: `take-control:${view.viewId}:${nowMs?.() ?? Date.now()}`, ...viewKey });
+        if (!result) return { status: 'failed' };
+        if (!result.ok) return { status: result.errorCode === 'browser_control_unconfirmed' ? 'unknown' : 'failed' };
+        const dispatched = BrowserCommandDispatchResultV1Schema.safeParse(result.result);
+        return { status: dispatched.success && dispatched.data.status === 'dispatched' ? 'accepted' : 'failed' };
+    }, [nowMs, props.onCommand, view.viewId, viewKey]);
     const handBack = React.useCallback(() => {
-        if (daemonOwned) {
-            props.sendDaemonCommand?.({ kind: 'handBack', commandId: `hand-back:${view.viewId}:${nowMs?.() ?? Date.now()}`, ...viewKey });
-            return;
-        }
-        controlService?.releaseHumanControl(viewKey);
-    }, [controlService, daemonOwned, nowMs, props.sendDaemonCommand, view.viewId, viewKey]);
-    const canControl = daemonOwned ? Boolean(props.sendDaemonCommand) : controlService !== null;
+        void props.onCommand?.({ kind: 'handBack', commandId: `hand-back:${view.viewId}:${nowMs?.() ?? Date.now()}`, ...viewKey });
+    }, [nowMs, props.onCommand, view.viewId, viewKey]);
+    const canControl = Boolean(props.onCommand) && (daemonOwned || controlService !== null);
+    // The source owner holds Agent reading and recording while a confidential entry stays on the page;
+    // only closing the page ends it (navigating or handing back does not).
+    const confidentialityHeld = daemonController?.confidentialityHeld === true;
+
+    // The Session viewer draws who acts below the picture and moves by the picture while it is only
+    // watched; this leaf stays the one owner of the takeover it hands over.
+    const viewerPresence = React.useMemo<SessionViewerPresence | null>(() => (inViewer ? {
+        presence,
+        agent,
+        onTakeControl: canControl ? takeControl : undefined,
+        onHandBack: canControl ? handBack : undefined,
+    } : null), [agent, canControl, handBack, inViewer, presence, takeControl]);
+    usePublishSessionViewerPresence('browser', viewerPresence);
+    usePublishSessionViewerSourceFacts('browser', inViewer ? {
+        machineName: null,
+        personInControl: presence.kind === 'human',
+        watching: presence.kind === 'agent' || presence.kind === 'stopping' || presence.kind === 'unconfirmed',
+        navigation: props.viewerNavigation ?? null,
+    } : null);
 
     return (
         <>
@@ -146,14 +167,23 @@ export function BrowserShellPresence(props: Readonly<{
                 pageRect={props.pageRect}
                 agentId={agent.agentId}
             />
-            <BrowserPresenceCapsule
-                testID={props.testID}
-                presence={presence}
-                agent={agent}
-                compact={props.compact}
-                onTakeControl={canControl ? takeControl : undefined}
-                onHandBack={canControl ? handBack : undefined}
-            />
+            {confidentialityHeld ? (
+                <BrowserFrameStatusCapsule
+                    testID={`${props.testID}-confidential-hold`}
+                    text={t('browserPresence.confidentialHeld', { agent: agent.name })}
+                    action={props.onClosePage ? { label: t('browserPresence.closePage'), onPress: props.onClosePage } : undefined}
+                />
+            ) : null}
+            {inViewer ? null : (
+                <BrowserPresenceCapsule
+                    testID={props.testID}
+                    presence={presence}
+                    agent={agent}
+                    compact={props.compact}
+                    onTakeControl={canControl ? takeControl : undefined}
+                    onHandBack={canControl ? handBack : undefined}
+                />
+            )}
         </>
     );
 }

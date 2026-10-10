@@ -1,8 +1,9 @@
 import * as React from 'react';
-import { Pressable, View } from 'react-native';
+import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
 import { Text } from '@/components/ui/text/Text';
+import { ToolbarButton } from '@/components/ui/buttons/ToolbarButton';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 
@@ -64,20 +65,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         // redundant cue rather than the only one.
         color: theme.colors.text.primary,
     },
-    button: {
-        alignSelf: 'flex-start',
-        borderRadius: 6,
-        borderWidth: 1,
-        borderColor: theme.colors.border.default,
-        backgroundColor: theme.colors.surface.base,
-        paddingHorizontal: 10,
-        paddingVertical: 5,
-    },
-    buttonText: {
-        ...Typography.rowMeta(),
-        ...Typography.default('semiBold'),
-        color: theme.colors.text.primary,
-    },
 }));
 
 function interactionStateLabel(props: BrowserDiagnosticsInteractionControls): string {
@@ -103,23 +90,6 @@ function pickerStateLabel(state: BrowserDiagnosticsInteractionControls['pickerSt
         case undefined:
             return null;
     }
-}
-
-function InteractionButton(props: Readonly<{
-    label: string;
-    onPress: () => void;
-    testID: string;
-}>): React.ReactElement {
-    return (
-        <Pressable
-            accessibilityRole="button"
-            onPress={props.onPress}
-            style={stylesheet.button}
-            testID={props.testID}
-        >
-            <Text style={stylesheet.buttonText}>{props.label}</Text>
-        </Pressable>
-    );
 }
 
 export function BrowserDiagnosticsInteractionPanel(props: Readonly<{
@@ -169,28 +139,28 @@ export function BrowserDiagnosticsInteractionPanel(props: Readonly<{
             ) : null}
             <View style={stylesheet.row}>
                 {showEnable ? (
-                    <InteractionButton
+                    <ToolbarButton
                         label={t('browserDiagnostics.host.interaction.enable')}
                         onPress={props.controls.onEnableInteraction}
                         testID={`${props.testID}-interaction-enable`}
                     />
                 ) : null}
                 {showDisable ? (
-                    <InteractionButton
+                    <ToolbarButton
                         label={t('browserDiagnostics.host.interaction.disable')}
                         onPress={props.controls.onDisableInteraction}
                         testID={`${props.testID}-interaction-disable`}
                     />
                 ) : null}
                 {showStartPicker ? (
-                    <InteractionButton
+                    <ToolbarButton
                         label={t('browserDiagnostics.host.interaction.startPicker')}
                         onPress={props.controls.onStartElementPicker}
                         testID={`${props.testID}-picker-start`}
                     />
                 ) : null}
                 {showCancelPicker ? (
-                    <InteractionButton
+                    <ToolbarButton
                         label={t('browserDiagnostics.host.interaction.cancelPicker')}
                         onPress={props.controls.onCancelElementPicker}
                         testID={`${props.testID}-picker-cancel`}

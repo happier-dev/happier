@@ -9,7 +9,8 @@ import type {
 
 import type { DesktopWebViewNativeAvailability } from "./adapters/desktopWebView";
 import type { BrowserViewState } from "./types";
-import { createBrowserControlState, dispatchBrowserControlCommand } from "./control";
+import { createBrowserControlState } from "./control/reducer";
+import { dispatchBrowserControlCommand } from "./control/commands";
 
 export const DEFAULT_BROWSER_SESSION_ID = "browser_session_default";
 

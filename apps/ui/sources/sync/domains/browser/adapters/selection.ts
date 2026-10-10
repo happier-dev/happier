@@ -244,8 +244,8 @@ export function selectBrowserTargetAdapter(input: SelectBrowserTargetAdapterInpu
  * Canonical fulfilment for the web `openExternalTab` selection outcome: hands the URL to the
  * shared {@link openExternalUrl} opener (new OS browser tab on web, system handler on native).
  * No-ops and returns `false` for render-engine or unavailable selections — it is a plain OS-tab
- * handoff and never injects into or scripts the opened page. The open-target host calls this
- * before dispatching an `openView`, so an external web target never dead-ends as unavailable.
+ * handoff and never injects into or scripts the opened page. The runtime Action executor fulfills
+ * the dispatcher's handoff effect after admission; an engine can also offer it after a framing refusal.
  */
 export async function openBrowserExternalTabSelection(
     selection: BrowserAdapterSelection,

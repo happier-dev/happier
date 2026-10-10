@@ -92,6 +92,15 @@ describe('ComputerTargetPicker', () => {
         expect(screen.findByTestId('p-permission')).toBeNull();
     });
 
+    it('keeps unknown capture readiness first instead of treating a denied input grant as the viewing failure', async () => {
+        const { props, screen: pending } = renderPicker({ state: {
+            kind: 'ready', targets: [], grants: { capture: 'unknown', input: 'denied' },
+        } });
+        const screen = await pending;
+        await screen.pressByTestIdAsync('computer-permission-open-settings');
+        expect(props.onOpenSettings).toHaveBeenCalledWith('capture');
+    });
+
     it('explains the owner’s display refusal without making a whole display selectable', async () => {
         const screen = await renderPicker({ state: {
             kind: 'ready', targets: [lumen], grants: { capture: 'granted', input: 'granted' },
@@ -107,6 +116,55 @@ describe('ComputerTargetPicker', () => {
         } }).screen;
         expect(empty.findByTestId('p-displays-unavailable')).toBeTruthy();
         expect(empty.findByTestId('p-target:display')).toBeNull();
+    });
+
+    it('asks before a whole display is shared, with viewing and input as separate grants, and shares a window at once', async () => {
+        const display = { ...screenTarget, label: 'Built-in display', width: 2560, height: 1600 };
+        const state: ComputerTargetPickerState = { kind: 'ready', targets: [lumen, display], grants: { capture: 'granted', input: 'granted' } };
+        const displayKey = computerTargetKey(display.target);
+        const forDisplay = renderPicker({ state, selectedKey: displayKey, access: 'see' });
+        const screen = await forDisplay.screen;
+        expect(screen.findByTestId('p-display-consent')).toBeNull();
+        await screen.pressByTestIdAsync('p-share');
+        // Nothing is shared by choosing: the consent says what a display exposes first.
+        expect(forDisplay.props.onShare).not.toHaveBeenCalled();
+        expect(screen.findByTestId('p-display-consent')).toBeTruthy();
+        expect(screen.getTextContent()).toContain('computerUse.picker.wholeDisplayBody:{"display":"Built-in display"}');
+        await screen.pressByTestIdAsync('p-display-consent-share');
+        expect(forDisplay.props.onShare).toHaveBeenCalledWith({ key: displayKey, access: 'see' });
+
+        const forWindow = renderPicker({ state, selectedKey: computerTargetKey(lumen.target) });
+        const windowScreen = await forWindow.screen;
+        await windowScreen.pressByTestIdAsync('p-share');
+        expect(windowScreen.findByTestId('p-display-consent')).toBeNull();
+        expect(forWindow.props.onShare).toHaveBeenCalledWith();
+    });
+
+    it('as the viewer’s switcher, watches a window at the press, marks what is shared and offers no form', async () => {
+        const other = { target: { kind: 'window', displayId: ':0', pid: 11, windowId: 2 }, title: 'Xcode', appName: 'Xcode' } as const;
+        const display = { ...screenTarget, label: 'Display 1', width: 2560, height: 1600 };
+        const state: ComputerTargetPickerState = { kind: 'ready', targets: [lumen, other, display], grants: { capture: 'granted', input: 'granted' } };
+        // The shared window is the first row; the press below reaches the last window row, another window.
+        const currentKey = computerTargetKey(lumen.target);
+        const { props, screen: pending } = renderPicker({ state, density: 'switcher', currentKey, selectedKey: currentKey, access: 'see' });
+        const screen = await pending;
+        const text = screen.getTextContent();
+        expect(text).toContain('computerUse.picker.usingIt');
+        expect(text).toContain('computerUse.picker.displayShared');
+        expect(text).toContain('computerUse.picker.footnote');
+        // The rows are the action: no access form, no policy line, no Share or Cancel.
+        expect(screen.findByTestId('p-share')).toBeNull();
+        expect(screen.findByTestId('p-cancel')).toBeNull();
+        expect(screen.findByTestId('p-access')).toBeNull();
+        expect(screen.findByTestId('p-policy')).toBeNull();
+        await screen.pressByTestIdAsync('p-refresh');
+        expect(props.onRetry).toHaveBeenCalledTimes(1);
+        await screen.pressByTestIdAsync('p-target:window');
+        expect(props.onShare).toHaveBeenCalledWith({ key: computerTargetKey(other.target), access: 'see' });
+        // A whole display still asks first.
+        await screen.pressByTestIdAsync('p-target:display');
+        expect(props.onShare).toHaveBeenCalledTimes(1);
+        expect(screen.findByTestId('p-display-consent')).toBeTruthy();
     });
 
     it('says plainly when the machine has no screen, and why a share did not land', async () => {

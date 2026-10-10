@@ -29,6 +29,7 @@ export const executeComputerActionViaMachineRpc: ComputerMachineRpc = async (inp
         raw = await machineRpcWithServerScope<unknown, typeof payload.data>({
             machineId: input.machineId,
             ...(input.serverId ? { serverId: input.serverId } : {}),
+            ...(input.accountId ? { accountId: input.accountId } : {}),
             method: RPC_METHODS.DAEMON_COMPUTER_ACTION_EXECUTE,
             payload: payload.data,
             ...(input.signal ? { signal: input.signal } : {}),

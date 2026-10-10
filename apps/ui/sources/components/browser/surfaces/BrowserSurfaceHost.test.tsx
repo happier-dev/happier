@@ -15,6 +15,7 @@ import {
     type PluginMachineExecutionOriginV1,
 } from '@happier-dev/protocol';
 import type { PluginClientApi } from '@happier-dev/plugin-sdk';
+import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import type { PluginClientActionHandler } from '@happier-dev/plugin-sdk/actions';
 import {
     normalizePluginUiDestinationBindingV1,
@@ -562,6 +563,36 @@ afterEach(async () => {
 });
 
 describe('BrowserSurfaceHost', () => {
+    it('does not reload the mounted page when the Browser Action is disabled for UI', async () => {
+        const { BrowserSurfaceHost } = await import('./BrowserSurfaceHost');
+        const { BrowserShell } = await import('@/components/browser/BrowserShell');
+        const { storage } = await import('@/sync/domains/state/storage');
+        const previous = storage.getState().settings.actionsSettingsV1;
+        storage.setState({ settings: { ...storage.getState().settings,
+            actionsSettingsV1: normalizeActionsSettingsV1({ v: 1, actions: { 'browser.reload': { enabled: false } } }),
+        } });
+        try {
+            const screen = await renderScreen(<BrowserSurfaceHost browserSessionId="browser_session_default"
+                platform="web" initialBrowserState={openBrowserTarget(createBrowserViewState(), target, {
+                    platform: 'web', currentUrl: 'https://preview.happier.test/',
+                })} policy={{ browserEnabled: true, viewTargetsEnabled: true, diagnosticsEnabled: false, contextEnabled: false }}
+                localServicePreviewState={createLocalServicePreviewState()} testID="browser-surface" />);
+            await act(async () => { screen.findByType('iframe').props.onLoad?.(); });
+            const previousNavigation = screen.findByType('iframe').props['data-browser-navigation-key'];
+            let commandResult: unknown;
+            await act(async () => {
+                commandResult = await screen.findByType(BrowserShell).props.onCommand({
+                    kind: 'reload', commandId: 'disabled-ui-reload', browserSessionId: 'browser_session_default', viewId: 'browser_view:preview_1',
+                });
+            });
+            expect(commandResult).toMatchObject({ ok: false, errorCode: 'action_disabled' });
+            await flushHookEffects();
+            expect(screen.findByType('iframe').props['data-browser-navigation-key']).toBe(previousNavigation);
+        } finally {
+            storage.setState({ settings: { ...storage.getState().settings, actionsSettingsV1: previous } });
+        }
+    });
+
     it('subscribes only while both the host and browser surface are visible', async () => {
         const appState = createReactNativeAppStateEmitter('background');
         const restore = appState.install(AppState);

@@ -1,8 +1,9 @@
 import * as React from 'react';
-import { Pressable, View } from 'react-native';
+import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
 import { Text, TextInput } from '@/components/ui/text/Text';
+import { ToolbarButton } from '@/components/ui/buttons/ToolbarButton';
 import { Typography } from '@/constants/Typography';
 import type {
     BrowserDiagnosticsObjectPropertyV1,
@@ -70,19 +71,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingVertical: 6,
         color: theme.colors.text.primary,
     },
-    submit: {
-        borderRadius: 6,
-        borderWidth: 1,
-        borderColor: theme.colors.border.default,
-        backgroundColor: theme.colors.surface.base,
-        paddingHorizontal: 10,
-        paddingVertical: 6,
-    },
-    submitText: {
-        ...Typography.rowMeta(),
-        ...Typography.default('semiBold'),
-        color: theme.colors.text.primary,
-    },
     entry: {
         gap: 4,
         borderRadius: 6,
@@ -128,19 +116,6 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     nodeValue: {
         ...Typography.keyHint(),
-        color: theme.colors.text.secondary,
-    },
-    toggle: {
-        borderRadius: 4,
-        borderWidth: 1,
-        borderColor: theme.colors.border.default,
-        backgroundColor: theme.colors.surface.base,
-        paddingHorizontal: 6,
-        paddingVertical: 1,
-    },
-    toggleText: {
-        ...Typography.rowMeta(),
-        ...Typography.default('semiBold'),
         color: theme.colors.text.secondary,
     },
     children: {
@@ -231,18 +206,13 @@ function BrowserDiagnosticsObjectNode(props: Readonly<{
                 <Text style={stylesheet.nodeName}>{props.name}</Text>
                 <Text style={stylesheet.nodeValue}>{describeRemoteValue(remote)}</Text>
                 {expandable ? (
-                    <Pressable
-                        accessibilityRole="button"
+                    <ToolbarButton
                         onPress={onToggle}
-                        style={stylesheet.toggle}
                         testID={`${testID}-expand`}
-                    >
-                        <Text style={stylesheet.toggleText}>
-                            {expanded
-                                ? t('browserDiagnostics.host.interaction.eval.collapse')
-                                : t('browserDiagnostics.host.interaction.eval.expand')}
-                        </Text>
-                    </Pressable>
+                        label={expanded
+                            ? t('browserDiagnostics.host.interaction.eval.collapse')
+                            : t('browserDiagnostics.host.interaction.eval.expand')}
+                    />
                 ) : null}
             </View>
             {expanded && inspector ? (
@@ -334,14 +304,12 @@ export function BrowserDiagnosticsEvalConsole(props: Readonly<{
                     autoCorrect={false}
                     style={stylesheet.input}
                 />
-                <Pressable
-                    accessibilityRole="button"
+                <ToolbarButton
                     onPress={submit}
-                    style={stylesheet.submit}
+                    size="md"
                     testID={`${props.testID}-submit`}
-                >
-                    <Text style={stylesheet.submitText}>{t('browserDiagnostics.host.interaction.eval.run')}</Text>
-                </Pressable>
+                    label={t('browserDiagnostics.host.interaction.eval.run')}
+                />
             </View>
             {controls.entries.length === 0 ? (
                 <Text testID={`${props.testID}-empty`} style={stylesheet.empty}>

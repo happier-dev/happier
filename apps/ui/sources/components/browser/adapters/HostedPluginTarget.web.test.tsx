@@ -2,6 +2,7 @@ import type {
     PluginHostedWebBridgeEnvelopeV1,
     PluginHostedWebSecurityPolicyV1,
 } from '@happier-dev/protocol';
+import { artifactHtmlBundleFromBodyV1 } from '@happier-dev/protocol';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
@@ -41,7 +42,7 @@ describe('HostedPluginTarget web', () => {
         const screen = await renderScreen(
             <HostedPluginTarget
                 title="Inline plugin"
-                html="<!doctype html><button>Inline</button>"
+                bundle={artifactHtmlBundleFromBodyV1('<!doctype html><button>Inline</button>')}
                 testID="inline-plugin"
                 onUnexpectedNavigation={onUnexpectedNavigation}
             />,

@@ -4,10 +4,11 @@ import type {
 } from '@happier-dev/protocol';
 import type { UiSurfaceNetworkOriginV1 } from '@happier-dev/protocol/plugins/ui';
 import * as React from 'react';
+import type { ArtifactHtmlBundleV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
 
 import type { PluginHostedWebSandboxPolicy } from '@/components/plugins/hostedWeb/sandbox';
 import { createPluginHostedWebNativeMessageBridge, type PluginHostedWebNativeBridgeConfig } from '@/components/plugins/hostedWeb/nativeMessageBridge';
-import { buildHostedHtmlDocument } from '@/components/plugins/hostedWeb/buildHostedHtmlDocument';
+import { HostedInlineDocumentFrame } from '@/components/plugins/hostedWeb/HostedArtifactFrame.native';
 import { resolveUrlOrigin } from '@/sync/domains/browser/adapters/targets/localPreview';
 
 import { BrowserViewFrame } from '../frame/BrowserViewFrame.native';
@@ -19,7 +20,6 @@ import {
 import type {
     BrowserDiagnosticsEngineBridgeConfig,
     BrowserFrameNavigationCommand,
-    NativeWebViewSource,
     BrowserFrameHostMessageAttachment,
 } from '../frame/types';
 
@@ -54,13 +54,11 @@ export function HostedPluginTarget(props: Readonly<{
     bridge?: (PluginHostedWebNativeBridgeConfig & Partial<BrowserFrameHostMessageAttachment>) | null;
     diagnostics?: BrowserDiagnosticsEngineBridgeConfig;
     networkOrigins?: readonly UiSurfaceNetworkOriginV1[];
-}> & NativeWebViewSource): React.ReactElement {
+    externalHttpLinks?: boolean;
+}> & (Readonly<{ bundle: ArtifactHtmlBundleV1; url?: never }> | Readonly<{ url: string; bundle?: never }>)): React.ReactElement {
     const sandbox = props.sandbox ?? DEFAULT_HOSTED_PLUGIN_SANDBOX;
     const security = props.security ?? DEFAULT_HOSTED_PLUGIN_SECURITY;
     const origin = props.url === undefined ? null : resolveUrlOrigin(props.url);
-    const html = React.useMemo(() => props.html === undefined
-        ? undefined
-        : buildHostedHtmlDocument(props.html, props.bootstrapConfig, { networkOrigins: props.networkOrigins }), [props.html, props.bootstrapConfig, props.networkOrigins]);
     const nativeMessageBridge = React.useMemo(() => {
         const bridge = props.bridge;
         if (!bridge) return undefined;
@@ -71,7 +69,23 @@ export function HostedPluginTarget(props: Readonly<{
             }),
         };
     }, [props.bridge]);
-    if (props.html === undefined && (!origin || !props.url || !canLoadHostedPluginTargetUrl({ security, url: props.url }))) {
+    if (props.bundle !== undefined) {
+        return <HostedInlineDocumentFrame
+            title={props.title}
+            bundle={props.bundle}
+            networkOrigins={props.networkOrigins}
+            bootstrapConfig={props.bootstrapConfig}
+            allowedNavigationOrigins={security.allowedNavigationOrigins}
+            bridge={props.bridge}
+            externalHttpLinks={props.externalHttpLinks}
+            onLoadStart={props.onLoadStart}
+            onLoadEnd={props.onLoad}
+            onLoadError={props.onError}
+            onBlockedNavigation={props.onUnexpectedNavigation}
+            testID={props.testID}
+        />;
+    }
+    if (!origin || !canLoadHostedPluginTargetUrl({ security, url: props.url })) {
         return (
             <BrowserViewFrame
                 engine={{
@@ -88,23 +102,21 @@ export function HostedPluginTarget(props: Readonly<{
             engine={{
                 kind: 'nativeWebView',
                 title: props.title,
-                ...(html !== undefined ? { html } : { url: props.url! }),
+                url: props.url,
                 testID: props.testID,
                 navigationCommand: props.navigationCommand,
-                originWhitelist: props.html !== undefined ? [] : [...new Set([
+                originWhitelist: [...new Set([
                     origin!,
                     ...security.allowedCallbackOrigins,
                     ...security.allowedNavigationOrigins,
                 ])],
                 javaScriptEnabled: sandbox.scripts,
-                mixedContentMode: props.url === undefined ? 'never' : resolveNativeMixedContentMode(security, props.url),
+                mixedContentMode: resolveNativeMixedContentMode(security, props.url),
                 diagnostics: props.diagnostics,
                 nativeMessageBridge,
                 onLoadStart: props.onLoadStart,
                 onLoadEnd: props.onLoad,
                 onError: props.onError,
-                onBlockedNavigation: props.html === undefined ? undefined : props.onUnexpectedNavigation,
-                onUnexpectedNavigation: props.html === undefined ? undefined : props.onUnexpectedNavigation,
             }}
         />
     );

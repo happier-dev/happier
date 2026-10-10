@@ -10,6 +10,18 @@ import { EMPTY_PLUGIN_UI_PROJECTION, type PluginUiProjectionModel } from '@/sync
 
 import { BrowserViewHost } from './BrowserViewHost';
 import type { BrowserDiagnosticsEngineBridgeConfig } from './frame/types';
+import { upsertServerProfile } from '@/sync/domains/server/serverProfiles';
+import { applyLocalServicePreviewSnapshot, createLocalServicePreviewState } from '@/sync/domains/local/services/preview/store';
+
+const previewHttp = vi.hoisted(() => ({ fetch: vi.fn<(url: string, init?: RequestInit) => Promise<Response>>(),
+    token: 'header.eyJzdWIiOiJ2aWV3ZXItYWNjb3VudCJ9.signature' }));
+vi.mock('@/utils/system/runtimeFetch', () => ({ runtimeFetch: (...args: Parameters<typeof previewHttp.fetch>) => previewHttp.fetch(...args) }));
+vi.mock('@/auth/storage/tokenStorage', async (importOriginal) => {
+    const { createTokenStorageModuleMock } = await import('@/dev/testkit/mocks/tokenStorage');
+    return createTokenStorageModuleMock({ importOriginal, tokenStorage: {
+        getCredentialsForServerUrl: async () => ({ token: previewHttp.token }),
+    } });
+});
 
 const simulatorTargetProps: Array<Readonly<Record<string, unknown>>> = [];
 const desktopWebViewTargetProps: Array<Readonly<Record<string, unknown>>> = [];
@@ -328,6 +340,51 @@ describe('BrowserViewHost', () => {
         desktopWebViewTargetProps.length = 0;
     });
 
+    it('admits a sessionless web frame through the actual viewer Home credential without a native descriptor', async () => {
+        const home = await upsertServerProfile({ serverUrl: 'https://viewer-home.example.test' });
+        const view = { ...createLocalPreviewView(), target: { ...createLocalPreviewView().target, sessionId: undefined },
+            currentUrl: 'https://preview.example.test/?previewToken=custodian', securityOrigin: 'https://preview.example.test' };
+        const resource = { previewId: 'preview_1', machineId: 'machine_1', owner: { kind: 'user' as const, id: 'starter' },
+            serviceTarget: { kind: 'managed_service' as const, machineId: 'machine_1', managedServiceId: 'actual-instance', cwd: '/workspace/app',
+                declaration: { workspaceRefId: 'workspace_1', selection: { kind: 'manifest' as const, name: 'web' } } },
+            target: { scheme: 'http' as const, host: '127.0.0.1', port: 5173 }, initialPath: { pathname: '/', search: '' },
+            display: { title: 'Web', addressLabel: 'localhost:5173' }, originMode: 'host' as const };
+        const state = applyLocalServicePreviewSnapshot(createLocalServicePreviewState(), { generatedAt: 1_000, refreshState: 'idle', diagnostics: [],
+            previews: [{ previewId: resource.previewId, resource, accessUrl: view.currentUrl, expiresAt: 2_000_000_000_000, diagnostics: [] }] });
+        previewHttp.fetch.mockImplementation(async (url, init) => {
+            if (url === 'https://viewer-home.example.test/v1/local-services/preview/preview_1/access'
+                && new Headers(init?.headers).get('Authorization') === `Bearer ${previewHttp.token}`) return Response.json({
+                    v: 1, kind: 'server_preview', previewId: resource.previewId, machineId: resource.machineId,
+                    accessUrl: 'https://preview.example.test/?previewToken=viewer', expiresAt: 2_000_000_000_000 });
+            return Response.json({ error: 'preview_access_denied' }, { status: 403 });
+        });
+        const screen = await renderScreen(<BrowserViewHost view={view} localServicePreviewState={state}
+            localServicePreviewServerId={home.id} testID="viewer-preview" />);
+        try {
+            await flushHookEffects({ cycles: 40 });
+            expect(screen.findByType('iframe').props.src).toBe('https://preview.example.test/?previewToken=viewer');
+        } finally { await screen.unmount(); }
+    });
+
+    it('resolves a registered target-only web preview at the Home without manufacturing a daemon snapshot', async () => {
+        const home = await upsertServerProfile({ serverUrl: 'https://target-only-home.example.test' });
+        const view: BrowserControlViewState = { ...createLocalPreviewView(), target: {
+            kind: 'localServicePreview', targetId: 'preview_1', machineId: 'machine_1', display: { title: 'Web' } },
+            currentUrl: null, securityOrigin: null };
+        previewHttp.fetch.mockImplementation(async (url, init) => {
+            if (url === 'https://target-only-home.example.test/v1/local-services/preview/preview_1/access'
+                && new Headers(init?.headers).get('Authorization') === `Bearer ${previewHttp.token}`) return Response.json({
+                    v: 1, kind: 'server_preview', previewId: 'preview_1', machineId: 'machine_1',
+                    accessUrl: 'https://preview.example.test/?previewToken=target-viewer', expiresAt: 2_000_000_000_000 });
+            return Response.json({ error: 'preview_access_denied' }, { status: 403 });
+        });
+        const screen = await renderScreen(<BrowserViewHost view={view} localServicePreviewServerId={home.id} testID="target-viewer" />);
+        try {
+            await flushHookEffects({ cycles: 40 });
+            expect(screen.findByType('iframe').props.src).toBe('https://preview.example.test/?previewToken=target-viewer');
+        } finally { await screen.unmount(); }
+    });
+
     it('fails closed when a hosted-plugin Browser view supplies only raw current or pending URLs', async () => {
         const view = {
             ...createHostedPluginView(),
@@ -545,8 +602,11 @@ describe('BrowserViewHost', () => {
             droppedFrames: 0,
             bufferedBytes: 0,
         } as const;
+        const openPage = vi.fn();
+        const closePage = vi.fn();
         const render = (playerState: React.ComponentProps<typeof BrowserViewHost>['streamedBrowserRuntime']) => renderScreen(
-            <BrowserViewHost view={createSidecarView()} streamedBrowserRuntime={playerState} testID="browser-view" />,
+            <BrowserViewHost view={createSidecarView()} streamedBrowserRuntime={playerState}
+                onOpenStreamedPageHere={openPage} onClosePage={closePage} testID="browser-view" />,
         );
 
         // No stream could be opened: say so, never an embedded page.
@@ -575,6 +635,11 @@ describe('BrowserViewHost', () => {
         const ended = await render({ machineName: 'MacBook Pro', playerState: { ...base, phase: 'stopped', lastFrameUrl: 'data:image/jpeg;base64,AAAA' } });
         expect(ended.findByTestId('browser-view-streamed-ended')).toBeTruthy();
         expect(ended.findByTestId('browser-view-streamed-player')).toBeNull();
+        await ended.pressByTestIdAsync('browser-view-streamed-ended-open');
+        expect(openPage).toHaveBeenCalledOnce();
+        await ended.pressByTestIdAsync('browser-view-streamed-ended-close');
+        expect(closePage).toHaveBeenCalledOnce();
+        expect(none.findByTestId('browser-view-streamed-ended-open')).toBeNull();
     });
 
     it('renders backed desktop external URL views through the native desktop WebView engine', async () => {

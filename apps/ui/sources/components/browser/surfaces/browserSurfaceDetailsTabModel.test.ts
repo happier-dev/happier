@@ -6,9 +6,19 @@ import {
     createBrowserViewDetailsTab,
     readBrowserViewDetailsResource,
     readBrowserViewLaunchpadResource,
+    selectBrowserWorkspaceViewerTab,
 } from './browserSurfaceDetailsTabModel';
 
 describe('browser surface details tab model', () => {
+    it('selects the current Browser workspace source and refuses an unrelated active Details tab', () => {
+        const first = { ...createBrowserViewDetailsTab({ target: { kind: 'externalUrl', targetId: 'first', url: 'https://first.test/' } }),
+            isPreview: false, isPinned: true };
+        const selected = { ...createBrowserViewDetailsTab({ target: { kind: 'externalUrl', targetId: 'selected', url: 'https://selected.test/' } }),
+            isPreview: false, isPinned: true };
+        expect(selectBrowserWorkspaceViewerTab({ tabs: [first, selected], activeTabKey: selected.key })).toBe(selected);
+        expect(selectBrowserWorkspaceViewerTab({ tabs: [first, selected], activeTabKey: 'file:readme' })).toBeNull();
+        expect(selectBrowserWorkspaceViewerTab(null)).toBeNull();
+    });
     it('builds the launchpad as a canonical browser-view tab carrying a launchpad resource', () => {
         const launchpad = createBrowserLaunchpadDetailsTab();
 

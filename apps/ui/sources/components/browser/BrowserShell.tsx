@@ -8,6 +8,7 @@ import type {
     BrowserRecordingPolicyStateV1,
     BrowserRecordingSessionV1,
     FeatureDecision,
+    ActionExecuteResult,
 } from '@happier-dev/protocol';
 import type { BrowserViewTargetV1 } from '@happier-dev/protocol';
 
@@ -77,6 +78,10 @@ import { isDaemonAuthoritativeBrowserView } from '@/sync/domains/browser/control
 import type { BrowserStreamedPageRect, BrowserStreamedSurfaceRuntime } from './adapters/BrowserStreamedTarget';
 import { BrowserPluginActionPlacements } from './BrowserPluginActionPlacements';
 import { BrowserShellPresence, type BrowserShellAgentPresence } from './copresence/BrowserShellPresence';
+import {
+    useSessionViewerBodyPresentation,
+    type SessionViewerSourceNavigation,
+} from '@/components/sessions/viewer/SessionViewerController';
 import { type BrowserProfileStatusModel } from './profile/BrowserProfileStatus';
 import { BrowserPrivacyPopover } from './profile/BrowserPrivacyPopover';
 import { shouldSurfaceBrowserPrivacy } from './profile/browserPrivacyVisibility';
@@ -229,7 +234,7 @@ export function BrowserShell(props: Readonly<{
     viewId?: string | null;
     platform: BrowserPlatformV1;
     state: BrowserControlState;
-    onCommand: (command: BrowserCommandV1) => void;
+    onCommand: (command: BrowserCommandV1) => void | Promise<ActionExecuteResult>;
     /**
      * B-2 cause-2: a sink the in-app render engines call to feed their page-load lifecycle
      * (iframe `onLoad`/`onError`, RN `onLoadStart`/`onLoadEnd`/`onError`, desktop `publishPageInfo`)
@@ -283,6 +288,8 @@ export function BrowserShell(props: Readonly<{
     browserContext?: BrowserShellContextState | null;
     browserDiagnostics?: BrowserShellDiagnosticsState | null;
     browserAutomation?: BrowserShellAutomationState | null;
+    /** Mounted transport availability only; command admission remains Action-owned. */
+    daemonControlAvailable?: boolean;
     /**
      * The session whose agent drives this browser, so the presence capsule, the cursor badge and the
      * streamed states name it (and know whether its turn is running). Independent of in-app
@@ -361,12 +368,12 @@ export function BrowserShell(props: Readonly<{
         bridge: browserDiagnostics?.bridge ?? props.browserAutomation?.engineBridge,
     });
     const urlFieldRef = React.useRef<BrowserUrlFieldHandle | null>(null);
-    const dispatchViewCommand = React.useCallback((kind: 'goBack' | 'goForward' | 'reload' | 'stop') => {
+    const dispatchViewCommand = React.useCallback((kind: 'goBack' | 'goForward' | 'reload' | 'stop' | 'closeView') => {
         if (!activeView) return;
-        props.onCommand({
+        return props.onCommand({
             kind,
             commandId: createCommandId(kind, activeView.viewId),
-            browserSessionId: props.browserSessionId,
+            browserSessionId: activeView.browserSessionId,
             viewId: activeView.viewId,
         });
     }, [activeView, props]);
@@ -395,7 +402,7 @@ export function BrowserShell(props: Readonly<{
         props.onCommand({
             kind: 'navigate',
             commandId: createCommandId('navigate', activeView.viewId),
-            browserSessionId: props.browserSessionId,
+            browserSessionId: activeView.browserSessionId,
             viewId: activeView.viewId,
             url,
         });
@@ -504,11 +511,27 @@ export function BrowserShell(props: Readonly<{
         onStop: () => dispatchViewCommand('stop'),
     });
 
+    // The Session viewer presents the page itself (lab `b-watch`): no browser chrome around the
+    // picture. Its Back, Forward and Reload move to the viewer's menu; the pane keeps the full shell.
+    const inViewer = useSessionViewerBodyPresentation() === 'viewer';
+    const viewerNavigation = React.useMemo<SessionViewerSourceNavigation | null>(() => (inViewer ? {
+        back: toolbar.canGoBack ? () => dispatchViewCommand('goBack') : null,
+        forward: toolbar.canGoForward ? () => dispatchViewCommand('goForward') : null,
+        reload: toolbar.canReload ? () => dispatchViewCommand('reload') : null,
+    } : null), [dispatchViewCommand, inViewer, toolbar.canGoBack, toolbar.canGoForward, toolbar.canReload]);
+    const closePage = React.useCallback(() => dispatchViewCommand('closeView'), [dispatchViewCommand]);
+    // Recovery opens the last page through the current-tab owner, not the stopped daemon view.
+    const recoveredUrl = activeView?.target.kind === 'externalUrl' ? activeView.currentUrl ?? activeView.target.url : null;
+    const recoveredPage = React.useMemo(() => recoveredUrl ? resolveExternalUrlTargetFromInput(recoveredUrl) : null, [recoveredUrl]);
+    const openStreamedPageHere = React.useCallback(() => {
+        if (recoveredPage) props.onNavigateInPlace?.(recoveredPage, { platform: props.platform });
+    }, [props.onNavigateInPlace, props.platform, recoveredPage]);
+
     // H-UX §5: a phone recomposes the chrome instead of shrinking it — the address is a host capsule
     // at the top, and the page controls move to a bottom bar in thumb reach. The launchpad is its own
     // page there (lab W): it brings its own address entry, so no browser chrome surrounds it.
     const phone = chromeDensity.density === 'phone';
-    const showPhoneChrome = phone && !showLaunchpad;
+    const showPhoneChrome = phone && !showLaunchpad && !inViewer;
     const controlMetrics = resolveBrowserChromeControlMetrics(chromeDensity.density);
     const addressField = (
         <BrowserUrlField
@@ -622,7 +645,7 @@ export function BrowserShell(props: Readonly<{
 
     return (
         <View testID={testID} style={stylesheet.root} onLayout={chromeDensity.onLayout}>
-            {phone ? (showPhoneChrome ? (
+            {inViewer ? null : phone ? (showPhoneChrome ? (
                 <View testID={`${testID}-top-bar`} style={stylesheet.phoneTopBar}>
                     <View style={stylesheet.phoneAddressSlot}>{addressField}</View>
                     {recordingCapsule}
@@ -677,6 +700,8 @@ export function BrowserShell(props: Readonly<{
                         browserProfile={props.browserProfile?.profile ?? null}
                         streamedBrowserRuntime={props.streamedBrowserRuntime}
                         onStreamedPageRectChange={setStreamedPageRect}
+                        onOpenStreamedPageHere={recoveredPage && props.onNavigateInPlace ? openStreamedPageHere : undefined}
+                        onClosePage={closePage}
                         agent={props.agent ?? null}
                         nowMs={props.nowMs}
                     />
@@ -701,12 +726,16 @@ export function BrowserShell(props: Readonly<{
                 {activeView && (isDaemonAuthoritativeBrowserView(activeView)
                     || (props.browserAutomation && props.browserAutomation.enabled !== false)) ? (
                     <BrowserShellPresence
+                        viewerNavigation={viewerNavigation}
+                        onClosePage={closePage}
                         testID={`${testID}-presence`}
                         view={activeView}
                         controlService={props.browserAutomation && props.browserAutomation.enabled !== false
                             ? props.browserAutomation.controlService
                             : null}
-                        sendDaemonCommand={props.browserContext?.daemonControl?.sendCommand}
+                        onCommand={isDaemonAuthoritativeBrowserView(activeView)
+                            && !(props.daemonControlAvailable ?? Boolean(props.browserContext?.daemonControl?.sendCommand))
+                            ? undefined : props.onCommand}
                         agent={props.agent ?? null}
                         pageRect={streamedPageRect}
                         compact={chromeDensity.collapsed}
@@ -714,7 +743,7 @@ export function BrowserShell(props: Readonly<{
                     />
                 ) : null}
             </View>
-            {activeView && props.onPluginBrowserAction ? (
+            {activeView && props.onPluginBrowserAction && !inViewer ? (
                 <BrowserPluginActionPlacements
                     detailsPanelActions={plugins.detailsPanelActions}
                     contextMenuActions={plugins.contextMenuActions}
@@ -731,7 +760,7 @@ export function BrowserShell(props: Readonly<{
               * section of this drawer now; when there is no host projection it is the only section,
               * so the capability is unchanged.
               */}
-            {activeDiagnostics || props.supplementalDiagnostics ? (
+            {!inViewer && (activeDiagnostics || props.supplementalDiagnostics) ? (
                 <BrowserDiagnosticsDrawer
                     diagnostics={activeDiagnostics ?? props.supplementalDiagnostics!}
                     state={browserDiagnostics?.eventSource ? undefined : browserDiagnostics?.state}

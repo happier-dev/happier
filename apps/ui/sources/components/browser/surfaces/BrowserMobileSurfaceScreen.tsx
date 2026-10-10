@@ -1,10 +1,4 @@
 import * as React from 'react';
-import { useUnistyles } from 'react-native-unistyles';
-
-import { usePaneHeaderSlotContent } from '@/components/appShell/panes/paneHeaderSlot';
-import { useMachinePresenceSummary } from '@/components/sessions/model/useMachinePresenceSummary';
-import { Icon } from '@/components/ui/icons/Icon';
-import { t } from '@/text';
 
 import { useSessionMachineTarget } from '@/components/sessions/model/useSessionMachineTarget';
 import { useSessionBrowserContextProductModel } from '@/components/sessions/browser/useSessionBrowserContextProductModel';
@@ -17,6 +11,7 @@ import { createSessionPaneScopeId } from '@/components/sessions/panes/sessionPan
 import { useDestinationPaneScopeId } from '@/components/appShell/workspace/DestinationInstanceHost';
 
 import { BrowserScopedWorkspace } from './BrowserScopedWorkspace';
+import { BrowserSurfacePaneHeader } from './browserSurfacePaneHeader';
 
 /**
  * The session's browser host outside the desktop Details workspace: the phone cockpit's Browser tab
@@ -28,8 +23,15 @@ import { BrowserScopedWorkspace } from './BrowserScopedWorkspace';
  */
 export function BrowserMobileSurfaceScreen(props: Readonly<{
     sessionId: string;
+    /** Exact Home borrowed from a Session source owner; never an ambient selection override. */
+    serverId?: string | null;
     scopeId?: string;
     testID?: string;
+    /** The shared Session viewer consumes the focused body without a second workspace shell. */
+    presentation?: 'workspace' | 'viewer';
+    visible?: boolean;
+    presentationSlotId?: string;
+    keepAliveAboveRouter?: boolean;
     /**
      * An enclosing cockpit supplies its one admitted projection. Standalone
      * Browser routes retain the incumbent scoped lookup below.
@@ -41,28 +43,14 @@ export function BrowserMobileSurfaceScreen(props: Readonly<{
     // Standalone routes have no admitted target and resolve the Session's own.
     const admitted = props.pluginProjection !== undefined;
     const preferredServerId = usePreferredServerIdForSession({
-        serverId: props.pluginProjection?.serverId,
+        serverId: props.pluginProjection?.serverId ?? props.serverId,
         sessionId: props.sessionId,
     });
-    const serverId = admitted ? props.pluginProjection?.serverId ?? null : preferredServerId;
+    const serverId = admitted
+        ? props.pluginProjection?.serverId ?? props.serverId ?? null
+        : props.serverId === undefined ? preferredServerId : props.serverId;
     const machineTarget = useSessionMachineTarget(props.sessionId, serverId);
     const machineId = admitted ? props.pluginProjection?.machineId ?? null : machineTarget?.machineId ?? null;
-    // The phone Browser tab is the launchpad in the pane anatomy (session-tabs lab Wp): its header says
-    // where the previews come from. No trailing action — Open an address is the body's first row.
-    const { theme } = useUnistyles();
-    const machineName = useMachinePresenceSummary(serverId, machineId).name;
-    const machineMark = React.useMemo(
-        () => <Icon name="laptop" size={13} color={theme.colors.text.tertiary} />,
-        [theme.colors.text.tertiary],
-    );
-    usePaneHeaderSlotContent(React.useMemo(() => ({
-        line: {
-            leading: machineMark,
-            segments: [machineName
-                ? t('browserLaunchpad.pane.previewsFrom', { machine: machineName })
-                : t('browserLaunchpad.pane.previews')],
-        },
-    }), [machineMark, machineName]));
     const destinationScopeId = useDestinationPaneScopeId(createSessionPaneScopeId(props.sessionId, serverId));
     const scopeId = props.scopeId ?? destinationScopeId;
     const scopedPluginProjection = useScopedPluginUiProjection({
@@ -96,25 +84,32 @@ export function BrowserMobileSurfaceScreen(props: Readonly<{
     }), [browserContext, recordingRuntime?.browserShellRecording]);
 
     return (
-        <BrowserScopedWorkspace
-            scopeId={scopeId}
-            scope={{
-                kind: 'session',
-                sessionId: props.sessionId,
-                serverId,
-                machineId,
-            }}
-            openScope="sessionMobile"
-            platform={resolveBrowserSurfacePlatform()}
-            localServicePreviewState={hostProps.localServicePreviewState}
-            localServicePreviewServerId={hostProps.localServicePreviewServerId}
-            launchpadRows={hostProps.launchpadRows}
-            launchpadRefreshStatus={hostProps.launchpadRefreshStatus}
-            launchpadRefreshError={hostProps.launchpadRefreshError}
-            productModels={productModels}
-            pluginProjection={pluginProjection}
-            pluginBrowserActionSessionId={props.sessionId}
-            testID={props.testID ?? 'session-mobile-browser'}
-        />
+        <>
+            <BrowserSurfacePaneHeader presentation={props.presentation} serverId={serverId} machineId={machineId} />
+            <BrowserScopedWorkspace
+                scopeId={scopeId}
+                presentation={props.presentation}
+                visible={props.visible}
+                presentationSlotId={props.presentationSlotId}
+                keepAliveAboveRouter={props.keepAliveAboveRouter}
+                scope={{
+                    kind: 'session',
+                    sessionId: props.sessionId,
+                    serverId,
+                    machineId,
+                }}
+                openScope="sessionMobile"
+                platform={resolveBrowserSurfacePlatform()}
+                localServicePreviewState={hostProps.localServicePreviewState}
+                localServicePreviewServerId={hostProps.localServicePreviewServerId}
+                launchpadRows={hostProps.launchpadRows}
+                launchpadRefreshStatus={hostProps.launchpadRefreshStatus}
+                launchpadRefreshError={hostProps.launchpadRefreshError}
+                productModels={productModels}
+                pluginProjection={pluginProjection}
+                pluginBrowserActionSessionId={props.sessionId}
+                testID={props.testID ?? 'session-mobile-browser'}
+            />
+        </>
     );
 }

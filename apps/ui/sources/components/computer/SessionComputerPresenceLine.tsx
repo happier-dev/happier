@@ -10,6 +10,7 @@ import { useSessionMachineTarget } from '@/components/sessions/model/useSessionM
 import { useSessionComputerMachine } from '@/sync/domains/computer/sessionComputerMachines';
 import { t } from '@/text';
 import { useDeviceType } from '@/utils/platform/responsive';
+import { useSessionViewerSourceAccountLifetime } from '@/components/sessions/viewer/SessionViewerSourceAccountScope';
 
 import { useComputerSessionControl } from './useComputerSessionControl';
 import { useOpenSessionComputerScreen } from './useOpenSessionComputerScreen';
@@ -89,14 +90,16 @@ export function SessionComputerPresenceLine(props: Readonly<{
     serverId?: string | null;
     testID?: string;
 }>): React.ReactElement | null {
+    const accountLifetime = useSessionViewerSourceAccountLifetime();
+    const serverId = props.serverId ?? accountLifetime?.scope.serverId ?? null;
     const seenComputerUse = useSessionComputerMachine(props.sessionId);
     // The share lives on the Session's own machine (computer use never targets another one).
-    const sessionMachineId = useSessionMachineTarget(seenComputerUse ? props.sessionId : null, props.serverId ?? null)?.machineId ?? null;
+    const sessionMachineId = useSessionMachineTarget(seenComputerUse && accountLifetime ? props.sessionId : null, serverId)?.machineId ?? null;
     if (!seenComputerUse || !sessionMachineId || seenComputerUse.machineId !== sessionMachineId) return null;
     return (
         <MountedSessionComputerPresenceLine
             sessionId={props.sessionId}
-            serverId={props.serverId ?? null}
+            serverId={serverId}
             machineId={sessionMachineId}
             testID={props.testID ?? 'session-computer-presence'}
         />

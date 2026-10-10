@@ -2,12 +2,15 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createDeferred, flushHookEffects, renderScreen } from '@/dev/testkit';
+import { createActionExecutorBoundaryFixture, createDeferred, flushHookEffects, renderScreen } from '@/dev/testkit';
 import { slideTransitionTokens } from '@/components/ui/motion/slideTransitionTokens';
 import { dispatchBrowserControlCommand } from '@/sync/domains/browser/control/commands';
 import { createBrowserControlState } from '@/sync/domains/browser/control/reducer';
 import { useBrowserDaemonControlTransport } from '@/sync/domains/browser/control/useBrowserDaemonControlTransport';
 import type { BrowserControlViewState } from '@/sync/domains/browser/control';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { createBrowserRuntimeActionExecutor } from '@/sync/domains/browser/actions/runtimeActionExecutor';
+import { browserControlActionId } from '@/sync/domains/browser/actions/controlActionId';
 
 import { BrowserShellPresence } from './BrowserShellPresence';
 
@@ -32,15 +35,34 @@ function view(controller: 'agent' | 'human', controlEpoch: number): BrowserContr
     } };
 }
 
-function Surface({ currentView }: Readonly<{ currentView: BrowserControlViewState }>) {
+function Surface({ currentView, enabled = true }: Readonly<{ currentView: BrowserControlViewState; enabled?: boolean }>) {
     const sendDaemonCommand = useBrowserDaemonControlTransport({ machineId: 'machine_1', serverId: 'server_1' });
+    const execute = createActionExecutor(createActionExecutorBoundaryFixture({
+        isActionEnabled: () => enabled,
+        runtimeActionExecute: createBrowserRuntimeActionExecutor({ control: {
+            readState: () => ({ ...createBrowserControlState(), viewsById: { [currentView.viewId]: currentView } }),
+            applyDispatchResult: () => {},
+            sendDaemonCommand,
+        } }),
+    }));
     return <BrowserShellPresence view={currentView} controlService={null} agent={null}
-        sendDaemonCommand={sendDaemonCommand} testID="p" />;
+        onCommand={command => execute.execute(browserControlActionId(command), command, {
+            surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+        })} testID="p" />;
 }
 
 describe('BrowserShellPresence daemon takeover', () => {
     beforeEach(() => { vi.useFakeTimers(); });
     afterEach(() => { vi.useRealTimers(); });
+    it('does not take control or hand back when the existing Action policy refuses UI admission', async () => {
+        rpc.mockReset();
+        const screen = await renderScreen(<Surface currentView={view('agent', 4)} enabled={false} />);
+        await screen.pressByTestIdAsync('p-take-control');
+        expect(screen.findHostByTestId('p-human')).toBeNull();
+        await screen.update(<Surface currentView={view('human', 5)} enabled={false} />);
+        await screen.pressByTestIdAsync('p-hand-back');
+        expect(rpc).not.toHaveBeenCalled();
+    });
     it.each(['unavailable', 'connection-lost'] as const)('recovers a %s result through the real app binding and transport', async (failure) => {
         rpc.mockReset();
         if (failure === 'unavailable') rpc.mockResolvedValue({ error: 'Method not found', errorCode: 'RPC_METHOD_NOT_FOUND' });

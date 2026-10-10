@@ -26,6 +26,7 @@ import { selectLocalServicePreviewByBrowserTarget } from '@/sync/domains/local/s
 import { openOrCreateLocalServicePreviewViaMachineRpc } from '@/sync/domains/local/services/preview/machineRpc';
 import { normalizeLocalServicePreviewSnapshotPayload } from '@/sync/domains/local/services/preview/api';
 import { publishLocalServicePreviewSnapshot } from '@/sync/domains/local/services/preview/sharedStore';
+import { LocalServicePreviewServiceTargetV1Schema } from '@happier-dev/protocol/local/services/preview/v1';
 
 import {
     createBrowserViewDetailsTab,
@@ -382,7 +383,15 @@ export function bindServicesOpenInBrowser(
             return { status: 'denied', reasonCode: 'browser_target_unavailable' };
         }
         const browserTarget = mapLocalServiceLaunchTargetToBrowserTarget(target);
-        if (target.actions.includes('register_preview') || browserTarget?.kind === 'localServicePreview') {
+        const isSourceQualifiedService = target.sourceClass?.kind === 'managed_service' && target.sessionId === undefined
+            && (target.declaration !== undefined || target.cwd !== undefined);
+        const parsedService = isSourceQualifiedService && target.sourceClass?.kind === 'managed_service'
+            ? LocalServicePreviewServiceTargetV1Schema.safeParse({ kind: 'managed_service', machineId: target.machineId,
+                managedServiceId: target.sourceClass.managedServiceId, ...(target.workspaceId ? { workspaceId: target.workspaceId } : {}),
+                declaration: target.declaration, cwd: target.cwd }) : null;
+        if (isSourceQualifiedService && !parsedService?.success) return { status: 'denied', reasonCode: 'browser_target_unavailable' };
+        const serviceTarget = parsedService?.success ? parsedService.data : undefined;
+        if (serviceTarget || target.actions.includes('register_preview') || browserTarget?.kind === 'localServicePreview') {
             const inventoryEntryId = target.sourceClass?.kind === 'inventory_entry'
                 ? target.sourceClass.inventoryEntryId
                 : undefined;
@@ -391,10 +400,10 @@ export function bindServicesOpenInBrowser(
             }
             // A new inventory registration belongs to the viewing context. An existing
             // preview keeps its own resource scope, including an explicitly sessionless one.
-            const sessionId = inventoryEntryId
+            const sessionId = serviceTarget ? undefined : inventoryEntryId
                 ? deps.sessionId ?? target.sessionId
                 : browserTarget?.kind === 'localServicePreview' ? browserTarget.sessionId : target.sessionId;
-            const targetReference = inventoryEntryId
+            const targetReference = serviceTarget ? { serviceTarget } : inventoryEntryId
                 ? { inventoryEntryId }
                 : { launchTargetId: browserTarget?.kind === 'localServicePreview' ? browserTarget.targetId : target.id };
             const result = await openOrCreateLocalServicePreviewViaMachineRpc({

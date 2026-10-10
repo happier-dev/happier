@@ -5,6 +5,7 @@ import type { BrowserStreamedSurfaceRuntime } from '@/components/browser/adapter
 import { useSimulatorRelayIngestion, type SimulatorRelayTransport } from '@/components/devices/simulator/relay/useSimulatorRelayIngestion';
 import { useMachineLiveStreamRelaySocket } from '@/components/stream/useMachineLiveStreamRelaySocket';
 import { publishComputerStatusFrame } from '@/sync/domains/computer/computerControlClient';
+import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 
 /** The live-stream family and codec W7's native computer source registers (`_CONTRACTS.md`, W7 U3 supplement). */
 const SCREEN_STREAM_FAMILY = 'screen';
@@ -22,16 +23,20 @@ export function useComputerScreenStream(input: Readonly<{
     sessionId: string;
     machineId: string | null;
     serverId: string | null;
+    accountLifetime?: ServerAccountScopeLifetime | null;
     sourceId: string | null;
     machineName: string | null;
     enabled?: boolean;
+    inputEnabled?: boolean;
 }>): BrowserStreamedSurfaceRuntime | null {
     const machineId = input.machineId?.trim() ?? '';
-    const serverId = input.serverId?.trim() ?? '';
+    const serverId = input.serverId?.trim() || input.accountLifetime?.scope.serverId || '';
     const sourceId = input.enabled === false ? null : input.sourceId;
+    const inputEnabled = input.inputEnabled ?? true;
     const socket = useMachineLiveStreamRelaySocket({
         machineId,
         serverId,
+        accountLifetime: input.accountLifetime,
         enabled: Boolean(sourceId && machineId),
         disconnectTag: 'computer-live-stream-relay-disconnect',
     });
@@ -55,7 +60,7 @@ export function useComputerScreenStream(input: Readonly<{
         caps: NO_VIEWER_CAPS,
         sourceCodecs: SCREEN_CODECS,
         onMetadataFrame: frame => {
-            if (sourceId && machineId) publishComputerStatusFrame({ sessionId: input.sessionId, machineId, serverId: input.serverId ?? null }, sourceId, frame);
+            if (sourceId && machineId) publishComputerStatusFrame({ sessionId: input.sessionId, machineId, serverId: serverId || null }, sourceId, frame);
         },
     });
     const sendControl = React.useMemo(() => {
@@ -76,7 +81,7 @@ export function useComputerScreenStream(input: Readonly<{
             machineName,
             connecting: !socket || !playerState,
             playerState,
-            input: sendControl && streamId ? { sourceId, streamId, send: sendControl } : null,
+            input: inputEnabled && sendControl && streamId ? { sourceId, streamId, send: sendControl } : null,
         };
-    }, [machineName, playerState, sendControl, socket, sourceId, streamId]);
+    }, [inputEnabled, machineName, playerState, sendControl, socket, sourceId, streamId]);
 }

@@ -17,27 +17,13 @@ import { buildBrowserAdapterCapabilities } from '../adapters/capabilities';
 import { createBrowserAutomationControlService, type BrowserAutomationRequest } from '../automation';
 import type { BrowserControlCommandDispatchResult, BrowserControlState } from '../control';
 import { applyBrowserControlEvent, createBrowserControlState } from '../control';
+import type { BrowserDaemonControlDispatchClientResult } from '../control/machineRpc';
+import { openExternalUrl } from '@/utils/url/openExternalUrl';
 
-type BrowserRuntimeActionExecutorModule = Readonly<{
-    createBrowserRuntimeActionExecutor?: (input: Readonly<{
-        control?: Readonly<{
-            readState: () => BrowserControlState | null | undefined;
-            applyDispatchResult: (result: BrowserControlCommandDispatchResult) => void | Promise<void>;
-            sendDaemonCommand?: (command: BrowserCommandV1) => void;
-        }>;
-        resolveControl?: (input: BrowserCommandV1) => Readonly<{
-            readState: () => BrowserControlState | null | undefined;
-            applyDispatchResult: (result: BrowserControlCommandDispatchResult) => void | Promise<void>;
-            sendDaemonCommand?: (command: BrowserCommandV1) => void;
-        }> | null | undefined;
-        automation?: Readonly<{
-            controlService: ReturnType<typeof createBrowserAutomationControlService>;
-        }>;
-        resolveAutomation?: (input: Readonly<{ browserSessionId: string }>) => Readonly<{
-            controlService: ReturnType<typeof createBrowserAutomationControlService>;
-        }> | null | undefined;
-    }>) => (args: RuntimeActionExecuteArgs) => Promise<unknown>;
-}>;
+// OS browser handoff is a genuine platform boundary; keep selection and dispatch real.
+vi.mock('@/utils/url/openExternalUrl', () => ({ openExternalUrl: vi.fn(async () => true) }));
+
+type BrowserRuntimeActionExecutorModule = typeof import('./runtimeActionExecutor');
 
 const localPreviewTarget = {
     kind: 'localServicePreview',
@@ -154,6 +140,69 @@ function openViewState(input: Readonly<{
 }
 
 describe('browser runtime action executor', () => {
+    it('fulfills an allowed OS-tab handoff below browser.view.open without materializing a view', async () => {
+        const { createBrowserRuntimeActionExecutor } = await import('./runtimeActionExecutor');
+        const state = createBrowserControlState();
+        const execute = createBrowserRuntimeActionExecutor({ control: {
+            readState: () => state,
+            applyDispatchResult: () => {},
+            readDispatchOptions: () => ({ targetPolicyDecision: { targetKind: 'externalUrl', state: 'allowed' },
+                desktopWebViewAvailability: null }),
+        } });
+        const result = await execute(runtimeArgs({ actionId: 'browser.view.open', input: {
+            kind: 'openView', commandId: 'external-handoff', browserSessionId: 'browser_session_1',
+            viewId: 'external-view', target: externalTarget, platform: 'desktop', focus: true,
+        } }));
+        expect(result).toMatchObject({ status: 'dispatched', adapterKind: 'externalUrl' });
+        expect(openExternalUrl).toHaveBeenCalledWith(externalTarget.url);
+        expect(state.viewsById['external-view']).toBeUndefined();
+    });
+
+    it('preserves an unconfirmed daemon dispatch instead of reporting optimistic acceptance', async () => {
+        const { createBrowserRuntimeActionExecutor } = await import('./runtimeActionExecutor');
+        const state = openViewState({ adapterKind: 'chromiumSidecar', engineKind: 'desktopWebView',
+            target: externalTarget, capabilities: sidecarCapabilities, currentUrl: externalTarget.url });
+        const execute = createBrowserRuntimeActionExecutor({ control: {
+            readState: () => state,
+            applyDispatchResult: () => { throw new Error('Daemon events must not be overwritten by the pre-dispatch projection'); },
+            sendDaemonCommand: async () => ({ ok: false, reason: 'request_failed' }),
+        } });
+        expect(await execute(runtimeArgs({ actionId: 'browser.control.takeControl', input: {
+            kind: 'takeControl', commandId: 'take-unconfirmed', browserSessionId: 'browser_session_1', viewId: 'view_1',
+        } }))).toMatchObject({ ok: false, errorCode: 'browser_control_unconfirmed' });
+    });
+
+    it('does not report an OS handoff as dispatched when the platform refuses it', async () => {
+        const { createBrowserRuntimeActionExecutor } = await import('./runtimeActionExecutor');
+        vi.mocked(openExternalUrl).mockResolvedValueOnce(false);
+        const execute = createBrowserRuntimeActionExecutor({ control: {
+            readState: createBrowserControlState,
+            applyDispatchResult: () => {},
+            readDispatchOptions: () => ({ targetPolicyDecision: { targetKind: 'externalUrl', state: 'allowed' } }),
+        } });
+        expect(await execute(runtimeArgs({ actionId: 'browser.view.open', input: {
+            kind: 'openView', commandId: 'refused-handoff', browserSessionId: 'browser_session_1',
+            viewId: 'external-view', target: externalTarget, platform: 'desktop',
+        } }))).toMatchObject({ ok: false, errorCode: 'runtime_action_disabled' });
+    });
+    it('uses the mounted target policy when opening an external URL through the Action owner', async () => {
+        const mod = await loadRuntimeActionExecutor();
+        expect(mod?.createBrowserRuntimeActionExecutor).toBeTypeOf('function');
+        if (!mod?.createBrowserRuntimeActionExecutor) return;
+        let state = createBrowserControlState();
+        const execute = mod.createBrowserRuntimeActionExecutor({ control: {
+            readState: () => state,
+            applyDispatchResult: result => { state = result.state; },
+            readDispatchOptions: () => ({ targetPolicyDecision: { targetKind: 'externalUrl', state: 'denied' } }),
+        } });
+        const result = await execute(runtimeArgs({ actionId: 'browser.view.open', input: {
+            kind: 'openView', commandId: 'open-through-action', browserSessionId: 'browser_session_1', viewId: 'view_1',
+            target: externalTarget, platform: 'ios', currentUrl: externalTarget.url, focus: true,
+        } }));
+        expect(result).toMatchObject({ ok: false, errorCode: 'runtime_action_disabled' });
+        expect(state.viewsById.view_1).toBeUndefined();
+    });
+
     it('routes browser.navigate through the domain control dispatcher and commits the accepted state', async () => {
         const mod = await loadRuntimeActionExecutor();
 
@@ -648,7 +697,9 @@ describe('browser runtime action executor', () => {
             currentUrl: 'https://browser.example.test/start',
         });
         const applyDispatchResult = vi.fn();
-        const sendDaemonCommand = vi.fn();
+        const sendDaemonCommand = vi.fn(async (command: BrowserCommandV1): Promise<BrowserDaemonControlDispatchClientResult> => ({
+            ok: true, result: { v: 1, commandId: command.commandId, status: 'dispatched', adapterKind: 'chromiumSidecar', events: [] },
+        }));
         const execute = mod.createBrowserRuntimeActionExecutor({
             control: {
                 readState: () => state,
@@ -706,7 +757,7 @@ describe('browser runtime action executor', () => {
             expect(result).not.toMatchObject({ error: 'runtime_action_disabled:browser:browser_control_route_unavailable' });
             expect(sendDaemonCommand).toHaveBeenCalledWith(command);
         }
-        expect(applyDispatchResult).toHaveBeenCalledTimes(commands.length);
+        expect(applyDispatchResult).not.toHaveBeenCalled();
     });
 
     it('dispatches browser.recording.attachToComposer to the recording-attach adapter', async () => {

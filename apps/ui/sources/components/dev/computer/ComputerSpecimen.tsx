@@ -17,6 +17,17 @@ import { Modal } from '@/modal';
 import { t } from '@/text';
 import type { CustomModalInjectedProps } from '@/modal/types';
 import type { BrowserCopresence } from '@/sync/domains/browser/automation/copresence';
+import { FloatingFrame, resolveFloatingFrameHeight } from '@happier-dev/plugin-ui/presentation';
+import {
+    useOptionalSessionViewerController,
+    usePublishSessionViewerPresence,
+    usePublishSessionViewerSourceFacts,
+} from '@/components/sessions/viewer/SessionViewerController';
+import { SessionViewerControllerProvider } from '@/components/sessions/viewer/SessionViewerControllerProvider';
+import { SessionViewerControls } from '@/components/sessions/viewer/SessionViewerControls';
+import { SessionViewerPicture } from '@/components/sessions/viewer/SessionViewerPicture';
+import { SessionViewerPresenceFooter } from '@/components/sessions/viewer/SessionViewerPresenceFooter';
+import { SESSION_VIEWER_DEFAULT_ASPECT } from '@/components/sessions/viewer/sessionViewerGeometry';
 
 /**
  * Dev-only specimen of computer use (lab `computer` TP, OG, CS, LV, K, UN, ST) drawn through the real
@@ -153,6 +164,80 @@ function ViewerFrame(props: Readonly<{ presence: keyof typeof PRESENCE; stream: 
     );
 }
 
+/** The viewer's own facts and presence, as the Computer body publishes them. */
+function WatchSource(props: Readonly<{ presence: keyof typeof PRESENCE }>) {
+    const viewer = useOptionalSessionViewerController();
+    const port = viewer?.port;
+    React.useEffect(() => { port?.apply({ kind: 'viewer.open', source: 'computer' }); }, [port]);
+    const presence = PRESENCE[props.presence];
+    usePublishSessionViewerSourceFacts('computer', {
+        machineName: MACHINE, personInControl: presence.kind === 'human', watching: presence.kind === 'agent',
+        chooseTarget: NOOP, stopSharing: NOOP,
+    });
+    const published = React.useMemo(() => ({
+        presence, agent: AGENT, onTakeControl: NOOP, onHandBack: NOOP, onCheckAgain: NOOP,
+        agentTitle: presence.kind === 'agent' ? t('computerUse.viewer.agentUsing', { agent: AGENT.name, target: TITLE }) : undefined,
+    }), [presence]);
+    usePublishSessionViewerPresence('computer', published);
+    return null;
+}
+
+/**
+ * Lab `b-watch` A/K: the floating viewer as the Session host composes it — the shared frame, its
+ * real controls and presence footer, and the chromeless Computer picture — at the lab's 420 width,
+ * bottom-right of a reading area, without a native driver.
+ */
+function WatchFrame(props: Readonly<{ presence: keyof typeof PRESENCE; phone: boolean }>) {
+    const stream = useStream('live');
+    const width = props.phone ? 358 : 420;
+    const height = resolveFloatingFrameHeight(width, SESSION_VIEWER_DEFAULT_ASPECT, { footer: true });
+    const area = { x: 0, y: 0, width: props.phone ? 358 : 1000, height: props.phone ? height : 640 };
+    const rect = { x: area.width - width, y: area.height - height, width, height };
+    const presence = PRESENCE[props.presence];
+    return (
+        <SessionViewerControllerProvider sessionId="specimen-session" serverId={null} phone={props.phone}
+            canPresentSource={() => true} openDocked={NOOP}>
+            <WatchSource presence={props.presence} />
+            <View style={{ width: area.width, height: area.height }} testID="specimen-watch-area">
+                <FloatingFrame
+                    testID="session-viewer-frame"
+                    mode={props.phone ? 'docked' : 'floating'}
+                    rect={rect}
+                    availableRect={area}
+                    aspectRatio={SESSION_VIEWER_DEFAULT_ASPECT}
+                    moveInput={presence.kind === 'agent' ? 'surface' : 'chrome'}
+                    onRectChange={NOOP}
+                    onModeChange={NOOP}
+                    controlsAlwaysVisible
+                    accessibilityLabel={t('computerUse.viewer.watchingA11y', { source: t('computerUse.viewer.sourceComputer'), machine: MACHINE })}
+                    controls={<SessionViewerControls sessionId="specimen-session" serverId={null} source="computer" />}
+                    footer={<SessionViewerPresenceFooter source="computer" compact={props.phone} />}
+                >
+                    <SessionViewerPicture framed source="computer">
+                        <ComputerScreenViewer
+                            agent={AGENT}
+                            targetTitle={TITLE}
+                            targetKind="window"
+                            machineName={MACHINE}
+                            shared
+                            stream={stream}
+                            presence={presence}
+                            agentActing={presence.kind === 'agent'}
+                            onTakeControl={NOOP}
+                            onHandBack={NOOP}
+                            onCheckAgain={NOOP}
+                            onChooseWindow={NOOP}
+                            onStopSharing={NOOP}
+                            chrome="none"
+                            compact={props.phone}
+                        />
+                    </SessionViewerPicture>
+                </FloatingFrame>
+            </View>
+        </SessionViewerControllerProvider>
+    );
+}
+
 /** The session-wide strip at the top of the transcript (lab HC), drawn with the real capsule strip. */
 function SessionLineFrame(props: Readonly<{ phone: boolean; presence: keyof typeof PRESENCE }>) {
     return (
@@ -229,6 +314,8 @@ const FRAMES: readonly Frame[] = [
     { id: 'STs', render: (phone) => <ViewerFrame presence="agent" stream="stalled" phone={phone} /> },
     { id: 'STe', render: (phone) => <ViewerFrame presence="human" stream="ended" phone={phone} /> },
     { id: 'STn', render: (phone) => <ViewerFrame presence="agent" stream="live" shared={false} phone={phone} /> },
+    { id: 'WA', render: (phone) => <WatchFrame presence="agent" phone={phone} /> },
+    { id: 'WK', render: (phone) => <WatchFrame presence="human" phone={phone} /> },
 ];
 
 export function ComputerSpecimen(props: Readonly<{ only: string | null; phone: boolean }>) {
@@ -236,7 +323,7 @@ export function ComputerSpecimen(props: Readonly<{ only: string | null; phone: b
     return (
         <SurfaceStateSizeProvider size={props.phone ? 'phone' : 'details'}>
             <View style={styles.root}>
-                <View testID={`computer-specimen-${frame.id}`} style={props.phone ? styles.framePhone : styles.frame}>
+                <View testID={`computer-specimen-${frame.id}`} style={frame.id.startsWith('W') ? styles.watch : props.phone ? styles.framePhone : styles.frame}>
                     {frame.render(props.phone)}
                 </View>
             </View>
@@ -262,6 +349,7 @@ const styles = StyleSheet.create((theme) => ({
         backgroundColor: theme.colors.surface.base,
     },
     cards: { padding: 16, gap: 16 },
+    watch: { alignSelf: 'flex-start', padding: 24, backgroundColor: theme.colors.surface.base },
     chat: { flex: 1 },
     stripFrame: { padding: 12 },
     grow: { flex: 1 },

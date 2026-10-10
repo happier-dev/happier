@@ -42,19 +42,12 @@ export {
     resolveBrowserSurfaceLifecycleState,
 } from './browserSurfaceLifecycle';
 export {
-    BrowserKeepAliveBinder,
-    BrowserPresentationPortalHost,
     BrowserPresentationRetentionProvider,
     createBrowserPresentationRetentionStore,
-    useBrowserPresentationPortalSlot,
     useOptionalBrowserPresentationRetentionStore,
 } from './browserPresentationRetention';
 export type {
-    BrowserKeepAliveBinderProps,
-    BrowserPresentationPortalEntry,
     BrowserPresentationRetentionStore,
-    UseBrowserPresentationPortalSlotInput,
-    UseBrowserPresentationPortalSlotResult,
 } from './browserPresentationRetention';
 export {
     resolveBrowserSurfacePlatform,

@@ -371,6 +371,33 @@ async function createSimulatorPreviewShellState(): Promise<Awaited<ReturnType<ty
 }
 
 describe('BrowserShell', () => {
+    it('recovers an ended agent stream through the existing current-tab open and close intents', async () => {
+        const { BrowserShell } = await import('./BrowserShell');
+        const state = await createShellState();
+        const original = state.viewsById.view_1!;
+        const view = { ...original,
+            target: { kind: 'externalUrl' as const, targetId: 'external_1', url: 'https://example.com/', display: { title: 'Example' } },
+            currentUrl: 'https://example.com/latest', adapterKind: 'chromiumSidecar' as const, engineKind: 'streamedSurface' as const,
+            adapterCapabilities: buildBrowserAdapterCapabilities({ adapterKind: 'chromiumSidecar',
+                supportedTargetKinds: ['externalUrl'], supportedRenderEngines: ['streamedSurface'] }),
+        };
+        const open = vi.fn();
+        const command = vi.fn();
+        const screen = await renderScreen(<BrowserShell browserSessionId="browser_session_1" platform="web"
+            state={{ ...state, viewsById: { ...state.viewsById, view_1: view } }}
+            onCommand={command} onNavigateInPlace={open} testID="ended-shell"
+            streamedBrowserRuntime={{ machineName: 'Remote', playerState: {
+                phase: 'stopped', selectedCodec: 'image.mjpeg', activeRenderer: 'mjpeg', decodedFrames: 0,
+                droppedFrames: 0, bufferedBytes: 0,
+            } }} />);
+        await screen.pressByTestIdAsync('ended-shell-view-streamed-ended-open');
+        expect(open).toHaveBeenCalledWith(expect.objectContaining({ kind: 'externalUrl', url: 'https://example.com/latest' }), { platform: 'web' });
+        expect(command).not.toHaveBeenCalled();
+        await screen.pressByTestIdAsync('ended-shell-view-streamed-ended-close');
+        expect(command).toHaveBeenCalledWith(expect.objectContaining({ kind: 'closeView', viewId: 'view_1', browserSessionId: 'browser_session_1' }));
+        await screen.unmount();
+    });
+
     beforeEach(async () => {
         vi.unstubAllGlobals();
         const { resetBrowserDiagnosticsDrawerStateForTests } = await import('./diagnostics/BrowserDiagnosticsDrawer');

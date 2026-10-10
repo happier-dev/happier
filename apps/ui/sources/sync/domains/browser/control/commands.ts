@@ -6,7 +6,7 @@ import type {
 
 import type { DesktopWebViewNativeAvailability } from '../adapters/desktopWebView';
 import type { BrowserAutomationControlService } from '../automation/controlService';
-import { selectBrowserTargetAdapter } from '../adapters/selection';
+import { selectBrowserTargetAdapter, type BrowserAdapterSelection } from '../adapters/selection';
 import { LOCAL_BROWSER_PROFILE_ID } from '../profiles/localBrowserProfile';
 import { isClientRenderedBrowserEngine } from './lifecycle';
 import { applyBrowserControlEvent } from './reducer';
@@ -21,6 +21,11 @@ type BrowserFocusViewCommand = Extract<BrowserCommandV1, { kind: 'focusView' }>;
 type BrowserViewLifecycleCommand = Extract<BrowserCommandV1, { kind: 'openView' | 'closeView' | 'setTarget' }>;
 
 export type BrowserControlCommandEffect =
+    | Readonly<{
+        kind: 'openExternalTab';
+        selection: Extract<BrowserAdapterSelection, { outcome: 'openExternalTab' }>;
+        command: Extract<BrowserCommandV1, { kind: 'openView' }>;
+      }>
     | Readonly<{
         kind: 'clientLocalNavigation';
         viewId: string;
@@ -177,13 +182,15 @@ function dispatchOpenViewCommand(
         desktopWebViewAvailability: options.desktopWebViewAvailability,
         nativeViewCaptureHandlerRegistered: options.nativeViewCaptureHandlerRegistered,
     });
-    // `openExternalTab` is a side-effect OS-tab handoff (the host opens it via the canonical
-    // opener before dispatch); it is not a renderable in-app view, so opening one is rejected here.
-    if (!selectedAdapter.ok || selectedAdapter.outcome === 'openExternalTab') {
+    if (!selectedAdapter.ok) {
         return {
             state,
             effects: [{ kind: 'commandRejected', command, reasonCode: 'adapter_unavailable' }],
         };
+    }
+    // Fulfill the selector's OS handoff below Action admission; it never materializes a view.
+    if (selectedAdapter.outcome === 'openExternalTab') {
+        return { state, effects: [{ kind: 'openExternalTab', selection: selectedAdapter, command }] };
     }
 
     const stateWithSession = ensureSessionForOpenView(state, command);

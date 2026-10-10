@@ -167,6 +167,18 @@ export function readBrowserViewDetailsResource(value: unknown): BrowserViewDetai
     };
 }
 
+/** The viewer consumes the workspace's selected Browser source, never an unrelated Details tab. */
+export function selectBrowserWorkspaceViewerTab(details: Readonly<{
+    tabs: readonly DetailsTabState[];
+    activeTabKey: string | null;
+}> | null): DetailsTabState | null {
+    const selected = details?.tabs.find((tab) => tab.key === details.activeTabKey);
+    if (!selected || (!readBrowserViewDetailsResource(selected.resource) && !readBrowserViewLaunchpadResource(selected.resource))) {
+        return null;
+    }
+    return selected;
+}
+
 /**
  * A live, per-view favicon/loading snapshot a surface can expose for its `browser-view` tabs.
  * Keyed lookup is by the tab resource's `viewId`; absence means "no live signal yet".

@@ -3,9 +3,12 @@ import type { RuntimeActionExecute } from '@happier-dev/protocol/actions/executo
 
 import { executeComputerActionViaMachineRpc } from './machineRpc';
 import { publishComputerActionAnswer } from '../computerControlClient';
+import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 
 export type ComputerMachineRpc = (input: Readonly<{
     serverId?: string;
+    /** Existing front-door Account admission, pinned by the scoped transport. */
+    accountId?: string;
     machineId: string;
     sessionId: string;
     actionId: string;
@@ -35,6 +38,8 @@ function readMachineId(input: unknown): string | null {
 export function createComputerRuntimeActionExecutor(input: Readonly<{
     executeOnMachine?: ComputerMachineRpc;
     fallback: RuntimeActionExecute;
+    /** The invoking Account owns publication, never the effect's returned acknowledgement. */
+    accountLifetime?: ServerAccountScopeLifetime;
 }>): RuntimeActionExecute {
     const executeOnMachine = input.executeOnMachine ?? executeComputerActionViaMachineRpc;
     return async (args) => {
@@ -48,13 +53,16 @@ export function createComputerRuntimeActionExecutor(input: Readonly<{
         if (!machineId) return refuse('invalid_parameters');
         const result = await executeOnMachine({
             ...(args.context.serverId ? { serverId: args.context.serverId } : {}),
+            ...(args.context.runtimeAccountId ? { accountId: args.context.runtimeAccountId } : {}),
             machineId,
             sessionId,
             actionId: args.actionId,
             input: args.input,
             ...(args.context.signal ? { signal: args.context.signal } : {}),
         });
-        publishComputerActionAnswer({ sessionId, machineId, serverId: args.context.serverId ?? null }, args.actionId, result);
+        if (!input.accountLifetime || input.accountLifetime.isCurrent()) {
+            publishComputerActionAnswer({ sessionId, machineId, serverId: args.context.serverId ?? null }, args.actionId, result);
+        }
         return result;
     };
 }

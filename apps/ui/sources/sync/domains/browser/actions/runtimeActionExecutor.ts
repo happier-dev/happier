@@ -10,7 +10,10 @@ import {
     dispatchBrowserControlCommand,
     type BrowserControlCommandDispatchResult,
     type BrowserControlCommandEffect,
+    type BrowserControlCommandDispatchOptions,
 } from '../control/commands';
+import type { BrowserDaemonControlDispatchClientResult } from '../control/machineRpc';
+import { openBrowserExternalTabSelection } from '../adapters/selection';
 import type { BrowserControlState } from '../control/state';
 import {
     createBrowserRecordingAttachExecutor,
@@ -44,7 +47,9 @@ type BrowserRuntimeActionFailure = Extract<ActionExecuteResult, Readonly<{ ok: f
 export type BrowserRuntimeControlAdapter = Readonly<{
     readState: () => BrowserControlState | null | undefined;
     applyDispatchResult: (result: BrowserControlCommandDispatchResult) => void | Promise<void>;
-    sendDaemonCommand?: (command: BrowserCommandV1) => void;
+    sendDaemonCommand?: (command: BrowserCommandV1) => Promise<BrowserDaemonControlDispatchClientResult>;
+    /** Trusted mounted platform/target facts, shared by UI and Agent dispatch. */
+    readDispatchOptions?: (command: BrowserCommandV1) => Omit<BrowserControlCommandDispatchOptions, 'sendDaemonCommand' | 'clientControlService'>;
 }>;
 
 export type BrowserRuntimeAutomationAdapter = Readonly<{
@@ -56,7 +61,7 @@ export type CreateBrowserRuntimeActionExecutorInput = Readonly<{
     resolveControl?: (command: BrowserCommandV1) => BrowserRuntimeControlAdapter | null | undefined;
     automation?: BrowserRuntimeAutomationAdapter;
     resolveAutomation?: (
-        input: Readonly<{ browserSessionId: string }>,
+        input: Readonly<{ browserSessionId: string; viewId?: string }>,
     ) => BrowserRuntimeAutomationAdapter | null | undefined;
     recordingAttach?: BrowserRecordingAttachAdapter;
     resolveRecordingAttach?: (
@@ -206,9 +211,13 @@ async function executeBrowserControlAction(
         return browserRuntimeActionDisabledResult('browser_control_unavailable');
     }
 
+    let daemonDispatch: Promise<BrowserDaemonControlDispatchClientResult> | undefined = undefined;
     const result = dispatchBrowserControlCommand(state, command.data, {
+        ...control.readDispatchOptions?.(command.data),
         clientControlService: (input.automation ?? input.resolveAutomation?.(command.data))?.controlService ?? undefined,
-        ...(control.sendDaemonCommand ? { sendDaemonCommand: control.sendDaemonCommand } : {}),
+        ...(control.sendDaemonCommand ? { sendDaemonCommand: (cmd: BrowserCommandV1) => {
+            daemonDispatch = control.sendDaemonCommand?.(cmd);
+        } } : {}),
     });
     const rejected = result.effects.find((effect): effect is Extract<BrowserControlCommandEffect, { kind: 'commandRejected' }> => (
         effect.kind === 'commandRejected'
@@ -220,8 +229,19 @@ async function executeBrowserControlAction(
         }
         return browserRuntimeActionDisabledResult(mapControlRejectedReason(rejected.reasonCode));
     }
-    if (result.effects.some((effect) => effect.kind === 'daemonCommand') && !control.sendDaemonCommand) {
-        return browserRuntimeActionDisabledResult('browser_control_route_unavailable');
+    if (result.effects.some((effect) => effect.kind === 'daemonCommand')) {
+        const dispatched = await daemonDispatch;
+        if (!dispatched) return browserRuntimeActionDisabledResult('browser_control_route_unavailable');
+        if (dispatched.ok) return dispatched.result;
+        if (dispatched.reason === 'unavailable') return browserRuntimeActionDisabledResult('browser_control_route_unavailable');
+        return { ok: false, errorCode: 'browser_control_unconfirmed', error: 'browser_control_unconfirmed' } satisfies BrowserRuntimeActionFailure;
+    }
+
+    const externalTab = result.effects.find((effect) => effect.kind === 'openExternalTab');
+    if (externalTab) {
+        await openBrowserExternalTabSelection(externalTab.selection);
+        return BrowserCommandDispatchResultV1Schema.parse({ v: 1, commandId: command.data.commandId,
+            status: 'dispatched', adapterKind: externalTab.selection.adapterKind, events: [] });
     }
 
     const serializedResult = serializeBrowserControlActionResult(command.data, state, result);
@@ -309,10 +329,8 @@ export function createBrowserRuntimeActionExecutor(
         // SUPPORT MATRIX (FINALIZATION-PLAN §3.2 / §10 "label every deferral"):
         // `browser.diagnostics.*` has no UI-local producer — diagnostics/devtools/eval run against
         // the live page on the DAEMON side (sidecar CDP), which is the real owner. The UI runtime
-        // executor fails closed here; the protocol surface map keeps the diagnostics family disabled
-        // on every surface (no real executor), so this branch is reached only by a non-front-door
-        // caller. Do NOT fake a UI dispatch — the daemon executor (`apps/cli/.../browser/actions`)
-        // services it through its `browser.context`/automation routes.
+        // executor fails closed here. The canonical surface map exposes the backed daemon Actions;
+        // their execution belongs to the daemon, not this UI-local adapter.
         if (BROWSER_DIAGNOSTICS_ACTION_IDS.has(args.actionId)) {
             return browserRuntimeActionDisabledResult('browser_diagnostics_unavailable');
         }
@@ -341,8 +359,8 @@ export function createBrowserRuntimeActionExecutor(
         if (BROWSER_RECORDING_ACTION_IDS.has(args.actionId)) {
             // Only the attach-to-composer leaf has a real UI executor (resolves the registered
             // recording-attach owner). The rest of the recording family (start/stop/cancel/status/
-            // listForView/discard/cleanupExpired) has no UI producer and stays disabled on every
-            // surface — labeled deferral, not faked.
+            // listForView/discard/cleanupExpired) runs through the daemon recording owner, not this
+            // UI-local adapter. Its unavailable result describes placement, not global support.
             if (args.actionId === 'browser.recording.attachToComposer') {
                 const parsed = parseRuntimeActionInput(args);
                 if (!parsed.ok) return parsed.result;

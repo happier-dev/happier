@@ -21,10 +21,12 @@ import {
     BROWSER_LAUNCHPAD_DETAILS_TAB_KEY,
     createBrowserLaunchpadDetailsTab,
     resolveBrowserTabPresentation,
+    selectBrowserWorkspaceViewerTab,
 } from './browserSurfaceDetailsTabModel';
 import { createOpenBrowserTargetInWorkspace, type OpenBrowserTargetScope } from './openBrowserTargetInWorkspace';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
+import { useRetainedPresentationSlotVisible } from '@/components/ui/presentation/retainedPresentationSlots';
 
 /**
  * Mobile browser surface, mounted on BOTH the session cockpit and the project cockpit. It hosts the
@@ -38,6 +40,10 @@ export function BrowserScopedWorkspace(props: Readonly<{
     scope: DetailsSurfaceScopeV1;
     openScope: OpenBrowserTargetScope;
     platform: BrowserPlatformV1;
+    presentation?: 'workspace' | 'viewer';
+    visible?: boolean;
+    presentationSlotId?: string;
+    keepAliveAboveRouter?: boolean;
     localServicePreviewState?: LocalServicePreviewState | null;
     localServicePreviewServerId?: string | null;
     /**
@@ -60,6 +66,11 @@ export function BrowserScopedWorkspace(props: Readonly<{
     testID?: string;
 }>): React.ReactElement {
     const pane = useAppPaneScope(props.scopeId);
+    const retainedSlotVisible = useRetainedPresentationSlotVisible();
+    const visible = props.visible !== false && retainedSlotVisible;
+    const sourceServerId = props.presentation === 'viewer' && props.scope.kind === 'session'
+        ? props.scope.serverId ?? null
+        : props.pluginProjection?.serverId ?? null;
 
     const openBrowserViewTarget = React.useMemo(() => createOpenBrowserTargetInWorkspace({
         openDetailsTab: pane.openDetailsTab,
@@ -71,11 +82,15 @@ export function BrowserScopedWorkspace(props: Readonly<{
     const renderers = React.useMemo(() => [
         createBrowserViewDetailsSurfaceRenderer({
             platform: props.platform,
+            visible,
+            presentationSlotId: props.presentationSlotId,
+            keepAliveAboveRouter: props.keepAliveAboveRouter,
             localServicePreviewState: props.localServicePreviewState,
             localServicePreviewServerId: props.localServicePreviewServerId,
             machineId: props.pluginProjection?.machineId ?? null,
-            serverId: props.pluginProjection?.serverId ?? null,
+            serverId: sourceServerId,
             pluginUiProjection: props.pluginProjection?.pluginUiProjection,
+            pluginAccountLifetime: props.pluginProjection?.accountLifetime,
             pluginUiInteractionEnabled: props.pluginProjection?.phase === 'current'
                 && props.pluginProjection?.interactionEnabled === true,
             pluginBrowserProjection: props.pluginProjection?.pluginBrowserProjection,
@@ -94,13 +109,17 @@ export function BrowserScopedWorkspace(props: Readonly<{
         props.localServicePreviewServerId,
         props.localServicePreviewState,
         props.platform,
+        visible,
+        props.presentationSlotId,
+        props.keepAliveAboveRouter,
         props.pluginBrowserActionSessionId,
         props.pluginProjection?.interactionEnabled,
         props.pluginProjection?.phase,
         props.pluginProjection?.machineId,
         props.pluginProjection?.pluginBrowserProjection,
         props.pluginProjection?.pluginUiProjection,
-        props.pluginProjection?.serverId,
+        props.pluginProjection?.accountLifetime,
+        sourceServerId,
         props.productModels,
     ]);
 
@@ -176,6 +195,15 @@ export function BrowserScopedWorkspace(props: Readonly<{
         ...pane,
         splitDetailsGroup: undefined,
     }), [pane]);
+
+    if (props.presentation === 'viewer') {
+        const selectedTab = selectBrowserWorkspaceViewerTab(pane.scopeState?.details ?? null);
+        return renderTabContent(selectedTab ?? {
+            ...createBrowserLaunchpadDetailsTab(),
+            isPreview: false,
+            isPinned: true,
+        });
+    }
 
     return (
         <DetailsSplitWorkspace

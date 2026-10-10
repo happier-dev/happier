@@ -18,6 +18,7 @@ import type {
 } from '@/sync/domains/browser/context';
 
 import { shadowLevelStyle } from '@/shadowElevation';
+import { GlassSurface } from '@/components/ui/glass/GlassSurface';
 
 import { BROWSER_CHROME_WIDTH } from '../browserChromeDensity';
 
@@ -470,7 +471,7 @@ export function AnnotationEditorOverlay(props: AnnotationEditorOverlayProps): Re
             />
             <AnnotationVisualMarks testID={props.testID} marks={props.marks} />
             <View style={stylesheet.trayDock} pointerEvents="box-none">
-                <View style={stylesheet.tray} accessibilityRole="toolbar" accessibilityLabel={t('browserContext.editor.title')}>
+                <GlassSurface surfaceGroup="floating" style={stylesheet.tray} accessibilityRole="toolbar" accessibilityLabel={t('browserContext.editor.title')}>
                     <View style={stylesheet.trayRow}>
                         <SegmentedTabBar<AnnotationEditorTool>
                             tabs={tools}
@@ -544,7 +545,7 @@ export function AnnotationEditorOverlay(props: AnnotationEditorOverlayProps): Re
                             onPress={props.onAttach}
                         />
                     </View>
-                </View>
+                </GlassSurface>
             </View>
         </View>
     );

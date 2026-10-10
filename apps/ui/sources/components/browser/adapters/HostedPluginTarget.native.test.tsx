@@ -1,10 +1,23 @@
-import type { PluginHostedWebBridgeEnvelopeV1 } from '@happier-dev/protocol';
+import { artifactHtmlBundleFromBodyV1, type PluginHostedWebBridgeEnvelopeV1 } from '@happier-dev/protocol';
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
 
 let lastWebViewProps: Readonly<Record<string, unknown>> | null = null;
+const nativeFrame = vi.hoisted(() => ({
+    registerInlineDocument: vi.fn().mockResolvedValue({ kind: 'registered' }),
+    unregisterInlineDocument: vi.fn().mockReturnValue(true),
+    View: vi.fn((_props: Readonly<Record<string, unknown>>) => null),
+}));
+vi.mock('expo-modules-core', () => ({
+    requireNativeModule: () => nativeFrame,
+    requireNativeViewManager: () => nativeFrame.View,
+}));
+vi.mock('react-native', async () => {
+    const { createReactNativeNativeMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeNativeMock({ platformOS: 'ios' });
+});
 
 vi.mock('react-native-webview', () => ({
     WebView: (props: Readonly<Record<string, unknown>>) => {
@@ -14,29 +27,23 @@ vi.mock('react-native-webview', () => ({
 }));
 
 describe('HostedPluginTarget native', () => {
-    it('mounts inline source through the existing native engine without a URL or Artifact', async () => {
+    it('loads an expanded boundary-sized bundle through the isolated token transport without a WebView HTML source', async () => {
         const { HostedPluginTarget } = await import('./HostedPluginTarget.native');
         lastWebViewProps = null;
-        await renderScreen(<HostedPluginTarget title="Inline" html="<p>Inline</p>" testID="inline" />);
-        const webViewProps = lastWebViewProps as Readonly<Record<string, unknown>> | null;
-        expect(webViewProps?.source).toEqual({ html: expect.stringContaining('<p>Inline</p>'), baseUrl: 'about:blank' });
-        expect((webViewProps?.source as { html: string }).html).toContain("default-src 'none'");
-        expect(webViewProps).toMatchObject({
-            cacheEnabled: false,
-            domStorageEnabled: false,
-            sharedCookiesEnabled: false,
-            thirdPartyCookiesEnabled: false,
-            allowFileAccess: false,
-            allowFileAccessFromFileURLs: false,
-            allowUniversalAccessFromFileURLs: false,
-            javaScriptCanOpenWindowsAutomatically: false,
-            mixedContentMode: 'never',
-        });
-        const shouldStartLoad = webViewProps?.onShouldStartLoadWithRequest as (
-            request: Readonly<{ url: string; isTopFrame?: boolean }>,
-        ) => boolean;
-        expect(shouldStartLoad({ url: 'about:blank', isTopFrame: true })).toBe(true);
-        expect(shouldStartLoad({ url: 'https://escape.example.test', isTopFrame: true })).toBe(false);
+        nativeFrame.registerInlineDocument.mockClear();
+        nativeFrame.View.mockClear();
+        const html = `<main>${'valid'.repeat(420_000)}</main>`;
+        const screen = await renderScreen(<HostedPluginTarget title="Inline" bundle={artifactHtmlBundleFromBodyV1(html)} testID="inline" />);
+        const registered = nativeFrame.registerInlineDocument.mock.calls.at(-1)?.[0];
+        expect(registered?.html).toContain(html);
+        expect(new TextEncoder().encode(registered?.html).length).toBeGreaterThan(2 * 1024 * 1024);
+        const frameProps = nativeFrame.View.mock.calls.at(-1)?.[0];
+        expect(frameProps).toMatchObject({ inlineDocumentHandleToken: registered?.token, initialPathAndQuery: '/' });
+        expect(frameProps).not.toHaveProperty('html');
+        expect(frameProps).not.toHaveProperty('url');
+        expect(lastWebViewProps).toBeNull();
+        await screen.unmount();
+        expect(nativeFrame.unregisterInlineDocument).toHaveBeenCalledWith(registered?.token);
     });
     it('blocks insecure non-loopback hosted-plugin URLs before creating a native WebView', async () => {
         const { HostedPluginTarget } = await import('./HostedPluginTarget.native');

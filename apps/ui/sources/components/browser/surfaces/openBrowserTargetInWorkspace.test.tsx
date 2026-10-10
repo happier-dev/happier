@@ -5,6 +5,7 @@ import type {
     LocalServiceLaunchTargetV1,
 } from '@happier-dev/protocol';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { isDeepStrictEqual } from 'node:util';
 
 // The OS-tab handoff is a genuine platform boundary (`window.open` / `Linking.openURL`); the
 // selection and fulfilment logic beneath it stays real.
@@ -141,7 +142,37 @@ function readTabBrowserSessionId(tab: DetailsTab): string | undefined {
 }
 
 describe('openBrowserTargetInWorkspace', () => {
-    afterEach(() => resetLocalServicePreviewStoreForTests());
+    afterEach(() => {
+        resetLocalServicePreviewStoreForTests();
+        machineRpcMock.mockReset();
+    });
+    it('opens the actual source-qualified managed service without retargeting a launch id or Session', async () => {
+        const serviceTarget = { kind: 'managed_service' as const, machineId: 'machine_123', managedServiceId: 'actual-instance',
+            workspaceId: 'workspace_1', cwd: '/workspace/app',
+            declaration: { workspaceRefId: 'workspace_1', selection: { kind: 'manifest' as const, name: 'web' } } };
+        const browserTarget = { ...localServicePreviewTarget, sessionId: undefined };
+        const resource = { previewId: browserTarget.targetId, machineId: serviceTarget.machineId,
+            owner: { kind: 'user', id: 'starter' }, serviceTarget, browserTarget,
+            target: { scheme: 'http', host: '127.0.0.1', port: 5173 }, initialPath: { pathname: '/', search: '' },
+            display: { title: 'Web', addressLabel: 'localhost:5173' }, originMode: 'host' };
+        const preview = { previewId: resource.previewId, resource, accessUrl: 'https://preview.example.test/?previewToken=current',
+            expiresAt: 61_000, diagnostics: [] };
+        machineRpcMock.mockImplementationOnce(async ({ payload }) => {
+            // Machine RPC is the network boundary; canonical UI mapping/parsing remain real.
+            if (!isDeepStrictEqual(payload, { machineId: serviceTarget.machineId, serviceTarget })) {
+                throw new Error('local_service_preview_lifecycle_refused:preview_target_unresolved');
+            }
+            return { protocolVersion: 1, status: 'existing', preview, snapshot: { v: 1, machineId: resource.machineId,
+                generatedAt: 1_000, refreshState: 'idle', resources: [resource], previews: [preview], diagnostics: [] } };
+        });
+        const opened: BrowserViewTargetV1[] = [];
+        const open = bindServicesOpenInBrowser({ onOpenTarget: target => { opened.push(target); }, platform: 'web', sessionId: 'viewing-session' });
+        expect(await open({ ...serviceTargetWithBrowserTarget, source: 'managed_service', id: 'service-row', sessionId: undefined,
+            sourceClass: { kind: 'managed_service', managedServiceId: serviceTarget.managedServiceId }, workspaceId: serviceTarget.workspaceId,
+            cwd: serviceTarget.cwd, declaration: serviceTarget.declaration, browserTarget: undefined, actions: ['open_preview'] }))
+            .toEqual({ status: 'succeeded' });
+        expect(opened).toEqual([browserTarget]);
+    });
     it('resolves a target into BOTH a details-workspace tab AND a live content record (one identity)', () => {
         const resolved = resolveBrowserViewTargetOpen({
             scope: 'sessionDetails',

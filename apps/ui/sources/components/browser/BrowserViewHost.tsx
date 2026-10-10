@@ -261,10 +261,13 @@ function StreamedBrowserView(props: Readonly<{
     runtime: BrowserStreamedSurfaceRuntime | null;
     agent: BrowserShellAgentPresence | null;
     onPageRectChange?: (rect: BrowserStreamedPageRect | null) => void;
+    onOpenPageHere?: () => void;
+    onClosePage?: () => void;
     testID: string;
 }>): React.ReactElement {
     const identity = useBrowserSessionAgentIdentity(props.agent);
-    return <BrowserStreamedTarget runtime={props.runtime} agentName={identity.name} onPageRectChange={props.onPageRectChange} testID={props.testID} />;
+    return <BrowserStreamedTarget runtime={props.runtime} agentName={identity.name} onPageRectChange={props.onPageRectChange}
+        onOpenPageHere={props.onOpenPageHere} onClosePage={props.onClosePage} testID={props.testID} />;
 }
 
 function buildViewLifecycleEmitter(input: Readonly<{
@@ -301,11 +304,16 @@ function LocalPreviewView(props: Readonly<{
     const noServerRoute = preview?.accessUnavailableReasonCode === 'preview_private_route_unavailable';
     const lifecycleAllowsLease = props.lifecycleState !== 'suspended'
         && props.lifecycleState !== 'closed' && props.lifecycleState !== 'orphaned';
+    const nativeDirectEnabled = Boolean(preview?.nativeDirect
+        && preview.nativeDirect.previewId === preview.previewId
+        && preview.nativeDirect.machineId === preview.resource.machineId);
     const access = useNativeDirectPreview({
-        previewId: preview?.nativeDirect?.previewId ?? null,
-        machineId: preview?.nativeDirect?.machineId ?? null,
+        // These are routing identities. The selected Home resolves the actual current registration.
+        previewId: preview?.previewId ?? target.targetId,
+        machineId: preview?.resource.machineId ?? target.machineId,
         serverId: props.serverId,
-        enabled: lifecycleAllowsLease && (view.engineKind === 'nativeWebView' || view.engineKind === 'desktopWebView'),
+        enabled: lifecycleAllowsLease && (view.engineKind === 'webIframe' || view.engineKind === 'nativeWebView' || view.engineKind === 'desktopWebView'),
+        nativeDirectEnabled,
         fallbackUrl: noServerRoute ? null : preview?.accessUrl ?? null,
         requestedUrl: noServerRoute && !preview?.nativeDirect ? null : view.pendingUrl ?? view.currentUrl,
         initialPath: preview ? preview.resource.initialPath.pathname + preview.resource.initialPath.search : undefined,
@@ -366,6 +374,8 @@ export function BrowserViewHost(props: Readonly<{
     agent?: BrowserShellAgentPresence | null;
     /** Where a streamed view's page is drawn inside this host, for the agent cursor. */
     onStreamedPageRectChange?: (rect: BrowserStreamedPageRect | null) => void;
+    onOpenStreamedPageHere?: () => void;
+    onClosePage?: () => void;
     nowMs?: () => number;
     testID?: string;
 }>): React.ReactElement {
@@ -459,6 +469,8 @@ export function BrowserViewHost(props: Readonly<{
                     runtime={props.streamedBrowserRuntime ?? null}
                     agent={props.agent ?? null}
                     onPageRectChange={props.onStreamedPageRectChange}
+                    onOpenPageHere={props.onOpenStreamedPageHere}
+                    onClosePage={props.onClosePage}
                     testID={`${testID}-streamed`}
                 />
             </View>

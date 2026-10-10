@@ -28,6 +28,7 @@ import { useDesktopWebViewNativeAvailability } from '@/sync/domains/browser/adap
 import { resolveLocalBrowserProfile } from '@/sync/domains/browser/profiles/localBrowserProfile';
 import type { LocalServicePreviewState } from '@/sync/domains/local/services/preview/store';
 import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
+import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import type { PluginBrowserProjectionModel } from '@/sync/domains/plugins/browser/actions';
 import { useFeatureDecision } from '@/hooks/server/useFeatureDecision';
 
@@ -67,6 +68,9 @@ type BrowserDetailsSurfaceViewTargetChange = Readonly<{
 }>;
 
 export type BrowserDetailsSurfaceRendererOptions = Readonly<{
+    visible?: boolean;
+    presentationSlotId?: string;
+    keepAliveAboveRouter?: boolean;
     localServicePreviewState?: LocalServicePreviewState | null;
     localServicePreviewServerId?: string | null;
     // W2-A-1 / A3: the machine/server scope used to build the UI→daemon control transport so a
@@ -75,6 +79,7 @@ export type BrowserDetailsSurfaceRendererOptions = Readonly<{
     machineId?: string | null;
     serverId?: string | null;
     pluginUiProjection?: PluginUiProjectionModel | null;
+    pluginAccountLifetime?: ServerAccountScopeLifetime | null;
     pluginUiInteractionEnabled?: boolean;
     pluginBrowserProjection?: PluginBrowserProjectionModel | null;
     pluginBrowserActionSessionId?: string | null;
@@ -152,6 +157,7 @@ function createInitialBrowserState(params: Readonly<{
 export function BrowserDetailsSurface(props: Readonly<{
     resource: BrowserDetailsSurfaceResource;
     presentationSlotId: string;
+    keepAliveAboveRouter?: boolean;
     active?: boolean;
     visible?: boolean;
     localServicePreviewState?: LocalServicePreviewState | null;
@@ -159,6 +165,7 @@ export function BrowserDetailsSurface(props: Readonly<{
     machineId?: string | null;
     serverId?: string | null;
     pluginUiProjection?: PluginUiProjectionModel | null;
+    pluginAccountLifetime?: ServerAccountScopeLifetime | null;
     pluginUiInteractionEnabled?: boolean;
     pluginBrowserProjection?: PluginBrowserProjectionModel | null;
     pluginBrowserActionSessionId?: string | null;
@@ -271,12 +278,13 @@ export function BrowserDetailsSurface(props: Readonly<{
             initialBrowserState={initialBrowserState}
             surfaceKey={`${browserSessionId}:${viewId ?? ''}:${targetIdentity}:${platform}:${currentUrl ?? ''}:${currentUrlExpiresAt ?? ''}:${selectionContextKey}`}
             presentationSlotId={props.presentationSlotId}
-            keepAliveAboveRouter
+            keepAliveAboveRouter={props.keepAliveAboveRouter ?? true}
             visible={props.visible ?? props.active ?? true}
             active={props.active ?? true}
             localServicePreviewState={props.localServicePreviewState}
             localServicePreviewServerId={props.localServicePreviewServerId}
             pluginUiProjection={props.pluginUiProjection}
+            pluginAccountLifetime={props.pluginAccountLifetime}
             pluginUiInteractionEnabled={props.pluginUiInteractionEnabled}
             pluginBrowserProjection={props.pluginBrowserProjection}
             pluginBrowserActionContext={{
@@ -368,14 +376,16 @@ export function createBrowserViewDetailsSurfaceRenderer(
             return (
                 <BrowserDetailsSurface
                     resource={surfaceResource}
-                    presentationSlotId={input.descriptor.surfaceId}
+                    presentationSlotId={options.presentationSlotId ?? input.descriptor.surfaceId}
+                    keepAliveAboveRouter={options.keepAliveAboveRouter}
                     active={input.active}
-                    visible={input.active}
+                    visible={options.visible !== false && input.active}
                     localServicePreviewState={options.localServicePreviewState}
                     localServicePreviewServerId={options.localServicePreviewServerId}
                     machineId={options.machineId}
                     serverId={options.serverId}
                     pluginUiProjection={options.pluginUiProjection}
+                    pluginAccountLifetime={options.pluginAccountLifetime}
                     pluginUiInteractionEnabled={options.pluginUiInteractionEnabled}
                     pluginBrowserProjection={options.pluginBrowserProjection}
                     pluginBrowserActionSessionId={options.pluginBrowserActionSessionId}
