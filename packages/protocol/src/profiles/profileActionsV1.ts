@@ -1,10 +1,10 @@
 import { z } from 'zod';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { LaunchProfileIdV2Schema } from './v2/profileId.js';
-import { LaunchProfileV2Schema, StoredLaunchProfileV2Schema } from './v2/schema.js';
-import { AIBackendProfileSchema } from './backendProfileSchema.js';
+import { LaunchProfileV2Schema } from './v2/schema.js';
 import { EnvVarRequirementSchema } from './environmentVariables.js';
-import { ProfileRecordIdV1Schema, ProfileRecordV1Schema, ProfileReferenceGuardRevisionV1Schema, ProfileRowRevisionV1Schema } from './profileRecordSchemaV1.js';
+import { ProfileRecordIdV1Schema, ProfileRecordV1Schema, ProfileReferenceGuardRevisionV1Schema, ProfileRowRevisionV1Schema,
+  ProfileSecretBindingOverridesV1Schema, ProfileLegacyCloneSourceV1Schema } from './profileRecordSchemaV1.js';
 import { ArtifactRevisionV1Schema } from '../artifacts/artifactActionsV1.js';
 import { ArtifactCallerAccessV1Schema } from '../artifacts/artifactAccessV1.js';
 import type { ProfileOperations } from './profileOperations.js';
@@ -82,8 +82,10 @@ const SearchResult = lazyZodSchema(() => z.union([MutationResult,
 const CreateInput = lazyZodSchema(() => z.object({
   profile: LaunchProfileV2Schema, expectedRevision: z.literal('absent'),
 }).strict());
-const SaveInput = lazyZodSchema(() => EditAddress.extend({
-  profile: z.union([StoredLaunchProfileV2Schema, AIBackendProfileSchema.strict()]),
+const SaveInput = lazyZodSchema(() => CapturedRowAddress.extend({
+  profile: AiLaunchProfileV1Schema,
+  secretBindings: ProfileSecretBindingOverridesV1Schema.optional(),
+  legacyCloneSource: ProfileLegacyCloneSourceV1Schema.optional(),
   expectedArtifactRevision: ArtifactRevisionV1Schema.optional(),
 }).strict().superRefine((input, context) => {
   if (input.id !== input.profile.id) context.addIssue({ code: 'custom', path: ['profile', 'id'], message: 'Profile identity must match addressed row' });
@@ -112,6 +114,14 @@ const ResourceId = lazyZodSchema(() => z.string().refine(resourceId => {
   try { formatSharedSavedSecretRefV1(resourceId); return true; }
   catch { return false; }
 }, 'Saved-secret Resource id must fit its canonical shared reference'));
+const SecretSelection = lazyZodSchema(() => z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('none') }).strict(),
+  z.object({ kind: z.literal('resource'), resourceId: ResourceId,
+    expectedResourceRevision: ProfileRowRevisionV1Schema }).strict(),
+]));
+const NamedSecretSelection = lazyZodSchema(() => z.object({
+  envName: EnvVarRequirementSchema.shape.name, selection: SecretSelection,
+}).strict());
 
 /** Strict semantic ingress; saved credentials cross this boundary only as captured references. */
 export const PROFILE_ACTION_INPUT_SCHEMAS_V1 = {
@@ -134,14 +144,10 @@ export const PROFILE_ACTION_INPUT_SCHEMAS_V1 = {
   'launch_profiles.favorite.set': FavoriteInput,
   'launch_profiles.delete': EditAddress,
   'launch_profiles.prompt_stack.update': lazyZodSchema(() => CapturedRowAddress.extend({ intent: PromptStackIntentV1Schema }).strict()),
-  'launch_profiles.secrets.select': lazyZodSchema(() => CapturedRowAddress.extend({
-    envName: EnvVarRequirementSchema.shape.name,
-    selection: z.discriminatedUnion('kind', [
-      z.object({ kind: z.literal('none') }).strict(),
-      z.object({ kind: z.literal('resource'), resourceId: ResourceId,
-        expectedResourceRevision: ProfileRowRevisionV1Schema }).strict(),
-    ]),
-  }).strict()),
+  'launch_profiles.secrets.select': lazyZodSchema(() => z.union([
+    CapturedRowAddress.extend(NamedSecretSelection.shape).strict(),
+    CapturedRowAddress.extend({ selections: z.array(NamedSecretSelection) }).strict(),
+  ])),
   'launch_profiles.legacy.preview': DaemonProviderProfileMigrationPreviewRequestV1Schema,
   'launch_profiles.legacy.convert': DaemonProviderProfileMigrationConfirmRequestV1Schema,
   'launch_profiles.legacy.resolve_conflict': DaemonProviderProfileMigrationConflictConfirmRequestV1Schema,

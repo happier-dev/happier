@@ -66,6 +66,8 @@ export type ProfileOperationResult =
   | Readonly<{ status: 'invalid'; reason: 'duplicate-id' | 'duplicate-name' | 'profile-not-found' | 'read-only' | 'legacy-creation-unsupported' | 'invalid-definition' | 'entry_conflict' | 'entry_not_found' | 'invalid_parameters'; id?: string }>;
 export type ProfileBuiltinEnabledInputV1 = Readonly<{ subject: Readonly<{ kind: 'builtin'; id: string }>; enabled: boolean; expectedSettingsVersion: number }>;
 export type ProfileBuiltinEnabledResultV1 = Readonly<{ status: 'preference-updated'; id: string; enabled: boolean; settingsVersion: number }>;
+type ProfileSecretSelectionV1 = Readonly<{ kind: 'none' }>
+  | Readonly<{ kind: 'resource'; resourceId: string; expectedResourceRevision: number }>;
 export type ProfileRemovalResult = Exclude<ProfileOperationResult, Readonly<{ status: 'updated' }>>
   | Readonly<{ status: 'updated'; id: string; revision: number;
     authoringMemoryCleanup?: Readonly<{ status: 'unavailable'; reason: 'authoring_memory_cleanup_failed' }> }>;
@@ -429,14 +431,24 @@ export function createProfileOperations(ports: ProfileOperationsPorts) {
         throw error;
       }
     },
-    selectSecret: (input: Readonly<{ id: string; expectedRevision: number | 'absent'; envName: string;
-      selection: Readonly<{ kind: 'none' }> | Readonly<{ kind: 'resource'; resourceId: string; expectedResourceRevision: number }> }>) => {
-      const savedSecretRevisions = input.selection.kind === 'resource'
-        ? [{ resourceId: input.selection.resourceId, expectedRevision: input.selection.expectedResourceRevision }] : [];
-      return update({ id: input.id, expectedRevision: input.expectedRevision, savedSecretRevisions }, record => ({ ...record,
-        secretBindings: applyProfileSecretBindingSelectionV1(record.secretBindings, input.envName,
-          input.selection.kind === 'none' ? input.selection : { kind: 'reference', reference: formatSharedSavedSecretRefV1(input.selection.resourceId) }),
-      }));
+    selectSecret: async (input: Readonly<{ id: string; expectedRevision: number | 'absent' }> & (
+      Readonly<{ envName: string; selection: ProfileSecretSelectionV1 }>
+      | Readonly<{ selections: readonly Readonly<{ envName: string; selection: ProfileSecretSelectionV1 }>[] }>)) => {
+      const selections = 'selections' in input ? input.selections : [input];
+      const resourceRevisions = new Map<string, number>();
+      for (const { selection } of selections) {
+        if (selection.kind !== 'resource') continue;
+        const previous = resourceRevisions.get(selection.resourceId);
+        if (previous !== undefined && previous !== selection.expectedResourceRevision) return invalid('invalid_parameters', input.id);
+        resourceRevisions.set(selection.resourceId, selection.expectedResourceRevision);
+      }
+      const savedSecretRevisions = [...resourceRevisions].map(([resourceId, expectedRevision]) => ({ resourceId, expectedRevision }));
+      return update({ id: input.id, expectedRevision: input.expectedRevision, savedSecretRevisions }, record => {
+        let secretBindings = record.secretBindings;
+        for (const { envName, selection } of selections) secretBindings = applyProfileSecretBindingSelectionV1(secretBindings, envName,
+          selection.kind === 'none' ? selection : { kind: 'reference', reference: formatSharedSavedSecretRefV1(selection.resourceId) });
+        return { ...record, secretBindings };
+      });
     },
     remove: async (input: Readonly<{ id: string; expectedRevision?: number }>): Promise<ProfileRemovalResult> => {
       const admitted = current(input.id, input.expectedRevision);

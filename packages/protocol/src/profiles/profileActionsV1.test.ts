@@ -13,6 +13,78 @@ const activeAuthority = { source: 'destination' as const, authority: 'active' as
   record: { v: 1 as const, phase: 'active' as const, sourceSettingsVersion: 0, migratedLogicalRevision: 0, inventory: [] } } };
 
 describe('Profile Action host demand', () => {
+  it('applies a captured binding batch in one row CAS and refuses stale or invalid batches without partial changes', async () => {
+    const profile = LaunchProfileV2Schema.parse({ v: 2, id: 'batch-profile', name: 'Batch', createdAt: 1, updatedAt: 1 });
+    let record = ProfileRecordV1Schema.parse({ v: 1, id: profile.id, definition: { kind: 'inline', profile },
+      enabled: false, promptStack: [], secretBindings: { FIRST: formatSharedSavedSecretRefV1('original'), KEEP: null } });
+    let revision = 4;
+    const writes: ProfileRecordV1[] = [];
+    const operations = createProfileOperations({
+      readCatalog: () => ({ status: 'ready', records: [{ record, revision }], diagnostics: [], referenceGuardRevision: 1, ...activeAuthority }),
+      writeRecord: async input => {
+        expect(input.expectedRevision).toBe(4);
+        expect(input.savedSecretRevisions).toEqual([{ resourceId: 'replacement', expectedRevision: 7 }]);
+        writes.push(input.record); record = input.record; revision++;
+        return { status: 'updated', id: record.id, revision };
+      },
+      deleteRecord: async () => { throw new Error('Unexpected deletion'); },
+    });
+    const input = { id: profile.id, expectedRevision: 4, selections: [
+      { envName: 'FIRST', selection: { kind: 'resource', resourceId: 'replacement', expectedResourceRevision: 7 } },
+      { envName: 'SECOND', selection: { kind: 'resource', resourceId: 'replacement', expectedResourceRevision: 7 } },
+      { envName: 'THIRD', selection: { kind: 'none' } },
+    ] };
+    const execute = createProfileActionExecuteV1({ operations, selectSecret: value => operations.selectSecret(value) });
+    expect(await execute(parseProfileActionRequestV1('launch_profiles.secrets.select', input), {}))
+      .toEqual({ ok: true, result: { status: 'updated', id: profile.id, revision: 5 } });
+    expect(writes).toHaveLength(1);
+    expect(record.secretBindings).toEqual({ FIRST: formatSharedSavedSecretRefV1('replacement'), SECOND: formatSharedSavedSecretRefV1('replacement'), THIRD: null, KEEP: null });
+    expect(await execute(parseProfileActionRequestV1('launch_profiles.secrets.select', input), {}))
+      .toMatchObject({ ok: true, result: { status: 'conflict', revision: 5 } });
+    expect(() => parseProfileActionRequestV1('launch_profiles.secrets.select', { ...input, selections: [
+      input.selections[0], { envName: 'INVALID NAME', selection: { kind: 'none' } },
+    ] })).toThrow();
+    expect(await execute(parseProfileActionRequestV1('launch_profiles.secrets.select', { ...input,
+      expectedRevision: 5, selections: [input.selections[0],
+        { envName: 'SECOND', selection: { kind: 'resource', resourceId: 'replacement', expectedResourceRevision: 8 } }],
+    }), {})).toMatchObject({ ok: true, result: { status: 'invalid', reason: 'invalid_parameters' } });
+    expect(writes).toHaveLength(1);
+  });
+
+  it('saves the editor projection and private binding changes together through the row owner', async () => {
+    const profile = LaunchProfileV2Schema.parse({ v: 2, id: 'edited-profile', name: 'Edited', createdAt: 1, updatedAt: 2 });
+    const previous = ProfileRecordV1Schema.parse({ v: 1, id: profile.id, definition: { kind: 'inline', profile },
+      enabled: false, promptStack: [], secretBindings: { TOKEN: formatSharedSavedSecretRefV1('old-resource') } });
+    const writes: ProfileRecordV1[] = [];
+    const operations = createProfileOperations({
+      readCatalog: () => ({ status: 'ready', records: [{ record: previous, revision: 4 }], diagnostics: [], referenceGuardRevision: 1, ...activeAuthority }),
+      writeRecord: async ({ record, expectedRevision }) => {
+        expect(expectedRevision).toBe(4);
+        writes.push(record);
+        return { status: 'updated', id: record.id, revision: 5 };
+      },
+      deleteRecord: async () => { throw new Error('Unexpected deletion'); },
+    });
+    const request = parseProfileActionRequestV1('launch_profiles.save', { id: profile.id, expectedRevision: 4,
+      profile: { ...profile, enabled: false, profileRecordRevision: 4, promptStack: [], secretBindings: {} },
+      secretBindings: { TOKEN: null } });
+    expect(await createProfileActionExecuteV1({ operations })(request, {})).toMatchObject({ ok: true,
+      result: { status: 'updated', revision: 5 } });
+    expect(writes).toEqual([{ ...previous, secretBindings: { TOKEN: null } }]);
+  });
+
+  it('admits a captured first Artifact membership and an evidence-bearing legacy draft save', () => {
+    const profile = LaunchProfileV2Schema.parse({ v: 2, id: 'received-profile', name: 'Received', createdAt: 1, updatedAt: 1 });
+    expect(parseProfileActionRequestV1('launch_profiles.save', { id: profile.id, expectedRevision: 'absent',
+      profile: { ...profile, artifactId: 'received-artifact', revision: { headerVersion: 2, bodyVersion: 3 }, shared: true },
+      expectedArtifactRevision: { headerVersion: 2, bodyVersion: 3 } }).input).toMatchObject({ expectedRevision: 'absent' });
+    const legacy = getBuiltInBackendProfile('azure-openai');
+    if (!legacy) throw new Error('Canonical builtin unavailable');
+    expect(parseProfileActionRequestV1('launch_profiles.save', { id: 'legacy-copy', expectedRevision: 'absent',
+      profile: { ...legacy, id: 'legacy-copy', isBuiltIn: false },
+      legacyCloneSource: { id: 'legacy-source', revision: 6 } }).input).toMatchObject({ legacyCloneSource: { revision: 6 } });
+  });
+
   it('admits retained existing inline saves while keeping new Profile authoring strict', () => {
     const id = ` ${'converted-profile-'.repeat(20)} `;
     const record = ProfileRecordV1Schema.parse({ v: 1, id, definition: { kind: 'inline', profile: {
@@ -131,7 +203,7 @@ describe('Profile Action host demand', () => {
     ]) expect(schema.safeParse(input).success).toBe(false);
     const absentRow = { id: 'inline-profile', expectedRevision: 'absent' };
     const profile = LaunchProfileV2Schema.parse({ v: 2, id: absentRow.id, name: 'Inline', createdAt: 1, updatedAt: 1 });
-    expect(PROFILE_ACTION_INPUT_SCHEMAS_V1['launch_profiles.save'].safeParse({ ...absentRow, profile }).success).toBe(false);
+    expect(PROFILE_ACTION_INPUT_SCHEMAS_V1['launch_profiles.save'].safeParse({ ...absentRow, profile }).success).toBe(true);
     expect(PROFILE_ACTION_INPUT_SCHEMAS_V1['launch_profiles.duplicate']
       .safeParse({ ...absentRow, newProfileId: 'copy', name: 'Copy', now: 2 }).success).toBe(false);
     expect(PROFILE_ACTION_INPUT_SCHEMAS_V1['launch_profiles.delete'].safeParse(absentRow).success).toBe(false);
@@ -142,7 +214,7 @@ describe('Profile Action host demand', () => {
     let settingsVersion = 4;
     let enabled = true;
     const operations = createProfileOperations({
-      readCatalog: () => { throw new Error('Profile row transport is unavailable'); },
+      readCatalog: () => ({ status: 'ready', records: [], diagnostics: [], referenceGuardRevision: 1, ...activeAuthority }),
       writeRecord: async () => { throw new Error('Builtin preference must not create a row'); },
       deleteRecord: async () => { throw new Error('Builtin preference must not delete a row'); },
       setBuiltinEnabled: async input => {
