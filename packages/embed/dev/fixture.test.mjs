@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
+import { test } from 'vitest';
 import { createFixtureStore, createCredentialIssuer, createLeadChat } from './fixture.mjs';
+import { actionSchemas } from './leads-fixture/contracts.mjs';
+import { activate, manifest } from './leads-fixture/index.ts';
+import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 
 const analysis = { leadId: 'northstar', score: 84, summary: 'Strong fit', nextStep: 'Call Maya' };
 const publicKey = Buffer.alloc(32, 1).toString('base64url');
@@ -14,7 +17,44 @@ function ownedStore() {
   return store;
 }
 
+test('the plugin uses only the host Action identity for backend replay', async () => {
+  const store = ownedStore();
+  const keys = [];
+  const testkit = await createPluginTestkit({ manifest, activate });
+  try {
+    const registration = testkit.registration('actions', 'update-stage');
+    assert.ok(registration);
+    // The host invocation context and HTTP service are this plugin's system boundaries.
+    const context = {
+      invocationId: 'host-approved-operation', session: { id: leadSessionId },
+      signal: new AbortController().signal,
+      services: { http: { async request(request) {
+        const key = request.headers['idempotency-key'];
+        keys.push(key);
+        const input = JSON.parse(new TextDecoder().decode(request.body));
+        assert.equal(Object.hasOwn(input, 'invocationId'), false);
+        const result = store.apply('update_stage', input, key, request.headers['x-happier-fixture-session-id']);
+        return { status: 200, body: new TextEncoder().encode(JSON.stringify(result)) };
+      } } },
+    };
+    const input = { leadId: 'northstar', stage: 'qualified' };
+    await registration(input, context);
+    await registration(input, { ...context, signal: new AbortController().signal });
+    assert.deepEqual(keys, ['host-approved-operation', 'host-approved-operation']);
+    assert.equal(store.listLeads('salesperson')[0].stageUpdates, 1);
+    await assert.rejects(registration(input, { ...context, invocationId: undefined }), /fixture_invocation_required/);
+    assert.equal(store.listLeads('salesperson')[0].stageUpdates, 1);
+  } finally {
+    await testkit.dispose();
+  }
+});
+
 test('validates business Action input before changing the lead', () => {
+  assert.deepEqual(actionSchemas.record_analysis.parse(analysis), analysis);
+  assert.throws(() => actionSchemas.record_analysis.parse({ ...analysis, invocationId: 'caller-id' }));
+  assert.deepEqual(actionSchemas.update_stage.parse({ leadId: 'northstar', stage: 'qualified' }),
+    { leadId: 'northstar', stage: 'qualified' });
+  assert.throws(() => actionSchemas.update_stage.parse({ leadId: 'northstar', stage: 'qualified', invocationId: 'caller-id' }));
   const store = ownedStore();
   assert.throws(() => store.apply('record_analysis', { ...analysis, score: 101 }, 'invocation-1', leadSessionId));
   assert.equal(store.listLeads('salesperson')[0].analysis, null);
@@ -32,7 +72,7 @@ test('replays an invocation once and rejects key reuse for a different mutation'
   assert.equal(store.listLeads('salesperson')[0].stageUpdates, 1);
   assert.throws(() => store.apply('update_stage', { leadId: 'northstar', stage: 'won' }, 'approval-1', leadSessionId), /idempotency_conflict/);
   assert.throws(() => store.apply('record_analysis', analysis, '', leadSessionId), /idempotency_key_required/);
-  assert.throws(() => store.apply('update_stage', { leadId: 'northstar', stage: 'won', invocationId: 'other-id' }, 'approval-2', leadSessionId), /idempotency_key_mismatch/);
+  assert.throws(() => store.apply('update_stage', { leadId: 'northstar', stage: 'won', invocationId: 'other-id' }, 'approval-2', leadSessionId));
   assert.equal(store.listLeads('salesperson')[0].stage, 'qualified');
 });
 

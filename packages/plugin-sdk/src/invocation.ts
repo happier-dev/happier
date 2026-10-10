@@ -119,6 +119,13 @@ export interface PluginInvocationContext {
     readonly surface: PluginInvocationSurface;
     /** Host clock captured once when this invocation context is admitted. */
     readonly invokedAtMs: number;
+    /**
+     * Host-owned daemon Action identity, suitable as an external idempotency key.
+     * An approved operation uses its durable approval-request identity across
+     * replay; independent Actions receive distinct identities. Absent for other
+     * callback kinds. This identity grants no authority or permission to replay.
+     */
+    readonly invocationId?: string;
     readonly caller?: PluginInvocationCaller;
     readonly session?: Readonly<{ id: string }>;
     /**

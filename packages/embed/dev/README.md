@@ -72,21 +72,21 @@ Actions `dev.leads-fixture/actions/record-analysis` and
 `dev.leads-fixture/actions/update-stage`. Public contribution IDs require hyphens,
 so the underscore names are retained only as backend operation names.
 
-Both inputs require `leadId` and `invocationId`. Analysis also requires `score`
+Both inputs require `leadId`. Analysis also requires `score`
 (0–100), `summary`, and `nextStep`; stage accepts `new`, `contacted`, `qualified`,
 `won`, or `lost`. The plugin and backend consume the same closed public schemas.
-The handler POSTs the invocation ID as `Idempotency-Key`. The backend applies a
+Caller-supplied `invocationId` is rejected. The handler POSTs the public host-stamped
+`context.invocationId` as `Idempotency-Key` and refuses a missing identity.
+An approved operation uses its durable approval-request ID across replay; a fresh
+Action gets a distinct host identity even with identical input. The backend applies a
 logical invocation once, returns its original result on replay, and rejects
 reuse of its ID for a different operation/input with `idempotency_conflict`.
 The handler also sends the public host-stamped `context.session.id`; the CRM
 checks that session's owner against the lead's owner before reading a replay
 result or applying a change. A copilot can act across its owner's leads.
 
-**Public contract gap:** `PluginInvocationContext` currently exposes neither a
-host invocation ID nor an approval-request ID. `invocationId` is therefore an
-explicit dev harness identity supplied by the caller, not a host-stamped approval
-ID. Tell the agent to generate a unique ID and retain it for the same logical
-call/retry. The approval owner still decides whether the stage handler runs.
+The approval owner still decides whether the stage handler runs. The identity
+does not authorize another execution or retry an ambiguous, already-started effect.
 
 The server is an in-memory, loopback-only fixture. Browser reloads retain the CRM
 and replay results while the backend remains running; backend restarts reset
@@ -115,10 +115,11 @@ Ordinary renewals and page reloads use the stored user/session ownership rule.
 Open the fixture, analyze Northstar, inspect the structured score/summary/next step,
 and confirm `/api/happier/sessions` lists only the user's owned chats in the embed's
 folder/tag filter. Follow up with “Should we move this lead to qualified? Call
-the Leads fixture update-stage Action with leadId=northstar, stage=qualified, and
-a unique invocationId.” Approve in the frame; refresh/reload and inspect
-`stageUpdates` from `/api/state` to confirm one application. Replay the same Action
-input to confirm the count remains one.
+the Leads fixture update-stage Action with leadId=northstar and stage=qualified.”
+Approve in the frame; refresh/reload and inspect `stageUpdates` from `/api/state`
+to confirm one application. Re-submit the same approval through the approval owner
+to confirm no second effect. Repeating a callback with that host key also returns
+the original backend result; a fresh Action, even with identical input, is distinct.
 
 Start the copilot by first Send, verify the stored session reopens after reload,
 then switch to Sam and verify Maya's session credential is refused. The QA lane
@@ -136,7 +137,7 @@ fixture uses the approved session Action structured-result path.
 Coordinate with the FE lane so only its one remote validation stage runs at a time:
 
 ```sh
-./apps/stack/bin/hstack-exec -- node --test packages/embed/dev/fixture.test.mjs
+./apps/stack/bin/hstack-exec -- node node_modules/vitest/vitest.mjs run --config vitest.config.ts --root packages/embed/dev
 ./apps/stack/bin/hstack-exec -- node scripts/workspaces/runTypeScriptCli.mjs --noEmit -p packages/embed/dev/tsconfig.json
 ```
 

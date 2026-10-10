@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "scripts": { "start": "node server.mjs", "test": "node --test fixture.test.mjs" },
+  "scripts": { "start": "node server.mjs", "test": "../../../apps/stack/bin/hstack-exec -- node ../../../node_modules/vitest/vitest.mjs run --config vitest.config.ts" },
   "dependencies": {
     "@happier-dev/embed": "0.0.0", "@happier-dev/sdk": "0.0.0",
     "@happier-dev/plugin-sdk": "0.0.0", "@happier-dev/protocol": "0.0.0", "esbuild": "0.27.2",
