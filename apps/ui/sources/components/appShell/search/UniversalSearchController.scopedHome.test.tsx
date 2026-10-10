@@ -1,6 +1,8 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
+import { DEFAULT_MEMORY_SETTINGS } from '@happier-dev/protocol/memory/memorySettings';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import type { SelectionListProps } from '@/components/ui/selectionList';
@@ -14,6 +16,9 @@ const harness = vi.hoisted(() => ({
     selectionListProps: null as SelectionListProps | null,
     navigateToSession: vi.fn(),
     searchHomeMemory: vi.fn(),
+    machineRpc: vi.fn(),
+    routerPush: vi.fn(),
+    memoryMachine: null as null | { serverId: string; machine: { id: string } },
     modalAlert: vi.fn(),
     featureEnabled: { search: true, 'memory.search': false } as Record<string, boolean>,
     fetchAllSessionMetadata: vi.fn(async () => {}),
@@ -63,7 +68,7 @@ vi.mock('@/modal', () => ({ Modal: { alert: harness.modalAlert } }));
 
 vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    return createExpoRouterMock().module;
+    return createExpoRouterMock({ router: { push: harness.routerPush } }).module;
 });
 
 vi.mock('@/components/ui/selectionList', async (importOriginal) => {
@@ -181,6 +186,10 @@ vi.mock('@/sync/domains/state/storage', async () => {
         storage: { getState: () => ({
             sessions: {},
             machines: {},
+            machineListByServerId: harness.memoryMachine ? { [harness.memoryMachine.serverId]: [{
+                id: harness.memoryMachine.machine.id, active: true, activeAt: Date.now(), createdAt: 1, updatedAt: 1,
+                metadata: { host: 'Test machine' },
+            }] } : {},
             sessionListRowsByServerId: harness.sessionListRows.reduce<Record<string, Record<string, typeof harness.sessionListRows[number]['session']>>>((byServer, row) => {
                 const serverId = row.serverId ?? '';
                 if (!serverId) return byServer;
@@ -232,7 +241,7 @@ vi.mock('@/sync/domains/features/featureDecisionRuntime', () => {
     };
 });
 vi.mock('@/sync/domains/machines/administration/useTargetSelection', () => ({
-    useMachineAdministrationTargetSelection: () => ({ resolveExecutionTarget: () => null }),
+    useMachineAdministrationTargetSelection: () => ({ resolveExecutionTarget: () => harness.memoryMachine }),
 }));
 vi.mock('@/sync/domains/memory/searchHomeMemory', () => ({
     searchHomeMemory: harness.searchHomeMemory,
@@ -263,17 +272,17 @@ vi.mock('@/auth/storage/tokenStorage', async (importOriginal) => {
                 token: options.serverId === 'home-b' ? 'account-1' : 'account-a',
             }),
         },
-        subscribeHomeCredentialMutations: () => () => undefined,
+        subscribeHomeCredentialMutations: (listener: Parameters<typeof actual.subscribeHomeCredentialMutations>[0]) => {
+            harness.homeCredentialMutationListeners.add(listener);
+            return () => harness.homeCredentialMutationListeners.delete(listener);
+        },
     };
 });
-vi.mock('@/sync/runtime/orchestration/homeAccountChange', () => ({
-    subscribeHomeCredentialChange: (listener: (event: { kind: 'credentials_set' | 'credentials_removed'; serverId: string; serverUrl: string }) => void) => {
-        harness.homeCredentialMutationListeners.add(listener);
-        return () => harness.homeCredentialMutationListeners.delete(listener);
-    },
-}));
 vi.mock('@/utils/auth/parseToken', () => ({ parseToken: (token: string) => token }));
-vi.mock('@/sync/domains/memory/searchDaemonMemory', () => ({ searchDaemonMemory: vi.fn() }));
+// The daemon RPC is the system boundary; negotiation, parsing and eligibility remain real.
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
+    machineRpcWithServerScope: harness.machineRpc,
+}));
 vi.mock('@/sync/ops/sessionMachineTarget', () => ({ readMachineControlTargetForSession: () => null }));
 vi.mock('@/hooks/server/useServerProfilesGeneration', () => ({ useServerProfilesGeneration: () => 1 }));
 vi.mock('@/sync/domains/server/serverProfiles', () => ({
@@ -348,11 +357,119 @@ afterEach(() => {
     harness.scopedPluginProjectionCalls = [];
     harness.activeAccountLifetime = null;
     harness.featureEnabled = { search: true, 'memory.search': false };
+    harness.memoryMachine = null;
+    harness.machineRpc.mockReset();
     vi.clearAllMocks();
     standardCleanup();
 });
 
+// Load the real owner outside React act and the behavior-test timeout. Its large
+// transitive graph can take over two minutes to transform on the remote mirror.
+beforeAll(async () => {
+    await import('./UniversalSearchController');
+}, 300_000);
+
 describe('UniversalSearchController exact Home scope', () => {
+    it('keeps old-daemon Session hits usable with explicit unavailable document coverage', async () => {
+        harness.featureEnabled = { search: false, 'memory.search': true };
+        harness.memoryMachine = { serverId: 'home-b', machine: { id: 'machine-b' } };
+        harness.machineRpc.mockImplementation(async (call) => {
+            if (call.method === 'daemon.memory.settings.get') return DEFAULT_MEMORY_SETTINGS;
+            if (call.method === 'daemon.memory.status') throw Object.assign(new Error('Older daemon'), {
+                rpcErrorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
+            });
+            return { v: 1, ok: true, hits: [{ sessionId: 'session-b', seqFrom: 9, seqTo: 9,
+                createdAtFromMs: 1, createdAtToMs: 1, summary: 'Old transcript match', score: 0.5 }] };
+        });
+        const { UniversalSearchController } = await import('./UniversalSearchController');
+        await renderScreen(<UniversalSearchController commands={[]} initialQuery="recovery"
+            initialScope={{ accountId: 'account-1', serverId: 'home-b', sessionId: null, machineId: null, rootPath: null }}
+            presentation="modal" onRequestClose={vi.fn()} />);
+        const section = harness.selectionListProps?.rootStep.sections.find((item) => item.id === 'transcript');
+        if (!section || section.kind !== 'dynamic') throw new Error('Memory search section missing');
+        const resolved = await section.resolve('recovery', new AbortController().signal);
+        expect(resolved.options).toHaveLength(1);
+        expect(resolved.resultHint).toContain('Memory document search is unavailable here.');
+        const query = harness.machineRpc.mock.calls.find(([call]) => call.method === 'daemon.memory.search')?.[0];
+        expect(query?.payload).not.toHaveProperty('corpora');
+        const option = resolved.options[0]!;
+        await act(async () => {
+            option.onSelect?.();
+            harness.selectionListProps?.onSelect?.(option.id, option);
+            await vi.waitFor(() => expect(harness.navigateToSession).toHaveBeenCalledWith('session-b', {
+                serverId: 'home-b', query: { jumpSeq: 9 },
+            }));
+        });
+    });
+
+    it('keeps mixed memory hits and opens their named topic through the qualified document route', async () => {
+        harness.featureEnabled['memory.search'] = true;
+        harness.memoryMachine = { serverId: 'home-b', machine: { id: 'machine-b' } };
+        harness.searchHomeMemory.mockResolvedValue({ v: 1, ok: true, hits: [{ sessionId: 'session-b',
+            seqFrom: 7, seqTo: 7, createdAtFromMs: 1, createdAtToMs: 1,
+            summary: 'Past release discussion', score: 0.5 }] });
+        const statusFixture = {
+            v: 1, enabled: true, indexMode: 'deep', hintsIndexReady: false,
+            deepIndexReady: true, activeIndexReady: true, activeIndexSearchable: true, embeddingsEnabled: false,
+            embeddingsMode: 'disabled', embeddingsPresetId: null, embeddingsProviderKind: null,
+            embeddingsModelId: null, embeddingsRuntimeState: 'unavailable', embeddingsUsingFallback: false,
+            tier1DbPath: null, deepDbPath: '/memory/deep.sqlite', tier1DbBytes: null, deepDbBytes: 1,
+            documentSearchSupported: true,
+        };
+        const resultFixture = {
+            v: 1, ok: true, documents: { state: 'ready' }, hits: [
+                { type: 'artifact', ref: { kind: 'doc', serverId: 'home-b', artifactId: 'memory/b' },
+                    revision: { headerVersion: 1, bodyVersion: 2 },
+                    location: { type: 'topic', title: 'Release & recovery' }, factId: 'fact/b',
+                    summary: 'Keep release recovery steps', score: 0.8 },
+                { type: 'artifact', ref: { kind: 'doc', serverId: 'home-b', artifactId: 'memory/b' },
+                    revision: { headerVersion: 1, bodyVersion: 2 },
+                    location: { type: 'topic', title: 'facts' }, factId: 'same-fact',
+                    summary: 'Named facts topic', score: 0.7 },
+                { type: 'artifact', ref: { kind: 'doc', serverId: 'home-b', artifactId: 'memory/b' },
+                    revision: { headerVersion: 1, bodyVersion: 2 }, location: 'facts', factId: 'same-fact',
+                    summary: 'Key facts section', score: 0.6 },
+                { sessionId: 'session-b', seqFrom: 7, seqTo: 7,
+                    createdAtFromMs: 1, createdAtToMs: 1, summary: 'Past release discussion', score: 0.5 },
+            ],
+        };
+        harness.machineRpc.mockImplementation(async call => call.method === 'daemon.memory.settings.get' ? DEFAULT_MEMORY_SETTINGS
+            : call.method === 'daemon.memory.status' ? statusFixture : resultFixture);
+        const { UniversalSearchController } = await import('./UniversalSearchController');
+        await renderScreen(<UniversalSearchController commands={[]} initialQuery="recovery"
+            initialScope={{ accountId: 'account-1', serverId: 'home-b', sessionId: null, machineId: null, rootPath: null }}
+            presentation="modal" onRequestClose={vi.fn()} />);
+        const section = harness.selectionListProps?.rootStep.sections.find((item) => item.id === 'transcript');
+        if (!section || section.kind !== 'dynamic') throw new Error('Memory search section missing');
+        const resolved = await section.resolve('recovery', new AbortController().signal);
+        expect(resolved.options.map((option) => option.label))
+            .toContain('Keep release recovery steps');
+        expect(harness.searchHomeMemory).toHaveBeenCalledWith(expect.objectContaining({ serverId: 'home-b', accountId: 'account-1' }));
+        const query = harness.machineRpc.mock.calls.find(([call]) => call.method === 'daemon.memory.search')?.[0];
+        expect(query).toMatchObject({ serverId: 'home-b', accountId: 'account-1', machineId: 'machine-b',
+            payload: { corpora: ['documents'] } });
+        expect(resolved.options).toHaveLength(4);
+        expect(new Set(resolved.options.map((option) => option.id)).size).toBe(4);
+        const memoryOption = resolved.options.find((option) => option.label === 'Keep release recovery steps');
+        if (!memoryOption) throw new Error('Remembered fact missing');
+        await act(async () => {
+            memoryOption.onSelect?.();
+            harness.selectionListProps?.onSelect?.(memoryOption.id, memoryOption);
+            await vi.waitFor(() => expect(harness.routerPush).toHaveBeenCalledWith(
+                '/settings/prompts/memory/memory%2Fb?serverId=home-b&topic=Release%20%26%20recovery&fact=fact%2Fb',
+            ));
+        });
+        const sessionOption = resolved.options.find((option) => option.subtitle === 'Past release discussion');
+        if (!sessionOption) throw new Error('Past Session missing');
+        await act(async () => {
+            sessionOption.onSelect?.();
+            harness.selectionListProps?.onSelect?.(sessionOption.id, sessionOption);
+            await vi.waitFor(() => expect(harness.navigateToSession).toHaveBeenCalledWith('session-b', {
+                serverId: 'home-b', query: { jumpSeq: 7 },
+            }));
+        });
+    });
+
     it('keeps a typed Messages section with a truthful hint when transcript search is disabled', async () => {
         harness.featureEnabled = { search: false, 'memory.search': false };
         const { UniversalSearchController } = await import('./UniversalSearchController');
@@ -419,7 +536,9 @@ describe('UniversalSearchController exact Home scope', () => {
         harness.sessionOrganizationProjection = {
             schemaVersion: 1,
             version: 1,
+            orderedPinSessionIds: [],
             pinnedSessionIds: [],
+            railPinnedSessionIds: [],
             pinsBySessionId: {},
             foldersById: {},
             folderAssignmentsBySessionId: {},
@@ -853,7 +972,7 @@ describe('UniversalSearchController exact Home scope', () => {
         ]);
     });
 
-    it('shows no scope chip when the only scope is the current Home', async () => {
+    it('offers the all-machines choice even when there is only one Home', async () => {
         harness.singleHome = true;
         const { UniversalSearchController } = await import('./UniversalSearchController');
 
@@ -868,7 +987,8 @@ describe('UniversalSearchController exact Home scope', () => {
         );
 
         expect(harness.selectionListProps).not.toBeNull();
-        expect(harness.selectionListProps?.filters ?? []).toHaveLength(0);
+        expect(harness.selectionListProps?.filters ?? []).toHaveLength(1);
+        expect(harness.selectionListProps?.filters?.[0].options).toHaveLength(2);
     });
 
     it('names the scope chip by the Home display name when there are several Homes', async () => {

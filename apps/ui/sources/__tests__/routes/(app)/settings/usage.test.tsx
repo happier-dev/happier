@@ -28,8 +28,8 @@ vi.mock('expo-router', () => ({
     useGlobalSearchParams: () => routeParams,
 }));
 
-vi.mock('@/components/settings/usage/UsagePanel', () => ({
-    UsagePanel: (props: Record<string, unknown>) => React.createElement('UsagePanel', props),
+vi.mock('@/components/settings/usage/UsageWidgetPage', () => ({
+    UsageWidgetPage: (props: Record<string, unknown>) => React.createElement('UsageWidgetPage', props),
 }));
 
 describe('/settings/usage', () => {
@@ -54,9 +54,9 @@ describe('/settings/usage', () => {
         standardCleanup();
     });
 
-    it('passes initial usage filters from the settings route search params into UsagePanel', async () => {
+    it('passes initial usage filters from the settings route search params into the Usage page', async () => {
         const screen = await renderScreen(<Screen />);
-        const panel = screen.findByType('UsagePanel' as never);
+        const panel = screen.findByType('UsageWidgetPage' as never);
 
         expect(panel.props.initialFilters).toEqual({
             period: '7days',
@@ -81,7 +81,7 @@ describe('/settings/usage', () => {
         };
 
         const screen = await renderScreen(<Screen />);
-        const panel = screen.findByType('UsagePanel' as never);
+        const panel = screen.findByType('UsageWidgetPage' as never);
 
         expect(panel.props.initialFilters).toEqual({
             period: 'today',
@@ -99,7 +99,7 @@ describe('/settings/usage', () => {
         };
 
         const screen = await renderScreen(<Screen />);
-        const panel = screen.findByType('UsagePanel' as never);
+        const panel = screen.findByType('UsageWidgetPage' as never);
 
         expect(panel.props.initialFilters).toEqual({
             period: 'year',
@@ -111,7 +111,7 @@ describe('/settings/usage', () => {
 
     it('syncs updated dashboard filters back into the route params', async () => {
         const screen = await renderScreen(<Screen />);
-        const panel = screen.findByType('UsagePanel' as never);
+        const panel = screen.findByType('UsageWidgetPage' as never);
 
         panel.props.onFiltersChange({
             period: 'year',
@@ -134,9 +134,18 @@ describe('/settings/usage', () => {
         });
     });
 
-    it('keeps UsagePanel filter props referentially stable across route rerenders with semantically unchanged filters', async () => {
+    it('records the selected view without clearing the filters, and filters without clearing the view', async () => {
         const screen = await renderScreen(<Screen />);
-        const firstPanel = screen.findByType('UsagePanel' as never);
+        const page = screen.findByType('UsageWidgetPage' as never);
+        page.props.onLayoutChange('costs');
+        expect(routerMock.spies.setParams).toHaveBeenLastCalledWith({ layoutId: 'costs' });
+        page.props.onFiltersChange({ period: '30days', metric: 'tokens', costMode: 'auto', focus: null });
+        expect(Object.keys(routerMock.spies.setParams.mock.calls.at(-1)![0] as object)).not.toContain('layoutId');
+    });
+
+    it('keeps the Usage page filter props referentially stable across route rerenders with semantically unchanged filters', async () => {
+        const screen = await renderScreen(<Screen />);
+        const firstPanel = screen.findByType('UsageWidgetPage' as never);
         const firstInitialFilters = firstPanel.props.initialFilters;
         const firstOnFiltersChange = firstPanel.props.onFiltersChange;
 
@@ -147,7 +156,7 @@ describe('/settings/usage', () => {
 
         await screen.update(<Screen />);
 
-        const secondPanel = screen.findByType('UsagePanel' as never);
+        const secondPanel = screen.findByType('UsageWidgetPage' as never);
 
         expect(secondPanel.props.initialFilters).toBe(firstInitialFilters);
         expect(secondPanel.props.onFiltersChange).toBe(firstOnFiltersChange);

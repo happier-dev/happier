@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 import { View, ScrollView, Pressable } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import {
@@ -126,6 +127,8 @@ export const FriendsView = React.memo(({}: FriendsViewProps) => {
     const feedLoaded = useFeedLoaded();
     const friendsLoaded = useFriendsLoaded();
     const { theme } = useUnistyles();
+    const materialColor = useHappierMaterialColorResolver();
+    const backgroundColor = materialColor(theme.colors.background.canvas, 'transparent');
     const isTablet = useIsTablet();
     // Read at render time so the user's content-width preference keeps applying
     // here; a module-scope stylesheet would freeze it at the first evaluation.
@@ -154,9 +157,9 @@ export const FriendsView = React.memo(({}: FriendsViewProps) => {
 
     if (!friendsIdentityReady) {
         return (
-            <View style={styles.container}>
+            <View style={[styles.container, { backgroundColor }]}>
                 {isTablet && (
-                    <View style={{ backgroundColor: theme.colors.background.canvas }}>
+                    <View style={{ backgroundColor }}>
                         <Header
                             title={<HeaderTitleTablet />}
                             headerRight={() => <HeaderRightTablet />}
@@ -184,9 +187,9 @@ export const FriendsView = React.memo(({}: FriendsViewProps) => {
             : 'content';
 
     return (
-        <View style={styles.container}>
+        <View style={[styles.container, { backgroundColor }]}>
             {isTablet && (
-                <View style={{ backgroundColor: theme.colors.background.canvas }}>
+                <View style={{ backgroundColor }}>
                     <Header
                         title={<HeaderTitleTablet />}
                         headerRight={() => <HeaderRightTablet />}

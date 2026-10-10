@@ -337,6 +337,8 @@ installSessionRouteCommonModuleMocks({
                 useIsDataReady: () => isDataReady,
                 useAllSessions: () => allSessionsState.current,
                 useAllMachines: () => allMachinesState.current,
+                useWorkspaceRefs: () => [],
+                useWorkspaceSyncRelationships: () => [],
                 useMachineListByServerId: () => machineListByServerIdState.current,
                 useProjectForSession: () => null,
                 useLocalSetting: <K extends keyof LocalSettings>(name: K): LocalSettings[K] => {
@@ -354,9 +356,6 @@ installSessionRouteCommonModuleMocks({
                     }
                     if (key === 'backendEnabledByTargetKey') {
                         return backendEnabledByTargetKey;
-                    }
-                    if (key === 'workspaceRefsV1' || key === 'workspaceSyncRelationshipsV1') {
-                        return [];
                     }
                     return null;
                 } }),

@@ -5,7 +5,7 @@ import { invokeTestInstanceHandler, renderScreen, standardCleanup } from '@/dev/
 import { WORKSPACE_ACTION_OUTPUT_SCHEMAS } from '@happier-dev/protocol';
 import { storage } from '@/sync/domains/state/storage';
 import { resolveCompactAppDestinations } from '../destinations/compactAppDestinationCatalog';
-import { DestinationInstanceHost, useDestinationParams, useDestinationRouter } from './DestinationInstanceHost';
+import { DestinationInstanceHost, useDestinationInstanceKey, useDestinationParams, useDestinationRouter } from './DestinationInstanceHost';
 import type { WorkspaceNavigationContextValue } from './WorkspaceNavigationContext';
 import { WorkspaceProvider } from './WorkspaceProvider';
 import { WorkspaceShell } from './WorkspaceShell';
@@ -19,15 +19,21 @@ import { reconcileWorkspaceSyncedTabs } from './workspaceSyncedTabs';
 import { registerWorkspaceRouteContext } from './workspaceRouteContext';
 import { Stack } from './destinationRoute';
 import { WorkspaceRouteEntry } from './createWorkspaceRouteEntry';
+import { WorkspaceRootStack } from './WorkspaceRootStack';
 
 const boundary = vi.hoisted(() => ({ layouts: {} as Record<string, unknown>, mirrors: [] as string[], scope: { serverId: 'home-a', accountId: 'alice' }, dataReady: true,
-    platform: 'ios', pathname: '/session/A1', params: { id: 'A1', serverId: 'home-a' } as Record<string, string> }));
+    platform: 'ios', pathname: '/session/A1', params: { id: 'A1', serverId: 'home-a' } as Record<string, string>,
+    renderScene: null as (() => React.ReactNode) | null }));
 // Socket transport is a genuine boundary; this layout-owner suite has no authenticated RPCs.
 vi.mock('@/sync/api/session/apiSocket', () => ({ apiSocket: {} }));
 // This navigation journey never renders Markdown; the vendor/native SDK remains a boundary.
 vi.mock('react-native-enriched-markdown/lib/module/web/streamingReveal.js', () => ({
     splitStreamingRevealTextParts: () => { throw new Error('Unexpected vendor Markdown reveal in workspace navigation test'); },
 }));
+vi.mock('expo-router/build/fork/getPathFromState', async () => {
+    const { loadInstalledExpoPathSerializer } = await import('@/dev/testkit/runtime/installedExpoPathSerializer');
+    return loadInstalledExpoPathSerializer();
+});
 // This harness has no recipient-envelope HTTP/process authority; reaching that API is a setup bug.
 vi.mock('@/sync/api/session/sessionDataKeyEnvelopesApi', () => {
     const unavailable = () => { throw new Error('Unexpected recipient-envelope API in workspace navigation test'); };
@@ -51,8 +57,22 @@ vi.mock('@expo/vector-icons', async () => {
 });
 vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    return createExpoRouterMock({ pathname: () => boundary.pathname, params: () => boundary.params,
+    const module = createExpoRouterMock({ pathname: () => boundary.pathname, params: () => boundary.params,
         router: { replace: (href: unknown) => { boundary.mirrors.push(String(href)); } } }).module;
+    // Expo is the navigator boundary. Observe whether its admitted options mount a modal scene;
+    // workspace admission, hydration, route entries and destination resolution remain real.
+    return { ...module, Stack: Object.assign((props: React.ComponentProps<typeof module.Stack>) => {
+        if (!boundary.renderScene) return React.createElement(module.Stack, props);
+        const declaration = React.Children.toArray(props.children).find(child =>
+            React.isValidElement<{ name?: string }>(child) && child.props.name === boundary.pathname.slice(1));
+        if (!React.isValidElement<{ options?: unknown }>(declaration)) throw new Error('Missing route declaration');
+        const options = typeof declaration.props.options === 'function'
+            ? declaration.props.options({ route: { name: boundary.pathname.slice(1), params: boundary.params }, navigation: {} })
+            : declaration.props.options;
+        const presentation = (options as { presentation?: string } | undefined)?.presentation;
+        const scene = boundary.renderScene();
+        return presentation && presentation !== 'card' ? React.createElement('RouteModalShell', { presentation }, scene) : scene;
+    }, { Screen: module.Stack.Screen }) };
 });
 const initialStorageState = storage.getState();
 // Test inputs use the same store snapshots and selectors as the mounted workspace.
@@ -97,23 +117,112 @@ function ResizeEditor() {
     return React.createElement('ResizeEditor', { draft, setDraft, params });
 }
 
+/** Real event dispatch beneath the external browser URL/history fixtures. */
+function installBrowserBoundary(input: Record<string, unknown> & { history: object }) {
+    const events = new EventTarget();
+    vi.stubGlobal('window', { ...input,
+        addEventListener: events.addEventListener.bind(events),
+        removeEventListener: events.removeEventListener.bind(events),
+        dispatchEvent: events.dispatchEvent.bind(events),
+    });
+}
+
 describe('consumed workspace navigation owner', () => {
+    it('retains qualified Project page and resource through mounted phone tab admission and activation', async () => {
+        const catalog = resolveCompactAppDestinations({ pages: [], builtins: { externalSessions: false, inbox: false, workflows: false, friends: false } });
+        const screen = await renderScreen(<WorkspaceProvider enabled={false} phone catalog={catalog}>
+            {(navigation) => React.createElement('ProjectPhoneOwner', { navigation })}
+        </WorkspaceProvider>);
+        const navigation = () => screen.root.findByType('ProjectPhoneOwner').props.navigation as WorkspaceNavigationContextValue;
+        const href = '/projects/wr_1/changes?serverId=home-b&worktreeId=checkout-a&layoutId=selected&comparisonId=comparison-a&initialFile=src%2Fa.ts';
+        await act(async () => { navigation().phone?.openHref(href, 'newTab'); });
+        const state = navigation().state;
+        const tabId = state.groups[state.focusedGroupId].activeTabId;
+        expect(state.tabs[tabId].target).toEqual({ kind: 'project', params: { workspaceRefId: 'wr_1', pageId: 'changes',
+            serverId: 'home-b', worktreeId: 'checkout-a', layoutId: 'selected', comparisonId: 'comparison-a', initialFile: 'src/a.ts' } });
+        await act(async () => { navigation().phone?.activateTab(tabId); });
+        expect(boundary.mirrors.at(-1)).toBe(href);
+    });
     beforeEach(() => {
         storage.setState({ ...initialStorageState, profileScope: { serverId: 'home-a', accountId: 'alice' }, isDataReady: true,
             localSettings: { ...initialStorageState.localSettings, workspaceLayoutV1: {}, titleStripThemeToggleVisible: false } }, true);
     });
     afterEach(() => { standardCleanup(); storage.setState(initialStorageState, true); boundary.mirrors = [];
         boundary.platform = 'ios'; boundary.pathname = '/session/A1'; boundary.params = { id: 'A1', serverId: 'home-a' };
+        boundary.renderScene = null;
         clearActiveUnsavedChangesGuard(); vi.unstubAllGlobals(); });
+    it.each([true, false])('never mounts an empty route modal for hosted History before/after hydration or resize (desktop=%s)', async desktop => {
+        boundary.platform = 'web'; boundary.pathname = '/external/browse'; boundary.params = {}; boundary.dataReady = false;
+        const location = { pathname: boundary.pathname, search: '', hash: '' };
+        const history = { state: null as unknown,
+            replaceState: (state: unknown) => { history.state = state; },
+            pushState: (state: unknown) => { history.state = state; }, go: () => {},
+        };
+        installBrowserBoundary({ location, history, sessionStorage: { getItem: () => 'main' } });
+        const catalog = resolveCompactAppDestinations({ pages: [], builtins: { externalSessions: true, inbox: false, workflows: false, friends: false } });
+        const Body = () => React.createElement('HistoryBody');
+        boundary.renderScene = () => <WorkspaceRouteEntry Body={Body} />;
+        const element = () => <WorkspaceProvider enabled={desktop} phone={!desktop} catalog={catalog}>
+            <WorkspaceRootStack><WorkspaceRootStack.Screen name="external/browse" options={() => ({ presentation: 'transparentModal' })} /></WorkspaceRootStack>
+        </WorkspaceProvider>;
+        const screen = await renderScreen(element());
+        expect(screen.root.findAllByType('RouteModalShell')).toHaveLength(0);
+        expect(screen.root.findAllByType('HistoryBody')).toHaveLength(0);
+        await act(async () => { boundary.dataReady = true; screen.update(element()); });
+        expect(screen.root.findAllByType('RouteModalShell')).toHaveLength(0);
+        expect(screen.root.findAllByType('HistoryBody')).toHaveLength(0);
+        for (const next of [!desktop, desktop]) {
+            desktop = next;
+            await act(async () => { screen.update(element()); });
+            expect(screen.root.findAllByType('RouteModalShell')).toHaveLength(0);
+        }
+    });
+    it.each(['web', 'ios', 'android'])('keeps unhosted History modal presentation on %s', async platform => {
+        boundary.platform = platform; boundary.pathname = '/external/browse'; boundary.params = {};
+        const catalog = resolveCompactAppDestinations({ pages: [], builtins: { externalSessions: platform !== 'web', inbox: false, workflows: false, friends: false } });
+        const Body = () => React.createElement('HistoryBody');
+        boundary.renderScene = () => <WorkspaceRouteEntry Body={Body} />;
+        const presentation = platform === 'web' ? 'transparentModal' : 'modal';
+        const screen = await renderScreen(<WorkspaceProvider enabled={false} phone catalog={catalog}>
+            <WorkspaceRootStack><WorkspaceRootStack.Screen name="external/browse" options={{ presentation }} /></WorkspaceRootStack>
+        </WorkspaceProvider>);
+        const modal = screen.root.findByType('RouteModalShell');
+        expect(modal.props.presentation).toBe(presentation);
+        expect(modal.findAllByType('HistoryBody')).toHaveLength(1);
+    });
+    it('keeps a hosted History entry non-modal while an unhosted modal is current', async () => {
+        boundary.platform = 'web'; boundary.pathname = '/new/index'; boundary.params = {};
+        const history = { state: null as unknown, replaceState: (state: unknown) => { history.state = state; },
+            pushState: (state: unknown) => { history.state = state; }, go: () => {} };
+        installBrowserBoundary({ location: { pathname: '/new', search: '', hash: '' },
+            history, sessionStorage: { getItem: () => 'main' } });
+        const catalog = resolveCompactAppDestinations({ pages: [], builtins: { externalSessions: true, inbox: false, workflows: false, friends: false } });
+        const screen = await renderScreen(<WorkspaceProvider enabled={false} phone catalog={catalog}>
+            <WorkspaceRootStack>
+                <WorkspaceRootStack.Screen name="external/browse" options={() => ({ presentation: 'transparentModal' })} />
+                <WorkspaceRootStack.Screen name="new/index" options={{ presentation: 'modal' }} />
+            </WorkspaceRootStack>
+        </WorkspaceProvider>);
+        const optionsFor = (name: string) => {
+            const options = screen.root.findByProps({ name }).props.options;
+            return typeof options === 'function' ? options({ route: { name, params: {} }, navigation: {} }) : options;
+        };
+        expect(optionsFor('external/browse').presentation).toBe('card');
+        expect(optionsFor('new/index').presentation).toBe('modal');
+    });
     it.each([
         ['/settings/no-body', '', false],
         ['/settings/plugins/acme.review/policy', '?subPath=bindings%2F1&subPath=bindings%2F2', false],
         ['/settings/no-body', '', true],
         ['/settings/plugins/acme.review/policy', '?subPath=bindings%2F1&subPath=bindings%2F2', true],
     ] as const)('retains Expo ownership for the unadmitted web location %s%s (desktop=%s)', async (pathname, search, desktop) => {
-        boundary.platform = 'web'; boundary.pathname = pathname; boundary.params = {};
-        vi.stubGlobal('window', { location: { pathname, search, hash: '' },
-            history: { state: null, replaceState: () => { throw new Error('Unadmitted route must not be projected'); } },
+        boundary.platform = 'web'; boundary.pathname = pathname; boundary.params = {}; boundary.dataReady = false;
+        const history = { state: null as unknown, pushState: () => { throw new Error('Unadmitted route must not be projected'); },
+            replaceState: (state: unknown, _unused: string, href?: string | URL | null) => {
+                if (href) throw new Error('Unadmitted route must not be projected');
+                history.state = state;
+            } };
+        installBrowserBoundary({ location: { pathname, search, hash: '' }, history,
             sessionStorage: { getItem: () => 'main' }, addEventListener: () => {}, removeEventListener: () => {} });
         const catalog = resolveCompactAppDestinations({ pages: [], builtins: {
             externalSessions: false, inbox: false, workflows: false, friends: false,
@@ -127,23 +236,78 @@ describe('consumed workspace navigation owner', () => {
         expect(screen.root.findAllByType('ExpoOwnedBody')).toHaveLength(1);
         expect(boundary.mirrors).toEqual([]);
     });
+    it('keeps an unready native phone route with its stack rather than the web workspace host', async () => {
+        boundary.platform = 'ios'; boundary.dataReady = false;
+        const catalog = resolveCompactAppDestinations({ pages: [], builtins: { externalSessions: false, inbox: false, workflows: false, friends: false } });
+        const Body = () => React.createElement('NativeOwnedDraft');
+        const screen = await renderScreen(<WorkspaceProvider enabled={false} phone catalog={catalog}>
+            <WorkspaceRouteEntry Body={Body} />
+        </WorkspaceProvider>);
+        expect(screen.root.findAllByType('NativeOwnedDraft')).toHaveLength(1);
+    });
+    it.each([[true, '/workflows/new'], [false, '/workflows/new'],
+        [false, '/settings/prompts/skills'], [false, '/settings/prompts/templates'],
+        [true, '/settings/session/runtime'], [true, '/settings/session/new-session-wizard']] as const)(
+        'admits the cold web route once readiness arrives without a throwaway body (desktop=%s, path=%s)', async (desktop, pathname) => {
+        boundary.platform = 'web'; boundary.dataReady = false; boundary.pathname = pathname; boundary.params = {};
+        const location = { pathname, search: '', hash: '' };
+        const history = { state: null as unknown,
+            replaceState: (state: unknown) => { history.state = state; },
+            pushState: (state: unknown) => { history.state = state; }, go: () => {},
+        };
+        installBrowserBoundary({ location, history, sessionStorage: { getItem: () => 'main' } });
+        const catalog = resolveCompactAppDestinations({ pages: [], builtins: { externalSessions: false, inbox: false, workflows: true, friends: false } });
+        let mounts = 0;
+        const Body = () => {
+            const hosted = useDestinationInstanceKey() !== null;
+            React.useEffect(() => { mounts += 1; }, []);
+            return React.createElement('EditableDraft', { hosted });
+        };
+        const element = () => <WorkspaceProvider enabled={desktop} phone={!desktop} catalog={catalog}>
+            {navigation => {
+                const group = navigation.state.groups[navigation.state.focusedGroupId];
+                const tab = navigation.state.tabs[group.activeTabId];
+                return <>{React.createElement('WorkspaceOwner', { navigation })}
+                    <WorkspaceRouteEntry Body={Body} mirror={React.createElement('UrlMirror')} />
+                    {navigation.active && <DestinationInstanceHost tabId={tab.id} ref={tab.target} pathname={pathname}
+                        focused visible navigation={navigation.navigationForTab(tab.id)}><Body /></DestinationInstanceHost>}
+                </>;
+            }}
+        </WorkspaceProvider>;
+        const screen = await renderScreen(element());
+        expect(screen.root.findByType('WorkspaceOwner').props.navigation.active).toBe(false);
+        expect(screen.root.findAllByType('EditableDraft')).toHaveLength(0);
+        expect(mounts).toBe(0);
+        await act(async () => { boundary.dataReady = true; await screen.update(element()); });
+        expect(screen.root.findByType('WorkspaceOwner').props.navigation.active).toBe(true);
+        expect(screen.root.findByType('EditableDraft').props.hosted).toBe(true);
+        expect(mounts).toBe(1);
+        expect(screen.root.findAllByType('UrlMirror')).toHaveLength(1);
+        expect(location.pathname).toBe(pathname);
+        expect(boundary.mirrors.every(href => href.split('?')[0] === pathname)).toBe(true);
+    });
     it.each(['agents/custom', 'connected-services/connect', 'embeds/new', 'account/api-tokens/token-a', 'voice/service', 'personalize',
-        'artifacts/new', 'artifacts/edit/document-a', 'workflows/new', 'workflows/edit', 'automations/new', 'boards/board-a', 'inbox'])('retains the %s editor across mobile-web/desktop hosting changes', async pageId => {
-        const appPage = /^(artifacts|workflows|automations|boards|inbox)(\/|$)/.test(pageId);
+        'artifacts/new', 'artifacts/edit/document-a', 'workflows/new', 'workflows/edit', 'automations/new', 'boards/board-a', 'inbox',
+        'external/browse', 'prompts/skills', 'prompts/templates', 'session/runtime',
+        'session/new-session-wizard'])('retains the %s editor across mobile-web/desktop hosting changes', async pageId => {
+        const appPage = /^(artifacts|workflows|automations|boards|inbox|external)(\/|$)/.test(pageId);
         const pathname = pageId === 'personalize' || appPage ? `/${pageId}` : `/settings/${pageId}`;
         const search = pageId === 'personalize' ? '?page=conversation' : '';
         boundary.platform = 'web'; boundary.pathname = pathname; boundary.params = {};
         const location = { pathname, search, hash: '' };
         const browserHistory = { state: null as unknown,
-            replaceState: (state: unknown, _unused: string, href: string) => { browserHistory.state = state;
+            replaceState: (state: unknown, _unused: string, href?: string | URL | null) => { browserHistory.state = state;
+                if (!href) return;
                 const url = new URL(href, 'https://happier.invalid'); location.pathname = url.pathname; location.search = url.search; location.hash = url.hash; },
             pushState: (state: unknown, unused: string, href: string) => browserHistory.replaceState(state, unused, href), go: () => {},
         };
-        vi.stubGlobal('window', { location, history: browserHistory, sessionStorage: { getItem: () => 'main' }, addEventListener: () => {}, removeEventListener: () => {} });
+        installBrowserBoundary({ location, history: browserHistory, sessionStorage: { getItem: () => 'main' } });
         const moduleName = pageId === 'agents/custom' ? 'agents/custom/index'
+            : pageId === 'prompts/skills' || pageId === 'prompts/templates' ? `${pageId}/index`
             : pageId === 'account/api-tokens/token-a' ? 'account/api-tokens/[tokenId]' : pageId;
         const appModule = pageId === 'artifacts/edit/document-a' ? 'artifacts/edit/[id]'
-            : pageId === 'boards/board-a' ? 'boards/[boardId]' : pageId === 'inbox' ? 'inbox/index' : pageId;
+            : pageId === 'boards/board-a' ? 'boards/[boardId]' : pageId === 'inbox' ? 'inbox/index'
+                : pageId === 'workflows/new' ? 'workflows/[id]/index' : pageId;
         const moduleKey = pageId === 'personalize' || appPage ? `./(app)/${appModule}.tsx` : `./(app)/settings/${moduleName}.tsx`;
         const modules: Record<string, unknown> = {
             './(app)/settings/_layout.tsx': { default: ResizeLayout },
@@ -151,7 +315,7 @@ describe('consumed workspace navigation owner', () => {
             [moduleKey]: { WorkspaceRouteBody: ResizeEditor },
         };
         registerWorkspaceRouteContext(Object.assign((key: string) => modules[key], { keys: () => Object.keys(modules) }));
-        const catalog = resolveCompactAppDestinations({ pages: [], builtins: { externalSessions: false, inbox: true, workflows: true, friends: false } });
+        const catalog = resolveCompactAppDestinations({ pages: [], builtins: { externalSessions: pageId === 'external/browse', inbox: true, workflows: true, friends: false } });
         let desktop = true;
         const element = () => <WorkspaceProvider enabled={desktop} phone={!desktop} catalog={catalog}>
             {navigation => <>{React.createElement('WorkspaceOwner', { navigation })}<WorkspaceShell catalog={catalog} /></>}
@@ -276,6 +440,41 @@ describe('consumed workspace navigation owner', () => {
         expect(requestDecision).toHaveBeenCalledTimes(2);
         expect(navigation().state.groups[group.id].tabIds).toEqual([pinnedId]);
         expect(navigation().state.recentlyClosed).toHaveLength(3);
+    });
+    it('admits the current browser location when readiness arrives before the Expo URL mirror', async () => {
+        boundary.platform = 'web';
+        boundary.pathname = '/session/A1';
+        boundary.params = { id: 'A1', serverId: 'home-a' };
+        boundary.dataReady = false;
+        const location = { pathname: '/session/A1', search: '?serverId=home-a', hash: '' };
+        const browserHistory = { state: null as unknown,
+            replaceState: (state: unknown, _unused: string, href?: string | URL | null) => {
+                browserHistory.state = state;
+                if (!href) return;
+                const url = new URL(href, 'https://happier.invalid');
+                location.pathname = url.pathname; location.search = url.search; location.hash = url.hash;
+            },
+            pushState: (state: unknown, unused: string, href: string) => browserHistory.replaceState(state, unused, href),
+            go: () => {},
+        };
+        installBrowserBoundary({ location, history: browserHistory, sessionStorage: { getItem: () => 'main' },
+            addEventListener: () => {}, removeEventListener: () => {} });
+        const catalog = resolveCompactAppDestinations({ pages: [], builtins: {
+            externalSessions: false, inbox: false, workflows: false, friends: false,
+        } });
+        const screen = await renderScreen(<WorkspaceProvider enabled catalog={catalog}>
+            {navigation => React.createElement('WorkspaceOwner', { navigation })}
+        </WorkspaceProvider>);
+        expect(screen.root.findByType('WorkspaceOwner').props.navigation.active).toBe(false);
+        await act(async () => {
+            // Browser navigation is authoritative even while Expo still presents A1's mirror inputs.
+            location.pathname = '/session/A2';
+            boundary.dataReady = true;
+        });
+        const navigation = screen.root.findByType('WorkspaceOwner').props.navigation as WorkspaceNavigationContextValue;
+        const group = navigation.state.groups[navigation.state.focusedGroupId];
+        expect(navigation.state.tabs[group.activeTabId].target.params.id).toBe('A2');
+        expect(location.pathname).toBe('/session/A2');
     });
     it('admits the initial route over a restored layout without persisting until an explicit navigation', async () => {
         const catalog = resolveCompactAppDestinations({ pages: [], builtins: {
@@ -426,8 +625,6 @@ describe('consumed workspace navigation owner', () => {
         });
         const previouslyFocusedGroupId = state().focusedGroupId;
         await act(async () => {
-            expect(await invokeWorkspaceAction({ actionId: 'workspace.split', input: { tabId: inactiveTabId, groupId: previouslyFocusedGroupId, direction: 'down' } }))
-                .toMatchObject({ ok: false, errorCode: 'workspace_group_mismatch' });
             expect(await invokeWorkspaceAction({ actionId: 'workspace.split', input: { tabId: inactiveTabId, direction: 'down' } })).toMatchObject({ ok: true });
         });
         const root = state().root;

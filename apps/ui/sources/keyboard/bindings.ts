@@ -30,29 +30,6 @@ export const browserShortcutConflicts: readonly Readonly<{
     { binding: 'Mod+]', platforms: ['web'], reason: 'browser-reserved' },
 ];
 
-const codeByDisplayKey: Readonly<Record<string, string>> = {
-    Enter: 'Enter',
-    Escape: 'Escape',
-    Tab: 'Tab',
-    Space: 'Space',
-    ArrowUp: 'ArrowUp',
-    ArrowDown: 'ArrowDown',
-    ArrowLeft: 'ArrowLeft',
-    ArrowRight: 'ArrowRight',
-    Home: 'Home',
-    End: 'End',
-    PageUp: 'PageUp',
-    PageDown: 'PageDown',
-    Backspace: 'Backspace',
-    Delete: 'Delete',
-    '.': 'Period',
-    '[': 'BracketLeft',
-    ']': 'BracketRight',
-    Slash: 'Slash',
-    '?': 'Slash',
-    '`': 'Backquote',
-    '\\': 'Backslash',
-};
 
 const semanticKeyFallbacks = new Set([
     'Enter',
@@ -99,48 +76,8 @@ export function resolveModModifier(platform: KeyboardPlatform): 'meta' | 'ctrl' 
     return platform === 'macos' || platform === 'ios' ? 'meta' : 'ctrl';
 }
 
-function codeForToken(token: string): string | undefined {
-    if (/^[A-Z]$/.test(token)) return `Key${token}`;
-    if (/^[0-9]$/.test(token)) return `Digit${token}`;
-    return codeByDisplayKey[token];
-}
-
-export function parseKeybindingRule(bindingOrRule: string | KeybindingRule): ParsedKeybindingRule {
-    const rule = typeof bindingOrRule === 'string' ? { binding: bindingOrRule } : bindingOrRule;
-    const parts = rule.binding.split('+').map((part) => part.trim()).filter(Boolean);
-    const parsed: {
-        binding: string;
-        platforms?: readonly KeyboardPlatform[];
-        blockedSurfaces?: readonly KeyboardSurface[];
-        allowInEditable?: boolean;
-        key?: string;
-        code?: string;
-        mod?: boolean;
-        alt?: boolean;
-        ctrl?: boolean;
-        meta?: boolean;
-        shift?: boolean;
-    } = {
-        ...rule,
-        binding: rule.binding,
-    };
-
-    for (const part of parts) {
-        const lower = part.toLowerCase();
-        if (lower === 'mod') parsed.mod = true;
-        else if (lower === 'ctrl' || lower === 'control') parsed.ctrl = true;
-        else if (lower === 'cmd' || lower === 'command' || lower === 'meta') parsed.meta = true;
-        else if (lower === 'shift') parsed.shift = true;
-        else if (lower === 'alt' || lower === 'option') parsed.alt = true;
-        else {
-            const normalizedKey = part.length === 1 ? part.toUpperCase() : part;
-            parsed.key = part.length === 1 ? part.toLowerCase() : part;
-            parsed.code = codeForToken(normalizedKey);
-        }
-    }
-
-    return parsed;
-}
+import { parseKeybindingRule } from '@happier-dev/protocol/actions/settings/accountSettingBindings';
+export { parseKeybindingRule };
 
 function modifierMatches(
     rule: ParsedKeybindingRule,

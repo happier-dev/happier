@@ -2,7 +2,8 @@ import type { DetailsOpenerRegion } from '@/components/ui/panels/paneBreakpoints
 import { PaneRegionProvider } from './paneRegion';
 import * as React from 'react';
 import { Platform, View, useWindowDimensions } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 
 import { MultiPaneHostWithBottom } from '@/components/ui/panels/MultiPaneHostWithBottom';
 import { resolvePaneLayout, type ResolvePaneLayoutInput } from '@/components/ui/panels/paneBreakpoints';
@@ -74,6 +75,8 @@ const NOOP = () => {};
 
 export const PaneColumnsHost = React.memo(function PaneColumnsHost(props: PaneColumnsHostProps) {
     const styles = stylesheet;
+    const { theme } = useUnistyles();
+    const materialColor = useHappierMaterialColorResolver();
     const deviceType = useDeviceType();
     const multiPaneDeviceType = resolveMultiPaneDeviceType({ platform: Platform.OS, deviceType });
     const { width: windowWidthPx, height: windowHeightPx } = useWindowDimensions();
@@ -495,7 +498,7 @@ export const PaneColumnsHost = React.memo(function PaneColumnsHost(props: PaneCo
                 bottomOverlayFocusReturnRef={props.bottomOverlayFocusReturnRef}
             />
             {showActionRail ? (
-                <View style={styles.railColumn}>
+                <View style={[styles.railColumn, { backgroundColor: materialColor(theme.colors.surface.base, 'transparent') }]}>
                     <PaneRegionProvider region="main">{props.actionRail}</PaneRegionProvider>
                 </View>
             ) : null}

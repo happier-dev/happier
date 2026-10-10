@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { usePathname } from 'expo-router';
-import { Platform } from 'react-native';
+import { Platform, useWindowDimensions } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Item } from '@/components/ui/lists/Item';
@@ -128,9 +128,11 @@ export const ColumnDestinationRows = React.memo(function ColumnDestinationRows(p
     // policy owner the rest of the app reads, never a local 44/48 copy.
     const sessionListDensity = useSetting('sessionListDensity');
     const isTablet = useIsTablet();
+    const { width: windowWidth } = useWindowDimensions();
     const densityRowHeight = resolveSessionListDensityViewState(sessionListDensity, {
         isTablet,
         platform: Platform.OS,
+        windowWidth,
     }).rowHeight;
     const rowHeight = Platform.OS === 'ios' || Platform.OS === 'android'
         ? Math.max(densityRowHeight, resolveMinimumInteractiveTargetSize(Platform.OS))
@@ -147,10 +149,8 @@ export const ColumnDestinationRows = React.memo(function ColumnDestinationRows(p
     return (
         <ItemGroup
             style={column === undefined ? styles.launcher : styles.column}
-            // These are destinations: quiet navigation rows (icon + label, a hover fill only) on the
-            // column's surface, never a sheet. They keep the sheet's inset, so their icons and labels
-            // sit on the list rows' grid.
-            surface="none"
+            // Columns keep their own plane; the phone launcher is one readable navigation sheet.
+            surface={column === undefined ? 'sheet' : 'none'}
             constrainToContentWidth={false}
             // The column's sheet edge (the shared column frame), where the session sheets start.
             containerStyle={column === undefined ? undefined : sessionListStyles.groupSheetInset}
@@ -161,9 +161,9 @@ export const ColumnDestinationRows = React.memo(function ColumnDestinationRows(p
                     title={row.title}
                     icon={<Icon name={row.icon} color={theme.colors.text.secondary} />}
                     rightElement={row.rightElement}
-                    density="tight"
-                    showChevron={false}
-                    showDivider={false}
+                    density={column === undefined ? 'comfortable' : 'tight'}
+                    showChevron={column === undefined}
+                    showDivider={column === undefined}
                     style={rowHeightStyle}
                     pressableStyle={ROW_FILL_SHAPE_STYLE}
                     selected={row.selected}
@@ -188,9 +188,9 @@ export const ColumnDestinationRows = React.memo(function ColumnDestinationRows(p
                     rightElement={destination.kind === 'plugin' && destination.badge ? (
                         <CompactAppDestinationBadge destination={destination} />
                     ) : undefined}
-                    density="tight"
-                    showChevron={false}
-                    showDivider={false}
+                    density={column === undefined ? 'comfortable' : 'tight'}
+                    showChevron={column === undefined}
+                    showDivider={column === undefined}
                     // `style` lands last on the row CONTAINER, so it beats the density minimum and
                     // the Pressable hugs it exactly; `pressableStyle` would leave dead space.
                     style={rowHeightStyle}

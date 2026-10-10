@@ -453,7 +453,9 @@ describe('SplitCanvasHost', () => {
         expect(screen.findByTestId('split-canvas-divider-split-nested')).toBeNull();
     });
 
-    it('applies live divider ratios before committing them to the reducer', async () => {
+    it('applies live divider ratios without animation-frame support before committing them to the reducer', async () => {
+        // This exercises the non-RAF boundary; the next frame-coalescing test owns RAF delivery.
+        vi.stubGlobal('requestAnimationFrame', undefined);
         const dispatch = vi.fn();
 
         const { SplitCanvasHost } = await import('./SplitCanvasHost');
@@ -496,6 +498,7 @@ describe('SplitCanvasHost', () => {
         expect(screen.findByTestId('split-canvas-pane-second-split-root')?.props.style).toEqual(
             expect.objectContaining({ flex: 0.3 }),
         );
+        expect(dispatch).not.toHaveBeenCalled();
     });
 
     it('uses both child subtree minimums to bound a measured divider', async () => {

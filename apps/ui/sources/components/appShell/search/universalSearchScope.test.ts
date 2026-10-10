@@ -6,6 +6,15 @@ import {
 } from './universalSearchScope';
 
 describe('Universal Search local scope', () => {
+    it('adds an all-machines scope within each credential-bound Home', () => {
+        const choices = buildUniversalSearchScopeChoices({ accountIdByServerId: new Map([['home', 'account']]),
+            profiles: [{ id: 'home', name: 'Home' }] as never, workspaces: [], sessions: [], readMachineTarget: () => null,
+            includeAllMachines: true, allMachinesLabel: 'All machines',
+        });
+        expect(choices.find(choice => choice.scope.machineScope === 'all')?.scope)
+            .toEqual({ accountId: 'account', serverId: 'home', sessionId: null, machineId: null, rootPath: null, machineScope: 'all' });
+        expect(choices[0].key).not.toBe(choices[1].key);
+    });
     it('keeps an invocation-seeded Home independent from focused Home changes', () => {
         const seed = { accountId: 'account', serverId: 'home-b', sessionId: null, machineId: null, rootPath: null } as const;
         const key = buildUniversalSearchScopeKeyFromSeed(seed);

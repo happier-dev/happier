@@ -25,6 +25,8 @@ export type WorkspacePhoneControls = Readonly<{
 
 export type WorkspaceNavigationContextValue = Readonly<{
     active: boolean;
+    /** The admitted route belongs here even while its retained workspace is hydrating. */
+    ownsRoute?: boolean;
     /** Present only on a phone, where the workspace owns the tab set but not navigation. */
     phone?: WorkspacePhoneControls | null;
     state: WorkspaceState;

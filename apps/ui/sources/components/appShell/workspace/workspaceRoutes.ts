@@ -1,4 +1,4 @@
-import { listSettingsRouteNames } from '@/components/settings/navigation/settingsRouteRegistry';
+import { listSettingsRouteNames } from '@/components/settings/navigation/settingsRouteDefinitions';
 import type { IconName } from '@/components/ui/icons/Icon';
 import type { TranslationKeyNoParams } from '@/text';
 import { matchWorkspaceRoutePatterns } from './workspaceRouteMatch';
@@ -55,12 +55,17 @@ export const workspaceRouteFiles: Readonly<Record<string, string>> = {
     "plugins": "./(app)/plugins/index.tsx",
     "plugins/listing": "./(app)/plugins/listing.tsx",
     "plugins/panels": "./(app)/plugins/panels.tsx",
-    "projects/[workspaceRefId]/details": "./(app)/projects/[workspaceRefId]/details.tsx",
-    "projects/[workspaceRefId]/files": "./(app)/projects/[workspaceRefId]/files.tsx",
-    "projects/[workspaceRefId]/git": "./(app)/projects/[workspaceRefId]/git.tsx",
+    "projects/[workspaceRefId]/overview": "./(app)/projects/[workspaceRefId]/overview.tsx",
+    "projects/[workspaceRefId]/code": "./(app)/projects/[workspaceRefId]/code.tsx",
+    "projects/[workspaceRefId]/changes": "./(app)/projects/[workspaceRefId]/changes.tsx",
+    "projects/[workspaceRefId]/scripts": "./(app)/projects/[workspaceRefId]/scripts.tsx",
+    "projects/[workspaceRefId]/services": "./(app)/projects/[workspaceRefId]/services.tsx",
+    "projects/[workspaceRefId]/context": "./(app)/projects/[workspaceRefId]/context.tsx",
     "projects/[workspaceRefId]": "./(app)/projects/[workspaceRefId]/index.tsx",
     "projects/[workspaceRefId]/terminal": "./(app)/projects/[workspaceRefId]/terminal.tsx",
     "projects": "./(app)/projects/index.tsx",
+    "projects/sources": "./(app)/projects/sources.tsx",
+    "projects/open": "./(app)/projects/open.tsx",
     "session/[id]/automations/new": "./(app)/session/[id]/automations/new.tsx",
     "session/archived": "./(app)/session/archived.tsx",
     "session/recent": "./(app)/session/recent.tsx",
@@ -87,7 +92,7 @@ export const workspaceRouteFiles: Readonly<Record<string, string>> = {
     "workflows/[id]": "./(app)/workflows/[id]/index.tsx",
     "workflows/edit": "./(app)/workflows/edit.tsx",
     "workflows": "./(app)/workflows/index.tsx",
-    "workflows/new": "./(app)/workflows/new.tsx",
+    "workflows/new": "./(app)/workflows/[id]/index.tsx",
     "workflows/runs/[runId]": "./(app)/workflows/runs/[runId].tsx",
     "workflows/runs": "./(app)/workflows/runs/index.tsx",
     "workflows/settings": "./(app)/workflows/settings.tsx",

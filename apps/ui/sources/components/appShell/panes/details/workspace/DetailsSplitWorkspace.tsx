@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { Platform, Pressable, View } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 
 import type { AppPaneScopeApi } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
@@ -112,6 +113,8 @@ export type DetailsSplitWorkspaceProps = Readonly<{
     resolveTabPresentation?: ((tab: DetailsTabState) => DetailsTabPresentation | null | undefined) | null;
     renderTabContent: DetailsTabGroupPanelProps['renderTabContent'];
     renderHeaderLeadingActions?: (() => React.ReactNode) | null;
+    /** Launchers for another tab; they ride on the strip only (see `DetailsTabGroupPanel`). */
+    renderStripActions?: (() => React.ReactNode) | null;
     renderHeaderActions?: (() => React.ReactNode) | null;
     renderEmptyState?: (() => React.ReactNode) | null;
     /**
@@ -209,6 +212,9 @@ function getDetailsView(pane: AppPaneScopeApi): PaneDetailsStateView {
 export const DetailsSplitWorkspace = React.memo((props: DetailsSplitWorkspaceProps) => {
     const enclosingStateSize = useSurfaceStateSize();
     const styles = stylesheet;
+    const { theme } = useUnistyles();
+    const materialColor = useHappierMaterialColorResolver();
+    const backgroundColor = materialColor(theme.colors.surface.base, 'transparent');
     const details = getDetailsView(props.pane);
     const overlay = details.overlay ?? null;
     const localOpeningFocusReturnRef = React.useRef<FocusReturnTarget>(null);
@@ -254,12 +260,15 @@ export const DetailsSplitWorkspace = React.memo((props: DetailsSplitWorkspacePro
                     presented={!details.maximizedGroupId || group.id === details.maximizedGroupId}
                     renderTabContent={props.renderTabContent}
                     renderHeaderLeadingActions={isFocused ? props.renderHeaderLeadingActions : null}
+                    renderStripActions={isFocused ? props.renderStripActions : null}
                     renderHeaderActions={isFocused ? props.renderHeaderActions : null}
                     renderEmptyState={props.renderEmptyState}
+                    collapseSingleTabStrip={details.groups.length === 1}
                 />
             </View>
         );
     }, [
+        details.groups.length,
         details.maximizedGroupId,
         props.forceEmptyState,
         groupPanelTestIds,
@@ -271,6 +280,7 @@ export const DetailsSplitWorkspace = React.memo((props: DetailsSplitWorkspacePro
         props.renderEmptyState,
         props.renderHeaderActions,
         props.renderHeaderLeadingActions,
+        props.renderStripActions,
         props.renderTabContent,
         props.resolveTabIconName,
         props.resolveTabPresentation,
@@ -293,6 +303,7 @@ export const DetailsSplitWorkspace = React.memo((props: DetailsSplitWorkspacePro
             resolveTabHref={props.resolveTabHref}
             renderTabContent={props.renderTabContent}
             renderHeaderLeadingActions={props.renderHeaderLeadingActions}
+            renderStripActions={props.renderStripActions}
             renderHeaderActions={props.renderHeaderActions}
             renderEmptyState={props.renderEmptyState}
         />
@@ -308,6 +319,7 @@ export const DetailsSplitWorkspace = React.memo((props: DetailsSplitWorkspacePro
         props.renderEmptyState,
         props.renderHeaderActions,
         props.renderHeaderLeadingActions,
+        props.renderStripActions,
         props.renderTabContent,
         props.resolveTabIconName,
         props.resolveTabPresentation,
@@ -426,7 +438,7 @@ export const DetailsSplitWorkspace = React.memo((props: DetailsSplitWorkspacePro
     return (
         // Pane-states lab 0: states in a details tab take the details step; a phone host keeps its own.
         <SurfaceStateSizeProvider size={enclosingStateSize === 'phone' ? 'phone' : 'details'}>
-        <View testID={props.testIds?.root} style={styles.root}>
+        <View testID={props.testIds?.root} style={[styles.root, { backgroundColor }]}>
             <ModalPaneBoundaryView
                 ref={detailsModalBoundary.setUnderlayFocusRef}
                 testID={overlay ? 'details-workspace-underlay' : undefined}
@@ -441,10 +453,10 @@ export const DetailsSplitWorkspace = React.memo((props: DetailsSplitWorkspacePro
                 <ModalPaneBoundaryView
                     ref={detailsModalBoundary.setOverlayFocusRef}
                     testID="details-workspace-overlay"
-                    style={styles.overlay}
+                    style={[styles.overlay, { backgroundColor }]}
                     {...detailsModalBoundary.overlayProps}
                 >
-                    <View style={styles.overlayChrome}>
+                    <View style={[styles.overlayChrome, { backgroundColor: materialColor(theme.colors.surface.inset, 'transparent') }]}>
                         <Pressable
                             testID="details-workspace-overlay-back"
                             accessibilityRole="button"

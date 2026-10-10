@@ -214,14 +214,14 @@ beforeAll(async () => {
 }, 240_000);
 
 describe('ConnectionStatusControl (label)', () => {
-    it('names an unnamed Home through the Home label owner, never by its raw address', async () => {
-        profilesMock.current = [{ id: 'srv-1', name: '127.0.0.1:53288', serverUrl: 'https://cloud.example.test' }];
+    it.each([true, false])('names an unnamed Home through the Home label owner with profile available=%s, never by its raw address', async (withProfile) => {
+        profilesMock.current = withProfile ? [{ id: 'srv-1', name: '127.0.0.1:53288', serverUrl: 'https://cloud.example.test' }] : [];
         try {
             const { ConnectionStatusControl } = await import('./ConnectionStatusControl');
             const screen = await renderScreen(React.createElement(ConnectionStatusControl, { variant: 'header' }));
             const trigger = screen.findByProps({ accessibilityRole: 'button' });
             expect(trigger.props.accessibilityLabel).not.toContain('127.0.0.1');
-            expect(trigger.props.accessibilityLabel).toContain('server.homeOnHost');
+            expect(trigger.props.accessibilityLabel).toContain('settingsAccount.thisHomeTitle');
             await screen.unmount();
         } finally {
             profilesMock.current = [{ id: 'srv-1', name: 'Happier Cloud', serverUrl: 'https://cloud.example.test' }];

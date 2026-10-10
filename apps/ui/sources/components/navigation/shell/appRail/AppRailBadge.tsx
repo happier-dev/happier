@@ -4,6 +4,7 @@ import { StyleSheet } from 'react-native-unistyles';
 import type { PluginUiToneV1 } from '@happier-dev/protocol/plugins/ui';
 
 import { formatBadgeCount } from '@/components/ui/navigation/tabBadge/tabBadgeModel';
+import { TabBadge } from '@/components/ui/navigation/tabBadge/TabBadge';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 
@@ -63,6 +64,15 @@ export const AppRailBadge = React.memo(function AppRailBadge(props: Readonly<{ s
         </View>
     );
 });
+
+/**
+ * The same signal on a row of the rail's More menu (a rail slot that moved there): a count in the
+ * menu row's trailing slot, from the same tone mapping. Menu rows have no strong-ink badge, so news
+ * reads as the quiet count there.
+ */
+export function AppRailMenuCount(props: Readonly<{ value: number; tone: AppRailBadgeTone }>) {
+    return <TabBadge variant="count" tone={props.tone === 'attention' ? 'attention' : 'neutral'} value={props.value} />;
+}
 
 const RINGED_COUNT_PX = APP_RAIL_BADGE.countSizePx + 2 * APP_RAIL_BADGE.ringPx;
 const RINGED_DOT_PX = APP_RAIL_BADGE.dotSizePx + 2 * APP_RAIL_BADGE.ringPx;

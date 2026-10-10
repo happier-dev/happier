@@ -34,10 +34,16 @@ function Index() { return React.createElement('HostedIndex'); }
 function ArtifactBody() {
     return React.createElement('HostedArtifact', { params: useLocalSearchParams() });
 }
+function WorkflowBody() {
+    const [draft, setDraft] = React.useState('');
+    return React.createElement('HostedWorkflow', { params: useLocalSearchParams(), draft, setDraft });
+}
+function RunSettingsBody() { return React.createElement('HostedRunSettings', { params: useLocalSearchParams() }); }
 
 // Expo's context/module loader is the boundary. Fixture modules retain real React providers,
 // route adapters and local editor state beneath that boundary.
-beforeAll(() => {
+beforeAll(async () => {
+    const { AutomationSettingsRoute } = await import('@/app/(app)/automations/settings');
     const modules: Record<string, unknown> = {
         './(app)/settings/_layout.tsx': { default: RootLayout },
         './(app)/settings/agents/_layout.tsx': { default: CollectionLayout },
@@ -60,6 +66,10 @@ beforeAll(() => {
         './(app)/artifacts/new.tsx': { WorkspaceRouteBody: ArtifactBody },
         './(app)/artifacts/[id].tsx': { WorkspaceRouteBody: ArtifactBody },
         './(app)/artifacts/edit/[id].tsx': { WorkspaceRouteBody: ArtifactBody },
+        // Both public URLs are rendered by the same Expo module.
+        './(app)/workflows/[id]/index.tsx': { WorkspaceRouteBody: WorkflowBody },
+        './(app)/workflows/settings.tsx': { WorkspaceRouteBody: RunSettingsBody },
+        './(app)/automations/settings.tsx': { WorkspaceRouteBody: AutomationSettingsRoute },
     };
     registerWorkspaceRouteContext(Object.assign((key: string) => {
         if (!(key in modules)) throw new Error(`Unexpected route module: ${key}`);
@@ -69,7 +79,7 @@ beforeAll(() => {
 
 function hosted(pathname: string, params: Record<string, string> = {}) {
     const catalog = resolveCompactAppDestinations({ pages: [], builtins: {
-        externalSessions: false, inbox: false, workflows: false, friends: false,
+        externalSessions: false, inbox: false, workflows: true, friends: false,
     } });
     const resolved = resolveDestinationRefFromHref(catalog, pathname);
     if (!resolved) throw new Error(`Unadmitted fixture route: ${pathname}`);
@@ -81,6 +91,31 @@ function hosted(pathname: string, params: Record<string, string> = {}) {
 }
 
 describe('workspace destination route composition', () => {
+    it('adjudicates the retired settings alias as Run settings rather than a Workflow entity or collection', async () => {
+        const catalog = resolveCompactAppDestinations({ pages: [], builtins: {
+            externalSessions: false, inbox: false, workflows: true, friends: false,
+        } });
+        const target = resolveDestinationRefFromHref(catalog, '/automations/settings')!;
+        const replace = vi.fn();
+        const screen = await renderScreen(<DestinationInstanceHost tabId="run-settings-alias" ref={target}
+            pathname="/automations/settings" focused visible navigation={{ push: () => {}, replace, back: () => {} }}>
+            <WorkspaceDestinationBody target={target} pathname="/automations/settings" renderSession={() => null} renderSessionDetails={() => null} />
+        </DestinationInstanceHost>);
+        expect(replace).toHaveBeenCalledWith('/workflows/settings');
+        expect(screen.root.findAllByType('HostedWorkflow')).toHaveLength(0);
+    });
+    it('loads Run settings with its own Home and no Workflow entity id', async () => {
+        const screen = await renderScreen(hosted('/workflows/settings?serverId=home-a'));
+        expect(screen.root.findByType('HostedRunSettings').props.params).toMatchObject({ serverId: 'home-a' });
+        expect(screen.root.findByType('HostedRunSettings').props.params.id).toBeUndefined();
+        expect(screen.root.findAllByType('HostedWorkflow')).toHaveLength(0);
+    });
+    it('keeps the mounted workflow editor when its create URL becomes the saved URL', async () => {
+        const screen = await renderScreen(hosted('/workflows/new'));
+        await act(async () => { screen.root.findByType('HostedWorkflow').props.setDraft('Accepted draft'); });
+        await screen.update(hosted('/workflows/saved-workflow'));
+        expect(screen.root.findByType('HostedWorkflow').props).toMatchObject({ draft: 'Accepted draft', params: { id: 'saved-workflow' } });
+    });
     it.each([
         ['/artifacts', {}],
         ['/artifacts/new', {}],

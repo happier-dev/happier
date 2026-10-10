@@ -626,10 +626,12 @@ export function resolveDestinationRefFromHref(
     }
     if (destination.id === 'settings') {
         if (!route) return null;
-        if (route?.params.pageId) return { kind: 'settings', params: {
+        // A decoded slash inside a dynamic segment is not a route separator.
+        // Keep the registered path for the inverse projection and body loader.
+        if (route.params.pageId || Object.values(route.params).some((value) => value.includes('/'))) return { kind: 'settings', params: {
             ...query, ...route.params, workspacePathname: path,
         } };
-        return { kind: 'settings', params: { ...query, ...route?.params, pageId: parts.slice(1).join('/') } };
+        return { kind: 'settings', params: { ...query, ...route.params, pageId: parts.slice(1).join('/') } };
     }
     if (path !== destination.routePath) {
         if (!route) return null;

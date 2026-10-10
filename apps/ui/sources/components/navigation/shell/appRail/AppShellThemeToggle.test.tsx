@@ -143,6 +143,9 @@ describe('AppShellThemeToggle', () => {
         expect(blur?.props.accessibilityState?.disabled ?? blur?.props.disabled).toBe(true);
         await screen.pressByTestIdAsync('appearance-material:everywhere');
         expect(storage.getState().settings.glassSurfaceMaterials?.content.blur).not.toBe('off');
+        await screen.pressByTestIdAsync('appearance-material:clear');
+        expect(storage.getState().settings.glassSurfaceMaterials?.floating).toEqual({ blur: 'strong', opacity: 0.02 });
+        expect(storage.getState().settings.glassBlurIntensity).toBe('strong');
     });
     it.each(['light', 'dark', 'adaptive'] as const)('marks only the stored %s mode as selected', async (mode) => {
         const { storage } = await import('@/sync/domains/state/storage');

@@ -52,6 +52,21 @@ vi.mock('@/sync/domains/state/storage', async () => {
 });
 
 describe('workspace route identity round trips', () => {
+    it.each([
+        ['/settings/actions/happier.scm.forge.github%2Factions%2Fgithub%2Fpull-request%2Fmerge',
+            'actionId', 'happier.scm.forge.github/actions/github/pull-request/merge'],
+        ['/settings/account/api-tokens/token-a%2Fpart', 'tokenId', 'token-a/part'],
+        ['/settings/account/api-tokens/token-a', 'tokenId', 'token-a'],
+        ['/settings/plugins/acme.review/policy?subPath=bindings%2F1', 'pageId', 'policy'],
+    ])('round trips a registered Settings dynamic segment without synthetic query: %s', (href, param, value) => {
+        const catalog = resolveCompactAppDestinations({ pages: [], builtins: {
+            externalSessions: false, inbox: false, workflows: false, friends: false,
+        } });
+        const target = resolveDestinationRefFromHref(catalog, href);
+        expect(target).toMatchObject({ kind: 'settings', params: { [param]: value } });
+        expect(target && hrefForDestinationRef(catalog, target)).toBe(href);
+    });
+
     it('includes hidden contribution defaults for rail customization only', () => {
         const catalog = resolveCompactAppDestinations({ pages: [], builtins: { externalSessions: false, inbox: false, workflows: false, friends: false } });
         const accountPlacement = { kind: 'rail', region: 'account' } as const;
@@ -134,7 +149,7 @@ describe('workspace route identity round trips', () => {
             externalSessions: false, inbox: true, workflows: true, friends: true,
         } });
         for (const href of ['/session/archived', '/session/recent', '/automations/edit?id=automation-a', '/automations/automation-a/runs/run-a',
-            '/workflows/edit?id=workflow-a', '/settings/plugins/acme.notes/general',
+            '/workflows/edit?id=workflow-a', '/workflows/settings?serverId=home-a', '/automations/settings?serverId=home-a', '/settings/plugins/acme.notes/general',
             '/settings/agents/custom/custom-agent', '/inbox/approvals/request-a']) {
             const target = resolveDestinationRefFromHref(catalog, href);
             expect(target, href).not.toBeNull();

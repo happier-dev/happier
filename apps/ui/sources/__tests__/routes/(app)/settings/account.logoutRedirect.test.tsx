@@ -7,6 +7,8 @@ import {
     standardCleanup,
 } from '@/dev/testkit';
 import { profileDefaults } from '@/sync/domains/profiles/profile';
+import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 
 import { createAccountFeaturesResponse, getRequestUrl, isFeaturesRequest } from './account.testHelpers';
 import {
@@ -41,6 +43,10 @@ const logoutMock = vi.hoisted(() =>
 );
 const deleteCurrentAccountMock = vi.hoisted(() => vi.fn(async () => ({ status: 'deleted' as const })));
 const removeRunnerCreatorCustodyForAccountMock = vi.hoisted(() => vi.fn(async () => undefined));
+vi.mock('socket.io-client', async importOriginal =>
+    (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
+installDisconnectedServerSocketBoundary();
+let deletionConnection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | null = null;
 
 installAccountSettingsRouteModuleMocks({
     textModule: async () => {
@@ -71,13 +77,15 @@ vi.mock('expo-camera', () => ({
     },
 }));
 
-vi.mock('@/auth/context/AuthContext', () => ({
-    useAuth: () => ({
+vi.mock('@/auth/context/AuthContext', async importOriginal => {
+    const actual = await importOriginal<typeof import('@/auth/context/AuthContext')>();
+    const { createAccountTokenForTests } = await import('@/dev/testkit/harness/homeGovernanceHarness');
+    return { ...actual, useAuth: () => ({
         isAuthenticated: true,
-        credentials: { token: 't', secret: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' },
+        credentials: { token: createAccountTokenForTests('account-a', { currentAccount: true }) },
         logout: logoutMock,
-    }),
-}));
+    }) };
+});
 
 vi.mock('@/hooks/auth/useConnectAccount', () => ({
     useConnectAccount: () => ({
@@ -106,7 +114,9 @@ vi.mock('@/hooks/server/useFriendsIdentityReadiness', () => ({
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: () => false,
 }));
-vi.mock('@/sync/api/account/deleteCurrentAccount', () => ({ deleteCurrentAccount: deleteCurrentAccountMock }));
+vi.mock('@/sync/api/account/deleteCurrentAccount', async importOriginal => ({
+    ...await importOriginal<typeof import('@/sync/api/account/deleteCurrentAccount')>(), deleteCurrentAccount: deleteCurrentAccountMock,
+}));
 vi.mock('@/sync/domains/ephemeralRunner/runnerCreatorDraftRemoval', () => ({
     removeRunnerCreatorCustodyForAccount: removeRunnerCreatorCustodyForAccountMock,
 }));
@@ -121,22 +131,21 @@ const routerMockRef = getAccountSettingsRouteRouterMockRef();
 // modules (such as the first-key credential lifecycle) that must bind the mocked `@/modal`.
 let storage: typeof import('@/sync/domains/state/storageStore')['storage'];
 beforeAll(async () => {
+    await (await import('@/dev/testkit/harness/syncSingletonLoader')).loadSyncSingletonForTests();
     ({ storage } = await import('@/sync/domains/state/storageStore'));
 });
 
 async function activateDeletionTestScope(): Promise<void> {
     const serverProfiles = await import('@/sync/domains/server/serverProfiles');
-    const home = await serverProfiles.upsertServerProfile({
-        serverUrl: 'https://deletion-home.example.test',
-        name: 'Deletion Home',
-        source: 'manual',
+    deletionConnection = await restoreServerAccountForTest({ serverUrl: 'https://deletion-home.example.test', accountId: 'account-a',
+        credentials: { token: createAccountTokenForTests('account-a', { currentAccount: true }) },
     });
-    await serverProfiles.setActiveServerId(home.id);
-    storage.getState().activateProfileScope({ serverId: home.id, accountId: 'account-a' });
+    storage.getState().activateProfileScope({ serverId: serverProfiles.resolveServerProfileScopeIdForIdentifier(deletionConnection.home.id), accountId: 'account-a' });
 }
 
 describe('Settings → Account logout redirect', () => {
-    afterEach(() => {
+    afterEach(async () => {
+        await deletionConnection?.dispose(); deletionConnection = null;
         vi.restoreAllMocks();
         vi.unstubAllGlobals();
         logoutMock.mockClear();
@@ -322,7 +331,7 @@ describe('Settings → Account logout redirect', () => {
         expect(row?.props.testID).toBe('settings-account-delete');
         await act(async () => { await row?.props.onPress?.(); });
         expect(modal.spies.prompt).toHaveBeenCalledWith('settingsAccount.deleteAccountConfirmTitle', 'settingsAccount.deleteAccountConfirmBody', expect.objectContaining({ placeholder: 'DELETE' }));
-        expect(deleteCurrentAccountMock).toHaveBeenCalledWith(expect.objectContaining({ token: 't' }));
+        expect(deleteCurrentAccountMock).toHaveBeenCalledWith(expect.objectContaining({ token: createAccountTokenForTests('account-a', { currentAccount: true }) }), expect.objectContaining({ request: expect.any(Function) }));
         expect(routerMockRef.current.spies.replace).toHaveBeenCalledWith('/');
         expect(teardownStartedMock).toHaveBeenCalledTimes(1);
     });

@@ -12,6 +12,7 @@ import { getServerFeaturesSnapshot, resetServerFeaturesClientForTests } from '@/
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { getStorage } from '@/sync/domains/state/storage';
+import { t } from '@/text';
 import { resolveCompactAppDestinations } from '@/components/appShell/destinations/compactAppDestinationCatalog';
 import type { PluginAppPage } from '@/components/appShell/plugins/pluginAppPages';
 import { AppRailSurface } from './AppRail';
@@ -51,20 +52,46 @@ const layout = (height: number): LayoutChangeEvent => ({
 } as LayoutChangeEvent);
 
 describe('AppRail measured room', () => {
+    it('explains unavailable built-in destinations through the shared accessible button', async () => {
+        const screen = await renderScreen(<InjectedAuthProvider credentials={null}><InboxSummaryProvider><AppRailSurface entries={entries()} activeId={null} onOpen={() => {}}
+            renderFooter={item => <View testID={item.id} />} /></InboxSummaryProvider></InjectedAuthProvider>);
+        const bots = screen.findHostByTestId('app-rail:bots');
+        expect(bots?.props['aria-disabled']).toBe(true);
+        const descriptionId = bots?.props['aria-describedby'];
+        expect(typeof descriptionId).toBe('string');
+        expect(screen.findAll(node => typeof node.type === 'string' && node.props.nativeID === descriptionId
+            && node.props.children === t('settingsActions.reasons.notAvailableInThisApp'))).not.toHaveLength(0);
+    });
+
+    it('keeps the unavailable destination explanation visible when it is placed in More', async () => {
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+        const screen = await renderScreen(<InjectedAuthProvider credentials={null}><InboxSummaryProvider><AppRailSurface entries={entries()} activeId={null} onOpen={() => {}}
+            preferences={{ orderedIds: [], placements: { bots: 'overflow' } }}
+            renderFooter={item => <View testID={item.id} />} /></InboxSummaryProvider></InjectedAuthProvider>);
+        await screen.pressByTestIdAsync('app-rail-more.trigger');
+        await flushHookEffects({ cycles: 1, advanceTimersMs: 0 });
+        expect(screen.findAll(node => typeof node.type === 'string'
+            && node.props.children === t('settingsActions.reasons.notAvailableInThisApp'))).not.toHaveLength(0);
+    });
+
     it('keeps focusable customization reachable with every destination and footer hidden', async () => {
         vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
         const all = entries();
         const items = buildAppRailPlacementItems(all, true);
         const customize = vi.fn();
-        const screen = await renderScreen(<AppRailSurface entries={all} activeId={null} onOpen={() => {}}
+        const screen = await renderScreen(<InjectedAuthProvider credentials={null}><AppRailSurface entries={all} activeId={null} onOpen={() => {}}
             updatesVisible onCustomize={customize}
-            preferences={{ orderedIds: [], placements: Object.fromEntries(items.map(item => [item.id, 'hidden' as const])) }} />);
+            preferences={{ orderedIds: [], placements: Object.fromEntries(items.map(item => [item.id, 'hidden' as const])) }} /></InjectedAuthProvider>);
         const trigger = screen.findHostByTestId('app-rail-more.trigger');
         expect(trigger).not.toBeNull();
         expect(trigger?.props.role).toBe('button');
         expect(trigger?.props.tabIndex).not.toBe(-1);
+        expect.soft(trigger?.props['aria-expanded']).toBe(false);
         await screen.pressByTestIdAsync('app-rail-more.trigger');
         await flushHookEffects({ cycles: 1, advanceTimersMs: 0 });
+        expect.soft(screen.findHostByTestId('app-rail-more.trigger')?.props['aria-expanded']).toBe(true);
+        expect.soft(screen.findAll((node) => typeof node.type === 'string'
+            && node.props.children === t('commandPalette.noCommandsFound'))).toHaveLength(0);
         for (const item of items) expect(screen.findHostByTestId(`app-rail-more:${item.id}`)).toBeNull();
         const action = screen.findHostByTestId('app-rail-more.customize');
         expect(action?.props.role).toBe('button');
@@ -75,8 +102,8 @@ describe('AppRail measured room', () => {
 
     it('shows every destination in the reported tall rail even if the old plugin area was collapsed', async () => {
         const all = entries();
-        const screen = await renderScreen(<InboxSummaryProvider><AppRailSurface entries={all} activeId={null} onOpen={() => {}}
-            renderFooter={(item) => <View testID={item.id} />} /></InboxSummaryProvider>);
+        const screen = await renderScreen(<InjectedAuthProvider credentials={null}><InboxSummaryProvider><AppRailSurface entries={all} activeId={null} onOpen={() => {}}
+            renderFooter={(item) => <View testID={item.id} />} /></InboxSummaryProvider></InjectedAuthProvider>);
         await act(async () => {
             // Layout is the OS boundary. The screenshot's rail has room for all eleven destinations.
             screen.findByTestId('app-rail')?.props.onLayout?.(layout(810));
@@ -88,8 +115,8 @@ describe('AppRail measured room', () => {
 
     it('moves app destinations into More as well when the whole rail is too short', async () => {
         const all = entries();
-        const screen = await renderScreen(<InboxSummaryProvider><AppRailSurface entries={all} activeId={null} onOpen={() => {}}
-            renderFooter={(item) => <View testID={item.id} />} /></InboxSummaryProvider>);
+        const screen = await renderScreen(<InjectedAuthProvider credentials={null}><InboxSummaryProvider><AppRailSurface entries={all} activeId={null} onOpen={() => {}}
+            renderFooter={(item) => <View testID={item.id} />} /></InboxSummaryProvider></InjectedAuthProvider>);
         await act(async () => {
             screen.findByTestId('app-rail')?.props.onLayout?.(layout(140));
             screen.findByTestId('app-rail-plugins')?.props.onLayout?.(layout(0));
@@ -103,12 +130,12 @@ describe('AppRail measured room', () => {
         vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
         const all = entries();
         const customize = vi.fn();
-        const screen = await renderScreen(<InboxSummaryProvider><AppRailSurface entries={all} activeId={null}
+        const screen = await renderScreen(<InjectedAuthProvider credentials={null}><InboxSummaryProvider><AppRailSurface entries={all} activeId={null}
             onOpen={() => {}} onCustomize={customize} renderFooter={(item, trigger) => trigger
                 ? trigger({ onPress: () => {}, open: false }) : <View testID={item.id} />}
             preferences={{ orderedIds: ['search', 'sessions'], placements: {
                 search: 'overflow', 'app-rail-usage': 'overflow', 'app-rail-machines': 'hidden',
-            } }} /></InboxSummaryProvider>);
+            } }} /></InboxSummaryProvider></InjectedAuthProvider>);
         await act(async () => screen.findByTestId('app-rail')?.props.onLayout?.(layout(810)));
         expect(screen.findByTestId('app-rail:search')).toBeNull();
         expect(screen.findByTestId('app-rail-usage')).toBeNull();

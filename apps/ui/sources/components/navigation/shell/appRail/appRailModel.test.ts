@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { PluginAppPage } from '@/components/appShell/plugins/pluginAppPages';
 import { resolveCompactAppDestinations } from '@/components/appShell/destinations/compactAppDestinationCatalog';
+import { createSessionFixture } from '@/dev/testkit';
+import { buildSessionOrganizationProjection, buildSessionOrganizationSessionKey } from '@/sync/domains/session/organization';
 
 import {
     buildAppRailEntries,
@@ -52,13 +54,49 @@ describe('app rail model', () => {
     it('puts rail destinations in their region, and a column destination in its column instead of on the rail', () => {
         const rail = buildAppRailEntries(catalog([page('triage', undefined, 1), page('notes', SESSIONS_COLUMN), page('board', { kind: 'rail' }, 0)]));
 
-        expect(ids(rail.app)).toEqual(['sessions', 'search', 'inbox', 'projects', 'workflows', 'boards', 'artifacts']);
+        expect(ids(rail.app)).toEqual(['sessions', 'search', 'inbox', 'projects', 'workflows', 'boards', 'artifacts', 'bots']);
         // Plugins anchors its region, then plugin pages by rank.
         expect(ids(rail.plugins)).toEqual(['plugins', 'plugin:acme.board:board', 'plugin:acme.triage:triage']);
         expect(ids(rail.account)).toEqual(['settings']);
         // Browse external sessions and the notes page belong to the Sessions column, not the rail.
         expect(ids([...rail.app, ...rail.plugins, ...rail.account])).not.toContain('browseExistingSessions');
         expect(ids([...rail.app, ...rail.plugins, ...rail.account])).not.toContain('plugin:acme.notes:notes');
+    });
+
+    it('projects only explicit rail-pinned Bots, keeping demoted choices for re-promotion', () => {
+        const bot = (id: string) => createSessionFixture({ id, metadata: { path: '/repo', host: 'host', bot: { kind: 'bot' } } });
+        const regular = createSessionFixture({ id: 'ordinary' });
+        const pin = (sessionId: string, sortKey: string, listPinned: boolean, railPinned: boolean) =>
+            ({ sessionId, sortKey, pinnedAt: 1, listPinned, railPinned });
+        const rows = [
+            { serverId: 'home-a', session: bot('list-only'), pin: pin('list-only', 'a', true, false) },
+            { serverId: 'home-a', session: regular, pin: pin('ordinary', 'b', true, true) },
+            { serverId: 'home-a', session: bot('second'), pin: pin('second', 'd', true, true) },
+            { serverId: 'home-a', session: bot('first'), pin: pin('first', 'c', false, true) },
+            { serverId: 'home-b', session: bot('first'), pin: pin('first', 'a', false, true) },
+        ];
+        const botHomes = (entries: typeof rows) => [...new Set(entries.map(row => row.serverId))].map(serverId => {
+            const homeRows = entries.filter(row => row.serverId === serverId);
+            return { serverId,
+                rowsBySessionId: Object.fromEntries(homeRows.map(row => [row.session.id, row.session])),
+                organization: buildSessionOrganizationProjection({
+                    schemaVersionByServerId: {}, snapshotVersionByServerId: {},
+                    pinsBySessionKey: Object.fromEntries(homeRows.map(row => [buildSessionOrganizationSessionKey(serverId, row.session.id), row.pin])),
+                    foldersByFolderKey: {}, folderAssignmentsBySessionKey: {}, tagsByTagKey: {}, tagAssignmentsBySessionKey: {},
+                    attentionStandingsBySessionKey: {}, orderEntriesByScopeKey: {}, labelsByLabelKey: {},
+                }, serverId),
+            };
+        });
+        const entries = buildAppRailEntries(catalog([]), { botHomes: botHomes(rows) });
+        expect(entries.app.filter(entry => entry.id === 'bots')).toHaveLength(1);
+        expect(entries.bots.map(entry => [entry.serverId, entry.sessionId])).toEqual([
+            ['home-a', 'first'], ['home-a', 'second'], ['home-b', 'first'],
+        ]);
+        const promoted = buildAppRailEntries(catalog([]), { botHomes: botHomes(rows.map(row => row.session.id === 'ordinary'
+            ? { ...row, session: bot('ordinary') } : row)) });
+        expect(promoted.bots.map(entry => entry.sessionId)).toContain('ordinary');
+        // The membership record is untouched by demotion; projecting again restores its explicit choice.
+        expect(buildAppRailEntries(catalog([]), { botHomes: botHomes(rows) }).bots).toEqual(entries.bots);
     });
 
     it('derives the open rail entry and the column beside the page from the one current destination', () => {
@@ -77,7 +115,7 @@ describe('app rail model', () => {
         expect(at('/inbox/approvals')).toEqual(['inbox', 'inbox', 'none']);
         // Projects stands its column beside every project page and the index.
         expect(at('/projects')).toEqual(['projects', 'projects', 'projects']);
-        expect(at('/projects/ws-1/files')).toEqual(['projects', 'projects', 'projects']);
+        expect(at('/projects/ws-1/code')).toEqual(['projects', 'projects', 'projects']);
         // Workflows stands its column beside the library, the editor and every run (FIN 04 §3.1).
         expect(at('/workflows')).toEqual(['workflows', 'workflows', 'workflows']);
         expect(at('/workflows/runs/run-1')).toEqual(['workflows', 'workflows', 'workflows']);

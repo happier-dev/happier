@@ -6,6 +6,7 @@ import type { UniversalSearchTarget } from './universalSearchResult';
 import { parseSessionPaneUrlState } from '@/components/sessions/panes/url/sessionPaneUrlState';
 import { createFileFindSeedHandoff } from '@/components/appShell/panes/fileFindSeedHandoff';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { makeExternalSessionHistoricalImportLocalId } from '@happier-dev/protocol/sessions/external/historicalImportIdentity';
 
 installFileFindAccountBoundaryMocks();
 
@@ -22,12 +23,52 @@ async function expectSavedWorkspaceResourceOpensInProject(
 
     expect(outcome).toEqual({ ok: true });
     expect(openProject).toHaveBeenCalledWith('wr_1', {
+        serverId: 'home-a',
         activeRootPath: '/repo',
         initialResource,
     });
 }
 
 describe('activateUniversalSearchResult', () => {
+    it('opens an external conversation through the existing candidate opener with a message Find seed', async () => {
+        const { openExternalSessionCandidate } = await import('@/components/sessions/external/browse/openExternalSessionCandidate');
+        const openSession = vi.fn();
+        const target: UniversalSearchTarget = { kind: 'externalConversation', serverId: 'home-a', accountId: 'account-a',
+            machineId: 'machine-a', query: 'quartz', agentId: 'fixture-agent',
+            source: { kind: 'fixture-source' }, candidate: { remoteSessionId: 'native', linkedSessionId: 'linked', updatedAtMs: 10 },
+            sourceItemId: 'message-uuid' };
+        expect(await activateUniversalSearchResult(target, { navigateToSession: vi.fn(), push: vi.fn(), openProject: () => true,
+            openExternalConversation: row => openExternalSessionCandidate({ candidate: row.candidate!, agentId: row.agentId,
+                source: row.source!, actionsAllowed: true, offline: false, isSelectionCurrent: () => true,
+                accountCurrentness: { isCurrent: () => true }, resolveCurrentTarget: () => ({ machineId: row.machineId, serverId: row.serverId }),
+                state: { requestToken: 0, linkingCandidateKey: null }, onLinkingChange: () => {}, openSession,
+                find: { query: row.query, sourceItemId: row.sourceItemId } }).then(outcome => outcome === 'opened'),
+        })).toEqual({ ok: true });
+        expect(openSession.mock.calls[0]?.[2]).toMatchObject({ query: 'quartz', target: { kind: 'route-message-id' } });
+        expect(openSession.mock.calls[0]?.[2].target.routeMessageId).toBe(makeExternalSessionHistoricalImportLocalId({
+            agentId: 'fixture-agent', remoteSessionId: 'native', directItemId: 'message-uuid',
+        }));
+    });
+
+    it('opens named memory topics and instructions through their existing document route owners', async () => {
+        const push = vi.fn();
+        const navigateToSession = vi.fn();
+        for (const [location, href] of [
+            [{ type: 'topic' as const, title: 'Release & recovery' }, '/settings/prompts/memory/memory%2Fb?serverId=home-b&topic=Release%20%26%20recovery&fact=fact%2Fb'],
+            ['archive' as const, '/settings/prompts/memory/memory%2Fb?serverId=home-b&topic=archive&fact=fact%2Fb'],
+            ['facts' as const, '/settings/prompts/memory/memory%2Fb?serverId=home-b&fact=fact%2Fb'],
+            ['document' as const, '/settings/prompts/docs/memory%2Fb?serverId=home-b'],
+        ] as const) {
+            const outcome = await activateUniversalSearchResult({ kind: 'memoryDocument',
+                serverId: 'producing-home', accountId: 'account-b',
+                ref: { kind: 'doc', artifactId: 'memory/b', serverId: 'home-b' },
+                location, factId: 'fact/b',
+            }, { push, navigateToSession, openProject: () => true });
+            expect(outcome).toEqual({ ok: true });
+            expect(push).toHaveBeenLastCalledWith(href);
+        }
+        expect(navigateToSession).not.toHaveBeenCalled();
+    });
     it('discards destination Find memory when navigation fails or the project disappeared', async () => {
         const handoff = createFileFindSeedHandoff();
         const scope = { serverId: 'home-a', machineId: 'machine-a', rootPath: '/repo' };
@@ -68,7 +109,7 @@ describe('activateUniversalSearchResult', () => {
         await activateUniversalSearchResult({ kind: 'workspaceFile', path: 'src/index.ts', anchor, anchorSource: 'diff', find,
             scope: { serverId: 'home-a', machineId: 'machine-a', rootPath: '/repo' }, workspaceRefId: 'wr_1',
             sessionId: null, serverId: 'home-a', accountId: 'account-a' }, { navigateToSession: vi.fn(), push: vi.fn(), openProject });
-        expect(openProject).toHaveBeenCalledWith('wr_1', { activeRootPath: '/repo', initialResource: { kind: 'file', path: 'src/index.ts', anchor, anchorSource: 'diff', find } });
+        expect(openProject).toHaveBeenCalledWith('wr_1', { serverId: 'home-a', activeRootPath: '/repo', initialResource: { kind: 'file', path: 'src/index.ts', anchor, anchorSource: 'diff', find } });
     });
     it('opens project results through the canonical project-opening owner', async () => {
         const push = vi.fn();
@@ -88,7 +129,7 @@ describe('activateUniversalSearchResult', () => {
         });
 
         expect(outcome).toEqual({ ok: true });
-        expect(openProject).toHaveBeenCalledWith('wr_1');
+        expect(openProject).toHaveBeenCalledWith('wr_1', { serverId: 'home-a' });
         expect(push).not.toHaveBeenCalled();
     });
 

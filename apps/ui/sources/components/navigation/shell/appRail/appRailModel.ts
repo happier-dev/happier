@@ -6,6 +6,11 @@ import {
 } from '@/components/appShell/destinations/compactAppDestinationCatalog';
 import { t } from '@/text';
 import type { NavigationPlacement } from '@/sync/domains/settings/mobileSurfacePinning';
+import type { SessionOrganizationProjection } from '@/sync/domains/session/organization';
+import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
+import { readSessionBotV1 } from '@happier-dev/protocol/sessions/identity/sessionBotV1';
+import { sessionAddressKey } from '@/sync/domains/session/sessionAddress';
+import { getSessionAvatarId } from '@/utils/sessions/sessionUtils';
 
 /**
  * The desktop app shell (lab `xrail-R1`, user ruling 2026-09-27): a rail of destinations, a column that
@@ -54,6 +59,20 @@ export function builtinAppShellColumn(id: BuiltinAppShellColumnId): Extract<AppS
 /** A rail entry is a catalog destination placed on the rail. */
 export type AppRailEntry = CompactAppDestination;
 
+export type AppRailBotEntry = Readonly<{
+    id: string;
+    serverId: string;
+    sessionId: string;
+    avatarId: string;
+    session: SessionListRenderableSession;
+}>;
+
+export type AppRailBotHome = Readonly<{
+    serverId: string;
+    rowsBySessionId: Readonly<Record<string, SessionListRenderableSession | undefined>>;
+    organization: SessionOrganizationProjection;
+}>;
+
 export type AppRailEntries = Readonly<{
     /** The app's own destinations: Sessions, Search, Inbox, Projects, Workflows… */
     app: readonly AppRailEntry[];
@@ -61,6 +80,8 @@ export type AppRailEntries = Readonly<{
     plugins: readonly AppRailEntry[];
     /** The bottom of the rail: Settings. */
     account: readonly AppRailEntry[];
+    /** Explicit rail membership, projected only while the current authorized row is a Bot. */
+    bots: readonly AppRailBotEntry[];
 }>;
 
 export type AppRailFooterItemId = 'app-rail-usage' | 'app-rail-machines' | 'app-rail-updates' | 'app-rail-account';
@@ -90,11 +111,20 @@ export function buildAppRailPlacementItems(entries: AppRailEntries, updatesVisib
 }
 
 /** The rail's entries, per region, in catalog order. Column destinations and hidden ones stay off. */
-export function buildAppRailEntries(catalog: readonly CompactAppDestination[], options?: Readonly<{ includeHidden?: boolean }>): AppRailEntries {
+export function buildAppRailEntries(catalog: readonly CompactAppDestination[], options?: Readonly<{
+    includeHidden?: boolean;
+    botHomes?: readonly AppRailBotHome[];
+}>): AppRailEntries {
     return {
         app: selectAppDestinationsInPlacement(catalog, { kind: 'rail', region: 'app' }, options),
         plugins: selectAppDestinationsInPlacement(catalog, { kind: 'rail', region: 'plugins' }, options),
         account: selectAppDestinationsInPlacement(catalog, { kind: 'rail', region: 'account' }, options),
+        bots: (options?.botHomes ?? []).flatMap(home => home.organization.railPinnedSessionIds.flatMap(sessionId => {
+            const session = home.rowsBySessionId[sessionId];
+            if (!session || readSessionBotV1(session.metadata?.bot)?.kind !== 'bot') return [];
+            return [{ id: `bot:${sessionAddressKey({ serverId: home.serverId, sessionId })}`,
+                serverId: home.serverId, sessionId, avatarId: getSessionAvatarId(session, home.serverId), session }];
+        })),
     };
 }
 

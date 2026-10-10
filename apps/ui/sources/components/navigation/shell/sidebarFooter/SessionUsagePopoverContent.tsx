@@ -1,7 +1,8 @@
 import * as React from 'react';
 import { useRouter } from 'expo-router';
 
-import { getAgentCore, isBundledAgentId } from '@/agents/catalog/catalog';
+import { isBundledAgentId } from '@/agents/catalog/catalog';
+import { resolveAgentCatalogTitle } from '@/agents/backendCatalog/agentCatalogProjection';
 import type { UsageSummary } from '@/components/hub/usage/useUsageSummary';
 import type { AccountUsageResetsAction } from '@/components/settings/connectedServices/usage/AccountUsageFacts';
 import type { ConnectedAccountIdentityPresenter } from '@/hooks/ui/useConnectedAccountIdentityPrivacy';
@@ -61,7 +62,7 @@ export function buildUsagePopoverSession(params: Readonly<{
     resetAction: AccountUsageResetsAction | null;
 }>): UsagePopoverSession {
     const agentId = params.agentId ?? '';
-    const agent = isBundledAgentId(agentId) ? t(getAgentCore(agentId).displayNameKey) : null;
+    const agent = isBundledAgentId(agentId) ? resolveAgentCatalogTitle(agentId) : null;
     const account = resolveSessionUsageAccount({ metadata: params.metadata, agentId });
     const findGroup = (service: Readonly<{ pluginId: string; localId: string }>, groupId: string) => params.groups.find((group) => (
         group.ref.groupId === groupId

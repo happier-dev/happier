@@ -199,7 +199,7 @@ describe('workspace destination row browser gestures', () => {
         expect(Object.keys(h.state().groups)).toHaveLength(2);
 
         // A retained virtualized row/tab may move to another scope without remounting its DOM host.
-        const projectHref = buildProjectRouteHref({ workspaceRefId: 'project-b', segment: 'details',
+        const projectHref = buildProjectRouteHref({ workspaceRefId: 'project-b', segment: 'code',
             activeRootPath: '/work/branch', defaultRootPath: '/work/main', activeWorktreeId: 'branch-b',
             sourceSurface: 'browse', initialResource: { kind: 'file', path: 'src/app.ts' },
         });

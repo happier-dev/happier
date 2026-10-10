@@ -2,7 +2,7 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { renderSettingsView, standardCleanup } from '@/dev/testkit';
+import { renderScreen, renderSettingsView, standardCleanup } from '@/dev/testkit';
 import { localSettingsParse } from '@/sync/domains/settings/localSettings';
 import { settingsParse } from '@/sync/domains/settings/settings';
 import { storage } from '@/sync/domains/state/storageStore';
@@ -155,9 +155,9 @@ describe('Appearance settings theme preference', () => {
 
         expect(screen.findByTestId('settings-theme-profile-preview')).toBeNull();
         const themesRow = screen.findRow('settings-appearance-themeProfiles') as any;
-        expect(themesRow.props.subtitle).toBe(
-            'settingsAppearance.themesSummary(light=settingsAppearance.themeProfiles.defaultTheme,dark=settingsAppearance.themeProfiles.presets.nightDark)',
-        );
+        const summary = await renderScreen(themesRow.props.subtitle);
+        expect(summary.getTextContent()).toContain('common.default');
+        expect(summary.getTextContent()).toContain('settingsAppearance.themeProfiles.presets.nightDark');
         expect(themesRow.props.detail).toBe(`settingsAppearance.themesCount(builtIn=${BUILT_IN_THEME_PROFILES.length + 2},custom=0)`);
     });
 

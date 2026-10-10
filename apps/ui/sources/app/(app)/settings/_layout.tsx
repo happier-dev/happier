@@ -4,7 +4,8 @@ import { useDestinationInstanceKey } from '@/components/appShell/workspace/Desti
 import { useUnistyles } from 'react-native-unistyles';
 
 import { SettingsShell } from '@/components/settings/shell/SettingsShell';
-import { NavigationTitleChromeProvider } from '@/components/ui/layout/PageHeader';
+import { NavigationTitleChromeProvider, useNavigationTitleChromeShowsTitle } from '@/components/ui/layout/PageHeader';
+import { useNavigationTitleChromePublisher } from '@/components/ui/layout/navigationTitleChrome';
 import { RouteModalPortalScope } from '@/components/navigation/RouteModalPortalScope';
 import { createAppStackScreenOptions, useAppStackUsesCustomHeader } from '@/components/navigation/createAppStackScreenOptions';
 import { getSettingsStackScreenDefinitions } from '@/components/settings/navigation/settingsRouteRegistry';
@@ -15,6 +16,8 @@ import { getPreferredLanguage, t } from '@/text';
 
 function SettingsLayoutBody() {
     const hosted = useDestinationInstanceKey() !== null;
+    const hostedShowsTitle = useNavigationTitleChromeShowsTitle();
+    const publisher = useNavigationTitleChromePublisher();
     const { theme } = useUnistyles();
     const preferredLanguage = getPreferredLanguage();
 
@@ -45,7 +48,7 @@ function SettingsLayoutBody() {
             {/* Crossing the phone width remounts this navigator; this keeps the page that was open. */}
             {hosted ? null : <SettingsPresentationRouteKeeper deviceType={deviceType} />}
             {/* Phones keep the native stack header (which shows the title); the modal has none. */}
-            <NavigationTitleChromeProvider showsTitle={!isModalPresentation && !hosted}>
+            <NavigationTitleChromeProvider showsTitle={hosted ? hostedShowsTitle : !isModalPresentation} publisher={publisher ?? undefined}>
             <SettingsShell>
                 {navigator}
             </SettingsShell>

@@ -1,9 +1,11 @@
 import {
     PluginUiDestinationReferenceV1Schema,
-    PluginUiInstanceKeyV1Schema,
     type PluginUiDestinationReferenceV1,
+} from '@happier-dev/protocol/plugins/contributions/ui/surfaceRegistry';
+import {
+    PluginUiInstanceKeyV1Schema,
     type PluginUiInstanceKeyV1,
-} from '@happier-dev/protocol/plugins/ui';
+} from '@happier-dev/protocol/plugins/ui/semanticCommands';
 import { z } from 'zod';
 
 /**

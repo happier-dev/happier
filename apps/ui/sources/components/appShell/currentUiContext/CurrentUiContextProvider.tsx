@@ -31,7 +31,6 @@ import {
 } from '@happier-dev/protocol/plugins/ui';
 import type {
     CurrentUiContextSnapshotV1,
-    PluginUiResolvedSemanticCommandV1,
 } from '@happier-dev/protocol/plugins/ui';
 
 import {
@@ -41,6 +40,7 @@ import {
     hasCurrentSessionRoute,
     readCurrentUiContextSettingsPage,
     type CurrentUiContextMountedEnrichment,
+    type CurrentUiContextMountedCommand,
     type CurrentUiContextMountProjection,
 } from './currentUiContextModel';
 
@@ -58,7 +58,7 @@ type CurrentUiContextMountRecord = Readonly<{
     retirement: AbortController;
     semanticCommands: readonly Readonly<{
         id: string;
-        command: PluginUiResolvedSemanticCommandV1;
+        command: CurrentUiContextMountedCommand;
     }>[];
 }>;
 
@@ -103,7 +103,7 @@ export type CurrentUiContextMountPublisher = Readonly<{
  */
 export type CurrentUiContextResolvedCommand = Readonly<{
     id: string;
-    command: PluginUiResolvedSemanticCommandV1;
+    command: CurrentUiContextMountedCommand;
     /** Aborts synchronously when this exact private command record retires. */
     retirementSignal: AbortSignal;
 }>;

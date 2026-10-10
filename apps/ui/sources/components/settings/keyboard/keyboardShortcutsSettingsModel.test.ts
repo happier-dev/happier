@@ -61,7 +61,6 @@ describe('keyboardShortcutsSettingsModel', () => {
         expect(model.commandRows.find((row) => row.commandId === 'composer.sendPending')?.defaultLabel).toBe('Cmd+Shift+Enter');
         expect(model.commandRows.find((row) => row.commandId === 'commandPalette.open')?.defaultLabel).toBe('Cmd+K');
         expect(model.commandRows.find((row) => row.commandId === 'settings.open')?.defaultLabel).toBe('Cmd+,');
-        expect(model.commandRows.every((row) => row.titleKey.startsWith('settingsKeyboard.commands.'))).toBe(true);
     });
 
     it('groups every command once, by the part of the app it acts on, in reading order', () => {

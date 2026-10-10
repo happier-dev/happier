@@ -26,9 +26,8 @@ const styles = StyleSheet.create({
 
 /**
  * Mobile web renders the cockpit too, but the bar's gesture is native-only, so the switcher never
- * opens there. An identity transform is not free on web: it creates a containing block and defeats
- * `backdrop-filter` for every descendant (`overlayMotion`'s `disableTransformOnWeb` exists for the
- * same trap).
+ * opens there. Leave the web session's existing containing-block geometry untouched rather than
+ * installing an unused transform for a native-only gesture.
  */
 const CAN_RECEDE = Platform.OS !== 'web';
 const NO_MOTION = Object.freeze({});

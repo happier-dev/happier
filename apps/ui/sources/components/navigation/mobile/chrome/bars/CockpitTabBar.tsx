@@ -1,5 +1,6 @@
 import * as React from 'react';
-import { Pressable, View } from 'react-native';
+import { View } from 'react-native';
+import { HappierPressable, HAPPIER_FOCUS_RING_DELEGATED_STYLE } from '@happier-dev/plugin-ui/presentation';
 import { ScrollView } from 'react-native-gesture-handler';
 import Animated from 'react-native-reanimated';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -14,6 +15,7 @@ import { Typography } from '@/constants/Typography';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
 import { ScrollEdgeFades } from '@/components/ui/scroll/ScrollEdgeFades';
 import { useScrollEdgeFades } from '@/components/ui/scroll/useScrollEdgeFades';
+import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 
 
 const styles = StyleSheet.create((theme) => ({
@@ -131,19 +133,21 @@ export function CockpitTabBar<TSurface extends string>(props: CockpitTabBarProps
         const active = tab.id === props.activeSurface;
         const tintColor = active ? theme.colors.text.primary : theme.colors.text.secondary;
         return (
-            <Pressable
+            <HappierPressable
                 key={tab.id}
                 testID={`${props.tabTestIdPrefix}${tab.id}`}
                 onPress={() => props.onSurfacePress(tab.id)}
                 hitSlop={{ top: 8, bottom: 8 }}
-                style={[styles.tab, {
+                style={(state) => [styles.tab, {
                     minWidth: metrics.tabMinWidth,
                     paddingVertical: metrics.tabPaddingVertical,
                     paddingHorizontal: metrics.tabPaddingHorizontal,
-                }]}
+                    borderRadius: metrics.activePillRadius,
+                }, HAPPIER_FOCUS_RING_DELEGATED_STYLE,
+                focusRingStyle({ focused: state.focused, color: theme.colors.border.focus })]}
                 accessibilityRole="tab"
                 accessibilityLabel={tab.accessibilityLabel ?? tab.label}
-                accessibilityState={{ selected: active }}
+                selected={active}
                 accessibilityActions={props.bandAccessibilityActions}
                 onAccessibilityAction={props.onBandAccessibilityAction
                     ? (event) => props.onBandAccessibilityAction?.(event.nativeEvent.actionName)
@@ -163,7 +167,7 @@ export function CockpitTabBar<TSurface extends string>(props: CockpitTabBarProps
                         {tab.label}
                     </Text>
                 ) : null}
-            </Pressable>
+            </HappierPressable>
         );
     };
     const scrolls = props.layout === 'scroll' && props.tabs.length > 1;
@@ -228,19 +232,27 @@ export const CockpitTabBarAction = React.forwardRef<View, Readonly<{
     const { theme } = useUnistyles();
     const metrics = resolveTabBarMetrics(useSetting('tabBarSize'), useSetting('tabBarShowLabels'));
     return (
-        <Pressable
-            ref={ref as React.Ref<never>}
+        <HappierPressable
+            controlRef={(node) => {
+                // The shared portable focus handle is this concrete native/Web View.
+                const view = node as View | null;
+                if (typeof ref === 'function') ref(view);
+                else if (ref) ref.current = view;
+            }}
             testID={props.testID}
             onPress={props.onPress}
             hitSlop={{ top: 8, bottom: 8 }}
-            style={[styles.tab, {
+            style={(state) => [styles.tab, {
                 minWidth: metrics.tabMinWidth,
                 paddingVertical: metrics.tabPaddingVertical,
                 paddingHorizontal: metrics.tabPaddingHorizontal,
-            }]}
-            accessibilityRole="button"
+                borderRadius: metrics.activePillRadius,
+            }, HAPPIER_FOCUS_RING_DELEGATED_STYLE,
+            focusRingStyle({ focused: state.focused, color: theme.colors.border.focus })]}
+            accessibilityRole={props.selected ? 'tab' : 'button'}
             accessibilityLabel={props.label}
-            accessibilityState={{ expanded: props.expanded, selected: props.selected === true }}
+            expanded={props.expanded}
+            selected={props.selected === true}
         >
             {props.selected ? <View pointerEvents="none" style={[styles.activePill, { borderRadius: metrics.activePillRadius }]} /> : null}
             <View style={styles.iconContainer}>
@@ -249,7 +261,7 @@ export const CockpitTabBarAction = React.forwardRef<View, Readonly<{
             {metrics.showLabels ? (
                 <Text style={[styles.label, props.selected ? styles.labelActive : styles.labelInactive]}>{props.label}</Text>
             ) : null}
-        </Pressable>
+        </HappierPressable>
     );
 });
 CockpitTabBarAction.displayName = 'CockpitTabBarAction';

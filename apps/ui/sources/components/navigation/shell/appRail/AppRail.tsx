@@ -2,6 +2,7 @@ import * as React from 'react';
 import { Platform, View, type LayoutChangeEvent } from 'react-native';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 
 import { useActivateAppDestination } from '@/components/appShell/destinations/compactAppDestinationCatalog';
 import { WorkspaceDestinationRow } from '@/components/appShell/workspace/WorkspaceDestinationRow';
@@ -12,7 +13,6 @@ import { Icon, type IconName } from '@/components/ui/icons/Icon';
 import { MENU_ROW_METRICS } from '@/components/ui/lists/itemDensityMetrics';
 import { ActionListSection } from '@/components/ui/lists/ActionListSection';
 import { SelectableRow } from '@/components/ui/lists/SelectableRow';
-import { TabBadge } from '@/components/ui/navigation/tabBadge/TabBadge';
 import { useNavigationSurfacePlacement } from '@/components/ui/navigation/useNavigationSurfacePlacement';
 import { Modal } from '@/modal';
 import { resolveNavigationOverflow, resolveNavigationPlacements, type NavigationPlacementPreferences } from '@/sync/domains/settings/mobileSurfacePinning';
@@ -20,6 +20,8 @@ import { describeUpdatesEntry, UpdatesPopoverButton } from '@/components/updates
 import { useSharedInboxSummary } from '@/hooks/inbox/useInboxSummary';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useKeyboardShortcutLabel } from '@/keyboard/shortcutLabels';
+import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
+import { getSessionName } from '@/utils/sessions/sessionUtils';
 import { t } from '@/text';
 import { useSharedUpdatesSummary } from '@/updates/useUpdatesSummary';
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
@@ -27,27 +29,39 @@ import { fireAndForget } from '@/utils/system/fireAndForget';
 
 import { SidebarFooterPopoverButton, type SidebarFooterPopoverContentProps, type SidebarFooterPopoverTrigger } from '../sidebarFooter/SidebarFooterPopoverButton';
 import { SidebarUsagePopoverContent, USAGE_POPOVER_WIDTH_PX } from '../sidebarFooter/SidebarUsagePopoverContent';
+import { InboxPopoverContent } from '@/components/inbox/InboxPopover';
 import { AppRailAccount } from './AppRailAccount';
 import { AppRailMachines } from './AppRailMachines';
+import { AppRailBotMenuIcon, AppRailBotPin, AppRailBots, useAppRailBotHomes } from './AppRailBots';
 import {
     APP_RAIL_ICON_GLYPH_SIZE_PX,
     APP_RAIL_ITEM_SIZE_PX,
     APP_RAIL_ITEM_SLOT_PX,
     APP_RAIL_WIDTH_PX,
 } from './appRailMetrics';
-import { AppRailBadge, resolveAppRailBadgeTone } from './AppRailBadge';
+import { AppRailBadge, AppRailMenuCount, resolveAppRailBadgeTone } from './AppRailBadge';
 import { useConnectedAccountsNeedingSignInCount } from './useConnectedAccountsNeedingSignInCount';
 import { AppRailPeek } from './AppRailPeek';
 import {
     buildAppRailEntries,
     buildAppRailPlacementItems,
     resolveAppRailEntryColumn,
+    type AppRailBotEntry,
     type AppRailEntry,
     type AppRailEntries,
     type AppRailPlacementItem,
 } from './appRailModel';
 import { useAppShellLocation } from './useAppShellLocation';
-import { glassSurfaceBackgroundColor } from '@/components/ui/glass/glassSurfacePaint';
+import { useSessionListRailOrganizationAction } from '@/components/sessions/shell/useSessionListRailOrganizationAction';
+import { useServerCredentialAccountScopeBindings } from '@/sync/domains/scope/useServerCredentialAccountScopes';
+import { moveAppRailBot } from './useAppRailBotReorder';
+
+/** A rail-pinned Bot, standing right under the Bots entry among the top items. */
+type AppRailTopGroup = AppRailPlacementItem['group'] | 'bots';
+type WithTopGroup<T> = T extends unknown ? Omit<T, 'group'> & Readonly<{ group: AppRailTopGroup }> : never;
+type AppRailTopItem =
+    | WithTopGroup<AppRailPlacementItem>
+    | Readonly<{ kind: 'botPin'; id: string; group: 'bots'; bot: AppRailBotEntry }>;
 
 const renderUsage = (content: SidebarFooterPopoverContentProps) => <SidebarUsagePopoverContent {...content} />;
 
@@ -76,7 +90,10 @@ const AppRailIcon = React.memo(function AppRailIcon(props: Readonly<{ name: Icon
  */
 export const AppRail = React.memo(function AppRail() {
     const { catalog, location } = useAppShellLocation();
-    const entries = React.useMemo(() => buildAppRailEntries(catalog, { includeHidden: true }), [catalog]);
+    const botHomes = useAppRailBotHomes();
+    const botHomeIds = React.useMemo(() => botHomes.map(home => home.serverId), [botHomes]);
+    useSessionListRailOrganizationAction(botHomeIds);
+    const entries = React.useMemo(() => buildAppRailEntries(catalog, { includeHidden: true, botHomes }), [botHomes, catalog]);
     const { preferences } = useNavigationSurfacePlacement('appRail');
     const updatesVisible = describeUpdatesEntry(useSharedUpdatesSummary()) !== null;
     const activeId = location.railEntryId;
@@ -105,7 +122,18 @@ export const AppRailSurface = React.memo(function AppRailSurface(props: Readonly
     renderFooter?: (item: AppRailPlacementItem, renderTrigger?: SidebarFooterPopoverTrigger) => React.ReactNode;
 }>) {
     const styles = stylesheet;
+    const { theme } = useUnistyles();
+    const materialColor = useHappierMaterialColorResolver();
     const { entries, activeId, onOpen: open } = props;
+    const botNeighbors = React.useMemo(() => {
+        const byHome = new Map<string, AppRailBotEntry[]>();
+        for (const bot of entries.bots) byHome.set(bot.serverId, [...(byHome.get(bot.serverId) ?? []), bot]);
+        const neighbors = new Map<string, { previous?: string; next?: string }>();
+        for (const bots of byHome.values()) bots.forEach((bot, index) => neighbors.set(bot.id, {
+            previous: bots[index - 1]?.sessionId, next: bots[index + 1]?.sessionId,
+        }));
+        return neighbors;
+    }, [entries.bots]);
 
     const [availableHeight, setAvailableHeight] = React.useState<number | null>(null);
     const onRailLayout = React.useCallback((event: LayoutChangeEvent) => {
@@ -114,12 +142,18 @@ export const AppRailSurface = React.memo(function AppRailSurface(props: Readonly
     }, []);
     const items = React.useMemo(() => buildAppRailPlacementItems(entries, props.updatesVisible === true), [entries, props.updatesVisible]);
     const placements = resolveNavigationPlacements(items, props.preferences);
-    const top = placements.pinned.filter(item => item.group !== 'account');
+    // Bots pinned to the rail stand right under the one Bots entry, in the person's order (60s3).
+    const top: AppRailTopItem[] = placements.pinned.filter(item => item.group !== 'account').flatMap((item): AppRailTopItem[] =>
+        item.kind === 'destination' && item.entry.activation === 'botsRoster'
+            // The Bots entry and its pins stand apart, a hairline above them (lab `b-rail A`).
+            ? [{ ...item, group: 'bots' as const },
+                ...entries.bots.map((bot): AppRailTopItem => ({ kind: 'botPin', id: bot.id, group: 'bots', bot }))]
+            : [item]);
     const bottom = placements.pinned.filter(item => item.group === 'account');
     // The anchored group has priority when space is short. Giving it the first top group's
     // geometry avoids counting a divider between the footer and the top: only top groups divide.
-    const priority = [...bottom.map(item => ({ ...item, group: top[0]?.group ?? 'app' })), ...top];
-    const fitted = resolveNavigationOverflow(priority, placements.overflow, {
+    const priority: AppRailTopItem[] = [...bottom.map(item => ({ ...item, group: top[0]?.group ?? 'app' })), ...top];
+    const fitted = resolveNavigationOverflow<AppRailTopItem>(priority, placements.overflow, {
         availableSize: availableHeight, itemSize: APP_RAIL_ITEM_SLOT_PX, separatorSize: RAIL_SEPARATOR_SIZE_PX,
     });
     const shownIds = new Set(fitted.shown.map(item => item.id));
@@ -127,22 +161,37 @@ export const AppRailSurface = React.memo(function AppRailSurface(props: Readonly
     const shownBottom = bottom.filter(item => shownIds.has(item.id));
     const overflowIds = new Set(fitted.overflow.map(item => item.id));
     const overflow = placements.ordered.filter(item => overflowIds.has(item.id));
+    // A measured overflow keeps every rail-pinned Bot reachable in More.
+    const overflowBots = entries.bots.filter(bot => overflowIds.has(bot.id));
+    // Pins already there when the rail mounts stand still; only a newly accepted pin lands.
+    const seenBotIdsRef = React.useRef<ReadonlySet<string> | null>(null);
+    const seenBotIds = seenBotIdsRef.current;
+    React.useEffect(() => {
+        seenBotIdsRef.current = new Set([...(seenBotIdsRef.current ?? []), ...entries.bots.map(bot => bot.id)]);
+    }, [entries.bots]);
     const renderFooter = props.renderFooter ?? ((item: AppRailPlacementItem, trigger?: SidebarFooterPopoverTrigger) =>
         <AppRailFooterItem item={item} renderTrigger={trigger} />);
 
     return (
-        <View testID="app-rail" style={styles.rail} onLayout={onRailLayout}
+        <View testID="app-rail" style={[styles.rail, { backgroundColor: materialColor(theme.colors.background.canvas, 'transparent') }]} onLayout={onRailLayout}
             {...(Platform.OS === 'web' ? { onContextMenu: (event: { preventDefault: () => void }) => { event.preventDefault(); props.onCustomize?.(); } } : null)}
             >
             <View testID="app-rail-destinations" style={styles.topArea}>
                 {shownTop.map((item, index) => <React.Fragment key={item.id}>
                     {index > 0 && shownTop[index - 1]?.group !== item.group ? <View style={styles.separator} /> : null}
-                    {item.kind === 'destination' ? <AppRailItem entry={item.entry} active={activeId === item.id} onOpen={open}
-                        onCustomize={props.onCustomize} /> : null}
+                    {item.kind === 'botPin'
+                        ? <AppRailBotPin bot={item.bot} slotStyle={styles.itemSlot}
+                            previousBotSessionId={botNeighbors.get(item.id)?.previous}
+                            nextBotSessionId={botNeighbors.get(item.id)?.next}
+                            animateEntry={seenBotIds !== null && !seenBotIds.has(item.id)} />
+                        : item.kind === 'destination' ? <AppRailItem entry={item.entry} active={activeId === item.id} onOpen={open}
+                            onCustomize={props.onCustomize} /> : null}
                 </React.Fragment>)}
-                {overflow.length > 0 || (fitted.shown.length === 0 && items.length > 0 && props.onCustomize) ? (
+                {overflow.length > 0 || overflowBots.length > 0 || (fitted.shown.length === 0 && items.length > 0 && props.onCustomize) ? (
                     <AppRailMore
                         entries={overflow}
+                        bots={overflowBots}
+                        botNeighbors={botNeighbors}
                         active={overflow.some((entry) => entry.id === activeId)}
                         onOpen={open}
                         onCustomize={props.onCustomize}
@@ -173,6 +222,14 @@ const AppRailItem = React.memo(function AppRailItem(props: Readonly<{
     const column = resolveAppRailEntryColumn(entry);
     // A plugin destination's static badge ("Beta") has no room for text on the rail: it marks the icon.
     const pluginBadge = entry.kind === 'plugin' ? entry.badge ?? null : null;
+    if (entry.activation === 'botsRoster' && !unavailable) {
+        return <View style={styles.itemSlot}><AppRailBots entry={entry} /></View>;
+    }
+    // Lab `inbox-I2`: the Inbox answers from beside the rail; the page is one "Open Inbox" away, and the
+    // icon of the Inbox already on screen simply stays on it.
+    if (entry.kind === 'builtin' && entry.signal === 'inboxCount' && !unavailable && !props.active) {
+        return <AppRailInbox entry={entry} onOpenPage={props.onOpen} />;
+    }
     const button = (peeks: boolean) => (
         <IconButton
             testID={`app-rail:${entry.id}`}
@@ -184,6 +241,7 @@ const AppRailItem = React.memo(function AppRailItem(props: Readonly<{
             tooltipPlacement="right"
             selected={props.active}
             disabled={unavailable}
+            disabledReason={describeUnavailableBuiltin(entry)}
             icon={<AppRailIcon name={entry.icon} active={props.active} />}
             onPress={() => props.onOpen(entry)}
             onLongPress={props.onCustomize}
@@ -206,6 +264,44 @@ const AppRailItem = React.memo(function AppRailItem(props: Readonly<{
     );
 });
 
+function describeUnavailableBuiltin(entry: AppRailEntry): string | undefined {
+    return entry.kind === 'builtin' && entry.availability !== 'available'
+        ? t('settingsActions.reasons.notAvailableInThisApp') : undefined;
+}
+
+/** The width the Inbox popover's rows need for a title, its line and an inline answer (lab `inbox-I2`). */
+const INBOX_POPOVER_WIDTH_PX = 400;
+
+const AppRailInbox = React.memo(function AppRailInbox(props: Readonly<{
+    entry: AppRailEntry;
+    onOpenPage: (entry: AppRailEntry) => void;
+}>) {
+    const styles = stylesheet;
+    const { entry, onOpenPage } = props;
+    const openPage = React.useCallback(() => onOpenPage(entry), [entry, onOpenPage]);
+    const renderContent = React.useCallback((content: SidebarFooterPopoverContentProps) => (
+        <InboxPopoverContent close={content.close} onOpenInbox={openPage} />
+    ), [openPage]);
+    const renderIcon = React.useCallback((open: boolean) => <AppRailIcon name={entry.icon} active={open} />, [entry.icon]);
+    return (
+        <WorkspaceDestinationRow style={styles.itemSlot} href={entry.routePath}>
+            <SidebarFooterPopoverButton
+                testID={`app-rail:${entry.id}`}
+                iconName={entry.icon}
+                label={entry.title}
+                placement="right"
+                anchorAlignVertical="start"
+                buttonSizePx={APP_RAIL_ITEM_SIZE_PX}
+                iconSizePx={APP_RAIL_ICON_GLYPH_SIZE_PX}
+                popoverWidthPx={INBOX_POPOVER_WIDTH_PX}
+                renderContent={renderContent}
+                renderIcon={renderIcon}
+            />
+            <AppRailInboxBadge testID={`app-rail:${entry.id}-badge`} />
+        </WorkspaceDestinationRow>
+    );
+});
+
 /** The Inbox count: read only by this leaf, so a new item re-renders the badge and nothing else. */
 const AppRailInboxBadge = React.memo(function AppRailInboxBadge(props: Readonly<{ testID: string }>) {
     const summary = useSharedInboxSummary();
@@ -220,6 +316,8 @@ const AppRailInboxBadge = React.memo(function AppRailInboxBadge(props: Readonly<
 
 const AppRailMore = React.memo(function AppRailMore(props: Readonly<{
     entries: readonly AppRailPlacementItem[];
+    bots?: readonly AppRailBotEntry[];
+    botNeighbors: ReadonlyMap<string, { previous?: string; next?: string }>;
     active: boolean;
     onOpen: (entry: AppRailEntry) => void;
     onCustomize?: () => void;
@@ -241,13 +339,28 @@ const AppRailMore = React.memo(function AppRailMore(props: Readonly<{
         return <WorkspaceDestinationRow href={entry?.kind === 'destination' && entry.entry.availability === 'available' && entry.entry.activation === 'navigate'
             ? entry.entry.routePath : null}>{children}</WorkspaceDestinationRow>;
     }, [props.entries, props.renderFooter, registerFooterAction]);
-    const items = props.entries.map((entry): DropdownMenuItem => ({
+    const navigateToSession = useNavigateToSession();
+    const botHomeIds = React.useMemo(() => [...new Set((props.bots ?? []).map(bot => bot.serverId))], [props.bots]);
+    const botScopes = useServerCredentialAccountScopeBindings(botHomeIds);
+    const botItems = (props.bots ?? []).map((bot): DropdownMenuItem => ({
+        id: bot.id,
+        testID: `app-rail-more:${bot.id}`,
+        title: getSessionName(bot.session, bot.serverId),
+        icon: <AppRailBotMenuIcon bot={bot} size={MENU_ROW_METRICS.iconGlyphSizePx + 2} />,
+        submenu: { items: [
+            { id: bot.id, title: t('common.open') },
+            ...(props.botNeighbors.get(bot.id)?.previous ? [{ id: `move-up:${bot.id}`, title: t('common.moveUp'), disabled: !botScopes.get(bot.serverId)?.isCurrent() }] : []),
+            ...(props.botNeighbors.get(bot.id)?.next ? [{ id: `move-down:${bot.id}`, title: t('common.moveDown'), disabled: !botScopes.get(bot.serverId)?.isCurrent() }] : []),
+        ] },
+    }));
+    const items = [...botItems, ...props.entries.map((entry): DropdownMenuItem => ({
         id: entry.id,
         testID: `app-rail-more:${entry.id}`,
         title: entry.title,
+        subtitle: entry.kind === 'destination' ? describeUnavailableBuiltin(entry.entry) : undefined,
         icon: <Icon name={entry.icon} size={MENU_ROW_METRICS.iconGlyphSizePx} color={theme.colors.text.secondary} />,
         disabled: entry.kind === 'destination' && entry.entry.availability !== 'available',
-    }));
+    }))];
     return (
         <View style={styles.itemSlot}>
             <DropdownMenu
@@ -255,6 +368,7 @@ const AppRailMore = React.memo(function AppRailMore(props: Readonly<{
                 open={open}
                 onOpenChange={setOpen}
                 items={items}
+                emptyLabel={null}
                 wrapItem={wrapItem}
                 closeOnSelect={false}
                 footer={<>
@@ -262,6 +376,19 @@ const AppRailMore = React.memo(function AppRailMore(props: Readonly<{
                         label: t('navigationPlacement.customize'), onPress: () => { setOpen(false); props.onCustomize?.(); } }]} /> : null}
                 </>}
                 onSelect={(id) => {
+                    const direction = id.startsWith('move-up:') ? 'up' : id.startsWith('move-down:') ? 'down' : null;
+                    if (direction) {
+                        const bot = props.bots?.find(candidate => id === `move-${direction}:${candidate.id}`);
+                        const target = bot && props.botNeighbors.get(bot.id)?.[direction === 'up' ? 'previous' : 'next'];
+                        if (bot && target) fireAndForget(moveAppRailBot(botScopes.get(bot.serverId), bot, target, direction === 'up' ? 'top' : 'bottom'), { tag: 'AppRail.More.Bot.move' });
+                        return;
+                    }
+                    const bot = props.bots?.find(candidate => candidate.id === id);
+                    if (bot) {
+                        setOpen(false);
+                        void navigateToSession(bot.sessionId, { serverId: bot.serverId });
+                        return;
+                    }
                     const entry = props.entries.find((candidate) => candidate.id === id);
                     if (entry?.kind === 'destination') { setOpen(false); props.onOpen(entry.entry); }
                     else footerActions.current.get(id)?.();
@@ -327,7 +454,7 @@ const AppRailUsage = React.memo(function AppRailUsage(props: Readonly<{ renderTr
     // A red count only for accounts that need a new sign-in; low limits never badge (lab G2).
     const signInCount = useConnectedAccountsNeedingSignInCount();
     const menuTrigger: SidebarFooterPopoverTrigger | undefined = props.renderTrigger ? state => props.renderTrigger?.({ ...state,
-        right: signInCount > 0 ? <TabBadge variant="count" tone="attention" value={signInCount} /> : undefined,
+        right: signInCount > 0 ? <AppRailMenuCount tone={resolveAppRailBadgeTone({ source: 'signIn' })} value={signInCount} /> : undefined,
     }) : undefined;
     const openUsage = React.useCallback(() => {
         const result = runGuardedNavigation(() => router.push(SETTINGS_ROUTES.usage as never));
@@ -375,7 +502,9 @@ const AppRailUpdates = React.memo(function AppRailUpdates(props: Readonly<{ rend
     const updatesSummary = useSharedUpdatesSummary();
     const updatesCopy = describeUpdatesEntry(updatesSummary);
     const menuTrigger: SidebarFooterPopoverTrigger | undefined = props.renderTrigger ? state => props.renderTrigger?.({ ...state,
-        right: updatesCopy?.count ? <TabBadge variant="count" tone={updatesCopy.warning ? 'attention' : 'neutral'} value={updatesCopy.count} /> : undefined,
+        right: updatesCopy?.count
+            ? <AppRailMenuCount tone={resolveAppRailBadgeTone({ source: 'updates', failed: updatesCopy.warning })} value={updatesCopy.count} />
+            : undefined,
     }) : undefined;
     return <>
                     <UpdatesPopoverButton
@@ -393,7 +522,7 @@ const AppRailUpdates = React.memo(function AppRailUpdates(props: Readonly<{ rend
                             signal={{
                                 kind: 'count',
                                 value: updatesCopy.count,
-                                tone: resolveAppRailBadgeTone({ source: 'updates', failed: updatesCopy.warning === true }),
+                                tone: resolveAppRailBadgeTone({ source: 'updates', failed: updatesCopy.warning }),
                             }}
                         />
                     ) : null}
@@ -414,7 +543,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         alignItems: 'center',
         paddingTop: RAIL_PADDING_TOP_PX,
         paddingBottom: RAIL_PADDING_BOTTOM_PX,
-        backgroundColor: glassSurfaceBackgroundColor(theme.colors.background.canvas, 'chrome', true),
+        backgroundColor: theme.colors.background.canvas,
     },
     group: {
         alignItems: 'center',

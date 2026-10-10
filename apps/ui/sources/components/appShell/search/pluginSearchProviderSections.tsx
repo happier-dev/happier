@@ -325,7 +325,7 @@ export function buildPluginSearchProviderSections(
             return [Object.freeze({
                 id: sectionId,
                 title,
-                resolverKey: `${sectionId}|${providerScope.serverId ?? ''}|${providerScope.machineId ?? ''}|${provider.occurrenceId}|${readPluginUiContributionOrigin(provider)?.executionOrigin?.materializationRef.materializationId ?? ''}|account:${input.accountLifetimeRevision ?? 0}`,
+                resolverKey: `${sectionId}|${providerScope.serverId ?? ''}|${providerScope.machineId ?? ''}|${provider.occurrenceId}|${JSON.stringify(readPluginUiContributionOrigin(provider)?.executionOrigin ?? null)}|account:${input.accountLifetimeRevision ?? 0}`,
                 // Empty query is a UI state, not a wire request.
                 visibleWhen: (value: string) => value.trim().length > 0,
                 resultFiltering: 'provider' as const,

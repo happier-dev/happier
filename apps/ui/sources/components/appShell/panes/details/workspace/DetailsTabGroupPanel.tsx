@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { Platform, View } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 
 import { PaneLoadingFallback } from '@/components/ui/panels/PaneLoadingFallback';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
@@ -19,6 +20,8 @@ import {
     type DetailsTabStripTestIds,
 } from './DetailsTabStrip';
 import { DetailsTabChromeProvider, useDetailsTabUnsavedKeys } from './detailsTabChrome';
+import { HeaderActionsScope, useStackHeaderActionsClaimed, useStackHeaderActionsPublisher } from '@/components/navigation/stackHeaderActions';
+import { useSurfaceStateSize } from '@/components/ui/surfaces/surfaceStateSize';
 
 type ScrollPropagationEvent = Readonly<{ stopPropagation?: () => void }>;
 
@@ -124,12 +127,27 @@ export type DetailsTabGroupPanelProps = Readonly<{
      */
     renderTabContent: (tab: DetailsTabState, presentation: Readonly<{ active: boolean }>) => React.ReactNode;
     renderHeaderLeadingActions?: (() => React.ReactNode) | null;
+    /**
+     * Launchers that open another tab in this group (the browser launchpad). They belong to the
+     * strip: when one tab's header takes the pane's controls, a peek keeps only the pane's own
+     * (focus, close), and the launchers come back with the strip.
+     */
+    renderStripActions?: (() => React.ReactNode) | null;
     renderHeaderActions?: (() => React.ReactNode) | null;
     renderEmptyState?: (() => React.ReactNode) | null;
+    /**
+     * The group is the pane's only one: while it shows a single tab whose content draws its own
+     * header, the strip (one chip naming what the header names) gives way and the pane's controls
+     * ride in that header (lab `session-D`). Several tabs, or a tab without a header, keep the strip.
+     */
+    collapseSingleTabStrip?: boolean;
 }>;
 
 export const DetailsTabGroupPanel = React.memo((props: DetailsTabGroupPanelProps) => {
     const styles = stylesheet;
+    const { theme } = useUnistyles();
+    const materialColor = useHappierMaterialColorResolver();
+    const backgroundColor = materialColor(theme.colors.surface.base, 'transparent');
     const rootRef = React.useRef<View | null>(null);
     useWebScrollLockBypass({ rootRef, enabled: true });
 
@@ -148,6 +166,20 @@ export const DetailsTabGroupPanel = React.memo((props: DetailsTabGroupPanelProps
 
 
     const headerPaddingTop = props.headerPaddingTop ?? 0;
+    // A phone keeps its strip: its leading control is the screen's Back, which belongs on that row.
+    const phone = useSurfaceStateSize() === 'phone';
+    const lendsControls = props.collapseSingleTabStrip === true && !phone && !forceEmptyState && props.group.tabs.length === 1;
+    const headerActionsScopeKey = `details-group:${React.useId()}`;
+    const { renderHeaderLeadingActions, renderHeaderActions } = props;
+    const renderLentControls = React.useCallback(() => (
+        <>
+            {renderHeaderLeadingActions ? renderHeaderLeadingActions() : null}
+            {renderHeaderActions ? renderHeaderActions() : null}
+        </>
+    ), [renderHeaderActions, renderHeaderLeadingActions]);
+    useStackHeaderActionsPublisher(headerActionsScopeKey, lendsControls ? renderLentControls : null);
+    const controlsTakenByTab = useStackHeaderActionsClaimed(headerActionsScopeKey);
+    const showStrip = !(lendsControls && controlsTakenByTab);
     const { unsavedKeys, chromeFor } = useDetailsTabUnsavedKeys();
     // Every diff drawn in this group applies the one split-width rule against the group's width. Only
     // crossing the threshold is state: resizing the pane does not re-render its tabs per pixel.
@@ -163,12 +195,12 @@ export const DetailsTabGroupPanel = React.memo((props: DetailsTabGroupPanelProps
             ref={rootRef}
             testID={props.testIds?.root}
             onLayout={onGroupLayout}
-            style={[styles.container, props.paddingTop ? { paddingTop: props.paddingTop } : null]}
+            style={[styles.container, { backgroundColor }, props.paddingTop ? { paddingTop: props.paddingTop } : null]}
             {...(Platform.OS === 'web'
                 ? { onWheel: stopScrollEventPropagationOnWeb, onTouchMove: stopScrollEventPropagationOnWeb }
                 : {})}
         >
-            <View style={[styles.header, { paddingTop: headerPaddingTop }]}>
+            {showStrip ? <View style={[styles.header, { paddingTop: headerPaddingTop, backgroundColor }]}>
                 {props.renderHeaderLeadingActions ? props.renderHeaderLeadingActions() : null}
                 {!forceEmptyState ? (
                     <DetailsTabStrip
@@ -185,8 +217,9 @@ export const DetailsTabGroupPanel = React.memo((props: DetailsTabGroupPanelProps
                 ) : (
                     <View style={{ flex: 1, minHeight: 0, minWidth: 0 }} />
                 )}
+                {props.renderStripActions ? props.renderStripActions() : null}
                 {props.renderHeaderActions ? props.renderHeaderActions() : null}
-            </View>
+            </View> : null}
             {forceEmptyState || props.group.tabs.length === 0 ? (
                 props.renderEmptyState ? props.renderEmptyState() : (
                     <SurfaceStateCard
@@ -214,9 +247,11 @@ export const DetailsTabGroupPanel = React.memo((props: DetailsTabGroupPanelProps
                                 isActive={isActive}
                             >
                                 <DetailsTabChromeProvider value={chromeFor(tab.key)}>
-                                    <React.Suspense fallback={<PaneLoadingFallback />}>
-                                        {props.renderTabContent(tab, { active: presented })}
-                                    </React.Suspense>
+                                    <HeaderActionsScope scopeKey={lendsControls ? headerActionsScopeKey : null}>
+                                        <React.Suspense fallback={<PaneLoadingFallback />}>
+                                            {props.renderTabContent(tab, { active: presented })}
+                                        </React.Suspense>
+                                    </HeaderActionsScope>
                                 </DetailsTabChromeProvider>
                             </DetailsTabSurface>
                         );

@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { Pressable, View } from 'react-native';
-import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
+import { Stack, useLocalSearchParams, useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { useUnistyles } from 'react-native-unistyles';
 
 import type { DaemonExecutionRunEntry } from '@happier-dev/protocol';
@@ -14,7 +14,9 @@ import { ConstrainedScreenContent } from '@/components/ui/layout/ConstrainedScre
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { tryShowDaemonUnavailableAlertForRpcFailure } from '@/utils/errors/daemonUnavailableAlert';
-import { useMachineListByServerId, useMachineListStatusByServerId } from '@/sync/domains/state/storage';
+import { useAllProfileMachineInventorySnapshots } from '@/sync/domains/machines/useMachineInventorySnapshots';
+import { filterVisibleMachines } from '@/sync/domains/machines/resolveServerScopedMachines';
+import type { MachineDisplayRenderable } from '@/sync/domains/machines/machineDisplayRenderable';
 import { machineExecutionRunsList } from '@/sync/ops/machineExecutionRuns';
 import { sessionExecutionRunStop } from '@/sync/ops/sessionExecutionRuns';
 import { machineStopSession } from '@/sync/ops/machines';
@@ -53,7 +55,7 @@ function readExactRouteIdentity(value: string | string[] | undefined): string | 
   return raw;
 }
 
-function getMachineTitle(machine: any): string {
+function getMachineTitle(machine: MachineDisplayRenderable): string {
   const displayName = typeof machine?.metadata?.displayName === 'string' ? machine.metadata.displayName.trim() : '';
   if (displayName) return displayName;
   const host = typeof machine?.metadata?.host === 'string' ? machine.metadata.host.trim() : '';
@@ -99,8 +101,7 @@ export default function RunsScreen() {
   const requestedMachineId = requestedTarget?.machineId ?? null;
   const requestedRunId = requestedTarget?.runId ?? null;
   const shouldContinue = useMountedShouldContinue();
-  const machineListByServerId = useMachineListByServerId();
-  const machineListStatusByServerId = useMachineListStatusByServerId();
+  const inventory = useAllProfileMachineInventorySnapshots();
   const [showFinished, setShowFinished] = React.useState(requestedRunId !== null);
   const [stoppingRunAddressKey, setStoppingRunAddressKey] = React.useState<string | null>(null);
   const [state, setState] = React.useState<MachineRunsState>({ status: 'idle' });
@@ -111,22 +112,16 @@ export default function RunsScreen() {
   }, [requestedRunId]);
 
   const serverEntries = React.useMemo(() => {
-    const entries = Object.entries(machineListByServerId ?? {})
-      .filter(([serverId, machines]) => (
-        typeof serverId === 'string'
-        && serverId.trim().length > 0
-        && (requestedServerId === null || serverId === requestedServerId)
-        && Array.isArray(machines)
-      ))
-      .map(([serverId, machines]) => [
-        serverId,
-        requestedMachineId === null
-          ? machines ?? []
-          : machines?.filter((machine) => String(machine?.id ?? '').trim() === requestedMachineId) ?? [],
-      ] as const);
+    const entries = inventory.flatMap(snapshot => snapshot.kind === 'resolved'
+      && snapshot.inventoryStatus !== 'signedOut'
+      && (requestedServerId === null || snapshot.serverIdentityId === requestedServerId || snapshot.profileId === requestedServerId)
+      ? [[
+        snapshot.serverIdentityId,
+        filterVisibleMachines(snapshot.machines).filter(machine => requestedMachineId === null || machine.id === requestedMachineId),
+      ] as const] : []);
     entries.sort(([a], [b]) => a.localeCompare(b));
     return entries;
-  }, [machineListByServerId, requestedMachineId, requestedServerId]);
+  }, [inventory, requestedMachineId, requestedServerId]);
 
   const load = React.useCallback(async () => {
     setState({ status: 'loading' });
@@ -136,9 +131,6 @@ export default function RunsScreen() {
     try {
       await Promise.all(
         serverEntries.flatMap(([serverId, machines]) => {
-          const serverStatus = machineListStatusByServerId?.[serverId] ?? 'idle';
-          if (serverStatus === 'signedOut') return [];
-
           return machines.map(async (machine) => {
             const machineId = String(machine?.id ?? '').trim();
             if (!machineId) return;
@@ -156,7 +148,7 @@ export default function RunsScreen() {
     } catch (error) {
       setState({ status: 'error', error: error instanceof Error ? error.message : t('runs.failedToLoad') });
     }
-  }, [machineListStatusByServerId, serverEntries]);
+  }, [serverEntries]);
 
   React.useEffect(() => {
     void load();

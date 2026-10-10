@@ -149,8 +149,9 @@ function AppScopeRightSidebarContent(props: AppScopeRightSidebarProps): React.Re
         selectedDestination: effectiveSelectedDestination,
         tabs,
         projectionPhase,
+        hasEstablishingMembers: props.projectionPhase === undefined && pluginProjection.hasEstablishingMembers === true,
         scope: 'app',
-    }), [effectiveSelectedDestination, projectionPhase, scopeState?.right.activeTabId, tabs]);
+    }), [effectiveSelectedDestination, pluginProjection.hasEstablishingMembers, projectionPhase, props.projectionPhase, scopeState?.right.activeTabId, tabs]);
     const resolvedActiveTabId = tabSelection.kind === 'available' ? tabSelection.tab.id : null;
     const activeTab = tabSelection.kind === 'available' ? tabSelection.tab : null;
     const activePlacement = activeTab && isPluginTab(activeTab) ? activeTab.placement : null;
@@ -288,12 +289,13 @@ export function AppScopeRightSidebarActionRail(props: Readonly<{ scopeId: string
     const pane = useAppPaneScope(props.scopeId);
     const rightPaneHiddenByDetails = usePaneActionRailRightPaneHiddenByDetails();
     const tabs = useAppRightSidebarTabs();
-    const { phase } = useAppShellPluginUiProjection();
+    const { phase, hasEstablishingMembers } = useAppShellPluginUiProjection();
     const selection = resolveRightSidebarTabSelection<string>({
         activeTabId: pane.scopeState?.right.activeTabId,
         selectedDestination: pane.scopeState?.right.selectedDestination ?? null,
         tabs,
         projectionPhase: phase,
+        hasEstablishingMembers,
         scope: 'app',
     });
     const selectTab = useAppRightSidebarTabChooser(props.scopeId, tabs);

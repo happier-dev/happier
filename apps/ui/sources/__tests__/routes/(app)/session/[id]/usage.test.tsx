@@ -24,8 +24,8 @@ installSessionRouteCommonModuleMocks({
     }),
 });
 
-vi.mock('@/components/settings/usage/UsagePanel', () => ({
-    UsagePanel: (props: { sessionId?: string }) => React.createElement('UsagePanel', props),
+vi.mock('@/components/settings/usage/UsageWidgetPage', () => ({
+    UsageWidgetPage: (props: { sessionId?: string }) => React.createElement('UsageWidgetPage', props),
 }));
 
 vi.mock('@/hooks/session/useHydrateSessionForRoute', () => ({
@@ -54,9 +54,9 @@ describe('/session/[id]/usage', () => {
         standardCleanup();
     });
 
-    it('renders the shared UsagePanel scoped to the requested session', async () => {
+    it('renders the shared Usage page scoped to the requested session', async () => {
         const screen = await renderScreen(<Screen />);
-        const panel = screen.findByType('UsagePanel' as any);
+        const panel = screen.findByType('UsageWidgetPage' as any);
         expect(panel.props.sessionId).toBe('session-1');
     });
 

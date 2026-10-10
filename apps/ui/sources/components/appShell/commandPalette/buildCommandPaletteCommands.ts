@@ -220,7 +220,7 @@ export function buildCommandPaletteCommands(
       cmds.push({
         id: 'askHappier.aboutUpdate',
         title: t('bots.guide.aboutUpdate'),
-        subtitle: release.versionLabel,
+        subtitle: t('bots.guide.aboutUpdateSubtitle', { version: release.versionLabel }),
         icon: 'sparkle',
         mark: 'askHappier',
         category: t('commandPalette.commands.actionsCategory'),

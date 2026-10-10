@@ -475,6 +475,20 @@ export function createCurrentUiContextVoiceToolPort(
         );
         if (!isCurrent()) return stale();
 
+        if (resolved.command.kind === 'hostLocal') {
+            const mergedSignal = mergeAbortSignals([resolved.retirementSignal, request.signal]);
+            try {
+                if (!isCurrent() || mergedSignal.signal.aborted) return stale();
+                // The local update may itself republish this mount. Preserve
+                // its known settlement; the callback fences its effect boundary.
+                return await resolved.command.invoke({ signal: mergedSignal.signal });
+            } catch {
+                return isCurrent() ? internalError() : stale();
+            } finally {
+                mergedSignal.dispose();
+            }
+        }
+
         if (resolved.command.kind === 'executeAction') {
             const mergedSignal = mergeAbortSignals([resolved.retirementSignal, request.signal]);
             try {

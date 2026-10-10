@@ -1,5 +1,6 @@
 import * as React from 'react';
-import { Platform, View, Pressable } from 'react-native';
+import { View } from 'react-native';
+import { HappierPressable, HAPPIER_FOCUS_RING_DELEGATED_STYLE } from '@happier-dev/plugin-ui/presentation';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
@@ -17,6 +18,7 @@ import { t } from '@/text';
 import { resolveTabBarTabs } from '@/components/ui/navigation/resolveTabBarTabs';
 import type { TabType } from '@/components/ui/navigation/tabTypes';
 import { Icon } from '@/components/ui/icons/Icon';
+import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 
 export type { TabType };
 
@@ -29,16 +31,6 @@ type MainAppTabBarProps = Readonly<{
      * action.
      */
     trailingAccessory?: React.ReactNode;
-}>;
-
-type WebTabKeyDownEvent = Readonly<{
-    key?: string;
-    nativeEvent?: Readonly<{ key?: string }>;
-    preventDefault?: () => void;
-}>;
-
-type WebTabKeyDownProps = Readonly<{
-    onKeyDown?: (event: WebTabKeyDownEvent) => void;
 }>;
 
 const styles = StyleSheet.create((theme) => ({
@@ -114,16 +106,6 @@ export const MainAppTabBar = React.memo((props: MainAppTabBarProps) => {
             }
         });
     }, [friendsEnabled, inboxEnabled]);
-    const handleTabKeyDown = React.useCallback((tab: TabType, event: WebTabKeyDownEvent) => {
-        if (Platform.OS !== 'web') return;
-        const key = event?.nativeEvent?.key ?? event?.key;
-        // RNW Pressable owns Enter and pointer activation. Its Space handling
-        // only applies to button-like roles, so role=tab needs this supplement.
-        if (key !== ' ' && key !== 'Spacebar') return;
-        event?.preventDefault?.();
-        props.onTabPress(tab);
-    }, [props.onTabPress]);
-
     return (
         <FloatingTabBarSurface bottomInset={insets.bottom} trailingAccessory={props.trailingAccessory}>
             <View
@@ -135,26 +117,22 @@ export const MainAppTabBar = React.memo((props: MainAppTabBarProps) => {
                     const accessibilityLabel = tab.key === 'sessions' && showSessionsAttentionBadge
                         ? t('tabs.sessionsNeedsAttention')
                         : tab.label;
-                    const webKeyDownProps: WebTabKeyDownProps = Platform.OS === 'web'
-                        ? { onKeyDown: (event) => handleTabKeyDown(tab.key, event) }
-                        : {};
-
                     return (
-                        <Pressable
+                        <HappierPressable
                             key={tab.key}
                             testID={`tabbar-tab-${tab.key}`}
-                            style={[styles.tab, {
+                            style={(state) => [styles.tab, {
                                 minWidth: metrics.tabMinWidth,
                                 paddingVertical: metrics.tabPaddingVertical,
                                 paddingHorizontal: metrics.tabPaddingHorizontal,
-                            }]}
+                                borderRadius: metrics.activePillRadius,
+                            }, HAPPIER_FOCUS_RING_DELEGATED_STYLE,
+                            focusRingStyle({ focused: state.focused, color: theme.colors.border.focus })]}
                             onPress={() => props.onTabPress(tab.key)}
                             hitSlop={{ top: 8, bottom: 8 }}
                             accessibilityRole="tab"
                             accessibilityLabel={accessibilityLabel}
-                            accessibilityState={{ selected: isActive }}
-                            aria-selected={isActive}
-                            {...webKeyDownProps}
+                            selected={isActive}
                         >
                             {isActive ? <View pointerEvents="none" style={[styles.activePill, { borderRadius: metrics.activePillRadius }]} /> : null}
                             <View style={styles.tabContent}>
@@ -181,7 +159,7 @@ export const MainAppTabBar = React.memo((props: MainAppTabBarProps) => {
                                     {tab.label}
                                 </Text>
                             ) : null}
-                        </Pressable>
+                        </HappierPressable>
                     );
                 })}
             </View>

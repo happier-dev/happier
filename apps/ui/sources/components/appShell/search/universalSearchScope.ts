@@ -57,6 +57,7 @@ export function buildUniversalSearchScopeKeyFromSeed(scope: UniversalSearchScope
         scope.sessionId,
         scope.machineId,
         scope.rootPath,
+        ...(scope.machineScope ? [scope.machineScope] : []),
     ]);
 }
 
@@ -65,6 +66,8 @@ export function buildUniversalSearchScopeChoices(input: Readonly<{
     profiles: readonly ServerProfile[];
     workspaces: readonly WorkspaceRefV1[];
     sessions: readonly Session[];
+    includeAllMachines?: boolean;
+    allMachinesLabel?: string;
     readMachineTarget(target: Readonly<{
         accountId: string;
         serverId: string;
@@ -82,7 +85,12 @@ export function buildUniversalSearchScopeChoices(input: Readonly<{
             machineId: null,
             rootPath: null,
         } satisfies UniversalSearchScopeSeed;
-        return [{ key: buildUniversalSearchScopeKeyFromSeed(scope), label: resolveHomeDisplayLabel(profile, profile.id), scope }];
+        const home = { key: buildUniversalSearchScopeKeyFromSeed(scope), label: resolveHomeDisplayLabel(profile, profile.id), scope };
+        const allScope = { ...scope, machineScope: 'all' as const };
+        return input.includeAllMachines ? [home, { key: buildUniversalSearchScopeKeyFromSeed(allScope),
+            // With one Home the Home is implied; with several, the choice says whose machines.
+            label: input.profiles.length > 1 || !input.allMachinesLabel ? `${home.label} · ${input.allMachinesLabel ?? home.label}` : input.allMachinesLabel,
+            scope: allScope }] : [home];
     });
     for (const workspace of input.workspaces) {
         const serverId = resolveServerProfileScopeIdForSelectionIdentifier(input.profiles, workspace.serverId);

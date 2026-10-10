@@ -1,6 +1,7 @@
 import type * as React from 'react';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Metro/Expo owns this context, including module evaluation and async mode.
@@ -11,6 +12,7 @@ import { registerWorkspaceRouteContext } from './workspaceRouteContext';
 import { workspaceRouteFiles } from './workspaceRoutes';
 
 const Body: React.ComponentType = () => null;
+const appRoot = fileURLToPath(new URL('../../../app/', import.meta.url));
 
 beforeEach(() => {
     context.load.mockReset();
@@ -18,9 +20,24 @@ beforeEach(() => {
 });
 
 describe('workspace loading through the canonical Expo context', () => {
+    it.each(['overview', 'code', 'changes', 'scripts', 'services', 'context'])('hosts the canonical Project %s page through its Expo body', async (page) => {
+        const key = `projects/[workspaceRefId]/${page}`;
+        context.load.mockImplementation((moduleKey) => {
+            if (moduleKey !== `./(app)/projects/[workspaceRefId]/${page}.tsx`) throw new Error('wrong Project page requested');
+            return { WorkspaceRouteBody: Body };
+        });
+        expect(workspaceRouteBodies[key]).toBeTypeOf('function');
+        await expect(workspaceRouteBodies[key]!()).resolves.toEqual({ default: Body });
+    });
+
+    it('has no unpublished Project alias module producers', () => {
+        for (const alias of ['details', 'files', 'git']) {
+            expect(workspaceRouteFiles[`projects/[workspaceRefId]/${alias}`]).toBeUndefined();
+        }
+    });
     it('uses existing, platform-neutral route identities', () => {
         for (const key of Object.values(workspaceRouteFiles)) {
-            const file = resolve(process.cwd(), 'sources/app', key);
+            const file = resolve(appRoot, key);
             expect(existsSync(file), key).toBe(true);
             // Current workspace routes have no platform-specific siblings. If
             // that changes, use Expo's selected route identity, not this key.
@@ -31,7 +48,7 @@ describe('workspace loading through the canonical Expo context', () => {
     });
 
     it.each(['settings', 'artifacts'])('hosts every %s leaf exported by the registered app tree', (directory) => {
-        const root = resolve(process.cwd(), 'sources/app');
+        const root = appRoot;
         const leaves: string[] = [];
         function visit(directory: string) {
             for (const entry of readdirSync(resolve(root, directory), { withFileTypes: true })) {

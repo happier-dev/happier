@@ -4,6 +4,8 @@ import type { SplitCanvasHostControls } from '../splitCanvas/components/SplitCan
 import { createWorkspaceEmptyTab, type WorkspaceState } from './workspaceState';
 import type { createWorkspaceNavigationAdapter } from './workspaceNavigationAdapter';
 import { createWorkspaceSplit } from './workspaceSplit';
+import type { FileFindSeedHandoff } from '../panes/fileFindSeedHandoff';
+import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 
 export type WorkspaceActionOutcome = Readonly<{ ok: true }> | WorkspaceTabsListOutput | WorkspaceClosedTabsListOutput
     | Readonly<{ ok: false; errorCode: string; error: string }>;
@@ -41,6 +43,7 @@ export function createWorkspaceActionAdapter(input: Readonly<{
     readCanvas: () => SplitCanvasHostControls | null;
     createId: () => string;
     phone?: boolean;
+    chatFind?: Readonly<{ handoff: FileFindSeedHandoff; resolveAuthority(serverId: string): ServerAccountScopeLifetime | null }>;
 }>) {
     return (actionId: WorkspaceActionId, parameters: unknown): WorkspaceActionOutcome => {
         const parsed = WORKSPACE_ACTION_INPUT_SCHEMAS[actionId].safeParse(parameters);
@@ -67,7 +70,6 @@ export function createWorkspaceActionAdapter(input: Readonly<{
         const groupId = requestedGroupId ?? source?.id ?? state.focusedGroupId;
         if (tabId && !source) return workspaceActionFailure('workspace_tab_not_found');
         if ('groupId' in data && data.groupId && !state.groups[data.groupId]) return workspaceActionFailure('workspace_group_not_found');
-        if (parsedActionId === 'workspace.split' && tabId && requestedGroupId && source?.id !== requestedGroupId) return workspaceActionFailure('workspace_group_mismatch');
         switch (parsedActionId) {
             case 'workspace.tabs.list': return projectWorkspaceTabsList(state);
             case 'workspace.tabs.open':
@@ -82,13 +84,28 @@ export function createWorkspaceActionAdapter(input: Readonly<{
                     if (direction && !measurement && !alreadyOpen) {
                         return workspaceActionFailure('workspace_layout_unmeasured');
                     }
-                    if (!input.navigation.openHref(data.href, {
-                        ...(tabId ? { tabId } : {}),
-                        ...('groupId' in data && data.groupId ? { groupId: data.groupId } : {}),
-                        ...('beforeTabId' in data ? { beforeTabId: data.beforeTabId } : {}),
-                        mode, reuseExisting,
-                        ...(measurement ? { availableSizePx: measurement.availableSizePx, minimumFirstSizePx: measurement.minimumExistingSizePx } : {}),
-                    })) return workspaceActionFailure('workspace_destination_unavailable');
+                    let cancelFind: (() => void) | undefined;
+                    if (data.find) {
+                        const target = input.navigation.resolveOpenTarget(data.href);
+                        const serverId = target?.params.serverId;
+                        const authority = serverId ? input.chatFind?.resolveAuthority(serverId) : null;
+                        if (target?.kind !== 'session' || !target.params.id || !input.chatFind || !authority?.isCurrent()
+                            || (target.params.accountId && target.params.accountId !== authority.scope.accountId)) {
+                            return workspaceActionFailure('workspace_find_unavailable');
+                        }
+                        cancelFind = input.chatFind.handoff.stageChat({ sessionId: target.params.id,
+                            serverId: authority.scope.serverId, accountId: authority.scope.accountId }, data.find, authority);
+                        if (!authority.isCurrent()) { cancelFind(); return workspaceActionFailure('workspace_find_unavailable'); }
+                    }
+                    try {
+                        if (!input.navigation.openHref(data.href, {
+                            ...(tabId ? { tabId } : {}),
+                            ...('groupId' in data && data.groupId ? { groupId: data.groupId } : {}),
+                            ...('beforeTabId' in data ? { beforeTabId: data.beforeTabId } : {}),
+                            mode, reuseExisting,
+                            ...(measurement ? { availableSizePx: measurement.availableSizePx, minimumFirstSizePx: measurement.minimumExistingSizePx } : {}),
+                        })) { cancelFind?.(); return workspaceActionFailure('workspace_destination_unavailable'); }
+                    } catch (error) { cancelFind?.(); throw error; }
                 } else {
                     if (tabId) return workspaceActionFailure('invalid_parameters');
                     input.navigation.dispatch({ type: 'openTab', groupId, tab: createWorkspaceEmptyTab(input.createId()),

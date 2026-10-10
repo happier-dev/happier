@@ -12,6 +12,7 @@ import { AppPaneProvider, useAppPaneContext } from '@/components/appShell/panes/
 import { buildDetailsWorkspaceStateView } from '@/components/appShell/panes/details/workspace/detailsWorkspaceSelectors';
 import { SessionCockpitSurfaceNavigationProvider } from '@/components/workspaceCockpit/session/SessionCockpitSurfaceNavigation';
 import { useReviewComposerHandoff } from '@/components/sessions/reviews/comments/useReviewComposerHandoff';
+import { ESCAPE_LAYER_PRIORITIES, registerEscapeLayer } from './escape';
 
 const testState = vi.hoisted(() => ({
     platformOS: 'web',
@@ -82,6 +83,40 @@ vi.mock('@/components/sessions/agentInput/subscribeToIosHardwareShiftEnter', () 
 }));
 
 describe('KeyboardShortcutProvider', () => {
+    it('lets a modal own Escape before closing an open Find surface', async () => {
+        let opened = true;
+        const closeFind = vi.fn(() => { opened = false; });
+        const controller: FindController = {
+            query: '', options: { matchCase: false, regex: false }, status: { kind: 'idle' },
+            capabilities: { regex: true, stop: false },
+            setQuery() {}, setOptions() {}, step() {}, stop() {}, close: closeFind,
+        };
+        function Surface() {
+            useFindSurfaceRegistration({
+                surfaceId: 'file:leaf', containsFocus: () => true, open: () => { opened = true; },
+                isOpen: () => opened, isInputFocused: () => true, controller,
+            });
+            return <Child />;
+        }
+        await renderScreen(<KeyboardShortcutProvider handlers={{}}><Surface /></KeyboardShortcutProvider>);
+        const closeModal = vi.fn();
+        const unregister = registerEscapeLayer({
+            priority: ESCAPE_LAYER_PRIORITIES.modal, allowEditableTarget: true, onEscape: closeModal,
+        });
+        const pressEscape = () => {
+            const event = createKeyboardEvent({ key: 'Escape', code: 'Escape' });
+            event.preventDefault = () => { Object.defineProperty(event, 'defaultPrevented', { value: true }); };
+            window.dispatchEvent(event);
+        };
+        try {
+            await act(async () => { pressEscape(); });
+            expect(closeModal).toHaveBeenCalledTimes(1);
+            expect(closeFind).not.toHaveBeenCalled();
+        } finally { unregister(); }
+        await act(async () => { pressEscape(); });
+        expect(closeFind).toHaveBeenCalledTimes(1);
+    });
+
     it('routes native keys to the focused input before composer shortcuts and releases them on blur', async () => {
         testState.platformOS = 'ios';
         const insert = vi.fn();
@@ -155,13 +190,14 @@ describe('KeyboardShortcutProvider', () => {
         const controller: FindController = { query: '', options: { matchCase: false, regex: false }, status: { kind: 'idle' }, capabilities: { regex: true, stop: false },
             setQuery() {}, setOptions() {}, step(direction) { steps += direction; }, stop() {}, close() { opened = false; focused = false; } };
         function Surface() {
-            useFindSurfaceRegistration({ surfaceId: 'terminal:leaf', containsFocus: () => true, open: () => { opened = true; focused = true; }, isOpen: () => opened, isInputFocused: () => focused, controller });
+            const [, refresh] = React.useReducer((value: number) => value + 1, 0);
+            useFindSurfaceRegistration({ surfaceId: 'terminal:leaf', containsFocus: () => true, open: () => { opened = true; focused = true; refresh(); }, isOpen: () => opened, isInputFocused: () => focused, controller });
             return <Child />;
         }
         await renderScreen(<KeyboardShortcutProvider handlers={{}}><Surface /></KeyboardShortcutProvider>);
         expect(window.addEventListener).toHaveBeenCalledWith('keydown', expect.any(Function), true);
         const first = createKeyboardEvent({ key: 'f', code: 'KeyF', metaKey: true });
-        window.dispatchEvent(first);
+        await act(async () => { window.dispatchEvent(first); });
         expect(opened).toBe(true);
         expect(first.preventDefault).toHaveBeenCalledOnce();
         expect(first.stopImmediatePropagation).toHaveBeenCalledOnce();

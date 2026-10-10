@@ -1,3 +1,4 @@
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import * as React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
@@ -33,7 +34,7 @@ function Wrapper({ children }: React.PropsWithChildren) {
     return <runtime.Wrapper><AppShellPluginUiProjectionValueProvider value={{
         pluginUiProjection: null, pluginBrowserProjection: null, phase: 'current',
         interactionEnabled: true, machineId: null, serverId: runtime.serverId, platform: 'web',
-        clientExecutableActivation: { status: 'ready' }, reloadClientExecutables: () => {},
+        accountLifetime: captureActiveServerAccountScopeLifetime(), clientExecutableActivation: { status: 'ready' }, reloadClientExecutables: () => {},
         reloadConnectedAccountProjection: () => {},
     }}>{children}</AppShellPluginUiProjectionValueProvider></runtime.Wrapper>;
 }

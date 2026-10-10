@@ -433,7 +433,7 @@ function useAccountPopoverHomeRows(props: React.ComponentProps<typeof AccountPop
         const labelFor = (target: ConnectionTarget) => {
             if (target.kind !== 'server') return getServerSelectionTargetName(target);
             const profile = serverById.get(target.serverId);
-            return profile ? resolveHomeDisplayLabel(profile, profile.id) : target.name;
+            return resolveHomeDisplayLabel(profile, target.serverId);
         };
         for (const target of props.targets) {
             const key = labelFor(target).trim().toLocaleLowerCase();

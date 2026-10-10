@@ -2,7 +2,6 @@ import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
-import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installNavigationShellCommonModuleMocks } from './navigationShellTestHelpers';
@@ -10,9 +9,8 @@ import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/s
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { createInboxItemRoute } from '@/components/inbox/inboxItemFocus';
-import { storage } from '@/sync/domains/state/storageStore';
 import { getActiveServerId, listServerProfiles, removeServerProfile, setActiveServerId } from '@/sync/domains/server/serverProfiles';
-import { standardCleanup } from '@/dev/testkit';
+import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 
 installDisconnectedServerSocketBoundary();
 
@@ -25,7 +23,6 @@ const readAnswers = new Map<string, { status?: number; body: unknown; respondAft
 let homeA = '';
 let homeB = '';
 const readStatePath = '/v2/sessions/session-x/read-state';
-const initialStorageState = storage.getState();
 const initialServerId = getActiveServerId();
 const initialProfileIds = new Set(listServerProfiles().map(profile => profile.id));
 
@@ -116,9 +113,15 @@ installNavigationShellCommonModuleMocks({
     storage: async (importOriginal) => importOriginal(),
 });
 
+// Configure the shared boundaries before these imports can initialize their store graph.
+const { storage } = await import('@/sync/domains/state/storageStore');
+const { renderScreen } = await import('@/dev/testkit/render/renderScreen');
+const initialStorageState = storage.getState();
+
 vi.mock('expo-image', () => ({ Image: 'Image' }));
 vi.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons', Octicons: 'Octicons' }));
-vi.mock('@/track', () => ({ trackFriendsProfileView: vi.fn() }));
+// Analytics leaves the process; the real module retains every Sync lifecycle export.
+vi.mock('@/track/tracking', () => ({ tracking: null }));
 vi.mock('@/components/ui/text/Text', () => ({ Text: 'Text' }));
 vi.mock('@/components/ui/icons/Icon', async (importOriginal) => ({
     ...await importOriginal<typeof import('@/components/ui/icons/Icon')>(),
@@ -197,6 +200,9 @@ async function renderUpdates(InboxView: React.ComponentType) {
     await press(updatesTab);
     return tree;
 }
+
+// Load the graph outside hook deadlines; per-test setup below still restores its bridge.
+await loadSyncSingletonForTests();
 
 describe('InboxView mark as read', () => {
     beforeEach(async () => {

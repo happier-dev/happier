@@ -44,6 +44,7 @@ function createFakeHistory(): Pick<History, 'length' | 'state' | 'pushState' | '
 
 describe('useDesktopSidebarHistoryNavigationAvailability', () => {
     let originalHistoryDescriptor: PropertyDescriptor | undefined;
+    let originalWindowDescriptor: PropertyDescriptor | undefined;
     let originalAddEventListenerDescriptor: PropertyDescriptor | undefined;
     let originalRemoveEventListenerDescriptor: PropertyDescriptor | undefined;
     let originalDispatchEventDescriptor: PropertyDescriptor | undefined;
@@ -51,6 +52,7 @@ describe('useDesktopSidebarHistoryNavigationAvailability', () => {
 
     beforeEach(() => {
         originalHistoryDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'history');
+        originalWindowDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'window');
         originalAddEventListenerDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'addEventListener');
         originalRemoveEventListenerDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'removeEventListener');
         originalDispatchEventDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'dispatchEvent');
@@ -72,11 +74,21 @@ describe('useDesktopSidebarHistoryNavigationAvailability', () => {
             configurable: true,
             value: eventTarget.dispatchEvent.bind(eventTarget),
         });
+        Object.defineProperty(globalThis, 'window', {
+            configurable: true,
+            value: {
+                history: globalThis.history,
+                addEventListener: eventTarget.addEventListener.bind(eventTarget),
+                removeEventListener: eventTarget.removeEventListener.bind(eventTarget),
+                dispatchEvent: eventTarget.dispatchEvent.bind(eventTarget),
+            },
+        });
     });
 
     afterEach(() => {
         for (const [key, descriptor] of [
             ['history', originalHistoryDescriptor],
+            ['window', originalWindowDescriptor],
             ['addEventListener', originalAddEventListenerDescriptor],
             ['removeEventListener', originalRemoveEventListenerDescriptor],
             ['dispatchEvent', originalDispatchEventDescriptor],

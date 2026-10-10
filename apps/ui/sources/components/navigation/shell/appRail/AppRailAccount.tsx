@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { Platform, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
+import { HappierPressable, useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 
 import {
     ConnectionStatusControl,
@@ -71,6 +71,7 @@ const AppRailAccountTrigger = React.memo(function AppRailAccountTrigger(props: R
 }>) {
     const styles = stylesheet;
     const { theme } = useUnistyles();
+    const materialColor = useHappierMaterialColorResolver();
     const { state } = props;
     const profile = useProfile();
     const identity = React.useMemo(
@@ -96,7 +97,7 @@ const AppRailAccountTrigger = React.memo(function AppRailAccountTrigger(props: R
                 style={(pressState) => [
                     styles.trigger,
                     pressState.hovered || state.open ? styles.triggerActive : null,
-                    pressState.pressed ? styles.triggerPressed : null,
+                    pressState.pressed ? [styles.triggerPressed, { backgroundColor: materialColor(theme.colors.surface.pressed, theme.colors.surface.pressedOverlay) }] : null,
                     focusRingStyle({ focused: pressState.focused, color: theme.colors.border.focus }),
                 ]}
             >
@@ -111,7 +112,7 @@ const AppRailAccountTrigger = React.memo(function AppRailAccountTrigger(props: R
                     <Icon name="user-circle" size={ICON_SIZE.lg} color={theme.colors.text.secondary} />
                 )}
                 {/* The Home's state on the avatar's corner; a Home that needs the person shows a warning mark. */}
-                <View style={styles.status}>
+                <View style={[styles.status, { backgroundColor: materialColor(theme.colors.background.canvas, 'transparent') }]}>
                     {state.needsAttention ? (
                         <Icon name="warning" size={10} color={state.statusColor} />
                     ) : (

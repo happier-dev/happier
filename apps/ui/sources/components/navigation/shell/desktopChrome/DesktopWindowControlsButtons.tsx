@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { Pressable, View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
+import { useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 import { desktopSidebarChromeStyles } from './desktopSidebarChromeStyles';
 import { Icon } from '@/components/ui/icons/Icon';
 import { t } from '@/text';
@@ -16,6 +17,8 @@ export type DesktopWindowControlsButtonsProps = Readonly<{
 export const DesktopWindowControlsButtons = React.memo((props: DesktopWindowControlsButtonsProps) => {
     const styles = desktopSidebarChromeStyles;
     const { theme } = useUnistyles();
+    const materialColor = useHappierMaterialColorResolver();
+    const buttonStyle = [styles.windowControlsButton, { backgroundColor: materialColor(theme.colors.surface.base) }];
     const layoutStyle = props.layout === 'column' ? styles.windowControlsButtonsColumn : styles.windowControlsButtons;
 
     return (
@@ -25,7 +28,7 @@ export const DesktopWindowControlsButtons = React.memo((props: DesktopWindowCont
                 onPress={props.onMinimize}
                 accessibilityRole="button"
                 accessibilityLabel={t('common.minimizeWindow')}
-                style={styles.windowControlsButton}
+                style={buttonStyle}
             >
                 <Icon name="minus" size={16} color={theme.colors.chrome.header.foreground} />
             </Pressable>
@@ -34,7 +37,7 @@ export const DesktopWindowControlsButtons = React.memo((props: DesktopWindowCont
                 onPress={props.onToggleMaximize}
                 accessibilityRole="button"
                 accessibilityLabel={t(props.isMaximized ? 'common.restoreWindow' : 'common.maximizeWindow')}
-                style={styles.windowControlsButton}
+                style={buttonStyle}
             >
                 <Icon
                     name={props.isMaximized ? 'arrows-in' : 'arrows-out'}
@@ -47,7 +50,7 @@ export const DesktopWindowControlsButtons = React.memo((props: DesktopWindowCont
                 onPress={props.onClose}
                 accessibilityRole="button"
                 accessibilityLabel={t('common.closeWindow')}
-                style={styles.windowControlsButton}
+                style={buttonStyle}
             >
                 <Icon name="x" size={16} color={theme.colors.chrome.header.foreground} />
             </Pressable>

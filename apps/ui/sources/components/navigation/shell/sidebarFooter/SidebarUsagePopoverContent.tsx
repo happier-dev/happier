@@ -40,7 +40,10 @@ import type { ConnectedServiceId } from '@happier-dev/protocol/connect/connected
 import type { ConnectedServiceQuotaRecoveryCreditsV1 } from '@happier-dev/protocol/connect/connected-service-schemas';
 import type { ProviderAccountSubscriptionV1 } from '@happier-dev/protocol/connect/accountSubscription';
 import { t } from '@/text';
-import { presentConnectedAccountName } from '@/sync/domains/connectedServices/qualifiedConnectedAccountTargetPresentation';
+import {
+    presentConnectedAccountNames,
+    type ConnectedAccountNamePresentation,
+} from '@/sync/domains/connectedServices/qualifiedConnectedAccountTargetPresentation';
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
@@ -248,6 +251,19 @@ export function SidebarUsagePopoverView(props: Readonly<{
     const refreshError = refreshKeys.map((key) => refresh?.errorsByKey[key]).find((error) => error != null);
     const shownAsOf = scoped ? sessionAccount?.account.fetchedAt ?? null : usage.asOf;
 
+    // Every account shown together is named at once, so two that read as their service's account are
+    // told apart by the one naming owner instead of each row naming itself.
+    const names = React.useMemo(() => presentConnectedAccountNames([
+        ...accounts.map(({ provider, account }) => ({
+            key: account.key, serviceTitle: provider.serviceLabel, displayName: account.label,
+            email: account.email, accountId: account.accountId, presentIdentity: privacy.present,
+        })),
+        ...facts.accountsNeedingSignIn.map((account) => ({
+            key: account.key, serviceTitle: account.serviceLabel, displayName: account.accountLabel,
+            email: account.accountEmail, accountId: account.accountId, presentIdentity: privacy.present,
+        })),
+    ]), [accounts, facts.accountsNeedingSignIn, privacy.present]);
+
     const renderAccount = (entry: (typeof accounts)[number]) => (
         <UsageAccountGroup
             key={entry.account.key}
@@ -255,7 +271,7 @@ export function SidebarUsagePopoverView(props: Readonly<{
             legacyServiceId={entry.provider.legacyServiceId}
             account={entry.account}
             facts={facts.accounts?.[entry.account.key] ?? null}
-            present={privacy.present}
+            name={names.get(entry.account.key)!}
             now={now}
         />
     );
@@ -263,7 +279,7 @@ export function SidebarUsagePopoverView(props: Readonly<{
         <SignedOutAccount
             key={account.key}
             account={account}
-            present={privacy.present}
+            name={names.get(account.key)!}
             onSignInAgain={props.onSignInAgain}
         />
     );
@@ -375,24 +391,10 @@ function withDividers(items: readonly React.ReactElement[]): React.ReactNode {
         : [<View key={`divider:${String(item.key)}`} style={styles.divider} />, item]));
 }
 
-/**
- * One account's head line through the one naming rule (`presentConnectedAccountName`) and the one privacy
- * presenter: "Service · Name" with its email (or a short provider id hint) on the right, or the service's
- * account when it has neither a name nor an email. Never a raw account id.
- */
-function presentAccountHeader(
-    present: ConnectedAccountIdentityPresenter,
-    input: Readonly<{ serviceLabel: string; label: string | null; email: string | null; accountId: string | null }>,
-): Readonly<{ title: string; email: string | null }> {
-    const name = presentConnectedAccountName({
-        serviceTitle: input.serviceLabel,
-        displayName: input.label,
-        email: input.email,
-        accountId: input.accountId,
-        presentIdentity: present,
-    });
+/** An account's head line: "Service · Name" with its email (or a short provider id hint) on the right. */
+function accountHeaderLine(serviceLabel: string, name: ConnectedAccountNamePresentation): Readonly<{ title: string; email: string | null }> {
     return {
-        title: name.serviceFallback ? name.primaryLabel : `${input.serviceLabel} · ${name.primaryLabel}`,
+        title: name.serviceFallback ? name.primaryLabel : `${serviceLabel} · ${name.primaryLabel}`,
         email: name.identityLabel,
     };
 }
@@ -421,11 +423,11 @@ const UsageAccountGroup = React.memo(function UsageAccountGroup(props: Readonly<
     legacyServiceId: string | null;
     account: UsageAccountRow;
     facts: UsagePopoverAccountFacts | null;
-    present: ConnectedAccountIdentityPresenter;
+    name: ConnectedAccountNamePresentation;
     now: number;
 }>) {
     const { account } = props;
-    const identity = presentAccountHeader(props.present, { ...account, serviceLabel: props.serviceLabel });
+    const identity = accountHeaderLine(props.serviceLabel, props.name);
     const stateLabel = account.windows.length > 0
         ? null
         : account.state === 'loading' ? t('common.loading') : t('common.unavailable');
@@ -503,17 +505,12 @@ function OwnSignInGroup(props: Readonly<{ group: NonNullable<UsagePopoverSession
 
 const SignedOutAccount = React.memo(function SignedOutAccount(props: Readonly<{
     account: ConnectedServiceAccountNeedingSignIn;
-    present: ConnectedAccountIdentityPresenter;
+    name: ConnectedAccountNamePresentation;
     onSignInAgain?: (account: ConnectedServiceAccountNeedingSignIn) => void;
 }>) {
     const { theme } = useUnistyles();
     const { account } = props;
-    const identity = presentAccountHeader(props.present, {
-        serviceLabel: account.serviceLabel,
-        label: account.accountLabel,
-        email: account.accountEmail,
-        accountId: account.accountId,
-    });
+    const identity = accountHeaderLine(account.serviceLabel, props.name);
     return (
         <View testID={`sidebar-usage-signed-out-${account.key}`} style={styles.group}>
             <AccountHeader

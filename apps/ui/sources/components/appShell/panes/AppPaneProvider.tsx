@@ -56,6 +56,9 @@ type AppPaneContextValue = Readonly<{
 }>;
 
 const AppPaneContext = createContext<AppPaneContextValue | null>(null);
+type AppPaneFindSeedContextValue = Pick<AppPaneContextValue, 'fileFindSeedHandoff' | 'fileFindSeedAccountBindings'>;
+// Launch consumers need credential/handoff changes, not every pane reducer tick.
+const AppPaneFindSeedContext = createContext<AppPaneFindSeedContextValue | null>(null);
 
 type PersistedPaneSlot = Readonly<{
     isOpen: boolean;
@@ -342,7 +345,11 @@ export const AppPaneProvider = React.memo((props: Readonly<{ children: React.Rea
         fileFindSeedAccountBindings,
     }), [driverRegistryVersion, dispatch, fileFindSeedHandoff, fileFindSeedAccountBindings, getDriver, overlayFocusReturnOwner, registerDriver, qualifiedState]);
 
-    return <AppPaneContext.Provider value={value}>{props.children}</AppPaneContext.Provider>;
+    const findSeedValue = useMemo(() => ({ fileFindSeedHandoff, fileFindSeedAccountBindings }),
+        [fileFindSeedHandoff, fileFindSeedAccountBindings]);
+    return <AppPaneContext.Provider value={value}><AppPaneFindSeedContext.Provider value={findSeedValue}>
+        {props.children}
+    </AppPaneFindSeedContext.Provider></AppPaneContext.Provider>;
 });
 
 export function useAppPaneContext(): AppPaneContextValue {
@@ -353,4 +360,8 @@ export function useAppPaneContext(): AppPaneContextValue {
 
 export function useOptionalAppPaneContext(): AppPaneContextValue | null {
     return useContext(AppPaneContext);
+}
+
+export function useOptionalAppPaneFindSeedContext(): AppPaneFindSeedContextValue | null {
+    return useContext(AppPaneFindSeedContext);
 }

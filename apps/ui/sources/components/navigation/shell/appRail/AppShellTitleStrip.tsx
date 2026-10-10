@@ -67,15 +67,14 @@ export const AppShellTitleStrip = React.memo(function AppShellTitleStrip(props: 
         if (result !== true) fireAndForget(result, { tag: 'AppShellTitleStrip.home' });
     }, [props.navigation, router]);
     const back = React.useCallback(() => {
-        if (props.navigation) { props.navigation.back(); return; }
-        const result = runGuardedNavigation(() => router.back());
+        const result = runGuardedNavigation(() => props.navigation ? props.navigation.back() : router.back(), 'history');
         if (result !== true) fireAndForget(result, { tag: 'AppShellTitleStrip.back' });
     }, [props.navigation, router]);
     const forward = React.useCallback(() => {
-        if (props.navigation) { props.navigation.forward(); return; }
         const result = runGuardedNavigation(() => {
+            if (props.navigation) { props.navigation.forward(); return; }
             (globalThis as { history?: { forward?: () => void } }).history?.forward?.();
-        });
+        }, 'history');
         if (result !== true) fireAndForget(result, { tag: 'AppShellTitleStrip.forward' });
     }, [props.navigation]);
     const [clusterEndPx, setClusterEndPx] = React.useState(0);

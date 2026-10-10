@@ -5,7 +5,7 @@ import { Platform, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useRouter } from 'expo-router';
 
-import type { MemorySearchHitV1 } from '@happier-dev/protocol';
+import { isMemoryDocumentSearchHitV1, isMemoryExternalTranscriptSearchHitV1, type MemorySearchCorpusV1, type MemorySearchHitV1 } from '@happier-dev/protocol/memory/memorySearch';
 import { normalizeMemorySearchSessionId } from '@/sync/domains/memory/applyMemorySearchSessionEligibility';
 
 import { useAppShellPluginUiProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
@@ -36,7 +36,7 @@ import {
 import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
 import { areServerAccountScopesEqual, createServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { ensureSessionMetadataInventoryForServerAccountScope } from '@/sync/domains/session/fetchSessionMetadataInventoryForServerAccountScope';
-import { storage, useSetting } from '@/sync/domains/state/storage';
+import { useWorkspaceRefs, storage } from '@/sync/domains/state/storage';
 import {
     captureActiveServerAccountScopeLifetime,
     type ActiveServerAccountScopeLifetime,
@@ -45,15 +45,17 @@ import {
     useServerCredentialAccountScopes,
     type ServerCredentialAccountScopeBinding,
 } from '@/sync/domains/scope/useServerCredentialAccountScopes';
-import { searchDaemonMemory } from '@/sync/domains/memory/searchDaemonMemory';
-import { searchHomeMemory } from '@/sync/domains/memory/searchHomeMemory';
+import { searchConversationsForAccount } from '@/sync/ops/searchConversations';
+import { resolveAgentCatalogTitle } from '@/agents/backendCatalog/agentCatalogProjection';
+import { describeConversationSearchCoverage } from './conversationSearchCoverage';
+import { openConversationSearchResult } from '@/sync/ops/openConversationSearchResult';
+import { useConversationSearch } from '@/sync/domains/search/useConversationSearch';
+import { hasConversationSearchScanFallback } from '@/sync/domains/search/searchConversations';
 import {
     useMemorySearchProvider,
 } from '@/sync/domains/memory/useMemorySearchProvider';
 import {
     captureMemorySearchSessionReadAuthority,
-    authorizeMemorySearchResult,
-    readMemorySearchSessionHydrationConcurrencyLimit,
     readMemorySearchSessionForServerScope,
 } from '@/sync/domains/memory/hydrateMemorySearchSessionTargets';
 import { searchWorkspaceFiles } from '@/sync/domains/workspaces/files/workspaceFileSearch';
@@ -88,6 +90,7 @@ import { activateUniversalSearchResult } from './activateUniversalSearchResult';
 import {
     buildUniversalSearchSections,
     EXTERNAL_CONVERSATION_SEARCH_OPTION_ID,
+    ALL_FILE_MATCHES_OPTION_ID,
     findCommandForOptionId,
     type UniversalSearchProjectEntity,
     type UniversalSearchSessionEntity,
@@ -130,6 +133,7 @@ const styles = StyleSheet.create(() => ({
 }));
 
 type PendingActivation = () => Promise<unknown>;
+const MEMORY_SEARCH_CORPORA: readonly MemorySearchCorpusV1[] = ['documents', 'sessions', 'external_transcripts'];
 
 function useUniversalSearchDynamicCache(
     scope: UniversalSearchScopeSeed,
@@ -256,7 +260,7 @@ export function UniversalSearchController(props: UniversalSearchControllerProps)
     }, [scope.accountId, scope.serverId, selectedCredentialBinding]);
     const memoryProvider = useMemorySearchProvider(scope.serverId
         ? { kind: 'exact', serverId: scope.serverId, machineId: scope.machineId }
-        : { kind: 'none' });
+        : { kind: 'none' }, { corpora: MEMORY_SEARCH_CORPORA, conversationSearch: true });
     const homeCredentialRevision = selectedCredentialBinding?.revision ?? -1;
     const pluginAccount = useCurrentPluginAccountLifetime();
     const dynamicSectionCache = useUniversalSearchDynamicCache(
@@ -272,7 +276,7 @@ export function UniversalSearchController(props: UniversalSearchControllerProps)
     const settingsCatalog = useResolvedSettingsPageCatalog();
     const sessions = useAllSessions();
     const sessionListRowsByServerId = useSessionListRowsByServerId();
-    const workspaceRefs = useSetting('workspaceRefsV1');
+    const workspaceRefs = useWorkspaceRefs();
     const canonicalScopeServerId = scope.serverId
         ? resolveServerProfileScopeIdForIdentifier(scope.serverId)
         : null;
@@ -425,110 +429,73 @@ export function UniversalSearchController(props: UniversalSearchControllerProps)
         }));
     }, [settingsCatalog, settingsPages]);
 
+    const conversationScopeKey = buildUniversalSearchScopeKeyFromSeed(scope);
     const transcript = React.useMemo<UniversalSearchSource>(() => {
-        if (!scope.serverId) return { status: 'absent' };
-        const unavailableReason = memoryProvider.unavailableReason;
-        if (!selectedCredentialIsCurrent || !memoryProvider.provider) {
-            return {
-                status: 'unavailable',
-                resolverKey: `transcript:${scope.accountId ?? ''}:${scope.serverId}:${homeCredentialRevision}:${unavailableReason ?? 'disabled'}`,
-                hint: selectedCredentialIsCurrent
-                    ? transcriptSearchUnavailableHint(unavailableReason)
-                    : t('memorySearchSettings.status.unavailableLight'),
-            };
+        if (!canonicalScopeServerId || !scope.accountId) return { status: 'absent' };
+        if (!selectedCredentialIsCurrent || !memoryProvider.queryAvailable || !memoryProvider.conversation) {
+            return { status: 'unavailable', resolverKey: `transcript:${conversationScopeKey}:${homeCredentialRevision}`,
+                hint: transcriptSearchUnavailableHint(memoryProvider.unavailableReason) };
         }
-        const resolverKey = memoryProvider.provider === 'home'
-            ? `home:${scope.accountId ?? ''}:${memoryProvider.homeServerId ?? ''}:${memoryProvider.homeReadiness ?? 'unknown'}:${homeCredentialRevision}`
-            : `daemon:${scope.accountId ?? ''}:${memoryProvider.daemonTarget?.serverId ?? ''}:${memoryProvider.daemonTarget?.machineId ?? ''}`;
-        if (!memoryProvider.queryAvailable) {
-            return {
-                status: 'unavailable',
-                resolverKey,
-                hint: transcriptSearchUnavailableHint(unavailableReason),
-            };
-        }
+        const providers = memoryProvider.conversation;
         return {
             status: 'ready',
-            resolverKey,
-            ...(memoryProvider.provider === 'daemon'
-                ? { resultHint: t('memorySearchSettings.budgets.groupFooter') }
-                : {}),
+            resolverKey: `conversations:${conversationScopeKey}:${homeCredentialRevision}:${JSON.stringify(providers)}`,
             resolve: async (value, signal) => {
-                const serverId = memoryProvider.provider === 'home'
-                    ? memoryProvider.homeServerId
-                    : memoryProvider.daemonTarget?.serverId ?? null;
-                const accountLifetime = selectedCredentialBinding;
-                if (
-                    !serverId
-                    || !accountLifetime
-                    || !accountLifetime.isCurrent()
-                    || accountLifetime.accountId !== scope.accountId
-                ) return [];
-                const requestController = new AbortController();
-                const abortRequest = () => requestController.abort();
-                if (signal.aborted) abortRequest();
-                else signal.addEventListener('abort', abortRequest, { once: true });
-                const retirement = accountLifetime.onRetire(abortRequest);
-                let authority: Awaited<ReturnType<typeof captureMemorySearchSessionReadAuthority>> | null = null;
-                try {
-                    authority = await captureMemorySearchSessionReadAuthority({
-                        serverId,
-                        accountId: accountLifetime.accountId,
-                    });
-                    if (requestController.signal.aborted || !accountLifetime.isCurrent()) return [];
-                    const response = memoryProvider.provider === 'home'
-                        ? await searchHomeMemory({ serverId: memoryProvider.homeServerId!, accountId: accountLifetime.accountId, query: value, scope: { type: 'global' }, mode: 'auto', maxResults: 20, signal: requestController.signal })
-                        : await searchDaemonMemory({ serverId: memoryProvider.daemonTarget!.serverId, accountId: accountLifetime.accountId, machineId: memoryProvider.daemonTarget!.machineId, query: value, scope: { type: 'global' }, mode: 'auto', maxResults: 20, signal: requestController.signal });
-                    if (!response.ok) throw new Error(response.error);
-                    const normalizedHits = response.hits.flatMap<MemorySearchHitV1>((hit) => {
-                        const sessionId = normalizeMemorySearchSessionId(hit.sessionId);
-                        return sessionId ? [{ ...hit, sessionId }] : [];
-                    });
-                    const authorizedResponse = await authorizeMemorySearchResult({
-                        result: { ...response, hits: normalizedHits },
-                        serverId,
-                        accountId: accountLifetime.accountId,
-                        authority,
-                        accountLifetime,
-                        readSessionForServerScope: readMemorySearchSessionForServerScope,
-                        concurrencyLimit: readMemorySearchSessionHydrationConcurrencyLimit(),
-                        signal: requestController.signal,
-                    });
-                    if (
-                        requestController.signal.aborted
-                        || !accountLifetime.isCurrent()
-                        || !authorizedResponse.ok
-                    ) return [];
-                    return authorizedResponse.hits.map((hit) => memoryHitResult(
-                            hit,
-                            serverId,
-                            accountLifetime.accountId,
-                            (() => {
-                                const freshRow = readSessionListRowsForServerId(
-                                    storage.getState().sessionListRowsByServerId,
-                                    serverId,
-                                )?.[hit.sessionId];
-                                const freshTitle = freshRow ? getSessionName(freshRow, serverId).trim() : '';
-                                const capturedTitle = sessionNameByTarget.get(buildUniversalSearchSessionTitleKey(
-                                    accountLifetime.accountId,
-                                    serverId,
-                                    hit.sessionId,
-                                ))?.trim() ?? '';
-                                const title = freshTitle || capturedTitle;
-                                return title && title !== hit.summary
-                                    ? title
-                                    : t('sessionsList.sessionFallbackLabel');
-                            })(),
-                        ));
-                } finally {
-                    retirement.dispose();
-                    signal.removeEventListener('abort', abortRequest);
-                    await authority?.release();
-                }
+                const lifetime = selectedCredentialBinding;
+                if (!lifetime?.isCurrent() || lifetime.accountId !== scope.accountId) return [];
+                const response = await searchConversationsForAccount({
+                    query: { v: 1, query: value, scope: { type: 'global' }, mode: 'auto', corpora: [...MEMORY_SEARCH_CORPORA], maxResults: 20 },
+                    accountLifetime: lifetime, providers, mode: 'indexed', signal,
+                    ...(scope.machineScope !== 'all' && (scope.machineId || memoryProvider.daemonTarget)
+                        ? { machineIds: [scope.machineId ?? memoryProvider.daemonTarget!.machineId] } : {}),
+                });
+                if (signal.aborted || !lifetime.isCurrent()) return [];
+                const results = response.hits.flatMap<UniversalSearchResult>(row => {
+                    if (row.mode !== 'indexed') return [];
+                    const hit = row.hit;
+                    if (isMemoryExternalTranscriptSearchHitV1(hit)) {
+                        if (!row.machineId) return [];
+                        return [{ id: buildUniversalSearchScopeKey([row.machineId, hit.source.sourceKey, hit.source.nativeSessionId, hit.sourceItemId]),
+                            scopeKey: conversationScopeKey, sourceId: UNIVERSAL_SEARCH_SOURCE_IDS.transcript, kind: 'externalConversation',
+                            // An Agent's own conversation has no Happier title: the Agent names the row, the match says why.
+                            title: resolveAgentCatalogTitle(hit.source.agentId),
+                            conversation: { snippet: hit.summary, query: value, agentId: hit.source.agentId,
+                                machineLabel: machineNameById.get(row.machineId) ?? row.machineId, atMs: hit.createdAtToMs },
+                            target: { kind: 'externalConversation', serverId: canonicalScopeServerId,
+                                accountId: lifetime.accountId, machineId: row.machineId, agentId: hit.source.agentId,
+                                sourceKey: hit.source.sourceKey, candidate: { remoteSessionId: hit.source.nativeSessionId, updatedAtMs: hit.createdAtToMs },
+                                sourceItemId: hit.sourceItemId, query: value } }];
+                    }
+                    if (isMemoryDocumentSearchHitV1(hit)) {
+                        const topic = typeof hit.location === 'object' ? hit.location.title : null;
+                        const location = typeof hit.location === 'object' ? hit.location.type : hit.location;
+                        const identity = [hit.ref.serverId, hit.ref.artifactId, location, topic, hit.factId];
+                        return [{ id: buildUniversalSearchScopeKey(identity),
+                            scopeKey: buildUniversalSearchScopeKey([lifetime.accountId, canonicalScopeServerId, ...identity]),
+                            sourceId: UNIVERSAL_SEARCH_SOURCE_IDS.transcript, kind: 'memoryDocument', title: hit.summary,
+                            target: { kind: 'memoryDocument', serverId: canonicalScopeServerId, accountId: lifetime.accountId,
+                                ref: hit.ref, location: hit.location, ...(hit.factId !== undefined ? { factId: hit.factId } : {}) } }];
+                    }
+                    const freshRow = readSessionListRowsForServerId(storage.getState().sessionListRowsByServerId, canonicalScopeServerId)?.[hit.sessionId];
+                    const title = (freshRow ? getSessionName(freshRow, canonicalScopeServerId) : '')
+                        || sessionNameByTarget.get(buildUniversalSearchSessionTitleKey(lifetime.accountId, canonicalScopeServerId, hit.sessionId));
+                    return [{ ...memoryHitResult(hit, canonicalScopeServerId, lifetime.accountId,
+                        title && title !== hit.summary ? title : t('sessionsList.sessionFallbackLabel')),
+                        conversation: { snippet: hit.summary, query: value, atMs: hit.createdAtToMs } }];
+                });
+                // Which machines were not fully covered, by name and reason. A machine whose index is off
+                // is only worth saying when every machine was asked; otherwise the Home answers for it.
+                const coverage = describeConversationSearchCoverage({ machines: response.machines, homeStatus: response.homeStatus,
+                    machineName: (machineId) => machineNameById.get(machineId) ?? machineId,
+                    ...(scope.machineScope === 'all' ? {} : { omit: ['disabled-by-settings'] as const }) });
+                const documentHint = response.machines.some(machine => machine.documents === 'ready') ? null
+                    : response.machines.some(machine => machine.documents === 'pending') ? t('memorySearchSettings.status.indexing')
+                    : t('memoryContext.memory.documentSearchUnavailable');
+                return { results, resultHint: [coverage, documentHint].filter(Boolean).join(' · ') };
             },
         };
-    }, [homeCredentialRevision, memoryProvider, scope.accountId, scope.serverId, selectedCredentialBinding, selectedCredentialIsCurrent, sessionNameByTarget]);
-
+    }, [canonicalScopeServerId, conversationScopeKey, homeCredentialRevision, machineNameById, memoryProvider, scope.accountId, scope.machineId, scope.machineScope,
+        selectedCredentialBinding, selectedCredentialIsCurrent, sessionNameByTarget]);
     const activeSession = React.useMemo(
         () => scope.serverId && scope.accountId && pluginAccount.lifetime?.isCurrent() === true
             && areServerAccountScopesEqual(
@@ -723,6 +690,8 @@ export function UniversalSearchController(props: UniversalSearchControllerProps)
         workspaces: workspaceRefs,
         sessions,
         readMachineTarget: readMachineControlTargetForSession,
+        includeAllMachines: true,
+        allMachinesLabel: t('conversationSearch.scopeAllMachines'),
     }), [accountIdByServerId, profiles, sessions, workspaceRefs]);
     const scopeKey = buildUniversalSearchScopeKeyFromSeed(scope);
     // The scope chip exists only when there is a choice to make. With one Home (and no workspace
@@ -739,8 +708,12 @@ export function UniversalSearchController(props: UniversalSearchControllerProps)
         id: 'scope',
         label: t('universalSearch.scopeFilterLabel'),
         valueLabel: currentScopeLabel,
-        icon: <Icon name="house" size={12} color={theme.colors.text.secondary} />,
-        options: scopeChoices.map((choice) => ({ id: choice.key, label: choice.label })),
+        // The chip shows what the scope is: a Home, or every machine in it.
+        icon: <Icon name={scope.machineScope === 'all' ? 'desktop' : 'house'} size={12} color={theme.colors.text.secondary} />,
+        options: scopeChoices.map((choice) => choice.scope.machineScope === 'all'
+            ? { id: choice.key, label: choice.label, subtitle: t('conversationSearch.scopeAllMachinesSubtitle'),
+                icon: <Icon name="desktop" size={14} color={theme.colors.text.secondary} /> }
+            : { id: choice.key, label: choice.label }),
         selectedId: scopeKey,
         onChange: (choiceKey: string) => {
             const choice = scopeChoices.find((candidate) => candidate.key === choiceKey);
@@ -749,22 +722,39 @@ export function UniversalSearchController(props: UniversalSearchControllerProps)
             setScope(choice.scope);
         },
         testID: 'universal-search:scope',
-    }] : undefined, [currentScopeLabel, hasScopeChoice, scopeChoices, scopeKey, theme.colors.text.secondary]);
+    }] : undefined, [currentScopeLabel, hasScopeChoice, scope.machineScope, scopeChoices, scopeKey, theme.colors.text.secondary]);
 
     const conversationMachineId = scope.machineId ?? workspaceScope?.machineId ?? null;
+    const scanAvailability = useConversationSearch({ query: { v: 1, query: '', scope: { type: 'global' }, mode: 'auto' },
+        mode: 'indexed', providers: { homeSessions: false, daemonEnabled: memoryProvider.conversation?.daemonEnabled === true }, accountLifetime: selectedCredentialBinding,
+        ...(scope.machineScope !== 'all' ? { machineIds: conversationMachineId ? [conversationMachineId] : [] } : {}),
+        enabled: selectedCredentialIsCurrent,
+    });
     const beginExternalConversationSearch = React.useCallback((value: string) => {
-        if (!conversationMachineId || !canonicalScopeServerId || !scope.accountId
+        const machineId = conversationMachineId ?? scanAvailability.result?.machines.find(machine => machine.standardSearchEnabled)?.machineId;
+        if (!machineId || !canonicalScopeServerId || !scope.accountId
             || !selectedCredentialBinding?.isCurrent() || selectedCredentialBinding.accountId !== scope.accountId) return;
         const activeScope = pluginAccount.lifetime?.scope;
         const machineLabel = activeScope?.accountId === scope.accountId
             && areServerProfileIdentifiersEquivalent(activeScope.serverId, canonicalScopeServerId)
-            ? machineNameById.get(conversationMachineId) ?? conversationMachineId
-            : conversationMachineId;
+            ? machineNameById.get(machineId) ?? machineId
+            : machineId;
         setExternalConversationSearch({
-            target: { machineId: conversationMachineId, serverId: canonicalScopeServerId, accountId: scope.accountId },
+            target: { machineId, serverId: canonicalScopeServerId, accountId: scope.accountId },
+            ...(scope.machineScope === 'all' ? { machineIds: scanAvailability.result?.machines.map(machine => machine.machineId) ?? [] } : {}),
             query: value, machineLabel, accountLifetime: selectedCredentialBinding,
         });
-    }, [canonicalScopeServerId, conversationMachineId, machineNameById, pluginAccount.lifetime, scope.accountId, selectedCredentialBinding]);
+    }, [canonicalScopeServerId, conversationMachineId, machineNameById, pluginAccount.lifetime, scanAvailability.result, scope.accountId, scope.machineScope, selectedCredentialBinding]);
+    const selectSource = React.useCallback((next: string) => {
+        setSelectedOptionId(null);
+        setSource(next === 'fileContent' ? 'fileContent' : undefined);
+        if (next !== 'fileContent') { setMatchCase(false); setRegex(false); }
+    }, []);
+    const showAllFileMatches = React.useCallback(() => selectSource('fileContent'), [selectSource]);
+    const fileContentScopeLabel = workspaceScope ? [
+        workspaceRef?.label?.trim() || workspaceScope.rootPath.split(/[\\/]/).filter(Boolean).pop(),
+        machineNameById.get(workspaceScope.machineId) ?? workspaceScope.machineId,
+    ].filter(Boolean).join(' · ') : undefined;
     const sections = React.useMemo(() => buildUniversalSearchSections({
         query,
         commands: props.commands,
@@ -775,19 +765,25 @@ export function UniversalSearchController(props: UniversalSearchControllerProps)
         transcript,
         files,
         fileContent,
+        fileContentScopeLabel,
+        onShowAllFileMatches: showAllFileMatches,
         source,
         commits,
         pluginSections,
-        ...(conversationMachineId && canonicalScopeServerId && selectedCredentialIsCurrent ? {
+        ...((conversationMachineId || scope.machineScope === 'all') && canonicalScopeServerId && selectedCredentialIsCurrent ? {
             externalConversationSearch: {
-                machineLabel: pluginAccount.lifetime?.scope.accountId === scope.accountId
-                    && areServerProfileIdentifiersEquivalent(pluginAccount.lifetime.scope.serverId, canonicalScopeServerId)
-                    ? machineNameById.get(conversationMachineId) ?? conversationMachineId : conversationMachineId,
+                standardSearchEnabled: hasConversationSearchScanFallback(scanAvailability.result),
+                // Every machine in scope is scanned when the scope says so; the row then names no single machine.
+                ...(scope.machineScope !== 'all' && conversationMachineId ? {
+                    machineLabel: pluginAccount.lifetime?.scope.accountId === scope.accountId
+                        && areServerProfileIdentifiersEquivalent(pluginAccount.lifetime.scope.serverId, canonicalScopeServerId)
+                        ? machineNameById.get(conversationMachineId) ?? conversationMachineId : conversationMachineId,
+                } : {}),
                 onSearch: beginExternalConversationSearch,
             },
         } : {}),
         onCommitResult: (result) => { committedResultRef.current = result; },
-    }), [beginExternalConversationSearch, canonicalScopeServerId, commits, conversationMachineId, fileContent, files, machineNameById, pluginAccount.lifetime, pluginSections, projects, props.commands, query, scope.accountId, searchSettingsPages, selectedCredentialIsCurrent, sessionEntities, sessionInventoryStatus, source, transcript]);
+    }), [beginExternalConversationSearch, canonicalScopeServerId, commits, conversationMachineId, fileContent, fileContentScopeLabel, files, machineNameById, pluginAccount.lifetime, pluginSections, projects, props.commands, query, scanAvailability.result, scope.accountId, scope.machineScope, searchSettingsPages, selectedCredentialIsCurrent, sessionEntities, sessionInventoryStatus, showAllFileMatches, source, transcript]);
     const rootStep = React.useMemo<SelectionListStep>(() => ({
         id: 'universal-search',
         inputPlaceholder: t('commandPalette.placeholder'),
@@ -894,7 +890,7 @@ export function UniversalSearchController(props: UniversalSearchControllerProps)
     }, [credentialBindings]);
 
     const handleSelect = React.useCallback((optionId: string, _option: SelectionListOption) => {
-        if (optionId === EXTERNAL_CONVERSATION_SEARCH_OPTION_ID) {
+        if (optionId === EXTERNAL_CONVERSATION_SEARCH_OPTION_ID || optionId === ALL_FILE_MATCHES_OPTION_ID) {
             committedResultRef.current = null;
             committedPluginActivationRef.current = null;
             setSelectedOptionId(null);
@@ -926,6 +922,17 @@ export function UniversalSearchController(props: UniversalSearchControllerProps)
             activate: async () => {
                 if (result) {
                     const outcome = await activateUniversalSearchResult(result.target, {
+                        openExternalConversation: async target => {
+                            const binding = credentialBindings.get(resolveServerProfileScopeIdForIdentifier(target.serverId));
+                            if (!binding?.isCurrent() || binding.accountId !== target.accountId) return false;
+                            return await openConversationSearchResult({ target, accountLifetime: binding,
+                                state: { requestToken: 0, linkingCandidateKey: null },
+                                openSession: (sessionId, destination, seed) => openChatWithFindSeed({
+                                    handoff: paneContext?.fileFindSeedHandoff, destination: { sessionId, serverId: destination.serverId ?? '' },
+                                    seed, authority: binding, open: () => navigateToSession(sessionId, { serverId: destination.serverId ?? undefined }),
+                                }),
+                            });
+                        },
                         navigateToSession,
                         push: (path) => { router.push(path as never); },
                         openProject,
@@ -958,7 +965,7 @@ export function UniversalSearchController(props: UniversalSearchControllerProps)
     }, [credentialBindings, isBuiltInTargetCurrent, navigateToSession, openProject, paneContext, pluginScopeIsCurrent, props.commands, props.onRequestClose, readExactSessionForActivation, router]);
 
     const activeRootStep = terminalJump?.step ?? rootStep;
-    const sourceFilters = React.useMemo<readonly SelectionListFilter[]>(() => workspaceScope || source ? [{ id: 'source', label: t('tools.names.search'), valueLabel: source ? t('universalSearch.content.textInFiles') : t('universalSearch.content.everything'), options: [{ id: 'everything', label: t('universalSearch.content.everything') }, { id: 'fileContent', label: t('universalSearch.content.textInFiles') }], selectedId: source ?? 'everything', onChange: (next) => { setSelectedOptionId(null); setSource(next === 'fileContent' ? 'fileContent' : undefined); if (next !== 'fileContent') { setMatchCase(false); setRegex(false); } }, testID: 'universal-search:source' }] : [], [source, workspaceScope]);
+    const sourceFilters = React.useMemo<readonly SelectionListFilter[]>(() => workspaceScope || source ? [{ id: 'source', label: t('tools.names.search'), valueLabel: source ? t('universalSearch.content.textInFiles') : t('universalSearch.content.everything'), options: [{ id: 'everything', label: t('universalSearch.content.everything') }, { id: 'fileContent', label: t('universalSearch.content.textInFiles') }], selectedId: source ?? 'everything', onChange: selectSource, testID: 'universal-search:source' }] : [], [selectSource, source, workspaceScope]);
     const combinedFilters = React.useMemo(() => [...(scopeFilters ?? []), ...sourceFilters], [scopeFilters, sourceFilters]);
     const activeFilters = terminalJump ? terminalScopeChrome.filters : combinedFilters;
     const inputSuffix = source === 'fileContent' && !terminalJump ? <View style={{ flexDirection: 'row', gap: 16 }}>

@@ -16,7 +16,8 @@ export function registerCurrentUiContextActionPort(createPort: PortFactory): () 
 }
 
 export async function executeCurrentUiContextAction(
-    request: Parameters<NonNullable<ActionExecutorDeps['uiCurrentContextAction']>>[0],
+    request: Parameters<NonNullable<ActionExecutorDeps['uiCurrentContextAction']>>[0]
+        | Parameters<NonNullable<ActionExecutorDeps['accountHomeContinuationAction']>>[0],
     hostAction?: PluginSurfaceHostActionBinding,
 ): Promise<ActionExecuteResult> {
     const surface = PluginActionSurfaceV2Schema.safeParse(request.context.surface);
@@ -30,12 +31,19 @@ export async function executeCurrentUiContextAction(
             ? { ok: false, errorCode: 'unsupported_action', error: 'current_ui_context_unavailable' }
             : { ok: true, result: snapshot };
     }
+    if (request.actionId === 'account.home_continuation.invoke') {
+        return port.invokeAccountHomeContinuation?.({ input: request.input, context: request.context })
+            ?? { ok: false, errorCode: 'unsupported_action', error: 'current_account_continuation_unavailable' };
+    }
     // The ordinary Action executor has already admitted this strict input.
     const input = request.input as Readonly<{ commandId: string }>;
     const outcome = await port.invokeCurrentUiCommand?.({ commandId: input.commandId, signal: request.context.signal });
+    const errorCode = outcome?.code === 'outcome_unknown' ? PLUGIN_ACTION_OUTCOME_UNKNOWN_CODE
+        : outcome?.code === 'denied' ? 'permission_denied'
+        : 'unsupported_action';
     return outcome?.ok
         ? { ok: true, result: outcome.result ?? null }
-        : { ok: false, errorCode: outcome?.code === 'denied' ? 'permission_denied' : 'unsupported_action', error: outcome?.code ?? 'current_ui_command_unavailable' };
+        : { ok: false, errorCode, error: outcome?.code ?? 'current_ui_command_unavailable' };
 }
 
 /** The generic executor borrows the mounted dispatcher, including its nested host services. */

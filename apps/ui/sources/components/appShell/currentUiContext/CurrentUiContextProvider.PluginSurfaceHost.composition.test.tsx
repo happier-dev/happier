@@ -119,11 +119,14 @@ const hostedRenderer = vi.hoisted(() => ({
     responses: [] as Array<Readonly<{ subPath: string; response: unknown }>>,
 }));
 
-vi.mock('expo-router', () => ({
-    useGlobalSearchParams: () => ({ pluginId: 'acme.current-ui-composition', localId: 'notes' }),
-    usePathname: () => '/plugins/acme.current-ui-composition/notes',
-    useSegments: () => ['(app)', 'plugins', '[pluginId]', '[localId]'],
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    return createExpoRouterMock({
+        params: { pluginId: 'acme.current-ui-composition', localId: 'notes' },
+        pathname: '/plugins/acme.current-ui-composition/notes',
+        segments: ['(app)', 'plugins', '[pluginId]', '[localId]'],
+    }).module;
+});
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');

@@ -3,6 +3,7 @@ import type { PluginBrowserProjectionModel } from '@/sync/domains/plugins/browse
 import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
 import type { PluginUiProjectionPhase } from '@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness';
 import type { LocalServicePreviewPlatform } from '@/sync/domains/local/services/preview/url';
+import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 
 export type PaneId = 'right' | 'details' | 'bottom';
 
@@ -21,6 +22,7 @@ export type PaneSurfaceScope =
         agentId?: string | null;
         pluginUiProjection?: PluginUiProjectionModel | null;
         pluginBrowserProjection?: PluginBrowserProjectionModel | null;
+        accountLifetime?: ServerAccountScopeLifetime | null;
         projectionPhase: PluginUiProjectionPhase;
         machineId?: string | null;
         serverId?: string | null;
@@ -31,6 +33,7 @@ export type PaneSurfaceScope =
         targetKind: 'project';
         projectId: string;
         pluginUiProjection?: PluginUiProjectionModel | null;
+        accountLifetime?: ServerAccountScopeLifetime | null;
         projectionPhase: PluginUiProjectionPhase;
         machineId?: string | null;
         serverId?: string | null;

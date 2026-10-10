@@ -1,9 +1,12 @@
 import * as React from 'react';
-import { View } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import { View, useWindowDimensions } from 'react-native';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { HappierListDetailLayout, useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 
+import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { InboxContent, type InboxView as InboxContentView } from '@/components/inbox/InboxContent';
-import type { InboxItemFocus } from '@/components/inbox/inboxItemFocus';
+import { createInboxItemRoute, type InboxItemFocus } from '@/components/inbox/inboxItemFocus';
+import { PaneLoadingFallback } from '@/components/ui/panels/PaneLoadingFallback';
 import { countInboxNeedsYou, countInboxUpdates } from '@/components/inbox/inboxCounts';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { Header } from '@/components/navigation/Header';
@@ -32,13 +35,43 @@ const styles = StyleSheet.create((theme) => ({
         color: theme.colors.chrome.header.foreground,
         ...Typography.default('semiBold'),
     },
+    idleDetail: {
+        flex: 1,
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingHorizontal: 24,
+        backgroundColor: theme.colors.surface.base,
+    },
+    idleDetailText: {
+        ...Typography.default(),
+        fontSize: 14,
+        lineHeight: 20,
+        color: theme.colors.text.secondary,
+        textAlign: 'center',
+    },
 }));
+
+// The detail draws a session, a run page or an approval page: loaded when something is selected, so
+// the Inbox list (and a phone, which never shows the pane) does not carry those screens.
+const InboxItemDetail = React.lazy(() => import('@/components/inbox/detail/InboxItemDetail')
+    .then((module) => ({ default: module.InboxItemDetail })));
+
+/**
+ * Beside the detail the list keeps room for a row's title, its line and its inline answer; the
+ * detail keeps room for an approval page's decision row and a transcript's messages. Below their
+ * sum the Inbox is the list alone and rows open their item's own page.
+ */
+const INBOX_LIST_MIN_WIDTH_PX = 400;
+const INBOX_DETAIL_MIN_WIDTH_PX = 440;
+const INBOX_LIST_SHARE = 0.6;
 
 function InboxHeaderTitle() {
     return <Text style={styles.headerTitle}>{t('tabs.inbox')}</Text>;
 }
 
 const InboxViewContent = React.memo(function InboxViewContent(props: Readonly<{ focusedItem?: InboxItemFocus | null }>) {
+    const { theme } = useUnistyles();
+    const materialColor = useHappierMaterialColorResolver();
     const model = useInboxModel();
     // Phones show the title in the navigation header and the page header shows only the purpose;
     // wide layouts have no navigation title, so the page header carries it.
@@ -56,7 +89,8 @@ const InboxViewContent = React.memo(function InboxViewContent(props: Readonly<{ 
         <SegmentedTabBar
             testIDPrefix="inbox.view"
             accessibilityLabel={t('inbox.work.tabs.a11y')}
-            compact
+            // A phone's full-width control is a thumb target (lab `phone-P4`); the header's sits beside the title.
+            compact={!phone}
             segmentSizing={phone ? undefined : 'content'}
             tabs={[
                 { id: 'needs_you' as const, label: t('inbox.work.tabs.needsYou'), ...(needsYouCount > 0 ? { count: String(needsYouCount) } : {}) },
@@ -67,8 +101,22 @@ const InboxViewContent = React.memo(function InboxViewContent(props: Readonly<{ 
         />
     );
 
+    const renderList = (onSelectItem: ((focus: InboxItemFocus) => void) | undefined) => (
+        <NavigationTitleChromeProvider showsTitle={phone}>
+            <ItemList testID="inbox.screen">
+                <PageHeader
+                    title={t('tabs.inbox')}
+                    description={t('inbox.work.pageDescription')}
+                    actions={phone ? undefined : tabs}
+                />
+                {phone ? <View style={styles.phoneTabs}>{tabs}</View> : null}
+                <InboxContent model={model} presentation="screen" view={view} focusedItem={focusedItem} onSelectItem={onSelectItem} />
+            </ItemList>
+        </NavigationTitleChromeProvider>
+    );
+
     return (
-        <View style={styles.container}>
+        <View style={[styles.container, { backgroundColor: materialColor(theme.colors.surface.base, 'transparent') }]}>
             <Header
                 title={phone ? <InboxHeaderTitle /> : null}
                 headerLeft={() => null}
@@ -76,18 +124,53 @@ const InboxViewContent = React.memo(function InboxViewContent(props: Readonly<{ 
                 headerShadowVisible={false}
                 headerTransparent
             />
-            <NavigationTitleChromeProvider showsTitle={phone}>
-                <ItemList testID="inbox.screen">
-                    <PageHeader
-                        title={t('tabs.inbox')}
-                        description={t('inbox.work.pageDescription')}
-                        actions={phone ? undefined : tabs}
-                    />
-                    {phone ? <View style={styles.phoneTabs}>{tabs}</View> : null}
-                    <InboxContent model={model} presentation="screen" view={view} focusedItem={focusedItem} />
-                </ItemList>
-            </NavigationTitleChromeProvider>
+            {phone ? renderList(undefined) : <InboxListDetail focusedItem={focusedItem} renderList={renderList} />}
         </View>
+    );
+});
+
+/**
+ * Lab `inbox-I1`: the list beside the selected item, selection held by the route's `item` parameter
+ * so a link, Back and a reload all land on the same item. Where both panes do not fit, the list is
+ * the page and a row opens its item's own page, as on a phone (DESIGN.md, Collections).
+ */
+const InboxListDetail = React.memo(function InboxListDetail(props: Readonly<{
+    focusedItem: InboxItemFocus | null;
+    renderList: (onSelectItem: ((focus: InboxItemFocus) => void) | undefined) => React.ReactNode;
+}>) {
+    const router = useRouter();
+    const { theme } = useUnistyles();
+    const materialColor = useHappierMaterialColorResolver();
+    const { fontScale } = useWindowDimensions();
+    const scale = Math.max(1, fontScale);
+    const select = React.useCallback((focus: InboxItemFocus) => {
+        router.replace(createInboxItemRoute(focus) as never);
+    }, [router]);
+    const close = React.useCallback(() => {
+        router.replace('/inbox' as never);
+    }, [router]);
+    return (
+        <HappierListDetailLayout
+            testID="inbox.layout"
+            listTestID="inbox.list-pane"
+            detailTestID="inbox.detail-pane"
+            minListWidth={INBOX_LIST_MIN_WIDTH_PX * scale}
+            minDetailWidth={INBOX_DETAIL_MIN_WIDTH_PX * scale}
+            preferredListRatio={INBOX_LIST_SHARE}
+            stackedPane="list"
+            listStyle={{ borderRightWidth: 1, borderRightColor: theme.colors.border.default }}
+            list={(layout) => props.renderList(layout?.mode === 'split' ? select : undefined)}
+            detail={props.focusedItem ? (
+                <React.Suspense fallback={<PaneLoadingFallback />}>
+                    <InboxItemDetail focus={props.focusedItem} onClose={close} />
+                </React.Suspense>
+            ) : null}
+            idleDetail={(
+                <View testID="inbox.detail.idle" style={[styles.idleDetail, { backgroundColor: materialColor(theme.colors.surface.base, 'transparent') }]}>
+                    <Text style={styles.idleDetailText}>{t('inbox.work.detail.idle')}</Text>
+                </View>
+            )}
+        />
     );
 });
 

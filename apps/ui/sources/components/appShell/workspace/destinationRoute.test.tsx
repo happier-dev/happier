@@ -2,6 +2,7 @@ import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
+import { findTestInstanceByTypeContainingText } from '@/dev/testkit/render/renderScreen';
 import { DestinationInstanceHost } from './DestinationInstanceHost';
 import { WorkspaceRouteOutlet } from './WorkspaceRouteOutlet';
 import { Stack } from './destinationRoute';
@@ -96,5 +97,18 @@ describe('destination route Stack declarations', () => {
         expect(screen.root.findAllByType('HostedRouteBody')).toHaveLength(1);
         expect(screen.root.findAllByType('SdkNavigator')).toHaveLength(0);
         expect(screen.root.findAllByType('StackScreen')).toHaveLength(0);
+    });
+
+    it('draws a hosted phone header subtitle the same way the native stack header does', async () => {
+        const options = { headerTitle: 'happier', headerSubtitle: 'happier-dev/happier' };
+        const screen = await renderScreen(<DestinationInstanceHost tabId="project-tab"
+            ref={{ kind: 'project', params: { workspaceRefId: 'w1' } }}
+            pathname="/projects/w1/overview" focused visible phone>
+            <WorkspaceRouteOutlet.Provider value={null}>
+                <Stack.Screen options={options} />
+            </WorkspaceRouteOutlet.Provider>
+        </DestinationInstanceHost>);
+        const header = screen.root.findByProps({ testID: 'workspace-destination-header' });
+        expect(findTestInstanceByTypeContainingText(header, 'Text', 'happier-dev/happier')).toBeDefined();
     });
 });

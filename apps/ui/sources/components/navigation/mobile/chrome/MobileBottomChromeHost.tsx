@@ -12,7 +12,18 @@ import {
     useProjectLastMobileSurface,
     useSessionLastMobileSurface,
     useSetting,
+    useLocalSetting,
+    useWorkspaceRefs,
+    useActiveServerAccountScope,
+    useProjectAccountRows,
 } from '@/sync/domains/state/storage';
+import { useWorkspaceRefById } from '@/components/projects/detail/useWorkspaceRefById';
+import { readProjectRouteCheckoutRootPath } from '@/components/projects/detail/projectRouteState';
+import { readProjectSelectionPreference, resolveProjectSelectionPreferenceKeys } from '@/sync/domains/settings/projectSelectionPersistence';
+import { resolveProjectCheckoutWorkspaceRef } from '@/sync/domains/workspaces/workspaceRefs';
+import { workspaceAddressFromRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
+import { buildProjectPaneScopeId } from '@/components/projects/detail/projectPaneScope';
+import { resolveProjectTerminalScope } from '@/components/projects/detail/projectTerminalScope';
 import {
     isOverlaySurfaceRoutePathname,
     normalizeSurfaceRoutePathname,
@@ -31,7 +42,7 @@ import {
     shouldRouteSessionCockpitSurfacePressThroughUrl,
     type SessionMobileSurface,
 } from '@/components/workspaceCockpit/session/sessionCockpitState';
-import { resolveProjectRoutePathForSurface } from '@/components/workspaceCockpit/project/projectCockpitState';
+import { normalizeProjectPage, resolveProjectCockpitRouteFromPathname, resolveProjectRoutePathForSurface } from '@/components/workspaceCockpit/project/projectCockpitState';
 import { useSessionTerminalAvailability } from '@/components/sessions/terminal/useSessionTerminalAvailability';
 
 import { MainAppTabBar } from './bars/MainAppTabBar';
@@ -125,13 +136,7 @@ export const MobileBottomChromeHost = React.memo(function MobileBottomChromeHost
 }>) {
     const pathname = usePathname();
     const router = useRouter();
-    const params = useGlobalSearchParams<{
-        mobileSurface?: string | string[];
-        serverId?: string | string[];
-        worktreeId?: string | string[];
-        activeRootPath?: string | string[];
-        sourceSurface?: string | string[];
-    }>();
+    const params = useGlobalSearchParams<Record<string, string | string[] | undefined>>();
     const auth = useAuth();
     const deviceType = useDeviceType();
     const reduceMotion = useReducedMotionPreference();
@@ -140,9 +145,30 @@ export const MobileBottomChromeHost = React.memo(function MobileBottomChromeHost
     const routeSessionId = resolveRouteSessionId(pathname);
     const routeWorkspaceRefId = resolveRouteWorkspaceRefId(pathname);
     const routeServerId = normalizeRouteParam(params.serverId);
+    const projectRef = useWorkspaceRefById(routeWorkspaceRefId ?? '', routeServerId);
+    const workspaceRefs = useWorkspaceRefs();
+    const projectLastRootPaths = useLocalSetting('projectLastActiveRootPathByWorkspaceRefId');
+    const projectLastWorktreeIds = useLocalSetting('projectLastActiveWorktreeIdByWorkspaceRefId');
+    const projectCheckout = React.useMemo(() => {
+        if (!projectRef) return null;
+        const keys = resolveProjectSelectionPreferenceKeys(workspaceRefs, projectRef);
+        const selectedRoot = readProjectRouteCheckoutRootPath({
+            rawWorktreeId: params.worktreeId, rawLegacyActiveRootPath: params.activeRootPath,
+            defaultRootPath: projectRef.rootPath,
+            persistedActiveRootPath: readProjectSelectionPreference(projectLastRootPaths, keys),
+            persistedWorktreeId: readProjectSelectionPreference(projectLastWorktreeIds, keys),
+        });
+        return selectedRoot === null ? null : resolveProjectCheckoutWorkspaceRef(workspaceRefs, projectRef, selectedRoot);
+    }, [params.activeRootPath, params.worktreeId, projectLastRootPaths, projectLastWorktreeIds, projectRef, workspaceRefs]);
+    const projectPage = resolveProjectCockpitRouteFromPathname(pathname)?.page ?? 'overview';
+    const projectViewerScope = useActiveServerAccountScope(projectRef?.serverId ?? routeServerId);
+    const projectRowsStatus = useProjectAccountRows()?.status;
+    const projectTerminalTabAvailable = React.useMemo(() => projectRef !== null && projectCheckout !== null
+        && resolveProjectTerminalScope(buildProjectPaneScopeId(projectRef.id, projectRef.serverId), workspaceAddressFromRefV1(projectCheckout)) !== null,
+    [projectCheckout, projectRef, projectRowsStatus, projectViewerScope]);
     const { sidebarTabAvailable: sessionTerminalTabAvailable } = useSessionTerminalAvailability(routeServerId);
     const sessionLastMobileSurface = useSessionLastMobileSurface(routeSessionId, routeServerId);
-    const projectLastMobileSurface = useProjectLastMobileSurface(routeWorkspaceRefId);
+    const projectLastMobileSurface = useProjectLastMobileSurface(routeWorkspaceRefId, routeServerId);
     const persistSessionLastMobileSurface = usePersistSessionLastMobileSurface();
     const persistProjectLastMobileSurface = usePersistProjectLastMobileSurface();
     const setBottomChromeHeight = useSessionCockpitBottomChromeHeightSetter();
@@ -397,16 +423,25 @@ export const MobileBottomChromeHost = React.memo(function MobileBottomChromeHost
                     : null;
             return {
                 key: `project:${model.workspaceRefId}`,
-                signature: `project:${model.workspaceRefId}:${model.surface}`,
+                signature: JSON.stringify(['project', model.workspaceRefId, model.surface, projectPage,
+                    projectRef?.serverId ?? routeServerId, projectTerminalTabAvailable,
+                    projectViewerScope?.accountId ?? null,
+                    projectCheckout?.id ?? null, projectCheckout?.rootPath ?? null, rawWorktreeId, rawActiveRootPath]),
                 node: (
                     <ProjectCockpitTabBar
                         workspaceRefId={model.workspaceRefId}
                         activeSurface={model.surface}
+                        activePage={projectPage}
+                        terminalTabAvailable={projectTerminalTabAvailable}
                         onSurfacePress={(surface) => {
-                            persistProjectLastMobileSurface(model.workspaceRefId, surface);
+                            const page = normalizeProjectPage(surface) ?? resolveProjectCockpitRouteFromPathname(pathname)?.page ?? 'overview';
+                            persistProjectLastMobileSurface(model.workspaceRefId, page, routeServerId);
                             router.replace(resolveProjectRoutePathForSurface({
                                 workspaceRefId: model.workspaceRefId,
+                                page,
                                 surface,
+                                serverId: routeServerId,
+                                routeParams: params,
                                 rawWorktreeId,
                                 rawActiveRootPath,
                             }));
@@ -429,9 +464,16 @@ export const MobileBottomChromeHost = React.memo(function MobileBottomChromeHost
         model,
         params.activeRootPath,
         params.worktreeId,
+        params,
+        pathname,
         persistProjectLastMobileSurface,
         router,
         routeServerId,
+        projectPage,
+        projectRef?.serverId,
+        projectViewerScope?.accountId,
+        projectTerminalTabAvailable,
+        projectCheckout,
         visibleMainTab,
         sessionTerminalTabAvailable,
         sessionLastMobileSurfaceBySessionId,
@@ -639,12 +681,17 @@ export const MobileBottomChromeHost = React.memo(function MobileBottomChromeHost
     // On a session the bar is wrapped by the switcher band, which owns the bar's gestures and the
     // switcher they open. The band keeps the same element type for the whole session, so the bar
     // never remounts when a gesture setting or the keyboard changes.
-    const currentChromeContent = renderedChrome.current ? (
-        renderedChrome.current.cockpitSessionId ? (
-            <SessionSwitcherBand sessionId={renderedChrome.current.cockpitSessionId} serverId={routeServerId}>
-                {renderedChrome.current.node}
+    // Animation state owns visual identity, not callback or projection freshness.
+    // A registration can arrive without changing the bar's signature.
+    const currentChrome = isSameBottomChromeItem(renderedChrome.current, resolvedChrome)
+        ? resolvedChrome
+        : renderedChrome.current;
+    const currentChromeContent = currentChrome ? (
+        currentChrome.cockpitSessionId ? (
+            <SessionSwitcherBand sessionId={currentChrome.cockpitSessionId} serverId={routeServerId}>
+                {currentChrome.node}
             </SessionSwitcherBand>
-        ) : renderedChrome.current.node
+        ) : currentChrome.node
     ) : null;
 
     return (

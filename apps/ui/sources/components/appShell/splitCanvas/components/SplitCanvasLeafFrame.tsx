@@ -1,16 +1,19 @@
 import * as React from 'react';
-import { Platform, Pressable, View } from 'react-native';
+import { HAPPIER_ICON_BUTTON_SIZE, useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
+import { Platform, View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import { SafeIonicons } from '@/components/ui/icons/SafeIonicons';
 import { t } from '@/text';
 import { SplitCanvasFocusRing } from './SplitCanvasFocusRing';
 import type { SplitCanvasLeafHostRef } from '../model/splitCanvasTypes';
-import { Icon } from '@/components/ui/icons/Icon';
+import { IconButton } from '@/components/ui/buttons/IconButton';
 
 type WebSplitCanvasHostElement = EventTarget & SplitCanvasLeafHostRef & {
     addEventListener: (type: string, listener: EventListener) => void;
     removeEventListener: (type: string, listener: EventListener) => void;
 };
+
+const CONTROLS_PILL_PADDING_PX = 4;
 
 export const SplitCanvasLeafFrame = React.memo((props: Readonly<{
     leafId: string;
@@ -29,6 +32,7 @@ export const SplitCanvasLeafFrame = React.memo((props: Readonly<{
     children: React.ReactNode;
 }>) => {
     const { theme } = useUnistyles();
+    const materialColor = useHappierMaterialColorResolver();
     const attachedHostRef = React.useRef<WebSplitCanvasHostElement | null>(null);
     const detachHostListenersRef = React.useRef<(() => void) | null>(null);
 
@@ -96,8 +100,8 @@ export const SplitCanvasLeafFrame = React.memo((props: Readonly<{
                     flex: 1,
                     minWidth: 0,
                     minHeight: 0,
-                    borderRadius: props.quietChrome ? 0 : 12,
-                    ...(props.quietChrome ? null : { backgroundColor: theme.colors.surface.base }),
+                    borderRadius: props.quietChrome ? 0 : theme.borderRadius.xl,
+                    ...(props.quietChrome ? null : { backgroundColor: materialColor(theme.colors.surface.base, 'transparent') }),
                     overflow: 'hidden',
                 }}
             >
@@ -116,51 +120,28 @@ export const SplitCanvasLeafFrame = React.memo((props: Readonly<{
                                 flexDirection: 'row',
                                 alignItems: 'center',
                                 gap: 6,
-                                padding: 4,
-                                borderRadius: 999,
+                                padding: CONTROLS_PILL_PADDING_PX,
+                                // A capsule around the shared icon buttons: half its own height.
+                                borderRadius: (HAPPIER_ICON_BUTTON_SIZE + CONTROLS_PILL_PADDING_PX * 2) / 2,
                                 borderWidth: 1,
                                 borderColor: theme.colors.border.default,
-                                backgroundColor: theme.colors.surface.inset,
+                                backgroundColor: materialColor(theme.colors.surface.inset),
                             }}
                         >
-                            <Pressable
+                            <IconButton
                                 testID={`split-canvas-leaf-maximize-${props.leafId}`}
-                                accessibilityRole="button"
+                                variant="plain"
+                                iconName={props.isMaximized ? 'arrows-in' : 'arrows-out'}
                                 accessibilityLabel={props.isMaximized ? t('common.restore') : t('common.maximize')}
                                 onPress={props.onToggleMaximize}
-                                style={{
-                                    width: 28,
-                                    height: 28,
-                                    borderRadius: 14,
-                                    alignItems: 'center',
-                                    justifyContent: 'center',
-                                }}
-                            >
-                                <Icon
-                                    name={props.isMaximized ? 'arrows-in' : 'arrows-out'}
-                                    size={16}
-                                    color={theme.colors.text.secondary}
-                                />
-                            </Pressable>
-                            <Pressable
+                            />
+                            <IconButton
                                 testID={`split-canvas-leaf-close-${props.leafId}`}
-                                accessibilityRole="button"
+                                variant="plain"
+                                iconName="x"
                                 accessibilityLabel={t('common.close')}
                                 onPress={props.onClose}
-                                style={{
-                                    width: 28,
-                                    height: 28,
-                                    borderRadius: 14,
-                                    alignItems: 'center',
-                                    justifyContent: 'center',
-                                }}
-                            >
-                                <Icon
-                                    name="x"
-                                    size={16}
-                                    color={theme.colors.text.secondary}
-                                />
-                            </Pressable>
+                            />
                         </View>
                     </View>
                 ) : null}

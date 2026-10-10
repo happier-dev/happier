@@ -1,6 +1,8 @@
 import * as React from 'react';
 import type { PaneHeaderContentLineSegment } from '@happier-dev/plugin-ui';
 
+import type { ItemAction } from '@/components/ui/lists/itemActions';
+
 /**
  * One fact on a pane header's live line: plain text, or the one noun the line is about (a branch)
  * drawn with emphasis.
@@ -23,10 +25,15 @@ export type PaneHeaderLine = Readonly<{
     segments: readonly PaneHeaderLineSegment[];
 }>;
 
-/** What a tab tells its pane header: the live line and the one trailing action (the likeliest next step). */
+/**
+ * What a tab tells its pane header: the live line, the one trailing action (the likeliest next step)
+ * and its rare operations. The header folds those into its single ⋯, after the action, with the
+ * pane's own operations, so a band never carries two ⋯.
+ */
 export type PaneHeaderSlotContent = Readonly<{
     line?: PaneHeaderLine | null;
     action?: React.ReactNode;
+    menuActions?: readonly ItemAction[];
 }>;
 
 type PaneHeaderSlotStore = Readonly<{
@@ -53,7 +60,7 @@ function sameLine(left: PaneHeaderLine | null | undefined, right: PaneHeaderLine
 function sameContent(left: PaneHeaderSlotContent | null, right: PaneHeaderSlotContent | null): boolean {
     if (left === right) return true;
     if (!left || !right) return false;
-    return left.action === right.action && sameLine(left.line, right.line);
+    return left.action === right.action && left.menuActions === right.menuActions && sameLine(left.line, right.line);
 }
 
 function createPaneHeaderSlotStore(): PaneHeaderSlotStore {

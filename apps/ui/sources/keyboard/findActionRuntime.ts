@@ -15,7 +15,7 @@ export function registerFindActionRuntime(registry: FindSurfaceRegistry): () => 
 export async function executeFindAction(request: FindActionRequest): Promise<ActionExecuteResult> {
     request.context.signal?.throwIfAborted();
     const input = UiFindInputSchema.parse(request.input);
-    const surface = mountedRegistry?.resolve(input.op === 'set' ? input.target : undefined);
+    const surface = mountedRegistry?.resolve(input.target);
     if (!surface) return { ok: true, result: { status: 'noMountedSurface' } };
     const controller = surface.controller;
     switch (input.op) {

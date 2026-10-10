@@ -268,7 +268,7 @@ describe('runGuardedNavigation', () => {
         expect(secondNavigate).not.toHaveBeenCalled();
     });
 
-    it('keeps a second exit blocked while a discarded continuation is still in flight', async () => {
+    it('allows clean navigation during an accepted discard continuation without prompting again', async () => {
         const { setActiveUnsavedChangesGuard, runGuardedNavigation } = await loadRunGuardedNavigationModule();
         const isDirtyRef = { current: true };
         const requestDecision = vi.fn(async (): Promise<UnsavedChangesDecision> => 'discard');
@@ -296,9 +296,9 @@ describe('runGuardedNavigation', () => {
         const secondExit = runGuardedNavigation(secondNavigate);
 
         expect(requestDecision).toHaveBeenCalledOnce();
-        expect(await secondExit).toBe(false);
+        expect(await secondExit).toBe(true);
         expect(firstNavigate).toHaveBeenCalledOnce();
-        expect(secondNavigate).not.toHaveBeenCalled();
+        expect(secondNavigate).toHaveBeenCalledOnce();
 
         resolveFirstNavigation();
         await expect(firstExit).resolves.toBe(true);

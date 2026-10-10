@@ -10,6 +10,9 @@ import { t } from '@/text';
 import type { FeatureId } from '@happier-dev/protocol';
 import { getFeatureBuildPolicyDecision } from '@/sync/domains/features/featureBuildPolicy';
 import { Text } from '@/components/ui/text/Text';
+import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { AskHappierMark } from '@/components/sessions/bots/AskHappierOfferCard';
+import { useAskHappierOpener } from '@/components/sessions/bots/useAskHappierOffer';
 
 
 const CHANGELOG_FEATURE_ID = 'app.ui.changelog' as const satisfies FeatureId;
@@ -38,6 +41,10 @@ const styles = StyleSheet.create((theme, runtime) => ({
         fontSize: 14,
         lineHeight: 20,
         color: theme.colors.text.secondary,
+        marginBottom: 12,
+    },
+    askHappier: {
+        alignSelf: 'flex-start',
         marginBottom: 12,
     },
     entryBodyContainer: {
@@ -69,6 +76,7 @@ const styles = StyleSheet.create((theme, runtime) => ({
 function ChangelogScreenEnabled() {
     const insets = useSafeAreaInsets();
     const entries = getChangelogEntries();
+    const askHappier = useAskHappierOpener();
     
     useEffect(() => {
         // Mark as viewed when component mounts
@@ -113,6 +121,19 @@ function ChangelogScreenEnabled() {
                         <Text style={styles.dateText}>
                             {entry.date}
                         </Text>
+                        {/* Asks about this exact release: its notes travel with the draft, nothing starts until Send. */}
+                        <View style={styles.askHappier}>
+                            <RoundButton
+                                testID={`changelog-ask-happier-${entry.id}`}
+                                size="small"
+                                display="secondary"
+                                leading={<AskHappierMark size={16} />}
+                                title={t('bots.guide.aboutUpdate')}
+                                onPress={() => askHappier({ kind: 'release', release: {
+                                    id: entry.id, versionLabel: entry.versionLabel, date: entry.date, markdown: entry.markdown,
+                                } })}
+                            />
+                        </View>
                         {entry.markdown ? (
                             <View style={styles.entryBodyContainer}>
                                 <MarkdownView markdown={entry.markdown} textStyle={styles.markdownText} />

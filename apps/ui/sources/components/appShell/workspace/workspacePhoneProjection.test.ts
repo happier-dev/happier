@@ -1,12 +1,29 @@
 import { describe, expect, it } from 'vitest';
 import { createWorkspaceState, reduceWorkspaceState, type WorkspaceTab } from './workspaceState';
-import { projectWorkspacePhoneTabs } from './workspacePhoneProjection';
+import { projectWorkspacePhoneTabs, resolvePhoneWorkspaceTabHref } from './workspacePhoneProjection';
+import { resolveCompactAppDestinations } from '../destinations/compactAppDestinationCatalog';
 import { parseWorkspaceLayout, serializeWorkspaceLayout } from './workspacePersistence';
 
 const tab = (id: string, kind: string): WorkspaceTab => ({ id, target: { kind, params: { id, serverId: 'home-a' } },
     pinned: false, preview: false });
 
 describe('workspace phone projection', () => {
+    it.each(['info', 'follow', 'permissions', 'runs', 'triggers', 'automations', 'runs/run-a'])('retains the requested Session leaf %s and Home', leaf => {
+        const catalog = resolveCompactAppDestinations({ pages: [], builtins: { externalSessions: false, inbox: true, friends: false, workflows: true } });
+        const href = `/session/session-a/${leaf}?serverId=home-a`;
+        expect(resolvePhoneWorkspaceTabHref(catalog, href)).toBe(href);
+    });
+    it('keeps main-tab collection links out of tabs without mistaking archived for a Session id', () => {
+        const catalog = resolveCompactAppDestinations({ pages: [], builtins: { externalSessions: false, inbox: true, friends: false, workflows: true } });
+        expect(resolvePhoneWorkspaceTabHref(catalog, '/session/archived')).toBeNull();
+        expect(resolvePhoneWorkspaceTabHref(catalog, '/inbox')).toBeNull();
+        expect(resolvePhoneWorkspaceTabHref(catalog, '/inbox/approvals/request-a?serverId=home-a')).toBe('/inbox/approvals/request-a?serverId=home-a');
+    });
+    it('retains the exact Project page, Home, checkout, dashboard and resource destination', () => {
+        const href = '/projects/project-a/context?serverId=home-a&worktreeId=checkout-a&layoutId=dashboard-a&initialFile=src%2Fa.ts&comparisonId=comparison-a';
+        const catalog = resolveCompactAppDestinations({ pages: [], builtins: { externalSessions: false, inbox: false, friends: false, workflows: false } });
+        expect(resolvePhoneWorkspaceTabHref(catalog, href)).toBe(href);
+    });
     it('restores a mixed pair from the local layout when account tab sync is off', () => {
         let state = createWorkspaceState(tab('a', 'session'));
         state = reduceWorkspaceState(state, { type: 'openTab', groupId: 'group:1', tab: tab('b', 'plugin:acme.page') });

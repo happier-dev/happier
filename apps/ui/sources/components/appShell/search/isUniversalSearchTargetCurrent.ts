@@ -8,6 +8,7 @@ import {
 } from '@/sync/domains/workspaces/workspaceScope';
 import type { UniversalSearchTarget } from './universalSearchResult';
 import { SETTINGS_ROUTES, settingsRoutePathname } from '@/components/settings/catalog/routes';
+import { resolveWorkspaceRefByAddress } from '@/sync/domains/workspaces/workspaceRefs';
 
 function areWorkspaceScopesEqual(left: WorkspaceScopeBase, right: WorkspaceScopeBase): boolean {
     const normalizedLeft = normalizeWorkspaceScopeBase(left);
@@ -37,7 +38,7 @@ export function isUniversalSearchTargetCurrent(input: Readonly<{
     isWorkspaceScopeReachable: (scope: WorkspaceScopeBase) => boolean;
 }>): boolean {
     const { target } = input;
-    if (target.kind === 'session') {
+    if (target.kind === 'session' || target.kind === 'memoryDocument' || target.kind === 'externalConversation') {
         return input.accountScope?.current === true
             && input.accountScope.accountId === target.accountId
             && areServerProfileIdentifiersEquivalent(input.accountScope.serverId, target.serverId);
@@ -46,8 +47,8 @@ export function isUniversalSearchTargetCurrent(input: Readonly<{
         return input.accountScope?.current === true
             && input.accountScope.accountId === target.accountId
             && areServerProfileIdentifiersEquivalent(input.accountScope.serverId, target.serverId)
-            && input.workspaces.some((workspace) => workspace.id === target.workspaceRefId
-                && areWorkspaceScopesEqual(workspace, target))
+            && resolveWorkspaceRefByAddress(input.workspaces, { serverId: target.serverId,
+                workspaceId: target.workspaceRefId, machineId: target.machineId, rootPath: target.rootPath }).kind === 'resolved'
             && input.isWorkspaceScopeReachable(target);
     }
     if (target.kind === 'settingsPage') {
@@ -69,8 +70,7 @@ export function isUniversalSearchTargetCurrent(input: Readonly<{
         || !areServerProfileIdentifiersEquivalent(target.serverId, capturedScope.serverId)
     ) return false;
     if (target.workspaceRefId) {
-        return input.workspaces.some((workspace) => workspace.id === target.workspaceRefId
-            && areWorkspaceScopesEqual(workspace, capturedScope))
+        return resolveWorkspaceRefByAddress(input.workspaces, { ...capturedScope, workspaceId: target.workspaceRefId }).kind === 'resolved'
             && input.isWorkspaceScopeReachable(capturedScope);
     }
     if (!target.sessionId) return false;

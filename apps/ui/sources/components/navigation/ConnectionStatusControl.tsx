@@ -683,12 +683,10 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
         setDiagnosticsCopied(false);
         setDetailsExpanded((expanded) => !expanded);
     }, []);
-    // The Home label owner names the Home (an address-only name reads "Home on <host>").
+    // The Home label owner keeps titles human even while the profile is unavailable.
     const activeServerLabel = React.useMemo(() => (
-        displayServerProfile
-            ? resolveHomeDisplayLabel(displayServerProfile, displayServerProfile.id)
-            : toServerUrlDisplay(displayServerUrl) || t('status.connected')
-    ), [displayServerProfile, displayServerUrl]);
+        resolveHomeDisplayLabel(displayServerProfile, displayServerId)
+    ), [displayServerProfile, displayServerId]);
 
     const switchServer = React.useCallback(async (
         serverId: string,

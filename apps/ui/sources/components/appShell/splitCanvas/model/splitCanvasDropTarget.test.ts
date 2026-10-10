@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { resolveSplitCanvasDropTarget } from './splitCanvasDropTarget';
+import { readSplitCanvasDropZone, resolveSplitCanvasDropTarget } from './splitCanvasDropTarget';
 
 describe('resolveSplitCanvasDropTarget', () => {
     const rect = {
@@ -9,6 +9,18 @@ describe('resolveSplitCanvasDropTarget', () => {
         width: 400,
         height: 240,
     };
+
+    it('admits the displayed zone throughout its interior, including pane corners', () => {
+        for (const placement of ['left', 'right', 'up', 'down', 'center'] as const) {
+            const zone = readSplitCanvasDropZone(placement);
+            for (const x of [0.01, 0.5, 0.99]) for (const y of [0.01, 0.5, 0.99]) {
+                expect(resolveSplitCanvasDropTarget({ rect, leafId: 'leaf-a',
+                    clientX: rect.left + rect.width * (zone.left + (zone.right - zone.left) * x),
+                    clientY: rect.top + rect.height * (zone.top + (zone.bottom - zone.top) * y),
+                }).placement).toBe(placement);
+            }
+        }
+    });
 
     it('targets the left edge when the pointer is near the left boundary', () => {
         expect(resolveSplitCanvasDropTarget({

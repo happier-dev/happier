@@ -1,17 +1,17 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 
 import { hrefForDestinationRef, type CompactAppDestination } from '@/components/appShell/destinations/compactAppDestinationCatalog';
 import { DETAILS_TAB_STRIP_METRICS as M } from '@/components/appShell/panes/details/header/detailsTabHeaderMetrics';
 import { SplitCanvasHost, type SplitCanvasRetainedLeafContent } from '@/components/appShell/splitCanvas/components/SplitCanvasHost';
 import type { SplitCanvasAction, SplitCanvasDirection, SplitCanvasLeafNode } from '@/components/appShell/splitCanvas/model/splitCanvasTypes';
-import { useActiveServerAccountScope, useSetting } from '@/sync/domains/state/storage';
+import { useWorkspaceRefs, useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { useEntityDragDropRuntime } from '@/components/ui/treeDragDrop/entityDragDropHooks';
 import { executeWorkspaceEntityDrop, resolveWorkspaceEntityDrop, WORKSPACE_ENTITY_KINDS } from './workspaceEntityDrop';
 import { describePaneDropDestination, presentPaneDropAdmission } from '@/components/appShell/splitCanvas/presentation/paneDropPresentation';
 import { createWorkspaceDropScene, readWorkspaceTabTitle } from './workspaceDropScene';
-import { NavigationTitleChromeProvider } from '@/components/ui/layout/navigationTitleChrome';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { PaneLoadingFallback } from '@/components/ui/panels/PaneLoadingFallback';
 import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
@@ -72,7 +72,7 @@ function WorkspaceCanvas(props: Readonly<{
 }>) {
     const workspace = props.workspace;
     const scope = useActiveServerAccountScope();
-    const workspaceRefs = useSetting('workspaceRefsV1');
+    const workspaceRefs = useWorkspaceRefs();
     const runtime = useEntityDragDropRuntime();
     const dispatchCanvas = React.useCallback((action: SplitCanvasAction<GroupPayload>) => {
         switch (action.type) {
@@ -129,13 +129,11 @@ function WorkspaceCanvas(props: Readonly<{
                     aria-labelledby={`workspace-${safeGroup}-tab-${toTestIdSafeValue(tabId)}`}>
                     <DestinationInstanceHost tabId={tabId} ref={tab.target}
                         pathname={pathname ?? ''} focused={isFocused && isVisible} visible={isVisible}
-                        navigation={workspace.navigationForTab(tabId)}>
-                        <NavigationTitleChromeProvider showsTitle={false}>
+                        navigation={workspace.navigationForTab(tabId)} phone={workspace.phone !== null && workspace.phone !== undefined}>
                             {pathname ? <React.Suspense fallback={<PaneLoadingFallback />}>
                                 <DestinationBody target={tab.target} pathname={pathname}
                                     renderSession={renderSession} renderSessionDetails={renderSessionDetails} />
                             </React.Suspense> : <SurfaceStateCard kind="unavailable" title={t('common.unavailable')} />}
-                        </NavigationTitleChromeProvider>
                     </DestinationInstanceHost>
                 </View> }];
         })), [props.catalog, workspace]);
@@ -174,6 +172,8 @@ function WorkspaceGroupView(props: Readonly<{
     /** The pane's tabs live in the window's top strip (a top-row pane under a strip that carries them). */
     tabsInTitleBar: boolean;
 }>) {
+    const { theme } = useUnistyles();
+    const materialColor = useHappierMaterialColorResolver();
     const { workspace, group } = props;
     const safeGroup = toTestIdSafeValue(group.id);
     const geometry = React.useContext(WorkspaceBarGeometryContext);
@@ -190,7 +190,7 @@ function WorkspaceGroupView(props: Readonly<{
         return () => geometry.setGroupFrame(group.id, null);
     }, [geometry, group.id, props.tabsInTitleBar, publishFrame]);
     return <View ref={frameRef} testID={`workspace-group-${safeGroup}`} style={styles.group} onLayout={publishFrame}>
-        {props.tabsInTitleBar || workspace.phone ? null : <View style={styles.strip}>
+        {props.tabsInTitleBar || workspace.phone ? null : <View style={[styles.strip, { backgroundColor: materialColor(theme.colors.surface.inset, 'transparent') }]}>
             <WorkspaceGroupTabs workspace={workspace} group={group} catalog={props.catalog}
                 focused={props.focused} placement="strip" />
         </View>}

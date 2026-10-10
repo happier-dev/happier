@@ -9,6 +9,7 @@ import { DesktopActivityOverlayRuntime } from '@/activity/adapters/desktop/runti
 import { ReleaseNotesAutoShowMount } from '@/changelog/releaseNotes';
 import { OnboardingShowcaseAutoShowMount } from '@/onboarding/showcase';
 import { CompanionNoDragRegionProvider } from '@/components/companion/interaction/CompanionNoDragRegion';
+import { tryRenderWebPortal } from '@/components/ui/popover/portal';
 import { DesktopPetOverlayRuntimeMount } from '@/components/pets/runtime/DesktopPetOverlayRuntimeMount';
 import { PetAppShellCompanionMount } from '@/components/pets/runtime/PetAppShellCompanionMount';
 import { VoicePresenceAppShellMount } from '@/components/voice/presence/VoicePresenceAppShellMount';
@@ -88,6 +89,15 @@ export const AuthenticatedAppRuntimeMounts = React.memo(function AuthenticatedAp
     isAuthenticated: boolean;
     isDesktopShell: boolean;
 }>) {
+    // The route navigator is retained but display:none while the desktop workspace is
+    // active. Global floating companions must render outside that hidden DOM branch;
+    // the existing web portal preserves their React context and runtime ownership.
+    const floatingCompanions = (
+        <CompanionNoDragRegionProvider>
+            <PetAppShellCompanionMount />
+            <VoicePresenceAppShellMount />
+        </CompanionNoDragRegionProvider>
+    );
     return (
         <>
             <ActivityBadgeRuntime />
@@ -109,10 +119,13 @@ export const AuthenticatedAppRuntimeMounts = React.memo(function AuthenticatedAp
               * Voice orb both start drags from measured rects, and a provider per companion would
               * mean each one only sees its own subtree's regions.
               */}
-            <CompanionNoDragRegionProvider>
-                <PetAppShellCompanionMount />
-                <VoicePresenceAppShellMount />
-            </CompanionNoDragRegionProvider>
+            {tryRenderWebPortal({
+                shouldPortalWeb: Platform.OS === 'web',
+                portalTargetOnWeb: 'body',
+                modalPortalTarget: null,
+                getBoundaryDomElement: () => null,
+                content: floatingCompanions,
+            }) ?? floatingCompanions}
             {props.isAuthenticated ? <ReleaseNotesAutoShowMount /> : null}
             {props.isAuthenticated && props.isDesktopShell ? (
                 <DesktopBrowserRecordingReverseCaptureRuntimeMount />

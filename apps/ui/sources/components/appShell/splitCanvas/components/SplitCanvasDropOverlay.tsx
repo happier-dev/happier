@@ -1,38 +1,30 @@
 import * as React from 'react';
 import { Platform, View, type ViewStyle } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { HAPPIER_MOTION_V1 } from '@happier-dev/plugin-ui/presentation';
+import { HAPPIER_DROP_INDICATOR_METRICS, HAPPIER_MOTION_V1 } from '@happier-dev/plugin-ui/presentation';
 
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import type { SplitCanvasDirection, SplitCanvasDropTarget } from '../model/splitCanvasTypes';
+import { readSplitCanvasDropZone } from '../model/splitCanvasDropTarget';
 
 /**
  * The pane zone (DnD lab C2/C2s). Geometry only: what releasing does is said on the carried card.
  *
- * - Centre: the pane takes a soft outline, with a short mark at each edge the pane can still split.
- *   A pane too narrow to split shows no edge marks; its whole body is the centre.
- * - Edge: the zone covers the part of the pane the new pane will take (a split starts even), over a
- *   frosted veil, so the person sees the real size before letting go.
+ * - Centre: the whole pane takes a soft outline and a light tint its content stays readable under,
+ *   with a short mark at each edge the pane can still split. A pane too narrow to split shows no marks.
+ * - Edge: a frosted band shows where release splits, not the eventual half-pane size.
  *
  * The zone sits inset from the pane edge so it never reads as the pane's own border.
  */
 
-/** A split starts even (`splitLeaf` ratio): the new pane takes half of the pane it splits. */
-const NEW_PANE_SHARE = '50%';
 const ZONE_INSET_PX = 8;
 const ZONE_RADIUS_PX = 12;
-const EDGE_MARK = Object.freeze({ thicknessPx: 4, lengthPx: 36, insetPx: 10 });
+const EDGE_MARK = Object.freeze({ thicknessPx: 4, lengthPx: 36, insetPx: 10, radiusPx: 2 });
 
 function zoneFrame(placement: SplitCanvasDropTarget['placement']): ViewStyle {
-    const inset = ZONE_INSET_PX;
-    switch (placement) {
-        case 'left': return { top: inset, bottom: inset, left: inset, right: NEW_PANE_SHARE };
-        case 'right': return { top: inset, bottom: inset, left: NEW_PANE_SHARE, right: inset };
-        case 'up': return { top: inset, bottom: NEW_PANE_SHARE, left: inset, right: inset };
-        case 'down': return { top: NEW_PANE_SHARE, bottom: inset, left: inset, right: inset };
-        case 'center':
-        default: return { top: inset, bottom: inset, left: inset, right: inset };
-    }
+    const zone = readSplitCanvasDropZone(placement);
+    return { top: `${zone.top * 100}%`, bottom: `${(1 - zone.bottom) * 100}%`,
+        left: `${zone.left * 100}%`, right: `${(1 - zone.right) * 100}%` };
 }
 
 function edgeMarkFrame(direction: SplitCanvasDirection): ViewStyle {
@@ -49,13 +41,20 @@ const stylesheet = StyleSheet.create((theme) => ({
     zone: {
         position: 'absolute',
         borderRadius: ZONE_RADIUS_PX,
-        borderWidth: 1.5,
+        // A container outline: the same stroke a group takes when a widget would enter it.
+        borderWidth: HAPPIER_DROP_INDICATOR_METRICS.containerOutlinePx,
         borderColor: theme.colors.state.active.border,
         overflow: 'hidden',
     },
     tint: {
         ...StyleSheet.absoluteFillObject,
         backgroundColor: theme.colors.state.active.background,
+    },
+    // The centre keeps the pane readable: half the band's tint, no veil, no frost.
+    softTint: {
+        ...StyleSheet.absoluteFillObject,
+        backgroundColor: theme.colors.state.active.background,
+        opacity: 0.5,
     },
     veil: {
         ...StyleSheet.absoluteFillObject,
@@ -64,7 +63,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     edgeMark: {
         position: 'absolute',
-        borderRadius: 3,
+        borderRadius: EDGE_MARK.radiusPx,
         backgroundColor: theme.colors.state.active.foreground,
         opacity: 0.6,
     },
@@ -96,9 +95,11 @@ export const SplitCanvasDropOverlay = React.memo((props: Readonly<{
         <View pointerEvents="none" style={StyleSheet.absoluteFillObject}
             accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
             <View testID={`split-canvas-drop-overlay-${leafId}-${placement}`}
-                style={[styles.zone, zoneFrame(placement), edge ? WEB_FROST : null, reducedMotion ? null : WEB_ZONE_GLIDE]}>
-                {edge ? <View style={styles.veil} /> : null}
-                <View style={styles.tint} />
+                style={[{ position: 'absolute' }, edge ? zoneFrame(placement) : StyleSheet.absoluteFillObject, reducedMotion ? null : WEB_ZONE_GLIDE]}>
+                <View style={[styles.zone, { top: ZONE_INSET_PX, bottom: ZONE_INSET_PX, left: ZONE_INSET_PX, right: ZONE_INSET_PX }, edge ? WEB_FROST : null]}>
+                    {edge ? <View style={styles.veil} /> : null}
+                    <View style={edge ? styles.tint : styles.softTint} />
+                </View>
             </View>
             {!edge ? (props.edgeMarks ?? []).map(direction => (
                 <View key={direction} testID={`split-canvas-drop-edge-${leafId}-${direction}`}

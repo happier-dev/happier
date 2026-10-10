@@ -1,4 +1,9 @@
 import '@expo/metro-runtime';
+import { installWorkspaceBrowserHistory } from './sources/components/appShell/workspace/workspaceBrowserTransport';
+
+// This call forces evaluation despite Metro inlineRequires, before Router can
+// install its URL mirror. WorkspaceProvider later binds the live transport.
+installWorkspaceBrowserHistory();
 
 declare const require: (id: string) => unknown;
 

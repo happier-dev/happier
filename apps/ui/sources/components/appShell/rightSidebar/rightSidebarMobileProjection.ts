@@ -24,7 +24,7 @@ export function resolveRightSidebarMobileProjection(input: Readonly<{
     tabs: readonly RightSidebarTabDefinition[];
 }>): readonly RightSidebarMobileProjectionEntry[] {
     return Object.freeze(input.tabs.flatMap((tab): readonly RightSidebarMobileProjectionEntry[] => {
-        if (tab.disabledReason) {
+        if (tab.disabledReason || tab.hiddenInLauncher) {
             return [];
         }
         const surface = resolveRightSidebarMobileSurface(tab, input.scope);
@@ -45,8 +45,8 @@ export function resolveRightSidebarTabIdForMobileSurface(input: Readonly<{
     surface: RightSidebarMobileSurface;
     tabs: readonly RightSidebarTabDefinition[];
 }>): string | null {
-    return resolveRightSidebarMobileProjection({
-        scope: input.scope,
-        tabs: input.tabs,
-    }).find((entry) => entry.surface === input.surface)?.tabId ?? null;
+    // Route/selection resolution consumes the complete catalog, including a
+    // companion whose launcher is temporarily hidden by the active full page.
+    return input.tabs.find((tab) => !tab.disabledReason
+        && resolveRightSidebarMobileSurface(tab, input.scope) === input.surface)?.id ?? null;
 }

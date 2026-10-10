@@ -8,9 +8,17 @@ import { matchWorkspaceDestinationRoute, workspaceRouteFiles } from './workspace
 import { workspaceSettingsLayoutKeys } from './workspaceRouteContext';
 import { WorkspaceRouteOutlet } from './WorkspaceRouteOutlet';
 
-const bodies = Object.fromEntries(Object.entries(workspaceRouteBodies).map(([routeKey, load]) => (
-    [routeKey, React.lazy(load)]
-)));
+// Routes that share one editor loader also share its lazy identity: promotion
+// after Save must not suspend an already mounted editor on another route chunk.
+const lazyBodies = new Map<() => Promise<{ default: React.ComponentType }>, React.LazyExoticComponent<React.ComponentType>>();
+const bodies = Object.fromEntries(Object.entries(workspaceRouteBodies).map(([routeKey, load]) => {
+    let Body = lazyBodies.get(load);
+    if (!Body) {
+        Body = React.lazy(load);
+        lazyBodies.set(load, Body);
+    }
+    return [routeKey, Body];
+}));
 // Stable component identities keep common layouts/providers mounted when their selected leaf changes.
 const layouts = new Map<string, React.LazyExoticComponent<React.ComponentType>>();
 function hostedLayout(key: string) {

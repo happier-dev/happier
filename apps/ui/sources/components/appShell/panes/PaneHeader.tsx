@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { View, type StyleProp, type TextStyle } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
-import { happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { happierPageTextMetrics, useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 import type { PluginUiDetailsPanePresentation } from '@happier-dev/plugin-ui/advanced';
 
 import { IconButton } from '@/components/ui/buttons/IconButton';
@@ -68,12 +68,14 @@ export type PaneHeaderProps = PaneHeaderContent & Readonly<{
  */
 export const PaneHeader = React.memo(function PaneHeader(props: PaneHeaderProps) {
     const styles = stylesheet;
+    const { theme } = useUnistyles();
+    const materialColor = useHappierMaterialColorResolver();
     const height = useHeaderHeight();
     const testID = props.testID ?? 'pane-header';
     const large = props.size === 'large';
     const line = props.line ?? (props.subtitle ? { segments: [props.subtitle] } : null);
     return (
-        <View testID={testID} style={large ? styles.large : [styles.band, { height }]}>
+        <View testID={testID} style={[large ? styles.large : [styles.band, { height }], { backgroundColor: materialColor(theme.colors.surface.base, 'transparent') }]}>
             <View style={styles.titleBlock}>
                 <View style={styles.titleRow}>
                 {props.leading ? <View style={styles.identityMark}>{props.leading}</View> : null}
@@ -118,7 +120,7 @@ export const PaneHeader = React.memo(function PaneHeader(props: PaneHeaderProps)
                     testID={`${testID}.close`}
                     iconName="x"
                     accessibilityLabel={t('common.close')}
-                    tooltip={t('common.close')}
+                    tooltip={props.size === 'large' ? undefined : t('common.close')}
                     variant="plain"
                     onPress={props.onClose}
                 />

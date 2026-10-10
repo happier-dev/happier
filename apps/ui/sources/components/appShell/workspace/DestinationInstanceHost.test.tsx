@@ -3,6 +3,9 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
 import { usePluginSurfaceFocusEligibility, usePluginSurfaceCurrentUiContextEligibility, useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { WorkspaceNavigationContext, type WorkspaceNavigationContextValue } from './WorkspaceNavigationContext';
+import { createWorkspaceState } from './workspaceState';
+import { resolveCompactAppDestinations } from '../destinations/compactAppDestinationCatalog';
 import {
     DestinationInstanceHost,
     useDestinationFocus,
@@ -57,6 +60,22 @@ function FocusProbe() {
 }
 
 describe('DestinationInstanceHost', () => {
+    it('gives unhosted shell consumers the focused workspace route before Expo mirrors it', async () => {
+        const catalog = resolveCompactAppDestinations({ pages: [], builtins: { externalSessions: false, inbox: false, workflows: true, friends: false } });
+        const value = (id: string | null): WorkspaceNavigationContextValue => ({
+            active: true, catalog,
+            state: createWorkspaceState({ id: 'workflow-tab', target: id === null ? { kind: 'workflows', params: {} }
+                : { kind: 'workflow', params: { id } }, pinned: false, preview: false }),
+            canGoBack: false, canGoForward: false, openHref: () => true,
+            activateTab: () => {}, closeTab: () => {}, closeTabs: () => {}, dispatch: () => {},
+            navigationForTab: () => ({ push: () => {}, replace: () => {}, back: () => {} }),
+            registerBackStep: () => () => {}, back: () => {}, forward: () => {},
+        });
+        const screen = await renderScreen(<WorkspaceNavigationContext.Provider value={value('qa-checklist')}><IdentityProbe /></WorkspaceNavigationContext.Provider>);
+        expect(screen.root.findByType('IdentityProbe').props.pathname).toBe('/workflows/qa-checklist');
+        await screen.update(<WorkspaceNavigationContext.Provider value={value(null)}><IdentityProbe /></WorkspaceNavigationContext.Provider>);
+        expect(screen.root.findByType('IdentityProbe').props.pathname).toBe('/workflows');
+    });
     it('gives only the visible focused destination plugin focus and semantic current-context eligibility', async () => {
         const screen = await renderScreen(<>
             {[{ id: 'focused', focused: true, visible: true }, { id: 'sibling', focused: false, visible: true },

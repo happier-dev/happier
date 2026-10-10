@@ -927,9 +927,9 @@ const styles = StyleSheet.create((theme) => ({
     pluginPaper: {
         backgroundColor: theme.colors.surface.base,
         paddingBottom: 24,
-        // The mounted surface root fills its host (`flex: 1`); in a row that fill is horizontal, so
-        // the half keeps its content height when the two halves stack on a phone.
-        flexDirection: 'row',
+        // The public Stack root keeps its natural content height. A column
+        // stretches it to this pane's width rather than its intrinsic row width.
+        flexDirection: 'column',
     },
     // A page-sized frame, so the pane has a page to sit beside.
     collectionPaneFrame: {

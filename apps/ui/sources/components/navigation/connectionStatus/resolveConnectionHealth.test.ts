@@ -50,6 +50,22 @@ describe('resolveConnectionHealth', () => {
         expect(result.kind).toBe('connecting');
     });
 
+    it('shows loading during a pending initial Home probe, not an outage from an unopened socket', () => {
+        expect(resolveConnectionHealth({
+            endpointStatus: 'idle',
+            socketStatus: 'disconnected',
+            machineGroups: [{ machineCount: 0, onlineCount: null, status: 'loading' }],
+        }).kind).toBe('connecting');
+    });
+
+    it('keeps a reachable Home loading while its socket reconnects', () => {
+        expect(resolveConnectionHealth({
+            endpointStatus: 'online',
+            socketStatus: 'disconnected',
+            machineGroups: [{ machineCount: 2, onlineCount: 2, status: 'idle' }],
+        }).kind).toBe('connecting');
+    });
+
     it('returns no_machine when the server is connected and there are no machines', () => {
         const result = resolveConnectionHealth({
             socketStatus: 'connected',

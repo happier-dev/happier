@@ -11,6 +11,7 @@ import {
     useDestinationParams,
     useDestinationPathname,
     useDestinationRouter,
+    useDestinationScreenOptions,
 } from './DestinationInstanceHost';
 
 export type { Href } from 'expo-router';
@@ -18,9 +19,10 @@ export { useDestinationParams as useLocalSearchParams, useDestinationGlobalParam
     useDestinationPathname as usePathname, useDestinationRouter as useRouter,
     useDestinationFocus as useIsFocused, useDestinationFocusEffect as useFocusEffect };
 
-/** Route-level header declarations only apply when this body is rendered by Expo. */
+/** A leaf's options go to its current navigation owner; named Screens are layout declarations. */
 function Screen(props: React.ComponentProps<typeof ExpoRouter.Stack.Screen>) {
     const hosted = useDestinationInstanceKey() !== null;
+    useDestinationScreenOptions(hosted && !props.name && typeof props.options !== 'function' ? props.options : undefined);
     return hosted ? null : <ExpoRouter.Stack.Screen {...props} />;
 }
 
@@ -54,7 +56,7 @@ export function Redirect(props: React.ComponentProps<typeof ExpoRouter.Redirect>
     return hosted ? null : <ExpoRouter.Redirect {...props} />;
 }
 
-/** This adapter suppresses native-header writes while preserving the existing mobile screen. */
+/** Hosted destinations publish to retained chrome; native destinations keep their stack navigator. */
 export function useNavigation() {
     const hosted = useDestinationInstanceKey() !== null;
     const navigation = useDestinationNavigation();

@@ -2,9 +2,10 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import type { PluginMachineExecutionOriginV1 } from '@happier-dev/protocol';
 import { normalizePluginUiDestinationBindingV1 } from '@happier-dev/protocol/plugins/ui';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
+import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
 import { createEmptyPaneDetailsState } from './details/workspace/detailsWorkspaceReducer';
 import {
     EMPTY_PLUGIN_UI_PROJECTION,
@@ -122,6 +123,24 @@ function projectionWith(...placements: readonly PluginUiSurfacePlacementProjecti
 }
 
 describe('AppPaneScopeHost fresh plugin surface open', () => {
+    let network: Awaited<ReturnType<typeof installSessionOpsNetworkBoundary>>;
+    let accountContext: Awaited<ReturnType<typeof import('@/sync/ops/actions/actionAccountContext').captureLazyActionAccountContext>>;
+
+    beforeEach(async () => {
+        network = await installSessionOpsNetworkBoundary();
+        const home = await network.addHome('https://server-1', 'account-a');
+        expect(home.id).toBe('server-1');
+        const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+        // Explicit pane scopes borrow the credential-admitted Home/Account
+        // lifetime; they must not manufacture authority or borrow ambient focus.
+        accountContext = await captureLazyActionAccountContext(home.id);
+    });
+
+    afterEach(() => {
+        accountContext.dispose();
+        network.dispose();
+    });
+
     it('hands a fresh current Project Companion bottom-pane request and peer Project panes to their existing owners', async () => {
         const { AppPaneScopeHost } = await import('./AppPaneScopeHost');
         const rightPlacement = createPlacement({
@@ -170,6 +189,7 @@ describe('AppPaneScopeHost fresh plugin surface open', () => {
                     projectionPhase: 'current',
                     machineId: 'machine-1',
                     serverId: 'server-1',
+                    accountLifetime: accountContext.accountLifetime,
                     platform: 'web',
                     interactionEnabled: true,
                 }}
@@ -258,6 +278,7 @@ describe('AppPaneScopeHost fresh plugin surface open', () => {
                     projectionPhase: 'current',
                     machineId: 'machine-1',
                     serverId: 'server-1',
+                    accountLifetime: accountContext.accountLifetime,
                     platform: 'web',
                     interactionEnabled: true,
                 }}
@@ -325,6 +346,7 @@ describe('AppPaneScopeHost fresh plugin surface open', () => {
                     projectionPhase: 'current',
                     machineId: 'machine-1',
                     serverId: 'server-1',
+                    accountLifetime: accountContext.accountLifetime,
                     platform: 'web',
                     interactionEnabled: true,
                 }}
@@ -426,6 +448,7 @@ describe('AppPaneScopeHost fresh plugin surface open', () => {
                     projectionPhase: 'current',
                     machineId: 'machine-1',
                     serverId: 'server-1',
+                    accountLifetime: accountContext.accountLifetime,
                     platform: 'web',
                     interactionEnabled: true,
                 }}
@@ -488,6 +511,7 @@ describe('AppPaneScopeHost fresh plugin surface open', () => {
                     projectionPhase: 'current',
                     machineId: 'machine-1',
                     serverId: 'server-1',
+                    accountLifetime: accountContext.accountLifetime,
                     platform: 'web',
                     interactionEnabled: true,
                 }}
@@ -557,6 +581,7 @@ describe('AppPaneScopeHost fresh plugin surface open', () => {
                     projectionPhase: 'current',
                     machineId: 'machine-1',
                     serverId: 'server-1',
+                    accountLifetime: accountContext.accountLifetime,
                     platform: 'web',
                     interactionEnabled: true,
                 }}
@@ -578,6 +603,7 @@ describe('AppPaneScopeHost fresh plugin surface open', () => {
                         projectionPhase: 'current',
                         machineId: 'machine-1',
                         serverId: 'server-1',
+                        accountLifetime: accountContext.accountLifetime,
                         platform: 'web',
                         interactionEnabled: true,
                     }}
@@ -634,6 +660,7 @@ describe('AppPaneScopeHost fresh plugin surface open', () => {
             projectionPhase: 'current' as const,
             machineId: 'machine-1',
             serverId: 'server-1',
+            accountLifetime: accountContext.accountLifetime,
             platform: 'web' as const,
             interactionEnabled: true,
         };
@@ -718,6 +745,7 @@ describe('AppPaneScopeHost fresh plugin surface open', () => {
                     projectionPhase: 'current',
                     machineId: 'machine-1',
                     serverId: 'server-1',
+                    accountLifetime: accountContext.accountLifetime,
                     platform: 'web',
                     interactionEnabled: true,
                 }}

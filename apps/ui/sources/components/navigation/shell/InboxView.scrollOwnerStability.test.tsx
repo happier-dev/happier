@@ -35,7 +35,7 @@ const friendRequestStore = vi.hoisted(() => {
 });
 
 const emptyStorageState = vi.hoisted(() => ({
-    settings: { workspacePathDisplayModeV1: 'name', workspaceRefsV1: [] },
+    settings: { workspacePathDisplayModeV1: 'name' },
     sessions: {},
     sessionMessages: {},
     sessionListRowsByServerId: {},

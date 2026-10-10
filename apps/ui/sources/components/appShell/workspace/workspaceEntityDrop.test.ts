@@ -4,7 +4,7 @@ import { resolveCompactAppDestinations } from '../destinations/compactAppDestina
 import { createWorkspaceNavigationAdapter } from './workspaceNavigationAdapter';
 import { createWorkspaceActionAdapter } from './workspaceActions';
 import { createWorkspaceState, reduceWorkspaceState } from './workspaceState';
-import { resolveWorkspaceEntityDrop } from './workspaceEntityDrop';
+import { resolveWorkspaceEntityDrop, resolveWorkspaceEntityHref } from './workspaceEntityDrop';
 import type { WorkspaceNavigationContextValue } from './WorkspaceNavigationContext';
 import { isWorkspaceActionId } from '@happier-dev/protocol';
 import { EntityDropAdmissionV1Schema } from '@happier-dev/protocol/plugins/ui';
@@ -29,11 +29,51 @@ function harness() {
         registerBackStep: () => () => {},
     };
     const execute = createWorkspaceActionAdapter({ getState: () => state, navigation,
-        readCanvas: () => null, createId: () => `id:${++sequence}` });
+        readCanvas: () => ({ readSplitMeasurement: () => ({ availableSizePx: 1400, minimumExistingSizePx: 400 }), resizeSplit: () => false }),
+        createId: () => `id:${++sequence}` });
     return { workspace, catalog, execute };
 }
 
 describe('workspace entity Action admission', () => {
+    it('applies an existing tab edge drop beside the hovered pane rather than its source pane', () => {
+        const h = harness();
+        h.workspace.dispatch({ type: 'openTab', groupId: 'group:1', tab: {
+            id: 'neighbor', target: { kind: 'session', params: { id: 'neighbor-session', ...scope } }, pinned: false, preview: false,
+        } });
+        h.workspace.openHref('/inbox', { mode: 'splitRight', availableSizePx: 1400, minimumFirstSizePx: 400 });
+        const target = Object.values(h.workspace.state.groups).find(group => group.id !== 'group:1')!;
+        const decision = resolveWorkspaceEntityDrop({ ...h, scope, workspaceRefs: [],
+            item: { kind: 'workspace-tab', scope, tabId: 'anchor' }, target: { leafId: target.id, placement: 'down' },
+            availableSizePx: 900, minimumExistingSizePx: 100 });
+        expect(decision.status).toBe('allowed');
+        if (decision.status !== 'allowed' || !isWorkspaceActionId(decision.effect.actionId)) throw new Error('Expected workspace effect');
+        expect(h.execute(decision.effect.actionId, decision.effect.input)).toEqual({ ok: true });
+        expect(h.workspace.state.root).toMatchObject({ kind: 'split', second: { kind: 'split', axis: 'column', first: { id: target.id } } });
+        expect(Object.values(h.workspace.state.tabs).filter(tab => tab.id === 'anchor')).toHaveLength(1);
+    });
+    it('refuses a repository file drop whose qualified checkout ID has multiple candidates', () => {
+        const h = harness();
+        const first = { id: 'workspace', serverId: 'home', machineId: 'machine', rootPath: '/repo', createdAtMs: 1 };
+        expect(resolveWorkspaceEntityHref({ kind: 'repository-file', scope, workspaceId: 'workspace',
+            machineId: 'machine', path: 'README.md' }, { ...h, scope,
+            workspaceRefs: [first, { ...first, rootPath: '/other' }] })).toBeNull();
+    });
+    it('splits destination and qualified repository-file drops through the same measured Action owner', () => {
+        for (const item of [
+            { kind: 'destination', scope, href: '/inbox' },
+            { kind: 'repository-file', scope, workspaceId: 'workspace', machineId: 'machine', path: 'README.md' },
+        ] as const) {
+            const h = harness();
+            const decision = resolveWorkspaceEntityDrop({ ...h, scope,
+                workspaceRefs: [{ id: 'workspace', serverId: 'home', machineId: 'machine', rootPath: '/repo', createdAtMs: 1 }],
+                item, target: { leafId: 'group:1', placement: 'right' }, availableSizePx: 1400, minimumExistingSizePx: 400 });
+            expect(decision).toMatchObject({ status: 'allowed', effect: { input: { mode: 'splitRight' } } });
+            if (decision.status !== 'allowed' || !isWorkspaceActionId(decision.effect.actionId)) throw new Error('Expected workspace effect');
+            expect(h.execute(decision.effect.actionId, decision.effect.input)).toEqual({ ok: true });
+            expect(h.workspace.state.root.kind).toBe('split');
+            expect(Object.values(h.workspace.state.tabs).map(tab => tab.target.kind)).toEqual(['session', item.kind === 'destination' ? 'inbox' : 'project']);
+        }
+    });
     it('opens a kept destination before its semantic anchor and focuses an already-open qualified Session', () => {
         const h = harness();
         const decision = resolveWorkspaceEntityDrop({ ...h, scope, workspaceRefs: [],

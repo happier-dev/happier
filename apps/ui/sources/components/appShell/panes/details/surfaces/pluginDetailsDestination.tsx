@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { I18nManager, Platform, Pressable, ScrollView, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 import { resolveHappierFocusRingVisible, resolveHappierTabKeySelection } from '@happier-dev/plugin-ui/presentation';
 import {
     isPluginUiDestinationBindingAdmittedAtRuntimeV1,
@@ -478,9 +479,12 @@ const PluginDetailsDestinationLaunchScopeContext = React.createContext<PluginDet
  */
 export function PluginDetailsDestinationLaunchScope(props: Readonly<{
     children: React.ReactNode;
+    accountLifetime?: ActiveServerAccountScopeLifetime | null;
 }>): React.ReactElement {
     const [store] = React.useState(createPluginDetailsDestinationLaunchStore);
-    const accountLifetime = captureActiveServerAccountScopeLifetime();
+    const accountLifetime = props.accountLifetime === undefined
+        ? captureActiveServerAccountScopeLifetime()
+        : props.accountLifetime;
     const [, refreshAfterAccountRetirement] = React.useReducer((revision: number) => revision + 1, 0);
 
     React.useEffect(() => {
@@ -1006,6 +1010,7 @@ export function PluginDetailsViewerChoiceChrome(props: Readonly<{
 }>): React.ReactElement | null {
     const styles = viewerChoiceStylesheet;
     const { theme } = useUnistyles();
+    const materialColor = useHappierMaterialColorResolver();
     const [pending, setPending] = React.useState(false);
     const tabRefs = React.useRef(new Map<string, React.ElementRef<typeof Pressable> | null>());
     const minimumInteractiveTargetSize = resolveMinimumInteractiveTargetSize(Platform.OS);
@@ -1048,7 +1053,7 @@ export function PluginDetailsViewerChoiceChrome(props: Readonly<{
 
     return (
         <View
-            style={styles.root}
+            style={[styles.root, { backgroundColor: materialColor(theme.colors.surface.inset, 'transparent') }]}
             accessibilityRole="tablist"
             accessibilityLabel={t('common.fileViewer')}
         >
@@ -1090,6 +1095,7 @@ export function PluginDetailsViewerChoiceChrome(props: Readonly<{
                                         minHeight: minimumInteractiveTargetSize,
                                     },
                                     candidate.selected ? styles.choiceSelected : null,
+                                    candidate.selected ? { backgroundColor: materialColor(theme.colors.surface.base) } : null,
                                     disabled ? styles.choiceDisabled : null,
                                     !disabled && interactionState.pressed ? styles.choicePressed : null,
                                     // Inset: a choice fills its horizontal scroller's height, which clips outside it.

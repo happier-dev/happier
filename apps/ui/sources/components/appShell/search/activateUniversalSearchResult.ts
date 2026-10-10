@@ -3,6 +3,7 @@ import type { OpenProjectOptions } from '@/components/projects/useOpenProject';
 import type { FileFindSeed as FindSeed } from '@/components/appShell/panes/fileFindSeedHandoff';
 
 import type { UniversalSearchTarget } from './universalSearchResult';
+import { memoryDocumentSearchHitHref } from '@/components/memory/memoryDocumentRoutes';
 
 /**
  * The one place a built-in Universal Search row turns into navigation.
@@ -25,6 +26,7 @@ export type UniversalSearchActivationOutcome =
     | Readonly<{ ok: false; reason: 'unavailable' | 'failed' }>;
 
 export type UniversalSearchActivationOwners = Readonly<{
+    openExternalConversation?: (target: Extract<UniversalSearchTarget, { kind: 'externalConversation' }>) => Promise<boolean>;
     /** Canonical scoped session navigation (Home switch + telemetry + singular route). */
     navigateToSession: (
         sessionId: string,
@@ -56,6 +58,12 @@ export async function activateUniversalSearchResult(
 
     try {
         switch (target.kind) {
+            case 'externalConversation':
+                return await owners.openExternalConversation?.(target) ? { ok: true } : { ok: false, reason: 'unavailable' };
+            case 'memoryDocument': {
+                owners.push(memoryDocumentSearchHitHref(target));
+                return { ok: true };
+            }
             case 'session': {
                 const sessionId = target.sessionId.trim();
                 if (!sessionId) return { ok: false, reason: 'unavailable' };
@@ -71,7 +79,7 @@ export async function activateUniversalSearchResult(
             }
             case 'project': {
                 if (!target.workspaceRefId.trim()) return { ok: false, reason: 'unavailable' };
-                if (!owners.openProject(target.workspaceRefId)) {
+                if (!owners.openProject(target.workspaceRefId, { serverId: target.serverId })) {
                     return { ok: false, reason: 'unavailable' };
                 }
                 return { ok: true };
@@ -87,6 +95,7 @@ export async function activateUniversalSearchResult(
                 try {
                     if (target.workspaceRefId) {
                         const opened = owners.openProject(target.workspaceRefId, {
+                            serverId: target.scope.serverId,
                             activeRootPath: target.scope.rootPath,
                             initialResource: { kind: 'file', path: target.path, ...(target.anchor ? { anchor: target.anchor } : {}),
                                 ...(target.anchorSource ? { anchorSource: target.anchorSource } : {}), ...(target.find ? { find: target.find } : {}) },
@@ -117,6 +126,7 @@ export async function activateUniversalSearchResult(
             case 'workspaceCommit': {
                 if (target.workspaceRefId) {
                     return owners.openProject(target.workspaceRefId, {
+                        serverId: target.scope.serverId,
                         activeRootPath: target.scope.rootPath,
                         initialResource: { kind: 'commit', sha: target.sha },
                     }) ? { ok: true } : { ok: false, reason: 'unavailable' };

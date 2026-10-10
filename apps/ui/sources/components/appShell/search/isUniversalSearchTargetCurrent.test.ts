@@ -6,6 +6,17 @@ import { isUniversalSearchTargetCurrent } from './isUniversalSearchTargetCurrent
 import type { UniversalSearchTarget } from './universalSearchResult';
 
 describe('isUniversalSearchTargetCurrent', () => {
+    it('rejects duplicate saved checkout candidates before project or file activation', () => {
+        const scope = { serverId: 'home', machineId: 'machine', rootPath: '/repo' };
+        const ref = { id: 'workspace', ...scope, createdAtMs: 1 };
+        const base = { accountScope: { serverId: 'home', accountId: 'account', current: true },
+            workspaces: [ref, { ...ref }], settingsPages: new Map(),
+            resolveSessionWorkspaceTarget: () => null, isWorkspaceScopeReachable: () => true };
+        expect(isUniversalSearchTargetCurrent({ ...base, target: { kind: 'project', ...scope,
+            workspaceRefId: 'workspace', accountId: 'account' } })).toBe(false);
+        expect(isUniversalSearchTargetCurrent({ ...base, target: { kind: 'workspaceFile', scope, path: 'README.md',
+            workspaceRefId: 'workspace', serverId: 'home', accountId: 'account', sessionId: null } })).toBe(false);
+    });
     it('keeps an exact scoped transcript target current when its session is not hydrated', () => {
         expect(isUniversalSearchTargetCurrent({
             target: { kind: 'session', serverId: 'home-b', accountId: 'account-b', sessionId: 'archived-unloaded', seq: 42 },

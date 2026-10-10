@@ -1,8 +1,10 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 
 import { PaneHeader, type PaneHeaderLineSegment } from '@/components/appShell/panes/PaneHeader';
+import { useClaimedStackHeaderActions } from '@/components/navigation/stackHeaderActions';
 import { ToolbarButton } from '@/components/ui/buttons/ToolbarButton';
 import { PageHeaderMenu, type PageHeaderMenuAction } from '@/components/ui/layout/PageHeaderEntityParts';
 import { useSurfaceStateSize } from '@/components/ui/surfaces/surfaceStateSize';
@@ -79,6 +81,8 @@ function toLineSegments(meta: readonly DetailsTabHeaderMetaFact[] | undefined): 
  * On a phone the band takes the pane header's large step and the controls stay on their own row.
  */
 export const DetailsTabHeader = React.memo(function DetailsTabHeader(props: DetailsTabHeaderProps) {
+    const { theme } = useUnistyles();
+    const materialColor = useHappierMaterialColorResolver();
     const phone = useSurfaceStateSize() === 'phone';
     const metrics = DETAILS_TAB_HEADER_METRICS[phone ? 'phone' : 'pane'];
     const styles = stylesheet;
@@ -101,27 +105,31 @@ export const DetailsTabHeader = React.memo(function DetailsTabHeader(props: Deta
     const menu = props.menu ?? (props.menuActions && props.menuActions.length > 0 ? (
         <PageHeaderMenu testID={`${testID}.menu`} actions={props.menuActions} />
     ) : null);
+    // The pane's own controls (⤢, close), when the pane showing this tab has no bar of its own.
+    const paneControls = useClaimedStackHeaderActions({ scopeOnly: true });
     // A phone recomposes: only `⋯` stays beside the title; the toggles and buttons move beneath it.
     const bandActions = phone
         ? (menu ?? undefined)
-        : props.actions || buttons || menu ? (
+        : props.actions || buttons || menu || paneControls ? (
             <View style={styles.bandActions}>
                 {props.actions}
                 {buttons}
                 {menu}
+                {paneControls}
             </View>
         ) : undefined;
-    const phoneToolbar = phone && (props.controls || props.actions || buttons) ? (
+    const phoneToolbar = phone && (props.controls || props.actions || buttons || paneControls) ? (
         <View style={styles.controls}>
             {props.controls}
             <View style={styles.grow} />
             {props.actions}
             {buttons}
+            {paneControls}
         </View>
     ) : null;
 
     return (
-        <View testID={`${testID}.root`} style={styles.root}>
+        <View testID={`${testID}.root`} style={[styles.root, { backgroundColor: materialColor(theme.colors.surface.base, 'transparent') }]}>
             <PaneHeader
                 testID={testID}
                 title={props.title}

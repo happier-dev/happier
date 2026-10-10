@@ -10,6 +10,7 @@ export type UniversalSearchScopeSeed = Readonly<{
     sessionId: string | null;
     machineId: string | null;
     rootPath: string | null;
+    machineScope?: 'all';
 }>;
 
 /** Canonicalize the one portable Home identity at Search ingress. */

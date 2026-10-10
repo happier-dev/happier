@@ -1,8 +1,8 @@
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { renderScreen } from '@/dev/testkit';
-import { CONTENT_WIDTH_PX_BY_MODE } from '@/components/ui/layout/contentWidthMode';
+import { renderScreen } from '@/dev/testkit/render/renderScreen';
+import { CONTENT_WIDTH_PX_BY_MODE, PAGE_COLUMN_MAX_WIDTH_PX } from '@/components/ui/layout/contentWidthMode';
 import { installNavigationShellCommonModuleMocks } from './navigationShellTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -85,12 +85,14 @@ installNavigationShellCommonModuleMocks({
     },
 });
 
-vi.mock('@/sync/domains/state/storageStore', () => {
+vi.mock('@/sync/domains/state/storageStore', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
     const storage = Object.assign(
         (selector: (value: typeof storageState) => unknown) => selector(storageState),
         { getState: () => storageState },
     );
-    return { storage, getStorage: () => storage };
+    const module = createStorageModuleStub({ storage });
+    return { storage: module.storage, getStorage: module.getStorage };
 });
 
 vi.mock('expo-image', () => ({ Image: 'Image' }));
@@ -134,6 +136,9 @@ async function setContentWidthMode(mode: 'compact' | 'medium' | 'full'): Promise
     });
 }
 
+// The first Inbox import initializes the full page graph; keep it outside assertion deadlines.
+const { InboxView } = await import('./InboxView');
+
 describe('navigation shell surfaces follow the content-width setting', () => {
     beforeEach(() => {
         scrollOwner.mounts = 0;
@@ -141,18 +146,20 @@ describe('navigation shell surfaces follow the content-width setting', () => {
         storageState.localSettings.uiContentWidthMode = 'compact';
     });
 
-    it('applies a changed content-width preference to the Inbox without remounting the scroll owner', async () => {
-        const { InboxView } = await import('./InboxView');
+    it('preserves the Inbox reading column across content-width changes without remounting its scroll owner', async () => {
+        const { HappierPageHeader } = await import('@happier-dev/plugin-ui/presentation');
 
         const tree = (await renderScreen(<InboxView />)).tree;
-        expect(readScrollContentMaxWidth(tree)).toBe(CONTENT_WIDTH_PX_BY_MODE.compact);
+        const readColumnWidth = () => tree.root.findByType(HappierPageHeader).props.columnMaxWidthPx;
+        // ItemList lets the scroll owner fill the screen; its page children own the reading measure.
+        expect(readColumnWidth()).toBe(PAGE_COLUMN_MAX_WIDTH_PX.reading);
         expect(scrollOwner.mounts).toBe(1);
 
         await setContentWidthMode('medium');
-        expect(readScrollContentMaxWidth(tree)).toBe(CONTENT_WIDTH_PX_BY_MODE.medium);
+        expect(readColumnWidth()).toBe(PAGE_COLUMN_MAX_WIDTH_PX.reading);
 
         await setContentWidthMode('full');
-        expect(readScrollContentMaxWidth(tree)).toBe(Number.POSITIVE_INFINITY);
+        expect(readColumnWidth()).toBe(PAGE_COLUMN_MAX_WIDTH_PX.reading);
 
         // The preference must reach the container in place, not by replacing it.
         expect(scrollOwner.mounts).toBe(1);
@@ -160,8 +167,9 @@ describe('navigation shell surfaces follow the content-width setting', () => {
 
     it('applies a changed content-width preference to Friends without remounting the scroll owner', async () => {
         const { FriendsView } = await import('./FriendsView');
+        const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
 
-        const tree = (await renderScreen(<FriendsView />)).tree;
+        const tree = (await renderScreen(<InjectedAuthProvider credentials={null}><FriendsView /></InjectedAuthProvider>)).tree;
         expect(readScrollContentMaxWidth(tree)).toBe(CONTENT_WIDTH_PX_BY_MODE.compact);
         expect(scrollOwner.mounts).toBe(1);
 

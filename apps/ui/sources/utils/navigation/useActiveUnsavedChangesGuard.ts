@@ -73,7 +73,7 @@ export function useActiveUnsavedChangesGuard(params: Readonly<{
         if (typeof addListener !== 'function') {
             // Fall back to mount/unmount only.
             maybeSet();
-            return () => maybeClear();
+            return maybeClear;
         }
 
         const focusSub = addListener.call(nav, 'focus', maybeSet);
@@ -84,5 +84,5 @@ export function useActiveUnsavedChangesGuard(params: Readonly<{
             unsubscribeListener(blurSub);
             maybeClear();
         };
-    }, [enabled, params.guard, params.navigation]);
+    }, [enabled, params.guard, params.guard?.isDirtyRef.current, params.navigation]);
 }

@@ -13,6 +13,7 @@ import type { DetailsSurfaceRenderInputV1 } from '@/components/appShell/panes/de
 import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import { createMachineFixture, renderHook, renderScreen as renderPanelScreen } from '@/dev/testkit';
 import { storage } from '@/sync/domains/state/storageStore';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { installSessionPaneRuntimeTestHarness } from '@/components/sessions/panes/sessionPaneRuntimeTestHarness';
 import { installSessionDetailsPanelCommonModuleMocks } from '@/components/sessions/panes/sessionDetailsPanelTestHelpers';
 import type { DetailsTabState } from '../workspace/detailsWorkspaceTypes';
@@ -668,9 +669,16 @@ describe('pluginDetailsDestination', () => {
             machineId: 'machine-1',
             interactionEnabled: true,
         } as const;
-        const authority = resolvePluginSurfaceLaunchAuthority({
+        const accountLifetime = captureActiveServerAccountScopeLifetime();
+        if (!accountLifetime) throw new Error('The restored test Home must have a current Account lifetime');
+        expect(resolvePluginSurfaceLaunchAuthority({
             placement: direct,
             accountLifetime: null,
+            scoped: scopedLaunchFacts,
+        })).toBeNull();
+        const authority = resolvePluginSurfaceLaunchAuthority({
+            placement: direct,
+            accountLifetime,
             scoped: scopedLaunchFacts,
         });
         expect(authority).toMatchObject({
@@ -688,7 +696,7 @@ describe('pluginDetailsDestination', () => {
 
         expect(stage({
             store: createStore(),
-            accountLifetime: null,
+            accountLifetime,
             placement: direct,
             targetKind: 'session',
             scopedLaunchFacts: { ...scopedLaunchFacts, machineId: 'machine-2' },
@@ -716,12 +724,14 @@ describe('pluginDetailsDestination', () => {
         ) return;
 
         const { tabPlacement, panePlacement, projection } = createDetailsPaneProjection();
+        const accountLifetime = captureActiveServerAccountScopeLifetime();
+        if (!accountLifetime) throw new Error('The restored test Home must have a current Account lifetime');
         const openTab = vi.fn();
         const openOverlay = vi.fn();
         const store = createStore();
         const handler = createHandler({
             store,
-            accountLifetime: null,
+            accountLifetime,
             targetKind: 'session',
             projection,
             mount: {
@@ -754,7 +764,7 @@ describe('pluginDetailsDestination', () => {
 
         const paneAuthority = resolveSelectedPluginSurfaceLaunchAuthority({
             placement: panePlacement,
-            accountLifetime: null,
+            accountLifetime,
         });
         expect(resolvePaneLaunch({
             store,
@@ -784,7 +794,7 @@ describe('pluginDetailsDestination', () => {
 
         const tabAuthority = resolveSelectedPluginSurfaceLaunchAuthority({
             placement: tabPlacement,
-            accountLifetime: null,
+            accountLifetime,
         });
         const tab = openTab.mock.calls[0]?.[0];
         expect(resolveTabLaunch({

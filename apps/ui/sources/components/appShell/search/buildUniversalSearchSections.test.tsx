@@ -1,4 +1,15 @@
 import { describe, expect, it, vi } from 'vitest';
+import * as React from 'react';
+import { renderScreen } from '@/dev/testkit';
+
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock();
+});
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
 
 // Locale is an environment boundary; section ownership and activation remain real.
 vi.mock('@/text', async () => {
@@ -54,7 +65,14 @@ function staticOptionIds(
 }
 
 describe('buildUniversalSearchSections', () => {
-    it('offers text-in-files for one character with a non-activatable refinement hint for an incomplete page', async () => {
+    it('omits the explicit scan row when standard search is disabled', () => {
+        const sections = buildUniversalSearchSections(input({ query: 'quartz', externalConversationSearch: {
+            machineLabel: 'Laptop', standardSearchEnabled: false, onSearch: () => {},
+        } }));
+        expect(staticOptionIds(sections, 'externalConversations')).toEqual([]);
+    });
+    it('offers text-in-files for one character and an actionable full-results scope for an incomplete page', async () => {
+        const onShowAllFileMatches = vi.fn();
         const source = {
             status: 'ready' as const,
             resolverKey: 'workspace-content',
@@ -64,6 +82,7 @@ describe('buildUniversalSearchSections', () => {
             query: 'needle',
             source: 'fileContent',
             fileContent: source,
+            onShowAllFileMatches,
         }));
         expect(sections.map((section) => section.id)).toEqual(['fileContent']);
         const content = dynamicSections(sections)[0]!;
@@ -73,8 +92,10 @@ describe('buildUniversalSearchSections', () => {
         expect(content.visibleWhen?.('ne')).toBe(true);
         expect(content.visibleWhen?.(' a')).toBe(true);
         const page = await content.resolve('needle', new AbortController().signal);
-        expect(page.options).toHaveLength(0);
-        expect(page.resultHint).toBe('universalSearch.content.refineSearch');
+        expect(page.options).toHaveLength(1);
+        page.options[0]?.onSelect?.();
+        expect(onShowAllFileMatches).toHaveBeenCalledOnce();
+        expect(page.resultHint).toBeUndefined();
         const unavailable = dynamicSections(buildUniversalSearchSections(input({
             source: 'fileContent', fileContent: { status: 'unavailable', resolverKey: 'offline', hint: 'unavailable' },
         })))[0]!;
@@ -115,10 +136,31 @@ describe('buildUniversalSearchSections', () => {
             'fileContent::exact-workspace::src/a.ts:4:2', 'fileContent::exact-workspace::src/a.ts:9:2',
         ]);
         expect(page.options[0]?.subtitleContent).toBeDefined();
+        expect(page.options[0]?.labelContent).toBeTypeOf('function');
+        expect(page.options[0]?.hideSubtitleWhenExpanded).toBe(true);
+        const preview = page.options[0]?.expandedContent;
+        expect(preview).toBeTypeOf('function');
+        const screen = await renderScreen(<>{typeof preview === 'function' ? preview() : preview}</>);
+        expect(screen.getTextContent()).toContain('before');
+        expect(screen.getTextContent()).toContain('after');
+        expect(screen.getTextContent()).toContain('literal');
+        await screen.unmount();
         page.options[1]?.onSelect?.();
         expect(commit).toHaveBeenCalledWith(expect.objectContaining({
             target: expect.objectContaining({ anchor: { kind: 'fileLine', startLine: 9 } }),
         }));
+    });
+    it('keeps a context-free matching line in its row without duplicating it in an expanded preview', async () => {
+        const result: UniversalSearchResult = { id: 'a:4', sourceId: 'fileContent', scopeKey: 'ws', kind: 'workspaceFile', title: 'a.ts',
+            fileContent: { path: 'a.ts', line: 4, column16: 1, length16: 6, text: 'needle', before: [], after: [] },
+            target: { kind: 'workspaceFile', scope: { serverId: 'home-a', machineId: 'machine-a', rootPath: '/repo' }, path: 'a.ts',
+                workspaceRefId: null, sessionId: null, serverId: 'home-a', accountId: 'account-a' } };
+        const sections = dynamicSections(buildUniversalSearchSections(input({ query: 'needle', fileContent: {
+            status: 'ready', resolverKey: 'ws', resolve: async () => [result],
+        } })));
+        const page = await sections[0]!.resolve('needle', new AbortController().signal);
+        expect(page.options[0]?.subtitleContent).toBeDefined();
+        expect(page.options[0]?.expandedContent).toBeUndefined();
     });
     it('names the line a `path:line` file hit opens at', async () => {
         const target = {
@@ -152,6 +194,43 @@ describe('buildUniversalSearchSections', () => {
         if (!section || section.kind !== 'static') throw new Error('Missing explicit conversation search row');
         section.options[0]!.onSelect?.();
         expect(onSearch).toHaveBeenCalledWith('body-only phrase');
+    });
+
+    it('says the scan covers every machine when no single machine is in scope', () => {
+        const row = (search: { machineLabel?: string }) => {
+            const section = buildUniversalSearchSections(input({ query: 'quartz', externalConversationSearch: { ...search, onSearch: () => {} } }))
+                .find((entry) => entry.id === 'externalConversations');
+            return section && 'options' in section ? section.options[0] : undefined;
+        };
+        expect(row({ machineLabel: 'Work machine' })?.subtitle).not.toBe('conversationSearch.scanAllMachines');
+        expect(row({})?.subtitle).toBe('conversationSearch.scanAllMachines');
+    });
+
+    it('presents a conversation hit by what it matched and whose conversation it is', async () => {
+        const hit = (id: string, conversation: UniversalSearchResult['conversation']): UniversalSearchResult => ({
+            id, scopeKey: 'home', sourceId: 'transcript', kind: 'externalConversation', title: id, conversation,
+            target: { kind: 'session', serverId: 'home', accountId: 'account', sessionId: id },
+        });
+        const sections = buildUniversalSearchSections(input({
+            query: 'flaky',
+            transcript: { status: 'ready', resolverKey: 'all', resolve: async () => [
+                hit('Claude Code', { snippet: 'the flaky e2e is the settings sheet', query: 'flaky', agentId: 'claude', machineLabel: 'Studio', atMs: 1 }),
+                hit('Docs search index', { snippet: 'skip the flaky e2e for now', query: 'flaky' }),
+                { ...hit('Plain', undefined), subtitle: 'plain subtitle' },
+            ] },
+        }));
+        const page = await dynamicSections(sections).find((section) => section.id === 'transcript')!.resolve('flaky', new AbortController().signal);
+        const [native, session, plain] = page.options;
+        // The matched text is the row's searchable subtitle and its spoken name, with the machine it lives on.
+        expect(native?.subtitle).toBe('the flaky e2e is the settings sheet');
+        expect(native?.accessibilityLabel).toBe('Claude Code, the flaky e2e is the settings sheet, Studio');
+        expect(native?.subtitleContent).toBeTypeOf('function');
+        expect(session?.accessibilityLabel).toBe('Docs search index, skip the flaky e2e for now');
+        // Only a conversation from an Agent's own history carries that Agent's mark.
+        expect(native?.icon).not.toBe(session?.icon);
+        expect(plain?.subtitle).toBe('plain subtitle');
+        expect(plain?.subtitleContent).toBeUndefined();
+        expect(plain?.accessibilityLabel).toBeUndefined();
     });
 
     it('projects complete-inventory progress and failure through the real Sessions section', () => {

@@ -9,6 +9,8 @@ import {
     type KeyboardShortcutCommandGroupId,
 } from './keyboardShortcutsSettingsModel';
 
+import { commandStorage } from '@happier-dev/protocol/actions/settings/accountSettingBindings';
+
 export const KEYBOARD_COMMAND_GROUP_TITLE_KEYS: Readonly<Record<KeyboardShortcutCommandGroupId, TranslationKeyNoParams>> = {
     general: 'settingsKeyboard.groupApp',
     sessions: 'settingsKeyboard.groupSessions',
@@ -24,7 +26,7 @@ const commandSections: Record<string, SettingsSectionDeclaration> = Object.fromE
         titleKey: KEYBOARD_COMMAND_GROUP_TITLE_KEYS[groupId],
         settings: Object.fromEntries(defaultKeyboardCommands
             .filter((command) => resolveKeyboardShortcutCommandGroupId(command.id) === groupId)
-            .map((command) => [command.id, { titleKey: command.settingsTitleKey }])),
+            .map((command) => [command.id, { storage: commandStorage(command.id) }])),
     }]),
 );
 
@@ -35,8 +37,8 @@ export const KEYBOARD_SETTINGS: SettingsPageDeclaration = defineSettingsPage({
         generalGroup: {
             titleKey: 'settingsKeyboard.generalGroupTitle',
             settings: {
-                enableShortcuts: { titleKey: 'settingsKeyboard.enableShortcutsTitle', descriptionKey: 'settingsKeyboard.enableShortcutsSubtitle', storage: { scope: 'account', key: 'keyboardShortcutsV2Enabled', access: 'read_write' } },
-                singleKey: { titleKey: 'settingsKeyboard.singleKeyTitle', descriptionKey: 'settingsKeyboard.singleKeySubtitle', storage: { scope: 'account', key: 'keyboardSingleKeyShortcutsEnabled', access: 'read_write' } },
+                enableShortcuts: {},
+                singleKey: {},
             },
         },
         ...commandSections,

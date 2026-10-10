@@ -12,12 +12,14 @@ export function ProviderConnectionRoute() {
         connectionId?: string | string[];
         section?: string | string[];
         add?: string | string[];
+        connected?: string | string[];
     }>();
     return (
         <ProviderConnectionDetailScreen
             connectionId={readParam(params.connectionId) ?? ''}
             section={readParam(params.section) ?? null}
             startAddingModels={readParam(params.add) === '1'}
+            justConnected={readParam(params.connected) === '1'}
         />
     );
 }

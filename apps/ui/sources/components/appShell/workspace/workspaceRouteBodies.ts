@@ -19,9 +19,12 @@ async function loadRouteBody(contextKey: string): Promise<{ default: React.Compo
     return { default: body as React.ComponentType };
 }
 
+const workflowEditorBody = () => loadRouteBody(workspaceRouteFiles['workflows/[id]']!);
 export const workspaceRouteBodies: Readonly<Record<string, () => Promise<{ default: React.ComponentType }>>> =
     Object.fromEntries(Object.entries(workspaceRouteFiles).map(([key, contextKey]) => [
-        key, () => loadRouteBody(contextKey),
+        key, key === 'workflows/new' || key === 'workflows/[id]'
+            ? workflowEditorBody
+            : () => loadRouteBody(contextKey),
     ]));
 
 export async function loadWorkspaceRouteLayout(contextKey: string): Promise<{ default: React.ComponentType }> {

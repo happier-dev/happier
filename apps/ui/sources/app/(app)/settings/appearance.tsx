@@ -26,8 +26,10 @@ import { Slider } from '@/components/ui/forms/Slider';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
+import { Typography } from '@/constants/Typography';
 import { ItemDensityChoiceRow } from '@/components/settings/appearance/ItemDensityPreview';
 import { WidgetFrameAppearanceSection } from '@/components/settings/appearance/WidgetFrameAppearanceSection';
+import { SurfaceFinishAppearanceSection } from '@/components/settings/appearance/SurfaceFinishAppearanceSection';
 import { resolveAppearanceDefaults } from '@/components/settings/appearance/appearanceDefaults';
 import { buildThemePresetSourceOptions } from '@/components/settings/appearance/themeProfiles/themeProfilePresetOptions';
 import { Modal } from '@/modal';
@@ -44,6 +46,7 @@ import {
 import type { LocalSettings } from '@/sync/domains/settings/localSettings';
 import {
     HAPPIER_SPINNER_PAUSE_IDS,
+    happierPageTextMetrics,
     HAPPIER_SPINNER_SPEED_IDS,
     HAPPIER_SPINNER_STYLE_IDS,
     happierSpinnerStyleTimingControls,
@@ -123,14 +126,15 @@ export const WorkspaceRouteBody = React.memo(function AppearanceSettingsScreen()
         const options = buildThemePresetSourceOptions(safeThemeProfiles);
         const nameFor = (profileId: string | null) => {
             const option = profileId ? options.find((candidate) => candidate.id === profileId) : null;
-            return option?.title ?? t('settingsAppearance.themeProfiles.defaultTheme');
+            return option?.title ?? t('common.default');
         };
         const custom = options.filter((option) => option.kind === 'custom').length;
         return {
-            slots: t('settingsAppearance.themesSummary', {
-                light: nameFor(safeThemeProfiles.activeProfileIds.light),
-                dark: nameFor(safeThemeProfiles.activeProfileIds.dark),
-            }),
+            slots: <Text style={styles.themesSummary}>{t('settingsAppearance.themesSummary', {
+                light: '{light}', dark: '{dark}',
+            }).split(/(\{light\}|\{dark\})/).map((part, index) => part === '{light}' || part === '{dark}'
+                ? <Text key={index} style={styles.themeName}>{nameFor(safeThemeProfiles.activeProfileIds[part === '{light}' ? 'light' : 'dark'])}</Text>
+                : part)}</Text>,
             count: t('settingsAppearance.themesCount', { builtIn: options.length - custom, custom }),
         };
     }, [safeThemeProfiles]);
@@ -343,28 +347,6 @@ export const WorkspaceRouteBody = React.memo(function AppearanceSettingsScreen()
                 }
             />
 
-            {/* Personalize Happier: the guided walk through the same choices, replayable here (lab R3). */}
-            <ItemGroup>
-                <SettingRow
-                    setting={APPEARANCE_SETTINGS.settings.personalize}
-                    testID="settings-appearance-personalize"
-                    icon={<Icon name="palette" />}
-                    subtitle={t('personalize.replaySubtitle')}
-                    showChevron={false}
-                    onPress={() => openPersonalize('look')}
-                    rightElementOutsidePressable
-                    rightElement={(
-                        <RoundButton
-                            testID="settings-appearance-personalize.start"
-                            size="small"
-                            display="secondary"
-                            title={t('personalize.replayAction')}
-                            onPress={() => openPersonalize('look')}
-                        />
-                    )}
-                />
-            </ItemGroup>
-
             {/* Theme: the mode is a visual choice; each mode's theme stays one tap away. */}
             <ItemGroup title={t('settingsAppearance.theme')}>
                 <SettingAnchor setting={APPEARANCE_SETTINGS.settings.themeMode}>
@@ -394,7 +376,7 @@ export const WorkspaceRouteBody = React.memo(function AppearanceSettingsScreen()
                     setting={APPEARANCE_SETTINGS.settings.themes}
                     testID="settings-appearance-themeProfiles"
                     icon={<Icon name="palette" />}
-                    subtitle={narrowWindow ? `${themesSummary.slots}\n${themesSummary.count}` : themesSummary.slots}
+                    subtitle={narrowWindow ? <Text style={styles.themesSummary}>{themesSummary.slots}{'\n'}{themesSummary.count}</Text> : themesSummary.slots}
                     subtitleLines={0}
                     detail={narrowWindow ? undefined : themesSummary.count}
                     onPress={() => router.push('/settings/appearance/themes')}
@@ -524,6 +506,7 @@ export const WorkspaceRouteBody = React.memo(function AppearanceSettingsScreen()
 
             {/* How widgets are framed on this device: Home, Board and Companion, Card | Plain. */}
             <WidgetFrameAppearanceSection />
+            <SurfaceFinishAppearanceSection />
 
             {/* Motion & depth: effects, animated numbers, and the blur behind layered surfaces. */}
             <ItemGroup
@@ -701,6 +684,7 @@ export const WorkspaceRouteBody = React.memo(function AppearanceSettingsScreen()
                         />
                     )}
                 >
+                    <SettingAnchor setting={APPEARANCE_SETTINGS.settings.tabBarGitBadge}>
                     <SegmentedChoiceItem
                         title={t('settingsAppearance.tabBarBadges.gitTitle')}
                         testID="settings-appearance-tabBarGitBadge-select"
@@ -709,26 +693,35 @@ export const WorkspaceRouteBody = React.memo(function AppearanceSettingsScreen()
                         value={tabBarGitBadgeMode}
                         onChange={setTabBarGitBadgeMode}
                     />
+                    </SettingAnchor>
+                    <SettingAnchor setting={APPEARANCE_SETTINGS.settings.tabBarFriendsBadge}>
                     <Item
                         title={t('tabs.friends')}
                         rightElement={<Switch testID="settings-appearance-tabBarFriendsBadge-switch" value={tabBarFriendsBadgeEnabled} onValueChange={setTabBarFriendsBadgeEnabled} />}
                         showChevron={false}
                     />
+                    </SettingAnchor>
+                    <SettingAnchor setting={APPEARANCE_SETTINGS.settings.tabBarSessionsBadge}>
                     <Item
                         title={t('tabs.sessions')}
                         rightElement={<Switch testID="settings-appearance-tabBarSessionsBadge-switch" value={tabBarSessionsBadgeEnabled} onValueChange={setTabBarSessionsBadgeEnabled} />}
                         showChevron={false}
                     />
+                    </SettingAnchor>
+                    <SettingAnchor setting={APPEARANCE_SETTINGS.settings.tabBarInboxBadge}>
                     <Item
                         title={t('tabs.inbox')}
                         rightElement={<Switch testID="settings-appearance-tabBarInboxBadge-switch" value={tabBarInboxBadgeEnabled} onValueChange={setTabBarInboxBadgeEnabled} />}
                         showChevron={false}
                     />
+                    </SettingAnchor>
+                    <SettingAnchor setting={APPEARANCE_SETTINGS.settings.tabBarOpenTabsBadge}>
                     <Item
                         title={t('common.tabs')}
                         rightElement={<Switch testID="settings-appearance-tabBarOpenTabsBadge-switch" value={tabBarOpenTabsBadgeEnabled} onValueChange={setTabBarOpenTabsBadgeEnabled} />}
                         showChevron={false}
                     />
+                    </SettingAnchor>
                 </ExpandableItem>
                 </SettingAnchor>
             </ItemGroup>
@@ -751,6 +744,20 @@ export const WorkspaceRouteBody = React.memo(function AppearanceSettingsScreen()
             </ItemGroup>
             </SettingSection>
 
+            {/* Replay comes after the choices it teaches, so Theme stays the page's first decision. */}
+            <ItemGroup surface="none">
+                <SettingRow
+                    setting={APPEARANCE_SETTINGS.settings.personalize}
+                    testID="settings-appearance-personalize"
+                    subtitle={t('personalize.replaySubtitle')}
+                    showChevron={false}
+                    onPress={() => openPersonalize('look')}
+                    rightElementOutsidePressable
+                    rightElement={<RoundButton testID="settings-appearance-personalize.start"
+                        display="inverted" title={t('personalize.replayAction')} onPress={() => openPersonalize('look')} />}
+                />
+            </ItemGroup>
+
             {/* Language */}
             <ItemGroup title={t('settingsLanguage.title')} description={t('settingsLanguage.description')}>
                 <Item
@@ -765,6 +772,11 @@ export const WorkspaceRouteBody = React.memo(function AppearanceSettingsScreen()
 });
 
 const styles = StyleSheet.create((theme) => ({
+    themesSummary: {
+        ...happierPageTextMetrics('rowDescription'),
+        color: theme.colors.text.secondary,
+    },
+    themeName: Typography.default('semiBold'),
     resetText: {
         color: theme.colors.text.secondary,
     },

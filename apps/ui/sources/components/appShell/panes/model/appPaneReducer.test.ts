@@ -33,6 +33,32 @@ function getDetailsView(state: ReturnType<typeof createAppPaneState>, scopeId: s
 }
 
 describe('appPaneReduce', () => {
+    it('applies a right-pane default only when activation creates the scope', () => {
+        const scopeId = 'project:fresh';
+        const activation = { type: 'activateScope' as const, scopeId,
+            initialRight: { isOpen: true, activeTabId: 'git' } };
+        let state = appPaneReduce(createAppPaneState({ maxScopesInMemory: 3 }), activation);
+        expect(state.scopes[scopeId].right).toMatchObject({
+            isOpen: true, activeTabId: 'git', selectedDestination: { kind: 'builtin', id: 'git' },
+        });
+        state = appPaneReduce(state, { type: 'closeRight', scopeId });
+        const right = state.scopes[scopeId].right;
+        state = appPaneReduce(state, { type: 'releaseScope', scopeId });
+        state = appPaneReduce(state, activation);
+        expect(state.scopes[scopeId].right).toBe(right);
+        expect(right.isOpen).toBe(false);
+    });
+
+    it('does not apply activation defaults to an existing empty restored scope', () => {
+        const scopeId = 'project:restored';
+        const previous = appPaneReduce(createAppPaneState({ maxScopesInMemory: 3 }), { type: 'activateScope', scopeId });
+        const restored = createAppPaneState({ maxScopesInMemory: 3, persistedScopes: previous.scopes });
+        const next = appPaneReduce(restored, { type: 'activateScope', scopeId,
+            initialRight: { isOpen: true, activeTabId: 'git' } });
+        expect(next.scopes[scopeId]).toBe(restored.scopes[scopeId]);
+        expect(next.scopes[scopeId].right.isOpen).toBe(false);
+    });
+
     it('reads additive persisted terminal fields without losing Project approval custody or layout', () => {
         const canonical = SessionTerminalWorkspaceV1Schema.parse({
             v: 1,
@@ -762,6 +788,25 @@ describe('appPaneReduce', () => {
         });
 
         expect(repeated).toBe(state);
+    });
+
+    it('merges independent review presentation patches against current pane state without opening Details', () => {
+        const scopeId = 'project:review';
+        const tabKey = 'scmReview:working';
+        let state = appPaneReduce(createAppPaneState({ maxScopesInMemory: 3 }), { type: 'activateScope', scopeId });
+        state = appPaneReduce(state, { type: 'setDetailsTabState', scopeId, tabKey, nextState: { scrollTop: 42 } });
+        // Both mounted review writers issue patches in one event, before either receives a render.
+        // @ts-expect-error Test-first: the canonical reducer does not admit atomic tab patches yet.
+        state = appPaneReduce(state, { type: 'patchDetailsTabState', scopeId, tabKey, patch: { reviewRunIds: ['run-1'] } });
+        // @ts-expect-error Test-first: the canonical reducer does not admit atomic tab patches yet.
+        state = appPaneReduce(state, { type: 'patchDetailsTabState', scopeId, tabKey, patch: { workspaceReviewTarget: { view: 'walkthrough' } } });
+        expect(state.scopes[scopeId].details.tabState[tabKey]).toEqual({ scrollTop: 42, reviewRunIds: ['run-1'], workspaceReviewTarget: { view: 'walkthrough' } });
+        expect(state.scopes[scopeId].details.isOpen).toBe(false);
+        expect(Object.keys(state.scopes[scopeId].details.tabsByKey)).toEqual([]);
+        const previous = state;
+        // @ts-expect-error Test-first: the canonical reducer does not admit atomic tab patches yet.
+        state = appPaneReduce(state, { type: 'patchDetailsTabState', scopeId, tabKey, patch: { reviewRunIds: ['run-1'] } });
+        expect(state).toBe(previous);
     });
 
     it('retains bottom tab state across open/close cycles', () => {

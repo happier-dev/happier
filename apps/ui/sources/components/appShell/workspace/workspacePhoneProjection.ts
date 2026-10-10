@@ -1,6 +1,6 @@
 import type { WorkspaceState, WorkspaceTab } from './workspaceState';
 import {
-    resolveDestinationRefFromHref, SEARCH_DESTINATION_ID, SESSIONS_DESTINATION_ID, type CompactAppDestination,
+    hrefForDestinationRef, resolveDestinationRefFromHref, SEARCH_DESTINATION_ID, SESSIONS_DESTINATION_ID, type CompactAppDestination,
 } from '../destinations/compactAppDestinationCatalog';
 import { collectSplitCanvasLeaves } from '../splitCanvas/model/splitCanvasTree';
 
@@ -47,21 +47,19 @@ function isPhoneMainTabKind(kind: string): boolean {
 
 /**
  * The tab a phone route shows, as the href the workspace keys it by, or null when the route is one of
- * the phone's main tabs. The tool a session or project shows on a phone (its path suffix or
- * `mobileSurface`) is this device's presentation, not the tab's identity, so it is dropped.
+ * the phone's main tabs. Explicit entity leaves retain their route and Home;
+ * only the base Session's mobileSurface is device-local presentation.
  */
 export function resolvePhoneWorkspaceTabHref(catalog: readonly CompactAppDestination[], href: string): string | null {
     let url: URL;
     try { url = new URL(href, 'https://happier.invalid'); } catch { return null; }
-    const [first, second, third] = url.pathname.split('/').filter(Boolean);
-    let normalized = `${url.pathname}${url.search}${url.hash}`;
-    const keep = (path: string, keys: readonly string[]) => {
-        const query = new URLSearchParams();
-        for (const key of keys) { const value = url.searchParams.get(key); if (value) query.set(key, value); }
-        return `${path}${query.size ? `?${query}` : ''}`;
-    };
-    if (first === 'session' && second && third !== 'details') normalized = keep(`/session/${second}`, ['serverId']);
-    else if (first === 'projects' && second) normalized = keep(`/projects/${second}`, ['worktreeId', 'serverId']);
+    const normalized = `${url.pathname}${url.search}${url.hash}`;
     const target = resolveDestinationRefFromHref(catalog, normalized);
-    return target && !isPhoneMainTabKind(target.kind) ? normalized : null;
+    if (!target) return null;
+    if (target.kind === 'session') {
+        const { mobileSurface: _mobileSurface, ...params } = target.params;
+        return hrefForDestinationRef(catalog, { ...target, params });
+    }
+    const entityLeaf = Boolean(target.params.workspacePathname && target.params.id);
+    return !isPhoneMainTabKind(target.kind) || entityLeaf ? normalized : null;
 }

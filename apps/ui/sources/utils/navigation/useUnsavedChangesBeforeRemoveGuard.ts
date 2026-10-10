@@ -21,6 +21,7 @@ export function useUnsavedChangesBeforeRemoveGuard(params: Readonly<{
     onDiscard?: () => void | Promise<void>;
     onSave?: () => boolean | Promise<boolean>;
     continueOnSave?: boolean;
+    onHistoryLeave?: () => void | Promise<void>;
     /** Flush an editor-owned pending value before the dirty decision is read. */
     prepareGuard?: () => void | Promise<void>;
     /** Install the remove interceptor even before React draft state is dirty. */
@@ -37,6 +38,7 @@ export function useUnsavedChangesBeforeRemoveGuard(params: Readonly<{
         onDiscard,
         onSave,
         continueOnSave,
+        onHistoryLeave,
         prepareGuard,
         interceptWhenClean,
         onContinue,
@@ -58,9 +60,11 @@ export function useUnsavedChangesBeforeRemoveGuard(params: Readonly<{
         onDiscard,
         onSave,
         continueOnSave,
+        onHistoryLeave,
         tag,
     }), [
         continueOnSave,
+        onHistoryLeave,
         ignoreRef,
         isDirtyRef,
         onDiscard,
@@ -85,22 +89,10 @@ export function useUnsavedChangesBeforeRemoveGuard(params: Readonly<{
         tag,
     ]);
 
-    const hostedGuard = React.useMemo<ActiveUnsavedChangesGuard>(() => ({
-        ...guard,
-        onDiscard: async () => {
-            await onDiscard?.();
-            onContinue(null);
-        },
-        onSave: async () => {
-            const saved = await onSave?.() ?? false;
-            if (saved && continueOnSave !== false) onContinue(null);
-            return saved;
-        },
-    }), [continueOnSave, guard, onContinue, onDiscard, onSave]);
     useActiveUnsavedChangesGuard({
         navigation: null,
-        guard: hostedGuard,
-        enabled: hosted && destinationFocused && enabled,
+        guard,
+        enabled: destinationFocused && enabled,
     });
 
     // Ownership is fixed for a mounted body; hosted views are outside the native Stack.

@@ -9,6 +9,8 @@ import { buildProjectRouteHref } from '@/components/projects/detail/projectRoute
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
 import { t } from '@/text';
 import type { PaneDropAdmission } from '../splitCanvas/presentation/paneDropPresentation';
+import { resolveWorkspaceRefById } from '@/sync/domains/workspaces/workspaceRefs';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 
 export const WORKSPACE_ENTITY_KINDS: readonly EntityDragKindV1[] = ['workspace-tab', 'session', 'destination', 'repository-file'];
 
@@ -25,18 +27,17 @@ export function resolveWorkspaceEntityHref(item: EntityDragItemV1, input: Readon
         kind: 'session', params: { id: item.address.sessionId, serverId: item.address.serverId, accountId: item.scope.accountId },
     });
     if (item.kind === 'repository-file' && item.workspaceId) {
-        const ref = input.workspaceRefs.find(candidate => candidate.id === item.workspaceId
-            && candidate.serverId === item.scope.serverId && candidate.machineId === item.machineId);
-        if (ref) href = buildProjectRouteHref({ workspaceRefId: ref.id, segment: 'details',
+        const resolution = resolveWorkspaceRefById(input.workspaceRefs, item.workspaceId, item.scope.serverId);
+        const ref = resolution.kind === 'resolved' ? resolution.ref : null;
+        if (ref?.machineId === item.machineId) href = buildProjectRouteHref({ workspaceRefId: ref.id, serverId: ref.serverId, segment: 'code',
             activeRootPath: ref.rootPath, defaultRootPath: ref.rootPath, initialResource: { kind: 'file', path: item.path } });
     }
     if (!href) return null;
     const ref = resolveDestinationRefFromHref(input.catalog, href);
-    if (!ref || (ref.params.serverId && ref.params.serverId !== input.scope.serverId)
+    if (!ref || (ref.params.serverId && !areServerProfileIdentifiersEquivalent(ref.params.serverId, input.scope.serverId))
         || (ref.params.accountId && ref.params.accountId !== input.scope.accountId)) return null;
     if (ref.kind === 'project') {
-        const workspaceRef = input.workspaceRefs.find(candidate => candidate.id === ref.params.workspaceRefId);
-        if (!workspaceRef || workspaceRef.serverId !== input.scope.serverId) return null;
+        if (resolveWorkspaceRefById(input.workspaceRefs, ref.params.workspaceRefId, input.scope.serverId).kind !== 'resolved') return null;
     }
     return hrefForDestinationRef(input.catalog, ref);
 }

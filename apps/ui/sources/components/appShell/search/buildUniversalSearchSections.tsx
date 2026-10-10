@@ -13,6 +13,10 @@ import { Text } from '@/components/ui/text/Text';
 import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
+import { ConversationHitSummary } from '@/components/sessions/external/browse/ConversationHitSummary';
+import { KeyHint } from '@/components/ui/keyboard/KeyHint';
+import { splitKeybindingLabel, useKeyboardShortcutLabel } from '@/keyboard/shortcutLabels';
+import { AgentIcon } from '@/agents/registry/AgentIcon';
 
 import type { Command } from '@/components/appShell/commandPalette/types';
 import {
@@ -55,6 +59,7 @@ import {
 const EMPTY_QUERY_RECENT_LIMIT = 5;
 const DEFAULT_ROW_LIMIT = 20;
 export const EXTERNAL_CONVERSATION_SEARCH_OPTION_ID = 'external-conversations:search';
+export const ALL_FILE_MATCHES_OPTION_ID = 'fileContent:all-matches';
 
 export type UniversalSearchSessionEntity = Readonly<{
     sessionId: string;
@@ -153,12 +158,19 @@ export type BuildUniversalSearchSectionsInput = Readonly<{
     transcript: UniversalSearchSource;
     files: UniversalSearchSource;
     fileContent?: UniversalSearchSource;
+    fileContentScopeLabel?: string;
+    onShowAllFileMatches?: () => void;
     source?: 'fileContent';
     commits: UniversalSearchSource;
     /** Already-built plugin provider sections; this module adds no plugin policy. */
     pluginSections: readonly SelectionListDynamicSection[];
     /** Explicit activation only: typing in Search never scans Agent transcripts. */
-    externalConversationSearch?: Readonly<{ machineLabel: string; onSearch(query: string): void }>;
+    externalConversationSearch?: Readonly<{
+        /** The one machine the scan runs on; absent when it runs on every machine in scope. */
+        machineLabel?: string;
+        standardSearchEnabled?: boolean;
+        onSearch(query: string): void;
+    }>;
     /**
      * Records the selected identity. It deliberately does NOT navigate: the
      * option-level callback runs BEFORE the list-level `onSelect`, and plan
@@ -190,11 +202,52 @@ function FileContentSnippet({ match }: Readonly<{ match: NonNullable<UniversalSe
     const ranges = [{ start: shownLead.length, end: shownLead.length + match.length16, current: false }];
     return (
         <View style={{ marginTop: 2 }}>
-            <Text useDefaultTypography={false} numberOfLines={1} style={{ ...Typography.mono(), fontSize: 12, lineHeight: 17, color: theme.colors.text.secondary }}>
+            <Text useDefaultTypography={false} numberOfLines={1} style={{ ...Typography.rowMeta(), ...Typography.mono(), color: theme.colors.text.secondary }}>
                 <FindHighlightedText text={text} ranges={ranges} />
             </Text>
         </View>
     );
+}
+
+/** Only the selected hit expands; context comes from the same search response (G1s). */
+function FileContentPreview({ match }: Readonly<{ match: NonNullable<UniversalSearchResult['fileContent']> }>) {
+    const { theme } = useUnistyles();
+    const lines = [...match.before, match.text, ...match.after];
+    const textStyle = { ...Typography.rowMeta(), ...Typography.mono(), color: theme.colors.text.secondary };
+    // One right-aligned gutter as wide as the last line number (lab `.fd-snip .ln`), so 9 → 10 never shifts the code.
+    const gutter = { minWidth: Math.ceil(String(match.line + match.after.length).length * (textStyle.fontSize ?? 12) * 0.6), textAlign: 'right' as const };
+    return <View testID="file-content-preview">
+        {lines.map((text, index) => <View key={index} style={{ flexDirection: 'row', gap: 8 }}>
+            <Text useDefaultTypography={false} style={[textStyle, gutter, { color: theme.colors.text.tertiary }]}>{match.line - match.before.length + index}</Text>
+            <Text useDefaultTypography={false} style={[textStyle, { flex: 1 }]}>
+                <FindHighlightedText text={text} ranges={index === match.before.length
+                    ? [{ start: match.column16 - 1, end: match.column16 - 1 + match.length16, current: true }] : undefined} />
+            </Text>
+        </View>)}
+    </View>;
+}
+
+/** File identity keeps its directory quiet, its name readable and its line tabular (lab G1). */
+function FileContentLabel({ match }: Readonly<{ match: NonNullable<UniversalSearchResult['fileContent']> }>) {
+    const { theme } = useUnistyles();
+    const split = Math.max(match.path.lastIndexOf('/'), match.path.lastIndexOf('\\'));
+    return <Text numberOfLines={1} ellipsizeMode="head" style={[Typography.rowTitle(), { color: theme.colors.text.primary }]}>
+        <Text style={[Typography.default(), { color: theme.colors.text.tertiary }]}>{match.path.slice(0, split + 1)}</Text>
+        <Text style={Typography.default('medium')}>{match.path.slice(split + 1)}</Text>
+        <Text style={[Typography.default(), Typography.tabular(), { color: theme.colors.text.tertiary }]}>{`:${match.line}`}</Text>
+    </Text>;
+}
+
+function TextInFilesShortcut() {
+    const shortcut = useKeyboardShortcutLabel('search.textInFiles');
+    return shortcut ? <View style={{ flexDirection: 'row', gap: 3 }}>
+        {splitKeybindingLabel(shortcut).map((label, index) => <KeyHint key={index} label={label} />)}
+    </View> : null;
+}
+
+/** The Agent's own mark for a conversation from its history; identity marks stand alone. */
+function agentIcon(agentId: string): () => React.ReactElement {
+    return () => <AgentIcon agentId={agentId} size={ICON_SIZE.md} />;
 }
 
 /** A file's own type mark (the Files tree's), not a generic glyph. */
@@ -217,13 +270,27 @@ function toOption(
             ? `${result.title}:${result.target.anchor.startLine}`
             : result.title,
         ...(result.subtitle ? { subtitle: result.subtitle } : {}),
-        ...(result.fileContent ? { subtitleContent: () => <FileContentSnippet match={result.fileContent!} /> } : {}),
+        ...(result.fileContent ? {
+            subtitleContent: () => <FileContentSnippet match={result.fileContent!} />,
+            ...(result.fileContent.before.length || result.fileContent.after.length ? {
+                expandedContent: () => <FileContentPreview match={result.fileContent!} />,
+                hideSubtitleWhenExpanded: true,
+            } : {}),
+        } : {}),
+        ...(result.conversation ? {
+            subtitle: result.conversation.snippet,
+            subtitleContent: () => <ConversationHitSummary snippet={result.conversation!.snippet} query={result.conversation!.query}
+                where={result.conversation!.machineLabel} atMs={result.conversation!.atMs} />,
+            // The row's spoken name is what it shows: the conversation, what matched, where.
+            accessibilityLabel: [result.title, result.conversation.snippet, result.conversation.machineLabel].filter(Boolean).join(', '),
+        } : {}),
         ...(result.searchText ? { searchText: result.searchText } : {}),
         ...(result.exactSearchText ? { exactSearchText: result.exactSearchText } : {}),
         ...((result.kind === 'project' || result.kind === 'workspaceFile') && result.subtitle
             ? { subtitleEllipsizeMode: 'head' as const }
             : {}),
-        icon: result.fileContent ? fileIcon(result.fileContent.path)
+        icon: result.conversation?.agentId ? agentIcon(result.conversation.agentId)
+            : result.fileContent ? fileIcon(result.fileContent.path)
             : result.kind === 'workspaceFile' && result.target.kind === 'workspaceFile' ? fileIcon(result.target.path)
             : icon(iconName),
         onSelect: () => { onCommit(result); },
@@ -239,6 +306,8 @@ function buildDynamicSection(
         rowLimit?: number;
         minQueryLength?: number;
         preserveQuery?: boolean;
+        scopeLabel?: string;
+        onShowAll?: () => void;
         onCommit: (result: UniversalSearchResult) => void;
     }>,
 ): SelectionListDynamicSection[] {
@@ -249,6 +318,7 @@ function buildDynamicSection(
         return [{
             id: input.sourceId,
             title: input.title,
+            rightAccessory: input.scopeLabel,
             resolverKey: `${input.sourceId}|${source.resolverKey}`,
             visibleWhen: (value: string) => (input.preserveQuery ? value.length : value.trim().length) >= (input.minQueryLength ?? 1),
             debounceMs: 0,
@@ -265,6 +335,7 @@ function buildDynamicSection(
     return [{
         id: input.sourceId,
         title: input.title,
+        rightAccessory: input.scopeLabel,
         resolverKey: `${input.sourceId}|${source.resolverKey}`,
         visibleWhen: (value: string) => (input.preserveQuery ? value.length : value.trim().length) >= (input.minQueryLength ?? 1),
         resultFiltering: 'provider',
@@ -277,23 +348,33 @@ function buildDynamicSection(
                 : { results: resolved, emptyHint: undefined };
             // Hits arrive grouped by file; each row names its `path:line` (Find lab G1) so any row read alone,
             // spoken or scrolled to, still says where it lands.
-            const options = page.results.slice(0, input.rowLimit).map((result) => {
+            const options: SelectionListOption[] = page.results.slice(0, input.rowLimit).map((result) => {
                 const option = toOption(result, input.iconName, input.onCommit);
                 if (!result.fileContent) return option;
                 const location = `${result.fileContent.path}:${result.fileContent.line}`;
                 return {
                     ...option,
                     label: location,
+                    labelContent: () => <FileContentLabel match={result.fileContent!} />,
                     labelEllipsizeMode: 'head' as const,
                     accessibilityLabel: `${location} ${result.fileContent.text.trim()}`,
                 };
             });
+            if (input.sourceId === UNIVERSAL_SEARCH_SOURCE_IDS.fileContent && input.onShowAll && (options.length > 0 || page.hasMore)) {
+                const files = new Set(page.results.filter(result => result.fileContent).map(result => result.fileContent!.path)).size;
+                options.push({
+                    id: ALL_FILE_MATCHES_OPTION_ID,
+                    testID: 'universal-search:all-file-matches',
+                    label: page.hasMore ? t('universalSearch.content.moreMatches')
+                        : t('universalSearch.content.allMatches', { matches: page.results.length, files }),
+                    rightAccessory: () => <TextInFilesShortcut />,
+                    onSelect: input.onShowAll,
+                });
+            }
             return {
                 options,
                 ...(page.emptyHint !== undefined ? { emptyHint: page.emptyHint } : {}),
-                ...(input.sourceId === UNIVERSAL_SEARCH_SOURCE_IDS.fileContent && page.hasMore
-                    ? { resultHint: t('universalSearch.content.refineSearch') }
-                    : page.resultHint !== undefined
+                ...(page.resultHint !== undefined
                     ? { resultHint: page.resultHint }
                     : source.resultHint !== undefined ? { resultHint: source.resultHint } : {}),
             };
@@ -320,7 +401,7 @@ export function buildUniversalSearchSections(
     const rowLimit = input.rowLimit ?? DEFAULT_ROW_LIMIT;
     const onCommit = input.onCommitResult;
     const sections: SelectionListSectionDescriptor[] = [];
-    const contentSections = buildDynamicSection({ sourceId: UNIVERSAL_SEARCH_SOURCE_IDS.fileContent, title: t('universalSearch.content.textInFiles'), source: input.fileContent ?? { status: 'absent' }, iconName: 'file', preserveQuery: true, onCommit }).map((section) => ({ kind: 'dynamic' as const, ...section }));
+    const contentSections = buildDynamicSection({ sourceId: UNIVERSAL_SEARCH_SOURCE_IDS.fileContent, title: t('universalSearch.content.textInFiles'), source: input.fileContent ?? { status: 'absent' }, iconName: 'file', preserveQuery: true, scopeLabel: input.fileContentScopeLabel, onShowAll: input.onShowAllFileMatches, onCommit }).map((section) => ({ kind: 'dynamic' as const, ...section }));
     if (input.source === 'fileContent') return contentSections;
 
     // Construction, currentness, availability, i18n and activation of commands
@@ -414,7 +495,7 @@ export function buildUniversalSearchSections(
     }
 
     const projects = narrowLocalEntities(input.projects, query, EMPTY_QUERY_RECENT_LIMIT);
-    if (query.length > 0 && input.externalConversationSearch) {
+    if (query.length > 0 && input.externalConversationSearch && input.externalConversationSearch.standardSearchEnabled !== false) {
         const search = input.externalConversationSearch;
         sections.push({
             kind: 'static',
@@ -423,7 +504,9 @@ export function buildUniversalSearchSections(
                 id: EXTERNAL_CONVERSATION_SEARCH_OPTION_ID,
                 testID: 'universal-search:external-conversations:search',
                 label: t('externalSessions.browseContentPaletteSearch', { query: input.query }),
-                subtitle: t('externalSessions.browseContentOnMachine', { machine: search.machineLabel }),
+                subtitle: search.machineLabel
+                    ? t('externalSessions.browseContentOnMachine', { machine: search.machineLabel })
+                    : t('conversationSearch.scanAllMachines'),
                 icon: icon('chat-circle-dots'),
                 onSelect: () => search.onSearch(input.query),
             }],

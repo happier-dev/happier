@@ -79,19 +79,6 @@ type ShortcutSettingsSubset = Pick<
     | 'keyboardShortcutOverridesV1'
 >;
 
-type Mutable<T> = { -readonly [K in keyof T]: T[K] };
-
-type KeyboardShortcutToggleDelta =
-    & Mutable<Pick<Settings, 'keyboardShortcutDisabledCommandIdsV1'>>
-    & Partial<Mutable<Pick<Settings, 'commandPaletteEnabled'>>>;
-
-type KeyboardShortcutResetDelta =
-    & Mutable<Pick<Settings, 'keyboardShortcutDisabledCommandIdsV1' | 'keyboardShortcutOverridesV1'>>
-    & Partial<Mutable<Pick<Settings, 'commandPaletteEnabled'>>>;
-
-type KeyboardShortcutSetDelta =
-    & Mutable<Pick<Settings, 'keyboardShortcutDisabledCommandIdsV1' | 'keyboardShortcutOverridesV1'>>
-    & Partial<Mutable<Pick<Settings, 'commandPaletteEnabled'>>>;
 
 function commandIdSort(left: KeyboardCommandId, right: KeyboardCommandId): number {
     return left.localeCompare(right);
@@ -131,16 +118,6 @@ function getActiveEffectiveBindings(params: Readonly<{
         }));
 }
 
-function clonePersistedKeybindingRule(binding: KeybindingRule): Settings['keyboardShortcutOverridesV1'][string][number] {
-    return {
-        binding: binding.binding,
-        ...(binding.platforms ? { platforms: [...binding.platforms] } : {}),
-        ...(binding.blockedSurfaces ? { blockedSurfaces: [...binding.blockedSurfaces] } : {}),
-        ...(binding.allowInEditable != null ? { allowInEditable: binding.allowInEditable } : {}),
-        ...(binding.nativeConsumable != null ? { nativeConsumable: binding.nativeConsumable } : {}),
-        ...(binding.conflictScope != null ? { conflictScope: binding.conflictScope } : {}),
-    };
-}
 
 function buildBrowserReservedConflicts(params: Readonly<{
     surface: KeyboardSurface;
@@ -191,7 +168,7 @@ function buildDuplicateBindingConflicts(params: Readonly<{
             const conflictScope = binding.conflictScope ?? 'global';
             const label = `${conflictScope}:${formatKeybindingLabel(parseKeybindingRule(binding), params.platform)}`;
             const current = commandIdsByLabel.get(label) ?? [];
-            current.push(command.id);
+            if (!current.includes(command.id)) current.push(command.id);
             commandIdsByLabel.set(label, current);
         }
     }
@@ -272,66 +249,4 @@ export function buildKeyboardShortcutSettingsModel(params: Readonly<{
     };
 }
 
-export function buildKeyboardShortcutToggleDelta(
-    disabledCommandIds: readonly string[],
-    commandId: KeyboardCommandId,
-    disabled: boolean,
-): KeyboardShortcutToggleDelta {
-    const next = new Set(disabledCommandIds);
-    if (disabled) {
-        next.add(commandId);
-    } else {
-        next.delete(commandId);
-    }
-    const delta: KeyboardShortcutToggleDelta = {
-        keyboardShortcutDisabledCommandIdsV1: Array.from(next),
-    };
-    if (commandId === 'commandPalette.open') {
-        delta.commandPaletteEnabled = !disabled;
-    }
-    return delta;
-}
-
-export function buildKeyboardShortcutResetDelta(params: Readonly<{
-    disabledCommandIds: readonly string[];
-    overrides: Readonly<Record<string, readonly KeybindingRule[]>>;
-    commandId: KeyboardCommandId;
-}>): KeyboardShortcutResetDelta {
-    const nextOverrides = { ...params.overrides };
-    delete nextOverrides[params.commandId];
-    const keyboardShortcutOverridesV1 = Object.fromEntries(
-        Object.entries(nextOverrides).map(([commandId, bindings]) => [
-            commandId,
-            bindings.map(clonePersistedKeybindingRule),
-        ]),
-    ) satisfies Settings['keyboardShortcutOverridesV1'];
-    return {
-        ...buildKeyboardShortcutToggleDelta(params.disabledCommandIds, params.commandId, false),
-        keyboardShortcutOverridesV1,
-    };
-}
-
-export function buildKeyboardShortcutSetDelta(params: Readonly<{
-    disabledCommandIds: readonly string[];
-    overrides: Readonly<Record<string, readonly KeybindingRule[]>>;
-    commandId: KeyboardCommandId;
-    binding: string;
-}>): KeyboardShortcutSetDelta | null {
-    const binding = params.binding.trim();
-    if (binding.length === 0) return null;
-    const parsed = parseKeybindingRule(binding);
-    if (!parsed.key && !parsed.code) return null;
-
-    const keyboardShortcutOverridesV1 = Object.fromEntries([
-        ...Object.entries(params.overrides).map(([commandId, bindings]) => [
-            commandId,
-            bindings.map(clonePersistedKeybindingRule),
-        ] as const),
-        [params.commandId, [{ binding }]],
-    ]) satisfies Settings['keyboardShortcutOverridesV1'];
-
-    return {
-        ...buildKeyboardShortcutToggleDelta(params.disabledCommandIds, params.commandId, false),
-        keyboardShortcutOverridesV1,
-    };
-}
+export { buildKeyboardShortcutToggleDelta, buildKeyboardShortcutResetDelta, buildKeyboardShortcutSetDelta } from '@happier-dev/protocol/actions/settings/keyboardPreferenceMutations';

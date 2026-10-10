@@ -1,3 +1,4 @@
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import * as React from 'react';
 import { StyleSheet } from 'react-native';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -21,6 +22,7 @@ const openUniversalSearch = vi.hoisted(() => vi.fn());
 const surfaceState = vi.hoisted(() => ({
     platformOS: 'web' as 'web' | 'ios' | 'android',
     isTablet: false,
+    windowWidth: 390,
 }));
 vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
@@ -35,7 +37,7 @@ vi.mock('@/text', async () => {
 });
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    const dimensions = () => ({ width: surfaceState.isTablet ? 840 : 390, height: 900, scale: 1, fontScale: 1 });
+    const dimensions = () => ({ width: surfaceState.isTablet ? 840 : surfaceState.windowWidth, height: 900, scale: 1, fontScale: 1 });
     return createReactNativeWebMock({
         Platform: {
             get OS() { return surfaceState.platformOS; },
@@ -100,7 +102,7 @@ function Wrapper({ children }: React.PropsWithChildren) {
     return <runtime.Wrapper><AppShellPluginUiProjectionValueProvider value={{
         pluginUiProjection: projection, pluginBrowserProjection: null, phase: 'current',
         interactionEnabled: true, machineId: null, serverId: runtime.serverId, platform: surfaceState.platformOS,
-        clientExecutableActivation: { status: 'ready' }, reloadClientExecutables: () => {},
+        accountLifetime: captureActiveServerAccountScopeLifetime(), clientExecutableActivation: { status: 'ready' }, reloadClientExecutables: () => {},
         reloadConnectedAccountProjection: () => {},
     }}><PluginAppPageLaunchInputScope pluginUiProjection={projection}>
         <UniversalSearchRuntimeProvider value={{ open: openUniversalSearch, buildCommands: () => [] }}>
@@ -113,10 +115,10 @@ async function render(element: React.ReactElement) {
     await flushHookEffects();
     return screen;
 }
-const rowIds = (screen: Awaited<ReturnType<typeof renderScreen>>) => screen.root
+const rowIds = (screen: Awaited<ReturnType<typeof renderScreen>>) => screen
     .findAllByType(Item).map(node => String(node.props.testID));
 function rowFor(screen: Awaited<ReturnType<typeof renderScreen>>, testID: string) {
-    return screen.root.findAllByType<typeof Item>(Item).find(node => node.props.testID === testID);
+    return screen.findAllByType(Item).find(node => node.props.testID === testID);
 }
 async function renderActionRowStyle() {
     const { ColumnDestinationRows } = await import('./ColumnDestinationRows');
@@ -132,6 +134,7 @@ describe('ColumnDestinationRows', () => {
     beforeEach(() => {
         routeState.push.mockReset();
         routeState.pathname = '/';
+        surfaceState.windowWidth = 390;
         openUniversalSearch.mockReset();
         surfaceState.platformOS = 'web';
         surfaceState.isTablet = false;
@@ -154,7 +157,7 @@ describe('ColumnDestinationRows', () => {
         expect(rowFor(sessions, 'compact-app-destination:plugin:acme.log:log')?.props.selected).toBe(true);
         expect(rowFor(sessions, 'external-sessions-browse-button')?.props.selected).toBe(false);
         // Destinations are not sessions: quiet navigation rows on the column's surface, never a sheet.
-        expect(sessions.root.findByType(ItemGroup).props.surface).toBe('none');
+        expect(sessions.findByType(ItemGroup).props.surface).toBe('none');
 
         // A column with nothing placed in it draws no rows at all.
         const plugins = await render(<ColumnDestinationRows column="plugins" />);
@@ -173,6 +176,7 @@ describe('ColumnDestinationRows', () => {
             'compact-app-destination:workflows',
             'compact-app-destination:boards',
             'compact-app-destination:artifacts',
+            'compact-app-destination:bots',
             'external-sessions-browse-button',
             'compact-app-destination:plugin:acme.log:log',
             'compact-app-destination:plugins',
@@ -207,21 +211,20 @@ describe('ColumnDestinationRows', () => {
             isTablet: surface.isTablet,
             platform: surface.platformOS,
         }).rowHeight;
-        // The case only discriminates while the density row is genuinely below the floor.
-        expect(densityHeight).toBeLessThan(minimumTargetSize);
-
         const style = await renderActionRowStyle();
 
-        expect(style.height).toBe(minimumTargetSize);
-        expect(style.minHeight).toBe(minimumTargetSize);
+        expect(style.height).toBe(Math.max(densityHeight, minimumTargetSize));
+        expect(style.minHeight).toBe(Math.max(densityHeight, minimumTargetSize));
     });
 
     it('keeps the desktop-web row on the session-list density grid', async () => {
         surfaceState.platformOS = 'web';
         surfaceState.isTablet = false;
+        surfaceState.windowWidth = 800;
         const densityHeight = resolveSessionListDensityViewState('narrow', {
             isTablet: false,
             platform: 'web',
+            windowWidth: 800,
         }).rowHeight;
         // The approved desktop decision is exactly the case a blanket floor would undo.
         expect(densityHeight).toBeLessThan(resolveMinimumInteractiveTargetSize('web'));

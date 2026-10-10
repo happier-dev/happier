@@ -32,6 +32,36 @@ beforeEach(() => { boundary.buttons = []; boundary.preventRemove = false; bounda
 afterEach(standardCleanup);
 
 describe('useUnsavedDraftNavigationGuard', () => {
+    it('keeps Back distinct from an explicit discard destination through the same decision', async () => {
+        const { useUnsavedDraftNavigationGuard } = await import('./useUnsavedDraftNavigationGuard');
+        const navigation = { isFocused: () => true, addListener: () => () => {}, dispatch: vi.fn() };
+        const back = vi.fn();
+        const leave = vi.fn();
+        const hook = await renderHook(() => useUnsavedDraftNavigationGuard({
+            navigation, isDirty: true, onBack: back, onLeave: leave, tag: 'distinct-back',
+        }));
+        await act(async () => hook.getCurrent().requestBack());
+        await act(async () => boundary.buttons.find(button => button.style === 'cancel')?.onPress?.());
+        expect(back).not.toHaveBeenCalled();
+        await act(async () => boundary.remove?.({ data: { action: { type: 'GO_BACK' } } }));
+        await act(async () => boundary.buttons.find(button => button.style === 'destructive')?.onPress?.());
+        expect(back).toHaveBeenCalledOnce();
+        expect(leave).not.toHaveBeenCalled();
+        expect(navigation.dispatch).not.toHaveBeenCalled();
+        await act(async () => hook.getCurrent().requestLeave());
+        await act(async () => boundary.buttons.find(button => button.style === 'destructive')?.onPress?.());
+        expect(leave).toHaveBeenCalledOnce();
+    });
+    it('uses the authoring destination after discarding a native Back, without redispatching unrelated history', async () => {
+        const { useUnsavedDraftNavigationGuard } = await import('./useUnsavedDraftNavigationGuard');
+        const navigation = { isFocused: () => true, addListener: () => () => {}, dispatch: vi.fn() };
+        const leave = vi.fn();
+        await renderHook(() => useUnsavedDraftNavigationGuard({ navigation, isDirty: true, onLeave: leave, tag: 'draft-back' }));
+        await act(async () => boundary.remove?.({ data: { action: { type: 'GO_BACK' } } }));
+        await act(async () => boundary.buttons.find(button => button.style === 'destructive')?.onPress?.());
+        expect(leave).toHaveBeenCalledOnce();
+        expect(navigation.dispatch).not.toHaveBeenCalled();
+    });
     it('offers only discard and keep-editing when the editor has no save continuation', async () => {
         const { useUnsavedDraftNavigationGuard } = await import('./useUnsavedDraftNavigationGuard');
         const { runGuardedNavigation } = await import('./runGuardedNavigation');

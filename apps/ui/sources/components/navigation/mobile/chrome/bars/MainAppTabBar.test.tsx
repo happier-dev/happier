@@ -189,10 +189,10 @@ describe('MainAppTabBar', () => {
         ] as const;
 
         for (const [id, label, selected] of expectedTabs) {
-            const tab = screen.findByTestId(`tabbar-tab-${id}`);
-            expect(tab?.props.accessibilityRole).toBe('tab');
+            const tab = screen.findHostByTestId(`tabbar-tab-${id}`);
+            expect(tab?.props.role ?? tab?.props.accessibilityRole).toBe('tab');
             expect(tab?.props.accessibilityLabel).toBe(label);
-            expect(tab?.props.accessibilityState).toEqual({ selected });
+            expect(tab?.props.accessibilityState).toEqual(expect.objectContaining({ selected }));
             expect(tab?.props['aria-selected']).toBe(selected);
             expect(tab && hasTextChild(tab, label)).toBe(false);
         }
@@ -204,7 +204,7 @@ describe('MainAppTabBar', () => {
         const screen = await renderTabBar(
             <MainAppTabBar activeTab="sessions" onTabPress={onTabPress} />,
         );
-        const projectsTab = screen.findByTestId('tabbar-tab-projects');
+        const projectsTab = screen.findHostByTestId('tabbar-tab-projects');
         const preventDefault = vi.fn();
 
         expect(projectsTab?.props.onKeyDown).toEqual(expect.any(Function));
@@ -235,7 +235,7 @@ describe('MainAppTabBar', () => {
             const nativeScreen = await renderTabBar(
                 <MainAppTabBar activeTab="sessions" onTabPress={onTabPress} />,
             );
-            expect(nativeScreen.findByTestId('tabbar-tab-projects')?.props.onKeyDown).toBeUndefined();
+            expect(nativeScreen.findHostByTestId('tabbar-tab-projects')?.props.onKeyDown).toBeUndefined();
         } finally {
             (Platform as { OS: string }).OS = previousPlatform;
         }
@@ -309,17 +309,17 @@ describe('MainAppTabBar', () => {
         const quietScreen = await renderTabBar(
             <MainAppTabBar activeTab="sessions" onTabPress={() => {}} />,
         );
-        const quietSessionsTab = quietScreen.findByTestId('tabbar-tab-sessions');
+        const quietSessionsTab = quietScreen.findHostByTestId('tabbar-tab-sessions');
         expect(quietSessionsTab?.props.accessibilityLabel).toBe('tabs.sessions');
-        expect(quietSessionsTab?.props.accessibilityState).toEqual({ selected: true });
+        expect(quietSessionsTab?.props.accessibilityState).toEqual(expect.objectContaining({ selected: true }));
 
         sessionsAttentionState.hasAttention = true;
         const attentionScreen = await renderTabBar(
             <MainAppTabBar activeTab="sessions" onTabPress={() => {}} />,
         );
-        const attentionSessionsTab = attentionScreen.findByTestId('tabbar-tab-sessions');
+        const attentionSessionsTab = attentionScreen.findHostByTestId('tabbar-tab-sessions');
         expect(attentionSessionsTab?.props.accessibilityLabel).toBe('tabs.sessionsNeedsAttention');
-        expect(attentionSessionsTab?.props.accessibilityState).toEqual({ selected: true });
+        expect(attentionSessionsTab?.props.accessibilityState).toEqual(expect.objectContaining({ selected: true }));
 
         const attentionDot = attentionSessionsTab?.find(
             (node) => typeof node.type === 'string' && node.props.importantForAccessibility === 'no-hide-descendants',
@@ -332,9 +332,9 @@ describe('MainAppTabBar', () => {
         const disabledScreen = await renderTabBar(
             <MainAppTabBar activeTab="sessions" onTabPress={() => {}} />,
         );
-        const disabledSessionsTab = disabledScreen.findByTestId('tabbar-tab-sessions');
+        const disabledSessionsTab = disabledScreen.findHostByTestId('tabbar-tab-sessions');
         expect(disabledSessionsTab?.props.accessibilityLabel).toBe('tabs.sessions');
-        expect(disabledSessionsTab?.props.accessibilityState).toEqual({ selected: true });
+        expect(disabledSessionsTab?.props.accessibilityState).toEqual(expect.objectContaining({ selected: true }));
     });
 
     it('renders without crashing when expo-image omits Image', async () => {

@@ -25,6 +25,8 @@ export type WorkspaceUrlTransport = Readonly<{
     commit: (href: string, entry: WorkspaceNavigationEntry, replace: boolean, position: number) => void;
     adoptCurrent?: (entry: WorkspaceNavigationEntry, position: number) => void;
     traverse?: (direction: -1 | 1) => void;
+    /** The browser retains entry positions across reloads; native transports use the local history. */
+    canTraverse?: (direction: -1 | 1) => boolean | undefined;
 }>;
 
 export function sameDestinationRef(a: DestinationRef, b: DestinationRef): boolean {
@@ -109,9 +111,10 @@ export function createWorkspaceNavigationAdapter(input: Readonly<{
         return focusedEntry();
     };
     return {
+        resolveOpenTarget,
         get history() { return history; },
-        get canGoBack() { return history.index > 0; },
-        get canGoForward() { return history.index < history.entries.length - 1; },
+        get canGoBack() { return input.transport.canTraverse?.(-1) ?? history.index > 0; },
+        get canGoForward() { return input.transport.canTraverse?.(1) ?? history.index < history.entries.length - 1; },
         findOpenHref(href: string): WorkspaceOpenDestination | null {
             const target = resolveOpenTarget(href);
             return target ? findOpenDestination(target) : null;
@@ -232,11 +235,15 @@ export function createWorkspaceNavigationAdapter(input: Readonly<{
                 } : recordWorkspaceNavigation(history, restoredEntry);
                 input.transport.adoptCurrent?.(restoredEntry, history.index);
                 input.onChange();
-                return;
+                return true;
             }
             const target = resolveDestinationRefFromHref(input.getCatalog(), href);
-            if (!target || sameDestinationRef(focusedEntry().target, target)) return;
-            this.openHref(href, {}, false);
+            if (!target) return false;
+            if (sameDestinationRef(focusedEntry().target, target)) {
+                input.transport.adoptCurrent?.(focusedEntry(), history.index);
+                return true;
+            }
+            return this.openHref(href, {}, false);
         },
         step(direction: -1 | 1) {
             if (direction === -1 ? !this.canGoBack : !this.canGoForward) return;

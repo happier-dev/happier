@@ -9,7 +9,7 @@ import { getActiveUnsavedChangesGuard, runGuardedNavigation } from '@/utils/navi
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { resolveDestinationRefFromHref, type CompactAppDestination } from '../destinations/compactAppDestinationCatalog';
 import { createWorkspaceNavigationAdapter, type WorkspaceOpenOptions } from './workspaceNavigationAdapter';
-import { createWorkspaceBrowserTransport } from './workspaceBrowserTransport';
+import { bindWorkspaceBrowserHistory, createWorkspaceBrowserTransport, installWorkspaceBrowserHistory } from './workspaceBrowserTransport';
 import type { WorkspaceNavigationEntry } from './workspaceNavigationHistory';
 import { useWorkspaceState } from './useWorkspaceState';
 import { useWorkspaceTabSync } from './useWorkspaceTabSync';
@@ -22,9 +22,12 @@ import { admitWorkspaceSingletonState, workspaceSingletonDestinationIds } from '
 import type { WorkspaceState } from './workspaceState';
 import { resolvePhoneWorkspaceTabHref } from './workspacePhoneProjection';
 import { useWorkspaceKeyboardShortcuts } from './useWorkspaceKeyboardShortcuts';
+import { WorkspaceRouteHostingContext } from './WorkspaceRouteHostingContext';
+import { useOptionalAppPaneFindSeedContext } from '../panes/AppPaneProvider';
+import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 
-function runNavigation(navigate: () => void): void {
-    const result = runGuardedNavigation(navigate);
+function runNavigation(navigate: () => void, intent?: 'history'): void {
+    const result = runGuardedNavigation(navigate, intent);
     if (result !== true) fireAndForget(result, { tag: 'Workspace.navigation' });
 }
 
@@ -39,12 +42,18 @@ export function WorkspaceProvider(props: Readonly<{
     catalog: readonly CompactAppDestination[];
     children: React.ReactNode | ((navigation: WorkspaceNavigationContextValue) => React.ReactNode);
 }>): React.ReactNode {
+    // Metro defers import evaluation. Resolve the decision owner while the app
+    // shell initializes, before any lazy destination can register a draft.
+    installWorkspaceBrowserHistory();
     const router = useRouter();
     const pathname = usePathname();
     const params = useGlobalSearchParams();
     const scope = useActiveServerAccountScope();
+    const findSeedContext = useOptionalAppPaneFindSeedContext();
+    const findHandoff = findSeedContext?.fileFindSeedHandoff;
     const scopeKey = scope ? JSON.stringify([scope.serverId, scope.accountId]) : null;
-    const routeHref = React.useMemo(() => {
+    // Browser history is authoritative even when readiness changes before Expo updates its mirror.
+    const routeHref = (() => {
         if (Platform.OS === 'web' && typeof window !== 'undefined') {
             return `${window.location.pathname}${window.location.search}${window.location.hash}`;
         }
@@ -53,11 +62,15 @@ export function WorkspaceProvider(props: Readonly<{
             if (typeof value === 'string') query.set(key, value);
         }
         return `${pathname}${query.size ? `?${query}` : ''}`;
-    }, [params, pathname]);
+    })();
     const phone = props.phone === true && !props.enabled;
     // Width changes presentation, never the owner or lifetime of an admitted web destination.
     const routeDestination = resolveDestinationRefFromHref(props.catalog, routeHref);
-    const hostsMobileWeb = phone && Platform.OS === 'web' && routeDestination !== null;
+    const canHostRoutes = props.enabled || (phone && Platform.OS === 'web');
+    const ownsHref = React.useCallback((href: string) => canHostRoutes
+        && resolveDestinationRefFromHref(props.catalog, href) !== null, [canHostRoutes, props.catalog]);
+    const ownsRoute = ownsHref(routeHref);
+    const hostsMobileWeb = phone && Platform.OS === 'web' && ownsRoute;
     const hostsRoute = props.enabled || hostsMobileWeb;
     const phoneTransport = phone && !hostsMobileWeb;
     const phoneTabHref = phone ? resolvePhoneWorkspaceTabHref(props.catalog, routeHref) : null;
@@ -76,26 +89,28 @@ export function WorkspaceProvider(props: Readonly<{
     const localOwner = useWorkspaceState({ initialTab, admitState });
     const owner = useWorkspaceTabSync({ local: localOwner, catalog: props.catalog, enabled: props.enabled || phone });
     const [historyVersion, changed] = React.useReducer((value: number) => value + 1, 0);
-    const latest = React.useRef({ owner, router, catalog: props.catalog, enabled: props.enabled, phone, phoneTransport, hostsRoute, scope, scopeKey, phoneTabHref });
-    latest.current = { owner, router, catalog: props.catalog, enabled: props.enabled, phone, phoneTransport, hostsRoute, scope, scopeKey, phoneTabHref };
+    const latest = React.useRef({ owner, router, catalog: props.catalog, enabled: props.enabled, phone, phoneTransport, hostsRoute, scope, scopeKey, phoneTabHref, findSeedContext });
+    latest.current = { owner, router, catalog: props.catalog, enabled: props.enabled, phone, phoneTransport, hostsRoute, scope, scopeKey, phoneTabHref, findSeedContext };
     const projectedHref = React.useRef<string | null>(null);
     const backSteps = React.useRef(new Map<string, () => boolean>());
     const canvasControlsRef = React.useRef<SplitCanvasHostControls | null>(null);
     const isCurrentUiOwner = React.useCallback(() => latest.current.scopeKey === scopeKey
         && latest.current.phoneTransport === phoneTransport && (latest.current.phone || latest.current.enabled)
         && latest.current.owner.isReady, [phoneTransport, scopeKey]);
-    const runUiNavigation = React.useCallback((operation: () => void) => {
+    const runUiNavigation = React.useCallback((operation: () => void, intent?: 'history') => {
         if (!isCurrentUiOwner()) return;
-        runNavigation(() => { if (isCurrentUiOwner()) operation(); });
+        runNavigation(() => { if (isCurrentUiOwner()) operation(); }, intent);
     }, [isCurrentUiOwner]);
-    const guardTraversal = React.useCallback((direction: -1 | 1, proceed: () => void) => {
-        runUiNavigation(() => {
+    const guardTraversal = React.useCallback((direction: -1 | 1, proceed: () => void, intent?: 'history') => {
+        if (!isCurrentUiOwner()) return false;
+        return runGuardedNavigation(() => {
+            if (!isCurrentUiOwner()) return;
             const state = latest.current.owner.getState();
             const tabId = state.groups[state.focusedGroupId].activeTabId;
             if (direction === -1 && backSteps.current.get(tabId)?.()) return;
             proceed();
-        });
-    }, [runUiNavigation]);
+        }, intent);
+    }, [isCurrentUiOwner]);
     const runtime = React.useMemo(() => {
         const mirror = (href: string, entry?: WorkspaceNavigationEntry) => {
             const projected = phoneTransport && entry?.target.kind === 'newTab' ? '/' : href;
@@ -112,11 +127,12 @@ export function WorkspaceProvider(props: Readonly<{
                 accept: (href, entry, position) => adapter.acceptUrl(href, entry, position),
                 guard: guardTraversal,
                 needsGuard: (direction) => {
-                    const guard = getActiveUnsavedChangesGuard();
                     const state = latest.current.owner.getState();
                     const tabId = state.groups[state.focusedGroupId].activeTabId;
-                    return Boolean((guard && !guard.ignoreRef?.current && (guard.isDirtyRef.current || guard.prepareGuard))
-                        || (direction === -1 && backSteps.current.has(tabId)));
+                    const guard = getActiveUnsavedChangesGuard();
+                    return Boolean(guard && !guard.ignoreRef?.current
+                        && (guard.isDirtyRef.current || guard.prepareGuard))
+                        || (direction === -1 && backSteps.current.has(tabId));
                 },
             }) : null;
         const adapter = createWorkspaceNavigationAdapter({
@@ -144,6 +160,8 @@ export function WorkspaceProvider(props: Readonly<{
             getState: () => latest.current.owner.getState(), navigation: runtime.adapter,
             readCanvas: () => canvasControlsRef.current, createId: randomUUID,
             phone,
+            ...(findHandoff ? { chatFind: { handoff: findHandoff, resolveAuthority: (serverId: string) =>
+                latest.current.findSeedContext?.fileFindSeedAccountBindings.get(resolveServerProfileScopeIdForIdentifier(serverId)) ?? null } } : {}),
         });
         const retire = registerMountedWorkspaceAction(async (request) => {
             const isCurrent = () => current && isCurrentUiOwner();
@@ -164,7 +182,7 @@ export function WorkspaceProvider(props: Readonly<{
             return outcome;
         });
         return () => { current = false; retire(); };
-    }, [eligible, isCurrentUiOwner, owner.isReady, phone, props.enabled, runtime, scopeKey]);
+    }, [eligible, findHandoff, isCurrentUiOwner, owner.isReady, phone, props.enabled, runtime, scopeKey]);
 
     React.useLayoutEffect(() => {
         if (!hostsRoute || !owner.isReady || !eligible) return;
@@ -174,14 +192,9 @@ export function WorkspaceProvider(props: Readonly<{
         } else if (projectedHref.current !== routeHref) runtime.adapter.acceptUrl(routeHref);
     }, [eligible, owner.isReady, hostsRoute, routeHref, runtime]);
 
-    React.useEffect(() => {
+    React.useLayoutEffect(() => {
         if (!hostsRoute || !owner.isReady || !runtime.browser || typeof window === 'undefined') return;
-        const onPop = (event: PopStateEvent) => {
-            if (runtime.browser?.acceptPopState(event.state)) event.stopImmediatePropagation();
-        };
-        // Expo's linking listener is a URL mirror, never a competing workspace history reader.
-        window.addEventListener('popstate', onPop, true);
-        return () => window.removeEventListener('popstate', onPop, true);
+        return bindWorkspaceBrowserHistory(runtime.browser.acceptPopState);
     }, [owner.isReady, hostsRoute, runtime]);
 
     // The phone records what is on screen as its one preview (or the tab it already is). It never
@@ -269,7 +282,7 @@ export function WorkspaceProvider(props: Readonly<{
             back: () => {
                 if (!isCurrentUiOwner()) return;
                 if (runtime.browser) runtime.adapter.step(-1);
-                else guardTraversal(-1, () => runtime.adapter.step(-1));
+                else guardTraversal(-1, () => runtime.adapter.step(-1), 'history');
             },
             canGoBack: () => runtime.adapter.canGoBack,
             setParams: (values) => { if (isCurrentUiOwner()) runtime.adapter.setParams(tabId, values); },
@@ -279,6 +292,7 @@ export function WorkspaceProvider(props: Readonly<{
     }, [guardTraversal, isCurrentUiOwner, openHref, runUiNavigation, runtime, tabNavigations]);
     const navigation = React.useMemo<WorkspaceNavigationContextValue>(() => ({
         active: hostsRoute && owner.isReady && eligible && runtime.initialized,
+        ownsRoute,
         phone: phoneControls,
         state: owner.state,
         catalog: props.catalog,
@@ -310,14 +324,16 @@ export function WorkspaceProvider(props: Readonly<{
         back: () => {
             if (!isCurrentUiOwner()) return;
             if (runtime.browser) runtime.adapter.step(-1);
-            else guardTraversal(-1, () => runtime.adapter.step(-1));
+            else guardTraversal(-1, () => runtime.adapter.step(-1), 'history');
         },
         forward: () => {
             if (!isCurrentUiOwner()) return;
             if (runtime.browser) runtime.adapter.step(1);
-            else guardTraversal(1, () => runtime.adapter.step(1));
+            else guardTraversal(1, () => runtime.adapter.step(1), 'history');
         },
-    }), [activateTab, eligible, guardTraversal, historyVersion, hostsRoute, isCurrentUiOwner, navigationForTab, openHref, phoneControls, owner.isReady, owner.state, owner.sharedTabs, owner.tabSyncStatus, owner.handoffSource, runUiNavigation, runtime]);
+    }), [activateTab, eligible, guardTraversal, historyVersion, hostsRoute, isCurrentUiOwner, navigationForTab, openHref, ownsRoute, phoneControls, owner.isReady, owner.state, owner.sharedTabs, owner.tabSyncStatus, owner.handoffSource, runUiNavigation, runtime]);
     useWorkspaceKeyboardShortcuts(navigation.active, () => latest.current.owner.getState());
-    return <WorkspaceNavigationContext.Provider value={navigation}>{typeof props.children === 'function' ? props.children(navigation) : props.children}</WorkspaceNavigationContext.Provider>;
+    return <WorkspaceRouteHostingContext.Provider value={ownsHref}>
+        <WorkspaceNavigationContext.Provider value={navigation}>{typeof props.children === 'function' ? props.children(navigation) : props.children}</WorkspaceNavigationContext.Provider>
+    </WorkspaceRouteHostingContext.Provider>;
 }

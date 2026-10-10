@@ -4,6 +4,7 @@ import { Platform } from 'react-native';
 import { useGlobalSearchParams, useSegments } from 'expo-router';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { getPluginMachineExecutionOriginRef } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 import { Modal } from '@/modal';
 import { COMMAND_SURFACE_WEB_PLACEMENT } from '@/modal/components/card/commandSurfaceCard';
 import { UniversalSearchModal, type UniversalSearchModalProps } from '@/components/appShell/search/UniversalSearchModal';
@@ -69,6 +70,7 @@ import { parseSessionPaneScopeId } from '@/components/sessions/panes/sessionPane
 import { TERMINAL_JUMP_ROUTE_PARAM } from '@/components/sessions/terminal/jump/terminalJumpTarget';
 import { NextPendingNavigationHost } from '@/components/sessions/pendingNavigation/NextPendingNavigationHost';
 import { t } from '@/text';
+import { useAskHappierStarter } from '@/components/sessions/bots/useAskHappierOffer';
 
 export function readActiveSessionIdFromRoute(
     segments: readonly string[],
@@ -166,14 +168,15 @@ function useCommandPalettePluginActionPresentation(activeSessionId: string | nul
                             buildQualifiedPluginContributionKey(identity)
                         ];
                         const origin = readPluginUiContributionOrigin(projectedAction);
+                        const exactRef = origin?.executionOrigin ? getPluginMachineExecutionOriginRef(origin.executionOrigin) : null;
                         return origin?.machineId === machineId
                             && origin.serverId === serverId
                             && origin.generation !== null
                             && String(origin.generation) === String(generation)
                             && origin.interactionEnabled === true
                             && origin.phase === 'current'
-                            && origin.executionOrigin?.materializationRef.pluginId === identity.pluginId
-                            && origin.executionOrigin.materializationRef.machineId === machineId;
+                            && exactRef?.pluginId === identity.pluginId
+                            && exactRef.machineId === machineId;
                     },
                 }),
             },
@@ -255,6 +258,7 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
     const petsCompanionEnabled = useFeatureEnabled('pets.companion');
     const { available: workflowsEnabled } = useWorkflowsAvailability();
     const openWorkflowAgentDraft = useWorkflowAgentAuthoring();
+    const startAskHappier = useAskHappierStarter();
     const openNewWorkflow = useCallback(() => { router.push('/workflows/new' as never); }, [router]);
     const openWorkflowAgentAuthoring = useCallback(() => {
         openWorkflowAgentDraft(buildWorkflowAgentAuthoringSeed({ kind: 'create' }));
@@ -400,7 +404,6 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
                 openNewWorkflow,
                 openWorkflowAgentAuthoring,
                 openAskHappier: async (context) => {
-                    const { startAskHappier } = await import('@/components/sessions/bots/askHappierEntry');
                     await startAskHappier({ lifetime: askHappierLifetime, context, currentUiContext: askHappierCurrentContext });
                 },
                 openTextInFiles: () => textSearchOpener.current(requestedScope),
@@ -417,7 +420,7 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
                 await Modal.alertAsync(title, message);
             },
         });
-    }, [commandContextSessionId, commandContextServerId, currentUiContextReader, executionRunsEnabled, voiceEnabled, petsCompanionEnabled, workflowsEnabled, paletteDestinations, activateCompactAppDestination, shortcutLabels, petControls, pluginActionPresentation, router, openNewSession, openNewWorkflow, openWorkflowAgentAuthoring, navigateToSession, actionExecutor]);
+    }, [commandContextSessionId, commandContextServerId, currentUiContextReader, executionRunsEnabled, voiceEnabled, petsCompanionEnabled, workflowsEnabled, paletteDestinations, activateCompactAppDestination, shortcutLabels, petControls, pluginActionPresentation, router, openNewSession, openNewWorkflow, openWorkflowAgentAuthoring, navigateToSession, actionExecutor, startAskHappier]);
 
     const actionCommandBuilder = React.useRef(buildCommands);
     actionCommandBuilder.current = buildCommands;

@@ -1,5 +1,6 @@
 import * as React from 'react';
 import type { HappierFindBarProps } from '@happier-dev/plugin-ui/presentation';
+import { useFindSurfaceRegistrationWithHost, type FindSurfaceRegistrationHost } from '@happier-dev/plugin-ui/advanced';
 import { Platform } from 'react-native';
 import { useShallow } from 'zustand/react/shallow';
 
@@ -27,6 +28,7 @@ import * as nativeKeyboardBridge from '@/components/sessions/agentInput/subscrib
 import { isDesktopHost } from '@/utils/platform/desktopHost';
 import { createFindSurfaceRegistry, type FindSurfaceRegistration, type FindSurfaceRegistry } from './findSurfaceRegistry';
 import { registerFindActionRuntime } from './findActionRuntime';
+import { ESCAPE_LAYER_PRIORITIES, useEscapeLayer } from './escape';
 
 type NativeKeyboardBridgeModule = typeof nativeKeyboardBridge & Readonly<{
     subscribeToNativeHardwareKeyboardEvents?: (
@@ -49,6 +51,30 @@ type NativeKeyboardInputRegistration = Readonly<{
 
 const KeyboardShortcutRegistrationContext = React.createContext<KeyboardShortcutRegistrationContextValue | null>(null);
 const EmbeddedFindKeyboardContext = React.createContext<Readonly<{ signatures: readonly string[]; dispatch(event: NativeHardwareKeyboardEventLike): boolean }> | null>(null);
+
+export type KeyboardShortcutContextSnapshot = Readonly<{
+    registration: KeyboardShortcutRegistrationContextValue | null;
+    labels: React.ContextType<typeof KeyboardShortcutLabelsContext>;
+}>;
+
+/** Modal hosts outside the caller's subtree keep using its one keyboard runtime. */
+export function useKeyboardShortcutContextSnapshot(): KeyboardShortcutContextSnapshot {
+    const registration = React.useContext(KeyboardShortcutRegistrationContext);
+    const labels = React.useContext(KeyboardShortcutLabelsContext);
+    return React.useMemo(() => ({ registration, labels }), [registration, labels]);
+}
+
+/** Replays context only; listeners, preferences and command dispatch remain provider-owned. */
+export function KeyboardShortcutContextBridge(props: React.PropsWithChildren<Readonly<{
+    snapshot: KeyboardShortcutContextSnapshot;
+}>>): React.ReactElement {
+    return <KeyboardShortcutRegistrationContext.Provider value={props.snapshot.registration}>
+        <KeyboardShortcutLabelsContext.Provider value={props.snapshot.labels}>
+            {props.children}
+        </KeyboardShortcutLabelsContext.Provider>
+    </KeyboardShortcutRegistrationContext.Provider>;
+}
+
 const HANDLER_KEY_SIGNATURE_SEPARATOR = '\u0000';
 
 function buildHandlerKeySignature(handlers: KeyboardShortcutHandlers): string {
@@ -130,29 +156,15 @@ export function useNativeKeyboardInput(input: NativeKeyboardInputRegistration | 
 }
 
 export function useFindSurfaceRegistration(surface: FindSurfaceRegistration | null): void {
+    useFindSurfaceRegistrationWithHost(surface, useFindSurfaceRegistrationHost());
+}
+
+/** The plugin presentation adapter forwards registrations into this provider's one owner. */
+export function useFindSurfaceRegistrationHost(): FindSurfaceRegistrationHost | null {
     const registration = React.useContext(KeyboardShortcutRegistrationContext);
-    const latestRef = React.useRef(surface);
-    latestRef.current = surface;
-    const surfaceId = surface?.surfaceId;
-    React.useEffect(() => {
-        if (!registration || surfaceId === undefined) return;
-        const entry: FindSurfaceRegistration = {
-            surfaceId,
-            containsFocus: () => latestRef.current?.containsFocus() === true,
-            open: () => latestRef.current?.open(),
-            isOpen: () => latestRef.current?.isOpen() === true,
-            isInputFocused: () => latestRef.current?.isInputFocused() === true,
-            get engineOwnsFind() { return latestRef.current?.engineOwnsFind === true; },
-            get controller() { return latestRef.current!.controller; },
-        };
-        const release = registration.find.register(entry);
-        registration.refreshFindAvailability();
-        return () => { release(); registration.refreshFindAvailability(); };
-    }, [registration, surfaceId]);
-    const focused = surface?.containsFocus() === true;
-    const open = surface?.isOpen() === true;
-    const inputFocused = surface?.isInputFocused() === true;
-    React.useEffect(() => { registration?.refreshFindAvailability(); }, [registration, focused, open, inputFocused]);
+    const find = registration?.find;
+    const refresh = registration?.refreshFindAvailability;
+    return React.useMemo(() => find && refresh ? { register: find.register, refresh } : null, [find, refresh]);
 }
 
 /** Menu intents are independent of keyboard preference disablement. */
@@ -408,6 +420,13 @@ export function KeyboardShortcutProvider(props: React.PropsWithChildren<Readonly
     const nativeHardwareKeyboardRegistrationRef = React.useRef(nativeHardwareKeyboardRegistration);
     nativeHardwareKeyboardRegistrationRef.current = nativeHardwareKeyboardRegistration;
 
+    useEscapeLayer({
+        enabled: Platform.OS === 'web' && find.resolve()?.isOpen() === true,
+        priority: ESCAPE_LAYER_PRIORITIES.find,
+        allowEditableTarget: true,
+        onEscape: (event) => find.closeFromKeyboard(normalizeKeyboardEvent(event as KeyboardEvent)) === 'handled',
+    });
+
     React.useEffect(() => {
         if (Platform.OS !== 'web') return;
         const dispatchEvent = (event: KeyboardEvent, captureFind: boolean) => {
@@ -423,7 +442,7 @@ export function KeyboardShortcutProvider(props: React.PropsWithChildren<Readonly
                 }),
             });
             const normalized = normalizeKeyboardEvent(event);
-            if ((!captureFind || find.closeFromKeyboard(normalized) !== 'handled') && !dispatcher(normalized)) return;
+            if (!dispatcher(normalized)) return;
             event.preventDefault();
             event.stopPropagation();
             if (captureFind) event.stopImmediatePropagation();

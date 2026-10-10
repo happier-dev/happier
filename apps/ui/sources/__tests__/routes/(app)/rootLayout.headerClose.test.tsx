@@ -4,6 +4,7 @@ import { act } from 'react-test-renderer';
 import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
 
 const routerBackSpy = vi.hoisted(() => vi.fn());
+const routerReplaceSpy = vi.hoisted(() => vi.fn());
 const safeRouterBackSpy = vi.hoisted(() => vi.fn());
 const stackNavigationState = vi.hoisted(() => ({
     index: 0,
@@ -54,13 +55,18 @@ vi.mock('expo-router', async () => {
     return createExpoRouterMock({
         router: {
             back: routerBackSpy,
+            replace: routerReplaceSpy,
         },
     }).module;
 });
 
-vi.mock('@/utils/navigation/safeRouterBack', () => ({
-    safeRouterBack: (...args: unknown[]) => safeRouterBackSpy(...args),
-}));
+vi.mock('@/utils/navigation/safeRouterBack', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/utils/navigation/safeRouterBack')>();
+    return { ...actual, safeRouterBack: (...args: Parameters<typeof actual.safeRouterBack>) => {
+        safeRouterBackSpy(...args);
+        return actual.safeRouterBack(...args);
+    } };
+});
 
 vi.mock('@expo/vector-icons', async () => {
     const { createExpoVectorIconsMock } = await import('@/dev/testkit/mocks/icons');
@@ -92,7 +98,8 @@ vi.mock('@/hooks/server/useFriendsIdentityReadiness', () => ({
     useFriendsIdentityReadiness: () => ({ isReady: true }),
 }));
 
-vi.mock('@/sync/domains/server/serverProfiles', () => ({
+vi.mock('@/sync/domains/server/serverProfiles', async (importOriginal) => ({
+    ...(await importOriginal<typeof import('@/sync/domains/server/serverProfiles')>()),
     getActiveServerUrl: () => null,
 }));
 
@@ -157,12 +164,14 @@ vi.mock('@/activity/notifications/runtime/useNotificationResponseRouting', () =>
     useNotificationResponseRouting: vi.fn(),
 }));
 
-vi.mock('@/utils/platform/desktopHost', () => ({
+vi.mock('@/utils/platform/desktopHost', async (importOriginal) => ({
+    ...(await importOriginal<typeof import('@/utils/platform/desktopHost')>()),
     invokeDesktopHost: vi.fn(),
     isDesktopHost: () => false,
 }));
 
-vi.mock('@/components/navigation/createAppStackScreenOptions', () => ({
+vi.mock('@/components/navigation/createAppStackScreenOptions', async (importOriginal) => ({
+    ...(await importOriginal<typeof import('@/components/navigation/createAppStackScreenOptions')>()),
     createAppStackScreenOptions: () => ({}),
 }));
 
@@ -185,7 +194,8 @@ vi.mock('@/components/voice/surface/VoiceAnnouncer', () => ({
     VoiceAnnouncer: () => React.createElement('VoiceAnnouncer'),
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => ({
+    ...(await importOriginal<typeof import('@/sync/domains/state/storage')>()),
     useEndpointConnectivity: () => ({ status: 'connected' }),
     useSyncError: () => null,
     useSetting: (key: string) => {
@@ -215,8 +225,47 @@ function getStackScreenOptions(
 }
 
 describe('app stack modal header close buttons', () => {
+    it.each(['workflows/edit', 'workflows/[id]/index'])('guards the Workflow Back and returns to its destination (%s)', async (name) => {
+        platformState.os = 'web';
+        deviceTypeState.value = 'phone';
+        const { default: RootLayout } = await import('@/app/(app)/_layout');
+        const screen = await renderScreen(<RootLayout />);
+        const options = getStackScreenOptions(screen, name);
+        const renderBack = options.headerLeft as ((props: { tintColor?: string }) => React.ReactNode) | undefined;
+        expect(renderBack).toBeTypeOf('function');
+        const header = await renderScreen(<>{renderBack?.({})}</>);
+        const { setActiveUnsavedChangesGuard, clearActiveUnsavedChangesGuard } = await import('@/utils/navigation/runGuardedNavigation');
+        const requestDecision = vi.fn<() => Promise<'keepEditing' | 'discard'>>().mockResolvedValueOnce('keepEditing').mockResolvedValueOnce('discard');
+        setActiveUnsavedChangesGuard({ isDirtyRef: { current: true }, requestDecision, tag: 'workflow-native-exit' });
+        try {
+            await header.pressByTestIdAsync('workflow-back');
+            expect(requestDecision).toHaveBeenCalledOnce();
+            expect(routerReplaceSpy).not.toHaveBeenCalled();
+            await header.pressByTestIdAsync('workflow-back');
+            expect(requestDecision).toHaveBeenCalledTimes(2);
+            expect(routerReplaceSpy).toHaveBeenCalledWith('/workflows');
+            expect(safeRouterBackSpy).not.toHaveBeenCalled();
+        } finally {
+            clearActiveUnsavedChangesGuard();
+        }
+    });
+    it('does not publish a second Workflow Back into desktop page actions', async () => {
+        const { default: RootLayout } = await import('@/app/(app)/_layout');
+        const { AppShellColumnContext } = await import('@/components/navigation/shell/appRail/appShellColumnContext');
+        const screen = await renderScreen(<AppShellColumnContext.Provider value={{ present: true, columnVisible: true }}>
+            <RootLayout />
+        </AppShellColumnContext.Provider>);
+        expect(getStackScreenOptions(screen, 'workflows/[id]/index').headerLeft).toBeUndefined();
+    });
+    it('leaves the phone library title and creation actions to its PageHeader', async () => {
+        deviceTypeState.value = 'phone';
+        const { default: RootLayout } = await import('@/app/(app)/_layout');
+        const screen = await renderScreen(<RootLayout />);
+        expect(getStackScreenOptions(screen, 'workflows/index').headerShown).toBe(false);
+    });
     beforeEach(() => {
         routerBackSpy.mockReset();
+        routerReplaceSpy.mockReset();
         safeRouterBackSpy.mockReset();
         stackNavigationMock.navigate.mockReset();
         stackNavigationMock.canGoBack.mockClear();
@@ -432,4 +481,5 @@ describe('app stack modal header close buttons', () => {
         // Phone keeps the instant tab switch — animation must remain suppressed.
         expect(settingsOptions.animation).toBe('none');
     });
+
 });

@@ -10,7 +10,7 @@ describe('resolvePaneFocusModeRouteScopeId', () => {
 
     it('resolves project routes into their pane scope id', () => {
         expect(resolvePaneFocusModeRouteScopeId('/projects/workspace-1')).toBe('project:workspace-1');
-        expect(resolvePaneFocusModeRouteScopeId('/(app)/projects/workspace-1/git')).toBe('project:workspace-1');
+        expect(resolvePaneFocusModeRouteScopeId('/(app)/projects/workspace-1/changes')).toBe('project:workspace-1');
     });
 
     it('decodes encoded scope ids and ignores query strings', () => {

@@ -28,6 +28,7 @@ import {
     type PaneDestinationRuntimeAdmission,
 } from './model/resolveSelectedPaneDestination';
 import type { SelectedPaneDestinationV1 } from './model/selectedPaneDestination';
+import type { InitialRightPaneState } from './model/appPaneReducer';
 import {
     PluginDetailsDestinationLaunchScope,
     usePluginDetailsDestinationNavigationOwners,
@@ -56,6 +57,8 @@ export type AppPaneDestinationDetails = Readonly<{
 
 export type AppPaneScopeHostProps = Readonly<{
     scopeId: string;
+    /** A creation default, never an instruction to reopen an existing scope. */
+    initialRight?: InitialRightPaneState;
     main: React.ReactNode;
     /** The main content's own minimum width before a pane becomes an overlay. */
     mainMinWidthPx?: number;
@@ -263,12 +266,16 @@ const AppPaneScopeHostContent = React.memo((props: AppPaneScopeHostProps) => {
     const deviceType = useDeviceType();
     const appProjection = useAppShellPluginUiProjection().pluginUiProjection;
     const screenFocused = useDestinationFocus();
+    // Activation reads the current creation input; resizing or changing preferences
+    // must not activate the scope again. The reducer ignores it for retained scopes.
+    const initialRightRef = React.useRef(props.initialRight);
+    initialRightRef.current = props.initialRight;
 
     // The page on screen owns the active scope; a page left behind (still mounted under the one on
     // screen) releases it, so "the current page's right sidebar" always names the page the user sees.
     React.useEffect(() => {
         if (!screenFocused) return;
-        dispatch({ type: 'activateScope', scopeId: props.scopeId });
+        dispatch({ type: 'activateScope', scopeId: props.scopeId, initialRight: initialRightRef.current });
         return () => dispatch({ type: 'releaseScope', scopeId: props.scopeId });
     }, [dispatch, props.scopeId, screenFocused]);
 
@@ -338,7 +345,9 @@ const AppPaneScopeHostContent = React.memo((props: AppPaneScopeHostProps) => {
 
     // The shared Account lifetime is the only retirement source for the
     // AppPane-private handoff. It carries no pane state and is never persisted.
-    const accountLifetime = captureActiveServerAccountScopeLifetime();
+    const accountLifetime = paneSurfaceScope
+        ? paneSurfaceScope.accountLifetime ?? null
+        : captureActiveServerAccountScopeLifetime();
     const [paneLaunchStore] = React.useState(createPluginSurfacePaneLaunchStore);
     const scopedLaunchFacts = React.useMemo<PluginSurfaceScopedLaunchFacts>(() => Object.freeze({
         serverId: paneSurfaceScope?.serverId ?? null,
@@ -649,7 +658,9 @@ const AppPaneScopeHostContent = React.memo((props: AppPaneScopeHostProps) => {
  * remains the sole selection/layout owner.
  */
 export const AppPaneScopeHost = React.memo((props: AppPaneScopeHostProps) => (
-    <PluginDetailsDestinationLaunchScope>
+    <PluginDetailsDestinationLaunchScope accountLifetime={props.pluginSurfaceScope !== undefined
+        ? props.pluginSurfaceScope?.accountLifetime ?? null
+        : undefined}>
         <AppPaneScopeHostContent {...props} />
     </PluginDetailsDestinationLaunchScope>
 ));

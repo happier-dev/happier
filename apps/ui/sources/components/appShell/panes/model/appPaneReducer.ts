@@ -65,6 +65,9 @@ export type AppPaneFocusModeState = Readonly<{
     scopeId: string | null;
 }>;
 
+/** Used only when activation creates a scope; retained state always wins. */
+export type InitialRightPaneState = Readonly<Pick<PaneScopeState['right'], 'isOpen' | 'activeTabId'>>;
+
 export type AppPaneState = Readonly<{
     activeScopeId: string | null;
     scopes: Readonly<Record<string, PaneScopeState>>;
@@ -77,7 +80,7 @@ export type AppPaneState = Readonly<{
 
 export type AppPaneAction =
     | { type: 'mergePersistedScopes'; scopes: Readonly<Record<string, PaneScopeState>> }
-    | { type: 'activateScope'; scopeId: string }
+    | { type: 'activateScope'; scopeId: string; initialRight?: InitialRightPaneState }
     /** The page that owned the active scope left the screen: no page's panes are active until one is. */
     | { type: 'releaseScope'; scopeId: string }
     | { type: 'enterFocusMode'; scopeId: string }
@@ -149,9 +152,15 @@ export function createAppPaneState(options: Readonly<{
     });
 }
 
-function createEmptyScopeState(): PaneScopeState {
+function createEmptyScopeState(initialRight?: InitialRightPaneState): PaneScopeState {
+    const activeTabId = initialRight?.activeTabId ?? null;
     return {
-        right: { isOpen: false, activeTabId: null, selectedDestination: null, tabState: {} },
+        right: {
+            isOpen: initialRight?.isOpen ?? false,
+            activeTabId,
+            selectedDestination: activeTabId === null ? null : createBuiltinPaneDestination(activeTabId),
+            tabState: {},
+        },
         details: createEmptyPaneDetailsState(),
         bottom: { isOpen: false, activeTabId: null, selectedDestination: null, tabState: {} },
     };
@@ -297,7 +306,7 @@ export function appPaneReduce(state: AppPaneState, action: AppPaneAction): AppPa
                 activeScopeId: action.scopeId,
                 scopeLru: touchScopeLru(state.scopeLru, action.scopeId),
                 focusMode: state.focusMode.scopeId === action.scopeId ? state.focusMode : { scopeId: null },
-                scopes: state.scopes[action.scopeId] ? state.scopes : { ...state.scopes, [action.scopeId]: createEmptyScopeState() },
+                scopes: state.scopes[action.scopeId] ? state.scopes : { ...state.scopes, [action.scopeId]: createEmptyScopeState(action.initialRight) },
             };
             return evictScopesIfNeeded(next);
         }

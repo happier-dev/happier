@@ -10,7 +10,8 @@ import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 import { t } from '@/text';
 import { FeatureDiagnosticsPanel } from '@/components/settings/features/FeatureDiagnosticsPanel';
 import {
-    buildUiFeatureToggleDefaults,
+    buildUiFeatureExperimentsChange,
+    buildUiFeatureToggleChange,
     listUiFeatureToggleDefinitions,
     resolveUiFeatureToggleEnabled,
     type UiFeatureToggleDefinition,
@@ -170,33 +171,14 @@ export const WorkspaceRouteBody = React.memo(function FeaturesSettingsScreen() {
     const experimentalToggleDefinitions = visibleToggleDefinitions.filter((d) => d.isExperimental);
 
     const seedExperimentalFeatureToggleDefaults = React.useCallback(() => {
-        const defaults = buildUiFeatureToggleDefaults({ experimentalOnly: true });
-        setFeatureToggles({
-            ...(featureToggles ?? {}),
-            ...defaults,
-        });
-    }, [featureToggles, setFeatureToggles]);
+        setFeatureToggles(buildUiFeatureExperimentsChange({ experiments, featureToggles }, true).featureToggles!);
+    }, [experiments, featureToggles, setFeatureToggles]);
 
     const toggleSettings = React.useMemo(() => ({ experiments, featureToggles }), [experiments, featureToggles]);
 
     const toggleableFeatureIdSet = React.useMemo(() => {
         return new Set(toggleDefinitions.map((d) => d.featureId));
     }, [toggleDefinitions]);
-
-    const dependentsByFeatureId = React.useMemo(() => {
-        const map = new Map<FeatureId, FeatureId[]>();
-        for (const def of toggleDefinitions) {
-            map.set(def.featureId, []);
-        }
-        for (const def of toggleDefinitions) {
-            for (const dep of getFeatureDependencies(def.featureId)) {
-                if (!toggleableFeatureIdSet.has(dep)) continue;
-                const list = map.get(dep);
-                if (list) list.push(def.featureId);
-            }
-        }
-        return map;
-    }, [toggleDefinitions, toggleableFeatureIdSet]);
 
     const isLocallyBlockedByDependencies = React.useCallback((featureId: FeatureId): boolean => {
         for (const dep of getFeatureDependencies(featureId)) {
@@ -215,27 +197,8 @@ export const WorkspaceRouteBody = React.memo(function FeaturesSettingsScreen() {
     }, [isFeatureHardDisabledByServer, isLocallyBlockedByDependencies, toggleDefinitions, toggleSettings]);
 
     const applyLocalToggleChange = React.useCallback((featureId: FeatureId, next: boolean) => {
-        const nextToggles: Record<string, boolean> = {
-            ...(featureToggles ?? {}),
-            [featureId]: next,
-        };
-
-        if (!next) {
-            const queue: FeatureId[] = [featureId];
-            const visited = new Set<FeatureId>(queue);
-            while (queue.length > 0) {
-                const current = queue.shift()!;
-                for (const dependent of dependentsByFeatureId.get(current) ?? []) {
-                    if (visited.has(dependent)) continue;
-                    visited.add(dependent);
-                    nextToggles[dependent] = false;
-                    queue.push(dependent);
-                }
-            }
-        }
-
-        setFeatureToggles(nextToggles);
-    }, [dependentsByFeatureId, featureToggles, setFeatureToggles]);
+        setFeatureToggles(buildUiFeatureToggleChange({ experiments, featureToggles }, featureId, next).featureToggles);
+    }, [experiments, featureToggles, setFeatureToggles]);
 
     const renderToggleRow = (d: UiFeatureToggleDefinition) => {
         const blockedByDependencies = isLocallyBlockedByDependencies(d.featureId);

@@ -25,7 +25,8 @@ export const SplitCanvasFocusRing = React.memo((props: Readonly<{
                 left: 0,
                 borderWidth: props.keyboardVisible ? 2 : 1,
                 borderColor: props.keyboardVisible ? theme.colors.accent.blue : theme.colors.border.default,
-                borderRadius: 12,
+                // The pane's own corner (`SplitCanvasLeafFrame`), so the ring lies on its edge.
+                borderRadius: theme.borderRadius.xl,
                 opacity: props.keyboardVisible ? 0.95 : 0.72,
             }}
         />

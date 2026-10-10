@@ -641,7 +641,7 @@ vi.mock('@/sync/sync', () => ({
 // catalog (a Home query); no Team resource is offered in this suite.
 vi.mock('@/hooks/teams/useHomeTeamCredentialModelCatalog', () => ({
     useHomeTeamCredentialModelCatalog: () => ({
-        resources: [], teamNameById: {}, homeNameByTeamId: {}, currentResourceKeys: new Set(), current: true,
+        resources: [], teamNameById: {}, homeNameByTeamId: {}, currentResourceKeys: new Set(), current: true, condition: null,
     }),
 }));
 

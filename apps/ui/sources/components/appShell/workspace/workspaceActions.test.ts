@@ -5,6 +5,11 @@ import { installPanelCommonModuleMocks } from '@/components/ui/panels/panelTestH
 import { createWorkspaceActionAdapter } from './workspaceActions';
 import { createWorkspaceNavigationAdapter } from './workspaceNavigationAdapter';
 import { createWorkspaceEmptyTab, createWorkspaceState, reduceWorkspaceState } from './workspaceState';
+import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
+import { serializeSessionPaneUrlState, parseSessionPaneUrlState } from '@/components/sessions/panes/url/sessionPaneUrlState';
+import { createFileFindSeedHandoff } from '../panes/fileFindSeedHandoff';
+import { makeExternalSessionHistoricalImportLocalId } from '@happier-dev/protocol/sessions/external/historicalImportIdentity';
+import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 
 installPanelCommonModuleMocks();
 // Recipient-envelope HTTP/process APIs are outside this deterministic workspace owner harness.
@@ -15,6 +20,48 @@ vi.mock('@/sync/api/session/sessionDataKeyEnvelopesApi', () => {
 });
 
 describe('workspace Action intent adapter', () => {
+    it('opens the exact native hit using the incumbent private chat handoff, never URL or tab persistence', () => {
+        let state = createWorkspaceState({ id: 'a', target: { kind: 'session', params: { id: 'a', serverId: 'home-a' } }, pinned: false, preview: false });
+        const catalog = resolveCompactAppDestinations({ builtins: { externalSessions: false, inbox: true, workflows: true, friends: false }, pages: [] });
+        const navigation = createWorkspaceNavigationAdapter({ getState: () => state, getCatalog: () => catalog,
+            dispatch: action => { state = reduceWorkspaceState(state, action); }, transport: { commit: () => {} },
+            createId: () => 'new', onChange: () => {} });
+        const handoff = createFileFindSeedHandoff();
+        let current = true;
+        const authority: ServerAccountScopeLifetime = { scope: { serverId: 'home-a', accountId: 'account' },
+            isCurrent: () => current, onRetire: () => ({ dispose() {} }) };
+        const execute = createWorkspaceActionAdapter({ getState: () => state, navigation, readCanvas: () => null,
+            createId: () => 'new', chatFind: { handoff, resolveAuthority: serverId => serverId === 'home-a' ? authority : null } });
+        const request = { href: '/session/a?serverId=home-a', find: { query: 'needle',
+            target: { kind: 'native-message', agentId: 'claude', remoteSessionId: 'native', sourceItemId: 'item' } } };
+        expect(execute('workspace.tabs.open', request)).toEqual({ ok: true });
+        const destination = { sessionId: 'a', serverId: 'home-a' };
+        expect(handoff.takeChatCurrent(destination)?.seed).toEqual({ query: 'needle', options: { matchCase: false, regex: false },
+            target: { kind: 'route-message-id', routeMessageId: makeExternalSessionHistoricalImportLocalId({
+                agentId: 'claude', remoteSessionId: 'native', directItemId: 'item' }) } });
+        expect(JSON.stringify(state)).not.toContain('needle');
+        expect(handoff.takeChatCurrent(destination)).toBeNull();
+        current = false;
+        const before = state;
+        expect(execute('workspace.tabs.open', request)).toMatchObject({ ok: false, errorCode: 'workspace_find_unavailable' });
+        expect(state).toBe(before);
+        handoff.dispose();
+    });
+    it('opens a file at its selected line through the same Session pane parser instead of another file Action', () => {
+        let state = createWorkspaceState({ id: 'a', target: { kind: 'session', params: { id: 'a', serverId: 'home-a' } }, pinned: false, preview: false });
+        const catalog = resolveCompactAppDestinations({ builtins: { externalSessions: false, inbox: true, workflows: true, friends: false }, pages: [] });
+        const navigation = createWorkspaceNavigationAdapter({ getState: () => state, getCatalog: () => catalog,
+            dispatch: action => { state = reduceWorkspaceState(state, action); }, transport: { commit: () => {} },
+            createId: () => 'new', onChange: () => {} });
+        const execute = createWorkspaceActionAdapter({ getState: () => state, navigation, readCanvas: () => null, createId: () => 'new' });
+        const href = buildScopedSessionRouteHref({ sessionId: 'a', serverId: 'home-a', query: serializeSessionPaneUrlState({
+            rightTabId: 'files', details: { kind: 'file', path: 'src/a.ts', anchor: { kind: 'fileLine', startLine: 17 } },
+        }) });
+        expect(execute('workspace.tabs.open', { href, tabId: 'a' })).toEqual({ ok: true });
+        expect(parseSessionPaneUrlState(state.tabs.a.target.params)?.details)
+            .toEqual({ kind: 'file', path: 'src/a.ts', anchor: { kind: 'fileLine', startLine: 17 } });
+        expect(Object.keys(state.tabs)).toEqual(['a']);
+    });
     it('uses live measurements for atomic destination edges and focuses already-open destinations without requiring geometry', () => {
         let state = createWorkspaceState({ id: 'a', target: { kind: 'session', params: { id: 'a', serverId: 'home-a' } }, pinned: false, preview: false });
         state = reduceWorkspaceState(state, { type: 'openTab', groupId: 'group:1', tab: { id: 'current', target: { kind: 'session', params: { id: 'current', serverId: 'home-a' } }, pinned: false, preview: true } });

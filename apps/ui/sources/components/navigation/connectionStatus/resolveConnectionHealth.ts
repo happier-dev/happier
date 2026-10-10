@@ -58,7 +58,7 @@ export function resolveConnectionHealth(params: Readonly<{
         };
     }
 
-    if (params.endpointStatus === 'connecting' && params.socketStatus !== 'connected') {
+    if ((params.endpointStatus === 'connecting' || params.endpointStatus === 'idle') && params.socketStatus !== 'connected') {
         return {
             kind: 'connecting',
             machineCount: machines.machineCount,
@@ -120,7 +120,9 @@ export function resolveConnectionHealth(params: Readonly<{
 
     if (params.socketStatus !== 'connected') {
         return {
-            kind: 'server_unreachable',
+            // When canonical readiness is available, an unopened/reconnecting
+            // realtime socket cannot contradict its successful Home verdict.
+            kind: params.endpointStatus === 'online' ? 'connecting' : 'server_unreachable',
             machineCount: machines.machineCount,
             onlineCount: machines.onlineCount,
             hasUnknownMachines,

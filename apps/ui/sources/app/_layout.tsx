@@ -37,8 +37,10 @@ import { useTrackScreens } from '@/track/useTrackScreens';
 import { RealtimeProvider } from '@/realtime/RealtimeProvider';
 import { VoiceEnergyAppProvider } from '@/components/voice/light/VoiceEnergyAppProvider';
 import { FaviconPermissionIndicator } from '@/components/web/FaviconPermissionIndicator';
+import { BotsRosterRuntimeProvider } from '@/components/sessions/bots/BotsRosterRuntime';
 import { CommandPaletteProvider } from '@/components/appShell/commandPalette/CommandPaletteProvider';
 import { WorkspaceAppShellProvider } from '@/components/appShell/workspace/WorkspaceAppShellProvider';
+import { SessionCockpitChromeRegistryProvider } from '@/components/workspaceCockpit/session/SessionCockpitChromeRegistry';
 import { StatusBarProvider } from '@/components/ui/layout/StatusBarProvider';
 import { UpdatesEntry } from '@/components/updates/UpdatesPopoverButton';
 import { UpdatesSummaryProvider } from '@/updates/useUpdatesSummary';
@@ -52,6 +54,8 @@ import { useUnistyles } from 'react-native-unistyles';
 import { AsyncLock } from '@/utils/system/lock';
 import { useWebUiFontScale } from '@/components/ui/text/useWebUiFontScale';
 import { GlassMaterialRuntime } from '@/components/ui/glass/GlassMaterialRuntime';
+import { SurfaceFinishRuntime } from '@/theme/SurfaceFinishRuntime';
+import { useWebRootCanvasPresentation } from '@/theme/useWebRootCanvasPresentation';
 import { glassSurfaceBackgroundColor } from '@/components/ui/glass/glassSurfacePaint';
 import { initializeSentryOnce, wrapWithSentryIfEnabled } from '@/utils/system/sentry';
 import { t } from '@/text';
@@ -649,6 +653,7 @@ async function loadFonts() {
 }
 
 function EmbedRootLayout() {
+    useWebRootCanvasPresentation(false);
     return <AppPresentationPlatformProvider><WebCryptoStartupGate><EmbedAppBoot /></WebCryptoStartupGate></AppPresentationPlatformProvider>;
 }
 
@@ -735,6 +740,7 @@ function FullAppRootLayout() {
     return (
         <AppPresentationPlatformProvider>
             <GlassMaterialRuntime>
+            {!embedWindowContext ? <SurfaceFinishRuntime /> : null}
             <WebCryptoStartupGate>
                 <AppCrashRecoveryBoundary
                     onRestart={onRestart}
@@ -929,11 +935,15 @@ function AppBoot(props: {
                             <AppPaneModalProvider>
                                 <WebServerOverrideGate>
                                 <ConcurrentSessionCacheRuntime>
+                                <SessionCockpitChromeRegistryProvider>
+                                <BotsRosterRuntimeProvider>
                                 <WorkspaceAppShellProvider>
                                 <CommandPaletteProvider>
                                     {appContent}
                                 </CommandPaletteProvider>
                                 </WorkspaceAppShellProvider>
+                                </BotsRosterRuntimeProvider>
+                                </SessionCockpitChromeRegistryProvider>
                                 </ConcurrentSessionCacheRuntime>
                                 </WebServerOverrideGate>
                             </AppPaneModalProvider>

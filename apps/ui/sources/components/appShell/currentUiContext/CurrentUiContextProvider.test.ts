@@ -151,12 +151,11 @@ vi.mock('@/sync/store/hooks', async (importOriginal) => ({
     useSetting: (key: string) => key === 'secrets' ? [] : providerState.voiceSettings as never,
 }));
 
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+    const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+    return createPartialStorageModuleMock(importOriginal, {
         useActiveServerAccountScope: () => null,
         useProfile: () => null,
-        useSetting: () => null,
     });
 });
 
@@ -267,6 +266,87 @@ afterEach(() => {
 });
 
 describe('CurrentUiContextProvider', () => {
+    it('executes a private mounted host command and refuses its retired descriptor', async () => {
+        const hook = await renderHook(() => ({
+            publisher: useCurrentUiContextMountPublisher(),
+            reader: useOptionalCurrentUiContextReader(),
+        }), { wrapper: CurrentUiContextTestProvider });
+        const reader = requireCurrentUiContextReader(hook.getCurrent().reader);
+        const publication = hook.getCurrent().publisher!.createMount();
+        let selectedPeriod = '7days';
+        const enrichment: CurrentUiContextMountedEnrichment = {
+            entity: { kind: 'usage_summary', label: 'Usage' },
+            commands: [{ title: 'Today', command: { kind: 'hostLocal', invoke: ({ signal }) => {
+                if (signal.aborted) return { ok: false, code: 'stale_surface' };
+                selectedPeriod = 'today';
+                return { ok: true, result: { period: selectedPeriod } };
+            } } }],
+        };
+        await act(async () => { publication.publish(enrichment); });
+        const port = createCurrentUiContextVoiceToolPort({ reader, readProjection: () => null, readNavigationBinding: () => null });
+        const commandId = reader.readCurrentUiContext()!.commands[0]!.id;
+        expect(JSON.stringify(reader.readCurrentUiContext())).not.toContain('hostLocal');
+        const cancelled = new AbortController();
+        cancelled.abort();
+        await expect(port.invokeCurrentUiCommand!({ commandId, signal: cancelled.signal })).resolves.toEqual({ ok: false, code: 'unavailable' });
+        expect(selectedPeriod).toBe('7days');
+        await expect(port.invokeCurrentUiCommand!({ commandId })).resolves.toEqual({ ok: true, result: { period: 'today' } });
+        expect(selectedPeriod).toBe('today');
+        await act(async () => { publication.publish({ ...enrichment, commands: [] }); });
+        selectedPeriod = '7days';
+        await expect(port.invokeCurrentUiCommand!({ commandId })).resolves.toEqual({ ok: false, code: 'unavailable' });
+        expect(selectedPeriod).toBe('7days');
+        await hook.unmount();
+    });
+
+    it('aborts an in-flight private host command when its exact mount retires', async () => {
+        const hook = await renderHook(() => ({ publisher: useCurrentUiContextMountPublisher(), reader: useOptionalCurrentUiContextReader() }),
+            { wrapper: CurrentUiContextTestProvider });
+        const reader = requireCurrentUiContextReader(hook.getCurrent().reader);
+        const publication = hook.getCurrent().publisher!.createMount();
+        let release!: () => void;
+        const held = new Promise<void>((resolve) => { release = resolve; });
+        let changed = false;
+        const invocationState: { signal: AbortSignal | null } = { signal: null };
+        await act(async () => { publication.publish({ commands: [{ title: 'Select view', command: { kind: 'hostLocal', invoke: async ({ signal }) => {
+            invocationState.signal = signal;
+            await held;
+            if (signal.aborted) return { ok: false, code: 'stale_surface' };
+            changed = true;
+            return { ok: true };
+        } } }] }); });
+        const port = createCurrentUiContextVoiceToolPort({ reader, readProjection: () => null, readNavigationBinding: () => null });
+        const commandId = reader.readCurrentUiContext()!.commands[0]!.id;
+        const invocation = port.invokeCurrentUiCommand!({ commandId });
+        await act(async () => { publication.dispose(); });
+        expect(invocationState.signal?.aborted).toBe(true);
+        release();
+        await expect(invocation).resolves.toEqual({ ok: false, code: 'stale_surface' });
+        expect(changed).toBe(false);
+        await hook.unmount();
+    });
+
+    it('preserves a known host-local success when its own update replaces the command', async () => {
+        const hook = await renderHook(() => ({ publisher: useCurrentUiContextMountPublisher(), reader: useOptionalCurrentUiContextReader() }),
+            { wrapper: CurrentUiContextTestProvider });
+        const reader = requireCurrentUiContextReader(hook.getCurrent().reader);
+        const publication = hook.getCurrent().publisher!.createMount();
+        let selectedPeriod = '7days';
+        await act(async () => { publication.publish({ commands: [{ title: 'Today', command: { kind: 'hostLocal', invoke: () => {
+            selectedPeriod = 'today';
+            publication.publish({ commands: [] });
+            return { ok: true, result: { period: selectedPeriod } };
+        } } }] }); });
+        const port = createCurrentUiContextVoiceToolPort({ reader, readProjection: () => null, readNavigationBinding: () => null });
+        const commandId = reader.readCurrentUiContext()!.commands[0]!.id;
+        await act(async () => {
+            await expect(port.invokeCurrentUiCommand!({ commandId })).resolves.toEqual({ ok: true, result: { period: 'today' } });
+        });
+        expect(selectedPeriod).toBe('today');
+        expect(reader.resolveCurrentUiCommand(commandId)).toBeNull();
+        await hook.unmount();
+    });
+
     it('retains a Tauri record when the provider lifecycle seam withdraws hidden reads, then retires it on unmount', async () => {
         setDesktopHost(true);
         setHostVisibility('visible');

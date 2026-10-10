@@ -2,6 +2,9 @@ import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScop
 import type { FileTargetAnchor } from '@/utils/url/sessionFileDeepLink';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import type { TranscriptJumpTarget } from '@/components/sessions/transcript/viewport/jump/transcriptJumpTargetTypes';
+import { makeExternalSessionHistoricalImportLocalId } from '@happier-dev/protocol/sessions/external/historicalImportIdentity';
+import type { WorkspaceChatFindSeedSchema } from '@happier-dev/protocol/actions/workspaceActionFamily';
+import type { z } from 'zod';
 
 /** A travelling query is launch input for one file, never a tab resource or URL parameter. */
 export type FileFindSeed = Readonly<{
@@ -24,6 +27,15 @@ export type ChatFindSeed = Readonly<{
     options: FileFindSeed['options'];
     target: TranscriptJumpTarget;
 }>;
+export type ChatFindLaunchSeed = ChatFindSeed | z.infer<typeof WorkspaceChatFindSeedSchema>;
+
+/** History and Actions share the native-to-imported message identity owner. */
+export function resolveChatFindSeed(seed: ChatFindLaunchSeed): ChatFindSeed {
+    return { query: seed.query, options: seed.options ?? { matchCase: false, regex: false },
+        target: seed.target.kind === 'native-message' ? { kind: 'route-message-id',
+            routeMessageId: makeExternalSessionHistoricalImportLocalId({ agentId: seed.target.agentId,
+                remoteSessionId: seed.target.remoteSessionId, directItemId: seed.target.sourceItemId }) } : seed.target };
+}
 export type ChatFindSeedDestination = Readonly<{ sessionId: string; serverId: string; accountId: string }>;
 export type ChatFindSeedHostDestination = Omit<ChatFindSeedDestination, 'accountId'>;
 
@@ -92,9 +104,9 @@ export function createFileFindSeedHandoff() {
             record.cancel();
             return { seed: record.seed, authority: record.authority };
         },
-        stageChat(destination: ChatFindSeedDestination, seed: ChatFindSeed, authority: ServerAccountScopeLifetime): () => void {
+        stageChat(destination: ChatFindSeedDestination, seed: ChatFindLaunchSeed, authority: ServerAccountScopeLifetime): () => void {
             const key = JSON.stringify(['chat', destination.sessionId, destination.serverId, destination.accountId]);
-            return stage(key, { kind: 'chat', destination, seed }, authority);
+            return stage(key, { kind: 'chat', destination, seed: resolveChatFindSeed(seed) }, authority);
         },
         peekChatCurrent(destination: ChatFindSeedHostDestination): ChatFindSeed | null {
             return findChatCurrent(destination)?.seed ?? null;
@@ -122,7 +134,7 @@ export type FileFindSeedHandoff = ReturnType<typeof createFileFindSeedHandoff>;
 export async function openChatWithFindSeed(input: Readonly<{
     handoff?: FileFindSeedHandoff;
     destination: ChatFindSeedHostDestination;
-    seed?: ChatFindSeed;
+    seed?: ChatFindLaunchSeed;
     authority?: ServerAccountScopeLifetime | null;
     open(): void | Promise<void>;
 }>) {

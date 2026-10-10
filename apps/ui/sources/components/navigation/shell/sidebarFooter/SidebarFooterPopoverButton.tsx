@@ -47,14 +47,28 @@ export function SidebarFooterPopoverButton(props: Readonly<{
     renderContent: (content: SidebarFooterPopoverContentProps) => React.ReactNode;
     /** The same control may be a full menu row when its rail slot moves into More. */
     renderTrigger?: SidebarFooterPopoverTrigger;
+    /**
+     * Lets an app-wide entry (the command palette, the phone launcher) open this same popover: the
+     * button hands its opener over while mounted and takes it back on unmount.
+     */
+    registerOpener?: (open: () => void) => () => void;
+    /** Beside a rail icon: whether the popover's top meets the icon's top (`start`) or centres on it (default). */
+    anchorAlignVertical?: 'start' | 'center';
+    /** Overrides the plain glyph (a filled glyph while open on the rail). */
+    renderIcon?: (open: boolean) => React.ReactNode;
 }>) {
     const { theme } = useUnistyles();
     const popoverWidthPx = props.popoverWidthPx ?? POPOVER_WIDTH_PX;
     const anchorRef = React.useRef<View>(null);
     const hoverPreview = props.hoverPreview === true && Platform.OS === 'web';
-    const { mode, toggle, close, hoverProps } = useHoverPreviewPopover({ enabled: hoverPreview });
     // The control a press came from: Escape returns focus there (the anchor view is not focusable).
     const focusReturnRef = React.useRef<FocusReturnTarget>(null);
+    const { mode, toggle, close, open, hoverProps } = useHoverPreviewPopover({ enabled: hoverPreview });
+    const { registerOpener } = props;
+    React.useEffect(() => registerOpener?.(() => {
+        focusReturnRef.current = null;
+        open();
+    }), [open, registerOpener]);
     const onPress = React.useCallback((event?: unknown) => {
         focusReturnRef.current = readPressFocusReturnTarget(event);
         toggle();
@@ -73,7 +87,7 @@ export function SidebarFooterPopoverButton(props: Readonly<{
                 tooltipHidden={mode !== 'closed'}
                 tooltipPlacement={props.placement ?? 'top'}
                 selected={mode !== 'closed'}
-                icon={<Icon name={props.iconName} size={props.iconSizePx ?? SIDEBAR_FOOTER_ICON_GLYPH_SIZE_PX} color={theme.colors.text.secondary} />}
+                icon={props.renderIcon?.(mode !== 'closed') ?? <Icon name={props.iconName} size={props.iconSizePx ?? SIDEBAR_FOOTER_ICON_GLYPH_SIZE_PX} color={theme.colors.text.secondary} />}
                 onPress={onPress}
             />}
             {mode !== 'closed' ? (
@@ -85,7 +99,8 @@ export function SidebarFooterPopoverButton(props: Readonly<{
                     placement={props.placement ?? 'top'}
                     gap={8}
                     edgePadding={{ horizontal: 8, vertical: 8 }}
-                    portal={{ web: true, native: true, matchAnchorWidth: false, anchorAlign: 'start' }}
+                    portal={{ web: true, native: true, matchAnchorWidth: false, anchorAlign: 'start',
+                        ...(props.anchorAlignVertical ? { anchorAlignVertical: props.anchorAlignVertical } : {}) }}
                     maxWidthCap={popoverWidthPx}
                     maxHeightCap={POPOVER_MAX_HEIGHT_PX}
                     onRequestClose={close}

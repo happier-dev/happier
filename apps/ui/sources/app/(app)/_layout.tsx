@@ -1,4 +1,5 @@
-import { Stack, router, usePathname } from 'expo-router';
+import { router, usePathname } from 'expo-router';
+import { WorkspaceRootStack as Stack } from '@/components/appShell/workspace/WorkspaceRootStack';
 import type { ExtendedStackNavigationOptions } from 'expo-router/build/layouts/StackClient';
 import { getFocusedRouteNameFromRoute, type ParamListBase, type RouteProp } from '@react-navigation/native';
 import 'react-native-reanimated';
@@ -22,11 +23,12 @@ import { DefaultBackButton } from '@/components/navigation/Header';
 import { NavigationTitleChromeProvider } from '@/components/ui/layout/PageHeader';
 import { useAppShellColumn } from '@/components/navigation/shell/appRail/appShellColumnContext';
 import { MobileBottomChromeHost } from '@/components/navigation/mobile/chrome/MobileBottomChromeHost';
-import { SessionCockpitChromeRegistryProvider } from '@/components/workspaceCockpit/session/SessionCockpitChromeRegistry';
+import { tryRenderWebPortal } from '@/components/ui/popover/portal';
 import { BrowserPresentationRetentionProvider } from '@/components/browser/surfaces/browserPresentationRetention';
 import { AuthenticatedAppRuntimeMounts } from '@/components/appShell/runtime/AuthenticatedAppRuntimeMounts';
 import { DesktopMainWindowRuntimes } from '@/desktop/DesktopMainWindowRuntimes';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
+import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { useSetting } from '@/sync/domains/state/storage';
 import {
     isNewSessionFloatingComposerPresentation,
@@ -103,7 +105,16 @@ function MobileBottomChromeMountGate(props: Readonly<{
 }>): React.ReactElement | null {
     const onboardingJourneyActive = useOnboardingJourneySessionActive();
     if (onboardingJourneyActive) return null;
-    return <MobileBottomChromeHost newSessionRendersFloatingComposer={props.newSessionRendersFloatingComposer} />;
+    // The retained navigator is hidden while the workspace owns the visible session.
+    // Keep its single bottom-chrome host visible and in the same React registry.
+    const chrome = <MobileBottomChromeHost newSessionRendersFloatingComposer={props.newSessionRendersFloatingComposer} />;
+    return <>{tryRenderWebPortal({
+        shouldPortalWeb: Platform.OS === 'web',
+        portalTargetOnWeb: 'body',
+        modalPortalTarget: null,
+        getBoundaryDomElement: () => null,
+        content: chrome,
+    }) ?? chrome}</>;
 }
 
 const RootLayoutShell = React.memo(function RootLayoutShell(): React.ReactElement {
@@ -217,25 +228,14 @@ const RootLayoutShell = React.memo(function RootLayoutShell(): React.ReactElemen
                 headerBackTitle: back,
             },
             workflowsIndex: {
-                headerShown: true,
+                // The library's PageHeader owns its identity and creation actions.
+                headerShown: false,
                 headerTitle: t('workflows.title'),
                 headerBackTitle: back,
             },
             boards: {
                 headerShown: true,
                 headerTitle: t('boards.title'),
-                headerBackTitle: back,
-            },
-            workflowsNew: {
-                headerShown: true,
-                // The editable name lives in the page; the chrome names the kind only.
-                headerTitle: t('workflows.page.chromeTitle'),
-                headerBackTitle: back,
-            },
-            workflowsEdit: {
-                headerShown: true,
-                // The editable name lives in the page; the chrome names the kind only.
-                headerTitle: t('workflows.page.chromeTitle'),
                 headerBackTitle: back,
             },
             workflowsDetail: {
@@ -354,6 +354,20 @@ const RootLayoutShell = React.memo(function RootLayoutShell(): React.ReactElemen
             },
         } satisfies Record<string, StackScreenOptions>;
     }, [newSessionPresentationMode, preferredLanguage]);
+    const workflowEditorScreenOptions = React.useCallback(() => ({
+        ...rootStackRouteOptions.workflowsDetail,
+        // Desktop workflow pages own Back when their column is collapsed.
+        // Publishing the native control there creates a second trailing Back.
+        ...(appShellPresent ? {} : {
+        headerLeft: ({ tintColor }: { tintColor?: string }) => (
+            <DefaultBackButton
+                testID="workflow-back"
+                tintColor={tintColor}
+                onPress={() => { void runGuardedNavigation(() => router.replace('/workflows' as never)); }}
+            />
+        ),
+        }),
+    }), [appShellPresent, rootStackRouteOptions.workflowsDetail, router]);
     const friendsManageScreenOptions = React.useCallback((args: { navigation: { navigate: (route: never) => void } }) => ({
         headerShown: true,
         headerTitle: t('navigation.friends'),
@@ -413,8 +427,8 @@ const RootLayoutShell = React.memo(function RootLayoutShell(): React.ReactElemen
     }, [newSessionPresentationMode, newSessionRendersFloatingComposer, newSessionVariant, preferredLanguage]);
     const externalSessionBrowseScreenOptions = React.useMemo<StackScreenOptions>(() => ({
         headerTitle: t('externalSessions.browseTitle'),
-        // On web the route is a transparent layer: Browse opens in the command-surface card (the same
-        // frame and placement as Search / ⌘K), which draws its own band with ⋯ and close.
+        // An unhosted web route opens in the command-surface card, which draws its own band
+        // with ⋯ and close. WorkspaceRootStack admits hosted routes as ordinary URL sinks.
         headerShown: Platform.OS !== 'web',
         headerBackTitle: t('common.cancel'),
         presentation: Platform.OS === 'web' ? 'transparentModal' : 'modal',
@@ -426,8 +440,7 @@ const RootLayoutShell = React.memo(function RootLayoutShell(): React.ReactElemen
     }), [preferredLanguage]);
 
     return (
-        <SessionCockpitChromeRegistryProvider>
-            <BrowserPresentationRetentionProvider>
+        <BrowserPresentationRetentionProvider>
             <ActivityPersonalSessionMembershipProvider enabled={isAuthenticated}>
             {/*
               * The one automatic Voice announcer for the whole app (§5.4a). It sits
@@ -543,16 +556,12 @@ const RootLayoutShell = React.memo(function RootLayoutShell(): React.ReactElemen
                     options={rootStackRouteOptions.boards}
                 />
                 <Stack.Screen
-                    name="workflows/new"
-                    options={rootStackRouteOptions.workflowsNew}
-                />
-                <Stack.Screen
                     name="workflows/edit"
-                    options={rootStackRouteOptions.workflowsEdit}
+                    options={workflowEditorScreenOptions}
                 />
                 <Stack.Screen
                     name="workflows/[id]/index"
-                    options={rootStackRouteOptions.workflowsDetail}
+                    options={workflowEditorScreenOptions}
                 />
                 <Stack.Screen
                     name="workflows/runs/[runId]"
@@ -578,18 +587,15 @@ const RootLayoutShell = React.memo(function RootLayoutShell(): React.ReactElemen
                     name="projects/[workspaceRefId]/index"
                     options={rootStackRouteOptions.hiddenHeader}
                 />
-                <Stack.Screen
-                    name="projects/[workspaceRefId]/files"
-                    options={rootStackRouteOptions.hiddenHeader}
-                />
-                <Stack.Screen
-                    name="projects/[workspaceRefId]/git"
-                    options={rootStackRouteOptions.hiddenHeader}
-                />
-                <Stack.Screen
-                    name="projects/[workspaceRefId]/details"
-                    options={rootStackRouteOptions.hiddenHeader}
-                />
+
+
+
+                <Stack.Screen name="projects/[workspaceRefId]/overview" options={rootStackRouteOptions.hiddenHeader} />
+                <Stack.Screen name="projects/[workspaceRefId]/code" options={rootStackRouteOptions.hiddenHeader} />
+                <Stack.Screen name="projects/[workspaceRefId]/changes" options={rootStackRouteOptions.hiddenHeader} />
+                <Stack.Screen name="projects/[workspaceRefId]/scripts" options={rootStackRouteOptions.hiddenHeader} />
+                <Stack.Screen name="projects/[workspaceRefId]/services" options={rootStackRouteOptions.hiddenHeader} />
+                <Stack.Screen name="projects/[workspaceRefId]/context" options={rootStackRouteOptions.hiddenHeader} />
                 {/*
                   * `session/[id]` has its own `_layout` (a Slot), so this is the stack's only screen for
                   * every Session route (no `session/[id]/…` entry here would name a stack child). The
@@ -808,8 +814,7 @@ const RootLayoutShell = React.memo(function RootLayoutShell(): React.ReactElemen
             </NavigationTitleChromeProvider>
             <MobileBottomChromeMountGate newSessionRendersFloatingComposer={newSessionRendersFloatingComposer} />
             </ActivityPersonalSessionMembershipProvider>
-            </BrowserPresentationRetentionProvider>
-        </SessionCockpitChromeRegistryProvider>
+        </BrowserPresentationRetentionProvider>
     );
 });
 

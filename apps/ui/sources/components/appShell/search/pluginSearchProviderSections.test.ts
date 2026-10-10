@@ -129,6 +129,44 @@ describe('buildPluginSearchProviderSections', () => {
         expect(new Set([first, nextOccurrence, otherMachine, otherServer]).size).toBe(4);
     });
 
+    it('admits exact source-backed providers and rebinds when their source custody changes', () => {
+        const current = projection();
+        const sourceOrigin = (registeredRootId: string) => ({
+            ...hostOrigin('happier.triage', 'machine-1', 7),
+            executionOrigin: {
+                serverIdentityId: 'srv_test',
+                sourceRef: {
+                    pluginId: 'happier.triage',
+                    machineId: 'machine-1',
+                    sourceCustody: { kind: 'development' as const, registeredRootId },
+                },
+            },
+        });
+        const withSource = (providerRoot: string, actionRoot = providerRoot, generation = 7) => projection({
+            generation,
+            searchProvidersById: {
+                'searchProvider:happier.triage:entries': {
+                    ...current.searchProvidersById['searchProvider:happier.triage:entries']!,
+                    hostOrigin: sourceOrigin(providerRoot),
+                },
+            },
+            actionsById: {
+                'happier.triage/search': {
+                    ...current.actionsById['happier.triage/search']!,
+                    hostOrigin: sourceOrigin(actionRoot),
+                },
+            },
+        });
+        const scopedLaunchFacts = { ...SCOPED, serverId: 'server-machine-1' };
+        const first = sections({ projection: withSource('root-a'), scopedLaunchFacts });
+        expect(first).toHaveLength(1);
+        const peerUpdate = sections({ projection: withSource('root-a', 'root-a', 8), scopedLaunchFacts });
+        expect(peerUpdate[0]!.resolverKey).toBe(first[0]!.resolverKey);
+        const replacement = sections({ projection: withSource('root-b'), scopedLaunchFacts });
+        expect(replacement[0]!.resolverKey).not.toBe(first[0]!.resolverKey);
+        expect(sections({ projection: withSource('root-a', 'root-b'), scopedLaunchFacts })).toHaveLength(0);
+    });
+
     it('omits a provider whose query Action is unavailable or retired', () => {
         const unavailable = projection({
             actionsById: Object.freeze({

@@ -11,11 +11,13 @@ const preventRemove = vi.hoisted(() => ({
     callback: null as null | ((event: { data: { action: unknown } }) => void),
     committedEnabled: false,
     committedCallback: null as null | ((event: { data: { action: unknown } }) => void),
+    focused: true,
+    navigationContext: null as React.Context<Readonly<Record<string, unknown>> | undefined> | null,
 }));
 
 vi.mock('@react-navigation/native', async () => {
     const { createReactNavigationNativeMock } = await import('@/dev/testkit/mocks/reactNavigation');
-    return createReactNavigationNativeMock({ usePreventRemove: (
+    const boundary = createReactNavigationNativeMock({ usePreventRemove: (
         enabled: boolean,
         callback: (event: { data: { action: unknown } }) => void,
     ) => {
@@ -26,6 +28,8 @@ vi.mock('@react-navigation/native', async () => {
             preventRemove.committedCallback = callback;
         }, [callback, enabled]);
     } });
+    preventRemove.navigationContext = boundary.NavigationContext;
+    return { ...boundary, useIsFocused: () => preventRemove.focused };
 });
 
 vi.mock('expo-router', async () => {
@@ -44,6 +48,7 @@ describe('useUnsavedChangesBeforeRemoveGuard', () => {
         preventRemove.callback = null;
         preventRemove.committedEnabled = false;
         preventRemove.committedCallback = null;
+        preventRemove.focused = true;
     });
 
     it('guards hosted navigation with only the focused destination and preserves keep-editing/discard', async () => {
@@ -75,7 +80,7 @@ describe('useUnsavedChangesBeforeRemoveGuard', () => {
         await screen.update(<Hosts focused="b" />);
         await act(async () => { expect(await runGuardedNavigation(navigate)).toBe(true); });
         expect(closeA).not.toHaveBeenCalled();
-        expect(closeB).toHaveBeenCalledWith(null);
+        expect(closeB).not.toHaveBeenCalled();
         expect(navigate).toHaveBeenCalledOnce();
         expect(dirtyA.current).toBe(true);
         expect(dirtyB.current).toBe(false);
@@ -111,6 +116,57 @@ describe('useUnsavedChangesBeforeRemoveGuard', () => {
         expect(onDiscard).toHaveBeenCalledOnce();
         expect(onContinue).toHaveBeenCalledWith(action);
         expect(isDirtyRef.current).toBe(false);
+    });
+
+    it('guards shell navigation from a focused stack editor as well as navigator removal', async () => {
+        const { useUnsavedChangesBeforeRemoveGuard } = await import('./useUnsavedChangesBeforeRemoveGuard');
+        const isDirtyRef = { current: true };
+        let decision: 'keepEditing' | 'discard' = 'keepEditing';
+        const navigate = vi.fn();
+        const onContinue = vi.fn();
+        const hook = await renderHook(() => useUnsavedChangesBeforeRemoveGuard({
+            isDirty: true, isDirtyRef, requestDecision: async () => decision,
+            onContinue, tag: 'stack-editor',
+        }));
+
+        await act(async () => { expect(await runGuardedNavigation(navigate)).toBe(false); });
+        expect(navigate).not.toHaveBeenCalled();
+        expect(isDirtyRef.current).toBe(true);
+        decision = 'discard';
+        await act(async () => { expect(await runGuardedNavigation(navigate)).toBe(true); });
+        expect(navigate).toHaveBeenCalledOnce();
+        expect(isDirtyRef.current).toBe(false);
+        expect(onContinue).not.toHaveBeenCalled();
+        await hook.unmount();
+        const afterUnmount = vi.fn();
+        expect(runGuardedNavigation(afterUnmount)).toBe(true);
+        expect(afterUnmount).toHaveBeenCalledOnce();
+    });
+
+    it('withdraws a stack editor shell guard while its navigator is unfocused and restores it on focus', async () => {
+        const { useUnsavedChangesBeforeRemoveGuard } = await import('./useUnsavedChangesBeforeRemoveGuard');
+        const Context = preventRemove.navigationContext;
+        if (!Context) throw new Error('Navigation boundary must initialize before rendering its screen');
+        const isDirtyRef = { current: true };
+        function Editor() {
+            useUnsavedChangesBeforeRemoveGuard({
+                isDirty: true, isDirtyRef, requestDecision: async () => 'keepEditing',
+                onContinue: () => {}, tag: 'focused-stack-editor',
+            });
+            return null;
+        }
+        const screen = await renderScreen(<Context.Provider value={{}}><Editor /></Context.Provider>);
+        const navigate = vi.fn();
+        await act(async () => { expect(await runGuardedNavigation(navigate)).toBe(false); });
+        preventRemove.focused = false;
+        await screen.update(<Context.Provider value={{}}><Editor /></Context.Provider>);
+        expect(runGuardedNavigation(navigate)).toBe(true);
+        expect(navigate).toHaveBeenCalledOnce();
+        preventRemove.focused = true;
+        await screen.update(<Context.Provider value={{}}><Editor /></Context.Provider>);
+        await act(async () => { expect(await runGuardedNavigation(navigate)).toBe(false); });
+        expect(navigate).toHaveBeenCalledOnce();
+        expect(isDirtyRef.current).toBe(true);
     });
 
     it('disables the navigator removal owner before redispatching a discarded action', async () => {

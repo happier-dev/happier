@@ -21,7 +21,7 @@ import { toTestIdSafeValue } from '@/utils/ui/toTestIdSafeValue';
 import type { WorkspaceNavigationContextValue } from '../WorkspaceNavigationContext';
 import { createWorkspaceEmptyTab, type WorkspaceGroup } from '../workspaceState';
 import { createWorkspaceSplit } from '../workspaceSplit';
-import { useActiveServerAccountScope, useSetting } from '@/sync/domains/state/storage';
+import { useWorkspaceRefs, useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { useEntityDragDropRuntime } from '@/components/ui/treeDragDrop/entityDragDropHooks';
 import { useEntityDropDomBinding } from '@/components/ui/treeDragDrop/useEntityDragDomBinding';
 import { executeWorkspaceEntityDrop, resolveWorkspaceEntityDrop, WORKSPACE_ENTITY_KINDS } from '../workspaceEntityDrop';
@@ -82,7 +82,7 @@ export function WorkspaceGroupTabs(props: Readonly<{
     const { theme } = useUnistyles();
     const { workspace, group } = props;
     const scope = useActiveServerAccountScope();
-    const workspaceRefs = useSetting('workspaceRefsV1');
+    const workspaceRefs = useWorkspaceRefs();
     const runtime = useEntityDragDropRuntime();
     const safeGroup = toTestIdSafeValue(group.id);
     const shortcutLabels = React.useContext(KeyboardShortcutLabelsContext);

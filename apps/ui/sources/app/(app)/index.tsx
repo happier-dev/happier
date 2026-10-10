@@ -2,7 +2,7 @@ import { useAuth } from '@/auth/context/AuthContext';
 import { View } from 'react-native';
 import * as React from 'react';
 import { StyleSheet } from 'react-native-unistyles';
-import { useRouter, useGlobalSearchParams } from '@/components/appShell/workspace/destinationRoute';
+import { useRouter, useLocalSearchParams } from '@/components/appShell/workspace/destinationRoute';
 import { MainView } from '@/components/navigation/shell/MainView';
 import { clearPendingSetupIntent, setPendingSetupIntent } from '@/sync/domains/pending/pendingSetupIntent';
 import { getPendingTerminalConnect } from '@/sync/domains/pending/pendingTerminalConnect';
@@ -21,6 +21,10 @@ import { isPersonalHomeBootstrapRuntimeHost } from '@/components/personalHome/bo
 import { PersonalHomeBootstrapContent } from '@/components/personalHome/bootstrap/PersonalHomeBootstrapGate';
 import { buildMachineAddHref } from '@/components/settings/machines/collection/machineCollectionModel';
 import { shouldKeepDesktopPersonalHomeShell } from '@/components/personalHome/bootstrap/personalHomeIndexRoutePolicy';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
+import { fireAndForget } from '@/utils/system/fireAndForget';
+import { useAskHappierStarter } from '@/components/sessions/bots/useAskHappierOffer';
 
 const stylesheet = StyleSheet.create({
     root: {
@@ -68,7 +72,7 @@ function Authenticated(props: Readonly<{
     activeServerId: string;
     shouldSuppressSetupContinuation: boolean;
 }>) {
-    const params = useGlobalSearchParams<{
+    const params = useLocalSearchParams<{
         id?: string | string[];
         messageId?: string | string[];
         jumpChildId?: string | string[];
@@ -78,6 +82,8 @@ function Authenticated(props: Readonly<{
         draftId?: string | string[];
     }>();
     const router = useRouter();
+    const activeServerAccountScope = useActiveServerAccountScope();
+    const startAskHappier = useAskHappierStarter();
 
     const sessionId = typeof params.id === 'string' ? params.id : Array.isArray(params.id) ? (params.id[0] ?? null) : null;
     const messageId = typeof params.messageId === 'string' ? params.messageId : Array.isArray(params.messageId) ? (params.messageId[0] ?? null) : null;
@@ -94,7 +100,7 @@ function Authenticated(props: Readonly<{
     const consumedIntentRef = React.useRef<typeof pendingSetupIntent>(null);
     const pendingTerminalConnect = getPendingTerminalConnect();
     React.useEffect(() => {
-        if (!shouldSuppressSetupContinuation || !pendingSetupIntent || pendingSetupIntent.phase === 'dismissed') return;
+        if (!shouldSuppressSetupContinuation || !pendingSetupIntent || pendingSetupIntent.branch === 'askHappier' || pendingSetupIntent.phase === 'dismissed') return;
         setPendingSetupIntent({ ...pendingSetupIntent, phase: 'dismissed' });
     }, [pendingSetupIntent, shouldSuppressSetupContinuation]);
 
@@ -127,16 +133,27 @@ function Authenticated(props: Readonly<{
     React.useEffect(() => {
         if (normalizeSessionId(sessionId) || newSessionAuthContinuation) return;
         if (!isAuthenticatedRootDeepLinkRedirectAllowed()) return;
-        if (shouldSuppressSetupContinuation || pendingTerminalConnect) return;
+        if ((shouldSuppressSetupContinuation && pendingSetupIntent?.branch !== 'askHappier') || pendingTerminalConnect) return;
         if (!pendingSetupIntent || consumedIntentRef.current === pendingSetupIntent) return;
         if (pendingSetupIntent.phase !== 'awaiting_auth' && pendingSetupIntent.phase !== 'post_auth') return;
 
+        if (pendingSetupIntent.branch === 'askHappier') {
+            const lifetime = captureActiveServerAccountScopeLifetime();
+            if (!lifetime) return;
+            consumedIntentRef.current = pendingSetupIntent;
+            clearPendingSetupIntent();
+            fireAndForget((async () => {
+                await startAskHappier({ lifetime, context: pendingSetupIntent.context,
+                    currentUiContext: pendingSetupIntent.currentUiContext });
+            })(), { tag: 'Home.askHappierAuthContinuation' });
+            return;
+        }
         consumedIntentRef.current = pendingSetupIntent;
         clearPendingSetupIntent();
         router.replace(buildMachineAddHref({
             path: pendingSetupIntent.branch === 'remoteMachine' ? 'ssh' : 'thisComputer',
         }));
-    }, [newSessionAuthContinuation, pendingSetupIntent, pendingTerminalConnect, router, sessionId, shouldSuppressSetupContinuation]);
+    }, [activeServerAccountScope, newSessionAuthContinuation, pendingSetupIntent, pendingTerminalConnect, router, sessionId, shouldSuppressSetupContinuation, startAskHappier]);
 
     return (
         <View style={stylesheet.root}>

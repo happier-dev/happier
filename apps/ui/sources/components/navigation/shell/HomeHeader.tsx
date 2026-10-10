@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 import { Header } from '@/components/navigation/Header';
 import { Platform, Pressable, View } from 'react-native';
 import { Typography } from '@/constants/Typography';
@@ -79,10 +80,11 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
 
 export const HomeHeader = React.memo(() => {
     const { theme } = useUnistyles();
+    const materialColor = useHappierMaterialColorResolver();
     const showWorkflows = useWorkflowsDestinationAccess().discoverable;
 
     return (
-        <View style={{ backgroundColor: theme.colors.background.canvas }}>
+        <View style={{ backgroundColor: materialColor(theme.colors.background.canvas, 'transparent') }}>
             <Header
                 title={<HeaderTitleWithSubtitle />}
                 headerRight={() => <HeaderRight />}

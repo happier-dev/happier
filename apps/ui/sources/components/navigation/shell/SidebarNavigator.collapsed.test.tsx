@@ -368,7 +368,8 @@ describe('SidebarNavigator (collapsed sidebar)', () => {
     expect(widthOf(sidebar)).toBeGreaterThan(0);
   });
 
-  it('hides the permanent sidebar when min edge is below 600px (e.g. landscape phone)', async () => {
+  it('hides the permanent sidebar on a landscape phone below 600px', async () => {
+    hoistedState.mockPlatformOS = 'ios';
     hoistedState.mockWindowDimensions = { width: 812, height: 375 };
 
     const { SidebarNavigator } = await import('./SidebarNavigator');
@@ -378,6 +379,16 @@ describe('SidebarNavigator (collapsed sidebar)', () => {
 
     expect(tree.findAllByProps({ testID: 'navigation-sidebar' })).toHaveLength(0);
     expect(tree.root.findAllByType('AppRail' as any)).toHaveLength(0);
+  });
+
+  it('keeps the permanent sidebar and rail on a short desktop web window', async () => {
+    hoistedState.mockWindowDimensions = { width: 812, height: 375 };
+
+    const { SidebarNavigator } = await import('./SidebarNavigator');
+    const { tree } = await renderScreen(<SidebarNavigator />);
+
+    expect(widthOf(getSidebar(tree))).toBeGreaterThan(0);
+    expect(tree.root.findAllByType('AppRail' as any)).toHaveLength(1);
   });
 
   it('keeps the full sidebar when resized down to the minimum width', async () => {

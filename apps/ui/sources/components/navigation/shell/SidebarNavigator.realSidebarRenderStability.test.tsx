@@ -1,7 +1,9 @@
+/** @vitest-environment jsdom */
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { renderScreen } from '@/dev/testkit/render/renderScreen';
+import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { installReactNativeWebMock } from '@/dev/testkit/mocks/reactNative';
 import type { DesktopWindowState } from '@/utils/platform/desktopWindowBridge';
 
@@ -32,47 +34,38 @@ function installDocumentEventListenerSpy(): Readonly<{
     records: RegisteredDocumentListener[];
     restore: () => void;
 }> {
-    const previousDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'document');
     const records: RegisteredDocumentListener[] = [];
-    const fakeDocument = {
-        addEventListener: vi.fn((
-            type: string,
-            listener: EventListenerOrEventListenerObject,
-            options?: boolean | AddEventListenerOptions,
-        ) => {
-            records.push({ type, listener, options });
-        }),
-        removeEventListener: vi.fn((
-            type: string,
-            listener: EventListenerOrEventListenerObject,
-            options?: boolean | EventListenerOptions,
-        ) => {
-            const index = records.findIndex((record) =>
-                record.type === type
-                && record.listener === listener
-                && record.options === options,
-            );
-            if (index !== -1) {
-                records.splice(index, 1);
-            }
-        }),
-        // Modules the app shell imports probe the document at load (a list backend's web check).
-        getElementById: vi.fn(() => null),
-    } satisfies Pick<Document, 'addEventListener' | 'removeEventListener' | 'getElementById'>;
-
-    Object.defineProperty(globalThis, 'document', {
-        configurable: true,
-        value: fakeDocument,
+    const addEventListener = document.addEventListener.bind(document);
+    const removeEventListener = document.removeEventListener.bind(document);
+    const addSpy = vi.spyOn(document, 'addEventListener').mockImplementation((
+        type: string,
+        listener: EventListenerOrEventListenerObject,
+        options?: boolean | AddEventListenerOptions,
+    ) => {
+        records.push({ type, listener, options });
+        addEventListener(type, listener, options);
+    });
+    const removeSpy = vi.spyOn(document, 'removeEventListener').mockImplementation((
+        type: string,
+        listener: EventListenerOrEventListenerObject,
+        options?: boolean | EventListenerOptions,
+    ) => {
+        const index = records.findIndex((record) =>
+            record.type === type
+            && record.listener === listener
+            && record.options === options,
+        );
+        if (index !== -1) {
+            records.splice(index, 1);
+        }
+        removeEventListener(type, listener, options);
     });
 
     return {
         records,
         restore: () => {
-            if (previousDescriptor) {
-                Object.defineProperty(globalThis, 'document', previousDescriptor);
-            } else {
-                Reflect.deleteProperty(globalThis, 'document');
-            }
+            addSpy.mockRestore();
+            removeSpy.mockRestore();
         },
     };
 }

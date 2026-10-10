@@ -1,24 +1,18 @@
-import type { FindController } from '@happier-dev/plugin-ui/presentation';
+import type { FindSurfaceRegistration } from '@happier-dev/plugin-ui/presentation';
 import type { KeyboardShortcutDisposition } from './runtime';
 import type { NormalizedKeyboardEvent } from './types';
 
-export type FindSurfaceRegistration = Readonly<{
-    surfaceId: string;
-    containsFocus(): boolean;
-    open(): void;
-    isOpen(): boolean;
-    isInputFocused(): boolean;
-    /** The native widget owns physical keys and counts; host Actions still address this surface. */
-    engineOwnsFind?: boolean;
-    controller: FindController;
-}>;
+export type { FindSurfaceRegistration } from '@happier-dev/plugin-ui/presentation';
 
 /** One mounted provider owns resolution; models retain all query and result state. */
 export function createFindSurfaceRegistry() {
     const entries = new Map<string, FindSurfaceRegistration>();
-    const resolve = (surfaceId?: string): FindSurfaceRegistration | undefined => surfaceId === undefined
-        ? [...entries.values()].reverse().find((entry) => entry.containsFocus())
-        : entries.get(surfaceId);
+    const resolve = (surfaceId?: string): FindSurfaceRegistration | undefined => {
+        const surface = surfaceId === undefined
+            ? [...entries.values()].reverse().find((entry) => entry.isAvailable?.() !== false && entry.containsFocus())
+            : entries.get(surfaceId);
+        return surface?.isAvailable?.() === false ? undefined : surface;
+    };
     return {
         resolve,
         register(surface: FindSurfaceRegistration) {

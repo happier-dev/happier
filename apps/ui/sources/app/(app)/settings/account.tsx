@@ -52,7 +52,10 @@ import { SelectionTiles, type SelectionTile } from '@/components/ui/forms/Select
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { ADD_HOME_RESTORE_PATH } from '@/auth/pairing/homeQrEntryIntent';
-import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { confirmForCapturedAccount } from '@/components/settings/apiTokens/confirmForCapturedAccount';
+import { getAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
+import { serverFetch, type ServerFetch } from '@/sync/http/client';
 
 export const WorkspaceRouteBody = React.memo(() => {
     const { theme } = useUnistyles();
@@ -150,17 +153,31 @@ export const WorkspaceRouteBody = React.memo(() => {
     };
     const handleDeleteAccount = async () => {
         if (accountDeletionPending) return;
-        const confirmation = await Modal.prompt(t('settingsAccount.deleteAccountConfirmTitle'), t('settingsAccount.deleteAccountConfirmBody'), { placeholder: ACCOUNT_ERASURE_CONFIRMATION_V1, confirmText: t('settingsAccount.deleteAccount') });
-        if (confirmation === null) return;
-        if (confirmation.trim() !== ACCOUNT_ERASURE_CONFIRMATION_V1) { await Modal.alertAsync(t('settingsAccount.deleteAccountInvalidTitle'), t('settingsAccount.deleteAccountInvalidBody')); return; }
         const credentials = auth.credentials;
-        const deletionScope = getActiveServerAccountScope();
-        if (!credentials || !deletionScope) { await Modal.alertAsync(t('common.error'), t('settingsAccount.deleteAccountFailed')); return; }
+        const capturedTarget = captureActiveServerAccountScopeLifetime();
+        const capturedServer = getAppliedActiveServerSnapshot();
+        if (!credentials || !capturedTarget) { await Modal.alertAsync(t('common.error'), t('settingsAccount.deleteAccountFailed')); return; }
+        try {
+            if (parseToken(credentials.token) !== capturedTarget.scope.accountId) throw new Error('Account credential changed');
+        } catch { await Modal.alertAsync(t('common.error'), t('settingsAccount.deleteAccountFailed')); return; }
+        const deletionTarget = await confirmForCapturedAccount({ captureDestructiveTarget: () => capturedTarget }, async () => {
+            const confirmation = await Modal.prompt(t('settingsAccount.deleteAccountConfirmTitle'), t('settingsAccount.deleteAccountConfirmBody'), { placeholder: ACCOUNT_ERASURE_CONFIRMATION_V1, confirmText: t('settingsAccount.deleteAccount') });
+            if (confirmation === null) return false;
+            if (confirmation.trim() !== ACCOUNT_ERASURE_CONFIRMATION_V1) {
+                await Modal.alertAsync(t('settingsAccount.deleteAccountInvalidTitle'), t('settingsAccount.deleteAccountInvalidBody'));
+                return false;
+            }
+            return true;
+        });
+        if (!deletionTarget) return;
+        const request: ServerFetch = (path, init, options) => serverFetch(path, init, { ...options,
+            expectedActiveServer: { serverId: capturedServer.serverId, generation: capturedServer.generation },
+        });
         setAccountDeletionPending(true);
         let runDeletionCleanup = async () => await completeAccountDeletion({
-            scope: deletionScope,
-            deleteCurrentAccount: async () => await deleteCurrentAccount(credentials),
-            logout: auth.logout,
+            target: deletionTarget,
+            deleteCurrentAccount: async options => await deleteCurrentAccount(credentials, { ...options, request }),
+            logout: options => auth.logout({ ...options, target: { serverId: capturedServer.serverId, serverUrl: capturedServer.serverUrl }, expectedCredentials: credentials }),
             replace: (path) => router.replace(path),
         });
         try {
@@ -184,6 +201,7 @@ export const WorkspaceRouteBody = React.memo(() => {
                 }
             }
         } catch (error) {
+            if (error instanceof Error && error.name === 'AbortError') return;
             // The Home's typed verdict names the real obstacle — the last Home
             // or Team owner must hand ownership on first — so it is shown
             // through the same owner that names it for administrators. Only an

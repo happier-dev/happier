@@ -4,6 +4,9 @@ import type { ResolvedSettingsPageNode, SettingsPageId } from '@/components/sett
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { readSessionDisplayTitleField } from '@/sync/state/selectors';
 import type { ParameterFreeRouteProjection } from '@/track/parameterFreeRouteProjection';
+import type { CurrentUiContextVoiceInvocationOutcome } from './currentUiContextVoiceToolPort';
+import type { AccountHomeContinuationInputV1 } from '@happier-dev/protocol/actions/accountHomeContinuationV1';
+import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { readMachineName } from '@/utils/sessions/machineDisplayNames';
 import { getSessionName } from '@/utils/sessions/sessionUtils';
 import { redactVoicePathLikeString } from '@/voice/shared/redactVoicePathLikeData';
@@ -18,6 +21,21 @@ import type {
 } from '@happier-dev/protocol/plugins/ui';
 
 export type CurrentUiNavigation = CurrentUiContextSnapshotV1['navigation'];
+
+/** Trusted host-local state only; outward effects retain their ordinary Action owner. */
+export type CurrentUiContextHostCommand = Readonly<{
+    kind: 'hostLocal';
+    invoke(input: Readonly<{ signal: AbortSignal }>): CurrentUiContextVoiceInvocationOutcome | Promise<CurrentUiContextVoiceInvocationOutcome>;
+}>;
+
+/** A mounted outward effect is executed only by its typed human-decided Action. */
+export type CurrentUiContextAccountHomeContinuationCommand = Readonly<{
+    kind: 'accountHomeContinuation';
+    account: ServerAccountScopeLifetime;
+    invoke(input: Readonly<{ signal: AbortSignal }>): Promise<Readonly<{ status: 'completed' }>>;
+}> & Omit<AccountHomeContinuationInputV1, 'commandId'>;
+
+export type CurrentUiContextMountedCommand = PluginUiResolvedSemanticCommandV1 | CurrentUiContextHostCommand | CurrentUiContextAccountHomeContinuationCommand;
 
 type CurrentUiContextSessionTitleSource = Parameters<typeof getSessionName>[0];
 type CurrentUiContextMachineLabelSource = Parameters<typeof readMachineName>[0];
@@ -39,7 +57,7 @@ export type CurrentUiContextMountedEnrichment = Readonly<{
     commands?: readonly Readonly<{
         title: string;
         description?: string;
-        command: PluginUiResolvedSemanticCommandV1;
+        command: CurrentUiContextMountedCommand;
     }>[];
 }>;
 

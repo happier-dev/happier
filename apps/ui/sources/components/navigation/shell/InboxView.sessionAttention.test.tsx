@@ -61,8 +61,10 @@ const primarySession = () => createSessionFixture({
     },
 });
 const storageState: Partial<StorageState> = {
+    workflowRunsById: {},
+    workflowRunListWindows: {},
     profile: { ...profileDefaults, id: 'me' },
-    settings: { ...settingsDefaults, workspacePathDisplayModeV1: 'name', workspaceRefsV1: [] },
+    settings: { ...settingsDefaults, workspacePathDisplayModeV1: 'name' },
     sessionMessages: {
         'session-1': createSessionMessagesFixture(),
         'hidden-voice': createSessionMessagesFixture({

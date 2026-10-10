@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 import { View, Pressable } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useIsTablet } from '@/utils/platform/responsive';
@@ -294,6 +295,8 @@ const PhoneMainView = React.memo((props: Readonly<{
     isTablet: boolean;
     themeGroupedBackground: string;
 }>) => {
+    const materialColor = useHappierMaterialColorResolver();
+    const backgroundColor = materialColor(props.themeGroupedBackground, 'transparent');
     const router = useRouter();
     const friendsEnabled = useFriendsEnabled();
     const inboxEnabled = useInboxAvailable();
@@ -338,7 +341,7 @@ const PhoneMainView = React.memo((props: Readonly<{
         if (buildPolicyDecision !== 'deny') {
             if (props.externalSessionsEnabled && props.storageKind === 'direct') {
                 return (
-                    <View style={styles.primaryPaneFallback}>
+                    <View style={[styles.primaryPaneFallback, { backgroundColor }]}>
                         <ExternalSessionsEmptyState surface="primaryPane" />
                     </View>
                 );
@@ -348,7 +351,7 @@ const PhoneMainView = React.memo((props: Readonly<{
             return <HomeHub />;
         }
         return (
-            <View testID="mainview-tablet-primary-pane-fallback" style={styles.primaryPaneFallback}>
+            <View testID="mainview-tablet-primary-pane-fallback" style={[styles.primaryPaneFallback, { backgroundColor }]}>
                 <Text style={styles.primaryPaneFallbackText}>
                     {t('components.emptyMainScreen.readyToCode')}
                 </Text>
@@ -357,8 +360,8 @@ const PhoneMainView = React.memo((props: Readonly<{
     }
 
     return (
-        <View style={styles.phoneContainer}>
-            <View style={{ backgroundColor: props.themeGroupedBackground }}>
+        <View style={[styles.phoneContainer, { backgroundColor }]}>
+            <View style={{ backgroundColor }}>
                 <Header
                     title={<HeaderTitle activeTab={headerTab} />}
                     headerRight={() => <HeaderRight activeTab={headerTab} />}

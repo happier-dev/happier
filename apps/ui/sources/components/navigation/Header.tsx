@@ -5,7 +5,8 @@ import type { NativeStackHeaderProps } from '@react-navigation/native-stack';
 import { useLayoutMaxWidth } from '../ui/layout/layout';
 import { useHeaderHeight } from '@/utils/platform/responsive';
 import { Typography } from '@/constants/Typography';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 import { shadowLevelStyle } from '@/shadowElevation';
 import { Text } from '@/components/ui/text/Text';
 import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
@@ -34,6 +35,8 @@ interface HeaderProps {
 
 export const Header = React.memo((props: HeaderProps) => {
     const styles = stylesheet;
+    const { theme } = useUnistyles();
+    const materialColor = useHappierMaterialColorResolver();
     const maxWidth = useLayoutMaxWidth();
 
     const {
@@ -61,6 +64,7 @@ export const Header = React.memo((props: HeaderProps) => {
         styles.container,
         headerTransparent && styles.containerTransparent,
         !headerTransparent && styles.containerNormal,
+        !headerTransparent && { backgroundColor: materialColor(theme.colors.chrome.header.background, 'transparent') },
         {
             minHeight: headerHeight + paddingTop,
             paddingTop,
@@ -132,6 +136,13 @@ export const DefaultBackButton: React.FC<{ tintColor?: string; onPress: () => vo
 };
 
 // Component wrapper for navigation header
+export function NavigationHeaderTitle(props: Readonly<{ title: string; tintColor?: string; style?: NativeStackHeaderProps['options']['headerTitleStyle'] }>) {
+    return <Text numberOfLines={1} ellipsizeMode="tail" style={[
+        { fontSize: 16, textAlign: Platform.OS === 'ios' ? 'center' : 'left', color: props.tintColor || '#000', flexShrink: 1, minWidth: 0 },
+        Typography.default('semiBold'), props.style,
+    ]}>{props.title}</Text>;
+}
+
 const NavigationHeaderComponent: React.FC<NativeStackHeaderProps> = React.memo((props) => {
     const { options, route, back, navigation } = props;
     const extendedOptions = options as ExtendedNavigationOptions;
@@ -140,29 +151,13 @@ const NavigationHeaderComponent: React.FC<NativeStackHeaderProps> = React.memo((
     let title: React.ReactNode | null = null;
     if (options.headerTitle) {
         if (typeof options.headerTitle === 'string') {
-            title = (
-                <Text style={[
-                    { fontSize: 16, textAlign: Platform.OS === 'ios' ? 'center' : 'left', color: options.headerTintColor || '#000' },
-                    Typography.default('semiBold'),
-                    options.headerTitleStyle
-                ]}>
-                    {options.headerTitle}
-                </Text>
-            );
+            title = <NavigationHeaderTitle title={options.headerTitle} tintColor={options.headerTintColor} style={options.headerTitleStyle} />;
         } else if (typeof options.headerTitle === 'function') {
             // Handle function type headerTitle
             title = options.headerTitle({ children: route.name, tintColor: options.headerTintColor });
         }
     } else if (typeof options.title === 'string') {
-        title = (
-            <Text style={[
-                { fontSize: 16, textAlign: Platform.OS === 'ios' ? 'center' : 'left', color: options.headerTintColor || '#000' },
-                Typography.default('semiBold'),
-                options.headerTitleStyle
-            ]}>
-                {options.title}
-            </Text>
-        );
+        title = <NavigationHeaderTitle title={options.title} tintColor={options.headerTintColor} style={options.headerTitleStyle} />;
     }
 
     // Determine header left content
@@ -286,6 +281,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     centerContainer: {
         flexGrow: 1,
         flexBasis: 0,
+        minWidth: 0,
         alignSelf: 'stretch',
         flexDirection: 'row',
         alignItems: 'center',

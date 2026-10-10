@@ -33,4 +33,12 @@ describe('ChangelogScreen', () => {
             entries.filter((entry) => entry.markdown).map((entry) => entry.markdown),
         );
     });
+
+    it('offers Ask Happier about each release beside that release', async () => {
+        const entries = getChangelogEntries();
+        const screen = await renderScreen(React.createElement(ChangelogScreen));
+        for (const entry of entries) {
+            expect(screen.findByTestId(`changelog-ask-happier-${entry.id}`)).toBeTruthy();
+        }
+    });
 });

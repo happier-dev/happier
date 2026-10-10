@@ -180,6 +180,17 @@ function takePreMutationFocusReturnTarget(ref: FocusReturnMutableRef | null): Fo
     return target;
 }
 
+/**
+ * Moves keyboard focus into a control that just replaced the one that had it (a "+ Set" that becomes
+ * the value's editor), so focus never falls to the page body. A text entry wins over the controls
+ * around it, since that is what the person came to fill in.
+ */
+export function focusFirstEntryWithin(container: HTMLElement): boolean {
+    const focusable = listFocusableElements(container);
+    const entry = focusable.find((element) => element.matches('textarea, input, [contenteditable="true"]'));
+    return focusElement(entry ?? focusable[0] ?? null);
+}
+
 function focusFirstElement(container: HTMLElement): boolean {
     const firstFocusableElement = listFocusableElements(container)[0] ?? null;
     return firstFocusableElement ? focusElement(firstFocusableElement) : false;

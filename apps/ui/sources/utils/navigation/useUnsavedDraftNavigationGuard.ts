@@ -6,7 +6,6 @@ import {
     runUnsavedChangesGuard,
     type ActiveUnsavedChangesGuard,
 } from '@/utils/navigation/runGuardedNavigation';
-import { useActiveUnsavedChangesGuard } from '@/utils/navigation/useActiveUnsavedChangesGuard';
 import { useUnsavedChangesBeforeRemoveGuard } from '@/utils/navigation/useUnsavedChangesBeforeRemoveGuard';
 import { promptUnsavedChangesAlert } from '@/utils/ui/promptUnsavedChangesAlert';
 
@@ -20,7 +19,9 @@ type NavigationDispatcher = Readonly<{ dispatch?: (action: unknown) => void }>;
  * re-deriving it: the canonical copy keys, the discard/save wiring, the
  * intercepted-action continuation and the Cancel runner. This binds a host's
  * dirty state to the existing guard owners once so the decision has a single
- * shape, and returns the Cancel entry point for that page.
+ * shape, and returns explicit departure and Back entry points for that page.
+ * A host may pop on Back while explicit Discard returns to a fixed destination;
+ * both continuations still run through this same dirty decision.
  *
  * It owns no draft: `isDirty`, `onDiscard` and `onSave` stay with the host that
  * knows what changed and how to commit it. `continueOnSave` is deliberately
@@ -36,9 +37,11 @@ export function useUnsavedDraftNavigationGuard(params: Readonly<{
     onSave?: () => boolean | Promise<boolean>;
     /** Where an allowed departure goes when no intercepted action was supplied. */
     onLeave?: () => void;
+    /** Back/history may pop an existing entry while an explicit discard has a fixed destination. */
+    onBack?: () => void;
     tag: string;
-}>): Readonly<{ requestLeave: () => void; allowSavedNavigation: () => void }> {
-    const { isDirty, navigation, onDiscard, onLeave, onSave, tag } = params;
+}>): Readonly<{ requestLeave: () => void; requestBack: () => void; allowSavedNavigation: () => void }> {
+    const { isDirty, navigation, onDiscard, onLeave, onBack = onLeave, onSave, tag } = params;
     const isDirtyRef = React.useRef(isDirty);
     isDirtyRef.current = isDirty;
     const ignoreRef = React.useRef(false);
@@ -58,13 +61,18 @@ export function useUnsavedDraftNavigationGuard(params: Readonly<{
         onDiscard?.();
     }, [onDiscard]);
     const continueNavigation = React.useCallback((action: unknown) => {
+        const type = action && typeof action === 'object' && 'type' in action ? action.type : null;
+        if (onBack && (type === 'GO_BACK' || type === 'POP' || type === 'POP_TO_TOP')) {
+            onBack();
+            return;
+        }
         const dispatch = (navigation as NavigationDispatcher | null)?.dispatch;
         if (action && typeof dispatch === 'function') {
             dispatch(action);
             return;
         }
         onLeave?.();
-    }, [navigation, onLeave]);
+    }, [navigation, onBack, onLeave]);
 
     const guard = React.useMemo<ActiveUnsavedChangesGuard>(() => ({
         isDirtyRef,
@@ -73,8 +81,9 @@ export function useUnsavedDraftNavigationGuard(params: Readonly<{
         onDiscard: discard,
         onSave,
         continueOnSave: false,
+        onHistoryLeave: onBack,
         tag,
-    }), [discard, onSave, requestDecision, tag]);
+    }), [discard, onBack, onSave, requestDecision, tag]);
 
     useUnsavedChangesBeforeRemoveGuard({
         isDirty,
@@ -84,19 +93,23 @@ export function useUnsavedDraftNavigationGuard(params: Readonly<{
         onDiscard: discard,
         onSave,
         continueOnSave: false,
+        onHistoryLeave: onBack,
         onContinue: continueNavigation,
         tag,
     });
-    useActiveUnsavedChangesGuard({ navigation, guard, enabled: isDirty });
 
     const requestLeave = React.useCallback(() => {
         void runUnsavedChangesGuard(guard, () => onLeave?.());
     }, [guard, onLeave]);
+
+    const requestBack = React.useCallback(() => {
+        void runUnsavedChangesGuard(guard, () => onBack?.());
+    }, [guard, onBack]);
 
     const allowSavedNavigation = React.useCallback(() => {
         ignoreRef.current = true;
         isDirtyRef.current = false;
     }, []);
 
-    return React.useMemo(() => ({ requestLeave, allowSavedNavigation }), [requestLeave, allowSavedNavigation]);
+    return React.useMemo(() => ({ requestLeave, requestBack, allowSavedNavigation }), [requestLeave, requestBack, allowSavedNavigation]);
 }

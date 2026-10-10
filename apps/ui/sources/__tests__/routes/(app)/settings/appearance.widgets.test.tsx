@@ -22,6 +22,8 @@ const shared = vi.hoisted(() => ({
         widgetFrameStyleHome: 'card',
         widgetFrameStyleBoard: 'card',
         widgetFrameStyleCompanion: 'plain',
+        uiSurfaceFinish: 'soft',
+        uiSurfaceFinishOverrides: {},
     } as Record<string, unknown>,
 }));
 
@@ -81,6 +83,13 @@ installSessionSettingsEntryModuleMocks({
     useDeviceType: 'desktop',
 });
 
+// The shared legacy harness's partial stub omits useIsTablet; restore real responsive logic.
+vi.doUnmock('@/utils/platform/responsive');
+// Visible segments live in Item's accessory: exercise its real rendering, not the legacy stub.
+vi.doUnmock('@/components/ui/lists/Item');
+vi.doUnmock('@/components/ui/lists/ItemGroup');
+vi.doUnmock('@/components/ui/lists/ItemList');
+
 vi.mock('expo-localization', () => ({ getLocales: () => [{ languageTag: 'en-US' }] }));
 vi.mock('expo-system-ui', () => ({ setBackgroundColorAsync: vi.fn() }));
 vi.mock('@/theme', async (importOriginal) => {
@@ -104,6 +113,9 @@ vi.mock('@/theme', async (importOriginal) => {
     };
 });
 
+// Transform the real route during collection, not inside an interaction's execution budget.
+const appearance = await import('@/app/(app)/settings/appearance');
+
 afterEach(() => {
     standardCleanup();
     resetSessionSettingsEntryState();
@@ -111,13 +123,27 @@ afterEach(() => {
         widgetFrameStyleHome: 'card',
         widgetFrameStyleBoard: 'card',
         widgetFrameStyleCompanion: 'plain',
+        uiSurfaceFinish: 'soft',
+        uiSurfaceFinishOverrides: {},
     });
 });
 
 describe('Appearance → Widgets (lab WK)', () => {
+    it('renders the real finish preview and changes global or inherited per-role choices through visible segments', async () => {
+        const screen = await renderSettingsView(React.createElement(appearance.default), { flushOptions: { cycles: 0 } });
+        expect(screen.findHostByTestId('settings-appearance-finish-preview-card')).not.toBeNull();
+        await screen.pressByTestIdAsync('settings-appearance-finish:flat');
+        expect(shared.settingsState.uiSurfaceFinish).toBe('flat');
+        await screen.pressByTestIdAsync('settings-appearance-finish-customize');
+        await screen.pressByTestIdAsync('settings-appearance-finish-card:soft');
+        expect(shared.settingsState.uiSurfaceFinishOverrides).toEqual({ card: 'soft' });
+        // The hook boundary projects the new stored value on the next render, as the real store does.
+        await act(async () => screen.update(React.createElement(appearance.default)));
+        await screen.pressByTestIdAsync('settings-appearance-finish-card:auto');
+        expect(shared.settingsState.uiSurfaceFinishOverrides).toEqual({});
+    });
     it('offers Card | Plain per surface with the current defaults, and writes the one surface changed', async () => {
-        const mod = await import('@/app/(app)/settings/appearance');
-        const screen = await renderSettingsView(React.createElement(mod.default), {
+        const screen = await renderSettingsView(React.createElement(appearance.default), {
             flushOptions: { cycles: 0 },
         });
 

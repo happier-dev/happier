@@ -3,6 +3,7 @@ import type { FileTargetAnchor } from '@/utils/url/sessionFileDeepLink';
 import type { ReviewCommentSource } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
 import type { FileFindSeed as FindSeed } from '@/components/appShell/panes/fileFindSeedHandoff';
 import type { MemoryDocumentSearchHitV1 } from '@happier-dev/protocol/memory/memorySearch';
+import type { ExternalSessionCandidateV1, ExternalSessionsSource } from '@happier-dev/protocol/sessions/external/daemonRpcV1';
 
 /**
  * The small UI-internal normalized boundary for built-in Universal Search rows.
@@ -27,6 +28,9 @@ export type UniversalSearchTarget =
      * Home B result is open cannot retarget the navigation.
      */
     | Readonly<{ kind: 'session'; serverId: string; accountId: string; sessionId: string; seq?: number }>
+    | Readonly<{ kind: 'externalConversation'; serverId: string; accountId: string; machineId: string;
+        agentId: string; sourceKey?: string; source?: ExternalSessionsSource; candidate: ExternalSessionCandidateV1;
+        sourceItemId: string; query: string }>
     | (Readonly<{ kind: 'memoryDocument'; serverId: string; accountId: string }>
         & Pick<MemoryDocumentSearchHitV1, 'ref' | 'location' | 'factId'>)
     | Readonly<{
@@ -88,6 +92,11 @@ export type UniversalSearchResult = Readonly<{
     searchText?: string;
     exactSearchText?: string;
     fileContent?: Readonly<{ path: string; line: number; column16: number; length16: number; text: string; before: readonly string[]; after: readonly string[] }>;
+    /**
+     * A conversation hit: the matched text and where it was said. `agentId` is set for a conversation
+     * that lives in an Agent's own history; its row then carries that Agent's mark.
+     */
+    conversation?: Readonly<{ snippet: string; query: string; agentId?: string; machineLabel?: string; atMs?: number }>;
     target: UniversalSearchTarget;
 }>;
 

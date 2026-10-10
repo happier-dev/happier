@@ -11,10 +11,13 @@ import Animated, {
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useShallow } from 'zustand/react/shallow';
 
+import { readBotActivity } from '@/components/sessions/bots/botActivity';
 import { BotsPopoverContent } from '@/components/sessions/bots/BotsPopoverContent';
 import { useOptionalBotsRosterRuntime } from '@/components/sessions/bots/BotsRosterRuntime';
 import { WorkspaceDestinationRow } from '@/components/appShell/workspace/WorkspaceDestinationRow';
 import { IconButton } from '@/components/ui/buttons/IconButton';
+import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { Avatar } from '@/components/ui/avatar/Avatar';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -23,10 +26,6 @@ import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
 import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
 import { useSessionListSelectionState } from '@/hooks/session/useSessionListSelectionState';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
-import {
-  isUrgentSessionListAttentionState,
-  mapSessionAwarenessToListAttentionState,
-} from '@/sync/domains/session/listing/deriveSessionListActivity';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import { readSessionListRowForServerId } from '@/sync/domains/session/listing/sessionListRowStateLookup';
 import { resolveSessionListOrganizationServerIds } from '@/sync/domains/session/organization/sessionListOrganizationServerIds';
@@ -35,10 +34,7 @@ import {
   useSessionOrganizationProjections,
 } from '@/sync/domains/state/storage';
 import { t } from '@/text';
-import {
-  getSessionName,
-  getSessionStatus,
-} from '@/utils/sessions/sessionUtils';
+import { getSessionName } from '@/utils/sessions/sessionUtils';
 
 import type {
   SidebarFooterPopoverContentProps,
@@ -55,24 +51,12 @@ import type {
   AppRailBotHome,
   AppRailEntry,
 } from './appRailModel';
+import { useAppRailBotReorder } from './useAppRailBotReorder';
 
-const ROSTER_WIDTH_PX = 340;
+/** The roster's drawn width (lab `b-rail A`): a name, its current line and the trailing time on one row. */
+const ROSTER_WIDTH_PX = 376;
 const PIN_AVATAR_SIZE_PX = 24;
 const PIN_RING_SIZE_PX = 32;
-
-type BotActivity = 'needsYou' | 'working' | 'quiet';
-
-/** The one classification the roster header, the rail badge and the pins share (operational awareness). */
-export function readBotActivity(
-  session: SessionListRenderableSession,
-  nowMs: number,
-): BotActivity {
-  const state = mapSessionAwarenessToListAttentionState(
-    getSessionStatus(session, nowMs).awareness.operational.primary,
-  );
-  if (isUrgentSessionListAttentionState(state)) return 'needsYou';
-  return state === 'thinking' ? 'working' : 'quiet';
-}
 
 /** The Homes whose rail membership the rail reads: the same Homes the Sessions list presents. */
 function useRailBotServerIds(): readonly string[] {
@@ -134,22 +118,53 @@ export function useAppRailBotHomes(): readonly AppRailBotHome[] {
   );
 }
 
-/** How many loaded Bots need the person: the Bots entry's only badge (no offline or working count). */
-function useBotsNeedingYouCount(): number {
-  const serverIds = useRailBotServerIds();
-  return storage((state) => {
+type SessionListRowsByServerId = Readonly<
+  Record<
+    string,
+    Readonly<Record<string, SessionListRenderableSession>> | undefined
+  >
+>;
+
+/**
+ * Counts the loaded Bots that need the person. The rail is always mounted and the store notifies on
+ * every change anywhere, so the count is recomputed only when one of these Homes' row maps was
+ * replaced; every other notification returns the previous number without walking a row.
+ */
+export function createBotsNeedingYouCounter(
+  serverIds: readonly string[],
+): (rowsByServerId: SessionListRowsByServerId) => number {
+  let countedRows: ReadonlyArray<SessionListRowsByServerId[string]> | null =
+    null;
+  let count = 0;
+  return (rowsByServerId) => {
+    const rows = serverIds.map((serverId) => rowsByServerId[serverId]);
+    if (
+      countedRows !== null &&
+      rows.every((homeRows, index) => homeRows === countedRows![index])
+    )
+      return count;
     const now = Date.now();
-    let count = 0;
-    for (const serverId of serverIds) {
-      const rows = state.sessionListRowsByServerId[serverId];
-      if (!rows) continue;
-      for (const row of Object.values(rows)) {
+    count = 0;
+    for (const homeRows of rows) {
+      if (!homeRows) continue;
+      for (const row of Object.values(homeRows)) {
         if (readSessionBotV1(row.metadata?.bot)?.kind !== 'bot') continue;
         if (readBotActivity(row, now) === 'needsYou') count += 1;
       }
     }
+    countedRows = rows;
     return count;
-  });
+  };
+}
+
+/** How many loaded Bots need the person: the Bots entry's only badge (no offline or working count). */
+function useBotsNeedingYouCount(): number {
+  const serverIds = useRailBotServerIds();
+  const count = React.useMemo(
+    () => createBotsNeedingYouCounter(serverIds),
+    [serverIds],
+  );
+  return storage((state) => count(state.sessionListRowsByServerId));
 }
 
 const renderRoster = (content: SidebarFooterPopoverContentProps) => (
@@ -219,6 +234,8 @@ export const AppRailBotPin = React.memo(function AppRailBotPin(
     bot: AppRailBotEntry;
     animateEntry: boolean;
     slotStyle: object;
+    previousBotSessionId?: string;
+    nextBotSessionId?: string;
   }>,
 ) {
   const { theme } = useUnistyles();
@@ -226,6 +243,8 @@ export const AppRailBotPin = React.memo(function AppRailBotPin(
   const navigateToSession = useNavigateToSession();
   const pathname = usePathname();
   const { bot } = props;
+  const reorder = useAppRailBotReorder(bot);
+  const [orderMenuOpen, setOrderMenuOpen] = React.useState(false);
   const name = getSessionName(bot.session, bot.serverId);
   const activity = readBotActivity(bot.session, Date.now());
   const href = buildScopedSessionRouteHref({
@@ -249,10 +268,26 @@ export const AppRailBotPin = React.memo(function AppRailBotPin(
         );
   const exiting = reducedMotion
     ? FadeOut.duration(motionTokens.successMoment.reducedCrossFadeMs)
-    : ZoomOut.duration(120);
+    : ZoomOut.duration(motionTokens.overlay.popover.exitMs);
   return (
-    <Animated.View entering={entering} exiting={exiting}>
-      <WorkspaceDestinationRow style={props.slotStyle} href={href}>
+    <Animated.View entering={entering} exiting={exiting} ref={reorder.ref}>
+      <WorkspaceDestinationRow style={props.slotStyle} href={href} existingMenu dragSource={false}>
+        {actions => <>
+        <DropdownMenu
+          testID={`app-rail:${bot.id}.order-menu`}
+          open={orderMenuOpen}
+          onOpenChange={setOrderMenuOpen}
+          items={[...actions.items,
+            ...(reorder.available && props.previousBotSessionId ? [{ id: 'move-up', title: t('common.moveUp'), shortcut: 'Alt+↑' }] : []),
+            ...(reorder.available && props.nextBotSessionId ? [{ id: 'move-down', title: t('common.moveDown'), shortcut: 'Alt+↓' }] : []),
+          ]}
+          onSelect={id => {
+            if (id === 'move-up' && props.previousBotSessionId) fireAndForget(reorder.move(props.previousBotSessionId, 'top'), { tag: 'AppRail.Bot.moveUp' });
+            else if (id === 'move-down' && props.nextBotSessionId) fireAndForget(reorder.move(props.nextBotSessionId, 'bottom'), { tag: 'AppRail.Bot.moveDown' });
+            else actions.select(id);
+          }}
+          placement="right" variant="slim" matchTriggerWidth={false}
+          trigger={({ openMenu }) =>
         <IconButton
           testID={`app-rail:${bot.id}`}
           variant="plain"
@@ -261,6 +296,18 @@ export const AppRailBotPin = React.memo(function AppRailBotPin(
           tooltip={name}
           tooltipPlacement="right"
           selected={active}
+          onLongPress={openMenu}
+          onContextMenu={event => { event.preventDefault(); event.stopPropagation(); openMenu(); }}
+          onKeyDown={async event => {
+            if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
+              event.preventDefault(); event.stopPropagation(); openMenu(); return;
+            }
+            if (!event.altKey || !reorder.available) return;
+            const target = event.key === 'ArrowUp' ? props.previousBotSessionId : event.key === 'ArrowDown' ? props.nextBotSessionId : undefined;
+            if (!target) return;
+            event.preventDefault(); event.stopPropagation();
+            await reorder.move(target, event.key === 'ArrowUp' ? 'top' : 'bottom');
+          }}
           icon={
             <View style={styles.pin}>
               {activity === 'working' ? (
@@ -282,6 +329,7 @@ export const AppRailBotPin = React.memo(function AppRailBotPin(
           onPress={() => {
             void navigateToSession(bot.sessionId, { serverId: bot.serverId });
           }}
+        />}
         />
         {activity === 'needsYou' ? (
           <AppRailBadge
@@ -289,6 +337,7 @@ export const AppRailBotPin = React.memo(function AppRailBotPin(
             signal={{ kind: 'dot', tone: 'attention' }}
           />
         ) : null}
+        </>}
       </WorkspaceDestinationRow>
     </Animated.View>
   );

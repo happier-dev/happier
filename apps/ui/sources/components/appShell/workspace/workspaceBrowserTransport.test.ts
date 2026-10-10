@@ -4,6 +4,9 @@ import { createWorkspaceNavigationAdapter } from './workspaceNavigationAdapter';
 import { createWorkspaceState, reduceWorkspaceState } from './workspaceState';
 import { resolveCompactAppDestinations } from '../destinations/compactAppDestinationCatalog';
 import { installPanelCommonModuleMocks } from '@/components/ui/panels/panelTestHelpers';
+import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
+import { runUnsavedChangesGuard } from '@/utils/navigation/runGuardedNavigation';
+import { trackBrowserHistoryNavigation } from '@/utils/navigation/browserHistoryNavigation';
 
 installPanelCommonModuleMocks();
 // Browser navigation never renders Markdown; fail on use of this vendor/native SDK boundary.
@@ -18,11 +21,105 @@ vi.mock('@/sync/api/session/sessionDataKeyEnvelopesApi', () => {
 });
 
 describe('workspace browser URL transport', () => {
-    it('restores the current browser entry before a guard decision, then resumes the same traversal', () => {
+    it.each([false, true])('pops retained entries after reload and restores guarded Forward without replacing them (dirty before readmission=%s)', async dirtyBeforeReadmission => {
+        const catalog = resolveCompactAppDestinations({ builtins: { externalSessions: false, inbox: false, workflows: false, friends: false }, pages: [] });
+        const entries: Array<{ state: unknown; href: string }> = [{ state: { id: 'initial' }, href: '/session/A1' }];
+        let position = 0;
+        let id = 0;
+        const decision = createDeferred<'discard'>();
+        const guard = { isDirtyRef: { current: false }, requestDecision: () => decision.promise, tag: 'reloaded-browser-transport' };
+        let guarded: ReturnType<typeof runUnsavedChangesGuard> = true;
+        let transport: ReturnType<typeof createWorkspaceBrowserTransport>;
+        const browser = {
+            get state() { return entries[position].state; },
+            pushState(state: unknown, _title: string, href?: string | URL | null) {
+                entries.splice(position + 1);
+                entries.push({ state, href: String(href) });
+                position++;
+            },
+            replaceState(state: unknown, _title: string, href?: string | URL | null) {
+                entries[position] = { state, href: href ? String(href) : entries[position].href };
+            },
+            go(delta: number) {
+                const next = position + delta;
+                // Like native history.go, an out-of-range traversal emits no popstate.
+                if (next < 0 || next >= entries.length) return;
+                position = next;
+                transport.acceptPopState(browser.state);
+            },
+        };
+        let stopTracking = trackBrowserHistoryNavigation(browser, () => {});
+        const mount = () => {
+            let layout = createWorkspaceState({ id: 'A', target: { kind: 'session', params: { id: 'A1' } }, pinned: false, preview: false });
+            transport = createWorkspaceBrowserTransport({
+                history: browser, getHref: () => entries[position].href, createId: () => `browser:${++id}`,
+                mirror: href => {
+                    const state = browser.state as { id: string };
+                    browser.replaceState({ id: state.id }, '', href);
+                },
+                accept: (href, entry, index) => adapter.acceptUrl(href, entry, index),
+                needsGuard: () => guard.isDirtyRef.current,
+                guard: (_direction, proceed) => {
+                    guarded = runUnsavedChangesGuard(guard, proceed);
+                    return guarded;
+                },
+            });
+            const adapter = createWorkspaceNavigationAdapter({
+                getCatalog: () => catalog, getState: () => layout,
+                dispatch: action => { layout = reduceWorkspaceState(layout, action); },
+                transport, createId: () => `tab:${++id}`, onChange: () => {},
+            });
+            adapter.initialize(entries[position].href);
+            return adapter;
+        };
+        const original = mount();
+        original.openHref('/session/A2');
+        original.openHref('/session/A3');
+        if (dirtyBeforeReadmission) original.step(-1);
+        const baseline = entries.map(entry => ({ ...entry }));
+        stopTracking();
+        stopTracking = trackBrowserHistoryNavigation(browser, () => {});
+        try {
+            const reloaded = mount();
+            expect(reloaded.history.index).toBe(0);
+            expect(reloaded.canGoBack).toBe(true);
+            if (dirtyBeforeReadmission) {
+                guard.isDirtyRef.current = true;
+                reloaded.step(1);
+                expect(position).toBe(1);
+                expect(reloaded.history.index).toBe(0);
+                expect(reloaded.history.entries.map(entry => entry.target.params.id)).toEqual(['A2']);
+                expect(entries).toEqual(baseline);
+                decision.resolve('discard');
+                await guarded;
+                expect(position).toBe(2);
+                expect(entries[position].href).toBe('/session/A3');
+                expect(reloaded.history.entries.map(entry => entry.target.params.id)).toEqual(['A2', 'A3']);
+                expect(entries).toEqual(baseline);
+                return;
+            }
+            reloaded.step(-1);
+            expect(entries[position].href).toBe('/session/A2');
+            reloaded.step(-1);
+            expect(entries[position].href).toBe('/session/A1');
+            expect(entries).toEqual(baseline);
+            guard.isDirtyRef.current = true;
+            reloaded.step(1);
+            expect(entries[position].href).toBe('/session/A1');
+            expect(entries).toEqual(baseline);
+            decision.resolve('discard');
+            await guarded;
+            expect(entries[position].href).toBe('/session/A2');
+            expect(entries).toEqual(baseline);
+        } finally { stopTracking(); }
+    });
+    it('restores the current browser entry before a guard decision, then resumes the same traversal', async () => {
         const entries = [{ state: { id: 'initial' }, href: '/session/A1' }];
         let position = 0;
         let nextId = 0;
-        let allow: (() => void) | null = null;
+        const decision = createDeferred<'discard'>();
+        const guard = { isDirtyRef: { current: true }, requestDecision: () => decision.promise, tag: 'browser-transport' };
+        let guarded: ReturnType<typeof runUnsavedChangesGuard> = true;
         const accepted: string[] = [];
         const browser = {
             get state() { return entries[position].state; },
@@ -40,7 +137,10 @@ describe('workspace browser URL transport', () => {
             history: browser, getHref: () => entries[position].href,
             mirror: () => {}, createId: () => `id:${++nextId}`,
             accept: (href) => { accepted.push(href); },
-            guard: (_direction, proceed) => { allow = proceed; },
+            guard: (_direction, proceed) => {
+                guarded = runUnsavedChangesGuard(guard, proceed);
+                return guarded;
+            },
         });
         const entry = { tabId: 'A', groupId: 'group:1', target: { kind: 'session', params: { id: 'A1' } } };
         transport.commit('/session/A1', entry, true, 0);
@@ -48,11 +148,12 @@ describe('workspace browser URL transport', () => {
         browser.go(-1);
         expect(entries[position].href).toBe('/session/A2');
         expect(accepted).toEqual([]);
-        expect(allow).not.toBeNull();
-        (allow as unknown as () => void)();
+        decision.resolve('discard');
+        await guarded;
         expect(accepted).toEqual(['/session/A1']);
         expect(entries[position].href).toBe('/session/A1');
         expect(entries).toHaveLength(2);
+        expect(guard.isDirtyRef.current).toBe(false);
     });
     it('uses browser Back and app Forward to restore exact entries, including a closed tab', () => {
         const catalog = resolveCompactAppDestinations({ builtins: { externalSessions: false, inbox: false, workflows: false, friends: false }, pages: [{
@@ -113,7 +214,12 @@ describe('workspace browser URL transport', () => {
         expect(entries[position].href).toBe('/settings/appearance');
         expect(entries).toHaveLength(4);
         expect(mirrors.at(-1)).toBe('/settings/appearance');
-        expect(transport.acceptPopState({ id: 'foreign' })).toBe(false);
+        // Unknown ids at an admitted URL are reconstructed after a document reload.
+        expect(transport.acceptPopState({ id: 'foreign' })).toBe(true);
+        const currentHref = entries[position].href;
+        entries[position].href = '/not-a-workspace-destination';
+        expect(transport.acceptPopState({ id: 'outside-workspace' })).toBe(false);
+        entries[position].href = currentHref;
         // Expo may ingest a deep link before the provider observes its URL.
         browser.pushState({ id: 'external-link' }, '', '/session/C1?serverId=home-c');
         adapter.acceptUrl('/session/C1?serverId=home-c');

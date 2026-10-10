@@ -1,7 +1,6 @@
 import * as React from 'react';
-import { View } from 'react-native';
 import { useRouter } from 'expo-router';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { useUnistyles } from 'react-native-unistyles';
 
 import { NewSessionMachineSelectionContent } from '@/components/sessions/new/components/NewSessionMachineSelectionContent';
 import type {
@@ -20,22 +19,18 @@ import { useMachineAddOptions } from '@/components/settings/machines/collection/
 import { useMachinesSettingsViewModel } from '@/components/settings/machines/machinesSettingsViewModel';
 import { MachinePresenceCounts } from '@/components/machines/MachinePresenceCounts';
 import { Icon } from '@/components/ui/icons/Icon';
-import { ActionListSection } from '@/components/ui/lists/ActionListSection';
-import { Text } from '@/components/ui/text/Text';
-import { Typography } from '@/constants/Typography';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { t } from '@/text';
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { countMachinePresence, isMachineOnline } from '@/utils/sessions/machineUtils';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
+import { RailPopoverRoster, resolveRailPopoverRosterListMaxHeight } from './RailPopoverRoster';
 import type { SidebarFooterPopoverContentProps } from './SidebarFooterPopoverButton';
 
 type PopoverMachine = ScopedSelectionMachine<Machine>;
 
 const NO_PINNED_MACHINES: readonly PopoverMachine[] = [];
-/** The rows beneath the list ("Add machine", "Add a machine pool") and the header. */
-const CHROME_HEIGHT_PX = 150;
 
 /**
  * The sidebar Machines popover: the machines and pools of the Homes the app shows, from the store
@@ -82,11 +77,27 @@ export function SidebarMachinesPopoverContent(props: SidebarFooterPopoverContent
 
     const iconColor = theme.colors.text.secondary;
     return (
-        <View testID="sidebar-machines-popover-content">
-            <View style={styles.header}>
-                <Text style={styles.title}>{t('settings.machines')}</Text>
-                <MachinePresenceCounts testID="sidebar-machines-presence" counts={counts} />
-            </View>
+        <RailPopoverRoster
+            testID="sidebar-machines-popover-content"
+            title={t('settings.machines')}
+            summary={<MachinePresenceCounts testID="sidebar-machines-presence" counts={counts} />}
+            actions={[
+                {
+                    id: 'add-machine',
+                    testID: 'sidebar-machines-add-machine',
+                    label: t('settings.addMachine'),
+                    icon: <Icon name="plus" size={16} color={iconColor} />,
+                    onPress: () => open(MACHINES_ADD_ROUTE, 'SidebarMachines.addMachine'),
+                },
+                addPool ? {
+                    id: 'add-pool',
+                    testID: 'sidebar-machines-add-pool',
+                    label: addPool.title,
+                    icon: <Icon name="plus" size={16} color={iconColor} />,
+                    onPress: () => open(addPool.href, 'SidebarMachines.addPool'),
+                } : null,
+            ]}
+        >
             {total > 0 || poolGroups.some((group) => group.pools.length > 0) ? (
                 <NewSessionMachineSelectionContent<PopoverMachine>
                     groups={groups}
@@ -106,56 +117,9 @@ export function SidebarMachinesPopoverContent(props: SidebarFooterPopoverContent
                     autoDetectCliGlyphs={false}
                     testIdPrefix="sidebar-machines"
                     testID="sidebar-machines-list"
-                    maxHeight={Math.max(160, props.maxHeight - CHROME_HEIGHT_PX)}
+                    maxHeight={resolveRailPopoverRosterListMaxHeight(props.maxHeight)}
                 />
             ) : null}
-            <View style={styles.divider} />
-            <ActionListSection
-                style={styles.actions}
-                actions={[
-                    {
-                        id: 'add-machine',
-                        testID: 'sidebar-machines-add-machine',
-                        label: t('settings.addMachine'),
-                        icon: <Icon name="plus" size={16} color={iconColor} />,
-                        onPress: () => open(MACHINES_ADD_ROUTE, 'SidebarMachines.addMachine'),
-                    },
-                    addPool ? {
-                        id: 'add-pool',
-                        testID: 'sidebar-machines-add-pool',
-                        label: addPool.title,
-                        icon: <Icon name="plus" size={16} color={iconColor} />,
-                        onPress: () => open(addPool.href, 'SidebarMachines.addPool'),
-                    } : null,
-                ]}
-            />
-        </View>
+        </RailPopoverRoster>
     );
 }
-
-const styles = StyleSheet.create((theme) => ({
-    header: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        gap: 12,
-        paddingHorizontal: 16,
-        paddingTop: 12,
-        paddingBottom: 4,
-    },
-    title: {
-        ...Typography.default('semiBold'),
-        fontSize: 13,
-        lineHeight: 18,
-        color: theme.colors.text.primary,
-    },
-    divider: {
-        height: StyleSheet.hairlineWidth,
-        marginHorizontal: 12,
-        backgroundColor: theme.colors.border.default,
-    },
-    actions: {
-        paddingTop: 4,
-        paddingBottom: 4,
-    },
-}));

@@ -85,6 +85,18 @@ describe('rightSidebarMobileProjection', () => {
             .not.toContain('navigation');
     });
 
+    it('hides the matching Project launcher without removing its mobile route destination', () => {
+        const tabs = resolveRightSidebarTabs({ scope: 'project', activePage: 'changes', presentation: 'mobile' });
+        expect(resolveRightSidebarMobileProjection({ scope: 'project', tabs }).map(entry => entry.tabId))
+            .toEqual(['files', 'scripts', 'browser', 'services']);
+        expect(resolveRightSidebarTabIdForMobileSurface({ scope: 'project', surface: 'git', tabs })).toBe('git');
+        expect(resolveRightSidebarTabIdForMobileSurface({ scope: 'project', surface: 'browse', tabs })).toBe('files');
+        const scriptsPageTabs = resolveRightSidebarTabs({ scope: 'project', activePage: 'scripts', presentation: 'mobile' });
+        expect(resolveRightSidebarMobileProjection({ scope: 'project', tabs: scriptsPageTabs }).map(entry => entry.tabId)).not.toContain('scripts');
+        expect(resolveRightSidebarTabIdForMobileSurface({ scope: 'project', surface: 'scripts', tabs: scriptsPageTabs })).toBe('scripts');
+        expect(resolveRightSidebarTabIdForMobileSurface({ scope: 'project', surface: 'terminal', tabs })).toBe('terminal');
+    });
+
     it('omits disabled plugin tabs from mobile projection', () => {
         const tabs = resolveRightSidebarTabs({
             scope: 'session',
