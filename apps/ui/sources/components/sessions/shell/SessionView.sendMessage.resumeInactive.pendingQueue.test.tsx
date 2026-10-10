@@ -17,7 +17,7 @@ import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { createReactNavigationNativeMock } from '@/dev/testkit/mocks/reactNavigation';
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import { renderScreen, findTestInstanceByTypeWithProps } from '@/dev/testkit/render/renderScreen';
-import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { createSessionFixture, createSessionAccessFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import type { createModalModuleMock } from '@/dev/testkit/mocks/modal';
 import type { Session, PendingMessage } from '@/sync/domains/state/storageTypes';
@@ -1087,6 +1087,24 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
         expect(resumeCalls()).toHaveLength(2);
         expect(resumeCalls()[1]?.payload).toMatchObject({ approvedNewDirectoryCreation: true });
         await screen.unmount();
+    });
+
+    it('keeps a live Edit recipient sending without a Machine grant or requester recovery', async () => {
+        updateSession({ active: true, activeAt: Date.now(), presence: 'online', access: createSessionAccessFixture('edit'),
+            accessLevel: 'edit', owner: 'alice' });
+        const screen = await renderSessionView();
+        try {
+            await act(async () => { storage.setState({ machineListByServerId: { [runtime.serverId]: [] },
+                machineListStatusByServerId: { [runtime.serverId]: 'idle' } }); });
+            expect(screen.findByTestId('session-requester-access-removed')).toBeNull();
+            expect(findAgentInput(screen)).toBeDefined();
+            await changeText(screen, 'Message to the shared live Session');
+            await send(screen);
+            await waitForSubmittedDraft(screen);
+            expect(pendingWrites()).toHaveLength(1);
+            expect(findAgentInput(screen).props.value).toBe('');
+            expect(resumeCalls()).toHaveLength(0);
+        } finally { await screen.unmount(); }
     });
 
     it('keeps requester history mounted after authoritative machine removal and authors continuation through the ordinary composer', async () => {

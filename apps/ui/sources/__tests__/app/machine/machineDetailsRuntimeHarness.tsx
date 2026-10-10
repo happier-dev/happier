@@ -74,13 +74,15 @@ export async function arrangeMachineDetailsHomeForTests(
     network.setHttpResponder(async input => {
         const url = new URL(String(input));
         if (url.pathname === '/v1/features') return Response.json(createRootLayoutFeaturesResponse({}));
+        if (url.pathname === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
         if (url.pathname === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
         if (url.pathname === '/v1/machines') {
             state.machineListRequests += 1;
             return Response.json((state.readMachines ? await state.readMachines() : state.machines).map(toWire));
         }
-        if (url.pathname.startsWith('/v1/machines/')) return null; // canonical harness supplies the plain machine transport key
-        return new Response('{}', { status: 404 });
+        // The shared HTTP boundary owns readiness (health/auth ping) and plain machine keys.
+        // Refusing those here would keep the real reachability owner waiting before any screen mounts.
+        return null;
     });
     network.respond(RPC_METHODS.DAEMON_EXECUTION_RUNS_LIST, { runs: [] });
     await setActiveServerId(home.id, { scope: 'device' });
@@ -89,9 +91,11 @@ export async function arrangeMachineDetailsHomeForTests(
     const { sync } = await import('@/sync/sync');
     await sync.refreshMachines();
     const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
+    const { AppPaneProvider } = await import('@/components/appShell/panes/AppPaneProvider');
     const { renderScreen } = await import('@/dev/testkit');
     const element = (Screen: React.ComponentType) => React.createElement(InjectedAuthProvider, {
-        credentials: { token: home.token }, children: React.createElement(Screen),
+        credentials: { token: home.token },
+        children: React.createElement(AppPaneProvider, { children: React.createElement(Screen) }),
     });
     return {
         home, state, storage, sync,

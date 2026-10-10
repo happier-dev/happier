@@ -41,6 +41,9 @@ describe('MachineDetailScreen hydration', () => {
             })]);
             await flushHookEffects({ cycles: 2, turns: 2 });
         });
+        await vi.waitFor(() => expect(home!.storage.getState().machines['machine-missing']?.metadata?.displayName,
+            JSON.stringify({ machines: home!.storage.getState().machines, scope: home!.storage.getState().profileScope,
+                lists: home!.storage.getState().machineListByServerId })).toBe('Recovered Machine'));
         await vi.waitFor(() => expect(screen.getTextContent()).not.toContain('common.loading'));
         expect(screen.getTextContent()).not.toContain('machine.notFound');
         expect(home.storage.getState().machines['machine-missing']?.metadata?.displayName).toBe('Recovered Machine');
@@ -61,6 +64,9 @@ describe('MachineDetailScreen hydration', () => {
         home = await arrangeMachineDetailsHomeForTests(network, {
             serverUrl: 'https://machine-hydration-offline.example.test', machines: [offline],
         });
+        expect(home.storage.getState().machines['machine-missing']?.metadata?.displayName,
+            JSON.stringify({ machines: home.storage.getState().machines, scope: home.storage.getState().profileScope,
+                lists: home.storage.getState().machineListByServerId })).toBe('Offline Machine');
         const screen = await home.render(MachineDetailScreen);
         await vi.waitFor(() => expect(screen.findByTestId('machine-detail-unavailable')).not.toBeNull());
         deferred = createDeferred<readonly Machine[]>();

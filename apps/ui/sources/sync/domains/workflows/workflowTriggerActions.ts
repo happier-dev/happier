@@ -5,8 +5,10 @@ import type { ActionExecutorContext } from '@happier-dev/protocol/actions/execut
 
 import { callWorkflowAction, type WorkflowActionExecute } from './callWorkflowAction';
 import { getStorage } from '@/sync/domains/state/storage';
-import { captureActiveServerAccountScopeCurrentness } from '@/sync/domains/scope/activeServerAccountScope';
+import { captureActiveServerAccountScopeCurrentness, captureActiveServerAccountScopeLifetime, getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
 import { WorkflowActionError } from './workflowActionError';
+import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 
 /**
  * The trigger client: `workflow.trigger.list | add | update | remove` (03 §5.3–§5.5) and the
@@ -26,6 +28,8 @@ export type WorkflowTriggerWriteResult = Readonly<{
 
 type CallOptions = Readonly<{
     signal?: AbortSignal;
+    /** Routed details consume their addressed credential binding, independent of focused Home. */
+    accountLifetime?: ServerAccountScopeLifetime | null;
     execute?: WorkflowActionExecute;
     /** Host-owned target facts, used only when the Action needs native host observations. */
     context?: Omit<ActionExecutorContext, 'surface' | 'signal'>;
@@ -37,22 +41,33 @@ async function callTriggerAction<TResult>(
     parseResult: (value: unknown) => TResult,
     options: CallOptions,
 ): Promise<TResult> {
-    const scope = captureActiveServerAccountScopeCurrentness();
+    const scope = options.accountLifetime === undefined ? captureActiveServerAccountScopeCurrentness() : options.accountLifetime;
     const result = await callWorkflowAction({
         actionId,
         input,
         parseResult,
         fallbackMessage: 'Workflow trigger request failed',
+        ...(options.accountLifetime === undefined ? {} : { accountLifetime: options.accountLifetime }),
         ...(options.signal === undefined ? {} : { signal: options.signal }),
         ...(options.execute === undefined ? {} : { execute: options.execute }),
         ...(options.context === undefined ? {} : { context: options.context }),
     });
-    if (!scope.isCurrent()) throw new WorkflowActionError({ message: 'action_account_scope_changed', rawCode: 'action_account_scope_changed' });
+    if (!scope?.isCurrent()) throw new WorkflowActionError({ message: 'action_account_scope_changed', rawCode: 'action_account_scope_changed' });
     options.signal?.throwIfAborted();
+    // The incumbent Automation store is focused-Account content. An addressed read returns
+    // the same FIN observation to its mounted consumer without publishing into another Home.
+    if (options.accountLifetime) {
+        const active = getActiveServerAccountScope();
+        if (!active || active.accountId !== options.accountLifetime.scope.accountId
+            || !areServerProfileIdentifiersEquivalent(active.serverId, options.accountLifetime.scope.serverId)) return result;
+    }
     const request = typeof input === 'object' && input !== null ? input : {};
+    // A deliberate retained-template review is a private draft, not an Account list observation.
+    if (actionId === 'workflow.trigger.list' && 'review' in request && request.review === true) return result;
     const sessionId = 'sessionId' in request && typeof request.sessionId === 'string' ? request.sessionId : null;
     const workflow = 'workflow' in request && typeof request.workflow === 'string' ? request.workflow : null;
-    const queryKey = sessionId ? `session:${sessionId}` : workflow ? `workflow:${workflow}` : 'account_inline';
+    const queryKey = sessionId ? `session:${sessionId}` : workflow ? `workflow:${workflow}`
+        : 'scope' in request && request.scope === 'account_all' ? 'account_all' : 'account_inline';
     if (actionId.endsWith('.list')) {
         const page = WorkflowTriggerListResultV1Schema.shape.sets.parse(
             typeof result === 'object' && result !== null && 'sets' in result ? result.sets : undefined,
@@ -74,17 +89,41 @@ async function callTriggerAction<TResult>(
 }
 
 /** A workflow's trigger sets (one per Account and workflow, U1), or the Account's inline triggers. */
+const pendingTriggerLists = new WeakMap<object, Map<string, Promise<readonly WorkflowTriggerSetV1[]>>>();
+
 export async function listWorkflowTriggerSets(
     request: z.input<typeof WorkflowTriggerListRequestV1Schema>,
     options: CallOptions = {},
 ): Promise<readonly WorkflowTriggerSetV1[]> {
-    const result = await callTriggerAction(
+    const parsed = WorkflowTriggerListRequestV1Schema.parse(request);
+    const lifetime = options.accountLifetime === undefined ? captureActiveServerAccountScopeLifetime() : options.accountLifetime;
+    // The rail and sidebar share the Account read; a consumer's cancellation
+    // must not cancel the other surface. This stores only pending work, not data.
+    options.signal?.throwIfAborted();
+    const key = JSON.stringify(parsed);
+    const shared = lifetime && !options.execute && !options.context;
+    let pending = shared ? pendingTriggerLists.get(lifetime) : undefined;
+    if (shared && !pending) { pending = new Map(); pendingTriggerLists.set(lifetime, pending); }
+    const existing = pending?.get(key);
+    const controller = shared && !existing ? new AbortController() : null;
+    const retirement = controller && lifetime ? lifetime.onRetire(() => controller.abort()) : null;
+    const promise = existing ?? callTriggerAction(
         'workflow.trigger.list',
-        WorkflowTriggerListRequestV1Schema.parse(request),
+        parsed,
         (value) => WorkflowTriggerListResultV1Schema.parse(value),
-        options,
-    );
-    return result.sets;
+        shared ? { ...(controller ? { signal: controller.signal } : {}),
+            ...(options.accountLifetime === undefined ? {} : { accountLifetime: options.accountLifetime }) } : options,
+    ).then(result => result.sets);
+    if (pending && !existing) {
+        pending.set(key, promise);
+        void promise.finally(() => {
+            retirement?.dispose();
+            if (pending?.get(key) === promise) pending.delete(key);
+        }).catch(() => undefined);
+    }
+    const sets = await promise;
+    options.signal?.throwIfAborted();
+    return sets;
 }
 
 export async function addWorkflowTrigger(request: z.input<typeof WorkflowTriggerAddRequestV1Schema>, options: CallOptions = {}): Promise<WorkflowTriggerWriteResult> {
@@ -94,6 +133,19 @@ export async function addWorkflowTrigger(request: z.input<typeof WorkflowTrigger
         (value) => WorkflowTriggerWriteResultV1Schema.parse(value),
         options,
     );
+}
+
+/** Open retained Session ciphertext on this device only; never publish its plaintext into list state. */
+export async function reviewWorkflowTriggerSet(automationId: string, options: CallOptions = {}): Promise<WorkflowTriggerSetV1> {
+    const result = await callTriggerAction(
+        'workflow.trigger.list',
+        WorkflowTriggerListRequestV1Schema.parse({ automationId, review: true }),
+        (value) => WorkflowTriggerListResultV1Schema.parse(value),
+        options,
+    );
+    const set = result.sets.find((candidate) => candidate.automationId === automationId);
+    if (!set || result.sets.length !== 1) throw new WorkflowActionError({ message: 'source_unavailable', rawCode: 'source_unavailable' });
+    return set;
 }
 
 export async function updateWorkflowTrigger(request: z.input<typeof WorkflowTriggerUpdateRequestV1Schema>, options: CallOptions = {}): Promise<WorkflowTriggerWriteResult> {

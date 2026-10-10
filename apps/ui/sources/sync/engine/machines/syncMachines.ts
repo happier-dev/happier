@@ -473,10 +473,10 @@ export async function fetchAndApplyMachines(params: {
     )] as const));
     const capturedRows = new Map(machines.map((machine) => [machine.id, machine] as const));
     const incumbentRows = new Map(machines.map((machine) => [machine.id,
-        currentMachineSnapshot?.[machine.id] ?? params.getExistingMachine?.(machine.id),
+        currentMachineSnapshot?.[machine.id] ?? params.getExistingMachine?.(machine.id) ?? null,
     ] as const));
-    const readIncumbentRow = (machineId: string) => params.getMachineSnapshot
-        ? params.getMachineSnapshot()[machineId] : params.getExistingMachine?.(machineId);
+    const readIncumbentRow = (machineId: string) => (params.getMachineSnapshot
+        ? params.getMachineSnapshot()[machineId] : params.getExistingMachine?.(machineId)) ?? null;
     const isMachineCurrent = (machineId: string) => {
         const row = capturedRows.get(machineId);
         return shouldContinue() && machineContexts.get(machineId)?.isCurrent() !== false

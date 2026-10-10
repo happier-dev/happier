@@ -12,11 +12,11 @@ import { useWorkflowTriggerSets } from '@/components/workflows/triggers/useWorkf
 import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import {
-  useActiveServerAccountScope,
   useSession,
   getStorage,
 } from '@/sync/domains/state/storage';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
+import type { ServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import {
   readManagedCreationScopeRule,
   type ManagedCreationScopeRule,
@@ -38,22 +38,17 @@ const ACCOUNT_TRIGGERS = { scope: 'account_all' } as const;
  * opens the trigger where FIN edits it. Keep writes no trigger; Session birth provenance still names its source.
  */
 export function ManagedCreationScopeRuleSection(
-  props: Readonly<{ machine: ManagedMachineV1; serverId: string }>,
+  props: Readonly<{ machine: ManagedMachineV1; serverId: string; binding?: ServerCredentialAccountScopeBinding }>,
 ) {
-  const scope = useActiveServerAccountScope();
-  // FIN trigger reads are Account-scoped to the active Home; another Home's rule is not read through it.
-  if (
-    !scope ||
-    !areServerProfileIdentifiersEquivalent(scope.serverId, props.serverId)
-  )
-    return null;
-  return <ScopeRuleReader machine={props.machine} serverId={props.serverId} accountId={scope.accountId} />;
+  const binding = props.binding;
+  if (!binding?.isCurrent() || !areServerProfileIdentifiersEquivalent(binding.serverId, props.serverId)) return null;
+  return <ScopeRuleReader machine={props.machine} serverId={props.serverId} accountId={binding.accountId} binding={binding} />;
 }
 
 function ScopeRuleReader(
-  props: Readonly<{ machine: ManagedMachineV1; serverId: string; accountId: string }>,
+  props: Readonly<{ machine: ManagedMachineV1; serverId: string; accountId: string; binding: ServerCredentialAccountScopeBinding }>,
 ) {
-  const { sets, status } = useWorkflowTriggerSets(ACCOUNT_TRIGGERS);
+  const { sets, status } = useWorkflowTriggerSets(ACCOUNT_TRIGGERS, props.binding);
   const sourceSessionId = getStorage()(React.useCallback(state => {
     if (state.sessionLocalStateScope?.accountId !== props.accountId
       || !areServerProfileIdentifiersEquivalent(state.sessionLocalStateScope.serverId, props.serverId)) return null;

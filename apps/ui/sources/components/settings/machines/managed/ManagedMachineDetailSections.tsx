@@ -99,7 +99,7 @@ export const ManagedMachinePolicySection = React.memo(
               subtitle={props.compactSummary.summary}
               onPress={props.compactSummary.onPress}
             />
-            {!keep.finiteOnly && isMachineRetainedWakeEligibleV1(keep.policy.retention) &&
+            {keep.capabilitiesAvailable !== false && !keep.finiteOnly && isMachineRetainedWakeEligibleV1(keep.policy.retention) &&
             keep.canWake !== false ? (
               <WakeRow keep={keep} testID={`${props.testID}.wake`} />
             ) : null}

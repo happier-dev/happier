@@ -283,6 +283,7 @@ import {
 } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 import { applyPermissionModeSelection } from '@/sync/domains/permissions/permissionModeApply';
 import { t, tLoose, type TranslationKey } from '@/text';
+import { isSessionAccessOwner } from '@/sync/engine/sessions/normalizeSessionAccessProjection';
 import { tracking, trackMessageSent } from '@/track';
 import { randomUUID } from '@/platform/randomUUID';
 import { useDeviceType, useIsLandscape, useIsTablet } from '@/utils/platform/responsive';
@@ -3663,7 +3664,8 @@ function SessionViewLoadedContent({
     const canSelectModel = hasWriteAccess || (embedded?.modelSelectionGranted === true && embedded.modelPicker === true);
     const sessionMachineRecord = useServerScopedMachine(sessionRouteServerId, typeof machineId === 'string' ? machineId : '');
     const sessionMachineInventorySettled = useIsMachineListSettled(sessionRouteServerId);
-    const sessionMachineAccessRemoved = Boolean(machineId && sessionMachineInventorySettled && !sessionMachineRecord);
+    const sessionMachineAccessRemoved = Boolean(isSessionAccessOwner(session.access, session.accessLevel)
+        && machineId && sessionMachineInventorySettled && !sessionMachineRecord);
     // Reconnect and the existing exact Home AccountChange edge reread native
     // observations; this does not submit Start or introduce a consumer timer.
     const socketConnectionGeneration = useSocketStatus().lastConnectedAt;

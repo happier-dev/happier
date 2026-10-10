@@ -6,7 +6,7 @@ import {
     encodeBase64,
 } from '@happier-dev/protocol';
 import type { Machine } from '@/sync/domains/state/storageTypes';
-import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createMachineFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { Encryption } from '@/sync/encryption/encryption';
 import { createDeferred } from '@/dev/testkit';
 import { storage } from '@/sync/domains/state/storage';
@@ -18,6 +18,25 @@ afterEach(() => {
 });
 
 describe('fetchAndApplyMachines plaintext account storage', () => {
+    it('admits a newly discovered Plain Machine when the snapshot and exact reader both lack its row', async () => {
+        const initialState = storage.getState();
+        storage.setState({ machines: {}, machineDisplayById: {}, machineListByServerId: {} });
+        const row = createPlainMachineRowFixture({ id: 'newly-discovered', accountId: 'bob' });
+        try {
+            await fetchAndApplyMachines({
+                credentials: { token: 'header.eyJzdWIiOiJib2IifQ==.signature' },
+                encryption: null, machineDataKeys: new Map(), replace: true,
+                getMachineSnapshot: () => storage.getState().machines,
+                getExistingMachine: (id) => storage.getState().machines[id] ?? null,
+                request: async () => Response.json([row]),
+                applyMachineDisplayEntries: (machines, options) => storage.getState().replaceMachineDisplays(machines, options),
+                applyMachines: (machines, replace) => storage.getState().applyMachines(machines, replace),
+            });
+            expect(storage.getState().machines[row.id]).toMatchObject({ id: row.id,
+                storageMode: 'plain', availability: { kind: 'available' }, metadata: { host: 'tester.local' } });
+            expect(storage.getState().machineDisplayById[row.id]?.metadata?.host).toBe('tester.local');
+        } finally { storage.setState(initialState, true); }
+    });
     it('does not reinstall keyless ready access withdrawn during post-response custody lookup', async () => {
         const initialState = storage.getState();
         const access = { custodian: { accountId: 'alice', displayName: 'Alice' }, role: 'use' as const,

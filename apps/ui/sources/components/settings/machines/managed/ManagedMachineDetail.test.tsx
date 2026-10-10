@@ -117,8 +117,8 @@ function staticRetentionQualification(machine: ManagedMachineV1, url: URL, init?
         provisioners: [{ contribution: machine.launch.provider, occurrenceId: 'static-native-occurrence', descriptor: {
             id: machine.launch.provider.localId, title: 'Static native resource', icon: 'server',
             resourceKind: 'static-native-resource', schemaVersion: machine.launch.schemaVersion,
-            launchSchema: { type: 'object', additionalProperties: true },
-            resourceSchema: { type: 'object', additionalProperties: true }, platforms: ['linux'], prerequisites: [],
+            launchSchema: { type: 'object', properties: { cpu: { type: 'integer' }, image: { type: 'string' } }, additionalProperties: false },
+            resourceSchema: { type: 'object', properties: { resourceId: { type: 'string' } }, additionalProperties: false }, platforms: ['linux'], prerequisites: [],
             billing: machine.reviewedFacts?.billing ?? { location: 'cloud', stoppedBilling: 'billed' },
             retention: { supportedIntents: ['start', 'stop', 'delete'] },
             actions: { check: 'check', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', power: 'power', destroy: 'destroy' },
@@ -223,7 +223,9 @@ describe('managed Machine detail', () => {
                 expect(url.origin).toBe(target.serverUrl);
                 triggerReads += 1;
                 return ownership === 'fin-read-failed' ? Response.json({ error: 'temporarily_unavailable' }, { status: 503 })
-                    : Response.json({ automations: boundRule ? [AutomationDefinitionListItemSchema.parse((({ executionRecipe: _recipe, ...row }) => row)(boundRule))] : [], nextCursor: null });
+                    : Response.json({ automations: boundRule ? [AutomationDefinitionListItemSchema.parse((({ executionRecipe: _recipe, triggers, ...row }) => ({
+                        ...row, triggers: triggers.map(({ triggerDefinitionEnvelope: _envelope, ...trigger }) => trigger),
+                    }))(boundRule))] : [], nextCursor: null });
             }
             if (url.pathname === '/v3/automations/birth-archive-rule') {
                 expect(url.origin).toBe(target.serverUrl);
@@ -1691,17 +1693,20 @@ describe('managed Machine detail', () => {
         // Online presence for a same-id replacement does not prove the required installation is available.
         expect(screen.tree.findAll(node => node.props?.testID === 'managed-machine.controller')).toHaveLength(0);
         expect(screen.tree.findAll(node => node.props?.testID === 'managed-machine.controller-unavailable').length).toBeGreaterThan(0);
-        await act(async () => screen.tree.findByType(ManagedMachinePolicySection).props.keep.onChange({
+        await flushHookEffects({ cycles: 25 });
+        expect(screen.tree.findByType(ManagedMachinePolicySection).props.keep.capabilitiesAvailable).toBe(false);
+        let saved: unknown;
+        await act(async () => { saved = await screen.tree.findByType(ManagedMachinePolicySection).props.keep.onChange({
             retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
-        }));
+        }); });
         await flushHookEffects({ cycles: 20 });
-        // A refused ordinary Action retains the authored proposal, not an applied revision.
+        // A replaced installation cannot qualify editing; the retained policy stays readable.
+        expect(saved).toBe(false);
         expect(screen.tree.findByType(ManagedMachinePolicySection).props.keep.policy).toMatchObject({
-            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+            retention: machine.retention, wakeOnAcceptedMessage: machine.wakeOnAcceptedMessage,
         });
         expect(screen.tree.findByType(ManagedMachinePolicySection).props.keep.defaultPolicy).toBeUndefined();
-        expect(screen.tree.findAll(node => node.props?.testID === 'managed-machine.policy.keep:reset'
-            && node.props.disabled === true).length).toBeGreaterThan(0);
+        expect(screen.findByTestId('managed-machine.policy.keep:reset')).toBeNull();
         denied = true;
         await act(async () => publishHomeAccountChange(target.id));
         await flushHookEffects({ cycles: 20 });

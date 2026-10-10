@@ -63,6 +63,8 @@ export type ManagedMachineKeepControlProps = Readonly<{
   canWake?: boolean;
   /** The declared native resource cannot stop and keep the same allocation. */
   finiteOnly?: boolean;
+  /** A live detail cannot offer policy edits until its current native capability owner qualifies it. */
+  capabilitiesAvailable?: boolean;
   /** Exact complete option identities; selection writes its returned native launch, never an inferred field. */
   nativeDuration?: Readonly<{
     value: string | null;
@@ -136,9 +138,20 @@ export const ManagedMachineKeepControl = React.memo(
   },
 );
 
+function UnavailableKeepPolicy(props: ManagedMachineKeepControlProps) {
+  return <>
+    <Item testID={`${props.testID}:retention`} title={t('managedRetention.whenUnused')}
+      subtitle={describeRetention(props.policy.retention)} mode="info" showChevron={false} />
+    <SectionContentRow testID={`${props.testID}:unavailable`}>
+      <Text style={styles.quiet}>{props.nativeExpiry ?? t('managedMachines.options.unavailable')}</Text>
+    </SectionContentRow>
+  </>;
+}
+
 function KeepFinite(props: ManagedMachineKeepControlProps) {
   const [open, setOpen] = React.useState(false);
   const duration = props.nativeDuration;
+  if (props.capabilitiesAvailable === false) return <UnavailableKeepPolicy {...props} />;
   return <>
     {duration?.editor ? <SectionContentRow testID={`${props.testID}:retention`}>
       <Text style={styles.quiet}>{t('managedRetention.ends')}</Text>
@@ -179,6 +192,7 @@ function KeepField(props: InnerProps) {
       }),
     [props.effects, props.policy.retention],
   );
+  if (props.capabilitiesAvailable === false) return <UnavailableKeepPolicy {...props} />;
   return (
     <>
       <DropdownMenu
@@ -319,6 +333,8 @@ function KeepChoices(props: InnerProps) {
     choose(rows[next]!);
     refs.current[next]?.focus();
   };
+  // Keep the draft's owner mounted while native qualification refreshes.
+  if (props.capabilitiesAvailable === false) return <UnavailableKeepPolicy {...props} />;
   return (
     <View testID={props.testID} style={styles.choices}>
       <View style={[styles.head, props.showLabel ? null : styles.headEnd]}>
