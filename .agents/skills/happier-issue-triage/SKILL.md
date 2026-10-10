@@ -62,6 +62,8 @@ Use `.agents/skills/happier-compatibility` for release provenance. Do not collap
 
 When a correction may already exist, also record the reporter's stated channel and the issue's current `stage:*` label under the lifecycle in `docs/issue-triage.md`. Record the current `needs:*` handoff separately: stage is availability, while needs is the next human handoff. Missing channel identity is a targeted evidence gap; a higher source/release status is not permission to ask a reporter on a lower channel to retest early. An already-issued conditional retry request may still justify `needs:reporter` while its named release stage is pending; the stage records that prerequisite. Clear both handoff labels when only normal release progression or release-owned certification remains.
 
+Apply the [source verification and handoff decision](../../../docs/issue-triage.md#source-verification-and-handoff-decision) when a fix is already integrated. Do not omit `stage:source` or retain `needs:maintainer` solely because a broader check is unavailable or routine release certification remains; preserve the deciding-evidence requirement and disclose the gap.
+
 Route a proven complete correction already integrated and verified on canonical `dev` with a required proposed `stage:source` mutation for each affected open issue, unless the issue already has the same or a higher verified stage. Triage does not apply the mutation; it must not silently drop the issue from the later release queue.
 
 ## 5. Form evidence-backed relationships

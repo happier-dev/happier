@@ -175,3 +175,37 @@ Arguments:
 - You can run published `hstack` via `npx` (for example `npx --yes -p @happier-dev/stack@latest hstack <command>`), but that is **not** the same as repo-local wrappers from this checkout.
 
 More dev docs: [hstack docs index](./apps/docs/content/docs/hstack/index.mdx), [development docs](./apps/docs/content/docs/development/index.mdx).
+
+### Lint and format
+
+The 0.3 development checkout uses root-owned [Oxlint](https://oxc.rs/docs/guide/usage/linter)
+and [Oxfmt](https://oxc.rs/docs/guide/usage/formatter) configurations. Run `yarn lint`
+or `hstack lint all` to check authored source throughout the repository. `hstack lint ui`
+also checks plugin UI contributions; `hstack lint cli` and `hstack lint server` narrow
+the source paths while using the same root policy. CI runs lint in the existing
+typecheck/governance job.
+
+The initial rules catch duplicate object keys, debugger statements, invalid `super`
+usage, negation precedence mistakes, invalid `typeof` comparisons, memo callbacks
+that return nothing, and unconditional state updates during React render. Broader
+React hooks/compiler rules are intentionally omitted where the initial survey
+produced widespread noise; there is no suppression baseline.
+
+Oxfmt uses an 80-column target, single quotes in JavaScript/TypeScript, and leaves
+package.json key ordering intact. Generated, vendored and build outputs are ignored.
+Format just your edited files with `yarn oxfmt path/to/file.ts path/to/other.tsx`.
+Claude Code's `PostToolUse` hook and [Codex's edit hook](https://developers.openai.com/codex/hooks)
+use the same `scripts/formatEditedFiles.mjs` adapter and root configuration. They
+format only the paths named by the edit, including Codex patch destinations; shell
+commands and external editors still need the explicit command. Start a new agent
+session after changing hook configuration and accept Codex's hook trust review when
+prompted. The hooks require the root development dependencies installed by `yarn`.
+
+The repository-wide reformat is deferred while the shared checkout is busy.
+At a quiet commit boundary, the owner can run `yarn format` (equivalent to
+`oxfmt .`), inspect the diff, and then run `yarn format:check`. Until that reformat
+lands, `format:check` is advisory and is deliberately absent from CI.
+
+The pinned Oxc packages ship native bindings for Linux x64/arm64 (GNU and musl),
+macOS x64/arm64, and Windows x64/arm64. Keep optional dependencies enabled when
+installing: those packages select the native binary for the current host.

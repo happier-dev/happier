@@ -267,6 +267,8 @@ These labels are intended to keep the public roadmap curated and consistent:
 - `type: bug`, `type: feature`, `type: task` (recommended)
 - `source: bug-report` (applied automatically by the bug-report service)
 
+Before deciding this transition, apply the [source verification and handoff decision](../../../docs/issue-triage.md#source-verification-and-handoff-decision). It defines the deciding correction evidence and the normal paired addition of `stage:source` and removal of `needs:maintainer`, including infrastructure-blocked checks. Keep unrun checks explicit; do not turn the source label into full CI or release certification.
+
 For an open issue with a complete correction integrated and verified on canonical `dev`, the next authorized GitHub mutation must add `stage:source` and remove any conflicting `stage:*` label. Omit this only when the issue is already at the same or a higher verified stage, or the evidence-backed disposition establishes that no correction exists to release; state the reason in the preview or post-action report. Do not apply the label before integration, infer a later stage, or silently omit the pending proposal when mutation authority is absent.
 
 Roadmap inclusion is opt-in. Do not add `roadmap`, add a project item, or change project fields unless exact authorization or a bounded standing grant explicitly includes roadmap changes for that issue set.

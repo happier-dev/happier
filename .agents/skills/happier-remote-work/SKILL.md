@@ -74,8 +74,8 @@ steady-state sync checks, cached load probes, selection, SSH execution, cancella
 are native shell operations. `--script` starts Yarn only on the selected host. Windows executes
 locally for this POSIX-only routing feature.
 
-The repository command policy chooses the least-loaded healthy configured target from short-lived,
-coalesced cached probes. It excludes targets whose repository filesystem reports no free space or
+The repository command policy chooses the least-loaded healthy configured target from short-lived
+cached probes, without a probe-coalescing lock or controller dispatch mutex. It excludes targets whose repository filesystem reports no free space or
 that cannot launch the requested top-level executable
 and adjusts cached load for commands dispatched there but not yet reflected by the next probe. Pass
 the executable directly when practical; `sh -lc` hides inner tool requirements from this preflight.
@@ -126,20 +126,23 @@ only when the user asks with `dev-targets sync-service stop`.
 
 ### Worker disk headroom and lane scratch (0.3 development)
 
-Linux admission measures the worker's allocated dependency, shared-cache and retained-build closure
-against available bytes on the containing filesystems. Peer disk envelopes share the existing
-admission records and lock. Insufficient headroom triggers ordered reclamation: old staging across
-stacks, unneeded Yarn entries, then scratch older than 24 hours. Unknown process visibility retains
-data. AUTO excludes the worker for that invocation's class; pins fail with the disk diagnostic.
-Status exposes measured envelopes and free bytes. Resident measurements are not temporal build
-peaks; unobserved install/build growth and filesystem quotas still require live measurement.
+Linux admission observes free bytes on the command's known write filesystems and refuses an
+already exhausted filesystem. There is no resident-closure proxy or peer disk reservation;
+no operation-specific additional-write peak has been established. Exhaustion triggers ordered
+reclamation: old staging across stacks, unneeded Yarn entries, then scratch older than 24 hours.
+Unknown UID or same-UID process visibility retains data; processes whose status identifies
+only foreign UIDs do not block this user's reclamation. Explicit maintenance applies the same retention policy
+independently. AUTO excludes a still-exhausted worker; pins fail with the disk diagnostic.
+Status exposes free bytes. Future install/build writes and quotas are not guaranteed by admission.
 
 Lane scripts use a unique `happier-*`, `hstack-*` or `docs-check-*` scratch directory beneath the
-worker's temporary directory, for example `mktemp -d "${TMPDIR:-/tmp}/happier-lane-disk-budget.XXXXXX"`.
+worker's temporary directory, for example `mktemp -d "$TMPDIR/happier-lane-disk-budget.XXXXXX"`.
+Routed POSIX commands default `TMPDIR` to `tmp` beneath the configured worker CLI home,
+on its disk-backed filesystem rather than RAM-backed `/tmp`. Explicit `TMPDIR` is preserved.
 Keep scratch outside the source mirror. The existing historical custody reaper covers these names;
-24 hours since the newest descendant change and a successful all-process cwd/fd/mapping check are
+24 hours since the newest descendant change and a successful same-UID cwd/fd/mapping check are
 required before reclamation. A failed holder query is unknown, never "no holder". If a worker's
-`/tmp` quota prevents allocation, `/var/tmp` may be selected explicitly with `TMPDIR`; run the same
+unrouted command needs another disk-backed root, `/var/tmp` may be selected explicitly with `TMPDIR`; run the same
 reaper against that parent for maintenance. Never relocate or delete a live lane's scratch.
 
 Use explicit transport for required platform evidence or target-specific cwd/env/TTY. It uses the
@@ -169,6 +172,18 @@ Service placement uses the same target configuration but has its own lifecycle o
 Independent commands may run concurrently, but preserve the repository's existing exclusive owners for package state, generated outputs, databases, ports, and devices. Do not add an agent-side global queue.
 
 ## Provisioning and recovery
+
+### Dedicated QA host (0.3 development)
+
+The canonical QA browser launcher uses `--no-sandbox` under the approved QA-host policy for Happier's own QA app. Attach controller automation to that browser; do not introduce a separate per-lane launch policy. Retain a TTY-backed foreground tool handle and verify cleanup after SIGINT: cancelling a non-TTY checkout launcher can leave the actual command and forward running.
+
+New controlled `--qa`/`agent-qa-*` stacks use the configured linux3, linux2 and linux1 QA pool. `service_placement.mjs` chooses the host with the largest actually available memory budget after live reservations, then writes one explicit daemon pin; command pools never reselect the Machine. Live Expo/browser/daemon RSS is already reflected in available memory, not deducted twice. Include windows1-linux only after its outer Windows C: disk is healthy; it is not a default candidate. Heavy validation stays on hosts fitting its existing class envelopes, independently of this QA pool. Existing stacks change only at an owner-requested next restart, through `dev-targets placement set daemon <target> --stack=<qa-stack>`. This QA default does not change development-daemon placement.
+
+Use `dev-targets qa setup <target> --stack=<qa-stack>` for idempotent managed JS, Claude Code/Codex CLI, Chromium, scratch, power and disk-retention preparation. Never copy user Agent credentials: the paired daemon owns connected-service materialization. Service-memory observation reserves live daemon/browser trees alongside server/Expo trees through the existing admission input; small jobs may use spare capacity and heavy classes retain their canonical envelopes.
+
+For browser QA, `dev-targets browser start <lane-session> --stack=<qa-stack> --url=<qa-ui-url>` selects the QA pool host with the greatest observed unreserved memory for that browser lifetime, independently of the fixed daemon pin, and forwards its CDP endpoint to the controller. Agent-browser/Playwright run locally against the returned endpoint and open the returned browser-facing `url`, which preserves the original origins and canonical Home address. A lane-owned loopback reverse SOCKS route through the existing SSH owner reaches the controller's QA server and borrowed Expo ingress; the browser owner supplies the required proxy policy. Do not rewrite Home URLs or add per-lane launch flags. Preserve the foreground handle; SIGINT retires only its owned browser/profile and forwards. An unusable pool or unavailable selected host fails closed without a controller-local browser; never silently relocate a pinned daemon. Read the controlled-stack skill for the complete QA lifecycle.
+
+For a QA ingress with a self-signed leaf, add `--trust-cert=<controller-local PEM certificate path>` to `browser start`. The controller reads that explicit certificate and sends only its SHA-256 SPKI digest to the worker; Chromium trusts the matching public key for this browser lifetime through `--ignore-certificate-errors-spki-list`. An unreadable or invalid certificate fails the launch. Omitting the option preserves normal certificate checks. Supply only the public certificate, never a private key; certificates are not discovered automatically and system trust stores are not changed.
 
 When no suitable target exists, report that fact. If the user asks to configure one, use:
 

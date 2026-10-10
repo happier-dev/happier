@@ -16,6 +16,14 @@ Schemas use the public SDK `/protocol` composition algebra and `/contributions` 
 
 The public [source conformance check](../packages/triage-protocol/src/testing/v1/conformance.ts) reads requiredness from those canonical declarations. An optional role may be omitted; when supplied, its binding must still satisfy the declared Action or surface contract. Conformance maintains no separate list of optional role names.
 
+In current 0.3 development source, `listInstances` is a safe read on plugin,
+UI, agent, MCP and CLI surfaces. All six bundled sources inherit that declaration;
+automated callers invoke the source's ordinary discovery Action, then submit an
+explicit `sources/administer-v1` intent. An empty placement list removes global
+menu placement, not Action invocation. Discovery never creates a source and never
+returns credential material; source administration retains its shared approval
+default for Account writes.
+
 Account-only sources declare their Action inputs with the shared
 `TriageSourceConnectedAccountInputsV1` schemas from the same protocol owner.
 These preserve each role's fields while requiring a configured-account instance.
@@ -29,6 +37,14 @@ sources use the generic schema and declare the native-service selection path.
 Triage's [`administerConfiguredSourceInstance.ts`](../packages/plugins/triage/src/corpus/configuration/administerConfiguredSourceInstance.ts) owns configured-instance writes and the exact source-ownership comparison. [`readConfiguredSourceRows.ts`](../packages/plugins/triage/src/corpus/configuration/readConfiguredSourceRows.ts) supplies the shared active-row read and cursor handling. Discovery produces candidates, not automatic durable creation; mounted source Settings uses the administration Action rather than a direct Collection writer. The read ABI distinguishes complete from truncated results and refuses invalid or changed caller authority.
 
 The source plugin retains its private configuration-token encoding and provider-specific behavior. Triage business behavior stays in `packages/plugins/triage`; shared host code stays source-neutral. Do not use this schema package as a new source service, credential store or corpus persistence owner.
+
+In 0.3 development, GitHub Settings supplies a source-native draft editor through
+the shared page's public `DraftEditor` seam. Add, Update and Restore let the user
+choose all reachable repositories or one `owner/repository`; Save normalizes and
+encodes that choice through GitHub's existing configuration owner. The editor
+changes only `draft.configuration`, preserving the discovered binding, instance
+key, key stability and locator. The shared page still submits the caller-bound
+administration Action and owns settlement; canceling the editor writes nothing.
 
 ### Native GitHub source bindings (0.3 development)
 
@@ -53,6 +69,20 @@ requires signing in with `gh` on that machine, not creating a Connected Account.
 Other first-party sources retain their account-only admission and reject native
 bindings. Native selection does not weaken explicit-account precedence or
 retired-subject checks; see [plugin platform ownership](plugin-platform.md#machine-native-github-credentials-03-development).
+
+For agent-authored repository scope, use `action.invoke` with Action reference
+`{ pluginId: 'happier.scm.forge.github', localId: 'triage/list-github-instances' }`
+and input `{ v: 1 }`. Retain
+the chosen candidate's binding, local instance key, stability and locator, and
+replace only its configuration. GitHub's current source-owned token is the JSON
+encoding of `{ v: 1, scope: { kind: 'repository', repositoryKey: 'owner/repository' } }`;
+the outer configuration remains `{ v: 1, token }`. Submit the resulting draft to
+the Action reference `{ pluginId: 'happier.triage', localId: 'sources/administer-v1' }`
+with `kind: 'create'` and source
+`{ pluginId: 'happier.scm.forge.github', localId: 'github-forge' }`. Reconfiguration
+uses the same draft and its existing `sourceInstanceId`. The Settings editor and
+agent inputs share GitHub's [configuration encoder/decoder](../packages/plugins/scm-github/src/triage/configuration.ts);
+this is a development source shape, not a generic host repository-scope schema.
 
 ## Mounted page actions (0.3 development)
 
@@ -131,7 +161,9 @@ read returns honest pending. There is no local three-read/750 ms settlement wind
 
 ## Detail panels and cross-source fix links
 
-[`descriptor.ts`](../packages/triage-protocol/src/v1/descriptor.ts) owns per-kind `detailTabs` and `detailActions`. Shared tab ids select the target's Overview, Activity, Files and Checks vocabulary; source tab ids keep source-owned names and append after the shared tabs. A source tab's optional `titleKey` resolves through that admitted source's projected translation bundle, with `title` as the fallback. Triage owns the frame and tab strip. A source renders the requested [`detail.ts`](../packages/triage-protocol/src/v1/detail.ts) `panel` through its existing detail surface; `detailActions: true` requests the `actions` panel in the header. Omission preserves the whole-detail path. A source using public Plugin UI `Tabs` consumes `tabList="host"` for a target-selected panel and `useTabPanelActivity().activeSignal` for retained asynchronous work.
+A present snapshot ([`observations.ts`](../packages/triage-protocol/src/v1/observations.ts)) may carry two optional display lines for list rows and the detail header: `authorLabel` (who opened the entry, as the provider names them) and `designation` (its short native designation as the provider writes it: GitHub `#2481`, GitLab `!88`/`#12`, Bitbucket `#42`, Azure DevOps `!17`, Sentry's short id). Both are presentation only, never parsed back into identity, and a shortened one sets `projectionTruncated`. PostHog error groups and Sentry issues carry no author; PostHog carries no designation.
+
+[`descriptor.ts`](../packages/triage-protocol/src/v1/descriptor.ts) owns per-kind `detailTabs` and `detailActions`. Shared tab ids select the target's Overview, Activity, Files and Checks vocabulary; source tab ids keep source-owned names and append after the shared tabs. A source tab's optional `titleKey` resolves through that admitted source's projected translation bundle, with `title` as the fallback. Either tab arm may name a `summaryFact`: the id of a row fact the kind's snapshots already carry. Triage's tab plan ([`tabs.ts`](../packages/plugins/triage/src/ui/detail/tabs.ts)) reads that fact from the snapshot of the entry that renders the tab (the linked fix PR's own facts for an issue's Files and Checks) and the strip shows its value beside the title: a number in the reader's locale (`~` when approximate), a status in the shared status tone (`resolveTriageRowFactStatusToneV1`), text quietly; time, actor and detail-only facts and a missing fact show nothing. Current declarations: GitHub Checks (`github/checks`), Sentry Occurrences (`events`), PostHog Occurrences and Affected sessions (`posthog/occurrences`, `posthog/sessions`). No source carries a changed-file count as a row fact, so Files has no summary. Triage owns the frame and tab strip. A source renders the requested [`detail.ts`](../packages/triage-protocol/src/v1/detail.ts) `panel` through its existing detail surface; `detailActions: true` requests the `actions` panel in the header. Omission preserves the whole-detail path. A source using public Plugin UI `Tabs` consumes `tabList="host"` for a target-selected panel and `useTabPanelActivity().activeSignal` for retained asynchronous work.
 
 The detail body keeps one mounted instance per entry/configured connection while
 changing its `panel` input. Selection and settled evidence pages remain owned by

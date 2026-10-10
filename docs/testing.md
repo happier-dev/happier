@@ -18,7 +18,46 @@ Canonical lanes:
 
 Use the smallest relevant subset during RED/GREEN loops. Before handoff, run the touched package typecheck/build-enforcing lane and at least one broader relevant lane when shared contracts are touched.
 
+In 0.3 development, `yarn workspace @happier-dev/cli test:unit src/api/artifacts/accountArtifactStore.test.ts` forwards the file selection through the routed script chain and runs it once. Explicit runner arguments, including file and test-name filters, bypass automatic sharding and the unit lane's unrelated native checks. An unfiltered unit run retains its shard/CI-part selection, native script tests and import-cycle guard. Known CLI unit aliases use source-test preparation and the validation class; actual compiler and runtime preparation keeps its own class.
+
 ## Choose checks by the changed contract
+
+### Primary workload standby preparation (0.3 development)
+
+`host.mjs` owns `hstack dev-vm primary status` and
+`hstack dev-vm primary switch TARGET --dry-run`. The inspection projects the
+existing execution-host profile and canonical dev-target configuration through
+`utils/execution_host/primary.mjs`; it writes no primary registry or assignment.
+An active Mac profile reads the mounted guest configuration through the existing
+workspace-mount owner and refuses to substitute the Mac copy when that view is
+unavailable. Server placement is a separate fact, never whole-workload authority.
+Unknown standby lag and database replica time remain explicitly unverified.
+
+`primary sync TARGET --source=SOURCE --home=HOME` extends the existing
+`dev_targets/sync_project.mjs` owner and shared Mutagen daemon/lock. Portable
+home state uses one-way-safe synchronization; generated online SQLite backups
+use a non-overlapping one-way-replica session in the same project. Raw Agent
+SQLite/WAL, ephemeral homes, build outputs, host-local daemon settings and
+incoming SSH authorized keys are excluded. Capture does not install snapshots
+over a running target's provider databases. The owner source loop is
+`.project/plans/2026-09-28-systemic-deep-audit/scripts/primary-switch/owner.test.mjs`;
+it exercises real Python SQLite online backup with a committed WAL writer and
+the real sync owner through OS/process boundaries.
+
+Non-dry-run switches fail before any transport or state change, even with
+`--force`. SSH primary delegation, both stacks' database replication, writer
+quiescence, role movement, and restore-test execution remain unimplemented. Do not
+use worker-source sync readiness as proof of complete standby freshness: worker
+mirrors exclude Git metadata and do not snapshot Agent SQLite databases.
+The composed completion check must switch between two lane-owned throwaway
+targets, preserve dirty/untracked work, move sessions through canonical handoff
+between distinct Machine identities, keep the source daemon accepting new work, restore both stacks' databases
+and boot its server, resume Claude Code and Codex sessions, then run the dry-run
+against the real topology. It must not switch the owner's current primary.
+The real work-session authority currently lives in the read-only 0.2 sibling;
+its public handoff and current permission-mode/machine projection gaps require
+owner authorization before the composed switch can be implemented. See the
+[operator guide](../apps/docs/content/docs/hstack/dev-vm.mdx#move-the-primary).
 
 | Change | Focused loop | Integration boundary |
 | --- | --- | --- |
@@ -33,7 +72,20 @@ Use shared boundary fixtures and real internal owners. A changed internal export
 
 Root unit and integration commands collect failures across independent workspaces instead of stopping at the first red package. Package preparation remains a prerequisite; aggregate failure collection cannot expose behavior behind an unavailable build, database, or candidate. Do not call an unexecuted lane successful.
 
-In 0.3 development, both remote command entry points finish dependency and workspace preparation before reserving the payload's heavyweight admission envelope. Preparation's compiler leaves retain their own admission. This order lets a dependency/build lock holder obtain admission while another command waits for that lock. Native admission decisions reclaim dead owners and owner directories with an unreadable or incomplete process identity under the existing capacity lock; read-only memory samples do not mutate those records.
+In 0.3 development, runtime worker bootstrap, validation preparation, local `hstack` bundled-workspace preflight and the Stack unit runner prepare emitted workspace prerequisites in `source-dev` mode by default. Their package compilers use the existing `package-dist` envelope, reusing an authenticated parent admission when present. Explicit strict mode, typecheck preparation and public packing/publication still check semantics; public `typecheck` remains independent. Both UI patch stages request patch-package's `--error-on-fail`, so a mixed previously patched tree reaches the existing dependency owner's pristine re-extraction and retry rather than being admitted as ready.
+
+Package-artifact publication admits its selected plugin compiler outputs through the existing
+workspace dependency build owner before the generator consumes them. This also prepares missing
+`dist` on a cold AUTO replica; check-only projections and compiler-input generation do not compile
+plugin packages. Existing optional-build isolation and required-plugin failure policy still apply.
+
+Both `source-dev` and `qa-runtime` package builds compile captured inputs, so edits during compilation do not require a quiet checkout. The output record identifies the captured inputs; later edits demand a subsequent build rather than being marked current by the completed build. Strict builds retain their live-input drift fence.
+
+The Stack unit runner isolates product state and caches without dropping its executor placement or authenticated admission identity. Tests simulating a different worker isolate that worker's OS admission state and package-manager executable paths through the canonical boundary fixtures instead of sharing the real host's reservations.
+
+Remote dependency bootstrap reuses the existing per-install dependency refresh lock and checks freshness again after waiting, so same-input callers share the completed installation. In 0.3 development, both remote command entry points finish dependency and workspace preparation before reserving the payload's heavyweight admission envelope. Preparation's compiler leaves retain their own admission. This order lets a dependency/build lock holder obtain admission while another command waits for that lock. Dependency waiters remain behind a live installer without an acquisition deadline; a delayed JavaScript heartbeat during synchronous package-manager work does not permit replacing that owner. The existing lock owner still reclaims exited installers and stale malformed lock records. Native admission decisions reclaim dead owners and owner directories with an unreadable or incomplete process identity under the existing capacity lock; read-only memory samples do not mutate those records.
+
+Routed POSIX commands default `TMPDIR` to `tmp` beneath the configured worker CLI home, on the worker's disk-backed filesystem. Explicit `TMPDIR` remains supported; existing live scratch is never relocated. This prevents default test/build scratch from consuming RAM-backed `/tmp` quotas. Custody owns that environment before admission, preparation and payload execution.
 
 For broad local collection, inspect `node scripts/pipeline/run.mjs checks --profile fast --dry-run` first. For a focused rerun, use a workspace command or `checks --profile custom --custom-checks integration,typecheck --install-deps false`. Custom selection is exact, not an implicit full baseline. The checks owner collects independent failures and returns nonzero; install failure still stops dependent checks.
 
@@ -41,11 +93,96 @@ Local and hosted profiles share selection policy ownership in `scripts/pipeline/
 
 In 0.3 development, a direct `hstack-exec` invocation from a configured Mac workspace delegates to its active primary execution host through the existing execution-host bridge. The authoritative host's native dispatcher then selects a worker using its own current configuration. Package working directories, launcher flags, explicit environment arguments and exit results survive that handoff. Explicit `--local`, already-placed children, CI and sandbox invocations retain their local paths; candidate profiles do not activate delegation.
 
-The development launcher also accepts `--repo=/absolute/sibling/checkout` before its other options. That checkout has a separate command placement policy and mirror on the configured `mac2-linux`/`windows2-linux` subset by default; change the subset through `dev-targets placement set commands ... --repo=...`. Its Mutagen project uses the same ignore policy and `no-watch` at both ends, seeds each new session once, then crosses the existing selected-target synchronization barrier on dispatch. Admission, AUTO retries, custody and dependency freshness remain 0.3-owned; installation and UI postinstall consume the sibling's own lockfile and source, and dependency builds use its existing workspace owner. From 0.2, the optional thin `apps/stack/bin/hstack-exec` delegates when its executable 0.3 sibling exists. Without that sibling, or with `HAPPIER_ROUTED_EXECUTOR=0`, it executes locally with native stdio, exit and signal behavior. Ordinary 0.2 package scripts are not automatically rewritten; invoke them through the wrapper.
+In current 0.3 development, active execution-host delegation retains a running guest when only capacity or toolchain updates are pending. It warns with the pending update instead of requiring provisioning or a VM restart before Stack control and command execution, including 0.2 commands using the 0.3 controller. Each guest command still enforces its own tool requirements. Doctor continues to report full provisioning compliance; candidate execution, unavailable guest session management, creation identity drift and security configuration drift remain blocking. The existing known legacy Lima service-forward cutover exception remains transport-specific. Delegation does not apply updates or restart the guest.
 
-Development command placement uses the native `apps/stack/bin/hstack-exec` owner, including POSIX commands launched through `dev-targets exec auto`. CPU load and used/available memory rank reachable targets. `remote_commands.mjs` owns both workload classification and memory envelopes; its generated `native_command_policy.sh` is consumed by selection, Linux/WSL admission, and explicit local execution. Measured cli-common and Protocol dist builds use `package-dist` with the existing 6 GiB envelope: observed Linux peaks were 1,853,332 and 4,682,608 KiB respectively. Canonical runtime worker requests use `runtime-build` with an 18 GiB envelope: a successful full daemon build on Linux x64 peaked at 16,442,992 KiB of aggregate process-tree RSS. Adding at least the measured package envelope's 1,608,848 KiB of spare headroom and rounding up to whole GiB gives 18 GiB; this does not justify admitting the full workload with only 15 GiB available. Full typechecks and unmeasured builds retain the conservative 21 GiB `compilation` envelope. Focused validation and dependency installation retain their existing 6 GiB envelope, derived from the earlier approximately 5.3 GB compiler and 1.1 GB suite footprints. Dependency-incomplete typechecks do not justify lowering the conservative envelope.
+The development launcher also accepts `--repo=/absolute/sibling/checkout` before its other options. That checkout has a separate command placement policy and mirror on the configured `mac2-linux`/`windows2-linux` subset by default; change the subset through `dev-targets placement set commands ... --repo=...`. Its Mutagen project uses the same ignore policy and `no-watch` at both ends for command-only targets. Explicit service placements from the sibling's own Stack configuration retain their exact endpoints in that same producer-owned project, with source watching for service targets; `mac-host` remains excluded from automatic command placement. The project seeds each new session once, then crosses the existing selected-target synchronization barrier on dispatch. Admission, AUTO retries, custody and dependency freshness remain 0.3-owned; installation and UI postinstall consume the sibling's own lockfile and source, and dependency builds use its existing workspace owner. From 0.2, the optional thin `apps/stack/bin/hstack-exec` delegates when its executable 0.3 sibling exists. Without that sibling, or with `HAPPIER_ROUTED_EXECUTOR=0`, it executes locally with native stdio, exit and signal behavior. Ordinary 0.2 package scripts are not automatically rewritten; invoke them through the wrapper.
 
-Selection excludes machines whose total RAM is below the selected class's requirement. Linux/WSL admission subtracts only each live admitted job's unused reservation, `max(0, class envelope - authenticated process-tree RSS)`, from available memory: resident pages are already absent from `MemAvailable`. Missing RSS observation retains the full reservation. The existing 10% available-memory and CPU/memory pressure checks remain. Reservations remain until exit or proven-dead owner reclamation; authenticated descendants reuse their parent's reservation, and escalation replaces that owner's envelope under the admission lock while crediting its existing resident memory. Explicit `--local` bypasses remote placement and uses this same admission against local memory. Light local commands remain immediate. Diagnostics name available, required and unused reserved memory. The envelopes reserve admission headroom but do not cap a command's actual memory use. Runtime publication placement uses the retained-demand broker described below; worker pressure keeps the build remote, and only unavailable capable workers permit configured local fallback. Darwin selection applies the total-capacity filter and pressure ranking; its existing execution path has no admission queue. Native Windows command routing remains local.
+Development command placement uses the native `apps/stack/bin/hstack-exec` owner, including POSIX commands launched through `dev-targets exec auto`. CPU load and used/available memory rank reachable targets. `remote_commands.mjs` owns both workload classification and memory envelopes; its generated `native_command_policy.sh` is consumed by selection, Linux/WSL admission, and explicit local execution. Measured package dist peaks fit the existing 6 GiB `package-dist` envelope: cli-common and Protocol's earlier Linux dist peaks were 1,853,332 and 4,682,608 KiB respectively. Canonical runtime worker requests use `runtime-build` with an 18 GiB envelope: a successful full daemon build on Linux x64 peaked at 16,442,992 KiB of aggregate process-tree RSS. Adding the measured package envelope's 1,608,848 KiB of spare headroom and rounding up to whole GiB gives 18 GiB. Two sequential public TS7 app checks on Linux ARM64 on 2026-10-09 observed largest process-tree metrics of 18,909,772 KiB for UI, 13,688,852 KiB for CLI and 14,179,616 KiB for server. Adding that same headroom and rounding up gives `compilation-ui` 20 GiB, `compilation-cli` 15 GiB and `compilation-server` 16 GiB. The owner decision applies those observations despite incomplete import graphs; they are not certified maxima and must be re-derived if a clean graph measures higher. Unscoped/mixed-package checks and unmeasured builds use the UI-sized 20 GiB `compilation` envelope; serial projects within one package retain its package class. Admission diagnostics and compiler OOMs expose insufficient headroom. Focused validation and dependency installation retain their existing 6 GiB envelope, derived from the earlier approximately 5.3 GB compiler and 1.1 GB suite footprints.
+
+Successful public typecheck measurements on Linux x64 on 2026-10-09 peaked at
+10,420,624 KiB of aggregate live-tree VmHWM for Protocol and 2,777,992 KiB for
+cli-common. Adding the same 1,608,848 KiB headroom gives minimum rounded
+envelopes of 12 and 5 GiB. Their public scripts and compiler invocations reuse
+the existing fitting classes: `runtime-build` (18 GiB) for Protocol and
+`package-dist` (6 GiB) for cli-common. Plugin SDK also uses `package-dist`:
+both public compiler programs ran, peaking at 4,428,896 KiB, and reported
+eight TS2322 diagnostics rather than missing dependencies. Docs `types:check`
+and its compiler also use `package-dist`; two runs with fresh incremental-state
+files peaked at 439,544 KiB. Mixed-package and unknown checks retain
+`compilation`. Dependency preparation still admits its own compiler workloads.
+Canonical per-package `buildTypeScriptPackageDist.mjs -p tsconfig.json` strict
+builds reuse `package-dist`; Protocol and SDK use `runtime-build` because their
+public-check observations plus headroom exceed 6 GiB. Emit-only builds retain
+`package-dist`. Root and cross-package project builds retain `compilation`.
+
+Development SSH commands, probes and native execution share the OpenSSH control socket selected by the synchronization owner's generated configuration (`sync_project.mjs#prepareDevTargetOpenSsh`). Generated defaults use `ControlMaster auto` and ten idle minutes of persistence; explicit guest socket paths remain in place. The native launcher's existing master-creation lock waits for its live creator instead of opening a new connection on contention. Stack and browser forwards remain dedicated because their owner must remove its listeners on stop without killing another session's master. Enrollment and controller-key verification use independent handshakes rather than treating an already-authenticated master as proof of the configured key. The opt-in Linux host policies and their removal are documented in `apps/docs/content/docs/hstack/dev-targets.mdx`; neither enrollment nor ordinary dispatch applies them.
+
+In 0.3 development, `provision.mjs` owns first-contact enrollment and explicit Linux host
+preparation. Enrollment accepts missing Node/Corepack and prints the exact
+`host prepare NAME --toolchain` next step; commands still need that toolchain. Explicit
+`--toolchain` consumes the Ubuntu worker provision profile's NodeSource Node 24, Corepack,
+pinned Yarn, Go and ripgrep setup. It verifies these tools and skips installation when they
+are already usable. `--create-user=NAME [--home=/absolute/path]` installs the dedicated public key, enables
+general passwordless sudo for the account, and switches the existing target's SSH user. The
+default home is `/home/NAME`; `--create-user=leeroy.guest --home=/home/leeroy.guest` provides path
+parity. This account policy is distinct from the existing narrow power/browser sudo grants.
+Its sudoers filename uses the hex-encoded account name without dots, and the candidate connection
+must pass both master-free key login and `sudo -n true` before the target changes. Existing accounts
+with another home are refused, as are existing UID-zero aliases and requested homes used by another
+account (including canonical path aliases), before SSH keys change. Default mirror/CLI-home paths
+follow the new home, explicit paths remain.
+CLI Vitest commands declare Go in the shared command policy, and executable preflight checks
+that declaration before dependency bootstrap or payload dispatch. Repair a missing Go executable
+with the same `host prepare NAME --toolchain` command; no pool-entry removal is needed.
+`--tailscale [--tailscale-authkey-stdin]` installs from the official package repository, joins
+when needed, and changes the existing target's endpoint to its tailnet address; the auth key
+travels only through stdin. `--auto-updates` enables unattended security upgrades without
+automatic reboot on Ubuntu. The [worker guide's fresh-host recipe](../apps/docs/content/docs/hstack/dev-targets.mdx#bring-up-a-fresh-linux-server)
+then invokes the existing QA tooling owner and exact-target executor before selecting placement.
+
+For existing workers with only the older narrow sudo grant, explicitly refresh it with
+`hstack dev-targets host prepare NAME --passwordless-sudo --passwordless-provisioning`
+before `hstack dev-targets qa setup NAME`. The browser installer uses
+`env COREPACK_ENABLE_PROJECT_SPEC=0` inside sudo to bypass the checkout's Yarn `packageManager`;
+the grant permits that exact assignment, not arbitrary elevated environment variables.
+QA setup does not broaden privileges automatically; full `--create-user` grants need no refresh.
+
+`--lockdown[=tailscale-only|ssh-public]` owns UFW default-deny incoming policy and SSH password,
+keyboard-interactive, and password-based root-login restrictions. Tailscale-only is the default
+and ssh-public additionally permits public 22/tcp. Both require installed UFW, Tailscale up,
+and an actual fresh tailnet-addressed key connection. The same SSH policy owner adopts the earlier
+`40-happier-no-password.conf` beside its fleet SSH configuration. Before every SSH-server/firewall policy mutation,
+preparation requires a dedicated-key probe with `ControlMaster=no` and `ControlPath=none`,
+arms five-minute automatic rollback, validates SSH configuration, and cancels rollback only
+after a fresh post-change key login. A password-authenticated master is not key evidence.
+The observed empty `authorized_keys` was caused by the orchestrator's `SSH_ASKPASS` helper:
+its inner SSH command consumed the outer command's stdin; adding `ssh -n` fixed that input loss.
+The enrollment defect was separately allowing a password-authenticated master to satisfy its
+dedicated-key probe. Recovery restores the key through password enrollment or an independent administrator
+or provider console, then proves a master-free key login before applying restrictions.
+
+Validate missing-toolchain enrollment, check-first repeated preparation, account/home
+changes, secret transport, Tailscale-only refusal, independent key probes and rollback
+arming/cancellation. Live proof uses the enrolled host: verify key-only tailnet login, public
+22/tcp closure from a non-tailnet path when available (otherwise label UFW/listening-socket
+evidence as the narrower observation), run QA setup and exact-target execution, then use existing
+command and QA placement owners. Script generation and green unit tests alone do not establish
+live host readiness. These host changes are opt-in, never ordinary dispatch side effects.
+Ordinary unmanaged `add --host` does not apply power policy; explicit `--managed-lima` and
+`--managed-wsl` enrollment still provisions the whole guest and its existing power policy.
+`service_placement.mjs#DEFAULT_QA_TARGET_NAMES` orders the default browser pool and new QA creation
+projection consumed by `stack_commands.mjs` as `nl1`, `nl2`, `linux3`, `linux2`, `linux1`.
+Explicit candidate pools stay exact;
+creation defaults never retrofit existing Machine pins. Browser placement ranks the pool for its
+own lifetime and does not move the daemon. The implicit browser pool includes only candidates
+registered in that consumer's existing target registry, so registries predating either worker still work.
+An empty implicit pool and an unknown explicitly named target fail without local browser fallback.
+
+On the Linux controller, explicit `--local` heavyweight compilation (including package-dist and runtime-build) refuses by default and points to AUTO. A caller can explicitly authorize `--local --allow-local-compilation`; this changes placement only and retains class admission plus the existing 8 GiB local floor, even under CI. Already-placed workers do not require the controller override. Light local commands remain immediate. Ordinary automatic CI execution retains its existing exemption.
+
+Selection excludes machines whose total RAM is below the selected class's requirement. Linux/WSL admission subtracts only each live admitted job's unused reservation, `max(0, class envelope - authenticated process-tree memory)`, from available memory: resident pages are already absent from `MemAvailable`. Missing memory observation retains the full reservation. There is no additional guessed available-memory percentage, PSI or CPU-load denial. Reservations remain until exit or proven-dead owner reclamation; authenticated descendants reuse their parent's reservation, and escalation replaces that owner's envelope under the admission lock while crediting its existing resident memory. Explicit `--local` bypasses remote placement and uses this same admission against local memory. Light local commands remain immediate. Diagnostics name available, required and unused reserved memory. The envelopes reserve admission headroom but do not cap a command's actual memory use. Runtime publication placement uses the retained-demand broker described below; busy admission keeps the build remote, and only unavailable capable workers permit configured local fallback. Darwin selection applies the total-capacity filter and load ranking; its existing execution path has no admission queue. Native Windows command routing remains local.
+
+In current 0.3 development source, the canonical Linux observer uses `/proc/<pid>/smaps_rollup` PSS for service/browser and admitted trees so shared pages contribute each process's share. During native admission, it can use the summed service RSS upper bound only when that bound cannot constrain available memory or the class's physical capacity; admitted-owner credits always retain exact PSS. Process metadata is observed once for the executing account, and kernel generations are read without per-PID subprocesses. Vanished processes contribute zero rather than stale RSS; unreadable or malformed PSS for a live process falls back to RSS and reports the accounted fallback PIDs. When neither observation is available, admission retains the full reservation. Historical RSS peak measurements above remain measurements of the original runs.
 
 In current 0.3 development source, the Linux worker fixes admission state at `/tmp/happier-heavyweight-admission-v1` and derives machine identity from the OS. Caller roots, homes, temporary mirrors and target aliases cannot create separate queues. The configured worker execution account owns that directory; unavailable or foreign-account state fails closed rather than falling back to a private root. Existing private-root live owners are observed during cutover, and authenticated legacy ancestors migrate their existing envelope on reentry. Already-loaded older launchers must drain before the new single-queue contract covers every writer.
 
@@ -53,26 +190,45 @@ If remote admission cannot register its state before payload execution, the admi
 
 In current 0.3 development, AUTO checks actual worker admission without waiting after preparation and before payload execution. An execution-qualified busy result releases that dispatch reservation and re-evaluates the remaining pool without an unavailable-host TTL. If every usable worker is busy, the selector waits using the admission pressure-retry cadence and re-evaluates the pool; it does not fall back locally merely because workers are busy. Explicit pins retain the worker's observable admission wait. Existing already-loaded launchers are not restarted or moved by this source change.
 
+POSIX compilation-class dispatch in 0.3 development keeps project locality at this same
+AUTO selector. A repeated project scope prefers its most recently completed worker
+when the current sample can admit immediately; busy admission falls back to
+ordinary pool selection. Each invocation completes its own causal synchronization
+barrier and runs through the existing heavyweight admission. The native compiler
+remains authoritative for incremental currentness. There is no input-equality
+scan, shared in-flight result or completed-check cache.
+
+Remote development service readiness and QA-browser forward readiness have no
+automatic overall startup deadline. They follow their owning process/user
+cancellation and exit lifecycle; positive explicit service-readiness options
+remain operator choices. Mutagen project mutation still uses its canonical
+exclusive lock, without a competing acquisition deadline. Remote cancellation
+confirmation similarly has no separate ten-second command cutoff.
+
+In current 0.3 development source, browser workers retain their signal handlers until their detached agent-browser session and temporary profile are closed. Controller loss follows the existing stdin lifeline; browser custody sends `close` through the existing control channel and awaits that cleanup rather than applying the generic two-second group cancellation. Stack stop retires exact Stack-name/env-file/browser-kind bindings locally and on configured POSIX targets, even without runtime state. It closes workers before sweeping remaining orphaned browser processes. An unavailable target leaves browser retirement unconfirmed, reports `browser_cleanup_unconfirmed:<target>`, and allows stop to proceed. A reachable target reporting browser cleanup failure still prevents finalization. This does not authorize another Stack's processes or a controller-local fallback.
+
+Remote Stack retirement in current 0.3 development uses the canonical trusted-process lifecycle owner when a runtime record survives a reboot; a retained file does not prove its recorded processes are alive. The existing legacy Expo-state probe still blocks retirement while a recorded Expo process survives. After a failed or interrupted stop, including one with no exit status, a fresh absence probe can confirm retirement. Surviving processes or unreadable membership remain unconfirmed and block completion.
+
 Runtime builds prepare and upload captured source before creating a native runtime-build owner or waiter. Source-transfer PREPARE/ACK precedes, and does not replace, actual admission READY. Once source is ready, builds retain one original worker demand while native AUTO checks alternatives on that same cadence. Each alternative refreshes command capability, synchronization and load rather than reusing unavailable or load caches. A selected alternative still flushing does not stop checks of other workers; its channel stays alive and its worker is excluded from concurrent selection until actual admission or failure. Only actual READY releases the original demand. Daemon builds prefer eligible native OS/architecture workers over supported cross builders; server/web placement keeps load-based ranking. Busy native workers still allow later cross-builder admission.
 
 Every native admission resource check reclaims owner and waiter records whose process generation is proven dead, including pressure-denied readiness probes and inherited escalation. Live records remain queued; reclamation adds no age deadline and never signals a process.
 
-Linux worker disk admission uses `worker_disk_budget.mjs` to measure the allocated dependency,
-shared-cache and largest retained-target closure on each worker. The containing filesystems'
-available bytes and authenticated peers' disk envelopes determine admission under the existing
-native lock. These resident closure measurements are not temporal class peaks. Unobserved growth
-and filesystem quotas remain separate validation obligations. Low disk triggers ordered custody
-reclamation (oldest stale staging across stacks, unneeded Yarn entries, stale lane scratch); a
-worker still short is excluded for the current command class before bootstrap/payload. The
-execution-qualified disk marker never authorizes replay of a started command. `dev-targets status`
-exposes free bytes and the measured runtime envelope. Pins report insufficient disk rather than
-waiting indefinitely for capacity that cleanup could not establish.
+Linux worker disk admission uses `worker_disk_budget.mjs` to observe free bytes on
+the command's known write filesystems. It refuses an already exhausted filesystem;
+resident dependencies, caches and retained outputs do not establish additional writes,
+so there is no disk-envelope reservation or guessed build peak. Exhaustion triggers
+ordered custody reclamation (oldest stale staging across stacks, unneeded Yarn entries,
+stale lane scratch). Explicit maintenance can run that retention policy independently.
+A still-exhausted worker is excluded before bootstrap/payload; pins report the disk
+diagnostic. The execution-qualified disk marker never authorizes replay of a started
+command. `dev-targets status` exposes free bytes. Admission does not guarantee capacity
+for future writes or filesystem quotas; real write failures remain authoritative.
 
 Linux/WSL waiting messages and `dev-targets status NAME` expose authenticated admission holders' class, PID, process age, phase and approximate recent process-tree CPU use. Newly created native owners start at `admitted`; a runtime worker reports `awaiting-runtime-request` before its build ACK and `building-runtime` after it. The awaiting phase includes producer publication-flight waits after actual admission; `building-runtime` does not imply CPU activity or rule out internal lock waits. Phase is diagnostic only and never changes the reservation. Older loaded owners without the optional field report unknown; their record lifecycle is unchanged. The existing service-memory observer owns this read-only projection. Waiters reuse their preceding cadence sample; status takes a second sample at that cadence when holders exist. CPU counters have one-second resolution, unavailable evidence is reported as unknown, and zero recent CPU is not a hung verdict. Observation never imposes a holder deadline or kills work.
 
 An explicit routed `hstack-exec --heavyweight-admission --class=... -- ...` carries its class into this same placement policy before committing to a worker. Payload flags after the delimiter do not change the envelope. Native memory observation uses the existing native process-identity owner without installed workspace dependencies, so fresh mirrors can enter admission before their first dependency bootstrap.
 
-Stack unit roots, CLI default test homes/bins, external-hook configuration fixtures and docs-check fixtures use `scripts/testing/process/temporaryDirectories.mjs` for normal teardown. On Linux, the existing remote execution custody owner can reclaim newly marked roots after their creator, process group and explicitly bound descendants are gone. Detached children inherit `HAPPIER_TEST_TEMP_ROOTS`; inaccessible ownership observations retain the root. In current 0.3 development, its explicit `reap-temp-roots` maintenance mode also checks historical `happier-*`, `hstack-*` and `docs-check-*` directories beneath the worker's temporary directory. Linux runtime-build requests invoke the same historical scanner before compiling; ordinary command dispatch already reaps marked abandoned roots. It reclaims only account-owned, non-symlink roots whose newest descendant mtime is older than 24 hours and which no live process uses as cwd, open descriptor or mapped file; unknown process visibility retains candidates. The 24-hour margin is based on builds of at most three hours and watchers of at most two hours, and does not limit admission waits. Reclamation logs paths and allocated bytes, counting hard-linked files once. Invoke the mode through target-specific execution of `bash apps/stack/scripts/utils/dev_targets/remote_execution_custody.sh reap-temp-roots - historical-sweep`; it never signals processes.
+Stack unit roots, CLI default test homes/bins, external-hook configuration fixtures and docs-check fixtures use `scripts/testing/process/temporaryDirectories.mjs` for normal teardown. On Linux, the existing remote execution custody owner can reclaim newly marked roots after their creator, process group and explicitly bound descendants are gone. Detached children inherit `HAPPIER_TEST_TEMP_ROOTS`; inaccessible ownership observations retain the root. In current 0.3 development, its explicit `reap-temp-roots` maintenance mode also checks historical `happier-*`, `hstack-*` and `docs-check-*` directories beneath the worker's temporary directory. Linux runtime-build requests invoke the same historical scanner before compiling; ordinary command dispatch already reaps marked abandoned roots. It reclaims only account-owned, non-symlink roots whose newest descendant mtime is older than 24 hours and which no live same-UID process uses as cwd, open descriptor or mapped file. Unknown UID or same-UID visibility retains candidates; processes whose status identifies only foreign UIDs do not block this user's reclamation. The 24-hour margin is based on builds of at most three hours and watchers of at most two hours, and does not limit admission waits. Reclamation logs paths and allocated bytes, counting hard-linked files once. Invoke the mode through target-specific execution of `bash apps/stack/scripts/utils/dev_targets/remote_execution_custody.sh reap-temp-roots - historical-sweep`; it never signals processes.
 
 Service placements do not exclude command hosts. Admission measures resident memory of current server/Expo process trees through their existing Stack PID state and process-generation witnesses, including standalone Expo state. It limits capacity to total RAM minus that resident memory without subtracting RSS twice from `MemAvailable`. Active builds retain their `runtime-build` class reservation. Diagnostics expose service and command reservations; no second placement list exists. A class larger than total RAM minus service reservations fails immediately with a remote-routing instruction, rather than waiting for impossible local capacity.
 
@@ -86,9 +242,21 @@ Managed guest SSH publication uses the guest alias as its multiplex identity and
 
 In 0.3 development, `apps/stack/bin/hstack-dev-target-control` owns the native per-session synchronization barrier for automatic and exact-target commands. Queued requests may share a successful Mutagen flush only when it started after each request captured demand. A request arriving during a flush requires a later cycle, so a just-written source file cannot be admitted against an earlier scan. Each caller checks fresh exact-session health before dispatch; failed or canceled flushes cannot satisfy demand. Platforms without `flock` retain a separate flush and health check for every request.
 
+The 0.3 routing producer owns one Mutagen daemon/data directory for development
+mirrors, separate from product workspace synchronization. Each source checkout
+has its own project and one session per used target in that daemon; sibling
+command configurations do not own daemons. Session identity includes the source
+root, so two repositories routed to the same worker have independent causal
+barriers. Stack and QA supervisors only borrow existing producer mirrors and
+cannot replace their membership or retire them on shutdown. Provisioning and
+retirement belong to the routing sync service. A failed resume does not restart
+the shared daemon, and project replacement flushes old membership before
+termination. Mac mirrors require a current Mac-only flow, not withdrawn
+exact-target typechecks alone.
+
 `mutagen_runtime.mjs` owns first-cycle readiness, including its generated `native_sync_readiness.sh` projection. A clean connected idle session with both endpoints in `no-watch` and no completed cycle is `needs-flush`: eligible for selection, with the mandatory dispatch barrier establishing a completed clean cycle before any payload. An active initial scan remains `synchronizing`. Status and doctor read the same classification; startup seeding also consumes it rather than deciding independently from watch/cycle fields.
 
-Development worker enrollment and automatic command placement attempt to disable sleep through `dev-targets power no-sleep NAME|auto`. Managed workers apply the same policy to their outer host and Linux guest. Windows disables AC/battery idle and unattended sleep, idle hibernation and lid-triggered sleep; macOS disables idle system sleep; Linux masks systemd sleep targets. Manual targets are excluded from automatic placement setup. An existing Windows machine policy enforcing zero satisfies that setting; conflicting policy remains an error. Administrator privileges are required, and denied settings are reported without blocking worker enrollment or changing placement. The explicit power command returns failure for incomplete configuration. These defaults belong to worker setup, not ordinary Happier installation on a personal computer.
+Managed worker enrollment and automatic command placement attempt to disable sleep through `dev-targets power no-sleep NAME|auto`. Ordinary unmanaged SSH enrollment requires explicit `host prepare --no-sleep` or `power no-sleep`. Managed workers apply the same policy to their outer host and Linux guest. Windows disables AC/battery idle and unattended sleep, idle hibernation and lid-triggered sleep; macOS disables idle system sleep; Linux masks systemd sleep targets. Manual targets are excluded from automatic placement setup. An existing Windows machine policy enforcing zero satisfies that setting; conflicting policy remains an error. Administrator privileges are required, and denied settings are reported without blocking worker enrollment or changing placement. The explicit power command returns failure for incomplete configuration. These defaults belong to worker setup, not ordinary Happier installation on a personal computer.
 
 In 0.3 development, Windows worker setup also installs the machine-wide `Happier-Worker-Power` task under SYSTEM, with boot and logon triggers and no execution deadline. Its administrator-protected script reapplies and verifies the same settings at boot and holds a named system power request. The existing per-user WSL task owns guest startup separately: running WSL alone does not prevent Modern Standby. The request keeps an AC-powered worker active while allowing its display to turn off. Windows limits power requests on battery and honors explicit user sleep; keep an unattended Modern Standby worker on AC. See Microsoft's [Modern Standby software preparation](https://learn.microsoft.com/en-us/windows-hardware/design/device-experiences/prepare-software-for-modern-standby) and [power-request limits](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-powersetrequest).
 
@@ -115,6 +283,46 @@ runtime. A package tarball, candidate archive, or immutable release identity is
 not an extra feature-completion gate. Exact-package consumer, integrity, and
 publication checks run only inside an explicitly authorized release operation
 against the bytes that operation may publish.
+
+## Managed Lima networking (0.3 development)
+
+`apps/stack/scripts/utils/managed_lima/profiles.mjs` owns network policy for
+both controller and worker VZ guests. New instances include `vzNAT`; retained
+instances change only through the explicit `network apply --force` command.
+`lifecycle.mjs#applyManagedLimaNetworking` owns stop → network-only edit → start
+and native configuration/power readback. The controller command wraps that
+owner with its existing SSHFS and service-tunnel teardown/startup. Ordinary
+start, recovery, doctor, and resource edits leave retained networks unchanged;
+missing native NAT is not a new health failure that blocks existing commands.
+
+The external basis is [Lima's VMNet contract](https://lima-vm.io/docs/config/network/vmnet/)
+and the installed v2.0.3/v2.1.0/v2.2.0 source: added networks default to metric 100,
+usernet uses 200, and VZ retains its usernet device beside native NAT. The
+usernet subnet still carries host/DNS access. The forwarding configuration is
+preserved, and Stack service/Mutagen SSH transport keeps its existing owners.
+The installed versions pin gvisor-tap-vsock v0.8.7/v0.8.8/v0.8.9, whose TCP forwarder
+admits 10 incomplete connection attempts; this is not an established-connection
+limit. Incident counts alone do not prove its saturation.
+
+CLI boundary fixtures cover network generation, explicit authorization,
+idempotence, route-priority correction, retained configuration, and edit failure.
+Live proof requires an owner-scheduled VM restart: record the Lima version and
+instance/store, apply once, check the native default route plus usernet's
+connected route, resolve DNS/`host.lima.internal`, probe SSH and actual Stack
+tunnels, and confirm Mutagen reconnects. Do not restart a VM to satisfy a source
+lane's tests. Operator steps and guest Tailscale identity are documented in the
+[development VM guide](../apps/docs/content/docs/hstack/dev-vm.mdx) and
+[worker guide](../apps/docs/content/docs/hstack/dev-targets.mdx).
+
+`apps/stack/scripts/provision/linux-inotify.mjs` owns the owner-approved
+`max_user_instances=1024` policy. Managed guest provisioning invokes it outside
+toolchain readiness; Linux/WSL `dev-targets host prepare --inotify` embeds it in
+the existing one-sudo preparation session. Neither path changes
+`max_user_watches`. OS-boundary fixtures execute the real shell policy against
+isolated sysctl/file adapters and assert the persisted file, live value,
+repeat behavior, and combined sudo scope. Live boot persistence still requires
+the owner's post-restart readback; sysctl.d is a boot input on systemd guests,
+not proof that every WSL init loads it. Removal is documented in both guides.
 
 ## Voice and audio validation
 
