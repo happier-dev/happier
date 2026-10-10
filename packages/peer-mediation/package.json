@@ -6,20 +6,73 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
-    "./browser/collector/cooperative": { "types": "./dist/browser/collector/cooperative.d.ts", "default": "./dist/browser/collector/cooperative.js" },
-    "./browser/collector/build": { "types": "./dist/browser/collector/build.d.ts", "default": "./dist/browser/collector/build.js" },
-    "./browser/collector/actions": { "types": "./dist/browser/collector/actions.d.ts", "default": "./dist/browser/collector/actions.js" },
-    "./browser/collector/elements": { "types": "./dist/browser/collector/elements.d.ts", "default": "./dist/browser/collector/elements.js" },
-    "./localServices/preview/httpAdapter": { "types": "./dist/localServices/preview/httpAdapter.d.ts", "default": "./dist/localServices/preview/httpAdapter.js" },
-    "./localServices/preview/websocketAdapter": { "types": "./dist/localServices/preview/websocketAdapter.d.ts", "default": "./dist/localServices/preview/websocketAdapter.js" },
-    "./localServices/preview/headers": { "types": "./dist/localServices/preview/headers.d.ts", "default": "./dist/localServices/preview/headers.js" },
-    "./localServices/preview/rewrites": { "types": "./dist/localServices/preview/rewrites.d.ts", "default": "./dist/localServices/preview/rewrites.js" },
-    "./localServices/preview/requestTarget": { "types": "./dist/localServices/preview/requestTarget.d.ts", "default": "./dist/localServices/preview/requestTarget.js" },
-    "./localServices/preview/upstreamSocket": { "types": "./dist/localServices/preview/upstreamSocket.d.ts", "default": "./dist/localServices/preview/upstreamSocket.js" },
-    "./localServices/preview/limits": { "types": "./dist/localServices/preview/limits.d.ts", "default": "./dist/localServices/preview/limits.js" },
-    "./localServices/preview/downstream": { "types": "./dist/localServices/preview/downstream.d.ts", "default": "./dist/localServices/preview/downstream.js" },
-    "./localServices/preview/upgradeClient": { "types": "./dist/localServices/preview/upgradeClient.d.ts", "default": "./dist/localServices/preview/upgradeClient.js" },
+    "./browser/collector/cooperative": {
+      "happier-source": "./src/browser/collector/cooperative.ts",
+      "types": "./dist/browser/collector/cooperative.d.ts",
+      "default": "./dist/browser/collector/cooperative.js"
+    },
+    "./browser/collector/build": {
+      "happier-source": "./src/browser/collector/build.ts",
+      "types": "./dist/browser/collector/build.d.ts",
+      "default": "./dist/browser/collector/build.js"
+    },
+    "./browser/collector/actions": {
+      "happier-source": "./src/browser/collector/actions.ts",
+      "types": "./dist/browser/collector/actions.d.ts",
+      "default": "./dist/browser/collector/actions.js"
+    },
+    "./browser/collector/elements": {
+      "happier-source": "./src/browser/collector/elements.ts",
+      "types": "./dist/browser/collector/elements.d.ts",
+      "default": "./dist/browser/collector/elements.js"
+    },
+    "./localServices/preview/httpAdapter": {
+      "happier-source": "./src/localServices/preview/httpAdapter.ts",
+      "types": "./dist/localServices/preview/httpAdapter.d.ts",
+      "default": "./dist/localServices/preview/httpAdapter.js"
+    },
+    "./localServices/preview/websocketAdapter": {
+      "happier-source": "./src/localServices/preview/websocketAdapter.ts",
+      "types": "./dist/localServices/preview/websocketAdapter.d.ts",
+      "default": "./dist/localServices/preview/websocketAdapter.js"
+    },
+    "./localServices/preview/headers": {
+      "happier-source": "./src/localServices/preview/headers.ts",
+      "types": "./dist/localServices/preview/headers.d.ts",
+      "default": "./dist/localServices/preview/headers.js"
+    },
+    "./localServices/preview/rewrites": {
+      "happier-source": "./src/localServices/preview/rewrites.ts",
+      "types": "./dist/localServices/preview/rewrites.d.ts",
+      "default": "./dist/localServices/preview/rewrites.js"
+    },
+    "./localServices/preview/requestTarget": {
+      "happier-source": "./src/localServices/preview/requestTarget.ts",
+      "types": "./dist/localServices/preview/requestTarget.d.ts",
+      "default": "./dist/localServices/preview/requestTarget.js"
+    },
+    "./localServices/preview/upstreamSocket": {
+      "happier-source": "./src/localServices/preview/upstreamSocket.ts",
+      "types": "./dist/localServices/preview/upstreamSocket.d.ts",
+      "default": "./dist/localServices/preview/upstreamSocket.js"
+    },
+    "./localServices/preview/limits": {
+      "happier-source": "./src/localServices/preview/limits.ts",
+      "types": "./dist/localServices/preview/limits.d.ts",
+      "default": "./dist/localServices/preview/limits.js"
+    },
+    "./localServices/preview/downstream": {
+      "happier-source": "./src/localServices/preview/downstream.ts",
+      "types": "./dist/localServices/preview/downstream.d.ts",
+      "default": "./dist/localServices/preview/downstream.js"
+    },
+    "./localServices/preview/upgradeClient": {
+      "happier-source": "./src/localServices/preview/upgradeClient.ts",
+      "types": "./dist/localServices/preview/upgradeClient.d.ts",
+      "default": "./dist/localServices/preview/upgradeClient.js"
+    },
     ".": {
+      "happier-source": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     }

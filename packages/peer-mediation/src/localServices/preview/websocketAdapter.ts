@@ -39,6 +39,7 @@ export type LocalServicePreviewWebSocketUpgradeRequest = Readonly<{
     head?: Uint8Array;
     client: LocalServicePreviewWebSocketClient;
     externalProtocol?: "http" | "https";
+    signal?: AbortSignal;
 }>;
 
 export type ProxyLocalServicePreviewWebSocketUpgradeResult =
@@ -109,6 +110,7 @@ async function openUpstreamUpgrade(input: ProxyLocalServicePreviewWebSocketUpgra
         headers: buildPreviewRequestHeaders({ preview: input.preview, headers: headersForObservability(input.request),
             externalProtocol: input.request.externalProtocol, upgrade: true }),
         maxHeaderSize: DEFAULT_PREVIEW_MAX_RESPONSE_HEADER_BYTES, createConnection: () => socket,
+        signal: input.request.signal,
     });
     const upgraded = new Promise<Readonly<{ socket: Duplex; head: Uint8Array }>>((resolve, reject) => {
         request.once("error", reject);
@@ -222,12 +224,16 @@ export async function proxyLocalServicePreviewWebSocketUpgrade(
     emitWebSocketLifecycle({ kind: "websocket.opened" });
     try {
         const upstream = await openUpstreamUpgrade(input, tunnel);
+        const abortUpstream = () => upstream.socket.destroy(new Error("client_aborted"));
+        input.request.signal?.addEventListener("abort", abortUpstream, { once: true });
         try {
+            if (input.request.signal?.aborted) abortUpstream();
             await Promise.all([
                 pumpClientToUpstream(input, upstream.socket),
                 pumpUpstreamToClient(input, upstream.socket, upstream.head),
             ]);
         } finally {
+            input.request.signal?.removeEventListener("abort", abortUpstream);
             upstream.socket.destroy();
         }
 
