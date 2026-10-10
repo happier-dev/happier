@@ -19,6 +19,48 @@ async function importRpcPolicy() {
 }
 
 describe('MachineRpcRoutePolicyV1', () => {
+  it('binds committed-copy review to the public read without granting shared Machine access or removal', async () => {
+    const { resolveMachineRpcRoutePolicy, resolveMachineRpcExternalActionEffectV1 } = await import('./routePolicyV1');
+    const method = RPC_METHODS.DAEMON_WORKSPACE_SYNC_COMMITTED_COPY_INSPECT;
+    expect(resolveMachineRpcGovernance(method)).toEqual({ rpcClassification: 'action_spec_bound',
+      actionSpecId: 'projects.worker.copy.inspect' });
+    expect(resolveMachineRpcRoutePolicy(method)).toMatchObject({ routeClass: 'server_required',
+      sharedMachineAccess: 'custodian_only', commandReceiptRequired: false });
+    expect(resolveMachineRpcExternalActionEffectV1(method)).toBe('projects.worker.copy.inspect');
+    expect(resolveMachineRpcExternalActionEffectV1(RPC_METHODS.DAEMON_WORKSPACE_SYNC_COMMITTED_COPY_REMOVE)).toBeNull();
+  });
+  it('restricts handoff preflight authority to read-only methods on its exact admitted peers', async () => {
+    const { resolveMachineRpcRoutePolicy, resolveMachineRpcExternalActionEffectV1 } = await import('./routePolicyV1');
+    const binding = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-issued-preflight', binding: {
+      accountId: 'requester', principalId: 'requester', credentialId: '11111111-1111-4111-8111-111111111111',
+      grant: API_TOKEN_FULL_GRANT_V1, serverIdentityId: `srv_${'a'.repeat(32)}`,
+      machineId: 'target', installationId: 'target-installation', custodianAccountId: 'custodian',
+      actionId: 'session.handoff', requestId: 'original-request', requestEnvelopeDigest: 'b'.repeat(43),
+      target: { kind: 'machine', machineId: 'target' },
+      handoffAdmission: { sessionId: 'moved-session', sourceMachineId: 'source', targetMachineId: 'target',
+        sourceInstallationId: 'source-installation', targetInstallationId: 'target-installation' },
+      handoffPreflight: { rootRequestId: 'original-request', rootRequestEnvelopeDigest: 'a'.repeat(43) },
+    } }).binding;
+    const check = RPC_METHODS.DAEMON_SESSION_HANDOFF_EXISTING_STATE_CHECK_V3;
+    const capability = RPC_METHODS.DAEMON_SESSION_HANDOFF_CAPABILITY_V3_GET;
+    for (const method of [check, capability]) {
+      expect(resolveMachineRpcRoutePolicy(method)).toMatchObject({ routeClass: 'server_required',
+        rpcClassification: 'internal_only', sharedMachineAccess: 'use' });
+      expect(resolveMachineRpcExternalActionEffectV1(method, binding)).toBe('session.handoff');
+      expect(resolveMachineRpcExternalActionEffectV1(method)).toBeNull();
+      expect(resolveMachineRpcExternalActionEffectV1(method, { ...binding, handoffPreflight: undefined })).toBeNull();
+      expect(resolveMachineRpcExternalActionEffectV1(method, { ...binding, installationId: 'retired' })).toBeNull();
+    }
+    const source = { ...binding, machineId: 'source', installationId: 'source-installation',
+      target: { kind: 'machine' as const, machineId: 'source' } };
+    expect(resolveMachineRpcExternalActionEffectV1(capability, source)).toBe('session.handoff');
+    expect(resolveMachineRpcExternalActionEffectV1(check, source)).toBeNull();
+    for (const method of [RPC_METHODS.DAEMON_SESSION_HANDOFF_START_V3,
+      RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3, RPC_METHODS.DAEMON_SESSION_HANDOFF_COMMIT_V3,
+      RPC_METHODS.SPAWN_HAPPY_SESSION]) {
+      expect(resolveMachineRpcExternalActionEffectV1(method, binding)).toBeNull();
+    }
+  });
   it('binds Search settings and index control transports to their canonical Actions', async () => {
     const { resolveMachineRpcRoutePolicy, resolveMachineRpcExternalActionEffectV1 } = await import('./routePolicyV1');
     for (const [method, actionSpecId] of [

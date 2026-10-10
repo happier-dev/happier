@@ -1,4 +1,8 @@
 import { RPC_METHODS, SESSION_RPC_METHODS } from '../../../../rpc/methods.js';
+import { ACTION_OPERATION_RPC_METHODS_V1, ACTION_OPERATION_RPC_METHODS_V2 } from '../../../../actions/operations/v1.js';
+import { MANAGED_MACHINE_ACTION_IDS_V1 } from '../../../managed/actionIdsV1.js';
+import { MANAGED_ACTIVITY_READ_RPC_METHOD, MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD } from '../../../managed/managedIntentV1.js';
+import { USAGE_SOURCE_ACTION_IDS } from '../../../../usage/usageSources.js';
 
 export type MachineRpcGovernanceClassification = 'action_spec_bound' | 'internal_only' | 'advisory_unclassified';
 
@@ -8,6 +12,22 @@ export type MachineRpcGovernanceMetadataV1 = Readonly<{
 }>;
 
 const ACTION_SPEC_RPC_METHOD_IDS = Object.freeze({
+  [RPC_METHODS.DAEMON_WORKSPACE_SYNC_COMMITTED_COPY_INSPECT]: 'projects.worker.copy.inspect',
+  [RPC_METHODS.DAEMON_MEMORY_SETTINGS_GET]: 'search.settings.get',
+  [RPC_METHODS.DAEMON_MEMORY_SETTINGS_SET]: 'search.settings.set',
+  [RPC_METHODS.DAEMON_MEMORY_STATUS]: 'memory.status',
+  [RPC_METHODS.DAEMON_MEMORY_CLEAR_INDEX]: 'memory.clear_index',
+  [RPC_METHODS.DAEMON_CONNECTED_SERVICE_POOL_SELECTION_GET]: 'connectedServices.pools.selection.get',
+  ...Object.fromEntries(USAGE_SOURCE_ACTION_IDS.filter(id => id !== 'usage.sources.dismiss').map(id => [id, id])),
+  [ACTION_OPERATION_RPC_METHODS_V1.list]: 'action.operations.list',
+  [ACTION_OPERATION_RPC_METHODS_V2.list]: 'action.operations.list',
+  [ACTION_OPERATION_RPC_METHODS_V1.get]: 'action.operations.get',
+  [ACTION_OPERATION_RPC_METHODS_V2.get]: 'action.operations.get',
+  [ACTION_OPERATION_RPC_METHODS_V1.cancel]: 'action.operations.cancel',
+  [RPC_METHODS.MACHINES_WORK_SUMMARY_GET]: 'machines.work.summary.get',
+  ...Object.fromEntries(MANAGED_MACHINE_ACTION_IDS_V1.map((id) => [id, id])),
+  [RPC_METHODS.PROJECTS_OPEN]: 'projects.open',
+  [RPC_METHODS.DAEMON_WORKSPACE_SYNC_MATERIALIZE_FOR_OPEN]: 'projects.open',
   [RPC_METHODS.STOP_SESSION]: 'session.stop',
   [RPC_METHODS.SESSION_SPAWN_NEW]: 'session.spawn_new',
   [RPC_METHODS.SESSION_CONTINUE_WITH_REPLAY]: 'session.continue_with_replay',
@@ -108,6 +128,13 @@ const ACTION_SPEC_RPC_METHOD_IDS = Object.freeze({
   [RPC_METHODS.DAEMON_PROMPT_REGISTRY_INSTALL]: 'daemon.promptRegistry.install',
   [RPC_METHODS.READ_FILE]: 'daemon.filesystem.readFile',
   [RPC_METHODS.WRITE_FILE]: 'daemon.filesystem.writeFile',
+  [RPC_METHODS.DAEMON_FILESYSTEM_CREATE_DIRECTORY]: 'daemon.filesystem.createDirectory',
+  [RPC_METHODS.DAEMON_FILESYSTEM_RENAME]: 'daemon.filesystem.rename',
+  [RPC_METHODS.DAEMON_FILESYSTEM_DELETE]: 'daemon.filesystem.delete',
+  [RPC_METHODS.DAEMON_FILESYSTEM_COPY]: 'daemon.filesystem.copy',
+  [RPC_METHODS.DAEMON_FILESYSTEM_UPLOAD]: 'daemon.filesystem.upload',
+  [RPC_METHODS.DAEMON_FILESYSTEM_DOWNLOAD]: 'daemon.filesystem.download',
+  [RPC_METHODS.DAEMON_FILESYSTEM_TRANSFER_CANCEL]: 'daemon.filesystem.transfer.cancel',
   [RPC_METHODS.LIST_DIRECTORY]: 'daemon.filesystem.listDirectory',
   [RPC_METHODS.GET_DIRECTORY_TREE]: 'daemon.filesystem.getDirectoryTree',
   [RPC_METHODS.DAEMON_FILESYSTEM_LIST_ROOTS]: 'daemon.filesystem.listRoots',
@@ -133,6 +160,7 @@ const ACTION_SPEC_RPC_METHOD_IDS = Object.freeze({
   [RPC_METHODS.SCM_REPOSITORY_CLONE]: 'scm.repository.clone',
   [RPC_METHODS.SCM_REPOSITORY_INIT]: 'scm.repository.init',
   [RPC_METHODS.SCM_REPOSITORY_REMOVE_INDEX_LOCK]: 'scm.repository.removeIndexLock',
+  [RPC_METHODS.SCM_HOSTING_REPOSITORY_RESOLVE_ADDRESS]: 'scm.hostingRepository.resolveAddress',
   [RPC_METHODS.SCM_HOSTING_REPOSITORY_DESCRIBE_PUBLISH_TARGETS]: 'scm.hostingRepository.describePublishTargets',
   [RPC_METHODS.SCM_HOSTING_REPOSITORY_PUBLISH]: 'scm.hostingRepository.publish',
   [RPC_METHODS.SCM_DIFF_SUMMARY_GENERATE]: 'scm.diffSummary.generate',
@@ -147,12 +175,16 @@ const SESSION_SPAWN_PRIVATE_INTERNAL_METHODS = new Set<string>([
 ]);
 
 const PMS5_DIRECT_INTERNAL_METHODS = new Set<string>([
+  RPC_METHODS.DAEMON_SESSION_HANDOFF_EXISTING_STATE_CHECK_V3,
+  RPC_METHODS.DAEMON_SESSION_HANDOFF_CAPABILITY_V3_GET,
+  MANAGED_ACTIVITY_READ_RPC_METHOD, MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD,
+  RPC_METHODS.DAEMON_MACHINE_ACCESS_LOSS,
+  RPC_METHODS.DAEMON_LOCAL_SERVICES_PREVIEW_ADMISSION,
+  RPC_METHODS.APPROVAL_REQUEST_SECRET_CONTINUE,
   RPC_METHODS.APPROVAL_REQUEST_REPLAY_APPROVED,
   RPC_METHODS.DAEMON_SESSION_FOLLOW_SOURCE_KEY_PREPARE,
   RPC_METHODS.DAEMON_EXECUTION_RUNS_LIST,
   RPC_METHODS.DAEMON_EXECUTION_RUN_BROKER_AUTHORITY_RESOLVE,
-  RPC_METHODS.DAEMON_MEMORY_STATUS,
-  RPC_METHODS.DAEMON_MEMORY_SETTINGS_GET,
   RPC_METHODS.DAEMON_VOICE_INFERENCE_STATUS,
   RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_LIST,
   RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_STATUS,

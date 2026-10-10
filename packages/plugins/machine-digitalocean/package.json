@@ -19,6 +19,7 @@
   },
   "files": [
     "dist",
+    "assets",
     ".happier-plugin",
     "package.json"
   ],

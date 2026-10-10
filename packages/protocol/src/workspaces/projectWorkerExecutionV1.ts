@@ -4,12 +4,7 @@ import { ActionOperationSnapshotV1Schema, ProjectCommandAttachmentV1Schema } fro
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { MachineFinitePolicyV1Schema } from '../machines/machineFinitePolicyV1.js';
 
-/** These observations establish no acceptance, unlike unavailable policy/telemetry or a full queue. */
-export const ProjectWorkerNoAcceptanceReasonV1Schema = lazyZodSchema(() => z.enum([
-  'empty', 'no_available_machine', 'not_accepting', 'draining', 'unsupported', 'forbidden',
-  'workspace_unavailable', 'memory_insufficient',
-]));
-export type ProjectWorkerNoAcceptanceReasonV1 = z.infer<typeof ProjectWorkerNoAcceptanceReasonV1Schema>;
+export { ProjectWorkerNoAcceptanceReasonV1Schema, type ProjectWorkerNoAcceptanceReasonV1 } from '../actions/projectWorkerRefusal.js';
 
 // These V1 authority/advisory envelopes are closed wire inputs, not stored projections.
 export const FiniteAdmissionV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [

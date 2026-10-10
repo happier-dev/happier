@@ -1,6 +1,6 @@
 import { isAbsolute } from 'node:path';
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
-import type { ConnectedAccountRuntime } from '@happier-dev/plugin-sdk/connected-accounts';
+import type { ConnectedAccountAuthenticationModeRuntime, ConnectedAccountRuntime } from '@happier-dev/plugin-sdk/connected-accounts';
 import { createCuaNativeClient, type CuaNativeClient } from './nativeClient.js';
 import { NativeFleetClaimSchema, FleetNativeIdSchema } from './remoteSchemas.js';
 
@@ -43,7 +43,7 @@ export function connectedAccountRuntime(kind: 'cloud' | 'cua'): ConnectedAccount
                 await context.attemptCredentials.set('token', token);
                 return { status: 'connected' as const, displayName: 'Cua Fleet', scopes: [] };
             } catch { return { status: 'rejected' as const, diagnostic }; }
-        } } } : {}) } },
+        } } satisfies Extract<ConnectedAccountAuthenticationModeRuntime, { kind: 'manual' }> } : {}) } },
         async status(context) {
             try { const env = environment(context.configuration.values, await context.credentials.get('token'));
                 return env.CUA_HOME || ('FLEETS_TOKEN' in env && env.FLEETS_TOKEN && 'CUA_FLEET_BASE_URL' in env && env.CUA_FLEET_BASE_URL)

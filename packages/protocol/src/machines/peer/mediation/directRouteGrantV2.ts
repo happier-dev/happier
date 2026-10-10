@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { DirectRouteGrantScopeV1Schema } from './directRouteGrantScopesV1.js';
@@ -12,10 +13,10 @@ export const PEER_ROUTE_EPHEMERAL_ED25519_KIND_V2 = 'ephemeral_ed25519' as const
 
 /** Machine/1 purposes bound to the existing grant flow and scope below. */
 export const IROH_PEER_ROUTE_OPERATION_KINDS_V2 = ['finite_transfer', 'workspace_sync', 'tcp_tunnel'] as const;
-export const IrohPeerRouteOperationKindV2Schema = z.enum(IROH_PEER_ROUTE_OPERATION_KINDS_V2);
+export const IrohPeerRouteOperationKindV2Schema = lazyZodSchema(() => z.enum(IROH_PEER_ROUTE_OPERATION_KINDS_V2));
 
 /** Closed application/transport identity of the party that opens `happier/machine/1`. */
-export const IrohPeerInitiatorV2Schema = z.discriminatedUnion('kind', [
+export const IrohPeerInitiatorV2Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('machine'),
     machineId: z.string().min(1),
@@ -25,16 +26,16 @@ export const IrohPeerInitiatorV2Schema = z.discriminatedUnion('kind', [
     kind: z.literal('account_client'),
     endpointId: IrohEndpointIdV1Schema,
   }).strict(),
-]);
+]));
 
 /** Closed target Machine identity and its currently published daemon transport identity. */
-export const IrohPeerTargetV2Schema = z.object({
+export const IrohPeerTargetV2Schema = lazyZodSchema(() => z.object({
   machineId: z.string().min(1),
   endpointId: IrohEndpointIdV1Schema,
-}).strict();
+}).strict());
 
 /** Signed machine/1 initiator/target relationship carried only by V2 `iroh_peer` grants. */
-export const IrohPeerRouteBindingV2Schema = z.object({
+export const IrohPeerRouteBindingV2Schema = lazyZodSchema(() => z.object({
   initiator: IrohPeerInitiatorV2Schema,
   target: IrohPeerTargetV2Schema,
   operationKind: IrohPeerRouteOperationKindV2Schema,
@@ -60,7 +61,7 @@ export const IrohPeerRouteBindingV2Schema = z.object({
       message: 'Workspace sync requires a Machine initiator',
     });
   }
-});
+}));
 
 export type IrohPeerRouteOperationKindV2 = z.infer<typeof IrohPeerRouteOperationKindV2Schema>;
 export type IrohPeerInitiatorV2 = z.infer<typeof IrohPeerInitiatorV2Schema>;
@@ -71,15 +72,15 @@ export type IrohPeerRouteBindingV2 = z.infer<typeof IrohPeerRouteBindingV2Schema
  * Iroh finite-transfer admission authorizes the carrier only. The prepared
  * transfer capability remains the sole operation and payload-size authority.
  */
-export const IrohFiniteTransferCarrierGrantScopeV2Schema = z.object({
+export const IrohFiniteTransferCarrierGrantScopeV2Schema = lazyZodSchema(() => z.object({
   kind: z.literal('bounded_transfer'),
   mode: z.literal('carrier'),
-}).strict();
+}).strict());
 
-export const DirectRouteGrantScopeV2Schema = z.union([
+export const DirectRouteGrantScopeV2Schema = lazyZodSchema(() => z.union([
   DirectRouteGrantScopeV1Schema,
   IrohFiniteTransferCarrierGrantScopeV2Schema,
-]);
+]));
 
 export type DirectRouteGrantScopeV2 = z.infer<typeof DirectRouteGrantScopeV2Schema>;
 
@@ -180,12 +181,14 @@ function fixedBase64UrlSchema(decodedLength: number): z.ZodString {
   );
 }
 
-export const DirectRouteGrantPayloadV2Schema = z
+export const DirectRouteGrantPayloadV2Schema = lazyZodSchema(() => z
   .object({
     v: z.literal(2),
     grantId: z.string().min(1),
     grantFamilyId: z.string().min(1).optional(),
     accountId: z.string().min(1),
+    /** Home-stamped credential authority for a private human continuation, never caller input. */
+    callerAuthority: z.enum(['present_user', 'account_automation']).optional(),
     machineId: z.string().min(1),
     flowKind: PeerFlowKindV1Schema,
     routeKind: AuthorizedPeerEndpointRouteKindV1Schema,
@@ -224,24 +227,24 @@ export const DirectRouteGrantPayloadV2Schema = z
       });
     }
     addIrohPeerRouteGrantBindingIssuesV2(payload, ctx);
-  });
+  }));
 
-export const DirectRouteGrantSignatureV2Schema = z
+export const DirectRouteGrantSignatureV2Schema = lazyZodSchema(() => z
   .object({
     keyId: z.string().min(1),
     alg: z.literal('Ed25519'),
     valueBase64Url: fixedBase64UrlSchema(64),
   })
-  .strict();
+  .strict());
 
-export const SignedDirectRouteGrantV2Schema = z
+export const SignedDirectRouteGrantV2Schema = lazyZodSchema(() => z
   .object({
     payload: DirectRouteGrantPayloadV2Schema,
     signature: DirectRouteGrantSignatureV2Schema,
   })
-  .strict();
+  .strict());
 
-export const DirectRouteGrantRequestV2Schema = z
+export const DirectRouteGrantRequestV2Schema = lazyZodSchema(() => z
   .object({
     v: z.literal(2),
     kind: z.literal(PEER_ROUTE_EPHEMERAL_ED25519_KIND_V2),
@@ -264,7 +267,7 @@ export const DirectRouteGrantRequestV2Schema = z
       });
     }
     addIrohPeerRouteGrantBindingIssuesV2(request, ctx);
-  });
+  }));
 
 export type DirectRouteGrantPayloadV2 = z.infer<typeof DirectRouteGrantPayloadV2Schema>;
 export type DirectRouteGrantSignatureV2 = z.infer<typeof DirectRouteGrantSignatureV2Schema>;

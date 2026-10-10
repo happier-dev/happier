@@ -9,7 +9,7 @@
     ".": { "happier-source": "./src/index.ts", "types": "./dist/index.d.ts", "default": "./dist/index.js" },
     "./manifest": { "happier-source": "./src/manifest.ts", "types": "./dist/manifest.d.ts", "default": "./dist/manifest.js" }
   },
-  "files": ["dist", ".happier-plugin", "package.json"],
+  "files": ["dist", "assets", ".happier-plugin", "package.json"],
   "scripts": {
     "test": "../../../apps/stack/bin/hstack-exec --script=test:local",
     "test:local": "vitest run",

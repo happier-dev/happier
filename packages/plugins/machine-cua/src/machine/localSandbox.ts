@@ -20,7 +20,9 @@ export function createCuaLocalSandbox(native: CuaNativeClient) {
             ? facts.state : 'unknown';
         if (power === 'unknown') return unknown;
         return { resource, existence: 'present' as const, power,
-            ...(facts.image !== null ? { imageId: facts.image } : {}) };
+            ...(facts.image !== null ? { imageId: facts.image } : {}) } satisfies {
+                resource: CuaLocalResourceV1; existence: 'present'; power: 'running' | 'stopped' | 'suspended'; imageId?: string;
+            };
     }
     return {
         async create(input: unknown, nameInput: string, imageDiskBytes: number, signal?: AbortSignal) {

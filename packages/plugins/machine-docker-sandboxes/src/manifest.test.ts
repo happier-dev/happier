@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { Buffer } from 'node:buffer';
 import { describe, expect, it, vi } from 'vitest';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
@@ -69,5 +70,15 @@ describe('activated Docker Sandboxes public role boundary', () => {
       const delivered = run.mock.calls.find(([request]) => request.args?.[0] === 'exec')?.[0].stdin;
       expect(delivered && Array.from(delivered)).toEqual([0]);
     } finally { await kit.dispose(); }
+  });
+});
+
+describe('brand mark', () => {
+  it('declares its packaged brand mark through the generic brand Resource', () => {
+    expect(DOCKER_SANDBOXES_PLUGIN.manifest.brand).toEqual({ iconResourceId: 'brand-icon' });
+    expect(DOCKER_SANDBOXES_PLUGIN.manifest.contributes.resources).toEqual([{ id: 'brand-icon', kind: 'asset', path: 'assets/brand.png', contentType: 'image/png' }]);
+    const asset = readFileSync(new URL('../assets/brand.png', import.meta.url));
+    expect([...asset.subarray(0, 8)]).toEqual([137, 80, 78, 71, 13, 10, 26, 10]);
+    expect(asset.readUInt32BE(16)).toBe(asset.readUInt32BE(20));
   });
 });

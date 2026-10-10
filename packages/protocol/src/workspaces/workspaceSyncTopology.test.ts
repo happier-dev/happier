@@ -6,6 +6,7 @@ import { ManagedMachineV1Schema } from '../machines/managed/managedMachineV1.js'
 import {
   deriveWorkspaceSyncTopology,
   resolveWorkspaceSyncEndpoint,
+  resolveWorkspaceSyncTransportAddress,
   resolveWorkspaceSyncTransferRoute,
   resolveWorkspaceSyncRelationshipEndpointRoles,
   resolveWorkspaceSyncRelationshipTransferDirection,
@@ -71,6 +72,23 @@ describe('workspaceSyncTopology', () => {
     expect(resolveWorkspaceSyncEndpoint({ ...input, childMachines: [{ ...child, projection: { ...projection,
       observation: { ...projection.observation, nativeResourceId: 'container-replaced' } } }] })).toEqual(unavailable);
     expect(resolveWorkspaceSyncEndpoint({ ...input, childMachines: [] })).toEqual(unavailable);
+    // An admitted caller can address P1 without owning or materializing P1's
+    // WorkspaceRef. The full-ref resolver still requires that physical row.
+    const transport = { namespace: admittedNamespace, childMachines: [{ ...child,
+      controller: { ...child.controller, available: false } }] };
+    expect(resolveWorkspaceSyncTransportAddress(transport)).toEqual({ ok: true,
+      address: { machineId: 'parent', installationId: 'parent-current' } });
+    expect(resolveWorkspaceSyncEndpoint({ ...transport, workspaceRefs: [], purpose: 'admitted_mapping' })).toEqual(unavailable);
+    expect(resolveWorkspaceSyncTransportAddress({ ...transport,
+      namespace: { ...admittedNamespace, rootPath: '/workspace/source-other' } })).toEqual(unavailable);
+    expect(resolveWorkspaceSyncTransportAddress({ ...transport, childMachines: [{ ...child,
+      controller: { ...child.controller, installationId: 'parent-replaced' } }] })).toEqual(unavailable);
+    expect(resolveWorkspaceSyncTransportAddress({ ...transport, childMachines: [{ ...child, projection: { ...projection,
+      observation: { ...projection.observation, nativeResourceId: 'container-replaced' } } }] })).toEqual(unavailable);
+    expect(resolveWorkspaceSyncTransportAddress({ ...transport,
+      childMachines: [{ ...child, managedMachine: { ...managedMachine, homeId: 'other-home' } }] })).toEqual(unavailable);
+    expect(resolveWorkspaceSyncTransportAddress({ namespace: admittedNamespace, childMachines: [] })).toEqual({ ok: true,
+      address: { machineId: 'child' } });
   });
 
   it('derives mixed-policy saved links around their concrete controller-owned hub', () => {

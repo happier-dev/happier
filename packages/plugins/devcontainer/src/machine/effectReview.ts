@@ -312,7 +312,7 @@ export async function readDevcontainerEffectReview(input: NativeReviewInput, raw
   }
 
   const featureSets = record(native.featuresConfiguration).featureSets;
-  const stableFeatureSets = Array.isArray(featureSets) ? featureSets.map(value => {
+  const stableFeatureSets = Array.isArray(featureSets) ? featureSets.map((value): Record<string, unknown> & { features: Record<string, unknown>[] } => {
     const set = record(value);
     const features = Array.isArray(set.features) ? set.features.map(value => {
       const { cachePath: _cachePath, ...feature } = record(value);

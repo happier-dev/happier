@@ -142,6 +142,9 @@ function provisioner(id: CuaLocalProvisionerId): MachineProvisionerAuthorDefinit
 }
 export const CUA_PLUGIN = definePlugin({
     id: pluginId, version: '0.0.0', displayName: 'Cua Machines',
+    // The provider's own mark beside its name in Machines: Cua's mark from github.com/trycua/cua img/logo_black.svg (MIT, Copyright (c) 2025 Cua AI, Inc.), monochrome.
+    brand: { iconResourceId: 'brand-icon', monochrome: true },
+    resources: { 'brand-icon': { kind: 'asset', path: 'assets/brand.png', contentType: 'image/png' } },
     description: 'Exact Cua local, BYOC and Fleet resources with private native bootstrap IO.',
     engines: { happier: '^0.0.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './.happier-plugin/daemon.js' },
     hostAccess: { required: [{ id: processAccess, capability: 'process', reason: 'Operate only the reviewed native Cua resource.',

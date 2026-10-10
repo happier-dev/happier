@@ -13,6 +13,14 @@ export type WorkspaceRefResolutionContextV1 = Readonly<{
   rootsEqual?: (left: string, right: string) => boolean;
 }>;
 
+/** Existing checkout display semantics, shared by clients and native Project labels. */
+export function resolveWorkspacePathBasenameV1(path: string): string | null {
+  const normalized = path.replace(/[\\/]+$/, '');
+  const segments = normalized.split(/[\\/]/).filter(segment => segment.length > 0);
+  const terminalSegment = segments[segments.length - 1] ?? normalized;
+  return terminalSegment.length > 0 ? terminalSegment : null;
+}
+
 /** Comparable target-platform spelling only; never expands a remote home on this machine. */
 export function normalizeWorkspaceRootPathV1(value: unknown): string | null {
   if (typeof value !== 'string' || !value.trim()) return null;

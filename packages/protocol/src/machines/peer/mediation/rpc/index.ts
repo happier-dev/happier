@@ -33,6 +33,7 @@ export {
   isVoiceMediaRelayTunnelId,
   resolveMachineRpcRelayFallbackDecision,
   resolveMachineRpcRoutePolicy,
+  resolveMachineRpcExternalActionEffectV1,
   resolveEphemeralRunnerMachineRpcAuthority,
   validateMachineRpcGrantAllowedMethods,
   validateMachineRpcRoutePolicies,

@@ -1,6 +1,7 @@
 import { Buffer } from 'node:buffer';
 import { definePlugin } from '@happier-dev/plugin-sdk';
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import type { PluginLocalizedStringV2 } from '@happier-dev/plugin-sdk/manifest';
 import {
   defineMachineProvisionerSchemas, defineMachineProvisionerReconciliationSchemas, MachineProvisionerBootstrapCarrierV1Schema, MachineProvisionerCheckResultV1Schema,
   MachineProvisionerNativeExecResultV1Schema, MachineProvisionerObservationV1Schema, MachineProvisionerPowerResultV1Schema,
@@ -50,7 +51,7 @@ export const DEVCONTAINER_MACHINE_PROVISIONER = {
 } satisfies MachineProvisionerAuthorDefinitionV1;
 
 export const DEVCONTAINER_PLUGIN = definePlugin({
-  id: DEVCONTAINER_PLUGIN_ID, version: '0.0.0', displayName: 'Devcontainer Machines',
+  id: DEVCONTAINER_PLUGIN_ID, version: '0.0.0', displayName: 'Devcontainer Machines' satisfies PluginLocalizedStringV2,
   description: 'Ordinary managed children on their physical Docker controller.',
   engines: { happier: '^0.0.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './.happier-plugin/daemon.js' },
   hostAccess: { required: [{ id: processAccess, capability: 'process', reason: 'Realize and manage the reviewed Devcontainer on this controller.',

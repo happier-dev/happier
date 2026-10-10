@@ -20,7 +20,7 @@
   "imports": {
     "#modal-sdk-worker": { "happier-source": "./src/machine/sdkWorker.ts", "default": "./dist/machine/sdkWorker.js" }
   },
-  "files": ["dist", ".happier-plugin", "package.json"],
+  "files": ["dist", "assets", ".happier-plugin", "package.json"],
   "dependencies": { "@happier-dev/plugin-sdk": "0.0.0", "modal": "0.11.0" },
   "devDependencies": { "@happier-dev/protocol": "0.0.0", "vitest": "^3.2.4", "@types/node": "^22.0.0" }
 }

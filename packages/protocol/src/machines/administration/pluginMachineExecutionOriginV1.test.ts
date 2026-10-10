@@ -9,6 +9,21 @@ import {
 } from './pluginMachineExecutionOriginV1.js';
 
 describe('PluginMachineExecutionOriginV1', () => {
+  it('preserves exact source custody without manufacturing a materialization identity', () => {
+    const origin = {
+      serverIdentityId: 'srv_account_one',
+      sourceRef: {
+        machineId: 'machine-a',
+        pluginId: 'acme.plugin',
+        sourceCustody: { kind: 'development', registeredRootId: 'registered-source-a' },
+      },
+    } as const;
+    expect(PluginMachineExecutionOriginV1Schema.safeParse(origin).success).toBe(true);
+    expect(compilePluginJsonSchema(PluginMachineExecutionOriginV1JsonSchema)(origin)).toBe(true);
+    expect(PluginMachineExecutionOriginV1Schema.safeParse({
+      ...origin, sourceRef: { ...origin.sourceRef, materializationId: 'invented' },
+    }).success).toBe(false);
+  });
   it('projects its exact portable identity as a reusable plugin JSON Schema fragment', () => {
     const validates = compilePluginJsonSchema(PluginMachineExecutionOriginV1JsonSchema);
     const canonical = {

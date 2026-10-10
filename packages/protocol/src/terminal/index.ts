@@ -52,3 +52,5 @@ export {
 export { SessionTerminalTargetV1Schema, SessionTerminalMemberV1Schema, SessionTerminalTabV1Schema, SessionTerminalWorkspaceV1Schema } from './workspace.js';
 export { SessionTerminalLayoutV1Schema } from './workspace.js';
 export type { SessionTerminalTargetV1, SessionTerminalLayoutV1, SessionTerminalMemberV1, SessionTerminalTabV1, SessionTerminalWorkspaceV1 } from './workspace.js';
+export { SessionTerminalPendingActionApprovalV1Schema } from './workspace.js';
+export type { SessionTerminalPendingActionApprovalV1 } from './workspace.js';

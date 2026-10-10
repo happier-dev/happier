@@ -41,6 +41,9 @@ export const MODAL_MACHINE_PROVISIONER = {
 
 export const MODAL_PLUGIN = definePlugin({
   id: MODAL_PLUGIN_ID, version: '0.0.0', displayName: 'Modal Machines',
+  // The provider's own mark beside its name in Machines: Modal's mark from Simple Icons 13.21.0 (CC0-1.0), monochrome so the host draws it in ink.
+  brand: { iconResourceId: 'brand-icon', monochrome: true },
+  resources: { 'brand-icon': { kind: 'asset', path: 'assets/brand.png', contentType: 'image/png' } },
   description: 'Finite Modal Sandboxes with private native bootstrap IO.',
   engines: { happier: '^0.0.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './.happier-plugin/daemon.js' },
   hostAccess: { required: [{ id: MODAL_ACCOUNT_PURPOSE, capability: 'connectedAccounts',

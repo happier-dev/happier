@@ -47,6 +47,9 @@ export const DOCKER_SANDBOXES_MACHINE_PROVISIONER = {
 
 export const DOCKER_SANDBOXES_PLUGIN = definePlugin({
   id: DOCKER_SANDBOXES_PLUGIN_ID, version: '0.0.0', displayName: 'Docker Sandbox Machines',
+  // The provider's own mark beside its name in Machines: Docker's mark from Simple Icons 13.21.0 (CC0-1.0), brand blue #2496ED.
+  brand: { iconResourceId: 'brand-icon' },
+  resources: { 'brand-icon': { kind: 'asset', path: 'assets/brand.png', contentType: 'image/png' } },
   description: 'Native local Docker Sandboxes with retained names and private bootstrap IO.',
   engines: { happier: '^0.0.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './.happier-plugin/daemon.js' },
   hostAccess: { required: [{ id: processAccess, capability: 'process', reason: 'Operate the exact reviewed Docker Sandbox.',

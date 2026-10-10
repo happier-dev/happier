@@ -1,7 +1,5 @@
 import { describe, expect, it } from 'vitest';
 
-import * as protocolRoot from '../index.js';
-import * as machines from './index.js';
 import * as protocol from './operationProtocolCapabilitiesV1.js';
 
 type CapabilitySchema = Readonly<{
@@ -16,17 +14,14 @@ function readCapabilitySchema(): CapabilitySchema {
 }
 
 describe('MachineOperationProtocolCapabilitiesV1', () => {
-  it('publishes the canonical Follow-context capability helper through the machine and package barrels', () => {
-    expect(machines.supportsMachineSessionFollowContextV1)
-      .toBe(protocol.supportsMachineSessionFollowContextV1);
-    expect(protocolRoot.supportsMachineSessionFollowContextV1)
-      .toBe(protocol.supportsMachineSessionFollowContextV1);
-    expect(machines.supportsMachineSessionFollowWakeOnHumanChangeV1)
-      .toBe(protocol.supportsMachineSessionFollowWakeOnHumanChangeV1);
-    expect(protocolRoot.supportsMachineSessionFollowWakeOnHumanChangeV1)
-      .toBe(protocol.supportsMachineSessionFollowWakeOnHumanChangeV1);
+  it('advertises personal connection broker authority only with the supported second epoch', () => {
+    expect(protocol.MachineOperationProtocolCapabilitiesV1Schema.safeParse({
+      providerBrokerIngress: { protocolVersions: [1, 2] },
+    }).success).toBe(true);
+    expect(protocol.MachineOperationProtocolCapabilitiesV1Schema.safeParse({
+      providerBrokerIngress: { protocolVersions: [2] },
+    }).success).toBe(false);
   });
-
   it('requires an explicit strict broker ingress capability without inferring it from the Iroh endpoint', () => {
     const endpoint = { protocolVersions: [1], endpointId: 'a'.repeat(64) };
     const capabilities = {
@@ -43,7 +38,7 @@ describe('MachineOperationProtocolCapabilitiesV1', () => {
     expect(protocol.supportsMachineOperationProtocolCapabilityV1({
       ...capabilities,
       providerBrokerIngress: { protocolVersions: [1], ready: true },
-    }, 'providerBrokerIngress')).toBe(false);
+    }, 'providerBrokerIngress')).toBe(true);
     expect(protocol.readMachineIrohEndpointAuthorityV1({ capabilities, revision: 4 })).toEqual({
       endpointId: endpoint.endpointId,
       revision: 4,
@@ -62,7 +57,7 @@ describe('MachineOperationProtocolCapabilitiesV1', () => {
     }, 'finiteTransferRpc')).toBe(false);
     expect(protocol.supportsMachineOperationProtocolCapabilityV1({
       finiteTransferRpc: { protocolVersions: [1], ready: true },
-    }, 'finiteTransferRpc')).toBe(false);
+    }, 'finiteTransferRpc')).toBe(true);
   });
 
   it('accepts target admission V2 only on the existing input-admission leaf', () => {
@@ -84,7 +79,7 @@ describe('MachineOperationProtocolCapabilitiesV1', () => {
     expect(protocol.supportsMachineSessionFollowContextV1(capabilities)).toBe(true);
     expect(protocol.supportsMachineSessionFollowContextV1({})).toBe(false);
     expect(protocol.supportsMachineSessionFollowContextV1({ sessionFollow: { contextV1: false } })).toBe(false);
-    expect(protocol.supportsMachineSessionFollowContextV1({ sessionFollow: { contextV1: true, wakeV1: false } })).toBe(false);
+    expect(protocol.supportsMachineSessionFollowContextV1({ sessionFollow: { contextV1: true, wakeV1: false } })).toBe(true);
     expect(protocol.supportsMachineSessionFollowWakeOnHumanChangeV1(capabilities)).toBe(false);
     expect(protocol.supportsMachineSessionFollowWakeOnHumanChangeV1({
       sessionFollow: { contextV1: true, wakeOnHumanChangeV1: true },
@@ -159,6 +154,55 @@ describe('MachineOperationProtocolCapabilitiesV1', () => {
     }).success).toBe(false);
     expect(requestSchema?.safeParse({
       capabilities: { sessionSpawn: { protocolVersions: [2] } },
+    }).success).toBe(false);
+  });
+
+  it('preserves known stored support while dropping unknown capability and nested fields', () => {
+    const capabilities = {
+      sessionSpawn: { protocolVersions: [1, 2], future: true },
+      sessionInputAdmission: { protocolVersions: [1, 2], future: true },
+      sessionFollow: { contextV1: true, wakeOnHumanChangeV1: true, future: true },
+      irohMachineEndpoint: { protocolVersions: [1], endpointId: 'a'.repeat(64), future: true },
+      futureCapability: { protocolVersions: [1] },
+    };
+    expect(protocol.supportsMachineOperationProtocolCapabilityV1(capabilities, 'sessionSpawn')).toBe(true);
+    expect(protocol.supportsMachineSessionSpawnProtocolVersionV1(capabilities, 2)).toBe(true);
+    expect(protocol.supportsMachineSessionInputAdmissionProtocolVersion(capabilities, 2)).toBe(true);
+    expect(protocol.supportsMachineSessionFollowContextV1(capabilities)).toBe(true);
+    expect(protocol.supportsMachineSessionFollowWakeOnHumanChangeV1(capabilities)).toBe(true);
+    expect(protocol.readMachineIrohEndpointAuthorityV1({ capabilities, revision: 4 })).toEqual({
+      endpointId: 'a'.repeat(64), revision: 4,
+    });
+    expect(protocol.supportsMachineOperationProtocolCapabilityV1(
+      capabilities,
+      'futureCapability' as protocol.MachineOperationProtocolCapabilityNameV1,
+    )).toBe(false);
+    expect(protocol.MachineUpdateOperationProtocolCapabilitiesRequestV1Schema.safeParse({ capabilities }).success).toBe(false);
+  });
+
+  it('exposes one stored projection that drops extras and rejects malformed known leaves', () => {
+    const schema = protocol.MachineOperationProtocolCapabilitiesV1StoredReadSchema;
+    expect(schema.safeParse({
+      sessionSpawn: { protocolVersions: [1], future: true },
+      futureCapability: { protocolVersions: [1] },
+    })).toEqual({ success: true, data: { sessionSpawn: { protocolVersions: [1] } } });
+    expect(schema.safeParse({
+      sessionSpawn: { protocolVersions: [1] },
+      sessionFollow: { contextV1: false, future: true },
+    }).success).toBe(false);
+  });
+
+  it('recognizes finite execution only through its explicit V1 leaf', () => {
+    const capability: protocol.MachineOperationProtocolCapabilityNameV1 = 'projectFiniteExecution';
+    const capabilities = { projectFiniteExecution: { protocolVersions: [1] } };
+    expect(protocol.MachineOperationProtocolCapabilitiesV1Schema.safeParse(capabilities).success).toBe(true);
+    expect(protocol.supportsMachineOperationProtocolCapabilityV1(capabilities, capability)).toBe(true);
+    expect(protocol.supportsMachineOperationProtocolCapabilityV1({}, capability)).toBe(false);
+    expect(protocol.supportsMachineOperationProtocolCapabilityV1({
+      projectFiniteExecution: { protocolVersions: [2] },
+    }, capability)).toBe(false);
+    expect(protocol.MachineUpdateOperationProtocolCapabilitiesRequestV1Schema.safeParse({
+      capabilities: { projectFiniteExecution: { protocolVersions: [1], installed: true } },
     }).success).toBe(false);
   });
 

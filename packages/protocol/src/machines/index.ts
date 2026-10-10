@@ -58,7 +58,10 @@ export * from './machineContentKeyTransitionV1.js';
 export {
     arePluginMachineMaterializationRefsEqual,
     arePluginMachineExecutionOriginsEqual,
-    PluginMachineExecutionOriginV1Schema,
+  PluginMachineExecutionOriginV1Schema,
+  PluginMachineMaterializationExecutionOriginV1Schema,
+  type PluginMachineMaterializationExecutionOriginV1,
+  getPluginMachineExecutionOriginRef,
     PluginMachineExecutionOriginV1JsonSchema,
     type PluginMachineExecutionOriginV1,
 } from './administration/pluginMachineExecutionOriginV1.js';

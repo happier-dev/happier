@@ -69,6 +69,9 @@ export const MACHINE_PROVISIONER = {
 
 export const PLUGIN = definePlugin({
   id: PLUGIN_ID, version: '0.0.0', displayName: 'Fly Machines',
+  // The provider's own mark beside its name in Machines: Fly.io's mark from Simple Icons 13.21.0 (CC0-1.0), monochrome so the host draws it in ink.
+  brand: { iconResourceId: 'brand-icon', monochrome: true },
+  resources: { 'brand-icon': { kind: 'asset', path: 'assets/brand.png', contentType: 'image/png' } },
   description: 'Native Fly Machine control and private buffered bootstrap IO.',
   engines: { happier: '^0.0.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './.happier-plugin/daemon.js' },
   hostAccess: { required: [

@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type { PluginApi, PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type { ActionHandler } from '@happier-dev/plugin-sdk/actions';
@@ -115,5 +116,15 @@ describe('public digitalocean machine provisioner', () => {
     expect(readers.resourceStored.parse({ ...resource, future: true })).toEqual(resource);
     const runtime = await activated({ droplet: { id: 42, name: 'managed', status: 'off', tags: [], volume_ids: [] } });
     expect(() => exports.ROLE_SCHEMAS.resourceInput.parse({ resource: { ...resource, future: true } })).toThrow();
+  });
+});
+
+describe('brand mark', () => {
+  it('declares its packaged brand mark through the generic brand Resource', () => {
+    expect(exports.PLUGIN_MANIFEST.brand).toEqual({ iconResourceId: 'brand-icon' });
+    expect(exports.PLUGIN_MANIFEST.contributes.resources).toEqual([{ id: 'brand-icon', kind: 'asset', path: 'assets/brand.png', contentType: 'image/png' }]);
+    const asset = readFileSync(new URL('../assets/brand.png', import.meta.url));
+    expect([...asset.subarray(0, 8)]).toEqual([137, 80, 78, 71, 13, 10, 26, 10]);
+    expect(asset.readUInt32BE(16)).toBe(asset.readUInt32BE(20));
   });
 });

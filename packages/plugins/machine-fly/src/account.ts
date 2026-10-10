@@ -56,7 +56,8 @@ export const connectedAccountRuntime: ConnectedAccountRuntime = {
     const token = input.fields.token?.trim();
     if (!validToken(token)) return { status: 'rejected', diagnostic };
     const status = await confirm(token!, context, options);
-    if (status !== 'connected') return { status: status === 'unavailable' ? 'unavailable' : 'rejected', diagnostic };
+    if (status === 'unavailable') return { status: 'unavailable', diagnostic };
+    if (status !== 'connected') return { status: 'rejected', diagnostic };
     await context.attemptCredentials.set('token', token!, options);
     return { status: 'connected', displayName: 'Fly', scopes: [] };
   } } } },

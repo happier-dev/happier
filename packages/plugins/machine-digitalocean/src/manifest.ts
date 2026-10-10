@@ -36,6 +36,9 @@ export const MACHINE_PROVISIONER = {
 
 export const PLUGIN = definePlugin({
   id: PLUGIN_ID, version: '0.0.0', displayName: 'DigitalOcean Machines',
+  // The provider's own mark beside its name in Machines: DigitalOcean's mark from Simple Icons 13.21.0 (CC0-1.0), brand blue #0080FF.
+  brand: { iconResourceId: 'brand-icon' },
+  resources: { 'brand-icon': { kind: 'asset', path: 'assets/brand.png', contentType: 'image/png' } },
   description: 'Manage exact reviewed DigitalOcean resources through captured cloud credentials.',
   engines: { happier: '^0.0.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './.happier-plugin/daemon.js' },
   hostAccess: { required: [

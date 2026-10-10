@@ -40,6 +40,9 @@ export const MACHINE_PROVISIONER = {
 
 export const PLUGIN = definePlugin({
   id: PLUGIN_ID, version: '0.0.0', displayName: 'Hetzner Machines',
+  // The provider's own mark beside its name in Machines: Hetzner's mark from Simple Icons 13.21.0 (CC0-1.0), brand red #D50C2D with the white H.
+  brand: { iconResourceId: 'brand-icon' },
+  resources: { 'brand-icon': { kind: 'asset', path: 'assets/brand.png', contentType: 'image/png' } },
   description: 'Manage exact reviewed Hetzner resources through captured cloud credentials.',
   engines: { happier: '^0.0.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './.happier-plugin/daemon.js' },
   hostAccess: { required: [

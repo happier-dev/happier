@@ -1,4 +1,8 @@
 export {
+    MachineDestinationPurposeV1Schema,
+    MachinePoolPlacementPurposeV1Schema,
+    type MachineDestinationPurposeV1,
+    type MachinePoolPlacementPurposeV1,
     MachinePoolIdV1Schema,
     MachinePoolSelectionOriginV1Schema,
     MachinePoolNameV1Schema,
@@ -39,6 +43,12 @@ export {
     type MachinePoolDeleteOutputV1,
     type MachinePoolResolveInputV1,
 } from './v1.js';
+export {
+    selectMachinePoolCandidate,
+    type MachinePoolSelectableMemberV1,
+    type MachinePoolSelectionV1,
+    type MachinePoolWorkerObservationV1,
+} from './machinePoolPlacement.js';
 export {
     MACHINE_POOL_ACTION_IDS_V1,
     MachinePoolActionIdV1Schema,
