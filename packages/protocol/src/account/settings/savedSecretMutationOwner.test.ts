@@ -706,12 +706,15 @@ describe('classified legacy credential import', () => {
     const rewrite = Reflect.get(savedSecretOwner, 'promoteLegacyInferenceSavedSecretReferenceV1');
     expect(typeof rewrite).toBe('function');
     if (typeof rewrite !== 'function') throw new Error('missing_inference_credential_import');
-    const raw = { inferenceOpenAIKey: ' exact-private-inference-fixture ', preferredLanguage: 'de',
+    // The inspected 0.2 producer accepts nullish strings without a field cap.
+    const exactValue = ` ${'exact-private-inference-fixture'.repeat(3000)}\n`;
+    expect(new TextEncoder().encode(exactValue).byteLength).toBeGreaterThan(64 * 1024);
+    const raw = { inferenceOpenAIKey: exactValue, preferredLanguage: 'de',
       voice: { untouched: true }, futurePreference: { opaque: true } };
     const input = { source, sharedSecretRef: `happier:shared-secret:v1:${id}` };
     expect(rewrite(raw, input)).toEqual({ value: raw.inferenceOpenAIKey,
       settings: { preferredLanguage: 'de', voice: raw.voice, futurePreference: raw.futurePreference } });
-    expect(raw.inferenceOpenAIKey).toBe(' exact-private-inference-fixture ');
+    expect(raw.inferenceOpenAIKey).toBe(exactValue);
     for (const value of [undefined, null, '', { futureCredential: 'retain-fixture' }]) {
       expect(() => rewrite({ ...raw, inferenceOpenAIKey: value }, input)).toThrow();
     }
