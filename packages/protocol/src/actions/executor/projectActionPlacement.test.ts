@@ -6,13 +6,14 @@ import { readProjectManifestDocument } from '../../workspaces/projectSetup/proje
 import type { ProjectManifestV1 } from '../../workspaces/projectSetup/projectManifestV1.js';
 import type { ProjectExecutionChoiceV1 } from '../../workspaces/projectWorkerPreferencesV1.js';
 import { resolveProjectActionMachineV1, type ProjectPlacementActionExecutorV1 } from './projectActionPlacement.js';
+import type { ManagedMachineV1 } from '../../machines/managed/managedMachineV1.js';
 
 const workspace = { serverId: 'home', workspaceId: 'checkout', machineId: 'source', rootPath: '/repo' };
 const native = { kind: 'native', tool: 'make', file: 'Makefile', target: 'check' } as const;
 const exact = { kind: 'workers', destination: { kind: 'machine', machineId: 'worker' } } as const satisfies ProjectExecutionChoiceV1;
 const pool = { kind: 'workers', destination: { kind: 'pool', poolId: '4e9648b6-6b2d-47dc-9e3f-d927a430102d', selection: 'automatic' } } as const satisfies ProjectExecutionChoiceV1;
 
-function sourceReads(manifest?: ProjectManifestV1, workerStatus?: unknown) {
+function sourceReads(manifest?: ProjectManifestV1, workerStatus?: unknown, managed?: ManagedMachineV1) {
   const bytes = JSON.stringify(manifest);
   const inspection = ProjectDefinitionInspectOutputSchema.parse({
     definition: manifest ? { basis: { kind: 'present', hash: createHash('sha256').update(bytes!).digest('hex') },
@@ -30,6 +31,7 @@ function sourceReads(manifest?: ProjectManifestV1, workerStatus?: unknown) {
       provenance: 'saved', preference: { enabled: true, destination: exact.destination, unavailable: 'fail', allowAdHoc: false, scriptOverrides: {} } } };
     if (actionId === 'projects.worker.status') return { ok: true, result: workerStatus ?? { eligible: true, load: { kind: 'unknown' },
       candidate: { serverId: 'home', machineId: 'worker' }, explanation: 'load_unknown' } };
+    if (actionId === 'machines.managed.list') return { ok: true, result: { machines: managed ? [managed] : [] } };
     if (actionId === 'machines.pools.resolve') return { ok: true, result: { kind: 'resolved', poolId: pool.destination.poolId,
       machineId: 'worker', priorityTier: 0 } };
     throw new Error(`Unexpected placement read: ${actionId}`);
@@ -37,10 +39,37 @@ function sourceReads(manifest?: ProjectManifestV1, workerStatus?: unknown) {
   return { reads, place: (selection: { kind: 'native'; source: typeof native } | { kind: 'named'; name: string },
     choice?: ProjectExecutionChoiceV1, context: Parameters<typeof resolveProjectActionMachineV1>[0]['context'] = {}) =>
     resolveProjectActionMachineV1({ actionId: 'projects.script.run', input: { workspace, selection, ...(choice ? { choice } : {}) },
-      context, executeCanonicalAction, createRequestKey: () => 'request' }) };
+      context, ...(managed ? { homeId: 'home' } : {}), executeCanonicalAction, createRequestKey: () => 'request' }) };
 }
 
 describe('Project Action declaration placement ceiling', () => {
+  it.each(['asleep', 'starting'] as const)('addresses an exact %s managed target before guest status, leaving wake and admission to the original finite root', async state => {
+    const launch = { provider: { pluginId: 'custom.compute', localId: 'native' }, schemaVersion: 1, name: 'Worker', choices: {} };
+    const managed: ManagedMachineV1 = { id: 'managed', homeId: 'home', custodianAccountId: 'account', launch,
+      controller: { machineId: 'controller', installationId: 'installation' }, allocation: 'bound',
+      resource: { contributionRef: launch.provider, schemaVersion: 1, value: { id: 'native' } },
+      creationState: 'active', enrolledMachineId: 'worker', desired: state === 'asleep' ? 'stop' : 'start', desiredWhen: 'now', intentRevision: 1,
+      retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: true,
+      observation: { observedAt: 1, availability: 'present', power: 'stopped', storage: 'retained' },
+      ...(state === 'starting' ? { submittedNativeEffect: { intent: 'start' as const, intentRevision: 1,
+        requestId: 'start', controller: { machineId: 'controller', installationId: 'installation' } } } : {}),
+    };
+    const h = sourceReads({ version: 1, scripts: { check: { execution: 'portable', source: native } } },
+      { eligible: false, candidate: null, load: { kind: 'unknown' }, explanation: 'unavailable' }, managed);
+    expect(await h.place({ kind: 'named', name: 'check' }, exact)).toEqual({ ok: true, machineId: 'worker' });
+    expect(h.reads).not.toContain('projects.worker.status');
+    // Revoking retained wake cannot use offline presence as finite eligibility.
+    const refused = sourceReads({ version: 1, scripts: { check: { execution: 'portable', source: native } } },
+      { eligible: false, candidate: null, load: { kind: 'unknown' }, explanation: 'unavailable' }, { ...managed, wakeOnAcceptedMessage: false });
+    expect(await refused.place({ kind: 'named', name: 'check' }, exact)).toMatchObject({ ok: false });
+    for (const invalid of [{ ...managed, archivedAt: 1 }, { ...managed, desired: 'delete' as const },
+      { ...managed, allocation: 'may-exist' as const, resource: undefined },
+      { ...managed, observation: { ...managed.observation!, storage: 'lost' as const } }, { ...managed, enrolledMachineId: 'another' }]) {
+      const stale = sourceReads({ version: 1, scripts: { check: { execution: 'portable', source: native } } },
+        { eligible: false, candidate: null, load: { kind: 'unknown' }, explanation: 'unavailable' }, invalid);
+      expect(await stale.place({ kind: 'named', name: 'check' }, exact)).toMatchObject({ ok: false });
+    }
+  });
   it.each([false, true])('retains exact copy-setup facts at the existing frontdoor and rejects stale Machine facts (stale=%s)', async stale => {
     const workerCopy = { serverId: 'home', sourceWorkspaceRefId: 'checkout', sourceMachineId: 'source', targetMachineId: stale ? 'another-worker' : 'worker' };
     const h = sourceReads({ version: 1, scripts: { check: { execution: 'portable', source: native } } },

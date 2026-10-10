@@ -7,9 +7,11 @@ import { MachinePoolResolveResultV1Schema } from '../../machines/pools/v1.js';
 import { resolveProjectMemoryDemandV1 } from '../../workspaces/projectSetup/projectMemoryDemandV1.js';
 import type { ActionExecuteFailure, ActionExecuteResult } from '../actionExecutionResult.js';
 import type { ActionExecutorContext } from './types.js';
+import { ManagedMachineActionOutputSchemasV1 } from '../../machines/managed/actionsV1.js';
+import { resolveManagedMachineWakeStateV1 } from '../../machines/managed/resolveMachineRetentionPolicyV1.js';
 
 export type ProjectPlacementActionExecutorV1 = (actionId: 'projects.inspect' | 'projects.worker.preferences.get'
-  | 'projects.worker.status' | 'machines.pools.resolve' | 'machines.pools.get', input: unknown) => Promise<ActionExecuteResult>;
+  | 'projects.worker.status' | 'machines.pools.resolve' | 'machines.pools.get' | 'machines.managed.list', input: unknown) => Promise<ActionExecuteResult>;
 
 function failure(errorCode: string, details?: unknown): ActionExecuteFailure {
   return { ok: false, errorCode, error: errorCode, ...(details === undefined ? {} : { details }) };
@@ -23,6 +25,8 @@ export async function resolveProjectActionMachineV1(args: Readonly<{
   context: Pick<ActionExecutorContext, 'actionRequestId' | 'executionRunTargetMachineId'>;
   executeCanonicalAction?: ProjectPlacementActionExecutorV1;
   createRequestKey: () => string;
+  /** Captured original Account Home; hosted principals cannot borrow an ambient wake path. */
+  homeId?: string;
 }>): Promise<{ ok: true; machineId: string } | ActionExecuteFailure> {
   const { actionId, context } = args;
   const parsed = PROJECT_ACTION_INPUT_SCHEMAS_V1[actionId].safeParse(args.input);
@@ -89,6 +93,23 @@ export async function resolveProjectActionMachineV1(args: Readonly<{
         if (candidate.data.kind !== 'resolved') return workerRefusal(candidate.data.reason);
         machineId = candidate.data.machineId;
       } else {
+        if (args.homeId) {
+          const inventory = await executeRead('machines.managed.list', { homeId: args.homeId });
+          if (inventory.ok) {
+            const rows = ManagedMachineActionOutputSchemasV1['machines.managed.list'].safeParse(inventory.result);
+            if (!rows.success || rows.data.machines.some(row => row.homeId !== args.homeId)) return failure('invalid_action_output');
+            const targets = rows.data.machines.filter(row => row.enrolledMachineId === destination.machineId);
+            const managed = targets.length === 1 ? targets[0] : undefined;
+            if (managed?.wakeOnAcceptedMessage && resolveManagedMachineWakeStateV1(managed, destination.machineId)) {
+              // C52 rechecks requester/controller custody and wakes this SAME finite
+              // root. Guest capability/copy/load admission belongs after Running,
+              // never a pre-wake RPC to a deliberately stopped guest.
+              return { ok: true, machineId: destination.machineId };
+            }
+          }
+          // Unsupported/denied managed reads cannot authorize wake. Ordinary
+          // connected workers still use their existing discriminating status read.
+        }
         const status = await executeRead('projects.worker.status', { workspace: address, destination, purpose: 'finite',
           ...(memoryDemand ? { memoryDemand } : {}),
         });

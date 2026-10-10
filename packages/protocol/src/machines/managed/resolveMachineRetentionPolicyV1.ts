@@ -1,5 +1,5 @@
 import type { BillingCapabilitiesV1, RetentionCapabilitiesV1 } from './providerFactsV1.js';
-import type { RetentionV1 } from './managedMachineV1.js';
+import type { ManagedMachineV1, RetentionV1 } from './managedMachineV1.js';
 import type { MachineRetentionCategoryV1, MachineRetentionDefaultsV1, MachineRetentionOverrideV1, MachineRetentionPolicyV1 } from '../../account/settings/machineRetentionDefaultsV1.js';
 
 /** D21's selected product default, not a lifecycle timeout or resource limit. */
@@ -16,6 +16,19 @@ export type ResolvedMachineRetentionPolicyV1 = MachineRetentionPolicyV1 & Readon
 export function isMachineRetainedWakeEligibleV1(retention: RetentionV1, nativeCapabilities?: Pick<RetentionCapabilitiesV1, 'supportedIntents'>): boolean {
   return !(retention.kind !== 'until-delete' && retention.effect === 'delete')
     && (!nativeCapabilities || nativeCapabilities.supportedIntents.some(intent => intent === 'start' || intent === 'resume'));
+}
+
+/** Current retained power facts, shared by INT presentation and finite placement; not dispatch authority. */
+export function resolveManagedMachineWakeStateV1(machine: ManagedMachineV1, enrolledMachineId: string): 'asleep' | 'starting' | null {
+  if (machine.creationState !== 'active' || machine.archivedAt !== undefined || machine.enrolledMachineId !== enrolledMachineId
+    || machine.allocation !== 'bound' || !machine.resource || machine.observation?.availability !== 'present'
+    || machine.observation.storage === 'lost' || machine.desired === 'delete' || machine.cleanup
+    || machine.submittedNativeEffect?.intent === 'delete') return null;
+  if (machine.observation.power !== 'running' && machine.submittedNativeEffect?.intent === 'start') return 'starting';
+  return machine.observation.storage === 'retained'
+    && (machine.observation.power === 'stopped' || machine.observation.power === 'suspended')
+    && machine.wakeOnAcceptedMessage && isMachineRetainedWakeEligibleV1(machine.retention, machine.reviewedFacts?.retentionCapabilities)
+    ? 'asleep' : null;
 }
 
 /** Explicit live edits are refused rather than mapped to a different native effect. */
