@@ -31,10 +31,11 @@ const managedPurposeFamilies = Object.freeze([
     provider: 'codex',
     purpose: 'openai-upstream' as const,
     allowedHttpsOrigin: 'https://chatgpt.com',
-    protocols: Object.freeze(['openai-chat', 'openai-responses']),
+    protocols: Object.freeze(['openai-chat', 'openai-responses', 'anthropic']),
     endpointTemplateIds: Object.freeze([
       'cliproxyapi-openai-responses',
       'cliproxyapi-openai-chat',
+      'cliproxyapi-anthropic',
     ]),
   }),
   Object.freeze({
@@ -42,8 +43,8 @@ const managedPurposeFamilies = Object.freeze([
     provider: 'claude',
     purpose: 'anthropic-upstream' as const,
     allowedHttpsOrigin: 'https://api.anthropic.com',
-    protocols: Object.freeze(['anthropic']),
-    endpointTemplateIds: Object.freeze(['cliproxyapi-anthropic']),
+    protocols: Object.freeze(['openai-chat', 'openai-responses', 'anthropic']),
+    endpointTemplateIds: Object.freeze(['cliproxyapi-openai-responses', 'cliproxyapi-openai-chat', 'cliproxyapi-anthropic']),
   }),
 ]);
 
@@ -110,16 +111,14 @@ function connectedAccounts(boundPurposes: readonly ManagedPurpose[]): Readonly<{
   });
 }
 
-function healthyIdentity(boundPurposes: readonly ManagedPurpose[]) {
-  const families = managedPurposeFamilies.filter((family) => (
-    boundPurposes.includes(family.purpose)
-  ));
+function healthyIdentity(_boundPurposes: readonly ManagedPurpose[]) {
+  const families = managedPurposeFamilies;
   return Object.freeze({
     v: 1,
-    contractVersion: 'happier.cliproxyapi-managed/v1',
+    contractVersion: 'happier.cliproxyapi-managed/v2',
     sdkVersion: 'v7.2.95',
     wrapperBuildVersion: 'cliproxyapi-test-build',
-    protocols: families.flatMap((family) => family.protocols),
+    protocols: [...new Set(families.flatMap((family) => family.protocols))],
     purposes: families.map((family) => Object.freeze({
       consumer: Object.freeze({
         pluginId: 'happier.provider.cliproxyapi',
@@ -164,9 +163,9 @@ const MANAGED_RUNTIME_ROOT = join(PACKAGE_ROOT, 'managed-runtime');
 const MANAGED_PURPOSE_CONFIGURATION_ENV =
   'HAPPIER_CLIPROXYAPI_MANAGED_PURPOSE_CONFIGURATION';
 const DOWNSTREAM_BEARER_ENV = 'HAPPIER_CLIPROXYAPI_DOWNSTREAM_BEARER';
-const REQUEST_AUTH_CAPABILITY_PATH_ENV =
-  'HAPPIER_CLIPROXYAPI_REQUEST_AUTH_CAPABILITY_PATH';
+const CONSUMER_ACCESS_PATH_ENV = 'HAPPIER_CLIPROXYAPI_CONSUMER_ACCESS_PATH';
 const DOWNSTREAM_BEARER = 'cliproxyapi-composed-downstream-bearer';
+const CONSUMER_BEARER = Buffer.alloc(32, 11).toString('base64url');
 
 type ChildExit = Readonly<{
   code: number | null;
@@ -324,6 +323,7 @@ async function spawnManagedWrapper(input: Readonly<{
   executable: string;
   spec: Parameters<ManagedServices['supervise']>[0];
   capabilityPath: string;
+  boundPurposes: readonly ManagedPurpose[];
   outboundProxyPort: number;
 }>): Promise<SpawnedManagedWrapper> {
   if (input.spec.mode.kind !== 'spawn') {
@@ -335,6 +335,14 @@ async function spawnManagedWrapper(input: Readonly<{
   if (typeof purposeConfiguration !== 'string') {
     throw new Error('CLIProxyAPI managed runtime did not emit its purpose declaration');
   }
+  const consumerAccessPath = join(dirname(input.capabilityPath), 'consumers.json');
+  await writeFile(consumerAccessPath, JSON.stringify({ v: 1, consumers: [{
+    token: CONSUMER_BEARER,
+    capabilityPath: input.capabilityPath,
+    purposes: input.boundPurposes.map((purpose) => ({
+      consumer: { pluginId: 'happier.provider.cliproxyapi', localId: 'cliproxyapi' }, purpose,
+    })),
+  }] }), { mode: 0o600 });
   const portServer = createServer();
   const port = await listen(portServer);
   await close(portServer);
@@ -347,7 +355,7 @@ async function spawnManagedWrapper(input: Readonly<{
       ...input.spec.mode.launch.env,
       PORT: String(port),
       [DOWNSTREAM_BEARER_ENV]: DOWNSTREAM_BEARER,
-      [REQUEST_AUTH_CAPABILITY_PATH_ENV]: input.capabilityPath,
+      [CONSUMER_ACCESS_PATH_ENV]: consumerAccessPath,
       HTTP_PROXY: `http://127.0.0.1:${input.outboundProxyPort}`,
       HTTPS_PROXY: `http://127.0.0.1:${input.outboundProxyPort}`,
       http_proxy: `http://127.0.0.1:${input.outboundProxyPort}`,
@@ -422,7 +430,10 @@ async function spawnManagedWrapper(input: Readonly<{
     async request(request) {
       const response = await fetch(new URL(request.pathAndQuery, baseUrl), {
         method: request.method ?? 'GET',
-        headers: request.headers,
+        headers: {
+          ...request.headers,
+          authorization: `Bearer ${request.pathAndQuery === '/healthz' ? DOWNSTREAM_BEARER : CONSUMER_BEARER}`,
+        },
         body: request.body,
         signal: request.signal,
       });
@@ -447,6 +458,7 @@ async function responseStatus(
   service: ManagedServiceHandle,
   pathAndQuery: string,
   method: 'GET' | 'POST',
+  model?: string,
 ): Promise<number> {
   const response = await service.request({
     pathAndQuery,
@@ -455,7 +467,7 @@ async function responseStatus(
       authorization: `Bearer ${DOWNSTREAM_BEARER}`,
       'content-type': 'application/json',
     }),
-    body: method === 'POST' ? new TextEncoder().encode('{}') : undefined,
+    body: method === 'POST' ? new TextEncoder().encode(JSON.stringify({ model, max_tokens: 16, messages: [{ role: 'user', content: 'hello' }], input: 'hello' })) : undefined,
   });
   await response.body?.cancel();
   return response.status;
@@ -493,6 +505,23 @@ async function healthIdentity(service: ManagedServiceHandle): Promise<unknown> {
 }
 
 describe('CLIProxyAPI managed runtime bound-purpose launch snapshot', () => {
+  it('G1 declares stable physical purpose families and consumer-scoped authority', async () => {
+    const services = connectedAccounts(['openai-upstream']);
+    const supervise = vi.fn<ManagedServices['supervise']>(async () => managedService(['openai-upstream', 'anthropic-upstream']));
+    await CLIPROXYAPI_PUBLIC_MANAGED_PROVIDER_RUNTIME.start({
+      reason: 'sessionDemand', connectionId: 'gateway-one', connectionRevision: 1,
+      endpointTemplateIds: [...requestedEndpointTemplateIds],
+    }, {
+      connectedAccounts: services.service,
+      managedServices: { dependencies: {} as never, supervise },
+      signal: new AbortController().signal,
+    });
+    const spec = supervise.mock.calls[0]?.[0];
+    expect(spec).toMatchObject({ requestAuth: { kind: 'connectedAccountConsumerAccessPath', injectEnvironmentKey: 'HAPPIER_CLIPROXYAPI_CONSUMER_ACCESS_PATH' } });
+    if (spec?.mode.kind !== 'spawn') throw new Error('Missing physical gateway spec');
+    const configuration = JSON.parse(spec.mode.launch.env!.HAPPIER_CLIPROXYAPI_MANAGED_PURPOSE_CONFIGURATION!);
+    expect(configuration.purposes.map((purpose: { purpose: string }) => purpose.purpose)).toEqual(['openai-upstream', 'anthropic-upstream']);
+  });
   it.each([
     {
       name: 'OpenAI only',
@@ -500,12 +529,13 @@ describe('CLIProxyAPI managed runtime bound-purpose launch snapshot', () => {
       expectedEndpointTemplateIds: [
         'cliproxyapi-openai-responses',
         'cliproxyapi-openai-chat',
+        'cliproxyapi-anthropic',
       ],
     },
     {
       name: 'Claude only',
       boundPurposes: ['anthropic-upstream'] as const,
-      expectedEndpointTemplateIds: ['cliproxyapi-anthropic'],
+      expectedEndpointTemplateIds: ['cliproxyapi-openai-responses', 'cliproxyapi-openai-chat', 'cliproxyapi-anthropic'],
     },
     {
       name: 'both families',
@@ -540,9 +570,7 @@ describe('CLIProxyAPI managed runtime bound-purpose launch snapshot', () => {
     const purposeConfiguration = JSON.stringify({
       v: 3,
       modelListEnabled: true,
-      purposes: managedPurposeFamilies.filter((family) => (
-        boundPurposes.includes(family.purpose)
-      )).map((family) => ({
+      purposes: managedPurposeFamilies.map((family) => ({
         id: family.id,
         provider: family.provider,
         consumer: {
@@ -624,24 +652,17 @@ describe('CLIProxyAPI managed runtime bound-purpose launch snapshot', () => {
           expectedEndpointTemplateIds: [
             'cliproxyapi-openai-responses',
             'cliproxyapi-openai-chat',
+            'cliproxyapi-anthropic',
           ],
           boundModelId: 'gpt-5.5',
           unboundModelId: 'claude-sonnet-4-6',
-          excludedRoutes: [
-            '/v1/messages',
-            '/v1/messages/count_tokens',
-          ],
         },
         {
           name: 'Claude only',
           boundPurposes: ['anthropic-upstream'] as const,
-          expectedEndpointTemplateIds: ['cliproxyapi-anthropic'],
+          expectedEndpointTemplateIds: ['cliproxyapi-openai-responses', 'cliproxyapi-openai-chat', 'cliproxyapi-anthropic'],
           boundModelId: 'claude-sonnet-4-6',
           unboundModelId: 'gpt-5.5',
-          excludedRoutes: [
-            '/v1/responses',
-            '/v1/chat/completions',
-          ],
         },
       ] as const) {
         const requestAuthEffects = { count: 0 };
@@ -689,6 +710,7 @@ describe('CLIProxyAPI managed runtime bound-purpose launch snapshot', () => {
                   executable,
                   spec,
                   capabilityPath,
+                  boundPurposes: testCase.boundPurposes,
                   outboundProxyPort,
                 });
                 return wrapper.handle;
@@ -704,7 +726,7 @@ describe('CLIProxyAPI managed runtime bound-purpose launch snapshot', () => {
             throw new Error('managed wrapper health identity is invalid');
           }
           expect(actualHealthIdentity.protocols).toEqual(
-            declaredPurposes.flatMap((purpose) => purpose.protocols),
+            [...new Set(declaredPurposes.flatMap((purpose) => purpose.protocols))],
           );
           expect(actualHealthIdentity.purposes).toEqual(
             declaredPurposes.map((purpose) => ({
@@ -719,8 +741,8 @@ describe('CLIProxyAPI managed runtime bound-purpose launch snapshot', () => {
           const modelIds = await catalogModelIds(result.service);
           expect(modelIds).toContain(testCase.boundModelId);
           expect(modelIds).not.toContain(testCase.unboundModelId);
-          for (const excludedRoute of testCase.excludedRoutes) {
-            expect(await responseStatus(result.service, excludedRoute, 'POST')).toBe(404);
+          for (const route of ['/v1/messages', '/v1/responses', '/v1/chat/completions']) {
+            expect(await responseStatus(result.service, route, 'POST', testCase.unboundModelId)).toBeGreaterThanOrEqual(400);
           }
           expect(requestAuthEffects.count).toBe(0);
           expect(outboundEffects.count).toBe(0);
@@ -751,7 +773,7 @@ describe('CLIProxyAPI managed runtime bound-purpose launch snapshot', () => {
       headers: Object.freeze({ 'content-type': 'application/json' }),
       body: new Response(JSON.stringify({
         v: 1,
-        contractVersion: 'happier.cliproxyapi-managed/v1',
+        contractVersion: 'happier.cliproxyapi-managed/v2',
         sdkVersion: 'v7.2.95',
         wrapperBuildVersion: 'cliproxyapi-test-build',
         protocols: ['openai-responses'],

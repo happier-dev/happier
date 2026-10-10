@@ -71,15 +71,28 @@ func newGateway(
 	if err != nil {
 		return nil, err
 	}
+	if config.ConsumerAccessPath != "" {
+		routes[Route{Method: http.MethodPost, Path: ConsumerAccessSettlementPath}] = struct{}{}
+	}
 	var leaseProvider coreauth.RoundTripperProvider
 	if config.ProviderConnection == nil {
-		leaseProvider, err = newLeaseRoundTripperProvider(config.AuthEntries, broker, upstream)
+		provider, providerErr := newLeaseRoundTripperProvider(config.AuthEntries, broker, upstream)
+		leaseProvider, err = provider, providerErr
 		if err != nil {
 			return nil, err
 		}
+		provider.consumerAccessRequired = config.ConsumerAccessPath != ""
 	}
 
-	manager := coreauth.NewManager(nil, &coreauth.RoundRobinSelector{}, nil)
+	var selector coreauth.Selector = &coreauth.RoundRobinSelector{}
+	if config.ConsumerAccessPath != "" {
+		entries := make(map[string]AuthEntry, len(config.AuthEntries))
+		for _, entry := range config.AuthEntries {
+			entries[entry.ID] = entry
+		}
+		selector = &consumerAdmissionSelector{entries: entries, delegate: selector}
+	}
+	manager := coreauth.NewManager(nil, selector, nil)
 	manager.SetCooldownStateStore(nil)
 	manager.SetRetryConfig(0, 0, 1)
 	for _, entry := range config.AuthEntries {
@@ -93,9 +106,13 @@ func newGateway(
 	}
 
 	upstreamConfig := managedSDKConfig(config)
+	downstreamAuth := StrictDownstreamBearerMiddleware(config.DownstreamBearer)
+	if config.ConsumerAccessPath != "" {
+		downstreamAuth = newConsumerAccessOwner(config).middleware()
+	}
 	middleware := []gin.HandlerFunc{
 		StrictServingMiddleware(routes),
-		StrictDownstreamBearerMiddleware(config.DownstreamBearer),
+		downstreamAuth,
 		ManagedHealthIdentityMiddleware(
 			managedHealthIdentity(config, runtimeIdentity),
 			func() bool { return managedModelsRegistered(config) },

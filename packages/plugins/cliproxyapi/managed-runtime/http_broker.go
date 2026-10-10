@@ -35,7 +35,8 @@ const (
 )
 
 type HTTPBrokerConfig struct {
-	CapabilityPath string `json:"capabilityPath"`
+	CapabilityPath     string `json:"capabilityPath"`
+	ConsumerAccessPath string `json:"consumerAccessPath,omitempty"`
 }
 
 type HTTPBroker struct {
@@ -60,7 +61,11 @@ func (e *BrokerHTTPError) Error() string {
 }
 
 func NewHTTPBroker(config HTTPBrokerConfig) (*HTTPBroker, error) {
-	if !filepath.IsAbs(config.CapabilityPath) {
+	if config.ConsumerAccessPath != "" {
+		if !filepath.IsAbs(config.ConsumerAccessPath) {
+			return nil, fmt.Errorf("consumer access path must be absolute")
+		}
+	} else if !filepath.IsAbs(config.CapabilityPath) {
 		return nil, fmt.Errorf("request-auth capability path must be absolute")
 	}
 	return &HTTPBroker{
@@ -122,7 +127,7 @@ func (b *HTTPBroker) post(ctx context.Context, path string, input, output any, o
 	if b == nil || b.client == nil {
 		return fmt.Errorf("request-auth broker is not initialized")
 	}
-	transport, err := b.readTransportTuple()
+	transport, err := b.readTransportTuple(ctx)
 	if err != nil {
 		return err
 	}
@@ -167,8 +172,20 @@ func (b *HTTPBroker) post(ctx context.Context, path string, input, output any, o
 	return responseErr
 }
 
-func (b *HTTPBroker) readTransportTuple() (requestAuthTransportTuple, error) {
-	transport, err := readScopedCapability(b.config.CapabilityPath)
+func (b *HTTPBroker) readTransportTuple(ctx context.Context) (requestAuthTransportTuple, error) {
+	path := b.config.CapabilityPath
+	if b.config.ConsumerAccessPath != "" {
+		scope, ok := requestConsumerScope(ctx)
+		if !ok || scope.path != b.config.ConsumerAccessPath {
+			return requestAuthTransportTuple{}, &BrokerHTTPError{StatusCode: http.StatusServiceUnavailable, Code: "request_auth_unavailable"}
+		}
+		access, err := scope.current()
+		if err != nil {
+			return requestAuthTransportTuple{}, &BrokerHTTPError{StatusCode: http.StatusServiceUnavailable, Code: "request_auth_unavailable"}
+		}
+		path = access.CapabilityPath
+	}
+	transport, err := readScopedCapability(path)
 	if err != nil {
 		return requestAuthTransportTuple{}, err
 	}
@@ -285,6 +302,12 @@ func isLowerHexSHA256(value string) bool {
 }
 
 func readBoundedPrivateFile(path string, limit int64) ([]byte, error) {
+	return readPrivateFile(path, limit)
+}
+
+// A zero limit is used for the host-owned consumer census: no capacity policy
+// exists for its admitted subjects. Capability documents retain their own bound.
+func readPrivateFile(path string, limit int64) ([]byte, error) {
 	parentInfo, err := os.Lstat(filepath.Dir(path))
 	if err != nil {
 		return nil, err
@@ -316,11 +339,15 @@ func readBoundedPrivateFile(path string, limit int64) ([]byte, error) {
 			return nil, fmt.Errorf("private file permissions are too broad")
 		}
 	}
-	data, err := io.ReadAll(io.LimitReader(file, limit+1))
+	var reader io.Reader = file
+	if limit > 0 {
+		reader = io.LimitReader(file, limit+1)
+	}
+	data, err := io.ReadAll(reader)
 	if err != nil {
 		return nil, err
 	}
-	if int64(len(data)) > limit {
+	if limit > 0 && int64(len(data)) > limit {
 		return nil, fmt.Errorf("private file is too large")
 	}
 	finalPathInfo, err := os.Lstat(path)

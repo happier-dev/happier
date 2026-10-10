@@ -4,23 +4,51 @@ import { ProviderContributionV1Schema } from '@happier-dev/protocol';
 import { CLIPROXYAPI_PROVIDER_CONTRIBUTION } from './contribution.js';
 import {
   projectCLIProxyAPIProviderConnectionApplication,
+  resolveCLIProxyAPIManagedBrokerApplication,
   resolveCLIProxyAPIManagedPurposeFamily,
 } from './managedContract.js';
 
 describe('CLIPROXYAPI_PROVIDER_CONTRIBUTION', () => {
-  it('owns the exact endpoint/protocol to Connected Account purpose mapping', () => {
+  it('owns source-qualified upstream purposes independently of the exact downstream endpoint/protocol', () => {
     expect(resolveCLIProxyAPIManagedPurposeFamily({
       endpointTemplateId: 'cliproxyapi-openai-responses',
       protocol: 'openai-responses',
+      service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' },
     })?.purpose).toBe('openai-upstream');
     expect(resolveCLIProxyAPIManagedPurposeFamily({
       endpointTemplateId: 'cliproxyapi-anthropic',
       protocol: 'anthropic',
+      service: { pluginId: 'happier.agent.claude', localId: 'claude-subscription' },
     })?.purpose).toBe('anthropic-upstream');
     expect(resolveCLIProxyAPIManagedPurposeFamily({
       endpointTemplateId: 'cliproxyapi-anthropic',
       protocol: 'openai-responses',
+      service: { pluginId: 'happier.agent.claude', localId: 'claude-subscription' },
     })).toBeNull();
+    expect(resolveCLIProxyAPIManagedBrokerApplication({
+      service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' },
+      protocol: 'anthropic',
+    })?.endpointTemplateId).toBe('cliproxyapi-anthropic');
+    expect(resolveCLIProxyAPIManagedBrokerApplication({
+      service: { pluginId: 'happier.agent.claude', localId: 'claude-subscription' },
+      protocol: 'openai-responses',
+    })?.endpointTemplateId).toBe('cliproxyapi-openai-responses');
+    expect(resolveCLIProxyAPIManagedBrokerApplication({
+      service: { pluginId: 'happier.agent.claude', localId: 'claude-subscription' },
+      protocol: 'openai-chat',
+    })?.endpointTemplateId).toBe('cliproxyapi-openai-chat');
+    expect(resolveCLIProxyAPIManagedBrokerApplication({
+      service: { pluginId: 'foreign', localId: 'openai-codex' },
+      protocol: 'anthropic',
+    })).toBeNull();
+    expect(resolveCLIProxyAPIManagedBrokerApplication({
+      service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' },
+      protocol: 'unsupported',
+    })).toBeNull();
+    expect(resolveCLIProxyAPIManagedBrokerApplication({
+      service: { pluginId: 'happier.agent.claude', localId: 'claude-subscription' },
+      protocol: 'anthropic',
+    })?.endpointTemplateId).toBe('cliproxyapi-anthropic');
   });
 
   it('projects Provider Connection traffic onto the same managed executable without changing its Agent target', () => {
@@ -104,13 +132,13 @@ describe('CLIPROXYAPI_PROVIDER_CONTRIBUTION', () => {
           purpose: 'openai-upstream',
           title: {
             key: 'managedPurpose.openai.title',
-            fallback: 'Use OpenAI upstream account',
+            fallback: 'ChatGPT account or pool',
           },
         }, {
           purpose: 'anthropic-upstream',
           title: {
             key: 'managedPurpose.anthropic.title',
-            fallback: 'Use Anthropic upstream account',
+            fallback: 'Claude account or pool',
           },
         }],
       },

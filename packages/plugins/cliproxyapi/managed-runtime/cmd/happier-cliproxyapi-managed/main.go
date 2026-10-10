@@ -42,7 +42,7 @@ func runWithContext(
 		return err
 	}
 	var broker managedruntime.RequestAuthBroker
-	if brokerConfig.CapabilityPath != "" {
+	if brokerConfig.ConsumerAccessPath != "" {
 		broker, err = managedruntime.NewHTTPBroker(brokerConfig)
 		if err != nil {
 			return err
@@ -109,20 +109,20 @@ func materializeGatewayConfig(
 	if err != nil {
 		return managedruntime.Config{}, managedruntime.HTTPBrokerConfig{}, fmt.Errorf("managed purpose configuration environment is invalid")
 	}
-	capabilityPath, hasCapabilityPath := lookupEnvironment(managedruntime.RequestAuthCapabilityPathEnvironmentVariable)
+	consumerAccessPath, hasConsumerAccessPath := lookupEnvironment(managedruntime.ConsumerAccessPathEnvironmentVariable)
 	runtimeDir := filepath.Join(os.TempDir(), fmt.Sprintf("happier-cliproxyapi-managed-%d", port))
 	if purposeConfiguration.ProviderConnection == nil {
-		if !hasCapabilityPath || capabilityPath == "" || capabilityPath != strings.TrimSpace(capabilityPath) ||
-			!filepath.IsAbs(capabilityPath) || strings.ContainsRune(capabilityPath, '\x00') {
-			return managedruntime.Config{}, managedruntime.HTTPBrokerConfig{}, fmt.Errorf("managed request-auth capability environment is missing or invalid")
+		if !hasConsumerAccessPath || consumerAccessPath == "" || consumerAccessPath != strings.TrimSpace(consumerAccessPath) ||
+			!filepath.IsAbs(consumerAccessPath) || strings.ContainsRune(consumerAccessPath, '\x00') {
+			return managedruntime.Config{}, managedruntime.HTTPBrokerConfig{}, fmt.Errorf("managed consumer access environment is missing or invalid")
 		}
-		capabilityPath = filepath.Clean(capabilityPath)
-		runtimeDir = filepath.Dir(filepath.Dir(capabilityPath))
+		consumerAccessPath = filepath.Clean(consumerAccessPath)
+		runtimeDir = filepath.Dir(filepath.Dir(consumerAccessPath))
 		if runtimeDir == filepath.Dir(runtimeDir) {
-			return managedruntime.Config{}, managedruntime.HTTPBrokerConfig{}, fmt.Errorf("managed request-auth capability environment is missing or invalid")
+			return managedruntime.Config{}, managedruntime.HTTPBrokerConfig{}, fmt.Errorf("managed consumer access environment is missing or invalid")
 		}
-	} else if hasCapabilityPath {
-		return managedruntime.Config{}, managedruntime.HTTPBrokerConfig{}, fmt.Errorf("managed request-auth capability environment is invalid for Provider Connection")
+	} else if hasConsumerAccessPath {
+		return managedruntime.Config{}, managedruntime.HTTPBrokerConfig{}, fmt.Errorf("managed consumer access environment is invalid for Provider Connection")
 	}
 	config, err := managedruntime.ImmutableGatewayConfig(
 		host,
@@ -134,7 +134,8 @@ func materializeGatewayConfig(
 	if err != nil {
 		return managedruntime.Config{}, managedruntime.HTTPBrokerConfig{}, fmt.Errorf("managed gateway environment is invalid: %w", err)
 	}
-	return config, managedruntime.HTTPBrokerConfig{CapabilityPath: capabilityPath}, nil
+	config.ConsumerAccessPath = consumerAccessPath
+	return config, managedruntime.HTTPBrokerConfig{ConsumerAccessPath: consumerAccessPath}, nil
 }
 
 func requiredEnvironment(

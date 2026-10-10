@@ -1,51 +1,51 @@
 export const CLIPROXYAPI_UI_TRANSLATIONS = Object.freeze({
   en: Object.freeze({
-    'managedPurpose.openai.title': 'Use OpenAI upstream account',
-    'managedPurpose.anthropic.title': 'Use Anthropic upstream account',
+    'managedPurpose.openai.title': 'ChatGPT account or pool',
+    'managedPurpose.anthropic.title': 'Claude account or pool',
   }),
   de: Object.freeze({
-    'managedPurpose.openai.title': 'OpenAI-Upstream-Konto verwenden',
-    'managedPurpose.anthropic.title': 'Anthropic-Upstream-Konto verwenden',
+    'managedPurpose.openai.title': 'ChatGPT-Konto oder Pool',
+    'managedPurpose.anthropic.title': 'Claude-Konto oder Pool',
   }),
   ru: Object.freeze({
-    'managedPurpose.openai.title': 'Использовать вышестоящую учётную запись OpenAI',
-    'managedPurpose.anthropic.title': 'Использовать вышестоящую учётную запись Anthropic',
+    'managedPurpose.openai.title': 'Учётная запись или пул ChatGPT',
+    'managedPurpose.anthropic.title': 'Учётная запись или пул Claude',
   }),
   pl: Object.freeze({
-    'managedPurpose.openai.title': 'Użyj nadrzędnego konta OpenAI',
-    'managedPurpose.anthropic.title': 'Użyj nadrzędnego konta Anthropic',
+    'managedPurpose.openai.title': 'Konto lub pula ChatGPT',
+    'managedPurpose.anthropic.title': 'Konto lub pula Claude',
   }),
   es: Object.freeze({
-    'managedPurpose.openai.title': 'Usar la cuenta de OpenAI de origen',
-    'managedPurpose.anthropic.title': 'Usar la cuenta de Anthropic de origen',
+    'managedPurpose.openai.title': 'Cuenta o grupo de ChatGPT',
+    'managedPurpose.anthropic.title': 'Cuenta o grupo de Claude',
   }),
   fr: Object.freeze({
-    'managedPurpose.openai.title': 'Utiliser le compte OpenAI en amont',
-    'managedPurpose.anthropic.title': 'Utiliser le compte Anthropic en amont',
+    'managedPurpose.openai.title': 'Compte ou groupe ChatGPT',
+    'managedPurpose.anthropic.title': 'Compte ou groupe Claude',
   }),
   it: Object.freeze({
-    'managedPurpose.openai.title': 'Usa l’account OpenAI upstream',
-    'managedPurpose.anthropic.title': 'Usa l’account Anthropic upstream',
+    'managedPurpose.openai.title': 'Account o pool ChatGPT',
+    'managedPurpose.anthropic.title': 'Account o pool Claude',
   }),
   pt: Object.freeze({
-    'managedPurpose.openai.title': 'Usar a conta OpenAI de origem',
-    'managedPurpose.anthropic.title': 'Usar a conta Anthropic de origem',
+    'managedPurpose.openai.title': 'Conta ou grupo do ChatGPT',
+    'managedPurpose.anthropic.title': 'Conta ou grupo do Claude',
   }),
   ca: Object.freeze({
-    'managedPurpose.openai.title': 'Utilitza el compte OpenAI d’origen',
-    'managedPurpose.anthropic.title': 'Utilitza el compte Anthropic d’origen',
+    'managedPurpose.openai.title': 'Compte o grup de ChatGPT',
+    'managedPurpose.anthropic.title': 'Compte o grup de Claude',
   }),
   'zh-Hans': Object.freeze({
-    'managedPurpose.openai.title': '使用上游 OpenAI 帐户',
-    'managedPurpose.anthropic.title': '使用上游 Anthropic 帐户',
+    'managedPurpose.openai.title': 'ChatGPT 帐户或帐户池',
+    'managedPurpose.anthropic.title': 'Claude 帐户或帐户池',
   }),
   'zh-Hant': Object.freeze({
-    'managedPurpose.openai.title': '使用上游 OpenAI 帳戶',
-    'managedPurpose.anthropic.title': '使用上游 Anthropic 帳戶',
+    'managedPurpose.openai.title': 'ChatGPT 帳戶或帳戶集區',
+    'managedPurpose.anthropic.title': 'Claude 帳戶或帳戶集區',
   }),
   ja: Object.freeze({
-    'managedPurpose.openai.title': '上流の OpenAI アカウントを使用',
-    'managedPurpose.anthropic.title': '上流の Anthropic アカウントを使用',
+    'managedPurpose.openai.title': 'ChatGPT アカウントまたはプール',
+    'managedPurpose.anthropic.title': 'Claude アカウントまたはプール',
   }),
 });
 

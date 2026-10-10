@@ -66,7 +66,6 @@ const healthyIdentity = Object.freeze({
 
 const anthropicOnlyIdentity = Object.freeze({
   ...healthyIdentity,
-  protocols: Object.freeze(['anthropic']),
   purposes: Object.freeze([healthyIdentity.purposes[1]!]),
 });
 
@@ -83,7 +82,7 @@ const fullyBoundPurposeConfiguration = JSON.stringify({
       },
       purpose: 'openai-upstream',
       allowedHttpsOrigin: 'https://chatgpt.com',
-      protocols: ['openai-chat', 'openai-responses'],
+      protocols: ['openai-chat', 'openai-responses', 'anthropic'],
     },
     {
       id: 'claude',
@@ -94,7 +93,7 @@ const fullyBoundPurposeConfiguration = JSON.stringify({
       },
       purpose: 'anthropic-upstream',
       allowedHttpsOrigin: 'https://api.anthropic.com',
-      protocols: ['anthropic'],
+      protocols: ['openai-chat', 'openai-responses', 'anthropic'],
     },
   ],
 });
@@ -111,7 +110,7 @@ const anthropicOnlyPurposeConfiguration = JSON.stringify({
     },
     purpose: 'anthropic-upstream',
     allowedHttpsOrigin: 'https://api.anthropic.com',
-    protocols: ['anthropic'],
+    protocols: ['openai-chat', 'openai-responses', 'anthropic'],
   }],
 });
 
@@ -412,10 +411,11 @@ describe('CLIProxyAPI public managed Provider activation', () => {
       catalogProbeEndpointTemplateIds,
     ));
     expect(admittedEndpointTemplateIds).toContain('cliproxyapi-anthropic');
-    // Nothing unbound leaks in beyond the declared catalog probes.
-    expect(admittedEndpointTemplateIds).toHaveLength(
-      catalogProbeEndpointTemplateIds.length + 1,
-    );
+    expect(admittedEndpointTemplateIds).toEqual([
+      'cliproxyapi-openai-responses',
+      'cliproxyapi-openai-chat',
+      'cliproxyapi-anthropic',
+    ]);
   });
 
   it('disposes the newly supervised service when readiness fails', async () => {

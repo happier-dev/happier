@@ -2,6 +2,7 @@ export const CLIPROXYAPI_MANAGED_ENV = Object.freeze({
   downstreamBearer: 'HAPPIER_CLIPROXYAPI_DOWNSTREAM_BEARER',
   requestAuthCapabilityPath:
     'HAPPIER_CLIPROXYAPI_REQUEST_AUTH_CAPABILITY_PATH',
+  consumerAccessPath: 'HAPPIER_CLIPROXYAPI_CONSUMER_ACCESS_PATH',
   purposeConfiguration:
     'HAPPIER_CLIPROXYAPI_MANAGED_PURPOSE_CONFIGURATION',
 });
@@ -23,7 +24,7 @@ export const CLIPROXYAPI_MANAGED_MODEL_LIST_ENABLED = true;
 export const CLIPROXYAPI_MANAGED_HEALTH_IDENTITY = Object.freeze({
   responseMaxBytes: 16 * 1024,
   v: 1,
-  contractVersion: 'happier.cliproxyapi-managed/v1',
+  contractVersion: 'happier.cliproxyapi-managed/v2',
   sdkVersion: 'v7.2.95',
   wrapperBuildVersionMaxBytes: 128,
   modelListEnabled: CLIPROXYAPI_MANAGED_MODEL_LIST_ENABLED,
@@ -45,10 +46,12 @@ export const CLIPROXYAPI_MANAGED_PURPOSE_FAMILIES = Object.freeze([
     purpose: 'openai-upstream',
     title: Object.freeze({
       key: 'managedPurpose.openai.title',
-      fallback: 'Use OpenAI upstream account',
+      fallback: 'ChatGPT account or pool',
     }),
     authEntry: Object.freeze({ id: 'codex', provider: 'codex' }),
-    protocols: Object.freeze(['openai-chat', 'openai-responses']),
+    // Proven downstream translations, independent of upstream authorization.
+    protocols: Object.freeze(['openai-chat', 'openai-responses', 'anthropic']),
+    // Public Team broker declarations still require one purpose per endpoint.
     endpointTemplateIds: Object.freeze([
       'cliproxyapi-openai-responses',
       'cliproxyapi-openai-chat',
@@ -76,10 +79,10 @@ export const CLIPROXYAPI_MANAGED_PURPOSE_FAMILIES = Object.freeze([
     purpose: 'anthropic-upstream',
     title: Object.freeze({
       key: 'managedPurpose.anthropic.title',
-      fallback: 'Use Anthropic upstream account',
+      fallback: 'Claude account or pool',
     }),
     authEntry: Object.freeze({ id: 'claude', provider: 'claude' }),
-    protocols: Object.freeze(['anthropic']),
+    protocols: Object.freeze(['openai-chat', 'openai-responses', 'anthropic']),
     endpointTemplateIds: Object.freeze(['cliproxyapi-anthropic']),
     connectedAccount: Object.freeze({
       service: Object.freeze({
@@ -121,11 +124,22 @@ export const CLIPROXYAPI_MANAGED_ENDPOINT_TEMPLATE_IDS = Object.freeze(
   ]),
 );
 
+function resolveManagedEndpointTemplateId(protocol: string) {
+  const supported = CLIPROXYAPI_MANAGED_PURPOSE_FAMILIES.some((family) => (
+    family.protocols.some((candidate) => candidate === protocol)
+  ));
+  if (!supported) return null;
+  return protocol === 'openai-chat'
+    ? 'cliproxyapi-openai-chat'
+    : protocol === 'openai-responses' ? 'cliproxyapi-openai-responses' : 'cliproxyapi-anthropic';
+}
+
 /** Canonical endpoint-to-purpose lookup shared by every managed CLIProxyAPI consumer. */
 export function resolveCLIProxyAPIManagedPurposeFamily(input: Readonly<{
   endpointTemplateId: string;
   protocol: string;
 }>): typeof CLIPROXYAPI_MANAGED_PURPOSE_FAMILIES[number] | null {
+  if (resolveManagedEndpointTemplateId(input.protocol) !== input.endpointTemplateId) return null;
   return CLIPROXYAPI_MANAGED_PURPOSE_FAMILIES.find((family) => (
     family.endpointTemplateIds.some((candidate) => candidate === input.endpointTemplateId)
     && family.protocols.some((candidate) => candidate === input.protocol)
@@ -146,14 +160,9 @@ export function projectCLIProxyAPIProviderConnectionApplication(input: Readonly<
   endpointTemplateId: string;
   protocol: 'openai-chat' | 'openai-responses' | 'anthropic';
 }> | null {
-  const supported = CLIPROXYAPI_MANAGED_PURPOSE_FAMILIES.some((family) => (
-    family.protocols.some((protocol) => protocol === input.protocol)
-  ));
-  if (!supported) return null;
+  const endpointTemplateId = resolveManagedEndpointTemplateId(input.protocol);
+  if (!endpointTemplateId) return null;
   const protocol = input.protocol as 'openai-chat' | 'openai-responses' | 'anthropic';
-  const endpointTemplateId = protocol === 'openai-chat'
-    ? 'cliproxyapi-openai-chat'
-    : protocol === 'openai-responses' ? 'cliproxyapi-openai-responses' : 'cliproxyapi-anthropic';
   return Object.freeze({
     agentTargetKey: input.agentTargetKey,
     implementationIdentity: Object.freeze({ pluginId: 'happier.provider.cliproxyapi', localId: 'cliproxyapi' }),
@@ -179,10 +188,13 @@ export function resolveCLIProxyAPIManagedBrokerApplication(input: Readonly<{
     && candidate.connectedAccount.service.localId === input.service.localId
     && candidate.protocols.some((protocol) => protocol === input.protocol));
   if (!family) return null;
-  return projectCLIProxyAPIProviderConnectionApplication({
+  const application = projectCLIProxyAPIProviderConnectionApplication({
     agentTargetKey: input.protocol === 'anthropic'
       ? 'agent:happier.agent.claude/claude'
       : 'agent:happier.agent.codex/codex',
     protocol: input.protocol,
   });
+  return application && resolveCLIProxyAPIManagedPurposeFamily(application) === family
+    ? application
+    : null;
 }

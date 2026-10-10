@@ -10,7 +10,7 @@ import (
 
 const (
 	DownstreamBearerEnvironmentVariable            = "HAPPIER_CLIPROXYAPI_DOWNSTREAM_BEARER"
-	RequestAuthCapabilityPathEnvironmentVariable   = "HAPPIER_CLIPROXYAPI_REQUEST_AUTH_CAPABILITY_PATH"
+	ConsumerAccessPathEnvironmentVariable          = "HAPPIER_CLIPROXYAPI_CONSUMER_ACCESS_PATH"
 	ManagedPurposeConfigurationEnvironmentVariable = "HAPPIER_CLIPROXYAPI_MANAGED_PURPOSE_CONFIGURATION"
 )
 
@@ -90,6 +90,7 @@ func ImmutableGatewayConfig(
 	}
 	authEntries := make([]AuthEntry, 0, len(normalizedPurposeConfiguration.Purposes))
 	protocols := make([]ProviderProtocol, 0, len(normalizedPurposeConfiguration.Purposes)*2)
+	seenProtocols := make(map[ProviderProtocol]struct{})
 	for _, row := range normalizedPurposeConfiguration.Purposes {
 		authEntries = append(authEntries, AuthEntry{
 			ID:                 row.ID,
@@ -97,7 +98,12 @@ func ImmutableGatewayConfig(
 			Purpose:            QualifiedPurpose{Consumer: row.Consumer, Purpose: row.Purpose},
 			AllowedHTTPSOrigin: row.AllowedHTTPSOrigin,
 		})
-		protocols = append(protocols, row.Protocols...)
+		for _, protocol := range row.Protocols {
+			if _, exists := seenProtocols[protocol]; !exists {
+				seenProtocols[protocol] = struct{}{}
+				protocols = append(protocols, protocol)
+			}
+		}
 	}
 	if normalizedPurposeConfiguration.ProviderConnection != nil {
 		protocols = append(protocols, normalizedPurposeConfiguration.ProviderConnection.Protocol)
@@ -142,7 +148,6 @@ func normalizeManagedPurposeConfiguration(
 	seenIDs := make(map[string]struct{}, len(configuration.Purposes))
 	seenProviders := make(map[Provider]struct{}, len(configuration.Purposes))
 	seenPurposes := make(map[QualifiedPurpose]struct{}, len(configuration.Purposes))
-	seenProtocols := make(map[ProviderProtocol]struct{}, len(configuration.Purposes)*2)
 	purposes := make([]ManagedPurposeConfigurationRow, 0, len(configuration.Purposes))
 	for _, row := range configuration.Purposes {
 		entry := AuthEntry{
@@ -167,6 +172,7 @@ func normalizeManagedPurposeConfiguration(
 		}
 		seenPurposes[entry.Purpose] = struct{}{}
 		protocols := make([]ProviderProtocol, 0, len(row.Protocols))
+		seenProtocols := make(map[ProviderProtocol]struct{}, len(row.Protocols))
 		for _, protocol := range row.Protocols {
 			if _, exists := protocolSurfaces[protocol]; !exists {
 				return ManagedPurposeConfiguration{}, fmt.Errorf("managed purpose configuration is invalid")

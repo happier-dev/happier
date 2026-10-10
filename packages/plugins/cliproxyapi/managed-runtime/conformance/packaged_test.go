@@ -48,7 +48,7 @@ func TestPackagedWrapper(t *testing.T) {
 		"HOST=127.0.0.1",
 		"PORT="+strconv.Itoa(port),
 		managedruntime.DownstreamBearerEnvironmentVariable+"="+downstreamBearer,
-		managedruntime.RequestAuthCapabilityPathEnvironmentVariable+"="+capabilityPath,
+		managedruntime.ConsumerAccessPathEnvironmentVariable+"="+capabilityPath,
 		managedruntime.ManagedPurposeConfigurationEnvironmentVariable+"="+
 			`{"v":3,"modelListEnabled":true,"purposes":[{"id":"codex","provider":"codex","consumer":{"pluginId":"happier.provider.cliproxyapi","localId":"cliproxyapi"},"purpose":"openai-upstream","allowedHttpsOrigin":"https://chatgpt.com","protocols":["openai-chat","openai-responses"]},{"id":"claude","provider":"claude","consumer":{"pluginId":"happier.provider.cliproxyapi","localId":"cliproxyapi"},"purpose":"anthropic-upstream","allowedHttpsOrigin":"https://api.anthropic.com","protocols":["anthropic"]}]}`,
 	)
@@ -111,7 +111,9 @@ func TestPackagedWrapper(t *testing.T) {
 		!slices.Equal(healthIdentity.Purposes, wantPurposes) {
 		t.Fatalf("packaged health identity = %#v", healthIdentity)
 	}
-	assertStatus(t, port, "/v1/models", downstreamBearer, http.StatusOK)
+	// A fresh process has no admitted consumer yet. Process health/management
+	// authority cannot publish a consumer catalog or borrow credentials.
+	assertStatus(t, port, "/v1/models", downstreamBearer, http.StatusServiceUnavailable)
 	assertStatus(t, port, "/v0/management/config", downstreamBearer, http.StatusNotFound)
 	assertModelRequestFailsClosed(t, port, downstreamBearer)
 	if _, err := os.Stat(filepath.Join(runtimeDir, "request-auth", "cliproxyapi-runtime")); !os.IsNotExist(err) {

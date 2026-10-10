@@ -17,6 +17,24 @@ import (
 
 const fullyBoundPurposeConfiguration = `{"v":3,"modelListEnabled":true,"purposes":[{"id":"codex","provider":"codex","consumer":{"pluginId":"happier.provider.cliproxyapi","localId":"cliproxyapi"},"purpose":"openai-upstream","allowedHttpsOrigin":"https://chatgpt.com","protocols":["openai-chat","openai-responses"]},{"id":"claude","provider":"claude","consumer":{"pluginId":"happier.provider.cliproxyapi","localId":"cliproxyapi"},"purpose":"anthropic-upstream","allowedHttpsOrigin":"https://api.anthropic.com","protocols":["anthropic"]}]}`
 
+func TestMaterializeGatewayConfigUsesSharedConsumerAccessInsteadOfOneSessionCapability(t *testing.T) {
+	root := t.TempDir()
+	accessPath := filepath.Join(root, "request-auth", "consumers.json")
+	environment := map[string]string{
+		"HOST": "127.0.0.1", "PORT": "32123",
+		managedruntime.DownstreamBearerEnvironmentVariable:            "health-secret",
+		"HAPPIER_CLIPROXYAPI_CONSUMER_ACCESS_PATH":                    accessPath,
+		managedruntime.ManagedPurposeConfigurationEnvironmentVariable: fullyBoundPurposeConfiguration,
+	}
+	config, broker, err := materializeGatewayConfig(func(name string) (string, bool) { value, ok := environment[name]; return value, ok })
+	if err != nil {
+		t.Fatalf("shared process config refused: %v", err)
+	}
+	if config.ConsumerAccessPath != accessPath || config.RuntimeDir != root || broker.ConsumerAccessPath != accessPath || broker.CapabilityPath != "" {
+		t.Fatalf("shared process retained one consumer capability: %#v / %#v", config, broker)
+	}
+}
+
 func TestParseArgumentsAcceptsOnlyNoArguments(t *testing.T) {
 	t.Parallel()
 
@@ -44,7 +62,7 @@ func TestMaterializeGatewayConfigReadsExactProcessEnvironmentAndImmutableFacts(t
 		"HOST": "127.0.0.1",
 		"PORT": "32123",
 		managedruntime.DownstreamBearerEnvironmentVariable:            "session-secret",
-		managedruntime.RequestAuthCapabilityPathEnvironmentVariable:   capabilityPath,
+		managedruntime.ConsumerAccessPathEnvironmentVariable:          capabilityPath,
 		managedruntime.ManagedPurposeConfigurationEnvironmentVariable: fullyBoundPurposeConfiguration,
 	}
 	config, brokerConfig, err := materializeGatewayConfig(func(name string) (string, bool) {
@@ -79,7 +97,7 @@ func TestMaterializeGatewayConfigReadsExactProcessEnvironmentAndImmutableFacts(t
 		config.AuthEntries[1].AllowedHTTPSOrigin != "https://api.anthropic.com" {
 		t.Fatalf("auth entries = %#v", config.AuthEntries)
 	}
-	if brokerConfig.CapabilityPath != capabilityPath {
+	if brokerConfig.ConsumerAccessPath != capabilityPath {
 		t.Fatalf("request-auth config = %#v", brokerConfig)
 	}
 }
@@ -100,7 +118,7 @@ func TestMaterializeGatewayConfigAcceptsProviderConnectionWithoutRequestAuthCapa
 		t.Fatalf("materializeGatewayConfig() error = %v", err)
 	}
 	if config.ProviderConnection == nil || config.ProviderConnection.Protocol != managedruntime.ProtocolAnthropic ||
-		config.ModelListEnabled || len(config.AuthEntries) != 0 || brokerConfig.CapabilityPath != "" {
+		config.ModelListEnabled || len(config.AuthEntries) != 0 || brokerConfig.ConsumerAccessPath != "" {
 		t.Fatalf("Provider Connection config = %#v; broker = %#v", config, brokerConfig)
 	}
 }
@@ -112,14 +130,14 @@ func TestMaterializeGatewayConfigRejectsMissingOrMalformedEnvironmentWithoutEcho
 		"HOST": "127.0.0.1",
 		"PORT": "32123",
 		managedruntime.DownstreamBearerEnvironmentVariable:            "secret-must-not-appear",
-		managedruntime.RequestAuthCapabilityPathEnvironmentVariable:   filepath.Join(t.TempDir(), "capability.json"),
+		managedruntime.ConsumerAccessPathEnvironmentVariable:          filepath.Join(t.TempDir(), "capability.json"),
 		managedruntime.ManagedPurposeConfigurationEnvironmentVariable: fullyBoundPurposeConfiguration,
 	}
 	for _, mutate := range []func(map[string]string){
 		func(env map[string]string) { delete(env, "HOST") },
 		func(env map[string]string) { delete(env, "PORT") },
 		func(env map[string]string) { delete(env, managedruntime.DownstreamBearerEnvironmentVariable) },
-		func(env map[string]string) { delete(env, managedruntime.RequestAuthCapabilityPathEnvironmentVariable) },
+		func(env map[string]string) { delete(env, managedruntime.ConsumerAccessPathEnvironmentVariable) },
 		func(env map[string]string) {
 			delete(env, managedruntime.ManagedPurposeConfigurationEnvironmentVariable)
 		},
@@ -129,10 +147,10 @@ func TestMaterializeGatewayConfigRejectsMissingOrMalformedEnvironmentWithoutEcho
 			env[managedruntime.DownstreamBearerEnvironmentVariable] = " secret-must-not-appear "
 		},
 		func(env map[string]string) {
-			env[managedruntime.RequestAuthCapabilityPathEnvironmentVariable] = "relative"
+			env[managedruntime.ConsumerAccessPathEnvironmentVariable] = "relative"
 		},
 		func(env map[string]string) {
-			env[managedruntime.RequestAuthCapabilityPathEnvironmentVariable] =
+			env[managedruntime.ConsumerAccessPathEnvironmentVariable] =
 				filepath.Join(t.TempDir(), "capability.json") + "\x00forged"
 		},
 		func(env map[string]string) {
@@ -166,7 +184,7 @@ func TestMaterializeGatewayConfigUsesTheHostOwnedMaterializedRoot(t *testing.T) 
 		"HOST": "127.0.0.1",
 		"PORT": "32123",
 		managedruntime.DownstreamBearerEnvironmentVariable:            "session-secret",
-		managedruntime.RequestAuthCapabilityPathEnvironmentVariable:   capabilityPath,
+		managedruntime.ConsumerAccessPathEnvironmentVariable:          capabilityPath,
 		managedruntime.ManagedPurposeConfigurationEnvironmentVariable: fullyBoundPurposeConfiguration,
 	}
 	config, _, err := materializeGatewayConfig(func(name string) (string, bool) {
@@ -199,7 +217,7 @@ func TestRunWithContextPreservesTheHostOwnedRootAcrossRestart(t *testing.T) {
 			"HOST": "127.0.0.1",
 			"PORT": strconv.Itoa(port),
 			managedruntime.DownstreamBearerEnvironmentVariable:            "session-secret",
-			managedruntime.RequestAuthCapabilityPathEnvironmentVariable:   capabilityPath,
+			managedruntime.ConsumerAccessPathEnvironmentVariable:          capabilityPath,
 			managedruntime.ManagedPurposeConfigurationEnvironmentVariable: fullyBoundPurposeConfiguration,
 		}
 		runContext, cancel := context.WithCancel(context.Background())

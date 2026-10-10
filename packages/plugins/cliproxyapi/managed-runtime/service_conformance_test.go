@@ -168,59 +168,56 @@ func TestPinnedSDKMixedServingUsesFinalLeaseAfterExecutorShaping(t *testing.T) {
 	assertNoRuntimeStateFiles(t, runtimeDir)
 }
 
-func TestPinnedSDKSparseOpenAIBindingExcludesUnboundClaudeServingAndCatalog(t *testing.T) {
-	port := reserveLoopbackPort(t)
-	cfg := Config{
-		Host:             "127.0.0.1",
-		Port:             port,
-		DownstreamBearer: "downstream-session-bearer",
-		RuntimeDir:       t.TempDir(),
-		AuthEntries: []AuthEntry{
-			testAuthEntry("codex", ProviderCodex, "openai-upstream"),
-		},
-		Protocols: []ProviderProtocol{
-			ProtocolOpenAIChat,
-			ProtocolOpenAIResponses,
-		},
-		ModelListEnabled: true,
-	}
-	broker := &sequenceBroker{}
-	upstream := &protocolFixtureRoundTripper{}
-	gateway, err := NewGateway(cfg, testRuntimeIdentity(), broker, upstream)
-	if err != nil {
-		t.Fatalf("NewGateway() error = %v", err)
-	}
-	cancel, runResult := runGateway(t, gateway)
-	defer stopGateway(t, cancel, runResult)
-
-	healthIdentity := awaitManagedHealthIdentity(t, cfg)
-	if got := healthIdentity.Protocols; len(got) != 2 ||
-		got[0] != ProtocolOpenAIChat || got[1] != ProtocolOpenAIResponses {
-		t.Fatalf("health identity protocols = %#v", got)
-	}
-	if got := healthIdentity.Purposes; len(got) != 1 || got[0] != testPurpose("openai-upstream") {
-		t.Fatalf("health identity purposes = %#v", got)
-	}
-	if len(healthIdentity.Protocols) != 2 || len(healthIdentity.Purposes) != 1 ||
-		healthIdentity.Purposes[0] != testPurpose("openai-upstream") {
-		t.Fatalf("sparse health identity = %#v", healthIdentity)
-	}
-	for _, model := range gateway.Catalog() {
-		if model.Provider == ProviderClaude {
-			t.Fatalf("sparse catalog advertised unbound Claude model %#v", model)
-		}
-	}
-
-	response := postJSON(t, cfg, "/v1/messages", `{"model":"claude-sonnet-4-6","max_tokens":16,"messages":[{"role":"user","content":"hello"}]}`)
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusNotFound {
-		t.Fatalf("unbound Claude downstream status = %d, want 404", response.StatusCode)
-	}
-	if got := len(broker.purposes()); got != 0 {
-		t.Fatalf("unbound Claude route performed %d request-auth lookups", got)
-	}
-	if got := len(upstream.requests()); got != 0 {
-		t.Fatalf("unbound Claude route performed %d upstream effects", got)
+func TestPinnedSDKSparseBindingsSeparateServingProtocolFromUpstreamAuthority(t *testing.T) {
+	for _, testCase := range crossProtocolCases()[:2] {
+		t.Run(testCase.name, func(t *testing.T) {
+			cfg := crossProtocolConfig(t, testCase)
+			cfg.Protocols = []ProviderProtocol{ProtocolOpenAIChat, ProtocolOpenAIResponses, ProtocolAnthropic}
+			broker := &sequenceBroker{leases: []OAuthBearerLease{validLease("only-bound-member", nil)}}
+			upstream := &protocolFixtureRoundTripper{}
+			gateway, err := NewGateway(cfg, testRuntimeIdentity(), broker, upstream)
+			if err != nil {
+				t.Fatal(err)
+			}
+			cancel, runResult := runGateway(t, gateway)
+			defer stopGateway(t, cancel, runResult)
+			health := awaitManagedHealthIdentity(t, cfg)
+			if len(health.Protocols) != 3 || len(health.Purposes) != 1 || health.Purposes[0] != testPurpose(testCase.purpose) {
+				t.Fatalf("sparse health: %#v", health)
+			}
+			unboundModel := "claude-sonnet-4-6"
+			if testCase.provider == ProviderClaude {
+				unboundModel = "gpt-5.5"
+			}
+			for _, model := range gateway.Catalog() {
+				if model.Provider != testCase.provider || model.ID == unboundModel {
+					t.Fatalf("unbound catalog row: %#v", model)
+				}
+			}
+			for _, path := range []string{"/v1/messages", "/v1/responses", "/v1/chat/completions"} {
+				payload := fmt.Sprintf(`{"model":%q,"max_tokens":16,"messages":[{"role":"user","content":"hello"}],"input":"hello"}`, unboundModel)
+				response := postJSON(t, cfg, path, payload)
+				_ = response.Body.Close()
+				if response.StatusCode < 400 {
+					t.Fatalf("unbound model admitted at %s: %d", path, response.StatusCode)
+				}
+			}
+			if len(broker.purposes()) != 0 || len(upstream.requests()) != 0 {
+				t.Fatal("unbound model performed auth lookup or upstream effect")
+			}
+			response := postJSON(t, cfg, testCase.path, testCase.request)
+			body := readResponse(t, response)
+			_ = response.Body.Close()
+			if response.StatusCode != http.StatusOK || !strings.Contains(body, testCase.terminal) {
+				t.Fatalf("bound translation = %d: %s", response.StatusCode, body)
+			}
+			if purposes := broker.purposes(); len(purposes) != 1 || purposes[0] != testPurpose(testCase.purpose) {
+				t.Fatalf("wrong authority: %#v", purposes)
+			}
+			if requests := upstream.requests(); len(requests) != 1 || requests[0].URL.Host != testCase.host {
+				t.Fatalf("wrong upstream: %#v", requests)
+			}
+		})
 	}
 }
 
@@ -942,6 +939,12 @@ func TestPinnedSDKPreservesStreamingToolsAndDownstreamWebsocketOverFinalTranspor
 		},
 		Protocols: []ProviderProtocol{ProtocolOpenAIResponses},
 	}
+	cfg.ConsumerAccessPath = filepath.Join(cfg.RuntimeDir, "consumers.json")
+	streamCapabilityPath, websocketCapabilityPath := filepath.Join(cfg.RuntimeDir, "stream.json"), filepath.Join(cfg.RuntimeDir, "websocket.json")
+	writeConsumerAccess(t, cfg.ConsumerAccessPath,
+		map[string]any{"token": testCapability(91), "capabilityPath": streamCapabilityPath, "purposes": []QualifiedPurpose{testPurpose("openai-upstream")}},
+		map[string]any{"token": testCapability(92), "capabilityPath": websocketCapabilityPath, "purposes": []QualifiedPurpose{testPurpose("openai-upstream")}},
+	)
 	broker := &sequenceBroker{leases: []OAuthBearerLease{
 		validLease("stream-member", map[string]string{"Chatgpt-Account-Id": "stream-account"}),
 		validLease("websocket-member", map[string]string{"Chatgpt-Account-Id": "websocket-account"}),
@@ -955,7 +958,9 @@ func TestPinnedSDKPreservesStreamingToolsAndDownstreamWebsocketOverFinalTranspor
 	defer stopGateway(t, cancel, runResult)
 	_ = awaitManagedHealthIdentity(t, cfg)
 
-	streamResponse := postJSON(t, cfg, "/v1/responses", `{
+	consumerConfig := cfg
+	consumerConfig.DownstreamBearer = testCapability(91)
+	streamResponse := postJSON(t, consumerConfig, "/v1/responses", `{
 		"model":"gpt-5.5",
 		"stream":true,
 		"input":"use the tool",
@@ -975,7 +980,7 @@ func TestPinnedSDKPreservesStreamingToolsAndDownstreamWebsocketOverFinalTranspor
 		t.Fatalf("stream omitted terminal event: %s", streamBody)
 	}
 
-	headers := http.Header{"Authorization": {"Bearer " + cfg.DownstreamBearer}}
+	headers := http.Header{"Authorization": {"Bearer " + testCapability(92)}}
 	connection, response, err := websocket.DefaultDialer.Dial(
 		fmt.Sprintf("ws://%s:%d/v1/responses", cfg.Host, cfg.Port),
 		headers,
@@ -1374,6 +1379,7 @@ type protocolFixtureRoundTripper struct {
 	seen       []*http.Request
 	statuses   []int
 	bodyErrors []error
+	toolCall   bool
 }
 
 type cancellationRoundTripper struct {
@@ -1421,6 +1427,14 @@ func (f *protocolFixtureRoundTripper) RoundTrip(request *http.Request) (*http.Re
 			Request: request,
 		}, nil
 	}
+	if f.toolCall && index == 0 {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": {"text/event-stream"}},
+			Body:       io.NopCloser(strings.NewReader(crossProtocolToolStream(strings.Contains(request.URL.Host, "anthropic")))),
+			Request:    request,
+		}, nil
+	}
 	if strings.Contains(request.URL.Host, "anthropic") {
 		if request.URL.Path == "/v1/messages/count_tokens" {
 			return &http.Response{
@@ -1430,7 +1444,11 @@ func (f *protocolFixtureRoundTripper) RoundTrip(request *http.Request) (*http.Re
 				Request:    request,
 			}, nil
 		}
-		if request.Header.Get("Accept") == "text/event-stream" {
+		var payload struct {
+			Stream bool `json:"stream"`
+		}
+		_ = json.Unmarshal(body, &payload)
+		if request.Header.Get("Accept") == "text/event-stream" || payload.Stream {
 			return &http.Response{
 				StatusCode: http.StatusOK,
 				Header:     http.Header{"Content-Type": {"text/event-stream"}},

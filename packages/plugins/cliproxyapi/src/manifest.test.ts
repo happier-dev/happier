@@ -61,7 +61,7 @@ describe('CLIProxyAPI plugin manifest', () => {
           purpose: 'openai-upstream',
           title: {
             key: 'managedPurpose.openai.title',
-            fallback: 'Use OpenAI upstream account',
+            fallback: 'ChatGPT account or pool',
           },
           service: {
             pluginId: 'happier.agent.codex',
@@ -73,7 +73,7 @@ describe('CLIProxyAPI plugin manifest', () => {
           purpose: 'anthropic-upstream',
           title: {
             key: 'managedPurpose.anthropic.title',
-            fallback: 'Use Anthropic upstream account',
+            fallback: 'Claude account or pool',
           },
           service: {
             pluginId: 'happier.agent.claude',

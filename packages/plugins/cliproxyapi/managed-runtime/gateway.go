@@ -10,7 +10,7 @@ import (
 )
 
 const (
-	WrapperContractVersion = "happier.cliproxyapi-managed/v1"
+	WrapperContractVersion = "happier.cliproxyapi-managed/v2"
 	PinnedSDKVersion       = "v7.2.95"
 )
 
@@ -42,6 +42,7 @@ type Config struct {
 	Host               string                                      `json:"host"`
 	Port               int                                         `json:"port"`
 	DownstreamBearer   string                                      `json:"downstreamBearer"`
+	ConsumerAccessPath string                                      `json:"consumerAccessPath,omitempty"`
 	RuntimeDir         string                                      `json:"runtimeDir"`
 	AuthEntries        []AuthEntry                                 `json:"authEntries"`
 	Protocols          []ProviderProtocol                          `json:"protocols"`
@@ -71,6 +72,9 @@ func (c Config) Validate() error {
 	}
 	if !filepath.IsAbs(c.RuntimeDir) {
 		return fmt.Errorf("runtime directory must be absolute")
+	}
+	if c.ConsumerAccessPath != "" && (!filepath.IsAbs(c.ConsumerAccessPath) || strings.ContainsRune(c.ConsumerAccessPath, '\x00') || c.ProviderConnection != nil) {
+		return fmt.Errorf("consumer access configuration is invalid")
 	}
 	if (c.ProviderConnection == nil) == (len(c.AuthEntries) == 0) {
 		return fmt.Errorf("exactly one managed upstream source is required")

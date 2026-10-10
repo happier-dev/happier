@@ -267,13 +267,17 @@ async function resolveManagedPurposeSnapshot(
       }),
     });
   }
-  const boundFamilies = Object.freeze([...families]);
-  const protocols = Object.freeze(boundFamilies.flatMap((family) => [
+  // Physical configuration declares supported translation families. The host's
+  // per-consumer capability registry, rather than this union, grants access.
+  const boundFamilies = CLIPROXYAPI_MANAGED_PURPOSE_FAMILIES;
+  const protocols = Object.freeze([...new Set(boundFamilies.flatMap((family) => [
     ...family.protocols,
-  ]));
-  const endpointTemplateIds = Object.freeze(boundFamilies.flatMap((family) => [
-    ...family.endpointTemplateIds,
-  ]));
+  ]))]);
+  const endpointTemplateIds = Object.freeze(
+    CLIPROXYAPI_PROVIDER_CONTRIBUTION.endpointTemplates
+      .filter((endpoint) => protocols.includes(endpoint.protocol))
+      .map((endpoint) => endpoint.id),
+  );
   const healthPurposes = Object.freeze(boundFamilies.map((family) => Object.freeze({
     consumer: Object.freeze({
       pluginId: PLUGIN_MANIFEST.id,
@@ -313,8 +317,8 @@ function publicManagedServiceSpec(
     ...(purposeSnapshot.sourceClass === 'connected_account'
       ? {
           requestAuth: Object.freeze({
-            kind: 'connectedAccountCapabilityPath' as const,
-            injectEnvironmentKey: CLIPROXYAPI_MANAGED_ENV.requestAuthCapabilityPath,
+            kind: 'connectedAccountConsumerAccessPath' as const,
+            injectEnvironmentKey: CLIPROXYAPI_MANAGED_ENV.consumerAccessPath,
           }),
         }
       : {}),

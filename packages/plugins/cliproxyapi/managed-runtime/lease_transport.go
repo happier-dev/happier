@@ -85,9 +85,10 @@ type RequestAuthFailureOutcome struct {
 }
 
 type leaseRoundTripperProvider struct {
-	entries map[string]AuthEntry
-	broker  RequestAuthBroker
-	base    http.RoundTripper
+	entries                map[string]AuthEntry
+	broker                 RequestAuthBroker
+	base                   http.RoundTripper
+	consumerAccessRequired bool
 }
 
 func newLeaseRoundTripperProvider(
@@ -123,16 +124,18 @@ func (p *leaseRoundTripperProvider) RoundTripperFor(auth *coreauth.Auth) http.Ro
 		return errorRoundTripper{err: fmt.Errorf("managed auth entry is not authorized")}
 	}
 	return &leaseRoundTripper{
-		entry:  entry,
-		broker: p.broker,
-		base:   p.base,
+		entry:                  entry,
+		broker:                 p.broker,
+		base:                   p.base,
+		consumerAccessRequired: p.consumerAccessRequired,
 	}
 }
 
 type leaseRoundTripper struct {
-	entry  AuthEntry
-	broker RequestAuthBroker
-	base   http.RoundTripper
+	entry                  AuthEntry
+	broker                 RequestAuthBroker
+	base                   http.RoundTripper
+	consumerAccessRequired bool
 }
 
 func (t *leaseRoundTripper) RoundTrip(request *http.Request) (*http.Response, error) {
@@ -146,11 +149,19 @@ func (t *leaseRoundTripper) roundTrip(request *http.Request, allowAuthRetry bool
 	if err := requireAllowedHTTPSOrigin(request.URL, t.entry.AllowedHTTPSOrigin); err != nil {
 		return nil, err
 	}
+	if err := t.requireCurrentConsumer(request.Context()); err != nil {
+		return nil, err
+	}
 	lease, err := t.broker.LookupRequestAuth(request.Context(), t.entry.Purpose)
 	if err != nil {
 		return nil, fmt.Errorf("request-auth lookup failed for managed purpose: %w", err)
 	}
 	if err := validateLease(lease, time.Now()); err != nil {
+		return nil, err
+	}
+	// Borrowing can await a refresh. Consumer withdrawal during that await
+	// must refuse the newly returned credential before the final upstream hop.
+	if err := t.requireCurrentConsumer(request.Context()); err != nil {
 		return nil, err
 	}
 
@@ -209,6 +220,24 @@ func (t *leaseRoundTripper) roundTrip(request *http.Request, allowAuthRetry bool
 		}
 	}
 	return response, nil
+}
+
+func (t *leaseRoundTripper) requireCurrentConsumer(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if !t.consumerAccessRequired {
+		return nil
+	}
+	scope, ok := requestConsumerScope(ctx)
+	if !ok {
+		return fmt.Errorf("consumer access is required")
+	}
+	access, err := scope.current()
+	if err != nil || !access.admits(t.entry.Purpose) {
+		return fmt.Errorf("consumer purpose is not authorized")
+	}
+	return nil
 }
 
 func normalizedHTTPFailure(class string, response *http.Response) ConnectedAccountConsumerFailure {
