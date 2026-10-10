@@ -1,3 +1,4 @@
+import { buildUsageLimitIssueFingerprint } from '@/session/usageLimitRecoveryControls/buildUsageLimitIssueFingerprint';
 import { readSessionMetadataRuntimeDescriptor } from '@happier-dev/agents';
 import {
   buildRecoveryCreditConsumeIdempotencyKey,
@@ -95,20 +96,6 @@ function readRecoveryIntent(metadata: MetadataRecord): SessionUsageLimitRecovery
   return parsed.success ? parsed.data : null;
 }
 
-function buildUsageLimitIssueFingerprint(
-  issue: NonNullable<ReturnType<typeof SessionRuntimeIssueV1Schema.safeParse>['data']>,
-): string {
-  return [
-    'usage-limit',
-    issue.provider ?? 'codex',
-    issue.providerTurnId ?? 'unknown-turn',
-    String(issue.occurredAt),
-    issue.usageLimit?.resetAtMs === null || issue.usageLimit?.resetAtMs === undefined
-      ? 'no-reset'
-      : String(issue.usageLimit.resetAtMs),
-  ].join(':');
-}
-
 function buildRecoveryIntentFromLatestUsageLimitIssue(
   params: SessionUsageLimitRecoveryControlAdapterParams,
 ): SessionUsageLimitRecoveryV1 | null {
@@ -124,6 +111,7 @@ function buildRecoveryIntentFromLatestUsageLimitIssue(
   const selectedAuth = resolveUsageLimitRecoverySelectedAuthFromIssue({
     issue: issueParsed.data,
     defaultNativeServiceId: CODEX_CONNECTED_SERVICE_ID,
+    connectedServices: params.metadata.connectedServices ?? null,
   }) ?? { kind: 'native', serviceId: CODEX_CONNECTED_SERVICE_ID };
 
   const timing = deriveUsageLimitRecoveryTiming({
@@ -135,7 +123,7 @@ function buildRecoveryIntentFromLatestUsageLimitIssue(
   return {
     v: 1,
     status: 'waiting',
-    issueFingerprint: buildUsageLimitIssueFingerprint(issueParsed.data),
+    issueFingerprint: buildUsageLimitIssueFingerprint(issueParsed.data, 'codex'),
     armedAtMs: issueParsed.data.occurredAt,
     resetAtMs: timing.resetAtMs,
     nextCheckAtMs: timing.nextCheckAtMs,

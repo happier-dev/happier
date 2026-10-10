@@ -17,3 +17,8 @@ export function buildNativeProviderAccountUsageSourceProfileId(params: Readonly<
   const hash = hashProfileMaterial(`${providerId}:${material || 'unknown'}`);
   return `${prefix}:${hash}`;
 }
+
+/** Recognizes the existing local-credential quota-source ID format. */
+export function isNativeLocalCredentialUsageSourceProfileId(profileId: string): boolean {
+  return /^native:[a-f0-9]{48}$/u.test(profileId);
+}

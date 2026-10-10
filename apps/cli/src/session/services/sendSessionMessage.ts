@@ -23,7 +23,7 @@ import {
   isSessionUserMessage,
   type SessionTurnActivity,
 } from '@/session/query/detectSessionTurnInFlight';
-import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
+import { fetchSessionById, type RawSessionRecord } from '@/session/transport/http/sessionsHttp';
 import { callSessionRpc } from '@/session/transport/rpc/sessionRpc';
 import { waitForIdleViaSocket } from '@/session/transport/socket/sessionSocketAgentState';
 import {
@@ -417,6 +417,8 @@ export async function sendSessionMessage(params: Readonly<{
   modelOverride?: string | null;
   requestedAction?: PendingRequestedActionV1;
   pendingAdmissionMode?: 'continuation_if_no_queued_user_input';
+  /** Recheck a synthetic input's authority after transport lookup, before Pending custody. */
+  canAdmit?: (context: Readonly<{ rawSession: RawSessionRecord; metadata: Record<string, unknown> | null }>) => boolean | Promise<boolean>;
 }>): Promise<SendSessionMessageResult> {
   const sessionTarget = await resolveSessionTransportContext({
     credentials: params.credentials,
@@ -462,6 +464,9 @@ export async function sendSessionMessage(params: Readonly<{
 
   const shouldUseRuntimeRpc = sessionTarget.rawSession.active === true;
   const shouldResumeInactiveSession = !shouldUseRuntimeRpc && params.resumeInactiveSession !== false;
+  if (params.canAdmit && !(await params.canAdmit({ rawSession: sessionTarget.rawSession, metadata: asRecord(decryptedMetadata) }))) {
+    return { ok: true, sessionId, localId, waited: false, suppressed: true };
+  }
   const admission = await admitSessionUserMessageToPendingQueue({
     credentials: params.credentials,
     sessionId,

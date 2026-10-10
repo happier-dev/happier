@@ -61,7 +61,6 @@ import { getSessionTranscript } from '@/session/services/getSessionTranscript';
 import { listSessions } from '@/session/services/listSessions';
 import { requestSessionStop } from '@/session/services/requestSessionStop';
 import {
-  ensureSessionRuntimeForPendingInput,
   requestInactiveSessionResume,
 } from '@/session/services/requestInactiveSessionResume';
 import { sendSessionMessage } from '@/session/services/sendSessionMessage';
@@ -94,7 +93,8 @@ import { normalizeExecutionRunWaitTimeoutMs } from '@/session/services/execution
 import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
 import { fetchSessionById, fetchSessionByIdCompat, type RawSessionRecord } from '@/session/transport/http/sessionsHttp';
 import { callSessionRpc } from '@/session/transport/rpc/sessionRpc';
-import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { callMachineRpc } from '@/session/transport/rpc/machineRpc';
+import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { routeSessionCatalogControl } from '@/session/catalogControls/sessionCatalogControlRouter';
 import { routeSessionGoalControl } from '@/session/goalControls/sessionGoalControlRouter';
@@ -617,6 +617,7 @@ export function createCliActionDeps(params: Readonly<{
   currentSessionPermissionAuthority?: 'trusted_runtime' | 'ambient_context';
   getCurrentSessionBackendTarget?: (() => BackendTargetRefV1 | null | undefined) | null;
   resumeInactiveSessionWhenUsageLimitReady?: ResumeInactiveSessionWhenUsageLimitReady;
+  checkRuntimeAuthUsageLimitRecovery?: (input: Readonly<{ sessionId: string; attemptId: string; resumePromptMode?: 'standard' | 'off' | 'custom' }>) => Promise<unknown>;
   scheduleInactiveSessionUsageLimitRecoveryCheck?: ScheduleInactiveSessionUsageLimitRecoveryCheck;
   cancelInactiveSessionUsageLimitRecoveryCheck?: CancelInactiveSessionUsageLimitRecoveryCheck;
   cancelConnectedServiceRuntimeAuthRecovery?: CancelConnectedServiceRuntimeAuthRecovery;
@@ -1005,6 +1006,26 @@ export function createCliActionDeps(params: Readonly<{
       ctx: transport.ctx,
     });
 
+    const recovery = SessionUsageLimitRecoveryV1Schema.safeParse(metadata?.[SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY]);
+    if (operation === 'checkNow' && recovery.success && recovery.data.runtimeAuthRecoveryAttemptId
+      && !params.checkRuntimeAuthUsageLimitRecovery) {
+      const machineId = normalizeString(transport.rawSession.machineId) ?? normalizeString(metadata?.machineId);
+      const metadataMachineId = normalizeString(metadata?.machineId);
+      let result: unknown = { ok: false, errorCode: 'session_usage_limit_recovery_control_remote_unavailable' };
+      if (machineId && (!metadataMachineId || metadataMachineId === machineId)) {
+        try {
+          result = await callMachineRpc({
+            credentials, machineId, method: RPC_METHODS.DAEMON_SESSION_USAGE_LIMIT_CHECK_NOW,
+            request: { ...request, sessionId: transport.sessionId },
+            authorization: { kind: 'session.write', sessionId: transport.sessionId },
+          });
+        } catch (error) {
+          result = { ok: false, errorCode: readRpcErrorCode(error) ?? 'machine_rpc_failed' };
+        }
+      }
+      return normalizeCliSessionUsageLimitRecoveryOperationResult({ sessionId: transport.sessionId, result });
+    }
+
     const currentMachineIdentity = await readCurrentMachineControlIdentity();
     const requestProvider = typeof request.provider === 'string' ? request.provider : null;
     const routeParams = {
@@ -1023,21 +1044,10 @@ export function createCliActionDeps(params: Readonly<{
         metadata,
         rawSession: transport.rawSession,
       }),
+      checkRuntimeAuthUsageLimitRecovery: params.checkRuntimeAuthUsageLimitRecovery,
       ...(params.resumeInactiveSessionWhenUsageLimitReady
         ? { resumeInactiveSessionWhenReady: params.resumeInactiveSessionWhenUsageLimitReady }
         : {}),
-      ensureSessionRuntimeForPendingInput: async (input: Readonly<{
-        sessionId: string;
-        rawSession: RawSessionRecord;
-        metadata: Record<string, unknown>;
-        requestId: string;
-      }>) => (await ensureSessionRuntimeForPendingInput({
-        credentials,
-        sessionId: input.sessionId,
-        localId: input.requestId,
-        rawSession: input.rawSession,
-        metadata: input.metadata,
-      })).ok,
       ...(params.retryTemporaryThrottleNow
         ? { retryTemporaryThrottleNow: params.retryTemporaryThrottleNow }
         : {}),

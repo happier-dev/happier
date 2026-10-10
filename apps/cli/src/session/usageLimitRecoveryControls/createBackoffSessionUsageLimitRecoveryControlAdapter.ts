@@ -1,3 +1,4 @@
+import { buildUsageLimitIssueFingerprint } from '@/session/usageLimitRecoveryControls/buildUsageLimitIssueFingerprint';
 import {
   SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY,
   SessionUsageLimitRecoveryV1Schema,
@@ -49,6 +50,19 @@ function isPendingRecoveryIntentStatus(status: SessionUsageLimitRecoveryV1['stat
   return status === 'waiting' || status === 'armed' || status === 'checking';
 }
 
+function normalizePersistedNativeSelection(
+  intent: SessionUsageLimitRecoveryV1 | null,
+  issue: SessionRuntimeIssueV1 | null,
+  metadata: MetadataRecord,
+): SessionUsageLimitRecoveryV1 | null {
+  if (!intent || !issue || intent.runtimeAuthRecoveryAttemptId
+    || (!isPendingRecoveryIntentStatus(intent.status) && intent.status !== 'paused') || intent.selectedAuth.kind !== 'profile'
+    || intent.selectedAuth.profileId !== issue.usageLimit?.connectedService?.profileId) return intent;
+  const selection = resolveUsageLimitRecoverySelectedAuthFromIssue({ issue,
+    requiredConnectedServiceId: intent.selectedAuth.serviceId, connectedServices: metadata.connectedServices ?? null });
+  return selection?.kind === 'native' ? { ...intent, selectedAuth: selection } : intent;
+}
+
 /**
  * A persisted intent may only arm a resume when the session's latest turn is
  * still interrupted. A turn that later completed (or was cancelled) normally
@@ -74,21 +88,6 @@ function readLatestUsageLimitIssue(input: Readonly<{
     return null;
   }
   return issue;
-}
-
-function buildUsageLimitIssueFingerprint(input: Readonly<{
-  issue: SessionRuntimeIssueV1;
-  providerId: string;
-}>): string {
-  return [
-    'usage-limit',
-    input.issue.provider ?? input.providerId,
-    input.issue.providerTurnId ?? 'unknown-turn',
-    String(input.issue.occurredAt),
-    input.issue.usageLimit?.resetAtMs === null || input.issue.usageLimit?.resetAtMs === undefined
-      ? 'no-reset'
-      : String(input.issue.usageLimit.resetAtMs),
-  ].join(':');
 }
 
 function resolveFallbackNextCheckAtMs(params: Readonly<{
@@ -134,6 +133,7 @@ function buildRecoveryIntentFromLatestUsageLimitIssue(params: Readonly<{
   maxAttempts: number;
   nowMs: number;
   resumePromptMode?: 'standard' | 'off' | 'custom';
+  connectedServices?: unknown;
 }>): SessionUsageLimitRecoveryV1 {
   const usageLimit = params.issue.usageLimit;
   const timing = usageLimit
@@ -146,10 +146,7 @@ function buildRecoveryIntentFromLatestUsageLimitIssue(params: Readonly<{
   const intent: SessionUsageLimitRecoveryV1 = {
     v: 1,
     status: 'waiting',
-    issueFingerprint: buildUsageLimitIssueFingerprint({
-      issue: params.issue,
-      providerId: params.providerId,
-    }),
+    issueFingerprint: buildUsageLimitIssueFingerprint(params.issue, params.providerId),
     armedAtMs: params.issue.occurredAt,
     resetAtMs: timing.resetAtMs,
     nextCheckAtMs: timing.nextCheckAtMs,
@@ -160,6 +157,7 @@ function buildRecoveryIntentFromLatestUsageLimitIssue(params: Readonly<{
     selectedAuth: resolveUsageLimitRecoverySelectedAuthFromIssue({
       issue: params.issue,
       defaultNativeServiceId: params.defaultNativeServiceId,
+      connectedServices: params.connectedServices ?? null,
     }) ?? { kind: 'native' },
   };
 
@@ -248,7 +246,7 @@ export function createBackoffSessionUsageLimitRecoveryControlAdapter(options: Re
         providerId: options.providerId,
         issueProviderFilter: options.issueProviderFilter ?? null,
       });
-      const persistedIntent = readRecoveryIntent(params.metadata);
+      const persistedIntent = normalizePersistedNativeSelection(readRecoveryIntent(params.metadata), latestIssue, params.metadata);
       if (isPersistedIntentSupersededByTurnCompletion({
         intent: persistedIntent,
         latestTurnStatus: params.rawSession.latestTurnStatus,
@@ -286,6 +284,7 @@ export function createBackoffSessionUsageLimitRecoveryControlAdapter(options: Re
             ),
             nowMs: now,
             resumePromptMode: params.resumePromptMode,
+            connectedServices: params.metadata.connectedServices ?? null,
           })
           : null;
       if (!intent) {

@@ -149,11 +149,13 @@ function inspectNativeOauthContract() {
   const hasCredentialFile = fs.existsSync(credentialsPath);
   const hasAccessToken = typeof claudeAiOauth?.accessToken === 'string' && claudeAiOauth.accessToken.length > 0;
   const hasRefreshToken = typeof claudeAiOauth?.refreshToken === 'string' && claudeAiOauth.refreshToken.length > 0;
+  // Agent SDK auth leases intentionally materialize access-only native credentials.
+  const allowAccessOnly = process.env.HAPPIER_E2E_FAKE_CLAUDE_ALLOW_ACCESS_ONLY_NATIVE_OAUTH === '1';
   const ok =
     hasClaudeConfigDirEnv &&
     hasCredentialFile &&
     hasAccessToken &&
-    hasRefreshToken &&
+    (hasRefreshToken || allowAccessOnly) &&
     missingScopes.length === 0 &&
     !hasOauthEnvToken &&
     !hasSetupEnvToken;
@@ -829,6 +831,37 @@ async function runSdkStreamUntilEof() {
 
     const now = Date.now();
     turn += 1;
+
+    // Persist the first rejection in the existing log so a restarted SDK child
+    // accepts the continuation for the same provider session.
+    if (scenario === 'usage-limit-once') {
+      const previous = fs.existsSync(logPath) ? fs.readFileSync(logPath, 'utf8') : '';
+      if (!previous.includes('"type":"sdk_usage_limit"')) {
+        const resetAtMs = now + Number(process.env.HAPPIER_E2E_FAKE_CLAUDE_RESET_DELAY_MS || '8000');
+        safeAppendJsonl(logPath, { type: 'sdk_usage_limit', invocationId, sessionId, resetAtMs, ts: now });
+        emitSdk({
+          type: 'rate_limit_event',
+          rate_limit_info: { status: 'rejected', rateLimitType: 'five_hour', resetsAt: resetAtMs / 1000, utilization: 1 },
+          uuid: randomUUID(),
+          session_id: sessionId,
+        });
+        emitSdk({ ...createResultSuccess(), subtype: 'error_during_execution', is_error: true, errors: ['Usage limit reached'], result: 'Usage limit reached' });
+        continue;
+      }
+      const acceptSignal = process.env.HAPPIER_E2E_FAKE_CLAUDE_CONTINUATION_ACCEPT_SIGNAL;
+      // The recipe owns this phase's budget; do not leave a failed assertion's SDK child waiting forever.
+      const acceptTimeoutMs = Number(process.env.HAPPIER_E2E_FAKE_CLAUDE_CONTINUATION_ACCEPT_TIMEOUT_MS);
+      if (acceptSignal && (!Number.isFinite(acceptTimeoutMs) || acceptTimeoutMs <= 0)) {
+        throw new Error('continuation_accept_signal_timeout_not_configured');
+      }
+      const acceptDeadline = Date.now() + acceptTimeoutMs;
+      while (acceptSignal && !fs.existsSync(acceptSignal)) {
+        const remainingMs = acceptDeadline - Date.now();
+        if (remainingMs <= 0) throw new Error(`continuation_accept_signal_timeout:${acceptTimeoutMs}`);
+        await new Promise((resolveWait) => setTimeout(resolveWait, Math.min(20, remainingMs)));
+      }
+      safeAppendJsonl(logPath, { type: 'sdk_continuation_accepted', invocationId, sessionId, ts: Date.now() });
+    }
 
     if (scenario === 'runtime-activity-staged' && stagedRuntimeActivityTaskId === null) {
       stagedRuntimeActivityTaskId = `runtime_activity_${turn}`;

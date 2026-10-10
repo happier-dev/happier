@@ -310,7 +310,8 @@ export async function createConnectedServiceProfile(params: Readonly<{
   tokenType?: string | null;
   providerAccountId?: string;
   expiresAt?: number;
-}>): Promise<void> {
+  allowProviderIdentityChange?: boolean;
+}>): Promise<string> {
   const now = Date.now();
   const providerAccountId = params.providerAccountId ?? `acct-${params.profileId}`;
   const expiresAt = params.expiresAt ?? now + 60 * 60_000;
@@ -340,7 +341,7 @@ export async function createConnectedServiceProfile(params: Readonly<{
     randomBytes: (length) => randomBytes(length),
   });
 
-  const response = await fetchJson<{ success?: boolean }>(
+  const response = await fetchJson<{ success?: boolean; credentialRevision?: string }>(
     `${params.fixture.serverBaseUrl}/v2/connect/${params.serviceId}/profiles/${params.profileId}/credential`,
     {
       method: 'POST',
@@ -350,6 +351,7 @@ export async function createConnectedServiceProfile(params: Readonly<{
       },
       body: JSON.stringify({
         sealed: { format: 'account_scoped_v1', ciphertext },
+        ...(params.allowProviderIdentityChange ? { reconnect: { allowProviderIdentityChange: true } } : {}),
         metadata: {
           kind: 'oauth',
           providerEmail: params.providerEmail,
@@ -360,9 +362,10 @@ export async function createConnectedServiceProfile(params: Readonly<{
       timeoutMs: 20_000,
     },
   );
-  if (response.status !== 200 || response.data?.success !== true) {
+  if (response.status !== 200 || response.data?.success !== true || typeof response.data.credentialRevision !== 'string') {
     throw new Error(`Failed to seed connected service profile ${params.profileId} (status=${response.status})`);
   }
+  return response.data.credentialRevision;
 }
 
 export async function createConnectedServiceAuthGroup(params: Readonly<{
@@ -490,7 +493,7 @@ export async function patchConnectedServiceAuthGroupMemberExhaustion(params: Rea
   return group;
 }
 
-function recoveryIntentPath(fixture: Pick<StartedConnectedServicesCodexDaemonFixture, 'daemonHomeDir' | 'serverId'>): string {
+export function recoveryIntentPath(fixture: Pick<StartedConnectedServicesCodexDaemonFixture, 'daemonHomeDir' | 'serverId'>): string {
   return resolve(
     join(
       fixture.daemonHomeDir,
@@ -553,6 +556,7 @@ export type StartedConnectedServicesClaudeDaemonFixture = Readonly<{
   daemonHomeDir: string;
   workspaceDir: string;
   serverId: string;
+  machineId: string;
   daemonPort: number;
   controlToken: string | undefined;
   fakeClaudeLogPath: string;
@@ -566,6 +570,7 @@ export async function startConnectedServicesClaudeDaemon(params: Readonly<{
   fakeClaudePath: string;
   fakeClaudeLogPath: string;
   fakeClaudeScenario?: string;
+  accountSettings?: Readonly<Record<string, unknown>>;
   serverExtraEnv?: Record<string, string>;
   extraEnv?: Record<string, string>;
 }>): Promise<StartedConnectedServicesClaudeDaemonFixture> {
@@ -590,7 +595,7 @@ export async function startConnectedServicesClaudeDaemon(params: Readonly<{
   await writeFile(join(sourceClaudeConfigDir, 'settings.json'), '{"theme":"e2e"}\n', 'utf8');
 
   const secret = Uint8Array.from(randomBytes(32));
-  const { serverId } = await seedCliAuthForServer({
+  const { serverId, machineId } = await seedCliAuthForServer({
     cliHome: daemonHomeDir,
     serverUrl: server.baseUrl,
     token: auth.token,
@@ -606,6 +611,7 @@ export async function startConnectedServicesClaudeDaemon(params: Readonly<{
       claudeUnifiedTerminalHost: 'auto',
       claudeRemoteAgentSdkEnabled: true,
       claudeRemoteSettingSourcesV2: ['user', 'project', 'local'],
+      ...(params.accountSettings ?? {}),
     },
   });
 
@@ -642,6 +648,7 @@ export async function startConnectedServicesClaudeDaemon(params: Readonly<{
     HAPPIER_HOME_DIR: daemonHomeDir,
     HAPPIER_SERVER_URL: server.baseUrl,
     HAPPIER_WEBAPP_URL: server.baseUrl,
+    HAPPIER_ACTIVE_SERVER_ID: serverId,
     CLAUDE_CONFIG_DIR: sourceClaudeConfigDir,
     HAPPIER_CLAUDE_PATH: params.fakeClaudePath,
     HAPPIER_E2E_FAKE_CLAUDE_LOG: params.fakeClaudeLogPath,
@@ -677,6 +684,7 @@ export async function startConnectedServicesClaudeDaemon(params: Readonly<{
     daemonHomeDir,
     workspaceDir,
     serverId,
+    machineId,
     daemonPort: daemon.state.httpPort,
     controlToken: daemon.state.controlToken,
     fakeClaudeLogPath: params.fakeClaudeLogPath,
@@ -710,6 +718,16 @@ export async function spawnConnectedClaudeGroupSession(params: Readonly<{
   profileId: string;
   initialPrompt?: string;
 }>): Promise<string> {
+  return spawnConnectedClaudeSession(params);
+}
+
+export async function spawnConnectedClaudeSession(params: Readonly<{
+  fixture: StartedConnectedServicesClaudeDaemonFixture;
+  sessionId: string;
+  groupId?: string;
+  profileId: string;
+  initialPrompt?: string;
+}>): Promise<string> {
   const response = await daemonControlPostJson<{ success?: boolean; sessionId?: unknown; error?: string }>({
     port: params.fixture.daemonPort,
     path: '/spawn-session',
@@ -739,8 +757,7 @@ export async function spawnConnectedClaudeGroupSession(params: Readonly<{
         bindingsByServiceId: {
           [CLAUDE_SUBSCRIPTION_SERVICE_ID]: {
             source: 'connected',
-            selection: 'group',
-            groupId: params.groupId,
+            ...(params.groupId ? { selection: 'group', groupId: params.groupId } : {}),
             profileId: params.profileId,
           },
         },

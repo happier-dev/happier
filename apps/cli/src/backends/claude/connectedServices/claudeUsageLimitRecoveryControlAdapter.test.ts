@@ -5,6 +5,7 @@ import {
 import { describe, expect, it } from 'vitest';
 
 import type { SessionUsageLimitRecoveryControlAdapterParams } from '@/session/usageLimitRecoveryControls/sessionUsageLimitRecoveryControlTypes';
+import { buildNativeProviderAccountUsageSourceProfileId } from '@/daemon/connectedServices/accountUsage/nativeSourceIdentity';
 import { createClaudeUsageLimitRecoveryControlAdapter } from './claudeUsageLimitRecoveryControlAdapter';
 
 function createParams(
@@ -70,61 +71,55 @@ function createClaudeUsageLimitIssue(overrides: Partial<{
   } as const;
 }
 
+function createNativeSourceRecovery(profileId: string, overrides: Partial<SessionUsageLimitRecoveryV1> = {}): SessionUsageLimitRecoveryV1 {
+  return {
+    v: 1, status: 'waiting', issueFingerprint: 'usage-limit:claude:turn-1:1700000000000:1700000060000',
+    armedAtMs: 1_700_000_000_000, resetAtMs: 1_700_000_060_000, nextCheckAtMs: 1_700_000_060_000,
+    attemptCount: 0, maxAttempts: 3, lastProbeError: null, resumePromptMode: 'standard',
+    selectedAuth: { kind: 'profile', serviceId: 'claude-subscription', profileId }, ...overrides,
+  };
+}
+
 describe('claudeUsageLimitRecoveryControlAdapter', () => {
-  it('waits until Claude retry-after timing and preserves the selected connected-service group', async () => {
-    const adapter = createClaudeUsageLimitRecoveryControlAdapter({
-      nowMs: () => 1_700_000_059_999,
-    });
-
+  it.each([
+    [1_700_000_059_999, 'waiting', 'waiting', 1_700_000_060_000],
+    [1_700_000_060_000, 'ready', 'paused', null],
+  ] as const)('checks retry-after timing at %s and preserves connected group authority', async (now, status, recoveryStatus, nextCheckAtMs) => {
+    const adapter = createClaudeUsageLimitRecoveryControlAdapter({ nowMs: () => now });
     await expect(adapter.checkNow?.(createParams({
-      machineId: 'machine-local',
-      agentRuntimeDescriptorV1: { v: 1, providerId: 'claude' },
-    }, {
-      latestTurnStatus: 'failed',
-      lastRuntimeIssue: createClaudeUsageLimitIssue(),
-    }))).resolves.toMatchObject({
-      ok: true,
-      status: 'waiting',
-      metadata: {
-        sessionUsageLimitRecoveryV1: {
-          status: 'waiting',
-          resetAtMs: null,
-          nextCheckAtMs: 1_700_000_060_000,
-          attemptCount: 1,
-          selectedAuth: {
-            kind: 'group',
-            serviceId: 'claude-subscription',
-            groupId: 'claude-group',
-            profileId: 'claude-profile-1',
-          },
-        },
-      },
+      machineId: 'machine-local', agentRuntimeDescriptorV1: { v: 1, providerId: 'claude' },
+    }, { latestTurnStatus: 'failed', lastRuntimeIssue: createClaudeUsageLimitIssue() }))).resolves.toMatchObject({
+      ok: true, status, metadata: { sessionUsageLimitRecoveryV1: {
+        status: recoveryStatus, resetAtMs: null, nextCheckAtMs, attemptCount: 1,
+        selectedAuth: { kind: 'group', serviceId: 'claude-subscription', groupId: 'claude-group', profileId: 'claude-profile-1' },
+      } },
     });
   });
 
-  it('marks Claude recovery ready after the check time', async () => {
-    const adapter = createClaudeUsageLimitRecoveryControlAdapter({
-      nowMs: () => 1_700_000_060_000,
-    });
-
-    await expect(adapter.checkNow?.(createParams({
-      machineId: 'machine-local',
-      agentRuntimeDescriptorV1: { v: 1, providerId: 'claude' },
-    }, {
-      latestTurnStatus: 'failed',
-      lastRuntimeIssue: createClaudeUsageLimitIssue(),
-    }))).resolves.toMatchObject({
-      ok: true,
-      status: 'ready',
-      metadata: {
-        sessionUsageLimitRecoveryV1: {
-          status: 'paused',
-          nextCheckAtMs: null,
-          attemptCount: 1,
-        },
-      },
-    });
-  });
+  it.each(['unpersisted', 'waiting native', 'waiting connected', 'paused native', 'daemon-owned'] as const)(
+    'qualifies native-looking quota evidence under %s authority without replacing its identity', async (scenario) => {
+      const sourceId = buildNativeProviderAccountUsageSourceProfileId({ kind: 'localCredential', providerId: 'claude', material: '/native/config' });
+      const intent = scenario === 'unpersisted' ? null : createNativeSourceRecovery(sourceId,
+        scenario === 'paused native' ? { status: 'paused', nextCheckAtMs: null, attemptCount: 1 }
+          : scenario === 'daemon-owned' ? { issueFingerprint: 'owned-attempt', runtimeAuthRecoveryAttemptId: 'owned-attempt' } : {});
+      const issue = createClaudeUsageLimitIssue({ resetAtMs: intent?.resetAtMs });
+      const metadata = {
+        ...(intent ? { sessionUsageLimitRecoveryV1: intent } : {}),
+        ...(scenario === 'waiting connected' ? { connectedServices: { v: 1, bindingsByServiceId: {
+          'claude-subscription': { source: 'connected', profileId: sourceId },
+        } } } : {}),
+      };
+      const selectedAuth = scenario === 'waiting connected' || scenario === 'daemon-owned'
+        ? intent?.selectedAuth : { kind: 'native', serviceId: 'claude-subscription' };
+      const adapter = createClaudeUsageLimitRecoveryControlAdapter({ nowMs: () => 1_700_000_060_000 });
+      await expect(adapter.checkNow?.(createParams(metadata, { latestTurnStatus: 'failed',
+        lastRuntimeIssue: { ...issue, usageLimit: { ...issue.usageLimit,
+          connectedService: { serviceId: 'claude-subscription', profileId: sourceId, groupId: null } } },
+      }))).resolves.toMatchObject({ ok: true, status: 'ready', metadata: { sessionUsageLimitRecoveryV1: {
+        ...intent, status: 'paused', nextCheckAtMs: null, attemptCount: (intent?.attemptCount ?? 0) + 1, selectedAuth,
+      } } });
+    },
+  );
 
   it('exhausts stale Claude recovery intents instead of retrying forever', async () => {
     const intent: SessionUsageLimitRecoveryV1 = {
