@@ -317,6 +317,8 @@ jobs:
               - 'scripts/pipeline/**'
               - 'packages/tests/src/testkit/process/**'
             installers_smoke:
+              - 'packages/cli-common/src/service/**'
+              - 'apps/cli/src/daemon/service/**'
               - '.github/actions/bootstrap-minisign/**'
               - 'apps/ui/src-tauri/**'
               - 'scripts/install/**'
@@ -1432,6 +1434,11 @@ jobs:
       - name: Verify Windows payload promotion
         shell: pwsh
         run: node --test scripts/release/installers_windows_payload_promotion.contract.test.mjs
+
+      - name: Verify Windows scheduled task contracts
+        shell: pwsh
+        working-directory: packages/cli-common
+        run: node ../../node_modules/vitest/vitest.mjs run --config vitest.config.ts src/service/windows.test.ts
 
       - name: Run unified installer smoke
         shell: pwsh

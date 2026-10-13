@@ -20,6 +20,14 @@ test('installer smoke selects the Windows-only payload promotion contract on tes
     filters.installers_smoke.includes('scripts/release/installers_windows_payload_promotion.contract.test.mjs'),
     'the native Windows contract must select its installer-smoke execution owner',
   );
+  for (const owner of ['packages/cli-common/src/service/**', 'apps/cli/src/daemon/service/**']) {
+    assert.ok(filters.installers_smoke.includes(owner), `${owner} must select real Windows service tests`);
+  }
+  const windowsJob = workflow.jobs['installers-smoke-windows'];
+  const wrapperTests = windowsJob.steps.find((step) => step.run?.includes('src/service/windows.test.ts'));
+  assert.ok(wrapperTests, 'Windows CI must execute the PowerShell service contracts');
+  assert.equal(wrapperTests['working-directory'], 'packages/cli-common');
+  assert.equal(wrapperTests.if, undefined, 'service contracts must run for every selected Windows job');
 });
 
 test('shared CLI restoration handles a Windows drive path and preserves executable payloads', async (t) => {
