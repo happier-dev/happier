@@ -220,9 +220,16 @@ export function renderWindowsScheduledTaskWrapperPs1(params: Readonly<{
 
   return [
     '$ErrorActionPreference = "Stop"',
+    // Setup failures (and a missing program) terminate before any redirect is in place;
+    // record them where launch diagnostics look instead of only in the task's exit code.
+    err ? `trap { $_ | Out-File -LiteralPath ${psQuoted(err)} -Append; exit 1 }` : '',
     wd ? `Set-Location -LiteralPath ${psQuoted(wd)}` : '',
     envLines,
+    // Windows PowerShell 5.1 wraps each redirected native stderr line in an ErrorRecord, so
+    // under "Stop" the first warning the program prints would terminate the wrapper (#539).
+    cmd ? '$ErrorActionPreference = "Continue"' : '',
     cmd ? `${cmd}${redirect}` : '',
+    cmd ? 'exit $LASTEXITCODE' : '',
     '',
   ]
     .filter(Boolean)

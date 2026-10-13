@@ -1,3 +1,7 @@
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -5,7 +9,89 @@ import {
   buildReadWindowsScheduledTaskStatusPowerShellCommand,
   buildStopWindowsScheduledTaskIfRunningPowerShellCommand,
   parseWindowsScheduledTaskStatusPowerShellJson,
+  renderWindowsScheduledTaskWrapperPs1,
 } from './windows';
+
+// Windows PowerShell 5.1 appends redirected streams as UTF-16LE; PowerShell 7 writes UTF-8.
+function readPowerShellLog(path: string): string {
+  const bytes = readFileSync(path);
+  const isUtf16 = (bytes[0] === 0xff && bytes[1] === 0xfe) || bytes.includes(0);
+  return bytes.toString(isUtf16 ? 'utf16le' : 'utf8').replace(/^\uFEFF/u, '');
+}
+
+function runWrapperWithWindowsPowerShell(params: Readonly<{
+  workingDirectory: string;
+  programArgs: readonly string[];
+}>): Readonly<{ status: number | null; stdoutLog: string; stderrLog: string }> {
+  const dir = mkdtempSync(join(tmpdir(), 'happier-wrapper-ps1-'));
+  try {
+    const stdoutPath = join(dir, 'out.log');
+    const stderrPath = join(dir, 'err.log');
+    const wrapperPath = join(dir, 'wrapper.ps1');
+    writeFileSync(wrapperPath, renderWindowsScheduledTaskWrapperPs1({
+      workingDirectory: params.workingDirectory,
+      programArgs: params.programArgs,
+      stdoutPath,
+      stderrPath,
+    }));
+    // The scheduled task action runs Windows PowerShell 5.1 (`powershell.exe`), not pwsh.
+    const result = spawnSync('powershell.exe', [
+      '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', wrapperPath,
+    ], { encoding: 'utf8', windowsHide: true, timeout: 30_000 });
+    const readIfPresent = (path: string) => {
+      try {
+        return readPowerShellLog(path);
+      } catch {
+        return '';
+      }
+    };
+    return { status: result.status, stdoutLog: readIfPresent(stdoutPath), stderrLog: readIfPresent(stderrPath) };
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+describe('Windows scheduled task wrapper script', () => {
+  it.runIf(process.platform === 'win32')('keeps the program running when it writes to stderr and propagates its exit code', () => {
+    const result = runWrapperWithWindowsPowerShell({
+      workingDirectory: tmpdir(),
+      programArgs: [
+        process.execPath,
+        '-e',
+        "process.stderr.write('(node) [DEP0169] DeprecationWarning\\n'); setTimeout(() => { process.stdout.write('still-running\\n'); process.exit(3); }, 500);",
+      ],
+    });
+
+    expect(result.stdoutLog).toContain('still-running');
+    expect(result.stderrLog).toContain('DEP0169');
+    expect(result.status).toBe(3);
+  });
+
+  it.runIf(process.platform === 'win32')('records wrapper setup failures in the stderr log and exits non-zero', () => {
+    const result = runWrapperWithWindowsPowerShell({
+      workingDirectory: join(tmpdir(), 'happier-wrapper-missing-dir', 'does-not-exist'),
+      programArgs: [process.execPath, '-e', "process.stdout.write('should-not-run\\n')"],
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(result.stdoutLog).not.toContain('should-not-run');
+    expect(result.stderrLog).toContain('does-not-exist');
+  });
+
+  it('keeps the program invocation on a single `& ` line for definition readers', () => {
+    const script = renderWindowsScheduledTaskWrapperPs1({
+      workingDirectory: 'C:\\Users\\tester',
+      programArgs: ['C:\\Users\\tester\\.happier\\bin\\happier.exe', 'daemon', 'start-sync', '--takeover'],
+      stdoutPath: 'C:\\Users\\tester\\.happier\\logs\\out.log',
+      stderrPath: 'C:\\Users\\tester\\.happier\\logs\\err.log',
+    });
+
+    expect(/^& (.*)$/mu.exec(script)?.[1]).toBe(
+      '"C:\\Users\\tester\\.happier\\bin\\happier.exe" "daemon" "start-sync" "--takeover"'
+      + ' 1>> "C:\\Users\\tester\\.happier\\logs\\out.log" 2>> "C:\\Users\\tester\\.happier\\logs\\err.log"',
+    );
+  });
+});
 
 describe('Windows scheduled task PowerShell status helper', () => {
   it('parses launch post-mortem fields from invariant JSON', () => {
