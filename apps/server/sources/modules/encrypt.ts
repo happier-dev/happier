@@ -24,3 +24,7 @@ export function decryptString(path: string[], encrypted: Uint8Array<ArrayBuffer>
 export function decryptBytes(path: string[], encrypted: Uint8Array<ArrayBuffer>) {
     return keyTree!.symmetricDecryptBuffer(path, encrypted);
 }
+
+export function deriveCurve25519KeyPair(path: string[]) {
+    return keyTree!.deriveCurve25519Key(path);
+}

@@ -7,6 +7,7 @@ import { debug } from "@/utils/logging/log";
 import { type Fastify } from "../../types";
 import { terminalAuthRequestExpiresAt, type TerminalAuthRequestPolicy } from "./terminalAuthRequestPolicy";
 import { getOrCreateServerIdentityId } from "@/app/serverIdentity/serverIdentity";
+import { sealKeylessAccountTerminalProvisioning } from "@/app/auth/keyless/keylessAccountContentKey";
 
 const BASE64_URL_REGEX = /^[A-Za-z0-9_-]+$/;
 
@@ -314,9 +315,14 @@ export function registerTerminalAuthRequestRoutes(
             return reply.code(404).send({ error: "Request not found" });
         }
         if (!authRequest.response) {
+            // A keyless account provisions every v2-capable terminal with the account content key,
+            // whichever device approved; other accounts relay the approver's response.
+            const keylessResponse = authRequest.supportsV2
+                ? await sealKeylessAccountTerminalProvisioning(request.userId, publicKey)
+                : null;
             await db.terminalAuthRequest.update({
                 where: { id: authRequest.id },
-                data: { response: request.body.response, responseAccountId: request.userId },
+                data: { response: keylessResponse ?? request.body.response, responseAccountId: request.userId },
             });
         }
         return reply.send({ success: true });

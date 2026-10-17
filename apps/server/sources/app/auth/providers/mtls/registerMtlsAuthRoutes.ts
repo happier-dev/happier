@@ -9,6 +9,7 @@ import { resolveKeylessAutoProvisionEligibility } from "@/app/auth/keyless/resol
 import { resolveKeylessAccountsEnabled } from "@/app/features/e2ee/resolveKeylessAccountsEnabled";
 import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
 import { resolveEffectiveAccountEncryptionModeFromAccountRow } from "@/app/encryption/accountEncryptionMode";
+import { KeylessAccountContentKeySchema, resolveKeylessAccountContentKey } from "@/app/auth/keyless/keylessAccountContentKey";
 
 type ForwardedMtlsIdentity = NonNullable<ReturnType<typeof resolveMtlsIdentityFromForwardedHeaders>>;
 
@@ -339,7 +340,7 @@ export function registerMtlsAuthRoutes(app: Fastify): void {
         {
             schema: {
                 response: {
-                    200: z.object({ success: z.literal(true), token: z.string() }),
+                    200: z.object({ success: z.literal(true), token: z.string(), content: KeylessAccountContentKeySchema.optional() }),
                     401: z.object({ error: z.literal("mtls-required") }),
                     403: z.object({ error: z.union([z.literal("e2ee-required"), z.literal("not-eligible")]) }),
                     409: z.object({ error: z.literal("restore-required") }),
@@ -374,7 +375,8 @@ export function registerMtlsAuthRoutes(app: Fastify): void {
             }
 
             const token = await auth.createToken(account.accountId);
-            return reply.send({ success: true, token });
+            const content = await resolveKeylessAccountContentKey(account.accountId);
+            return reply.send({ success: true, token, ...(content ? { content } : {}) });
         },
     );
 
@@ -384,7 +386,7 @@ export function registerMtlsAuthRoutes(app: Fastify): void {
             schema: {
                 body: z.object({ code: z.string() }),
                 response: {
-                    200: z.object({ success: z.literal(true), token: z.string() }),
+                    200: z.object({ success: z.literal(true), token: z.string(), content: KeylessAccountContentKeySchema.optional() }),
                     401: z.object({ error: z.literal("invalid-code") }),
                     409: z.object({ error: z.literal("restore-required") }),
                 },
@@ -408,7 +410,8 @@ export function registerMtlsAuthRoutes(app: Fastify): void {
                 return reply.code(409).send({ error: "restore-required" });
             }
             const token = await auth.createToken(verified.userId);
-            return reply.send({ success: true, token });
+            const content = await resolveKeylessAccountContentKey(verified.userId);
+            return reply.send({ success: true, token, ...(content ? { content } : {}) });
         },
     );
 }

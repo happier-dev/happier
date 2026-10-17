@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import tweetnacl from 'tweetnacl';
 import {
     clearPendingExternalAuthMock,
     localSearchParamsMock,
@@ -103,6 +104,50 @@ describe('oauth/[provider] return (keyless)', () => {
                     }),
                 }),
             );
+            expect(replaceSpy).toHaveBeenCalledWith('/');
+        });
+
+        vi.stubGlobal('fetch', originalFetch);
+    });
+
+    it('logs in with the account content key when the keyless finalize response carries one', async () => {
+        replaceSpy.mockReset();
+        loginWithCredentialsSpy.mockReset();
+        clearPendingExternalAuthMock.mockReset();
+
+        localSearchParamsMock.mockReturnValue({
+            provider: 'github',
+            flow: 'auth',
+            accountMode: 'plain',
+            pending: 'p1',
+        });
+        setPendingExternalAuthState({ provider: 'github', proof: 'proof_1' });
+
+        const accountKey = tweetnacl.box.keyPair();
+        const content = {
+            publicKey: Buffer.from(accountKey.publicKey).toString('base64'),
+            machineKey: Buffer.from(accountKey.secretKey).toString('base64'),
+        };
+        const originalFetch = globalThis.fetch;
+        const fetchMock = vi.fn(async (url: any) => {
+            if (typeof url === 'string' && url.endsWith('/health')) {
+                return new Response(JSON.stringify({ ok: true }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                });
+            }
+            if (typeof url === 'string' && url.includes('/v1/auth/external/github/finalize-keyless')) {
+                return new Response(JSON.stringify({ success: true, token: 'tok_1', content }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                });
+            }
+            return new Response(JSON.stringify({ error: 'unexpected' }), { status: 500 });
+        });
+        vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
+
+        await runWithOAuthScreen(async () => {
+            expect(loginWithCredentialsSpy).toHaveBeenCalledWith({ token: 'tok_1', encryption: content });
             expect(replaceSpy).toHaveBeenCalledWith('/');
         });
 

@@ -4,10 +4,12 @@ import { createHash, randomBytes } from "node:crypto";
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from "fastify-type-provider-zod";
 import * as privacyKit from "privacy-kit";
 import tweetnacl from "tweetnacl";
+import { openTerminalProvisioningV2Payload } from "@happier-dev/protocol";
 
 import { db } from "@/storage/db";
 import { auth } from "@/app/auth/auth";
 import { authRoutes } from "./authRoutes";
+import { deriveKeylessAccountContentKey } from "@/app/auth/keyless/keylessAccountContentKey";
 import { enableAuthentication } from "../../utils/enableAuthentication";
 import { createAppCloseTracker } from "../../testkit/appLifecycle";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
@@ -330,6 +332,77 @@ describe("authRoutes (terminal auth request) (integration)", () => {
         expect(row?.claimedAt).toBeTruthy();
 
         await app.close();
+    });
+
+    it("provisions a keyless account's terminal with the account content key, whichever device approves", async () => {
+        const account = await db.account.create({ data: { publicKey: null, encryptionMode: "plain" }, select: { id: true } });
+        const token = await auth.createToken(account.id);
+
+        const app = createTestApp();
+        authRoutes(app as any);
+        await app.ready();
+
+        const terminal = createTerminalKeypair();
+        const claimSecret = new Uint8Array(randomBytes(32));
+        const createRes = await app.inject({
+            method: "POST",
+            url: "/v1/auth/request",
+            payload: { publicKey: terminal.publicKeyBase64, supportsV2: true, claimSecretHash: sha256Base64Url(claimSecret) },
+        });
+        expect(createRes.statusCode).toBe(200);
+
+        const approveRes = await app.inject({
+            method: "POST",
+            url: "/v1/auth/response",
+            headers: { authorization: `Bearer ${token}` },
+            payload: { publicKey: terminal.publicKeyBase64, response: "approver-device-key" },
+        });
+        expect(approveRes.statusCode).toBe(200);
+
+        const claimRes = await app.inject({
+            method: "POST",
+            url: "/v1/auth/request/claim",
+            payload: { publicKey: terminal.publicKeyBase64, claimSecret: encodeBase64Url(claimSecret) },
+        });
+        expect(claimRes.statusCode).toBe(200);
+        const { response } = claimRes.json() as { response: string };
+        expect(response).not.toBe("approver-device-key");
+
+        // The terminal opens the unpaired v2 format the CLI reads: [0x00, content private key].
+        const opened = openTerminalProvisioningV2Payload({
+            payload: privacyKit.decodeBase64(response),
+            recipientSecretKeyOrSeed: terminal.secretKeyRaw,
+        });
+        expect(opened).not.toBeNull();
+        expect(privacyKit.encodeBase64(new Uint8Array(opened!))).toBe(deriveKeylessAccountContentKey(account.id).machineKey);
+    });
+
+    it("relays the approver's response for a keyless account's terminal that cannot read v2 provisioning", async () => {
+        const account = await db.account.create({ data: { publicKey: null, encryptionMode: "plain" }, select: { id: true } });
+        const token = await auth.createToken(account.id);
+
+        const app = createTestApp();
+        authRoutes(app as any);
+        await app.ready();
+
+        const terminal = createTerminalKeypair();
+        const createRes = await app.inject({
+            method: "POST",
+            url: "/v1/auth/request",
+            payload: { publicKey: terminal.publicKeyBase64, supportsV2: false },
+        });
+        expect(createRes.statusCode).toBe(200);
+
+        const approveRes = await app.inject({
+            method: "POST",
+            url: "/v1/auth/response",
+            headers: { authorization: `Bearer ${token}` },
+            payload: { publicKey: terminal.publicKeyBase64, response: "approver-legacy-response" },
+        });
+        expect(approveRes.statusCode).toBe(200);
+
+        const row = await db.terminalAuthRequest.findUnique({ where: { publicKey: privacyKit.encodeHex(terminal.publicKeyRaw) } });
+        expect(row?.response).toBe("approver-legacy-response");
     });
 
     it("returns consumed when the claim write loses a race after eligibility checks", async () => {

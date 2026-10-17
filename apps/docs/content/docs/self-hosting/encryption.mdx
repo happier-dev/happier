@@ -79,6 +79,16 @@ For plaintext accounts to work across devices (including keyless login), clients
 - Plaintext accounts use **settings v2** (`GET/POST /v2/account/settings`) and store settings as a plaintext envelope.
 - The legacy settings route (`/v1/account/settings`) is **rejected for plaintext accounts** with `400 { error: "plain_account_requires_settings_v2" }`.
 
+#### Keyless account content key
+
+Every device of a keyless account gets the same content keypair. The server derives it from `HANDY_MASTER_SECRET` and the account id and stores nothing. The app (web, desktop and mobile) receives it at keyless sign-in (OAuth/OIDC or mTLS), and `happier auth login` receives it whichever device approves the login, so every device and machine of the account holds the same key. Machine features that encrypt with it (the file browser, starting sessions, session handoff) no longer depend on which device approved which login.
+
+Notes:
+- Rotating `HANDY_MASTER_SECRET` rotates these keys. Devices pick up the new key at their next sign-in; run `happier auth login` again on each machine.
+- A machine registered under an older key moves onto the account key when its daemon next registers after a fresh `happier auth login`.
+- A CLI that sets `HAPPIER_TERMINAL_PAIRING_REQUIRE=v3` cannot log in to a keyless account, because the server-provisioned response uses the v2 format.
+- App versions released before this change keep a per-device key until updated.
+
 #### Plaintext at-rest sealing (recommended)
 
 Plaintext accounts are server-readable by definition, but you can still reduce disk/backups exposure by sealing sensitive account-scoped blobs at rest using the server master secret.

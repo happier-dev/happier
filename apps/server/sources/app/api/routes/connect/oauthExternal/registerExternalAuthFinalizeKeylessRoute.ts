@@ -16,6 +16,7 @@ import { readAuthOauthKeylessFeatureEnv } from "@/app/features/catalog/readFeatu
 import { resolveKeylessAutoProvisionEligibility } from "@/app/auth/keyless/resolveKeylessAutoProvisionEligibility";
 import { resolveKeylessAccountsAvailability } from "@/app/features/e2ee/resolveKeylessAccountsEnabled";
 import { resolveEffectiveAccountEncryptionModeFromAccountRow } from "@/app/encryption/accountEncryptionMode";
+import { KeylessAccountContentKeySchema, resolveKeylessAccountContentKey } from "@/app/auth/keyless/keylessAccountContentKey";
 
 function sha256Hex(value: string): string {
     return createHash("sha256").update(value, "utf8").digest("hex");
@@ -31,7 +32,11 @@ export function registerExternalAuthFinalizeKeylessRoute(app: Fastify) {
                 username: z.string().min(1).optional(),
             }),
             response: {
-                200: z.object({ success: z.literal(true), token: z.string().min(1) }),
+                200: z.object({
+                    success: z.literal(true),
+                    token: z.string().min(1),
+                    content: KeylessAccountContentKeySchema.optional(),
+                }),
                 400: z.object({ error: z.enum(["invalid-pending", "invalid-proof", "username-required", "invalid-username"]) }),
                 403: z.object({ error: z.enum(["keyless-disabled", "not-eligible", "e2ee-required"]) }),
                 404: z.object({ error: z.literal("unsupported-provider") }),
@@ -137,7 +142,8 @@ export function registerExternalAuthFinalizeKeylessRoute(app: Fastify) {
             }
             await db.repeatKey.deleteMany({ where: { key: pendingKey } });
             const token = await auth.createToken(existingIdentity.accountId);
-            return reply.send({ success: true, token });
+            const content = await resolveKeylessAccountContentKey(existingIdentity.accountId);
+            return reply.send({ success: true, token, ...(content ? { content } : {}) });
         }
 
         if (!keylessEnv.autoProvision) {
@@ -202,6 +208,7 @@ export function registerExternalAuthFinalizeKeylessRoute(app: Fastify) {
         }
 
         const token = await auth.createToken(account.id);
-        return reply.send({ success: true, token });
+        const content = await resolveKeylessAccountContentKey(account.id);
+        return reply.send({ success: true, token, ...(content ? { content } : {}) });
     });
 }

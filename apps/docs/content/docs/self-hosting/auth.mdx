@@ -73,8 +73,9 @@ The same OAuth provider (for example GitHub or an OIDC provider) can appear in t
 - **Keyed provisioning** (“Continue with GitHub”): creates a **device-key** account.
   - Users must back up a secret key and **restore** on new devices/browsers.
   - This is the standard Happier model and works on E2EE-only servers.
-- **Keyless login** (“Sign in with GitHub”): signs in to a **keyless/plain** account (no device keys).
+- **Keyless login** (“Sign in with GitHub”): signs in to a **keyless/plain** account (no secret key to back up).
   - Sign-in can be **seamless across devices**, but it is intended for enterprise deployments and usually paired with plaintext storage.
+  - The server hands every device the account's content key at sign-in (see [Keyless account content key](/self-hosting/encryption#keyless-account-content-key)).
 
 Server operators control which role(s) are enabled via `/v1/features` (policy + feature env vars). Clients should not guess.
 

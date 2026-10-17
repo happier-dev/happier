@@ -86,7 +86,7 @@ export default function MtlsCallbackScreen() {
                     }
 
                     const token = String(json.token);
-                    const credentials = await buildDataKeyCredentialsForToken(token);
+                    const credentials = await buildDataKeyCredentialsForToken(token, json.content);
                     await auth.loginWithCredentials(credentials);
                     if (!mounted) return;
                     router.replace('/');

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import tweetnacl from 'tweetnacl';
 import { installLocalStorageMock } from '@/auth/storage/tokenStorage.web.testHelpers';
 
 vi.mock('react-native', async () => {
@@ -71,6 +72,46 @@ describe('buildDataKeyCredentialsForToken', () => {
         const creds = await buildDataKeyCredentialsForToken('new-token');
 
         expect(creds).toEqual({ token: 'new-token', encryption: { publicKey: 'pk', machineKey: 'mk' } });
+    });
+
+    it('uses the account content key the server returned instead of a stored or random key', async () => {
+        restoreLocalStorage = installLocalStorageMock().restore;
+
+        const { setServerUrl } = await import('@/sync/domains/server/serverConfig');
+        setServerUrl('https://server.example.test');
+
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        await TokenStorage.setCredentials({
+            token: 'old-token',
+            encryption: { publicKey: 'pk', machineKey: 'mk' },
+        } as any);
+
+        const accountKey = tweetnacl.box.keyPair();
+        const content = {
+            publicKey: Buffer.from(accountKey.publicKey).toString('base64'),
+            machineKey: Buffer.from(accountKey.secretKey).toString('base64'),
+        };
+
+        const { buildDataKeyCredentialsForToken } = await import('./buildDataKeyCredentialsForToken');
+        const creds = await buildDataKeyCredentialsForToken('new-token', content);
+
+        expect(creds).toEqual({ token: 'new-token', encryption: content });
+        expect(getRandomBytesAsyncMock).not.toHaveBeenCalled();
+    });
+
+    it('rejects an account content key whose public key does not belong to its machine key', async () => {
+        restoreLocalStorage = installLocalStorageMock().restore;
+
+        const { setServerUrl } = await import('@/sync/domains/server/serverConfig');
+        setServerUrl('https://server.example.test');
+
+        const content = {
+            publicKey: Buffer.from(tweetnacl.box.keyPair().publicKey).toString('base64'),
+            machineKey: Buffer.from(tweetnacl.box.keyPair().secretKey).toString('base64'),
+        };
+
+        const { buildDataKeyCredentialsForToken } = await import('./buildDataKeyCredentialsForToken');
+        await expect(buildDataKeyCredentialsForToken('new-token', content)).rejects.toThrow();
     });
 });
 

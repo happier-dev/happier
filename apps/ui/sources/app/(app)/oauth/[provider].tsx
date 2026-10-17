@@ -267,7 +267,7 @@ export default function OAuthProviderReturn() {
                     setProvisioningChoiceOpen(false);
                     maybeActivateServerUrl(ctx.serverUrl);
                     if (params.mode === 'plain') {
-                        const credentials = await buildDataKeyCredentialsForToken(json.token);
+                        const credentials = await buildDataKeyCredentialsForToken(json.token, json.content);
                         await (auth as any).loginWithCredentials(credentials);
                     } else {
                         await auth.login(json.token, secret!);

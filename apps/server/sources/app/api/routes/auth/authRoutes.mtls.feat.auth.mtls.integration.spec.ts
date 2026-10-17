@@ -27,6 +27,7 @@ describe("authRoutes (mTLS) (integration)", () => {
         harness = await createLightSqliteHarness({
             tempDirPrefix: "happier-auth-mtls-",
             initAuth: true,
+            initEncrypt: true,
         });
     }, 120_000);
     afterEach(async () => {
@@ -373,6 +374,20 @@ describe("authRoutes (mTLS) (integration)", () => {
         const claimBody = claimRes.json() as any;
         expect(claimBody.success).toBe(true);
         expect(typeof claimBody.token).toBe("string");
+        expect(claimBody.content).toEqual({ publicKey: expect.any(String), machineKey: expect.any(String) });
+
+        // A direct sign-in of the same keyless account receives the same account content keypair.
+        const directRes = await app.inject({
+            method: "POST",
+            url: "/v1/auth/mtls",
+            headers: {
+                "x-happier-client-cert-email": "alice@example.com",
+                "x-happier-client-cert-sha256": "sha256:abc123",
+                "x-happier-client-cert-issuer": "CN=Example Root CA",
+            },
+        });
+        expect(directRes.statusCode, directRes.body).toBe(200);
+        expect((directRes.json() as any).content).toEqual(claimBody.content);
 
         // Claim codes must be single-use to avoid replay within the TTL window.
         const claimRes2 = await app.inject({

@@ -610,6 +610,42 @@ not participate: their envelope remains bound to the owning Session. A missing o
 census, a revision mismatch, or a wrong envelope kind aborts the Account transition without
 partially changing the mode.
 
+## Keyless account content key
+
+A keyless account has no account signing key and no recovery secret, and is always `plain`. Its
+devices still need a content keypair (`encryption.publicKey` / `encryption.machineKey` in data-key
+credentials): machine data keys are sealed to it, and machine RPC and daemon-to-daemon RPC (session
+handoff) encrypt with it even on plain accounts. If each device generated its own keypair, a
+machine would work only with the one device whose key it held.
+
+The server therefore owns one content keypair per keyless account:
+
+- **Derivation.** A Curve25519 keypair from the server key tree (`HANDY_MASTER_SECRET`) at path
+  `auth / keyless / content-key / <accountId>`. Nothing is stored. Rotating the master secret
+  rotates every keyless account's key, along with the tokens it already invalidates.
+- **Sign-in.** `POST /v1/auth/external/:provider/finalize-keyless`, `POST /v1/auth/mtls` and
+  `POST /v1/auth/mtls/claim` return it as `content: { publicKey, machineKey }` when the account is
+  keyless. The UI stores it as its data-key credentials, replacing any stored or random keypair. A
+  keyed account (including a keyed account in `plain` mode) gets no `content` and keeps its own
+  key material.
+- **Terminal login.** `POST /v1/auth/response` ignores the approver's `response` for a keyless
+  account when the terminal request advertised `supportsV2`, and stores the account key sealed to
+  the terminal in the unpaired v2 format (`[0x00, machineKey]` box bundle). The CLI therefore gets
+  the account key whichever device approved. Terminals without `supportsV2` keep the relayed
+  approver response.
+- **Machine re-registration.** `POST /v1/machines` normally pins a machine's
+  `contentPublicKeyFingerprint`. For a keyless account it also accepts a move onto the account
+  key's fingerprint, and onto no other key, so a machine registered under an older per-device key
+  migrates the next time its daemon registers after a fresh login.
+
+The key only reaches holders of the account's bearer token. On a plain account that token can
+already read every record this key protects, and the server can read them too, so a server-held
+key exposes nothing new. E2EE accounts are unaffected.
+
+Not covered: the store apps' QR account linking (`/v1/auth/account/response`) still sends the
+approver's machine key, which the scanning device treats as a recovery secret and derives a
+different key from.
+
 ## Terminal pairing authentication rollout
 
 Terminal pairing v3 adds a 32-byte secret to the QR/deep link and authenticates the sealed
@@ -626,6 +662,10 @@ authenticated protocol locally:
 ```bash
 HAPPIER_TERMINAL_PAIRING_REQUIRE=v3 happier auth login
 ```
+
+A keyless account's terminal response is authored by the server in the v2 format (see
+[Keyless account content key](#keyless-account-content-key)), so a terminal that requires `v3`
+refuses it and cannot log in to a keyless account.
 
 `v3` is a minimum accepted pairing-protocol requirement: legacy v1/v2 responses are rejected, and
 future supported versions may satisfy the same or a stronger requirement. Unknown values fail

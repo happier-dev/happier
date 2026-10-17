@@ -399,7 +399,7 @@ function NotAuthenticated() {
                     return;
                 }
                 const token = String(json.token);
-                const credentials = await buildDataKeyCredentialsForToken(token);
+                const credentials = await buildDataKeyCredentialsForToken(token, json.content);
                 await auth.loginWithCredentials(credentials);
             } finally {
                 clearTimeout(timer);

@@ -31,6 +31,7 @@ import {
     serializeMachineRow,
 } from "@/app/machines/machineSerialization";
 import { registerMachineReplacementRoutes } from "./registerMachineReplacementRoutes";
+import { deriveKeylessAccountContentPublicKeyFingerprint, isKeylessAccount } from "@/app/auth/keyless/keylessAccountContentKey";
 
 function bytesEqual(a: Uint8Array | null, b: Uint8Array | null) {
     if (a === b) return true;
@@ -59,6 +60,7 @@ type InstallationIdentityUpdateResolution =
 function resolveInstallationIdentityUpdate(
     machine: ExistingMachineInstallationIdentity,
     identity: VerifiedMachineInstallationIdentity | null,
+    keylessAccountContentKeyFingerprint: string | null,
 ): InstallationIdentityUpdateResolution {
     if (!identity) {
         return { ok: true, data: {} };
@@ -70,10 +72,17 @@ function resolveInstallationIdentityUpdate(
     if (machine.installationPublicKey && !bytesEqual(machine.installationPublicKey, identity.installationPublicKey)) {
         return { ok: false, reason: "installation_public_key_mismatch" };
     }
+    // A keyless account's machine may move onto the account content key, and onto no other key.
+    const movesToKeylessAccountContentKey = Boolean(
+        keylessAccountContentKeyFingerprint
+        && identity.contentPublicKeyFingerprint === keylessAccountContentKeyFingerprint
+        && machine.contentPublicKeyFingerprint !== keylessAccountContentKeyFingerprint,
+    );
     if (
         machine.contentPublicKeyFingerprint
         && identity.contentPublicKeyFingerprint
         && machine.contentPublicKeyFingerprint !== identity.contentPublicKeyFingerprint
+        && !movesToKeylessAccountContentKey
     ) {
         return { ok: false, reason: "content_public_key_fingerprint_mismatch" };
     }
@@ -83,7 +92,7 @@ function resolveInstallationIdentityUpdate(
         data: {
             ...(!machine.installationId ? { installationId: identity.installationId } : {}),
             ...(!machine.installationPublicKey ? { installationPublicKey: identity.installationPublicKey } : {}),
-            ...(!machine.contentPublicKeyFingerprint && identity.contentPublicKeyFingerprint
+            ...((!machine.contentPublicKeyFingerprint || movesToKeylessAccountContentKey) && identity.contentPublicKeyFingerprint
                 ? { contentPublicKeyFingerprint: identity.contentPublicKeyFingerprint }
                 : {}),
         },
@@ -355,7 +364,18 @@ export function machinesRoutes(app: Fastify) {
             const wantsDataEncryptionKeyUpdate =
                 nextDataEncryptionKey !== undefined
                 && !bytesEqual(machine.dataEncryptionKey ?? null, nextDataEncryptionKey);
-            const installationIdentityUpdate = resolveInstallationIdentityUpdate(machine, verifiedInstallationIdentity);
+            // Only a fingerprint change can need the keyless account content key fingerprint.
+            const keylessAccountContentKeyFingerprint = machine.contentPublicKeyFingerprint
+                && verifiedInstallationIdentity?.contentPublicKeyFingerprint
+                && machine.contentPublicKeyFingerprint !== verifiedInstallationIdentity.contentPublicKeyFingerprint
+                && await isKeylessAccount(userId)
+                ? deriveKeylessAccountContentPublicKeyFingerprint(userId)
+                : null;
+            const installationIdentityUpdate = resolveInstallationIdentityUpdate(
+                machine,
+                verifiedInstallationIdentity,
+                keylessAccountContentKeyFingerprint,
+            );
             if (!installationIdentityUpdate.ok) {
                 return reply.code(400).send({ error: "invalid-params", reason: installationIdentityUpdate.reason });
             }
@@ -401,7 +421,11 @@ export function machinesRoutes(app: Fastify) {
                     const currentWantsDataEncryptionKeyUpdate =
                         nextDataEncryptionKey !== undefined
                         && !bytesEqual(current.dataEncryptionKey ?? null, nextDataEncryptionKey);
-                    const currentInstallationIdentityUpdate = resolveInstallationIdentityUpdate(current, verifiedInstallationIdentity);
+                    const currentInstallationIdentityUpdate = resolveInstallationIdentityUpdate(
+                        current,
+                        verifiedInstallationIdentity,
+                        keylessAccountContentKeyFingerprint,
+                    );
                     if (!currentInstallationIdentityUpdate.ok) {
                         return { error: 'invalid_installation_identity' as const, reason: currentInstallationIdentityUpdate.reason };
                     }

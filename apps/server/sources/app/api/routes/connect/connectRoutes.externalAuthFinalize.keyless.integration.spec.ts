@@ -3,6 +3,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { createHash } from "node:crypto";
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from "fastify-type-provider-zod";
 import * as privacyKit from "privacy-kit";
+import tweetnacl from "tweetnacl";
 
 import { db } from "@/storage/db";
 import { connectRoutes } from "./connectRoutes";
@@ -21,6 +22,32 @@ function createTestApp() {
     app.setSerializerCompiler(serializerCompiler);
     const typed = app.withTypeProvider<ZodTypeProvider>() as any;
     return trackApp(typed);
+}
+
+async function seedKeylessPending(pendingKey: string, proof: string): Promise<void> {
+    const proofHash = createHash("sha256").update(proof, "utf8").digest("hex");
+    const githubProfile = { id: 123, login: "octocat", avatar_url: "", name: "The Octocat" };
+    await db.repeatKey.create({
+        data: {
+            key: pendingKey,
+            value: JSON.stringify({
+                flow: "auth",
+                provider: "github",
+                authMode: "keyless",
+                proofHash,
+                profileEnc: privacyKit.encodeBase64(
+                    encryptString(["auth", "external", "github", "pending_keyless", pendingKey, "profile"], JSON.stringify(githubProfile)),
+                ),
+                accessTokenEnc: privacyKit.encodeBase64(
+                    encryptString(["auth", "external", "github", "pending_keyless", pendingKey, "token"], `tok_${pendingKey}`),
+                ),
+                suggestedUsername: "octocat",
+                usernameRequired: false,
+                usernameReason: null,
+            }),
+            expiresAt: new Date(Date.now() + 60_000),
+        },
+    });
 }
 
 describe("connectRoutes (external auth finalize keyless) (integration)", () => {
@@ -124,6 +151,45 @@ describe("connectRoutes (external auth finalize keyless) (integration)", () => {
         expect(pending).toBeNull();
 
         await app.close();
+    });
+
+    it("POST /v1/auth/external/:provider/finalize-keyless hands every sign-in of a keyless account the same content keypair", async () => {
+        harness.resetEnv({
+            HAPPIER_FEATURE_AUTH_OAUTH__KEYLESS_ENABLED: "1",
+            HAPPIER_FEATURE_AUTH_OAUTH__KEYLESS_PROVIDERS: "github",
+            HAPPIER_FEATURE_AUTH_OAUTH__KEYLESS_AUTO_PROVISION: "1",
+            HAPPIER_FEATURE_E2EE__KEYLESS_ACCOUNTS_ENABLED: "1",
+            HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional",
+            HAPPIER_FEATURE_ENCRYPTION__DEFAULT_ACCOUNT_MODE: "plain",
+        });
+
+        const app = createTestApp();
+        connectRoutes(app as any);
+        await app.ready();
+
+        const finalize = async (pendingKey: string, proof: string) => {
+            await seedKeylessPending(pendingKey, proof);
+            const res = await app.inject({
+                method: "POST",
+                url: "/v1/auth/external/github/finalize-keyless",
+                headers: { "content-type": "application/json" },
+                payload: { pending: pendingKey, proof },
+            });
+            expect(res.statusCode).toBe(200);
+            return res.json();
+        };
+
+        // First sign-in provisions the account; the second resolves the linked identity.
+        const first = await finalize("oauth_pending_keylessK1", "proof_k1");
+        const second = await finalize("oauth_pending_keylessK2", "proof_k2");
+        expect(await db.account.count()).toBe(1);
+
+        expect(first.content).toEqual({ publicKey: expect.any(String), machineKey: expect.any(String) });
+        expect(second.content).toEqual(first.content);
+        const machineKey = privacyKit.decodeBase64(first.content.machineKey);
+        expect(machineKey.length).toBe(32);
+        expect(privacyKit.encodeBase64(new Uint8Array(tweetnacl.box.keyPair.fromSecretKey(machineKey).publicKey)))
+            .toBe(first.content.publicKey);
     });
 
     it("POST /v1/auth/external/:provider/finalize-keyless returns 409 restore-required when the external identity is linked to a keyed account", async () => {
@@ -273,6 +339,9 @@ describe("connectRoutes (external auth finalize keyless) (integration)", () => {
         const json = res.json();
         expect(json).toMatchObject({ success: true });
         expect(typeof json.token).toBe("string");
+
+        // A keyed account keeps its own key material; only keyless accounts get the account content key.
+        expect(json.content).toBeUndefined();
 
         const pending = await db.repeatKey.findUnique({ where: { key: pendingKey } });
         expect(pending).toBeNull();

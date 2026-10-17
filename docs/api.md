@@ -31,6 +31,7 @@ Auth flows:
 - `POST /v1/auth/response`
   - Body: `{ response, publicKey }` (requires Bearer auth)
   - Approves a terminal auth request.
+  - For a keyless account and a request with `supportsV2`, the server stores the account content key sealed to the terminal instead of `response` (see `encryption.md`, Keyless account content key).
 
 - `POST /v1/auth/account/request`
   - Body: `{ publicKey }`
