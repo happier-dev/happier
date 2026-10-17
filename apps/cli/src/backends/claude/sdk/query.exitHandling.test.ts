@@ -62,9 +62,9 @@ describe('claude sdk query exit handling', () => {
     tmpRoot = mkdtempSync(join(tmpdir(), 'happier-claude-query-native-proof-'));
     const pidPath = join(tmpRoot, 'native-pid');
     const provider = writeExecutableShimSync({ dir: tmpRoot, fileName: outcome === 'javascript-in-launcher' ? 'provider.cjs' : 'provider', contents: `#!${process.execPath}
+      process.on('SIGUSR1', () => process.exit(0));
       require('node:fs').writeFileSync(${JSON.stringify(pidPath)}, String(process.pid));
       console.log(JSON.stringify({ type: 'system', subtype: 'init', session_id: 'owned-session' }));
-      process.on('SIGUSR1', () => process.exit(0));
       setInterval(() => {}, 1000);
     ` });
     const preload = join(tmpRoot, 'os-spawn-error.cjs');

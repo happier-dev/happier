@@ -19,7 +19,9 @@ function firstClaudeMessageText(value: unknown): string | null {
 
 export function isClaudeLocalCommandTranscriptMessage(message: RawJSONLines): boolean {
   if (message.type !== 'user') return false;
-  if (readClaudeControlCommandRowShape(message) !== null) return true;
+  const shape = readClaudeControlCommandRowShape(message);
+  if (shape?.kind === 'shell_command' || shape?.kind === 'shell_output') return false;
+  if (shape !== null) return true;
   const text = firstClaudeMessageText(message);
   if (!text) return false;
   const trimmed = text.trim();

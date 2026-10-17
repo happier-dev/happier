@@ -123,12 +123,12 @@ describe('claudeRemoteAgentSdk owned process exit', () => {
         `, { mode: 0o755 });
         await writeFile(shimPath, 'Windows shell shim fixture\n');
         await writeFile(shellWrapper, `#!${process.execPath}
-            require('node:child_process').spawn(process.execPath, [${JSON.stringify(providerPath)}], { stdio: 'inherit' });
             process.on('SIGTERM', () => {});
             process.on('SIGUSR1', () => {
                 if (${kind === 'wrapper-exit'}) process.exit(0);
                 else process.stdout.end();
             });
+            require('node:child_process').spawn(process.execPath, [${JSON.stringify(providerPath)}], { stdio: 'inherit' });
         `, { mode: 0o755 });
         const activity = createSessionRuntimeActivity('supported');
         const snapshots: Array<{ state: string; activeCount: number }> = [];

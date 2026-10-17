@@ -14,6 +14,22 @@ describe('readClaudeTranscriptTurnSignal', () => {
     ).toEqual({ type: 'turn_started', providerTurnId: null, source: 'claude_transcript_user_prompt' });
   });
 
+  it.each([
+    '<bash-stdout>hi\n</bash-stdout><bash-stderr></bash-stderr>',
+    '<bash-stderr>Command failed: exit 1</bash-stderr>',
+  ])('does not start a turn from visible shell output (%s)', (text) => {
+    for (const content of [text, [{ type: 'text', text }]]) {
+      expect(readClaudeTranscriptTurnSignal({ type: 'user', uuid: 'shell-output',
+        message: { role: 'user', content } } satisfies RawJSONLines)).toBeNull();
+    }
+  });
+
+  it('preserves native shell input as a turn start', () => {
+    expect(readClaudeTranscriptTurnSignal({ type: 'user', uuid: 'shell-input',
+      message: { role: 'user', content: '<bash-input> echo hi</bash-input>' } } satisfies RawJSONLines))
+      .toEqual({ type: 'turn_started', providerTurnId: null, source: 'claude_transcript_user_prompt' });
+  });
+
   it('detects assistant end_turn as a completion candidate', () => {
     expect(
       readClaudeTranscriptTurnSignal({

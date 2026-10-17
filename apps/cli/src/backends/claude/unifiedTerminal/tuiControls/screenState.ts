@@ -100,6 +100,13 @@ export type ClaudeScreenState = Readonly<{
    * submits `/effort medium/effort medium` (incident cmq7pyqkj, U1).
   */
   composerContent: string | null;
+  /**
+   * Content of the bash-mode prompt line (`!  echo hi`, footer `! for shell mode`), null outside
+   * bash mode. Kept apart from `composerContent` on purpose: a bash-mode prompt is not a message
+   * composer, so it must not satisfy any readiness, steering or clearing check. Only delivery of a
+   * message that itself starts with `!` reads it, to see that message staged before pressing Enter.
+   */
+  shellComposerContent: string | null;
   composerCursorRelation: 'at_content_start' | 'inside_or_after_content' | null;
   modeMarker: ClaudeTuiModeMarker | null;
   visibleModel: string | null;
@@ -200,11 +207,14 @@ const EFFORT_CONFIRMATION = /set (?:reasoning )?effort (?:level )?to\s+([a-z]+)\
 const EFFORT_KEPT_NOTICE = /kept effort level as\s+([a-z]+)\b/gim;
 const EFFORT_STATUS_LINE = /\beffort:\s*([a-z]+)\b/im;
 
-// Composer prompt line: `>`, `›` (U+203A), or `❯` (U+276F, the real 2.1.170 glyph) followed by
+// Input prompt line: `>`, `›` (U+203A), `❯` (U+276F), or the shell-mode `!`, followed by
 // optional content (inside an optional box border). The negative lookahead excludes menu-selection
 // lines (`❯ 1. Yes`) — the same `❯` glyph marks dialog choices — so a dialog never reads as an
 // interactive composer (fail-closed: an ambiguous numbered line is treated as not-a-composer).
-const COMPOSER_LINE = /(?:^|\n)[^\S\n]*(?:[│|][^\S\n]*)?(?:>|›|❯)(?![^\S\n]*(?:\d+\.|[◯◉○●◐◑]))[^\S\n]*(.*?)[^\S\n]*(?:[│|][^\S\n]*)?(?:\n|$)/;
+// Shell recognition needs its following footer so the hint cannot match itself. Both prompt kinds
+// participate in the SAME last-input selection: an old shell capture cannot outrank a newer normal
+// draft, and an old normal composer cannot make the active shell prompt ready for ordinary input.
+const COMPOSER_LINE = /(?:^|\n)[^\S\n]*(?:[│|][^\S\n]*)?((?:>|›|❯)(?![^\S\n]*(?:\d+\.|[◯◉○●◐◑]))|!(?=[\s\S]*\n[^\S\n]*! for shell mode(?:\s|$)))[^\S\n]*(.*?)[^\S\n]*(?:[│|][^\S\n]*)?(?:\n|$)/;
 const SLASH_SUGGESTION_LINE = /(?:^|\n)[^\S\n]*\/[a-z][a-z0-9-]*\b/i;
 // Agents/selection panel (live capture 2026-06-12 11:50, runner pid 58731): the selector header
 // renders `↑/↓ to select` and the focus cursor renders as `❯ ◯ <agent-type> <title>` rows. The
@@ -423,24 +433,32 @@ function cursorProvesPlainPlaceholder(params: Readonly<{
 function readComposerState(
   text: string,
   rawText: string,
+  match: RegExpExecArray | null,
   context?: ClaudeScreenParseContext | undefined,
-): Readonly<{ content: string | null; cursorRelation: ClaudeScreenState['composerCursorRelation'] }> {
+): Readonly<{ content: string | null; shellContent: string | null; cursorRelation: ClaudeScreenState['composerCursorRelation'] }> {
   // Executed prompts echo as `❯ <prompt>` transcript rows (live capture 2026-06-11); the REAL
   // composer is the LAST composer-shaped line on screen (the input box renders at the bottom).
-  const match = lastMatch(new RegExp(COMPOSER_LINE.source, `${COMPOSER_LINE.flags}g`), text);
-  if (!match) return { content: null, cursorRelation: null };
-  const content = (match[1] ?? '').trim();
-  const cursorRelation = readCursorComposerRelation({ text, match, content, context });
-  if (content.length === 0) return { content, cursorRelation };
+  if (!match) return { content: null, shellContent: null, cursorRelation: null };
+  const content = (match[2] ?? '').trim();
   const continuation = readComposerContinuationLines(text, match.index + match[0].length);
+  if (match[1] === '!') {
+    return {
+      content: null,
+      shellContent: continuation.length === 0 ? content : [content, ...continuation].join('\n'),
+      cursorRelation: null,
+    };
+  }
+  const cursorRelation = readCursorComposerRelation({ text, match, content, context });
+  if (content.length === 0) return { content, shellContent: null, cursorRelation };
   if (continuation.length === 0 && composerContentIsDimPlaceholder(rawText, content, cursorRelation)) {
-    return { content: '', cursorRelation };
+    return { content: '', shellContent: null, cursorRelation };
   }
   if (cursorProvesPlainPlaceholder({ rawText, content, continuation, cursorRelation })) {
-    return { content: '', cursorRelation };
+    return { content: '', shellContent: null, cursorRelation };
   }
   return {
     content: continuation.length === 0 ? content : [content, ...continuation].join('\n'),
+    shellContent: null,
     cursorRelation,
   };
 }
@@ -745,8 +763,8 @@ export function parseClaudeScreenState(rawText: string, context?: ClaudeScreenPa
   // confirmed focused-selection block owns the cursor, so it must win before composer parsing;
   // otherwise the selected row masquerades as a draft and suppresses the generic dialog path.
   const composerState = rewindSelectionVisible || visibleDialogSelection?.kind === 'focused'
-    ? { content: null, cursorRelation: null }
-    : readComposerState(text, rawText, context);
+    ? { content: null, shellContent: null, cursorRelation: null }
+    : readComposerState(text, rawText, lastComposerMatch, context);
   const composerContent = composerState.content;
   const hasComposer = composerContent !== null;
   // A host cursor on the parsed composer is direct evidence that the composer, not an older
@@ -821,6 +839,7 @@ export function parseClaudeScreenState(rawText: string, context?: ClaudeScreenPa
     userDraftPresent,
     selectionListVisible: rewindSelectionVisible || SELECTION_CURSOR_ROW.test(text) || (SELECTION_LIST_HINT.test(text) && !hasComposer),
     composerContent,
+    shellComposerContent: anyDialog ? null : composerState.shellContent,
     composerCursorRelation: composerState.cursorRelation,
     modeMarker,
     visibleModel: resolveVisibleModel(text),

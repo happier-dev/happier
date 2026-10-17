@@ -57,6 +57,98 @@ function createDeferred<T>() {
 describe('createClaudeUnifiedTranscriptBridge', () => {
   const tempDirs: string[] = [];
 
+  it('keeps completed local shell output visible without restarting the turn after its commit', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'happier-claude-shell-output-lifecycle-'));
+    tempDirs.push(dir);
+    const sessionId = 'shell-output-session';
+    const transcriptPath = join(dir, `${sessionId}.jsonl`);
+    await writeFile(transcriptPath, '');
+    const injected: string[] = [];
+    const accepted: string[] = [];
+    const visible: RawJSONLines[] = [];
+    const observed: string[] = [];
+    let readyCount = 0;
+    let confirmation = Promise.resolve(false);
+    let completion: Promise<void> | undefined;
+    let lifecycle: ReturnType<typeof createClaudeUnifiedHookLifecycleBridge> | undefined;
+    const discovery = createClaudeUnifiedAcceptedPromptTranscriptDiscovery({
+      acceptedPromptWindowMs: 5_000,
+      onAttemptLocalCommandCompleted: () => {
+        completion = lifecycle?.settleAttemptLocalCommandCompleted();
+        return completion;
+      },
+    });
+    const arbiter = createClaudeUnifiedInputArbiter({
+      quietPeriodMs: 0,
+      // The terminal write is the external boundary; all transcript/lifecycle logic stays real.
+      injectPrompt: async (batch) => {
+        injected.push(batch.message);
+        return { status: 'injected', at: Date.now(), bytesWritten: batch.message.length };
+      },
+      onProviderAcceptancePending: (batch) => { discovery.recordAcceptedPrompt({
+        message: batch.message, deliveryIdentity: { localIds: batch.userMessageLocalIds },
+      }); },
+      onPromptAccepted: (batch) => {
+        discovery.consumeAcceptedPromptByBatch(batch);
+        accepted.push(...(batch.userMessageLocalIds ?? []));
+      },
+    });
+    lifecycle = createClaudeUnifiedHookLifecycleBridge({
+      subscribeClaudeSessionHooks: () => () => undefined,
+      arbiter, completionQuiescenceMs: 0,
+      onReady: () => { readyCount += 1; },
+    });
+    const bridge = createClaudeUnifiedTranscriptBridge({
+      sessionId, transcriptPath, workingDirectory: dir,
+      onRawTranscriptValue: (value) => { discovery.observeControlCommandTranscript(value); },
+      onMessage: async (message) => {
+        visible.push(message);
+        // A visible-message network commit can settle after raw completion side effects.
+        if (message.uuid === 'shell-output') await completion;
+      },
+      onTranscriptMessage: (message) => {
+        const match = discovery.findMatchingTranscript([message]);
+        if (match) confirmation = arbiter.confirmPromptAcceptedByProviderIf((batch) => (
+          doesClaudeUnifiedPromptBatchMatchAcceptedTranscript({ batch, match })
+        ));
+        lifecycle?.observeTranscript(message);
+        if (typeof message.uuid === 'string') observed.push(message.uuid);
+      },
+      transcriptMissingWarningMs: 0,
+    });
+    try {
+      const abortSignal = new AbortController().signal;
+      lifecycle.start({ abortSignal });
+      await bridge.start({ abortSignal });
+      arbiter.observeLifecycle({ type: 'output' });
+      await arbiter.enqueueUiMessage({ message: '! echo hi', origin: { kind: 'ui_pending' }, userMessageLocalIds: ['shell-local-id'] });
+      await arbiter.drainWhenSafe();
+      const base = { type: 'user', sessionId, promptId: 'shell-prompt', timestamp: new Date().toISOString() } as const;
+      await appendJsonl(transcriptPath, { ...base, uuid: 'shell-caveat', isMeta: true,
+        message: { role: 'user', content: '<local-command-caveat>Output goes directly to the user.</local-command-caveat>' } });
+      await appendJsonl(transcriptPath, { ...base, uuid: 'shell-input', parentUuid: 'shell-caveat',
+        message: { role: 'user', content: '<bash-input> echo hi</bash-input>' } });
+      await waitUntil(() => observed.includes('shell-input'));
+      await confirmation;
+      expect(accepted).toEqual(['shell-local-id']);
+      expect(arbiter.snapshot().turnState).toBe('running');
+      await appendJsonl(transcriptPath, { ...base, uuid: 'shell-output', parentUuid: 'shell-input',
+        message: { role: 'user', content: '<bash-stdout>hi\n</bash-stdout><bash-stderr></bash-stderr>' } });
+      await waitUntil(() => observed.includes('shell-output'));
+      expect(visible.some((message) => message.uuid === 'shell-output')).toBe(true);
+      expect(readyCount).toBe(1);
+      expect(arbiter.snapshot().turnState).toBe('idle');
+      await arbiter.enqueueUiMessage({ message: 'ordinary next prompt', origin: { kind: 'ui_pending' }, userMessageLocalIds: ['next-local-id'] });
+      await arbiter.drainWhenSafe();
+      expect(injected).toEqual(['! echo hi', 'ordinary next prompt']);
+      expect(accepted).toEqual(['shell-local-id']);
+    } finally {
+      lifecycle.dispose();
+      await bridge.dispose();
+      await arbiter.dispose();
+    }
+  });
+
   it.each([false, true])('uses transcript authority after an ambiguous task XML submit hook (native: %s)', async (native) => {
     const dir = await mkdtemp(join(tmpdir(), 'happier-claude-task-prompt-admission-'));
     tempDirs.push(dir);

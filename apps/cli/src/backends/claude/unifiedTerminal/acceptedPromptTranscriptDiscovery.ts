@@ -57,6 +57,7 @@ type ControlCommandBinding = {
   commandUuid: string | null;
   promptId: string | null;
   commandText: string;
+  commandKind: 'command' | 'shell_command';
   transcriptTimestampMs: number | null;
   observedAtMs: number;
   expiresAtMs: number;
@@ -357,6 +358,10 @@ export function createClaudeUnifiedAcceptedPromptTranscriptDiscovery(opts: Reado
   const acceptedPrompts: AcceptedPrompt[] = [];
   const independentControlCommands: IndependentControlCommand[] = [];
   const controlCommandBindings = new Map<string, ControlCommandBinding>();
+  // Native no-query shell episodes explicitly precede the input with a meta caveat.
+  // Its UUID is the input's parentUuid (Claude Code 2.1.302); output alone cannot
+  // establish completion because ordinary shell commands may continue into inference.
+  const localCommandCaveats = new Map<string, number>();
   const nowMs = opts.nowMs ?? Date.now;
   const acceptedPromptWindowMs = Math.max(100, Math.trunc(opts.acceptedPromptWindowMs));
   const controlCommandBindingRetentionMs = acceptedPromptWindowMs * 2;
@@ -390,10 +395,20 @@ export function createClaudeUnifiedAcceptedPromptTranscriptDiscovery(opts: Reado
         independentControlCommands.splice(index, 1);
       }
     }
-    for (const [key, binding] of controlCommandBindings) {
-      if (binding.expiresAtMs < referenceMs) controlCommandBindings.delete(key);
-    }
     const liveAcceptedPromptIds = new Set(acceptedPrompts.map((prompt) => prompt.id));
+    for (const [key, binding] of controlCommandBindings) {
+      // Echo retention cannot retire the completion evidence for an ongoing local
+      // command. Provider acceptance removes its prompt registration before stdout
+      // necessarily arrives; its binding remains authoritative until completion.
+      const awaitingAttemptLocalCompletion = binding.origin.kind === 'attempt'
+        && binding.completionOwner === 'local_stdout'
+        && !binding.completionEmitted
+        && (binding.acceptedConfirmed || liveAcceptedPromptIds.has(binding.origin.acceptedPromptId));
+      if (binding.expiresAtMs < referenceMs && !awaitingAttemptLocalCompletion) controlCommandBindings.delete(key);
+    }
+    for (const [uuid, expiresAtMs] of localCommandCaveats) {
+      if (expiresAtMs < referenceMs) localCommandCaveats.delete(uuid);
+    }
     for (let index = nativeQueuedCommandCustody.length - 1; index >= 0; index -= 1) {
       const custody = nativeQueuedCommandCustody[index];
       if (!custody) continue;
@@ -581,10 +596,12 @@ export function createClaudeUnifiedAcceptedPromptTranscriptDiscovery(opts: Reado
       return existing;
     }
     const shape = readClaudeControlCommandRowShape(message);
-    if (!shape || shape.kind !== 'command') {
+    if (!shape || (shape.kind !== 'command' && shape.kind !== 'shell_command')) {
       throw new Error('bindControlCommandRow requires a command row');
     }
-    const commandText = `${shape.name}${shape.args.length > 0 ? ` ${shape.args}` : ''}`;
+    const commandText = shape.kind === 'shell_command'
+      ? shape.command
+      : `${shape.name}${shape.args.length > 0 ? ` ${shape.args}` : ''}`;
     const transcriptTimestampMs = readMessageTimestampMs(message);
     const observedAtMs = transcriptTimestampMs ?? nowMs();
     const binding: ControlCommandBinding = {
@@ -592,10 +609,15 @@ export function createClaudeUnifiedAcceptedPromptTranscriptDiscovery(opts: Reado
       commandUuid: identity.uuid,
       promptId: identity.promptId,
       commandText,
+      commandKind: shape.kind,
       transcriptTimestampMs,
       observedAtMs,
       expiresAtMs: observedAtMs + controlCommandBindingRetentionMs,
-      completionOwner: resolveClaudeControlCommandCompletionOwner(shape.name),
+      completionOwner: shape.kind === 'shell_command'
+        ? localCommandCaveats.has(readNonEmptyString((message as Record<string, unknown>).parentUuid) ?? '')
+          ? 'local_stdout'
+          : 'external_lifecycle'
+        : resolveClaudeControlCommandCompletionOwner(shape.name),
       origin: { kind: 'unknown' },
       attemptDeliveryIdentity: null,
       acceptedConfirmed: false,
@@ -613,19 +635,31 @@ export function createClaudeUnifiedAcceptedPromptTranscriptDiscovery(opts: Reado
   function observeControlCommandTranscript(value: unknown): boolean {
     const message = parseRawJsonLinesObject(value);
     if (!message) return false;
+    if (message.isSidechain === true || readObject((message as Record<string, unknown>).origin)?.kind === 'peer') return false;
     const shape = readClaudeControlCommandRowShape(message);
     if (!shape) return false;
+    pruneExpired(nowMs());
     const identity = readTranscriptIdentity(message);
-    opts.onControlCommandConsumed?.(message);
-    if (shape.kind === 'command') {
+    if (shape.kind === 'local_caveat') {
+      if (identity.uuid) {
+        localCommandCaveats.set(identity.uuid, (readMessageTimestampMs(message) ?? nowMs()) + controlCommandBindingRetentionMs);
+      }
+      return true;
+    }
+    // Shell input/output remain visible; only slash-control bookkeeping is consumed.
+    if (shape.kind === 'command' || shape.kind === 'stdout') opts.onControlCommandConsumed?.(message);
+    if (shape.kind === 'command' || shape.kind === 'shell_command') {
       bindControlCommandRow(message);
       return true;
     }
     const record = message as Record<string, unknown>;
     const parentUuid = readNonEmptyString(record.parentUuid);
     const matchingBindings = [...controlCommandBindings.values()].filter((binding) => (
-      (parentUuid !== null && binding.commandUuid === parentUuid)
-      || (identity.promptId !== null && binding.promptId === identity.promptId)
+      binding.commandKind === (shape.kind === 'shell_output' ? 'shell_command' : 'command')
+      && (shape.kind === 'shell_output'
+        ? parentUuid !== null && binding.commandUuid === parentUuid
+        : (parentUuid !== null && binding.commandUuid === parentUuid)
+          || (identity.promptId !== null && binding.promptId === identity.promptId))
     ));
     if (matchingBindings.length === 1) {
       const binding = matchingBindings[0];
@@ -738,6 +772,7 @@ export function createClaudeUnifiedAcceptedPromptTranscriptDiscovery(opts: Reado
     for (const message of messages) {
       const record = readObject(message);
       const parsedMessage = parseRawJsonLinesObject(message);
+      if (record?.isSidechain === true || readObject(record?.origin)?.kind === 'peer') continue;
       const providerPromptId = readNonEmptyString(record?.promptId);
       const providerSessionId = readNonEmptyString(record?.sessionId);
       if (parsedMessage && providerPromptId && providerSessionId
@@ -746,11 +781,11 @@ export function createClaudeUnifiedAcceptedPromptTranscriptDiscovery(opts: Reado
         continue;
       }
       const controlShape = parsedMessage ? readClaudeControlCommandRowShape(parsedMessage) : null;
-      if (parsedMessage && controlShape?.kind === 'stdout') {
+      if (parsedMessage && (controlShape?.kind === 'stdout' || controlShape?.kind === 'shell_output' || controlShape?.kind === 'local_caveat')) {
         observeControlCommandTranscript(parsedMessage);
         continue;
       }
-      if (parsedMessage && controlShape?.kind === 'command') {
+      if (parsedMessage && (controlShape?.kind === 'command' || controlShape?.kind === 'shell_command')) {
         const identity = readTranscriptIdentity(parsedMessage);
         if (closedTranscriptEvidence.has(identity.transcriptKey)) continue;
         observeControlCommandTranscript(parsedMessage);

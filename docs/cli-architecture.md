@@ -1286,6 +1286,14 @@ requests retain their explicitly selected namespace. Generated agent names label
 the panes rather than creating separate Herdr servers.
 Claude unified reuses the existing composer parser and prompt-submission verifier;
 successful terminal writes are not provider acceptance acknowledgements.
+In development source, normal and shell prompts share one active-input selection and
+wrapped-text reader. Shell input is verification-only: it cannot make the terminal
+ready for an ordinary message, and only a request starting with `!` can authorize
+its submission. Blocking dialogs exclude shell verification.
+Native bash-input records retain exact shell-request identity for Pending settlement.
+A linked native local-command caveat and bash output complete the existing local-command
+lifecycle; output without that caveat retains the provider's inference lifecycle.
+Shell input and output remain visible in the transcript.
 In development source, Claude prompt staging and consumption wait under the existing
 session cancellation signal, rather than the terminal transport's write deadline.
 An overloaded TUI can display a successful paste late. The shared terminal verifier
