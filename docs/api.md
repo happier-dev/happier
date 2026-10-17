@@ -39,6 +39,12 @@ Auth flows:
 - `POST /v1/auth/account/response`
   - Body: `{ response, publicKey }` (requires Bearer auth)
 
+- `POST /v1/auth/external/:provider/token-exchange`
+  - Body: `{ accessToken }`: a JWT access token the caller obtained from the provider itself.
+  - Off unless the provider's config has `tokenExchange.allowedClientIds` and keyless login is enabled for the provider.
+  - The provider owns the token check (`OAuthFlowProvider.verifyExternalAccessToken`; OIDC: allowlisted client claim, then `/userinfo` with the token's subject claim as the expected `sub`). The route only signs in to an account already linked to that identity, refuses E2EE accounts (`409 restore-required`), and applies `enforceLoginEligibility`.
+  - Response: `{ success, token }`.
+
 ## Endpoint catalog
 ### Sessions
 - `GET /v1/sessions`
@@ -96,6 +102,7 @@ and [encryption](encryption.md) for the owning wire and privacy boundaries.
 ### Connect (OAuth providers + vendor tokens)
 - `GET /v1/auth/external/:provider/params`
 - `POST /v1/auth/external/:provider/finalize`
+- `POST /v1/auth/external/:provider/token-exchange`
 - `DELETE /v1/auth/external/:provider/pending/:pending`
 - `GET /v1/connect/external/:provider/params`
 - `POST /v1/connect/external/:provider/finalize`

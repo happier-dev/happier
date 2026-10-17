@@ -3,6 +3,7 @@ import * as oidcClient from "openid-client";
 import type { OAuthFlowProvider, OAuthTokenExchangeResult } from "@/app/oauth/providers/types";
 import type { OidcAuthProviderInstanceConfig } from "@/app/auth/providers/oidc/oidcProviderConfig";
 import { discoverOidcConfiguration } from "./oidcDiscovery";
+import { createOidcExternalAccessTokenVerifier } from "./oidcExternalAccessTokenVerifier";
 
 export function createOidcOAuthProvider(instance: OidcAuthProviderInstanceConfig): OAuthFlowProvider {
     const isConfigured = () => Boolean(instance.clientId && instance.clientSecret && instance.redirectUrl && instance.issuer);
@@ -99,6 +100,9 @@ export function createOidcOAuthProvider(instance: OidcAuthProviderInstanceConfig
             const sub = (profile as any)?.sub?.toString?.().trim?.() ?? "";
             return sub ? sub : null;
         },
+        ...(instance.tokenExchange
+            ? { verifyExternalAccessToken: createOidcExternalAccessTokenVerifier(instance, instance.tokenExchange) }
+            : {}),
     });
 
     return provider;

@@ -13,6 +13,7 @@ Happier’s “custom provider” support is **OpenID Connect (OIDC) 1.0** using
 - The provider must support code exchange at the token endpoint
 - `id_token` claims are used as the primary identity profile; optional `/userinfo` can be enabled
 - Optional refresh tokens can be stored (encrypted) for offboarding re-checks
+- Optional: a headless machine can trade a JWT access token from the provider for a Happier token (see [Token exchange for headless machines](#token-exchange-for-headless-machines))
 
 If you need SAML, the recommended approach is to use your IdP’s “OIDC app” or a SAML→OIDC bridge (Okta/Auth0/Azure AD/Keycloak, etc.), and configure Happier using the OIDC options below.
 
@@ -52,6 +53,9 @@ The config must be a JSON array. Each entry defines one provider instance:
     },
     "fetchUserInfo": false,
     "storeRefreshToken": false,
+    "tokenExchange": {
+      "allowedClientIds": ["…"]
+    },
     "ui": {
       "buttonColor": "#111111",
       "iconHint": "okta"
@@ -75,6 +79,7 @@ Notes:
   - `groupsAll`: user must be in *all* groups.
 - `fetchUserInfo` (default `false`): if enabled, the server fetches `/userinfo` and merges it into the identity profile.
 - `storeRefreshToken` (default `false`): if enabled, the server stores an **encrypted refresh token** and uses refresh flows for periodic eligibility re-checks (offboarding) without requiring users to reconnect.
+- `tokenExchange` (default: absent, exchange off): lets machines trade an access token for a Happier token. See [Token exchange for headless machines](#token-exchange-for-headless-machines).
 - `ui` provides optional UI hints only (no security impact).
 
 ## Client secret from an environment variable
@@ -166,6 +171,67 @@ HAPPIER_FEATURE_AUTH_UI__AUTO_REDIRECT_ENABLED=1
 HAPPIER_FEATURE_AUTH_UI__AUTO_REDIRECT_PROVIDER_ID=<providerId>
 AUTH_ANONYMOUS_SIGNUP_ENABLED=0
 ```
+
+### Token exchange for headless machines
+
+A machine that already holds a user's access token from your IdP can trade it for a Happier token on that user's account, with no browser and no pairing step. Dev-box platforms that keep a per-user IdP token in each workspace (for example a Coder external auth) use this to attach a new workspace to its owner's account.
+
+What you need first:
+
+- Keyless OIDC login enabled for the provider (above). The exchange only signs in to keyless/plain accounts.
+- The user has signed in to Happier through this provider at least once. The exchange never creates an account.
+- An OAuth client in your IdP that issues the machine's access tokens. It can be Happier's own client or a separate one, provided its `/userinfo` returns the same `sub` as the user's Happier login. Providers using [pairwise subject identifiers](https://openid.net/specs/openid-connect-core-1_0.html#SubjectIDTypes) can return different subjects for separate client sectors; those tokens return `not-linked` even if the user has already signed in to Happier.
+
+Turn it on per provider by listing the clients whose tokens may be exchanged:
+
+```json
+"tokenExchange": {
+  "allowedClientIds": ["0oa1exampleclient"],
+  "clientIdClaim": "cid",
+  "subjectClaim": "uid"
+}
+```
+
+- `allowedClientIds` (required): OAuth client ids, compared exactly. An empty or missing list leaves the exchange off.
+- `clientIdClaim` (optional): the access-token claim naming the client. When unset, Happier reads `client_id` (RFC 9068), then `azp`. For Okta JWT access tokens with a `cid` client claim, set `clientIdClaim` to `cid`.
+- `subjectClaim` (default `sub`): the access-token claim that must equal the `sub` returned by `/userinfo`. For Okta JWT access tokens whose `sub` is the login and whose `uid` matches the `/userinfo` subject, set `subjectClaim` to `uid`.
+
+Verify these claim names against tokens from your configured issuer. [Okta treats org authorization server access-token contents as opaque](https://developer.okta.com/docs/guides/validate-access-tokens/main/) and may change their format. This exchange requires a readable JWT with the configured client and subject claims; an org token format change can therefore disable exchange even while browser login still works. The token is validated by Okta's own `/userinfo` endpoint, rather than by local signature validation.
+
+The machine then calls:
+
+```bash
+curl -fsS -X POST "https://YOUR_SERVER/v1/auth/external/<providerId>/token-exchange" \
+  -H 'content-type: application/json' \
+  -d "{\"accessToken\":\"$IDP_ACCESS_TOKEN\"}"
+# {"success":true,"token":"…"}
+```
+
+How the server checks the token:
+
+1. It reads the client claim from the token's JWT payload and refuses clients that are not allowed. Opaque (non-JWT) access tokens are refused.
+2. It sends the token to the provider's `/userinfo` endpoint. The provider rejects a token that is expired, revoked, or whose payload was edited, because the signature no longer matches.
+3. It requires the `/userinfo` `sub` to equal the token's `subjectClaim`.
+4. It looks up the account already linked to that `sub` for this provider.
+5. It refuses end-to-end encrypted accounts and applies the same login eligibility check every authenticated request gets (disabled accounts, `AUTH_REQUIRED_LOGIN_PROVIDERS`, offboarding).
+
+The access token must be a JWT and must carry the `openid` scope, or `/userinfo` refuses it.
+
+| Status | `error` | Meaning |
+| --- | --- | --- |
+| 401 | `invalid-token` | Not a JWT, rejected by `/userinfo`, or subject mismatch |
+| 403 | `token-exchange-disabled` | No `tokenExchange.allowedClientIds`, or keyless login is off for this provider |
+| 403 | `client-not-allowed` | The token's client is not in `allowedClientIds` |
+| 403 | `account-disabled`, `provider-required`, `not-eligible` | The account fails login eligibility |
+| 404 | `not-linked` | No account is linked to this identity yet; sign in once through the app |
+| 409 | `restore-required` | The linked account is end-to-end encrypted |
+| 502 | `upstream_error` | The IdP could not be reached |
+
+Limits:
+
+- The Happier token does not expire with the IdP token. Revocation works as for any other Happier token: disable the account or rely on offboarding checks.
+- The response carries only an API token, no content key. Development-source CLI credentials can be token-only, but the CLI has no command that consumes an exchanged token yet. Historical encrypted content still requires its genuine old key.
+- Requests share the `oauthExternal.authParams` per-IP rate limit (see [Rate limits](/self-hosting/rate-limits)).
 
 ## Step-by-step: add a new OIDC provider
 

@@ -13,7 +13,15 @@ export type OidcStubServer = {
     issuer: string;
     close: () => Promise<void>;
     reset: () => void;
+    /**
+     * Signs a JWT access token with the stub's key and registers it with /userinfo,
+     * which then answers that exact token with `userInfoClaims`. Any other bearer
+     * (for example a token whose payload was edited after signing) gets 401.
+     */
+    issueAccessToken: (claims: Record<string, unknown>, userInfoClaims: Record<string, unknown>) => string;
 };
+
+const CODE_FLOW_ACCESS_TOKEN = "at_1";
 
 function base64Url(input: Buffer): string {
     return input.toString("base64url");
@@ -53,6 +61,7 @@ export async function startOidcStubServer(options: StartOidcStubServerOptions = 
     const privateKeyPem = privateKey.export({ format: "pem", type: "pkcs8" }).toString("utf8");
 
     const authCodes = new Map<string, OidcCodeRecord>();
+    const issuedAccessTokens = new Map<string, Record<string, unknown>>();
     let issuer = "";
 
     const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
@@ -131,7 +140,7 @@ export async function startOidcStubServer(options: StartOidcStubServerOptions = 
             res.setHeader("content-type", "application/json");
             res.end(
                 JSON.stringify({
-                    access_token: "at_1",
+                    access_token: CODE_FLOW_ACCESS_TOKEN,
                     token_type: "Bearer",
                     expires_in: 600,
                     id_token: idToken,
@@ -142,6 +151,21 @@ export async function startOidcStubServer(options: StartOidcStubServerOptions = 
         }
 
         if (options.includeUserInfoEndpoint && (req.method === "POST" || req.method === "GET") && url.pathname === "/userinfo") {
+            const authorization = req.headers.authorization ?? "";
+            const bearer = authorization.startsWith("Bearer ") ? authorization.slice("Bearer ".length) : "";
+            const issuedClaims = issuedAccessTokens.get(bearer);
+            if (issuedClaims) {
+                res.statusCode = 200;
+                res.setHeader("content-type", "application/json");
+                res.end(JSON.stringify(issuedClaims));
+                return;
+            }
+            if (bearer !== CODE_FLOW_ACCESS_TOKEN) {
+                res.statusCode = 401;
+                res.setHeader("www-authenticate", 'Bearer error="invalid_token"');
+                res.end();
+                return;
+            }
             res.statusCode = 200;
             res.setHeader("content-type", "application/json");
             res.end(
@@ -179,6 +203,21 @@ export async function startOidcStubServer(options: StartOidcStubServerOptions = 
         },
         reset: () => {
             authCodes.clear();
+            issuedAccessTokens.clear();
+        },
+        issueAccessToken: (claims, userInfoClaims) => {
+            const token = signJwtRs256({
+                header: { typ: "at+jwt", alg: "RS256", kid },
+                payload: {
+                    iss: issuer,
+                    exp: Math.floor(Date.now() / 1000) + 600,
+                    iat: Math.floor(Date.now() / 1000),
+                    ...claims,
+                },
+                privateKeyPem,
+            });
+            issuedAccessTokens.set(token, userInfoClaims);
+            return token;
         },
     };
 }
