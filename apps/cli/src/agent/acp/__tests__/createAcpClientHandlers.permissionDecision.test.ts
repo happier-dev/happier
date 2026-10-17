@@ -330,4 +330,54 @@ describe('createAcpClientHandlers permission pre-prompt decisions', () => {
 
     expect(order).toEqual(['cancel', 'response']);
   });
+
+  it('wires createElicitation only when permissionHandler.handleElicitation is defined and does not cancel turn on decline', async () => {
+    const cancel = vi.fn(async () => undefined);
+    const handleElicitation = vi.fn(async () => ({ action: 'decline' as const }));
+    const handlerContext = createHandlerContext();
+    const client = createAcpClientHandlers({
+      onSessionUpdate: () => undefined,
+      transport: new DefaultTransport('test'),
+      emit: () => undefined,
+      permissionHandler: {
+        handleToolCall: async () => ({ decision: 'approved' as const }),
+        handleElicitation,
+      },
+      createHandlerContext: () => handlerContext,
+      getToolNameContext: () => ({ recentPromptHadChangeTitle: false, toolCallCountSincePrompt: 0 }),
+      getActiveSessionId: () => 'session-1',
+      capturePermissionRequest: () => ({
+        scope: 'turn',
+        isCurrent: () => true,
+        cancel,
+      }),
+      emitPermissionResponse: vi.fn(async () => undefined),
+      clearTrackedToolCall: vi.fn(),
+      incrementToolCallCountSincePrompt: vi.fn(),
+      toolCalls: handlerContext.toolCalls,
+      lastSelectedPermissionOptionIdByToolCallId: new Map(),
+    });
+
+    expect(client.createElicitation).toBeTypeOf('function');
+    await expect(
+      client.createElicitation!({
+        mode: 'form',
+        sessionId: 'session-1',
+        toolCallId: 'elicit-1',
+        message: 'Refine plan?',
+        requestedSchema: {
+          type: 'object',
+          properties: {},
+        },
+      }),
+    ).resolves.toEqual({ action: 'decline' });
+    expect(handleElicitation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        mode: 'form',
+        sessionId: 'session-1',
+        toolCallId: 'elicit-1',
+      }),
+    );
+    expect(cancel).not.toHaveBeenCalled();
+  });
 });

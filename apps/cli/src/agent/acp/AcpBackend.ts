@@ -1050,6 +1050,7 @@ export class AcpBackend implements CatalogAcpBackend {
       clientName: 'happier-cli',
       clientVersion: packageJson.version,
       fsEnabled,
+      elicitationEnabled: typeof this.options.permissionHandler?.handleElicitation === 'function',
       ...(typeof this.options.parameterizedModelPicker === 'boolean'
         ? { parameterizedModelPicker: this.options.parameterizedModelPicker }
         : {}),

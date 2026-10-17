@@ -2,6 +2,8 @@ import {
   RequestError,
   type AgentApp,
   type ClientApp,
+  type CreateElicitationRequest,
+  type CreateElicitationResponse,
   type ParamsParser,
   type ReadTextFileRequest,
   type ReadTextFileResponse,
@@ -26,6 +28,9 @@ export type AcpClientConnectionHandlers = Readonly<{
   writeTextFile?: (
     params: WriteTextFileRequest,
   ) => WriteTextFileResponse | Promise<WriteTextFileResponse>;
+  createElicitation?: (
+    params: CreateElicitationRequest,
+  ) => CreateElicitationResponse | Promise<CreateElicitationResponse>;
 }>;
 
 export type AcpExtensionHandlerContext = Readonly<{

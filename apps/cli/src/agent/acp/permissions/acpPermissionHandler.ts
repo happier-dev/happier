@@ -1,4 +1,8 @@
 import type {
+  CreateElicitationRequest,
+  CreateElicitationResponse,
+} from '@agentclientprotocol/sdk';
+import type {
   SessionPermissionFollowUpPromptIntent as SessionPermissionFollowUpPromptIntentV1,
 } from '@happier-dev/plugin-sdk/sessions';
 import type { SessionInputCausalPermissionAuthorityV1 } from '@happier-dev/protocol';
@@ -75,6 +79,15 @@ export interface AcpPermissionHandler {
     input: unknown,
     context?: AcpPermissionCallContext,
   ): Promise<AcpPermissionDecisionResult>;
+
+  /**
+   * Handle an ACP `elicitation/create` request through the canonical session
+   * interactions service.
+   */
+  handleElicitation?(
+    request: CreateElicitationRequest,
+    context?: AcpPermissionCallContext,
+  ): Promise<CreateElicitationResponse>;
 
   /**
    * Abort one exact provider permission occurrence and settle its durable host

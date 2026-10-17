@@ -423,5 +423,20 @@ export function composeAcpTier2PermissionHandler(params: Readonly<{
         cachedDecisions.delete(toolCallId);
       }
     },
+    ...(fallbackHandler?.handleElicitation
+      ? {
+          handleElicitation: fallbackHandler.handleElicitation.bind(fallbackHandler),
+        }
+      : {}),
+    ...(fallbackHandler?.abortPendingRequestAndFlush
+      ? {
+          abortPendingRequestAndFlush: fallbackHandler.abortPendingRequestAndFlush.bind(fallbackHandler),
+        }
+      : {}),
+    ...(fallbackHandler?.abortPendingRequestsAndFlush
+      ? {
+          abortPendingRequestsAndFlush: fallbackHandler.abortPendingRequestsAndFlush.bind(fallbackHandler),
+        }
+      : {}),
   };
 }

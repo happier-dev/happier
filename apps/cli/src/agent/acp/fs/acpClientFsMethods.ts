@@ -33,6 +33,7 @@ export function buildInitializeRequest(params: {
   clientName: string;
   clientVersion: string;
   fsEnabled?: boolean;
+  elicitationEnabled?: boolean;
   parameterizedModelPicker?: boolean;
 }): InitializeRequest {
   const fsEnabled = params.fsEnabled ?? isAcpFsEnabled();
@@ -43,6 +44,7 @@ export function buildInitializeRequest(params: {
         readTextFile: fsEnabled,
         writeTextFile: fsEnabled,
       },
+      ...(params.elicitationEnabled ? { elicitation: { form: {} } } : {}),
       ...(typeof params.parameterizedModelPicker === 'boolean'
         ? { _meta: { parameterizedModelPicker: params.parameterizedModelPicker } }
         : {}),
