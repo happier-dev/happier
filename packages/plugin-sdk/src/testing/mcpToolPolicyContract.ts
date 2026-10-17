@@ -251,12 +251,10 @@ export function runAgentMcpToolPolicyContract(input: AgentMcpToolPolicyContractI
             it('does not claim K8/K8b/K8c support when the declaration is absent', () => assert.equal(declared, undefined));
             return;
         }
-        it('K8 applies Off/Ask/Allow through real calls', async () => {
-            for (const setting of ['off', 'ask', 'allow'] as const) {
-                const runtime = await open(setting);
-                if (control.approval === 'native') await assertNative(runtime, projection(setting, 'default'));
-                await invoke(runtime, setting, 0, 'once', setting === 'off' && control.off === 'hidden');
-            }
+        it.each(['off', 'ask', 'allow'] as const)('K8 applies %s through real calls', async setting => {
+            const runtime = await open(setting);
+            if (control.approval === 'native') await assertNative(runtime, projection(setting, 'default'));
+            await invoke(runtime, setting, 0, 'once', setting === 'off' && control.off === 'hidden');
         });
         it('K8 preserves the mode ceiling on the next real call', async () => {
             const runtime = await open('allow');

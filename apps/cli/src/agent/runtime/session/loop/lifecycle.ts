@@ -36,9 +36,9 @@ import {
   type PromptLoopBoundaryReason,
   type PromptLoopResetReason,
 } from '@/agent/runtime/runPermissionModePromptLoop';
-import { createReadyNotificationDispatcher } from '@/agent/runtime/notifications/createReadyNotificationDispatcher';
+import { createReadyNotificationDispatcher, type ReadyNotificationTurnContext } from '@/agent/runtime/notifications/createReadyNotificationDispatcher';
 import { sendReadyWithPushNotification } from '@/agent/runtime/notifications/sendReadyWithPushNotification';
-import { resetAssistantTextSnapshotTurnScope } from '@/agent/runtime/turns/assistantTextSnapshotTurnScope';
+import { resetAssistantTextSnapshotTurnScope, type AssistantTextSnapshotTurnScope } from '@/agent/runtime/turns/assistantTextSnapshotTurnScope';
 import {
   resolveAgentCompositionPromptText,
 } from '@/agent/prompting/coding/resolveEffectiveCodingPrompt';
@@ -335,6 +335,12 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
   const hookRuntime = params.hookRuntime;
   const hookRuntimeForCallbacks = hookRuntime;
   let preparedTurnFacts: SessionTurnFactsV1 | null = null;
+  type HostReadyCapture = {
+    turnId: string | null;
+    snapshotScope: AssistantTextSnapshotTurnScope | null;
+    context?: ReadyNotificationTurnContext;
+  };
+  let hostReadyCapture: HostReadyCapture | null = null;
   // The foreground Runner owns current-generation Composer callbacks through its authenticated
   // daemon bridge. The prompt loop only receives these narrow dispatch operations; it never
   // gains registry or PluginInvocationContext authority of its own.
@@ -343,7 +349,8 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
       ...hookRuntimeForCallbacks,
       beginTurnLifecycle: hookRuntimeForCallbacks.beginTurnLifecycle.bind(hookRuntimeForCallbacks),
       waitForTurnCompletion: hookRuntimeForCallbacks.waitForTurnCompletion.bind(hookRuntimeForCallbacks),
-      subscribeRuntimeEvents: hookRuntimeForCallbacks.subscribeRuntimeEvents.bind(hookRuntimeForCallbacks),
+      // The decorated operations own event normalization; native hooks retain controls.
+      subscribeRuntimeEvents: params.runtime.subscribeRuntimeEvents.bind(params.runtime),
       cancelTurn: hookRuntimeForCallbacks.cancelTurn.bind(hookRuntimeForCallbacks),
       readSessionIdentity: hookRuntimeForCallbacks.readSessionIdentity.bind(hookRuntimeForCallbacks),
       updateSessionRuntimeConfig: hookRuntimeForCallbacks.updateSessionRuntimeConfig.bind(hookRuntimeForCallbacks),
@@ -649,6 +656,9 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
   const observeRuntimeLifecycleMessage = (message: unknown): void => {
     const parsedRuntimeEvent = AgentSessionRuntimeEventSchema.safeParse(message);
     if (parsedRuntimeEvent.success && parsedRuntimeEvent.data.kind === 'turn-start') {
+      if (hostReadyCapture?.turnId === null && parsedRuntimeEvent.data.startedBy === 'host') {
+        hostReadyCapture.turnId = parsedRuntimeEvent.data.turnId;
+      }
       activeRuntimeTranscriptTurnId = parsedRuntimeEvent.data.turnId;
       delete readTurnTranscriptState(parsedRuntimeEvent.data.turnId).failure;
     }
@@ -679,6 +689,7 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
         });
       }
     }
+    const readyCapture = hostReadyCapture?.turnId === projectionTurnId ? hostReadyCapture : null;
     const transcriptProjection = runtimeTranscriptProjectionSerial.then(async () => {
       let transcriptProjectionError: unknown = null;
       try {
@@ -696,14 +707,30 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
       } catch (error) {
         transcriptProjectionError = error;
       }
-      if (parsedRuntimeEvent.success) {
-        await observeAgentStreamTokenEvent({
-          event: parsedRuntimeEvent.data,
-          agentId: params.policyAgentId,
-          observeAgentStreamToken,
-          uiLogPrefix: params.config.uiLogPrefix,
-        });
-        await runtimeFailureTranscriptProjector(parsedRuntimeEvent.data);
+      try {
+        if (parsedRuntimeEvent.success) {
+          await observeAgentStreamTokenEvent({
+            event: parsedRuntimeEvent.data,
+            agentId: params.policyAgentId,
+            observeAgentStreamToken,
+            uiLogPrefix: params.config.uiLogPrefix,
+          });
+          await runtimeFailureTranscriptProjector(parsedRuntimeEvent.data);
+        }
+      } catch (error) {
+        transcriptProjectionError ??= error;
+      }
+      if (
+        readyCapture && readyCapture.context === undefined && parsedRuntimeEvent.success
+        && (parsedRuntimeEvent.data.kind === 'turn-complete' || parsedRuntimeEvent.data.kind === 'turn-failed'
+          || parsedRuntimeEvent.data.kind === 'turn-cancelled')
+      ) {
+        // The ordered terminal projection has flushed this host turn's text.
+        // Capture it before a successor can update the Session snapshot.
+        readyCapture.context = {
+          assistantPreviewText: transcriptProjectionError ? null : params.session.getTurnAssistantTextSnapshotStore?.()
+            ?.getCurrentTurnSnapshot({ turnToken: readyCapture.snapshotScope?.turnToken ?? null })?.normalizedText ?? null,
+        };
       }
       if (transcriptProjectionError) {
         throw transcriptProjectionError;
@@ -744,6 +771,7 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
       lifecycle: sessionTurnLifecycle,
       message,
     });
+    if (parsedRuntimeEvent.success) setThinkingState(sessionTurnLifecycle.hasActiveTurn());
     const observation = mapRuntimeMessageToTerminalLifecycleObservation({
       agentId: params.policyAgentId,
       message,
@@ -900,8 +928,9 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
     lastKeepAliveSentAt = now;
   };
   const setThinkingState = (value: boolean): void => {
-    if (params.runtimeState.thinking === value) return;
-    params.runtimeState.thinking = value;
+    const thinking = value || sessionTurnLifecycle.hasActiveTurn();
+    if (params.runtimeState.thinking === thinking) return;
+    params.runtimeState.thinking = thinking;
     publishKeepAlive();
   };
   publishKeepAlive();
@@ -1230,7 +1259,9 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
       setCurrentPermissionMode: params.permissionModeState.setCurrentPermissionMode,
       setCurrentPermissionModeUpdatedAt: params.permissionModeState.setCurrentPermissionModeUpdatedAt,
       registerProviderAcceptedEffect: params.registerProviderAcceptedEffect,
-      onBeforeTurnBegin: (input) => {
+      onBeforeTurnBegin: (input, snapshotScope) => {
+        const capture: HostReadyCapture = { turnId: null, snapshotScope };
+        hostReadyCapture = capture;
         const contextOnly = input.hostContextOnly;
         preparedTurnFacts = stampTurnFacts({
           sessionWorkDepth: params.session.getWorkDepth?.() ?? 0,
@@ -1241,6 +1272,7 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
             workflowWorkDepth: contextOnly.workDepth,
           } : {}),
         });
+        return () => capture.context;
       },
       releaseRejectedBeforeProviderPromptIdentity: (session, message) =>
         params.permissionModeState.releaseRejectedBeforeProviderPromptIdentity(session, message),

@@ -26,10 +26,6 @@ type AgentRuntimeBinding = Readonly<{
   observeEvent(event: AgentSessionRuntimeEventV1): Promise<void>;
   revoke(): Promise<void>;
 }>;
-type AgentRuntimeActivitySubscriber = (
-  handler: (event: AgentSessionRuntimeEventV1) => void,
-) => () => void;
-
 type ExecutionRunsBinding = Readonly<{
   observeSnapshot(snapshot: ExecutionRunsActivitySnapshot): Promise<void>;
   revoke(): Promise<void>;
@@ -43,17 +39,6 @@ export type HostRuntimeActivityProjection = Readonly<{
   notifyTransportDisconnected(): void;
   dispose(): void;
 }>;
-
-export function resolveAgentRuntimeActivitySubscriber(params: Readonly<{
-  applicability: RuntimeActivityApplicability;
-  subscribeAgentSessionRuntimeEvents?: AgentRuntimeActivitySubscriber;
-}>): AgentRuntimeActivitySubscriber | null {
-  if (params.applicability !== 'supported') return null;
-  if (!params.subscribeAgentSessionRuntimeEvents) {
-    throw new Error('Supported Runtime Activity requires an activated canonical agent-runtime producer');
-  }
-  return params.subscribeAgentSessionRuntimeEvents;
-}
 
 const IDLE: HostRuntimeActivitySnapshot = Object.freeze({
   state: 'idle',

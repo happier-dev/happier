@@ -6,7 +6,8 @@ import { PLUGIN_MANIFEST } from '../manifest.js';
 
 describe('Pi AGENT_DEFINITION', () => {
   it('declares native-extension Happier tool delivery', () => {
-    expect(AGENT_DEFINITION.core.tools).toEqual({ delivery: 'native_extension', support: 'experimental' });
+    expect(AGENT_DEFINITION.core.tools).toEqual({ delivery: 'native_extension', support: 'experimental',
+      mcpToolControl: { off: 'hidden', approval: 'host' } });
   });
   it('publishes Claude subscription credential eligibility through the public declaration', () => {
     expect(PLUGIN_MANIFEST.contributes.agents[0]?.connectedAccounts).toEqual(expect.arrayContaining([

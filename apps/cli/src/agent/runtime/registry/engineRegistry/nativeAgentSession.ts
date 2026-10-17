@@ -4042,7 +4042,6 @@ export function createNativeAgentSessionOperations(
         },
         setOnPromptDeliveryOutcome(handler) {
             deliveryOutcomeHandler = handler;
-            if (handler && !disposeStarted) ensureSubscription();
         },
         async updateSessionRuntimeConfig(update) {
             if (disposeStarted || invariant.read().runtimeEnded) {

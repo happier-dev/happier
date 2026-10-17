@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, expect, it } from 'vitest';
@@ -19,6 +19,20 @@ for (const root of ['.pi/agent/skills', '.agents/skills']) {
 afterAll(() => rmSync(home, { recursive: true, force: true }));
 const observer = createAgentLaunchObserver({ home });
 const boundaries = observer.boundaries as AgentLaunchObserverBoundaries;
+
+function observeLaunch() {
+  const launch = observer.observeLaunch();
+  // Runtime-owned bridge paths vary per launch. Compare the actual consumed bytes,
+  // while the shared observer still records the real argv and native-home writes.
+  return { ...launch, argv: launch.argv.map((argument, index) => {
+    const flag = launch.argv[index - 1];
+    if (flag === '--happier-tools-config'
+      || (flag === '--extension' && argument.endsWith('happier-pi-tools-bridge.mjs'))) {
+      return readFileSync(argument, 'utf8');
+    }
+    return argument;
+  }) };
+}
 
 function processBoundary(spec: Extract<PluginProtocolClientSpec, { kind: 'jsonStream' }>): PluginProtocolClientHandle<'jsonStream'> {
   boundaries.recordLaunch({ argv: spec.launch.args ?? [], env: spec.launch.env });
@@ -92,5 +106,5 @@ it('declares the proven Pi delivery and the native roots the resolver scans', ()
   expect(agent.capabilities.skills).toEqual({ delivery: 'session_dir', nativeDisable: 'unsupported', liveReload: 'unsupported',
     nativeRoots: { user: [['.pi', 'agent', 'skills'], ['.agents', 'skills']], project: [['.pi', 'skills'], ['.agents', 'skills']] } });
 });
-runAgentSkillDeliveryContract({ agent, openSession, observeLaunch: observer.observeLaunch,
+runAgentSkillDeliveryContract({ agent, openSession, observeLaunch,
   variants: [{ id: 'Session', open: openSession, expect: 'delivers' }, { id: 'Run', open: openRun, expect: 'delivers' }] });

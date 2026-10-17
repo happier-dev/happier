@@ -19,7 +19,6 @@ describe('Pi private user MCP config', () => {
         env: { HAPPIER_MCP_STDIO_LAUNCHER_CONFIG_FILE: launcherConfigPath } } };
       const mcpToolPolicy = { example: { unlisted: 'ask', tools: { read: 'allow', write: 'off' } } } satisfies NonNullable<AgentSessionOpenRequest['mcpToolPolicy']>;
       const prepared = await preparePiHappierToolsExtension({
-        agentDir: root,
         config: { v: 1, sessionId: 'session', directory: root, systemPrompt: '', tools: [],
           launch: { executablePath: '/managed/happier', argsPrefix: [] } },
         mcpServers,
@@ -38,6 +37,7 @@ describe('Pi private user MCP config', () => {
         await prepared.dispose();
       }
       expect(existsSync(prepared.configPath)).toBe(false);
+      expect(existsSync(prepared.extensionPath)).toBe(false);
     } finally {
       rmSync(dirname(launcherConfigPath), { recursive: true, force: true });
       rmSync(root, { recursive: true, force: true });
@@ -48,7 +48,7 @@ describe('Pi private user MCP config', () => {
     const root = mkdtempSync(join(tmpdir(), 'happier-pi-run-mcp-assets-'));
     let prepared: Awaited<ReturnType<typeof preparePiHappierToolsExtension>> | undefined;
     try {
-      prepared = await preparePiHappierToolsExtension({ agentDir: root, directory: root,
+      prepared = await preparePiHappierToolsExtension({ directory: root,
         mcpServersStrictMode: false,
         mcpServers: { run: { command: '/managed/server', args: [] } },
         mcpToolPolicy: { run: { unlisted: 'ask', tools: { echo: 'ask' } } } });

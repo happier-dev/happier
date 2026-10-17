@@ -80,7 +80,7 @@ export const UsageNativeAccountingEvidenceSchema = lazyZodSchema(() => UsageAcco
   historyComplete: true, asOfMs: true, counterEpoch: true, inputIncludesCache: true, outputIncludesReasoning: true,
 }).extend({
   status: z.enum(['available', 'partial']),
-  inferenceKey: NonBlankOpaqueIdentifierSchema.optional(),
+  inferenceKey: zMini.optional(NonBlankOpaqueIdentifierSchema),
 }).strict());
 export type UsageNativeAccountingEvidence = z.infer<typeof UsageNativeAccountingEvidenceSchema>;
 
@@ -100,7 +100,7 @@ export const UsageRequestAttributionSchema = lazyZodSchema(() => z.object({
   turnId: z.string().trim().min(1),
   source: z.discriminatedUnion('kind', [
     z.object({ kind: z.literal('native'), connectedAccount: zMini.nullable(asProtocolZod(QualifiedConnectedAccountRefSchema)) }).strict(),
-    z.object({ kind: z.literal('provider'), providerId: ProviderContributionKeySchema.nullable(), providerConnectionId: ProviderConnectionIdSchema }).strict(),
+    z.object({ kind: z.literal('provider'), providerId: zMini.nullable(ProviderContributionKeySchema), providerConnectionId: ProviderConnectionIdSchema }).strict(),
   ]),
 }).strict());
 export type UsageRequestAttribution = z.infer<typeof UsageRequestAttributionSchema>;
@@ -433,8 +433,8 @@ export const UsageAnalyticsContributionSchema = lazyZodSchema(() => z.object({
   modelId: z.string().trim().min(1).nullable(),
   // Applied model-source identity, never inferred from Agent or model labels.
   backendMode: z.string().trim().min(1).nullable().optional(),
-  providerId: ProviderContributionKeySchema.nullable().optional(),
-  providerConnectionId: ProviderConnectionIdSchema.transform(value => String(value)).nullable().optional(),
+  providerId: zMini.optional(zMini.nullable(ProviderContributionKeySchema)),
+  providerConnectionId: zMini.optional(zMini.nullable(zMini.pipe(ProviderConnectionIdSchema, zMini.transform(value => String(value))))),
   /** Missing older responses remain unknown, including a null connection dimension. */
   /** Response-bound source certainty; absent and current-metadata-only dimensions are unknown. */
   providerAttribution: z.enum(['known', 'unknown']).optional(),
@@ -464,7 +464,7 @@ export const UsageAnalyticsQueryResponseSchema = lazyZodSchema(() => z.object({
   messageStats: UsageAnalyticsMessageStatsSchema.optional(),
   costPresentation: UsageAnalyticsCostPresentationSchema.optional(),
   costFacts: z.array(UsageAnalyticsCostFactSchema).optional(),
-  priceCatalog: UsageModelPriceCatalogSchema.optional(),
+  priceCatalog: zMini.optional(UsageModelPriceCatalogSchema),
   coverage: UsageAnalyticsCoverageSchema.optional(),
   contributions: z.array(UsageAnalyticsContributionSchema).optional(),
   tokenCategories: UsageObservationTokensSchema.optional(),

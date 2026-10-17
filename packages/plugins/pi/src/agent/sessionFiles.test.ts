@@ -28,6 +28,7 @@ describe('pi session-file layout', () => {
     ) as { exports?: Record<string, unknown> };
 
     expect(packageJson.exports).toHaveProperty('./agent/sessionFiles', {
+      'happier-source': './src/agent/sessionFiles.ts',
       types: './dist/agent/sessionFiles.d.ts',
       default: './dist/agent/sessionFiles.js',
     });

@@ -18,7 +18,8 @@ export type NormalizedRuntimeEventPublicationHub<TMessage> = Readonly<{
   /**
    * Typed host-private identity publication. Late subscribers are replayed the
    * latest value of every already-published fact, so the publication result —
-   * not subscription order — is the contract.
+   * not subscription order — is the contract. Identity observation is passive;
+   * the message reader owns upstream activation and consumption.
    */
   subscribeIdentityPublication: (
     handler: NormalizedRuntimeIdentityPublicationHandler,
@@ -106,7 +107,7 @@ export function createNormalizedRuntimeEventPublicationHub<TMessage>(params: Rea
   };
 
   const clearUpstreamSubscriptionIfUnused = (): void => {
-    if (handlers.size === 0 && identityHandlers.size === 0) {
+    if (handlers.size === 0) {
       clearUpstreamSubscription();
     }
   };
@@ -123,10 +124,6 @@ export function createNormalizedRuntimeEventPublicationHub<TMessage>(params: Rea
   const subscribeIdentityPublication = (
     handler: NormalizedRuntimeIdentityPublicationHandler,
   ): (() => void) => {
-    // Register upstream before the handler: an upstream that publishes
-    // synchronously on subscribe must reach the new handler exactly once,
-    // through the replay below rather than through both paths.
-    ensureUpstreamRegistered();
     identityHandlers.add(handler);
     for (const publication of Array.from(publishedByFact.values())) {
       notifyIdentityHandler(handler, publication);

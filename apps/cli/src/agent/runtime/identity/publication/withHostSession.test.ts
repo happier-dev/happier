@@ -451,6 +451,7 @@ describe('withHostSessionRuntimeIdentityPublication', () => {
       },
     });
     const created = await wrapped.config.createSessionRuntime?.({} as never);
+    const stopMessages = created?.operations.subscribeRuntimeEvents(() => undefined);
     const published: unknown[] = [];
     const unsubscribe = created?.operations.subscribeRuntimeIdentityPublication?.((publication) => {
       published.push(publication);
@@ -458,6 +459,7 @@ describe('withHostSessionRuntimeIdentityPublication', () => {
 
     await created?.operations.sendTurnPrompt('hello');
     unsubscribe?.();
+    stopMessages?.();
 
     expect(published).toEqual([{
       fact: 'runtimeDescriptor',
@@ -518,6 +520,8 @@ describe('withHostSessionRuntimeIdentityPublication', () => {
       runtime: created.operations,
     } as never);
 
+    const stopMessages = created.operations.subscribeRuntimeEvents(unsubscribe.observeRuntimeEvent);
+
     const publishRuntimeMessage = upstreamRuntimeEvents.handler;
     if (!publishRuntimeMessage) {
       throw new Error('expected runtime event subscription');
@@ -527,6 +531,7 @@ describe('withHostSessionRuntimeIdentityPublication', () => {
       name: 'runtime.descriptor',
       payload: descriptor,
     });
+    stopMessages();
     unsubscribe();
 
     expect(sessionState.writeHappierField).toHaveBeenCalledWith({
@@ -568,12 +573,13 @@ describe('withHostSessionRuntimeIdentityPublication', () => {
     if (!created) throw new Error('expected wrapped runtime');
 
     const streamed: unknown[] = [];
-    created.operations.subscribeRuntimeEvents((message) => streamed.push(message));
+    const stopMessages = created.operations.subscribeRuntimeEvents((message) => streamed.push(message));
 
     const published: unknown[] = [];
     const unsubscribePublication = created.operations
       .subscribeRuntimeIdentityPublication?.((publication) => published.push(publication));
     unsubscribePublication?.();
+    stopMessages();
 
     // The canonical Agent Session runtime stream carries only canonical strict events.
     expect(streamed).toEqual([]);
@@ -705,7 +711,7 @@ describe('external Agent native resume identity — composed host publication', 
         return { ok: true as const, version: 1 };
       }),
     };
-    subscribeSessionRuntimePublicationToMetadata({
+    const publication = subscribeSessionRuntimePublicationToMetadata({
       session: { sessionId: 'session-1', updateMetadata: vi.fn() },
       sessionState,
       runtime: created.operations,
@@ -713,6 +719,7 @@ describe('external Agent native resume identity — composed host publication', 
       providerSessionMetadataKey: null,
     } as never);
 
+    const stopMessages = created.operations.subscribeRuntimeEvents(publication.observeRuntimeEvent);
     upstream.handler?.({
       kind: 'provider-session-id',
       sequence: 1,
@@ -722,6 +729,8 @@ describe('external Agent native resume identity — composed host publication', 
     });
     await Promise.resolve();
     await Promise.resolve();
+    stopMessages();
+    publication();
     return metadata;
   }
 

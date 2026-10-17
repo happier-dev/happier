@@ -1,4 +1,6 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import type {
   ManagedExecutableRef } from '@happier-dev/plugin-sdk/managed-services';
@@ -22,8 +24,8 @@ import {
   PI_REQUEST_AUTH_PRODUCER_VERSION_ENV,
   resolvePiRequestAuthExtensionPath,
 } from '../../auth/services/requestAuth/index.js';
-import { buildPiCompletedContextCompactionPayload } from './events.js';
-import { createPiRuntimeOperations } from './operations.js';
+import { buildPiCompletedContextCompactionPayload, type PiRuntimeEvent } from './events.js';
+import { createPiExecutionRunConversation, createPiRuntimeOperations } from './operations.js';
 
 type Capture = {
   initialRecords?: readonly unknown[];
@@ -47,6 +49,7 @@ type Capture = {
   listener?: (record: unknown) => void | Promise<void>;
   resolveExit?: (result: Awaited<ReturnType<PluginProtocolClientHandle<'jsonStream'>['wait']>>) => void;
   warnings?: unknown[][];
+  logs?: unknown[][];
   questionRequests?: unknown[];
   questionResult?: unknown;
   questionHandler?: (request: unknown, options?: Readonly<{ signal?: AbortSignal }>) => Promise<unknown>;
@@ -117,11 +120,13 @@ function createRuntimeContext(capture: Capture) {
       },
   };
   return {
+    // The fake process boundary accepts these prepared extension arguments without loading files.
+    happierToolsExtension: { extensionPath: '/tmp/pi-tools-bridge.js', configPath: '/tmp/pi-tools-config.json' },
     logger: {
-      debug: () => undefined,
-      info: () => undefined,
-      warn: (...args: unknown[]) => capture.warnings?.push(args),
-      error: () => undefined,
+      debug: (...args: unknown[]) => { capture.logs?.push(args); },
+      info: (...args: unknown[]) => { capture.logs?.push(args); },
+      warn: (...args: unknown[]) => { capture.warnings?.push(args); capture.logs?.push(args); },
+      error: (...args: unknown[]) => { capture.logs?.push(args); },
     },
     services: {
       interactions: {
@@ -192,6 +197,11 @@ function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
 
 async function emit(capture: Capture, record: unknown): Promise<void> {
   await capture.listener?.(record);
+}
+
+function extensionUserInput(text: string) {
+  return { type: 'extension_ui_request', id: 'input-notification', method: 'notify',
+    message: JSON.stringify({ type: 'happy-pi-user-input', text }) };
 }
 
 async function emitExit(
@@ -315,6 +325,143 @@ function configuration(options: Readonly<Record<string, string>>): AgentSessionC
 describe('createPiRuntimeOperations', () => {
   afterEach(() => {
     vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it.each(['session', 'executionRun'])('retains extension startup output until the first %s consumer watches', async (kind) => {
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(100);
+    const capture: Capture = { specs: [], written: [] };
+    const params = { ...createRuntimeContext(capture), cwd: '/tmp/pi-workspace', env: {}, eagerStart: true };
+    const opening = kind === 'session'
+      ? createPiRuntimeOperations({ ...params, sessionId: 'startup-host-session' })
+      : createPiExecutionRunConversation(params);
+    await waitForWrittenCount(capture, 1);
+    expect(capture.written[0]).toMatchObject({ type: 'get_state' });
+    const observedAtMs = Date.now();
+    await emit(capture, extensionUserInput('extension startup input'));
+    await emit(capture, { type: 'agent_start' });
+    await emit(capture, { type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: 'startup answer' } });
+    await emit(capture, { type: 'agent_end' });
+    await ackLastCommand(capture, { sessionId: 'startup-native-session' });
+    const runtime = await opening;
+    try {
+      clock.mockReturnValue(observedAtMs + 1_000);
+      const events: PiRuntimeEvent[] = [];
+      runtime.watch((event) => events.push(event));
+      const conversation = events.filter((event) => ['transcript-message-committed', 'turn-start', 'message-delta', 'turn-complete'].includes(event.kind));
+      expect(conversation).toEqual([
+        expect.objectContaining({ kind: 'transcript-message-committed', role: 'user', text: 'extension startup input', emittedAtMs: observedAtMs }),
+        expect.objectContaining({ kind: 'turn-start', startedBy: 'provider' }),
+        expect.objectContaining({ kind: 'message-delta', text: 'startup answer' }),
+        expect.objectContaining({ kind: 'turn-complete' }),
+      ]);
+      await vi.waitFor(() => expect(events.filter((event) => event.kind === 'available-commands')).toHaveLength(1));
+      expect(events.filter((event) => event.kind === 'provider-session-id')).toHaveLength(1);
+      expect(events.filter((event) => event.kind === 'available-commands')).toHaveLength(1);
+      const laterEvents: PiRuntimeEvent[] = [];
+      runtime.watch((event) => laterEvents.push(event));
+      expect(laterEvents.map((event) => event.kind)).toEqual(['provider-session-id', 'available-commands']);
+    } finally {
+      await runtime.dispose();
+    }
+  });
+
+  it('orders a reentrant consumer event after the retained startup events', async () => {
+    const capture: Capture = { specs: [], written: [] };
+    const opening = createPiRuntimeOperations({ ...createRuntimeContext(capture), cwd: '/tmp/pi-workspace', env: {},
+      sessionId: 'startup-host-session', eagerStart: true });
+    await waitForWrittenCount(capture, 1);
+    await emit(capture, extensionUserInput('first startup input'));
+    await emit(capture, { type: 'agent_start' });
+    await emit(capture, { type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: 'startup answer' } });
+    await emit(capture, { type: 'agent_end' });
+    await ackLastCommand(capture, { sessionId: 'startup-native-session' });
+    const runtime = await opening;
+    try {
+      const events: AgentSessionRuntimeEvent[] = [];
+      runtime.watch((event) => {
+        events.push(event);
+        if (event.kind === 'transcript-message-committed' && event.text === 'first startup input') {
+          void emit(capture, extensionUserInput('reentrant input'));
+        }
+      });
+      expect(events.filter((event) => event.kind === 'transcript-message-committed' || event.kind === 'message-delta')).toEqual([
+        expect.objectContaining({ kind: 'transcript-message-committed', text: 'first startup input' }),
+        expect.objectContaining({ kind: 'message-delta', text: 'startup answer' }),
+        expect.objectContaining({ kind: 'transcript-message-committed', text: 'reentrant input' }),
+      ]);
+    } finally {
+      await runtime.dispose();
+    }
+  });
+
+  it('stops startup replay when its first consumer disposes the runtime', async () => {
+    const capture: Capture = { specs: [], written: [] };
+    const opening = createPiRuntimeOperations({ ...createRuntimeContext(capture), cwd: '/tmp/pi-workspace', env: {},
+      sessionId: 'startup-host-session', eagerStart: true });
+    await waitForWrittenCount(capture, 1);
+    await emit(capture, extensionUserInput('startup input'));
+    await emit(capture, { type: 'agent_start' });
+    await ackLastCommand(capture, { sessionId: 'startup-native-session' });
+    const runtime = await opening;
+    const events: AgentSessionRuntimeEvent[] = [];
+    let disposal: Promise<void> | undefined;
+    runtime.watch((event) => {
+      events.push(event);
+      disposal = Promise.resolve(runtime.dispose());
+    });
+    await disposal;
+    expect(events).toEqual([expect.objectContaining({ kind: 'transcript-message-committed', text: 'startup input' })]);
+    expect(capture.handleDisposeCount).toBe(1);
+  });
+
+  it.each(['session', 'executionRun'])('prepares the input bridge for a native %s without host tools or MCP', async (kind) => {
+    const root = mkdtempSync(join(tmpdir(), 'happier-pi-runtime-input-'));
+    try {
+      const capture: Capture = { specs: [], written: [] };
+      const { happierToolsExtension: _preparedFixture, ...context } = createRuntimeContext(capture);
+      const params = { ...context, cwd: root, env: { PI_CODING_AGENT_DIR: join(root, 'agent') },
+        initialSessionId: 'native-input-session' };
+      const runtime = kind === 'session'
+        ? await createPiRuntimeOperations({ ...params, sessionId: 'host-input-session' })
+        : await createPiExecutionRunConversation(params);
+      try {
+        const args = capture.specs[0]!.launch.args;
+        const flagIndex = args.indexOf('--happier-tools-config');
+        expect(flagIndex).toBeGreaterThan(0);
+        const configPath = args[flagIndex + 1]!;
+        const extensionPath = args[flagIndex - 1]!;
+        expect(readFileSync(extensionPath, 'utf8')).toContain('happy-pi-user-input');
+        expect(JSON.parse(readFileSync(configPath, 'utf8'))).toMatchObject({ directory: root, tools: [], mcpServers: {} });
+        expect(existsSync(join(root, 'agent'))).toBe(false);
+        await runtime.dispose();
+        expect(existsSync(configPath)).toBe(false);
+        expect(existsSync(extensionPath)).toBe(false);
+      } finally {
+        await runtime.dispose();
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses to spawn when the mandatory input bridge cannot be materialized', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'happier-pi-runtime-input-failure-'));
+    try {
+      const capture: Capture = { specs: [], written: [] };
+      const { happierToolsExtension: _preparedFixture, ...context } = createRuntimeContext(capture);
+      const agentDir = join(root, 'agent');
+      writeFileSync(agentDir, 'not a directory');
+      vi.stubEnv('TMPDIR', agentDir);
+      vi.stubEnv('TMP', agentDir);
+      vi.stubEnv('TEMP', agentDir);
+      await expect(createPiRuntimeOperations({ ...context, cwd: root, env: { PI_CODING_AGENT_DIR: agentDir },
+        sessionId: 'host-input-session' })).rejects.toThrow();
+      expect(capture.specs).toEqual([]);
+    } finally {
+      vi.unstubAllEnvs();
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it('includes process resolution in the five-minute eager session-open deadline', async () => {
@@ -499,6 +646,248 @@ describe('createPiRuntimeOperations', () => {
     });
     await ackLastCommand(capture);
     await expect(prompt).resolves.toEqual({ status: 'admitted' });
+    await runtime.dispose();
+  });
+
+  it('publishes extension-injected user prompts as user transcript rows with a provider-started turn', async () => {
+    const capture: Capture = { specs: [], written: [] };
+    const runtime = await createRuntime(capture);
+    const events: AgentSessionRuntimeEvent[] = [];
+    runtime.watch((event) => events.push(event));
+
+    // A Pi extension (e.g. AFT background bash) injects a prompt while the session is idle,
+    // then the provider starts a run on its own.
+    const injectedText = '  <system-reminder>\n[BACKGROUND BASH COMPLETED]\n- task bash-1 (exit 0)\n</system-reminder>\n';
+    await emit(capture, extensionUserInput(injectedText));
+    await emit(capture, { type: 'agent_start' });
+    await emit(capture, {
+      type: 'message_end',
+      message: { role: 'user', content: [{ type: 'text', text: injectedText }] },
+    });
+    await emit(capture, {
+      type: 'message_update',
+      assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: 'ack' },
+    });
+    await emit(capture, { type: 'agent_end' });
+
+    const parsedEvents = parseEvents(events);
+    const committed = parsedEvents.filter(
+      (event) => event.kind === 'transcript-message-committed' && event.role === 'user',
+    );
+    expect(committed).toEqual([
+      expect.objectContaining({
+        kind: 'transcript-message-committed',
+        role: 'user',
+        text: injectedText,
+        messageId: expect.stringMatching(/^provider-user-prompt:/),
+      }),
+    ]);
+    // A second observation of identical text commits a distinct row: the id is
+    // per-occurrence, so legitimate repeats do not collapse into one transcript row.
+    await emit(capture, extensionUserInput(injectedText));
+    const committedAfterRepeat = events.filter(
+      (event): event is Extract<AgentSessionRuntimeEvent, { kind: 'transcript-message-committed' }> =>
+        event.kind === 'transcript-message-committed' && event.role === 'user',
+    );
+    expect(committedAfterRepeat).toHaveLength(2);
+    expect(committedAfterRepeat[1]!.messageId).not.toBe(committedAfterRepeat[0]!.messageId);
+    const turnStart = parsedEvents.find((event) => event.kind === 'turn-start');
+    expect(turnStart).toMatchObject({ kind: 'turn-start', startedBy: 'provider' });
+    const turnComplete = parsedEvents.find((event) => event.kind === 'turn-complete');
+    expect(turnComplete).toMatchObject({ turnId: turnStart?.turnId });
+    expect(parsedEvents.some((event) => event.kind === 'turn-failed')).toBe(false);
+
+    await runtime.dispose();
+  });
+
+  it('suppresses the echo of host-submitted prompts and keeps only injected user prompts', async () => {
+    const capture: Capture = { specs: [], written: [] };
+    const runtime = await createRuntime(capture);
+    const events: AgentSessionRuntimeEvent[] = [];
+    runtime.watch((event) => events.push(event));
+
+    const submission = sendPrompt(runtime, 'happier sent prompt');
+    await waitForWrittenCount(capture, 1);
+    await ackLastCommand(capture);
+    await expect(submission).resolves.toEqual({ status: 'admitted' });
+
+    // Pi starts the run before echoing its initial user message.
+    await emit(capture, { type: 'agent_start' });
+    await emit(capture, {
+      type: 'message_end',
+      message: { role: 'user', content: [{ type: 'text', text: 'happier sent prompt' }] },
+    });
+    await emit(capture, {
+      type: 'message_update',
+      assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: 'ok' },
+    });
+
+    const committed = parseEvents(events).filter((event) => event.kind === 'transcript-message-committed');
+    expect(committed).toEqual([]);
+
+    await runtime.dispose();
+  });
+
+  it('suppresses the echo of in-flight steer messages', async () => {
+    const capture: Capture = { specs: [], written: [] };
+    const runtime = await createRuntime(capture);
+    const events: AgentSessionRuntimeEvent[] = [];
+    runtime.watch((event) => events.push(event));
+
+    const submission = sendPrompt(runtime, 'happier sent prompt');
+    await waitForWrittenCount(capture, 1);
+    await ackLastCommand(capture);
+    await expect(submission).resolves.toEqual({ status: 'admitted' });
+    await emit(capture, { type: 'agent_start' });
+
+    const steer = runtime.send({
+      inputIds: ['pi-input-2'],
+      input: { text: 'focus on error handling' },
+      delivery: { kind: 'steer', turnId: 'pi-turn-1' },
+    });
+    await waitForWrittenCount(capture, 2);
+    await ackLastCommand(capture);
+    await expect(steer).resolves.toEqual({ status: 'admitted' });
+
+    // The steer text echoes as a user message mid-turn.
+    await emit(capture, {
+      type: 'message_end',
+      message: { role: 'user', content: [{ type: 'text', text: 'focus on error handling' }] },
+    });
+    // Origin, rather than text equality, distinguishes an extension submission.
+    await emit(capture, extensionUserInput('focus on error handling'));
+
+    const committed = parseEvents(events).filter(
+      (event) => event.kind === 'transcript-message-committed' && event.role === 'user',
+    );
+    expect(committed.map((event) => (event as { text?: string }).text)).toEqual([
+      'focus on error handling',
+    ]);
+
+    await runtime.dispose();
+  });
+
+  it.each([
+    ['/review concurrency', 'EXPANDED TEMPLATE BODY: review src/index.ts.'],
+    ['transform this input', 'Transformed by an input extension.'],
+  ])('ignores the provider user echo after agent_start for %s', async (prompt, expanded) => {
+    const capture: Capture = { specs: [], written: [] };
+    const runtime = await createRuntime(capture);
+    const events: AgentSessionRuntimeEvent[] = [];
+    runtime.watch((event) => events.push(event));
+
+    const submission = sendPrompt(runtime, prompt);
+    await waitForWrittenCount(capture, 1);
+    await ackLastCommand(capture);
+    await expect(submission).resolves.toEqual({ status: 'admitted' });
+
+    await emit(capture, { type: 'agent_start' });
+    await emit(capture, {
+      type: 'message_end',
+      message: {
+        role: 'user',
+        content: [{ type: 'text', text: expanded }],
+      },
+    });
+    await emit(capture, {
+      type: 'message_update',
+      assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: 'ok' },
+    });
+    await emit(capture, { type: 'agent_end' });
+
+    expect(parseEvents(events).filter(
+      (event) => event.kind === 'transcript-message-committed' && event.role === 'user',
+    )).toEqual([]);
+
+    await runtime.dispose();
+  });
+
+  it('surfaces a later injection whose text matches a prompt rejected before effect', async () => {
+    const capture: Capture = { specs: [], written: [] };
+    const runtime = await createRuntime(capture);
+    const events: AgentSessionRuntimeEvent[] = [];
+    runtime.watch((event) => events.push(event));
+
+    const rejectedText = 'continue the interrupted work';
+    const submission = sendPrompt(runtime, rejectedText);
+    await waitForWrittenCount(capture, 1);
+    await failLastCommand(capture);
+    await expect(submission).resolves.toMatchObject({ status: 'rejected', diagnostic: expect.anything() });
+
+    // An extension later injects a prompt with the identical text; it must surface.
+    await emit(capture, extensionUserInput(rejectedText));
+
+    const committed = parseEvents(events).filter(
+      (event) => event.kind === 'transcript-message-committed' && event.role === 'user',
+    );
+    expect(committed.map((event) => (event as { text?: string }).text)).toEqual([rejectedText]);
+
+    await runtime.dispose();
+  });
+
+  it('reports extension submissions even after an accepted command has no user echo', async () => {
+    const capture: Capture = { specs: [], written: [], warnings: [], logs: [] };
+    const runtime = await createRuntime(capture);
+    const events: AgentSessionRuntimeEvent[] = [];
+    runtime.watch((event) => events.push(event));
+    const text = 'private input handled by a user extension';
+    const submission = sendPrompt(runtime, text);
+    await waitForWrittenCount(capture, 1);
+    await ackLastCommand(capture);
+    await expect(submission).resolves.toEqual({ status: 'admitted' });
+    await emit(capture, extensionUserInput(text));
+    await emit(capture, extensionUserInput(text));
+    const committed = events.filter((event) => event.kind === 'transcript-message-committed');
+    expect(committed).toEqual([
+      expect.objectContaining({ role: 'user', text }),
+      expect.objectContaining({ role: 'user', text }),
+    ]);
+    expect(capture.warnings).toEqual([]);
+    expect(JSON.stringify(capture.logs)).not.toContain(text);
+    await runtime.dispose();
+  });
+
+  it('ignores unrelated or malformed extension notifications', async () => {
+    const capture: Capture = { specs: [], written: [], warnings: [] };
+    const runtime = await createRuntime(capture);
+    const events: AgentSessionRuntimeEvent[] = [];
+    runtime.watch((event) => events.push(event));
+    for (const message of ['regular extension notice', '{', JSON.stringify({ type: 'other', text: 'unrelated' }),
+      JSON.stringify({ type: 'happy-pi-user-input', text: '' }), JSON.stringify({ type: 'happy-pi-user-input', text: 1 })]) {
+      await emit(capture, { type: 'extension_ui_request', id: 'notify', method: 'notify', message });
+    }
+    expect(events.filter((event) => event.kind === 'transcript-message-committed')).toEqual([]);
+    expect(capture.warnings).toEqual([]);
+    await runtime.dispose();
+  });
+
+  it('retains queued extension submission observations across cancellation and identical retries', async () => {
+    const capture: Capture = { specs: [], written: [], logs: [] };
+    const runtime = await createRuntime(capture);
+    const events: AgentSessionRuntimeEvent[] = [];
+    runtime.watch((event) => events.push(event));
+    const submission = sendPrompt(runtime, 'run until cancelled');
+    await waitForWrittenCount(capture, 1);
+    await ackLastCommand(capture);
+    await expect(submission).resolves.toEqual({ status: 'admitted' });
+    await emit(capture, { type: 'agent_start' });
+    const text = 'private queued follow-up';
+    // The input hook reports a queued submission before a model turn or user echo exists.
+    await emit(capture, extensionUserInput(text));
+    const cancel = runtime.cancel!({ turnId: 'pi-turn-1', reason: 'user' });
+    await waitForWrittenCount(capture, 2);
+    await emit(capture, { type: 'agent_end', willRetry: false });
+    await ackLastCommand(capture);
+    await expect(cancel).resolves.toEqual({ status: 'requested', turnId: 'pi-turn-1' });
+    await emit(capture, extensionUserInput(text));
+    const committed = events.filter((event) => event.kind === 'transcript-message-committed');
+    expect(committed).toEqual([
+      expect.objectContaining({ role: 'user', text }),
+      expect.objectContaining({ role: 'user', text }),
+    ]);
+    expect(committed[0]).not.toHaveProperty('turnId');
+    expect(committed[1]).not.toHaveProperty('turnId');
+    expect(JSON.stringify(capture.logs)).not.toContain(text);
     await runtime.dispose();
   });
 
@@ -1006,7 +1395,7 @@ describe('createPiRuntimeOperations', () => {
 
       const args = capture.specs[0]?.launch.args ?? [];
       const extensionIndexes = args
-        .map((arg, index) => arg === '--extension' ? index : -1)
+        .map((arg, index) => arg === '--extension' && args[index + 1] === resolvePiRequestAuthExtensionPath(agentDir) ? index : -1)
         .filter((index) => index >= 0);
       expect(extensionIndexes).toHaveLength(1);
       const extensionIndex = extensionIndexes[0]!;
@@ -1089,7 +1478,7 @@ describe('createPiRuntimeOperations', () => {
       'anthropic/*',
     ]));
     // No capability means no request-auth extension and no version floor.
-    expect(capture.specs[0]?.launch.args).not.toContain('--extension');
+    expect(capture.specs[0]?.launch.args).not.toContain(resolvePiRequestAuthExtensionPath('/tmp/happier-pi-agent-dir'));
     expect(capture.versionProbeCount).toBeUndefined();
     expect(capture.specs[0]?.launch.env?.[PI_REQUEST_AUTH_PRODUCER_VERSION_ENV]).toBeUndefined();
   });

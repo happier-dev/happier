@@ -1,3 +1,5 @@
+import { PI_USER_INPUT_NOTIFICATION_TYPE } from '../../tools/extensionSource.js';
+
 export type PiBlockingExtensionUiRequest = Readonly<{
   id: string;
   method: 'select' | 'confirm' | 'input' | 'editor';
@@ -22,6 +24,21 @@ function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
 
 function readString(value: unknown): string | null {
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
+}
+
+/** Pi's native notification transports extension input observations on the ordered RPC stream. */
+export function parsePiExtensionUserInput(value: unknown): string | null {
+  if (!isRecord(value) || value.type !== 'extension_ui_request' || value.method !== 'notify'
+    || typeof value.message !== 'string') return null;
+  let payload: unknown;
+  try {
+    payload = JSON.parse(value.message);
+  } catch {
+    return null;
+  }
+  return isRecord(payload) && payload.type === PI_USER_INPUT_NOTIFICATION_TYPE
+    && typeof payload.text === 'string' && payload.text.length > 0
+    ? payload.text : null;
 }
 
 export function parsePiBlockingExtensionUiRequest(value: unknown): PiBlockingExtensionUiRequest | null {

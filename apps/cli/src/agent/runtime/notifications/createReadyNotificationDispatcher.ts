@@ -20,6 +20,10 @@ type ReadyNotificationSession = Readonly<{
 
 type ReadyNotificationPushSender = Parameters<typeof sendReadyWithPushNotification>[0]['pushSender'];
 
+export type ReadyNotificationTurnContext = Readonly<{
+  assistantPreviewText: string | null;
+}>;
+
 type ReadyNotificationDispatcherParams = Readonly<{
   session: ReadyNotificationSession;
   pushSender: ReadyNotificationPushSender | null;
@@ -42,8 +46,8 @@ type IdleReadyNotificationDispatcherParams = ReadyNotificationDispatcherParams &
 
 export function createReadyNotificationDispatcher(
   params: ReadyNotificationDispatcherParams,
-): () => Promise<void> {
-  return async () => {
+): (context?: ReadyNotificationTurnContext) => Promise<void> {
+  return async (context) => {
     if (!params.pushSender) {
       await enqueueReadySessionEventCommitted(params.session, 'home_required');
       return;
@@ -51,6 +55,16 @@ export function createReadyNotificationDispatcher(
 
     const sendReadyWithPushNotificationImpl =
       params.sendReadyWithPushNotificationFn ?? sendReadyWithPushNotification;
+
+    const assistantPreviewText = resolveReadyNotificationAssistantText({
+      includeAssistantPreviewText: params.includeAssistantPreviewText,
+      explicitAssistantText: context?.assistantPreviewText,
+      snapshotStore: context === undefined
+        ? params.turnAssistantTextSnapshotStore
+          ?? params.session.getTurnAssistantTextSnapshotStore?.()
+          ?? null
+        : null,
+    });
 
     await sendReadyWithPushNotificationImpl({
       session: params.session,
@@ -62,12 +76,7 @@ export function createReadyNotificationDispatcher(
           ? () => params.session.getMetadataSnapshot?.()
           : null,
       ),
-      assistantPreviewText: resolveReadyNotificationAssistantText({
-        includeAssistantPreviewText: params.includeAssistantPreviewText,
-        snapshotStore: params.turnAssistantTextSnapshotStore
-          ?? params.session.getTurnAssistantTextSnapshotStore?.()
-          ?? null,
-      }),
+      assistantPreviewText,
       accountSettings: params.accountSettings ?? null,
       settingsSecretsReadKeys: params.settingsSecretsReadKeys,
       includeAssistantPreviewText: params.includeAssistantPreviewText,

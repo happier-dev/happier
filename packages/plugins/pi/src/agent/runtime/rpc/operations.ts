@@ -69,10 +69,12 @@ import {
   buildPiExtensionUiQuestionRequest,
   buildPiExtensionUiResponse,
   parsePiBlockingExtensionUiRequest,
+  parsePiExtensionUserInput,
   type PiBlockingExtensionUiRequest,
   type PiExtensionUiResponse,
 } from './extensionUi.js';
 import { PI_MCP_APPROVAL_CALL_PREFIX, PI_MCP_CAPABILITY_NOTICE_RECORD_TYPE } from '../../tools/extensionSource.js';
+import { preparePiHappierToolsExtension, type PreparedPiHappierToolsExtension } from '../../tools/assets.js';
 
 const PI_VERSION_PROBE_TIMEOUT_MS = 30_000;
 // Session opening is one provider-lifecycle operation. Keep every RPC in that
@@ -248,7 +250,7 @@ type PiRuntimeTurnOperations = Readonly<{
   ): Promise<void>;
   steerInFlightTurn(message: string): Promise<void>;
   waitForTurnCompletion(opts?: Readonly<Record<string, unknown>>): Promise<void>;
-  subscribeRuntimeEvents(handler: PiConversationEventHandler): () => void;
+  subscribeRuntimeEvents(handler: PiConversationEventHandler, replayStartupEvents?: boolean): () => void;
   /**
    * Cancel the exact tracked Pi turn (active or in-flight admission). Returns
    * `false` without touching the Pi process when `turnId` does not identify
@@ -483,7 +485,7 @@ function createRuntimeOperations(params: Readonly<{
   rpc: PiJsonStreamRpcClient;
   logger: PluginLoggerService;
   initialSessionId: string | null;
-  subscribeRuntimeEvents: (handler: PiConversationEventHandler) => () => void;
+  subscribeRuntimeEvents: (handler: PiConversationEventHandler, replayStartupEvents?: boolean) => () => void;
   publishRuntimeEvent: RuntimeEventPublisher;
   resolveProviderNativeCommand: (prompt: string) => Promise<boolean>;
   refreshCommands?: () => void;
@@ -964,8 +966,8 @@ function createRuntimeOperations(params: Readonly<{
       if (!completion) return;
       await withTimeout(completion.promise, opts);
     },
-    subscribeRuntimeEvents(handler: PiConversationEventHandler): () => void {
-      return params.subscribeRuntimeEvents(handler);
+    subscribeRuntimeEvents(handler: PiConversationEventHandler, replayStartupEvents?: boolean): () => void {
+      return params.subscribeRuntimeEvents(handler, replayStartupEvents);
     },
     async cancelTurn(turnId, reason): Promise<boolean> {
       if (pendingCancellation) {
@@ -1110,7 +1112,7 @@ function createPiConversationRuntime(params: Readonly<{
     ) {
       activeCompactionId = null;
     }
-  });
+  }, false);
 
   const publishInputRejected = (request: AgentSessionSendRequest, reason: PluginDiagnosticData): void => {
     params.operations.publishRuntimeEvent({
@@ -1313,7 +1315,8 @@ async function createPiConversationRuntimeOperations(
     : null;
   const sessionOpenLifecycle = params.sessionOpenLifecycle ?? ownedSessionOpenLifecycle;
   let modelDiscoveryDirectory: ReturnType<typeof createSecureTempDirectorySync> | null = null;
-  let runtimeOwnsDiscoveryDirectory = false;
+  let runtimeOwnsResources = false;
+  let ownedToolsExtension: PreparedPiHappierToolsExtension | null = null;
   try {
   const normalizedEnv = normalizeEnv(params.env);
   const requestAuthEnabled = hasPiRequestAuthProvider(normalizedEnv);
@@ -1338,6 +1341,17 @@ async function createPiConversationRuntimeOperations(
       sessionOpenLifecycle ?? undefined,
     );
   }
+  let happierToolsExtension = params.happierToolsExtension;
+  if (!happierToolsExtension) {
+    // The bridge observes extension input even when no host tools or MCP servers are configured.
+    const preparation = preparePiHappierToolsExtension({
+      directory: params.cwd,
+    });
+    ownedToolsExtension = sessionOpenLifecycle
+      ? await sessionOpenLifecycle.waitFor(preparation, 'Happier input bridge preparation', async lateTools => await lateTools.dispose())
+      : await preparation;
+    happierToolsExtension = ownedToolsExtension;
+  }
   let modelDiscoveryExtensionPath: string | undefined;
   if (params.models) {
     modelDiscoveryDirectory = createSecureTempDirectorySync({ prefix: 'happier-pi-models-' });
@@ -1350,6 +1364,7 @@ async function createPiConversationRuntimeOperations(
   }
   const processSpawn = params.services.exec.clients.spawn(createPiExecSpec({
     ...params,
+    happierToolsExtension,
     env: {
       ...normalizedEnv,
       ...(requestAuthProducerVersion
@@ -1365,6 +1380,10 @@ async function createPiConversationRuntimeOperations(
     )
     : await processSpawn;
   const subscribers = new Set<PiConversationEventHandler>();
+  // Eager startup can emit conversation output before the host can attach its watcher.
+  // Internal observers still receive events immediately; only the first consumer drains this history.
+  let pendingStartupEvents: PiRuntimeEvent[] | null = [];
+  let replayingStartupSubscriber: PiConversationEventHandler | null = null;
   let retainedAvailableCommandsEvent: PiRuntimeEvent | null = null;
   let retainedProviderSessionIdEvent: PiRuntimeEvent | null = null;
   let malformedRuntimeEventPublished = false;
@@ -1381,8 +1400,9 @@ async function createPiConversationRuntimeOperations(
     }
     if (event.kind === 'tool-result') activeMcpCalls.delete(event.toolCallId);
     if (event.kind === 'turn-complete' || event.kind === 'runtime-ended') activeMcpCalls.clear();
-    for (const subscriber of subscribers) {
-      subscriber(event);
+    pendingStartupEvents?.push(event);
+    for (const subscriber of [...subscribers]) {
+      if (subscribers.has(subscriber) && subscriber !== replayingStartupSubscriber) subscriber(event);
     }
     if (event.kind === 'runtime-ended') terminalRuntimeEventPublished = true;
   };
@@ -1415,12 +1435,12 @@ async function createPiConversationRuntimeOperations(
     publishParsedRuntimeEvent(diagnosticEvent);
   };
   const publishRuntimeEvent = (event: PiRuntimeEvent): void => {
+    const observedEvent = { ...event, emittedAtMs: event.emittedAtMs ?? Date.now() };
     if (happierSessionId) {
       const parsed = AgentSessionRuntimeEventSchema.safeParse({
-        ...event,
+        ...observedEvent,
         sequence: sequence + 1,
         sessionId: happierSessionId,
-        emittedAtMs: event.emittedAtMs ?? Date.now(),
       });
       if (!parsed.success) {
         publishMalformedRuntimeEventDiagnostic(event, parsed.error.issues);
@@ -1428,7 +1448,7 @@ async function createPiConversationRuntimeOperations(
       }
     }
     sequence += 1;
-    publishParsedRuntimeEvent(event);
+    publishParsedRuntimeEvent(observedEvent);
   };
   let operations: RuntimeOperationsWithRecordHandler | null = null;
   let usageObservationChain = Promise.resolve();
@@ -1503,6 +1523,17 @@ async function createPiConversationRuntimeOperations(
   rpc = createPiJsonStreamRpcClient({
     handle,
     onEvent(record) {
+      const extensionUserInput = parsePiExtensionUserInput(record);
+      if (extensionUserInput !== null) {
+        // Submission provenance is supplied by Pi's input hook, never inferred from user echoes.
+        publishRuntimeEvent({
+          kind: 'transcript-message-committed',
+          messageId: `provider-user-prompt:${randomUUID()}`,
+          role: 'user',
+          text: extensionUserInput,
+        });
+        return;
+      }
       if (record.type === PI_MCP_CAPABILITY_NOTICE_RECORD_TYPE) {
         const parsed = SessionCapabilityNoticeV1Schema.safeParse(record.notice);
         if (!parsed.success) {
@@ -1578,10 +1609,26 @@ async function createPiConversationRuntimeOperations(
     rpc,
     logger: params.logger,
     initialSessionId: params.initialSessionId ?? null,
-    subscribeRuntimeEvents(handler) {
+    subscribeRuntimeEvents(handler, replayStartupEvents = true) {
       subscribers.add(handler);
-      if (retainedProviderSessionIdEvent) handler(retainedProviderSessionIdEvent);
-      if (retainedAvailableCommandsEvent) handler(retainedAvailableCommandsEvent);
+      if (replayStartupEvents && pendingStartupEvents !== null && replayingStartupSubscriber === null) {
+        replayingStartupSubscriber = handler;
+        try {
+          // Reentrant publication appends to this same startup history instead of overtaking it.
+          for (let index = 0; pendingStartupEvents !== null && index < pendingStartupEvents.length; index += 1) {
+            handler(pendingStartupEvents[index]!);
+          }
+          pendingStartupEvents = null;
+        } catch (error) {
+          subscribers.delete(handler);
+          throw error;
+        } finally {
+          replayingStartupSubscriber = null;
+        }
+      } else {
+        if (retainedProviderSessionIdEvent) handler(retainedProviderSessionIdEvent);
+        if (retainedAvailableCommandsEvent) handler(retainedAvailableCommandsEvent);
+      }
       return () => {
         subscribers.delete(handler);
       };
@@ -1642,6 +1689,7 @@ async function createPiConversationRuntimeOperations(
       modelsSource?.dispose();
       unsubscribeProcessExit();
       subscribers.clear();
+      pendingStartupEvents = null;
     },
   });
   if (params.eagerStart === true) {
@@ -1662,16 +1710,22 @@ async function createPiConversationRuntimeOperations(
       throw error;
     }
   }
-  runtimeOwnsDiscoveryDirectory = true;
+  runtimeOwnsResources = true;
   return {
     ...runtime,
     async dispose() {
       try { await runtime.dispose(); }
-      finally { modelDiscoveryDirectory?.cleanup(); }
+      finally {
+        try { await ownedToolsExtension?.dispose(); }
+        finally { modelDiscoveryDirectory?.cleanup(); }
+      }
     },
   };
   } finally {
-    if (!runtimeOwnsDiscoveryDirectory) modelDiscoveryDirectory?.cleanup();
+    if (!runtimeOwnsResources) {
+      try { await ownedToolsExtension?.dispose(); }
+      finally { modelDiscoveryDirectory?.cleanup(); }
+    }
     ownedSessionOpenLifecycle?.dispose();
   }
 }

@@ -4,6 +4,29 @@ import type { NormalizedRuntimeIdentityPublicationV1 } from './createNormalizedR
 import { createNormalizedRuntimeEventPublicationHub } from './createNormalizedRuntimeEventPublicationHub';
 
 describe('createNormalizedRuntimeEventPublicationHub', () => {
+  it('retains cold messages until a message reader subscribes after an identity observer', () => {
+    const messages: unknown[] = [];
+    let activeWatches = 0;
+    const startupMessage = { kind: 'message-delta', sessionId: 'startup-session', turnId: 'startup-turn',
+      sequence: 1, emittedAtMs: 1, channel: 'assistant', text: 'startup answer' };
+    const cold = [startupMessage];
+    const hub = createNormalizedRuntimeEventPublicationHub<unknown>({
+      identity: { runtimeDescriptor: null, runtimeCapabilities: null, runtimeFacets: null },
+      subscribeUpstream(handler) {
+        activeWatches += 1;
+        for (const message of cold.splice(0)) handler(message);
+        return () => { activeWatches -= 1; };
+      },
+    });
+    const stopIdentity = hub.subscribeIdentityPublication(() => undefined);
+    const stopMessages = hub.subscribe(message => messages.push(message));
+    expect(messages).toEqual([startupMessage]);
+    stopMessages();
+    expect(activeWatches).toBe(0);
+    stopIdentity();
+    hub.dispose();
+  });
+
   it('allows a later runtime descriptor update to replace a fallback descriptor', () => {
     const upstream: { handler?: (message: unknown) => void } = {};
     const hub = createNormalizedRuntimeEventPublicationHub<unknown>({
@@ -33,6 +56,7 @@ describe('createNormalizedRuntimeEventPublicationHub', () => {
     });
 
     hub.publishFallbackIdentity();
+    const stopMessages = hub.subscribe(() => undefined);
     upstream.handler?.({
       type: 'event',
       name: 'runtime.descriptor',
@@ -46,6 +70,7 @@ describe('createNormalizedRuntimeEventPublicationHub', () => {
       },
     });
     unsubscribe();
+    stopMessages();
 
     expect(published).toEqual([
       {

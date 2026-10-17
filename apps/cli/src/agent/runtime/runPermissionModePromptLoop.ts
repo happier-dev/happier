@@ -78,6 +78,7 @@ import type { AgentCompositionToolSelection } from '@/plugins/runtime/hooks/exec
 import type { HostPreparedContext } from '@/agent/runtime/session/contextOnly/hostContextOnlyInput';
 import { createPromptCompositionScope, type PromptPlanComposition } from '@/agent/prompting/promptComposition';
 import type { SessionPromptPlanResolver } from '@/agent/prompting/coding/sessionPromptPlan';
+import type { ReadyNotificationTurnContext } from '@/agent/runtime/notifications/createReadyNotificationDispatcher';
 
 export { projectSessionComposerAttachmentDispatchInput } from '@/agent/runtime/turns/prepareSessionInputForProviderDispatch';
 export type { ComposerAttachmentDispatchResolver } from '@/agent/runtime/turns/prepareSessionInputForProviderDispatch';
@@ -601,7 +602,7 @@ export async function runPermissionModePromptLoop(opts: {
   getAbortSignal: () => AbortSignal;
   keepAlive: () => void;
   setThinking: (value: boolean) => void;
-  sendReady: () => void | Promise<void>;
+  sendReady: (context?: ReadyNotificationTurnContext) => void | Promise<void>;
   currentPermissionModeUpdatedAt: number;
   setCurrentPermissionMode: (mode: PermissionMode) => void;
   setCurrentPermissionModeUpdatedAt: (updatedAt: number) => void;
@@ -687,7 +688,10 @@ export async function runPermissionModePromptLoop(opts: {
     onAccepted: (() => void) | null,
   ) => void;
   /** Host lifecycle freezes protected cause facts immediately before runtime begin. */
-  onBeforeTurnBegin?: (input: PermissionModeQueuedPrompt) => void;
+  onBeforeTurnBegin?: (
+    input: PermissionModeQueuedPrompt,
+    snapshotScope: AssistantTextSnapshotTurnScope | null,
+  ) => void | (() => ReadyNotificationTurnContext | undefined);
   /**
    * Session-scoped hold for a replay seed the provider already accepted whose metadata
    * retirement has not succeeded. The loop records failed settlement outcomes here and, at
@@ -1156,6 +1160,7 @@ export async function runPermissionModePromptLoop(opts: {
     let contextOnlyWakeWithdrawn = false;
     let currentCheckpointMessageId: string | null = null;
     let assistantTextSnapshotScope: AssistantTextSnapshotTurnScope | null = null;
+    let readReadyTurnContext: (() => ReadyNotificationTurnContext | undefined) | undefined;
     // Retiring the replay seed belongs to provider ACCEPTANCE of the prompt the seed was
     // prefixed to — not to that prompt's turn completing. Once the provider has taken
     // custody the seed is in its context whether the turn then completes, aborts, errors,
@@ -1664,7 +1669,8 @@ export async function runPermissionModePromptLoop(opts: {
         if (resolveSessionPlan) opts.resolveFreshSessionSystemPrompt?.assertPreparedPlanCurrent?.();
         recordPreparationPhase('host_context');
         assistantTextSnapshotScope = beginAssistantTextSnapshotTurnScope(opts.session);
-        opts.onBeforeTurnBegin?.(message.message);
+        const readyTurnContext = opts.onBeforeTurnBegin?.(message.message, assistantTextSnapshotScope);
+        if (typeof readyTurnContext === 'function') readReadyTurnContext = readyTurnContext;
         opts.runtime.beginTurnLifecycle();
         beganTurn = true;
         startActiveTurnPendingPump();
@@ -1849,7 +1855,7 @@ export async function runPermissionModePromptLoop(opts: {
         opts.keepAlive();
         await opts.onAfterLoopBoundary?.({ reason: 'turn_completed' });
         if (shouldSendReady) {
-          await opts.sendReady();
+          await opts.sendReady(readReadyTurnContext?.());
         }
         completeAssistantTextSnapshotTurnScope(opts.session, assistantTextSnapshotScope);
       } else if (handledPreTurnFailure || contextOnlyWakeWithdrawn) {

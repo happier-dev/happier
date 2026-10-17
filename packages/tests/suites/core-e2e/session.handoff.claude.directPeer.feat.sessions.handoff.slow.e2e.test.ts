@@ -22,7 +22,7 @@ import {
   fetchSessionMetadataV2,
 } from '../../src/testkit/sessionHandoffMetadata';
 import { createUserScopedSocketCollector, type SocketCollector } from '../../src/testkit/socketClient';
-import { createDataKeyRpcClient, unwrapDataKeyRpcResult } from '../../src/testkit/syntheticAgent/rpcClient';
+import { createDataKeyRpcClient, createMachineRpcClient, unwrapDataKeyRpcResult } from '../../src/testkit/syntheticAgent/rpcClient';
 import { waitFor } from '../../src/testkit/timing';
 import { activateLinkedDirectSession } from '../../src/testkit/directSessions/activateLinkedDirectSession';
 import { resolveClaudeProjectId } from '../../src/testkit/claudeProjectId.cjs';
@@ -585,7 +585,7 @@ describe('core e2e: session handoff via direct peer', () => {
       context: 'user-scoped socket connected for late cutover proof',
     });
 
-    const sourceMachineRpc = createDataKeyRpcClient(ui, auth.accountMachineKey);
+    const sourceMachineRpc = createMachineRpcClient(ui, { mode: 'plain' });
 
     const machineIds = await waitForMachineIds({
       baseUrl: server.baseUrl,

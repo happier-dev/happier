@@ -4,7 +4,7 @@ import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaq
 
 import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { Metadata } from '@/api/types';
-import type { RuntimeTurnOperations } from '@/agent/runtime/turns/runtimeTurnOperations';
+import type { RuntimeTurnOperations, RuntimeTurnMessageHandler } from '@/agent/runtime/turns/runtimeTurnOperations';
 import type { SessionStateSyncEngine } from '@happier-dev/agents';
 import { SessionCapabilityAgentFactsV1Schema, type CapabilityApplyTimingInputV1 } from '@happier-dev/protocol/reach/capabilityApplyTimingV1';
 import type { RuntimeDescriptorV1 } from '@happier-dev/protocol';
@@ -28,13 +28,13 @@ function updateRuntimePublicationMetadata(
 export function subscribeSessionRuntimePublicationToMetadata(params: Readonly<{
   session: Pick<ApiSessionClient, 'sessionId' | 'updateMetadata'>;
   sessionState: Pick<SessionStateSyncEngine, 'writeHappierField'>;
-  runtime: RuntimeTurnOperations;
+  runtime: Pick<RuntimeTurnOperations, 'readSessionIdentity' | 'subscribeRuntimeIdentityPublication'>;
   providerSessionMetadataKey?: string | null;
   /** Shared-editor runtimes retain runtime-local publications but cannot write owner metadata. */
   publishOwnerMetadata?: boolean;
   capabilitySelection?: CapabilityApplyTimingInputV1['agent'];
   resolveCapabilitySelectionForDescriptor?: (descriptor: RuntimeDescriptorV1) => Promise<CapabilityApplyTimingInputV1['agent']>;
-}>): () => void {
+}>): (() => void) & Readonly<{ observeRuntimeEvent: RuntimeTurnMessageHandler }> {
   let lastPublishedNativeIdentity: string | null = null;
   let lastPublishedDescriptor: unknown = undefined;
   let lastPublishedCapabilities: unknown = undefined;
@@ -110,14 +110,16 @@ export function subscribeSessionRuntimePublicationToMetadata(params: Readonly<{
     // A later runtime event can still publish identity after cold-read failure.
   }
 
-  const unsubscribeRuntimeEvents = params.runtime.subscribeRuntimeEvents((message) => {
+  // The Session lifecycle feeds this observer from its canonical event watch.
+  const observeRuntimeEvent: RuntimeTurnMessageHandler = (message) => {
+    if (disposed) return;
     if (message.kind === 'provider-session-id') {
       publishProviderSessionId(
         message.providerSessionId,
         'nativeSessionLogPath' in message ? message.nativeSessionLogPath : null,
       );
     }
-  });
+  };
 
   const unsubscribeIdentityPublication = params.runtime.subscribeRuntimeIdentityPublication?.(
     (publication) => {
@@ -192,9 +194,8 @@ export function subscribeSessionRuntimePublicationToMetadata(params: Readonly<{
     },
   );
 
-  return () => {
+  return Object.assign(() => {
     disposed = true;
-    unsubscribeRuntimeEvents();
     unsubscribeIdentityPublication?.();
-  };
+  }, { observeRuntimeEvent });
 }

@@ -1,6 +1,7 @@
 export const PI_HAPPIER_TOOLS_CONFIG_FLAG = 'happier-tools-config';
 export const PI_MCP_APPROVAL_CALL_PREFIX = 'happier:mcp-approval:';
 export const PI_MCP_CAPABILITY_NOTICE_RECORD_TYPE = 'happier-pi-mcp-capability-notice';
+export const PI_USER_INPUT_NOTIFICATION_TYPE = 'happy-pi-user-input';
 
 export function buildPiHappierToolsExtensionSource(): string {
   return `// Happier Pi native tools extension. Generated; tool policy is host-owned.
@@ -11,6 +12,7 @@ import { createInterface } from "node:readline";
 const CONFIG_FLAG = ${JSON.stringify(PI_HAPPIER_TOOLS_CONFIG_FLAG)};
 const MCP_APPROVAL_CALL_PREFIX = ${JSON.stringify(PI_MCP_APPROVAL_CALL_PREFIX)};
 const MCP_CAPABILITY_NOTICE_RECORD_TYPE = ${JSON.stringify(PI_MCP_CAPABILITY_NOTICE_RECORD_TYPE)};
+const USER_INPUT_NOTIFICATION_TYPE = ${JSON.stringify(PI_USER_INPUT_NOTIFICATION_TYPE)};
 const BRIDGE_OUTPUT_MAX_BYTES = 1024 * 1024;
 const BRIDGE_OUTPUT_MAX_LINES = 4000;
 const TOOL_OUTPUT_MAX_BYTES = 50 * 1024;
@@ -301,6 +303,13 @@ export default function happierPiToolsExtension(pi) {
     const config = readConfig(pi);
     if (!config) return;
     registered = true;
+    // Explicit CLI extensions load before discovered user extensions. Observe submission
+    // before another input handler can transform or handle it; RPC input is already host-owned.
+    pi.on("input", (event, ctx) => {
+      if (event.source === "extension" && typeof event.text === "string" && event.text.length > 0) {
+        ctx.ui.notify(JSON.stringify({ type: USER_INPUT_NOTIFICATION_TYPE, text: event.text }));
+      }
+    });
     pi.on("before_agent_start", (event) => {
       const addition = String(config.systemPrompt || "").trim();
       if (!addition) return undefined;

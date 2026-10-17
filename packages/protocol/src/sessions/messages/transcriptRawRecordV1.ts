@@ -1,6 +1,7 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { createStoredReadSchema } from '../../json/storedReadSchema.js';
 import { z } from 'zod';
+import * as zMini from 'zod/mini';
 
 import {
   ConnectedServiceAuthGroupIdSchema,
@@ -666,7 +667,7 @@ const AgentEventSchema = lazyZodSchema(() => z.discriminatedUnion('type', [
   z
     .object({
       type: z.literal('runtime-config-outcome'),
-      agentId: AgentIdV1Schema.optional(),
+      agentId: zMini.optional(AgentIdV1Schema),
       runtime: z.string().trim().min(1).max(128),
       status: RuntimeConfigOutcomeStatusV1Schema,
       timing: RuntimeConfigOutcomeTimingV1Schema.optional(),
@@ -724,10 +725,10 @@ const AgentEventSchema = lazyZodSchema(() => z.discriminatedUnion('type', [
     .object({
       type: z.literal('connected-service-account-switch'),
       serviceId: ConnectedAccountServiceKeyIngressSchema,
-      groupId: ConnectedServiceAuthGroupIdSchema.nullable(),
+      groupId: zMini.nullable(ConnectedServiceAuthGroupIdSchema),
       groupLabel: z.string().trim().min(1).nullable().optional(),
-      fromProfileId: ConnectedServiceProfileIdSchema.nullable(),
-      toProfileId: ConnectedServiceProfileIdSchema.nullable(),
+      fromProfileId: zMini.nullable(ConnectedServiceProfileIdSchema),
+      toProfileId: zMini.nullable(ConnectedServiceProfileIdSchema),
       // Optional human-readable profile labels resolved at emission time, so the UI can render
       // identity display even before profile-label settings hydrate on the consuming client.
       fromProfileLabel: z.string().trim().min(1).nullable().optional(),
@@ -743,8 +744,8 @@ const AgentEventSchema = lazyZodSchema(() => z.discriminatedUnion('type', [
       serviceId: ConnectedAccountServiceKeyIngressSchema,
       resetAtMs: z.number(),
       reason: z.string(),
-      profileId: ConnectedServiceProfileIdSchema.nullable().optional(),
-      groupId: ConnectedServiceAuthGroupIdSchema.nullable().optional(),
+      profileId: zMini.optional(zMini.nullable(ConnectedServiceProfileIdSchema)),
+      groupId: zMini.optional(zMini.nullable(ConnectedServiceAuthGroupIdSchema)),
     })
     .passthrough(),
   z
@@ -752,8 +753,8 @@ const AgentEventSchema = lazyZodSchema(() => z.discriminatedUnion('type', [
       type: z.literal('agent-quota-recovered'),
       serviceId: ConnectedAccountServiceKeyIngressSchema,
       reason: z.string(),
-      profileId: ConnectedServiceProfileIdSchema.nullable().optional(),
-      groupId: ConnectedServiceAuthGroupIdSchema.nullable().optional(),
+      profileId: zMini.optional(zMini.nullable(ConnectedServiceProfileIdSchema)),
+      groupId: zMini.optional(zMini.nullable(ConnectedServiceAuthGroupIdSchema)),
     })
     .passthrough(),
   // O1: connected-service switch lifecycle events (committed by the daemon switch FSM)
@@ -766,7 +767,7 @@ const AgentEventSchema = lazyZodSchema(() => z.discriminatedUnion('type', [
       outcome: ConnectedServiceSwitchAttemptOutcomeV1Schema.optional(),
       outcomeAction: ConnectedServiceSwitchAttemptOutcomeActionV1Schema.optional(),
       errorCode: z.string().nullable().optional(),
-      diagnostic: ConnectedServiceUxDiagnosticV1Schema.optional(),
+      diagnostic: zMini.optional(ConnectedServiceUxDiagnosticV1Schema),
       groupGeneration: z.number().int().nonnegative().optional(),
       sessionAdoption: ConnectedServiceSwitchAttemptSessionAdoptionV1Schema.optional(),
       sessionAdoptedGeneration: z.number().int().nonnegative().optional(),
@@ -782,12 +783,12 @@ const AgentEventSchema = lazyZodSchema(() => z.discriminatedUnion('type', [
       type: z.literal('connected-service-runtime-auth-recovery'),
       status: ConnectedServiceRuntimeAuthRecoveryTranscriptStatusV1Schema,
       serviceId: ConnectedAccountServiceKeyIngressSchema,
-      profileId: ConnectedServiceProfileIdSchema.optional(),
-      groupId: ConnectedServiceAuthGroupIdSchema.optional(),
+      profileId: zMini.optional(ConnectedServiceProfileIdSchema),
+      groupId: zMini.optional(ConnectedServiceAuthGroupIdSchema),
       attempt: z.number().int().positive().optional(),
       nextRetryAtMs: z.number().int().nonnegative().nullable().optional(),
       terminal: z.boolean().optional(),
-      diagnostic: ConnectedServiceUxDiagnosticV1Schema.optional(),
+      diagnostic: zMini.optional(ConnectedServiceUxDiagnosticV1Schema),
       reason: z.string().trim().min(1).optional(),
     })
     .passthrough(),

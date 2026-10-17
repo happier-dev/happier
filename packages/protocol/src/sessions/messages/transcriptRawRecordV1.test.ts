@@ -968,6 +968,13 @@ describe('runtime-config-outcome agent event', () => {
     message: 'model switched to claude-opus',
   };
 
+  it('preserves a supplied provider identity without requiring one on legacy records', () => {
+    expect(TranscriptRawAgentEventV1Schema.parse(baseEvent)).toEqual(baseEvent);
+    expect(TranscriptRawAgentEventV1Schema.parse({ ...baseEvent, agentId: 'pi' }))
+      .toEqual({ ...baseEvent, agentId: 'pi' });
+    expect(TranscriptRawAgentEventV1Schema.safeParse({ ...baseEvent, agentId: '' }).success).toBe(false);
+  });
+
   it('accepts each of the five public statuses', () => {
     for (const status of [
       'applied',

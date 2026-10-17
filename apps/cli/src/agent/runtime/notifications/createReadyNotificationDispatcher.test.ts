@@ -87,7 +87,12 @@ describe('createIdleReadyNotificationDispatcher', () => {
     expect(enqueueSessionEventCommitted).toHaveBeenCalledTimes(2);
   });
 
-  it('passes current turn assistant text from the session snapshot to the ready sender', async () => {
+  it.each([
+    { includePreview: true, context: undefined, expected: 'Ready for review' },
+    { includePreview: true, context: { assistantPreviewText: 'Captured host answer' }, expected: 'Captured host answer' },
+    { includePreview: true, context: { assistantPreviewText: null }, expected: null },
+    { includePreview: false, context: { assistantPreviewText: 'Private host answer' }, expected: null },
+  ])('selects ready preview $expected with includePreview=$includePreview', async ({ includePreview, context, expected }) => {
     const store = createTurnAssistantTextSnapshotStore({ maxTextChars: 200 });
     store.beginTurn({ turnToken: 'turn-1', startSeqExclusive: 1, startedAtMs: 100 });
     store.observe({ text: 'Ready for review', source: 'committed', seq: 2 });
@@ -102,14 +107,18 @@ describe('createIdleReadyNotificationDispatcher', () => {
       pushSender: { sendToAllDevices: vi.fn() },
       waitingForCommandLabel: 'Claude',
       logPrefix: '[runtime]',
-      includeAssistantPreviewText: true,
+      includeAssistantPreviewText: includePreview,
       sendReadyWithPushNotificationFn,
     });
 
-    await dispatchReady();
+    await dispatchReady(context);
 
     expect(sendReadyWithPushNotificationFn).toHaveBeenCalledWith(
-      expect.objectContaining({ assistantPreviewText: 'Ready for review' }),
+      expect.objectContaining({ assistantPreviewText: expected }),
+    );
+    await dispatchReady();
+    expect(sendReadyWithPushNotificationFn).toHaveBeenLastCalledWith(
+      expect.objectContaining({ assistantPreviewText: includePreview ? 'Ready for review' : null }),
     );
   });
 

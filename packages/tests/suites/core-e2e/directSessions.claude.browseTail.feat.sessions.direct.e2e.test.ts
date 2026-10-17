@@ -11,7 +11,7 @@ import { createTestAuth } from '../../src/testkit/auth';
 import { seedCliAuthForTestAccount } from '../../src/testkit/cliAuth';
 import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { createUserScopedSocketCollector } from '../../src/testkit/socketClient';
-import { createDataKeyRpcClient, unwrapDataKeyRpcResult } from '../../src/testkit/syntheticAgent/rpcClient';
+import { createDataKeyRpcClient, createMachineRpcClient, unwrapDataKeyRpcResult } from '../../src/testkit/syntheticAgent/rpcClient';
 import { waitFor } from '../../src/testkit/timing';
 import { fakeClaudeFixturePath, waitForFakeClaudeInvocation, waitForFakeClaudeUserText } from '../../src/testkit/fakeClaude';
 import { resolveClaudeProjectId } from '../../src/testkit/claudeProjectId.cjs';
@@ -110,7 +110,7 @@ describe('core e2e: direct Claude sessions browse/link/tail', () => {
     try {
       await waitFor(() => ui.isConnected(), { timeoutMs: 20_000, context: 'socket connected for direct sessions e2e' });
 
-      const machineRpc = createDataKeyRpcClient(ui, auth.accountMachineKey);
+      const machineRpc = createMachineRpcClient(ui, { mode: 'plain' });
 
       let candidatesResult: any = null;
       await waitFor(
@@ -646,7 +646,7 @@ describe('core e2e: direct Claude sessions browse/link/tail', () => {
     try {
       await waitFor(() => ui.isConnected(), { timeoutMs: 20_000, context: 'socket connected for direct takeover persist e2e' });
 
-      const machineRpc = createDataKeyRpcClient(ui, auth.accountMachineKey);
+      const machineRpc = createMachineRpcClient(ui, { mode: 'plain' });
 
       let candidatesResult: any = null;
       await waitFor(

@@ -3,7 +3,6 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   createHostRuntimeActivityProjection,
   createInitialHostRuntimeActivityMutation,
-  resolveAgentRuntimeActivitySubscriber,
 } from './createHostRuntimeActivityProjection';
 
 describe('createHostRuntimeActivityProjection', () => {
@@ -275,29 +274,4 @@ describe('createHostRuntimeActivityProjection', () => {
     expect(enqueue).toHaveBeenCalledTimes(2);
   });
 
-  it.each([
-    'unavailable',
-    'not_applicable',
-  ] as const)('does not bind a producer-shaped method when applicability is %s', (applicability) => {
-    const subscribe = vi.fn(() => () => undefined);
-    expect(resolveAgentRuntimeActivitySubscriber({
-      applicability,
-      subscribeAgentSessionRuntimeEvents: subscribe,
-    })).toBeNull();
-    expect(subscribe).not.toHaveBeenCalled();
-  });
-
-  it('fails configuration when supported applicability has no activated producer', () => {
-    expect(() => resolveAgentRuntimeActivitySubscriber({
-      applicability: 'supported',
-    })).toThrow(/activated.*producer/i);
-  });
-
-  it('returns the activated producer when applicability is supported', () => {
-    const subscribe = vi.fn(() => () => undefined);
-    expect(resolveAgentRuntimeActivitySubscriber({
-      applicability: 'supported',
-      subscribeAgentSessionRuntimeEvents: subscribe,
-    })).toBe(subscribe);
-  });
 });

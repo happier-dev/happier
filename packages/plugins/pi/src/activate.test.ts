@@ -318,6 +318,7 @@ describe('activate', () => {
     const registration = activation.registration('agents', 'pi');
     expect(registration).toMatchObject({ factory: expect.any(Function) });
     expect(registration?.externalSessions).toEqual({
+      readAccounting: expect.any(Function),
       resolveSource: expect.any(Function),
       listCandidates: expect.any(Function),
       resolveLinkIdentity: expect.any(Function),
@@ -343,6 +344,7 @@ describe('activate', () => {
     expect(Object.keys(registration?.externalSessions ?? {}).sort()).toEqual([
       'listCandidates',
       'pageTranscript',
+      'readAccounting',
       'readAfterTranscript',
       'resolveLinkIdentity',
       'resolveLinkedIdentity',
@@ -472,7 +474,10 @@ describe('activate', () => {
       kind: 'jsonStream',
       launch: expect.objectContaining({
         executable: { kind: 'systemTool', id: 'pi-cli' },
-        args: ['--extension', expect.stringMatching(/model-discovery\.mjs$/), '--mode', 'rpc', '--thinking', 'medium'],
+        args: ['--extension', expect.stringMatching(/model-discovery\.mjs$/),
+          '--extension', expect.stringMatching(/happier-pi-tools-bridge\.mjs$/),
+          '--happier-tools-config', expect.stringMatching(/config\.json$/),
+          '--mode', 'rpc', '--approve', '--thinking', 'medium'],
         env: expect.objectContaining({ NODE_ENV: 'production', DEBUG: '', CI: '1' }),
       }),
     })]);
@@ -573,7 +578,7 @@ describe('activate', () => {
       const extensionPaths = args.filter((_arg, index) => args[index - 1] === '--extension');
       const configIndex = args.indexOf('--happier-tools-config');
       expect(configIndex).toBeGreaterThanOrEqual(0);
-      expect(extensionPaths).toEqual(expect.arrayContaining([expect.stringContaining('happier-pi-tools-bridge.js')]));
+      expect(extensionPaths).toEqual(expect.arrayContaining([expect.stringContaining('happier-pi-tools-bridge.mjs')]));
       const configPath = args[configIndex + 1];
       expect(configPath).toBeTruthy();
       expect(JSON.parse(await readFile(configPath!, 'utf8'))).toMatchObject({

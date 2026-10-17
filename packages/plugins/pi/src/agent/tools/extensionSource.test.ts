@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -8,8 +8,124 @@ import {
   buildPiHappierToolsExtensionSource,
   PI_HAPPIER_TOOLS_CONFIG_FLAG,
 } from './extensionSource.js';
+import { preparePiHappierToolsExtension } from './assets.js';
 
 describe('Pi Happier tools extension', () => {
+  it.each(['0.81.0', '0.82.1'])('observes input before discovered user handlers through the real Pi %s loader', async (version) => {
+    const pi = version === '0.81.0' ? await import('pi-coding-agent-0810') : await import('pi-coding-agent-0821');
+    const root = mkdtempSync(join(tmpdir(), 'happier-pi-input-loader-'));
+    const agentDir = join(root, 'agent');
+    const prepared = await preparePiHappierToolsExtension({ directory: root });
+    let session: Awaited<ReturnType<typeof pi.createAgentSession>>['session'] | undefined;
+    try {
+      const userExtensionPath = join(agentDir, 'extensions', 'user.js');
+      mkdirSync(join(agentDir, 'extensions'), { recursive: true });
+      writeFileSync(userExtensionPath, `export default function userExtension(pi) {
+        pi.on('input', event => {
+          if (event.text === 'handled') return { action: 'handled' };
+          if (event.text === 'transform me') return { action: 'transform', text: 'transformed by discovered extension' };
+        });
+      }`);
+      const settingsManager = pi.SettingsManager.inMemory({ retry: { enabled: false }, compaction: { enabled: false } });
+      const modelRuntime = await pi.ModelRuntime.create({ authPath: join(root, 'auth.json'), modelsPath: null, allowModelNetwork: false });
+      await modelRuntime.setRuntimeApiKey('anthropic', 'test-runtime-key');
+      const model = modelRuntime.getModels('anthropic')[0]!;
+      const resourceLoader = new pi.DefaultResourceLoader({ cwd: root, agentDir, settingsManager,
+        additionalExtensionPaths: [prepared.extensionPath], noSkills: true, noThemes: true, noContextFiles: true });
+      await resourceLoader.reload();
+      const opened = await pi.createAgentSession({ cwd: root, agentDir, settingsManager, modelRuntime, model,
+        thinkingLevel: 'off', tools: [], resourceLoader, sessionManager: pi.SessionManager.inMemory(root) });
+      session = opened.session;
+      expect(opened.extensionsResult.errors).toEqual([]);
+      expect(opened.extensionsResult.extensions.map((extension) => extension.path)).toEqual([prepared.extensionPath, userExtensionPath]);
+      session.extensionRunner!.setFlagValue(PI_HAPPIER_TOOLS_CONFIG_FLAG, prepared.configPath);
+      const observations: unknown[] = [];
+      const events: string[] = [];
+      await session.bindExtensions({ uiContext: { notify: (message) => { observations.push(JSON.parse(message)); events.push('input'); } } });
+      session.subscribe((event) => {
+        if (event.type === 'agent_start') events.push('start');
+        if (event.type === 'message_end' && event.message.role === 'user') {
+          const content = event.message.content;
+          events.push(typeof content === 'string' ? content : content.filter((part) => part.type === 'text').map((part) => part.text).join(''));
+        }
+      });
+      // The model transport is the only mocked logic; loader, input chain and generated bridge are real.
+      session.agent.streamFunction = async () => {
+        const message = { role: 'assistant' as const, content: [], api: model.api, provider: model.provider, model: model.id,
+          usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } }, stopReason: 'stop' as const, timestamp: Date.now() };
+        return { async *[Symbol.asyncIterator]() { yield { type: 'done' as const, reason: 'stop' as const, message }; }, result: async () => message };
+      };
+      for (const text of ['ordinary host prompt', 'transform me', 'handled']) await session.prompt(text, { source: 'rpc' });
+      expect(observations).toEqual([]);
+      events.length = 0;
+      await session.sendUserMessage('handled');
+      await session.sendUserMessage('handled');
+      expect(observations).toEqual([
+        { type: 'happy-pi-user-input', text: 'handled' },
+        { type: 'happy-pi-user-input', text: 'handled' },
+      ]);
+      expect(events).toEqual(['input', 'input']);
+      await session.sendUserMessage('transform me');
+      expect(observations.at(-1)).toEqual({ type: 'happy-pi-user-input', text: 'transform me' });
+      expect(events).toEqual(['input', 'input', 'input', 'start', 'transformed by discovered extension']);
+    } finally {
+      session?.dispose();
+      await prepared.dispose();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('reports extension-submitted input through native UI notifications before user input handlers', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'happier-pi-input-test-'));
+    try {
+      const extensionPath = join(root, 'extension.mjs');
+      const configPath = join(root, 'config.json');
+      writeFileSync(configPath, JSON.stringify({ v: 1, directory: root, systemPrompt: '', tools: [] }));
+      writeFileSync(extensionPath, buildPiHappierToolsExtensionSource());
+      const module = await import(pathToFileURL(extensionPath).href);
+      const handlers = new Map<string, (event: unknown, context: unknown) => unknown>();
+      const notifications: string[] = [];
+      module.default({
+        registerFlag() {},
+        getFlag: () => configPath,
+        on(name: string, handler: (event: unknown, context: unknown) => unknown) { handlers.set(name, handler); },
+      });
+      const context = { ui: { notify: (message: string) => notifications.push(message) } };
+      await handlers.get('session_start')?.({}, context);
+      const text = '  <system-reminder>背景 task complete</system-reminder>\n';
+      for (const source of ['rpc', 'interactive', 'extension', 'extension']) {
+        await handlers.get('input')?.({ source, text }, context);
+      }
+      await handlers.get('input')?.({ source: 'extension', text: '' }, context);
+      expect(notifications.map((message) => JSON.parse(message))).toEqual([
+        { type: 'happy-pi-user-input', text },
+        { type: 'happy-pi-user-input', text },
+      ]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('does not expose input notifications when standalone Pi discovers an unconfigured bridge', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'happier-pi-input-unconfigured-'));
+    try {
+      const extensionPath = join(root, 'extension.mjs');
+      writeFileSync(extensionPath, buildPiHappierToolsExtensionSource());
+      const module = await import(pathToFileURL(extensionPath).href);
+      const handlers = new Map<string, (event: unknown, context: unknown) => unknown>();
+      const notifications: string[] = [];
+      module.default({ registerFlag() {}, getFlag: () => undefined,
+        on(name: string, handler: (event: unknown, context: unknown) => unknown) { handlers.set(name, handler); } });
+      const context = { ui: { notify: (message: string) => notifications.push(message) } };
+      await handlers.get('session_start')?.({}, context);
+      await handlers.get('input')?.({ source: 'extension', text: 'private standalone prompt' }, context);
+      expect(notifications).toEqual([]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('registers exactly the host manifest and appends the canonical system prompt', async () => {
     const root = mkdtempSync(join(tmpdir(), 'happier-pi-tools-test-'));
     try {

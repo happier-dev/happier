@@ -3743,6 +3743,55 @@ describe('runHostSessionRuntime', () => {
     expect(commitPendingFirstInputAfterRuntimeReady).not.toHaveBeenCalled();
   });
 
+  it.each(['supported', 'not_applicable'] as const)('preserves eager provider startup through the actual host launch (%s Activity)', async applicability => {
+    const { createNativeAgentSessionOperations } = await import('@/agent/runtime/registry/engineRegistry/nativeAgentSession');
+    const { AgentSessionRuntimeEventV1Schema } = await import('@happier-dev/protocol');
+    const harness = createHarness();
+    harness.config.runtimeActivityApplicability = applicability;
+    const sessionId = harness.session.sessionId;
+    const cold = [
+      { kind: 'transcript-message-committed', messageId: 'startup-input', role: 'user', text: 'EXTENSION_STARTUP_INPUT' },
+      { kind: 'turn-start', turnId: 'startup-turn', startedBy: 'provider' },
+      { kind: 'message-delta', turnId: 'startup-turn', channel: 'assistant', text: 'EXTENSION_STARTUP_ANSWER' },
+      { kind: 'turn-complete', turnId: 'startup-turn' },
+      { kind: 'provider-session-id', providerSessionId: 'startup-native-session' },
+      { kind: 'runtime-activity-snapshot', state: 'idle', activeCount: 0 },
+    ].map((event, index) => AgentSessionRuntimeEventV1Schema.parse({ ...event, sessionId, sequence: index + 1, emittedAtMs: index + 1 }));
+    const listeners = new Set<(event: import('@happier-dev/plugin-sdk/agents/runtime').AgentSessionRuntimeEvent) => void>();
+    // The native provider is the external boundary: cold output is consumed by
+    // its first watch, exactly as Pi and the public SDK Run adapter specify.
+    const native: import('@happier-dev/plugin-sdk/agents/runtime').AgentSessionRuntime = {
+      send: async () => ({ status: 'admitted' }),
+      watch(listener) {
+        listeners.add(listener);
+        for (const event of cold.splice(0)) listener(event);
+        return { dispose() { listeners.delete(listener); } };
+      },
+      dispose() {},
+    };
+    const runtime = createNativeAgentSessionOperations(native, sessionId, undefined, undefined, undefined, undefined, undefined, {
+      context: {} as import('@happier-dev/plugin-sdk/agents/runtime').AgentSessionRuntimeContext,
+      cwd: '/tmp/workspace', connectedAccounts: [], capabilities: { open: ['create'], delivery: ['newTurn'], cancel: false },
+      cancellation: { declared: false }, configuration: { declared: false }, manualCompaction: { declared: false },
+    });
+    setSessionRuntimeFactory(harness.config, () => ({ operations: runtime, nativeRuntime: runtime }));
+    const { withHostSessionRuntimeIdentityPublication } = await import('@/agent/runtime/identity/publication/withHostSession');
+    const { HOST_SESSION_RUNTIME_PLAN_KIND } = await import('./lifecycle');
+    const wrapped = withHostSessionRuntimeIdentityPublication({
+      plan: { kind: HOST_SESSION_RUNTIME_PLAN_KIND, agentId: 'qwen', opts: harness.opts, config: harness.config },
+      identity: { runtimeDescriptor: null, runtimeCapabilities: null, runtimeFacets: null },
+    });
+    Object.assign(harness.config, wrapped.config);
+    harness.session.enqueueAgentMessageCommitted = vi.fn(async () => ({ persisted: true, delivered: true }));
+    harness.deps.runPermissionModePromptLoopFn = async () => undefined;
+    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+    const committed = JSON.stringify(harness.session.enqueueAgentMessageCommitted.mock.calls);
+    expect.soft(committed).toContain('EXTENSION_STARTUP_INPUT');
+    expect.soft(committed).toContain('EXTENSION_STARTUP_ANSWER');
+    expect(runtime.readSessionIdentity()).toEqual({ sessionId: 'startup-native-session' });
+    expect(listeners.size).toBe(0);
+  });
+
   it('binds the supported current-runtime observer and publishes idle before provider input starts', async () => {
     const harness = createHarness();
     harness.config.runtimeActivityApplicability = 'supported';

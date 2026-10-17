@@ -204,7 +204,6 @@ import { createCurrentSessionPresentationHost, type CurrentSessionPresentationHo
 import {
   createInitialHostRuntimeActivityMutation,
   createHostRuntimeActivityProjection,
-  resolveAgentRuntimeActivitySubscriber,
   type HostRuntimeActivityProjection,
   type HostRuntimeActivitySnapshot,
 } from '@/agent/runtime/session/activity/createHostRuntimeActivityProjection';
@@ -1190,9 +1189,7 @@ export async function runHostSessionRuntime(
   let runtimeActivityProjection: HostRuntimeActivityProjection | null = null;
   let agentRuntimeActivityBinding: ReturnType<HostRuntimeActivityProjection['bindAgentRuntime']> | null = null;
   let executionRunsActivityBinding: ReturnType<HostRuntimeActivityProjection['bindExecutionRuns']> | null = null;
-  let unsubscribeRuntimeActivityEvents: (() => void) | null = null;
   let unsubscribeExecutionRunActivity: (() => void) | null = null;
-  let runtimeActivitySubscriptionEpoch = 0;
   let runtimeActivitySourceSessionId: string | null = null;
   let modelTransitionCoordinator: ReturnType<
     typeof createSessionModelTransitionCoordinator
@@ -1246,65 +1243,26 @@ export async function runHostSessionRuntime(
 
   const runtimeActivityApplicability = config.runtimeActivityApplicability;
 
-  const stopAgentRuntimeActivitySubscription = (): void => {
-    runtimeActivitySubscriptionEpoch += 1;
-    const unsubscribe = unsubscribeRuntimeActivityEvents;
-    unsubscribeRuntimeActivityEvents = null;
-    try {
-      unsubscribe?.();
-    } catch {
-      logger.debug(
-        `${config.uiLogPrefix} Runtime Activity subscriber disposal failed after logical fencing (non-fatal)`,
-        {
-          error: 'runtime_activity_subscriber_disposal_failed',
-        },
-      );
-    }
-  };
-
-  const bindAgentRuntimeActivityProducer = (
-    producer: HostSessionRuntimeHookRuntime,
-    sourceSessionId: string,
-  ): void => {
-    const subscribeRuntimeActivity = resolveAgentRuntimeActivitySubscriber({
-      applicability: runtimeActivityApplicability,
-      subscribeAgentSessionRuntimeEvents: (handler) => producer.subscribeRuntimeEvents((message) => {
-        if ('kind' in message) handler(message);
-      }),
-    });
-    stopAgentRuntimeActivitySubscription();
+  const bindAgentRuntimeActivityProducer = (sourceSessionId: string): void => {
     agentRuntimeActivityBinding = null;
     runtimeActivitySourceSessionId = null;
-    if (!subscribeRuntimeActivity) return;
-
+    if (runtimeActivityApplicability !== 'supported') return;
     const projection = runtimeActivityProjection;
     if (!projection) throw new Error('Runtime Activity producer binding requires an active projection');
-    const subscriptionEpoch = ++runtimeActivitySubscriptionEpoch;
-    let activatedBinding: ReturnType<HostRuntimeActivityProjection['bindAgentRuntime']> | null = null;
-    const bufferedEvents: AgentSessionRuntimeEvent[] = [];
-    const observeEvent = (event: AgentSessionRuntimeEvent): void => {
-      if (runtimeActivitySubscriptionEpoch !== subscriptionEpoch) return;
-      const binding = activatedBinding;
-      if (!binding) {
-        bufferedEvents.push(event);
-        return;
-      }
-      const expectedSourceSessionId = runtimeActivitySourceSessionId;
-      if (!expectedSourceSessionId || event.sessionId !== expectedSourceSessionId) return;
-      const targetSessionId = session.sessionId;
-      observeRuntimeActivityPublication(
-        binding.observeEvent(event.sessionId === targetSessionId
-          ? event
-          : { ...event, sessionId: targetSessionId }),
-        'agent-runtime',
-      );
-    };
-    const unsubscribe = subscribeRuntimeActivity(observeEvent);
-    activatedBinding = projection.bindAgentRuntime({ applicability: 'supported' });
-    agentRuntimeActivityBinding = activatedBinding;
+    agentRuntimeActivityBinding = projection.bindAgentRuntime({ applicability: 'supported' });
     runtimeActivitySourceSessionId = sourceSessionId;
-    unsubscribeRuntimeActivityEvents = unsubscribe;
-    for (const event of bufferedEvents.splice(0)) observeEvent(event);
+  };
+
+  const observeAgentRuntimeActivityEvent = (event: AgentSessionRuntimeEvent): void => {
+    const binding = agentRuntimeActivityBinding;
+    if (!binding || event.sessionId !== runtimeActivitySourceSessionId) return;
+    const targetSessionId = session.sessionId;
+    observeRuntimeActivityPublication(
+      binding.observeEvent(event.sessionId === targetSessionId
+        ? event
+        : { ...event, sessionId: targetSessionId }),
+      'agent-runtime',
+    );
   };
 
   const augmentSessionMetadata = (metadata: Metadata): Metadata => {
@@ -1343,7 +1301,6 @@ export async function runHostSessionRuntime(
         await executionRunsActivityBinding?.revoke();
         executionRunsActivityBinding = null;
       } else {
-        stopAgentRuntimeActivitySubscription();
         await agentRuntimeActivityBinding?.revoke();
         await executionRunsActivityBinding?.revoke();
         unsubscribeExecutionRunActivity?.();
@@ -1403,7 +1360,6 @@ export async function runHostSessionRuntime(
       });
       if (runtimeForInFlightSteer) {
         bindAgentRuntimeActivityProducer(
-          runtimeForInFlightSteer,
           retainedRuntimeActivitySourceSessionId,
         );
       }
@@ -1714,7 +1670,6 @@ export async function runHostSessionRuntime(
         unsubscribeExecutionRunActivity = null;
       });
       await runCleanupStep('dispose runtime Activity projection', () => {
-        stopAgentRuntimeActivitySubscription();
         runtimeActivityProjection?.dispose();
         runtimeActivityProjection = null;
       });
@@ -3295,7 +3250,7 @@ export async function runHostSessionRuntime(
   );
   runtimeForInFlightSteer = hookRuntime;
   applyMcpAccountPolicyUpdate?.();
-  bindAgentRuntimeActivityProducer(hookRuntime, session.sessionId);
+  bindAgentRuntimeActivityProducer(session.sessionId);
 
   const completeClaimedSessionAuthorityPreparation = async (
     claimedSession: ApiSessionClient,
@@ -3468,11 +3423,10 @@ export async function runHostSessionRuntime(
         epochId,
       });
       try {
-        stopAgentRuntimeActivitySubscription();
         await agentRuntimeActivityBinding?.revoke();
       } catch (error) {
         if (runtimeActivityApplicability === 'supported') {
-          bindAgentRuntimeActivityProducer(hookRuntime, session.sessionId);
+          bindAgentRuntimeActivityProducer(session.sessionId);
         }
         const clearResult = await inputConsumer.clearProviderInputAdmission({
           serviceId: 'host-runtime',
@@ -3496,7 +3450,7 @@ export async function runHostSessionRuntime(
     onSuccessorProviderBindingAdmitted:
       admitSuccessorProviderBindingHandoff,
     onSuccessorBound: () => {
-      bindAgentRuntimeActivityProducer(hookRuntime, session.sessionId);
+      bindAgentRuntimeActivityProducer(session.sessionId);
     },
     onSuccessorUsable: async () => {
       const epochId = activeRuntimeReplacementEpoch;
@@ -3780,6 +3734,8 @@ export async function runHostSessionRuntime(
           dispatchRuntimeStop();
         },
         publishHostRuntimeEvent: (event) => {
+          observeAgentRuntimeActivityEvent(event);
+          unsubscribeRuntimePublication.observeRuntimeEvent(event);
           if (event.kind === 'usage-observed' && event.context) {
             latestSessionContextUsage = event.context;
             publishSessionFollowWakeInvalidation();
@@ -3928,7 +3884,6 @@ export async function runHostSessionRuntime(
     config.onAfterStart = originalOnAfterStart;
     sessionStateMetadataObserver.dispose();
     disposeRuntimeModelsPublisher();
-    stopAgentRuntimeActivitySubscription();
     unsubscribeExecutionRunActivity?.();
     runtimeActivityProjection?.dispose();
     unsubscribePendingQueueDeliveryTiming();

@@ -8,10 +8,8 @@ import {
   type AgentSessionRuntimeContext,
   createExecutionRunHostBackendFromConversationRuntime,
 } from '@happier-dev/plugin-sdk/agents/runtime';
-import { resolveHomeDirFromEnvironment } from '@happier-dev/plugin-sdk/fs';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import { SESSION_CAPABILITY_NOTICE_SIDECAR_KEY } from '@happier-dev/plugin-sdk/sessions';
-import { join } from 'node:path';
 
 import {
   createPiRuntimeOperations,
@@ -101,10 +99,7 @@ async function openPiSession(
         const config = nativeBridgeResolution ? await lifecycle.waitFor(
           nativeBridgeResolution, 'Happier tools bridge resolution',
         ) : undefined;
-        const launchEnv = prepared.launchEnvironment.values;
-        const agentDir = launchEnv.PI_CODING_AGENT_DIR?.trim()
-          || join(resolveHomeDirFromEnvironment(launchEnv), '.pi', 'agent');
-        const toolPreparation = preparePiHappierToolsExtension({ agentDir,
+        const toolPreparation = preparePiHappierToolsExtension({
           ...(config ? { config } : { directory: request.cwd }),
           mcpServersStrictMode: request.mcpServersStrictMode,
           mcpServers: request.mcpServers, mcpToolPolicy: request.mcpToolPolicy });
@@ -244,11 +239,8 @@ async function openPiExecutionRun(
           throw new Error('Pi qualified Connected Account launch was invalidated before opening the runtime.');
         }
         if (Object.keys(request.mcpServers ?? {}).length > 0) {
-          const launchEnv = prepared.launchEnvironment.values;
-          const agentDir = launchEnv.PI_CODING_AGENT_DIR?.trim()
-            || join(resolveHomeDirFromEnvironment(launchEnv), '.pi', 'agent');
           preparedTools = await lifecycle.waitFor(preparePiHappierToolsExtension({
-            agentDir, directory: request.cwd,
+            directory: request.cwd,
             mcpServersStrictMode: request.mcpServersStrictMode,
             mcpServers: request.mcpServers, mcpToolPolicy: request.mcpToolPolicy,
           }), 'MCP tools extension preparation', async lateTools => await lateTools.dispose());

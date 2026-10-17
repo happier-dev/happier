@@ -8,9 +8,23 @@ import {
   UsageAnalyticsQueryRequestSchema,
   UsageAnalyticsQueryResponseSchema,
   UsageEventIngestRequestSchema,
+  UsageRequestAttributionSchema,
 } from './usageAnalyticsContracts.js';
 
 describe('usageAnalyticsContracts', () => {
+  it.each([null, 'happier.agent.pi/pi'])('parses provider request attribution with provider id %s', (providerId) => {
+    const attribution = {
+      v: 1,
+      turnId: 'turn-1',
+      source: { kind: 'provider', providerId, providerConnectionId: 'connection-1' },
+    };
+    expect(UsageRequestAttributionSchema.parse(attribution)).toEqual(attribution);
+    expect(UsageRequestAttributionSchema.safeParse({
+      ...attribution,
+      source: { ...attribution.source, providerId: '' },
+    }).success).toBe(false);
+  });
+
   it('accepts latest context fields on session breakdown rows', () => {
     const response = UsageAnalyticsQueryResponseSchema.parse({
       v: 1,

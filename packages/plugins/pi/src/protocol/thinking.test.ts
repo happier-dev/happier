@@ -16,6 +16,7 @@ describe('pi protocol thinking', () => {
     ) as { exports?: Record<string, unknown> };
 
     expect(packageJson.exports).toHaveProperty('./protocol/thinking', {
+      'happier-source': './src/protocol/thinking.ts',
       types: './dist/protocol/thinking.d.ts',
       default: './dist/protocol/thinking.js',
     });
