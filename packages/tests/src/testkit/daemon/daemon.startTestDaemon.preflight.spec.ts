@@ -133,7 +133,7 @@ async function writeReplacementDaemonScript(scriptPath: string, opts: { serverId
 }
 
 describe('startTestDaemon', () => {
-  it('launches the exact caller-supplied prepared daemon snapshot through the canonical resolver', async () => {
+  it('launches the exact caller-supplied prepared daemon snapshot and restarts after its process retires', async () => {
     const testDir = await mkdtemp(join(tmpdir(), 'happier-daemon-prepared-dist-exact-candidate-'));
     const homeDir = resolve(testDir, 'home');
     const snapshotDir = resolve(testDir, 'immutable-cli-candidate');
@@ -165,6 +165,13 @@ describe('startTestDaemon', () => {
         'daemon',
         'start-sync',
       ]);
+      const originalPid = daemon.state.pid;
+      const originalArguments = daemon.proc.child.spawnargs;
+      await daemon.proc.stop();
+      cliLaunchSpecMock.resolveCliTestLaunchSpec.mockImplementationOnce(actualResolveCliTestLaunchSpec);
+      daemon = await daemon.restart();
+      expect(daemon.state.pid).not.toBe(originalPid);
+      expect(daemon.proc.child.spawnargs).toEqual(originalArguments);
     } finally {
       if (daemon) await daemon.stop();
       await rm(testDir, { recursive: true, force: true });

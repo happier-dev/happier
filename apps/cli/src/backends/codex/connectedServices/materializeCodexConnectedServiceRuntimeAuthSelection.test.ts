@@ -137,7 +137,7 @@ describe('materializeCodexConnectedServiceRuntimeAuthSelection', () => {
     expect(callSessionRpc).toHaveBeenCalledWith({
       token: 'machine-token',
       sessionId: 'sess_1',
-      ctx: { encryptionKey: new Uint8Array(32), encryptionVariant: 'legacy' },
+      ctx: { encryptionKey: null, encryptionVariant: 'plain' },
       mode: 'plain',
       timeoutMs: 60_000,
       method: `sess_1:${SESSION_RPC_METHODS.SESSION_CONNECTED_SERVICE_AUTH_APPLY_GENERATION}`,

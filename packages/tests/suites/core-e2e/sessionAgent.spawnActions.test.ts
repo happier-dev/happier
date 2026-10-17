@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import axios from 'axios';
 import { randomUUID } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
@@ -212,6 +213,18 @@ describe('core e2e: session-agent spawn actions', () => {
     spawnMachineSession.mockReset();
     io.mockReset();
     updateSessionMetadataWithRetry.mockReset();
+    const realGet = axios.get.bind(axios);
+    // Machine lookup is the remote HTTP boundary; localhost MCP transport stays real.
+    vi.spyOn(axios, 'get').mockImplementation(async (url, config) => {
+      if (String(url).endsWith('/v1/machines/machine-local')) {
+        return { status: 200, data: { machine: { id: 'machine-local', dataEncryptionKey: null } } };
+      }
+      return realGet(url, config);
+    });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   it('exposes session.spawn_new to session agents, honors Off settings, and forwards rich inherited spawn options', async () => {

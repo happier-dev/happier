@@ -11,6 +11,121 @@ import {
 } from '@happier-dev/agents';
 
 describe('ClaudeLocalPermissionBridge', () => {
+  it('disposes a live hook after durable cancellation admission while the acknowledgement transport is offline', async () => {
+    const { session, client } = createPermissionHandlerSessionStub('local-dispose-offline');
+    const bridge = new ClaudeLocalPermissionBridge(session);
+    bridge.activate();
+    const hook = bridge.handlePermissionHook({
+      hook_event_name: 'PermissionRequest', tool_name: 'Write', tool_input: {}, tool_use_id: 'dispose-offline',
+    });
+    let result: unknown;
+    void hook.then((value) => { result = value; }, (error) => { result = error; });
+    await vi.advanceTimersByTimeAsync(0);
+    client.updateAgentState = () => { throw new Error('ack transport offline'); };
+    bridge.dispose();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(result).toMatchObject({ continue: true });
+    expect(client.agentState.completedRequests['dispose-offline']).toMatchObject({ status: 'canceled' });
+    expect(client.agentState.requests['dispose-offline']).toBeUndefined();
+  });
+
+  it('publishes automatic history through the caught history writer when no pending request exists', async () => {
+    const { session, client } = createPermissionHandlerSessionStub('local-auto-history');
+    client.updateMetadata((metadata) => ({ ...metadata, permissionMode: 'yolo', permissionModeUpdatedAt: 123 }));
+    const bridge = new ClaudeLocalPermissionBridge(session);
+    bridge.activate();
+    client.updateAgentStateRequestSettlement = async () => { throw new Error('no durable storage'); };
+    await expect(bridge.handlePermissionHook({
+      hook_event_name: 'PermissionRequest', tool_name: 'Write', tool_input: {}, tool_use_id: 'auto-history',
+    })).resolves.toMatchObject({ continue: true });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(client.agentState.completedRequests['auto-history']).toMatchObject({ status: 'approved' });
+    bridge.dispose();
+  });
+
+  it('retains an observed native PostToolUse completion before releasing its hook and permits admission retry', async () => {
+    const { session, client } = createPermissionHandlerSessionStub('session-durable-local-admission');
+    const bridge = new ClaudeLocalPermissionBridge(session);
+    bridge.activate();
+    const hookData = {
+      tool_name: 'Write', tool_input: { file_path: '/workspace/file' }, tool_use_id: 'local-durable',
+    };
+    const pending = bridge.handlePermissionHook({ hook_event_name: 'PermissionRequest', ...hookData });
+    await vi.advanceTimersByTimeAsync(0);
+    let admit!: () => void;
+    let fail!: (error: Error) => void;
+    const original = client.updateAgentStateRequestSettlement.bind(client);
+    client.updateAgentStateRequestSettlement = (updater) => new Promise<void>((resolve, reject) => {
+      admit = () => { void original(updater).then(resolve, reject); };
+      fail = reject;
+    });
+    let resumed = false;
+    void pending.then(() => { resumed = true; });
+    bridge.handleSessionHook({ hook_event_name: 'PostToolUse', ...hookData });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(resumed).toBe(false);
+    fail(new Error('storage admission failed'));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(resumed).toBe(false);
+    expect(client.agentState.requests['local-durable']).toBeDefined();
+    bridge.handleSessionHook({ hook_event_name: 'PostToolUse', ...hookData });
+    admit();
+    await vi.advanceTimersByTimeAsync(0);
+    await expect(pending).resolves.toMatchObject({ continue: true });
+    bridge.dispose();
+  });
+
+  it('retains an observed PostToolUse completion arriving while a pre-effect UI acknowledgement is pending', async () => {
+    const { session, client } = createPermissionHandlerSessionStub('local-observed-during-ui');
+    const bridge = new ClaudeLocalPermissionBridge(session);
+    bridge.activate();
+    const data = { tool_name: 'Write', tool_input: {}, tool_use_id: 'observed-during-ui' };
+    const hook = bridge.handlePermissionHook({ hook_event_name: 'PermissionRequest', ...data });
+    let outcome = 'pending';
+    void hook.then(() => { outcome = 'allowed'; }, () => { outcome = 'canceled'; });
+    await vi.advanceTimersByTimeAsync(0);
+    let failAcknowledgement!: (error: Error) => void;
+    client.updateAgentState = () => new Promise<never>((_resolve, reject) => {
+      if (!failAcknowledgement) failAcknowledgement = reject;
+      else reject(new Error('UI acknowledgement unavailable'));
+    });
+    const respond = client.rpcHandlerManager.getHandler('permission')!;
+    const response = respond({ id: data.tool_use_id, approved: true });
+    await vi.advanceTimersByTimeAsync(0);
+    bridge.handleSessionHook({ hook_event_name: 'PostToolUse', ...data });
+    failAcknowledgement(new Error('UI acknowledgement unavailable'));
+    await expect(response).resolves.toMatchObject({ ok: false, errorCode: 'permission_response_failed' });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(outcome).toBe('allowed');
+    expect(client.agentState.completedRequests[data.tool_use_id]).toMatchObject({
+      status: 'approved', reason: 'Approved in Claude terminal',
+    });
+    bridge.dispose();
+  });
+
+  it('rejects the disposed local waiter on failed cancellation admission and retains its occurrence for retirement retry', async () => {
+    const { session, client } = createPermissionHandlerSessionStub('local-dispose-admission-failure');
+    const bridge = new ClaudeLocalPermissionBridge(session);
+    bridge.activate();
+    const hook = bridge.handlePermissionHook({
+      hook_event_name: 'PermissionRequest', tool_name: 'Write', tool_input: {}, tool_use_id: 'dispose-failed',
+    });
+    let outcome = 'pending';
+    void hook.then(() => { outcome = 'allowed'; }, () => { outcome = 'canceled'; });
+    await vi.advanceTimersByTimeAsync(0);
+    const admit = client.updateAgentStateRequestSettlement.bind(client);
+    client.updateAgentStateRequestSettlement = async () => { throw new Error('journal unavailable'); };
+    bridge.dispose();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(outcome).toBe('canceled');
+    expect(client.agentState.requests['dispose-failed']).toBeDefined();
+    client.updateAgentStateRequestSettlement = admit;
+    bridge.dispose();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(client.agentState.completedRequests['dispose-failed']).toMatchObject({ status: 'canceled' });
+    expect(client.agentState.requests['dispose-failed']).toBeUndefined();
+  });
+
   it('keeps a failed UI approval retryable before releasing its native hook', async () => {
     const { session, client } = createPermissionHandlerSessionStub('local-approval-retry');
     const bridge = new ClaudeLocalPermissionBridge(session);
@@ -94,6 +209,24 @@ describe('ClaudeLocalPermissionBridge', () => {
       source: CLAUDE_LOCAL_PERMISSION_BRIDGE_REQUEST_SOURCE,
     });
     expect(client.agentState.requests.other_owner_question).toBeDefined();
+  });
+
+  it('retires source-only requests added after activation when disposed', async () => {
+    const { session, client } = createPermissionHandlerSessionStub('session-local-disposal-orphan');
+    const bridge = new ClaudeLocalPermissionBridge(session);
+    bridge.activate();
+    await vi.advanceTimersByTimeAsync(0);
+    const request = { tool: 'Bash', arguments: {}, createdAt: 1 };
+    const claimed = { ...request, source: CLAUDE_LOCAL_PERMISSION_BRIDGE_REQUEST_SOURCE,
+      permissionResponseClaimV1: { owner: 'other-runtime' } };
+    client.agentState.requests = {
+      orphan: { ...request, source: CLAUDE_LOCAL_PERMISSION_BRIDGE_REQUEST_SOURCE },
+      background: request, claimed,
+    };
+    bridge.dispose();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(client.agentState.completedRequests.orphan).toMatchObject({ status: 'canceled' });
+    expect(client.agentState.requests).toEqual({ background: request, claimed });
   });
 
   it('leaves a source-owned opaque claimed request outstanding through activation and disposal', async () => {

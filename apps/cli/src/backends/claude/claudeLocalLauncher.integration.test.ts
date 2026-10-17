@@ -158,7 +158,8 @@ function createLocalHarness(options?: {
     sessionId: 'happy_sess_1',
     keepAlive: vi.fn(),
     updateMetadata: vi.fn(),
-    updateAgentState: vi.fn(),
+    updateAgentStateRequestSettlement: vi.fn(async () => {}),
+      updateAgentState: vi.fn(),
     sessionTurnLifecycle: {
       failTurn: vi.fn(async () => {}),
     },

@@ -71,7 +71,9 @@ describe("publishSessionPublisherLifecycleUpdate", () => {
         expect(emitUpdate).toHaveBeenCalledWith(expect.objectContaining({
             payload: expect.objectContaining({
                 seq: 20,
-                body: expect.objectContaining({ active: false, activeAt: 130 }),
+                body: expect.objectContaining({
+                    active: false, activeAt: 130,
+                }),
             }),
         }));
     });

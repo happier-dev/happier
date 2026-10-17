@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
@@ -17,6 +17,7 @@ import {
   createApiSessionSocketStub,
 } from '@/testkit/backends/apiSessionSocketHarness';
 import type { ACPMessageData } from './sessionMessageTypes';
+import type { AgentState } from '@/api/types';
 import type { createSessionSocketTransport } from './connection/createSessionSocketTransport';
 import type { createUserScopedSocket } from './sockets';
 
@@ -197,10 +198,396 @@ function createDeferred<T>(): Readonly<{
   return { promise, resolve, reject };
 }
 
+async function seedEncryptedSettlementWithFollowingTurn(sessionId: string, value: unknown, key: Uint8Array) {
+  const { encrypt, encodeBase64 } = await import('@/api/encryption');
+  const { saveSessionMutationOutbox } = await import('./mutations/sessionMutationPersistence');
+  const { createSessionTurnMutation } = await import('./mutations/sessionMutationTypes');
+  const settlement = {
+    kind: 'agent_state_request_settlement',
+    mutationId: 'settlement',
+    payload: {
+      v: 1, source: 'agent_state_request_settlement', sessionId, mutationId: 'settlement',
+      content: { t: 'encrypted', c: encodeBase64(encrypt(key, 'legacy', value)) },
+    },
+    createdAt: 100, attempts: 0, nextAttemptAt: 0,
+  } as const;
+  const turn = createSessionTurnMutation({
+    sessionId, mutationId: 'following-turn', action: 'begin', turnId: 'turn', observedAt: 101,
+  });
+  await saveSessionMutationOutbox(await createRuntimePersistenceContext(sessionId), [settlement, {
+    kind: 'session_turn', mutationId: turn.mutationId, payload: turn,
+    createdAt: 101, attempts: 0, nextAttemptAt: 0,
+  }]);
+  return settlement;
+}
+
 const taskCompleteMessage = { type: 'task_complete', id: 'turn-1' } satisfies ACPMessageData;
 const reusableUnknownTurnId = ['primary', 'runtime'].join('-') + ':s1:unknown';
 
 describe('ApiSessionClient durable mutation outbox', () => {
+  it('acknowledges a fast-start permission through the attached Deferred client before resolving its provider', async () => {
+    const request = { tool: 'Write', arguments: {}, createdAt: 1 };
+    let serverState: AgentState = {};
+    let version = 0;
+    sessionSocketStub = createApiSessionSocketStub({ connected: true, emitWithAck: async (event, payload) => {
+      if (event !== 'update-state') return { ok: true };
+      const value = payload as { agentState: string };
+      serverState = JSON.parse(value.agentState);
+      return { result: 'success', version: ++version, agentState: value.agentState };
+    } });
+    userSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
+    const { ApiSessionClient } = await import('./sessionClient');
+    const { DeferredApiSessionClient } = await import('@/agent/runtime/startup/DeferredApiSessionClient');
+    const { AgentStateRequestStore } = await import('@/agent/permissions/agentStateRequestStore');
+    const { createPermissionRequestCoordinator } = await import('@/agent/permissions/permissionRequestCoordinator');
+    const deferred = new DeferredApiSessionClient({
+      placeholderSessionId: 'PID-permission', limits: { maxEntries: 10, maxBytes: 10_000 },
+    });
+    const coordinator = createPermissionRequestCoordinator<boolean>({ store: new AgentStateRequestStore({ session: deferred, logPrefix: '[Test]' }) });
+    const provider = coordinator.requestDecision({ requestId: 'permission', toolName: request.tool, toolInput: request.arguments, createdAt: 1 });
+    void provider.catch(() => undefined);
+    const client = new ApiSessionClient('tok', createPlainSessionFixture({ id: 's-deferred-permission' }));
+    try {
+      // Match the production Claude fast-start attachment boundary in runClaude.
+      await deferred.attach(client as unknown as import('@/agent/runtime/startup/DeferredApiSessionClient').DeferredApiSessionTarget);
+      await expect.poll(() => serverState.requests?.permission).toEqual(expect.objectContaining(request));
+      await expect(coordinator.completeRpcResponse({
+        context: coordinator.getResponseContext('permission')!,
+        completion: { result: true, completedRequest: { status: 'approved' } },
+      })).resolves.toBe(true);
+      await expect(provider).resolves.toBe(true);
+      expect(serverState.requests?.permission).toBeUndefined();
+      expect(serverState.completedRequests?.permission.status).toBe('approved');
+    } finally {
+      coordinator.cancelRequest('permission', 'test cleanup');
+      await client.close();
+    }
+  });
+
+  it('finishes client close cleanup while returning a concurrent settlement admission failure to its caller', async () => {
+    sessionSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
+    userSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
+    const { ApiSessionClient } = await import('./sessionClient');
+    const request = { tool: 'Write', arguments: {}, createdAt: 1 };
+    const client = new ApiSessionClient('tok', createPlainSessionFixture({
+      id: 's-close-failed-admission', agentState: { requests: { request } },
+    }));
+    let closed = false;
+    client.on('local-closed', () => { closed = true; });
+    const admission = client.updateAgentStateRequestSettlement(() => ({
+      requests: {}, completedRequests: { request: { ...request, completedAt: 2, status: 'canceled' } },
+    }));
+    const rejected = expect(admission).rejects.toThrow('requires account credentials');
+    try {
+      await expect(client.close()).resolves.toBeUndefined();
+      await rejected;
+      expect(closed).toBe(true);
+      expect(userSocketStub.close).toHaveBeenCalledOnce();
+      expect(supervisorControl?.getState().phase).toBe('shutting_down');
+    } finally {
+      await rejected;
+      if (!closed) await client.close();
+    }
+  });
+
+  it('quarantines an authenticated invalid settlement without blocking the following turn or replaying it after restart', async () => {
+    const { writeCredentialsLegacy } = await import('@/persistence');
+    const key = new Uint8Array(32).fill(7);
+    await writeCredentialsLegacy({ secret: key, token: 'tok' });
+    const sessionId = 's-invalid-settlement';
+    const mutation = await seedEncryptedSettlementWithFollowingTurn(sessionId, { privateInvalidPayload: 'secret' }, key);
+    const actions: string[] = [];
+    const makeSocket = () => createApiSessionSocketStub({ connected: true, emitWithAck: async (event) => {
+      if (event === 'session-turn-mutation') actions.push(event);
+      return { ok: true };
+    } });
+    sessionSocketStub = makeSocket();
+    userSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
+    const { ApiSessionClient } = await import('./sessionClient');
+    const client = new ApiSessionClient('tok', createPlainSessionFixture({ id: sessionId }));
+    try {
+      await expect.poll(() => readPersistedOutboxMutations(sessionId)).toEqual([]);
+      expect(actions).toEqual(['session-turn-mutation']);
+      const context = await createRuntimePersistenceContext(sessionId);
+      const deadLetters = JSON.parse(await readFile(context.paths.deadLetterPath, 'utf8'));
+      expect(deadLetters.entries).toEqual([expect.objectContaining({
+        reason: 'permanent_invalid_payload',
+        queuedMutation: expect.objectContaining({ payload: mutation.payload }),
+      })]);
+      expect(JSON.stringify(deadLetters)).not.toContain('privateInvalidPayload');
+      expect(JSON.stringify(deadLetters)).not.toContain('secret');
+    } finally {
+      await client.close();
+    }
+    sessionSocketStub = makeSocket();
+    const restarted = new ApiSessionClient('tok', createPlainSessionFixture({ id: sessionId }));
+    try {
+      await restarted.flush();
+      expect(await readPersistedOutboxMutations(sessionId)).toEqual([]);
+      expect(actions).toEqual(['session-turn-mutation']);
+    } finally {
+      await restarted.close();
+    }
+  });
+
+  it('retains an undecryptable settlement and delivers it with the following turn after correct-key reconstruction', async () => {
+    const { writeCredentialsLegacy } = await import('@/persistence');
+    const key = new Uint8Array(32).fill(7);
+    await writeCredentialsLegacy({ secret: new Uint8Array(32).fill(8), token: 'tok' });
+    const sessionId = 's-wrong-key-settlement';
+    const completed = { tool: 'Write', arguments: { path: 'private' }, createdAt: 1, completedAt: 2, status: 'canceled' };
+    const mutation = await seedEncryptedSettlementWithFollowingTurn(sessionId, {
+      v: 1, entries: [{ requestId: 'request', completed, removeRequest: true }],
+    }, key);
+    let state: AgentState = { requests: { request: { tool: 'Write', arguments: { path: 'private' }, createdAt: 1 } } };
+    const actions: string[] = [];
+    const makeSocket = () => createApiSessionSocketStub({ connected: true, emitWithAck: async (event, payload) => {
+      if (event === 'update-state') {
+        const request = payload as { agentState: string };
+        state = JSON.parse(request.agentState);
+        return { result: 'success', version: 1, agentState: request.agentState };
+      }
+      if (event === 'session-turn-mutation') actions.push(event);
+      return { ok: true };
+    } });
+    sessionSocketStub = makeSocket();
+    userSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
+    const { ApiSessionClient } = await import('./sessionClient');
+    const client = new ApiSessionClient('tok', createPlainSessionFixture({ id: sessionId, agentState: state }));
+    try {
+      await client.flush();
+      expect(await readPersistedOutboxMutations(sessionId)).toEqual([
+        expect.objectContaining({ payload: mutation.payload }),
+        expect.objectContaining({ kind: 'session_turn' }),
+      ]);
+      expect(actions).toEqual([]);
+      const context = await createRuntimePersistenceContext(sessionId);
+      await expect(readFile(context.paths.deadLetterPath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally {
+      await client.close();
+    }
+    await writeCredentialsLegacy({ secret: key, token: 'tok' });
+    sessionSocketStub = makeSocket();
+    const restarted = new ApiSessionClient('tok', createPlainSessionFixture({ id: sessionId, agentState: state }));
+    try {
+      await expect.poll(() => readPersistedOutboxMutations(sessionId)).toEqual([]);
+      expect(state.requests).toEqual({});
+      expect(state.completedRequests?.request).toEqual(completed);
+      expect(actions).toEqual(['session-turn-mutation']);
+    } finally {
+      await restarted.close();
+    }
+  });
+
+  it.each(['legacy', 'tokenOnly'] as const)('does not retain a %s pre-effect UI decision for later journal replay after acknowledgement failure', async (variant) => {
+    const { writeCredentialsLegacy, writeCredentialsTokenOnly } = await import('@/persistence');
+    const token = `header.${Buffer.from(JSON.stringify({ sub: 'settlement-account' })).toString('base64url')}.sig`;
+    if (variant === 'legacy') await writeCredentialsLegacy({ secret: new Uint8Array(32).fill(7), token });
+    else await writeCredentialsTokenOnly({ token });
+    const request = { tool: 'Write', kind: 'permission', arguments: {}, createdAt: 1 };
+    let serverState: AgentState = { requests: { ui: request } };
+    let serverVersion = 0;
+    let online = true;
+    sessionSocketStub = createApiSessionSocketStub({ connected: true, emitWithAck: async (event, payload) => {
+      if (event === 'ping') return { v: 1 };
+      if (event !== 'update-state') return { ok: true };
+      if (!online) return { result: 'error' };
+      const value = payload as { expectedVersion: number; agentState: string };
+      if (value.expectedVersion !== serverVersion) return {
+        result: 'version-mismatch', version: serverVersion, agentState: JSON.stringify(serverState),
+      };
+      serverState = JSON.parse(value.agentState);
+      return { result: 'success', version: ++serverVersion, agentState: value.agentState };
+    } });
+    userSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
+    const { ApiSessionClient } = await import('./sessionClient');
+    const { AgentStateRequestStore } = await import('@/agent/permissions/agentStateRequestStore');
+    const { createPermissionRequestCoordinator } = await import('@/agent/permissions/permissionRequestCoordinator');
+    const client = new ApiSessionClient(token, createPlainSessionFixture({ id: 's-ui-failure', agentState: serverState }));
+    const coordinator = createPermissionRequestCoordinator<boolean>({ store: new AgentStateRequestStore({ session: client, logPrefix: '[Test]' }) });
+    const provider = coordinator.requestDecision({ requestId: 'ui', toolName: request.tool, toolInput: request.arguments, createdAt: 1 });
+    let outcome = 'pending';
+    void provider.then(() => { outcome = 'allowed'; }, () => { outcome = 'canceled'; });
+    try {
+      await expect.poll(() => serverVersion).toBeGreaterThan(0);
+      online = false;
+      await expect(coordinator.completeRpcResponse({
+        context: coordinator.getResponseContext('ui')!,
+        completion: { result: true, completedRequest: { status: 'approved' } },
+      })).rejects.toThrow();
+      online = true;
+      await client.flush();
+      expect(await readPersistedOutboxMutations('s-ui-failure')).toEqual([]);
+      expect(serverState.requests?.ui).toBeDefined();
+      expect(serverState.completedRequests?.ui).toBeUndefined();
+      expect(outcome).toBe('pending');
+    } finally {
+      coordinator.cancelRequest('ui', 'test cleanup');
+      await client.close();
+    }
+  });
+
+  it.each(['before-handler', 'ack'] as const)('journals automatic history after a %s failure and replays it after same-session reconstruction', async (failure) => {
+    const { writeCredentialsLegacy } = await import('@/persistence');
+    await writeCredentialsLegacy({ secret: new Uint8Array(32).fill(7), token: 'tok' });
+    let online = false;
+    let serverState: AgentState = { requests: {} };
+    let serverVersion = 0;
+    const automatic = { tool: 'Write', arguments: { path: 'private-automatic' }, createdAt: 1, completedAt: 2, status: 'approved' as const };
+    const makeSocket = () => createApiSessionSocketStub({ connected: true, emitWithAck: async (event, payload) => {
+      if (event === 'ping') return { v: 1 };
+      if (event !== 'update-state') return { ok: true };
+      if (!online) return { result: 'error' };
+      const request = payload as { expectedVersion: number; agentState: string };
+      if (request.expectedVersion !== serverVersion) return {
+        result: 'version-mismatch', version: serverVersion, agentState: JSON.stringify(serverState),
+      };
+      serverState = JSON.parse(request.agentState);
+      return { result: 'success', version: ++serverVersion, agentState: request.agentState };
+    } });
+    const connectionReady = createDeferred<void>();
+    if (failure === 'before-handler') {
+      useRealSupervisor = true;
+      sessionConnectionGate = connectionReady.promise;
+      vi.stubEnv('HAPPIER_SESSION_SOCKET_CONNECT_TIMEOUT_MS', '5');
+    }
+    sessionSocketStub = makeSocket();
+    sessionSocketStub.connected = failure !== 'before-handler';
+    userSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
+    const { ApiSessionClient } = await import('./sessionClient');
+    const first = new ApiSessionClient('tok', createPlainSessionFixture({ id: 's-auto-history', agentState: serverState }));
+    try {
+      await expect(first.updateAgentState((state) => ({ ...state, completedRequests: { automatic } }), {
+        retainPermissionCompletionsOnFailure: true,
+      })).rejects.toThrow();
+      expect(await readPersistedOutboxMutations('s-auto-history'))
+        .toEqual([expect.objectContaining({ kind: 'agent_state_request_settlement' })]);
+    } finally {
+      connectionReady.resolve();
+      await first.close();
+    }
+    useRealSupervisor = false;
+    sessionConnectionGate = null;
+    online = true;
+    sessionSocketStub = makeSocket();
+    const restarted = new ApiSessionClient('tok', createPlainSessionFixture({ id: 's-auto-history', agentState: serverState }));
+    try {
+      await expect.poll(() => serverState.completedRequests?.automatic).toEqual(automatic);
+      await expect.poll(async () => await readPersistedOutboxMutations('s-auto-history')).toEqual([]);
+    } finally {
+      await restarted.close();
+    }
+  });
+
+  it('fails request settlement admission without credentials and drains cancellation custody during close', async () => {
+    sessionSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { result: 'error' } });
+    userSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
+    const { ApiSessionClient } = await import('./sessionClient');
+    const request = { tool: 'Write', arguments: { path: 'private' }, createdAt: 10 };
+    const client = new ApiSessionClient('tok', createPlainSessionFixture({ id: 's-close-settlement', agentState: {
+      requests: { foreground: request, background: { ...request, createdAt: 11 } },
+    } }));
+    const { AgentStateRequestStore } = await import('@/agent/permissions/agentStateRequestStore');
+    const store = new AgentStateRequestStore({ session: client, logPrefix: '[Test]' });
+    await expect(store.completeRequest({ requestId: 'foreground', status: 'canceled' }))
+      .rejects.toThrow('requires account credentials');
+    const { writeCredentialsLegacy } = await import('@/persistence');
+    await writeCredentialsLegacy({ secret: new Uint8Array(32).fill(9), token: 'tok' });
+    store.cancelAllRequests({ reason: 'source retired', requestIds: ['foreground'] });
+    await client.close();
+    const queued = await readPersistedOutboxMutations('s-close-settlement');
+    expect(queued).toEqual(expect.arrayContaining([expect.objectContaining({ kind: 'agent_state_request_settlement' })]));
+    expect(JSON.stringify(queued)).not.toContain('private');
+  });
+
+  it.each(['legacy', 'dataKey', 'tokenOnly'] as const)('recovers %s encrypted exact request settlement after restart and rebases on concurrent requests', async (variant) => {
+    const { writeCredentialsLegacy, writeCredentialsDataKey, writeCredentialsTokenOnly, readCredentials } = await import('@/persistence');
+    const token = `header.${Buffer.from(JSON.stringify({ sub: 'settlement-account' })).toString('base64url')}.sig`;
+    if (variant === 'legacy') await writeCredentialsLegacy({ secret: new Uint8Array(32).fill(7), token });
+    else if (variant === 'dataKey') await writeCredentialsDataKey({ publicKey: new Uint8Array(32).fill(8), machineKey: new Uint8Array(32).fill(9), token });
+    else await writeCredentialsTokenOnly({ token });
+    const foreground = { tool: 'Write', arguments: { path: 'private-foreground-path' }, createdAt: 10 };
+    const background = { tool: 'Write', arguments: { path: 'private-background-path' }, createdAt: 11 };
+    let serverState: AgentState = { requests: { foreground, background }, completedRequests: {} };
+    let serverVersion = 0;
+    let online = false;
+    const publishedCounts: unknown[] = [];
+    const makeSocket = () => createApiSessionSocketStub({
+      connected: true,
+      emitWithAck: async (event, payload) => {
+        if (event === 'ping') return { v: 1 };
+        if (event !== 'update-state') return { ok: true };
+        if (!online) return { result: 'error' };
+        const request = payload as { expectedVersion: number; agentState: string; activitySummaryV1: unknown };
+        if (request.expectedVersion !== serverVersion) {
+          return { result: 'version-mismatch', version: serverVersion, agentState: JSON.stringify(serverState) };
+        }
+        serverState = JSON.parse(request.agentState);
+        serverVersion += 1;
+        publishedCounts.push(request.activitySummaryV1);
+        return { result: 'success', version: serverVersion, agentState: request.agentState };
+      },
+    });
+    sessionSocketStub = makeSocket();
+    userSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
+    const { ApiSessionClient } = await import('./sessionClient');
+    const { AgentStateRequestStore } = await import('@/agent/permissions/agentStateRequestStore');
+    const first = new ApiSessionClient(token, createPlainSessionFixture({ id: 's-settlement', agentState: serverState }));
+    try {
+      await new AgentStateRequestStore({ session: first, logPrefix: '[Test]' }).completeRequest({
+        requestId: 'foreground', status: variant === 'tokenOnly' ? 'canceled' : 'approved',
+        ...(variant === 'tokenOnly' ? {} : { decision: 'approved', observedCompletion: true }),
+      });
+    } catch (error) {
+      await first.close();
+      throw error;
+    }
+    const saved = JSON.stringify(await readPersistedOutboxMutations('s-settlement'));
+    expect(saved).toContain('agent_state_request_settlement');
+    expect(saved).not.toContain('private-foreground-path');
+    expect(saved).not.toContain('private-background-path');
+    await first.close();
+
+    // The new process has an older snapshot; the server also gained another request.
+    serverState.requests = { ...serverState.requests, newer: { ...foreground, createdAt: 30 } };
+    serverVersion += 1;
+    online = true;
+    if (variant === 'tokenOnly') {
+      const { configuration } = await import('@/configuration');
+      const identity = await readFile(configuration.installationIdentityFile, 'utf8');
+      await rm(configuration.installationIdentityFile);
+      sessionSocketStub = makeSocket();
+      const missingIdentity = new ApiSessionClient(token, createPlainSessionFixture({
+        id: 's-settlement', agentState: { requests: { foreground, background } },
+      }));
+      try {
+        await missingIdentity.flush();
+        expect(await readPersistedOutboxMutations('s-settlement')).toEqual([
+          expect.objectContaining({ kind: 'agent_state_request_settlement', payload: expect.objectContaining({
+            content: expect.objectContaining({ t: 'installation_encrypted_v1' }),
+          }) }),
+        ]);
+        await expect(readFile(configuration.installationIdentityFile)).rejects.toMatchObject({ code: 'ENOENT' });
+        expect(serverState.requests?.foreground).toEqual(foreground);
+      } finally {
+        await missingIdentity.close();
+        await writeFile(configuration.installationIdentityFile, identity, { mode: 0o600 });
+      }
+      // Same-account authorization refresh must not rotate the local encryption key.
+      await writeCredentialsTokenOnly({ token: `header.${Buffer.from(JSON.stringify({ sub: 'settlement-account', refreshed: true })).toString('base64url')}.sig` });
+      expect((await readCredentials())?.encryption).toBeNull();
+    }
+    sessionSocketStub = makeSocket();
+    const restarted = new ApiSessionClient(token, createPlainSessionFixture({
+      id: 's-settlement', agentState: { requests: { foreground, background } }, agentStateVersion: 0,
+    }));
+    await expect.poll(async () => await readPersistedOutboxMutations('s-settlement')).toEqual([]);
+    expect(serverState.requests).toEqual({ background, newer: { ...foreground, createdAt: 30 } });
+    expect(serverState.completedRequests).toMatchObject({ foreground: { status: variant === 'tokenOnly' ? 'canceled' : 'approved' } });
+    expect(publishedCounts).toContainEqual({ pendingPermissionRequestCount: 2, pendingUserActionRequestCount: 0 });
+    await restarted.close();
+  });
+
   beforeEach(async () => {
     vi.resetModules();
     vi.mocked(axios.get).mockReset();
@@ -221,7 +608,12 @@ describe('ApiSessionClient durable mutation outbox', () => {
   });
 
   afterEach(async () => {
+    // The file logger owns a buffered writer outside the client lifecycle. Drain
+    // its timer before removing the test's home, so it cannot recreate the folder.
+    const { logger } = await import('@/ui/logger');
+    logger.flushSync();
     vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
     process.env.HAPPIER_HOME_DIR = originalHappyHomeDir;
     if (tempHomeDir) {
       await rm(tempHomeDir, { recursive: true, force: true });

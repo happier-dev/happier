@@ -27,6 +27,16 @@ import {
     type CommittedClaudeJsonlMessageBaseline,
 } from '@/backends/claude/utils/claudeJsonlMessageKey';
 import { randomUUID } from 'node:crypto';
+import {
+    openAgentStateRequestSettlement,
+    sealAgentStateRequestSettlement,
+    type AgentStateRequestSettlementEncryptionScope,
+} from './agentStateRequestSettlementEncryption';
+import {
+    AgentStateRequestSettlementSchema,
+    applyAgentStateRequestSettlement,
+    buildAgentStateRequestSettlement,
+} from './agentStateRequestSettlement';
 import { AsyncLock } from '@/utils/lock';
 import { RpcHandlerManager } from '../rpc/RpcHandlerManager';
 import { registerSessionHandlers } from '@/rpc/handlers/registerSessionHandlers';
@@ -285,7 +295,6 @@ import { normalizeExecutionRunWaitTimeoutMs } from '@/session/services/execution
 import { createEventShapeLoggerForLog } from '@/diagnostics/eventShapeForLog';
 import { runSupervisedRequest } from '@/api/connection/requestSupervision/runSupervisedRequest';
 import { updateAgentStateBestEffort, updateMetadataBestEffort, type AgentStateWriteOptions } from './sessionWritesBestEffort';
-import { AgentStateCompletionRecovery } from './agentStateCompletionRecovery';
 import { readCliClientUpgradeRequired } from '@/api/clientCompatibility/cliClientCompatibility';
 import { normalizeAgentPromptPayload } from '@/agent/core/AgentPromptPayload';
 import type {
@@ -579,6 +588,7 @@ export class ApiSessionClient extends EventEmitter {
     private static readonly STARTUP_MESSAGE_CATCH_UP_RETRY_DELAYS_MS = [250, 1_000, 2_500] as const;
 
     private readonly token: string;
+    private readonly requestSettlementEncryptionScope: AgentStateRequestSettlementEncryptionScope;
     readonly sessionId: string;
     private metadata: Metadata | null;
     private runtimeWorkingDirectory: string | null = null;
@@ -596,7 +606,6 @@ export class ApiSessionClient extends EventEmitter {
     private executionRunPermissionHandler: CodexLikePermissionHandler | null = null;
     private readonly rpcLifecycleRegistrations: RpcLifecycleRegistration[] = [];
     private agentStateLock = new AsyncLock();
-    private readonly agentStateCompletionRecovery = new AgentStateCompletionRecovery(() => this.agentState);
     private metadataLock = new AsyncLock();
     private encryptionKey: Uint8Array;
     private encryptionVariant: 'legacy' | 'dataKey';
@@ -742,7 +751,7 @@ export class ApiSessionClient extends EventEmitter {
         },
     });
     private daemonTurnLifecycleNotifyTail: Promise<void> = Promise.resolve();
-    private readonly pendingSessionTurnWrites = new Set<Promise<void>>();
+    private readonly pendingDurableSessionWrites = new Set<Promise<void>>();
     private readonly committedUserMessageSeqTracker = new CommittedUserMessageSeqTracker();
     private readonly sessionMutationOutbox: SessionMutationOutbox;
     private readonly runtimeActivitySnapshotPublisher: RuntimeActivitySnapshotSessionMutationPublisher;
@@ -948,6 +957,10 @@ export class ApiSessionClient extends EventEmitter {
 	        super()
 	        this.token = token;
 	        this.sessionId = session.id;
+            this.requestSettlementEncryptionScope = {
+                token, sessionId: session.id, serverId: configuration.activeServerId,
+                installationIdentityPath: configuration.installationIdentityFile,
+            };
 	        this.metadata = normalizeSessionMetadataForRead(session.metadata);
 	        this.metadataVersion = session.metadataVersion;
             this.sessionSocketMachineId = resolveSessionSocketMachineIdForBootstrap(session.metadata);
@@ -1088,6 +1101,22 @@ export class ApiSessionClient extends EventEmitter {
             sessionId: this.sessionId,
             getSocket: () => this.socket as any,
             requestReconnect: (reason) => this.kickSessionSocketReconnectForDurableMutation(reason),
+            deliverAgentStateRequestSettlement: async (mutation) => {
+                const decrypted = await openAgentStateRequestSettlement(this.requestSettlementEncryptionScope, mutation.content);
+                // The crypto boundary also returns null for a wrong key. Retain that
+                // ciphertext for recovery rather than permanently quarantining it.
+                if (decrypted === null) throw new Error('Request settlement recovery could not decrypt payload');
+                const settlement = AgentStateRequestSettlementSchema.safeParse(decrypted);
+                if (!settlement.success) {
+                    logger.infoFile('[API] Invalid durable request settlement payload', {
+                        sessionId: this.sessionId,
+                        mutationId: mutation.mutationId,
+                    });
+                    return { status: 'permanent_invalid_payload', reason: 'invalid_agent_state_request_settlement' };
+                }
+                await this.updateAgentState((state) => applyAgentStateRequestSettlement(state, settlement.data));
+                return { status: 'delivered', path: 'socket' };
+            },
         });
         this.runtimeActivitySnapshotPublisher = createRuntimeActivitySnapshotSessionMutationPublisher({
             sessionId: this.sessionId,
@@ -1363,17 +1392,6 @@ export class ApiSessionClient extends EventEmitter {
                 const isReconnect = this.hasConnectedOnce;
                 this.hasConnectedOnce = true;
                 this.sessionConnectionEpoch += 1;
-                // Permission completion owns only the Agent-state CAS; pending-input
-                // readiness may still be waiting for an independent runtime publisher.
-                if (this.agentStateCompletionRecovery.hasPending()) {
-                    await this.updateAgentState((state) => state).catch(() => {
-                        logger.infoFile('[API] session_permission_completion_replay_failed', {
-                            sessionId: this.sessionId,
-                            operation: 'update-state',
-                        });
-                    });
-                }
-
                 if (!await this.convergePendingInputReadiness?.(() => {
                     if (this.shouldKeepUserSocketConnected()) {
                         this.kickUserSocketConnect();
@@ -5742,10 +5760,18 @@ export class ApiSessionClient extends EventEmitter {
      */
     updateAgentState(handler: (state: AgentState) => AgentState, options?: AgentStateWriteOptions): Promise<void> {
         logger.debugLargeJson('Updating agent state', this.agentState);
-        return this.agentStateLock.inLock(() => this.agentStateCompletionRecovery.runUpdate({
-            handler,
-            retainPermissionCompletionsOnFailure: options?.retainPermissionCompletionsOnFailure,
-            write: async (update) => {
+        const update = this.agentStateLock.inLock(async () => {
+            let captured: ReturnType<typeof buildAgentStateRequestSettlement> = { v: 1, entries: [] };
+            let handlerInvoked = false;
+            const capture = (state: AgentState) => {
+                handlerInvoked = true;
+                const updated = handler(state);
+                if (options?.retainPermissionCompletionsOnFailure) {
+                    captured = buildAgentStateRequestSettlement(state, updated, { automaticHistory: true });
+                }
+                return updated;
+            };
+            try {
                 await this.waitForSessionSocketOnlineForAckWrite('update-state');
                 await updateSessionAgentStateWithAck({
                     socket: this.socket,
@@ -5755,28 +5781,76 @@ export class ApiSessionClient extends EventEmitter {
                     encryptionKey: this.encryptionKey,
                     encryptionVariant: this.encryptionVariant,
                     getAgentState: () => this.agentState,
-                    setAgentState: (agentState) => {
-                        this.agentState = agentState;
-                    },
+                    setAgentState: (agentState) => { this.agentState = agentState; },
                     getAgentStateVersion: () => this.agentStateVersion,
-                    setAgentStateVersion: (version) => {
-                        this.agentStateVersion = version;
-                    },
+                    setAgentStateVersion: (version) => { this.agentStateVersion = version; },
                     syncSessionSnapshotFromServer: async () => {
                         await this.syncSessionSnapshotFromServer({ reason: 'waitForMetadataUpdate' });
                     },
-                    handler: update,
+                    handler: capture,
                 });
-            },
-        }).catch((error: unknown) => {
-            if (options?.retainPermissionCompletionsOnFailure && this.agentStateCompletionRecovery.hasPending()) {
-                logger.infoFile('[API] session_permission_completion_deferred', {
-                    sessionId: this.sessionId,
-                    operation: 'update-state',
-                });
+            } catch (error) {
+                if (options?.retainPermissionCompletionsOnFailure) {
+                    try {
+                        // Offline admission can fail before the acknowledged updater calls its
+                        // handler. The same lock still owns this snapshot and exact history delta.
+                        if (!handlerInvoked) capture(this.agentState ?? {});
+                        if (captured.entries.length > 0) {
+                            await this.enqueueAgentStateRequestSettlement(captured);
+                            logger.infoFile('[API] session_permission_completion_deferred', {
+                                sessionId: this.sessionId, operation: 'update-state',
+                            });
+                        }
+                    } catch (retentionError) {
+                        logger.infoFile('[API] session_permission_completion_retention_failed', {
+                            sessionId: this.sessionId, operation: 'journal-agent-state-completion',
+                        });
+                        throw retentionError;
+                    }
+                }
+                throw error;
             }
-            throw error;
-        }));
+        });
+        if (options?.retainPermissionCompletionsOnFailure) {
+            // The caller still observes the normal write failure. Close drains the
+            // retention attempt, whose failure is reported above in the default log.
+            const tracked = update.catch(() => undefined);
+            this.pendingDurableSessionWrites.add(tracked);
+            void tracked.then(() => this.pendingDurableSessionWrites.delete(tracked));
+        }
+        return update;
+    }
+
+    /** Durable exact request completion; publication and unrelated state updates retain their owner. */
+    updateAgentStateRequestSettlement(
+        handler: (state: AgentState) => AgentState,
+    ): Promise<void> {
+        const admission = this.admitAgentStateRequestSettlement(handler);
+        const tracked = admission.catch(() => undefined);
+        this.pendingDurableSessionWrites.add(tracked);
+        void tracked.then(() => this.pendingDurableSessionWrites.delete(tracked));
+        return admission;
+    }
+
+    private async admitAgentStateRequestSettlement(handler: (state: AgentState) => AgentState): Promise<void> {
+        const settlement = await this.agentStateLock.inLock(async () => {
+            const state = this.agentState ?? {};
+            return buildAgentStateRequestSettlement(state, handler(state));
+        });
+        await this.enqueueAgentStateRequestSettlement(settlement);
+    }
+
+    private async enqueueAgentStateRequestSettlement(
+        settlement: ReturnType<typeof buildAgentStateRequestSettlement>,
+    ): Promise<void> {
+        if (settlement.entries.length === 0) return;
+        const content = await sealAgentStateRequestSettlement(this.requestSettlementEncryptionScope, settlement);
+        const result = await this.sessionMutationOutbox.enqueueAgentStateRequestSettlement({
+            v: 1, source: 'agent_state_request_settlement', sessionId: this.sessionId,
+            mutationId: randomUUID(),
+            content,
+        });
+        if (!result.persisted) throw new Error('Request settlement was not durably admitted');
     }
 
     private trackSessionTurnWrite(
@@ -5792,9 +5866,9 @@ export class ApiSessionClient extends EventEmitter {
                 error: serializeAxiosErrorForLog(error),
             });
         });
-        this.pendingSessionTurnWrites.add(tracked);
+        this.pendingDurableSessionWrites.add(tracked);
         void tracked.finally(() => {
-            this.pendingSessionTurnWrites.delete(tracked);
+            this.pendingDurableSessionWrites.delete(tracked);
         });
     }
 
@@ -5827,7 +5901,7 @@ export class ApiSessionClient extends EventEmitter {
         await Promise.all([
             this.messageCommitQueueTail.catch(() => undefined),
             this.sessionMutationOutbox.flush('flush').catch(() => undefined),
-            ...[...this.pendingSessionTurnWrites].map((update) => update.catch(() => undefined)),
+            ...this.pendingDurableSessionWrites,
         ]);
     }
 

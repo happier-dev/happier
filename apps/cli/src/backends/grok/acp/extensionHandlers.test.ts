@@ -89,6 +89,13 @@ class BaseBackedSession {
     return this.agentState;
   }
 
+  async updateAgentStateRequestSettlement(updater: Parameters<BaseBackedSession['updateAgentState']>[0]): Promise<void> {
+
+    await this.updateAgentState(updater);
+
+  }
+
+
   updateAgentState(updater: (state: typeof this.agentState) => typeof this.agentState): typeof this.agentState {
     this.agentState = updater(this.agentState);
     return this.agentState;
@@ -138,7 +145,7 @@ function createCoordinatedPermissionHandler(): Readonly<{
   const completedRequestIds: string[] = [];
   const store: PermissionRequestCoordinatorStore = {
     publishRequest: (request) => { outstanding.set(request.requestId, request); },
-    completeRequest: ({ requestId }) => {
+    completeRequest: async ({ requestId }) => {
       completedRequestIds.push(requestId);
       outstanding.delete(requestId);
     },

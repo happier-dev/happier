@@ -83,6 +83,7 @@ export type SessionUserMessageDeliveryInfo = Readonly<{
 
 export interface SessionClientPort {
   sessionId: string;
+  updateAgentStateRequestSettlement(updater: (state: AgentState) => AgentState): Promise<void>;
   rpcHandlerManager: RpcHandlerManagerLike;
   getOrCreatePermissionRpcRouter?(): SessionPermissionRpcRouter;
 

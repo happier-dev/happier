@@ -3,7 +3,7 @@ import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLo
 import { logger } from '@/ui/logger';
 
 export type AgentStateWriteOptions = Readonly<{
-  /** Retain decided permission outcomes for recovery in this live Session. */
+  /** Journal failed automatic permission history through the Session's canonical completion owner. */
   retainPermissionCompletionsOnFailure?: boolean;
 }>;
 

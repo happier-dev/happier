@@ -356,6 +356,9 @@ export type SessionV2 = {
   pendingCount?: number;
   pendingBlockedCount?: number;
   pendingVersion?: number;
+  pendingPermissionRequestCount?: number;
+  pendingUserActionRequestCount?: number;
+  pendingRequestObservedAt?: number | null;
   latestTurnStatus: PrimaryTurnStatusV1 | null;
   lastRuntimeIssue: SessionRuntimeIssueV1 | null;
 };
@@ -381,6 +384,9 @@ function parseSessionV2Common(value: unknown, context: string): SessionV2 {
   const pendingCount = value.pendingCount;
   const pendingBlockedCount = value.pendingBlockedCount;
   const pendingVersion = value.pendingVersion;
+  const pendingPermissionRequestCount = value.pendingPermissionRequestCount;
+  const pendingUserActionRequestCount = value.pendingUserActionRequestCount;
+  const pendingRequestObservedAt = value.pendingRequestObservedAt;
   const latestTurnStatus = parseLatestTurnStatus(value.latestTurnStatus, context);
   const lastRuntimeIssue = parseLastRuntimeIssue(value.lastRuntimeIssue, context);
 
@@ -420,6 +426,16 @@ function parseSessionV2Common(value: unknown, context: string): SessionV2 {
     throw new Error(`Invalid v2 session pendingVersion (${context})`);
   }
 
+  for (const count of [pendingPermissionRequestCount, pendingUserActionRequestCount]) {
+    if (count !== undefined && (typeof count !== 'number' || !Number.isInteger(count) || count < 0)) {
+      throw new Error(`Invalid v2 session pending request count (${context})`);
+    }
+  }
+  if (pendingRequestObservedAt !== undefined && pendingRequestObservedAt !== null
+    && (typeof pendingRequestObservedAt !== 'number' || !Number.isFinite(pendingRequestObservedAt) || pendingRequestObservedAt < 0)) {
+    throw new Error(`Invalid v2 session pendingRequestObservedAt (${context})`);
+  }
+
   return {
     id,
     seq,
@@ -435,6 +451,9 @@ function parseSessionV2Common(value: unknown, context: string): SessionV2 {
     ...(typeof pendingCount === 'number' ? { pendingCount } : {}),
     ...(typeof pendingBlockedCount === 'number' ? { pendingBlockedCount } : {}),
     ...(typeof pendingVersion === 'number' ? { pendingVersion } : {}),
+    ...(typeof pendingPermissionRequestCount === 'number' ? { pendingPermissionRequestCount } : {}),
+    ...(typeof pendingUserActionRequestCount === 'number' ? { pendingUserActionRequestCount } : {}),
+    ...(typeof pendingRequestObservedAt === 'number' || pendingRequestObservedAt === null ? { pendingRequestObservedAt } : {}),
     latestTurnStatus,
     lastRuntimeIssue,
   };

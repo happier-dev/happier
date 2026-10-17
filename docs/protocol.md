@@ -93,6 +93,10 @@ Field names below match on-wire payloads.
   - `body`: `{ t: "update-session", id, metadata?, agentState? }`
   - `metadata`: `{ value, version }` or null
   - `agentState`: `{ value, version }` or null
+  - Optional pending-request projections use `pendingPermissionRequestCount`, `pendingUserActionRequestCount`, and nullable `pendingRequestObservedAt`.
+  - Pending request counts describe the outstanding requests in Agent state, including independent execution runs. Foreground completion, cancellation, publisher close, and released-UI Stop preserve them; those lifecycle events do not own every request in the Session. The acknowledged Agent-state writer commits the request state and derived counts together, then publishes their committed projection.
+  - Development request-settlement delivery retains encrypted, request-specific completion intents in the existing CLI runtime mutation journal before releasing the provider waiter. Delivery merges each exact occurrence into current Agent state through the existing versioned writer; it preserves independent and newer requests. Normal delivery retries while the runtime is active, and a runtime reopening the same Session replays admitted intents after restart. Runtime journals remain runtime-owned; daemon terminal recovery does not take them over. This reliability improvement requires the updated CLI, uses the existing server wire contract, and is not a release availability claim.
+
 
 - `delete-session`
   - `body`: `{ t: "delete-session", sid }`

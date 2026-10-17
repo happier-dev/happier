@@ -39,6 +39,7 @@ import {
 } from './sessionMutationOutboxFailureHandling';
 import { withSessionMutationDeliverySlot } from './sessionMutationDeliveryLimiter';
 import type {
+    AgentStateRequestSettlementMutationV1,
     QueuedSessionMutation,
     RuntimeActivitySnapshotMutationV1,
     SessionTurnMutationV1,
@@ -103,6 +104,7 @@ export type RuntimeActivitySnapshotTail = Readonly<{
 }>;
 
 export type SessionMutationOutbox = Readonly<{
+    enqueueAgentStateRequestSettlement(mutation: AgentStateRequestSettlementMutationV1): Promise<SessionMutationEnqueueResult>;
     enqueueSessionTurn(mutation: SessionTurnMutationV1): Promise<void>;
     enqueueTranscriptMessage(mutation: TranscriptMessageAppendMutationV1): Promise<Readonly<{
         persisted: boolean;
@@ -135,6 +137,7 @@ export type CreateSessionMutationOutboxParams = Readonly<{
     sessionId: string;
     getSocket: () => SessionMutationSocket;
     requestReconnect: (reason: string) => void;
+    deliverAgentStateRequestSettlement?: (mutation: AgentStateRequestSettlementMutationV1) => Promise<SessionMutationDeliveryOutcome>;
 }>;
 
 export type CreateSessionMutationJournalParams = Readonly<{
@@ -145,6 +148,7 @@ export type CreateSessionMutationJournalParams = Readonly<{
     token: string;
     getSocket: () => SessionMutationSocket;
     requestReconnect: (reason: string) => void;
+    deliverAgentStateRequestSettlement?: (mutation: AgentStateRequestSettlementMutationV1) => Promise<SessionMutationDeliveryOutcome>;
     deliverRuntimeActivitySnapshot?: (
         mutation: RuntimeActivitySnapshotMutationV1,
     ) => Promise<SessionMutationDeliveryOutcome>;
@@ -233,6 +237,13 @@ export function createSessionMutationJournal(params: CreateSessionMutationJourna
             custody: params.custody,
             paths: params.paths,
             admission: params.admission,
+            deliverAgentStateRequestSettlement: async (mutation) => {
+                const capable = new Map([...handles].filter(([, handle]) => handle.deliverAgentStateRequestSettlement));
+                if (capable.size === 0) throw new Error('Request settlement delivery unavailable');
+                const handle = selectActiveOutboxHandle(capable);
+                if (!handle.deliverAgentStateRequestSettlement) throw new Error('Request settlement delivery unavailable');
+                return await handle.deliverAgentStateRequestSettlement(mutation);
+            },
             deliverRuntimeActivitySnapshot: async (mutation) => {
                 const candidateHandles = [...handles.values()].filter((handle) => (
                     handle.deliverRuntimeActivitySnapshot !== undefined
@@ -302,6 +313,10 @@ export function createSessionMutationJournal(params: CreateSessionMutationJourna
     };
 
     return {
+        enqueueAgentStateRequestSettlement: async (mutation) => await enqueueIfOpen(
+            () => sharedEntry.outbox.enqueueAgentStateRequestSettlement(mutation),
+            { persisted: false, delivered: false },
+        ),
         enqueueSessionTurn: async (mutation) => {
             await enqueueIfOpen(
                 () => sharedEntry.outbox.enqueueSessionTurn(mutation),
@@ -733,6 +748,12 @@ function createSessionMutationOutboxInstance(params: CreateSessionMutationJourna
     }
 
     async function deliver(mutation: QueuedSessionMutation): Promise<SessionMutationDeliveryOutcome> {
+        if (mutation.kind === 'agent_state_request_settlement') {
+            if (!params.deliverAgentStateRequestSettlement) {
+                return { status: 'retryable', reason: 'request_settlement_delivery_unavailable' };
+            }
+            return await params.deliverAgentStateRequestSettlement(mutation.payload);
+        }
         if (mutation.kind === 'session_turn') {
             const result = await deliverSessionTurnMutation({
                 token: params.token,
@@ -979,7 +1000,9 @@ function createSessionMutationOutboxInstance(params: CreateSessionMutationJourna
                         didChange = true;
                         break;
                     }
-                    logger.debug('[API] Durable session mutation delivery failed', {
+                    const reportDeliveryFailure = mutation.kind === 'agent_state_request_settlement'
+                        ? logger.infoFile.bind(logger) : logger.debug.bind(logger);
+                    reportDeliveryFailure('[API] Durable session mutation delivery failed', {
                         sessionId: params.sessionId,
                         mutationKind: mutation.kind,
                         mutationId: mutation.mutationId,
@@ -1191,6 +1214,13 @@ function createSessionMutationOutboxInstance(params: CreateSessionMutationJourna
     });
 
     return {
+        async enqueueAgentStateRequestSettlement(mutation) {
+            if (mutation.sessionId !== params.sessionId) throw new Error('Request settlement sessionId must match journal');
+            return await enqueue({
+                kind: 'agent_state_request_settlement', mutationId: mutation.mutationId,
+                payload: mutation, createdAt: Date.now(), attempts: 0, nextAttemptAt: 0,
+            });
+        },
         async enqueueSessionTurn(mutation) {
             return await enqueue(createQueuedSessionTurn(mutation), {
                 awaitFlush: mutation.action === 'fail' || mutation.action === 'cancel',

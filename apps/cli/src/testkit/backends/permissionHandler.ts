@@ -34,6 +34,13 @@ export class FakePermissionSession {
     return this.agentState;
   }
 
+  async updateAgentStateRequestSettlement(updater: Parameters<FakePermissionSession['updateAgentState']>[0]): Promise<void> {
+
+    await this.updateAgentState(updater);
+
+  }
+
+
   updateAgentState(updater: (state: AgentState) => AgentState): AgentState {
     this.agentState = updater(this.agentState);
     return this.agentState;

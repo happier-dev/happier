@@ -189,7 +189,7 @@ export function resolveReadyProjectionEventType(params: Readonly<{
         : undefined;
 }
 
-function selectSessionActivityBadgeInputs() {
+export function selectSessionActivityBadgeInputs() {
     return {
         seq: true,
         // Not a badge input: `resolveSessionUnreadSinceWrite` decides the edge against the *stored*

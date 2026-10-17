@@ -126,7 +126,8 @@ async function findAvailablePort(): Promise<number> {
   return port;
 }
 
-vi.mock('@/persistence', () => ({
+vi.mock('@/persistence', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/persistence')>(),
   readSettings: vi.fn(async () => {
     readSettingsCalls += 1;
     return { machineId: 'machine_1' };

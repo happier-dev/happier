@@ -574,6 +574,7 @@ export type StartedDaemon = {
   state: DaemonState;
   proc: SpawnedProcess;
   stop: () => Promise<void>;
+  restart: () => Promise<StartedDaemon>;
 };
 
 export function resolveTestDaemonOwnershipLeasesDir(rootDir: string = repoRootDir()): string {
@@ -754,13 +755,18 @@ export async function startTestDaemon(params: {
     throw e;
   }
 
+  const stop = async () => {
+    await stopDaemonFromHomeDir(params.happyHomeDir).catch(() => {});
+    await proc.stop().catch(() => {});
+  };
   return {
     happyHomeDir: params.happyHomeDir,
     state,
     proc,
-    stop: async () => {
-      await stopDaemonFromHomeDir(params.happyHomeDir).catch(() => {});
-      await proc.stop().catch(() => {});
+    stop,
+    restart: async () => {
+      await stop();
+      return await startTestDaemon(params);
     },
   };
 }

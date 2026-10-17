@@ -25,6 +25,13 @@ class FakeSession {
     return this.agentState;
   }
 
+  async updateAgentStateRequestSettlement(updater: Parameters<FakeSession['updateAgentState']>[0]): Promise<void> {
+
+    await this.updateAgentState(updater);
+
+  }
+
+
   updateAgentState(updater: any) {
     this.agentState = updater(this.agentState);
     return this.agentState;

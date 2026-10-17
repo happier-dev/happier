@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createDeferred } from '@/testkit/async/deferred';
 
 import {
   createPermissionHandlerSessionStub,
@@ -356,13 +357,24 @@ describe('ClaudeLocalPermissionBridge (response state)', () => {
 
     const permissionHandler = client.rpcHandlerManager.getHandler('permission');
     expect(permissionHandler).toBeDefined();
-    const lateAnswer = await permissionHandler?.({
+    const admission = createDeferred<void>();
+    client.updateAgentStateRequestSettlement = async (updater) => {
+      await admission.promise;
+      client.agentState = updater(client.agentState);
+    };
+    let hookSettled = false;
+    void ask.then(() => { hookSettled = true; }, () => { hookSettled = true; });
+    const lateAnswer = permissionHandler?.({
       id: 'toolu_ask_expire_1',
       approved: true,
       answers: { 'Pick a color': 'Red' },
     });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(hookSettled).toBe(false);
+    expect(client.agentState.requests.toolu_ask_expire_1).toBeDefined();
+    admission.resolve();
 
-    expect(lateAnswer).toEqual({
+    expect(await lateAnswer).toEqual({
       ok: false,
       errorCode: 'permission_request_expired',
       errorMessage: 'permission_request_expired',

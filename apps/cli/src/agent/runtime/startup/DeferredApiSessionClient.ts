@@ -1,3 +1,4 @@
+import type { AgentStateWriteOptions } from '@/api/session/sessionWritesBestEffort';
 import type {
   DeferredSessionBufferEntry,
   DeferredSessionBufferDropReason,
@@ -62,10 +63,12 @@ export type DeferredApiSessionTarget = Readonly<{
     meta?: Record<string, unknown>;
   }>) => Promise<SessionUserMessageEnqueueResult>;
   updateMetadata: (updater: (metadata: Metadata) => Metadata) => void | Promise<void>;
-  updateAgentState: (updater: (state: AgentState) => AgentState) => void | Promise<void>;
+  updateAgentState: (updater: (state: AgentState) => AgentState, options?: AgentStateWriteOptions) => void | Promise<void>;
+  updateAgentStateRequestSettlement: (updater: (state: AgentState) => AgentState) => Promise<void>;
   getRuntimeActivitySnapshotPublisher?: () => SessionRuntimeActivitySnapshotPublisher | null;
   keepAlive: (thinking: boolean, mode: 'local' | 'remote') => void;
   getMetadataSnapshot: () => Metadata | null;
+  getAgentStateSnapshot?: () => AgentState | null;
   refreshSessionSnapshotFromServerBestEffort?: (opts?: { reason?: 'connect' | 'waitForMetadataUpdate' }) => Promise<void>;
   waitForMetadataUpdate: (abortSignal?: AbortSignal) => Promise<boolean>;
   waitForPendingEligibilityUpdate?: (abortSignal?: AbortSignal) => Promise<boolean>;
@@ -461,10 +464,10 @@ export class DeferredApiSessionClient {
     return deferred.promise;
   }
 
-  updateAgentState(_updater: (state: AgentState) => AgentState): void | Promise<void> {
+  updateAgentState(_updater: (state: AgentState) => AgentState, options?: AgentStateWriteOptions): void | Promise<void> {
     const target = this.target;
     if (target && !this.flushInFlight) {
-      return target.updateAgentState(_updater);
+      return target.updateAgentState(_updater, options);
     }
 
     const deferred = createDeferredPromise<void>();
@@ -475,7 +478,7 @@ export class DeferredApiSessionClient {
 
     this.pushBufferedCall(
       async (t) => {
-        await Promise.resolve(t.updateAgentState(_updater));
+        await Promise.resolve(t.updateAgentState(_updater, options));
         deferred.resolve();
       },
       { hint: 'updateAgentState' },
@@ -484,6 +487,25 @@ export class DeferredApiSessionClient {
         onError: (error) => deferred.reject(error),
       },
     );
+    return deferred.promise;
+  }
+
+  updateAgentStateRequestSettlement(updater: (state: AgentState) => AgentState): Promise<void> {
+    const target = this.target;
+    if (target && !this.flushInFlight) return target.updateAgentStateRequestSettlement(updater);
+    const deferred = createDeferredPromise<void>();
+    const dropped = () => deferred.reject(new Error('Request settlement was canceled before durable session attachment'));
+    if (this.cancelled) {
+      dropped();
+      return deferred.promise;
+    }
+    this.pushBufferedCall(async (attached) => {
+      await attached.updateAgentStateRequestSettlement(updater);
+      deferred.resolve();
+    }, { hint: 'updateAgentStateRequestSettlement' }, {
+      onDrop: dropped,
+      onError: (error) => deferred.reject(error),
+    });
     return deferred.promise;
   }
 
@@ -497,6 +519,10 @@ export class DeferredApiSessionClient {
     const target = this.target;
     if (!target) return null;
     return target.getMetadataSnapshot();
+  }
+
+  getAgentStateSnapshot(): AgentState | null {
+    return this.target?.getAgentStateSnapshot?.() ?? null;
   }
 
   async refreshSessionSnapshotFromServerBestEffort(opts?: { reason?: 'connect' | 'waitForMetadataUpdate' }): Promise<void> {

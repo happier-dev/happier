@@ -349,9 +349,9 @@ export class PermissionHandler {
         const completed = await this.permissionCoordinator.completeRpcResponse({
             context,
             completion: this.buildPermissionCompletion(response, context),
+            onAdmitted: () => this.recordPermissionResponse(response, context),
         });
         if (!completed) return false;
-        this.recordPermissionResponse(response, context);
         return true;
     }
 
@@ -378,7 +378,6 @@ export class PermissionHandler {
                 }),
             }),
             completeRequest: (params) => this.agentStateRequestStore.completeRequest(params),
-            cancelAllRequests: (params) => this.cancelRemoteOutstandingRequests(params.reason),
             hasOutstandingRequest: (requestId) => this.readOutstandingRemoteRequest(requestId) !== null,
             isOutstandingRequestClaimed: (requestId) => {
                 const rawRequest = (this.session.client as any).getAgentStateSnapshot?.()?.requests?.[requestId] ?? null;
@@ -400,14 +399,6 @@ export class PermissionHandler {
         } catch {
             return null;
         }
-    }
-
-    private cancelRemoteOutstandingRequests(reason: string): void {
-        this.agentStateRequestStore.cancelAllRequests({
-            reason,
-            decision: 'abort',
-            shouldCancel: (request) => !isRequestOwnedOutsideRemotePermissionHandler(request),
-        });
     }
 
     private applyPermissionResponseSideEffects(params: {
@@ -460,13 +451,13 @@ export class PermissionHandler {
 
         const completion = this.buildPermissionCompletion(message, context);
 
-        if (!this.permissionCoordinator.completeResponse({ context, completion })) {
-            logger.debug('[Claude] Permission response did not complete an outstanding request');
-            return;
-        }
-
-        this.recordPermissionResponse(message, context);
+        this.permissionCoordinator.completeResponse({
+            context,
+            completion,
+            onAdmitted: () => this.recordPermissionResponse(message, context),
+        });
     }
+
 
     private recordPermissionResponse(message: PermissionResponse, context: PermissionRequestCoordinatorContext): void {
         const id = message.id;
@@ -953,8 +944,23 @@ export class PermissionHandler {
             decision?: 'abort';
         },
     ): void {
-        this.pendingRequestMetadata.clear();
-        this.permissionCoordinator.cancelAll(reason);
+        // Resumed Agent-state requests have no coordinator waiter. Retire that
+        // source-owned subset through the same exact, durable settlement owner.
+        const requests = this.session.client.getAgentStateSnapshot?.()?.requests ?? {};
+        const stateOnlyRequestIds = Object.keys(requests).filter((requestId) => (
+            this.permissionCoordinator.getResponseContext(requestId)?.correlation === 'agent_state'
+        ));
+        if (stateOnlyRequestIds.length > 0) {
+            this.agentStateRequestStore.cancelAllRequests({
+                reason: _opts?.completedReason ?? reason,
+                decision: _opts?.decision ?? 'abort',
+                requestIds: stateOnlyRequestIds,
+                shouldCancel: (request) => !isRequestOwnedOutsideRemotePermissionHandler(request),
+            });
+        }
+        void this.permissionCoordinator.cancelAll(reason).then(() => {
+            this.pendingRequestMetadata.clear();
+        }).catch(() => logger.infoFile('[Claude] Cancellation request settlement admission failed'));
     }
 
     async abortPendingRequestsAndFlush(reason: string = 'Aborted by user'): Promise<void> {

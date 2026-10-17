@@ -154,7 +154,7 @@ async function openNewSessionDraft(params: Readonly<{
 }>): Promise<Readonly<{ draftId: string; composer: ReturnType<Page['getByTestId']> }>> {
     const draftListHydration = params.draftId
         ? params.page.waitForResponse(
-            (response) => response.url().endsWith('/v1/account/session-drafts/list')
+            (response) => new URL(response.url()).pathname === '/v1/account/session-drafts/list'
                 && response.request().method() === 'POST'
                 && response.status() === 200,
             { timeout: 60_000 },
@@ -596,7 +596,7 @@ test.describe('ui e2e: session composer draft continuity', () => {
         let releaseResponse!: () => void;
         const mayRespond = new Promise<void>((resolve) => { releaseResponse = resolve; });
         let didIntercept = false;
-        const pendingEnqueueUrl = `**/v2/sessions/${session.id}/pending`;
+        const pendingEnqueueUrl = (url: URL) => url.pathname === `/v2/sessions/${session.id}/pending`;
         await page.route(pendingEnqueueUrl, async (route) => {
             if (route.request().method() !== 'POST') {
                 await route.fallback();

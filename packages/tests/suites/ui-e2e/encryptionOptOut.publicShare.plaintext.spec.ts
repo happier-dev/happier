@@ -191,6 +191,8 @@ test.describe('ui e2e: plaintext mode + public share', () => {
       const migrateJson = (await migrateResp.json()) as { success?: unknown; mode?: unknown };
       expect(migrateJson?.success).toBe(true);
       expect(migrateJson?.mode).toBe('plain');
+      // Converting Machine content retires its previous daemon encryption context.
+      daemon = await daemon.restart();
 
       const tag = `ui-e2e-plain-${run.runId}`;
       const message = `hello from plain ${run.runId}`;

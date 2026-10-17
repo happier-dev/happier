@@ -1,23 +1,20 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { accountSettingsParse } from '@happier-dev/protocol';
+import { PushNotificationClient } from '@/api/pushNotifications';
 
+import { createPermissionHandlerSessionStubWithMetadata } from '../utils/permissionHandler.testkit';
 import { ClaudeLocalPermissionBridge } from './localPermissionBridge';
 
-function createSessionStub(sendToAllDevicesAsync: ReturnType<typeof vi.fn>): any {
-  const client: any = {
-    sessionId: 's1',
-    getMetadataSnapshot: vi.fn(() => ({ flavor: 'claude', summary: { text: 'Refactor auth flow' } })),
-    updateAgentState: vi.fn((updater: any) => updater({ requests: {}, completedRequests: {}, capabilities: {} })),
-    getAgentStateSnapshot: vi.fn(() => ({ requests: {}, completedRequests: {}, capabilities: {} })),
-  };
-  return {
-    client,
-    pushSender: { sendToAllDevicesAsync },
-    accountSettings: null,
-    getOrCreatePermissionRpcRouter: () => ({ registerConsumer: () => {}, removeConsumer: () => {} } as any),
-    fetchRecentTranscriptTextItemsForAcpImport: vi.fn(async () => []),
-  } as any;
+function createSessionStub(sendToAllDevicesAsync: ReturnType<typeof vi.fn>) {
+  const { session } = createPermissionHandlerSessionStubWithMetadata({
+    sessionId: 's1', metadata: { flavor: 'claude', summary: { text: 'Refactor auth flow' } },
+  });
+  const pushSender = new PushNotificationClient('test-token');
+  // Keep permission state and policy real; replace only external push delivery.
+  vi.spyOn(pushSender, 'sendToAllDevicesAsync').mockImplementation(sendToAllDevicesAsync);
+  session.pushSender = pushSender;
+  return session;
 }
 
 describe('ClaudeLocalPermissionBridge push policy', () => {
@@ -35,7 +32,7 @@ describe('ClaudeLocalPermissionBridge push policy', () => {
       tool_use_id: 'tool1',
       tool_name: 'Read',
       tool_input: { path: 'a' },
-    } as any);
+    });
 
     bridge.dispose();
     await p;
@@ -59,7 +56,7 @@ describe('ClaudeLocalPermissionBridge push policy', () => {
       tool_use_id: 'tool1',
       tool_name: 'Read',
       tool_input: { path: 'a' },
-    } as any);
+    });
 
     bridge.dispose();
     await p;

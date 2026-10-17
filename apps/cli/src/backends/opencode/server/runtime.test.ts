@@ -10163,6 +10163,7 @@ describe('createOpenCodeServerRuntime', () => {
       sessionId: session.sessionId,
       getAgentStateSnapshot: () => agentState,
       updateAgentState: async (updater) => { agentState = updater(agentState); },
+      updateAgentStateRequestSettlement: async (updater) => { agentState = updater(agentState); },
     } });
     const onAbortRequested = vi.fn();
     const permissionHandler = new ProviderEnforcedPermissionHandler(permissionSession, { logPrefix: '[Test]', onAbortRequested });

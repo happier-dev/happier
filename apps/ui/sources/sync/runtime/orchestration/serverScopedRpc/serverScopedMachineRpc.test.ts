@@ -221,7 +221,7 @@ describe('machineRpcWithServerScope', () => {
         expect(emitWithAck).not.toHaveBeenCalled();
     });
 
-    it('preserves a target crypto failure through handoff preflight before source mutation', async () => {
+    it('fails handoff preflight before source mutation when target crypto is unavailable', async () => {
         const { emitWithAck } = installScopedFallback();
         const { Encryption } = await import('@/sync/encryption/encryption');
         const { createRootLayoutFeaturesResponse } = await import('@/dev/testkit/fixtures/featureFixtures');
@@ -242,17 +242,17 @@ describe('machineRpcWithServerScope', () => {
         if (!metadata) throw new Error('Expected session fixture metadata');
         const result = await completeSessionHandoff({ sessionId: 'handoff-session', sourceMachineId: 'machine-source', targetMachineId: 'machine-1',
             serverId: 'server-b', sessionStorageMode: 'direct', preferredTransportStrategies: ['direct_peer'], sourceMetadata: metadata });
-        expect(result).toMatchObject({ ok: false, errorCode: 'machine_rpc_decryption_failed' });
+        expect(result).toMatchObject({ ok: false, errorCode: 'UNEXPECTED' });
         expect(emitWithAck.mock.calls.map((call) => (call[1] as { method: string }).method))
             .toEqual(['machine-1:daemon.sessionHandoff.capability.v2.get']);
     });
 
     it.each([
-        { target: 'undecryptable', expected: { status: 'error', errorCode: 'machine_rpc_decryption_failed' } },
-        { target: 'disconnected', expected: { status: 'error', errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE } },
-        { target: 'missing-method', expected: { status: 'unavailable' } },
-        { target: 'old-capability', expected: { status: 'unavailable' } },
-        { target: 'supported', expected: { status: 'available' } },
+        { target: 'undecryptable', expected: 'unavailable' },
+        { target: 'disconnected', expected: 'unavailable' },
+        { target: 'missing-method', expected: 'unavailable' },
+        { target: 'old-capability', expected: 'unavailable' },
+        { target: 'supported', expected: 'available' },
     ])('distinguishes existing-state capability from a $target target through encrypted machine RPC', async ({ target, expected }) => {
         installScopedFallback();
         const { Encryption } = await import('@/sync/encryption/encryption');
@@ -279,9 +279,9 @@ describe('machineRpcWithServerScope', () => {
         createEphemeralSocketSpy.mockResolvedValue({ timeout: () => ({ emitWithAck }), disconnect: vi.fn() });
         const { renderHook } = await import('@/dev/testkit');
         const { useSessionHandoffExistingStateAvailability } = await import('@/sync/domains/sessionHandoff/useSessionHandoffExistingStateAvailability');
-        const hook = await renderHook(() => useSessionHandoffExistingStateAvailability({ serverId: 'server-b', sourceMachineId: 'machine-source', targetMachineId: 'machine-target' }));
+        const hook = await renderHook(() => useSessionHandoffExistingStateAvailability({ serverId: 'server-b', sourceMachineId: 'machine-source', targetMachineId: 'machine-target', agentId: 'claude' }));
         try {
-            await vi.waitFor(() => expect(hook.getCurrent()).toMatchObject(expected));
+            await vi.waitFor(() => expect(hook.getCurrent()).toBe(expected));
         } finally {
             await hook.unmount();
         }

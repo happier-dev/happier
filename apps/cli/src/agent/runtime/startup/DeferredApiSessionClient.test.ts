@@ -21,6 +21,34 @@ function createMetadataStub(overrides?: Partial<Metadata>): Metadata {
 }
 
 describe('DeferredApiSessionClient', () => {
+  it('admits request settlement only through its attached durable owner and rejects startup cancellation', async () => {
+    const deferred = new DeferredApiSessionClient({
+      placeholderSessionId: 'PID-request-settlement', limits: { maxEntries: 10, maxBytes: 10_000 },
+    });
+    const admission = createDeferred<void>();
+    const settle = vi.fn(() => admission.promise);
+    let admitted = false;
+    const completion = deferred.updateAgentStateRequestSettlement((state) => state).then(() => { admitted = true; });
+    const attaching = deferred.attach({
+      sessionId: 'session-request-settlement',
+      rpcHandlerManager: { registerHandler: vi.fn(), invokeLocal: vi.fn(async () => ({})) },
+      updateAgentStateRequestSettlement: settle,
+    } as unknown as DeferredApiSessionTarget);
+    await vi.waitFor(() => expect(settle).toHaveBeenCalledOnce());
+    expect(admitted).toBe(false);
+    admission.resolve();
+    await attaching;
+    await completion;
+    expect(admitted).toBe(true);
+
+    const canceled = new DeferredApiSessionClient({
+      placeholderSessionId: 'PID-canceled-settlement', limits: { maxEntries: 10, maxBytes: 10_000 },
+    });
+    const pending = canceled.updateAgentStateRequestSettlement((state) => state);
+    const rejected = expect(pending).rejects.toThrow('before durable session attachment');
+    canceled.cancel();
+    await rejected;
+  });
   it('buffers exact Claude transcript commits until the real session client attaches', async () => {
     const deferred = new DeferredApiSessionClient({
       placeholderSessionId: 'PID-claude-exact-commit',
@@ -351,6 +379,7 @@ describe('DeferredApiSessionClient', () => {
       sendUserTextMessageCommitted: vi.fn(async () => {}),
       sendSessionEventCommitted: vi.fn(async () => ({ seq: 2 })),
       updateMetadata: vi.fn(),
+      updateAgentStateRequestSettlement: vi.fn(async () => {}),
       updateAgentState: vi.fn(),
       keepAlive: vi.fn(),
       getMetadataSnapshot: vi.fn(() => createMetadataStub()),
@@ -443,6 +472,7 @@ describe('DeferredApiSessionClient', () => {
       sendCodexMessage: vi.fn(),
       sendUserTextMessage: vi.fn(),
       updateMetadata: vi.fn(),
+      updateAgentStateRequestSettlement: vi.fn(async () => {}),
       updateAgentState: vi.fn(),
       keepAlive: vi.fn(),
       getMetadataSnapshot: vi.fn(() => createMetadataStub()),
@@ -484,7 +514,8 @@ describe('DeferredApiSessionClient', () => {
       rpcHandlerManager: { registerHandler: vi.fn(), invokeLocal: vi.fn(async () => ({})) },
       sendSessionEvent: vi.fn(), sendClaudeSessionMessage: vi.fn(), sendAgentMessage: vi.fn(),
       sendAgentMessageCommitted: vi.fn(async () => {}), sendCodexMessage: vi.fn(), sendUserTextMessage: vi.fn(),
-      updateMetadata: vi.fn(), updateAgentState: vi.fn(), keepAlive: vi.fn(),
+      updateMetadata: vi.fn(), updateAgentStateRequestSettlement: vi.fn(async () => {}),
+      updateAgentState: vi.fn(), keepAlive: vi.fn(),
       getMetadataSnapshot: vi.fn(() => createMetadataStub()), waitForMetadataUpdate: vi.fn(async () => true),
       wakePendingMaterialization,
       popPendingMessage: vi.fn(async () => false), peekPendingMessageQueueV2Count: vi.fn(async () => 0),
@@ -512,7 +543,8 @@ describe('DeferredApiSessionClient', () => {
       sessionId: 'sess_cancelled', rpcHandlerManager: { registerHandler: vi.fn(), invokeLocal: vi.fn(async () => ({})) },
       sendSessionEvent: vi.fn(), sendClaudeSessionMessage: vi.fn(), sendAgentMessage: vi.fn(),
       sendAgentMessageCommitted: vi.fn(async () => {}), sendCodexMessage: vi.fn(), sendUserTextMessage: vi.fn(),
-      updateMetadata: vi.fn(), updateAgentState: vi.fn(), keepAlive: vi.fn(), getMetadataSnapshot: vi.fn(() => null),
+      updateMetadata: vi.fn(), updateAgentStateRequestSettlement: vi.fn(async () => {}),
+      updateAgentState: vi.fn(), keepAlive: vi.fn(), getMetadataSnapshot: vi.fn(() => null),
       waitForMetadataUpdate: vi.fn(async () => true), wakePendingMaterialization,
       popPendingMessage: vi.fn(async () => false), peekPendingMessageQueueV2Count: vi.fn(async () => 0),
       discardPendingMessageQueueV2All: vi.fn(async () => 0), discardCommittedMessageLocalIds: vi.fn(async () => 0),
@@ -536,6 +568,7 @@ describe('DeferredApiSessionClient', () => {
       sendCodexMessage: vi.fn(),
       sendUserTextMessage: vi.fn(),
       updateMetadata: vi.fn(),
+      updateAgentStateRequestSettlement: vi.fn(async () => {}),
       updateAgentState: vi.fn(),
       keepAlive: vi.fn(),
       getMetadataSnapshot: vi.fn(() => createMetadataStub()),
@@ -579,6 +612,7 @@ describe('DeferredApiSessionClient', () => {
         calls.push('user');
       }),
       updateMetadata: vi.fn(),
+      updateAgentStateRequestSettlement: vi.fn(async () => {}),
       updateAgentState: vi.fn(),
       keepAlive: vi.fn(),
       getMetadataSnapshot: vi.fn(() => createMetadataStub()),
@@ -621,6 +655,7 @@ describe('DeferredApiSessionClient', () => {
       updateMetadata: vi.fn(async () => {
         throw new Error('boom');
       }),
+      updateAgentStateRequestSettlement: vi.fn(async () => {}),
       updateAgentState: vi.fn(),
       keepAlive: vi.fn(),
       getMetadataSnapshot: vi.fn(() => createMetadataStub()),
@@ -661,6 +696,7 @@ describe('DeferredApiSessionClient', () => {
       sendCodexMessage: vi.fn(),
       sendUserTextMessage: vi.fn(),
       updateMetadata: vi.fn(),
+      updateAgentStateRequestSettlement: vi.fn(async () => {}),
       updateAgentState: vi.fn(async () => {
         throw new Error('agent-state-boom');
       }),
@@ -709,6 +745,7 @@ describe('DeferredApiSessionClient', () => {
         await metadataGate.promise;
         calls.push('metadata:end');
       }),
+      updateAgentStateRequestSettlement: vi.fn(async () => {}),
       updateAgentState: vi.fn(),
       keepAlive: vi.fn(),
       getMetadataSnapshot: vi.fn(() => null),
@@ -732,6 +769,7 @@ describe('DeferredApiSessionClient', () => {
       sendCodexMessage: vi.fn(),
       sendUserTextMessage: vi.fn(),
       updateMetadata: vi.fn(),
+      updateAgentStateRequestSettlement: vi.fn(async () => {}),
       updateAgentState: vi.fn(),
       keepAlive: vi.fn(),
       getMetadataSnapshot: vi.fn(() => null),
@@ -808,6 +846,7 @@ describe('DeferredApiSessionClient', () => {
       updateMetadata: vi.fn(() => {
         calls.push('metadata');
       }),
+      updateAgentStateRequestSettlement: vi.fn(async () => {}),
       updateAgentState: vi.fn(() => {
         calls.push('agentState');
       }),
@@ -865,6 +904,7 @@ describe('DeferredApiSessionClient', () => {
       sendCodexMessage: vi.fn(),
       sendUserTextMessage: vi.fn(),
       updateMetadata: vi.fn(),
+      updateAgentStateRequestSettlement: vi.fn(async () => {}),
       updateAgentState: vi.fn(),
       keepAlive: vi.fn(),
       getMetadataSnapshot: vi.fn(() => null),
@@ -915,6 +955,7 @@ describe('DeferredApiSessionClient', () => {
       sendCodexMessage: vi.fn(),
       sendUserTextMessage: vi.fn(),
       updateMetadata: vi.fn(),
+      updateAgentStateRequestSettlement: vi.fn(async () => {}),
       updateAgentState: vi.fn(),
       keepAlive: vi.fn(),
       getMetadataSnapshot: vi.fn(() => null),
@@ -958,6 +999,7 @@ describe('DeferredApiSessionClient', () => {
       sendCodexMessage: vi.fn(),
       sendUserTextMessage: vi.fn(),
       updateMetadata: vi.fn(),
+      updateAgentStateRequestSettlement: vi.fn(async () => {}),
       updateAgentState: vi.fn(),
       keepAlive: vi.fn(),
       getMetadataSnapshot: vi.fn(() => null),
@@ -1009,7 +1051,8 @@ describe('DeferredApiSessionClient', () => {
         sendCodexMessage: vi.fn(),
         sendUserTextMessage: vi.fn(),
         updateMetadata: vi.fn(),
-        updateAgentState: vi.fn(),
+        updateAgentStateRequestSettlement: vi.fn(async () => {}),
+      updateAgentState: vi.fn(),
         keepAlive: vi.fn(),
         getMetadataSnapshot: vi.fn(() => createMetadataStub()),
         waitForMetadataUpdate: vi.fn(async () => true),

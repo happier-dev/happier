@@ -1214,8 +1214,12 @@ describe('core e2e: session handoff via server-routed transfer', () => {
             context: 'user-scoped socket connected for server-routed late cutover proof',
         });
 
-        const sourceMachineRpc = createDataKeyRpcClient(ui, sourceMachineKey);
-        const targetMachineRpc = createDataKeyRpcClient(ui, targetMachineKey);
+        const sourceMachineRpc: ReturnType<typeof createDataKeyRpcClient> = {
+          call: ui.rpcCall.bind(ui),
+        };
+        const targetMachineRpc: ReturnType<typeof createDataKeyRpcClient> = {
+          call: ui.rpcCall.bind(ui),
+        };
 
         const machineIds = await waitForMachineIds({
             baseUrl: server.baseUrl,

@@ -333,7 +333,9 @@ describe('core e2e: direct Claude sessions browse/link/tail', () => {
     try {
       await waitFor(() => ui.isConnected(), { timeoutMs: 20_000, context: 'socket connected for direct takeover persist e2e' });
 
-      const machineRpc = createDataKeyRpcClient(ui, machineKey);
+      const machineRpc: ReturnType<typeof createDataKeyRpcClient> = {
+        call: ui.rpcCall.bind(ui),
+      };
 
       let candidatesResult: any = null;
       await waitFor(

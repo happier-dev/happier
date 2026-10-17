@@ -239,6 +239,7 @@ export function registerSessionRuntimeActivitySnapshotSocketEvent(params: Readon
                     activeAt: result.activeAt,
                     ...(result.projection ? { projection: result.projection } : {}),
                     ...(result.turnProjection ?? {}),
+                    badgeAttentionChanged: result.badgeAttentionChanged,
                 });
             }
             acknowledge?.(SessionRuntimeActivityCloseAckSchema.parse({
@@ -345,6 +346,7 @@ export function registerSessionRuntimeActivitySnapshotSocketEvent(params: Readon
                 activeAt: result.activeAt,
                 ...(result.projection ? { projection: result.projection } : {}),
                 ...(result.turnProjection ?? {}),
+                badgeAttentionChanged: result.badgeAttentionChanged,
             });
         } catch (error) {
             warn(

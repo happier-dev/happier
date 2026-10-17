@@ -118,7 +118,8 @@ function createHarness(providerTasks?: SessionRuntimeActivityContributionHandle,
       metadata = updater(metadata);
       hasMetadata = true;
     }),
-    updateAgentState: vi.fn((updater: (current: AgentState) => AgentState) => {
+    updateAgentStateRequestSettlement: vi.fn(async () => {}),
+      updateAgentState: vi.fn((updater: (current: AgentState) => AgentState) => {
       agentState = updater(agentState);
     }),
     getAgentStateSnapshot: vi.fn(() => agentState),

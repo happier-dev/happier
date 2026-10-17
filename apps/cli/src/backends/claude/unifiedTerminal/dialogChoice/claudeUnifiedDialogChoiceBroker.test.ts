@@ -31,7 +31,7 @@ function dialog(screen: string) {
 function deferredAgentStateWrite(client: ReturnType<typeof createPermissionHandlerSessionStub>['client']) {
   let release!: () => void;
   const persisted = new Promise<void>((resolve) => { release = resolve; });
-  Object.defineProperty(client, 'updateAgentState', {
+  for (const method of ['updateAgentState', 'updateAgentStateRequestSettlement'] as const) Object.defineProperty(client, method, {
     configurable: true,
     value: (updater: (state: AgentState) => AgentState) => {
       client.agentState = updater(client.agentState as AgentState) as typeof client.agentState;
@@ -46,7 +46,7 @@ function deferredSerializedAgentStateWrites(
 ) {
   const releases: Array<() => void> = [];
   let tail = Promise.resolve();
-  Object.defineProperty(client, 'updateAgentState', {
+  for (const method of ['updateAgentState', 'updateAgentStateRequestSettlement'] as const) Object.defineProperty(client, method, {
     configurable: true,
     value: (updater: (state: AgentState) => AgentState) => {
       let release!: () => void;
@@ -72,6 +72,27 @@ function deferredSerializedAgentStateWrites(
 }
 
 describe('ClaudeUnifiedDialogChoiceBroker lifecycle', () => {
+  it('reports denied-choice admission failure without an unhandled rejection and retries the retained request on disposal', async () => {
+    const { session, client } = createPermissionHandlerSessionStub('dialog-denied-admission-failure');
+    const broker = new ClaudeUnifiedDialogChoiceBroker(session, { createRequestId: () => 'denied-failed' });
+    broker.activate();
+    const pending = broker.requestDialogChoice({ dialog: dialog(EFFORT_DIALOG) });
+    void pending.catch(() => {});
+    await vi.waitFor(() => expect(client.agentState.requests['denied-failed']).toBeDefined());
+    const admit = client.updateAgentStateRequestSettlement.bind(client);
+    client.updateAgentStateRequestSettlement = async () => { throw new Error('journal unavailable'); };
+    await expect(client.rpcHandlerManager.getHandler('permission')!({
+      id: 'denied-failed', approved: false, reason: 'user_denied',
+    })).resolves.toEqual({ ok: true });
+    await expect(pending).rejects.toThrow('journal unavailable');
+    await Promise.resolve();
+    expect(client.agentState.requests['denied-failed']).toBeDefined();
+    client.updateAgentStateRequestSettlement = admit;
+    await broker.dispose();
+    expect(client.agentState.requests['denied-failed']).toBeUndefined();
+    expect(client.agentState.completedRequests['denied-failed']).toMatchObject({ status: 'canceled' });
+  });
+
   it('keeps a failed UI dialog answer retryable without releasing the choice', async () => {
     const { session, client } = createPermissionHandlerSessionStub('dialog-approval-retry');
     const broker = new ClaudeUnifiedDialogChoiceBroker(session, { createRequestId: () => 'retry' });

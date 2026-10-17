@@ -64,6 +64,23 @@ function completeReportedSession(params: Parameters<typeof waitForSessionWebhook
   return completion;
 }
 
+async function installRunnerProcessRowsFixture(agent: 'claude' | 'codex'): Promise<void> {
+  const childProcessBoundary = await import('node:child_process');
+  const actualChildProcessBoundary = await vi.importActual<typeof import('node:child_process')>('node:child_process');
+  // Synthetic runner PIDs must have matching OS census evidence. Returning an
+  // actual process row keeps classification and report-marker custody real,
+  // without falling through to the shared machine's unrelated process census.
+  vi.spyOn(childProcessBoundary, 'execFileSync').mockImplementation(((file, args, options) => {
+    if (file === 'ps' && Array.isArray(args) && args.includes('-p')
+      && (args.includes('12345') || args.includes('23456'))) {
+      const command = `/test/apps/cli/dist/index.mjs ${agent} --started-by daemon`;
+      if (args.includes('stat=,ucomm=,command=')) return `S node ${command}\n`;
+      if (args.includes('command=')) return `${command}\n`;
+    }
+    return actualChildProcessBoundary.execFileSync(file, args, options);
+  }) as typeof childProcessBoundary.execFileSync);
+}
+
 function createRegisteredMachine(machineId: string) {
   return {
     id: machineId,
@@ -725,7 +742,8 @@ vi.mock('@/backends/catalog', async (importOriginal) => {
   };
 });
 
-vi.mock('@/persistence', () => ({
+vi.mock('@/persistence', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/persistence')>(),
   writeDaemonState: vi.fn(),
   writeDaemonStateIfLockOwned: vi.fn(() => true),
   writeConnectedServiceBrokerState: vi.fn(),
@@ -1630,6 +1648,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
 
   it.each(['existing', 'fresh', 'encrypted', 'stale_pid', 'legacy', 'other_machine', 'unknown_process', 'lookup_failed', 'webhook_during_lookup', 'exit_during_lookup', 'locked_runner', 'wrapper', 'windows_dispatcher'] as const)('handles an accepted %s launch before its session webhook', async (startup) => {
     const isFresh = startup !== 'existing';
+    await installRunnerProcessRowsFixture('codex');
     const spawnBoundary = spawnHappyCliBoundary;
     spawnHappyCLI.mockImplementationOnce(spawnBoundary).mockImplementationOnce((argv, options) => {
       const child = spawnBoundary(argv, options);
@@ -2465,20 +2484,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
     const isExitBeforeFirstReport = contract === 'exit_before_first_report';
     const isEarlyRegularExit = contract === 'early_regular_exit' || contract === 'early_regular_report_exit' || isWrapperPromotion || isExitBeforeFirstReport;
     const fixtureAgent = isEarlyRegularExit || isRestoredPlain || isWindows ? 'codex' : 'claude';
-    const childProcessBoundary = await import('node:child_process');
-    const actualChildProcessBoundary = await vi.importActual<typeof import('node:child_process')>('node:child_process');
-    // Synthetic runner PIDs must have matching OS census evidence. Returning an
-    // actual process row keeps classification and report-marker custody real,
-    // without falling through to the shared machine's unrelated process census.
-    vi.spyOn(childProcessBoundary, 'execFileSync').mockImplementation(((file, args, options) => {
-      if (file === 'ps' && Array.isArray(args) && args.includes('-p')
-        && (args.includes('12345') || args.includes('23456'))) {
-        const command = `/test/apps/cli/dist/index.mjs ${fixtureAgent} --started-by daemon`;
-        if (args.includes('stat=,ucomm=,command=')) return `S node ${command}\n`;
-        if (args.includes('command=')) return `${command}\n`;
-      }
-      return actualChildProcessBoundary.execFileSync(file, args, options);
-    }) as typeof childProcessBoundary.execFileSync);
+    await installRunnerProcessRowsFixture(fixtureAgent);
     const isNonceReplay = contract.endsWith('_nonce_replay');
     const recoveredReady = contract === 'ready_nonce_replay' || isRestoredPlain || contract === 'missing_id_nonce_replay' || contract === 'legacy_windows_nonce_replay'
       || contract === 'console_nonce_replay' || contract === 'tmux_nonce_replay' || contract === 'zellij_nonce_replay';

@@ -34,9 +34,15 @@ describe('createSpawnedSession exact remote routing', () => {
     calls = [];
     disconnectNextSpawn = false;
     boundary.spawn.mockResolvedValue({ success: true, sessionId: 'local-session' });
-    boundary.get.mockImplementation(async (url: string) => url.endsWith('/v1/machines')
-      ? { status: 200, data: [{ id: 'remote', replacedByMachineId: 'local' }] }
-      : { status: 200, data: { session } });
+    boundary.get.mockImplementation(async (url: string) => {
+      if (url.endsWith('/v1/machines/remote')) {
+        return { status: 200, data: { machine: { id: 'remote', dataEncryptionKey: null } } };
+      }
+      if (url.endsWith('/v1/machines')) {
+        return { status: 200, data: [{ id: 'remote', replacedByMachineId: 'local' }] };
+      }
+      return { status: 200, data: { session } };
+    });
     answer = () => ({ type: 'success', sessionId: session.id });
     boundary.io.mockImplementation(() => {
       const events = new EventEmitter();
@@ -95,7 +101,7 @@ describe('createSpawnedSession exact remote routing', () => {
     })).rejects.toMatchObject({ code: 'DAEMON_RPC_UNAVAILABLE' });
     expect(calls.every((call) => call.method.startsWith('remote:'))).toBe(true);
     expect(boundary.spawn).not.toHaveBeenCalled();
-    expect(boundary.get).not.toHaveBeenCalled();
+    expect(boundary.get.mock.calls.every(([url]) => String(url).endsWith('/v1/machines/remote'))).toBe(true);
   });
 
   it('accepts a synchronous typed remote response without resolving a nonce', async () => {

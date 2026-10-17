@@ -1712,21 +1712,73 @@ and response side effects advance only after the existing Agent-state write
 acknowledges request completion. A failed write reaches the RPC caller while the
 request remains retryable and independent pending requests remain intact. Requests
 present only in Agent state keep their existing behavior without caching a provider
-decision. Native and automatic decisions retain their non-blocking reconciliation
-paths and are outside this acknowledgement guarantee.
+decision. Pre-effect provider decisions use this same acknowledged writer. A failed
+response is not queued for later permission execution. Already observed native
+PostToolUse completions and lifecycle cancellation retirements instead durably admit
+the exact completion. Automatic decisions without an outstanding request publish
+history without blocking provider progress.
 
 Metadata and Agent-state retries use the current managed socket on every attempt.
 Reconnection can therefore finish the same operation within its existing retry
 budget.
 
-Native and automatic terminal permission outcomes preserve local tool progress.
-When their Agent-state write fails, the running Session client retains the decided
-completion entries and reoffers them through the existing acknowledged write path
-on reconnect or the next Agent-state write. Recovery applies only to the same
-pending request identity, or to an automatic outcome whose request remains absent;
-a newer terminal outcome, replacement request, or response claim takes precedence.
-The Session owns this recovery across permission-handler replacement. It is
-in-memory recovery for the running process and does not survive process exit.
+An observed Claude PostToolUse completion and lifecycle cancellation use the Session's
+existing durable mutation journal. PostToolUse is the explicit evidence that a native
+tool already ran; the journal never replays an unapplied UI or provider approval.
+Cancellation rejects local waiters even if admission fails, retaining the detached
+occurrence for a retirement retry and reporting the failure. Local bridge disposal
+waits for cancellation admission rather than a server round trip. Single-request
+lifecycle cancellation invalidates in-flight UI decisions while retirement is
+pending. Local hook expiry uses the same admission boundary before returning its
+default response. Automatic history
+first uses the normal
+acknowledged Agent-state write; if that fails, the same journal retains its exact
+completion delta. Existing `{ t: 'encrypted', c }` entries retain the canonical
+account machine encryption context, including plaintext sessions with genuine keys.
+For token-only credentials, new entries instead use
+`{ t: 'installation_encrypted_v1', c }`: the existing private installation identity
+supplies a local encryption key without creating Account key material or another
+secret file. The key is `deriveKey` over the validated identity's base64url-decoded
+64-byte private key, with usage `Happier Session Mutation` and path
+`['request-settlement-v1', serverId, accountId, sessionId]`. Server and identity-file
+scope are captured with the client; Account identity is the trimmed JWT subject.
+The ciphertext uses the existing AES-256-GCM data-key bundle and standard base64.
+Same-Account token refreshes retain access; credentials for another Account fail
+closed. Recovery reads the original installation identity and never creates a new
+one when it is missing. Missing or replacement identity material leaves ciphertext
+queued and reports failure; restore the original identity to recover those entries.
+The journal retries through the
+existing current-version Agent-state updater. It preserves unrelated requests,
+replacement occurrences, response claims, and already committed automatic outcomes.
+Once a request is absent, replay preserves its committed terminal outcome even
+when a later cancellation was captured from a stale snapshot.
+An authenticated, decrypted settlement that fails schema validation is quarantined
+in the existing dead-letter file, preserving its encrypted bytes and allowing later
+mutations to proceed. Missing credentials or an undecryptable payload remain
+retryable so restoring the correct credentials can recover the entry. Both failures
+are reported in the normal file log without request contents.
+Envelope markers are parsed explicitly. An older reader that does not recognize
+the marker uses its existing journal quarantine path rather than another key.
+Released CLI v0.2.15 does not recognize this private mutation kind; its existing
+unknown-kind quarantine preserves the complete encrypted row. Returning to the
+current runtime re-admits either recognized envelope through the existing recovery
+owner. This adds no server wire field or background recovery process.
+Claude abort/reset/disposal also retires source-owned persisted requests that have
+no local provider waiter; local bridge and unified dialog requests retain their
+separate ownership scopes. Coordinator-owned requests settle through their existing
+waiter lifecycle, while state-only requests use the same durable request store.
+Automatic history can replay only while its request remains absent, including on
+the first write after a version conflict.
+
+This is runtime-owned recovery: reconstructing an ApiSessionClient for the same
+session resumes admitted settlements after a process restart. Closing drains local
+admission attempts before closing the journal; a failed attempt still rejects to
+its caller without interrupting client cleanup. A permanently offline runtime can
+leave an admitted entry pending until that session resumes. This change does not
+add unattended daemon takeover. Failed automatic writes report
+`session_permission_completion_deferred` after durable admission, and admission
+failure reports `session_permission_completion_retention_failed` in the normal
+file log. Neither record contains request contents.
 
 Terminal Agent-state update failures report `session_agent_state_update_failed` in the
 normal file log, including when a best-effort caller absorbs the error. This

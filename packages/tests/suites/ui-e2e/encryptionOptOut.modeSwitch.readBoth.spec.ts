@@ -258,6 +258,8 @@ test.describe('ui e2e: encryption opt-out mode switching', () => {
       expect(sessionADraft.envelope).toBe('encrypted');
 
       const migrateDraftsToPlain = await toggleAccountEncryptionMode({ page, uiBaseUrl, expectedMode: 'plain' });
+      // Converting Machine content retires its previous daemon encryption context.
+      daemon = await daemon.restart();
       expectCompleteDraftMigration({
         request: migrateDraftsToPlain,
         draftIds: [draftAId, draftBId],
@@ -310,6 +312,7 @@ test.describe('ui e2e: encryption opt-out mode switching', () => {
       await expect(page.getByText(msgB, { exact: true }).first()).toBeVisible({ timeout: 120_000 });
 
       const migrateDraftsToE2ee = await toggleAccountEncryptionMode({ page, uiBaseUrl, expectedMode: 'e2ee' });
+      daemon = await daemon.restart();
       expectCompleteDraftMigration({
         request: migrateDraftsToE2ee,
         draftIds: [draftAId, draftBId],

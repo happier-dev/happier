@@ -45,9 +45,15 @@ export class FakePermissionClient {
     this.metadata = opts?.metadata ?? {};
   }
 
-  updateAgentState(updater: (current: AgentState) => AgentState): AgentState {
+  async updateAgentStateRequestSettlement(
+    updater: Parameters<FakePermissionClient['updateAgentState']>[0],
+  ): Promise<void> {
     this.agentState = updater(this.agentState);
-    return this.agentState;
+  }
+
+
+  updateAgentState(updater: (current: AgentState) => AgentState): void | Promise<void> {
+    this.agentState = updater(this.agentState);
   }
 
   updateMetadata(updater: (current: Metadata) => Metadata): Metadata {

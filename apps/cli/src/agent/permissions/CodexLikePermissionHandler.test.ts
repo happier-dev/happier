@@ -31,6 +31,13 @@ class FakeSession {
     return this.agentState;
   }
 
+  async updateAgentStateRequestSettlement(updater: Parameters<FakeSession['updateAgentState']>[0]): Promise<void> {
+
+    await this.updateAgentState(updater);
+
+  }
+
+
   updateAgentState(updater: any) {
     this.agentState = updater(this.agentState);
     return this.agentState;
@@ -697,10 +704,11 @@ describe('CodexLikePermissionHandler', () => {
     );
   });
 
-  it('does not emit unhandledRejection when updateAgentState rejects while resolving pending requests', async () => {
+  it('keeps the provider pending and permits retry when request settlement fails', async () => {
     const session = new FakeSession();
+    let failing = true;
     session.updateAgentState = async () => {
-      throw new Error('updateAgentState failed');
+      if (failing) throw new Error('updateAgentState failed');
     };
     const handler = new CodexLikePermissionHandler({ session: session as any, logPrefix: '[Test]' });
 
@@ -711,6 +719,15 @@ describe('CodexLikePermissionHandler', () => {
 
       handler.setPermissionMode('read-only', 10);
 
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      expect(await settledState(promise)).toBe('pending');
+      failing = false;
+      session.updateAgentState = (updater) => {
+        session.agentState = updater(session.agentState);
+        return session.agentState;
+      };
+      const respond = session.rpcHandlerManager.handlers.get('permission')!;
+      await respond({ id: 'tool-1', approved: false, decision: 'denied' });
       await expect(promise).resolves.toEqual({ decision: 'denied' });
 
       // Give Node a chance to surface an unhandled rejection if one was created.

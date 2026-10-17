@@ -12,7 +12,8 @@ vi.mock('socket.io-client', () => ({
     io: mockIo,
 }));
 
-vi.mock('@/persistence', () => ({
+vi.mock('@/persistence', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/persistence')>(),
     readCredentials: vi.fn(async () => ({
         token: 'fake-token',
         encryption: { type: 'legacy', secret: new Uint8Array(32).fill(7) },

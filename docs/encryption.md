@@ -298,6 +298,14 @@ material. A client without the old material cannot convert or control an encrypt
 historical Machine: it reports an operation failure rather than replacing stored
 documents with defaults. Restore the genuine key material to convert that history.
 
+The development CLI's private request-settlement journal remains encrypted even
+for token-only plain Accounts. It derives a scoped local key from the existing
+private installation identity; this does not fabricate Account encryption material
+or change Machine/Session storage mode. Existing account-key journal envelopes keep
+their original reader. Recovery requires the original installation identity and
+does not replace missing key material. The exact local envelope and derivation are
+documented in [CLI architecture](./cli-architecture.md).
+
 ### Artifacts
 - `header` and `body` are encrypted bytes encoded as base64 on the wire.
 - Stored as `Bytes` in the DB.
