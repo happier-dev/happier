@@ -199,14 +199,14 @@ const OauthCredentialPayloadSchema = z.object({
     tokenType: z.string().min(1).nullable(),
     providerAccountId: z.string().min(1).nullable(),
     providerEmail: z.string().min(1).nullable(),
-    raw: z.unknown().nullable(),
+    raw: z.unknown().nullable().optional(),
 });
 
 const TokenCredentialPayloadSchema = z.object({
     token: z.string().min(1),
     providerAccountId: z.string().min(1).nullable(),
     providerEmail: z.string().min(1).nullable(),
-    raw: z.unknown().nullable(),
+    raw: z.unknown().nullable().optional(),
 });
 
 const ConnectedServiceCredentialBaseSchema = z.object({

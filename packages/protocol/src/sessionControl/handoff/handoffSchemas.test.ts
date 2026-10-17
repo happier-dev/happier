@@ -1,10 +1,25 @@
 import { describe, expect, it } from 'vitest';
+import { SessionHandoffCapabilityV2Schema } from './handoffSchemas.js';
 
 async function loadHandoffModule() {
   return await import(new URL('./handoffRpc.js', import.meta.url).href).catch((error) => ({ error } as const));
 }
 
 describe('session handoff schemas', () => {
+  it('defaults omitted optional capability flags to false and authorizes only explicit true', () => {
+    const required = { protocolVersion: 2, atomicTargetResume: true, targetCleanup: true };
+    expect(SessionHandoffCapabilityV2Schema.parse(required)).toEqual({
+      ...required,
+      sameMachineHandoff: false,
+      existingState: false,
+    });
+    expect(SessionHandoffCapabilityV2Schema.parse({
+      ...required,
+      sameMachineHandoff: true,
+      existingState: 'true',
+    })).toEqual({ ...required, sameMachineHandoff: true, existingState: false });
+  });
+
   it('carries explicit existing-state intent and refuses simultaneous workspace copying', async () => {
     const mod = await loadHandoffModule();
     expect(mod).not.toHaveProperty('error');

@@ -46,7 +46,7 @@ See the canonical template at `apps/server/.env.example`.
 
 If you terminate TLS on a reverse proxy (Caddy/Nginx/Traefik), also set:
 
-- `HAPPIER_SERVER_TRUST_PROXY=<your proxy's address or CIDR>`, for example `127.0.0.1` when the proxy runs on the same host, or the Docker network's subnet when it runs in a container (see [Networking / reverse proxy](/self-hosting/env#networking--reverse-proxy))
+- `HAPPIER_SERVER_TRUST_PROXY=<your proxy's address>`, for example `127.0.0.1` when the proxy runs on the same host, or the proxy container's IP when it runs in Docker. Use a Docker subnet CIDR only when every peer on that subnet is trusted to supply forwarded headers (see [Networking / reverse proxy](/self-hosting/env#networking--reverse-proxy)).
 
 This allows correct `request.ip` and protocol detection behind `X-Forwarded-*` headers (important for rate limiting and some URL behaviors).
 

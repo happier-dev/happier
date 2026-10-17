@@ -76,6 +76,7 @@ describe("publicShareRoutes plaintext sessions (integration)", () => {
         { name: "disabled", trustProxy: undefined, remoteAddress: "203.0.113.9", forwardedFor: "198.51.100.7", consentRequired: true, expectedIp: "203.0.113.9" },
         { name: "untrusted", trustProxy: "10.0.0.0/8", remoteAddress: "203.0.113.9", forwardedFor: "198.51.100.7", consentRequired: true, expectedIp: "203.0.113.9" },
         { name: "trusted", trustProxy: "10.0.0.0/8", remoteAddress: "10.1.2.3", forwardedFor: "198.51.100.7", consentRequired: true, expectedIp: "198.51.100.7" },
+        { name: "real-ip-only", trustProxy: "10.0.0.0/8", remoteAddress: "10.1.2.3", forwardedFor: undefined, consentRequired: true, expectedIp: "10.1.2.3" },
         { name: "untrusted-chain", trustProxy: "10.0.0.0/8", remoteAddress: "10.1.2.3", forwardedFor: "198.51.100.7, 203.0.113.8", consentRequired: true, expectedIp: "203.0.113.8" },
         { name: "without-consent", trustProxy: "10.0.0.0/8", remoteAddress: "10.1.2.3", forwardedFor: "198.51.100.7", consentRequired: false, expectedIp: null },
     ])("persists the canonical client IP and consent policy for $name proxies", async ({ name, trustProxy, remoteAddress, forwardedFor, consentRequired, expectedIp }) => {
@@ -108,12 +109,17 @@ describe("publicShareRoutes plaintext sessions (integration)", () => {
         publicShareRoutes(app);
         await app.ready();
         try {
+            if (consentRequired) {
+                const denied = await app.inject({ method: "GET", url: `/v1/public-share/${encodeURIComponent(token)}` });
+                expect(denied.statusCode).toBe(403);
+                await expect(db.publicShareAccessLog.count({ where: { publicShareId: share.id } })).resolves.toBe(0);
+            }
             const response = await app.inject({
                 method: "GET",
                 url: `/v1/public-share/${encodeURIComponent(token)}?consent=true`,
                 remoteAddress,
                 headers: {
-                    "x-forwarded-for": forwardedFor,
+                    ...(forwardedFor ? { "x-forwarded-for": forwardedFor } : {}),
                     "x-real-ip": "192.0.2.99",
                     "user-agent": "share-access-test",
                 },
@@ -126,6 +132,14 @@ describe("publicShareRoutes plaintext sessions (integration)", () => {
                 ipAddress: expectedIp,
                 userAgent: consentRequired ? "share-access-test" : null,
             }]);
+            if (!consentRequired) {
+                const withoutConsentQuery = await app.inject({ method: "GET", url: `/v1/public-share/${encodeURIComponent(token)}` });
+                expect(withoutConsentQuery.statusCode).toBe(200);
+                await expect(db.publicShareAccessLog.findMany({
+                    where: { publicShareId: share.id },
+                    select: { ipAddress: true, userAgent: true },
+                })).resolves.toEqual([{ ipAddress: null, userAgent: null }, { ipAddress: null, userAgent: null }]);
+            }
         } finally {
             await app.close();
         }

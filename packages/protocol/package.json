@@ -93,7 +93,7 @@
     "@noble/hashes": "^1.8.0",
     "base64-js": "^1.5.1",
     "tweetnacl": "^1.0.3",
-    "zod": "4.3.6",
+    "zod": "4.6.7",
     "zod-to-json-schema": "3.25.1"
   },
   "devDependencies": {

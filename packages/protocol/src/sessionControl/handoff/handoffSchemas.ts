@@ -35,8 +35,8 @@ export const SessionHandoffCapabilityV2Schema = z.object({
   protocolVersion: z.literal(2),
   atomicTargetResume: z.literal(true),
   targetCleanup: z.literal(true),
-  sameMachineHandoff: z.unknown().transform((value) => value === true),
-  existingState: z.unknown().transform((value) => value === true),
+  sameMachineHandoff: z.unknown().optional().transform((value) => value === true),
+  existingState: z.unknown().optional().transform((value) => value === true),
 });
 export type SessionHandoffCapabilityV2 = z.infer<typeof SessionHandoffCapabilityV2Schema>;
 

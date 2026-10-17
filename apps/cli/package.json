@@ -161,7 +161,7 @@
     "cross-spawn": "^7.0.6",
     "diff": "^8.0.2",
     "expo-server-sdk": "^3.15.0",
-    "fastify": "^5.7.3",
+    "fastify": "^5.12.7",
     "fastify-type-provider-zod": "6.1.0",
     "http-proxy": "^1.18.1",
     "https-proxy-agent": "^7.0.6",
@@ -180,7 +180,7 @@
     "tar": "^7.5.8",
     "tweetnacl": "^1.0.3",
     "ws-node": "npm:ws@^8.18.3",
-    "zod": "4.3.6"
+    "zod": "4.6.7"
   },
   "devDependencies": {
     "@eslint/compat": "^1",
@@ -195,7 +195,7 @@
     "release-it": "^19.0.6",
     "shx": "^0.3.3",
     "ts-node": "^10",
-    "tmp": "^0.2.5",
+    "tmp": "^0.2.6",
     "tsx": "^4.20.6",
     "@typescript/native": "npm:typescript@7.0.2",
     "typescript": "5.9.3",

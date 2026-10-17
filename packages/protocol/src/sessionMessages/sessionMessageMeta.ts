@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { createHappierMetaEnvelopeSchema } from '../structuredMessages/HappierMetaEnvelope.js';
 
 import { createSentFromSchema } from '../sentFrom.js';
 import { createSessionPermissionModeSchema } from '../sessionMetadata/sessionPermissionModes.js';
@@ -74,12 +75,7 @@ export function createSessionMessageMetaSchema(zod: typeof z) {
       allowedTools: zod.array(zod.string()).nullable().optional(),
       disallowedTools: zod.array(zod.string()).nullable().optional(),
       displayText: zod.string().optional(),
-      happier: zod
-        .object({
-          kind: zod.string(),
-          payload: zod.unknown(),
-        })
-        .optional(),
+      happier: createHappierMetaEnvelopeSchema(zod).optional(),
     })
     .passthrough();
 }

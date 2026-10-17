@@ -5,10 +5,14 @@ import { z } from 'zod';
  *
  * UI renderers must Zod-parse `payload` by kind and never deep-merge untrusted objects.
  */
-export const HappierMetaEnvelopeSchema = z.object({
-  kind: z.string().min(1),
-  payload: z.unknown(),
-});
+export function createHappierMetaEnvelopeSchema(zod: typeof z) {
+  return zod.object({
+    kind: zod.string().min(1),
+    payload: zod.unknown().optional(),
+  });
+}
+
+export const HappierMetaEnvelopeSchema = createHappierMetaEnvelopeSchema(z);
 
 export type HappierMetaEnvelope = z.infer<typeof HappierMetaEnvelopeSchema>;
 

@@ -15,4 +15,5 @@ export function normalizeWindowsTerminalWindowName(value: unknown): string {
 
 export const WindowsTerminalWindowNameSchema = z
   .unknown()
+  .optional()
   .transform((value) => normalizeWindowsTerminalWindowName(value));

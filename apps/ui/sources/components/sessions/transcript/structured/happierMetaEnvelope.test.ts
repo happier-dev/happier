@@ -9,6 +9,11 @@ describe('parseHappierMetaEnvelope', () => {
         expect(parseHappierMetaEnvelope({ happier: null })).toBeNull();
     });
 
+    it('accepts a payload-free internal marker through the shared envelope', () => {
+        expect(parseHappierMetaEnvelope({ happier: { kind: 'claude_jsonl_consumed_marker.v1' } }))
+            .toEqual({ kind: 'claude_jsonl_consumed_marker.v1' });
+    });
+
     it('returns kind + payload when meta contains a valid envelope', () => {
         const parsed = parseHappierMetaEnvelope({
             happier: { kind: 'review_comments.v1', payload: { ok: true } },

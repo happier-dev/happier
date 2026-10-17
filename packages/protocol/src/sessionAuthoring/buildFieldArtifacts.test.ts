@@ -109,6 +109,7 @@ describe('sessionAuthoring field artifacts', () => {
       backendId: 'review-bot',
     });
     expect(parsed.automation?.enabled).toBe(true);
+    expect(parsed.windowsTerminalWindowName).toBe('happier');
     expectTypeOf<typeof parsed>().toMatchTypeOf<SessionAuthoringValueV1>();
   });
 
