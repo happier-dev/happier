@@ -248,11 +248,11 @@ describe('machineRpcWithServerScope', () => {
     });
 
     it.each([
-        { target: 'undecryptable', expected: { status: 'error', errorCode: 'machine_rpc_decryption_failed' } },
-        { target: 'disconnected', expected: { status: 'error', errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE } },
-        { target: 'missing-method', expected: { status: 'unavailable' } },
-        { target: 'old-capability', expected: { status: 'unavailable' } },
-        { target: 'supported', expected: { status: 'available' } },
+        { target: 'undecryptable', expected: 'unavailable' },
+        { target: 'disconnected', expected: 'unavailable' },
+        { target: 'missing-method', expected: 'unavailable' },
+        { target: 'old-capability', expected: 'unavailable' },
+        { target: 'supported', expected: 'available' },
     ])('distinguishes existing-state capability from a $target target through encrypted machine RPC', async ({ target, expected }) => {
         installScopedFallback();
         const { Encryption } = await import('@/sync/encryption/encryption');
@@ -279,9 +279,9 @@ describe('machineRpcWithServerScope', () => {
         createEphemeralSocketSpy.mockResolvedValue({ timeout: () => ({ emitWithAck }), disconnect: vi.fn() });
         const { renderHook } = await import('@/dev/testkit');
         const { useSessionHandoffExistingStateAvailability } = await import('@/sync/domains/sessionHandoff/useSessionHandoffExistingStateAvailability');
-        const hook = await renderHook(() => useSessionHandoffExistingStateAvailability({ serverId: 'server-b', sourceMachineId: 'machine-source', targetMachineId: 'machine-target' }));
+        const hook = await renderHook(() => useSessionHandoffExistingStateAvailability({ serverId: 'server-b', sourceMachineId: 'machine-source', targetMachineId: 'machine-target', agentId: 'claude' }));
         try {
-            await vi.waitFor(() => expect(hook.getCurrent()).toMatchObject(expected));
+            await vi.waitFor(() => expect(hook.getCurrent()).toBe(expected));
         } finally {
             await hook.unmount();
         }

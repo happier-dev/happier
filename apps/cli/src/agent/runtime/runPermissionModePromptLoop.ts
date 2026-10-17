@@ -23,6 +23,7 @@ import { readNewestSessionModelsMetadataStateV1 } from '@happier-dev/agents';
 import {
   resolveProviderPromptFailureDeliveryReason,
   type ProviderPromptWithMeta,
+  type ProviderTurnCompletionResult,
 } from '@/agent/runtime/providerPromptSubmission';
 
 type PromptRuntime = {
@@ -37,7 +38,7 @@ type PromptRuntime = {
   isProviderNativeCommand?: InFlightSteerController['isProviderNativeCommand'];
   compactContext?: (command: string) => Promise<void>;
   failTurn?: (error: unknown) => void | boolean | Promise<void | boolean>;
-  flushTurn: () => void | Promise<void>;
+  flushTurn: () => void | ProviderTurnCompletionResult | Promise<void | ProviderTurnCompletionResult>;
   reset: () => Promise<void>;
   getSessionId: () => string | null;
   shouldResumeAfterPermissionModeChange?: () => boolean;
@@ -64,6 +65,7 @@ type QueuedPermissionModeMessage = {
 export type ReadyNotificationTurnContext = Readonly<{
   turnToken: string | null;
   startSeqExclusive: number | null;
+  turnResult?: ProviderTurnCompletionResult;
 }>;
 
 class StrictInitialResumeError extends Error {
@@ -652,7 +654,14 @@ export async function runPermissionModePromptLoop(opts: {
             await opts.runtime.flushTurn();
           } catch {}
         } else {
-          await opts.runtime.flushTurn();
+          const turnResult = await opts.runtime.flushTurn();
+          if (turnResult) {
+            readyTurnContext = {
+              turnToken: readyTurnContext?.turnToken ?? null,
+              startSeqExclusive: readyTurnContext?.startSeqExclusive ?? null,
+              turnResult,
+            };
+          }
         }
       }
       // Metadata updates can arrive while we're mid-turn.

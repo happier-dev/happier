@@ -19,6 +19,7 @@ import type { SessionRuntimeActivitySnapshotPublisher } from '@/session/runtimeA
 import type { SessionUserMessageEnqueueResult } from '@/rpc/handlers/sessionUserMessageSend';
 import type { SessionRuntimeControls } from '@/rpc/handlers/sessionControls';
 import { cloneCallableSessionRuntimeControls } from '@/api/session/sessionRuntimeControls';
+import type { SessionTranscriptObservationProvenanceV1 } from '@happier-dev/protocol';
 
 export type DeferredApiSessionTarget = Readonly<{
   sessionId: string;
@@ -46,14 +47,14 @@ export type DeferredApiSessionTarget = Readonly<{
   sendAgentMessageCommitted: (
     provider: unknown,
     body: unknown,
-    opts: { localId: string; meta?: Record<string, unknown> },
+    opts: { localId: string; meta?: Record<string, unknown>; provenance?: SessionTranscriptObservationProvenanceV1 },
   ) => Promise<void>;
   sendCodexMessage: (body: unknown) => void;
   sendCodexMessageCommitted?: (body: unknown, opts: { localId: string }) => Promise<unknown>;
   sendUserTextMessage: (text: string, opts?: { localId?: string; meta?: Record<string, unknown> }) => void;
   sendUserTextMessageCommitted?: (
     text: string,
-    opts: { localId: string; meta?: Record<string, unknown> },
+    opts: { localId: string; meta?: Record<string, unknown>; provenance?: SessionTranscriptObservationProvenanceV1 },
   ) => Promise<void>;
   sendSessionEventCommitted?: (event: unknown, opts: { localId: string }) => Promise<unknown>;
   enqueueSessionUserMessage?: (params: Readonly<{
@@ -318,7 +319,7 @@ export class DeferredApiSessionClient {
   sendAgentMessageCommitted(
     _provider: unknown,
     _body: unknown,
-    _opts: { localId: string; meta?: Record<string, unknown> },
+    _opts: { localId: string; meta?: Record<string, unknown>; provenance?: SessionTranscriptObservationProvenanceV1 },
   ): Promise<void> {
     return this.forwardCommittedCall(
       (target) => target.sendAgentMessageCommitted(_provider, _body, _opts),
@@ -366,7 +367,7 @@ export class DeferredApiSessionClient {
 
   sendUserTextMessageCommitted(
     _text: string,
-    _opts: { localId: string; meta?: Record<string, unknown> },
+    _opts: { localId: string; meta?: Record<string, unknown>; provenance?: SessionTranscriptObservationProvenanceV1 },
   ): Promise<void> {
     return this.forwardCommittedCall(
       (target) => {

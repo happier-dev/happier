@@ -121,7 +121,7 @@ import { initializeBackendRunSession } from '@/agent/runtime/initializeBackendRu
 import { initializeBackendApiContext } from '@/agent/runtime/initializeBackendApiContext';
 import { codexLocalLauncher, type CodexLauncherResult } from './codexLocalLauncher';
 import { sendReadyWithPushNotification } from '@/agent/runtime/sendReadyWithPushNotification';
-import { resolveProviderPromptFailureDeliveryReason } from '@/agent/runtime/providerPromptSubmission';
+import { resolveProviderPromptFailureDeliveryReason, type ProviderTurnCompletionResult } from '@/agent/runtime/providerPromptSubmission';
 import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { getSessionNotificationTitle } from '@/agent/runtime/readyNotificationContext';
 import { resolveReadyNotificationAssistantText } from '@/agent/runtime/readyNotificationAssistantText';
@@ -375,7 +375,7 @@ export async function runCodex(opts: {
         clearGoal?: () => Promise<unknown>;
         listVendorPlugins?: () => Promise<unknown>;
         listSkills?: () => Promise<unknown>;
-        flushTurn: () => Promise<void>;
+        flushTurn: () => Promise<void | ProviderTurnCompletionResult>;
         rollbackConversation: (request: import('@happier-dev/protocol').SessionRollbackRpcParams) => Promise<import('@happier-dev/protocol').SessionRollbackRpcResult>;
     }>;
     //
@@ -1388,6 +1388,7 @@ export async function runCodex(opts: {
             assistantPreviewText: resolveReadyNotificationAssistantText({
                 includeMessageText: includeAssistantPreviewText,
                 explicitAssistantText: turnAssistantPreviewTracker.getPreview(),
+                turnResult: context?.turnResult,
                 session,
                 turnToken: context?.turnToken ?? null,
                 startSeqExclusive: context?.startSeqExclusive ?? null,
@@ -3051,7 +3052,14 @@ export async function runCodex(opts: {
                                 // The exact provider turn has already failed. Publish its terminal
                                 // boundary before Connected Services attempts refresh/switch/continuation
                                 // so recovery cannot wait on the turn that is waiting on recovery.
-                                await runtime.flushTurn();
+                                const turnResult = await runtime.flushTurn();
+                                if (turnResult) {
+                                    readyTurnContext = {
+                                        turnToken: readyTurnContext?.turnToken ?? null,
+                                        startSeqExclusive: readyTurnContext?.startSeqExclusive ?? null,
+                                        turnResult,
+                                    };
+                                }
                                 providerTurnSettledBeforeRuntimeAuthRecovery = true;
                             }
                             const recoveryReport = await reportConnectedServiceRuntimeAuthFailureToDaemon({
@@ -3112,7 +3120,14 @@ export async function runCodex(opts: {
                     && hasActiveAppServerProviderTurn;
                 if (useCodexAcp || useCodexAppServer) {
                     if (!preserveActiveAppServerTurn && !providerTurnSettledBeforeRuntimeAuthRecovery) {
-                        await remoteRuntime?.flushTurn();
+                        const turnResult = await remoteRuntime?.flushTurn();
+                        if (turnResult) {
+                            readyTurnContext = {
+                                turnToken: readyTurnContext?.turnToken ?? null,
+                                startSeqExclusive: readyTurnContext?.startSeqExclusive ?? null,
+                                turnResult,
+                            };
+                        }
                     }
                 }
                 if (useCodexAcp) {

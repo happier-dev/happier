@@ -22,7 +22,7 @@ const readSegmentState = (meta: Record<string, unknown> | undefined): string => 
 async function createRuntimeWithThinkingCommits(): Promise<{
   backend: ReturnType<typeof createFakeAcpRuntimeBackend>;
   thinkingCommits: () => ThinkingCommit[];
-  flushTurn: () => Promise<void>;
+  flushTurn: ReturnType<typeof createAcpRuntime>['flushTurn'];
 }> {
   const backend = createFakeAcpRuntimeBackend({ sessionId: 'sess_main' });
   const durableCalls: Array<{ localId: string; body: ACPMessageData; meta?: Record<string, unknown> }> = [];

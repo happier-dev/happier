@@ -131,8 +131,8 @@ describe('createAcpRuntime (transcript streaming vNext)', () => {
     backend.emit({ type: 'model-output', textDelta: 'Final answer.' } satisfies AgentMessage);
     backend.emit({ type: 'model-output', fullText: finalSnapshot, fullTextScope: snapshotScope } satisfies AgentMessage);
 
-    expect(tracker.getPreview()).toBe('Progress update.Final answer.');
-    await runtime.flushTurn();
+    await expect.poll(() => tracker.getPreview()).toBe('Progress update.Final answer.');
+    await expect(runtime.flushTurn()).resolves.toEqual({ assistantText: 'Progress update.Final answer.' });
 
     const completedAssistantMessages = durableCalls.flatMap((call) => {
       const streamMeta = call.meta?.happierStreamSegmentV1;
@@ -169,7 +169,7 @@ describe('createAcpRuntime (transcript streaming vNext)', () => {
       fullTextScope: 'segment',
     } satisfies AgentMessage);
 
-    expect(tracker.getPreview()).toBe('Shared prefixShared prefix continued');
+    await expect.poll(() => tracker.getPreview()).toBe('Shared prefixShared prefix continued');
     await runtime.flushTurn();
   });
 
@@ -210,7 +210,7 @@ describe('createAcpRuntime (transcript streaming vNext)', () => {
       expect(draftId).toBeDefined();
     }
     backend.emit({ type: 'model-output', fullText: 'corrected', fullTextScope: 'segment' });
-    expect(tracker.getPreview()).toBe('retained artifactcorrected');
+    await expect.poll(() => tracker.getPreview()).toBe('retained artifactcorrected');
     await runtime.flushTurn();
 
     expect(messageBuffer.getMessages().filter((message) => message.type === 'assistant').map((message) => message.content))

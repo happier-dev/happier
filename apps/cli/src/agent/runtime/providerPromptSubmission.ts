@@ -55,3 +55,8 @@ export type ProviderPromptWithMeta = Readonly<{
   localId?: string | null;
   meta?: Record<string, unknown>;
 }> & ProviderPromptSubmissionCallbacks;
+
+/** Final output captured by the turn owner, independent of subsequent provider activity. */
+export type ProviderTurnCompletionResult = Readonly<{
+  assistantText: string | null;
+}>;

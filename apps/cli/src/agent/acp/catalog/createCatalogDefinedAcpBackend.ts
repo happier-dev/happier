@@ -86,14 +86,8 @@ export function createCatalogDefinedAcpBackend(
     ): Promise<StartSessionResult> => applyMode(await loadSession(sessionId, openOptions));
   }
 
-  if (typeof backend.loadSessionWithReplayCapture === 'function') {
-    const loadSessionWithReplayCapture = backend.loadSessionWithReplayCapture.bind(backend);
-    configurable.loadSessionWithReplayCapture = async (sessionId: SessionId) => {
-      const result = await loadSessionWithReplayCapture(sessionId);
-      await applyPermissionMode(result.sessionId);
-      return result;
-    };
-  }
+  // ACP replay capture delegates to this same wrapped loadSession. Applying the
+  // mode again around capture would send a second provider configuration write.
 
   return backend;
 }

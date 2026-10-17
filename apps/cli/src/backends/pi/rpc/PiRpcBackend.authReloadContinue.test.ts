@@ -299,6 +299,9 @@ describe('PiRpcBackend auth reload restart deferral', () => {
     const boots = parseJsonLines<{ pid: number }>(await readFile(fixture.bootLogPath, 'utf8'));
     expect(boots[1]!.pid).not.toBe(firstBoot.pid);
     expect(fixture.messages).not.toContainEqual(expect.objectContaining({ type: 'status', status: 'error' }));
+    expect(fixture.messages.filter((message) => message.type === 'status' && message.status === 'idle')).toEqual([
+      { type: 'status', status: 'idle', turnFinished: true },
+    ]);
 
     // Re-deliver an old child's delayed exit after the replacement has been published. The exit
     // handler must be child-identity-aware: this event no longer owns backend process state.

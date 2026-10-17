@@ -4,7 +4,7 @@ import { mkdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
 import { createRunDirs } from '../../src/testkit/runDir';
-import { type StartedDaemon } from '../../src/testkit/daemon/daemon';
+import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
 import { resolveUiWebBeforeAllTimeoutMs, startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
@@ -190,6 +190,15 @@ test.describe('ui e2e: encryption opt-out mode switching', () => {
     await mkdir(testDir, { recursive: true });
 
     const diagnostics = collectBrowserDiagnostics({ page });
+    const daemonEnv = {
+      ...process.env,
+      HAPPIER_SERVER_URL: server.baseUrl,
+      HAPPIER_WEBAPP_URL: uiBaseUrl,
+      HAPPIER_CLAUDE_PATH: fakeClaudeFixturePath(),
+      HAPPIER_DISABLE_CAFFEINATE: '1',
+      HAPPIER_VARIANT: 'dev',
+      HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
+    };
 
     let daemon: StartedDaemon | null = null;
     let thrown: unknown = null;
@@ -200,9 +209,7 @@ test.describe('ui e2e: encryption opt-out mode switching', () => {
         cliHomeDir,
         serverUrl: server.baseUrl,
         uiBaseUrl,
-        extraEnv: {
-          HAPPIER_CLAUDE_PATH: fakeClaudeFixturePath(),
-        },
+        extraEnv: daemonEnv,
       });
 
       const draftAText = `account-mode draft A ${run.runId}`;
@@ -268,6 +275,15 @@ test.describe('ui e2e: encryption opt-out mode switching', () => {
       await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/session/${sessionAId}`, 120_000);
       await expect(page.getByTestId('session-composer-input')).toHaveValue(sessionADraftText, { timeout: 60_000 });
 
+      // Machine conversion retires the old key context; restart before creating another session.
+      await daemon.stop();
+      daemon = null;
+      daemon = await startTestDaemon({
+        testDir: resolve(join(testDir, 'daemon-after-plain')),
+        happyHomeDir: cliHomeDir,
+        env: daemonEnv,
+      });
+
       const tagB = `ui-e2e-plain-b-${run.runId}`;
       const msgB = `hello plain B ${run.runId}`;
 
@@ -319,6 +335,15 @@ test.describe('ui e2e: encryption opt-out mode switching', () => {
       await expectNewSessionDraftReadable({ page, uiBaseUrl, draftId: draftBId, text: draftBText });
       await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/session/${sessionAId}`, 120_000);
       await expect(page.getByTestId('session-composer-input')).toHaveValue(sessionADraftText, { timeout: 60_000 });
+
+      // Machine conversion retires the old key context; restart before creating another session.
+      await daemon.stop();
+      daemon = null;
+      daemon = await startTestDaemon({
+        testDir: resolve(join(testDir, 'daemon-after-e2ee')),
+        happyHomeDir: cliHomeDir,
+        env: daemonEnv,
+      });
 
       const tagC = `ui-e2e-e2ee-c-${run.runId}`;
       const msgC = `hello e2ee C ${run.runId}`;

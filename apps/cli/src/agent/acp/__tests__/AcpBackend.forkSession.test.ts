@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { withTempDir } from '@/testkit/fs/tempDir';
 import { AcpBackend } from '../AcpBackend';
 import { writeAcpTestAgentScript } from '../testkit/subprocessHarness';
+import type { StatusMessage } from '@/agent/core/AgentMessage';
 
 function writeForkAgentScript(params: { dir: string; supportsFork: boolean }): string {
   return writeAcpTestAgentScript({
@@ -57,10 +58,15 @@ describe('AcpBackend forkSession', () => {
         command: process.execPath,
         args: [writeForkAgentScript({ dir, supportsFork: true })],
       });
+      const statuses: StatusMessage[] = [];
+      backend.onMessage((message) => { if (message.type === 'status') statuses.push(message); });
 
       try {
         const result = await backend.forkSession({ sessionId: ' sess_parent ' });
         expect(result).toEqual({ sessionId: ' sess_child ' });
+        const readiness = statuses.find((message) => message.status === 'idle');
+        expect(readiness).toBeDefined();
+        expect(readiness?.turnFinished).toBeUndefined();
       } finally {
         await backend.dispose();
       }

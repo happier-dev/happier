@@ -19,7 +19,7 @@ export function unwrapDataKeyRpcResult(result: DataKeyRpcResult, context = 'data
 type RpcSocket = {
   rpcCall: <T = unknown>(
     method: string,
-    params: string,
+    params: unknown,
     timeoutMs?: number,
     authorization?: SocketRpcAuthorizationContext,
   ) => Promise<T>;
@@ -32,7 +32,7 @@ type RpcResponseEnvelope = {
   errorCode?: unknown;
 };
 
-export function createDataKeyRpcClient(socket: RpcSocket, dataKey: Uint8Array): {
+function createRpcClient(socket: RpcSocket, dataKey: Uint8Array | null): {
   /**
    * `authorization` is required by the server for a session-write method
    * (`resolveSocketRpcSessionWriteAuthorizationMethod`); without it the call is
@@ -52,12 +52,13 @@ export function createDataKeyRpcClient(socket: RpcSocket, dataKey: Uint8Array): 
       timeoutMs?: number,
       authorization?: SocketRpcAuthorizationContext,
     ) => {
-      const params = encryptDataKeyBase64(payload, dataKey);
+      const params = dataKey === null ? payload : encryptDataKeyBase64(payload, dataKey);
       const res = await socket.rpcCall<RpcResponseEnvelope>(method, params, timeoutMs, authorization);
       if (!res || typeof res !== 'object') {
         return { ok: false, error: 'invalid-rpc-response' };
       }
       if (res.ok === true) {
+        if (dataKey === null) return { ok: true, result: res.result };
         if (typeof res.result !== 'string') {
           return { ok: false, error: 'invalid-rpc-result', errorCode: undefined };
         }
@@ -73,4 +74,12 @@ export function createDataKeyRpcClient(socket: RpcSocket, dataKey: Uint8Array): 
       };
     },
   };
+}
+
+export function createDataKeyRpcClient(socket: RpcSocket, dataKey: Uint8Array) {
+  return createRpcClient(socket, dataKey);
+}
+
+export function createPlainRpcClient(socket: RpcSocket) {
+  return createRpcClient(socket, null);
 }

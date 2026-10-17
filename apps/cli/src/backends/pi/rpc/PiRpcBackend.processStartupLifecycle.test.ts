@@ -28,6 +28,8 @@ vi.mock('@/utils/fs/protectedTempTextArtifact', async (importOriginal) => {
   };
 });
 
+import type { AgentMessage } from '@/agent/core';
+
 import { PiRpcBackend } from './PiRpcBackend';
 
 function deferred<T>(): Readonly<{
@@ -41,20 +43,40 @@ function deferred<T>(): Readonly<{
   return { promise, resolve };
 }
 
-function writeFakePi(dir: string, options: Readonly<{ exitAfterState?: boolean }> = {}): string {
+function writeFakePi(dir: string, options: Readonly<{ exitAfterState?: boolean; createSession?: boolean; startupActivity?: 'streaming' | 'compacting'; finishFile?: string }> = {}): string {
   const script = join(dir, 'fake-pi-startup.js');
   writeFileSync(script, `
 const readline = require('node:readline');
 const rl = readline.createInterface({ input: process.stdin });
 const out = value => process.stdout.write(JSON.stringify(value) + '\\n');
-const state = { sessionId: 'pi-startup', model: { id: 'm', provider: 'p' } };
+let created = ${options.createSession !== true};
+let active = ${options.startupActivity !== undefined};
+const state = () => ({ ...(created ? { sessionId: 'pi-startup' } : {}), model: { id: 'm', provider: 'p' },
+  isStreaming: active && ${options.startupActivity === 'streaming'}, isCompacting: active && ${options.startupActivity === 'compacting'} });
+const beginActivity = () => { if (active) out({ type: 'agent_start' }); };
+if (created) beginActivity();
+const finishFile = ${JSON.stringify(options.finishFile ?? null)};
+if (finishFile) {
+  const fs = require('node:fs');
+  fs.watchFile(finishFile, { interval: 10, persistent: false }, stat => {
+    if (stat.size === 0) return;
+    fs.unwatchFile(finishFile);
+    active = false;
+    out({ type: 'agent_end' });
+  });
+}
 rl.on('line', line => {
   const command = JSON.parse(line);
   const base = { id: command.id, type: 'response', command: command.type, success: true };
   if (command.type === 'get_state') {
-    out({ ...base, data: state });
+    out({ ...base, data: state() });
     if (${options.exitAfterState === true}) setTimeout(() => process.exit(1), 20);
     return;
+  }
+  if (command.type === 'new_session') {
+    created = true;
+    beginActivity();
+    return out({ ...base, data: { cancelled: false } });
   }
   if (command.type === 'get_available_models') {
     if (${options.exitAfterState === true}) return;
@@ -79,6 +101,39 @@ describe('PiRpcBackend process startup lifecycle', () => {
     fsBoundary.stat.mockClear();
     vi.useRealTimers();
     vi.restoreAllMocks();
+  });
+
+  it.each([
+    { operation: 'start', createSession: false, startupActivity: 'streaming' },
+    { operation: 'start', createSession: true, startupActivity: 'compacting' },
+    { operation: 'resume', createSession: false, startupActivity: 'streaming' },
+  ] as const)('does not complete $startupActivity provider work during $operation startup (create=$createSession)', async ({ operation, createSession, startupActivity }) => {
+    const dir = mkdtempSync(join(tmpdir(), 'happier-pi-startup-active-'));
+    dirs.push(dir);
+    const finishFile = join(dir, 'finish');
+    writeFileSync(finishFile, '');
+    const backend = new PiRpcBackend({
+      cwd: dir,
+      command: process.execPath,
+      args: [writeFakePi(dir, { createSession, startupActivity, finishFile })],
+      env: { PI_CODING_AGENT_DIR: dir },
+    });
+    backends.push(backend);
+    const messages: AgentMessage[] = [];
+    backend.onMessage((message) => messages.push(message));
+
+    const opened = operation === 'resume'
+      ? await backend.loadSession('pi-startup')
+      : await backend.startSession();
+    expect(opened).toEqual({ sessionId: 'pi-startup' });
+    expect(messages.some((message) => message.type === 'status' && message.status === 'running')).toBe(true);
+    expect(messages.filter((message) => message.type === 'status' && message.status === 'idle')).toEqual([]);
+
+    // The native agent_end, rather than session readiness, owns turn completion.
+    writeFileSync(finishFile, 'finish');
+    await vi.waitFor(() => expect(messages.filter((message) => message.type === 'status' && message.status === 'idle')).toEqual([
+      { type: 'status', status: 'idle' },
+    ]));
   });
 
   it('does not publish or spawn an artifact that finishes materializing after disposal', async () => {

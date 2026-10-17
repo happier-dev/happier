@@ -34,6 +34,17 @@ pi --version
 happier pi
 ```
 
+## Extension-started runs
+
+In development builds, text submitted by Pi extensions appears in the Happier
+conversation, and runs started by extensions show the session as working.
+Repeated submissions remain separate messages, even when their text is identical.
+
+A recorded input may still be transformed or handled by another extension, or
+cancelled while queued. Its appearance in the conversation does not by itself
+confirm that the model received it. This support covers text inputs; it does not
+add extension-input image attachments.
+
 ## Permissions
 
 Use the shared permission vocabulary when starting Pi:

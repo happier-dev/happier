@@ -113,37 +113,6 @@ describe('createAcpRuntime (thinking state)', () => {
     // (onThinkingChange(false) is idempotent)
   });
 
-  it('does not start a task for status:running outside an owned turn', async () => {
-    const backend = createFakeAcpRuntimeBackend({ sessionId: 'sess_main' });
-
-    const messages: ACPMessageData[] = [];
-    const session = createBasicSessionClientWithOverrides({
-      sendAgentMessage: (_provider, body) => {
-        messages.push(body);
-      },
-    });
-
-    const runtime = createAcpRuntime({
-      provider: 'pi',
-      directory: '/tmp',
-      session,
-      messageBuffer: new MessageBuffer(),
-      mcpServers: {},
-      permissionHandler: createApprovedPermissionHandler(),
-      onThinkingChange: () => {},
-      ensureBackend: async () => backend,
-    });
-
-    await runtime.startOrLoad({});
-
-    backend.emit({ type: 'status', status: 'running' } satisfies AgentMessage);
-    expect(messages.some((msg) => msg.type === 'task_started')).toBe(false);
-
-    runtime.beginTurn();
-    backend.emit({ type: 'status', status: 'running' } satisfies AgentMessage);
-    expect(messages.filter((msg) => msg.type === 'task_started')).toHaveLength(1);
-  });
-
   it('does NOT clear thinking on status:idle while turn is in-flight (issue #82 flicker)', async () => {
     const backend = createFakeAcpRuntimeBackend({ sessionId: 'sess_main' });
 

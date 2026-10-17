@@ -1,6 +1,7 @@
 import type { ACPMessageData, ACPProvider, SessionEventMessage } from '@/api/session/sessionMessageTypes';
 import type { Metadata } from '@/api/types';
 import type { SessionTurnLifecycle } from '@/agent/runtime/session/turn/types';
+import type { SessionTranscriptObservationProvenanceV1 } from '@happier-dev/protocol';
 
 /**
  * Minimal session client surface required by ACP runtimes + replay importers.
@@ -13,14 +14,14 @@ export type AcpReplaySidechainSessionClient = Readonly<{
   sendAgentMessageCommitted: (
     provider: ACPProvider,
     body: ACPMessageData,
-    opts: { localId: string; meta?: Record<string, unknown> },
+    opts: { localId: string; meta?: Record<string, unknown>; provenance?: SessionTranscriptObservationProvenanceV1 },
   ) => Promise<void>;
 }>;
 
 export type AcpReplayHistorySessionClient = AcpReplaySidechainSessionClient & Readonly<{
   sendUserTextMessageCommitted: (
     text: string,
-    opts: { localId: string; meta?: Record<string, unknown> },
+    opts: { localId: string; meta?: Record<string, unknown>; provenance?: SessionTranscriptObservationProvenanceV1 },
   ) => Promise<void>;
   updateMetadata: (handler: (metadata: Metadata) => Metadata) => Promise<void> | void;
   fetchRecentTranscriptTextItemsForAcpImport: (

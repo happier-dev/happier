@@ -116,7 +116,7 @@ export interface SessionClientPort {
   fetchRecentTranscriptTextItemsForAcpImport?(opts?: { take?: number }): Promise<Array<{ role: 'user' | 'agent'; text: string }>>;
   fetchCommittedTranscriptIdentitySnapshot?(): Promise<import('./transcriptQueries').CommittedTranscriptIdentitySnapshot>;
   sendAgentMessage(provider: ACPProvider, body: ACPMessageData, opts?: { localId?: string; meta?: Record<string, unknown> }): void;
-  sendAgentMessageCommitted(provider: ACPProvider, body: ACPMessageData, opts: { localId: string; meta?: Record<string, unknown> }): Promise<void>;
+  sendAgentMessageCommitted(provider: ACPProvider, body: ACPMessageData, opts: { localId: string; meta?: Record<string, unknown>; provenance?: SessionTranscriptObservationProvenanceV1 }): Promise<void>;
   sendAgentMessageEphemeral?(
     provider: ACPProvider,
     body: ACPMessageData,

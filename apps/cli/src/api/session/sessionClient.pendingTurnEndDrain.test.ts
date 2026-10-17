@@ -193,7 +193,17 @@ async function createClient(
         if (options.serverContractMode === 'released') return {};
         return { v: 1 };
       }
-      return customEmitWithAck?.(event, payload, socket) ?? { ok: true };
+      const customAck = customEmitWithAck?.(event, payload, socket);
+      if (customAck !== undefined) return customAck;
+      if (event === 'update-state') {
+        if (!payload || typeof payload !== 'object'
+          || !('expectedVersion' in payload) || typeof payload.expectedVersion !== 'number'
+          || !('agentState' in payload)) {
+          throw new Error('Malformed Agent-state update payload');
+        }
+        return { result: 'success', version: payload.expectedVersion + 1, agentState: payload.agentState };
+      }
+      return { ok: true };
     },
   });
   userSocketStub = createApiSessionSocketStub({ id: 'user-socket', connected: false });

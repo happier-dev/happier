@@ -78,6 +78,7 @@ import {
   buildPiExtensionAskUserQuestionInput,
   buildPiExtensionUiResponse,
   parsePiBlockingExtensionUiRequest,
+  parsePiExtensionUserInput,
   type PiExtensionUiResponse,
 } from './piExtensionUiRequest';
 import {
@@ -786,7 +787,6 @@ export class PiRpcBackend implements AgentBackend {
         this.sessionFile = existingSessionFile;
         await this.captureAuthJsonSnapshot();
         this.publishRuntimeState(stateBefore);
-        this.emitMessage({ type: 'status', status: 'idle' });
         return { sessionId: existingSessionId };
       }
 
@@ -813,7 +813,6 @@ export class PiRpcBackend implements AgentBackend {
       this.sessionFile = nextSessionFile;
       await this.captureAuthJsonSnapshot();
       this.publishRuntimeState(stateAfter);
-      this.emitMessage({ type: 'status', status: 'idle' });
       return { sessionId: nextSessionId };
     } catch (error) {
       if (Date.now() >= lifecycle.deadlineMs) {
@@ -957,7 +956,6 @@ export class PiRpcBackend implements AgentBackend {
       this.sessionFile = asNonEmptyString(state.sessionFile) ?? sessionFile;
       await this.captureAuthJsonSnapshot();
       this.publishRuntimeState(state);
-      this.emitMessage({ type: 'status', status: 'idle' });
       return { sessionId: expectedSessionId };
     } catch (error) {
       this.sessionId = null;
@@ -1268,7 +1266,8 @@ export class PiRpcBackend implements AgentBackend {
         await this.sendCommand({ type: 'prompt', message }, 30_000, { processAlreadyEnsured: true });
       } catch (error) {
         const promptError = asError(error);
-        settleAdmission(promptError instanceof PiRpcPromptRejectedBeforeEffectError
+        const rejectedBeforeEffect = promptError instanceof PiRpcPromptRejectedBeforeEffectError;
+        settleAdmission(rejectedBeforeEffect
           ? { status: 'rejected_before_effect', error: promptError }
           : { status: 'effect_may_have_occurred', error: promptError });
         if (isPromptResponseTimeoutError(promptError)) {
@@ -1818,7 +1817,6 @@ export class PiRpcBackend implements AgentBackend {
     }));
     this.sessionFile = asNonEmptyString(state.sessionFile) ?? sessionFile;
     this.publishRuntimeState(state);
-    this.emitMessage({ type: 'status', status: 'idle' });
     return true;
   }
 
@@ -1939,6 +1937,12 @@ export class PiRpcBackend implements AgentBackend {
 
     const record = asRecord(parsed);
     if (!record) return;
+    const extensionUserInput = parsePiExtensionUserInput(record);
+    if (extensionUserInput !== null) {
+      this.notePendingTurnActivity(record);
+      this.emitMessage({ type: 'user-message', text: extensionUserInput });
+      return;
+    }
     if (this.pendingTurn) {
       this.tracePiRpcFailureBoundary('stdout_record', record);
     }
@@ -2582,7 +2586,7 @@ export class PiRpcBackend implements AgentBackend {
     this.pendingTurn = null;
     this.clearPendingTurnTimers(pending);
     this.openPromptRequestIds.clear();
-    this.emitMessage({ type: 'status', status: 'idle' });
+    this.emitMessage({ type: 'status', status: 'idle', turnFinished: true });
     pending.resolve();
     return true;
   }

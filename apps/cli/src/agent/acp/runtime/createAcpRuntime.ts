@@ -72,6 +72,7 @@ import { canonicalizeToolNameV2 } from '@/agent/tools/normalization';
 import type {
   ProviderPromptSubmissionCallbacks,
   ProviderPromptWithMeta,
+  ProviderTurnCompletionResult,
 } from '@/agent/runtime/providerPromptSubmission';
 import { ProviderPromptSubmissionRejectedBeforeEffectError } from '@/agent/runtime/providerPromptSubmission';
 import {
@@ -98,7 +99,7 @@ import {
   type NormalizedAcpPlanSnapshot,
 } from '@/agent/acp/plans';
 import { applyProviderSessionInfoUpdate } from '@/agent/acp/runtime/providerSessionInfoState';
-import { createSessionMediaTurnState } from '@/agent/acp/runtime/sessionMediaTurnState';
+import { createSessionMediaTurnState, type SessionMediaTurnState } from '@/agent/acp/runtime/sessionMediaTurnState';
 
 const ACP_FAILURE_TRACE_ENV = 'HAPPIER_ACP_FAILURE_TRACE';
 
@@ -302,7 +303,7 @@ export type AcpRuntime = Readonly<{
   sendPrompt: (prompt: string) => Promise<void>;
   sendPromptWithMeta: (params: ProviderPromptWithMeta) => Promise<void>;
   failTurn: (error: unknown) => Promise<boolean>;
-  flushTurn: () => Promise<void>;
+  flushTurn: () => Promise<ProviderTurnCompletionResult>;
 }>;
 
 export type AcpRuntimeSteerPromptOptions = InFlightSteerPromptOptions & Readonly<{
@@ -591,17 +592,45 @@ export function createAcpRuntime(params: {
     update: { title?: string | null; updatedAt?: string | null };
     observedAt: number;
   }> | null = null;
-  const modelOutputState: ModelOutputReconciliationState = { turnText: '', segmentText: '' };
-  let lastModelOutputText = '';
-  let accumulatedThinkingText = '';
-  let isResponseInProgress = false;
-  let taskStartedSent = false;
-  let turnAborted = false;
-  let pendingTurnOutcome: AcpTurnOutcome | null = null;
-  let loadingSession = false;
-  let turnInFlight = false;
-  let currentTurnId: string | null = null;
-  let turnMediaGeneration = 0;
+  type RuntimeTurnState = {
+    modelOutputState: ModelOutputReconciliationState;
+    lastModelOutputText: string;
+    accumulatedThinkingText: string;
+    isResponseInProgress: boolean;
+    taskStartedSent: boolean;
+    turnAborted: boolean;
+    pendingTurnOutcome: AcpTurnOutcome | null;
+    turnInFlight: boolean;
+    currentTurnId: string | null;
+    responseCompletion: Promise<AcpTurnOutcome | void> | null;
+    settlement: Promise<void> | null;
+    persistedSessionMediaItems: SessionMediaItemV1[];
+    unavailableSessionMediaByDedupeKey: Map<string, SessionMediaUnavailableV1[]>;
+    sessionMediaTurnState: SessionMediaTurnState<RuntimeSessionMediaSource>;
+  };
+  const createTurnState = (): RuntimeTurnState => ({
+    modelOutputState: { turnText: '', segmentText: '' },
+    lastModelOutputText: '',
+    accumulatedThinkingText: '',
+    isResponseInProgress: false,
+    taskStartedSent: false,
+    turnAborted: false,
+    pendingTurnOutcome: null,
+    turnInFlight: false,
+    currentTurnId: null,
+    responseCompletion: null,
+    settlement: null,
+    persistedSessionMediaItems: [],
+    unavailableSessionMediaByDedupeKey: new Map(),
+    sessionMediaTurnState: createSessionMediaTurnState<RuntimeSessionMediaSource>({
+      maxEntries: SESSION_MEDIA_MESSAGE_MAX_ENTRIES_V1,
+      resolveDedupeKey: resolveSessionMediaDedupeKey,
+    }),
+  });
+  let turnState = createTurnState();
+  // The host caller may finish after a provider-started successor is already active.
+  // Keep its reference to the same canonical context until its explicit flush consumes it.
+  let hostCallerTurn: RuntimeTurnState | null = null;
   let startOrLoadFlight: Readonly<{ intentKey: string; promise: Promise<string> }> | null = null;
   let postStartPendingDrainFlight: Promise<void> | null = null;
   let startupDrainController: AbortController | null = null;
@@ -664,12 +693,6 @@ export function createAcpRuntime(params: {
     ? params.pendingQueue.inputConsumer
     : null;
   let sessionMediaPersistenceQueueTail: Promise<void> = Promise.resolve();
-  let persistedSessionMediaItems: SessionMediaItemV1[] = [];
-  const unavailableSessionMediaByDedupeKey = new Map<string, SessionMediaUnavailableV1[]>();
-  const sessionMediaTurnState = createSessionMediaTurnState<RuntimeSessionMediaSource>({
-    maxEntries: SESSION_MEDIA_MESSAGE_MAX_ENTRIES_V1,
-    resolveDedupeKey: resolveSessionMediaDedupeKey,
-  });
   const identityBinding = createAcpSessionIdentityBinding({
     persistBound: params.sessionIdentity.kind === 'persist-bound'
       ? params.sessionIdentity.persistBound
@@ -717,7 +740,7 @@ export function createAcpRuntime(params: {
     void pendingQueueInputConsumer.pumpPendingWhileActive({
       abortSignal: controller.signal,
       maxPopPerWake: params.pendingQueue.maxPopPerWake,
-      shouldContinue: () => turnInFlight && pendingPumpController === controller,
+      shouldContinue: () => turnState.turnInFlight && pendingPumpController === controller,
       logPrefix: '[ACP]',
       reason: 'acp-active-turn',
     }).catch((error) => {
@@ -733,29 +756,34 @@ export function createAcpRuntime(params: {
   const toolCallCacheTtlMs = Math.max(1, params.toolCallCache?.ttlMs ?? 10 * 60_000);
   const toolNameByCallId = new Map<string, { toolName: string; createdAtMs: number }>();
   const toolCallIdQueue: string[] = [];
-  const streamedTranscriptWriter = createStreamedTranscriptWriter({
-    provider: params.provider,
-    session: params.session,
-  });
-  let pendingTurnBoundaryStreamFlush: Promise<void> | null = null;
+  const streamedTranscriptWriter = createStreamedTranscriptWriter({ provider: params.provider, session: params.session });
+  const observedTranscriptProvenance = { kind: 'non_dependent', source: 'external' } as const;
+  // Provider output has already happened, whether its turn began in Happier or externally.
+  // The session journal owns its retention and ordering with subsequent turn mutations.
+  streamedTranscriptWriter.setCommitProvenance(observedTranscriptProvenance);
+  let pendingTurnSettlement: Promise<void> | null = null;
 
-  const closeOpenStreamedTranscriptSegmentsBeforeTurn = () => {
-    const boundaryFlush = streamedTranscriptWriter.flushAll({ reason: 'turn-end' }).then(
-      () => undefined,
-      (error) => {
-        logger.debug(`[${params.provider}] Failed to flush streamed transcript segments at turn boundary (non-fatal)`, error);
-      },
-    );
-    const trackedBoundaryFlush = boundaryFlush.finally(() => {
-      if (pendingTurnBoundaryStreamFlush === trackedBoundaryFlush) {
-        pendingTurnBoundaryStreamFlush = null;
-      }
+  // Transcript boundaries and lifecycle publication share one settlement order. Activity
+  // changes stay synchronous: a delayed transcript commit must never restore thinking.
+  const enqueueTurnSettlement = <T>(settle: () => T | Promise<T>): Promise<T> => {
+    const result = pendingTurnSettlement ? pendingTurnSettlement.then(settle) : settle();
+    if (!(result instanceof Promise)) return Promise.resolve(result);
+    const tracked = result.then(() => undefined, () => undefined).finally(() => {
+      if (pendingTurnSettlement === tracked) pendingTurnSettlement = null;
     });
-    pendingTurnBoundaryStreamFlush = trackedBoundaryFlush;
+    pendingTurnSettlement = tracked;
+    return result;
   };
 
-  const waitForPendingTurnBoundaryStreamFlush = async () => {
-    await pendingTurnBoundaryStreamFlush;
+  const closeOpenStreamedTranscriptSegmentsBeforeTurn = () => {
+    if (!streamedTranscriptWriter.hasPendingSegments()) return;
+    void enqueueTurnSettlement(async () => {
+      try {
+        await streamedTranscriptWriter.flushAll({ reason: 'turn-end' });
+      } catch (error) {
+        logger.debug(`[${params.provider}] Failed to flush streamed transcript segments at turn boundary (non-fatal)`, error);
+      }
+    });
   };
 
   const clearToolCallCache = () => {
@@ -817,44 +845,70 @@ export function createAcpRuntime(params: {
   };
 
   const ensureCurrentTurnId = (): string => {
-    if (!currentTurnId) currentTurnId = randomUUID();
-    return currentTurnId;
+    if (!turnState.currentTurnId) turnState.currentTurnId = randomUUID();
+    return turnState.currentTurnId;
+  };
+
+  const publishTaskStarted = (): void => {
+    const turn = turnState;
+    handleAcpStatusRunning({
+      session: {
+        keepAlive: params.session.keepAlive.bind(params.session),
+        sendAgentMessage: (provider, body) => {
+          void enqueueTurnSettlement(() => { params.session.sendAgentMessage(provider, body); }).catch((error) => {
+            logger.infoFile(`[${params.provider}] Failed to publish ACP task start`, error);
+          });
+        },
+      },
+      agent: params.provider,
+      getTaskStartedSent: () => turn.taskStartedSent,
+      setTaskStartedSent: (value) => { turn.taskStartedSent = value; },
+      makeId: () => ensureCurrentTurnId(),
+    });
+  };
+
+  const reportTurnMediaOverflow = (turn: RuntimeTurnState): void => {
+    const droppedCount = turn.sessionMediaTurnState.takeOverflowCount();
+    if (droppedCount > 0) {
+      logger.debug(`[${params.provider}] Bounded excess session media sources for the turn`, {
+        droppedCount, maxEntries: SESSION_MEDIA_MESSAGE_MAX_ENTRIES_V1,
+      });
+    }
   };
 
   const resetTurnState = () => {
-    const droppedSessionMediaCount = sessionMediaTurnState.takeOverflowCount();
-    if (droppedSessionMediaCount > 0) {
-      logger.debug(`[${params.provider}] Bounded excess session media sources for the turn`, {
-        droppedCount: droppedSessionMediaCount,
-        maxEntries: SESSION_MEDIA_MESSAGE_MAX_ENTRIES_V1,
-      });
-    }
-    modelOutputState.turnText = '';
-    modelOutputState.segmentText = '';
-    lastModelOutputText = '';
-    accumulatedThinkingText = '';
-    isResponseInProgress = false;
-    taskStartedSent = false;
-    turnAborted = false;
-    pendingTurnOutcome = null;
-    currentTurnId = null;
-    turnMediaGeneration += 1;
-    persistedSessionMediaItems = [];
-    unavailableSessionMediaByDedupeKey.clear();
-    sessionMediaTurnState.reset();
+    turnState = createTurnState();
     params.turnAssistantPreviewTracker?.reset();
   };
 
-  const rememberTurnOutcome = (outcome: AcpTurnOutcome | void): void => {
-    if (!turnAborted && (!outcome || outcome.kind === 'completed' || outcome.kind === 'refused')) {
-      const failure = params.hooks?.classifyAssistantTurnFailure?.({ text: modelOutputState.segmentText, lastMessageText: lastModelOutputText, processEnv: params.processEnv ?? process.env });
+  const retireCurrentTurn = (): RuntimeTurnState => {
+    const turn = turnState;
+    stopPendingPump();
+    publishInFlightSteerCapabilities(false);
+    resetTurnState();
+    params.onThinkingChange(false);
+    params.session.keepAlive(false, 'remote');
+    return turn;
+  };
+
+  const rememberTurnOutcome = (outcome: AcpTurnOutcome | void, turn: RuntimeTurnState = turnState): void => {
+    // A response callback racing the abort acknowledgement cannot replace cancellation.
+    if (turn.pendingTurnOutcome?.kind === 'aborted') return;
+    if (turn.pendingTurnOutcome?.kind === 'failed') throw turn.pendingTurnOutcome.error;
+    if (!turn.turnAborted && (!outcome || outcome.kind === 'completed' || outcome.kind === 'refused')) {
+      const failure = params.hooks?.classifyAssistantTurnFailure?.({ text: turn.modelOutputState.segmentText, lastMessageText: turn.lastModelOutputText, processEnv: params.processEnv ?? process.env });
       if (failure) throw failure;
     }
     if (!outcome) return;
-    pendingTurnOutcome = outcome;
+    turn.pendingTurnOutcome = outcome;
     if (outcome.kind !== 'completed') {
-      turnAborted = true;
+      turn.turnAborted = true;
     }
+  };
+
+  const waitForTurnResponse = (b: AcpRuntimeBackend, turn: RuntimeTurnState): Promise<AcpTurnOutcome | void> => {
+    turn.responseCompletion ??= b.waitForResponseComplete?.() ?? Promise.resolve();
+    return turn.responseCompletion;
   };
 
   const createRuntimeHandledTurnAbortError = (cause: unknown): Error => {
@@ -863,8 +917,8 @@ export function createAcpRuntime(params: {
     return error;
   };
 
-  const rethrowPromptError = (error: unknown): never => {
-    if (turnAborted && !isAbortLikeError(error)) {
+  const rethrowPromptError = (error: unknown, turn: RuntimeTurnState = turnState): never => {
+    if (turn.turnAborted && !isAbortLikeError(error)) {
       throw createRuntimeHandledTurnAbortError(error);
     }
     throw error;
@@ -891,25 +945,25 @@ export function createAcpRuntime(params: {
     return rethrowPromptError(error);
   };
 
-  const rebalanceTurnUnavailableSessionMedia = (): void => {
-    const unavailable = [...unavailableSessionMediaByDedupeKey.values()].flat();
+  const rebalanceTurnUnavailableSessionMedia = (turn: RuntimeTurnState): void => {
+    const unavailable = [...turn.unavailableSessionMediaByDedupeKey.values()].flat();
     const bounded = boundSessionMediaEnvelopeEntries({
-      media: persistedSessionMediaItems,
+      media: turn.persistedSessionMediaItems,
       unavailable,
       maxEntries: SESSION_MEDIA_MESSAGE_MAX_ENTRIES_V1,
     });
-    sessionMediaTurnState.recordOverflow(bounded.droppedCount);
+    turn.sessionMediaTurnState.recordOverflow(bounded.droppedCount);
     let remainingUnavailable = bounded.unavailable.length;
     const retainedByDedupeKey = new Map<string, SessionMediaUnavailableV1[]>();
-    for (const [dedupeKey, entries] of unavailableSessionMediaByDedupeKey) {
+    for (const [dedupeKey, entries] of turn.unavailableSessionMediaByDedupeKey) {
       if (remainingUnavailable <= 0) break;
       const retained = entries.slice(0, remainingUnavailable);
       if (retained.length > 0) retainedByDedupeKey.set(dedupeKey, retained);
       remainingUnavailable -= retained.length;
     }
-    unavailableSessionMediaByDedupeKey.clear();
+    turn.unavailableSessionMediaByDedupeKey.clear();
     for (const [dedupeKey, entries] of retainedByDedupeKey) {
-      unavailableSessionMediaByDedupeKey.set(dedupeKey, entries);
+      turn.unavailableSessionMediaByDedupeKey.set(dedupeKey, entries);
     }
   };
 
@@ -917,24 +971,25 @@ export function createAcpRuntime(params: {
     source: string,
     items: readonly RuntimeSessionMediaSource[],
     recordUnavailableForTurn = true,
+    turn: RuntimeTurnState = turnState,
   ): Promise<RuntimeSessionMediaPersistResult> => {
     if (!params.sessionMedia) {
       logger.debug(`[${params.provider}] Session media emitted before media persister is wired; dropping transient sources`);
       return { media: [], unavailable: [] };
     }
-    const generation = turnMediaGeneration;
+    const generation = runtimeGeneration;
     const persistedItems: SessionMediaItemV1[] = [];
     const unavailableItems: SessionMediaUnavailableV1[] = [];
-    for (const { item, dedupeKey } of sessionMediaTurnState.admit(items)) {
+    for (const { item, dedupeKey } of turn.sessionMediaTurnState.admit(items)) {
       const persistence = sessionMediaPersistenceQueueTail.then(async () => {
-        if (generation !== turnMediaGeneration) return;
+        if (generation !== runtimeGeneration) return;
         try {
           const persisted = await Promise.resolve(params.sessionMedia!.persist({
             type: 'session-media',
             source,
             media: [item],
           }));
-          if (generation !== turnMediaGeneration) return;
+          if (generation !== runtimeGeneration) return;
           if (!recordUnavailableForTurn) {
             const bounded = boundSessionMediaEnvelopeEntries({
               media: persisted.media,
@@ -943,8 +998,8 @@ export function createAcpRuntime(params: {
             });
             persistedItems.push(...bounded.media);
             unavailableItems.push(...bounded.unavailable);
-            sessionMediaTurnState.recordOverflow(bounded.droppedCount);
-            sessionMediaTurnState.finish(
+            turn.sessionMediaTurnState.recordOverflow(bounded.droppedCount);
+            turn.sessionMediaTurnState.finish(
               dedupeKey,
               persisted.media.length > 0
                 ? 'persisted'
@@ -955,38 +1010,38 @@ export function createAcpRuntime(params: {
             return;
           }
           if (persisted.media.length > 0) {
-            unavailableSessionMediaByDedupeKey.delete(dedupeKey);
+            turn.unavailableSessionMediaByDedupeKey.delete(dedupeKey);
             const bounded = boundSessionMediaEnvelopeEntries({
-              media: [...persistedSessionMediaItems, ...persisted.media],
+              media: [...turn.persistedSessionMediaItems, ...persisted.media],
               unavailable: [],
               maxEntries: SESSION_MEDIA_MESSAGE_MAX_ENTRIES_V1,
             });
-            const acceptedMedia = bounded.media.slice(persistedSessionMediaItems.length);
-            sessionMediaTurnState.recordOverflow(bounded.droppedCount);
+            const acceptedMedia = bounded.media.slice(turn.persistedSessionMediaItems.length);
+            turn.sessionMediaTurnState.recordOverflow(bounded.droppedCount);
             if (acceptedMedia.length === 0) {
               // Persistence already completed for this admitted key. Keep the slot terminal even
               // when a multi-item result exceeded the remaining durable-envelope capacity, so a
               // provider cannot force repeated persistence work with the same dropped source.
-              sessionMediaTurnState.finish(dedupeKey, 'persisted');
+              turn.sessionMediaTurnState.finish(dedupeKey, 'persisted');
               return;
             }
             persistedItems.push(...acceptedMedia);
-            persistedSessionMediaItems.push(...acceptedMedia);
-            rebalanceTurnUnavailableSessionMedia();
-            sessionMediaTurnState.finish(dedupeKey, 'persisted');
+            turn.persistedSessionMediaItems.push(...acceptedMedia);
+            rebalanceTurnUnavailableSessionMedia(turn);
+            turn.sessionMediaTurnState.finish(dedupeKey, 'persisted');
             return;
           }
           if (persisted.unavailable.length > 0) {
-            unavailableSessionMediaByDedupeKey.set(dedupeKey, [...persisted.unavailable]);
-            rebalanceTurnUnavailableSessionMedia();
-            const acceptedUnavailable = unavailableSessionMediaByDedupeKey.get(dedupeKey) ?? [];
+            turn.unavailableSessionMediaByDedupeKey.set(dedupeKey, [...persisted.unavailable]);
+            rebalanceTurnUnavailableSessionMedia(turn);
+            const acceptedUnavailable = turn.unavailableSessionMediaByDedupeKey.get(dedupeKey) ?? [];
             unavailableItems.push(...acceptedUnavailable);
-            sessionMediaTurnState.finish(dedupeKey, 'unavailable');
+            turn.sessionMediaTurnState.finish(dedupeKey, 'unavailable');
             return;
           }
-          sessionMediaTurnState.finish(dedupeKey, 'release');
+          turn.sessionMediaTurnState.finish(dedupeKey, 'release');
         } catch (error) {
-          sessionMediaTurnState.finish(dedupeKey, 'release');
+          turn.sessionMediaTurnState.finish(dedupeKey, 'release');
           throw error;
         }
       });
@@ -999,17 +1054,17 @@ export function createAcpRuntime(params: {
     return { media: persistedItems, unavailable: unavailableItems };
   };
 
-  const persistSessionMediaMessage = (msg: RuntimeSessionMediaMessage): void => {
-    const persistPromise = persistSessionMediaSources(msg.source, msg.media)
+  const persistSessionMediaMessage = (msg: RuntimeSessionMediaMessage, turn: RuntimeTurnState): void => {
+    const persistPromise = persistSessionMediaSources(msg.source, msg.media, true, turn)
       .then(() => undefined)
       .catch((error) => {
         logger.debug(`[${params.provider}] Failed to persist session media (non-fatal)`, error);
       });
-    sessionMediaTurnState.track(persistPromise);
+    turn.sessionMediaTurnState.track(persistPromise);
   };
 
-  const drainPendingSessionMediaPersistence = async (): Promise<void> => {
-    await sessionMediaTurnState.drain();
+  const drainPendingSessionMediaPersistence = async (turn: RuntimeTurnState): Promise<void> => {
+    await turn.sessionMediaTurnState.drain();
   };
 
   const buildSessionMediaEnvelope = (
@@ -1072,6 +1127,7 @@ export function createAcpRuntime(params: {
   const forwardToolResultWithMedia = (
     msg: Extract<AgentMessage, { type: 'tool-result' }>,
     forward: (next: AgentMessage) => void,
+    turn: RuntimeTurnState,
   ): void => {
     const media = extractToolResultSessionMedia(msg.callId, msg.result);
     if (media.length === 0 || !params.sessionMedia) {
@@ -1079,7 +1135,7 @@ export function createAcpRuntime(params: {
       return;
     }
 
-    const forwardPromise = persistSessionMediaSources('acp-tool-result', media, false)
+    const forwardPromise = persistSessionMediaSources('acp-tool-result', media, false, turn)
       .then((result) => {
         if (result.media.length === 0 && result.unavailable.length === 0) {
           forward(msg);
@@ -1094,7 +1150,7 @@ export function createAcpRuntime(params: {
         logger.debug(`[${params.provider}] Failed to persist tool-result session media (non-fatal)`, error);
         forward(msg);
       });
-    sessionMediaTurnState.track(forwardPromise);
+    turn.sessionMediaTurnState.track(forwardPromise);
   };
 
   type TerminalTurnSnapshot = Readonly<{
@@ -1103,10 +1159,10 @@ export function createAcpRuntime(params: {
     taskStartedSent: boolean;
   }>;
 
-  const captureTerminalTurn = (): TerminalTurnSnapshot => ({
-    providerTurnId: currentTurnId ?? (turnInFlight ? ensureCurrentTurnId() : null),
-    turnInFlight,
-    taskStartedSent,
+  const captureTerminalTurn = (turn: RuntimeTurnState = turnState): TerminalTurnSnapshot => ({
+    providerTurnId: turn.currentTurnId ?? (turn.turnInFlight ? (turn.currentTurnId ??= randomUUID()) : null),
+    turnInFlight: turn.turnInFlight || turn.currentTurnId !== null,
+    taskStartedSent: turn.taskStartedSent,
   });
 
   const beginCapturedLifecycleTurn = (turn: TerminalTurnSnapshot): Promise<string | null> => {
@@ -1117,6 +1173,17 @@ export function createAcpRuntime(params: {
       }).then((handle) => handle.turnId);
     }
     return Promise.resolve(turn.providerTurnId);
+  };
+
+  const completeCapturedTurn = async (turn: TerminalTurnSnapshot): Promise<void> => {
+    await beginCapturedLifecycleTurn(turn);
+    if (!turn.providerTurnId) return;
+    params.session.sendAgentMessage(params.provider, { type: 'task_complete', id: turn.providerTurnId });
+    await recordSessionTurnCompleted({
+      session: params.session,
+      provider: params.provider,
+      providerTurnId: turn.providerTurnId,
+    });
   };
 
   const publishTerminalCompatibilityMarker = (
@@ -1139,21 +1206,22 @@ export function createAcpRuntime(params: {
   const beginStatusErrorSurface = (
     detailRaw: unknown,
     turn: TerminalTurnSnapshot = captureTerminalTurn(),
+    cause: 'status_error' | 'session_error' = 'status_error',
   ): Promise<Extract<ACPMessageData, { type: 'turn_failed' }> | null> | null => {
     if (isAbortLikeError(detailRaw)) return null;
     const compatibilityMarkerId = beginCapturedLifecycleTurn(turn);
     const issuePromise = surfacePrimarySessionRuntimeIssue({
-      cause: 'status_error',
+      cause,
       provider: params.provider,
       providerTurnId: turn.providerTurnId,
       error: detailRaw,
-      session: params.session,
+      session: { sessionTurnLifecycle: params.session.sessionTurnLifecycle },
     });
     return Promise.all([compatibilityMarkerId, issuePromise]).then(([markerId, issue]) => {
-      if (turn.turnInFlight && markerId && params.session.sessionTurnLifecycle) {
+      if (markerId || !params.session.sessionTurnLifecycle) {
         return {
           type: 'turn_failed',
-          id: markerId,
+          id: markerId ?? randomUUID(),
           ...(issue ? { issue } : {}),
         };
       }
@@ -1184,31 +1252,46 @@ export function createAcpRuntime(params: {
     });
   };
 
-  const surfacePromptFailure = async (detailRaw: unknown): Promise<boolean> => {
-    if (isAbortLikeError(detailRaw)) return false;
-    if (turnAborted) return true;
+  const flushCapturedTurnTranscript = async (
+    turn: RuntimeTurnState,
+    options: Parameters<typeof streamedTranscriptWriter.flushAll>[0],
+  ): Promise<void> => {
+    await drainPendingSessionMediaPersistence(turn);
+    const unavailable = [...turn.unavailableSessionMediaByDedupeKey.values()].flat();
+    const mediaMeta = turn.persistedSessionMediaItems.length > 0 || unavailable.length > 0
+      ? buildSessionMediaMeta(turn.persistedSessionMediaItems, undefined, unavailable)
+      : null;
+    const attachedMedia = mediaMeta ? streamedTranscriptWriter.mergeAssistantMeta(mediaMeta) : false;
+    const summary = await streamedTranscriptWriter.flushAll(options);
+    if (mediaMeta && !attachedMedia) {
+      await params.session.sendAgentMessageCommitted(
+        params.provider,
+        { type: 'message', message: '' },
+        { localId: randomUUID(), meta: mediaMeta, provenance: observedTranscriptProvenance },
+      );
+    }
+    if (summary.segments.some((segment) => segment.sawText && !segment.didDurablyFlush)) {
+      throw new Error('ACP transcript publication remains unresolved');
+    }
+  };
 
-    const failedTurn = captureTerminalTurn();
-    const compatibilityMarkerId = beginCapturedLifecycleTurn(failedTurn);
+  const settlePromptFailure = async (detailRaw: unknown, turn: RuntimeTurnState): Promise<boolean> => {
+    const failedTurn = captureTerminalTurn(turn);
     const issueError = normalizeAcpPromptFailureRuntimeIssueError({
       provider: params.provider,
       error: detailRaw,
       turnInFlight: failedTurn.turnInFlight,
     });
+    const compatibilityMarkerId = beginCapturedLifecycleTurn(failedTurn);
     const issuePromise = surfacePrimarySessionRuntimeIssue({
       cause: 'session_error',
       provider: params.provider,
       providerTurnId: failedTurn.providerTurnId,
       error: issueError,
-      session: params.session,
+      session: { sessionTurnLifecycle: params.session.sessionTurnLifecycle },
     });
-    turnAborted = true;
-    clearToolCallCache();
-    params.onThinkingChange(false);
-    params.session.keepAlive(false, 'remote');
-
     try {
-      await streamedTranscriptWriter.flushAll({ reason: 'abort', interruptedReason: 'prompt-error' });
+      await flushCapturedTurnTranscript(turn, { reason: 'abort', interruptedReason: 'prompt-error' });
     } catch (error) {
       logger.debug(`[${params.provider}] Failed to flush streamed transcript after prompt failure`, error);
     }
@@ -1222,7 +1305,7 @@ export function createAcpRuntime(params: {
 
     const [markerId, issue] = await Promise.all([compatibilityMarkerId, issuePromise]);
     let compatibilityMarkerSent = false;
-    if (failedTurn.turnInFlight && markerId && params.session.sessionTurnLifecycle) {
+    if (failedTurn.turnInFlight && markerId) {
       publishTerminalCompatibilityMarker({
         type: 'turn_failed',
         id: markerId,
@@ -1239,7 +1322,137 @@ export function createAcpRuntime(params: {
       compatibilityMarkerSent,
     });
     await params.hooks?.onTurnFailure?.({ error: detailRaw, sessionId: params.happierSessionId ?? null, session: params.session, processEnv: params.processEnv ?? process.env });
+    clearToolCallCache();
+    params.turnAssistantPreviewTracker?.reset();
     return true;
+  };
+
+  const surfacePromptFailure = async (detailRaw: unknown, turn = hostCallerTurn ?? turnState): Promise<boolean> => {
+    if (isAbortLikeError(detailRaw)) return false;
+    if (turn.turnAborted) return true;
+    turn.turnAborted = true;
+    if (turn === turnState) {
+      params.onThinkingChange(false);
+      params.session.keepAlive(false, 'remote');
+    }
+    return enqueueTurnSettlement(() => settlePromptFailure(detailRaw, turn));
+  };
+
+  const flushCapturedTurn = (turn: RuntimeTurnState, completion?: Promise<AcpTurnOutcome | void>): Promise<void> => {
+    if (turn.settlement) return turn.settlement;
+    if (!turn.currentTurnId && !turn.turnInFlight) {
+      // An idle cancellation has no task to terminalize, but its aborted context
+      // must retire before the next provider input is observed.
+      if (turn === turnState && turn.turnAborted) retireCurrentTurn();
+      return enqueueTurnSettlement(clearToolCallCache);
+    }
+    const terminalTurn = captureTerminalTurn(turn);
+    if (turn === turnState) retireCurrentTurn();
+    const permissionSettlement = abortPendingAcpPermissionRequests(
+      params.permissionHandler,
+      turn.turnAborted ? 'ACP runtime turn aborted' : 'ACP runtime turn ended',
+      (error) => {
+        logger.debug(`[${params.provider}] Failed to abort pending permission requests at turn boundary`, error);
+      },
+    );
+    turn.settlement = enqueueTurnSettlement(async () => {
+      if (turn.pendingTurnOutcome?.kind === 'failed') {
+        if (!turn.turnAborted) {
+          turn.turnAborted = true;
+          await settlePromptFailure(turn.pendingTurnOutcome.error, turn);
+        }
+        return;
+      }
+      if (completion) {
+        try {
+          rememberTurnOutcome(await completion, turn);
+        } catch (error) {
+          if (!turn.turnAborted) {
+            turn.pendingTurnOutcome = { kind: 'failed', error: error instanceof Error ? error : new Error(String(error)) };
+            turn.turnAborted = true;
+            await settlePromptFailure(error, turn);
+            return;
+          }
+        }
+      }
+      try {
+        const transcriptError = await flushCapturedTurnTranscript(
+          turn,
+          turn.turnAborted
+            ? { reason: 'abort', interruptedReason: 'turn-aborted' }
+            : { reason: 'turn-end' },
+        ).then(() => null, (error: unknown) => ({ error }));
+        await permissionSettlement;
+        if (turn.pendingTurnOutcome && turn.pendingTurnOutcome.kind !== 'completed') {
+          const providerTurnId = turn.currentTurnId ??= randomUUID();
+          if (!turn.taskStartedSent && params.session.sessionTurnLifecycle) {
+            await params.session.sessionTurnLifecycle.beginTurn({
+              provider: params.provider,
+              providerTurnId,
+            });
+          }
+          const markerType = turn.pendingTurnOutcome.kind === 'aborted' ? 'turn_cancelled' : 'turn_aborted';
+          params.session.sendAgentMessage(params.provider, { type: markerType, id: providerTurnId });
+          if (params.session.sessionTurnLifecycle) {
+            await params.session.sessionTurnLifecycle.cancelTurn({
+              provider: params.provider,
+              providerTurnId,
+            });
+          }
+        }
+        if (transcriptError) throw transcriptError.error;
+        if (!turn.turnAborted && turn.turnInFlight) {
+          try {
+            params.hooks?.onBeforeFlushTurn?.({
+              sendToolCall: ({ toolName, input, callId }) => {
+                const resolvedCallId = typeof callId === 'string' && callId.length > 0 ? callId : randomUUID();
+                params.session.sendAgentMessage(params.provider, {
+                  type: 'tool-call',
+                  callId: resolvedCallId,
+                  name: toolName,
+                  input,
+                  id: randomUUID(),
+                });
+                return resolvedCallId;
+              },
+              sendToolResult: ({ callId, output }) => {
+                params.session.sendAgentMessage(params.provider, {
+                  type: 'tool-result',
+                  callId,
+                  output,
+                  id: randomUUID(),
+                });
+              },
+            });
+          } catch (e) {
+            logger.debug(`[${params.provider}] onBeforeFlushTurn hook failed (non-fatal)`, e);
+          }
+        }
+
+        if (!turn.turnAborted) {
+          await completeCapturedTurn(terminalTurn);
+        }
+      } catch (error) {
+        if (!turn.turnAborted) {
+          turn.turnAborted = true;
+          const marker = await beginStatusErrorSurface(error, terminalTurn, 'session_error');
+          if (marker) publishTerminalCompatibilityMarker(marker);
+        }
+        throw error;
+      } finally {
+        clearToolCallCache();
+        reportTurnMediaOverflow(turn);
+        params.turnAssistantPreviewTracker?.reset();
+      }
+    });
+    return turn.settlement;
+  };
+
+  const flushTurn = async (): Promise<ProviderTurnCompletionResult> => {
+    const turn = hostCallerTurn ?? turnState;
+    hostCallerTurn = null;
+    await flushCapturedTurn(turn);
+    return { assistantText: turn.modelOutputState.turnText || null };
   };
 
   const publishRuntimeMetadataBestEffort = (
@@ -1326,558 +1539,588 @@ export function createAcpRuntime(params: {
       return true;
     };
 
+    const closeModelOutputSegment = (turn: RuntimeTurnState): void | Promise<void> => {
+      resetModelOutputSegment(turn.modelOutputState);
+      turn.lastModelOutputText = '';
+      if (streamedTranscriptWriter.hasPendingSegments()) {
+        return streamedTranscriptWriter.flushAll({ reason: 'tool-call-boundary' }).then(() => undefined);
+      }
+    };
+
     b.onMessage((msg: AgentMessage) => {
       if (handlerGeneration !== runtimeMetadataPublicationGeneration) return;
       if (handleProviderSessionInfoMessage(msg)) return;
-      if (loadingSession) {
-        if (msg.type === 'status' && msg.status === 'error') {
-          turnAborted = true;
-          const statusErrorSurface = beginStatusErrorSurface(msg.detail);
-          if (!statusErrorSurface) {
-            params.session.sendAgentMessage(params.provider, { type: 'turn_aborted', id: ensureCurrentTurnId() });
-          } else {
-            void statusErrorSurface.then((marker) => {
-              if (marker) publishTerminalCompatibilityMarker(marker);
-            }).catch((error) => {
-              logger.debug(`[${params.provider}] Failed to persist primary session runtime issue (non-fatal)`, error);
-            });
-          }
+      if (msg.type === 'status') {
+        if (msg.status === 'running' && !turnState.turnInFlight && !turnState.currentTurnId) {
+          ensureCurrentTurnId();
+          params.onThinkingChange(true);
+          params.session.keepAlive(true, 'remote');
         }
-        return;
-      }
-
-      if (msg.type === 'tool-result') evictToolCallCache(Date.now());
-      const thinkingToolBoundary = (msg.type === 'tool-call' || msg.type === 'tool-result')
-        && isThinkingToolName(msg.type === 'tool-result'
-          ? toolNameByCallId.get(msg.callId)?.toolName ?? msg.toolName
-          : msg.toolName);
-      if (isModelOutputSegmentBoundary(msg) && !thinkingToolBoundary) {
-        resetModelOutputSegment(modelOutputState);
-        lastModelOutputText = '';
-        void streamedTranscriptWriter.flushAll({ reason: 'tool-call-boundary' });
-      }
-
-      switch (msg.type) {
-        case 'model-output': {
-          lastModelOutputText = msg.textDelta ?? msg.fullText ?? '';
-          const change = reconcileModelOutput(modelOutputState, msg);
-          const deltaRaw = change.kind === 'append' ? change.text : '';
-          if (acpTraceMarkersEnabled && sessionId && deltaRaw.includes('ACP_STUB_')) {
-            // Trace only deterministic stub markers (never arbitrary assistant text) so provider harness
-            // can coordinate mid-turn steer without requiring tool-calls or vendor credentials.
+        if (isModelOutputSegmentBoundary(msg)) {
+          const turn = turnState;
+          void enqueueTurnSettlement(() => closeModelOutputSegment(turn));
+        }
+        if (msg.status === 'running') {
+          publishTaskStarted();
+          if (turnState.turnInFlight && acpTraceMarkersEnabled && sessionId) {
             recordToolTraceEvent({
               direction: 'inbound',
               sessionId,
               protocol: 'acp',
               provider: params.provider,
               kind: 'trace-marker',
-              payload: { text: deltaRaw },
+              payload: { event: 'acp_status_running' },
             });
           }
-          handleAcpModelOutputDelta({
-            delta: deltaRaw,
-            messageBuffer: params.messageBuffer,
-            getIsResponseInProgress: () => isResponseInProgress,
-            setIsResponseInProgress: (value) => { isResponseInProgress = value; },
-            appendToAccumulatedResponse: () => {},
-          });
-          params.turnAssistantPreviewTracker?.replace(modelOutputState.turnText);
-
-          if (change.kind === 'replace') {
-            params.messageBuffer.updateLastMessage(modelOutputState.turnText, 'assistant', { replace: true });
-            if (!streamedTranscriptWriter.overrideAssistantText(modelOutputState.segmentText)) {
-              streamedTranscriptWriter.appendAssistantDelta(modelOutputState.segmentText);
-            }
-          } else if (deltaRaw) {
-            streamedTranscriptWriter.appendAssistantDelta(deltaRaw);
-          }
-          break;
         }
 
-        case 'status': {
-          if (msg.status === 'running') {
-            if (turnInFlight) {
-              handleAcpStatusRunning({
-                session: params.session,
-                agent: params.provider,
-                getTaskStartedSent: () => taskStartedSent,
-                setTaskStartedSent: (value) => { taskStartedSent = value; },
-                makeId: () => ensureCurrentTurnId(),
-              });
-
-              if (acpTraceMarkersEnabled && sessionId) {
-                // Provider-agnostic trace marker used by the e2e harness to enqueue an in-flight steer
-                // step while the turn is running (without relying on vendor-specific assistant output).
-                recordToolTraceEvent({
-                  direction: 'inbound',
-                  sessionId,
-                  protocol: 'acp',
-                  provider: params.provider,
-                  kind: 'trace-marker',
-                  payload: { event: 'acp_status_running' },
-                });
-              }
-            }
-          }
-
-          if (msg.status === 'error') {
-            const statusErrorTurn = captureTerminalTurn();
-            const shouldSurfaceFailure = !turnAborted && !isAbortLikeError(msg.detail);
+        if (msg.status === 'error') {
+          const statusErrorTurn = captureTerminalTurn();
+          const turn = turnState;
+          const shouldSurfaceFailure = !turn.turnAborted && !isAbortLikeError(msg.detail);
+          turn.turnAborted = true;
+          if (!turn.turnInFlight) retireCurrentTurn();
+          void enqueueTurnSettlement(async () => {
+            const transcriptFlush = flushCapturedTurnTranscript(turn, { reason: 'abort', interruptedReason: 'status-error' });
             const statusErrorSettlement = shouldSurfaceFailure
               ? beginStatusErrorSurface(msg.detail, statusErrorTurn)
               : beginStatusAbortSurface(statusErrorTurn);
-            void abortPendingAcpPermissionRequests(params.permissionHandler, 'ACP runtime status:error', (error) => {
-              logger.debug(`[${params.provider}] Failed to abort pending permission requests after status:error`, error);
-            });
-            void streamedTranscriptWriter.flushAll({ reason: 'abort', interruptedReason: 'status-error' })
-              .catch((error) => {
-                logger.debug(`[${params.provider}] Failed to flush streamed transcript after status:error`, error);
-              })
-              .then(async () => {
-                const marker = await statusErrorSettlement;
-                if (marker) publishTerminalCompatibilityMarker(marker);
-              })
-              .catch((error) => {
-                logger.debug(`[${params.provider}] Failed to persist primary session runtime issue (non-fatal)`, error);
-              });
-            turnAborted = true;
-            clearToolCallCache();
-            params.onThinkingChange(false);
-            params.session.keepAlive(false, 'remote');
-          }
-          if (msg.status === 'idle' && !turnInFlight) {
-            params.onThinkingChange(false);
-            params.session.keepAlive(false, 'remote');
-          }
-          break;
-        }
-
-        case 'tool-call': {
-          if (isThinkingToolName(msg.toolName)) {
-            forwarder.forward(msg);
-            break;
-          }
-
-          params.messageBuffer.addMessage(`Executing: ${msg.toolName}`, 'tool');
-          recordToolCall(msg.callId, msg.toolName);
-          forwarder.forward(msg);
-          break;
-        }
-
-        case 'tool-result': {
-          const callId = msg.callId;
-          const originToolName = toolNameByCallId.get(callId)?.toolName ?? msg.toolName;
-          if (typeof originToolName === 'string' && isThinkingToolName(originToolName)) {
-            forwarder.forward(msg);
-            break;
-          }
-          const resultRecord =
-            msg.result && typeof msg.result === 'object' && !Array.isArray(msg.result)
-              ? (msg.result as Record<string, unknown>)
-              : null;
-          const maybeStream =
-            !!resultRecord && (typeof resultRecord.stdoutChunk === 'string' || resultRecord._stream === true);
-          if (!maybeStream) {
-            const outputText = typeof msg.result === 'string'
-              ? msg.result
-              : JSON.stringify(msg.result ?? '').slice(0, 200);
-            params.messageBuffer.addMessage(`Result: ${outputText}`, 'result');
-          }
-          forwardToolResultWithMedia(msg, (next) => forwarder.forward(next));
-
-          if (typeof originToolName === 'string' && originToolName.length > 0) {
             try {
-              params.hooks?.onToolResult?.({ toolName: originToolName, callId, result: msg.result });
-            } catch (e) {
-              logger.debug(`[${params.provider}] onToolResult hook failed (non-fatal)`, e);
+              await transcriptFlush;
+            } catch (error) {
+              logger.debug(`[${params.provider}] Failed to flush streamed transcript after status:error`, error);
             }
+            const marker = await statusErrorSettlement;
+            if (marker) publishTerminalCompatibilityMarker(marker);
+            clearToolCallCache();
+            reportTurnMediaOverflow(turn);
+            params.turnAssistantPreviewTracker?.reset();
+          }).catch((error) => {
+            logger.debug(`[${params.provider}] Failed to persist primary session runtime issue (non-fatal)`, error);
+          });
+          void abortPendingAcpPermissionRequests(params.permissionHandler, 'ACP runtime status:error', (error) => {
+            logger.debug(`[${params.provider}] Failed to abort pending permission requests after status:error`, error);
+          });
+          params.onThinkingChange(false);
+          params.session.keepAlive(false, 'remote');
+        }
+        if (msg.status === 'idle' && (!turnState.turnInFlight || msg.turnFinished)) {
+          const turn = turnState;
+          const completion = msg.turnFinished && turn.turnInFlight ? waitForTurnResponse(b, turn) : undefined;
+          void flushCapturedTurn(turn, completion).catch((error) => {
+            logger.infoFile(`[${params.provider}] Failed to settle provider turn`, error);
+          });
+        }
+        return;
+      }
+      const turn = turnState;
+      const applyMessage = (): void | Promise<void> => {
+        switch (msg.type) {
+          case 'model-output': {
+            turn.lastModelOutputText = msg.textDelta ?? msg.fullText ?? '';
+            const change = reconcileModelOutput(turn.modelOutputState, msg);
+            const deltaRaw = change.kind === 'append' ? change.text : '';
+            if (acpTraceMarkersEnabled && sessionId && deltaRaw.includes('ACP_STUB_')) {
+              // Trace only deterministic stub markers (never arbitrary assistant text) so provider harness
+              // can coordinate mid-turn steer without requiring tool-calls or vendor credentials.
+              recordToolTraceEvent({
+                direction: 'inbound',
+                sessionId,
+                protocol: 'acp',
+                provider: params.provider,
+                kind: 'trace-marker',
+                payload: { text: deltaRaw },
+              });
+            }
+            handleAcpModelOutputDelta({
+              delta: deltaRaw,
+              messageBuffer: params.messageBuffer,
+              getIsResponseInProgress: () => turn.isResponseInProgress,
+              setIsResponseInProgress: (value) => { turn.isResponseInProgress = value; },
+              appendToAccumulatedResponse: () => {},
+            });
+            params.turnAssistantPreviewTracker?.replace(turn.modelOutputState.turnText);
+
+            if (change.kind === 'replace') {
+              params.messageBuffer.updateLastMessage(turn.modelOutputState.turnText, 'assistant', { replace: true });
+              if (!streamedTranscriptWriter.overrideAssistantText(turn.modelOutputState.segmentText)) {
+                streamedTranscriptWriter.appendAssistantDelta(turn.modelOutputState.segmentText);
+              }
+            } else if (deltaRaw) {
+              streamedTranscriptWriter.appendAssistantDelta(deltaRaw);
+            }
+            break;
           }
 
-          // Provider-agnostic sidechain import: if a subagent result includes a vendor session id,
-          // capture its replay in a separate backend and import it as a sidechain thread.
-          if (typeof originToolName === 'string' && isGenericSubAgentToolName(canonicalizeToolNameV2({ protocol: 'acp', toolName: originToolName }))) {
-            const record = asRecord(msg.result);
-            const metadata = record ? asRecord(record.metadata) : null;
-            const metadataSessionIdRaw = metadata?.sessionId;
-            const metadataSessionId = typeof metadataSessionIdRaw === 'string' ? metadataSessionIdRaw : null;
-            const outputValue = record?.output;
-            const outputText = typeof outputValue === 'string' ? outputValue : null;
-            const contentText = typeof record?.content === 'string' ? record.content : null;
-            const fallbackSidechainText = (() => {
-              const raw = (contentText ?? outputText ?? '').trim();
-              if (!raw) return '';
-              // Strip embedded task metadata blocks so the sidechain preview is mostly the assistant output.
-              return raw.replace(/<task_metadata>[\s\S]*?<\/task_metadata>/gi, '').trim();
-            })();
-            const embeddedSessionId = outputText
-              ? (() => {
-                  const match = outputText.match(/<task_metadata>[\s\S]*?session_id:\s*([^\s<]+)[\s\S]*?<\/task_metadata>/i);
-                  return match?.[1] ? String(match[1]) : null;
-                })()
-              : null;
-            const remoteSessionId = readNonBlankOpaqueIdentifier(metadataSessionId ?? embeddedSessionId) ?? '';
+          case 'user-message': {
+            // A user prompt observed on the provider side (extension-injected). Commit it as
+            // a user transcript row so Happier clients show why the provider kept working.
+            // The localId is occurrence-unique: pi message events carry no provider id, and a
+            // text-derived id would collapse legitimate repeats of identical prompt text
+            // (e.g. two "continue" injections) into one transcript row. Commit retries reuse
+            // the localId captured by this single enqueue, so delivery stays idempotent.
+            return params.session.sendUserTextMessageCommitted(msg.text, {
+              localId: `provider-user-prompt:${randomUUID()}`,
+              meta: { providerObservedUserPrompt: true, provider: params.provider },
+              provenance: observedTranscriptProvenance,
+            }).catch((error) => {
+              if (!turn.turnAborted) {
+                turn.pendingTurnOutcome = {
+                  kind: 'failed',
+                  error: error instanceof Error ? error : new Error('ACP observed input publication failed', { cause: error }),
+                };
+              }
+              throw error;
+            });
+          }
 
-            if (remoteSessionId) {
-              const createReplayBackend = params.createReplayBackend ?? (async () => {
-                    const created = await createCatalogAcpBackend(params.provider as CatalogAgentId, {
-                  cwd: params.directory,
-                  mcpServers: params.mcpServers,
-                  permissionHandler: undefined,
-                });
-                return created.backend as AcpRuntimeBackend;
-              });
+          case 'tool-call': {
+            if (isThinkingToolName(msg.toolName)) {
+              forwarder.forward(msg);
+              break;
+            }
 
-              void (async () => {
-                let replayBackend: AcpRuntimeBackend | null = null;
-                let replayImported = false;
-                try {
-                  replayBackend = await createReplayBackend();
-                  const canReplay = Boolean(replayBackend.loadSessionWithReplayCapture);
-                  if (canReplay) {
-                    const loaded = await replayBackend.loadSessionWithReplayCapture!(remoteSessionId);
-                    const replay = loaded.replay;
-                    if (Array.isArray(replay) && replay.length > 0) {
-                      await importAcpReplaySidechainV1({
-                        session: params.session,
-                        provider: params.provider,
-                        remoteSessionId,
-                        sidechainId: callId,
-                        replay: replay as unknown[],
-                      });
-                      replayImported = true;
-                      return;
-                    }
-                  }
-                } catch (e) {
-                  logger.warn(`[${params.provider}] Child replay unavailable; using launch output fallback`, sidechainFailureDetails('replay', e));
-                } finally {
-                  // Fallback: if we can't replay-import, at least persist the Task output as a sidechain message.
-                  if (!replayImported && fallbackSidechainText) {
-                    try {
-                      await params.session.sendAgentMessageCommitted(
-                        params.provider,
-                        { type: 'message', message: fallbackSidechainText, sidechainId: callId },
-                        { localId: randomUUID(), meta: { importedFrom: 'acp-sidechain', remoteSessionId, sidechainId: callId } },
-                      );
-                    } catch (e) {
-                      logger.warn(`[${params.provider}] Child replay fallback could not be persisted`, sidechainFailureDetails('fallback', e));
-                    }
-                  }
-                  toolNameByCallId.delete(callId);
-                  if (replayBackend) {
-                    try {
-                      await replayBackend.dispose({ preserveProviderSession: true });
-                    } catch (e) {
-                      logger.warn(`[${params.provider}] Child replay attachment could not be disposed`, sidechainFailureDetails('dispose', e));
-                    }
-                  }
-                }
+            params.messageBuffer.addMessage(`Executing: ${msg.toolName}`, 'tool');
+            recordToolCall(msg.callId, msg.toolName);
+            forwarder.forward(msg);
+            break;
+          }
+
+          case 'tool-result': {
+            const callId = msg.callId;
+            const originToolName = toolNameByCallId.get(callId)?.toolName ?? msg.toolName;
+            if (typeof originToolName === 'string' && isThinkingToolName(originToolName)) {
+              forwarder.forward(msg);
+              break;
+            }
+            const resultRecord =
+              msg.result && typeof msg.result === 'object' && !Array.isArray(msg.result)
+                ? (msg.result as Record<string, unknown>)
+                : null;
+            const maybeStream =
+              !!resultRecord && (typeof resultRecord.stdoutChunk === 'string' || resultRecord._stream === true);
+            if (!maybeStream) {
+              const outputText = typeof msg.result === 'string'
+                ? msg.result
+                : JSON.stringify(msg.result ?? '').slice(0, 200);
+              params.messageBuffer.addMessage(`Result: ${outputText}`, 'result');
+            }
+            forwardToolResultWithMedia(msg, (next) => forwarder.forward(next), turn);
+
+            if (typeof originToolName === 'string' && originToolName.length > 0) {
+              try {
+                params.hooks?.onToolResult?.({ toolName: originToolName, callId, result: msg.result });
+              } catch (e) {
+                logger.debug(`[${params.provider}] onToolResult hook failed (non-fatal)`, e);
+              }
+            }
+
+            // Provider-agnostic sidechain import: if a subagent result includes a vendor session id,
+            // capture its replay in a separate backend and import it as a sidechain thread.
+            if (typeof originToolName === 'string' && isGenericSubAgentToolName(canonicalizeToolNameV2({ protocol: 'acp', toolName: originToolName }))) {
+              const record = asRecord(msg.result);
+              const metadata = record ? asRecord(record.metadata) : null;
+              const metadataSessionIdRaw = metadata?.sessionId;
+              const metadataSessionId = typeof metadataSessionIdRaw === 'string' ? metadataSessionIdRaw : null;
+              const outputValue = record?.output;
+              const outputText = typeof outputValue === 'string' ? outputValue : null;
+              const contentText = typeof record?.content === 'string' ? record.content : null;
+              const fallbackSidechainText = (() => {
+                const raw = (contentText ?? outputText ?? '').trim();
+                if (!raw) return '';
+                // Strip embedded task metadata blocks so the sidechain preview is mostly the assistant output.
+                return raw.replace(/<task_metadata>[\s\S]*?<\/task_metadata>/gi, '').trim();
               })();
+              const embeddedSessionId = outputText
+                ? (() => {
+                    const match = outputText.match(/<task_metadata>[\s\S]*?session_id:\s*([^\s<]+)[\s\S]*?<\/task_metadata>/i);
+                    return match?.[1] ? String(match[1]) : null;
+                  })()
+                : null;
+              const remoteSessionId = readNonBlankOpaqueIdentifier(metadataSessionId ?? embeddedSessionId) ?? '';
+
+              if (remoteSessionId) {
+                const createReplayBackend = params.createReplayBackend ?? (async () => {
+                      const created = await createCatalogAcpBackend(params.provider as CatalogAgentId, {
+                    cwd: params.directory,
+                    mcpServers: params.mcpServers,
+                    permissionHandler: undefined,
+                  });
+                  return created.backend as AcpRuntimeBackend;
+                });
+
+                void (async () => {
+                  let replayBackend: AcpRuntimeBackend | null = null;
+                  let replayImported = false;
+                  try {
+                    replayBackend = await createReplayBackend();
+                    const canReplay = Boolean(replayBackend.loadSessionWithReplayCapture);
+                    if (canReplay) {
+                      const loaded = await replayBackend.loadSessionWithReplayCapture!(remoteSessionId);
+                      const replay = loaded.replay;
+                      if (Array.isArray(replay) && replay.length > 0) {
+                        await importAcpReplaySidechainV1({
+                          session: params.session,
+                          provider: params.provider,
+                          remoteSessionId,
+                          sidechainId: callId,
+                          replay: replay as unknown[],
+                        });
+                        replayImported = true;
+                        return;
+                      }
+                    }
+                  } catch (e) {
+                    logger.warn(`[${params.provider}] Child replay unavailable; using launch output fallback`, sidechainFailureDetails('replay', e));
+                  } finally {
+                    // Fallback: if we can't replay-import, at least persist the Task output as a sidechain message.
+                    if (!replayImported && fallbackSidechainText) {
+                      try {
+                        await params.session.sendAgentMessageCommitted(
+                          params.provider,
+                          { type: 'message', message: fallbackSidechainText, sidechainId: callId },
+                          { localId: randomUUID(), meta: { importedFrom: 'acp-sidechain', remoteSessionId, sidechainId: callId } },
+                        );
+                      } catch (e) {
+                        logger.warn(`[${params.provider}] Child replay fallback could not be persisted`, sidechainFailureDetails('fallback', e));
+                      }
+                    }
+                    toolNameByCallId.delete(callId);
+                    if (replayBackend) {
+                      try {
+                        await replayBackend.dispose({ preserveProviderSession: true });
+                      } catch (e) {
+                        logger.warn(`[${params.provider}] Child replay attachment could not be disposed`, sidechainFailureDetails('dispose', e));
+                      }
+                    }
+                  }
+                })();
+              } else {
+                toolNameByCallId.delete(callId);
+              }
             } else {
               toolNameByCallId.delete(callId);
             }
-          } else {
-            toolNameByCallId.delete(callId);
+            break;
           }
-          break;
-        }
 
-        case 'session-media': {
-          persistSessionMediaMessage(msg);
-          break;
-        }
-
-        case 'fs-edit': {
-          params.messageBuffer.addMessage(`File edit: ${msg.description}`, 'tool');
-          forwarder.forward(msg);
-          break;
-        }
-
-        case 'terminal-output': {
-          const data = typeof (msg as any).data === 'string' ? String((msg as any).data) : '';
-          if (data) {
-            params.messageBuffer.addMessage(data, 'result');
+          case 'session-media': {
+            persistSessionMediaMessage(msg, turn);
+            break;
           }
-          forwarder.forward(msg);
-          break;
-        }
 
-        case 'token-count': {
-          forwarder.forward(msg);
-          break;
-        }
-
-        case 'permission-request': {
-          const payloadRecord = asRecord((msg as any).payload);
-          const toolNameRaw = typeof payloadRecord?.toolName === 'string' ? payloadRecord.toolName : typeof (msg as any).reason === 'string' ? (msg as any).reason : '';
-          const toolName = typeof toolNameRaw === 'string' && toolNameRaw.trim() ? toolNameRaw.trim() : 'unknown_tool';
-          const permissionId = readNonBlankOpaqueIdentifier((msg as any).id) ?? randomUUID();
-          const reason = typeof (msg as any).reason === 'string' ? String((msg as any).reason) : toolName;
-          try {
-            params.hooks?.onPermissionRequest?.({ permissionId, toolName, payload: (msg as any).payload, reason });
-          } catch (e) {
-            logger.debug(`[${params.provider}] Failed to run permission-request hook (non-fatal)`, e);
-          }
-          resetModelOutputSegment(modelOutputState);
-          lastModelOutputText = '';
-          void streamedTranscriptWriter.flushAll({ reason: 'tool-call-boundary' }).finally(() => {
+          case 'fs-edit': {
+            params.messageBuffer.addMessage(`File edit: ${msg.description}`, 'tool');
             forwarder.forward(msg);
-          });
-          break;
-        }
+            break;
+          }
 
-        case 'event': {
-          const name = msg.name;
-          if (name === 'connected-service-runtime-auth-recovery') {
-            const recoveryEvent = parseConnectedServiceRuntimeAuthRecoveryEvent(msg.payload);
-            if (recoveryEvent) {
-              params.session.sendSessionEvent?.(recoveryEvent);
+          case 'terminal-output': {
+            const data = typeof (msg as any).data === 'string' ? String((msg as any).data) : '';
+            if (data) {
+              params.messageBuffer.addMessage(data, 'result');
             }
+            forwarder.forward(msg);
+            break;
           }
-          if (name === 'context_compaction') {
-            const payloadRecord = asRecord(msg.payload);
-            const normalizedPayload = payloadRecord ? normalizeContextCompactionPayload(payloadRecord) : null;
-            if (normalizedPayload) {
-              params.session.sendAgentMessage(params.provider, normalizedPayload);
+
+          case 'token-count': {
+            forwarder.forward(msg);
+            break;
+          }
+
+          case 'permission-request': {
+            const payloadRecord = asRecord((msg as any).payload);
+            const toolNameRaw = typeof payloadRecord?.toolName === 'string' ? payloadRecord.toolName : typeof (msg as any).reason === 'string' ? (msg as any).reason : '';
+            const toolName = typeof toolNameRaw === 'string' && toolNameRaw.trim() ? toolNameRaw.trim() : 'unknown_tool';
+            const permissionId = readNonBlankOpaqueIdentifier((msg as any).id) ?? randomUUID();
+            const reason = typeof (msg as any).reason === 'string' ? String((msg as any).reason) : toolName;
+            try {
+              params.hooks?.onPermissionRequest?.({ permissionId, toolName, payload: (msg as any).payload, reason });
+            } catch (e) {
+              logger.debug(`[${params.provider}] Failed to run permission-request hook (non-fatal)`, e);
             }
-          }
-          if (name === 'available_commands_update') {
-            const payload = msg.payload;
-            const payloadRecord = asRecord(payload);
-            const details = normalizeAvailableCommands(payloadRecord?.availableCommands ?? payload);
-            publishSlashCommandsToMetadata({
-              session: {
-                updateMetadata: (updater) => publishRuntimeMetadataBestEffort(
-                  updater,
-                  'available_commands_update',
-                ),
-              },
-              details,
+            resetModelOutputSegment(turn.modelOutputState);
+            turn.lastModelOutputText = '';
+            return streamedTranscriptWriter.flushAll({ reason: 'tool-call-boundary' }).then(() => undefined).finally(() => {
+              forwarder.forward(msg);
             });
           }
-          if (name === 'session_modes_state') {
-            const payloadRecord = asRecord(msg.payload);
-            const currentModeIdRaw = payloadRecord?.currentModeId;
-            const currentModeId = typeof currentModeIdRaw === 'string' ? currentModeIdRaw : '';
-            const availableModesRaw = payloadRecord?.availableModes;
-            const availableModes = Array.isArray(availableModesRaw)
-              ? availableModesRaw
-                  .filter((m: any) => m && typeof m.id === 'string' && typeof m.name === 'string')
-                  .map((m: any) => ({
-                    id: String(m.id),
-                    name: String(m.name),
-                    ...(typeof m.description === 'string' ? { description: String(m.description) } : {}),
-                  }))
-              : [];
-            if (currentModeId && availableModes.length > 0) {
-              publishRuntimeMetadataBestEffort(
-                (metadata) => {
-                  const sessionModes = {
-                    v: 1 as const,
-                    provider: params.provider,
-                    updatedAt: Date.now(),
-                    currentModeId,
-                    availableModes,
-                  };
-                  return {
-                    ...metadata,
-                    sessionModesV1: sessionModes,
-                    acpSessionModesV1: sessionModes,
-                  };
-                },
-                'session_modes_state',
-              );
-            }
-          }
-          if (name === 'session_models_state') {
-            publishAcpSessionModelsState({
-              session: {
-                updateMetadata: (updater) => publishRuntimeMetadataBestEffort(
-                  updater,
-                  'session_models_state',
-                ),
-              },
-              provider: params.provider,
-              payload: msg.payload,
-              logPrefix: `[${params.provider}]`,
-              reason: 'session_models_state',
-              requireAvailableModels: true,
-            });
-          }
-          if ((name === 'config_options_state' || name === 'config_options_update')
-            && Array.isArray(asRecord(msg.payload)?.configOptions)) {
-            const payloadRecord = asRecord(msg.payload);
-            const configOptions = normalizeConfigOptionsArray(payloadRecord?.configOptions);
-            const derivedModels = (() => {
-              if (params.deriveSessionModelsFromConfigOptions) {
-                return params.deriveSessionModelsFromConfigOptions(configOptions);
+
+          case 'event': {
+            const name = msg.name;
+            if (name === 'connected-service-runtime-auth-recovery') {
+              const recoveryEvent = parseConnectedServiceRuntimeAuthRecoveryEvent(msg.payload);
+              if (recoveryEvent) {
+                params.session.sendSessionEvent?.(recoveryEvent);
               }
-
-              const modelOpt = configOptions.find(isAcpModelConfigOptionLike);
-              if (!modelOpt || !Array.isArray(modelOpt.options)) return null;
-
-              const currentValue = modelOpt.currentValue;
-              const currentModelId =
-                typeof currentValue === 'string'
-                  ? currentValue
-                  : (typeof currentValue === 'number' && Number.isFinite(currentValue) ? String(currentValue) : (typeof currentValue === 'boolean' ? (currentValue ? 'true' : 'false') : ''));
-              if (!currentModelId) return null;
-
-              const availableModels = modelOpt.options
-                .filter((opt) => opt.value !== undefined && typeof opt.name === 'string')
-                .map((opt) => ({
-                  id: String(opt.value),
-                  name: String(opt.name),
-                  ...(typeof opt.description === 'string' ? { description: String(opt.description) } : {}),
-                }))
-                .filter((m) => m.id && m.name);
-              if (modelOpt.options.length > 0 && availableModels.length === 0) return null;
-
-              return { currentModelId, availableModels };
-            })();
-            const derivedModes = (() => {
-              const modeOpt = configOptions.find(isAcpModeConfigOptionLike);
-              if (!modeOpt || !Array.isArray(modeOpt.options) || modeOpt.options.length === 0) return null;
-
-              const currentModeId = stringifySessionConfigOptionValue(modeOpt.currentValue);
-              if (!currentModeId) return null;
-
-              const availableModes = modeOpt.options
-                .map((opt) => ({
-                  id: stringifySessionConfigOptionValue(opt.value),
-                  name: opt.name,
-                  ...(typeof opt.description === 'string' ? { description: opt.description } : {}),
-                }))
-                .filter((mode) => mode.id && mode.name);
-              if (availableModes.length === 0) return null;
-
-              return { currentModeId, availableModes };
-            })();
-
-            publishRuntimeMetadataBestEffort(
-              (metadata) => {
-                const now = Date.now();
-                const next: any = {
-                  ...metadata,
-                  sessionConfigOptionsV1: {
-                    v: 1,
-                    provider: params.provider,
-                    updatedAt: now,
-                    configOptions,
+            }
+            if (name === 'context_compaction') {
+              const payloadRecord = asRecord(msg.payload);
+              const normalizedPayload = payloadRecord ? normalizeContextCompactionPayload(payloadRecord) : null;
+              if (normalizedPayload) {
+                params.session.sendAgentMessage(params.provider, normalizedPayload);
+              }
+            }
+            if (name === 'available_commands_update') {
+              const payload = msg.payload;
+              const payloadRecord = asRecord(payload);
+              const details = normalizeAvailableCommands(payloadRecord?.availableCommands ?? payload);
+              publishSlashCommandsToMetadata({
+                session: {
+                  updateMetadata: (updater) => publishRuntimeMetadataBestEffort(
+                    updater,
+                    'available_commands_update',
+                  ),
+                },
+                details,
+              });
+            }
+            if (name === 'session_modes_state') {
+              const payloadRecord = asRecord(msg.payload);
+              const currentModeIdRaw = payloadRecord?.currentModeId;
+              const currentModeId = typeof currentModeIdRaw === 'string' ? currentModeIdRaw : '';
+              const availableModesRaw = payloadRecord?.availableModes;
+              const availableModes = Array.isArray(availableModesRaw)
+                ? availableModesRaw
+                    .filter((m: any) => m && typeof m.id === 'string' && typeof m.name === 'string')
+                    .map((m: any) => ({
+                      id: String(m.id),
+                      name: String(m.name),
+                      ...(typeof m.description === 'string' ? { description: String(m.description) } : {}),
+                    }))
+                : [];
+              if (currentModeId && availableModes.length > 0) {
+                publishRuntimeMetadataBestEffort(
+                  (metadata) => {
+                    const sessionModes = {
+                      v: 1 as const,
+                      provider: params.provider,
+                      updatedAt: Date.now(),
+                      currentModeId,
+                      availableModes,
+                    };
+                    return {
+                      ...metadata,
+                      sessionModesV1: sessionModes,
+                      acpSessionModesV1: sessionModes,
+                    };
                   },
-                };
-                next.acpConfigOptionsV1 = next.sessionConfigOptionsV1;
-
-                const previousModels = readNewestSessionModelsMetadataStateV1(metadata as unknown as Record<string, unknown>);
-                const modelSnapshot = derivedModels ?? (
-                  !params.deriveSessionModelsFromConfigOptions
-                    && Array.isArray(payloadRecord?.configOptions)
-                    && !configOptions.some(isAcpModelConfigOptionLike)
-                    && previousModels?.provider === params.provider
-                    ? previousModels
-                    : null
+                  'session_modes_state',
                 );
-                if (modelSnapshot) {
-                  const availableModels = params.deriveSessionModelsFromConfigOptions
-                    ? modelSnapshot.availableModels
-                    : applyObservedAcpModelOptions(
-                      modelSnapshot.availableModels,
-                      modelSnapshot.currentModelId,
-                      collectAcpModelScopedConfigOptions(configOptions),
-                      previousModels?.provider === params.provider ? previousModels.availableModels : [],
-                    );
-                  next.sessionModelsV1 = {
-                    v: 1,
-                    provider: params.provider,
-                    updatedAt: derivedModels ? now : previousModels?.updatedAt ?? 0,
-                    currentModelId: modelSnapshot.currentModelId,
-                    availableModels,
-                  };
-                  next.acpSessionModelsV1 = next.sessionModelsV1;
-                }
-                if (derivedModes) {
-                  const sessionModes = {
-                    v: 1 as const,
-                    provider: params.provider,
-                    updatedAt: now,
-                    currentModeId: derivedModes.currentModeId,
-                    availableModes: derivedModes.availableModes,
-                  };
-                  next.sessionModesV1 = sessionModes;
-                  next.acpSessionModesV1 = sessionModes;
+              }
+            }
+            if (name === 'session_models_state') {
+              publishAcpSessionModelsState({
+                session: {
+                  updateMetadata: (updater) => publishRuntimeMetadataBestEffort(
+                    updater,
+                    'session_models_state',
+                  ),
+                },
+                provider: params.provider,
+                payload: msg.payload,
+                logPrefix: `[${params.provider}]`,
+                reason: 'session_models_state',
+                requireAvailableModels: true,
+              });
+            }
+            if ((name === 'config_options_state' || name === 'config_options_update')
+              && Array.isArray(asRecord(msg.payload)?.configOptions)) {
+              const payloadRecord = asRecord(msg.payload);
+              const configOptions = normalizeConfigOptionsArray(payloadRecord?.configOptions);
+              const derivedModels = (() => {
+                if (params.deriveSessionModelsFromConfigOptions) {
+                  return params.deriveSessionModelsFromConfigOptions(configOptions);
                 }
 
-                return next as any;
-              },
-              'config_options_state',
-            );
-          }
-          if (name === 'current_mode_update') {
-            const payloadRecord = asRecord(msg.payload);
-            const currentModeIdRaw = payloadRecord?.currentModeId;
-            const currentModeId = typeof currentModeIdRaw === 'string' ? currentModeIdRaw : '';
-            if (currentModeId) {
+                const modelOpt = configOptions.find(isAcpModelConfigOptionLike);
+                if (!modelOpt || !Array.isArray(modelOpt.options)) return null;
+
+                const currentValue = modelOpt.currentValue;
+                const currentModelId =
+                  typeof currentValue === 'string'
+                    ? currentValue
+                    : (typeof currentValue === 'number' && Number.isFinite(currentValue) ? String(currentValue) : (typeof currentValue === 'boolean' ? (currentValue ? 'true' : 'false') : ''));
+                if (!currentModelId) return null;
+
+                const availableModels = modelOpt.options
+                  .filter((opt) => opt.value !== undefined && typeof opt.name === 'string')
+                  .map((opt) => ({
+                    id: String(opt.value),
+                    name: String(opt.name),
+                    ...(typeof opt.description === 'string' ? { description: String(opt.description) } : {}),
+                  }))
+                  .filter((m) => m.id && m.name);
+                if (modelOpt.options.length > 0 && availableModels.length === 0) return null;
+
+                return { currentModelId, availableModels };
+              })();
+              const derivedModes = (() => {
+                const modeOpt = configOptions.find(isAcpModeConfigOptionLike);
+                if (!modeOpt || !Array.isArray(modeOpt.options) || modeOpt.options.length === 0) return null;
+
+                const currentModeId = stringifySessionConfigOptionValue(modeOpt.currentValue);
+                if (!currentModeId) return null;
+
+                const availableModes = modeOpt.options
+                  .map((opt) => ({
+                    id: stringifySessionConfigOptionValue(opt.value),
+                    name: opt.name,
+                    ...(typeof opt.description === 'string' ? { description: opt.description } : {}),
+                  }))
+                  .filter((mode) => mode.id && mode.name);
+                if (availableModes.length === 0) return null;
+
+                return { currentModeId, availableModes };
+              })();
+
               publishRuntimeMetadataBestEffort(
                 (metadata) => {
-                  const prev = metadata.sessionModesV1 ?? metadata.acpSessionModesV1;
-                  const availableModes = Array.isArray(prev?.availableModes) ? prev.availableModes : [];
-                  const sessionModes = {
-                    v: 1 as const,
-                    provider: params.provider,
-                    updatedAt: Date.now(),
-                    currentModeId,
-                    availableModes,
-                  };
-                  return {
+                  const now = Date.now();
+                  const next: any = {
                     ...metadata,
-                    sessionModesV1: sessionModes,
-                    acpSessionModesV1: sessionModes,
+                    sessionConfigOptionsV1: {
+                      v: 1,
+                      provider: params.provider,
+                      updatedAt: now,
+                      configOptions,
+                    },
                   };
+                  next.acpConfigOptionsV1 = next.sessionConfigOptionsV1;
+
+                  const previousModels = readNewestSessionModelsMetadataStateV1(metadata as unknown as Record<string, unknown>);
+                  const modelSnapshot = derivedModels ?? (
+                    !params.deriveSessionModelsFromConfigOptions
+                      && Array.isArray(payloadRecord?.configOptions)
+                      && !configOptions.some(isAcpModelConfigOptionLike)
+                      && previousModels?.provider === params.provider
+                      ? previousModels
+                      : null
+                  );
+                  if (modelSnapshot) {
+                    const availableModels = params.deriveSessionModelsFromConfigOptions
+                      ? modelSnapshot.availableModels
+                      : applyObservedAcpModelOptions(
+                        modelSnapshot.availableModels,
+                        modelSnapshot.currentModelId,
+                        collectAcpModelScopedConfigOptions(configOptions),
+                        previousModels?.provider === params.provider ? previousModels.availableModels : [],
+                      );
+                    next.sessionModelsV1 = {
+                      v: 1,
+                      provider: params.provider,
+                      updatedAt: derivedModels ? now : previousModels?.updatedAt ?? 0,
+                      currentModelId: modelSnapshot.currentModelId,
+                      availableModels,
+                    };
+                    next.acpSessionModelsV1 = next.sessionModelsV1;
+                  }
+                  if (derivedModes) {
+                    const sessionModes = {
+                      v: 1 as const,
+                      provider: params.provider,
+                      updatedAt: now,
+                      currentModeId: derivedModes.currentModeId,
+                      availableModes: derivedModes.availableModes,
+                    };
+                    next.sessionModesV1 = sessionModes;
+                    next.acpSessionModesV1 = sessionModes;
+                  }
+
+                  return next as any;
                 },
-                'current_mode_update',
+                'config_options_state',
               );
             }
-          }
-          if (name === 'current_model_update') {
-            publishAcpSessionModelsState({
-              session: { updateMetadata: (updater) => publishRuntimeMetadataBestEffort(updater, 'current_model_update') },
-              provider: params.provider,
-              payload: msg.payload,
-              logPrefix: `[${params.provider}]`,
-              reason: 'current_model_update',
-              preservePreviousAvailableModels: true,
-            });
-          }
-          if (name === 'thinking') {
-            const payloadRecord = asRecord(msg.payload);
-            const fullTextRaw = payloadRecord?.fullText;
-            if (typeof fullTextRaw === 'string' && fullTextRaw.length > 0) {
-              // Authoritative snapshot (e.g. pi message_end): append only what streamed deltas
-              // have not already delivered, mirroring the model-output fullText reconciliation.
-              if (accumulatedThinkingText && fullTextRaw.startsWith(accumulatedThinkingText)) {
-                const suffix = fullTextRaw.slice(accumulatedThinkingText.length);
-                if (suffix) {
-                  streamedTranscriptWriter.appendThinkingDelta(suffix);
-                }
-              } else if (!accumulatedThinkingText) {
-                streamedTranscriptWriter.appendThinkingDelta(fullTextRaw);
-              } else {
-                // Defensive: divergent authoritative text — surface it rather than lose reasoning.
-                streamedTranscriptWriter.appendThinkingDelta('\n\n');
-                streamedTranscriptWriter.appendThinkingDelta(fullTextRaw);
-              }
-              accumulatedThinkingText = '';
-            } else {
-              const textRaw = payloadRecord?.text;
-              const text = typeof textRaw === 'string' ? textRaw : '';
-              if (text) {
-                streamedTranscriptWriter.appendThinkingDelta(text);
-                accumulatedThinkingText += text;
+            if (name === 'current_mode_update') {
+              const payloadRecord = asRecord(msg.payload);
+              const currentModeIdRaw = payloadRecord?.currentModeId;
+              const currentModeId = typeof currentModeIdRaw === 'string' ? currentModeIdRaw : '';
+              if (currentModeId) {
+                publishRuntimeMetadataBestEffort(
+                  (metadata) => {
+                    const prev = metadata.sessionModesV1 ?? metadata.acpSessionModesV1;
+                    const availableModes = Array.isArray(prev?.availableModes) ? prev.availableModes : [];
+                    const sessionModes = {
+                      v: 1 as const,
+                      provider: params.provider,
+                      updatedAt: Date.now(),
+                      currentModeId,
+                      availableModes,
+                    };
+                    return {
+                      ...metadata,
+                      sessionModesV1: sessionModes,
+                      acpSessionModesV1: sessionModes,
+                    };
+                  },
+                  'current_mode_update',
+                );
               }
             }
+            if (name === 'current_model_update') {
+              publishAcpSessionModelsState({
+                session: { updateMetadata: (updater) => publishRuntimeMetadataBestEffort(updater, 'current_model_update') },
+                provider: params.provider,
+                payload: msg.payload,
+                logPrefix: `[${params.provider}]`,
+                reason: 'current_model_update',
+                preservePreviousAvailableModels: true,
+              });
+            }
+            if (name === 'thinking') {
+              const payloadRecord = asRecord(msg.payload);
+              const fullTextRaw = payloadRecord?.fullText;
+              if (typeof fullTextRaw === 'string' && fullTextRaw.length > 0) {
+                // Authoritative snapshot (e.g. pi message_end): append only what streamed deltas
+                // have not already delivered, mirroring the model-output fullText reconciliation.
+                if (turn.accumulatedThinkingText && fullTextRaw.startsWith(turn.accumulatedThinkingText)) {
+                  const suffix = fullTextRaw.slice(turn.accumulatedThinkingText.length);
+                  if (suffix) {
+                    streamedTranscriptWriter.appendThinkingDelta(suffix);
+                  }
+                } else if (!turn.accumulatedThinkingText) {
+                  streamedTranscriptWriter.appendThinkingDelta(fullTextRaw);
+                } else {
+                  // Defensive: divergent authoritative text — surface it rather than lose reasoning.
+                  streamedTranscriptWriter.appendThinkingDelta('\n\n');
+                  streamedTranscriptWriter.appendThinkingDelta(fullTextRaw);
+                }
+                turn.accumulatedThinkingText = '';
+              } else {
+                const textRaw = payloadRecord?.text;
+                const text = typeof textRaw === 'string' ? textRaw : '';
+                if (text) {
+                  streamedTranscriptWriter.appendThinkingDelta(text);
+                  turn.accumulatedThinkingText += text;
+                }
+              }
+            }
+            break;
           }
-          break;
         }
+      };
+      const processMessage = (): void | Promise<void> => {
+        if (msg.type === 'tool-result') evictToolCallCache(Date.now());
+        const thinkingToolBoundary = (msg.type === 'tool-call' || msg.type === 'tool-result')
+          && isThinkingToolName(msg.type === 'tool-result'
+            ? toolNameByCallId.get(msg.callId)?.toolName ?? msg.toolName
+            : msg.toolName);
+        if (isModelOutputSegmentBoundary(msg) && !thinkingToolBoundary) {
+          const segmentFlush = closeModelOutputSegment(turn);
+          if (segmentFlush) return segmentFlush.then(applyMessage);
+        }
+        return applyMessage();
+
+      };
+      const isMetadataEvent = msg.type === 'event' && msg.name !== 'thinking' && msg.name !== 'context_compaction';
+      if (!isMetadataEvent) {
+        void enqueueTurnSettlement(processMessage).catch((error) => {
+          logger.infoFile(`[${params.provider}] Failed to process ACP turn output`, error);
+        });
+      } else {
+        processMessage();
       }
     });
   };
@@ -2096,6 +2339,7 @@ export function createAcpRuntime(params: {
     callbacks: ProviderPromptSubmissionCallbacks = {},
     metadata?: Record<string, unknown>,
   ): Promise<void> => {
+    const turn = turnState;
     if (!sessionId) {
       throw createRejectedBeforeProviderEffectError(
         new Error(`${params.provider} ACP session was not started`),
@@ -2127,7 +2371,7 @@ export function createAcpRuntime(params: {
     let responseCompletion: Promise<AcpTurnOutcome | void> | null = null;
     try {
       if (b.waitForResponseComplete) {
-        responseCompletion = b.waitForResponseComplete();
+        responseCompletion = waitForTurnResponse(b, turn);
       }
 
       if (submissionEvidence?.kind === 'effect_may_have_occurred') {
@@ -2149,17 +2393,25 @@ export function createAcpRuntime(params: {
         callbacks.onProviderPromptAccepted?.();
       }
       if (responseCompletion) {
-        rememberTurnOutcome(await responseCompletion);
+        const outcome = await responseCompletion;
+        if (turn.settlement) {
+          await turn.settlement;
+          if (turn.pendingTurnOutcome?.kind === 'failed') throw turn.pendingTurnOutcome.error;
+        }
+        else {
+          await pendingTurnSettlement;
+          rememberTurnOutcome(outcome, turn);
+        }
       }
     } catch (error) {
-      rethrowPromptError(error);
+      rethrowPromptError(error, turn);
     }
   };
 
   return {
     getSessionId: () => sessionId,
     supportsInFlightSteer: () => inFlightSteerEnabled,
-    isTurnInFlight: () => turnInFlight,
+    isTurnInFlight: () => turnState.turnInFlight,
 
     async isProviderNativeCommand(prompt: string): Promise<boolean> {
       const b = await ensureBackend();
@@ -2167,11 +2419,16 @@ export function createAcpRuntime(params: {
     },
 
     beginTurn(): void {
-      closeOpenStreamedTranscriptSegmentsBeforeTurn();
-      turnInFlight = true;
+      // A host prompt may steer a provider-started run. Preserve its canonical turn
+      // identity, transcript and media rather than opening a competing task lifecycle.
+      const adoptingTurn = !turnState.turnInFlight && turnState.currentTurnId !== null && !turnState.turnAborted;
+      if (!adoptingTurn) {
+        closeOpenStreamedTranscriptSegmentsBeforeTurn();
+        resetTurnState();
+      }
+      turnState.turnInFlight = true;
+      hostCallerTurn = turnState;
       publishInFlightSteerCapabilities(true);
-      turnAborted = false;
-      resetTurnState();
       ensureCurrentTurnId();
       startPendingPumpIfNeeded();
       params.onThinkingChange(true);
@@ -2185,38 +2442,20 @@ export function createAcpRuntime(params: {
 
     async cancel(): Promise<void> {
       if (!sessionId) return;
-      await streamedTranscriptWriter.flushAll({ reason: 'abort', interruptedReason: 'cancelled' });
-      const b = await ensureBackend();
+      const providerSessionId = sessionId;
+      const turn = turnState;
+      turn.turnAborted = true;
+      turn.pendingTurnOutcome = { kind: 'aborted', stopReason: 'cancelled' };
+      stopPendingPump();
+      publishInFlightSteerCapabilities(false);
+      params.onThinkingChange(false);
+      params.session.keepAlive(false, 'remote');
       try {
-        await b.cancel(sessionId);
+        const b = await ensureBackend();
+        await b.cancel(providerSessionId);
       } finally {
-        await abortPendingAcpPermissionRequests(params.permissionHandler, 'ACP runtime cancelled', (error) => {
-          logger.debug(`[${params.provider}] Failed to abort pending permission requests after cancel`, error);
-        });
-        if (turnInFlight && params.session.sessionTurnLifecycle) {
-          const providerTurnId = currentTurnId ?? ensureCurrentTurnId();
-          try {
-            if (!taskStartedSent) {
-              await params.session.sessionTurnLifecycle.beginTurn({
-                provider: params.provider,
-                providerTurnId,
-              });
-            }
-            await params.session.sessionTurnLifecycle.cancelTurn({
-              provider: params.provider,
-              providerTurnId,
-            });
-          } catch (error) {
-            logger.debug(`[${params.provider}] Failed to persist ACP runtime cancellation (non-fatal)`, error);
-          }
-        }
-        // Cancel should behave like a turn boundary: don't keep steering/pending state alive.
-        turnInFlight = false;
-        publishInFlightSteerCapabilities(false);
-        params.onThinkingChange(false);
-        params.session.keepAlive(false, 'remote');
-        stopPendingPump();
-        clearToolCallCache();
+        if (turnState === turn) await flushCapturedTurn(turn);
+        else await pendingTurnSettlement;
       }
     },
 
@@ -2227,6 +2466,7 @@ export function createAcpRuntime(params: {
         const startupFlight = startOrLoadFlight?.promise ?? null;
         const deferredDrainFlight = postStartPendingDrainFlight;
         runtimeGeneration += 1;
+        hostCallerTurn = null;
         runtimeMetadataPublicationGeneration += 1;
         const identityReset = identityBinding.reset();
         startupDrainController?.abort('acp-runtime:generation-reset');
@@ -2236,10 +2476,9 @@ export function createAcpRuntime(params: {
         completedStartOrLoadIntentKey = null;
         sessionId = null;
         pendingProviderSessionInfo = null;
-        turnInFlight = false;
+        turnState.turnInFlight = false;
         publishInFlightSteerCapabilities(false);
         resetTurnState();
-        loadingSession = false;
         clearToolCallCache();
         stopPendingPump();
         params.onThinkingChange(false);
@@ -2322,16 +2561,13 @@ export function createAcpRuntime(params: {
             if (!b.loadSession && !b.loadSessionWithReplayCapture) {
               throw new Error(`${params.provider} ACP backend does not support loading sessions`);
             }
-            loadingSession = true;
-            try {
-              if (b.loadSessionWithReplayCapture && importHistory) {
-                return await b.loadSessionWithReplayCapture(resumeReference);
-              }
-              if (b.loadSession) return await b.loadSession(resumeReference, sessionOpenOptions);
-              return await b.loadSessionWithReplayCapture!(resumeReference);
-            } finally {
-              loadingSession = false;
+            // The backend owns replay suppression. A native resume can emit fresh
+            // extension input and output before opening completes, so the runtime
+            // must not blanket-drop the live message stream during session load.
+            if (b.loadSessionWithReplayCapture) {
+              return await b.loadSessionWithReplayCapture(resumeReference);
             }
+            return await b.loadSession!(resumeReference, sessionOpenOptions);
           },
         });
         assertRuntimeGeneration(operationGeneration);
@@ -2503,6 +2739,7 @@ export function createAcpRuntime(params: {
         throw new Error(`${params.provider} ACP session was not started`);
       }
 
+      const turn = turnState;
       const b = await ensureBackend();
       try {
         if (b.compactContext) {
@@ -2511,10 +2748,18 @@ export function createAcpRuntime(params: {
           await b.sendPrompt(sessionId, command);
         }
         if (b.waitForResponseComplete) {
-          rememberTurnOutcome(await b.waitForResponseComplete());
+          const outcome = await waitForTurnResponse(b, turn);
+          if (turn.settlement) {
+            await turn.settlement;
+            if (turn.pendingTurnOutcome?.kind === 'failed') throw turn.pendingTurnOutcome.error;
+          }
+          else {
+            await pendingTurnSettlement;
+            rememberTurnOutcome(outcome, turn);
+          }
         }
       } catch (error) {
-        rethrowPromptError(error);
+        rethrowPromptError(error, turn);
       }
     },
 
@@ -2522,106 +2767,7 @@ export function createAcpRuntime(params: {
       return surfacePromptFailure(error);
     },
 
-    async flushTurn(): Promise<void> {
-      try {
-        await waitForPendingTurnBoundaryStreamFlush();
-        await drainPendingSessionMediaPersistence();
-        const unavailableSessionMedia = [...unavailableSessionMediaByDedupeKey.values()].flat();
-        const sessionMediaMeta = persistedSessionMediaItems.length > 0 || unavailableSessionMedia.length > 0
-          ? buildSessionMediaMeta(persistedSessionMediaItems, undefined, unavailableSessionMedia)
-          : null;
-        const attachedSessionMediaToAssistantRow = sessionMediaMeta
-          ? streamedTranscriptWriter.mergeAssistantMeta(sessionMediaMeta)
-          : false;
-        await streamedTranscriptWriter.flushAll(
-          turnAborted
-            ? { reason: 'abort', interruptedReason: 'turn-aborted' }
-            : { reason: 'turn-end' },
-        );
-        await abortPendingAcpPermissionRequests(
-          params.permissionHandler,
-          turnAborted ? 'ACP runtime turn aborted' : 'ACP runtime turn ended',
-          (error) => {
-            logger.debug(`[${params.provider}] Failed to abort pending permission requests at turn boundary`, error);
-          },
-        );
-        if (sessionMediaMeta && !attachedSessionMediaToAssistantRow && !turnAborted) {
-          await params.session.sendAgentMessageCommitted(
-            params.provider,
-            { type: 'message', message: '' },
-            { localId: randomUUID(), meta: sessionMediaMeta },
-          );
-        }
-      } finally {
-        turnInFlight = false;
-        publishInFlightSteerCapabilities(false);
-        stopPendingPump();
-        params.onThinkingChange(false);
-        params.session.keepAlive(false, 'remote');
-      }
-      if (pendingTurnOutcome && pendingTurnOutcome.kind !== 'completed') {
-        const providerTurnId = ensureCurrentTurnId();
-        if (!taskStartedSent && params.session.sessionTurnLifecycle) {
-          await params.session.sessionTurnLifecycle.beginTurn({
-            provider: params.provider,
-            providerTurnId,
-          });
-        }
-        const markerType = pendingTurnOutcome.kind === 'aborted' ? 'turn_cancelled' : 'turn_aborted';
-        params.session.sendAgentMessage(params.provider, { type: markerType, id: providerTurnId });
-        if (params.session.sessionTurnLifecycle) {
-          await params.session.sessionTurnLifecycle.cancelTurn({
-            provider: params.provider,
-            providerTurnId,
-          });
-        }
-      }
-      if (!turnAborted) {
-        try {
-          params.hooks?.onBeforeFlushTurn?.({
-            sendToolCall: ({ toolName, input, callId }) => {
-              const resolvedCallId = typeof callId === 'string' && callId.length > 0 ? callId : randomUUID();
-              params.session.sendAgentMessage(params.provider, {
-                type: 'tool-call',
-                callId: resolvedCallId,
-                name: toolName,
-                input,
-                id: randomUUID(),
-              });
-              return resolvedCallId;
-            },
-            sendToolResult: ({ callId, output }) => {
-              params.session.sendAgentMessage(params.provider, {
-                type: 'tool-result',
-                callId,
-                output,
-                id: randomUUID(),
-              });
-            },
-          });
-        } catch (e) {
-          logger.debug(`[${params.provider}] onBeforeFlushTurn hook failed (non-fatal)`, e);
-        }
-      }
+    flushTurn,
 
-      if (!turnAborted) {
-        const providerTurnId = ensureCurrentTurnId();
-        if (!taskStartedSent && params.session.sessionTurnLifecycle) {
-          await params.session.sessionTurnLifecycle.beginTurn({
-            provider: params.provider,
-            providerTurnId,
-          });
-        }
-        params.session.sendAgentMessage(params.provider, { type: 'task_complete', id: providerTurnId });
-        await recordSessionTurnCompleted({
-          session: params.session,
-          provider: params.provider,
-          providerTurnId,
-        });
-      }
-
-      clearToolCallCache();
-      resetTurnState();
-    },
   };
 }

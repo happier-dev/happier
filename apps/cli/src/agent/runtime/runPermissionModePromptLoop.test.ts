@@ -19,6 +19,10 @@ import type { SessionTurnMutationV1 } from '@/api/session/mutations/sessionMutat
 import { createSessionProviderInputConsumer } from './sessionInput/SessionProviderInputConsumer';
 import { createPermissionModeQueueState } from './createPermissionModeQueueState';
 import { createProviderEnforcedPermissionHandler } from '@/agent/permissions/createProviderEnforcedPermissionHandler';
+import { createTurnAssistantPreviewTracker } from './turnAssistantPreviewTracker';
+import { resolveReadyNotificationAssistantText } from './readyNotificationAssistantText';
+import { createTurnAssistantTextSnapshotStore } from '@/api/session/turnAssistantTextSnapshot';
+import { configuration } from '@/configuration';
 
 type PromptLoopMetadata = Metadata & {
   replaySeedV1?: any;
@@ -64,6 +68,59 @@ async function waitForPromptLoopTick(): Promise<void> {
 }
 
 describe('runPermissionModePromptLoop', () => {
+  it.each(['host answer', ''])('keeps host ready text scoped when a successor is already active (host text: %s)', async (hostText) => {
+    const tracker = createTurnAssistantPreviewTracker();
+    const snapshots = createTurnAssistantTextSnapshotStore({ maxTextChars: configuration.readyNotificationAssistantTextMaxChars });
+    const session = createMutableApiSessionClientFixture({ overrides: {
+      beginTurnAssistantTextSnapshot: (params) => snapshots.beginTurn(params),
+      getTurnAssistantTextSnapshot: (params) => snapshots.getForTurn(params),
+      sendAgentMessageEphemeral: (_provider, body) => {
+        if (body.type === 'message') snapshots.observe({ text: body.message, source: 'ephemeral' });
+        return { accepted: true, epoch: 0 };
+      },
+    } });
+    const backend = createFakeAcpRuntimeBackend({ sendPrompt: async () => {
+      backend.emit({ type: 'status', status: 'running' });
+      if (hostText) backend.emit({ type: 'model-output', fullText: hostText, fullTextScope: 'segment' });
+      backend.emit({ type: 'status', status: 'idle', turnFinished: true });
+      backend.emit({ type: 'status', status: 'running' });
+      backend.emit({ type: 'model-output', fullText: 'successor answer', fullTextScope: 'segment' });
+      await expect.poll(() => tracker.getPreview()).toBe('successor answer');
+    } });
+    const permissionHandler = createProviderEnforcedPermissionHandler({ session, logPrefix: '[ready-test]' });
+    const runtime = createAcpRuntime({
+      provider: 'pi', directory: '/tmp', session, messageBuffer: new MessageBuffer(), mcpServers: {},
+      permissionHandler, turnAssistantPreviewTracker: tracker, onThinkingChange: () => {}, ensureBackend: async () => backend,
+    });
+    const queue = createModeQueue();
+    queue.push({ text: 'host prompt', localId: 'ready-host' }, { permissionMode: 'default' });
+    let shouldExit = false;
+    let readyText: string | null = null;
+    try {
+      await runPermissionModePromptLoop({
+        providerName: 'Pi', agentMessageType: 'pi', explicitPermissionMode: undefined,
+        session, messageQueue: queue, permissionHandler, runtime,
+        createOverrideSynchronizer: (isStarted) => createRuntimeOverrideSynchronizers({ session, runtime, isStarted }),
+        messageBuffer: new MessageBuffer(), shouldExit: () => shouldExit,
+        getAbortSignal: () => new AbortController().signal, keepAlive: () => {}, setThinking: () => {},
+        sendReady: (context) => {
+          readyText = resolveReadyNotificationAssistantText({
+            turnResult: context?.turnResult,
+            explicitAssistantText: tracker.getPreview(), session,
+            turnToken: context?.turnToken, startSeqExclusive: context?.startSeqExclusive,
+          });
+          shouldExit = true;
+        },
+        currentPermissionModeUpdatedAt: 0, setCurrentPermissionMode: () => {}, setCurrentPermissionModeUpdatedAt: () => {},
+        formatPromptErrorMessage: formatProviderPromptErrorMessage,
+      });
+      expect(readyText).toBe(hostText || null);
+    } finally {
+      backend.emit({ type: 'status', status: 'idle' });
+      await runtime.flushTurn();
+    }
+  });
+
   it('restores saved permission intent before eager native attachment even when its timestamp was already read', async () => {
     const session = createMutableApiSessionClientFixture<PromptLoopMetadata>({ overrides: { onUserMessage: () => undefined } });
     session.__setMetadata(createPromptLoopMetadata({ permissionMode: 'read-only', permissionModeUpdatedAt: 77 }));

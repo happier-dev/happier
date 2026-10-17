@@ -59,6 +59,31 @@ segments and releases only drained writers. Codex tool boundaries wait for admis
 into the existing session commit queue, while acknowledgement settles in the writer;
 turn-end flushes await settlement and return the durable delivery summaries.
 
+In development source, ACP output observations enter the existing session mutation
+journal with explicit external provenance. Assistant and thinking snapshots,
+provider-observed input, media-only rows, and lifecycle mutations share that
+owner's durable custody and replay order. Calls without observation provenance
+keep their existing remote-acknowledgement contract.
+
+Pi's existing Happier bridge observes extension-origin text through Pi's `input`
+hook and forwards it using the public RPC notification channel. The Pi adapter
+consumes that observation before diagnostic tracing and sends it through the
+shared ACP transcript path. It records a submitted input, which later extension
+handlers may transform or handle; it does not claim the model received that text.
+Host input keeps its existing recording path, and raw user-message echoes do not
+create another transcript row. The bridge is required for Happier-managed Pi
+launches. Provider-started runs use the same ACP turn state and settlement path as
+host-started runs.
+
+The backend's conclusive response completion seals the captured host turn before
+a provider-started successor can begin; transient idle signals do not seal it.
+The existing flush result carries that captured turn's assistant text into ready
+notifications, including an explicitly empty answer, so later output cannot
+replace the host's notification. Replay suppression belongs to the backend's
+existing replay-capture owner. The shared runtime preserves fresh input and
+output emitted during native resume and imports captured history only when
+requested.
+
 ## CLI entry flow
 
 ```mermaid

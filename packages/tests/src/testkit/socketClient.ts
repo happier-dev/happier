@@ -100,7 +100,7 @@ export class SocketCollector {
    */
   async rpcCall<T = RpcResponseEnvelope>(
     method: string,
-    params: string,
+    params: unknown,
     timeoutMs?: number,
     authorization?: SocketRpcAuthorizationContext,
   ): Promise<T> {

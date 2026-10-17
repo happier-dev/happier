@@ -1705,6 +1705,7 @@ describe('PiRpcBackend pending turn lifecycle', () => {
       const idleCountBeforePrompt = messages.filter(
         (message) => message.type === 'status' && message.status === 'idle',
       ).length;
+      expect(messages).not.toContainEqual(expect.objectContaining({ turnFinished: true }));
 
       await expect(Promise.race([
         backend.sendPrompt(session.sessionId, 'final answer with stale provider state'),
@@ -1713,6 +1714,7 @@ describe('PiRpcBackend pending turn lifecycle', () => {
       expect(messages.filter(
         (message) => message.type === 'status' && message.status === 'idle',
       )).toHaveLength(idleCountBeforePrompt + 1);
+      expect(messages).toContainEqual({ type: 'status', status: 'idle', turnFinished: true });
       expect(messages.some((message) => (
         message.type === 'model-output'
         && message.fullText === 'PI_IDLE_SECOND_ACCEPTED_20260723'

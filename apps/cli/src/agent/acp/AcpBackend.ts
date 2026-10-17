@@ -2950,7 +2950,7 @@ export class AcpBackend implements AgentBackend {
     this.waitingForResponse = false;
 
     if (outcome.kind !== 'timed_out') {
-      this.emit({ type: 'status', status: 'idle' });
+      this.emit({ type: 'status', status: 'idle', turnFinished: true });
     }
 
     if (this.idleResolver) {
@@ -3820,7 +3820,7 @@ export class AcpBackend implements AgentBackend {
       this.postIdleWithoutAssistantMessageTimeout = null;
     }
     this.clearResponseCompletionTimeout();
-    this.emit({ type: 'status', status: 'idle' });
+    this.emit({ type: 'status', status: 'idle', turnFinished: this.waitingForResponse ? true : undefined });
     this.clearActiveToolCallStateForTerminalTurn('idle finalization');
     this.closeCurrentTurnGeneration();
     // Avoid races where the idle signal arrives before `waitForResponseComplete()` starts waiting.

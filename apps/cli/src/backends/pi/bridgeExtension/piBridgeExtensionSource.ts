@@ -1,6 +1,6 @@
-import { PI_BRIDGE_CONFIG_PATH_FLAG, PI_BRIDGE_TOKEN_COUNT_MARKER_TYPE } from './piBridgeExtensionEnv';
+import { PI_BRIDGE_CONFIG_PATH_FLAG, PI_BRIDGE_TOKEN_COUNT_MARKER_TYPE, PI_BRIDGE_USER_INPUT_MARKER_TYPE } from './piBridgeExtensionEnv';
 
-export const PI_BRIDGE_EXTENSION_VERSION = '4';
+export const PI_BRIDGE_EXTENSION_VERSION = '5';
 
 function jsString(value: string): string {
   return JSON.stringify(value);
@@ -14,6 +14,7 @@ import { readFileSync } from "node:fs";
 
 const CONFIG_PATH_FLAG = ${jsString(PI_BRIDGE_CONFIG_PATH_FLAG)};
 const TOKEN_COUNT_MARKER_TYPE = ${jsString(PI_BRIDGE_TOKEN_COUNT_MARKER_TYPE)};
+const USER_INPUT_MARKER_TYPE = ${jsString(PI_BRIDGE_USER_INPUT_MARKER_TYPE)};
 const BRIDGE_OUTPUT_MAX_BYTES = 1024 * 1024;
 const BRIDGE_OUTPUT_MAX_LINES = 4000;
 const TOOL_OUTPUT_MAX_BYTES = 50 * 1024;
@@ -251,6 +252,16 @@ export default function HappierPiToolsBridgeExtension(pi) {
     const config = readSessionConfig(pi);
     if (!config) return;
     registered = true;
+
+    // Observe submitted extension input at Pi's public input boundary, as the host does
+    // for its own submissions. Later input handlers may transform or handle it; a handler
+    // that already handled the input prevents this observer from running.
+    pi.on("input", (event, ctx) => {
+      if (event.source !== "extension" || typeof event.text !== "string" || !event.text.length) return;
+      // The native notification API shares Pi's RPC output stream with lifecycle events.
+      // User message_end echoes have no origin and must never infer this observation.
+      ctx.ui.notify(JSON.stringify({ type: USER_INPUT_MARKER_TYPE, text: event.text }));
+    });
 
     pi.on("message_end", (event, ctx) => {
       const message = event && typeof event === "object" ? event.message : null;

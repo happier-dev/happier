@@ -28,7 +28,6 @@ export function createPiAcpRuntime(params: {
   onThinkingChange: (thinking: boolean) => void;
   getSessionOpenAbortSignal?: () => AbortSignal | undefined;
   memoryRecallGuidanceEnabled?: boolean;
-  fallbackToolDelivery: 'native_mcp' | 'shell_bridge' | 'unsupported';
   getPermissionMode?: () => PermissionMode | null | undefined;
   processEnv?: NodeJS.ProcessEnv;
   pendingQueueDrainMaxPopPerWake?: number;
@@ -98,42 +97,30 @@ export function createPiAcpRuntime(params: {
       // HOME) — the same root the connected-services materializer uses — so every
       // Happier-spawned Pi session gets the bridge, not just connected-service
       // launches.
-      let happyToolsBridge: PiBackendOptions['happyToolsBridge'];
-      try {
-        const accountSettings =
-          params.accountSettings && typeof params.accountSettings === 'object' && !Array.isArray(params.accountSettings)
-            ? params.accountSettings
-            : {};
-        const mergedSettings = resolveSessionCodingPromptSettings({
-          settings: accountSettings,
-          profileId: sessionProfileId,
-        });
-        const explicitAgentDir = typeof process.env.PI_CODING_AGENT_DIR === 'string'
-          ? process.env.PI_CODING_AGENT_DIR.trim() || null
-          : null;
-        const agentDir = explicitAgentDir
-          ?? join((typeof process.env.HOME === 'string' && process.env.HOME.trim()) || homedir(), '.pi', 'agent');
-        const resolved = await resolveHappyToolsBridgeBackendOptions({
-          agentDir,
-          sessionId: session.sessionId,
-          settings: mergedSettings,
-          memoryRecallGuidanceEnabled,
-          memoryMachineId: params.machineId,
-        });
-        if (resolved) {
-          happyToolsBridge = resolved;
-        }
-      } catch (error) {
-        // Best-effort: spawn without the bridge args; the full coding system prompt
-        // (including the shell-bridge CLI appendix) rides the spawn flag below as the
-        // fallback tool delivery path for this session.
-        logger.debug('[pi] tools-bridge extension resolution failed; spawning without bridge args', error);
-      }
+      const accountSettings =
+        params.accountSettings && typeof params.accountSettings === 'object' && !Array.isArray(params.accountSettings)
+          ? params.accountSettings
+          : {};
+      const mergedSettings = resolveSessionCodingPromptSettings({
+        settings: accountSettings,
+        profileId: sessionProfileId,
+      });
+      const explicitAgentDir = typeof process.env.PI_CODING_AGENT_DIR === 'string'
+        ? process.env.PI_CODING_AGENT_DIR.trim() || null
+        : null;
+      const agentDir = explicitAgentDir
+        ?? join((typeof process.env.HOME === 'string' && process.env.HOME.trim()) || homedir(), '.pi', 'agent');
+      const happyToolsBridge = await resolveHappyToolsBridgeBackendOptions({
+        agentDir,
+        sessionId: session.sessionId,
+        settings: mergedSettings,
+        memoryRecallGuidanceEnabled,
+        memoryMachineId: params.machineId,
+      });
+      if (!happyToolsBridge) throw new Error('Pi session input bridge could not bind');
 
-      // Prompt preparation is load-bearing, not best-effort. With the bridge, residual
-      // profile/provider/run blocks are appended to the host-resolved base inside the
-      // protected bridge config so Pi sees one canonically ordered addition. Without
-      // the bridge, the complete prompt rides --append-system-prompt instead.
+      // The bridge owns input observations and the ordered Happier prompt. Failure to
+      // materialize it must fail startup rather than silently lose extension inputs.
       const text = await resolveEffectiveCodingPromptText({
         credentials: params.credentials,
         settings: params.accountSettings ?? null,
@@ -143,41 +130,24 @@ export function createPiAcpRuntime(params: {
           featureId: 'execution.runs',
           env: process.env,
         }).state === 'enabled',
-        ...(happyToolsBridge
-          ? {
-            // The bridge resolver already produced the Happier base/tool guidance.
-            // Resolve only the remaining profile/provider/run blocks here, then join
-            // them after that base in the protected bridge configuration below.
-            baseOverride: null,
-            memoryRecallGuidanceEnabled: false,
-          }
-          : {
-            memoryRecallGuidanceEnabled,
-            memoryMachineId: params.machineId,
-            toolDelivery: params.fallbackToolDelivery,
-            toolDeliverySessionId: session.sessionId,
-            toolDeliveryDirectory: params.directory,
-          }),
+        baseOverride: null,
+        memoryRecallGuidanceEnabled: false,
       });
       const resolvedPromptText = typeof text === 'string' && text.trim() ? text : undefined;
 
-      if (happyToolsBridge) {
-        const promptFragments = [happyToolsBridge.sessionConfig.promptAddition, resolvedPromptText]
-          .filter((fragment): fragment is string => typeof fragment === 'string' && fragment.trim().length > 0);
-        happyToolsBridge = {
+      const promptFragments = [happyToolsBridge.sessionConfig.promptAddition, resolvedPromptText]
+        .filter((fragment): fragment is string => typeof fragment === 'string' && fragment.trim().length > 0);
+      return {
+        happyToolsBridge: {
           ...happyToolsBridge,
           sessionConfig: {
             ...happyToolsBridge.sessionConfig,
-            // Pi applies --append-system-prompt before extension hooks. Keeping the
-            // entire Happier addition here preserves the canonical order: base/tool
-            // guidance first, then profile stacks and provider/run supplements.
+            // Pi applies --append-system-prompt before extension hooks. Keep the entire
+            // Happier addition here so the host-resolved base precedes supplements.
             promptAddition: promptFragments.join('\n\n'),
           },
-        };
-        return { happyToolsBridge };
-      }
-
-      return resolvedPromptText ? { appendSystemPromptText: resolvedPromptText } : {};
+        },
+      };
      },
    });
  }

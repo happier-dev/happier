@@ -12,7 +12,7 @@ import { seedCliDataKeyAuthForServer } from '../../src/testkit/cliAuth';
 import { daemonControlPostJson } from '../../src/testkit/daemon/controlServerClient';
 import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { createUserScopedSocketCollector } from '../../src/testkit/socketClient';
-import { createDataKeyRpcClient, unwrapDataKeyRpcResult } from '../../src/testkit/syntheticAgent/rpcClient';
+import { createDataKeyRpcClient, createPlainRpcClient, unwrapDataKeyRpcResult } from '../../src/testkit/syntheticAgent/rpcClient';
 import { waitFor } from '../../src/testkit/timing';
 import {
   fakeClaudeFixturePath,
@@ -333,7 +333,7 @@ describe('core e2e: direct Claude sessions browse/link/tail', () => {
     try {
       await waitFor(() => ui.isConnected(), { timeoutMs: 20_000, context: 'socket connected for direct takeover persist e2e' });
 
-      const machineRpc = createDataKeyRpcClient(ui, machineKey);
+      const machineRpc = createPlainRpcClient(ui);
 
       let candidatesResult: any = null;
       await waitFor(
