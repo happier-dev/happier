@@ -1,7 +1,9 @@
 import React from 'react';
 import { Platform, View } from 'react-native';
 import Animated from 'react-native-reanimated';
-import { GestureDetector } from 'react-native-gesture-handler';
+import type { GestureType, ComposedGesture } from 'react-native-gesture-handler';
+
+import { type UseSessionInlineDragResult } from './useSessionInlineDrag';
 
 import type { TreeDropOverlaySharedValues } from '@/components/ui/treeDragDrop';
 import {
@@ -26,7 +28,7 @@ import {
  * the live geometry registry.
  */
 export const DraggableSessionFolderHeaderFrame = React.memo(function DraggableSessionFolderHeaderFrame(props: Readonly<{
-    children: React.ReactNode;
+    children: (dragHandleGesture: UseSessionInlineDragResult['gesture']) => React.ReactNode;
     folderId?: string;
     dragKey?: string;
     groupKey: string;
@@ -57,10 +59,14 @@ export const DraggableSessionFolderHeaderFrame = React.memo(function DraggableSe
         resolveDropResult: props.resolveDropResult,
         dataIndex: props.dataIndex,
         overlayShared: props.overlayShared,
+        // Native keeps hold-to-drag so taps on the header itself stay cheap;
+        // web no longer relies on activation timing at all — the gesture only
+        // lives on the drag handle, so header buttons are outside the gesture
+        // view entirely (see the component docblock for the WKWebView chain).
         activateAfterLongPressMs: Platform.OS === 'web' ? undefined : 350,
     });
 
-    const content = (
+    return (
         <Animated.View
             ref={wrapperRef}
             collapsable={false}
@@ -68,11 +74,7 @@ export const DraggableSessionFolderHeaderFrame = React.memo(function DraggableSe
             style={animatedStyle}
             onLayout={() => props.onRegisterTreeRowBounds(props.treeRowId, wrapperRef.current)}
         >
-            {props.children}
+            {props.children(gesture)}
         </Animated.View>
     );
-
-    return gesture ? (
-        <GestureDetector gesture={gesture}>{content}</GestureDetector>
-    ) : content;
 });

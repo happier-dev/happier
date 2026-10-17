@@ -1457,6 +1457,11 @@ jobs:
         working-directory: packages/cli-common
         run: node ../../node_modules/vitest/vitest.mjs run --config vitest.config.ts src/service/windows.test.ts
 
+      - name: Verify Windows scheduled task contracts
+        shell: pwsh
+        working-directory: packages/cli-common
+        run: node ../../node_modules/vitest/vitest.mjs run --config vitest.config.ts src/service/windows.test.ts
+
       - name: Run unified installer smoke
         shell: pwsh
         env:

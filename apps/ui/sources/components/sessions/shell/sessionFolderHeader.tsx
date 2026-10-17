@@ -1,6 +1,8 @@
 import React from 'react';
-import { Platform, Pressable, View } from 'react-native';
+import { Platform, Pressable, View, type ViewStyle } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { GestureDetector } from 'react-native-gesture-handler';
+import type { UseSessionInlineDragResult } from './useSessionInlineDrag';
 
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Text } from '@/components/ui/text/Text';
@@ -66,6 +68,7 @@ const stylesheet = StyleSheet.create((theme) => ({
 export function FolderGroupHeader(props: Readonly<{
     item: SessionFolderHeaderItem;
     collapsed: boolean;
+    dragHandleGesture?: UseSessionInlineDragResult['gesture'];
     onToggleCollapse: () => void;
     onFocus: () => void;
     onNewSession: () => void;
@@ -199,18 +202,28 @@ export function FolderGroupHeader(props: Readonly<{
                     <Icon name="folder" size={14} color={iconColor} />
                     <Text style={styles.title} numberOfLines={1}>{props.item.title}</Text>
                 </Pressable>
-                <View
-                    style={[styles.actionButton, showActions ? styles.visible : styles.hidden]}
-                    testID={`session-folder-reorder-handle-${props.item.folderId}`}
-                    pointerEvents="none"
-                >
-                    <Icon
-                        name="list"
-                        size={14}
-                        color={iconColor}
-                        style={[styles.dragHandle, showActions ? styles.dragHandleActive : null]}
-                    />
-                </View>
+                {props.dragHandleGesture ? (
+                    <GestureDetector gesture={props.dragHandleGesture}>
+                        <View
+                            style={[styles.actionButton, showActions ? styles.visible : styles.hidden, isWeb && ({ cursor: 'move' } as unknown as ViewStyle)]}
+                            testID={`session-folder-reorder-handle-${props.item.folderId}`}
+                        >
+                            <Icon
+                                name="list"
+                                size={14}
+                                color={iconColor}
+                            />
+                        </View>
+                    </GestureDetector>
+                ) : (
+                    <View
+                        style={[styles.actionButton, styles.hidden]}
+                        testID={`session-folder-reorder-handle-${props.item.folderId}`}
+                        pointerEvents="none"
+                    >
+                        <Icon name="list" size={14} color={theme.colors.text.tertiary} />
+                    </View>
+                )}
                 <View
                     onPointerEnter={isWeb ? () => setActionsHovered(true) : undefined}
                     onPointerLeave={isWeb ? () => setActionsHovered(false) : undefined}

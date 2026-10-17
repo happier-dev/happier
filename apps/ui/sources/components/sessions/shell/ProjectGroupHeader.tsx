@@ -1,7 +1,9 @@
 import React from 'react';
-import { Platform, Pressable, View } from 'react-native';
+import { Platform, Pressable, View, type ViewStyle } from 'react-native';
 import { Image } from 'expo-image';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { GestureDetector } from 'react-native-gesture-handler';
+import type { UseSessionInlineDragResult } from './useSessionInlineDrag';
 
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Text } from '@/components/ui/text/Text';
@@ -124,6 +126,7 @@ export const ProjectGroupHeader = React.memo(function ProjectGroupHeader(props: 
     workspaceLabelsV1: Record<string, string>;
     workspaceFaviconsEnabled?: boolean;
     workspaceMachineSubtitlesEnabled?: boolean;
+    dragHandleGesture?: UseSessionInlineDragResult['gesture'];
     onRenameWorkspace: (workspaceKey: string, currentLabel: string) => void;
     onResetWorkspaceName: (workspaceKey: string) => void;
     onCreateSession: () => void;
@@ -270,24 +273,18 @@ export const ProjectGroupHeader = React.memo(function ProjectGroupHeader(props: 
                 </Pressable>
                 <View style={styles.trailingActions}>
                     {showHoverActions && reorderHandleKey ? (
-                        <Pressable
-                            style={styles.actionButton}
-                            testID={`session-workspace-reorder-handle:${reorderHandleKey}`}
-                            onPress={(event) => {
-                                (event as any)?.stopPropagation?.();
-                            }}
-                            onHoverIn={isWeb ? () => setIsActionsHovered(true) : undefined}
-                            onHoverOut={isWeb ? () => setIsActionsHovered(false) : undefined}
-                            accessible={false}
-                            hitSlop={8}
-                        >
-                            <Icon
-                                name="list"
-                                size={14}
-                                color={actionIconColor}
-                                style={[styles.dragHandle, showHoverActions ? styles.dragHandleActive : null]}
-                            />
-                        </Pressable>
+                        props.dragHandleGesture ? (
+                            <GestureDetector gesture={props.dragHandleGesture}>
+                                <View
+                                    style={[styles.actionButton, isWeb && ({ cursor: 'move' } as unknown as ViewStyle)]}
+                                    testID={`session-workspace-reorder-handle:${reorderHandleKey}`}
+                                    onPointerEnter={isWeb ? () => setIsActionsHovered(true) : undefined}
+                                    onPointerLeave={isWeb ? () => setIsActionsHovered(false) : undefined}
+                                >
+                                    <Icon name="list" size={14} color={actionIconColor} />
+                                </View>
+                            </GestureDetector>
+                        ) : null
                     ) : null}
                     {showHoverActions && workspaceKey ? (
                         <DropdownMenu

@@ -1901,9 +1901,11 @@ export const SessionsListContent = React.memo(function SessionsListContent(props
                     onRegisterTreeRowBounds={registerTreeRowBounds}
                     onUnregisterTreeRowBounds={unregisterTreeRowBounds}
                 >
+                    {(dragHandleGesture) => (
                     <FolderGroupHeader
                         item={folderHeader}
                         collapsed={Boolean(collapsedKeys[collapseKey])}
+                        dragHandleGesture={dragHandleGesture}
                         onToggleCollapse={() => handleToggleCollapse(collapseKey)}
                         onFocus={() => handleFocusSessionFolder(folderHeader)}
                         onNewSession={() => handleCreateSessionFromFolder(folderHeader)}
@@ -1918,6 +1920,7 @@ export const SessionsListContent = React.memo(function SessionsListContent(props
                         onMoveDown={() => moveTreeRowByKeyboard(treeRow, folderLabel, 'down')}
                         disabled={!folderActionsEnabled}
                     />
+                    )}
                 </DraggableSessionFolderHeaderFrame>
             );
         }
@@ -1938,9 +1941,11 @@ export const SessionsListContent = React.memo(function SessionsListContent(props
                     onRegisterTreeRowBounds={registerTreeRowBounds}
                     onUnregisterTreeRowBounds={unregisterTreeRowBounds}
                 >
+                    {(dragHandleGesture) => (
                     <ProjectGroupHeader
                         item={item}
                         hasMultipleMachines={hasMultipleMachines}
+                        dragHandleGesture={dragHandleGesture}
                         workspaceLabelsV1={workspaceLabelsV1}
                         workspaceFaviconsEnabled={workspaceFaviconsEnabled}
                         workspaceMachineSubtitlesEnabled={workspaceMachineSubtitlesEnabled}
@@ -1952,6 +1957,7 @@ export const SessionsListContent = React.memo(function SessionsListContent(props
                         onToggleCollapse={() => handleToggleCollapse(collapseKey)}
                         headerTestId={headerTestId}
                     />
+                    )}
                 </DraggableSessionFolderHeaderFrame>
             );
         }
