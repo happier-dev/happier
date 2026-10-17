@@ -1,8 +1,11 @@
 import * as React from 'react';
-import { View, type StyleProp, type ViewStyle } from 'react-native';
+import { Animated, Platform, View, type StyleProp, type ViewStyle } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Text } from '@/components/ui/text/Text';
+import { motionTokens } from '@/components/ui/motion/motionTokens';
+import { resolveMotionPresentation } from '@/components/ui/motion/reducedMotionTable';
+import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 
 export type MeterTone = 'success' | 'warning' | 'danger' | 'neutral';
 
@@ -18,6 +21,9 @@ export interface MeterBarProps {
     /** Track height in px (default 6). */
     height?: number;
     trackColor?: string;
+    fillColor?: string;
+    /** Animate transfer progress; capacity meters retain their immediate updates. */
+    animated?: boolean;
     /**
      * When the bar reports progress (not a capacity), its accessible name. The bar then exposes
      * `progressbar` semantics with the fill as a 0–100 value.
@@ -62,8 +68,24 @@ export const MeterBar = React.memo<MeterBarProps>((props) => {
     const fill = clamp01(props.fillFraction);
     // Read the token directly — never apply a runtime opacity/rgba transform to a
     // theme token (web var-ification turns such transforms into silent no-ops).
-    const fillColor = theme.colors.state[props.tone].foreground;
+    const fillColor = props.fillColor ?? theme.colors.state[props.tone].foreground;
     const trackColor = props.trackColor ?? theme.colors.surface.pressedOverlay;
+    const reducedMotion = useReducedMotionPreference();
+    const animatedFill = React.useRef(new Animated.Value(fill)).current;
+    React.useEffect(() => {
+        if (!props.animated || resolveMotionPresentation('progressFill', reducedMotion) !== 'animate') {
+            animatedFill.setValue(fill);
+            return;
+        }
+        const animation = Animated.timing(animatedFill, {
+            toValue: fill,
+            duration: motionTokens.durationMs.fast,
+            easing: motionTokens.easing.standard,
+            useNativeDriver: Platform.OS !== 'web',
+        });
+        animation.start();
+        return () => animation.stop();
+    }, [animatedFill, fill, props.animated, reducedMotion]);
 
     return (
         <View
@@ -80,9 +102,16 @@ export const MeterBar = React.memo<MeterBarProps>((props) => {
                 testID={props.testID ? `${props.testID}:track` : undefined}
                 style={[styles.track, { height, backgroundColor: trackColor }]}
             >
-                <View
+                <Animated.View
                     testID={props.testID ? `${props.testID}:fill` : undefined}
-                    style={[styles.fill, { width: `${fill * 100}%`, backgroundColor: fillColor }]}
+                    style={[
+                        styles.fill,
+                        { backgroundColor: fillColor },
+                        props.animated
+                            // Native-driven layout animations throw; scale from the leading edge instead.
+                            ? { width: '100%', transformOrigin: 'left', transform: [{ scaleX: animatedFill }] }
+                            : { width: `${fill * 100}%` },
+                    ]}
                 />
             </View>
             {props.caption != null ? (

@@ -1,7 +1,8 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DownloadOptions, DownloadPauseState, DownloadProgressData, FileSystemDownloadResult } from 'expo-file-system/legacy';
 
-import { ensureModelPackInstalled } from '@/voice/modelPacks/installer.native';
+import { ensureModelPackInstalled, type ModelPackDownloadProgress } from '@/voice/modelPacks/installer.native';
+import { settleWithFakeClock, useInstallerFakeClock } from '@/voice/modelPacks/installerFakeClock.testHarness';
 
 type NativeTask = {
   downloadAsync(): Promise<FileSystemDownloadResult | undefined>;
@@ -57,9 +58,12 @@ async function createHarness(options: { status?: number; pending?: boolean; fail
   }
   class Directory {
     uri: string;
-    exists = true;
     constructor(...parts: Array<string | { uri: string }>) { this.uri = uri(parts); }
+    get exists() { return [...files.keys()].some((path) => path.startsWith(`${this.uri}/`)); }
     create() {}
+    delete() {
+      for (const path of files.keys()) if (path.startsWith(`${this.uri}/`)) files.delete(path);
+    }
   }
   class File {
     uri: string;
@@ -69,6 +73,14 @@ async function createHarness(options: { status?: number; pending?: boolean; fail
     delete() { files.delete(this.uri); }
     write(value: string) { files.set(this.uri, new TextEncoder().encode(value)); }
     async text() { return new TextDecoder().decode(files.get(this.uri)); }
+    move(destination: { uri: string }) {
+      const bytes = files.get(this.uri);
+      if (!bytes) throw new Error('move_source_missing');
+      if (files.has(destination.uri) || new Directory(destination.uri).exists) throw new Error('move_destination_exists');
+      files.delete(this.uri);
+      files.set(destination.uri, bytes);
+      this.uri = destination.uri;
+    }
     open() {
       let offset = 0;
       const fileUri = this.uri;
@@ -132,7 +144,7 @@ async function createHarness(options: { status?: number; pending?: boolean; fail
     throw new Error('artifact_fetch_crossed_js_boundary');
   };
 
-  const install = (signal: AbortSignal, onProgress?: (progress: { loaded: number; total: number }) => void) => ensureModelPackInstalled({
+  const install = (signal: AbortSignal, onProgress?: (progress: ModelPackDownloadProgress) => void) => ensureModelPackInstalled({
     packId: 'example', mode: 'download_if_missing', manifestUrl: 'https://example.com/manifest.json',
     timeoutMs: 120_000, signal, onProgress,
   }, { fs: { Directory, File, Paths: { document: 'file:///docs/' } }, fetch: fetchImpl });
@@ -145,12 +157,13 @@ describe('native model pack file downloads', () => {
     nativeBoundary.createDownloadResumable.mockReset();
     nativeBoundary.platform.OS = 'android';
   });
+  afterEach(() => { vi.useRealTimers(); });
 
   it.each(['android', 'ios'] as const)('downloads files outside JS and releases native resources on %s', async (platform) => {
     nativeBoundary.platform.OS = platform;
     const harness = await createHarness();
-    const progress: Array<{ loaded: number; total: number }> = [];
-    await harness.install(new AbortController().signal, (value) => progress.push({ loaded: value.loaded, total: value.total }));
+    const progress: ModelPackDownloadProgress[] = [];
+    await harness.install(new AbortController().signal, (value) => progress.push(value));
 
     expect(harness.requestedUrls).toHaveLength(1);
     expect(harness.requestedUrls[0]).toContain('manifest.json');
@@ -158,13 +171,20 @@ describe('native model pack file downloads', () => {
     if (platform === 'ios') expect(harness.nativeOptions[0]?.sessionType).toBe(1);
     expect(harness.files.get(harness.fileUri)).toEqual(harness.bytes);
     expect(harness.files.has(harness.metaUri)).toBe(true);
-    expect(progress).toEqual([{ loaded: 2, total: 4 }, { loaded: 4, total: 4 }]);
+    // Bytes arrive while the file transfers; it counts as done only once verified.
+    expect(progress).toEqual([
+      { loaded: 2, total: 4, filesDone: 0, filesTotal: 1 },
+      { loaded: 4, total: 4, filesDone: 0, filesTotal: 1 },
+      { loaded: 4, total: 4, filesDone: 1, filesTotal: 1 },
+    ]);
     expect(harness.lifecycle).toMatchObject({ subscribed: false, retainedNativeTask: false });
   });
 
   it('rejects a non-success HTTP result and removes the native-downloaded file', async () => {
     const harness = await createHarness({ status: 404 });
     await expect(harness.install(new AbortController().signal)).rejects.toThrow('model_pack_download_failed:404');
+    // A missing asset is permanent; only transient transfer failures are retried.
+    expect(harness.nativeUrls).toHaveLength(1);
     expect(harness.files.has(harness.fileUri)).toBe(false);
     expect(harness.files.has(harness.metaUri)).toBe(false);
     expect(harness.lifecycle).toMatchObject({ subscribed: false, retainedNativeTask: false });
@@ -172,10 +192,21 @@ describe('native model pack file downloads', () => {
 
   it('removes partial output and releases native resources after a transport failure', async () => {
     const harness = await createHarness({ failure: new Error('native_transport_failed') });
-    await expect(harness.install(new AbortController().signal)).rejects.toThrow('native_transport_failed');
+    useInstallerFakeClock();
+    await expect(settleWithFakeClock(harness.install(new AbortController().signal))).rejects.toThrow('native_transport_failed');
+    // Transport failures are transient on mobile networks, so the file is retried before the pack fails.
+    expect(harness.nativeUrls.length).toBeGreaterThan(1);
     expect(harness.files.has(harness.fileUri)).toBe(false);
     expect(harness.files.has(harness.metaUri)).toBe(false);
     expect(harness.lifecycle).toMatchObject({ subscribed: false, retainedNativeTask: false });
+  });
+
+  it('fails without retrying when the device runs out of storage during a transfer', async () => {
+    const harness = await createHarness({ failure: new Error('java.io.IOException: write failed: ENOSPC (No space left on device)') });
+    useInstallerFakeClock();
+    await expect(settleWithFakeClock(harness.install(new AbortController().signal))).rejects.toThrow('ENOSPC');
+    expect(harness.nativeUrls).toHaveLength(1);
+    expect(harness.files.has(harness.fileUri)).toBe(false);
   });
 
   it('preserves native setup failure while reporting cleanup failure and unsubscribing', async () => {
@@ -183,7 +214,8 @@ describe('native model pack file downloads', () => {
     const harness = await createHarness({ setupFailure: originalError });
     const warning = vi.spyOn(console, 'warn').mockImplementation(() => {});
     try {
-      await expect(harness.install(new AbortController().signal)).rejects.toBe(originalError);
+      useInstallerFakeClock();
+      await expect(settleWithFakeClock(harness.install(new AbortController().signal))).rejects.toBe(originalError);
       expect(warning.mock.calls.flat()).toContain(harness.cleanupError);
       expect(harness.files.has(harness.metaUri)).toBe(false);
       expect(harness.lifecycle).toMatchObject({ subscribed: false, retainedNativeTask: false });

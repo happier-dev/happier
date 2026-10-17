@@ -8773,6 +8773,20 @@ settingsSession: {
                     },
                 },
             },
+            modelPackDownload: {
+                progress: ({ loaded, total }: { loaded: string; total: string }) => `${loaded} de ${total}`,
+                progressWithFiles: ({ loaded, total, filesDone, filesTotal }: { loaded: string; total: string; filesDone: number; filesTotal: number }) =>
+                    `${loaded} de ${total} · ${filesDone} de ${filesTotal} ${filesTotal === 1 ? 'fitxer' : 'fitxers'}`,
+                progressAccessibilityLabel: "Progrés de la descàrrega",
+                failedDetail: "Ha fallat",
+                failedSubtitle: "No s'ha pogut preparar el model. Toca per tornar-ho a provar.",
+                failedResumableSubtitle: ({ size }: { size: string }) => `La descàrrega no s'ha completat. Es conserven ${size}; toca per reprendre-la.`,
+                incompleteDetail: "Incompleta",
+                incompleteSubtitle: ({ size }: { size: string }) => `${size} descarregats fins ara. Toca per continuar.`,
+                discardSubtitle: "Elimina la descàrrega inacabada per alliberar espai.",
+                discardConfirmTitle: "Vols descartar la descàrrega inacabada?",
+                discardConfirmBody: ({ size }: { size: string }) => `S'eliminaran els ${size} descarregats fins ara. Podràs tornar a descarregar el model més endavant.`,
+            },
             localNeuralStt: {
                 modelPack: {
                     title: 'Paquet de models',

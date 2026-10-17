@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { getKokoroAssetSetOptions, resolveKokoroRuntimeConfig } from '@/voice/kokoro/assets/kokoroAssetSets';
+import {
+  getKokoroAssetSetOptions,
+  getKokoroNativeModelPackOptions,
+  resolveKokoroRuntimeConfig,
+} from '@/voice/kokoro/assets/kokoroAssetSets';
 
 describe('kokoroAssetSets', () => {
   it('resolves env-default config when no assetSetId is selected', () => {
@@ -26,5 +30,11 @@ describe('kokoroAssetSets', () => {
     expect(options.length).toBeGreaterThanOrEqual(2);
     expect(options[0]?.id).toBe('');
   });
-});
 
+  it('offers native pickers only asset sets with a published native model pack', () => {
+    const webIds = getKokoroAssetSetOptions({}).map((s) => s.id);
+    const nativeIds = getKokoroNativeModelPackOptions({}).map((s) => s.id);
+    expect(webIds).toContain('kokoro-82m-v1.0-onnx-fp32-wasm');
+    expect(nativeIds).toEqual(['kokoro-82m-v1.0-onnx-q8-wasm']);
+  });
+});

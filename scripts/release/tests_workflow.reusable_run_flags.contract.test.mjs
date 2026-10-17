@@ -14,6 +14,11 @@ const repoRoot = resolve(here, '..', '..');
 
 test('installer smoke selects the Windows-only payload promotion contract on test-only changes', async () => {
   const workflow = YAML.parse(await readFile(join(repoRoot, '.github/workflows/tests.yml'), 'utf8'));
+  assert.equal(
+    workflow.jobs['installers-smoke-windows'].steps.filter((step) => step.run?.includes('src/service/windows.test.ts')).length,
+    1,
+    'Windows CI must execute the PowerShell service contracts exactly once',
+  );
   const classifier = workflow.jobs.ci_plan.steps.find((step) => step.id === 'changes');
   const filters = YAML.parse(classifier.with.filters);
   assert.ok(

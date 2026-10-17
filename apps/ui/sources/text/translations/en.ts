@@ -8873,6 +8873,20 @@ settingsSession: {
                     },
                 },
             },
+            modelPackDownload: {
+                progress: ({ loaded, total }: { loaded: string; total: string }) => `${loaded} of ${total}`,
+                progressWithFiles: ({ loaded, total, filesDone, filesTotal }: { loaded: string; total: string; filesDone: number; filesTotal: number }) =>
+                    `${loaded} of ${total} · ${filesDone} of ${filesTotal} ${filesTotal === 1 ? 'file' : 'files'}`,
+                progressAccessibilityLabel: "Download progress",
+                failedDetail: "Failed",
+                failedSubtitle: "Couldn't get the model ready. Tap to try again.",
+                failedResumableSubtitle: ({ size }: { size: string }) => `Download didn't finish. ${size} is saved, so tap to resume.`,
+                incompleteDetail: "Incomplete",
+                incompleteSubtitle: ({ size }: { size: string }) => `${size} downloaded so far. Tap to continue.`,
+                discardSubtitle: "Delete the unfinished download to free up space.",
+                discardConfirmTitle: "Discard unfinished download?",
+                discardConfirmBody: ({ size }: { size: string }) => `This deletes the ${size} downloaded so far. You can download the model again later.`,
+            },
             localNeuralStt: {
                 modelPack: {
                     title: 'Model pack',

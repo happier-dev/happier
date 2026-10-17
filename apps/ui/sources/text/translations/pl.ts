@@ -9322,6 +9322,20 @@ settingsSession: {
           },
         },
       },
+      modelPackDownload: {
+        progress: ({ loaded, total }: { loaded: string; total: string }) => `${loaded} z ${total}`,
+        progressWithFiles: ({ loaded, total, filesDone, filesTotal }: { loaded: string; total: string; filesDone: number; filesTotal: number }) =>
+          `${loaded} z ${total} · ${filesDone} z ${filesTotal} ${filesTotal === 1 ? 'pliku' : 'plików'}`,
+        progressAccessibilityLabel: "Postęp pobierania",
+        failedDetail: "Niepowodzenie",
+        failedSubtitle: "Nie udało się przygotować modelu. Dotknij, aby spróbować ponownie.",
+        failedResumableSubtitle: ({ size }: { size: string }) => `Pobieranie nie zostało ukończone. Zachowano ${size} — dotknij, aby wznowić.`,
+        incompleteDetail: "Niekompletne",
+        incompleteSubtitle: ({ size }: { size: string }) => `Dotąd pobrano ${size}. Dotknij, aby kontynuować.`,
+        discardSubtitle: "Usuń niedokończone pobieranie, aby zwolnić miejsce.",
+        discardConfirmTitle: "Odrzucić niedokończone pobieranie?",
+        discardConfirmBody: ({ size }: { size: string }) => `Spowoduje to usunięcie pobranych dotąd ${size}. Model możesz pobrać ponownie później.`,
+      },
       localNeuralStt: {
         modelPack: {
           title: "Pakiet modelu",

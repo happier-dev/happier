@@ -22,7 +22,12 @@ export type KokoroAssetSetOption = {
   title: string;
   subtitle?: string;
   config?: KokoroRuntimeConfig;
+  // Native runtimes install an asset set as a model pack with the same id; web loads models directly.
+  // `false` marks a web-only asset set that has no published native pack.
+  nativeModelPack?: boolean;
 };
+
+export const DEFAULT_KOKORO_NATIVE_MODEL_PACK_ID = 'kokoro-82m-v1.0-onnx-q8-wasm';
 
 const KokoroRuntimeConfigSchema = z.object({
   modelId: z.string().min(1),
@@ -37,12 +42,13 @@ const KokoroAssetSetOptionSchema = z.object({
   title: z.string().min(1),
   subtitle: z.string().optional(),
   config: KokoroRuntimeConfigSchema.optional(),
+  nativeModelPack: z.boolean().optional(),
 });
 
 function getBuiltInAssetSets(): KokoroAssetSetOption[] {
   return [
     {
-      id: 'kokoro-82m-v1.0-onnx-q8-wasm',
+      id: DEFAULT_KOKORO_NATIVE_MODEL_PACK_ID,
       title: 'Kokoro 82M (q8)',
       subtitle: 'Smaller download, faster inference (recommended).',
       config: {
@@ -62,6 +68,7 @@ function getBuiltInAssetSets(): KokoroAssetSetOption[] {
         device: 'wasm',
         wasmPaths: null,
       },
+      nativeModelPack: false,
     },
   ];
 }
@@ -89,6 +96,21 @@ export function getKokoroAssetSetOptions(env: Record<string, string | undefined>
     },
     ...concrete,
   ];
+}
+
+export function getKokoroNativeModelPackOptions(env: Record<string, string | undefined> = process.env): KokoroAssetSetOption[] {
+  return getKokoroAssetSetOptions(env).filter((s) => s.id && s.nativeModelPack !== false);
+}
+
+// Settings sync across devices, so a native runtime can receive an asset set chosen on web.
+export function resolveKokoroNativeModelPackId(
+  assetSetId: string | null | undefined,
+  env: Record<string, string | undefined> = process.env,
+): string {
+  const id = assetSetId?.trim();
+  if (!id) return DEFAULT_KOKORO_NATIVE_MODEL_PACK_ID;
+  const webOnly = getKokoroAssetSetOptions(env).some((s) => s.id === id && s.nativeModelPack === false);
+  return webOnly ? DEFAULT_KOKORO_NATIVE_MODEL_PACK_ID : id;
 }
 
 export function resolveKokoroRuntimeConfig(opts: {

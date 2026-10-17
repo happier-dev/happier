@@ -1,4 +1,5 @@
 import { randomUUID } from '@/platform/randomUUID';
+import { resolveKokoroNativeModelPackId } from '@/voice/kokoro/assets/kokoroAssetSets';
 import { resolveKokoroSherpaSidForVoiceIdWithSpeakerCount } from '@/voice/kokoro/voices/kokoroSherpaVoiceMapping';
 import { ensureModelPackInstalled } from '@/voice/modelPacks/installer.native';
 import { resolveModelPackManifestUrl } from '@/voice/modelPacks/manifests';
@@ -17,13 +18,6 @@ type KokoroNativeModuleLike = {
   }): Promise<{ wavPath: string; sampleRate: number }>;
   cancel(params: { jobId: string }): Promise<void>;
 };
-
-const DEFAULT_KOKORO_ASSET_SET_ID = 'kokoro-82m-v1.0-onnx-q8-wasm';
-
-function normalizeAssetSetId(assetSetId: string | null | undefined): string {
-  if (typeof assetSetId === 'string' && assetSetId.trim().length > 0) return assetSetId.trim();
-  return DEFAULT_KOKORO_ASSET_SET_ID;
-}
 
 type NativeOverrides = {
   kokoroNativeModule?: KokoroNativeModuleLike | null;
@@ -153,7 +147,7 @@ export async function synthesizeKokoroWav(
 
   let wavUriToDelete: string | null = null;
   try {
-    const assetSetId = normalizeAssetSetId(opts.assetSetId);
+    const assetSetId = resolveKokoroNativeModelPackId(opts.assetSetId);
     const manifestUrl = overrides.resolveManifestUrl
       ? overrides.resolveManifestUrl(assetSetId)
       : resolveModelPackManifestUrl({ packId: assetSetId });
@@ -235,7 +229,7 @@ export async function prepareKokoroTts(
   }
 
   const fs = await getFs(overrides);
-  const assetSetId = normalizeAssetSetId(opts.assetSetId ?? null);
+  const assetSetId = resolveKokoroNativeModelPackId(opts.assetSetId ?? null);
   const manifestUrl = overrides.resolveManifestUrl
     ? overrides.resolveManifestUrl(assetSetId)
     : resolveModelPackManifestUrl({ packId: assetSetId });
@@ -247,9 +241,7 @@ export async function prepareKokoroTts(
       manifestUrl,
       timeoutMs: opts.timeoutMs,
       signal: opts.signal,
-      onProgress: (p) => {
-        opts.onProgress?.({ loaded: p.loaded, total: p.total, file: (p as any)?.file });
-      },
+      onProgress: opts.onProgress,
     },
     { fs: fs as any },
   );

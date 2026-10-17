@@ -7632,6 +7632,20 @@ settingsSession: {
                     autoSubtitle: '不提供語言提示。',
                 },
             },
+            modelPackDownload: {
+                progress: ({ loaded, total }: { loaded: string; total: string }) => `${loaded} / ${total}`,
+                progressWithFiles: ({ loaded, total, filesDone, filesTotal }: { loaded: string; total: string; filesDone: number; filesTotal: number }) =>
+                    `${loaded} / ${total} · ${filesDone} / ${filesTotal} 個檔案`,
+                progressAccessibilityLabel: "下載進度",
+                failedDetail: "失敗",
+                failedSubtitle: "無法準備模型。輕點以重試。",
+                failedResumableSubtitle: ({ size }: { size: string }) => `下載未完成。已保留 ${size}，輕點即可繼續。`,
+                incompleteDetail: "未完成",
+                incompleteSubtitle: ({ size }: { size: string }) => `目前已下載 ${size}。輕點以繼續。`,
+                discardSubtitle: "刪除未完成的下載以釋放空間。",
+                discardConfirmTitle: "要放棄未完成的下載嗎？",
+                discardConfirmBody: ({ size }: { size: string }) => `這會刪除目前已下載的 ${size}。之後可以重新下載模型。`,
+            },
             localNeuralStt: {
                 modelPack: {
                     title: '模型包',

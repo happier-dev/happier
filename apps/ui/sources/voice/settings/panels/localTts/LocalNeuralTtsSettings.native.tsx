@@ -8,16 +8,21 @@ import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import type { VoiceLocalTtsSettings } from '@/sync/domains/settings/voiceLocalTtsSettings';
-import { getKokoroAssetSetOptions } from '@/voice/kokoro/assets/kokoroAssetSets';
+import { getKokoroNativeModelPackOptions, resolveKokoroNativeModelPackId } from '@/voice/kokoro/assets/kokoroAssetSets';
 import { resolveModelPackManifestUrl } from '@/voice/modelPacks/manifests';
 import { isKokoroRuntimeSupported } from '@/voice/kokoro/runtime/kokoroSupport';
 import { speakKokoroText } from '@/voice/output/KokoroTtsController';
 import { createVoicePlaybackController } from '@/voice/runtime/VoicePlaybackController';
 import { formatModelPackBuildLabel } from '@/voice/modelPacks/formatBuildLabel';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import {
+  readPartialDownloadBytes,
+  resolveModelPackTransferRow,
+  resolvePartialDownloadRemoveRow,
+} from '@/voice/settings/panels/modelPack/modelPackTransferRows';
 
 import { useLocalNeuralKokoroVoiceCatalog } from './useLocalNeuralKokoroVoiceCatalog.native';
-import { useLocalNeuralModelPackState } from './useLocalNeuralModelPackState.native';
+import { useNativeModelPackState } from '@/voice/settings/panels/modelPack/useNativeModelPackState.native';
 import { Icon } from '@/components/ui/icons/Icon';
 
 export function LocalNeuralTtsSettings(props: {
@@ -28,18 +33,18 @@ export function LocalNeuralTtsSettings(props: {
 }) {
   const { theme } = useUnistyles();
   const [openMenu, setOpenMenu] = React.useState<null | 'assetSet' | 'voiceId' | 'speed'>(null);
-  const DEFAULT_KOKORO_ASSET_SET_ID = 'kokoro-82m-v1.0-onnx-q8-wasm';
 
   const effectiveVoiceId = props.cfgKokoro.voiceId ?? 'af_heart';
   const effectiveSpeed = props.cfgKokoro.speed ?? 1;
-  const effectiveAssetSetId = props.cfgKokoro.assetId ?? DEFAULT_KOKORO_ASSET_SET_ID;
-  const assetSets = React.useMemo(() => getKokoroAssetSetOptions().filter((s) => s.id), []);
+  const effectiveAssetSetId = resolveKokoroNativeModelPackId(props.cfgKokoro.assetId);
+  const assetSets = React.useMemo(() => getKokoroNativeModelPackOptions(), []);
   const runtimeSupported = React.useMemo(() => isKokoroRuntimeSupported(), []);
 
   const manifestUrl = React.useMemo(() => resolveModelPackManifestUrl({ packId: effectiveAssetSetId }), [effectiveAssetSetId]);
 
-  const { modelStatus, downloadDetail, installed, installSummary, updateCheckedRemote, prepareModel, cancelPrepare, clearAssets, checkForUpdates } =
-    useLocalNeuralModelPackState({
+  const { modelStatus, downloadProgress, installed, installSummary, updateCheckedRemote, prepareModel, cancelPrepare, clearAssets, checkForUpdates } =
+    useNativeModelPackState({
+      role: 'tts',
       packId: effectiveAssetSetId,
       manifestUrl,
       networkTimeoutMs: props.networkTimeoutMs,
@@ -91,16 +96,12 @@ export function LocalNeuralTtsSettings(props: {
   const buildLabel = formatModelPackBuildLabel((installSummary as any)?.manifest);
   const readyDetail = buildLabel ? `${t('settingsVoice.local.kokoro.modelStatus.ready')} • ${buildLabel}` : t('settingsVoice.local.kokoro.modelStatus.ready');
 
+  const partialBytes = readPartialDownloadBytes(installSummary);
+  const transferRow = resolveModelPackTransferRow({ status: modelStatus, progress: downloadProgress, partialBytes });
+  const partialRemoveRow = installed ? null : resolvePartialDownloadRemoveRow(partialBytes);
   const modelDetail =
-    modelStatus === 'downloading'
-      ? (downloadDetail ?? t('settingsVoice.local.kokoro.modelStatus.downloading'))
-      : modelStatus === 'ready'
-        ? readyDetail
-        : modelStatus === 'error'
-          ? t('settingsVoice.local.kokoro.modelStatus.error')
-        : installed
-            ? readyDetail
-            : t('settingsVoice.local.kokoro.modelStatus.notDownloaded');
+    transferRow?.detail
+      ?? (modelStatus === 'ready' || installed ? readyDetail : t('settingsVoice.local.kokoro.modelStatus.notDownloaded'));
 
   const updateDetail = updateCheckedRemote
     ? updateCheckedRemote.updateAvailable
@@ -163,7 +164,8 @@ export function LocalNeuralTtsSettings(props: {
 
       <Item
         title={t('settingsVoice.local.kokoro.model.title')}
-        subtitle={t('settingsVoice.local.kokoro.model.subtitleNative')}
+        subtitle={transferRow?.subtitle ?? t('settingsVoice.local.kokoro.model.subtitleNative')}
+        subtitleLines={transferRow ? 0 : undefined}
         detail={modelDetail}
         onPress={() => {
           if (!runtimeSupported) {
@@ -200,9 +202,13 @@ export function LocalNeuralTtsSettings(props: {
 
       <Item
         title={t('settingsVoice.local.kokoro.removeAssets.title')}
-        subtitle={t('settingsVoice.local.kokoro.removeAssets.subtitle')}
-        detail={installed ? t('settingsVoice.local.kokoro.removeAssets.detailRemove') : t('settingsVoice.local.kokoro.common.none')}
-        onPress={installed ? clearAssets : undefined}
+        subtitle={partialRemoveRow?.subtitle ?? t('settingsVoice.local.kokoro.removeAssets.subtitle')}
+        detail={
+          installed
+            ? t('settingsVoice.local.kokoro.removeAssets.detailRemove')
+            : (partialRemoveRow?.detail ?? t('settingsVoice.local.kokoro.common.none'))
+        }
+        onPress={installed || partialRemoveRow ? clearAssets : undefined}
         showChevron={false}
         selected={false}
       />

@@ -8828,6 +8828,20 @@ settingsSession: {
                     },
                 },
             },
+            modelPackDownload: {
+                progress: ({ loaded, total }: { loaded: string; total: string }) => `${loaded} sur ${total}`,
+                progressWithFiles: ({ loaded, total, filesDone, filesTotal }: { loaded: string; total: string; filesDone: number; filesTotal: number }) =>
+                    `${loaded} sur ${total} · ${filesDone} ${filesDone <= 1 ? 'fichier' : 'fichiers'} sur ${filesTotal}`,
+                progressAccessibilityLabel: "Progression du téléchargement",
+                failedDetail: "Échec",
+                failedSubtitle: "Impossible de préparer le modèle. Touche pour réessayer.",
+                failedResumableSubtitle: ({ size }: { size: string }) => `Le téléchargement n'est pas terminé. ${size} sont conservés ; touche pour reprendre.`,
+                incompleteDetail: "Incomplet",
+                incompleteSubtitle: ({ size }: { size: string }) => `${size} téléchargés jusqu’ici. Touche pour continuer.`,
+                discardSubtitle: "Supprime le téléchargement inachevé pour libérer de l'espace.",
+                discardConfirmTitle: "Abandonner le téléchargement inachevé ?",
+                discardConfirmBody: ({ size }: { size: string }) => `Les ${size} déjà téléchargés seront supprimés. Tu pourras retélécharger le modèle plus tard.`,
+            },
             localNeuralStt: {
                 modelPack: {
                     title: 'Pack de modèles',

@@ -126,7 +126,11 @@ describe('synthesizeKokoroWav (native)', () => {
     expect(new Uint8Array(bytes)).toEqual(new Uint8Array([1, 2, 3, 4]));
   });
 
-  it('uses the default Kokoro asset set id when assetSetId is missing', async () => {
+  it.each([
+    ['missing', null],
+    // Settings sync across devices; web can select asset sets that have no published native pack.
+    ['web-only', 'kokoro-82m-v1.0-onnx-fp32-wasm'],
+  ])('uses the default Kokoro native pack when assetSetId is %s', async (_label, assetSetId) => {
     const fileDelete = vi.fn().mockResolvedValue(undefined);
     class File {
       uri: string;
@@ -166,7 +170,7 @@ describe('synthesizeKokoroWav (native)', () => {
     await synthesizeKokoroWav(
       {
         text: 'hello',
-        assetSetId: null,
+        assetSetId,
         voiceId: 'af_bella',
         speed: 1,
         timeoutMs: 5000,
@@ -294,7 +298,7 @@ describe('synthesizeKokoroWav (native)', () => {
     );
   });
 
-  it('forwards model pack download progress (including file) during prepare', async () => {
+  it('forwards model pack download progress (including file counts) during prepare', async () => {
     const onProgress = vi.fn();
 
     const kokoroNativeModule = {
@@ -305,7 +309,7 @@ describe('synthesizeKokoroWav (native)', () => {
     };
 
     const ensureInstalled = vi.fn().mockImplementation(async (opts: any) => {
-      opts?.onProgress?.({ loaded: 1, total: 4, file: 'onnx/model_quantized.onnx' });
+      opts?.onProgress?.({ loaded: 1, total: 4, filesDone: 2, filesTotal: 7 });
       return {
         packDirUri: 'file:///docs/happier/voice/modelPacks/kokoro-test',
         manifest: {
@@ -341,6 +345,6 @@ describe('synthesizeKokoroWav (native)', () => {
       },
     );
 
-    expect(onProgress).toHaveBeenCalledWith({ loaded: 1, total: 4, file: 'onnx/model_quantized.onnx' });
+    expect(onProgress).toHaveBeenCalledWith({ loaded: 1, total: 4, filesDone: 2, filesTotal: 7 });
   });
 });
