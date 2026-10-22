@@ -417,6 +417,8 @@ export class SessionDraftRepository {
     private readonly listListeners = new Map<string, Set<Listener>>();
     private readonly flushInFlight = new Map<string, Promise<SessionDraftFlushResult>>();
     private readonly mutationBatches = new Map<string, ScopeMutationBatch>();
+    private readonly pendingPersistScopes = new Map<string, SessionDraftRepositoryScope>();
+    private persistDrainScheduled = false;
     private readonly snapshotCache = new WeakMap<PersistedReplica, SessionDraftSnapshot>();
     private readonly existingProjectionCache = new WeakMap<PersistedReplica, ExistingSessionDraftProjection | null>();
     private readonly newListProjectionCache = new Map<string, readonly NewSessionDraftProjection[]>();
@@ -563,6 +565,30 @@ export class SessionDraftRepository {
         }
     }
 
+    private drainPendingPersists(): void {
+        const pending = [...this.pendingPersistScopes.values()];
+        this.pendingPersistScopes.clear();
+        // Reset first so writes landing during the synchronous loop re-schedule.
+        this.persistDrainScheduled = false;
+        // A subscriber listener throwing inside setPersistenceError's notifyBatch must
+        // neither starve the remaining scopes' persistence nor be swallowed: contain it
+        // per scope, keep draining, and rethrow the first one after the loop so it stays
+        // observable (it surfaces as an unhandled rejection on the scheduled microtask).
+        let listenerError: unknown = null;
+        for (const scope of pending) {
+            try {
+                this.persist(scope);
+            } catch {
+                try {
+                    this.setPersistenceError(scope, true);
+                } catch (error) {
+                    listenerError ??= error;
+                }
+            }
+        }
+        if (listenerError !== null) throw listenerError;
+    }
+
     private projectedStatus(scope: SessionDraftRepositoryScope, replica: PersistedReplica): SessionDraftStatus {
         return this.getScopeState(scope).persistenceError ? 'error' : replica.status;
     }
@@ -617,7 +643,22 @@ export class SessionDraftRepository {
         this.getScopeState(scope).replicas.set(canonicalSessionDraftAddressV1(replica.address), replica);
         this.newListProjectionCache.delete(this.scopeKey(scope));
         if (this.recordMutation(scope, replica.address)) return;
-        this.persist(scope);
+        if (this.storage.flush) {
+            // Web: defer serialization out of the caller's task. The hot path is the
+            // composer input event, but every non-batch writeReplica defers (status
+            // flips, sync acknowledgements, rebases, hydration, supplements) — all
+            // safe under microtask FIFO, each persist still scheduling its own flush.
+            // Native (MMKV) storage.set IS the durable write — keep it synchronous there.
+            this.pendingPersistScopes.set(this.scopeKey(scope), scope);
+            if (!this.persistDrainScheduled) {
+                this.persistDrainScheduled = true;
+                // Mirror the persist() flush-scheduling idiom below; the storage boundary
+                // coalesces writes, failures surface via setPersistenceError.
+                void Promise.resolve().then(() => this.drainPendingPersists());
+            }
+        } else {
+            this.persist(scope);
+        }
         this.notify(scope, replica.address);
     }
 

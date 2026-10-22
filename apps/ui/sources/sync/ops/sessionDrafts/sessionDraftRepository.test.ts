@@ -110,11 +110,12 @@ describe('sessionDraftRepository', () => {
         expect(repository.getSessionDraftSnapshot(scope, address)).not.toBeNull();
     });
 
-    it('retains opaque envelope fields and the predecessor entry pointer when editing a hydrated scope', () => {
+    it('retains opaque envelope fields and the predecessor entry pointer when editing a hydrated scope', async () => {
         const storage = createMemoryStorage();
         const repository = createSessionDraftRepository({ storage, cipher: plainCipher(), syncEnabled: false });
         repository.writeExistingSessionDraft({ scope, sessionId: 'session-a', patch: { text: 'before' } });
         repository.writeNewSessionDraft({ scope, draftId: uuid(991), patch: { text: 'ordinary entry' }, materializationIntent: 'userEdit' });
+        await Promise.resolve();
         const key = [...storage.values.keys()][0]!;
         storage.set(key, JSON.stringify({
             ...JSON.parse(storage.values.get(key)!),
@@ -152,7 +153,7 @@ describe('sessionDraftRepository', () => {
         expect(repository.getExistingSessionDraftProjection(scope, 'session-a')?.status).toBe(syncEnabled ? 'pending' : 'clean');
         expect(repository.getSessionDraftSnapshot(scope, sessionAddress)?.document.composer.text.value).toBe('retry this edit');
     });
-    it('does not reserialize unrelated large replicas when one draft changes', () => {
+    it('does not reserialize unrelated large replicas when one draft changes', async () => {
         const storage = createMemoryStorage();
         const repository = createSessionDraftRepository({ storage, cipher: plainCipher(), syncEnabled: false });
         const coldText = 'unchanged large document'.repeat(10_000);
@@ -166,6 +167,7 @@ describe('sessionDraftRepository', () => {
         });
         try {
             repository.writeExistingSessionDraft({ scope, sessionId: 'hot', patch: { text: 'one keystroke' } });
+            await Promise.resolve();
         } finally {
             observed.mockRestore();
         }
@@ -197,6 +199,104 @@ describe('sessionDraftRepository', () => {
         await repository.flushSessionDraft({ scope, address: sessionAddress });
         expect(createSessionDraftRepository({ storage, cipher: plainCipher(), syncEnabled: false })
             .getSessionDraftSnapshot(scope, sessionAddress)?.document.composer.text.value).toBe('next message');
+    });
+
+    it('publishes a written draft to same-task readers before the persistence microtask', () => {
+        const memory = createMemoryStorage();
+        const storage = { ...memory, flush: async () => {} };
+        const repository = createSessionDraftRepository({ storage, cipher: plainCipher(), syncEnabled: false });
+        repository.writeExistingSessionDraft({ scope, sessionId: 'session-a', patch: { text: 'same-task read' } });
+        expect(repository.getSessionDraftSnapshot(scope, sessionAddress)?.document.composer.text.value).toBe('same-task read');
+        expect(repository.captureSessionDraftCurrentness({ scope, address: sessionAddress }).mutationIds['composer.text']).toBeDefined();
+    });
+
+    it('defers the whole-scope persistence write to one microtask with the latest value', async () => {
+        const memory = createMemoryStorage();
+        const setCalls: string[] = [];
+        const storage = {
+            ...memory,
+            flush: async () => {},
+            set: (key: string, value: string) => { setCalls.push(value); return memory.set(key, value); },
+        };
+        const repository = createSessionDraftRepository({ storage, cipher: plainCipher(), syncEnabled: false });
+        repository.writeExistingSessionDraft({ scope, sessionId: 'session-a', patch: { text: 'hel' } });
+        repository.writeExistingSessionDraft({ scope, sessionId: 'session-a', patch: { text: 'hello' } });
+        expect(setCalls).toHaveLength(0);
+        await Promise.resolve();
+        expect(setCalls).toHaveLength(1);
+        expect(createSessionDraftRepository({ storage, cipher: plainCipher(), syncEnabled: false })
+            .getSessionDraftSnapshot(scope, sessionAddress)?.document.composer.text.value).toBe('hello');
+    });
+
+    it('runs one persistence write per microtask checkpoint at keystroke cadence', async () => {
+        // Each keystroke is its own task and the drain runs at that task's microtask
+        // checkpoint, so two writes separated by a checkpoint produce two storage
+        // writes (per-keystroke write counts are unchanged by the deferral; only
+        // same-task multi-writes coalesce). Pins the cadence the commit describes.
+        const memory = createMemoryStorage();
+        const setCalls: string[] = [];
+        const storage = {
+            ...memory,
+            flush: async () => {},
+            set: (key: string, value: string) => { setCalls.push(value); return memory.set(key, value); },
+        };
+        const repository = createSessionDraftRepository({ storage, cipher: plainCipher(), syncEnabled: false });
+        repository.writeExistingSessionDraft({ scope, sessionId: 'session-a', patch: { text: 'h' } });
+        await Promise.resolve();
+        expect(setCalls).toHaveLength(1);
+        repository.writeExistingSessionDraft({ scope, sessionId: 'session-a', patch: { text: 'he' } });
+        await Promise.resolve();
+        expect(setCalls).toHaveLength(2);
+    });
+
+    it('serializes the cleared state, not the interim keystroke, when the deferred drain runs', async () => {
+        const memory = createMemoryStorage();
+        const setCalls: string[] = [];
+        const storage = {
+            ...memory,
+            flush: async () => {},
+            set: (key: string, value: string) => { setCalls.push(value); return memory.set(key, value); },
+        };
+        const repository = createSessionDraftRepository({ storage, cipher: plainCipher(), syncEnabled: false });
+        repository.writeExistingSessionDraft({ scope, sessionId: 'session-a', patch: { text: 'submitted prompt' } });
+        repository.writeExistingSessionDraft({ scope, sessionId: 'session-a', patch: { text: '' } });
+        await Promise.resolve();
+        expect(setCalls).toHaveLength(1);
+        const persisted = JSON.parse(setCalls[0]!) as { replicas: Record<string, { localRawDocument: SessionDraftDocumentV1 }> };
+        expect(persisted.replicas[canonicalSessionDraftAddressV1(sessionAddress)]?.localRawDocument.composer.text.value).toBe('');
+    });
+
+    it('flushes a currentness clear only after the deferred persistence drain has run', async () => {
+        const memory = createMemoryStorage();
+        const storage = { ...memory, flush: async () => {} };
+        const repository = createSessionDraftRepository({ storage, cipher: plainCipher(), syncEnabled: false });
+        repository.writeExistingSessionDraft({ scope, sessionId: 'session-a', patch: { text: 'submitted prompt' } });
+        const currentness = repository.captureSessionDraftCurrentness({ scope, address: sessionAddress });
+        await expect(repository.clearSessionDraftCurrentness({ scope, address: sessionAddress, currentness })).resolves.toBe(true);
+        expect(createSessionDraftRepository({ storage, cipher: plainCipher(), syncEnabled: false })
+            .getSessionDraftSnapshot(scope, sessionAddress)?.document.composer.text.value ?? '').toBe('');
+    });
+
+    it('routes a deferred persistence failure to the error state and retries on the next write', async () => {
+        const memory = createMemoryStorage();
+        let setThrows = true;
+        const storage = {
+            ...memory,
+            set: (key: string, value: string) => {
+                if (setThrows) throw new Error('quota exceeded');
+                return memory.set(key, value);
+            },
+            flush: async () => {},
+        };
+        const repository = createSessionDraftRepository({ storage, cipher: plainCipher(), syncEnabled: false });
+        repository.writeExistingSessionDraft({ scope, sessionId: 'session-a', patch: { text: 'hello' } });
+        // Same-task readers still see the write; only durability failed.
+        expect(repository.getSessionDraftSnapshot(scope, sessionAddress)?.document.composer.text.value).toBe('hello');
+        await vi.waitFor(() => expect(repository.getSessionDraftSnapshot(scope, sessionAddress)?.status).toBe('error'));
+        setThrows = false;
+        repository.writeExistingSessionDraft({ scope, sessionId: 'session-a', patch: { text: 'hello again' } });
+        await vi.waitFor(() => expect(repository.getSessionDraftSnapshot(scope, sessionAddress)?.status).toBe('clean'));
+        expect(memory.values.size).toBeGreaterThan(0);
     });
 
     it('prepares async storage and refuses a successful flush until local bytes are durable', async () => {
@@ -251,6 +351,7 @@ describe('sessionDraftRepository', () => {
         const repository = createSessionDraftRepository(options);
         const text = 'large-draft-payload:'.repeat(10_000);
         repository.writeExistingSessionDraft({ scope, sessionId: 'session-a', patch: { text } });
+        await Promise.resolve();
         expect([...storage.values.values()][0].split(text).length - 1).toBe(1);
         const restored = createSessionDraftRepository(options);
         expect(restored.getSessionDraftSnapshot(scope, sessionAddress)?.document.composer.text.value).toBe(text);
@@ -650,6 +751,7 @@ describe('sessionDraftRepository', () => {
             patch: { authoring: { machineId: 'mine' } },
             materializationIntent: 'userEdit',
         });
+        await Promise.resolve();
         const storageKey = [...storage.values.keys()][0]!;
         const persisted = JSON.parse(storage.values.get(storageKey)!) as {
             replicas: Record<string, Record<string, unknown>>;
@@ -928,6 +1030,7 @@ describe('sessionDraftRepository', () => {
             patch: { text: 'newer edit after launch' },
             materializationIntent: 'userEdit',
         });
+        await Promise.resolve();
 
         const restored = createSessionDraftRepository({
             storage,
