@@ -702,11 +702,154 @@ describe('MultiTextInput', () => {
         });
         expect(mockTextarea.scrollTop).toBe(250);
 
-        // The parent confirm of that same edit re-runs the measurement pass.
+        // The parent confirm of that same edit is deduped against the change
+        // handler's measurement of the same text/style/maxHeight, so no second
+        // collapse-to-measure pass runs and the scroll position stays put.
         await act(async () => {
             tree.update(renderInput(editedValue));
         });
         expect(mockTextarea.scrollTop).toBe(250);
+    });
+
+    it('runs one collapse-to-measure pass per self-edit keystroke cycle', async () => {
+        // A self-edit keystroke measures in the change handler; the parent's
+        // confirm render used to repeat the identical measurement — a pure
+        // duplicate collapse with its own forced layout flushes. One keystroke
+        // cycle (edit + parent confirm) must produce exactly one `height:
+        // auto` collapse write.
+        const { MultiTextInput } = await import('./MultiTextInput.web');
+        const initialValue = 'a'.repeat(600);
+        let backingValue = initialValue;
+        let autoWriteCount = 0;
+        const styleValues: Record<string, string> = {};
+        const style = {} as Record<string, string>;
+        const mockTextareaBase = {
+            selectionStart: 0,
+            selectionEnd: 0,
+            scrollTop: 0,
+            scrollHeight: 2000,
+            style,
+            setSelectionRange: vi.fn(),
+            dispatchEvent: vi.fn(),
+            focus: vi.fn(),
+            blur: vi.fn(),
+            getBoundingClientRect: () => ({ left: 0, top: 0, width: 100, height: 40 }),
+        };
+        Object.defineProperty(style, 'height', {
+            get: () => styleValues.height ?? '',
+            set: (next: string) => {
+                styleValues.height = next;
+                if (next === 'auto') autoWriteCount += 1;
+            },
+            enumerable: true,
+            configurable: true,
+        });
+        Object.defineProperty(mockTextareaBase, 'value', {
+            get: () => backingValue,
+            set: (next: string) => {
+                backingValue = next;
+            },
+        });
+        const mockTextarea = mockTextareaBase as typeof mockTextareaBase & { value: string };
+
+        const renderInput = (value: string) => (
+            <MultiTextInput
+                testID="composer-input"
+                value={value}
+                maxHeight={144}
+                onChangeText={() => {}}
+            />
+        );
+
+        let tree!: renderer.ReactTestRenderer;
+        await act(async () => {
+            tree = renderer.create(renderInput(initialValue), {
+                createNodeMock: (element) => {
+                    if (element.type === 'textarea') return mockTextarea;
+                    return null;
+                },
+            });
+        });
+        expect(autoWriteCount).toBe(1);
+        autoWriteCount = 0;
+
+        const input = tree.root.findByType('textarea' as any);
+        const editedValue = `${initialValue}x`;
+        await act(async () => {
+            backingValue = editedValue;
+            input.props.onChange({ target: mockTextarea, currentTarget: mockTextarea });
+        });
+        expect(autoWriteCount).toBe(1);
+
+        // The parent confirm of that same edit must not collapse again: the
+        // text, textarea style, and max height are all unchanged since the
+        // change handler measured them in the same task.
+        await act(async () => {
+            tree.update(renderInput(editedValue));
+        });
+        expect(autoWriteCount).toBe(1);
+    });
+
+    it('re-measures on a textarea style change even when the text is unchanged', async () => {
+        // Guards the measurement dedupe key's style dimension: a new
+        // textStyle prop identity with identical text must still collapse and
+        // re-measure (font metrics change the content height).
+        const { MultiTextInput } = await import('./MultiTextInput.web');
+        const value = 'a'.repeat(600);
+        let autoWriteCount = 0;
+        const styleValues: Record<string, string> = {};
+        const style = {} as Record<string, string>;
+        const mockTextareaBase = {
+            value,
+            selectionStart: 0,
+            selectionEnd: 0,
+            scrollTop: 0,
+            scrollHeight: 2000,
+            style,
+            setSelectionRange: vi.fn(),
+            dispatchEvent: vi.fn(),
+            focus: vi.fn(),
+            blur: vi.fn(),
+            getBoundingClientRect: () => ({ left: 0, top: 0, width: 100, height: 40 }),
+        };
+        Object.defineProperty(style, 'height', {
+            get: () => styleValues.height ?? '',
+            set: (next: string) => {
+                styleValues.height = next;
+                if (next === 'auto') autoWriteCount += 1;
+            },
+            enumerable: true,
+            configurable: true,
+        });
+        const mockTextarea = mockTextareaBase as typeof mockTextareaBase & { value: string };
+
+        const renderInput = (textStyle: { fontSize: number }) => (
+            <MultiTextInput
+                testID="composer-input"
+                value={value}
+                maxHeight={144}
+                textStyle={textStyle}
+                onChangeText={() => {}}
+            />
+        );
+
+        let tree!: renderer.ReactTestRenderer;
+        await act(async () => {
+            tree = renderer.create(renderInput({ fontSize: 14 }), {
+                createNodeMock: (element) => {
+                    if (element.type === 'textarea') return mockTextarea;
+                    return null;
+                },
+            });
+        });
+        expect(autoWriteCount).toBe(1);
+        autoWriteCount = 0;
+
+        await act(async () => {
+            tree.update(renderInput({ fontSize: 14 }));
+        });
+
+        expect(autoWriteCount).toBe(1);
     });
 
     it('re-applies a consumed web scroll restore after adopting an external value, but never after self-edit confirms', async () => {

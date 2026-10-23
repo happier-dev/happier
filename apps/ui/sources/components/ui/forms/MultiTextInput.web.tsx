@@ -103,6 +103,12 @@ type WebTextStyleOverride = Readonly<{
 
 type WebTextareaStyle = CSSProperties;
 
+type TextareaMeasurementKey = Readonly<{
+    text: string;
+    textareaStyle: WebTextareaStyle;
+    maxHeight: number;
+}>;
+
 function toCssLength(value: TextStyle['fontSize'] | TextStyle['lineHeight'] | TextStyle['letterSpacing']) {
     if (typeof value === 'number') return `${value}px`;
     if (typeof value === 'string') return value;
@@ -166,6 +172,7 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
     const pendingChangeTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
     const lastScrollRestoreKeyRef = React.useRef<string | null>(null);
     const lastReportedContentHeightRef = React.useRef<number | null>(null);
+    const lastMeasuredKeyRef = React.useRef<TextareaMeasurementKey | null>(null);
     const normalizedMaxHeight = normalizeWebTextareaMaxHeight(maxHeight);
     const [textareaHeight, setTextareaHeight] = React.useState<number | undefined>(
         () => (value.length > WEB_TEXTAREA_AUTOSIZE_VALUE_LENGTH_LIMIT ? normalizedMaxHeight : undefined),
@@ -249,6 +256,10 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
         onContentHeightChange(height);
     }, [onContentHeightChange]);
 
+    // Invariant for the measurement key recorded below: it stores liveValueRef.current's
+    // text while the branch decision reads nextValueLength — every current call site
+    // passes the live value's length, and a future caller that diverges them would
+    // record a misleading key. Keep the two in sync if new call sites are added.
     const applyTextareaHeight = React.useCallback((node: HTMLTextAreaElement, nextValueLength = liveValueRef.current.length) => {
         if (nextValueLength > WEB_TEXTAREA_AUTOSIZE_VALUE_LENGTH_LIMIT) {
             // No collapse-to-measure for oversized text (that double reflow is
@@ -265,6 +276,7 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
             notifyContentHeightChange(Math.max(measuredContentHeight, normalizedMaxHeight));
             node.style.height = `${normalizedMaxHeight}px`;
             setTextareaHeight((current) => (current === normalizedMaxHeight ? current : normalizedMaxHeight));
+            lastMeasuredKeyRef.current = { text: liveValueRef.current, textareaStyle, maxHeight: normalizedMaxHeight };
             return;
         }
 
@@ -305,7 +317,8 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
                 node.scrollTop = previousScrollTop;
             }
         }
-    }, [normalizedMaxHeight, notifyContentHeightChange]);
+        lastMeasuredKeyRef.current = { text: liveValueRef.current, textareaStyle, maxHeight: normalizedMaxHeight };
+    }, [normalizedMaxHeight, notifyContentHeightChange, textareaStyle]);
 
     React.useLayoutEffect(() => {
         const node = textareaRef.current;
@@ -314,7 +327,20 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
             if (value === lastEmittedValueRef.current) {
                 hasUnconfirmedEmissionRef.current = false;
             }
-            applyTextareaHeight(node);
+            // The change handler measured this exact text/style/maxHeight in
+            // the same task, so the confirm render's pass would be a pure
+            // duplicate collapse with its own forced layout flushes. Pure ref
+            // compares only (a clientWidth read would refund part of the win);
+            // width-only changes were never covered by this effect's deps, so
+            // skipping preserves parity.
+            const lastMeasuredKey = lastMeasuredKeyRef.current;
+            const alreadyMeasured = lastMeasuredKey !== null
+                && lastMeasuredKey.text === liveValueRef.current
+                && lastMeasuredKey.textareaStyle === textareaStyle
+                && lastMeasuredKey.maxHeight === normalizedMaxHeight;
+            if (!alreadyMeasured) {
+                applyTextareaHeight(node);
+            }
             return;
         }
 
