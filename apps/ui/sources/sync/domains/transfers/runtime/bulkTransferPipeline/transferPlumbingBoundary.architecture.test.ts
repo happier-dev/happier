@@ -1,5 +1,6 @@
 import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
@@ -37,8 +38,9 @@ async function listFilesRecursively(directory: string): Promise<string[]> {
 
 describe('bulkTransferPipeline (architecture)', () => {
     it('keeps chunk transfer plumbing scoped to bulkTransferPipeline/**', async () => {
-        const runtimeDirectory = new URL('../', import.meta.url);
-        const runtimePath = runtimeDirectory.pathname;
+        // URL.pathname percent-encodes non-ASCII path segments (e.g. CJK directory
+        // names), which readdir cannot resolve; fileURLToPath decodes them.
+        const runtimePath = fileURLToPath(new URL('../', import.meta.url));
         const files = (await listFilesRecursively(runtimePath)).filter((filePath) =>
             (filePath.endsWith('.ts') || filePath.endsWith('.tsx'))
             && !filePath.endsWith('.test.ts')
