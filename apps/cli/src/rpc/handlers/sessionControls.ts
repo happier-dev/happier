@@ -165,25 +165,6 @@ function readCatalogRuntimeOptions(rawCwd: string | undefined): Readonly<{ cwd?:
   return cwd.length > 0 ? { cwd } : {};
 }
 
-function buildUsageLimitRecoveryIntent(input: Readonly<{
-  issueFingerprint?: string;
-  nowMs: number;
-}>): SessionUsageLimitRecoveryV1 {
-  return SessionUsageLimitRecoveryV1Schema.parse({
-    v: 1,
-    status: 'waiting',
-    issueFingerprint: input.issueFingerprint ?? `usage-limit:${input.nowMs}`,
-    armedAtMs: input.nowMs,
-    resetAtMs: null,
-    nextCheckAtMs: null,
-    attemptCount: 0,
-    maxAttempts: 0,
-    lastProbeError: null,
-    resumePromptMode: 'standard',
-    selectedAuth: { kind: 'native' },
-  });
-}
-
 function readCurrentUsageLimitRecoveryIntent(metadata: Metadata | null | undefined): unknown {
   return metadata && typeof metadata === 'object'
     ? (metadata as Record<string, unknown>)[SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY]

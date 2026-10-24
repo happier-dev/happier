@@ -153,7 +153,7 @@ function appendToolGroupUnits(params: Readonly<{
         ...capMetadataFields,
     });
 
-    if (!expanded && hiddenCount > 0) {
+    if (!expanded && params.collapsedPreviewCount > 0 && hiddenCount > 0) {
         params.output.push({
             kind: 'tool-group-expand',
             id: `${params.groupId}#expand`,

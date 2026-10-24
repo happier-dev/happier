@@ -55,6 +55,7 @@ export {
 export {
   type ClaudeUnifiedTerminalHost,
   type ClaudeUnifiedTerminalResumeChoice,
+  type ClaudeUnifiedTerminalResponseLocation,
   type ClaudeUnifiedTerminalWorkspaceTrust,
   type ClaudeUnifiedTerminalWorkspaceTrustPolicy,
   CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFINITION,
@@ -62,10 +63,12 @@ export {
   CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFAULTS,
   CLAUDE_UNIFIED_TERMINAL_HOSTS,
   CLAUDE_UNIFIED_TERMINAL_RESUME_CHOICES,
+  CLAUDE_UNIFIED_TERMINAL_RESPONSE_LOCATIONS,
   CLAUDE_UNIFIED_TERMINAL_WORKSPACE_TRUST_POLICIES,
   MAX_CLAUDE_REMOTE_ADVANCED_OPTIONS_JSON_CHARS,
   buildClaudeRemoteOutgoingMessageMetaExtras,
   buildClaudeRemoteProviderSettingsShape,
   isValidClaudeRemoteAdvancedOptionsJson,
   normalizeClaudeRemoteAdvancedOptionsJson,
+  resolveClaudeUnifiedTerminalResponseLocations,
 } from './definitions/claudeRemote.js';

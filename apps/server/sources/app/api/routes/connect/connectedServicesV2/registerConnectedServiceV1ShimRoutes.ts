@@ -25,6 +25,7 @@ export function registerConnectedServiceV1ShimRoutes(app: Fastify, params: Reado
           kind: z.enum(["oauth", "token"]),
           providerEmail: z.string().min(1).nullable().optional(),
           providerAccountId: z.string().min(1).nullable().optional(),
+          providerOrganizationId: z.string().min(1).nullable().optional(),
           expiresAt: z.number().int().nonnegative().nullable().optional(),
         }).optional(),
       }),
@@ -52,6 +53,7 @@ export function registerConnectedServiceV1ShimRoutes(app: Fastify, params: Reado
       kind: meta?.kind ?? "oauth",
       providerEmail: meta?.providerEmail ?? null,
       providerAccountId: meta?.providerAccountId ?? null,
+      providerOrganizationId: meta?.providerOrganizationId ?? null,
     };
     const result = await mutateConnectedServiceCredential({
       accountId: userId,
@@ -91,6 +93,7 @@ export function registerConnectedServiceV1ShimRoutes(app: Fastify, params: Reado
             kind: z.enum(["oauth", "token"]),
             providerEmail: z.string().nullable().optional(),
             providerAccountId: z.string().nullable().optional(),
+            providerOrganizationId: z.string().nullable().optional(),
             expiresAt: z.number().int().nonnegative().nullable().optional(),
           }),
         }),
@@ -123,6 +126,7 @@ export function registerConnectedServiceV1ShimRoutes(app: Fastify, params: Reado
         kind: row.metadata.kind,
         providerEmail: row.metadata.providerEmail ?? null,
         providerAccountId: row.metadata.providerAccountId ?? null,
+        providerOrganizationId: row.metadata.providerOrganizationId ?? null,
         expiresAt: row.expiresAt ? row.expiresAt.getTime() : null,
       },
     });

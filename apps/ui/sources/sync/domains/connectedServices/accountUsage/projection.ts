@@ -70,18 +70,13 @@ export function projectProviderAccountUsageToNativeDisplaySnapshot(params: Reado
   const profileId = ConnectedServiceProfileIdSchema.safeParse(`acct:${snapshot.recordId}`);
   if (!profileId.success) return null;
 
+  const projected = projectProviderAccountUsageSnapshotToConnectedServiceQuotaSnapshotV1({
+    snapshot,
+    source: { serviceId, profileId: profileId.data, bindingKind: 'profile' },
+  });
+  if (!projected) return null;
   return ConnectedServiceQuotaSnapshotV1Schema.parse({
-    v: 1,
-    serviceId,
-    profileId: profileId.data,
-    fetchedAt: snapshot.fetchedAtMs,
-    staleAfterMs: snapshot.staleAfterMs,
-    planLabel: snapshot.planLabel ?? null,
-    accountLabel: snapshot.accountLabel ?? null,
-    providerId: snapshot.providerId,
-    activeAccountId: snapshot.recordKey.accountSubjectId,
-    fetchedAtMs: snapshot.fetchedAtMs,
-    staleAtMs: snapshot.fetchedAtMs + snapshot.staleAfterMs,
+    ...projected,
     source: snapshot.source === 'providerHttp'
       ? 'provider_api'
       : snapshot.source === 'runtimeSignal'
@@ -91,13 +86,5 @@ export function projectProviderAccountUsageToNativeDisplaySnapshot(params: Reado
           : snapshot.source === 'manual'
             ? 'manual_refresh'
             : 'unknown',
-    confidence: snapshot.confidence === 'confirmed'
-      ? 'exact'
-      : snapshot.confidence === 'estimated'
-        ? 'estimated'
-        : 'unknown',
-    ...(snapshot.recoveryCredits ? { recoveryCredits: snapshot.recoveryCredits } : {}),
-    ...(snapshot.recoveryCreditDetails ? { recoveryCreditDetails: snapshot.recoveryCreditDetails } : {}),
-    meters: snapshot.meters,
   });
 }

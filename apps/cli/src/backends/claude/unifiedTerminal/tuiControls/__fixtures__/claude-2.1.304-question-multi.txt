@@ -1,0 +1,35 @@
+▎ actions and prompt injection before executing, runs the ones it assesses as lower-risk, and blocks the rest.
+▎ https://code.claude.com/docs/en/permission-modes
+
+❯ Use AskUserQuestion exactly once now. Ask a single question: Which probe color? Header Color, options Amber
+  and Blue with short descriptions, multiSelect false. Do not perform any other tools. After the answer say
+  only PROBE_DONE and the answer.
+
+● User answered Claude's questions:
+  ⎿  · Which probe color? → Amber
+
+● PROBE_DONE Amber
+
+✻ Brewed for 4s · done 2:44 PM
+
+❯ Use AskUserQuestion exactly once. Include two questions in this same tool call: question Which probe
+  fruits? header Fruits, options Apple, Pear, Plum, multiSelect true; second question Which probe size?
+  header Size, options Small, Large, multiSelect false. Do not perform other tools. After answers say only
+  PROBE_DONE and answers.
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+←  ☐ Fruits  ☐ Size  ✔ Submit  →
+
+Which probe fruits?
+
+❯ 1. [ ] Apple
+         Apple fruit.
+  2. [ ] Pear
+         Pear fruit.
+  3. [ ] Plum
+         Plum fruit.
+  4. [ ] Type something
+     Next
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  5. Chat about this
+
+Enter to select · Tab/Arrow keys to navigate · Esc to cancel

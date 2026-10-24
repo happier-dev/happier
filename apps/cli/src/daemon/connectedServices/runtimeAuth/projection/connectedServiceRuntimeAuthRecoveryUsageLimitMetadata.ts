@@ -28,7 +28,8 @@ export function buildRuntimeAuthUsageLimitRecoveryMetadataUpdater(input: Readonl
       ...metadata,
       [SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY]: {
         v: 1, status,
-        issueFingerprint: sameAttempt && current ? current.issueFingerprint : attemptId,
+        issueFingerprint: intent.classification.runtimeIssueFingerprint
+          ?? (sameAttempt && current ? current.issueFingerprint : attemptId),
         runtimeAuthRecoveryAttemptId: attemptId,
         armedAtMs: intent.armedAtMs,
         resetAtMs: intent.classification.resetsAtMs ?? null,

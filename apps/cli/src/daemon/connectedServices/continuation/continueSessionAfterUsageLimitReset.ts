@@ -7,7 +7,7 @@ import {
 import type { Credentials } from '@/persistence';
 import type { RawSessionRecord } from '@/session/transport/http/sessionsHttp';
 import type { sendSessionMessage } from '@/session/services/sendSessionMessage';
-import { buildUsageLimitIssueFingerprint } from '@/session/usageLimitRecoveryControls/buildUsageLimitIssueFingerprint';
+import { buildUsageLimitIssueFingerprint } from '@happier-dev/protocol';
 import { hasSameUsageLimitRecoveryIdentity } from '@/session/usageLimitRecoveryControls/mergeUsageLimitRecoveryIntent';
 import { readLatestUsageLimitFailureIssue } from '@/session/usageLimitRecoveryControls/readLatestUsageLimitFailureIssue';
 import { resolveUsageLimitRecoverySelectedAuthFromIssue } from '@/session/usageLimitRecoveryControls/usageLimitRecoverySelectedAuth';

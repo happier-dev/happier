@@ -101,7 +101,7 @@ describe('claudeUsageLimitRecoveryControlAdapter', () => {
       const sourceId = buildNativeProviderAccountUsageSourceProfileId({ kind: 'localCredential', providerId: 'claude', material: '/native/config' });
       const intent = scenario === 'unpersisted' ? null : createNativeSourceRecovery(sourceId,
         scenario === 'paused native' ? { status: 'paused', nextCheckAtMs: null, attemptCount: 1 }
-          : scenario === 'daemon-owned' ? { issueFingerprint: 'owned-attempt', runtimeAuthRecoveryAttemptId: 'owned-attempt' } : {});
+          : scenario === 'daemon-owned' ? { runtimeAuthRecoveryAttemptId: 'owned-attempt' } : {});
       const issue = createClaudeUsageLimitIssue({ resetAtMs: intent?.resetAtMs });
       const metadata = {
         ...(intent ? { sessionUsageLimitRecoveryV1: intent } : {}),

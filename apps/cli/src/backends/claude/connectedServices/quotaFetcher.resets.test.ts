@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { buildConnectedServiceCredentialRecord, ConnectedServiceQuotaSnapshotV1Schema } from '@happier-dev/protocol';
+import { buildConnectedServiceCredentialRecord, ConnectedServiceCredentialRecordV1Schema, ConnectedServiceQuotaSnapshotV1Schema } from '@happier-dev/protocol';
 
 import { createClaudeSubscriptionQuotaFetcher } from './quotaFetcher';
 
@@ -27,10 +27,39 @@ function fetcher() { return createClaudeSubscriptionQuotaFetcher({ userAgent: 'c
 describe('Claude provider reset vertical', () => {
   afterEach(() => vi.unstubAllGlobals());
 
+  it('does not consume a reset in a profile context belonging to another user', async () => {
+    const transport = vi.fn(async (url: string | URL | Request, init?: RequestInit) => response(
+      init?.method === 'POST' ? { result: 'reset' }
+        : String(url).endsWith('/profile')
+          ? { account: { uuid: 'another-user' }, organization: { uuid: 'org-other' } }
+          : evaluated,
+    ));
+    vi.stubGlobal('fetch', transport);
+    await expect(fetcher().consumeRecoveryCredit!({ record, now, signal, providerCreditId: 'promo', idempotencyKey: 'context-mismatch' }))
+      .rejects.toMatchObject({ quotaFetchErrorCode: 'malformed' });
+    expect(transport.mock.calls.some(([, init]) => init?.method === 'POST')).toBe(false);
+  });
+
+  it('does not debit another organization when the same user profile contradicts the credential context', async () => {
+    const scopedRecord = ConnectedServiceCredentialRecordV1Schema.parse({
+      ...record, oauth: { ...record.oauth, raw: { claudeAiOauth: { organizationUuid: 'org-selected' } } },
+    });
+    const transport = vi.fn(async (url: string | URL | Request, init?: RequestInit) => response(
+      init?.method === 'POST' ? { result: 'reset' }
+        : String(url).endsWith('/profile')
+          ? { account: { uuid: 'account-is-not-organization' }, organization: { uuid: 'org-other' } }
+          : evaluated,
+    ));
+    vi.stubGlobal('fetch', transport);
+    await expect(fetcher().consumeRecoveryCredit!({ record: scopedRecord, now, signal, providerCreditId: 'promo', idempotencyKey: 'organization-mismatch' }))
+      .rejects.toMatchObject({ quotaFetchErrorCode: 'malformed', recoveryCreditConsumeOutcomeUnknown: false });
+    expect(transport.mock.calls.some(([, init]) => init?.method === 'POST')).toBe(false);
+  });
+
   it.each([{ target: 'provider-seven-day', expected: 'consumed', posts: 1 },
     { target: 'seven_day', expected: 'not_available', posts: 0 }])('uses the actual provider limit identity for $target', async ({ target, expected, posts }) => {
     const transport = vi.fn(async (url: string | URL | Request, init?: RequestInit) => response(init?.method === 'POST'
-      ? { result: 'reset' } : String(url).endsWith('/profile') ? { organization: { uuid: 'org' } }
+      ? { result: 'reset' } : String(url).endsWith('/profile') ? { account: { uuid: 'account-is-not-organization' }, organization: { uuid: 'org' } }
         : { seven_day: { utilization: 100, provider_limit_id: 'provider-seven-day' },
           cedar_ember: { eligible: true, next_grant_id: 'promo', grants: [{ ...grant, clears: [target] }] } }));
     vi.stubGlobal('fetch', transport);
@@ -77,15 +106,18 @@ describe('Claude provider reset vertical', () => {
   });
 
   it('uses fresh selected eligibility and the organization UUID for exactly one Cedar POST', async () => {
+    const scopedRecord = ConnectedServiceCredentialRecordV1Schema.parse({
+      ...record, oauth: { ...record.oauth, raw: { claudeAiOauth: { organizationUuid: 'org-uuid' } } },
+    });
     const transport = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
-      if (String(url).endsWith('/profile')) return response({ account: { uuid: 'wrong-account' }, organization: { uuid: 'org-uuid' } });
+      if (String(url).endsWith('/profile')) return response({ account: { uuid: 'account-is-not-organization' }, organization: { uuid: 'org-uuid' } });
       if (init?.method === 'POST') return response({ result: 'reset', cleared: grant.clears });
       return response(String(url).includes('?') ? evaluated : ordinary);
     });
     vi.stubGlobal('fetch', transport);
     const provider = fetcher();
     expect(provider.consumeRecoveryCredit).toBeTypeOf('function');
-    expect(await provider.consumeRecoveryCredit!({ record, now, signal, providerCreditId: 'promo', idempotencyKey: 'account-action' })).toBe('consumed');
+    expect(await provider.consumeRecoveryCredit!({ record: scopedRecord, now, signal, providerCreditId: 'promo', idempotencyKey: 'account-action' })).toBe('consumed');
     const posts = transport.mock.calls.filter(([, init]) => init?.method === 'POST');
     expect(posts).toHaveLength(1);
     expect(posts[0][0]).toBe('https://api.anthropic.com/api/organizations/org-uuid/reset_rate_limits');
@@ -103,7 +135,7 @@ describe('Claude provider reset vertical', () => {
   it.each([['already_used', 'already_consumed'], ['not_limited', 'nothing_to_reset'], ['ineligible', 'not_available'],
     ['unavailable', 'not_available'], ['cooldown', 'not_available']] as const)('maps confirmed %s outcome', async (result, expected) => {
     vi.stubGlobal('fetch', vi.fn(async (url: string | URL | Request, init?: RequestInit) => response(init?.method === 'POST'
-      ? { result } : String(url).endsWith('/profile') ? { organization: { uuid: 'org' } } : evaluated)));
+      ? { result } : String(url).endsWith('/profile') ? { account: { uuid: 'account-is-not-organization' }, organization: { uuid: 'org' } } : evaluated)));
     expect(await fetcher().consumeRecoveryCredit!({ record, now, signal, providerCreditId: 'promo', idempotencyKey: 'action' })).toBe(expected);
   });
 
@@ -113,7 +145,7 @@ describe('Claude provider reset vertical', () => {
         if (mode === 'network') throw new Error('connection lost');
         return mode === 'server' ? response({}, 500) : response({ unexpected: true });
       }
-      return response(String(url).endsWith('/profile') ? { organization: { uuid: 'org' } } : evaluated);
+      return response(String(url).endsWith('/profile') ? { account: { uuid: 'account-is-not-organization' }, organization: { uuid: 'org' } } : evaluated);
     });
     vi.stubGlobal('fetch', transport);
     await expect(fetcher().consumeRecoveryCredit!({ record, now, signal, providerCreditId: 'promo', idempotencyKey: 'action' }))
@@ -123,7 +155,7 @@ describe('Claude provider reset vertical', () => {
 
   it('refuses an automatic reset that does not clear the exhausted model allowance', async () => {
     const transport = vi.fn(async (url: string | URL | Request, init?: RequestInit) => response(init?.method === 'POST'
-      ? { result: 'reset' } : String(url).endsWith('/profile') ? { organization: { uuid: 'org' } } : evaluated));
+      ? { result: 'reset' } : String(url).endsWith('/profile') ? { account: { uuid: 'account-is-not-organization' }, organization: { uuid: 'org' } } : evaluated));
     vi.stubGlobal('fetch', transport);
     expect(await fetcher().consumeRecoveryCredit!({ record, now, signal, providerCreditId: 'promo',
       providerLimitIds: ['seven_day_opus'], idempotencyKey: 'automatic-action' })).toBe('not_available');
@@ -134,7 +166,7 @@ describe('Claude provider reset vertical', () => {
     const juniper = { five_hour: ordinary.five_hour, cedar_ember: evaluated.cedar_ember, juniper_tide: { eligible: true, arm: 'reset', available: true,
       resets_per_week: 3, weekly_resets_at: '2026-10-18T00:00:00Z' } };
     const transport = vi.fn(async (url: string | URL | Request, init?: RequestInit) => response(init?.method === 'POST'
-      ? { result: 'reset' } : String(url).endsWith('/profile') ? { organization: { uuid: 'org' } } : juniper));
+      ? { result: 'reset' } : String(url).endsWith('/profile') ? { account: { uuid: 'account-is-not-organization' }, organization: { uuid: 'org' } } : juniper));
     vi.stubGlobal('fetch', transport);
     const provider = fetcher();
     const snapshot = await provider.fetch({ record, now, signal });
@@ -178,7 +210,7 @@ describe('Claude provider reset vertical', () => {
     let usageFails = true;
     const transport = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
       if (init?.method === 'POST') { usageFails = false; return response({ result: 'reset' }); }
-      if (String(url).endsWith('/profile')) return response({ organization: { uuid: 'org' } });
+      if (String(url).endsWith('/profile')) return response({ account: { uuid: 'account-is-not-organization' }, organization: { uuid: 'org' } });
       if (String(url).includes('?')) return response(evaluated);
       return usageFails ? response({}, 500) : response(ordinary);
     });
@@ -199,7 +231,7 @@ describe('Claude provider reset vertical', () => {
 
   it.each([{ providerLimitIds: [] }, { providerLimitIds: ['five_hour'] }])('does not automatically spend a usable grant without freshly proven target exhaustion ($providerLimitIds)', async ({ providerLimitIds }) => {
     const transport = vi.fn(async (url: string | URL | Request, init?: RequestInit) => response(init?.method === 'POST'
-      ? { result: 'reset' } : String(url).endsWith('/profile') ? { organization: { uuid: 'org' } }
+      ? { result: 'reset' } : String(url).endsWith('/profile') ? { account: { uuid: 'account-is-not-organization' }, organization: { uuid: 'org' } }
         : { ...evaluated, five_hour: { utilization: 50 } }));
     vi.stubGlobal('fetch', transport);
     expect(await fetcher().consumeRecoveryCredit!({ record, now, signal, providerCreditId: 'promo',

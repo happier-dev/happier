@@ -216,8 +216,11 @@ function readRuntimeSentence(message: string): string | null {
     return /[.!?…]$/.test(text) ? text : null;
 }
 
-/** K6 failure codes → one sentence, when the runtime gave no sentence of its own. */
-function describeInstallFailure(code: string | undefined): string {
+/** Known structured failures own their guidance; other failures may supply a runtime sentence. */
+function describeInstallFailure({ code, message }: Readonly<{ code?: string; message: string }>): string {
+    if (code === 'archive-expanded-byte-limit') return t('updates.row.archiveExpandedByteLimit');
+    const runtimeSentence = readRuntimeSentence(message);
+    if (runtimeSentence) return runtimeSentence;
     if (code === 'update-not-verified') return t('updates.row.updateNotVerified');
     if (code === 'update-not-available') return t('updates.row.updateItYourWay');
     return t('updates.row.failedGeneric');
@@ -362,7 +365,7 @@ export async function runMachineItemUpdate(
         if (!result.response.ok) {
             setRecord(serverId, item.id, {
                 status: 'failed',
-                message: readRuntimeSentence(result.response.error.message) ?? describeInstallFailure(result.response.error.code),
+                message: describeInstallFailure(result.response.error),
                 logPath: typeof result.response.logPath === 'string' ? result.response.logPath : null,
             });
             return;

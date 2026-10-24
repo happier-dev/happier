@@ -520,8 +520,9 @@ vi.mock('@/utils/platform/responsive', () => ({
     useIsTablet: () => false,
 }));
 vi.mock('@/hooks/session/useDraft', () => ({
-    useDraft: (_sessionId: string, value: string, onChange: (next: string) => void) => {
-        draftHookState.valuesBySessionId.set(_sessionId, value);
+    useDraft: (_sessionId: string, textStore: { getPrompt: () => string; setPrompt: (next: string) => void }) => {
+        const onChange = textStore.setPrompt;
+        draftHookState.valuesBySessionId.set(_sessionId, textStore.getPrompt());
         return {
         clearDraft: () => {
             draftHookState.valuesBySessionId.set(_sessionId, '');

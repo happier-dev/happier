@@ -15,6 +15,7 @@ import {
 } from '@/agent/executionRuns/runtime/executionRunErrors';
 import { buildReviewGuidanceBlock } from '@/agent/reviews/prompt/buildStandardReviewPrompt';
 import { logger } from '@/ui/logger';
+import { disposeExecutionRunBackendController } from './settleExecutionRunControllerOccurrence';
 
 function stripTrailingJsonObjectFromText(text: string): string {
   const trimmed = String(text ?? '');
@@ -474,7 +475,7 @@ export async function executeBoundedBackendRun(args: Readonly<{
     );
   } finally {
     try {
-      await backendCtrl.backend.dispose();
+      await disposeExecutionRunBackendController(backendCtrl);
     } catch {
       // ignore
     }

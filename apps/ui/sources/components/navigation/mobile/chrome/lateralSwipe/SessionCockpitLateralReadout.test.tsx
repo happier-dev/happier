@@ -1,10 +1,12 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
 import { createStorageModuleStub } from '@/dev/testkit/mocks/storage';
+import type { Metadata } from '@/sync/domains/state/storageTypes';
+import { installAgentAssetLoader } from '@/dev/testkit/mocks/agentAssets';
 import { buildSessionNavigationCursor } from '@/sync/domains/session/navigation/sessionNavigationCursor';
 import {
     publishSessionNavigationCursor,
@@ -15,7 +17,9 @@ import {
 
 const sessionNamesState = vi.hoisted(() => ({
     bySessionId: {} as Record<string, string>,
+    metadataBySessionId: {} as Record<string, Metadata>,
 }));
+beforeEach(installAgentAssetLoader);
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -26,10 +30,6 @@ vi.mock('react-native', async () => {
 
 vi.mock('react-native-worklets', () => ({
     scheduleOnRN: (fn: (...args: unknown[]) => void, ...args: unknown[]) => fn(...args),
-}));
-
-vi.mock('@/agents/registry/AgentIcon', () => ({
-    AgentIcon: (props: Record<string, unknown>) => React.createElement('AgentIcon', props),
 }));
 
 vi.mock('@/auth/context/AuthContext', () => ({
@@ -46,7 +46,7 @@ vi.mock('@/sync/domains/state/storage', () => createStorageModuleStub({
             sessions: Object.fromEntries(
                 Object.entries(sessionNamesState.bySessionId).map(([sessionId, name]) => [
                     sessionId,
-                    { metadata: { name } },
+                    { metadata: { name, ...sessionNamesState.metadataBySessionId[sessionId] } },
                 ]),
             ),
         }),
@@ -118,6 +118,7 @@ describe('SessionCockpitLateralReadout', () => {
         standardCleanup();
         resetSessionNavigationCursorForTests();
         sessionNamesState.bySessionId = {};
+        sessionNamesState.metadataBySessionId = {};
     });
 
     it('adds no resting pixels to the capsule', async () => {
@@ -125,6 +126,26 @@ describe('SessionCockpitLateralReadout', () => {
         const { screen } = await renderReadout('session-1');
 
         expect(screen.findAllHostsByTestId('session-cockpit-lateral-readout')).toHaveLength(0);
+    });
+
+    it.each(['unknown', 'declared-codex'] as const)('presents %s identity while naming the selected destination', async (identity) => {
+        sessionNamesState.bySessionId = { 'session-2': 'Destination' };
+        sessionNamesState.metadataBySessionId = {
+            'session-2': identity === 'declared-codex'
+                ? { path: '/repo', host: 'host', flavor: 'claude', agentRuntimeDescriptorV1: { v: 1, providerId: 'codex', provider: { backendMode: 'mcp' } } }
+                : { path: '/repo', host: 'host' },
+        };
+        publishVisibleSessionOrder(['session-0', 'session-1', 'session-2']);
+        const { harness, screen } = await renderReadout('session-1');
+
+        act(() => steerTo(harness, 'next', -0.6));
+
+        expect(screen.findByTestId('session-cockpit-lateral-readout-title')?.props.children).toBe('Destination');
+        if (identity === 'unknown') {
+            expect(screen.tree.root.findByProps({ name: 'stack-simple' })).toBeTruthy();
+        } else {
+            expect(screen.tree.root.findAll((node) => node.props.agentId === 'codex')).not.toHaveLength(0);
+        }
     });
 
     it('names the destination and its place in the captured order while the finger travels', async () => {

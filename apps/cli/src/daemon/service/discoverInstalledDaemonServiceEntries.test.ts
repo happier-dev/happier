@@ -11,7 +11,7 @@ import { resolveDaemonServiceCliRuntimeFromEnv } from './cli';
 import { previewDaemonServiceInstall } from './installer';
 import { planServiceDaemonsRestartAfterUpdate } from '@/cli/runtime/update/restartServiceDaemonAfterUpdate';
 
-import { discoverInstalledDaemonServiceEntries, isValidInstalledDaemonServiceFile, readInstalledDaemonServiceAutostartMode, readInstalledDaemonServiceTargetMode } from './discoverInstalledDaemonServiceEntries';
+import { discoverInstalledDaemonServiceEntries, isInstalledDaemonServiceForHappierHome, isValidInstalledDaemonServiceFile, readInstalledDaemonServiceAutostartMode, readInstalledDaemonServiceHomeDir, readInstalledDaemonServiceTargetMode } from './discoverInstalledDaemonServiceEntries';
 
 const { readdirSyncMock, readFileSyncMock } = vi.hoisted(() => ({ readdirSyncMock: vi.fn(), readFileSyncMock: vi.fn() }));
 // Filesystem enumeration and reads are the OS boundary; all discovery/parsing stays real.
@@ -53,6 +53,25 @@ describe('discoverInstalledDaemonServiceEntries', () => {
     spawnSyncMock.mockImplementation((command, args) => (isHappierTaskFolderListing(command, args)
       ? happierTaskFolderListing([])
       : { status: 0, stdout: '', stderr: '' } as never));
+  });
+
+  it.each([
+    ["\"C:\\Users\\O'Connor\\qa`$HOME\\.happier``cache\"", String.raw`C:\Users\O'Connor\qa$HOME\.happier` + '`cache'],
+    [String.raw`'C:\Users\O''Connor\qa\$HOME\.happier'`, String.raw`C:\Users\O'Connor\qa\$HOME\.happier`],
+  ])('recognizes the owning home from a quoted Windows definition %s', async (quotedHome, expectedHome) => {
+    await withTempDir('happier-windows-literal-home-', async (dir) => {
+      const path = join(dir, 'happier-daemon.default.ps1');
+      writeFileSync(path, [
+        `$env:HAPPIER_HOME_DIR = ${quotedHome}`,
+        '$env:HAPPIER_DAEMON_STARTUP_SOURCE = "background-service"',
+        '& "C:\\happier.exe" "daemon" "start-sync"',
+      ].join('\n'));
+
+      expect(readInstalledDaemonServiceHomeDir({ platform: 'win32', path })).toBe(expectedHome);
+      expect(isInstalledDaemonServiceForHappierHome({
+        platform: 'win32', path, expectedLabel: 'Happier\\happier-daemon.default', happierHomeDir: expectedHome,
+      })).toBe(true);
+    });
   });
 
   it.each(['EACCES', 'EIO'])('propagates %s rather than reporting an empty service inventory', async (code) => {

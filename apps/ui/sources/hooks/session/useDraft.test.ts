@@ -3,6 +3,7 @@ import renderer, { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useDraft, type SessionDraftTextSnapshot } from './useDraft';
+import { useComposerTextStore } from '@/components/sessions/agentInput/composerTextStore';
 import { TEXT_INPUT_LARGE_TEXT_VALUE_LENGTH_LIMIT } from '@/components/ui/forms/largeTextInputPolicy';
 import { flushHookEffects, renderScreen } from '@/dev/testkit';
 
@@ -269,7 +270,9 @@ function installFakeWindowLifecycleEvents() {
 type HarnessState = Readonly<{
   sessionId: string;
   setSessionId: (id: string) => void;
-  value: string;
+  /** The live composer text, read from the text store (the harness does not subscribe to it). */
+  readonly value: string;
+  readValue: () => string;
   setValue: (next: string) => void;
   clearDraft: () => void;
   clearDraftIfCurrentValueMatches?: (expectedValue: string) => boolean;
@@ -288,15 +291,18 @@ type HarnessState = Readonly<{
 
 async function renderHarness(params: { initialSessionId: string; active?: boolean }): Promise<{
   getCurrent: () => HarnessState;
+  getRenderCount: () => number;
   unmount: () => void;
 }> {
   let current: HarnessState | null = null;
+  let renderCount = 0;
 
   function Harness() {
+    renderCount += 1;
     const [sessionId, setSessionId] = React.useState(params.initialSessionId);
-    const [value, setValue] = React.useState('');
+    const textStore = useComposerTextStore(() => '');
     const [, setTick] = React.useState(0);
-    const draftApi = useDraft(sessionId, value, setValue, {
+    const draftApi = useDraft(sessionId, textStore, {
       autoSaveInterval: 60_000,
       ...(typeof params.active === 'boolean' ? { active: params.active } : {}),
     });
@@ -306,8 +312,11 @@ async function renderHarness(params: { initialSessionId: string; active?: boolea
     current = {
       sessionId,
       setSessionId,
-      value,
-      setValue,
+      get value() {
+        return textStore.getPrompt();
+      },
+      readValue: textStore.getPrompt,
+      setValue: textStore.setPrompt,
       clearDraft: draftApi.clearDraft,
       clearDraftIfCurrentValueMatches: 'clearDraftIfCurrentValueMatches' in draftApi
         ? draftApi.clearDraftIfCurrentValueMatches
@@ -342,6 +351,7 @@ async function renderHarness(params: { initialSessionId: string; active?: boolea
       if (!current) throw new Error('Harness did not render');
       return current;
     },
+    getRenderCount: () => renderCount,
     unmount: () => {
       if (!root) return;
       act(() => root!.unmount());
@@ -438,6 +448,54 @@ describe('useDraft', () => {
       vi.useRealTimers();
       platformState.os = 'web';
     }
+  });
+
+  it('keeps the debounced remote flush scheduled by an edit until the autosave interval elapses', async () => {
+    vi.useFakeTimers();
+    try {
+      const harness = await renderHarness({ initialSessionId: 's1' });
+      await flushHookEffects({ cycles: 1, turns: 1 });
+      draftRepositoryHarness.flush.mockClear();
+
+      await act(async () => {
+        harness.getCurrent().setDraftValue?.('draft-1 edited');
+      });
+      await flushHookEffects({ cycles: 1, turns: 1 });
+      expect(draftRepositoryHarness.flush).not.toHaveBeenCalled();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60_000);
+      });
+
+      expect(draftRepositoryHarness.flush).toHaveBeenCalledWith(expect.objectContaining({
+        address: { kind: 'session', sessionId: 's1' },
+      }));
+      harness.unmount();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not re-render its host for the repository echo of composer edits', async () => {
+    const harness = await renderHarness({ initialSessionId: 's1' });
+    await flushHookEffects({ cycles: 1, turns: 1 });
+    act(() => {
+      harness.getCurrent().setDraftValue?.('draft-1 e');
+    });
+    await flushHookEffects({ cycles: 1, turns: 1 });
+    const rendersBefore = harness.getRenderCount();
+
+    act(() => {
+      harness.getCurrent().setDraftValue?.('draft-1 ed');
+    });
+    act(() => {
+      harness.getCurrent().setDraftValue?.('draft-1 edited');
+    });
+    await flushHookEffects({ cycles: 1, turns: 1 });
+
+    expect(harness.getCurrent().readValue()).toBe('draft-1 edited');
+    expect(harness.getRenderCount()).toBe(rendersBefore);
+    harness.unmount();
   });
 
   it('publishes composer edits to the local canonical replica in the input event', async () => {

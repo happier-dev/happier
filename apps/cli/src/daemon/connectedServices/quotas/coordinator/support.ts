@@ -21,6 +21,7 @@ import {
 } from '@happier-dev/protocol';
 
 import type { Credentials } from '@/persistence';
+import { readConnectedServiceCredentialOrganizationId } from '../../descriptors/connectedAccountDescriptors';
 import {
   invalidateConnectedServiceAccountMode,
   resolveConnectedServiceAccountMode,
@@ -229,9 +230,17 @@ export type ExistingQuotaSnapshotResponse =
   | Awaited<ReturnType<NonNullable<QuotaApi['getConnectedServiceQuotaSnapshotPlain']>>>;
 
 export type ResolvedQuotaStorageMode = 'e2ee' | 'plain';
+export type ResolvedQuotaCredential = Readonly<{
+  storageMode: ResolvedQuotaStorageMode;
+  record: ConnectedServiceCredentialRecordV1 | null;
+  credentialRevision: ConnectedServiceCredentialRevisionV1 | null;
+}>;
 export type ResolvedExistingQuotaSnapshot = Readonly<{
   storageMode: ResolvedQuotaStorageMode;
   existing: ExistingQuotaSnapshotResponse;
+  credential?: ResolvedQuotaCredential;
+  preopenedSnapshot?: ConnectedServiceQuotaSnapshotV1;
+  verifiedCredentialFingerprint?: string | null;
 }>;
 export type ConnectedServiceInBandQuotaSnapshotRecordResult =
   | Readonly<{ status: 'enqueued'; enqueue: 'accepted' | 'coalesced' }>
@@ -573,6 +582,7 @@ export function activeBindingMatchesRuntimeIdentity(
 
 export function readCredentialAccountIdentity(record: ConnectedServiceCredentialRecordV1): Readonly<{
   providerAccountId: string;
+  providerOrganizationId: string | null;
   accountLabel: string | null;
 }> | null {
   if (record.kind === 'oauth') {
@@ -583,7 +593,7 @@ export function readCredentialAccountIdentity(record: ConnectedServiceCredential
     const accountLabel = typeof record.oauth.providerEmail === 'string' && record.oauth.providerEmail.trim()
       ? record.oauth.providerEmail.trim()
       : null;
-    return { providerAccountId, accountLabel };
+    return { providerAccountId, providerOrganizationId: readConnectedServiceCredentialOrganizationId(record), accountLabel };
   }
   if (record.kind === 'token') {
     const providerAccountId = typeof record.token.providerAccountId === 'string'
@@ -593,7 +603,7 @@ export function readCredentialAccountIdentity(record: ConnectedServiceCredential
     const accountLabel = typeof record.token.providerEmail === 'string' && record.token.providerEmail.trim()
       ? record.token.providerEmail.trim()
       : null;
-    return { providerAccountId, accountLabel };
+    return { providerAccountId, providerOrganizationId: readConnectedServiceCredentialOrganizationId(record), accountLabel };
   }
   return null;
 }
@@ -630,7 +640,7 @@ export type FailureState = Readonly<{
   inconclusiveRefreshProbeCount?: number;
 }>;
 
-export type CredentialRefreshReason = 'near_expiry' | 'auth_failure';
+export type CredentialRefreshReason = 'near_expiry' | 'auth_failure' | 'provider_context';
 export type RefreshConnectedServiceCredentialForQuota = (input: Readonly<{
   serviceId: ConnectedServiceId;
   profileId: string;
@@ -640,7 +650,7 @@ export type RefreshConnectedServiceCredentialForQuota = (input: Readonly<{
 
 export type AccountUsageStoreForQuotaPolicy = Pick<
   ProviderAccountUsageStore,
-  'recordSnapshot' | 'resolveRecordId'
+  'recordSnapshot' | 'resolveRecordId' | 'retainSourcesForProfile'
 > & AccountUsageStoreForAuthGroupSwitchState;
 
 export const QUOTA_AUTH_FAILURE_REAUTH_CONSECUTIVE_FAILURES = 5;

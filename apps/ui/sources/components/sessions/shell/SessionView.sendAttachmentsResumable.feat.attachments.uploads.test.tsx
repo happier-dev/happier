@@ -186,8 +186,9 @@ vi.mock('@/utils/platform/responsive', () => ({
     useIsTablet: () => false,
 }));
 vi.mock('@/hooks/session/useDraft', () => ({
-    useDraft: (_sessionId: string, value: string, onChange: (next: string) => void) => {
-        draftHookState.valuesBySessionId.set(_sessionId, value);
+    useDraft: (_sessionId: string, textStore: { getPrompt: () => string; setPrompt: (next: string) => void }) => {
+        const onChange = textStore.setPrompt;
+        draftHookState.valuesBySessionId.set(_sessionId, textStore.getPrompt());
         const address = { kind: 'session' as const, sessionId: _sessionId };
         const draftSnapshot = React.useSyncExternalStore(
             (listener) => subscribeSessionDraft(TEST_SERVER_ACCOUNT_SCOPE, address, listener),
@@ -271,7 +272,8 @@ vi.mock('@/hooks/session/useDraft', () => ({
                 onChange(remainingText);
                 return true;
             },
-            draftSnapshot,
+            draftConflict: draftSnapshot?.conflict ?? null,
+            draftStatus: draftSnapshot?.status ?? null,
             draftScope: TEST_SERVER_ACCOUNT_SCOPE,
         };
     },

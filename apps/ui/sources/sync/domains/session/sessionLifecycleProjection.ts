@@ -17,6 +17,51 @@ export function normalizeSessionOrderingNumber(value: unknown): number | null {
         : null;
 }
 
+type SessionRequestProjection = Partial<Pick<Session,
+    | 'agentState' | 'agentStateVersion'
+    | 'pendingPermissionRequestCount' | 'pendingUserActionRequestCount' | 'pendingRequestObservedAt'
+>> & {
+    hasPendingPermissionRequests?: boolean;
+    hasPendingUserActionRequests?: boolean;
+};
+
+export function shouldPreserveSessionRequestProjection(
+    previous: SessionRequestProjection | undefined,
+    incoming: SessionRequestProjection,
+): boolean {
+    if (!previous) return false;
+    const previousVersion = normalizeSessionOrderingNumber(previous.agentStateVersion);
+    const incomingVersion = normalizeSessionOrderingNumber(incoming.agentStateVersion);
+    if (previousVersion !== null && incomingVersion !== null && previousVersion !== incomingVersion) {
+        return incomingVersion < previousVersion;
+    }
+    return isOlder(incoming.pendingRequestObservedAt, previous.pendingRequestObservedAt);
+}
+
+/** Keep request content and its public pending projection on the same accepted observation. */
+export function reconcileSessionRequestProjection<T extends SessionRequestProjection>(
+    previous: SessionRequestProjection | undefined,
+    incoming: T,
+): T {
+    if (!previous || !shouldPreserveSessionRequestProjection(previous, incoming)) return incoming;
+    const hasOlderVersion = isOlder(incoming.agentStateVersion, previous.agentStateVersion);
+    let next = incoming;
+    const preserve = (key: keyof SessionRequestProjection): void => {
+        if ((key in previous || key in next) && next[key] !== previous[key]) {
+            next = { ...next, [key]: previous[key] };
+        }
+    };
+    if (hasOlderVersion) {
+        preserve('agentState');
+        preserve('agentStateVersion');
+    }
+    for (const key of [
+        'pendingPermissionRequestCount', 'pendingUserActionRequestCount',
+        'hasPendingPermissionRequests', 'hasPendingUserActionRequests', 'pendingRequestObservedAt',
+    ] as const) preserve(key);
+    return next;
+}
+
 /**
  * Single owner of a session's presence: "online" while the runtime reports it active, otherwise the
  * last-seen timestamp. Every path that changes `active` must derive presence here, or a row that
@@ -117,4 +162,21 @@ export function reconcileSessionLifecycleProjection<T extends SessionLifecyclePr
     const runtimeActivity = resolveMergedSessionRuntimeActivityProjectionFields(previous, incoming);
     if (runtimeActivity) applyPatch(runtimeActivity);
     return next;
+}
+
+type SessionSnapshotProjection = SessionLifecycleProjection & SessionRequestProjection & Pick<Session, 'metadata' | 'metadataVersion'>;
+
+/** Apply the independent lifecycle, request, and metadata ordering rules to a whole snapshot. */
+export function reconcileSessionSnapshot<T extends SessionSnapshotProjection>(
+    previous: SessionSnapshotProjection | undefined,
+    incoming: T,
+): T {
+    let next = reconcileSessionRequestProjection(previous, incoming);
+    const previousMetadataVersion = normalizeSessionOrderingNumber(previous?.metadataVersion);
+    const incomingMetadataVersion = normalizeSessionOrderingNumber(incoming.metadataVersion);
+    if (previous && previousMetadataVersion !== null && incomingMetadataVersion !== null
+        && incomingMetadataVersion < previousMetadataVersion) {
+        next = { ...next, metadata: previous.metadata, metadataVersion: previous.metadataVersion };
+    }
+    return reconcileSessionLifecycleProjection(previous, next);
 }

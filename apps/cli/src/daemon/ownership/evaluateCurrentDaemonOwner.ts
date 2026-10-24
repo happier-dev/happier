@@ -71,7 +71,7 @@ async function findStateLessDaemonProcessForCurrentRuntimeRoot(): Promise<HappyP
   const currentRuntimeRoot = normalizePathFragment(projectPath());
   const matching = (await findAllHappyProcesses())
     .filter((processInfo) => isDaemonProcessForCurrentRuntimeRoot(processInfo, currentRuntimeRoot))
-    .filter((processInfo) => daemonProcessMatchesCurrentScope(processInfo))
+    .filter((processInfo) => daemonProcessMatchesCurrentScope(processInfo, { requireScopeIdentity: true }))
     .sort((a, b) => a.pid - b.pid);
   return matching[0] ?? null;
 }

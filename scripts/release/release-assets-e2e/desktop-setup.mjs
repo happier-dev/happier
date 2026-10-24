@@ -28,7 +28,7 @@ import {
   resolvePublishedStableBaseline,
   stageCliReleaseAssets,
 } from './desktop-setup-artifacts.mjs';
-import { PREDECESSOR_SETUP_PARAMS_BY_DESKTOP_TAG, runHsetupTask } from './desktop-setup-driver.mjs';
+import { PREDECESSOR_SETUP_PARAMS_BY_DESKTOP_TAG, resolvePredecessorSetupParams, runHsetupTask } from './desktop-setup-driver.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const RELAY_URL = 'http://relay:3005';
@@ -440,7 +440,7 @@ async function main() {
       const previousSetup = await runPredecessorSetup({
         relayUrl: RELAY_URL,
         webappUrl: RELAY_URL,
-        setupParams: PREDECESSOR_SETUP_PARAMS_BY_DESKTOP_TAG[baseline.desktopTag],
+        setupParams: resolvePredecessorSetupParams(baseline.desktopTag, { relayUrl: RELAY_URL, webappUrl: RELAY_URL, channel, accountId }),
         inspectionParams,
         runHsetup: (kind, params, env) => hsetup(machine, 'prev', kind, params, { approvePairing, serviceConsent: 'decline' }, env),
         runCli: (args) => execAs(machine, `"$HOME/.happier/bin/happier" ${args.map((arg) => `'${arg.replaceAll("'", "'\\''")}'`).join(' ')}`),

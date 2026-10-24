@@ -6,8 +6,8 @@ import {
   captureScreenState,
 } from '../tuiControls/controlRuntime';
 import { answerClaudeUnifiedRegisteredDialog } from '../tuiControls/dialogAnswer';
+import { answerClaudeNativeQuestion } from '../tuiControls/nativeQuestion';
 import {
-  resolveClaudeUnifiedVisibleDialog,
   getClaudeUnifiedDialogIdentity,
   type ClaudeUnifiedDialogId,
   type ClaudeUnifiedVisibleDialog,
@@ -79,6 +79,9 @@ export function createClaudeUnifiedDialogChoiceScreenProbe(params: Readonly<{
   };
 
   const cancelPendingIfResolved = async (): Promise<void> => {
+    // Native tool results (including Esc/No) have exact correlation. A temporary redraw or
+    // movement between question tabs is not evidence that the native occurrence ended.
+    if (params.broker.hasNativePrompt()) return;
     if (
       (params.isResumeStartupActive?.() ?? true)
       && params.broker.hasPendingChoice('resume_choice')
@@ -105,9 +108,40 @@ export function createClaudeUnifiedDialogChoiceScreenProbe(params: Readonly<{
     if (automaticDecision) params.broker.noteTerminalAnswerStarted(dialog);
     const task = (automaticDecision
       ? Promise.resolve(automaticDecision)
-      : params.broker.requestDialogChoice({ dialog, signal }))
+      : params.broker.requestDialogChoice({
+        dialog, signal,
+        ...(dialog.kind === 'native' ? {
+          applyDecision: async (decision: ClaudeUnifiedDialogChoiceDecision) => {
+            if (!params.broker.isCurrentNativeDialog(dialog)) throw new Error('claude_native_prompt_changed');
+            const result = dialog.dialogId === 'ask_user_question' && decision.structuredAnswersV1
+              ? await answerClaudeNativeQuestion({
+                port: params.port, questions: dialog.questions, answers: decision.structuredAnswersV1,
+                isCurrent: () => params.broker.isCurrentNativeDialog(dialog),
+                verifyApplied: () => params.broker.verifyNativeQuestionAnswer(dialog, decision.structuredAnswersV1!),
+                wait: params.wait, settleMs: params.settleMs,
+                verifyPollIntervalMs: params.verifyPollIntervalMs, verifyPollTimeoutMs: params.verifyPollTimeoutMs,
+              })
+              : await answerClaudeUnifiedRegisteredDialog({
+                port: params.port, dialogId: dialog.dialogId,
+                expectedIdentity: getClaudeUnifiedDialogIdentity(dialog), choice: decision.choice,
+                feedback: decision.feedback,
+                resolveDialog: (state) => params.broker.resolveVisibleDialog(state),
+                isCurrent: () => params.broker.isCurrentNativeDialog(dialog),
+                wait: params.wait, settleMs: params.settleMs,
+                verifyPollIntervalMs: params.verifyPollIntervalMs, verifyPollTimeoutMs: params.verifyPollTimeoutMs,
+              });
+            if (result.status !== 'answered') throw new Error(
+              result.status === 'failed' ? result.reason : 'claude_native_prompt_changed',
+            );
+          },
+        } : {}),
+      }))
       .then(async (decision) => {
         if (disposed) return;
+        if (dialog.kind === 'native') {
+          params.broker.noteTerminalAnswerSucceeded(dialog);
+          return;
+        }
         const result = await answerClaudeUnifiedRegisteredDialog({
           port: params.port,
           dialogId: dialog.dialogId,
@@ -145,6 +179,9 @@ export function createClaudeUnifiedDialogChoiceScreenProbe(params: Readonly<{
           answerTask = null;
           answerTaskIdentity = null;
           abortController = null;
+          if (dialog.kind === 'native' && !disposed) {
+            void probe().catch((error) => logger.infoFile('[unified]: Native prompt follow-up observation failed', error));
+          }
         }
       });
     answerTask = task;
@@ -156,11 +193,34 @@ export function createClaudeUnifiedDialogChoiceScreenProbe(params: Readonly<{
     state: ClaudeScreenState,
   ): Promise<ClaudeUnifiedDialogChoiceScreenProbeResult> => {
     if (disposed) return { kind: 'failed', reason: 'disposed' };
-    const initialDialog = resolveClaudeUnifiedVisibleDialog(state);
+    let initialDialog = params.broker.resolveVisibleDialog(state);
+    if (!initialDialog && params.broker.hasNativePrompt()) {
+      // PermissionRequest can precede Claude's next paint. Observe that redraw using the
+      // existing terminal verification budget instead of waiting for the turn-stall probe.
+      const intervalMs = Math.max(1, params.verifyPollIntervalMs);
+      const maxPolls = Math.max(1, Math.ceil(params.verifyPollTimeoutMs / intervalMs));
+      for (let poll = 0; poll < maxPolls && !initialDialog; poll += 1) {
+        await params.wait(intervalMs);
+        if (disposed) return { kind: 'failed', reason: 'disposed' };
+        if (!params.broker.hasNativePrompt()) return { kind: 'not_visible' };
+        const captured = await captureScreenState(params.port);
+        if (disposed) return { kind: 'failed', reason: 'disposed' };
+        if (!params.broker.hasNativePrompt()) return { kind: 'not_visible' };
+        const failure = captureFailureResult(captured);
+        if (failure) return failure;
+        if (captured.kind !== 'state') return { kind: 'failed', reason: 'capture_failed' };
+        initialDialog = params.broker.resolveVisibleDialog(captured.state);
+      }
+      if (!initialDialog) {
+        logger.infoFile('[unified]: Native prompt did not render within terminal verification budget');
+      }
+    }
+    if (initialDialog && params.broker.isNativeAnswerInFlight()) return { kind: 'owned', dialogId: initialDialog.dialogId };
     if (!initialDialog) {
       await cancelPendingIfResolved();
       return { kind: 'not_visible' };
     }
+    if (!params.broker.shouldPublishDialog(initialDialog)) return { kind: 'owned', dialogId: initialDialog.dialogId };
     if (dialogIsOwned(initialDialog)) {
       if (!params.broker.hasPendingChoiceForDialog(initialDialog)) {
         await params.broker.noteDialogResolvedInTerminal('claude_dialog_owned_by_control_path');
@@ -170,15 +230,23 @@ export function createClaudeUnifiedDialogChoiceScreenProbe(params: Readonly<{
 
     await params.wait(Math.max(0, params.graceMs));
     if (disposed) return { kind: 'failed', reason: 'disposed' };
+    if (initialDialog.kind === 'native' && !params.broker.isCurrentNativeDialog(initialDialog)) {
+      return { kind: 'not_visible' };
+    }
     const recaptured = await captureScreenState(params.port);
+    if (disposed) return { kind: 'failed', reason: 'disposed' };
+    if (initialDialog.kind === 'native' && !params.broker.isCurrentNativeDialog(initialDialog)) {
+      return { kind: 'not_visible' };
+    }
     const failure = captureFailureResult(recaptured);
     if (failure) return failure;
     if (recaptured.kind !== 'state') return { kind: 'failed', reason: 'capture_failed' };
-    const dialog = resolveClaudeUnifiedVisibleDialog(recaptured.state);
+    const dialog = params.broker.resolveVisibleDialog(recaptured.state);
     if (!dialog) {
       await cancelPendingIfResolved();
       return { kind: 'not_visible' };
     }
+    if (!params.broker.shouldPublishDialog(dialog)) return { kind: 'owned', dialogId: dialog.dialogId };
     if (dialogIsOwned(dialog)) {
       if (!params.broker.hasPendingChoiceForDialog(dialog)) {
         await params.broker.noteDialogResolvedInTerminal('claude_dialog_owned_by_control_path');
@@ -206,15 +274,16 @@ export function createClaudeUnifiedDialogChoiceScreenProbe(params: Readonly<{
     };
   };
 
-  return {
-    async probe() {
+  const probe = async (): Promise<ClaudeUnifiedDialogChoiceScreenProbeResult> => {
       if (disposed) return { kind: 'failed', reason: 'disposed' };
       const captured = await captureScreenState(params.port);
       const failure = captureFailureResult(captured);
       if (failure) return failure;
       if (captured.kind !== 'state') return { kind: 'failed', reason: 'capture_failed' };
       return evaluateScreenState(captured.state);
-    },
+  };
+  return {
+    probe,
     evaluateScreenState,
     dispose() {
       if (disposed) return;

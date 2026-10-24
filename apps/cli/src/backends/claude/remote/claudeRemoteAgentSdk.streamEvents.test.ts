@@ -1,9 +1,54 @@
+import type { Query, SDKMessage, SDKAssistantMessage } from '@anthropic-ai/claude-agent-sdk';
 import { describe, expect, it, vi } from 'vitest';
 
 import { claudeRemoteAgentSdk } from './claudeRemoteAgentSdk';
 import { makeMode } from './claudeRemoteAgentSdk.testkit';
 
 describe('claudeRemoteAgentSdk stream events', () => {
+    it('keeps rejected allowance availability and sidechain errors out of parent failure recovery', async () => {
+        let sent = false;
+        const failures: unknown[] = [];
+        const quota: unknown[] = [];
+        // The external Agent SDK query is the boundary; stream admission and mapping remain real.
+        const query: Pick<Query, typeof Symbol.asyncIterator | 'close' | 'setPermissionMode' | 'setModel' | 'setMaxThinkingTokens' | 'supportedCommands' | 'supportedModels'> = {
+            async *[Symbol.asyncIterator]() {
+                yield { type: 'rate_limit_event', rate_limit_info: { status: 'rejected', rateLimitType: 'overage', utilization: 1, overageStatus: 'rejected', overageDisabledReason: 'org_level_disabled' } } as SDKMessage;
+                const sidechainError = {
+                    type: 'assistant', parent_tool_use_id: 'child-task', isApiErrorMessage: true, apiErrorStatus: 429,
+                    error: 'rate_limit', uuid: '00000000-0000-4000-8000-000000000001', session_id: 'native-main',
+                    message: {
+                        id: 'child-message', type: 'message', role: 'assistant', model: 'claude',
+                        content: [], container: null, context_management: null, stop_reason: 'end_turn', stop_sequence: null,
+                        usage: { input_tokens: 0, output_tokens: 0, cache_creation: null,
+                            cache_creation_input_tokens: null, cache_read_input_tokens: null, inference_geo: null,
+                            iterations: null, server_tool_use: null, service_tier: null, speed: null },
+                    },
+                } satisfies SDKAssistantMessage & { isApiErrorMessage: boolean; apiErrorStatus: number };
+                yield sidechainError;
+                yield { type: 'result', subtype: 'success', is_error: false, session_id: 'native-main', result: 'completed', num_turns: 1, total_cost_usd: 0, duration_ms: 1, duration_api_ms: 1 } as SDKMessage;
+            },
+            close() {}, async setPermissionMode() {}, async setModel() {}, async setMaxThinkingTokens() {},
+            supportedCommands: async () => [], supportedModels: async () => [],
+        };
+        // Only consumed SDK controls are implemented at this external process boundary.
+        const createQuery = () => query as Query;
+        await claudeRemoteAgentSdk({
+            sessionId: null, transcriptPath: null, path: '/tmp', claudeExecutablePath: '/tmp/claude',
+            canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }), isAborted: () => false,
+            nextMessage: async () => {
+                if (sent) return null;
+                sent = true;
+                return { message: 'hello', mode: makeMode({ claudeRemoteAgentSdkEnabled: true }) };
+            },
+            onReady() {}, onSessionFound() {}, onMessage() {},
+            onRateLimitEvent: async (details) => { failures.push(details); },
+            onQuotaEvidence: async (windows) => { quota.push(...windows); },
+            createQuery,
+        });
+        expect(failures).toEqual([]);
+        expect(quota.length).toBeGreaterThan(0);
+    });
+
     const runAgentSdkStreamForCompactionEvents = async (
         streamMessages: unknown[],
         options?: Readonly<{ initialMessage?: string }>,
@@ -119,7 +164,7 @@ describe('claudeRemoteAgentSdk stream events', () => {
         });
     });
 
-    it('accepts a prompt when the Agent SDK input API takes custody, even if the query later fails', async () => {
+    it('keeps a prompt accepted after its exact native acknowledgment even if the query later fails', async () => {
         const onPromptAcceptedByProvider = vi.fn();
         const onPromptTransportFailure = vi.fn();
         let didSendPrompt = false;
@@ -127,6 +172,7 @@ describe('claudeRemoteAgentSdk stream events', () => {
             async *[Symbol.asyncIterator]() {
                 const consumed = await (params.prompt as AsyncIterable<unknown>)[Symbol.asyncIterator]().next();
                 if (consumed.done) throw new Error('expected claimed prompt');
+                yield { ...(consumed.value as object), isReplay: true, session_id: 'native-session' };
                 throw new Error('SDK stopped after accepting prompt input');
             },
             close: vi.fn(),
@@ -169,7 +215,7 @@ describe('claudeRemoteAgentSdk stream events', () => {
         expect(onPromptTransportFailure).not.toHaveBeenCalled();
     });
 
-    it('does not depend on the Agent SDK child-process stdin implementation to accept prompt custody', async () => {
+    it('waits for native acknowledgment without depending on the SDK child-process stdin implementation', async () => {
         const onPromptAcceptedByProvider = vi.fn();
         let didSendPrompt = false;
         let acceptedAtCreateQuery = -1;
@@ -179,6 +225,8 @@ describe('claudeRemoteAgentSdk stream events', () => {
                 async *[Symbol.asyncIterator]() {
                     const consumed = await (params.prompt as AsyncIterable<unknown>)[Symbol.asyncIterator]().next();
                     if (consumed.done) throw new Error('expected Agent SDK prompt');
+                    expect(onPromptAcceptedByProvider).not.toHaveBeenCalled();
+                    yield { ...(consumed.value as object), isReplay: true, session_id: 'native-session' };
                     yield { type: 'result' } as any;
                 },
                 close: vi.fn(),
@@ -230,10 +278,14 @@ describe('claudeRemoteAgentSdk stream events', () => {
         let secondPromptArrivedBeforeResult = false;
         const steerabilityChanges: boolean[] = [];
         const interrupt = vi.fn(async () => {});
+        const accepted = vi.fn();
+        const onMessage = vi.fn();
         const createQuery = vi.fn((params: any) => ({
             async *[Symbol.asyncIterator]() {
                 const promptIterator = (params.prompt as AsyncIterable<unknown>)[Symbol.asyncIterator]();
-                await promptIterator.next();
+                const first = await promptIterator.next();
+                if (first.done) throw new Error('Expected initial prompt');
+                yield { ...(first.value as object), isReplay: true, session_id: 'native-session' };
                 const timeout = Symbol('timeout');
                 const second = await Promise.race([
                     promptIterator.next(),
@@ -242,6 +294,7 @@ describe('claudeRemoteAgentSdk stream events', () => {
                 if (second !== timeout && !second.done) {
                     receivedSecondPrompt = second.value;
                     secondPromptArrivedBeforeResult = true;
+                    yield { ...(second.value as object), isReplay: true, session_id: 'native-session' };
                 }
                 yield { type: 'result' } as any;
             },
@@ -264,7 +317,7 @@ describe('claudeRemoteAgentSdk stream events', () => {
             nextMessage: async () => {
                 nextMessageCall += 1;
                 if (nextMessageCall === 1) {
-                    return { message: 'initial', mode: makeMode({ claudeRemoteAgentSdkEnabled: true }) };
+                    return { message: 'initial', mode: makeMode({ claudeRemoteAgentSdkEnabled: true }), userMessageLocalIds: ['initial-local'] };
                 }
                 if (nextMessageCall === 2) {
                     return {
@@ -278,7 +331,8 @@ describe('claudeRemoteAgentSdk stream events', () => {
             },
             onReady: () => {},
             onSessionFound: () => {},
-            onMessage: () => {},
+            onMessage,
+            onPromptAcceptedByProvider: accepted,
             onInFlightSteerAvailabilityChange: (available: boolean) => steerabilityChanges.push(available),
             createQuery,
         } as any);
@@ -291,6 +345,8 @@ describe('claudeRemoteAgentSdk stream events', () => {
         }));
         expect(interrupt).not.toHaveBeenCalled();
         expect(steerabilityChanges).toContain(true);
+        expect(accepted.mock.calls.map(([outcome]) => outcome.userMessageLocalIds)).toEqual([['initial-local'], ['steer-local']]);
+        expect(onMessage.mock.calls.some(([message]) => message.type === 'user')).toBe(false);
     });
 
     it('interrupts the active Agent SDK turn before streaming an exact interrupt-and-send action', async () => {

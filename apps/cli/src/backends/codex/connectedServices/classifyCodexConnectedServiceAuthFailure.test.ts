@@ -1,8 +1,186 @@
 import { describe, expect, it } from 'vitest';
 
-import { classifyCodexConnectedServiceAuthFailure } from './classifyCodexConnectedServiceAuthFailure';
+import { buildUsageLimitIssueFingerprint, type SessionRuntimeIssueV1 } from '@happier-dev/protocol';
+import { createSessionTurnLifecycle } from '@/agent/runtime/session/turn/lifecycle';
+import { createFakeAcpRuntimeBackend } from '@/testkit/backends/acpRuntimeBackend';
+import { createApprovedPermissionHandler } from '@/testkit/backends/permissionHandler';
+import { createBasicSessionClientWithOverrides } from '@/testkit/backends/sessionFixtures';
+import { createTestAcpRuntime } from '@/testkit/backends/acpRuntime';
+import { MessageBuffer } from '@/ui/ink/messageBuffer';
+import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
+import {
+  reportConnectedServiceRuntimeAuthFailureToDaemon,
+  resetConnectedServiceRuntimeAuthFailureReportDedupeForTests,
+} from '@/daemon/connectedServices/runtimeAuth/reportConnectedServiceRuntimeAuthFailureToDaemon';
+import {
+  attachCodexRuntimeAuthFailureIssue,
+  classifyCodexConnectedServiceAuthFailure,
+  createCodexRuntimeAuthFailureTurnHook,
+  readCodexRuntimeAuthClassification,
+} from './classifyCodexConnectedServiceAuthFailure';
 
 describe('classifyCodexConnectedServiceAuthFailure', () => {
+  it.each([
+    { label: 'invalid failure kind', overrides: { kind: 'provider-private-kind' }, expected: null },
+    {
+      label: 'nonfinite timing and private provider data',
+      overrides: {
+        resetsAtMs: Number.POSITIVE_INFINITY,
+        retryAfterMs: Number.NaN,
+        planType: 'access_token=private-value',
+        rateLimits: { authorization: 'Bearer private-value' },
+      },
+      expected: { kind: 'usage_limit', resetsAtMs: null, retryAfterMs: null, planType: null, rateLimits: null },
+    },
+  ])('normalizes attached runtime failure classifications: $label', ({ overrides, expected }) => {
+    const error = Object.assign(new Error('Provider display error'), {
+      runtimeAuthClassification: {
+        kind: 'usage_limit', serviceId: 'openai-codex', profileId: 'work', groupId: null,
+        resetsAtMs: null, planType: 'plus', rateLimits: null, source: 'structured_provider_error',
+        ...overrides,
+      },
+    });
+    const classification = readCodexRuntimeAuthClassification(error);
+    if (expected === null) expect(classification).toBeNull();
+    else expect(classification).toMatchObject(expected);
+  });
+
+  it.each([
+    { type: 'usage_limit_reached', message: 'Usage limit reached' },
+    { code: 'token_invalidated', message: 'unexpected status 401 Unauthorized: Your authentication token has been invalidated. Please try signing in again.' },
+  ])('reports an accepted ACP failure before its durable failure write settles ($message)', async (providerError) => {
+    resetConnectedServiceRuntimeAuthFailureReportDedupeForTests();
+    const outboxDir = await createTempDir('happier-codex-accepted-failure-report-');
+    let releaseWrite!: () => void;
+    const blockedWrite = new Promise<void>((resolve) => { releaseWrite = resolve; });
+    const classification = classifyCodexConnectedServiceAuthFailure({
+      providerErrorPath: true, serviceId: 'openai-codex', profileId: 'work', groupId: null,
+      error: { error: providerError },
+    });
+    if (!classification) throw new Error('Missing provider classification');
+    const error = Object.assign(new Error(providerError.message), { runtimeAuthClassification: classification });
+    let acceptedIssue: SessionRuntimeIssueV1 | null = null;
+    let notifiedClassification: unknown = null;
+    let failureSettled = false;
+    const lifecycle = createSessionTurnLifecycle({
+      sessionId: 'codex-blocked-failure-write',
+      enqueueSessionTurn: async (mutation) => {
+        if (mutation.action !== 'fail') return;
+        acceptedIssue = mutation.issue ?? null;
+        await blockedWrite;
+      },
+    });
+    const backend = createFakeAcpRuntimeBackend({
+      sendPrompt: async () => {
+        backend.emit({ type: 'status', status: 'running' });
+        throw error;
+      },
+    });
+    const runtime = createTestAcpRuntime({
+      provider: 'codex', directory: '/tmp',
+      session: createBasicSessionClientWithOverrides({
+        sessionTurnLifecycle: lifecycle,
+        sendAgentMessage: (provider, body) => {
+          void lifecycle.observeAcpLifecycleMarker({ provider, body }).pendingWrite;
+        },
+      }),
+      messageBuffer: new MessageBuffer(), mcpServers: {},
+      permissionHandler: createApprovedPermissionHandler(), onThinkingChange: () => {},
+      ensureBackend: async () => backend,
+      hooks: {
+        onTurnFailure: createCodexRuntimeAuthFailureTurnHook(async (acceptedClassification) => {
+          await reportConnectedServiceRuntimeAuthFailureToDaemon({
+            sessionId: 'codex-blocked-failure-write', classification: acceptedClassification,
+            reportOutboxDir: outboxDir,
+            notify: async (body) => {
+              notifiedClassification = body.classification;
+              return { ok: true, result: { status: 'switch_reason_disabled' }, recoveryReceipt: {
+                reportId: body.reportId, attemptId: 'accepted-attempt', transition: 'terminal', eventLocalId: 'accepted-event',
+              } };
+            },
+          });
+        }),
+      },
+    });
+    let failure: Promise<boolean> | null = null;
+    try {
+      await runtime.startOrLoad({ resumeId: null });
+      runtime.beginTurn();
+      await expect(runtime.sendPrompt('exhausted account')).rejects.toBe(error);
+      failure = runtime.failTurn(error).finally(() => { failureSettled = true; });
+      await expect.poll(() => notifiedClassification).not.toBeNull();
+      expect(failureSettled).toBe(false);
+      if (!acceptedIssue) throw new Error('Missing accepted canonical issue');
+      expect(notifiedClassification).toMatchObject({
+        runtimeIssueFingerprint: buildUsageLimitIssueFingerprint(acceptedIssue),
+      });
+    } finally {
+      releaseWrite();
+      await failure;
+      await runtime.reset();
+      resetConnectedServiceRuntimeAuthFailureReportDedupeForTests();
+      await removeTempDir(outboxDir);
+    }
+  });
+
+  it('attaches the accepted ACP lifecycle issue fingerprint to the original classified error', async () => {
+    const classification = classifyCodexConnectedServiceAuthFailure({
+      providerErrorPath: true,
+      serviceId: 'openai-codex',
+      profileId: 'work',
+      groupId: null,
+      error: { error: { type: 'usage_limit_reached', message: 'Usage limit reached' } },
+    });
+    if (!classification) throw new Error('Missing provider classification');
+    const error = Object.assign(new Error('Usage limit reached'), { runtimeAuthClassification: classification });
+    let acceptedIssue: SessionRuntimeIssueV1 | null = null;
+    const lifecycle = createSessionTurnLifecycle({
+      sessionId: 'codex-accepted-failure',
+      enqueueSessionTurn: async (mutation) => {
+        if (mutation.action === 'fail' && mutation.issue) acceptedIssue = mutation.issue;
+      },
+    });
+    const backend = createFakeAcpRuntimeBackend({
+      sendPrompt: async () => {
+        backend.emit({ type: 'status', status: 'running' });
+        throw error;
+      },
+    });
+    const runtime = createTestAcpRuntime({
+      provider: 'codex',
+      directory: '/tmp',
+      session: createBasicSessionClientWithOverrides({
+        sessionTurnLifecycle: lifecycle,
+        sendAgentMessage: (provider, body) => {
+          void lifecycle.observeAcpLifecycleMarker({ provider, body }).pendingWrite;
+        },
+      }),
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {},
+      permissionHandler: createApprovedPermissionHandler(),
+      onThinkingChange: () => {},
+      ensureBackend: async () => backend,
+      hooks: {
+        onTurnFailure: async ({ error: failed, issue }) => {
+          if (issue) attachCodexRuntimeAuthFailureIssue(failed, issue);
+        },
+      },
+    });
+    try {
+      await runtime.startOrLoad({ resumeId: null });
+      runtime.beginTurn();
+      await expect(runtime.sendPrompt('exhausted account')).rejects.toBe(error);
+      await runtime.failTurn(error);
+      if (!acceptedIssue) throw new Error('Missing accepted canonical issue');
+      expect(error.runtimeAuthClassification).toMatchObject({
+        runtimeIssueFingerprint: buildUsageLimitIssueFingerprint(acceptedIssue),
+      });
+    } finally {
+      await runtime.reset();
+    }
+    expect(error.runtimeAuthClassification).toMatchObject({ kind: classification.kind });
+  });
+
   it('classifies ChatGPT account model incompatibility as plan-invalid recovery evidence', () => {
     const result = classifyCodexConnectedServiceAuthFailure({
       providerErrorPath: true,

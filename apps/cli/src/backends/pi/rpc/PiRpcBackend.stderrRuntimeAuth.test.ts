@@ -4,6 +4,13 @@ import { HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY } from '@/daemon/connected
 import { resetConnectedServiceRuntimeAuthFailureReportDedupeForTests } from '@/daemon/connectedServices/runtimeAuth/reportConnectedServiceRuntimeAuthFailureToDaemon';
 
 import { PiRpcBackend } from './PiRpcBackend';
+import { createSessionTurnLifecycle } from '@/agent/runtime/session/turn/lifecycle';
+import type { SessionTurnMutationV1 } from '@/api/session/mutations/sessionMutationTypes';
+import { createTestAcpRuntime } from '@/testkit/backends/acpRuntime';
+import { createFakeAcpRuntimeBackend } from '@/testkit/backends/acpRuntimeBackend';
+import { createApprovedPermissionHandler } from '@/testkit/backends/permissionHandler';
+import { createBasicSessionClientWithOverrides } from '@/testkit/backends/sessionFixtures';
+import { MessageBuffer } from '@/ui/ink/messageBuffer';
 
 const mockNotifyDaemonConnectedServiceRuntimeAuthFailure = vi.hoisted(() => vi.fn(async () => ({})));
 vi.mock('@/daemon/controlClient', () => ({
@@ -271,7 +278,7 @@ describe('PiRpcBackend stderr runtime-auth detection', () => {
     }));
   });
 
-  it('emits a generic recovery status when the daemon report has a typed diagnostic but no transcript event', async () => {
+  it('keeps retry-scheduled diagnostic fallback out of terminal turn status', async () => {
     mockNotifyDaemonConnectedServiceRuntimeAuthFailure.mockResolvedValueOnce(
       createScheduledRuntimeAuthRecoveryReport({ includeTranscriptEvent: false }),
     );
@@ -279,6 +286,20 @@ describe('PiRpcBackend stderr runtime-auth detection', () => {
     const priv = backend as unknown as PrivateStderrBackend;
     const messages: unknown[] = [];
     backend.onMessage((message) => messages.push(message));
+    const transport = createFakeAcpRuntimeBackend();
+    backend.onMessage((message) => transport.emit(message));
+    const mutations: SessionTurnMutationV1[] = [];
+    const sessionTurnLifecycle = createSessionTurnLifecycle({ sessionId: 'pi-diagnostic-fallback',
+      enqueueSessionTurn: async (mutation) => { mutations.push(mutation); } });
+    const runtime = createTestAcpRuntime({ provider: 'pi', directory: '/tmp',
+      session: { ...createBasicSessionClientWithOverrides({ sendAgentMessage: (provider, body) => {
+        void sessionTurnLifecycle.observeAcpLifecycleMarker({ provider, body }).pendingWrite;
+      } }), sessionTurnLifecycle }, messageBuffer: new MessageBuffer(), mcpServers: {},
+      permissionHandler: createApprovedPermissionHandler(), onThinkingChange: () => {},
+      ensureBackend: async () => transport });
+    await runtime.startOrLoad({ resumeId: null });
+    runtime.beginTurn();
+    transport.emit({ type: 'status', status: 'running' });
 
     await priv.reportPiRuntimeAuthFailureToDaemon({
       kind: 'usage_limit',
@@ -291,11 +312,14 @@ describe('PiRpcBackend stderr runtime-auth detection', () => {
       source: 'structured_provider_error',
     });
 
+    await runtime.flushTurn();
+    expect(mutations.filter((mutation) => mutation.action === 'fail')).toEqual([]);
     expect(messages).toContainEqual({
-      type: 'status',
-      status: 'error',
-      detail: expect.stringContaining('retry scheduled'),
+      type: 'terminal-output',
+      data: expect.stringContaining('retry scheduled'),
     });
+    expect(messages).not.toContainEqual(expect.objectContaining({ type: 'status', status: 'error' }));
+    await runtime.reset();
   });
 
   it('detects plain stderr usage-limit marker names', () => {

@@ -4,6 +4,7 @@ import type { EnhancedMode } from "./loop";
 import { logger } from "@/ui/logger";
 import type { JsRuntime } from "./runClaude";
 import type { SessionHookData } from "./utils/startHookServer";
+import { ClaudeToolHookCorrelation } from './utils/claudeToolHookCorrelation';
 import type { ClaudeStatuslineRuntimeReconcileInput } from "./statusline/applyClaudeStatuslineUpdate";
 import type { PermissionMode } from "@/api/types";
 import { randomUUID } from "node:crypto";
@@ -329,6 +330,8 @@ export class Session {
     /** Terminal host metadata for this CLI process, when launched by tmux/daemon wrappers. */
     readonly terminalRuntime: TerminalRuntimeFlags | null;
     readonly defaultSystemPromptText: string | undefined;
+    readonly observeClaudePermissionTranscript: ((value: unknown) => void) | undefined;
+    readonly claudeToolHookCorrelation = new ClaudeToolHookCorrelation();
 
     sessionId: string | null;
     transcriptPath: string | null = null;
@@ -411,6 +414,7 @@ export class Session {
         startedBy?: 'daemon' | 'terminal',
         terminalRuntime?: TerminalRuntimeFlags | null,
         defaultSystemPromptText?: string,
+        observeClaudePermissionTranscript?: (value: unknown) => void,
         precomputedMcpBridge?: { mcpServers: Record<string, McpServerConfig>; stop: () => void } | null,
         reportSessionMetadataToDaemon?: SessionMetadataDaemonReporter | null,
         runtimeActivityContributions?: Readonly<{
@@ -420,6 +424,7 @@ export class Session {
     }) {
         this.path = opts.path;
         this.client = opts.client;
+        this.observeClaudePermissionTranscript = opts.observeClaudePermissionTranscript;
         this.unregisterConnectedServiceAuthGroupRuntimeControl = this.client.registerSessionRuntimeControls?.({
             applyConnectedServiceAuthGeneration: this.applyConnectedServiceAuthGeneration,
         }) ?? (() => {});
@@ -550,6 +555,7 @@ export class Session {
      * Cleanup resources (call when session is no longer needed)
      */
     cleanup = (): void => {
+        this.claudeToolHookCorrelation.clear();
         this.unregisterConnectedServiceAuthGroupRuntimeControl();
         this.unregisterConnectedServiceAuthGroupRuntimeControl = () => {};
         this.connectedServiceExactApplicationHandler = null;
@@ -931,8 +937,17 @@ export class Session {
     }
 
     onClaudeSessionHook = (data: SessionHookData): void => {
+        this.claudeToolHookCorrelation.observePreToolUse(data);
         for (const callback of this.claudeSessionHookCallbacks) {
             callback(data);
+        }
+        if (isSidechainSessionHook(data)) return;
+        const event = data.hook_event_name ?? data.hookEventName;
+        if (event === 'PostToolUse' || event === 'PostToolUseFailure') {
+            const id = data.tool_use_id ?? data.toolUseId;
+            if (typeof id === 'string') this.claudeToolHookCorrelation.delete(id);
+        } else if (event === 'Stop' || event === 'StopFailure' || event === 'SessionEnd' || event === 'UserPromptSubmit') {
+            this.claudeToolHookCorrelation.clear();
         }
     }
 
@@ -1039,6 +1054,7 @@ export class Session {
      * Clear the current session ID (used by /clear command)
      */
     clearSessionId = (): void => {
+        this.claudeToolHookCorrelation.clear();
         this.sessionId = null;
         this.transcriptPath = null;
         updateMetadataBestEffort(

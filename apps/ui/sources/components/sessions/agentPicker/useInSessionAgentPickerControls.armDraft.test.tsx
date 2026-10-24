@@ -6,6 +6,7 @@ import { renderHook } from '@/dev/testkit/hooks/renderHook';
 import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { existingSessionDraftSemanticValues } from '@/sync/domains/input/drafts/existingSessionDraftSemanticValues';
+import { writeExistingSessionDraft } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 import type { SessionArmedAgentContinuation } from '@/sync/domains/input/draftValues/sessionDraftValueTypes';
 import { continueSessionWithArmedAgent } from '@/sync/domains/session/input/continueSessionWithArmedAgent';
 
@@ -98,8 +99,10 @@ type HookProps = Readonly<{
     source?: SessionAgentContinuationSourceState;
 }>;
 
+let controlsRenderCount = 0;
+
 async function renderControls(props: HookProps = {}) {
-    const hook = await renderHook((hookProps: HookProps) => useInSessionAgentPickerControls({
+    const hook = await renderHook((hookProps: HookProps) => (controlsRenderCount += 1, useInSessionAgentPickerControls({
         sessionId: 'session-1',
         accountScope: SCOPE,
         currentAgentId: hookProps.currentAgentId ?? 'claude',
@@ -117,7 +120,7 @@ async function renderControls(props: HookProps = {}) {
             machineId: 'machine-1',
             cwd: '/repo',
         },
-    }), { initialProps: props });
+    })), { initialProps: props });
     // Let the inspections answer so the rail decision is settled.
     await act(async () => { await Promise.resolve(); });
     await act(async () => { await Promise.resolve(); });
@@ -215,6 +218,21 @@ describe('useInSessionAgentPickerControls arm draft', () => {
         await act(async () => { await Promise.resolve(); });
         expect(stale.getCurrent().armedContinuation).toBeNull();
         expect(readPersistedArm()).toBeUndefined();
+    });
+
+    it('does not re-render the composer owner for draft text keystrokes', async () => {
+        const hook = await renderControls();
+        await armTarget(hook, 'agent:codex');
+        const rendersBefore = controlsRenderCount;
+
+        await act(async () => {
+            writeExistingSessionDraft({ scope: SCOPE, sessionId: 'session-1', patch: { text: 'h' } });
+            writeExistingSessionDraft({ scope: SCOPE, sessionId: 'session-1', patch: { text: 'he' } });
+        });
+
+        expect(controlsRenderCount).toBe(rendersBefore);
+        expect(hook.getCurrent().armedContinuation).toEqual(armedIntentFor('codex'));
+        await hook.unmount();
     });
 
     it('keeps the armed Agent across a remount, exactly as the draft text already survives one', async () => {

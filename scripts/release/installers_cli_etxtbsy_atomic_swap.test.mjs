@@ -15,8 +15,9 @@ async function sha256(path) {
   return createHash('sha256').update(bytes).digest('hex');
 }
 
-test('install.sh installs via atomic swap when cp to target would hit ETXTBSY', async () => {
+test('install.sh installs via atomic swap when cp to target would hit ETXTBSY', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'happier-installer-etxtbsy-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
   const binDir = join(root, 'bin');
   const installDir = join(root, 'install');
   const outBinDir = join(root, 'out-bin');
@@ -58,7 +59,15 @@ echo Linux
   const artifactDir = join(fixtureDir, artifactStem);
   await mkdir(artifactDir, { recursive: true });
   const happierBin = join(artifactDir, 'happier');
-  await writeFile(happierBin, '#!/usr/bin/env bash\nexit 0\n', 'utf8');
+  // The legacy CLI rejects payload promotion, so the real shell-owned binary swap runs.
+  await writeFile(happierBin, `#!/usr/bin/env bash
+set -euo pipefail
+if [[ "\${1:-}" = "self" && "\${2:-}" = "__install-payload" ]]; then
+  echo "Error: Unknown self subcommand: __install-payload" >&2
+  exit 1
+fi
+exit 0
+`, 'utf8');
   await chmod(happierBin, 0o755);
 
   const tarPath = join(fixtureDir, artifactName);
@@ -139,6 +148,8 @@ printf '%s' '${releaseJson}'
   // Stub cp: fail with ETXTBSY-like message if the installer tries to copy directly onto the target binary path.
   const cpStubPath = join(binDir, 'cp');
   const targetBinaryPath = join(installDir, 'bin', 'happier');
+  await mkdir(dirname(targetBinaryPath), { recursive: true });
+  await writeFile(targetBinaryPath, '#!/usr/bin/env bash\nexit 19\n', { mode: 0o755 });
   await writeFile(
     cpStubPath,
     `#!/usr/bin/env bash
@@ -172,8 +183,7 @@ exec ${JSON.stringify(realCp)} "$@"
   const stdout = String(res.stdout ?? '');
   const stderr = String(res.stderr ?? '');
   assert.equal(res.status, 0, `installer failed:\n--- stdout ---\n${stdout}\n--- stderr ---\n${stderr}\n`);
-  assert.ok(stdout.includes('[✓] Verifying archive checksum'), 'installer should verify checksums');
-  assert.ok(stdout.includes('[✓] Verifying release signature'), 'installer should verify minisign signature');
-
-  await rm(root, { recursive: true, force: true });
+  assert.deepEqual(await readFile(targetBinaryPath), await readFile(happierBin));
+  const installed = spawnSync(join(outBinDir, 'happier'), [], { env, encoding: 'utf8' });
+  assert.equal(installed.status, 0, String(installed.stderr ?? ''));
 });

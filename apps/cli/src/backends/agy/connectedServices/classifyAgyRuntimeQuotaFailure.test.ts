@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { buildUsageLimitIssueFingerprint, type SessionRuntimeIssueV1 } from '@happier-dev/protocol';
+import { createSessionTurnLifecycle } from '@/agent/runtime/session/turn/lifecycle';
 import { AGENTS_CORE } from '@happier-dev/agents';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
 import { createTestAcpRuntime } from '@/testkit/backends/acpRuntime';
@@ -31,25 +33,34 @@ describe('Antigravity ACP quota diagnostic admission', () => {
     daemonBoundary.outboxRoot = outboxRoot;
     const reports: unknown[] = [];
     const sent: unknown[] = [];
+    const failedIssues: SessionRuntimeIssueV1[] = [];
+    const lifecycle = createSessionTurnLifecycle({ sessionId: 'agy-selected-recovery', enqueueSessionTurn: async (mutation) => {
+      if (mutation.action === 'fail' && mutation.issue) failedIssues.push(mutation.issue);
+    } });
     daemonBoundary.notify.mockImplementation(async (body: unknown) => {
-      expect(sent).toContainEqual(expect.objectContaining({ type: 'turn_failed' }));
+      expect(failedIssues.length).toBeGreaterThan(0);
       reports.push(body);
       return { ok: true, result: { status: 'recovery_superseded', reason: 'source_tuple_mismatch', serviceId: 'antigravity' } };
     });
     const backend = createFakeAcpRuntimeBackend();
     const runtime = createTestAcpRuntime({ provider: 'agy', directory: '/tmp', happierSessionId: 'agy-selected-recovery',
       processEnv: { HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON: JSON.stringify([{ kind: 'group', serviceId: 'antigravity', groupId: 'selected-pool', activeProfileId: 'selected-profile', fallbackProfileId: 'fallback', generation: 7, credentialRevision: 'csr_abcdefghijklmnopqrstuv' }]) },
-      session: createBasicSessionClientWithOverrides({ sendAgentMessage: (_provider, body) => { sent.push(body); } }),
+      session: createBasicSessionClientWithOverrides({ sessionTurnLifecycle: lifecycle, sendAgentMessage: (provider, body) => { sent.push(body); void lifecycle.observeAcpLifecycleMarker({ provider, body }).pendingWrite; } }),
       messageBuffer: new MessageBuffer(), mcpServers: {}, permissionHandler: createApprovedPermissionHandler(), onThinkingChange: () => {}, ensureBackend: async () => backend,
       hooks: await agent.getAcpRuntimeTurnHooks() });
     try {
       await runtime.startOrLoad({ resumeId: null });
-      runtime.beginTurn();
-      backend.emit({ type: 'model-output', textDelta: diagnostic });
-      const error = await runtime.sendPrompt('continue').then(() => null, (error: unknown) => error);
-      await runtime.failTurn(error);
-      await runtime.flushTurn();
-      expect(reports).toEqual([expect.objectContaining({ sessionId: 'agy-selected-recovery', classification: expect.objectContaining({ serviceId: 'antigravity', profileId: 'selected-profile', groupId: 'selected-pool', groupGeneration: 7, credentialRevision: 'csr_abcdefghijklmnopqrstuv' }) })]);
+      for (let occurrence = 0; occurrence < 2; occurrence += 1) {
+        runtime.beginTurn();
+        backend.emit({ type: 'model-output', textDelta: diagnostic });
+        const error = await runtime.sendPrompt('continue').then(() => null, (error: unknown) => error);
+        await runtime.failTurn(error);
+        await runtime.flushTurn();
+      }
+      await expect.poll(() => reports.length).toBe(2);
+      expect(reports.map((report) => (report as { classification: { runtimeIssueFingerprint?: string } }).classification.runtimeIssueFingerprint).sort())
+        .toEqual(failedIssues.map((issue) => buildUsageLimitIssueFingerprint(issue)).sort());
+      expect(reports).toEqual(expect.arrayContaining([expect.objectContaining({ sessionId: 'agy-selected-recovery', classification: expect.objectContaining({ serviceId: 'antigravity', profileId: 'selected-profile', groupId: 'selected-pool', groupGeneration: 7, credentialRevision: 'csr_abcdefghijklmnopqrstuv' }) })]));
       expect(sent).toContainEqual(expect.objectContaining({ type: 'turn_failed', issue: expect.objectContaining({ usageLimit: expect.objectContaining({ connectedService: expect.objectContaining({ profileId: 'selected-profile', groupId: 'selected-pool' }) }) }) }));
     } finally {
       await runtime.reset();

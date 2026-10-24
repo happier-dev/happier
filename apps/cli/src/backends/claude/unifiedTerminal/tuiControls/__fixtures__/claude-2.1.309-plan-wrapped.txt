@@ -1,0 +1,24 @@
+
+  ⎿  /plan to preview
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+
+  ────────────────────────────────────────────────────────────────────────────
+   Ready to code?
+
+   Here is Claude's plan:
+  ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+   Synthetic Plan (Approval Prompt Test)
+
+   Context                                                                    ↓
+  ────────────────────────────────────────────────────────────────────────────
+   Claude has written up a plan and is ready to execute. Would you like to
+   proceed?
+
+   ❯ 1. Yes, and switch to BYPASS PERMISSIONS (no further prompts) for this
+        session
+     2. Yes, manually approve edits
+     3. Tell Claude what to change
+        shift+tab to approve with this feedback
+
+   ctrl+g to edit in Vim ·
+   /tmp/issue671-native-probe/claude-home/plans/magical-popping-crayon.md

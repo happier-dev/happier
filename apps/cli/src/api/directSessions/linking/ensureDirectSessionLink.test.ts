@@ -479,6 +479,7 @@ describe('ensureDirectSessionLink', () => {
         metadata: {
           flavor: 'opencode',
           path: '/repo',
+          opencodeSessionId: 'oc_connected',
         },
         respawn: {
           version: 1,
@@ -575,6 +576,7 @@ describe('ensureDirectSessionLink', () => {
         metadata: {
           flavor: 'opencode',
           path: '/repo',
+          opencodeSessionId: 'oc_existing',
         },
         respawn: {
           version: 1,

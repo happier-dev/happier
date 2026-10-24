@@ -1,4 +1,4 @@
-import { ConnectedServiceCredentialRevisionV1Schema } from '@happier-dev/protocol';
+import { buildUsageLimitIssueFingerprint, ConnectedServiceCredentialRevisionV1Schema, type SessionRuntimeIssueV1 } from '@happier-dev/protocol';
 import { classifyProviderLimitEvidence } from '@/daemon/connectedServices/quotas/normalization';
 import type { ConnectedServiceRuntimeFailureInput, ConnectedServiceRuntimeFailureClassification } from '@/daemon/connectedServices/runtimeAuth/types';
 import type { AcpRuntimeSessionClient } from '@/agent/acp/sessionClient';
@@ -51,11 +51,12 @@ export function classifyAgyAssistantTurnFailure(params: Readonly<{ text: string;
   return classification ? Object.assign(new Error(message), { runtimeAuthClassification: classification }) : null;
 }
 
-/** The daemon owns recovery; report only after the ACP turn has settled. */
-export async function reportAgyTurnFailure(params: Readonly<{ error: unknown; sessionId: string | null; session: AcpRuntimeSessionClient; processEnv: NodeJS.ProcessEnv }>): Promise<void> {
+/** Report the accepted ACP failure occurrence; the daemon owns recovery. */
+export async function reportAgyTurnFailure(params: Readonly<{ error: unknown; issue?: SessionRuntimeIssueV1 | null; sessionId: string | null; session: AcpRuntimeSessionClient; processEnv: NodeJS.ProcessEnv }>): Promise<void> {
   const selection = findConnectedServiceChildSelection(params.processEnv, 'antigravity');
   if (!selection || !params.sessionId) return;
-  const classification = classifyAgyRuntimeQuotaFailure({ target: { agentId: 'agy' }, error: params.error, selection });
+  const classified = classifyAgyRuntimeQuotaFailure({ target: { agentId: 'agy' }, error: params.error, selection });
+  const classification = classified && params.issue ? { ...classified, runtimeIssueFingerprint: buildUsageLimitIssueFingerprint(params.issue) } : classified;
   if (!classification) return;
   const report = await reportConnectedServiceRuntimeAuthFailureToDaemon({ sessionId: params.sessionId, classification, switchesThisTurn: 0, logPrefix: '[agy]' });
   if (report.report === null) logger.warn('[agy] Connected-account quota recovery could not reach the daemon');

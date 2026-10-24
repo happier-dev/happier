@@ -1,3 +1,7 @@
+import { readFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
@@ -25,6 +29,29 @@ function createDeferred(): Readonly<{ promise: Promise<void>; resolve: () => voi
 }
 
 describe('createAcpRuntime (status error surfacing)', () => {
+  it('records failed recovery-hook delivery through the default file diagnostic without leaking its error', async () => {
+    const fileSink = vi.spyOn(logger, 'infoFile').mockImplementation(() => {});
+    const backend = createFakeAcpRuntimeBackend({ sessionId: 'hook-diagnostic-session' });
+    const mutations: SessionTurnMutationV1[] = [];
+    const lifecycle = createSessionTurnLifecycle({ sessionId: 'hook-diagnostic-session',
+      enqueueSessionTurn: async (mutation) => { mutations.push(mutation); } });
+    const runtime = createAcpRuntime({ provider: 'codex', directory: '/tmp',
+      session: { ...createBasicSessionClientWithOverrides(), sessionTurnLifecycle: lifecycle },
+      messageBuffer: new MessageBuffer(), mcpServers: {}, permissionHandler: createApprovedPermissionHandler(),
+      onThinkingChange: () => {}, ensureBackend: async () => backend,
+      // Failed filesystem delivery is a genuine hook output boundary, not a mocked runtime owner.
+      hooks: { onTurnFailure: async () => { await readFile(join(tmpdir(), `private-recovery-${randomUUID()}`)); } },
+    });
+    await runtime.startOrLoad({});
+    await lifecycle.beginTurn({ provider: 'codex' });
+    runtime.beginTurn();
+    backend.emit({ type: 'status', status: 'error', detail: 'provider failed' });
+    await expect.poll(() => fileSink.mock.calls.some(([message]) => String(message).includes('accepted_turn_failure_report_unavailable'))).toBe(true);
+    expect(JSON.stringify(fileSink.mock.calls)).not.toContain('private-recovery-');
+    expect(mutations.filter((mutation) => mutation.action === 'fail')).toHaveLength(1);
+    await runtime.reset();
+  });
+
   afterEach(() => {
     delete process.env.HAPPIER_ACP_FAILURE_TRACE;
     vi.restoreAllMocks();

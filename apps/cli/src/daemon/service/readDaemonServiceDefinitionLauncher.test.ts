@@ -23,8 +23,8 @@ describe('readDaemonServiceDefinitionLauncher', () => {
     })).toEqual(['/usr/local/bin/node', '/opt/happier/dist/index.mjs']);
     expect(readDaemonServiceDefinitionLauncher({
       platform: 'win32',
-      contents: renderWindowsScheduledTaskWrapperPs1({ programArgs: ['C:\\Users\\Jo "J"\\happier.exe', 'daemon', 'start-sync'] }),
-    })).toEqual(['C:\\Users\\Jo "J"\\happier.exe']);
+      contents: renderWindowsScheduledTaskWrapperPs1({ programArgs: ['C:\\Users\\Jo "$HOME"`\\happier.exe', 'daemon', 'start-sync'] }),
+    })).toEqual(['C:\\Users\\Jo "$HOME"`\\happier.exe']);
   });
 
   it('reports a replacement whenever the launcher switches between a user-installed CLI and the managed CLI, in either direction (R13)', () => {

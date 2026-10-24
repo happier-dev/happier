@@ -3,7 +3,25 @@ import {
     CLAUDE_REMOTE_PROVIDER_FIELDS,
 } from '@happier-dev/agents';
 
-import type { ProviderSettingsPlugin } from '@/agents/providers/shared/providerSettingsPlugin';
+import type { ProviderSettingEnumOption, ProviderSettingsPlugin } from '@/agents/providers/shared/providerSettingsPlugin';
+
+const responseLocationOptions = [
+    {
+        id: 'app_and_terminal',
+        title: { key: 'settingsProviders.plugins.claude.responseLocationOptions.app_and_terminal.title' },
+        subtitle: { key: 'settingsProviders.plugins.claude.responseLocationOptions.app_and_terminal.subtitle' },
+    },
+    {
+        id: 'app_only',
+        title: { key: 'settingsProviders.plugins.claude.responseLocationOptions.app_only.title' },
+        subtitle: { key: 'settingsProviders.plugins.claude.responseLocationOptions.app_only.subtitle' },
+    },
+    {
+        id: 'terminal_only',
+        title: { key: 'settingsProviders.plugins.claude.responseLocationOptions.terminal_only.title' },
+        subtitle: { key: 'settingsProviders.plugins.claude.responseLocationOptions.terminal_only.subtitle' },
+    },
+] as const satisfies readonly ProviderSettingEnumOption[];
 
 export const CLAUDE_PROVIDER_SETTINGS_PLUGIN: ProviderSettingsPlugin = {
     providerId: 'claude',
@@ -51,6 +69,20 @@ export const CLAUDE_PROVIDER_SETTINGS_PLUGIN: ProviderSettingsPlugin = {
                     kind: 'boolean',
                     title: { key: 'settingsProviders.plugins.claude.fields.claudeUnifiedTerminalEnabled.title' },
                     subtitle: { key: 'settingsProviders.plugins.claude.fields.claudeUnifiedTerminalEnabled.subtitle' },
+                },
+                {
+                    key: 'claudeUnifiedTerminalQuestionResponseLocation',
+                    kind: 'enum',
+                    title: { key: 'settingsProviders.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.title' },
+                    subtitle: { key: 'settingsProviders.plugins.claude.fields.claudeUnifiedTerminalQuestionResponseLocation.subtitle' },
+                    enumOptions: responseLocationOptions,
+                },
+                {
+                    key: 'claudeUnifiedTerminalPermissionResponseLocation',
+                    kind: 'enum',
+                    title: { key: 'settingsProviders.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.title' },
+                    subtitle: { key: 'settingsProviders.plugins.claude.fields.claudeUnifiedTerminalPermissionResponseLocation.subtitle' },
+                    enumOptions: responseLocationOptions,
                 },
                 {
                     key: 'claudeUnifiedTerminalHost',

@@ -38,6 +38,7 @@ export async function runOpenCode(opts: StandardAcpProviderRunOptions & {
     serverBaseUrlExplicit: false,
   };
   const backendMode = resolveOpenCodeBackendModeFromEnv(process.env);
+  const hasHostedTerminal = backendMode === 'server' && hasHostedAttachedTerminalPresentation(opts.terminalRuntime);
   let serverRuntime: ReturnType<typeof createOpenCodeServerRuntime> | null = null;
   let currentSession: Parameters<NonNullable<StandardAcpProviderConfig['onAfterStart']>>[0]['session'] | null = null;
   let currentRuntime: Parameters<NonNullable<StandardAcpProviderConfig['onAfterStart']>>[0]['runtime'] | null = null;
@@ -49,7 +50,7 @@ export async function runOpenCode(opts: StandardAcpProviderRunOptions & {
     support: resolveOpenCodeLocalControlSupport({
       backendMode,
       hasTTY: process.stdout.isTTY && process.stdin.isTTY,
-      hasHostedTerminal: hasHostedAttachedTerminalPresentation(opts.terminalRuntime),
+      hasHostedTerminal,
     }),
     startingMode: opts.startingMode ?? (opts.startedBy === 'terminal' && backendMode === 'server' ? 'local' : 'remote'),
     terminalRuntime: opts.terminalRuntime,
@@ -88,6 +89,7 @@ export async function runOpenCode(opts: StandardAcpProviderRunOptions & {
     agentMessageType: 'opencode',
     startRuntimeBeforeFirstPrompt: backendMode === 'server',
     machineMetadata: initialMachineMetadata,
+    terminalHostOwner: hasHostedTerminal ? 'runtime' : 'startup',
     terminalDisplay: OpenCodeTerminalDisplay,
     resolveRuntimeDirectory: ({ session, metadata }) => session.getMetadataSnapshot()?.path ?? metadata.path,
     resolveKeepAliveMode: localControl.resolveKeepAliveMode,

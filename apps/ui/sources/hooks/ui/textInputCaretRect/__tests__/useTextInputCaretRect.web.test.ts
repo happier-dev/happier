@@ -1,3 +1,4 @@
+import * as React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, standardCleanup } from '@/dev/testkit';
 
@@ -321,6 +322,119 @@ describe('useTextInputCaretRect (web)', () => {
             top: 235,
             height: 18,
         });
+    });
+
+    it('does not measure the caret while no consumer demands the rect', async () => {
+        const textarea = createMockTextarea();
+        const inputRef = createInputRef(createMockHandle(textarea));
+        const { useTextInputCaretRect } = await import('../useTextInputCaretRect.web');
+
+        const hook = await renderHook(
+            (props: { start: number }) =>
+                useTextInputCaretRect({
+                    inputRef,
+                    selection: { start: props.start, end: props.start },
+                    enabled: true,
+                    demanded: false,
+                }),
+            { initialProps: { start: 1 } },
+        );
+        await hook.rerender({ start: 2 });
+
+        expect(hook.getCurrent()).toBeNull();
+        expect(mockedGetCaretCoordinates).not.toHaveBeenCalled();
+        expect(textarea.addEventListener).not.toHaveBeenCalled();
+    });
+
+    it('measures in the layout phase of the commit that turns demand on, before paint', async () => {
+        const textarea = createMockTextarea();
+        const inputRef = createInputRef(createMockHandle(textarea));
+        const { useTextInputCaretRect } = await import('../useTextInputCaretRect.web');
+        const phases: string[] = [];
+        mockedGetCaretCoordinates.mockImplementation(() => {
+            phases.push('measure');
+            return { top: 20, left: 30, height: 18 };
+        });
+
+        const hook = await renderHook(
+            (props: { demanded: boolean }) => {
+                const rect = useTextInputCaretRect({
+                    inputRef,
+                    selection: { start: 4, end: 4 },
+                    enabled: true,
+                    demanded: props.demanded,
+                });
+                // Declared after the hook: runs after its layout effect in the same commit.
+                React.useLayoutEffect(() => {
+                    phases.push('layout');
+                });
+                React.useEffect(() => {
+                    phases.push('passive');
+                });
+                return rect;
+            },
+            { initialProps: { demanded: false } },
+        );
+        phases.length = 0;
+
+        await hook.rerender({ demanded: true });
+
+        expect(phases.slice(0, 2)).toEqual(['measure', 'layout']);
+        expect(hook.getCurrent()).toEqual({ left: 130, top: 220, height: 18 });
+    });
+
+    it('keeps the rect identity when a remeasure yields the same geometry', async () => {
+        const textarea = createMockTextarea();
+        const inputRef = createInputRef(createMockHandle(textarea));
+        const { useTextInputCaretRect } = await import('../useTextInputCaretRect.web');
+        let renders = 0;
+
+        const hook = await renderHook(
+            (props: { start: number }) => {
+                renders += 1;
+                return useTextInputCaretRect({
+                    inputRef,
+                    selection: { start: props.start, end: props.start },
+                    enabled: true,
+                });
+            },
+            { initialProps: { start: 5 } },
+        );
+        const first = hook.getCurrent();
+        const rendersBefore = renders;
+
+        // e.g. a character typed over a selection leaves the caret on the same pixel.
+        await hook.rerender({ start: 6 });
+
+        expect(mockedGetCaretCoordinates).toHaveBeenCalledTimes(2);
+        expect(hook.getCurrent()).toBe(first);
+        // Only the caller's own rerender: an equal measurement must not schedule another render.
+        expect(renders - rendersBefore).toBe(1);
+    });
+
+    it('subscribes to textarea scroll once per demanded period, not once per caret move', async () => {
+        const textarea = createMockTextarea();
+        const inputRef = createInputRef(createMockHandle(textarea));
+        const { useTextInputCaretRect } = await import('../useTextInputCaretRect.web');
+
+        const hook = await renderHook(
+            (props: { start: number }) =>
+                useTextInputCaretRect({
+                    inputRef,
+                    selection: { start: props.start, end: props.start },
+                    enabled: true,
+                }),
+            { initialProps: { start: 1 } },
+        );
+        await hook.rerender({ start: 2 });
+        await hook.rerender({ start: 3 });
+
+        expect(textarea.addEventListener).toHaveBeenCalledTimes(1);
+
+        // Scrolling remeasures against the latest caret position.
+        mockedGetCaretCoordinates.mockClear();
+        (textarea as unknown as { _triggerScroll: () => void })._triggerScroll();
+        expect(mockedGetCaretCoordinates).toHaveBeenCalledWith(textarea, 3);
     });
 
     it('defaults enabled to true when not specified', async () => {

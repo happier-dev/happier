@@ -124,5 +124,7 @@ export function useConnectionHealth() {
     return {
         ...health,
         ...presentation,
+        endpointStatus: endpointConnectivity.status,
+        nextRetryAt: endpointConnectivity.nextRetryAt,
     };
 }

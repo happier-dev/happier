@@ -1614,34 +1614,62 @@ function Copy-OrDownloadInstallerAsset {
   Invoke-InstallerWebRequestWithRetry -Uri $Source -Headers $GitHubHeaders -OutFile $DestinationPath
 }
 
-function Test-InstallerTransientWebException {
+function Test-InstallerWebExceptionStatus {
   param (
-    [Parameter(Mandatory = $true)] [System.Management.Automation.ErrorRecord] $ErrorRecord
+    [Parameter(Mandatory = $true)] [System.Management.Automation.ErrorRecord] $ErrorRecord,
+    [Parameter(Mandatory = $true)] [int[]] $StatusCode
   )
 
-  $retryableStatusCodes = @(404, 502, 503, 504)
   $exception = $ErrorRecord.Exception
-  $statusCode = $null
+  $actualStatusCode = $null
   if ($exception -and $exception.Response -and $exception.Response.StatusCode) {
     try {
-      $statusCode = [int]$exception.Response.StatusCode
+      $actualStatusCode = [int]$exception.Response.StatusCode
     }
     catch {
-      $statusCode = $null
+      $actualStatusCode = $null
     }
   }
-  if ($null -ne $statusCode -and $retryableStatusCodes -contains $statusCode) {
+  if ($null -ne $actualStatusCode -and $StatusCode -contains $actualStatusCode) {
     return $true
   }
 
   $message = if ($exception) { [string]$exception.Message } else { [string]$ErrorRecord }
-  foreach ($code in $retryableStatusCodes) {
+  foreach ($code in $StatusCode) {
     if ($message -match "(^|\D)$code(\D|$)") {
       return $true
     }
   }
 
   return $false
+}
+
+function Test-InstallerTransientWebException {
+  param (
+    [Parameter(Mandatory = $true)] [System.Management.Automation.ErrorRecord] $ErrorRecord
+  )
+
+  $retryableStatusCodes = @(404, 502, 503, 504)
+  return Test-InstallerWebExceptionStatus -ErrorRecord $ErrorRecord -StatusCode $retryableStatusCodes
+}
+
+# GitHub rejects an expired or revoked token with 401 even for public releases, so a rejected
+# credential drops the token and the caller retries anonymously. Transient failures keep it.
+function Remove-InstallerGitHubTokenAfterFailure {
+  param (
+    [hashtable] $Headers,
+    [Parameter(Mandatory = $true)] [System.Management.Automation.ErrorRecord] $ErrorRecord
+  )
+
+  if (-not $Headers -or -not $Headers.ContainsKey("Authorization")) {
+    return $false
+  }
+  if (-not (Test-InstallerWebExceptionStatus -ErrorRecord $ErrorRecord -StatusCode 401)) {
+    return $false
+  }
+  Write-Warning "GitHub rejected GITHUB_TOKEN/HAPPIER_GITHUB_TOKEN (401); retrying without the token." -WarningAction Continue
+  $Headers.Remove("Authorization")
+  return $true
 }
 
 function Invoke-InstallerWebRequestWithRetry {
@@ -1670,6 +1698,10 @@ function Invoke-InstallerWebRequestWithRetry {
         return Invoke-WebRequest @params
       }
       catch {
+        if (Remove-InstallerGitHubTokenAfterFailure -Headers $Headers -ErrorRecord $_) {
+          $attempt -= 1
+          continue
+        }
         if ($attempt -ge $retryDelaysMs.Length -or -not (Test-InstallerTransientWebException -ErrorRecord $_)) {
           throw
         }
@@ -1698,6 +1730,10 @@ function Invoke-InstallerRestMethodWithRetry {
       return Invoke-RestMethod @params
     }
     catch {
+      if (Remove-InstallerGitHubTokenAfterFailure -Headers $Headers -ErrorRecord $_) {
+        $attempt -= 1
+        continue
+      }
       if ($attempt -ge $retryDelaysMs.Length -or -not (Test-InstallerTransientWebException -ErrorRecord $_)) {
         throw
       }

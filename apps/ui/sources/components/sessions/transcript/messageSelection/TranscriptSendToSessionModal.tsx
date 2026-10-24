@@ -2,8 +2,7 @@ import * as React from 'react';
 import { View, useWindowDimensions } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import { DEFAULT_AGENT_ID, resolveAgentIdFromFlavor } from '@/agents/catalog/catalog';
-import { AgentIcon } from '@/agents/registry/AgentIcon';
+import { SessionListIdentity } from '@/components/sessions/shell/SessionListIdentity';
 import { SelectionList, type SelectionListOption, type SelectionListStep } from '@/components/ui/selectionList';
 import { Text } from '@/components/ui/text/Text';
 import { useKeyboardHeight } from '@/hooks/ui/useKeyboardHeight';
@@ -116,10 +115,6 @@ function appendSessionListTargets(
     }
 }
 
-function resolveSessionAgentId(session: TranscriptSendToSessionTargetSource) {
-    return resolveAgentIdFromFlavor(session.metadata?.flavor) ?? DEFAULT_AGENT_ID;
-}
-
 const TranscriptSendToSessionRowMeta = React.memo(function TranscriptSendToSessionRowMeta(
     props: Readonly<{ session: TranscriptSendToSessionTarget }>,
 ) {
@@ -211,9 +206,11 @@ export const TranscriptSendToSessionModal = React.memo(function TranscriptSendTo
             label: getSessionName(session),
             subtitle: getSessionSubtitle(session),
             icon: (
-                <AgentIcon
-                    agentId={resolveSessionAgentId(session)}
-                    size={20}
+                <SessionListIdentity
+                    session={session}
+                    display="agentLogo"
+                    avatarSize={20}
+                    agentLogoSize={20}
                     testID={`transcript-send-to-session-agent-logo-${session.id}`}
                 />
             ),

@@ -521,7 +521,7 @@ export function createAcpRuntime(params: {
    */
   hooks?: {
     classifyAssistantTurnFailure?: (params: Readonly<{ text: string; lastMessageText: string; processEnv: NodeJS.ProcessEnv }>) => Error | null;
-    onTurnFailure?: (params: Readonly<{ error: unknown; sessionId: string | null; session: AcpRuntimeSessionClient; processEnv: NodeJS.ProcessEnv }>) => Promise<void>;
+    onTurnFailure?: (params: Readonly<{ error: unknown; issue?: SessionRuntimeIssueV1 | null; sessionId: string | null; session: AcpRuntimeSessionClient; processEnv: NodeJS.ProcessEnv }>) => Promise<void>;
     onBeginTurn?: () => void;
     onToolResult?: (params: { toolName: string; callId: string; result: unknown }) => void;
     onPermissionRequest?: (params: { permissionId: string; toolName: string; payload: unknown; reason: string }) => void;
@@ -1203,6 +1203,13 @@ export function createAcpRuntime(params: {
     });
   };
 
+  const notifyAcceptedTurnFailure = (error: unknown, issue: SessionRuntimeIssueV1): void => {
+    void params.hooks?.onTurnFailure?.({ error, issue, sessionId: params.happierSessionId ?? null,
+      session: params.session, processEnv: params.processEnv ?? process.env }).catch(() => {
+      logger.infoFile('[ACP] accepted_turn_failure_report_unavailable');
+    });
+  };
+
   const beginStatusErrorSurface = (
     detailRaw: unknown,
     turn: TerminalTurnSnapshot = captureTerminalTurn(),
@@ -1216,8 +1223,10 @@ export function createAcpRuntime(params: {
       providerTurnId: turn.providerTurnId,
       error: detailRaw,
       session: { sessionTurnLifecycle: params.session.sessionTurnLifecycle },
+      onFailureTurn: ({ issue }) => notifyAcceptedTurnFailure(detailRaw, issue),
     });
     return Promise.all([compatibilityMarkerId, issuePromise]).then(([markerId, issue]) => {
+      if (!params.session.sessionTurnLifecycle && issue) notifyAcceptedTurnFailure(detailRaw, issue);
       if (markerId || !params.session.sessionTurnLifecycle) {
         return {
           type: 'turn_failed',
@@ -1289,6 +1298,7 @@ export function createAcpRuntime(params: {
       providerTurnId: failedTurn.providerTurnId,
       error: issueError,
       session: { sessionTurnLifecycle: params.session.sessionTurnLifecycle },
+      onFailureTurn: ({ issue }) => notifyAcceptedTurnFailure(detailRaw, issue),
     });
     try {
       await flushCapturedTurnTranscript(turn, { reason: 'abort', interruptedReason: 'prompt-error' });
@@ -1321,7 +1331,7 @@ export function createAcpRuntime(params: {
       lifecycleAvailable: !!params.session.sessionTurnLifecycle,
       compatibilityMarkerSent,
     });
-    await params.hooks?.onTurnFailure?.({ error: detailRaw, sessionId: params.happierSessionId ?? null, session: params.session, processEnv: params.processEnv ?? process.env });
+    if (!params.session.sessionTurnLifecycle && issue) notifyAcceptedTurnFailure(detailRaw, issue);
     clearToolCallCache();
     params.turnAssistantPreviewTracker?.reset();
     return true;
@@ -1577,13 +1587,14 @@ export function createAcpRuntime(params: {
         if (msg.status === 'error') {
           const statusErrorTurn = captureTerminalTurn();
           const turn = turnState;
-          const shouldSurfaceFailure = !turn.turnAborted && !isAbortLikeError(msg.detail);
+          const failureError = msg.error ?? msg.detail;
+          const shouldSurfaceFailure = !turn.turnAborted && !isAbortLikeError(failureError);
           turn.turnAborted = true;
           if (!turn.turnInFlight) retireCurrentTurn();
           void enqueueTurnSettlement(async () => {
             const transcriptFlush = flushCapturedTurnTranscript(turn, { reason: 'abort', interruptedReason: 'status-error' });
             const statusErrorSettlement = shouldSurfaceFailure
-              ? beginStatusErrorSurface(msg.detail, statusErrorTurn)
+              ? beginStatusErrorSurface(failureError, statusErrorTurn)
               : beginStatusAbortSurface(statusErrorTurn);
             try {
               await transcriptFlush;

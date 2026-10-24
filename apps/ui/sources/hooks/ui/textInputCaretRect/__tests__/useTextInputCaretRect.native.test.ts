@@ -174,6 +174,28 @@ describe('useTextInputCaretRect (native)', () => {
         expect(capturedHandler.onSelectionChange).toBeDefined();
     });
 
+    it('keeps the focus-scoped subscription and tracks the caret while the rect is not demanded (D38)', async () => {
+        const inputRef = createInputRef();
+        const { useTextInputCaretRect } = await import('../useTextInputCaretRect.native');
+
+        const hook = await renderHook(() =>
+            useTextInputCaretRect({ inputRef, enabled: true, demanded: false }),
+        );
+
+        // The trigger keystroke's selection event precedes demand; it must already be consumed.
+        expect(capturedHandler.onSelectionChange).toBeDefined();
+        await act(async () => {
+            capturedHandler.onSelectionChange?.({
+                target: 42,
+                selection: {
+                    start: { x: 50, y: 10, position: 1 },
+                    end: { x: 50, y: 30, position: 1 },
+                },
+            });
+        });
+        expect(hook.getCurrent()).toEqual({ left: 150, top: 210, height: 20 });
+    });
+
     it('clears rect when enabled transitions from true to false', async () => {
         const inputRef = createInputRef();
         const { useTextInputCaretRect } = await import('../useTextInputCaretRect.native');

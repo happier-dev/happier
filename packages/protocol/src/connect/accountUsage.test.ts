@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 
 import * as accountUsageModule from './accountUsage.js';
-import { SealedConnectedServiceQuotaSnapshotV1Schema } from './connectedServiceSchemas.js';
+import { ConnectedServiceQuotaSnapshotV1Schema, SealedConnectedServiceQuotaSnapshotV1Schema } from './connectedServiceSchemas.js';
 import * as protocol from '../index.js';
 import { ReleasedProviderAccountUsageSnapshotV1Schema, ReleasedSealedProviderAccountUsageSnapshotV1Schema, ReleasedProviderAccountUsagePlainWriteSchema } from './fixtures/releasedV0216AccountUsage.js';
 
@@ -361,6 +361,31 @@ describe('provider account usage protocol', () => {
       }),
       meters: snapshot.meters,
     }));
+  });
+
+  it('preserves organization quota scope without replacing the provider account identity', () => {
+    const recordKey = {
+      providerId: 'claude', accountSubjectId: 'acct-user', subjectKind: 'account',
+      quotaScope: 'organization', quotaScopeId: 'org-work',
+    };
+    const projected = accountUsageModule.projectProviderAccountUsageToConnectedServiceQuotaSnapshot(
+      accountUsageModule.ProviderAccountUsageSnapshotV1Schema.parse(createSnapshot({ recordKey })),
+      { serviceId: 'anthropic', profileId: 'work', bindingKind: 'profile' },
+    );
+
+    expect(ConnectedServiceQuotaSnapshotV1Schema.parse(projected)).toMatchObject({
+      activeAccountId: 'acct-user',
+      providerOrganizationId: 'org-work',
+    });
+    expect(ReleasedProviderAccountUsageSnapshotV1Schema.safeParse(createSnapshot({ recordKey })).success).toBe(true);
+  });
+
+  it('does not invent organization context for account-only quota snapshots', () => {
+    const projected = accountUsageModule.projectProviderAccountUsageToConnectedServiceQuotaSnapshot(
+      accountUsageModule.ProviderAccountUsageSnapshotV1Schema.parse(createSnapshot()),
+      { serviceId: 'openai-codex', profileId: 'work', bindingKind: 'profile' },
+    );
+    expect(projected).not.toHaveProperty('providerOrganizationId');
   });
 
   it('does not export the connected-service quota back-projection helper', () => {

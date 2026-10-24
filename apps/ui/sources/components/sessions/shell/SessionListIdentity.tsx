@@ -1,6 +1,8 @@
 import * as React from 'react';
+import { useUnistyles } from 'react-native-unistyles';
+import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 
-import { DEFAULT_AGENT_ID, getAgentPickerIconScale, resolveAgentIdFromFlavor } from '@/agents/catalog/catalog';
+import { getAgentPickerIconScale } from '@/agents/catalog/catalog';
 import { AgentIcon } from '@/agents/registry/AgentIcon';
 import { Avatar } from '@/components/ui/avatar/Avatar';
 import { useSetting } from '@/sync/domains/state/storage';
@@ -29,15 +31,19 @@ export const SessionListIdentity = React.memo(function SessionListIdentity(props
     color?: string;
     testID?: string;
 }>) {
+    const { theme } = useUnistyles();
     if (props.display === 'none') return null;
+    const agentId = resolveAgentIdFromSessionMetadata(props.session.metadata);
     if (props.display === 'agentLogo') {
-        const agentId = resolveAgentIdFromFlavor(props.session.metadata?.flavor) ?? DEFAULT_AGENT_ID;
+        const color = props.monochrome === true ? theme.colors.text.tertiary : props.color;
         return (
             <AgentIcon
                 agentId={agentId}
                 size={props.agentLogoSize}
-                color={props.color}
-                style={{ transform: [{ scale: getAgentPickerIconScale(agentId) }] }}
+                // A logo is already a single tint, so the avatar's greyscale has no effect here:
+                // a stopped session takes the dimmer ink instead.
+                color={color}
+                style={{ transform: [{ scale: agentId ? getAgentPickerIconScale(agentId) : 1 }] }}
                 testID={props.testID ?? `session-list-agent-logo-${props.session.id}`}
             />
         );
@@ -47,7 +53,7 @@ export const SessionListIdentity = React.memo(function SessionListIdentity(props
             id={getSessionAvatarId(props.session)}
             size={props.avatarSize}
             monochrome={props.monochrome}
-            flavor={props.session.metadata?.flavor}
+            flavor={agentId}
             hasUnreadMessages={false}
         />
     );

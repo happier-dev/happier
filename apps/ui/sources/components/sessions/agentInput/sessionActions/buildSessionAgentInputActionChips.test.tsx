@@ -63,6 +63,30 @@ describe('buildSessionAgentInputActionChips', () => {
         actionIdsState.value = [];
     });
 
+    it('seeds the action with the composer text current when the chip is pressed', () => {
+        actionIdsState.value = ['review.start'];
+        let composerText = 'typed before the chips were built';
+
+        const [chip] = buildSessionAgentInputActionChips({
+            sessionId: 'session-1',
+            defaultBackendTarget: { kind: 'builtInAgent', agentId: 'claude' } as const,
+            defaultBackendId: 'claude',
+            getInstructionsText: () => composerText,
+        });
+        composerText = 'typed after the chips were built';
+        const rendered = chip!.render({
+            chipStyle: () => null,
+            showLabel: true,
+            iconColor: '#000',
+            textStyle: {},
+            countTextStyle: {},
+            popoverAnchorRef: { current: null },
+        }) as React.ReactElement<{ onPress?: () => void }>;
+        rendered.props.onPress?.();
+
+        expect(JSON.stringify(createSessionActionDraftMock.mock.calls.at(-1)?.[1])).toContain('typed after the chips were built');
+    });
+
     it('seeds UI-normalized permission defaults for execution-run action chips', () => {
         actionIdsState.value = ['review.start', 'subagents.delegate.start'];
 
@@ -70,7 +94,7 @@ describe('buildSessionAgentInputActionChips', () => {
             sessionId: 'session-1',
             defaultBackendTarget: { kind: 'builtInAgent', agentId: 'claude' } as const,
             defaultBackendId: 'claude',
-            instructionsText: '',
+            getInstructionsText: () => '',
         });
 
         const expectations = [

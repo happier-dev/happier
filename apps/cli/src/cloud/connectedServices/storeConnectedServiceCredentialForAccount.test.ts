@@ -43,6 +43,22 @@ function createApi(overrides: Partial<ConnectedServiceCredentialStorageApi>): Co
 }
 
 describe('storeConnectedServiceCredentialForAccount', () => {
+  it('publishes the credential organization as sealed public metadata', async () => {
+    const record = buildConnectedServiceCredentialRecord({
+      now: 1000, serviceId: 'claude-subscription', profileId: 'work', kind: 'oauth',
+      oauth: { accessToken: 'access', refreshToken: 'refresh', idToken: null, scope: null, tokenType: null,
+        providerAccountId: 'same-user', providerEmail: null, raw: { claudeAiOauth: { organizationUuid: 'org-a' } } },
+    });
+    let metadata: unknown;
+    await storeConnectedServiceCredentialForAccount({
+      api: createApi({ registerConnectedServiceCredentialSealed: async (params) => {
+        metadata = params.metadata;
+        return { success: true, credentialRevision: revision };
+      } }), credentials: createCredentials(), record,
+    });
+    expect(metadata).toMatchObject({ providerAccountId: 'same-user', providerOrganizationId: 'org-a' });
+  });
+
   it('reports an unresolved native import write as unknown even without cancellation', async () => {
     let reads = 0;
     await expect(storeConnectedServiceCredentialForAccount({

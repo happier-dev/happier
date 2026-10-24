@@ -59,3 +59,9 @@ tauri-plugin-deep-link = "=2.4.9"
 
 [dev-dependencies]
 tempfile = "3.20"
+tauri = { version = "2.12.1", features = ["test"] }
+
+# AppKit requires its window tests to run on the process's main thread.
+[[test]]
+name = "macos_window_frame_test"
+harness = false

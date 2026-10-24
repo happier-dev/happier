@@ -4,7 +4,23 @@
 const { randomBytes } = require('node:crypto');
 const { mkdirSync, writeFileSync, chmodSync } = require('node:fs');
 const { join } = require('node:path');
-const { generateKeyPairSync, sign } = require('node:crypto');
+const { createHash, createHmac, createPrivateKey, createPublicKey, generateKeyPairSync, sign } = require('node:crypto');
+
+// The app publishes the Account content key at sign-in (apps/ui/sources/auth/flows/getToken.ts);
+// approval verifies retained key material against it. Same derivation as @happier-dev/protocol.
+function deriveContentKeyFromSeed(seed) {
+  let I = createHmac('sha512', Buffer.from('Happy EnCoder Master Seed', 'utf8')).update(seed).digest();
+  I = createHmac('sha512', I.subarray(32)).update(Buffer.concat([Buffer.from([0]), Buffer.from('content', 'utf8')])).digest();
+  return I.subarray(0, 32);
+}
+
+function contentPublicKeyFromSeed(seed) {
+  // crypto_box_seed_keypair: secret scalar = SHA-512(contentSeed)[0..32], public = X25519 base point multiple.
+  const scalar = createHash('sha512').update(deriveContentKeyFromSeed(seed)).digest().subarray(0, 32);
+  const pkcs8 = Buffer.concat([Buffer.from('302e020100300506032b656e04220420', 'hex'), scalar]);
+  const spki = createPublicKey(createPrivateKey({ key: pkcs8, format: 'der', type: 'pkcs8' })).export({ type: 'spki', format: 'der' });
+  return spki.subarray(spki.length - 32);
+}
 
 function argvValue(args, name) {
   const idx = args.indexOf(name);
@@ -88,11 +104,17 @@ async function main() {
   const publicKeyRaw = extractEd25519PublicKeyRawFromSpkiDer(spkiDer);
   const challenge = randomBytes(32);
   const signature = sign(null, challenge, privateKey);
+  const pkcs8Der = privateKey.export({ type: 'pkcs8', format: 'der' });
+  const signingSeed = Buffer.from(pkcs8Der.subarray(pkcs8Der.length - 32));
+  const contentPublicKey = contentPublicKeyFromSeed(signingSeed);
+  const contentBinding = Buffer.concat([Buffer.from('Happy content key v1\u0000', 'utf8'), contentPublicKey]);
 
   const authRes = await postJson(`${serverUrl}/v1/auth`, {
     publicKey: publicKeyRaw.toString('base64'),
     challenge: challenge.toString('base64'),
     signature: Buffer.from(signature).toString('base64'),
+    contentPublicKey: contentPublicKey.toString('base64'),
+    contentPublicKeySig: Buffer.from(sign(null, contentBinding, privateKey)).toString('base64'),
   });
 
   const token = String(authRes?.token ?? '').trim();
@@ -100,8 +122,9 @@ async function main() {
     throw new Error('missing token from /v1/auth response');
   }
 
-  // 2) Write credentials to enable `happier auth approve` (token-only usage).
-  const secret = randomBytes(32).toString('base64');
+  // 2) Write legacy credentials for `happier auth approve`. The legacy secret is the
+  // Account's Ed25519 signing seed, so approval can verify it still owns this Account.
+  const secret = signingSeed.toString('base64');
   const serverDir = join(homeDir, 'servers', activeServerId);
   const keyPath = join(serverDir, 'access.key');
   mkdirSync(serverDir, { recursive: true });

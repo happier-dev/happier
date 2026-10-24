@@ -7,6 +7,16 @@ import { describe, expect, it } from 'vitest';
 import { createCodexAppServerStreamEventBridge } from './streamEventBridge';
 
 describe('createCodexAppServerStreamEventBridge', () => {
+    it('keeps native completed command output in the tool result when no started event was observed', () => {
+        const updates = createCodexAppServerStreamEventBridge().onNotification({ method: 'item/completed', params: {
+            item: { id: 'native-command', type: 'commandExecution', command: 'pwd', cwd: '/project',
+                status: 'completed', aggregatedOutput: '/project\n', exitCode: 0 },
+        } });
+        expect(updates).toEqual([
+            expect.objectContaining({ type: 'tool-call', input: expect.not.objectContaining({ aggregatedOutput: expect.anything() }) }),
+            expect.objectContaining({ type: 'tool-result', output: expect.objectContaining({ stdout: '/project\n', exitCode: 0 }) }),
+        ]);
+    });
     it('maps provider-native user messages while preserving Happier correlation', () => {
         const bridge = createCodexAppServerStreamEventBridge();
 

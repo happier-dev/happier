@@ -1,5 +1,6 @@
 import {
   ConnectedServiceCredentialRecordV1Schema,
+  buildConnectedServiceCredentialMetadata,
   sealConnectedServiceCredentialCiphertext,
   type ConnectedServiceCredentialRecordV1,
   type ConnectedServiceCredentialRevisionBoundaryV1,
@@ -108,12 +109,7 @@ export async function persistRefreshedCredential(input: Readonly<{
     serviceId: input.binding.serviceId,
     profileId: input.binding.profileId,
     sealed: { format: 'account_scoped_v1', ciphertext: sealedCiphertext },
-    metadata: {
-      kind: input.updated.kind,
-      providerEmail: input.updated.kind === 'oauth' ? input.updated.oauth.providerEmail : null,
-      providerAccountId: input.updated.kind === 'oauth' ? input.updated.oauth.providerAccountId : null,
-      expiresAt: input.updated.expiresAt,
-    },
+    metadata: buildConnectedServiceCredentialMetadata(input.updated),
     expectedCredentialRevision: input.source.credentialRevision,
     refreshLeaseOwnerId: input.refreshLeaseOwnerId,
   });

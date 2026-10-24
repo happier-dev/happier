@@ -98,7 +98,19 @@ Both refusals name WSL2 as the way to get a `tmux`- or zellij-hosted unified ses
 
 ## Unified-only settings
 
-Two settings under **Claude Code** exist because the unified runtime can see Claude’s dialogs. They do nothing in the other runtimes.
+These settings under **Claude Code** apply to the unified runtime.
+
+### Questions and approvals (development)
+
+In development source, **Answer questions** and **Approve permission requests** are independent controls. Each offers **App and terminal** (default), **App prompts**, and **Terminal only**. These controls are separate from the classic local permission bridge toggle. An existing explicit bridge opt-out is preserved until you choose a response location.
+
+**App prompts** keeps questions waiting for an answer in Happier and uses the existing app request flow for permissions. Claude still owns its native permission controls and may accept a terminal response; that response retires the app request too. **Terminal only** leaves responses in Claude Code.
+
+With **App and terminal** selected, a question is one request shared by the app and Claude's native form. Answering in either place retires the other prompt. Multiple questions, checkboxes, and freeform answers use the native form's own controls. Happier preserves a conflicting draft or selection you have already made in the terminal and asks you to finish there rather than replacing it.
+
+In that flow, permission requests offer the choices Claude actually displays, including their exact remembered scope. Plan approval uses those native choices too; freeform feedback requests a plan revision. If Happier cannot recognize a native form safely, it directs you to the terminal.
+
+These changes are not a statement of preview or stable availability. The response-location controls require the updated Happier CLI and app.
 
 ### Large-session resume
 

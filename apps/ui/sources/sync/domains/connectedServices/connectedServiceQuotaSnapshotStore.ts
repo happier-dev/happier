@@ -1,3 +1,16 @@
+import { getConnectedServiceCredentialSealed } from '@/sync/api/account/apiConnectedServicesV2';
+import { getConnectedServiceCredentialPlain } from '@/sync/api/account/apiConnectedServicesV3';
+import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
+import {
+    assertConnectedServiceCredentialRecordBinding,
+    buildConnectedServiceCredentialMetadata,
+    connectedServiceUsageRequiresOrganizationId,
+    ConnectedServiceCredentialRecordV1Schema,
+    isProviderAccountUsageOrganizationContextMatch,
+    openConnectedServiceCredentialCiphertext,
+    type ProviderAccountUsageOrganizationContext,
+    type ConnectedServiceCredentialRecordV1,
+} from '@happier-dev/protocol';
 import {
     getConnectedServiceQuotaSnapshotSealed,
     requestConnectedServiceQuotaSnapshotRefresh,
@@ -12,13 +25,16 @@ import { connectedServiceQuotaRecoveryCreditConsume } from '@/sync/ops/connected
 import { sanitizeEndpointErrorMessage } from '@/sync/runtime/connectivity/sanitizeEndpointErrorMessage';
 import { isRuntimeActive, subscribeToRuntimeActiveChange } from '@/utils/runtime/isRuntimeActive';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
-import type { CredentialScopedAccountMode } from './useCredentialScopedAccountModeResolver';
+import { resolveAuthCredentialsScopeKey } from '@/auth/storage/resolveAuthCredentialsScopeKey';
+
 import type {
     ConnectedServiceId,
     ConnectedServiceQuotaRecoveryCreditConsumeReceiptV1,
     ConnectedServiceQuotaSnapshotV1,
 } from '@happier-dev/protocol';
 import { t } from '@/text';
+
+export type CredentialScopedAccountMode = 'plain' | 'e2ee';
 
 /**
  * Shared, module-level loader cache for connected-service quota snapshots.
@@ -239,19 +255,87 @@ export function subscribeQuotaSnapshotEntry(key: string | null, listener: () => 
     };
 }
 
+/** Remove this credential's stale projection without creating a second usage cache. */
+export function invalidateConnectedServiceQuotaSnapshotForCredential(
+    credentials: AuthCredentials,
+    record: ConnectedServiceCredentialRecordV1,
+): void {
+    const key = buildQuotaSnapshotScopeKey(resolveAuthCredentialsScopeKey(credentials), record.serviceId, record.profileId);
+    const previous = entries.get(key);
+    if (!previous) return;
+    const identity = buildConnectedServiceCredentialMetadata(record);
+    const matches = previous.snapshot && (connectedServiceUsageRequiresOrganizationId(record.serviceId)
+        ? isProviderAccountUsageOrganizationContextMatch(previous.snapshot, {
+            providerAccountId: identity.providerAccountId,
+            providerOrganizationId: identity.providerOrganizationId ?? null,
+        })
+        : Boolean(identity.providerAccountId && previous.snapshot.activeAccountId === identity.providerAccountId));
+    if (matches) return;
+
+    // Entry identity already represents this cache operation's lifetime. Removing it also
+    // prevents earlier reads or recovery-credit results from committing after this write.
+    clearPollTimer(previous);
+    entries.delete(key);
+    const current = getOrCreateEntry(key);
+    current.pollRetainCount = previous.pollRetainCount;
+    current.pollContext = previous.pollContext;
+    notify(key);
+    if (current.pollRetainCount > 0 && current.pollContext) {
+        current.loadAttempted = true;
+        void runLoad(key, current.pollContext);
+    }
+}
+
+async function readCurrentQuotaOrganizationContext(
+    ctx: QuotaSnapshotLoadContext,
+    mode: CredentialScopedAccountMode,
+): Promise<ProviderAccountUsageOrganizationContext | null> {
+    const binding = { serviceId: ctx.serviceId, profileId: ctx.profileId };
+    let record: ConnectedServiceCredentialRecordV1 | undefined;
+    if (mode === 'plain') {
+        record = (await getConnectedServiceCredentialPlain(ctx.credentials, binding))?.content.v;
+    } else {
+        const sealed = await getConnectedServiceCredentialSealed(ctx.credentials, binding);
+        if (!sealed) return null;
+        const opened = openConnectedServiceCredentialCiphertext({
+            material: resolveAccountScopedCryptoMaterialFromCredentials(ctx.credentials),
+            ciphertext: sealed.sealed.ciphertext,
+        });
+        const parsed = ConnectedServiceCredentialRecordV1Schema.safeParse(opened?.value);
+        if (!parsed.success) return null;
+        record = assertConnectedServiceCredentialRecordBinding({ binding, record: parsed.data });
+    }
+    if (!record) return null;
+    const metadata = buildConnectedServiceCredentialMetadata(record);
+    return { providerAccountId: metadata.providerAccountId, providerOrganizationId: metadata.providerOrganizationId ?? null };
+}
+
 async function runLoad(key: string, ctx: QuotaSnapshotLoadContext): Promise<ConnectedServiceQuotaSnapshotV1 | null> {
     const entry = getOrCreateEntry(key);
+    const isCurrentEntry = () => entries.get(key) === entry && isScopeActive(ctx.credentialScope);
     if (entry.loadPromise) return entry.loadPromise;
     clearPollTimer(entry);
 
     const promise = (async (): Promise<ConnectedServiceQuotaSnapshotV1 | null> => {
-        if (!isScopeActive(ctx.credentialScope)) return null;
+        if (!isCurrentEntry()) return null;
         entry.loading = true;
         entry.error = null;
         publish(key, entry);
+        const requiresOrganization = connectedServiceUsageRequiresOrganizationId(ctx.serviceId);
+        let organizationContext: ProviderAccountUsageOrganizationContext | null = null;
         try {
             const mode = await ctx.resolveAccountMode();
-            if (!isScopeActive(ctx.credentialScope)) return null;
+            if (!isCurrentEntry()) return null;
+
+            if (requiresOrganization) {
+                // Read through the same coalesced load so old relays' missing public metadata
+                // cannot let a same-user reconnect retain another organization's cloud usage.
+                organizationContext = await readCurrentQuotaOrganizationContext(ctx, mode);
+                if (!isCurrentEntry()) return null;
+                if (entry.snapshot && !isProviderAccountUsageOrganizationContextMatch(entry.snapshot, organizationContext)) {
+                    entry.snapshot = null;
+                }
+            }
 
             let opened: ConnectedServiceQuotaSnapshotV1 | null = null;
             if (mode === 'plain') {
@@ -261,38 +345,36 @@ async function runLoad(key: string, ctx: QuotaSnapshotLoadContext): Promise<Conn
                 });
             }
 
-            if (!isScopeActive(ctx.credentialScope)) return null;
+            if (!isCurrentEntry()) return null;
             if (mode !== 'plain' || !opened) {
                 const sealed = await getConnectedServiceQuotaSnapshotSealed(ctx.credentials, {
                     serviceId: ctx.serviceId,
                     profileId: ctx.profileId,
                 });
-                const fallback = sealed
+                opened = sealed
                     ? openConnectedServiceQuotaViewSnapshot(ctx.credentials, sealed.sealed, {
                         serviceId: ctx.serviceId,
                         profileId: ctx.profileId,
                     })
                     : null;
-                if (!isScopeActive(ctx.credentialScope)) return null;
-                entry.snapshot = fallback ?? (entry.refreshing ? entry.snapshot : null);
-                entry.consecutiveErrors = 0;
-                entry.nextFetchAtMs = computeNextFetchAtMs(fallback);
-                return fallback;
             }
-            if (!isScopeActive(ctx.credentialScope)) return null;
-            entry.snapshot = opened;
+            if (!isCurrentEntry()) return null;
+            if (requiresOrganization && opened && !isProviderAccountUsageOrganizationContextMatch(opened, organizationContext)) {
+                opened = null;
+            }
+            entry.snapshot = opened ?? (entry.refreshing ? entry.snapshot : null);
             entry.consecutiveErrors = 0;
             entry.nextFetchAtMs = computeNextFetchAtMs(opened);
             return opened;
         } catch (error) {
-            if (!isScopeActive(ctx.credentialScope)) return null;
+            if (!isCurrentEntry()) return null;
             entry.error = sanitizeEndpointErrorMessage(error) ?? t('common.error');
             entry.consecutiveErrors += 1;
             entry.nextFetchAtMs = Date.now() + computeErrorBackoffMs(entry.consecutiveErrors);
             if (!entry.snapshot) entry.snapshot = null;
             return null;
         } finally {
-            if (isScopeActive(ctx.credentialScope)) {
+            if (isCurrentEntry()) {
                 entry.loading = false;
                 if (entry.refreshSinceFetchedAt !== null) {
                     if (entry.error || (entry.snapshot && entry.snapshot.fetchedAt > entry.refreshSinceFetchedAt)) {
@@ -305,8 +387,10 @@ async function runLoad(key: string, ctx: QuotaSnapshotLoadContext): Promise<Conn
                 }
             }
             entry.loadPromise = null;
-            publish(key, entry);
-            schedulePolling(key);
+            if (entries.get(key) === entry) {
+                publish(key, entry);
+                schedulePolling(key);
+            }
         }
     })();
 
@@ -355,6 +439,7 @@ export function retainQuotaSnapshotPolling(key: string, ctx: QuotaSnapshotLoadCo
 export async function refreshQuotaSnapshot(key: string, ctx: QuotaSnapshotLoadContext): Promise<void> {
     activeCredentialScope = ctx.credentialScope;
     const entry = getOrCreateEntry(key);
+    const isCurrentEntry = () => entries.get(key) === entry && isScopeActive(ctx.credentialScope);
     clearPollTimer(entry);
     const previousRefresh = entry.refreshPromise;
     if (previousRefresh && entry.refreshing) {
@@ -368,15 +453,15 @@ export async function refreshQuotaSnapshot(key: string, ctx: QuotaSnapshotLoadCo
     publish(key, entry);
     const promise = Promise.resolve(previousRefresh).then(async () => {
         // A new intent waits for the cancelled request without inheriting its completion.
-        if (entry.refreshPromise !== promise || !entry.refreshing || !isScopeActive(ctx.credentialScope)) return;
+        if (entry.refreshPromise !== promise || !entry.refreshing || !isCurrentEntry()) return;
         const inFlightFetchedAt = (await entry.loadPromise
             ?.then((snapshot) => snapshot?.fetchedAt ?? 0)
             .catch(() => 0)) ?? 0;
-        if (entry.refreshPromise !== promise || !isScopeActive(ctx.credentialScope) || !entry.refreshing) return;
+        if (entry.refreshPromise !== promise || !isCurrentEntry() || !entry.refreshing) return;
         entry.refreshSinceFetchedAt = Math.max(entry.snapshot?.fetchedAt ?? 0, inFlightFetchedAt);
         try {
             const mode = await ctx.resolveAccountMode();
-            if (entry.refreshPromise !== promise || !isScopeActive(ctx.credentialScope) || !entry.refreshing) return;
+            if (entry.refreshPromise !== promise || !isCurrentEntry() || !entry.refreshing) return;
             let ok = mode === 'plain'
                 ? await requestConnectedServiceQuotaSnapshotRefreshV3(ctx.credentials, { serviceId: ctx.serviceId, profileId: ctx.profileId })
                 : await requestConnectedServiceQuotaSnapshotRefresh(ctx.credentials, { serviceId: ctx.serviceId, profileId: ctx.profileId });
@@ -384,10 +469,10 @@ export async function refreshQuotaSnapshot(key: string, ctx: QuotaSnapshotLoadCo
                 ok = await requestConnectedServiceQuotaSnapshotRefresh(ctx.credentials, { serviceId: ctx.serviceId, profileId: ctx.profileId });
             }
             if (!ok) throw new Error(t('common.error'));
-            if (entry.refreshPromise !== promise || !isScopeActive(ctx.credentialScope) || !entry.refreshing) return;
+            if (entry.refreshPromise !== promise || !isCurrentEntry() || !entry.refreshing) return;
             await runLoad(key, ctx);
         } catch (error) {
-            if (entry.refreshPromise !== promise || !isScopeActive(ctx.credentialScope) || !entry.refreshing) return;
+            if (entry.refreshPromise !== promise || !isCurrentEntry() || !entry.refreshing) return;
             entry.error = sanitizeEndpointErrorMessage(error) ?? t('common.error');
             entry.refreshSinceFetchedAt = null;
             entry.refreshing = false;
@@ -398,9 +483,9 @@ export async function refreshQuotaSnapshot(key: string, ctx: QuotaSnapshotLoadCo
     try {
         await promise;
     } finally {
-        if (entry.refreshPromise === promise) {
+        if (entries.get(key) === entry && entry.refreshPromise === promise) {
             entry.refreshPromise = null;
-            if (!isScopeActive(ctx.credentialScope) || entry.pollRetainCount === 0) {
+            if (!isCurrentEntry() || entry.pollRetainCount === 0) {
                 entry.refreshSinceFetchedAt = null;
                 entry.refreshing = false;
             }
@@ -426,6 +511,9 @@ export async function consumeQuotaRecoveryCredit(
             sourceSnapshotFetchedAtMs: entry.snapshot?.fetchedAt ?? null,
         });
         if (result.ok) {
+            if (entries.get(key) !== entry || !isScopeActive(ctx.credentialScope)) {
+                return { ok: true, receipt: result.receipt };
+            }
             entry.snapshot = result.snapshot;
             entry.error = null;
             publish(key, entry);

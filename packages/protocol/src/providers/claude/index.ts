@@ -29,3 +29,10 @@ export {
   normalizeClaudeSlashCommandName,
   readClaudeSlashCommandNames,
 } from './slashCommands.js';
+export {
+  normalizeClaudeOauthProfileEntitlement,
+  readClaudeOauthCredentialMetadata,
+  readClaudeOauthCredentialOrganizationId,
+  type ClaudeOauthCredentialMetadata,
+  type ClaudeOauthEntitlementMetadata,
+} from './oauthProfile.js';

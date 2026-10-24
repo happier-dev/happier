@@ -19,6 +19,15 @@ export function readSessionHookSidechainAgentId(data: SessionHookData): string |
   return trimmed.length > 0 ? trimmed : null;
 }
 
+/** Scope shared by SDK and transcript observations of Claude requests. */
+export function isClaudeSidechainRuntimeEvidence(value: unknown): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  const parentToolUseId = record.parent_tool_use_id ?? record.parentToolUseId;
+  return record.isSidechain === true
+    || (typeof parentToolUseId === 'string' && parentToolUseId.trim().length > 0);
+}
+
 export function isSidechainSessionHook(data: SessionHookData): boolean {
   return readSessionHookSidechainAgentId(data) !== null;
 }

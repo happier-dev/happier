@@ -1,4 +1,5 @@
 import type { Metadata, Session } from '@/sync/domains/state/storageTypes';
+import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import { computeHasUnreadActivity } from '@/sync/domains/messages/unread';
 import type {
     PrimaryTurnStatusV1,
@@ -34,7 +35,7 @@ import {
     resolveSessionListUnreadEntryActivityAt,
 } from './placement/sessionListPlacementProjection';
 import { didSessionListWorkingRetentionInputsChange } from './placement/sessionListWorkingRetention';
-import { normalizeSessionOrderingNumber, reconcileSessionLifecycleProjection } from '../sessionLifecycleProjection';
+import { reconcileSessionLifecycleProjection, reconcileSessionRequestProjection } from '../sessionLifecycleProjection';
 import {
     deriveSessionRuntimePresentationState,
     resolveSessionRuntimePresenceFields,
@@ -49,6 +50,7 @@ export interface SessionListRenderableMetadata {
     homeDir?: string | null;
     host?: string | null;
     machineId?: string | null;
+    /** Canonical Agent identity resolved before discarding full metadata evidence. */
     flavor?: string | null;
     directSessionV1?: {
         v: 1;
@@ -272,7 +274,7 @@ export function buildSessionListRenderableMetadata(metadata: Metadata | null | u
         homeDir: typeof metadata.homeDir === 'string' ? metadata.homeDir : null,
         host: typeof metadata.host === 'string' ? metadata.host : null,
         machineId: typeof metadata.machineId === 'string' ? metadata.machineId : null,
-        flavor: typeof metadata.flavor === 'string' ? metadata.flavor : null,
+        flavor: resolveAgentIdFromSessionMetadata(metadata),
         directSessionV1,
         readStateV1,
         agentActivityCounts: deriveAgentActivityCounts(agentActivityEntries.map(toAgentActivityCountable)),
@@ -437,24 +439,14 @@ function shouldPreserveSessionListRenderablePendingFlags(
     );
 }
 
-function preserveSessionListRenderablePendingFlags(
+function preserveSessionListRenderableMissingPendingFlags(
     previous: SessionListRenderableSession | undefined,
     next: SessionListRenderableSession,
 ): SessionListRenderableSession {
-    if (!previous) return next;
-    const previousObservedAt = normalizeSessionOrderingNumber(previous.pendingRequestObservedAt);
-    const nextObservedAt = normalizeSessionOrderingNumber(next.pendingRequestObservedAt);
-    const hasPreviousFlags = typeof previous.hasPendingPermissionRequests === 'boolean'
-        || typeof previous.hasPendingUserActionRequests === 'boolean';
-    const hasOlderObservation = hasPreviousFlags
-        && previousObservedAt !== null
-        && nextObservedAt !== null
-        && nextObservedAt < previousObservedAt;
-    const preserveMissingFlags = shouldPreserveSessionListRenderablePendingFlags(next, previous);
-    if (!hasOlderObservation && !preserveMissingFlags) return next;
+    if (!shouldPreserveSessionListRenderablePendingFlags(next, previous)) return next;
     return {
         ...next,
-        agentStateVersion: preserveMissingFlags ? previous.agentStateVersion : next.agentStateVersion,
+        agentStateVersion: previous.agentStateVersion,
         hasPendingPermissionRequests: previous.hasPendingPermissionRequests,
         hasPendingUserActionRequests: previous.hasPendingUserActionRequests,
         pendingRequestObservedAt: previous.pendingRequestObservedAt ?? null,
@@ -465,7 +457,10 @@ export function preserveSessionListRenderableStaleFields(
     previous: SessionListRenderableSession | undefined,
     next: SessionListRenderableSession,
 ): SessionListRenderableSession {
-    next = preserveSessionListRenderablePendingFlags(previous, reconcileSessionLifecycleProjection(previous, next));
+    next = preserveSessionListRenderableMissingPendingFlags(previous, reconcileSessionLifecycleProjection(
+        previous,
+        reconcileSessionRequestProjection(previous, next),
+    ));
     // A projection pass re-derives every renderable, so an unchanged session still arrives as a
     // fresh object. Handing that object on defeats identity all the way up the session list: the
     // row is rebuilt around it, then the array, then the whole list re-renders. Returning the
@@ -601,7 +596,10 @@ export function applySessionListRenderablePatch(
     // entry fact is re-stamped from the latest activity; keep the row's
     // existing entry time so an unread row does not move on every message.
     patched.unreadSince = resolveSessionListRenderableUnreadSince(renderable, patched);
-    return preserveSessionListRenderablePendingFlags(renderable, reconcileSessionLifecycleProjection(renderable, patched));
+    return preserveSessionListRenderableMissingPendingFlags(renderable, reconcileSessionLifecycleProjection(
+        renderable,
+        reconcileSessionRequestProjection(renderable, patched),
+    ));
 }
 
 export function isSessionListRenderablePatchNoop(

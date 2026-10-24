@@ -49,7 +49,12 @@ const WINDOWS_ACL_COMMAND_PATHS = Object.freeze({
   'icacls.exe': ['icacls.exe'],
   'powershell.exe': ['WindowsPowerShell', 'v1.0', 'powershell.exe'],
 } satisfies Readonly<Record<string, readonly string[]>>);
+const WINDOWS_ACL_POWERSHELL_ERROR_POLICY = [
+  '$ErrorActionPreference = "Stop"',
+  'trap { [Console]::Error.WriteLine($_.Exception.Message); exit 1 }',
+].join('\n');
 const WINDOWS_ACL_INSPECTION_SCRIPT = [
+  WINDOWS_ACL_POWERSHELL_ERROR_POLICY,
   '& {',
   'param([string]$Path)',
   '$acl = Get-Acl -LiteralPath $Path -ErrorAction Stop',
@@ -71,6 +76,7 @@ const WINDOWS_ACL_INSPECTION_SCRIPT = [
   '} ',
 ].join('\n');
 const WINDOWS_ACL_APPLY_SCRIPT = [
+  WINDOWS_ACL_POWERSHELL_ERROR_POLICY,
   '& {',
   'param([string]$Path, [string]$Sid, [string]$SystemSid, [string]$Kind)',
   '$acl = Get-Acl -LiteralPath $Path -ErrorAction Stop',
@@ -117,11 +123,20 @@ function commandFailure(command: string, result: WindowsProtectedAclCommandResul
   );
 }
 
+function resolveWindowsProtectedAclCommandEnvironment(command: string, nativeCommand: string): NodeJS.ProcessEnv | undefined {
+  if (command !== 'powershell.exe') return undefined;
+  // Both command runners must load modules from the selected Windows
+  // PowerShell installation, regardless of the launching shell's version.
+  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => key.toLowerCase() !== 'psmodulepath'));
+  return { ...env, PSModulePath: win32.join(win32.dirname(nativeCommand), 'Modules') };
+}
+
 function defaultRunCommand(command: string, args: readonly string[]): Promise<WindowsProtectedAclCommandResult> {
   const nativeCommand = resolveWindowsProtectedAclCommand(command);
   return new Promise((resolve, reject) => {
     execFile(nativeCommand, [...args], {
       encoding: 'utf8',
+      env: resolveWindowsProtectedAclCommandEnvironment(command, nativeCommand),
       windowsHide: true,
       maxBuffer: 1024 * 1024,
     }, (error, stdout, stderr) => {
@@ -142,6 +157,7 @@ function defaultRunCommandSync(command: string, args: readonly string[]): Window
   const nativeCommand = resolveWindowsProtectedAclCommand(command);
   const result = spawnSync(nativeCommand, [...args], {
     encoding: 'utf8',
+    env: resolveWindowsProtectedAclCommandEnvironment(command, nativeCommand),
     windowsHide: true,
     maxBuffer: 1024 * 1024,
   });
@@ -163,12 +179,12 @@ function parseCurrentUserSid(stdout: string): string {
   return match[0];
 }
 
-function parseWindowsAclSnapshot(stdout: string): WindowsAclSnapshot {
+function parseWindowsAclSnapshot(result: WindowsProtectedAclCommandResult): WindowsAclSnapshot {
   let value: unknown;
   try {
-    value = JSON.parse(stdout);
+    value = JSON.parse(result.stdout);
   } catch {
-    throw new Error('Windows protected ACL verification returned invalid JSON');
+    throw new Error(`Windows protected ACL verification returned invalid JSON (stderr ${JSON.stringify(summarizeCommandStderr(result.stderr))})`);
   }
   if (typeof value !== 'object' || value === null) {
     throw new Error('Windows protected ACL verification returned an invalid snapshot');
@@ -241,7 +257,7 @@ export function createWindowsProtectedAclBoundary(params: Readonly<{
   const verify = async (input: Readonly<{ path: string; kind: WindowsProtectedPathKind }>) => {
     const sid = await resolveSid();
     const result = await runChecked('powershell.exe', inspectionArgs(input.path));
-    verifyWindowsAclSnapshot(parseWindowsAclSnapshot(result.stdout), sid, input.path);
+    verifyWindowsAclSnapshot(parseWindowsAclSnapshot(result), sid, input.path);
   };
   return Object.freeze({
     async applyAndVerify(input) {
@@ -270,7 +286,7 @@ export function createWindowsProtectedAclBoundarySync(params: Readonly<{
   const verify = (input: Readonly<{ path: string; kind: WindowsProtectedPathKind }>) => {
     const sid = resolveSid();
     const result = runChecked('powershell.exe', inspectionArgs(input.path));
-    verifyWindowsAclSnapshot(parseWindowsAclSnapshot(result.stdout), sid, input.path);
+    verifyWindowsAclSnapshot(parseWindowsAclSnapshot(result), sid, input.path);
   };
   return Object.freeze({
     applyAndVerify(input) {

@@ -1,5 +1,6 @@
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
+import { reconcileSessionSnapshot } from '@/sync/domains/session/sessionLifecycleProjection';
 
 export type SessionApplyCoalescerConfig = Readonly<{
     enabled: boolean;
@@ -89,7 +90,12 @@ export function createSessionApplyCoalescer(params: Readonly<{
     function upsertQueued(sessions: readonly SessionApplyCoalescerSession[], options?: SessionApplyOptions): void {
         const shouldContinue = options?.shouldContinue ?? (() => true);
         for (const session of sessions) {
-            queuedSessions.set(session.id, { session, shouldContinue });
+            const queued = queuedSessions.get(session.id);
+            const previous = queued?.shouldContinue() ? queued.session : undefined;
+            queuedSessions.set(session.id, {
+                session: reconcileSessionSnapshot(previous, session),
+                shouldContinue,
+            });
         }
     }
 

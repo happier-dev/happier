@@ -29,7 +29,7 @@ async function createRecoveryHarness(program: 'cedar' | 'juniper' = 'cedar', pen
       if (pendingPost) await pendingPost;
       return new Response(JSON.stringify({ result: 'reset', cleared: ['five_hour', 'seven_day'] }));
     }
-    if (String(url).endsWith('/profile')) return new Response(JSON.stringify({ organization: { uuid: 'org' } }));
+    if (String(url).endsWith('/profile')) return new Response(JSON.stringify({ account: { uuid: 'account' }, organization: { uuid: 'org' } }));
     const recovery = program === 'cedar'
       ? { cedar_ember: { eligible: true, grants: [{ ...grant, resets_left: Math.max(0, 2 - posts.length) },
           { ...grant, id: 'other', resets_left: 1 }], next_grant_id: 'promo', cooldown_until: null },
@@ -45,7 +45,8 @@ async function createRecoveryHarness(program: 'cedar' | 'juniper' = 'cedar', pen
     now, serviceId, profileId, kind: 'oauth',
     oauth: { accessToken: 'placeholder', refreshToken: 'placeholder', idToken: null,
       scope: 'user:inference user:profile user:sessions:claude_code user:mcp_servers user:file_upload',
-      tokenType: null, providerAccountId: 'account', providerEmail: null },
+      tokenType: null, providerAccountId: 'account', providerEmail: null,
+      raw: { claudeAiOauth: { organizationUuid: 'org' } } },
   });
   const provider = createClaudeSubscriptionQuotaFetcher({ userAgent: 'claude-cli/2.1.296 (external, cli)' });
   snapshot = await provider.fetch({ record, now: now - 1_000, signal: new AbortController().signal });

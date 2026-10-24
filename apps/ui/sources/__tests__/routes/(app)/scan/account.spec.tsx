@@ -2,6 +2,7 @@ import React from 'react';
 import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import { AuthProvider } from '@/auth/context/AuthContext';
 import {
     installScanRouteCommonModuleMocks,
 } from './scanRouteTestHelpers';
@@ -50,7 +51,7 @@ describe('/scan/account', () => {
     it('processes scanned account link URLs', async () => {
         const { default: Screen } = await import('@/app/(app)/scan/account');
 
-        await renderScreen(<Screen />);
+        await renderScreen(<AuthProvider initialCredentials={null}><Screen /></AuthProvider>);
 
         expect(typeof lastScannerProps?.onScan).toBe('function');
 
@@ -66,7 +67,7 @@ describe('/scan/account', () => {
     it('routes scanned terminal URLs to terminal auth even from the account scanner', async () => {
         const { default: Screen } = await import('@/app/(app)/scan/account');
 
-        await renderScreen(<Screen />);
+        await renderScreen(<AuthProvider initialCredentials={null}><Screen /></AuthProvider>);
 
         expect(typeof lastScannerProps?.onScan).toBe('function');
 
@@ -84,7 +85,7 @@ describe('/scan/account', () => {
 
         const { default: Screen } = await import('@/app/(app)/scan/account');
 
-        await renderScreen(<Screen />);
+        await renderScreen(<AuthProvider initialCredentials={null}><Screen /></AuthProvider>);
 
         const footerElement = lastScannerProps?.footer;
         expect(footerElement).toBeTruthy();

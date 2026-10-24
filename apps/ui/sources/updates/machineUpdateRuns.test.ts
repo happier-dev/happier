@@ -188,6 +188,24 @@ describe('runMachineItemUpdate — a remote CLI update is started, then observed
         expect(runs.readUnseenUpdateCompletions(accountA).size).toBe(0);
     });
 
+    it.each([
+        '[release-runtime] archive exceeds expanded-byte limit',
+        'Extraction failed in C:\\private\\install.log.',
+    ])('shows structured extraction guidance instead of raw runtime output: %s', async (message) => {
+        rpc.invoke.mockResolvedValue({
+            supported: true,
+            response: { ok: false, error: { code: 'archive-expanded-byte-limit', message }, logPath: '/logs/codex.log' },
+        });
+        const codex: UpdateItem = { ...remoteCli, id: 'studio:agent:codex', subject: { kind: 'agent-cli', agentId: 'codex' }, title: 'Codex' };
+        await runs.runMachineItemUpdate(codex, { scope: accountA });
+        expect(runs.observeMachineUpdateRun(runs.readMachineUpdateRuns('server-a'), codex.id)).toMatchObject({
+            running: false,
+            errorMessage: 'updates.row.archiveExpandedByteLimit',
+            logPath: '/logs/codex.log',
+        });
+        expect(runs.readUnseenUpdateCompletions(accountA).has(codex.id)).toBe(false);
+    });
+
     it('raw installer output never becomes the row\'s sentence; its log stays behind View log', async () => {
         rpc.invoke.mockImplementation(async () => ({
             supported: true,

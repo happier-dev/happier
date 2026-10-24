@@ -1,6 +1,11 @@
 import { createHash } from "node:crypto";
 
-import { ConnectedServiceUsageSourceV1Schema, type ConnectedServiceUsageSourceV1 } from "@happier-dev/protocol";
+import {
+    ConnectedServiceUsageSourceV1Schema,
+    isProviderAccountUsageOrganizationContextMatch,
+    ProviderAccountUsageRecordKeyV1Schema,
+    type ConnectedServiceUsageSourceV1,
+} from "@happier-dev/protocol";
 import { AGENTS_CORE } from "@happier-dev/agents";
 
 import { db } from "@/storage/db";
@@ -31,11 +36,14 @@ type AgentConnectedServiceSupport = Readonly<{
 
 type ConnectedServiceBindingIdentity = Readonly<{
     providerAccountId: string | null;
+    providerOrganizationId: string | null;
 }>;
 type ProviderAccountUsageRecordIdentity = Readonly<{
     providerId: string;
     accountSubjectId: string;
     subjectKind: string;
+    quotaScope: string;
+    quotaScopeId: string | null;
 }>;
 
 const AGENTS_BY_PROVIDER_ID: Readonly<Record<string, AgentConnectedServiceSupport>> = AGENTS_CORE;
@@ -54,6 +62,7 @@ function readCredentialBindingIdentity(metadata: unknown): ConnectedServiceBindi
     const record = readRecord(metadata);
     return {
         providerAccountId: readString(record?.providerAccountId),
+        providerOrganizationId: readString(record?.providerOrganizationId),
     };
 }
 
@@ -157,8 +166,7 @@ async function isStoredConnectedServiceUsageSourceActive(
             }, client)).identity;
         }
         assertConnectedServiceBindingIdentityMatchesProviderUsageRecord({
-            providerAccountSubjectId: record.accountSubjectId,
-            providerAccountSubjectKind: record.subjectKind,
+            record,
             bindingIdentity,
         });
         return true;
@@ -182,7 +190,7 @@ async function resolveLinkedProviderUsageRecordIdentity(
                 recordId: source.providerAccountUsageRecordId,
             },
         },
-        select: { providerId: true, accountSubjectId: true, subjectKind: true },
+        select: { providerId: true, accountSubjectId: true, subjectKind: true, quotaScope: true, quotaScopeId: true },
     });
     if (!record) {
         throw new ConnectedServiceUsageSourceOwnershipError("Provider account usage record does not belong to the source account");
@@ -253,8 +261,7 @@ async function resolveGroupBinding(params: Readonly<{
 }
 
 function assertConnectedServiceBindingIdentityMatchesProviderUsageRecord(params: Readonly<{
-    providerAccountSubjectId: string;
-    providerAccountSubjectKind: string;
+    record: ProviderAccountUsageRecordIdentity;
     bindingIdentity: ConnectedServiceBindingIdentity;
 }>): void {
     if (!params.bindingIdentity.providerAccountId) {
@@ -263,14 +270,29 @@ function assertConnectedServiceBindingIdentityMatchesProviderUsageRecord(params:
             "unproven",
         );
     }
-    if (params.providerAccountSubjectKind !== "account") {
+    if (params.record.subjectKind !== "account") {
         throw new ConnectedServiceUsageSourceOwnershipError(
             "Provider account usage record does not expose a verifiable account subject",
             "unproven",
         );
     }
-    if (params.bindingIdentity.providerAccountId !== params.providerAccountSubjectId) {
+    if (params.bindingIdentity.providerAccountId !== params.record.accountSubjectId) {
         throw new ConnectedServiceUsageSourceOwnershipError("Connected-service credential identity does not match provider account usage record");
+    }
+    if (params.bindingIdentity.providerOrganizationId || params.record.quotaScope === "organization") {
+        const recordKey = ProviderAccountUsageRecordKeyV1Schema.parse({
+            providerId: params.record.providerId,
+            accountSubjectId: params.record.accountSubjectId,
+            subjectKind: params.record.subjectKind,
+            quotaScope: params.record.quotaScope,
+            quotaScopeId: params.record.quotaScopeId ?? undefined,
+        });
+        if (!isProviderAccountUsageOrganizationContextMatch(recordKey, params.bindingIdentity)) {
+            throw new ConnectedServiceUsageSourceOwnershipError(
+                "Connected-service credential organization does not match provider account usage record",
+                params.bindingIdentity.providerOrganizationId ? "mismatch" : "unproven",
+            );
+        }
     }
 }
 
@@ -286,7 +308,7 @@ export async function upsertConnectedServiceUsageSource(
                 recordId: parsed.providerAccountUsageRecordId,
             },
         },
-        select: { recordId: true, providerId: true, accountSubjectId: true, subjectKind: true },
+        select: { recordId: true, providerId: true, accountSubjectId: true, subjectKind: true, quotaScope: true, quotaScopeId: true },
     });
     if (!record) {
         throw new ConnectedServiceUsageSourceOwnershipError("Provider account usage record does not belong to the source account");
@@ -310,8 +332,7 @@ export async function upsertConnectedServiceUsageSource(
         };
     }
     assertConnectedServiceBindingIdentityMatchesProviderUsageRecord({
-        providerAccountSubjectId: record.accountSubjectId,
-        providerAccountSubjectKind: record.subjectKind,
+        record,
         bindingIdentity,
     });
 

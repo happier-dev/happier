@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { buildUsageLimitIssueFingerprint, type SessionRuntimeIssueV1 } from '@happier-dev/protocol';
 
 import { CONNECTED_SERVICE_BROKER_BRIDGE_FETCH_TIMEOUT_MS } from '../broker/brokerBridgeCallSource';
 
@@ -25,6 +26,36 @@ const classifiedFailure = {
 } as const;
 
 describe('reportConnectedServiceRuntimeAuthFailureToDaemon', () => {
+  it('reports each accepted failure occurrence while coalescing duplicate observers of that occurrence', async () => {
+    resetConnectedServiceRuntimeAuthFailureReportDedupeForTests();
+    const outboxDir = await createTempDir('happier-runtime-auth-failed-turns-');
+    const calls: string[] = [];
+    const notify = async (body: Readonly<{ reportId: string }>) => {
+      calls.push(body.reportId);
+      return { ok: true, result: { status: 'switch_reason_disabled' }, recoveryReceipt: {
+        reportId: body.reportId, attemptId: `attempt:${calls.length}`, transition: 'terminal', eventLocalId: `event:${calls.length}`,
+      } };
+    };
+    const issue: SessionRuntimeIssueV1 = { v: 1, scope: 'primary_session', status: 'failed', code: 'usage_limit', source: 'usage_limit', provider: 'claude', occurredAt: 1_000 };
+    const classification = { ...classifiedFailure, kind: 'usage_limit' as const };
+    try {
+      for (const occurredAt of [1_000, 1_000, 2_000]) {
+        await reportConnectedServiceRuntimeAuthFailureToDaemon({
+          sessionId: 'same-session-fresh-turns', classification: {
+            ...classification,
+            runtimeIssueFingerprint: buildUsageLimitIssueFingerprint({ ...issue, occurredAt }),
+          }, notify, reportOutboxDir: outboxDir, nowMs: () => occurredAt,
+        });
+      }
+      expect(new Set(calls).size).toBe(2);
+      expect(calls).toHaveLength(2);
+      expect(await readRuntimeAuthFailureReportOutboxItems({ outboxDir })).toEqual([]);
+    } finally {
+      resetConnectedServiceRuntimeAuthFailureReportDedupeForTests();
+      await removeTempDir(outboxDir);
+    }
+  });
+
   it('keeps the local recovery report lifecycle-owned instead of imposing a wall-clock deadline', () => {
     expect(CONNECTED_SERVICE_RUNTIME_AUTH_FAILURE_REPORT_TIMEOUT_MS).toBeNull();
     expect(CONNECTED_SERVICE_BROKER_BRIDGE_FETCH_TIMEOUT_MS).toBeGreaterThan(0);
@@ -278,6 +309,18 @@ describe('reportConnectedServiceRuntimeAuthFailureToDaemon', () => {
         nowMs: () => 1_100,
       });
 
+      expect(notify).toHaveBeenCalledTimes(2);
+    });
+
+    it('keeps reports from different organizations distinct for the same provider user', async () => {
+      const notify = vi.fn(async () => ({ ok: true, result: { status: 'noop' } }));
+      for (const sourceProviderOrganizationId of ['org-one', 'org-two']) {
+        await reportConnectedServiceRuntimeAuthFailureToDaemon({
+          sessionId: 'sess_dedupe_source_organization', switchesThisTurn: 0,
+          classification: { ...limitClassification, sourceProviderAccountId: 'same-user', sourceProviderOrganizationId },
+          notify, nowMs: () => 1000,
+        });
+      }
       expect(notify).toHaveBeenCalledTimes(2);
     });
 

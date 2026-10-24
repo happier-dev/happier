@@ -61,34 +61,3 @@ export function applyKnownPendingQueueState(
         || current.pendingVersion !== normalizedNext.pendingVersion;
     return { state: normalizedNext, changed };
 }
-
-export function derivePendingQueueStateAfterMaterializeResult(params: Readonly<{
-    current: PendingQueueState;
-    didMaterialize: boolean;
-    authoritativeState?: KnownPendingQueueState | null;
-}>): { state: PendingQueueState; changed: boolean } {
-    if (params.authoritativeState) {
-        return applyKnownPendingQueueState(params.current, params.authoritativeState);
-    }
-
-    if (!params.current.known) {
-        return { state: params.current, changed: false };
-    }
-
-    if (!params.didMaterialize) {
-        return applyKnownPendingQueueState(params.current, {
-            known: true,
-            pendingCount: 0,
-            pendingBlockedCount: 0,
-            pendingVersion: params.current.pendingVersion,
-        });
-    }
-
-    const pendingCount = Math.max(0, params.current.pendingCount - 1);
-    return applyKnownPendingQueueState(params.current, {
-        known: true,
-        pendingCount,
-        pendingBlockedCount: Math.min(params.current.pendingBlockedCount, pendingCount),
-        pendingVersion: params.current.pendingVersion + 1,
-    });
-}

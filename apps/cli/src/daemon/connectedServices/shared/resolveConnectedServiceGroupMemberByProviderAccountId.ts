@@ -1,3 +1,8 @@
+export type ConnectedServiceGroupMemberProviderAccountIdentity = Readonly<{
+  providerAccountId: string | null;
+  providerOrganizationId?: string | null;
+}>;
+
 type ConnectedServiceGroupMemberIdentityCandidate = Readonly<{ profileId: string }>;
 
 function readNonEmptyString(value: unknown): string | null {
@@ -6,17 +11,22 @@ function readNonEmptyString(value: unknown): string | null {
 
 export async function resolveConnectedServiceGroupMemberByProviderAccountId(input: Readonly<{
   providerAccountId: string;
+  providerOrganizationId?: string | null;
   members: readonly ConnectedServiceGroupMemberIdentityCandidate[];
-  resolveProviderAccountId: (profileId: string) => Promise<string | null>;
+  resolveProviderAccountIdentity: (profileId: string) => Promise<ConnectedServiceGroupMemberProviderAccountIdentity | null>;
 }>): Promise<string | null> {
   const providerAccountId = readNonEmptyString(input.providerAccountId);
   if (!providerAccountId) return null;
+  const providerOrganizationId = readNonEmptyString(input.providerOrganizationId);
   const matches: string[] = [];
   for (const member of input.members) {
     const profileId = readNonEmptyString(member.profileId);
     if (!profileId) continue;
     try {
-      if (readNonEmptyString(await input.resolveProviderAccountId(profileId)) === providerAccountId) {
+      const identity = await input.resolveProviderAccountIdentity(profileId);
+      if (readNonEmptyString(identity?.providerAccountId) === providerAccountId) {
+        // An account-only observation cannot attest an organization-bearing quota context.
+        if (readNonEmptyString(identity?.providerOrganizationId) !== providerOrganizationId) continue;
         matches.push(profileId);
       }
     } catch {

@@ -1,5 +1,5 @@
 import type { Metadata } from '@/api/types';
-import type { SessionTurnLifecycle } from '@/agent/runtime/session/turn/types';
+import type { FailTurnInput, SessionTurnLifecycle } from '@/agent/runtime/session/turn/types';
 import type { SessionRuntimeIssueV1, SessionTurnsProjectionV1 } from '@happier-dev/protocol';
 import {
     buildCodexAppServerRollbackEvidenceSet,
@@ -768,6 +768,7 @@ export function createCodexAppServerSessionTurnTracker(params: Readonly<{
         async failActiveTurn(paramsForFailure: Readonly<{
             endSeqInclusive: number | null;
             issue?: SessionRuntimeIssueV1 | null;
+            onFailureTurn?: FailTurnInput['onFailureTurn'];
         }>): Promise<void> {
             await drainStartAnchorResolution();
             if (!activeTurn || activeTurn.kind !== 'tracked') {
@@ -800,6 +801,7 @@ export function createCodexAppServerSessionTurnTracker(params: Readonly<{
                         provider: CODEX_AGENT_ID,
                         ...(activeTurn.providerTurnId ? { providerTurnId: activeTurn.providerTurnId } : {}),
                         ...(paramsForFailure.issue ? { issue: paramsForFailure.issue } : {}),
+                        ...(paramsForFailure.onFailureTurn ? { onFailureTurn: paramsForFailure.onFailureTurn } : {}),
                     });
                 } catch (error) {
                     params.onMetadataWriteError?.(error);

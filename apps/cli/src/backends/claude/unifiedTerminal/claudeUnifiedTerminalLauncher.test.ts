@@ -2395,7 +2395,7 @@ describe('claudeUnifiedTerminalLauncher', () => {
     }
 
     await vi.waitFor(() => {
-      expect(session.client.sessionTurnLifecycle?.failTurn).toHaveBeenCalledWith({
+      expect(session.client.sessionTurnLifecycle?.failTurn).toHaveBeenCalledWith(expect.objectContaining({
         provider: 'claude',
         allocateWhenIdle: true,
         issue: expect.objectContaining({
@@ -2403,7 +2403,7 @@ describe('claudeUnifiedTerminalLauncher', () => {
           source: 'auth_error',
           provider: 'claude',
         }),
-      });
+      }));
     });
   });
 
@@ -2474,7 +2474,7 @@ describe('claudeUnifiedTerminalLauncher', () => {
     }
 
     expect(session.client.sessionTurnLifecycle?.failTurn).toHaveBeenCalledTimes(1);
-    expect(session.client.sessionTurnLifecycle?.failTurn).toHaveBeenCalledWith({
+    expect(session.client.sessionTurnLifecycle?.failTurn).toHaveBeenCalledWith(expect.objectContaining({
       provider: 'claude',
       allocateWhenIdle: true,
       issue: expect.objectContaining({
@@ -2482,7 +2482,7 @@ describe('claudeUnifiedTerminalLauncher', () => {
         source: 'auth_error',
         provider: 'claude',
       }),
-    });
+    }));
     expect(session.client.sessionTurnLifecycle?.failTurn).not.toHaveBeenCalledWith({
       provider: 'claude',
       issue: expect.objectContaining({

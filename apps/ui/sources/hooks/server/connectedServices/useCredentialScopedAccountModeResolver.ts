@@ -3,7 +3,8 @@ import * as React from 'react';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { fetchAccountEncryptionMode } from '@/sync/api/account/apiAccountEncryptionMode';
 
-export type CredentialScopedAccountMode = 'plain' | 'e2ee';
+import type { CredentialScopedAccountMode } from '@/sync/domains/connectedServices/connectedServiceQuotaSnapshotStore';
+export type { CredentialScopedAccountMode } from '@/sync/domains/connectedServices/connectedServiceQuotaSnapshotStore';
 
 type ScopedAccountMode = Readonly<{
   credentialScope: string;

@@ -284,6 +284,16 @@ execution runs retain their own lifecycle and use the shared current-work
 [protocol classification](protocol.md#ephemeral-event-types), so an idle resumable
 handle does not keep the roster's live count or running indicator active.
 
+In current development source, `ApiSessionClient` retains the execution-run
+manager's cleanup registration and starts it at Session close or runtime
+termination, without waiting for the primary agent or transport to finish.
+Terminal bounded runs release their backend independently of optional parent
+completion-input delivery; a parked long-lived run remains usable until stopped
+or its owning Session closes. Backend disposal joins the existing per-backend
+cleanup rather than repeating native teardown. Voice owns chat and commit
+backends as soon as they are acquired, including while native session opening is
+pending, and releases them before waiting for an active turn to settle.
+
 ## Storage and persistence
 ### Database (Prisma)
 Prisma models live in `prisma/schema.prisma`. Key tables:

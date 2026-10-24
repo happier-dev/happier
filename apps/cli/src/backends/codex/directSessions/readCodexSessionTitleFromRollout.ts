@@ -1,3 +1,4 @@
+import { readDirectSessionTitlePage } from '@/api/directSessions/title/readDirectSessionTitlePage';
 import { readJsonlFileForward } from '@/api/directSessions/filePaging/jsonlForwardReader';
 import { readDirectSessionTitleCandidate } from '@/api/directSessions/title/readDirectSessionTitleCandidate';
 
@@ -23,12 +24,13 @@ export async function readCodexSessionTitleFromRollout(filePath: string): Promis
   let scannedItems = 0;
 
   while (scannedBytes < TITLE_SCAN_TOTAL_MAX_BYTES && scannedItems < TITLE_SCAN_TOTAL_MAX_ITEMS) {
-    const page = await readJsonlFileForward({
+    const page = await readDirectSessionTitlePage(() => readJsonlFileForward({
       filePath,
       offsetBytes,
       maxBytes: Math.min(TITLE_SCAN_CHUNK_MAX_BYTES, TITLE_SCAN_TOTAL_MAX_BYTES - scannedBytes),
       maxItems: Math.min(TITLE_SCAN_CHUNK_MAX_ITEMS, TITLE_SCAN_TOTAL_MAX_ITEMS - scannedItems),
-    });
+    }));
+    if (!page) break;
 
     for (const line of page.items) {
       const actions = mapCodexRolloutEventToActions(line.value, { debug: false });

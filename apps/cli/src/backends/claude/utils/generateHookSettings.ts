@@ -43,6 +43,8 @@ export { DEFAULT_PERMISSION_HOOK_TIMEOUT_SECONDS } from './permissionHookTimeout
 
 export interface GenerateHookSettingsOptions {
     enableLocalPermissionBridge?: boolean;
+    /** Observe exact tool-use identities for native unified prompt cancellation/correlation. */
+    observeNativeToolPrompts?: boolean;
     permissionHookSecret?: string;
     /**
      * Stable identity for the generated hook plugin directory.
@@ -190,6 +192,7 @@ function writeHookPluginConfiguration(params: Readonly<{
     port: number;
     nodeExecutable: string;
     enableLocalPermissionBridge: boolean;
+    observeNativeToolPrompts?: boolean;
     permissionHookTimeoutSeconds?: number;
     platform: NodeJS.Platform;
 }>): void {
@@ -237,7 +240,10 @@ function writeHookPluginConfiguration(params: Readonly<{
         hooks.PreToolUse = [{
             matcher: 'AskUserQuestion',
             hooks: [{ type: 'command', command: buildPermissionCommand('PreToolUse'), timeout }],
-        }];
+        }, ...(params.observeNativeToolPrompts ? [{
+            matcher: '*',
+            hooks: [{ type: 'command', command: buildSessionHookCommand('PreToolUse') }],
+        }] : [])];
     }
 
     // The versioned asset directory is complete before this one atomic activation point.
@@ -267,6 +273,7 @@ export function refreshRetainedClaudeHookPlugin(params: Readonly<{
     pluginDir: string;
     port: number;
     permissionHookTimeoutSeconds?: number;
+    observeNativeToolPrompts?: boolean;
     platform?: NodeJS.Platform;
 }>): void {
     writeHookPluginConfiguration({
@@ -274,6 +281,7 @@ export function refreshRetainedClaudeHookPlugin(params: Readonly<{
         port: params.port,
         nodeExecutable: resolveNodeExecutable(),
         enableLocalPermissionBridge: true,
+        observeNativeToolPrompts: params.observeNativeToolPrompts,
         platform: params.platform ?? process.platform,
         ...(params.permissionHookTimeoutSeconds === undefined
             ? {}
@@ -399,6 +407,7 @@ export function generateHookPluginDir(port: number, options: GenerateHookSetting
         port,
         nodeExecutable,
         enableLocalPermissionBridge: options.enableLocalPermissionBridge === true,
+        observeNativeToolPrompts: options.observeNativeToolPrompts,
         ...(options.permissionHookTimeoutSeconds === undefined
             ? {}
             : { permissionHookTimeoutSeconds: options.permissionHookTimeoutSeconds }),

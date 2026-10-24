@@ -1273,6 +1273,8 @@ export const de: TranslationStructure = {
         secretKeyPlaceholder: 'XXXXX-XXXXX-XXXXX...',
         linkNewDeviceTitle: 'Neues Gerät verknüpfen',
         linkNewDeviceSubtitle: 'Scanne den QR-Code auf deinem neuen Gerät, um es mit diesem Konto zu verknüpfen',
+        pairingConnectionWarningTitle: "Keine Serververbindung",
+        pairingConnectionWarningBody: "Zum Koppeln muss der Server erreichbar sein. Prüfe deine Verbindung oder scanne einen Code für einen anderen Server.",
         linkNewDeviceQrInstructions: 'Öffne Happier auf deinem neuen Gerät und lass den QR-Code anzeigen',
         scanQrCodeOnDevice: 'QR-Code scannen',
         unsupported: {
@@ -3782,6 +3784,11 @@ export const de: TranslationStructure = {
 	        plugins: {
             claude: {
                 title: "Claude Code",
+                responseLocationOptions: {
+                    app_and_terminal: { title: "App und Terminal", subtitle: "Antworte in der Happier-App oder im Claude Code-Terminal." },
+                    app_only: { title: "Anfragen in der App", subtitle: "Nutze den bisherigen Anfrageablauf in der App. Claude kann weiterhin Antworten in seinem Terminal annehmen." },
+                    terminal_only: { title: "Nur Terminal", subtitle: "Antworte im Claude Code-Terminal." },
+                },
                 sections: {
                     claudeModelDiscovery: {
                         title: "Modellerkennung",
@@ -3826,6 +3833,14 @@ export const de: TranslationStructure = {
                                 subtitle: "Das von Happier mitgelieferte zellij nutzen."
                             }
                         }
+                    },
+                    claudeUnifiedTerminalQuestionResponseLocation: {
+                        title: "Fragen beantworten",
+                        subtitle: "Wähle, wo du Fragen in gemeinsamen Terminalsitzungen beantwortest."
+                    },
+                    claudeUnifiedTerminalPermissionResponseLocation: {
+                        title: "Berechtigungsanfragen genehmigen",
+                        subtitle: "Wähle, wo du Berechtigungsanfragen in gemeinsamen Terminalsitzungen genehmigst."
                     },
                     claudeUnifiedTerminalResumeChoice: {
                         title: "Fortsetzen großer Sessions",
@@ -3929,7 +3944,7 @@ export const de: TranslationStructure = {
                     },
                     claudeLocalPermissionBridgeEnabled: {
                         title: "Experimentell: lokale Berechtigungs-Bridge",
-                        subtitle: "Berechtigungsabfragen aus Claudes lokalem Modus an Happier weiterleiten, damit du sie in der App freigeben oder ablehnen kannst."
+                        subtitle: "Leite Berechtigungsanfragen klassischer lokaler Claude-Sitzungen an Happier weiter. Gemeinsame Terminalsitzungen verwenden die Antwortoptionen oben."
                     },
                     claudeLocalPermissionBridgeWaitIndefinitely: {
                         title: "Anfragen offen lassen, bis sie beantwortet sind",
@@ -9416,6 +9431,7 @@ settingsSession: {
             checking: 'Wird geprüft…',
             failedGeneric: 'Das Update wurde nicht abgeschlossen. Versuch es noch einmal.',
             remoteUnsupported: 'Dieser Rechner kann seine Kommandozeile nicht aus der Ferne aktualisieren. Aktualisiere sie direkt auf dem Rechner.',
+            archiveExpandedByteLimit: "Die heruntergeladene Laufzeit überschreitet die Größenbegrenzung beim Entpacken. Aktualisiere Happier, bevor du es erneut versuchst.",
             updateNotVerified: 'Das Update lief, aber die Version hat sich nicht geändert.',
             rolledBackLocal: 'Das Update ist nicht gestartet, daher ist dieser Computer zur vorherigen Version zurückgekehrt.',
             smokeFailed: 'Die neue Version lief auf diesem Computer nicht, daher hat sich nichts geändert.',

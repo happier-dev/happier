@@ -40,6 +40,7 @@ const appPaneScopeHostRenderSpy = vi.hoisted(() => vi.fn());
 const deferredRenderSpy = vi.hoisted(() => vi.fn());
 const agentContentViewRenderSpy = vi.hoisted(() => vi.fn());
 const agentInputRenderSpy = vi.hoisted(() => vi.fn());
+const sessionScreenRenderSpy = vi.hoisted(() => vi.fn());
 const pendingMessagesHookSpy = vi.hoisted(() => vi.fn());
 const subagentSourceMessagesHookSpy = vi.hoisted(() => vi.fn());
 const sessionExecutionRunsSupportedHookSpy = vi.hoisted(() => vi.fn());
@@ -268,7 +269,10 @@ installSessionShellCommonModuleMocks({
                     sessionState = next;
                 },
                 useIsDataReady: () => true,
-                useRealtimeStatus: () => realtimeStatusValue.current,
+                useRealtimeStatus: () => {
+                    sessionScreenRenderSpy();
+                    return realtimeStatusValue.current;
+                },
                 useSessionMessages: () => React.useSyncExternalStore(
                     (listener) => {
                         committedMessagesListeners.add(listener);
@@ -424,19 +428,20 @@ vi.mock('@/utils/platform/responsive', () => ({
     useIsTablet: () => false,
 }));
 vi.mock('@/hooks/session/useDraft', () => ({
-    useDraft: (_sessionId: string, value: string, onChange: (next: string) => void) => {
-        const latestValue = React.useRef(value);
-        latestValue.current = value;
+    useDraft: (_sessionId: string, textStore: { getPrompt: () => string; setPrompt: (next: string) => void }) => {
+        const latestValue = React.useRef(textStore.getPrompt());
 
         const setDraftValue = React.useCallback((nextValueOrUpdater: string | ((currentValue: string) => string)) => {
             const nextValue = typeof nextValueOrUpdater === 'function'
                 ? nextValueOrUpdater(latestValue.current)
                 : nextValueOrUpdater;
             latestValue.current = nextValue;
-            onChange(nextValue);
-        }, [onChange]);
+            textStore.setPrompt(nextValue);
+        }, [textStore]);
 
         return {
+            draftConflict: null,
+            draftStatus: 'clean',
             clearDraft: () => setDraftValue(''),
             setDraftValue,
             clearDraftForSessionIfCurrentValueMatches: (snapshot: Readonly<{ text: string }>) => {
@@ -632,6 +637,7 @@ describe('SessionView (transcript rendering for seq-only sessions)', () => {
         appPaneScopeHostRenderSpy.mockClear();
         deferredRenderSpy.mockClear();
         agentInputRenderSpy.mockClear();
+        sessionScreenRenderSpy.mockClear();
         fetchPendingMessagesSpy.mockClear();
         pendingMessagesHookSpy.mockClear();
         subagentSourceMessagesHookSpy.mockClear();
@@ -1288,6 +1294,27 @@ describe('SessionView (transcript rendering for seq-only sessions)', () => {
         );
 
         expect(sessionExecutionRunsSupportedHookSpy).not.toHaveBeenCalled();
+
+        await screen.unmount();
+    });
+
+    it('re-renders only the composer input while typing, not the session screen or transcript', async () => {
+        const screen = await renderSessionView();
+        const typeIntoComposer = (text: string) => agentInputRenderSpy.mock.calls.at(-1)?.[0]?.onChangeText(text);
+        expect(chatListRenderSpy).toHaveBeenCalled();
+        sessionScreenRenderSpy.mockClear();
+        chatListRenderSpy.mockClear();
+
+        await act(async () => {
+            typeIntoComposer('h');
+        });
+        await act(async () => {
+            typeIntoComposer('he');
+        });
+
+        expect(agentInputRenderSpy.mock.calls.at(-1)?.[0]?.value).toBe('he');
+        expect(chatListRenderSpy).not.toHaveBeenCalled();
+        expect(sessionScreenRenderSpy).not.toHaveBeenCalled();
 
         await screen.unmount();
     });

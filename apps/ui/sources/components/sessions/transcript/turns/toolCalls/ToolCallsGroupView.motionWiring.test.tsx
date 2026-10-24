@@ -91,11 +91,15 @@ describe('ToolCallsGroupView (motion wiring)', () => {
         expect(screen.findAllByTestId('transcript-enter-wrapper')).toHaveLength(0);
         expect(screen.findByTestId('transcript-collapsible')).toBeNull();
 
-        await screen.pressByTestIdAsync('transcript-tool-calls-preview-more');
+        await screen.pressByTestIdAsync('transcript-tool-calls-header');
 
         expect(screen.findAllByTestId('transcript-enter-wrapper')).toHaveLength(2);
         const collapsibleAfter = screen.findByTestId('transcript-collapsible') as any;
         expect(collapsibleAfter?.props.expanded).toBe(true);
+
+        await screen.pressByTestIdAsync('transcript-tool-calls-header');
+        expect(screen.findAllByTestId('transcript-enter-wrapper')).toHaveLength(0);
+        expect(screen.findByTestId('transcript-collapsible')).toBeNull();
     });
 
     it('shows a stack icon and toggles chevron direction when expanded', async () => {
@@ -112,7 +116,7 @@ describe('ToolCallsGroupView (motion wiring)', () => {
         expect(screen.findAllByType('Icon').map((icon) => icon.props.name)).toContain('stack-simple');
         expect(screen.findAllByType('Icon').map((icon) => icon.props.name)).not.toContain('caret-up');
 
-        await screen.pressByTestIdAsync('transcript-tool-calls-preview-more');
+        await screen.pressByTestIdAsync('transcript-tool-calls-header');
 
         expect(screen.findAllByType('Icon').map((icon) => icon.props.name)).toContain('caret-up');
     });

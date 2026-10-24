@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { SessionRuntimeIssueV1, SessionUsageLimitRecoveryV1 } from '@happier-dev/protocol';
+import { buildUsageLimitIssueFingerprint, type SessionRuntimeIssueV1, type SessionUsageLimitRecoveryV1 } from '@happier-dev/protocol';
 
 import {
     buildSessionUsageLimitRecoveryPresentation,
@@ -9,7 +9,7 @@ import {
 } from './sessionUsageLimitRecoveryPresentation';
 
 function usageIssue(
-    provider: string,
+    provider: string | undefined,
     resetAtMs: number | null,
     overrides: Partial<NonNullable<SessionRuntimeIssueV1['usageLimit']>> = {},
 ): SessionRuntimeIssueV1 {
@@ -50,6 +50,68 @@ function temporaryThrottleIssue(provider: string): SessionRuntimeIssueV1 {
 }
 
 describe('sessionUsageLimitRecoveryPresentation', () => {
+    it.each(['claude', undefined])('keeps an exact issue-bound runtime recovery attempt actionable with provider %s', (provider) => {
+        const issue = usageIssue(provider, 5_000);
+        const recovery: SessionUsageLimitRecoveryV1 = {
+            v: 1, status: 'waiting', issueFingerprint: buildUsageLimitIssueFingerprint(issue),
+            runtimeAuthRecoveryAttemptId: 'current-attempt', armedAtMs: 100,
+            resetAtMs: 5_000, nextCheckAtMs: 5_000, attemptCount: 1, maxAttempts: 3,
+            lastProbeError: null, resumePromptMode: 'standard', selectedAuth: { kind: 'native' },
+        };
+        const presentation = buildSessionUsageLimitRecoveryPresentation({
+            featureEnabled: true, latestTurnStatus: 'failed', issue, recovery,
+            rememberedMode: 'ask', checkNowSupported: true,
+            translate: (key) => key, formatTime: String,
+        });
+        expect(presentation?.runtimeAuthRecoveryAttemptId).toBe('current-attempt');
+        expect(presentation?.issueFingerprint).toBe(buildUsageLimitIssueFingerprint(issue));
+        expect(presentation?.armedAtMs).toBe(100);
+        expect(presentation?.banner.primaryAction.kind).toBe('cancel');
+    });
+
+    it('does not bind an opaque legacy runtime attempt to a current issue', () => {
+        const issue = usageIssue('claude', 5_000);
+        const recovery: SessionUsageLimitRecoveryV1 = {
+            v: 1, status: 'cancelled', issueFingerprint: 'legacy-attempt',
+            runtimeAuthRecoveryAttemptId: 'legacy-attempt', armedAtMs: 100,
+            resetAtMs: 500, nextCheckAtMs: null, attemptCount: 1, maxAttempts: 3,
+            lastProbeError: null, resumePromptMode: 'standard', selectedAuth: { kind: 'native' },
+        };
+        const presentation = buildSessionUsageLimitRecoveryPresentation({
+            featureEnabled: true, latestTurnStatus: 'failed', issue, recovery,
+            rememberedMode: 'ask', translate: (key) => key, formatTime: String,
+        });
+        expect(presentation?.issueFingerprint).toBe(buildUsageLimitIssueFingerprint(issue));
+        expect(presentation).not.toHaveProperty('runtimeAuthRecoveryAttemptId');
+        expect(presentation?.banner.primaryAction.kind).toBe('enable');
+    });
+
+    it.each(['cancelled', 'waiting'] as const)(
+        'keeps a fresh usage-limit issue independent of an older %s recovery',
+        (status) => {
+            const issue = { ...usageIssue('claude', 5_000), occurredAt: 2_000, providerTurnId: 'turn-b' };
+            const recovery: SessionUsageLimitRecoveryV1 = {
+                v: 1, status, issueFingerprint: 'usage-limit:claude:turn-a:100:500',
+                runtimeAuthRecoveryAttemptId: 'old-attempt', armedAtMs: 100,
+                resetAtMs: 500, nextCheckAtMs: null, attemptCount: 1, maxAttempts: 3,
+                lastProbeError: null, resumePromptMode: 'standard', selectedAuth: { kind: 'native' },
+            };
+            const input = {
+                featureEnabled: true, latestTurnStatus: 'failed', issue, recovery,
+                rememberedMode: 'ask', checkNowSupported: true, hasInterruptedWorkToResume: true, nowMs: 3_000,
+                translate: (key: string) => key, formatTime: String,
+            } as const;
+
+            const presentation = buildSessionUsageLimitRecoveryPresentation(input);
+            expect(presentation?.issueFingerprint).toBe('usage-limit:claude:turn-b:2000:5000');
+            expect(presentation?.armedAtMs).toBe(2_000);
+            expect(presentation).not.toHaveProperty('runtimeAuthRecoveryAttemptId');
+            expect(presentation?.banner.primaryAction.kind).toBe('enable');
+            expect(buildSessionUsageLimitStatusBadgePresentation(input)?.label)
+                .toBe('session.usageLimitRecovery.statusLimitReached');
+        },
+    );
+
     it('projects overload retry timing and controls without quota actions, including while awaiting the provider', () => {
         const recovery: SessionUsageLimitRecoveryV1 = {
             v: 1, status: 'waiting', issueFingerprint: 'temporary-throttle:s1:1', armedAtMs: 1,
@@ -202,7 +264,7 @@ describe('sessionUsageLimitRecoveryPresentation', () => {
         const recovery: SessionUsageLimitRecoveryV1 = {
             v: 1,
             status: 'exhausted',
-            issueFingerprint: 'usage:group-exhausted',
+            issueFingerprint: buildUsageLimitIssueFingerprint(usageIssue('codex', null)),
             armedAtMs: 1,
             resetAtMs: null,
             nextCheckAtMs: null,
@@ -241,7 +303,7 @@ describe('sessionUsageLimitRecoveryPresentation', () => {
             formatTime: (value) => String(value),
         });
 
-        expect(presentation?.issueFingerprint).toBe('usage:group-exhausted');
+        expect(presentation?.issueFingerprint).toBe(buildUsageLimitIssueFingerprint(usageIssue('codex', null)));
         expect(presentation?.banner.primaryAction.kind).toBe('switch_fallback_now');
         expect(presentation?.banner.secondaryActions.map((action) => action.kind)).toEqual(['check_now', 'remember']);
         expect(badge?.label).toBe('session.usageLimitRecovery.statusExhausted');
@@ -251,7 +313,7 @@ describe('sessionUsageLimitRecoveryPresentation', () => {
         const recovery: SessionUsageLimitRecoveryV1 = {
             v: 1,
             status: 'exhausted',
-            issueFingerprint: 'usage:group-exhausted-stale-issue',
+            issueFingerprint: buildUsageLimitIssueFingerprint(usageIssue('codex', null)),
             armedAtMs: 1,
             resetAtMs: null,
             nextCheckAtMs: null,
@@ -290,7 +352,7 @@ describe('sessionUsageLimitRecoveryPresentation', () => {
         const recovery: SessionUsageLimitRecoveryV1 = {
             v: 1,
             status: 'exhausted',
-            issueFingerprint: 'usage:group-no-eligible-member-newer-profile',
+            issueFingerprint: buildUsageLimitIssueFingerprint(usageIssue('codex', null)),
             armedAtMs: 1,
             resetAtMs: null,
             nextCheckAtMs: null,
@@ -400,7 +462,7 @@ describe('sessionUsageLimitRecoveryPresentation', () => {
         const recovery: SessionUsageLimitRecoveryV1 = {
             v: 1,
             status: 'checking',
-            issueFingerprint: 'usage:s1',
+            issueFingerprint: buildUsageLimitIssueFingerprint(usageIssue('codex', null)),
             armedAtMs: 1,
             resetAtMs: null,
             nextCheckAtMs: null,
@@ -430,7 +492,7 @@ describe('sessionUsageLimitRecoveryPresentation', () => {
             formatTime: (value) => String(value),
         });
 
-        expect(presentation?.issueFingerprint).toBe('usage:s1');
+        expect(presentation?.issueFingerprint).toBe(buildUsageLimitIssueFingerprint(usageIssue('codex', null)));
         expect(presentation?.banner.primaryAction.kind).toBe('cancel');
         expect(presentation?.banner.secondaryActions.map((action) => action.kind)).toEqual(['check_now', 'forget']);
         expect(badge).toEqual(expect.objectContaining({
@@ -529,7 +591,7 @@ describe('sessionUsageLimitRecoveryPresentation', () => {
         const recovery: SessionUsageLimitRecoveryV1 = {
             v: 1,
             status: 'waiting',
-            issueFingerprint: 'usage:waiting-reset',
+            issueFingerprint: buildUsageLimitIssueFingerprint(usageIssue('codex', null)),
             armedAtMs: 1,
             resetAtMs,
             nextCheckAtMs: resetAtMs,
@@ -568,7 +630,7 @@ describe('sessionUsageLimitRecoveryPresentation', () => {
         const recovery: SessionUsageLimitRecoveryV1 = {
             v: 1,
             status: 'waiting',
-            issueFingerprint: 'usage:rotation-pending',
+            issueFingerprint: buildUsageLimitIssueFingerprint(usageIssue('codex', null)),
             armedAtMs: 1,
             resetAtMs: null,
             nextCheckAtMs: null,
@@ -849,7 +911,7 @@ describe('sessionUsageLimitRecoveryPresentation', () => {
         const recovery: SessionUsageLimitRecoveryV1 = {
             v: 1,
             status: 'cancelled',
-            issueFingerprint: 'usage:cancelled',
+            issueFingerprint: buildUsageLimitIssueFingerprint(usageIssue('codex', null)),
             armedAtMs: 1,
             resetAtMs: null,
             nextCheckAtMs: null,

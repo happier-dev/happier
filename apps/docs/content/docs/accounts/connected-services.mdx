@@ -147,6 +147,16 @@ request. A queued prompt is not confirmation that the Agent recovered: recovery
 remains pending until the Agent runs successfully. Cancelling the wait, stopping
 the session, or sending newer work takes precedence over automatic continuation.
 
+Development corrections keep recovery state associated with the failure that
+created it. Cancelling an earlier wait does not hide a newer usage-limit failure,
+and checking the newer failure does not revive the earlier wait.
+
+Pool quota selection determines which meters affect account eligibility before
+a request. A supported limit error that actually fails the Agent's main operation
+still follows the pool's configured switching rules and limits. Create separate
+pools when different sessions should use different quota filters; provider-enforced
+usage and spending limits still apply.
+
 ## Model-capacity retries
 
 In development builds, a terminal model-capacity failure such as Codex
@@ -216,6 +226,23 @@ claude setup-token
 ```
 
 Then paste it into Happier.
+
+#### Claude quota identity in development builds
+
+The development correction keeps OAuth quota usage separate when one Claude
+login belongs to different organizations. Profiles for the same user and
+organization share usage evidence, even when their Happier labels differ.
+Personal and work organizations retain their own meters and recovery context.
+
+Older connections can obtain their organization identity during a fresh quota
+check using the connected token. If Claude cannot confirm that context, Happier
+does not infer shared quota ownership from the email or user id alone. Setup
+tokens do not gain OAuth quota telemetry from this correction.
+
+Usage verified with the current credential can still support that profile's local
+recovery when organization information is unavailable. Reconnecting with a
+different credential requires fresh evidence. This does not identify every cause
+of a Claude rate-limit or spend-limit response.
 
 ### Anthropic API key
 
@@ -552,6 +579,11 @@ What it offers depends on what is actually possible:
 
 **Always wait and resume** remembers your choice for that account so the banner
 stops asking, and **Ask each time** puts the question back.
+
+In development source, cancelling recovery for an earlier failure does not hide
+a new usage-limit issue. If an older daemon's saved wait cannot be associated
+with the current failure, the banner shows actions for the current issue rather
+than the saved wait's timing or cancellation state.
 
 ### Usage-reset credits
 

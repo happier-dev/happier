@@ -146,7 +146,7 @@ function readToolContextFromItem(item: RecordLike): ToolContext | null {
         return {
             toolKind: 'command',
             name: 'CodexBash',
-            input: omitKeys(item, ['id', 'itemId', 'type', 'itemType', 'stderr', 'stdout', 'exitCode', 'exit_code', 'status', 'success', 'error']),
+            input: omitKeys(item, ['id', 'itemId', 'type', 'itemType', 'stderr', 'stdout', 'aggregatedOutput', 'aggregated_output', 'exitCode', 'exit_code', 'durationMs', 'status', 'success', 'error']),
         };
     }
 
@@ -178,6 +178,9 @@ function readToolResultOutput(item: RecordLike, itemType: string | null, input?:
         ? Object.keys(input as RecordLike)
         : [];
     const output = omitKeys(item, ['id', 'itemId', 'type', 'itemType', ...inputKeys]);
+    if (itemType === 'commandexecution' && typeof output.aggregatedOutput === 'string') {
+        return { ...omitKeys(output, ['aggregatedOutput']), stdout: output.stdout ?? output.aggregatedOutput };
+    }
     return itemType === 'mcptoolcall' && 'result' in item ? extractMcpToolCallResultOutput(item.result) : output;
 }
 

@@ -1,0 +1,35 @@
+● User answered Claude's questions:
+  ⎿  · Which literal probe text? → first native linesecond native line — 雪 🦦
+
+● PROBE_DONE
+
+✻ Cogitated for 5s · done 3:02 PM
+
+❯ AskUserQuestion once with question Which comma probe? header Comma, exactly two
+  options: first label "Alpha, beta", second label "雪 🦦". multiSelect false. No other
+  tools. After answer say PROBE_DONE.
+
+● User answered Claude's questions:
+  ⎿  · Which comma probe? → first LF line
+     second LF line — 雪 🦦
+
+● PROBE_DONE
+
+✻ Cooked for 4s · done 3:03 PM
+
+❯ Repeat same comma question once, same options. No other tools.
+──────────────────────────────────────────────────────────────────────────────────────────
+ ☐ Comma
+
+Which comma probe?
+
+  1. Alpha, beta
+     Probe option with a comma in the label.
+  2. 雪 🦦
+     Probe option with Unicode and an emoji in the label.
+❯ 3. owned canonical first LF
+     owned canonical second LF — 雪 🦦
+──────────────────────────────────────────────────────────────────────────────────────────
+  4. Chat about this
+
+Enter to select · ↑/↓ to navigate · ctrl+g to edit in Vim · Esc to cancel

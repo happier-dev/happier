@@ -1,5 +1,5 @@
 import { buildBackendTargetKey, normalizeCodexBackendMode } from '@happier-dev/protocol';
-import { parsePermissionIntentAlias } from '@happier-dev/agents';
+import { parsePermissionIntentAlias, resolveClaudeUnifiedTerminalResponseLocations } from '@happier-dev/agents';
 import { z } from 'zod';
 
 import { AGENT_IDS, getAgentCore } from '@/agents/registry/registryCore';
@@ -18,6 +18,11 @@ export function applyAccountSettingsCompatibilityMigrations<TSettings extends Re
 }): TSettings {
     const { input, inputSchemaVersion, supportedSchemaVersion } = params;
     const next = { ...params.settings } as Record<string, unknown>;
+
+    // Resolve before defaults hide whether an older account explicitly disabled the bridge.
+    const claudeResponseLocations = resolveClaudeUnifiedTerminalResponseLocations(input);
+    next.claudeUnifiedTerminalQuestionResponseLocation = claudeResponseLocations.question;
+    next.claudeUnifiedTerminalPermissionResponseLocation = claudeResponseLocations.permission;
 
     if (next.preferredLanguage === 'zh') {
         next.preferredLanguage = 'zh-Hans';

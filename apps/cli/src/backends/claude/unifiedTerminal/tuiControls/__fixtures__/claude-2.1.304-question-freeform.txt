@@ -1,0 +1,35 @@
+  fruits? header Fruits, options Apple, Pear, Plum, multiSelect true; second question Which probe size?
+  header Size, options Small, Large, multiSelect false. Do not perform other tools. After answers say only
+  PROBE_DONE and answers.
+
+● User answered Claude's questions:
+  ⎿  · Which probe fruits? → Apple, Pear
+     · Which probe size? → Large
+
+● PROBE_DONE Fruits: Apple, Pear; Size: Large
+
+✻ Baked for 4s · done 2:45 PM
+
+❯ Call AskUserQuestion once: Which probe animal? header Animal; options Cat and Dog; multiSelect false. After
+  answer say only PROBE_DONE and answer. No other tools.
+
+● User declined to answer questions
+  ⎿  · Which probe animal? (Cat / Dog)
+
+✻ Baked for 2s · done 2:46 PM
+
+❯ Repeat same AskUserQuestion once. No other tools.
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ ☐ Animal
+
+Which probe animal?
+
+  1. Cat
+     Cat animal.
+  2. Dog
+     Dog animal.
+❯ 3. Otter freeform probe
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  4. Chat about this
+
+Enter to select · ↑/↓ to navigate · ctrl+g to edit in Vim · Esc to cancel

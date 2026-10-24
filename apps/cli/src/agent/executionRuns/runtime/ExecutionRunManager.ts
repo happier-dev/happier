@@ -58,6 +58,7 @@ import {
 import { deriveExecutionRunRuntimeActivityContribution, readExecutionRunTurnInFlight } from '@/agent/executionRuns/runtime/executionRunRuntimeActivity';
 import { readExecutionRunErrorCode } from '@/agent/executionRuns/runtime/executionRunErrors';
 import { logger } from '@/ui/logger';
+import { disposeExecutionRunBackendController } from './settleExecutionRunControllerOccurrence';
 import type { ResumedExecutionRunBackend } from './resumeBackendController';
 
 function readBoundedExternalSendAckTimeoutMs(): number {
@@ -134,6 +135,8 @@ export class ExecutionRunManager {
   private readonly terminalRuntimeActivityPromises = new Map<string, Promise<void>>();
   private readonly terminalStateWaiters = new Map<string, Set<Readonly<{ resolve: () => void }>>>();
   private readonly runLifecycleTails = new Map<string, Promise<void>>();
+  private disposalPromise: Promise<void> | null = null;
+  private controllerDisposalTail: Promise<void> = Promise.resolve();
   private readonly voiceAgentManager: VoiceAgentManager;
   private readonly onPublicStateUpdated: ((run: ExecutionRunPublicState) => void) | null;
 
@@ -341,7 +344,12 @@ export class ExecutionRunManager {
   }>) {
     this.parentProvider = opts.parentProvider;
     this.resolveCwd = opts.resolveCwd ?? (() => opts.cwd);
-    this.createBackend = opts.createBackend;
+    this.createBackend = (backendOptions) => {
+      if (this.disposalPromise) {
+        throw Object.assign(new Error('Execution run manager is disposed'), { code: 'execution_run_not_allowed' });
+      }
+      return opts.createBackend(backendOptions);
+    };
     this.sendAcp = opts.sendAcp;
     this.streamedTranscriptSession = opts.streamedTranscriptSession ?? null;
     this.transcriptWriter = opts.transcriptWriter ?? null;
@@ -580,13 +588,18 @@ export class ExecutionRunManager {
           canInspect: current.retentionPolicy === 'resumable',
           ...(current.summary ? { summary: current.summary.slice(0, 8_000) } : {}),
         });
-        try {
-          await this.enqueueParentSessionInput(input);
-        } catch (error) {
+        const reportEnqueueFailure = (error: unknown) => {
           logger.warn('[EXECUTION RUN] Failed to enqueue parent completion input', {
             runId: current.runId,
             error: error instanceof Error ? error.message : String(error),
           });
+        };
+        try {
+          // Parent input delivery is independent of the child's terminal lifecycle.
+          // Keep its persistence and handoff running while the child's backend is released.
+          void this.enqueueParentSessionInput(input).catch(reportEnqueueFailure);
+        } catch (error) {
+          reportEnqueueFailure(error);
         }
       }
     }
@@ -594,6 +607,9 @@ export class ExecutionRunManager {
   }
 
   async start(params: ExecutionRunManagerStartParams): Promise<ExecutionRunStartResult> {
+    if (this.disposalPromise) {
+      throw Object.assign(new Error('Execution run manager is disposed'), { code: 'execution_run_not_allowed' });
+    }
     const existing = this.resolveStartRequest(params);
     if (existing) return existing;
     const started = await startExecutionRun({
@@ -615,6 +631,7 @@ export class ExecutionRunManager {
       writeActivityMarker: this.writeActivityMarker.bind(this),
       finishRun: this.finishRun.bind(this),
       executeBoundedRun: this.executeBoundedRun.bind(this),
+      isSessionClosing: () => this.disposalPromise !== null,
       send: this.send.bind(this),
       voiceAgentManager: this.voiceAgentManager,
       getDepthByCallId: this.getDepthByCallId.bind(this),
@@ -695,6 +712,7 @@ export class ExecutionRunManager {
     runId: string,
     params: Readonly<{ message: string; resume?: boolean; delivery?: unknown }>,
   ): Promise<{ ok: boolean; errorCode?: string; error?: string }> {
+    if (this.disposalPromise) return { ok: false, errorCode: 'execution_run_not_allowed', error: 'Session is closing' };
     const run = this.runs.get(runId) ?? null;
     if (!run) return { ok: false, errorCode: 'execution_run_not_found', error: 'Not found' };
 
@@ -706,6 +724,7 @@ export class ExecutionRunManager {
         controllers: this.controllers,
         budgetRegistry: this.budgetRegistry,
         createBackend: this.buildResumeBackendFactory(run),
+        isSessionClosing: () => this.disposalPromise !== null,
         maxTurns: this.maxTurns,
         getNowMs: this.getNowMs,
         finishRun: this.finishRun.bind(this),
@@ -727,6 +746,7 @@ export class ExecutionRunManager {
         async () => await prepareBackendLongLivedRunResume(sendArgs),
       );
       if (!prepared.ok) return prepared;
+      if (this.disposalPromise) return { ok: false, errorCode: 'execution_run_not_allowed', error: 'Session is closing' };
       return sendPreparedBackendLongLivedRun(sendArgs, prepared.controller);
     }
 
@@ -818,6 +838,7 @@ export class ExecutionRunManager {
   }
 
   async ensure(runId: string, params: Readonly<{ resume?: boolean }>): Promise<{ ok: boolean; errorCode?: string; error?: string }> {
+    if (this.disposalPromise) return { ok: false, errorCode: 'execution_run_not_allowed', error: 'Session is closing' };
     const run = this.runs.get(runId) ?? null;
     const ensure = async () => await ensureExecutionRun({
       runId,
@@ -830,6 +851,7 @@ export class ExecutionRunManager {
         : async () => {
             throw new Error('Execution run not found');
           },
+      isSessionClosing: () => this.disposalPromise !== null,
       sendAcp: this.sendAcp,
       parentProvider: this.parentProvider,
       streamedTranscriptSession: this.streamedTranscriptSession,
@@ -963,17 +985,51 @@ export class ExecutionRunManager {
 
   async stop(runId: string): Promise<{ ok: boolean; errorCode?: string; error?: string }> {
     return this.withRunLifecycleLock(runId, async () => {
-      const result = await stopExecutionRun({
-      runId,
-      runs: this.runs,
-      controllers: this.controllers,
-      voiceAgentManager: this.voiceAgentManager,
-      getNowMs: this.getNowMs,
-      finishRun: this.finishRun.bind(this),
-      });
-      if (!result.ok) return result;
-      return result;
+      const controller = this.controllers.get(runId);
+      try {
+        return await stopExecutionRun({
+          runId,
+          runs: this.runs,
+          controllers: this.controllers,
+          voiceAgentManager: this.voiceAgentManager,
+          getNowMs: this.getNowMs,
+          finishRun: this.finishRun.bind(this),
+        });
+      } finally {
+        if (controller?.disposalPromise) {
+          // Stop acknowledgements stay independent of provider teardown. Session disposal
+          // joins that same work even after the stopped occurrence leaves the controller map.
+          this.controllerDisposalTail = Promise.all([
+            this.controllerDisposalTail,
+            Promise.allSettled([controller.disposalPromise, controller.cancellationPromise]).then(() => {}),
+          ]).then(() => {});
+        }
+      }
     });
+  }
+
+  dispose(): Promise<void> {
+    this.disposalPromise ??= Promise.resolve().then(async () => {
+      const controllers = [...this.controllers.entries()];
+      await Promise.all(controllers.map(async ([runId, controller]) => {
+        const stopped = this.stop(runId);
+        // Begin native teardown even when another lifecycle operation is waiting on the provider.
+        const disposal = controller.kind === 'backend'
+          ? disposeExecutionRunBackendController(controller)
+          : Promise.resolve();
+        const outcomes = await Promise.allSettled([stopped, disposal]);
+        for (const outcome of outcomes) {
+          if (outcome.status !== 'rejected') continue;
+          logger.infoFile('[EXECUTION RUN] Session cleanup failed', {
+            runId,
+            error: outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason),
+          });
+        }
+      }));
+      await this.controllerDisposalTail;
+      await this.voiceAgentManager.dispose();
+    });
+    return this.disposalPromise;
   }
 
   async applyAction(runId: string, params: ExecutionRunActionParams): Promise<ExecutionRunActionResult> {

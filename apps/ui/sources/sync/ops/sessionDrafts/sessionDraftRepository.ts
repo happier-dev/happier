@@ -404,6 +404,11 @@ function isPersistedReplica(value: unknown): value is PersistedReplica {
     return Boolean(candidate.address && candidate.localRawDocument && Array.isArray(candidate.pendingFieldMutations));
 }
 
+// The new-session list projection reads only newSession replicas; other kinds never change it.
+function isNewSessionListAddress(address: SessionDraftAddressV1): boolean {
+    return address.kind === 'newSession';
+}
+
 function normalizeNewSessionDraftId(value: unknown): string | null {
     const parsed = SessionDraftAddressV1Schema.safeParse({ kind: 'newSession', draftId: value });
     return parsed.success && parsed.data.kind === 'newSession' ? parsed.data.draftId : null;
@@ -549,8 +554,9 @@ export class SessionDraftRepository {
         const state = this.scopeStates.get(scopeKey);
         if (!state || Boolean(state.persistenceError) === failed) return;
         state.persistenceError = failed;
-        this.newListProjectionCache.delete(scopeKey);
-        this.notifyBatch(scope, [...state.replicas.values()].map((replica) => replica.address));
+        const addresses = [...state.replicas.values()].map((replica) => replica.address);
+        if (addresses.some(isNewSessionListAddress)) this.newListProjectionCache.delete(scopeKey);
+        this.notifyBatch(scope, addresses);
     }
 
     private async flushStorage(scope: SessionDraftRepositoryScope): Promise<void> {
@@ -568,16 +574,17 @@ export class SessionDraftRepository {
     }
 
     private notify(scope: SessionDraftRepositoryScope, address: SessionDraftAddressV1): void {
-        const listenerKey = this.replicaListenerKey(scope, address);
-        for (const listener of this.listeners.get(listenerKey) ?? []) listener();
-        for (const listener of this.listListeners.get(this.scopeKey(scope)) ?? []) listener();
+        this.notifyBatch(scope, [address]);
     }
 
     private notifyBatch(scope: SessionDraftRepositoryScope, addresses: Iterable<SessionDraftAddressV1>): void {
+        let newSessionListChanged = false;
         for (const address of addresses) {
             const listenerKey = this.replicaListenerKey(scope, address);
             for (const listener of this.listeners.get(listenerKey) ?? []) listener();
+            newSessionListChanged ||= isNewSessionListAddress(address);
         }
+        if (!newSessionListChanged) return;
         for (const listener of this.listListeners.get(this.scopeKey(scope)) ?? []) listener();
     }
 
@@ -615,7 +622,7 @@ export class SessionDraftRepository {
 
     private writeReplica(scope: SessionDraftRepositoryScope, replica: PersistedReplica): void {
         this.getScopeState(scope).replicas.set(canonicalSessionDraftAddressV1(replica.address), replica);
-        this.newListProjectionCache.delete(this.scopeKey(scope));
+        if (isNewSessionListAddress(replica.address)) this.newListProjectionCache.delete(this.scopeKey(scope));
         if (this.recordMutation(scope, replica.address)) return;
         this.persist(scope);
         this.notify(scope, replica.address);
@@ -637,7 +644,7 @@ export class SessionDraftRepository {
             && state.ordinaryEntryDraftId === address.draftId;
         if (clearedOrdinaryEntryPointer) state.ordinaryEntryDraftId = null;
         if (!deleted && !clearedOrdinaryEntryPointer) return;
-        this.newListProjectionCache.delete(this.scopeKey(scope));
+        if (deleted && isNewSessionListAddress(address)) this.newListProjectionCache.delete(this.scopeKey(scope));
         if (deleted && this.recordMutation(scope, address)) return;
         this.persist(scope);
         if (deleted) this.notify(scope, address);

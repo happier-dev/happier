@@ -148,10 +148,10 @@ export const ToolCallsGroupViewWithSessionCommon = React.memo((props: ToolCallsG
     }, [expanded, previewCount, props.toolMessages]);
 
     const hiddenCount = expanded ? 0 : Math.max(0, count - previewMessages.length);
-    const showExpandButton = !expanded && hiddenCount > 0;
+    const showExpandButton = !expanded && previewCount > 0 && hiddenCount > 0;
     const showCollapsedPreview = previewMessages.length > 0;
     const { setExpanded } = props;
-    const onCollapse = React.useCallback(() => setExpanded(false), [setExpanded]);
+    const onToggle = React.useCallback(() => setExpanded(!expanded), [setExpanded, expanded]);
     const onExpand = React.useCallback(() => setExpanded(true), [setExpanded]);
     const previewSidechainIds = React.useMemo(() => {
         return resolveGroupedPreviewSidechainIds({
@@ -214,16 +214,16 @@ export const ToolCallsGroupViewWithSessionCommon = React.memo((props: ToolCallsG
                 status={props.status}
                 count={count}
                 expanded={expanded}
-                onCollapse={onCollapse}
+                onToggle={onToggle}
             />
 
-            <View style={[styles.contentRow, normalizedChromeMode === 'activity_feed' ? styles.contentRowFeed : styles.contentRowCards]}>
+            {expanded || showCollapsedPreview ? <View style={[styles.contentRow, normalizedChromeMode === 'activity_feed' ? styles.contentRowFeed : styles.contentRowCards]}>
                 <View style={styles.contentGutter}>
                     <View style={styles.gutterLine} />
                 </View>
                 <View style={styles.contentBody}>
                     {showExpandButton || showCollapsedPreview ? (
-                        <View style={[styles.preview, normalizedChromeMode === 'activity_feed' ? styles.previewFeed : styles.previewCards]}>
+                        <View style={[styles.preview, normalizedChromeMode === 'activity_feed' && !showFeedBackground ? styles.previewFeed : styles.previewCards]}>
                             {showExpandButton ? (
                                 <ToolCallsGroupExpandMoreChrome hiddenCount={hiddenCount} onExpand={onExpand} />
                             ) : null}
@@ -265,7 +265,7 @@ export const ToolCallsGroupViewWithSessionCommon = React.memo((props: ToolCallsG
 
                     {expanded ? (
                         <TranscriptCollapsible id={collapsibleId} createdAt={createdAt} expanded={expanded}>
-                            <View style={[styles.body, normalizedChromeMode === 'activity_feed' ? styles.bodyFeed : styles.bodyCards]}>
+                            <View style={[styles.body, normalizedChromeMode === 'activity_feed' && !showFeedBackground ? styles.bodyFeed : styles.bodyCards]}>
                                 {props.toolMessages.map((m, index) => {
                                     const { nestedMessageId, toolPinAction } = resolveGroupedRowToolChrome(m, expanded);
                                     return (
@@ -304,7 +304,7 @@ export const ToolCallsGroupViewWithSessionCommon = React.memo((props: ToolCallsG
                         </TranscriptCollapsible>
                     ) : null}
                 </View>
-            </View>
+            </View> : null}
         </View>
     );
 });
@@ -320,6 +320,7 @@ const styles = StyleSheet.create((theme) => ({
         overflow: 'hidden',
     },
     containerFeed: {
+        marginBottom: 8,
         borderRadius: 0,
         backgroundColor: 'transparent',
         overflow: 'visible',
@@ -357,6 +358,7 @@ const styles = StyleSheet.create((theme) => ({
     },
     previewFeed: {
         paddingHorizontal: 0,
+        paddingBottom: 0,
     },
     previewRow: {
     },
@@ -370,7 +372,7 @@ const styles = StyleSheet.create((theme) => ({
         paddingBottom: 6,
     },
     bodyCards: {},
-    bodyFeed: {},
+    bodyFeed: { paddingBottom: 0 },
     toolRow: {
     },
     toolRowCards: {

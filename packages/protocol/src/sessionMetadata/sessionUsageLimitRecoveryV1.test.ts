@@ -3,7 +3,11 @@ import { describe, expect, it } from 'vitest';
 import {
   SessionUsageLimitRecoveryV1Schema,
   resolveSessionUsageLimitRecoveryResumePromptModeV1,
+  buildUsageLimitIssueFingerprint,
+  isSessionUsageLimitRecoveryForIssue,
+  readSessionUsageLimitRecoveryForIssue,
 } from './sessionUsageLimitRecoveryV1.js';
+import type { SessionRuntimeIssueV1 } from '../sessions/control/runtimeIssueV1.js';
 
 const baseIntent = {
   v: 1,
@@ -19,6 +23,26 @@ const baseIntent = {
 } as const;
 
 describe('SessionUsageLimitRecoveryV1', () => {
+  it('uses the same exact issue identity for recovery producers and readers', () => {
+    const issue: SessionRuntimeIssueV1 = {
+      v: 1, scope: 'primary_session', status: 'failed', source: 'usage_limit', code: 'usage_limit',
+      provider: 'claude', providerTurnId: 'turn-b', occurredAt: 2_000,
+      usageLimit: { v: 1, resetAtMs: 5_000, retryAfterMs: null, quotaScope: 'account', recoverability: 'wait' },
+    };
+    const recovery = { issueFingerprint: buildUsageLimitIssueFingerprint(issue) };
+    expect(recovery.issueFingerprint).toBe('usage-limit:claude:turn-b:2000:5000');
+    expect(isSessionUsageLimitRecoveryForIssue(issue, recovery)).toBe(true);
+    expect(isSessionUsageLimitRecoveryForIssue({ ...issue, occurredAt: 2_001 }, recovery)).toBe(false);
+    expect(isSessionUsageLimitRecoveryForIssue(issue, { issueFingerprint: 'opaque-attempt' })).toBe(false);
+    const intent = { ...baseIntent, issueFingerprint: recovery.issueFingerprint };
+    expect(readSessionUsageLimitRecoveryForIssue(intent, issue)?.issueFingerprint).toBe(recovery.issueFingerprint);
+    expect(readSessionUsageLimitRecoveryForIssue(intent, { ...issue, occurredAt: 2_001 })).toBeNull();
+    expect(readSessionUsageLimitRecoveryForIssue(intent)?.issueFingerprint).toBe(recovery.issueFingerprint);
+    const providerless = { ...issue, provider: undefined, providerTurnId: undefined, usageLimit: undefined };
+    expect(buildUsageLimitIssueFingerprint(providerless)).toBe('usage-limit:unknown-provider:unknown-turn:2000:no-reset');
+    expect(buildUsageLimitIssueFingerprint(providerless, 'claude')).toBe('usage-limit:claude:unknown-turn:2000:no-reset');
+  });
+
   it('defaults and persists resumePromptMode on stored recovery intents', () => {
     expect(SessionUsageLimitRecoveryV1Schema.parse(baseIntent)).toMatchObject({
       resumePromptMode: 'standard',
