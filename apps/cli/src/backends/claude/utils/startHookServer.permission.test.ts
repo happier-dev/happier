@@ -4,6 +4,9 @@ import { createServer } from 'node:net';
 import { join, resolve } from 'node:path';
 
 import { startHookServer } from './startHookServer';
+import { createPermissionHandlerSessionStub } from './permissionHandler.testkit';
+import { ClaudeLocalPermissionBridge } from '../localPermissions/localPermissionBridge';
+import { PUBLIC_RPC_HANDLER_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 
 async function postSessionHook(params: {
   port: number;
@@ -186,6 +189,80 @@ describe('startHookServer (permission hook)', () => {
     }
   });
 
+  it('withdraws an interactive question when its HTTP hook times out and rejects a late answer', async () => {
+    const { session, client } = createPermissionHandlerSessionStub('question-http-timeout');
+    const bridge = new ClaudeLocalPermissionBridge(session, { responseTimeoutMs: 20 });
+    bridge.activate();
+    const server = await startHookServer({
+      onSessionHook: () => {},
+      onPermissionHook: (data, options) => bridge.handlePermissionHook(data, options),
+      permissionRequestTimeoutMs: 20,
+    });
+    servers.push(server);
+
+    try {
+      const response = await postPermissionHook({
+        port: server.port,
+        body: {
+          hook_event_name: 'PreToolUse',
+          tool_name: 'AskUserQuestion',
+          tool_use_id: 'question-http-timeout',
+          tool_input: {
+            questions: [{
+              question: 'Which color?',
+              options: [{ label: 'Blue' }, { label: 'Green' }],
+            }],
+          },
+        },
+      });
+
+      expect(response.status).toBe(408);
+      await expect.poll(() => client.agentState.requests['question-http-timeout']).toBeUndefined();
+      expect(client.agentState.completedRequests['question-http-timeout']).toMatchObject({ status: 'canceled' });
+      const answer = client.rpcHandlerManager.getHandler('permission')?.({
+        id: 'question-http-timeout',
+        approved: true,
+        answers: { 'Which color?': 'Blue' },
+      });
+      await expect(answer).rejects.toMatchObject({
+        publicErrorCode: PUBLIC_RPC_HANDLER_ERROR_CODES.STRUCTURED_QUESTION_RECEIVER_NOT_OWNER,
+      });
+      expect(client.agentState.completedRequests['question-http-timeout']).toMatchObject({ status: 'canceled' });
+    } finally {
+      bridge.dispose();
+    }
+  });
+
+  it('withdraws a pending permission when the native hook disconnects without a response timeout', async () => {
+    const { session, client } = createPermissionHandlerSessionStub('permission-http-disconnect');
+    const bridge = new ClaudeLocalPermissionBridge(session, { responseTimeoutMs: null });
+    bridge.activate();
+    const server = await startHookServer({
+      onSessionHook: () => {},
+      onPermissionHook: (data, options) => bridge.handlePermissionHook(data, options),
+      permissionRequestTimeoutMs: null,
+    });
+    servers.push(server);
+    const controller = new AbortController();
+
+    try {
+      const response = fetch(`http://127.0.0.1:${server.port}/hook/permission-request`, {
+        method: 'POST',
+        signal: controller.signal,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'pwd' }, tool_use_id: 'permission-http-disconnect' }),
+      });
+      await expect.poll(() => client.agentState.requests['permission-http-disconnect']).toBeDefined();
+      controller.abort();
+      await expect(response).rejects.toMatchObject({ name: 'AbortError' });
+      await expect.poll(() => client.agentState.requests['permission-http-disconnect']).toBeUndefined();
+      expect(client.agentState.completedRequests['permission-http-disconnect']).toMatchObject({ status: 'canceled' });
+    } finally {
+      controller.abort();
+      bridge.dispose();
+    }
+  });
+
   it('returns 403 when the secret header is missing or mismatched', async () => {
     const onPermissionHook = vi.fn(() => ({
       continue: true,
@@ -309,7 +386,7 @@ describe('startHookServer (permission hook)', () => {
       hook_event_name: 'PreToolUse',
       tool_name: 'AskUserQuestion',
       tool_use_id: 'toolu_ask_pre_forwarder_1',
-    }));
+    }), expect.objectContaining({ signal: expect.any(AbortSignal) }));
     expect(JSON.parse(result.stdout)).toMatchObject({
       hookSpecificOutput: {
         hookEventName: 'PreToolUse',

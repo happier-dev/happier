@@ -411,16 +411,19 @@ describe('readAfterCodexTranscript', () => {
     expect(secondBatch.nextCursor).toBeTruthy();
   });
 
-  it('keeps polling app-server-linked sessions when rollout files are missing, then forces a refresh when one appears', async () => {
+  it('keeps native follow on its selected source when a legacy rollout appears', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-codex-direct-tail-app-server-'));
     const codexHome = join(root, 'codex-home');
     const sessionsDir = join(codexHome, 'sessions');
     await mkdir(codexHome, { recursive: true });
 
     const sessionId = 'remote_app_server';
+    const nativeItemsPath = join(root, 'native-items.json');
+    await writeFile(nativeItemsPath, '[]');
     const fakeAppServer = await writeFakeCodexAppServerThreadListScript({
       dir: root,
       initializeName: 'fake',
+      nativeItemsPath,
       nonArchivedThreads: [{
         id: sessionId,
         name: 'App server tail preview',
@@ -481,7 +484,7 @@ describe('readAfterCodexTranscript', () => {
     });
 
     expect(afterRolloutAppears.items).toHaveLength(0);
-    expect(afterRolloutAppears.truncated).toBe(true);
+    expect(afterRolloutAppears.truncated).toBe(false);
     expect(afterRolloutAppears.nextCursor).toBeTruthy();
   });
 

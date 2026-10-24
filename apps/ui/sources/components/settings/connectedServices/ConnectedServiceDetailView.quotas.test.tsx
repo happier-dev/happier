@@ -3,7 +3,7 @@ import React from 'react';
 import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { __resetConnectedServiceQuotaSnapshotStore } from '@/hooks/server/connectedServices/connectedServiceQuotaSnapshotStore';
+import { __resetConnectedServiceQuotaSnapshotStore } from '@/sync/domains/connectedServices/connectedServiceQuotaSnapshotStore';
 
 import {
   buildProviderAccountUsageRecordId,

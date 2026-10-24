@@ -8,6 +8,7 @@ import { areExecutionRunBackendTargetsEqual } from '@/agent/executionRuns/runtim
 import type { ACPProvider } from '@/api/session/sessionMessageTypes';
 import type { AcpSendFn } from '@/agent/acp/bridge/acpSessionForwarding';
 import { createBackendControllerMessageHandler } from '@/agent/executionRuns/runtime/createBackendControllerMessageHandler';
+import { disposeExecutionRunBackendController } from './settleExecutionRunControllerOccurrence';
 import { resolveExecutionRunIntentProfile } from '@/agent/executionRuns/profiles/intentRegistry';
 import { createStreamedTranscriptWriter, type StreamedTranscriptWriterSession } from '@/api/session/streamedTranscriptWriter';
 
@@ -29,6 +30,7 @@ export async function resumeBackendControllerForResumableRun(args: Readonly<{
    * mapped to a typed resume failure below.
    */
   createBackend: () => Promise<ResumedExecutionRunBackend>;
+  isSessionClosing?: () => boolean;
   sendAcp: AcpSendFn;
   parentProvider: ACPProvider;
   streamedTranscriptSession: StreamedTranscriptWriterSession | null;
@@ -44,6 +46,9 @@ export async function resumeBackendControllerForResumableRun(args: Readonly<{
   | { ok: true }
   | { ok: false; errorCode: string; error: string }
 > {
+  if (args.isSessionClosing?.()) {
+    return { ok: false, errorCode: 'execution_run_not_allowed', error: 'Session is closing' };
+  }
   if (args.run.retentionPolicy !== 'resumable') {
     return { ok: false, errorCode: 'execution_run_not_allowed', error: 'Not resumable' };
   }
@@ -118,15 +123,6 @@ export async function resumeBackendControllerForResumableRun(args: Readonly<{
   const canResume = wantsReplayCapture
     ? Boolean(backend.loadSessionWithReplayCapture)
     : Boolean(backend.loadSessionWithReplayCapture || backend.loadSession);
-  if (!canResume) {
-    await backend.dispose().catch(() => {});
-    args.budgetRegistry?.releaseExecutionRun(args.runId);
-    return await failAfterAdmission({
-      errorCode: 'execution_run_not_allowed',
-      error: wantsReplayCapture ? 'Backend does not support resumable long-lived runs' : 'Backend does not support resume',
-    });
-  }
-
   let resolveTerminal!: () => void;
   const terminalPromise = new Promise<void>((resolve) => {
     resolveTerminal = resolve;
@@ -135,7 +131,7 @@ export async function resumeBackendControllerForResumableRun(args: Readonly<{
   const resumeCtrl: ExecutionRunBackendController = {
     kind: 'backend',
     backend,
-    backendSupportsResume: true,
+    backendSupportsResume: canResume,
     childSessionId: null,
     buffer: '',
     sidechainStreamBuffer: '',
@@ -165,10 +161,25 @@ export async function resumeBackendControllerForResumableRun(args: Readonly<{
     resolveTerminal,
   };
 
+  if (args.isSessionClosing?.() || !canResume) {
+    await disposeExecutionRunBackendController(resumeCtrl).catch(() => {});
+    args.budgetRegistry?.releaseExecutionRun(args.runId);
+    return await failAfterAdmission({
+      errorCode: 'execution_run_not_allowed',
+      error: args.isSessionClosing?.()
+        ? 'Session is closing'
+        : wantsReplayCapture ? 'Backend does not support resumable long-lived runs' : 'Backend does not support resume',
+    });
+  }
+
+  // The existing map owns an acquired backend before native load can wait for an ACK.
+  args.controllers.set(args.runId, resumeCtrl);
+  const isCurrentController = () => args.controllers.get(args.runId) === resumeCtrl
+    && !resumeCtrl.cancelled && !resumeCtrl.disposalPromise && !args.isSessionClosing?.();
+
   const profile = resolveExecutionRunIntentProfile(args.run.intent);
   const shouldMaterializeInTranscript = profile.transcriptMaterialization !== 'none';
   const sendAcp = shouldMaterializeInTranscript ? args.sendAcp : (() => {});
-  let controllerPreparing = true;
 
   const onMessage = createBackendControllerMessageHandler({
     ctrl: resumeCtrl,
@@ -182,10 +193,7 @@ export async function resumeBackendControllerForResumableRun(args: Readonly<{
     backendSupportsResume: true,
     writeActivityMarker: args.writeActivityMarker,
     getNowMs: args.getNowMs,
-    // loadSessionWithReplayCapture may synchronously emit replay/live messages before the
-    // controller can be installed. The caller serializes this provisional ownership; after load,
-    // exact map identity is the only accepted authority.
-    isCurrentController: () => controllerPreparing || args.controllers.get(args.runId) === resumeCtrl,
+    isCurrentController,
     onPublicStateUpdated: args.onPublicStateUpdated,
     onModelOutput: args.onModelOutput,
   });
@@ -194,9 +202,12 @@ export async function resumeBackendControllerForResumableRun(args: Readonly<{
     const loaded = backend.loadSessionWithReplayCapture
       ? await backend.loadSessionWithReplayCapture(vendorSessionId)
       : await backend.loadSession!(vendorSessionId);
+    if (!isCurrentController()) {
+      await disposeExecutionRunBackendController(resumeCtrl).catch(() => {});
+      args.budgetRegistry?.releaseExecutionRun(args.runId);
+      return { ok: false, errorCode: 'execution_run_not_allowed', error: 'Resume was retired' };
+    }
     resumeCtrl.childSessionId = loaded.sessionId;
-    args.controllers.set(args.runId, resumeCtrl);
-    controllerPreparing = false;
     args.runs.set(args.runId, {
       ...args.run,
       ...(prepared.connectedServicesRegistration ? {
@@ -209,11 +220,18 @@ export async function resumeBackendControllerForResumableRun(args: Readonly<{
     });
     args.onPublicStateUpdated?.(args.runId);
     await args.writeActivityMarker(args.runId, args.getNowMs(), { force: true, resumed: true });
-    return { ok: true };
-  } catch (e: any) {
-    controllerPreparing = false;
-    await backend.dispose().catch(() => {});
+    return isCurrentController()
+      ? { ok: true }
+      : { ok: false, errorCode: 'execution_run_not_allowed', error: 'Resume was retired' };
+  } catch (e: unknown) {
+    const retired = !isCurrentController();
+    await disposeExecutionRunBackendController(resumeCtrl).catch(() => {});
     args.budgetRegistry?.releaseExecutionRun(args.runId);
+    // A queued Session stop still owns terminalization of this occurrence. Do not restore
+    // its previous state or remove the controller it must settle after load unwinds.
+    if (retired) return { ok: false, errorCode: 'execution_run_not_allowed', error: 'Resume was retired' };
+    if (args.controllers.get(args.runId) === resumeCtrl) args.controllers.delete(args.runId);
+    resumeCtrl.resolveTerminal();
     return await failAfterAdmission({
       errorCode: 'execution_run_failed',
       error: e instanceof Error ? e.message : 'Resume failed',

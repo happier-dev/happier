@@ -179,6 +179,11 @@ without resending the retired input or manufacturing provider acceptance. The AP
 session client owns exact custody reconciliation and publishes the same Pending
 wake when local custody changes.
 
+The development-source Agent SDK and legacy remote runners also require exact
+native input acknowledgment before reporting acceptance. Their shared settlement
+owner and failed-startup replay retention are described in
+[Pending delivery](pending-delivery.md#ui-settlement-convergence-development).
+
 In development source, Unified Terminal publishes its exact-host stop capability
 as soon as the attachment is persisted, before metadata publication or provider
 initialization can block. Explicit stop still destroys only that owned attachment;

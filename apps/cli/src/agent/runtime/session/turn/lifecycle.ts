@@ -441,7 +441,14 @@ export function createSessionTurnLifecycle(
 
     async function failTurn(input: FailTurnInput): Promise<void> {
         let allocatedWrite: Promise<void> | null = null;
-        if (!activeTurn && input.allocateWhenIdle) {
+        const previousIssue = lastTerminalTurn?.lastRuntimeIssue;
+        const reuseFailedTurn = input.suppressUntrustedDuplicate === true
+            && !activeTurn && !normalizeOptionalString(input.providerTurnId)
+            && lastTerminalTurn?.terminalStatus === 'failed'
+            && previousIssue?.code === input.issue?.code
+            && previousIssue?.source === input.issue?.source
+            && previousIssue?.provider === input.issue?.provider;
+        if (!activeTurn && input.allocateWhenIdle && !reuseFailedTurn) {
             // Session-scoped failure with no active turn (e.g. host death between
             // turns): allocate a session-owned turn so the failure surfaces, but do
             // NOT emit a misleading 'prompt_or_steer' observer event.
@@ -452,7 +459,10 @@ export function createSessionTurnLifecycle(
             });
             allocatedWrite = begun.pendingWrite;
         }
-        const result = terminalTurnSync({ ...input, status: 'failed' });
+        const result = terminalTurnSync({ ...input, status: 'failed', suppressUntrustedDuplicate: reuseFailedTurn });
+        if (result.turn?.lastRuntimeIssue) {
+            input.onFailureTurn?.({ turnId: result.turn.turnId, issue: result.turn.lastRuntimeIssue });
+        }
         await awaitTerminalTurnWriteAndEmit(result, 'failed', allocatedWrite);
     }
 

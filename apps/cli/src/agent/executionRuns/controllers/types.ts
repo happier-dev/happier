@@ -31,6 +31,8 @@ export type ExecutionRunBackendController = {
   pendingExternalMessagesSignal: { promise: Promise<void>; resolve: () => void } | null;
   lastMarkerWriteAtMs: number;
   terminalMarkerWritePromise?: Promise<void>;
+  disposalPromise?: Promise<void>;
+  cancellationPromise?: Promise<void>;
   /**
    * Run-owned readiness for the initially admitted backend occurrence. A send arriving after the
    * durable run handle is returned waits here instead of racing session provisioning.
@@ -46,6 +48,8 @@ export type ExecutionRunVoiceAgentController = {
   cancelled: boolean;
   lastMarkerWriteAtMs: number;
   terminalMarkerWritePromise?: Promise<void>;
+  disposalPromise?: Promise<void>;
+  cancellationPromise?: Promise<void>;
   terminalPromise: Promise<void>;
   resolveTerminal: () => void;
   transcript: Readonly<{ persistenceMode: 'ephemeral' | 'persistent'; epoch: number }>;

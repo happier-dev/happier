@@ -1,8 +1,9 @@
-import type { ConnectedServiceCredentialRecordV1 } from '@happier-dev/protocol';
+import { readClaudeOauthCredentialOrganizationId, type ConnectedServiceCredentialRecordV1 } from '@happier-dev/protocol';
 
 export type ClaudeSubscriptionCredentialIdentity = Readonly<{
   providerAccountId: string | null;
   providerEmail: string | null;
+  providerOrganizationId: string | null;
 }>;
 
 function readOptionalIdentityValue(value: string | null | undefined): string | null {
@@ -17,12 +18,14 @@ export function readClaudeSubscriptionCredentialIdentity(
     return {
       providerAccountId: readOptionalIdentityValue(record.oauth.providerAccountId),
       providerEmail: readOptionalIdentityValue(record.oauth.providerEmail),
+      providerOrganizationId: readClaudeOauthCredentialOrganizationId(record.oauth.raw),
     };
   }
   if (record.kind === 'token') {
     return {
       providerAccountId: readOptionalIdentityValue(record.token.providerAccountId),
       providerEmail: readOptionalIdentityValue(record.token.providerEmail),
+      providerOrganizationId: null,
     };
   }
   return null;

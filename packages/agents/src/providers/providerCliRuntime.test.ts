@@ -35,7 +35,7 @@ describe('PROVIDER_CLI_RUNTIME_SPECS', () => {
         },
         archiveExtractionLimits: {
           maxFileBytes: 384 * 1024 * 1024,
-          maxExpandedBytes: 384 * 1024 * 1024,
+          maxExpandedBytes: 512 * 1024 * 1024,
         },
       },
     });
@@ -47,10 +47,10 @@ describe('PROVIDER_CLI_RUNTIME_SPECS', () => {
     expect(archiveExtractionLimits).toBeDefined();
     if (!archiveExtractionLimits) return;
 
-    // Checksum-pinned OpenAI release rust-v0.147.0 contains a 298,668,336-byte
-    // Codex executable and expands to 370,442,135 bytes across the package.
-    expect(archiveExtractionLimits.maxFileBytes).toBeGreaterThan(298_668_336);
-    expect(archiveExtractionLimits.maxExpandedBytes).toBeGreaterThan(370_442_135);
+    // Digest-verified rust-v0.163.0 Windows x64 package: SHA-256
+    // 901028b285614a9974f431f9d9f6534b3e5ed8d62eba4ba64f4762c00f040522.
+    expect(archiveExtractionLimits.maxFileBytes).toBeGreaterThanOrEqual(341_270_320);
+    expect(archiveExtractionLimits.maxExpandedBytes).toBeGreaterThanOrEqual(465_689_987);
   });
 
   it('declares managed package sources for package-backed CLIs', () => {

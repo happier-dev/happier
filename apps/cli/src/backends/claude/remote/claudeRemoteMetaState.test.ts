@@ -95,6 +95,19 @@ describe('applyClaudeRemoteMetaState', () => {
     });
   });
 
+  it('retains independent unified response locations through metadata updates', () => {
+    const next = applyClaudeRemoteMetaState(DEFAULT_CLAUDE_REMOTE_META_STATE, {
+      claudeUnifiedTerminalQuestionResponseLocation: 'terminal_only',
+      claudeUnifiedTerminalPermissionResponseLocation: 'app_only',
+    });
+    expect(next).toMatchObject({
+      claudeUnifiedTerminalQuestionResponseLocation: 'terminal_only',
+      claudeUnifiedTerminalPermissionResponseLocation: 'app_only',
+    });
+    expect(applyClaudeRemoteMetaState(next, { claudeUnifiedTerminalQuestionResponseLocation: 'invalid' }))
+      .toMatchObject({ claudeUnifiedTerminalQuestionResponseLocation: 'terminal_only' });
+  });
+
   it('applies valid unified terminal host values only', () => {
     const tmux = applyClaudeRemoteMetaState(DEFAULT_CLAUDE_REMOTE_META_STATE, {
       claudeUnifiedTerminalHost: 'tmux',

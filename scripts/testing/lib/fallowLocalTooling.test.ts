@@ -9,7 +9,6 @@ type PackageJson = Readonly<{
 type FallowConfig = Readonly<{
   $schema?: string;
   entry?: readonly string[];
-  ignoreDependencies?: readonly string[];
   duplicates?: Readonly<{
     ignoreImports?: boolean;
   }>;
@@ -18,7 +17,7 @@ type FallowConfig = Readonly<{
   }>;
 }>;
 
-const FALLOW_VERSION = '2.62.0';
+const FALLOW_VERSION = '2.84.0';
 
 function readJsonFile<T>(path: string): T {
   assert.equal(existsSync(path), true, `${path} must exist`);
@@ -55,6 +54,5 @@ test('Fallow config is checked in while generated local state stays ignored', ()
   assert.equal(config.duplicates?.ignoreImports, true);
   assert.ok(config.entry?.includes('scripts/**/*.{js,mjs,cjs,ts,tsx}'));
   assert.ok(config.entry?.includes('apps/*/scripts/**/*.{js,mjs,cjs,ts,tsx}'));
-  assert.ok(config.ignoreDependencies?.includes('node:sqlite'));
   assert.match(gitignore, /^\/\.fallow\/$/m);
 });

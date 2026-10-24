@@ -1,4 +1,4 @@
-import { buildUsageLimitIssueFingerprint } from '@/session/usageLimitRecoveryControls/buildUsageLimitIssueFingerprint';
+import { buildUsageLimitIssueFingerprint, isSessionUsageLimitRecoveryForIssue } from '@happier-dev/protocol';
 import { randomUUID } from 'node:crypto';
 import { canPublishSessionResumeIdentity } from '@/session/metadata/sessionIdentityPublication';
 import { join } from 'node:path';
@@ -152,6 +152,7 @@ import { createCodexAppServerSessionTurnTracker } from './turns/codexAppServerSe
 import { CodexAppServerHistoryBoundary } from './codexAppServerHistoryBoundary';
 import {
     classifyCodexConnectedServiceAuthFailure,
+    attachCodexRuntimeAuthFailureIssue,
     isCodexProviderCapacityFailure,
     type CodexConnectedServiceRuntimeFailureClassification,
 } from '../connectedServices/classifyCodexConnectedServiceAuthFailure';
@@ -1780,6 +1781,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
                                 sessionId: params.session.sessionId,
                                 classification: {
                                     kind: 'usage_limit',
+                                    runtimeIssueFingerprint: intent.issueFingerprint,
                                     serviceId: 'openai-codex',
                                     groupId: intent.selectedAuth.groupId,
                                     profileId: intent.selectedAuth.profileId,
@@ -3384,6 +3386,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
         error?: Error;
         emitUndeliverablePrompt?: boolean;
         failureIssue?: SessionRuntimeIssueV1 | null;
+        onFailureTurn?: (failure: Readonly<{ turnId: string; issue: SessionRuntimeIssueV1 }>) => void;
         flushReason?: 'turn-end' | 'abort' | 'failure';
         insideBridgeWork?: boolean;
     }>): Promise<void> => {
@@ -3480,6 +3483,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
             await turnBoundaryTracker.failActiveTurn({
                 endSeqInclusive: readLastObservedMessageSeq(params.session),
                 issue: options.failureIssue,
+                onFailureTurn: options.onFailureTurn,
             });
         }
         if (options?.flushReason === 'turn-end' && activeTurn) {
@@ -3690,6 +3694,13 @@ export function createCodexAppServerRuntime(params: Readonly<{
                 await finishPendingTurn({
                     error: failure,
                     failureIssue: issue,
+                    onFailureTurn: ({ issue: acceptedIssue }) => {
+                        issue = acceptedIssue;
+                        attachCodexRuntimeAuthFailureIssue(failure, acceptedIssue);
+                        void requestConnectedServiceGroupRecoveryForTerminalFailure(
+                            failure instanceof CodexAppServerTurnFailure ? failure.runtimeAuthClassification : null,
+                        );
+                    },
                     flushReason: 'failure',
                     insideBridgeWork: true,
                 });
@@ -3700,6 +3711,11 @@ export function createCodexAppServerRuntime(params: Readonly<{
                     publishCodexTurnAbortedMessage();
                 }
             }
+        }
+        if (!params.session.sessionTurnLifecycle) {
+            void requestConnectedServiceGroupRecoveryForTerminalFailure(
+                failure instanceof CodexAppServerTurnFailure ? failure.runtimeAuthClassification : null,
+            );
         }
         await updateUsageLimitRecoveryFromSurfacedIssue(issue);
     };
@@ -3719,8 +3735,8 @@ export function createCodexAppServerRuntime(params: Readonly<{
                 sessionId: params.session.sessionId,
                 classification,
             });
-        } catch (error) {
-            logger.debug('[codex-app-server] Failed to request connected-service group recovery after terminal provider failure', error);
+        } catch {
+            logger.infoFile('[codex-app-server] accepted_turn_failure_report_unavailable');
         }
     };
 
@@ -3760,16 +3776,6 @@ export function createCodexAppServerRuntime(params: Readonly<{
                 return;
             }
             await abortPendingTurnWithFailure(failure);
-            const groupRecoveryClassification = failure instanceof CodexAppServerTurnFailure
-                ? failure.runtimeAuthClassification
-                : null;
-            // The daemon may hot-apply a replacement credential back through this same
-            // runtime. Start recovery only after the terminal boundary and classified issue
-            // are published, but do not await it while a notification bridge owns the
-            // runtime queue or the hot-apply callback can deadlock behind that bridge.
-            void requestConnectedServiceGroupRecoveryForTerminalFailure(
-                groupRecoveryClassification,
-            );
             return;
         }
         if (terminalOutcome === 'interrupted') {
@@ -5863,7 +5869,11 @@ export function createCodexAppServerRuntime(params: Readonly<{
             if (request.operation === 'consume_reset_credit') {
                 return unsupportedSessionRuntimeMethod(SESSION_RPC_METHODS.SESSION_USAGE_LIMIT_CHECK_NOW);
             }
-            const currentIntent = usageLimitRecoveryScheduler.read(request.sessionId);
+            const storedIntent = usageLimitRecoveryScheduler.read(request.sessionId);
+            const currentIntent = storedIntent && latestUsageLimitIssue
+                && !isSessionUsageLimitRecoveryForIssue(latestUsageLimitIssue, storedIntent, 'codex')
+                ? null
+                : storedIntent;
             if (
                 currentIntent
                 && currentIntent.status !== 'cancelled'

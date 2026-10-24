@@ -1,3 +1,6 @@
+import { buildUsageLimitIssueFingerprint } from '@happier-dev/protocol';
+import type { SessionTurnLifecycle } from '@/agent/runtime/session/turn/types';
+import { surfacePrimarySessionRuntimeIssue } from '@/agent/runtime/session/errors/surfacePrimarySessionRuntimeIssue';
 import { findConnectedServiceChildSelection } from '@/daemon/connectedServices/connectedServiceChildEnvironment';
 import {
   reportConnectedServiceRuntimeAuthFailureToDaemon,
@@ -24,6 +27,7 @@ import {
  */
 export type GeminiRuntimeAuthFailureSessionClient = Readonly<{
   sessionId: string;
+  sessionTurnLifecycle?: SessionTurnLifecycle;
   sendSessionEvent?: (event: Readonly<{ type: 'message'; message: string }>) => void;
 }>;
 
@@ -71,23 +75,33 @@ export function classifyGeminiConnectedServiceRuntimeAuthFailure(params: Readonl
 export async function surfaceGeminiConnectedServiceRuntimeAuthFailure(params: Readonly<{
   session: GeminiRuntimeAuthFailureSessionClient;
   classification: ConnectedServiceRuntimeFailureClassification;
+  failedTurn?: Readonly<{ sessionSeq?: number | null }>;
   logPrefix?: string;
   /** Boundary injection for tests: daemon local-control notify + outbox dir. */
   notify?: ReportNotify;
   reportOutboxDir?: string;
 }>): Promise<ConnectedServiceRuntimeAuthFailureDaemonReport> {
   const logPrefix = params.logPrefix ?? '[gemini]';
+  let classification = params.classification;
+  if (params.failedTurn) {
+    // Canonical terminal admission is synchronous; recovery must not wait for its durable write.
+    void surfacePrimarySessionRuntimeIssue({ provider: 'gemini', cause: 'status_error', session: params.session,
+      error: { runtimeAuthClassification: classification }, sessionSeq: params.failedTurn.sessionSeq,
+      suppressUntrustedDuplicate: true,
+      onFailureTurn: ({ issue }) => { classification = { ...classification, runtimeIssueFingerprint: buildUsageLimitIssueFingerprint(issue) }; },
+    }).catch((error) => { logger.debug(`${logPrefix} Failed to persist accepted turn failure (non-fatal)`, error); });
+  }
   const recoveryReport = await reportConnectedServiceRuntimeAuthFailureToDaemon({
     sessionId: params.session.sessionId,
     switchesThisTurn: 0,
-    classification: params.classification,
+    classification,
     logPrefix,
     ...(params.notify ? { notify: params.notify } : {}),
     ...(params.reportOutboxDir ? { reportOutboxDir: params.reportOutboxDir } : {}),
   });
   projectConnectedServiceRuntimeAuthRecoveryReport({
     report: recoveryReport,
-    classification: params.classification,
+    classification,
     sendGenericStatusMessage: (message) => {
       if (!params.session.sendSessionEvent) return false;
       params.session.sendSessionEvent({ type: 'message', message });
@@ -104,6 +118,7 @@ export async function surfaceGeminiConnectedServiceRuntimeAuthFailure(params: Re
 export async function reportGeminiConnectedServiceRuntimeAuthFailureBestEffort(params: Readonly<{
   session: GeminiRuntimeAuthFailureSessionClient;
   error: unknown;
+  failedTurn?: Readonly<{ sessionSeq?: number | null }>;
   env?: NodeJS.ProcessEnv;
   logPrefix?: string;
 }>): Promise<GeminiConnectedServiceRuntimeAuthFailureReportResult | null> {
@@ -116,6 +131,7 @@ export async function reportGeminiConnectedServiceRuntimeAuthFailureBestEffort(p
     const recoveryReport = await surfaceGeminiConnectedServiceRuntimeAuthFailure({
       session: params.session,
       classification,
+      ...(params.failedTurn ? { failedTurn: params.failedTurn } : {}),
       ...(params.logPrefix ? { logPrefix: params.logPrefix } : {}),
     });
     return { classification, recoveryReport };

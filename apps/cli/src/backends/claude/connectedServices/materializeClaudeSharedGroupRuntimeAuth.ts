@@ -89,6 +89,7 @@ export async function materializeClaudeSharedGroupRuntimeAuth(
           preserveExistingAccountState: true,
           providerAccountId: identity?.providerAccountId ?? null,
           providerEmail: identity?.providerEmail ?? null,
+          providerOrganizationId: identity?.providerOrganizationId ?? null,
         });
         return {
           status: 'materialized' as const,
@@ -116,6 +117,7 @@ export async function materializeClaudeSharedGroupRuntimeAuth(
         preserveExistingAccountState: false,
         providerAccountId: identity?.providerAccountId ?? null,
         providerEmail: identity?.providerEmail ?? null,
+        providerOrganizationId: identity?.providerOrganizationId ?? null,
       });
       await writeClaudeConnectedServiceHomeProvenance({
         claudeConfigDir: target.metadata.runtimeClaudeConfigDir,

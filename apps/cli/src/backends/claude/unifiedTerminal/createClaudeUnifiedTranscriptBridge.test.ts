@@ -57,6 +57,90 @@ function createDeferred<T>() {
 describe('createClaudeUnifiedTranscriptBridge', () => {
   const tempDirs: string[] = [];
 
+  it('delivers Send now once after a tool-use interruption without accepting it before the transcript echo', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'happier-claude-tool-interruption-'));
+    tempDirs.push(dir);
+    const sessionId = 'tool-interruption-session';
+    const transcriptPath = join(dir, `${sessionId}.jsonl`);
+    await writeFile(transcriptPath, '');
+    const injected: string[] = [];
+    const accepted: string[] = [];
+    const observed: string[] = [];
+    const thinking: boolean[] = [];
+    const terminalReasons: string[] = [];
+    let interrupts = 0;
+    let confirmation = Promise.resolve(false);
+    const discovery = createClaudeUnifiedAcceptedPromptTranscriptDiscovery({ acceptedPromptWindowMs: 5_000 });
+    const arbiter = createClaudeUnifiedInputArbiter({
+      quietPeriodMs: 0,
+      // Terminal writes and interrupt requests are external boundaries; lifecycle and custody stay real.
+      injectPrompt: async (batch) => {
+        injected.push(batch.message);
+        return { status: 'injected', at: Date.now(), bytesWritten: batch.message.length };
+      },
+      interruptActiveTurn: async () => { interrupts += 1; },
+      onProviderAcceptancePending: (batch) => { discovery.recordAcceptedPrompt({
+        message: batch.message, deliveryIdentity: { localIds: batch.userMessageLocalIds },
+      }); },
+      onPromptAccepted: (batch) => {
+        discovery.consumeAcceptedPromptByBatch(batch);
+        accepted.push(...(batch.userMessageLocalIds ?? []));
+      },
+    });
+    const lifecycle = createClaudeUnifiedHookLifecycleBridge({
+      subscribeClaudeSessionHooks: () => () => undefined,
+      arbiter, completionQuiescenceMs: 0,
+      onThinkingChange: (value) => { thinking.push(value); },
+      onPromptTurnTerminal: (event) => { terminalReasons.push(event.reason); },
+    });
+    const bridge = createClaudeUnifiedTranscriptBridge({
+      sessionId, transcriptPath, workingDirectory: dir,
+      onMessage: () => undefined,
+      onTranscriptMessage: (message) => {
+        const match = discovery.findMatchingTranscript([message]);
+        if (match) confirmation = arbiter.confirmPromptAcceptedByProviderIf((batch) => (
+          doesClaudeUnifiedPromptBatchMatchAcceptedTranscript({ batch, match })
+        ));
+        lifecycle.observeTranscript(message);
+        if (typeof message.uuid === 'string') observed.push(message.uuid);
+      },
+      transcriptMissingWarningMs: 0,
+    });
+    try {
+      const abortSignal = new AbortController().signal;
+      lifecycle.start({ abortSignal });
+      await bridge.start({ abortSignal });
+      await appendJsonl(transcriptPath, { type: 'user', uuid: 'original-prompt', sessionId,
+        message: { role: 'user', content: 'Use a tool' } });
+      await waitUntil(() => observed.includes('original-prompt'));
+      await arbiter.enqueueUiMessage({
+        message: 'Follow up after interrupt', origin: { kind: 'ui_pending' },
+        pendingProviderAction: 'interrupt_and_send', userMessageLocalIds: ['follow-up'],
+      });
+      await arbiter.drainWhenSafe();
+      expect(interrupts).toBe(1);
+      expect(injected).toEqual([]);
+      expect(thinking.at(-1)).toBe(true);
+      await appendJsonl(transcriptPath, { type: 'user', uuid: 'tool-interruption', sessionId,
+        message: { role: 'user', content: [{ type: 'text', text: '[Request interrupted by user for tool use]' }] } });
+      await waitUntil(() => observed.includes('tool-interruption'));
+      await arbiter.drainWhenSafe();
+      expect(terminalReasons).toEqual(['aborted']);
+      expect(thinking.at(-1)).toBe(false);
+      expect(injected).toEqual(['Follow up after interrupt']);
+      expect(accepted).toEqual([]);
+      await appendJsonl(transcriptPath, { type: 'user', uuid: 'follow-up-echo', sessionId,
+        message: { role: 'user', content: 'Follow up after interrupt' } });
+      await waitUntil(() => observed.includes('follow-up-echo'));
+      await confirmation;
+      await arbiter.drainWhenSafe();
+      await arbiter.drainWhenSafe();
+      expect(accepted).toEqual(['follow-up']);
+      expect(injected).toEqual(['Follow up after interrupt']);
+      expect(interrupts).toBe(1);
+    } finally { lifecycle.dispose(); await bridge.dispose(); await arbiter.dispose(); }
+  });
+
   it('keeps completed local shell output visible without restarting the turn after its commit', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'happier-claude-shell-output-lifecycle-'));
     tempDirs.push(dir);

@@ -1,7 +1,7 @@
 import type { DirectTranscriptRawMessageV1 } from '@happier-dev/protocol';
 
 import type { CodexRolloutAction } from '../localControl/rolloutMapper';
-import { projectCodexRolloutActions } from '../rollout/projectCodexRolloutActions';
+import { projectCodexRolloutActions, type CodexProjectedRolloutEvent } from '../rollout/projectCodexRolloutActions';
 
 function shouldFilterHarnessBlob(text: string): boolean {
   const t = text.trim();
@@ -39,19 +39,29 @@ export function mapCodexRolloutLineToDirectMessages(params: Readonly<{
   actions: ReadonlyArray<CodexRolloutAction>;
   sidechainId?: string | null;
 }>): DirectTranscriptRawMessageV1[] {
-  const createdAtMs = extractEnvelopeTimestampMs(params.lineValue);
   // Direct transcript rendering should include "debug-only" tool calls (e.g., Codex-internal read/write tools),
   // but must still filter harness/system blobs that Codex sometimes embeds as user messages.
   const projected = projectCodexRolloutActions(
     params.actions,
     { sidechainId: params.sidechainId ?? null },
   );
+  return mapCodexProjectedEventsToDirectMessages({
+    projected,
+    createdAtMs: extractEnvelopeTimestampMs(params.lineValue),
+    idForIndex: index => stableOffsetId(`codex:${params.fileRelPath}`, params.lineStartOffsetBytes, index),
+  });
+}
 
+export function mapCodexProjectedEventsToDirectMessages(params: Readonly<{
+  projected: readonly CodexProjectedRolloutEvent[];
+  createdAtMs: number;
+  idForIndex: (index: number) => string;
+}>): DirectTranscriptRawMessageV1[] {
+  const { projected, createdAtMs } = params;
   const out: DirectTranscriptRawMessageV1[] = [];
   for (let i = 0; i < projected.length; i++) {
     const action = projected[i]!;
-    const idPrefix = `codex:${params.fileRelPath}`;
-    const stableId = stableOffsetId(idPrefix, params.lineStartOffsetBytes, i);
+    const stableId = params.idForIndex(i);
 
     if (action.type === 'user-text') {
       if (shouldFilterHarnessBlob(action.text)) continue;

@@ -10,6 +10,7 @@ import type { Session } from '@/sync/domains/state/storageTypes';
 import type { SessionListCacheEntryV1 } from '@/sync/domains/state/warmCachePersistence';
 import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
 import type { V2SessionRecord } from '@happier-dev/protocol';
+import { createSessionFixture } from '@/dev/testkit';
 
 import { fetchAndApplySessions, type SessionListEncryption } from './sessionSnapshot';
 
@@ -110,7 +111,11 @@ type SnapshotRun = Readonly<{
     hydratedRenderable: SessionListRenderableSession;
 }>;
 
-async function runSessionListSnapshot(): Promise<SnapshotRun> {
+async function runSessionListSnapshot(options: Readonly<{
+    row?: V2SessionRecord;
+    cachedEntry?: SessionListCacheEntryV1;
+    existingSession?: Session;
+}> = {}): Promise<SnapshotRun> {
     const firstPaintRenderables: SessionListRenderableSession[][] = [];
     const hydratedSessions: Session[] = [];
 
@@ -119,11 +124,12 @@ async function runSessionListSnapshot(): Promise<SnapshotRun> {
         encryption: createEncryptionHarness(),
         sessionDataKeys: new Map<string, Uint8Array>(),
         request: async () => jsonResponse({
-            sessions: [buildUnreadPlainRow()],
+            sessions: [options.row ?? buildUnreadPlainRow()],
             nextCursor: null,
             hasNext: false,
         }),
-        cachedSessionListEntries: { [SESSION_ID]: buildWarmCacheEntry() },
+        cachedSessionListEntries: { [SESSION_ID]: options.cachedEntry ?? buildWarmCacheEntry() },
+        getExistingSession: () => options.existingSession,
         requiredHydrationSessionIds: [SESSION_ID],
         awaitSessionListHydration: true,
         applySessionListRenderables: (renderables) => {
@@ -142,7 +148,7 @@ async function runSessionListSnapshot(): Promise<SnapshotRun> {
     });
 
     const firstPaintRenderable = firstPaintRenderables[0]?.find((entry) => entry.id === SESSION_ID);
-    const hydratedSession = hydratedSessions.find((session) => session.id === SESSION_ID);
+    const hydratedSession = hydratedSessions.find((session) => session.id === SESSION_ID) ?? options.existingSession;
     expect(firstPaintRenderable).toBeDefined();
     expect(hydratedSession).toBeDefined();
 
@@ -158,6 +164,40 @@ afterEach(() => {
 });
 
 describe('warm first-paint session-list renderables', () => {
+    it.each(['plain-row', 'existing-encrypted-session'] as const)(
+        'prefers complete identity evidence from %s over a matching legacy cache flavor',
+        async (source) => {
+            const metadata = {
+                path: '/repo',
+                host: 'host',
+                flavor: 'claude',
+                agentRuntimeDescriptorV1: { v: 1, providerId: 'codex', provider: { backendMode: 'mcp' } } as const,
+            };
+            const row = buildUnreadPlainRow();
+            const existingSession = source === 'existing-encrypted-session'
+                ? createSessionFixture({
+                    id: SESSION_ID,
+                    metadata,
+                    metadataVersion: row.metadataVersion,
+                    agentState: {},
+                    agentStateVersion: row.agentStateVersion,
+                })
+                : undefined;
+            const { firstPaintRenderable, hydratedRenderable } = await runSessionListSnapshot({
+                row: {
+                    ...row,
+                    encryptionMode: source === 'plain-row' ? 'plain' : 'e2ee',
+                    metadata: source === 'plain-row' ? JSON.stringify(metadata) : 'encrypted-metadata',
+                },
+                cachedEntry: { ...buildWarmCacheEntry(), flavor: 'claude' },
+                existingSession,
+            });
+
+            expect(firstPaintRenderable.metadata?.flavor).toBe('codex');
+            expect(hydratedRenderable.metadata?.flavor).toBe('codex');
+        },
+    );
+
     it('carries the server-materialized unreadSince onto the warm first-paint renderable', async () => {
         const { firstPaintRenderable } = await runSessionListSnapshot();
 

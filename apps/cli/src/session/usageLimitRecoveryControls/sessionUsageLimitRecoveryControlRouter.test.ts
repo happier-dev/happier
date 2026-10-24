@@ -2,6 +2,7 @@ import { createClaudeUsageLimitRecoveryControlAdapter } from '@/backends/claude/
 import { buildCodexAgentRuntimeDescriptor } from '@happier-dev/agents';
 import {
   SessionUsageLimitRecoveryOperationResultV1Schema,
+  buildUsageLimitIssueFingerprint,
   type SessionUsageLimitRecoveryOperationResultV1,
 } from '@happier-dev/protocol';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
@@ -234,7 +235,7 @@ describe('sessionUsageLimitRecoveryControlRouter', () => {
     const recovery = {
       v: 1,
       status: 'waiting',
-      issueFingerprint: 'usage-limit:sess_1:reset',
+      issueFingerprint: buildUsageLimitIssueFingerprint(createUsageLimitIssue()),
       armedAtMs: 1,
       resetAtMs: 2,
       nextCheckAtMs: 2,
@@ -265,7 +266,7 @@ describe('sessionUsageLimitRecoveryControlRouter', () => {
     expect(lastMetadataUpdaterResult({ sessionUsageLimitRecoveryV1: recovery })).toMatchObject({
       sessionUsageLimitRecoveryV1: {
         status: 'waiting',
-        issueFingerprint: 'usage-limit:sess_1:reset',
+        issueFingerprint: buildUsageLimitIssueFingerprint(createUsageLimitIssue()),
         resumePromptMode: 'off',
       },
     });
@@ -933,7 +934,27 @@ describe('sessionUsageLimitRecoveryControlRouter', () => {
     expect(checkNow).not.toHaveBeenCalled();
   });
 
+  it('checks the current issue through its real adapter instead of an unrelated old runtime attempt', async () => {
+    const issue = { ...createUsageLimitIssue({ resetAtMs: 1_700_000_160_000 }), provider: 'claude' };
+    const result = await routeSessionUsageLimitRecoveryCheckNow({
+      token: 'token', sessionId: 'sess_current',
+      rawSession: createRawSession({ id: 'sess_current', latestTurnStatus: 'failed', lastRuntimeIssue: issue }),
+      metadata: createMetadata({ sessionUsageLimitRecoveryV1: {
+        v: 1, status: 'cancelled', issueFingerprint: 'old-attempt', runtimeAuthRecoveryAttemptId: 'old-attempt',
+        armedAtMs: 1_000, resetAtMs: 2_000, nextCheckAtMs: null, attemptCount: 0, maxAttempts: 5,
+        lastProbeError: null, selectedAuth: { kind: 'native' },
+      } }),
+      currentMachineId: 'machine-local', ctx, mode: 'plain', callLiveSessionRpc: async () => undefined,
+      resolveAdapter: async () => createClaudeUsageLimitRecoveryControlAdapter({ nowMs: () => 1_700_000_120_000 }),
+    });
+    expect(parseOperationResult(result)).toMatchObject({ ok: true, status: 'waiting' });
+    expect(result).toMatchObject({ metadata: { sessionUsageLimitRecoveryV1: {
+      issueFingerprint: buildUsageLimitIssueFingerprint(issue), resetAtMs: 1_700_000_160_000,
+    } } });
+  });
+
   it.each([true, false])('keeps owner-tagged check-now with its exact runtime-auth attempt (active=%s)', async (active) => {
+    const issue = { ...createUsageLimitIssue({ resetAtMs: 60_000 }), provider: 'claude' };
     const scheduler = new RuntimeAuthRecoveryScheduler({
       nowMs: () => 1_000,
       recover: async () => ({ status: 'recovery_action_required', action: { kind: 'profile_action_required', reason: 'usage_limit' } }),
@@ -947,9 +968,9 @@ describe('sessionUsageLimitRecoveryControlRouter', () => {
       const adapter = vi.fn(async () => ({ checkNow: async () => ({ ok: true, status: 'ready' }) }));
       const result = await routeSessionUsageLimitRecoveryCheckNow({
         token: 'token', credentials: createCredentials(), sessionId: 'sess_owner',
-        rawSession: createRawSession({ id: 'sess_owner', active }),
+        rawSession: createRawSession({ id: 'sess_owner', active, latestTurnStatus: 'failed', lastRuntimeIssue: issue }),
         metadata: createMetadata({ sessionUsageLimitRecoveryV1: {
-          v: 1, status: 'waiting', issueFingerprint: begun.attemptId,
+          v: 1, status: 'waiting', issueFingerprint: buildUsageLimitIssueFingerprint(issue),
           runtimeAuthRecoveryAttemptId: begun.attemptId, armedAtMs: 1_000,
           resetAtMs: 60_000, nextCheckAtMs: 60_000, attemptCount: 0, maxAttempts: 5,
           lastProbeError: null, selectedAuth: { kind: 'profile', serviceId: 'claude-subscription', profileId: 'primary' },

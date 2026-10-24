@@ -2,6 +2,7 @@ import { stat } from 'node:fs/promises';
 
 import { readJsonlFileBackwardPage } from '@/api/directSessions/filePaging/jsonlBackwardPager';
 import { readJsonlFileForward } from '@/api/directSessions/filePaging/jsonlForwardReader';
+import { readDirectSessionTitlePage } from '@/api/directSessions/title/readDirectSessionTitlePage';
 import { readDirectSessionTitleCandidate } from '@/api/directSessions/title/readDirectSessionTitleCandidate';
 
 const TITLE_SCAN_CHUNK_MAX_BYTES = 128 * 1024;
@@ -39,14 +40,15 @@ async function readClaudeTitleFromTail(filePath: string): Promise<string | null>
   // Claude loads the latest value of each title independently. A later AI
   // metadata snapshot cannot override a manual rename, even on an older page.
   while (endOffsetBytes > 0) {
-    const page = await readJsonlFileBackwardPage({
+    const page = await readDirectSessionTitlePage(() => readJsonlFileBackwardPage({
       filePath,
       endOffsetBytes,
       maxBytes: TITLE_SCAN_CHUNK_MAX_BYTES,
       // The byte page already bounds memory. Every JSONL record consumes at
       // least one byte, so do not stop at 64 items and reread the same chunk.
       maxItems: TITLE_SCAN_CHUNK_MAX_BYTES,
-    });
+    }));
+    if (!page) break;
     for (let index = page.items.length - 1; index >= 0; index -= 1) {
       const value = page.items[index]?.value;
       if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
@@ -81,12 +83,13 @@ export async function readClaudeSessionTitle(filePath: string): Promise<string |
   let scannedItems = 0;
 
   while (scannedBytes < TITLE_SCAN_TOTAL_MAX_BYTES && scannedItems < TITLE_SCAN_TOTAL_MAX_ITEMS) {
-    const page = await readJsonlFileForward({
+    const page = await readDirectSessionTitlePage(() => readJsonlFileForward({
       filePath,
       offsetBytes,
       maxBytes: Math.min(TITLE_SCAN_CHUNK_MAX_BYTES, TITLE_SCAN_TOTAL_MAX_BYTES - scannedBytes),
       maxItems: Math.min(TITLE_SCAN_CHUNK_MAX_ITEMS, TITLE_SCAN_TOTAL_MAX_ITEMS - scannedItems),
-    });
+    }));
+    if (!page) break;
 
     for (const line of page.items) {
       const value = line.value;

@@ -376,7 +376,7 @@ jobs:
             --out-dir "dist/ui-mobile" \
             --publish-apk-release false \
             --release-message "${{ inputs.release_message }}" \
-            "${store_args[@]}" \
+            ${store_args[@]+"${store_args[@]}"} \
             --secrets-source env
 
       - name: Persist Android candidate identity for recovery
@@ -588,7 +588,7 @@ jobs:
             --publish-apk-release false \
             --testflight-distribution-mode deferred \
             --release-message "${{ inputs.release_message }}" \
-            "${store_args[@]}" \
+            ${store_args[@]+"${store_args[@]}"} \
             --secrets-source env
 
       - name: Dispatch exact TestFlight reconciliation
@@ -763,7 +763,7 @@ jobs:
             --project-dir "$submit_workspace" \
             --path "$aab" \
             --wait true \
-            "${store_args[@]}"
+            ${store_args[@]+"${store_args[@]}"}
 
   retry_store_publication:
     name: Resume production store publication (existing binary)

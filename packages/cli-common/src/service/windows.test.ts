@@ -56,8 +56,9 @@ function readPowerShellLog(path: string): string {
 function runWrapperWithWindowsPowerShell(params: Readonly<{
   workingDirectory: string;
   programArgs: readonly string[];
+  env?: Record<string, string>;
 }>): Readonly<{ status: number | null; stdoutLog: string; stderrLog: string }> {
-  const dir = mkdtempSync(join(tmpdir(), 'happier-wrapper-ps1-'));
+  const dir = mkdtempSync(join(tmpdir(), 'happier-wrapper-$HOME-'));
   try {
     const stdoutPath = join(dir, 'out.log');
     const stderrPath = join(dir, 'err.log');
@@ -65,6 +66,7 @@ function runWrapperWithWindowsPowerShell(params: Readonly<{
     writeFileSync(wrapperPath, renderWindowsScheduledTaskWrapperPs1({
       workingDirectory: params.workingDirectory,
       programArgs: params.programArgs,
+      env: params.env,
       stdoutPath,
       stderrPath,
     }));
@@ -86,6 +88,23 @@ function runWrapperWithWindowsPowerShell(params: Readonly<{
 }
 
 describe('Windows scheduled task wrapper script', () => {
+  it.runIf(process.platform === 'win32')('preserves literal dollar signs in paths, arguments and environment values', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'happier-working-$HOME-'));
+    const literal = 'literal$HOME`"$env:USERPROFILE';
+    try {
+      const result = runWrapperWithWindowsPowerShell({
+        workingDirectory: dir,
+        programArgs: [process.execPath, '-e', 'process.stdout.write(JSON.stringify({cwd:process.cwd(),arg:process.argv[1],value:process.env.WRAPPER_LITERAL}))', 'argument$HOME'],
+        env: { WRAPPER_LITERAL: literal },
+      });
+
+      expect(result.status).toBe(0);
+      expect(JSON.parse(result.stdoutLog)).toEqual({ cwd: dir, arg: 'argument$HOME', value: literal });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it.runIf(process.platform === 'win32')('keeps the program running when it writes to stderr and propagates its exit code', () => {
     const result = runWrapperWithWindowsPowerShell({
       workingDirectory: tmpdir(),

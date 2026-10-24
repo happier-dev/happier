@@ -1580,6 +1580,31 @@ describe('ChatList (FlashList v2)', () => {
             return (getCapturedFlashListProps()?.data ?? []).map((item: any) => item.id);
         }
 
+        it('keeps header-only plain groups collapsed with a stable boundary, including after a background toggle', async () => {
+            configureToolTurn(['t1', 't2', 't3', 't4', 't5'], { previewCount: 0, readerMessage: true });
+            settingValues.transcriptToolCallsGroupShowBackground = false;
+            const { ChatList } = await import('./ChatList');
+            const screen = await renderTrackedFlashListChatList(<ChatList session={{ ...sessionState }} />);
+            await screen.settle();
+
+            const plainIds = listDataIds();
+            expect(plainIds).toContain(`${groupId}#header`);
+            expect(plainIds).toContain(`${groupId}#footer`);
+            expect(plainIds).not.toContain(`${groupId}#expand`);
+            expect(plainIds.filter((id) => /^msg:t[1-5]$/.test(id))).toEqual([]);
+
+            settingValues.transcriptToolCallsGroupShowBackground = true;
+            await screen.update(<ChatList session={{ ...sessionState, seq: 1 }} />);
+            await screen.settle();
+            expect(listDataIds()).toContain(`${groupId}#footer`);
+
+            settingValues.transcriptToolCallsGroupShowBackground = false;
+            await screen.update(<ChatList session={{ ...sessionState, seq: 2 }} />);
+            await screen.settle();
+            expect(listDataIds()).toEqual(plainIds);
+            await screen.unmount();
+        });
+
         it('turns a prepend that merges into the visible group into BETWEEN-row insertion with stable keys', async () => {
             configureToolTurn(['t2', 't3']);
 

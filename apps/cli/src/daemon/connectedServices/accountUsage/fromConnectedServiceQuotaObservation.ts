@@ -1,3 +1,4 @@
+import { connectedServiceUsageRequiresOrganizationId } from '@happier-dev/protocol';
 import {
   buildProviderAccountUsageRecordId,
   ConnectedServiceQuotaConfidenceV1Schema,
@@ -9,6 +10,7 @@ import {
   type ProviderAccountUsageSnapshotV1,
 } from '@happier-dev/protocol';
 import { ProviderAccountUsageSnapshotV1Schema } from '@happier-dev/protocol';
+import { getConnectedAccountDescriptor } from '../descriptors/connectedAccountDescriptors';
 
 function mapQuotaSourceToUsageSource(source: ConnectedServiceQuotaSnapshotV1['source']): ProviderAccountUsageSourceV1 {
   const normalized = source ? ConnectedServiceQuotaSourceV1Schema.parse(source) : 'unknown';
@@ -47,15 +49,18 @@ export function buildProviderAccountUsageSnapshotFromConnectedServiceQuotaObserv
     ? input.sourceProviderAccountId.trim()
     : '';
   const stableAccountId = (snapshot.activeAccountId ?? sourceProviderAccountId).trim();
-  const hasStableSubject = Boolean(stableAccountId);
-  const accountSubjectId = stableAccountId
-    || `legacy-connected-service:${snapshot.serviceId}:${snapshot.profileId}`;
+  const organizationId = snapshot.providerOrganizationId?.trim() || null;
+  const requiresOrganization = connectedServiceUsageRequiresOrganizationId(snapshot.serviceId);
+  const hasStableSubject = Boolean(stableAccountId) && (!requiresOrganization || Boolean(organizationId));
+  const accountSubjectId = hasStableSubject ? stableAccountId
+    : `legacy-connected-service:${snapshot.serviceId}:${snapshot.profileId}`;
   const fetchedAtMs = snapshot.fetchedAtMs ?? snapshot.fetchedAt;
   const recordKey: ProviderAccountUsageRecordKeyV1 = {
     providerId,
     accountSubjectId,
     subjectKind: hasStableSubject ? 'account' : 'unknown',
-    quotaScope: 'account',
+    quotaScope: hasStableSubject && organizationId ? 'organization' : 'account',
+    ...(hasStableSubject && organizationId ? { quotaScopeId: organizationId } : {}),
   };
 
   return ProviderAccountUsageSnapshotV1Schema.parse({

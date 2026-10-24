@@ -4,8 +4,77 @@ import type { AgentBackend, AgentMessageHandler, SessionId, StartSessionResult }
 
 import type { ExecutionRunState } from '@/agent/executionRuns/runtime/executionRunTypes';
 import { resumeBackendControllerForResumableRun } from '@/agent/executionRuns/runtime/resumeBackendController';
+import type { ExecutionRunController } from '@/agent/executionRuns/controllers/types';
+import { disposeExecutionRunBackendController } from './settleExecutionRunControllerOccurrence';
 
 describe('resumeBackendControllerForResumableRun', () => {
+  it.each(['acquisition', 'load'] as const)('rejects a resume retired during backend %s without restoring its controller', async (phase) => {
+    const run: ExecutionRunState = {
+      runId: 'run_retired', callId: 'call_retired', sidechainId: 'sidechain_retired', sessionId: 'parent_retired', depth: 0,
+      intent: 'delegate', backendTarget: { kind: 'builtInAgent', agentId: 'claude' }, backendId: 'claude',
+      instructions: '', permissionMode: 'read_only', retentionPolicy: 'resumable', runClass: 'long_lived',
+      ioMode: 'request_response', status: 'cancelled', startedAtMs: 1, resumeHandle: {
+        kind: 'vendor_session.v1', backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+        vendorSessionId: 'vendor_retired',
+      },
+    };
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let reachedBoundary!: () => void;
+    const boundary = new Promise<void>((resolve) => { reachedBoundary = resolve; });
+    let closing = false;
+    const dispose = vi.fn(async () => undefined);
+    const load = vi.fn(async () => {
+      if (phase === 'load') { reachedBoundary(); await gate; }
+      return { sessionId: 'child_retired', replay: [] };
+    });
+    const backend: AgentBackend = {
+      startSession: async () => ({ sessionId: 'unused' }),
+      loadSessionWithReplayCapture: load,
+      sendPrompt: async () => {}, cancel: async () => {}, onMessage: () => {}, dispose,
+    };
+    const controllers = new Map<string, ExecutionRunController>();
+    const runs = new Map([[run.runId, run]]);
+    const resume = resumeBackendControllerForResumableRun({
+      runId: run.runId, run, runs, controllers, budgetRegistry: null,
+      createBackend: async () => {
+        if (phase === 'acquisition') { reachedBoundary(); await gate; }
+        return { backend };
+      },
+      isSessionClosing: () => closing,
+      sendAcp: () => {}, parentProvider: 'claude', streamedTranscriptSession: null,
+      writeActivityMarker: async () => {}, getNowMs: () => 1,
+      admitRuntimeActivity: async () => {}, rollbackRuntimeActivityAfterFailedAdmission: async () => {},
+      terminalRuntimeActivityAfterFailedAdmission: async () => {},
+    });
+    try {
+      await boundary;
+      // The late load case also protects cancellation while the Session stays open.
+      closing = phase === 'acquisition';
+      const controller = controllers.get(run.runId);
+      if (phase === 'load') {
+        expect(controller?.kind).toBe('backend');
+        if (controller?.kind === 'backend') {
+          controller.cancelled = true;
+          controllers.delete(run.runId);
+          runs.set(run.runId, run);
+          await disposeExecutionRunBackendController(controller);
+          expect(dispose).toHaveBeenCalledOnce();
+        }
+      }
+      release();
+      await expect(resume).resolves.toMatchObject({ ok: false, errorCode: 'execution_run_not_allowed' });
+      expect(dispose).toHaveBeenCalledOnce();
+      expect(controllers.has(run.runId)).toBe(false);
+      expect(runs.get(run.runId)?.status).toBe('cancelled');
+      if (phase === 'acquisition') expect(load).not.toHaveBeenCalled();
+    } finally {
+      release();
+      await resume;
+      await backend.dispose();
+    }
+  });
+
   it('resumes using loadSession when loadSessionWithReplayCapture is unavailable', async () => {
     let disposed = false;
     const backend: AgentBackend = {

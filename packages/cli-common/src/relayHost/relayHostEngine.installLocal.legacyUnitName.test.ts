@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { access, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { renderWindowsScheduledTaskWrapperPs1 } from '../service/windows.js';
 
 describe('RelayHostEngine (installOrUpdate local legacy unit name)', () => {
   it('migrates the legacy unsuffixed unit to the suffixed unit when the suffixed unit is missing', async () => {
@@ -288,7 +289,7 @@ describe('RelayHostEngine (installOrUpdate local legacy unit name)', () => {
   it('ignores and removes the legacy unsuffixed Windows wrapper when it is owned by the preview install root', async () => {
     const originalPlatform = process.platform;
 
-    const homeDir = await mkdtemp(join(tmpdir(), 'happier-relay-host-legacy-windows-'));
+    const homeDir = await mkdtemp(join(tmpdir(), 'happier-relay-host-legacy-windows-$HOME-'));
     const payloadRoot = join(homeDir, 'payload');
     await mkdir(payloadRoot, { recursive: true });
     await mkdir(join(payloadRoot, 'prisma', 'sqlite', 'migrations', '20200101000000_init'), { recursive: true });
@@ -345,7 +346,7 @@ describe('RelayHostEngine (installOrUpdate local legacy unit name)', () => {
       await mkdir(join(homeDir, '.happier', 'services'), { recursive: true });
       await writeFile(
         legacyWrapperPath,
-        `$ErrorActionPreference = "Stop"\nSet-Location -LiteralPath "${previewInstallRoot}"\n`,
+        renderWindowsScheduledTaskWrapperPs1({ workingDirectory: previewInstallRoot }),
         'utf8',
       );
 

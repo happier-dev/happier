@@ -790,6 +790,7 @@ export class ConnectedServiceAuthGroupSwitchCoordinator {
   }> | null {
     if (
       input.trigger === 'classified_failure'
+      && input.request.reason === 'same_provider_account_exhausted'
       && !shouldHandleConnectedServiceProviderLimitFailure({
         selection: input.loaded.policy.quotaLimitSelection,
         reason: input.request.reason,

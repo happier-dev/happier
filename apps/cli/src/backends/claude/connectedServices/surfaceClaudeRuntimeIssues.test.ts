@@ -1,3 +1,5 @@
+import type { notifyDaemonConnectedServiceRuntimeAuthFailure } from '@/daemon/controlClient';
+import { sanitizeConnectedServiceRuntimeFailureClassification } from '@/daemon/connectedServices/runtimeAuth/sanitizeConnectedServiceRuntimeFailureClassification';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -12,6 +14,10 @@ import {
 } from '@/daemon/connectedServices/runtimeAuth/reportConnectedServiceRuntimeAuthFailureToDaemon';
 import { buildProviderAccountUsageSnapshotFromConnectedServiceQuotaObservation } from '@/daemon/connectedServices/accountUsage/fromConnectedServiceQuotaObservation';
 import { canRecordProviderAccountUsageSourceLinks } from '@/daemon/connectedServices/accountUsage/record';
+import { recordConnectedServiceRuntimeQuotaSnapshotForSession } from '@/daemon/connectedServices/quotas/recordConnectedServiceRuntimeQuotaSnapshotForSession';
+import { ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore } from '@/daemon/connectedServices/accountGroups/quotas/ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore';
+import { resolveConnectedServiceGroupMemberByProviderAccountId } from '@/daemon/connectedServices/shared/resolveConnectedServiceGroupMemberByProviderAccountId';
+import { readClaudeMaterializedOAuthAccountIdentity } from './resolveClaudeRuntimeProviderAccountIdentity';
 import { createSessionTurnLifecycle } from '@/agent/runtime/session/turn/lifecycle';
 import type { SessionTurnMutationV1 } from '@/api/session/mutations/sessionMutationTypes';
 import type { FailTurnInput } from '@/agent/runtime/session/turn/types';
@@ -22,7 +28,7 @@ import {
   surfaceClaudeRateLimitRuntimeIssue,
 } from './surfaceClaudeRuntimeIssues';
 
-const mockNotifyDaemonConnectedServiceRuntimeAuthFailure = vi.hoisted(() => vi.fn(async () => ({})));
+const mockNotifyDaemonConnectedServiceRuntimeAuthFailure = vi.hoisted(() => vi.fn<(input: Parameters<typeof notifyDaemonConnectedServiceRuntimeAuthFailure>[0]) => Promise<unknown>>(async () => ({})));
 const mockNotifyDaemonConnectedServiceQuotaSnapshot = vi.hoisted(() => vi.fn(async () => ({ ok: true })));
 vi.mock('@/daemon/controlClient', () => ({
   notifyDaemonConnectedServiceRuntimeAuthFailure: mockNotifyDaemonConnectedServiceRuntimeAuthFailure,
@@ -112,6 +118,35 @@ function restoreClaudeSelectionEnv(previous: string | undefined): void {
 }
 
 describe('surfaceClaudeRuntimeIssues runtime-auth projection', () => {
+  it('reports duplicate Claude observers once and a fresh begun turn again', async () => {
+    const previousSelectionEnv = installClaudeSelectionEnv();
+    const mutations: SessionTurnMutationV1[] = [];
+    let sequence = 0;
+    const lifecycle = createSessionTurnLifecycle({
+      sessionId: 'claude-observer-occurrences', createId: () => String(++sequence),
+      enqueueSessionTurn: async (mutation) => { mutations.push(mutation); },
+    });
+    const session = { client: { sessionId: 'claude-observer-occurrences', sessionTurnLifecycle: lifecycle } };
+    const details = {
+      v: 1 as const, resetAtMs: null, retryAfterMs: null, limitCategory: 'usage_limit' as const,
+      quotaScope: 'account' as const, recoverability: 'wait' as const, planType: null,
+      utilization: null, overage: null, action: null, connectedService: null,
+    };
+    try {
+      await lifecycle.beginTurn({ provider: 'claude' });
+      await surfaceClaudeRateLimitRuntimeIssue(session, details, '[test]');
+      await surfaceClaudeRateLimitRuntimeIssue(session, details, '[test]');
+      expect(mockNotifyDaemonConnectedServiceRuntimeAuthFailure).toHaveBeenCalledTimes(1);
+      await lifecycle.beginTurn({ provider: 'claude' });
+      await surfaceClaudeRateLimitRuntimeIssue(session, details, '[test]');
+      expect(mockNotifyDaemonConnectedServiceRuntimeAuthFailure).toHaveBeenCalledTimes(2);
+      const fingerprints = mockNotifyDaemonConnectedServiceRuntimeAuthFailure.mock.calls.map(([input]) => sanitizeConnectedServiceRuntimeFailureClassification(input.classification)?.runtimeIssueFingerprint);
+      expect(fingerprints[0]).toEqual(expect.any(String));
+      expect(fingerprints[1]).not.toBe(fingerprints[0]);
+      expect(mutations.filter((mutation) => mutation.action === 'fail')).toHaveLength(2);
+    } finally { restoreClaudeSelectionEnv(previousSelectionEnv); }
+  });
+
   it('publishes a primary rejection after the previous turn completed', async () => {
     const previousSelectionEnv = installClaudeSelectionEnv();
     const mutations: SessionTurnMutationV1[] = [];
@@ -916,7 +951,7 @@ describe('surfaceClaudeRuntimeIssues runtime-auth projection', () => {
         connectedService: null,
       }, '[claude-test]');
 
-      expect(failTurn).toHaveBeenCalledWith({
+      expect(failTurn).toHaveBeenCalledWith(expect.objectContaining({
         provider: 'claude',
         allocateWhenIdle: true,
         issue: expect.objectContaining({
@@ -929,7 +964,7 @@ describe('surfaceClaudeRuntimeIssues runtime-auth projection', () => {
             recoverability: 'retry',
           },
         }),
-      });
+      }));
       const issue = (failTurn.mock.calls[0]?.[0] as { issue?: Record<string, unknown> } | undefined)?.issue;
       expect(issue).not.toHaveProperty('usageLimit');
     } finally {
@@ -963,7 +998,7 @@ describe('surfaceClaudeRuntimeIssues runtime-auth projection', () => {
         connectedService: null,
       }, '[claude-test]');
 
-      expect(failTurn).toHaveBeenCalledWith({
+      expect(failTurn).toHaveBeenCalledWith(expect.objectContaining({
         provider: 'claude',
         allocateWhenIdle: true,
         issue: expect.objectContaining({
@@ -977,7 +1012,7 @@ describe('surfaceClaudeRuntimeIssues runtime-auth projection', () => {
             retryAfterMs: 2_000,
           }),
         }),
-      });
+      }));
     } finally {
       restoreClaudeSelectionEnv(previousSelectionEnv);
     }
@@ -1009,7 +1044,7 @@ describe('surfaceClaudeRuntimeIssues runtime-auth projection', () => {
         connectedService: null,
       }, '[claude-test]');
 
-      expect(failTurn).toHaveBeenCalledWith({
+      expect(failTurn).toHaveBeenCalledWith(expect.objectContaining({
         provider: 'claude',
         allocateWhenIdle: true,
         issue: expect.objectContaining({
@@ -1033,7 +1068,7 @@ describe('surfaceClaudeRuntimeIssues runtime-auth projection', () => {
             },
           }),
         }),
-      });
+      }));
       expect(mockNotifyDaemonConnectedServiceQuotaSnapshot).toHaveBeenCalledWith({
         sessionId: 'sess_native_claude',
         serviceId: 'claude-subscription',
@@ -1093,7 +1128,7 @@ describe('surfaceClaudeRuntimeIssues runtime-auth projection', () => {
         connectedService: null,
       }, '[claude-test]');
 
-      expect(failTurn).toHaveBeenCalledWith({
+      expect(failTurn).toHaveBeenCalledWith(expect.objectContaining({
         provider: 'claude',
         allocateWhenIdle: true,
         issue: expect.objectContaining({
@@ -1105,7 +1140,7 @@ describe('surfaceClaudeRuntimeIssues runtime-auth projection', () => {
             recoverability: 'retry',
           },
         }),
-      });
+      }));
       const issue = (failTurn.mock.calls[0]?.[0] as { issue?: Record<string, unknown> } | undefined)?.issue;
       expect(issue).not.toHaveProperty('usageLimit');
       expect(mockNotifyDaemonConnectedServiceRuntimeAuthFailure).not.toHaveBeenCalled();
@@ -1301,7 +1336,7 @@ describe('R3-4: Claude in-band evidence becomes source-backed → predictive sof
   }
 
   it('enriches passive quota evidence with the live account identity → source-linked PAU (soft-switch eligible)', async () => {
-    await writeMaterializedClaudeConfig({ accountUuid: 'acct_live_uuid', emailAddress: 'pool@happier.dev' });
+    await writeMaterializedClaudeConfig({ accountUuid: 'acct_live_uuid', emailAddress: 'pool@happier.dev', organizationUuid: 'org-pool' });
 
     await recordClaudeRateLimitQuotaEvidence({
       client: { sessionId: 'sess_r34_passive' },
@@ -1325,8 +1360,51 @@ describe('R3-4: Claude in-band evidence becomes source-backed → predictive sof
     })).toBe(true);
   });
 
+  it('preserves burn history when repeated native Claude observations attest the same user and organization', async () => {
+    await writeMaterializedClaudeConfig({ accountUuid: 'acct_live_uuid', organizationUuid: 'org-live' });
+    const selection = process.env[HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY];
+    if (!selection) throw new Error('Expected the connected-service selection fixture.');
+    const runtimeQuotaSnapshots = new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore();
+    const firstAt = Date.now();
+    const now = vi.spyOn(Date, 'now');
+    try {
+      for (const [index, utilization] of [10, 20].entries()) {
+        now.mockReturnValue(firstAt + index * 1000);
+        await recordClaudeRateLimitQuotaEvidence({ client: { sessionId: 'same-org-burn' } }, [{
+          ...passiveUtilizationDetails(), resetAtMs: firstAt + 60_000, utilization,
+        }], '[test]');
+        const delivered = deliveredQuotaCall();
+        await recordConnectedServiceRuntimeQuotaSnapshotForSession({
+          getChildren: () => [{ startedBy: 'daemon', happySessionId: 'same-org-burn', pid: 123,
+            spawnOptions: { directory: '/tmp/project', environmentVariables: {
+              [HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]: selection,
+            }, connectedServices: { v: 1, bindingsByServiceId: { 'claude-subscription': {
+              source: 'connected', selection: 'group', profileId: 'claude-main', groupId: 'team-pool',
+            } } } },
+          }],
+          runtimeQuotaSnapshots, sessionId: 'same-org-burn', serviceId: 'claude-subscription',
+          groupId: 'team-pool', groupGeneration: 4, sourceProviderAccountId: delivered.sourceProviderAccountId,
+          snapshot: delivered.snapshot,
+          resolveProviderQualifiedGroupSource: async (context) => {
+            const profileId = await resolveConnectedServiceGroupMemberByProviderAccountId({
+              ...context, members: [{ profileId: 'claude-main' }],
+              resolveProviderAccountIdentity: async () => readClaudeMaterializedOAuthAccountIdentity(tmpDir),
+            });
+            return profileId ? { profileId, groupGeneration: 4 } : null;
+          },
+        });
+      }
+      expect(runtimeQuotaSnapshots.getRecentBurn({ serviceId: 'claude-subscription', groupId: 'team-pool',
+        profileId: 'claude-main', groupGeneration: 4, nowMs: firstAt + 1000, maxAgeMs: 60_000,
+      })).toMatchObject({ remainingPercentPerMs: 0.01, remainingPercent: 80 });
+      expect(deliveredQuotaCall().snapshot.activeAccountId).toBe('acct_live_uuid');
+    } finally {
+      now.mockRestore();
+    }
+  });
+
   it('stamps the live identity onto the rejected usage-limit snapshot too', async () => {
-    await writeMaterializedClaudeConfig({ accountUuid: 'acct_live_uuid' });
+    await writeMaterializedClaudeConfig({ accountUuid: 'acct_live_uuid', organizationUuid: 'org-live' });
     const failTurn = createClaudeFailTurnSpy();
 
     await surfaceClaudeRateLimitRuntimeIssue({
@@ -1337,15 +1415,19 @@ describe('R3-4: Claude in-band evidence becomes source-backed → predictive sof
     } as any, {
       ...passiveUtilizationDetails(),
       limitCategory: 'usage_limit' as const,
+      sourceProviderOrganizationId: 'org-live',
       utilization: 100,
     }, '[r34-test]');
 
     expect(deliveredQuotaCall().sourceProviderAccountId).toBe('acct_live_uuid');
+    expect(deliveredQuotaCall().snapshot.providerOrganizationId).toBe('org-live');
+    expect(failTurn.mock.calls[0]?.[0].issue?.usageLimit).not.toHaveProperty('sourceProviderOrganizationId');
     expect(mockNotifyDaemonConnectedServiceRuntimeAuthFailure).toHaveBeenCalledWith(
       expect.objectContaining({
         sessionId: 'sess_r34_rejected',
         classification: expect.objectContaining({
           sourceProviderAccountId: 'acct_live_uuid',
+          sourceProviderOrganizationId: 'org-live',
         }),
       }),
       expect.anything(),

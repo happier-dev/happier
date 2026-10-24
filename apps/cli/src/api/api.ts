@@ -853,6 +853,7 @@ export class ApiClient {
       kind: 'oauth' | 'token';
       providerEmail?: string | null;
       providerAccountId?: string | null;
+      providerOrganizationId?: string | null;
       expiresAt?: number | null;
     };
     expectedCredentialRevision?: ConnectedServiceCredentialRevisionV1 | null;
@@ -1291,7 +1292,6 @@ export class ApiClient {
         {
           headers: {
             'Authorization': `Bearer ${this.credential.token}`,
-            'Content-Type': 'application/json',
             [CONNECTED_SERVICE_AUTO_QUOTA_RESET_HEADER]: CONNECTED_SERVICE_AUTO_QUOTA_RESET_HEADER_VALUE,
           },
           params: { expectedGeneration },

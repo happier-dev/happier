@@ -16,11 +16,10 @@ import {
 import { structuredInputMentionSurvivesText } from '@/components/sessions/agentInput/structuredInputMentions';
 import {
     type ComposerStructuredInputMention,
+    type SessionDraftValueByFieldId,
 } from '@/sync/domains/input/draftValues/sessionDraftValueTypes';
 import { existingSessionDraftSemanticValues } from '@/sync/domains/input/drafts/existingSessionDraftSemanticValues';
-import {
-    subscribeSessionDraft,
-} from '@/sync/ops/sessionDrafts/sessionDraftRepository';
+import { useExistingSessionDraftSemanticValue } from './useExistingSessionDraftSemanticValue';
 import {
     areServerAccountScopesEqual,
     serverAccountScopeKeySuffix,
@@ -31,6 +30,8 @@ import { useAgentInputComposerDraftGarbageCollection } from './useAgentInputComp
 import { useWebLifecycleFlush } from './useWebLifecycleFlush';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
+
+const NO_PERSISTED_MENTIONS: SessionDraftValueByFieldId['structuredInput.mentions'] = [];
 export type SessionAgentInputComposerPersistence = Readonly<{
     expanded: boolean;
     setExpanded: React.Dispatch<React.SetStateAction<boolean>>;
@@ -228,20 +229,12 @@ export function useSessionAgentInputComposerPersistence({
     useAgentInputComposerDraftGarbageCollection(scope);
     const isFocused = useIsFocused();
     const owner = React.useMemo(() => createSessionDraftOwner(sessionId), [sessionId]);
-    const subscribeToSemanticDraft = React.useCallback((listener: () => void) => {
-        if (!scope || owner?.kind !== 'session') return () => undefined;
-        return subscribeSessionDraft(scope, { kind: 'session', sessionId: owner.sessionId }, listener);
-    }, [owner, scope]);
-    const readStructuredMentionsSignature = React.useCallback(() => {
-        if (!scope || owner?.kind !== 'session') return 'disabled';
-        return JSON.stringify(
-            existingSessionDraftSemanticValues.read(scope, owner.sessionId, 'structuredInput.mentions') ?? [],
-        );
-    }, [owner, scope]);
-    React.useSyncExternalStore(
-        subscribeToSemanticDraft,
-        readStructuredMentionsSignature,
-        readStructuredMentionsSignature,
+    // Re-render when the persisted mentions change (e.g. a restore), not for text keystrokes.
+    useExistingSessionDraftSemanticValue(
+        scope,
+        owner?.kind === 'session' ? owner.sessionId : null,
+        'structuredInput.mentions',
+        NO_PERSISTED_MENTIONS,
     );
     const inputStateReadOptions = React.useMemo(() => ({ textLength, fontScale }), [fontScale, textLength]);
     const scopedStateReadOptions = React.useMemo(() => ({ text, textLength, fontScale }), [fontScale, text, textLength]);

@@ -37,6 +37,31 @@ describe('readClaudeRemoteProviderPromptAcceptance', () => {
 });
 
 describe('createClaudeRemotePromptSettlementTracker', () => {
+  it('accepts only the exact main-chain acknowledgment and leaves an unacknowledged send ambiguous', () => {
+    const onAccepted = vi.fn();
+    const onTransportFailure = vi.fn();
+    const tracker = createClaudeRemotePromptSettlementTracker({ onAccepted, onTransportFailure });
+    const first = { message: 'same text', mode: { permissionMode: 'default' as const }, userMessageLocalIds: ['first'] };
+    const second = { message: 'same text', mode: { permissionMode: 'default' as const }, userMessageLocalIds: ['second'] };
+    tracker.track(first);
+    tracker.track(second);
+    const firstUuid = tracker.submit(first);
+    const secondUuid = tracker.submit(second);
+    const echo = { type: 'user', uuid: firstUuid, parent_tool_use_id: null };
+    expect(tracker.observeProviderMessage({ ...echo, uuid: 'historical' })).toBe(false);
+    expect(tracker.observeProviderMessage({ ...echo, type: 'assistant' })).toBe(false);
+    expect(tracker.observeProviderMessage({ ...echo, isSynthetic: true })).toBe(false);
+    expect(tracker.observeProviderMessage({ ...echo, parent_tool_use_id: 'child' })).toBe(false);
+    expect(onAccepted).not.toHaveBeenCalled();
+    expect(tracker.observeProviderMessage({ ...echo, uuid: secondUuid })).toBe(true);
+    expect(tracker.observeProviderMessage({ ...echo, uuid: secondUuid })).toBe(false);
+    tracker.settleUnresolved();
+    expect(onAccepted).toHaveBeenCalledExactlyOnceWith({ maxUserMessageSeq: null, userMessageLocalIds: ['second'] });
+    expect(onTransportFailure).toHaveBeenCalledExactlyOnceWith({
+      kind: 'effect_may_have_occurred', maxUserMessageSeq: null, userMessageLocalIds: ['first'],
+    });
+  });
+
   it('rejects every claimed prompt that never reached the provider API boundary', () => {
     const onAccepted = vi.fn();
     const onTransportFailure = vi.fn();

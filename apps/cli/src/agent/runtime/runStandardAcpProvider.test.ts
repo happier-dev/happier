@@ -1,11 +1,15 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { AgentState } from '@/api/types';
+import type { AgentState, Metadata } from '@/api/types';
 import { createProviderEnforcedPermissionHandler } from '@/agent/permissions/createProviderEnforcedPermissionHandler';
 import { buildBackendTargetKey } from '@happier-dev/protocol';
 import { createTestAcpRuntime } from '@/testkit/backends/acpRuntime';
 import { createFakeAcpRuntimeBackend } from '@/testkit/backends/acpRuntimeBackend';
-import { createMutableApiSessionClientFixture } from '@/testkit/backends/sessionFixtures';
+import { createMockSession, createMutableApiSessionClientFixture } from '@/testkit/backends/sessionFixtures';
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
+import { reloadConfiguration } from '@/configuration';
+import * as daemonControlClient from '@/daemon/controlClient';
 import { runPermissionModePromptLoop } from './runPermissionModePromptLoop';
 import { createPermissionModeQueueState } from './createPermissionModeQueueState';
 
@@ -259,6 +263,46 @@ function createHarness() {
 }
 
 describe('runStandardAcpProvider', () => {
+  it.each(['runtime', 'startup'] as const)('respects %s ownership when reporting tmux startup fallback', async (terminalHostOwner) => {
+    const harness = createHarness();
+    const home = await createTempDir('happier-provider-terminal-owner-');
+    const env = createEnvKeyScope(['HAPPIER_HOME_DIR']);
+    env.patch({ HAPPIER_HOME_DIR: home });
+    reloadConfiguration();
+    const daemonReport = vi.spyOn(daemonControlClient, 'notifyDaemonSessionStarted').mockResolvedValue({});
+    harness.opts.startedBy = 'daemon';
+    harness.opts.terminalRuntime = { mode: 'plain', requested: 'tmux', tmuxTarget: 'happy' };
+    harness.config.terminalHostOwner = terminalHostOwner;
+    // Exercise the real metadata factory, initializer, warning builder, and local persistence.
+    // The API/session transport, daemon IPC, and provider loop use harness boundaries.
+    harness.deps.createSessionMetadataFn = undefined;
+    harness.deps.initializeBackendRunSessionFn = undefined;
+    harness.session.updateAgentState = vi.fn(async () => undefined);
+    harness.deps.initializeBackendApiContextFn = async () => ({
+      machineId: 'machine-1',
+      api: {
+        getOrCreateSession: async ({ metadata }: { metadata: Metadata }) => createMockSession({ id: 'session-1', metadata }),
+        sessionSyncClient: () => harness.session,
+        push: () => ({ sendToAllDevices: () => undefined }),
+      },
+    });
+
+    try {
+      await runStandardAcpProvider(harness.opts, harness.config, harness.deps);
+      const warning = expect.objectContaining({ type: 'message', message: expect.stringContaining('tmux') });
+      if (terminalHostOwner === 'runtime') {
+        expect(harness.session.sendSessionEvent).not.toHaveBeenCalledWith(warning);
+      } else {
+        expect(harness.session.sendSessionEvent).toHaveBeenCalledWith(warning);
+      }
+    } finally {
+      daemonReport.mockRestore();
+      env.restore();
+      reloadConfiguration();
+      await removeTempDir(home);
+    }
+  });
+
   it('preserves an ordinary manifest resume identity when no matching local return exists', async () => {
     const harness = createHarness();
     harness.opts.resume = 'qwen-native-1';

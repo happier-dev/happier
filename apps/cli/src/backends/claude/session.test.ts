@@ -15,6 +15,7 @@ import { createClaudeUnifiedRuntimeControlBridge } from './unifiedTerminal/runti
 import { createClaudeUnifiedTuiControlController } from './unifiedTerminal/tuiControls/controller';
 import { createFakeControlPort } from './unifiedTerminal/tuiControls/fakeControlPort';
 import { createClaudeSettingsGuard } from './unifiedTerminal/tuiControls/settingsGuard';
+import { ClaudeUnifiedDialogChoiceBroker } from './unifiedTerminal/dialogChoice/claudeUnifiedDialogChoiceBroker';
 import { DEFAULT_CLAUDE_TUI_CONTROL_TIMINGS } from './unifiedTerminal/tuiControls/types';
 import { claudeRemoteAgentSdk } from './remote/claudeRemoteAgentSdk';
 import { buildInactiveSessionResumeSpawnOptions } from '@/daemon/sessions/runtimeSnapshot/buildInactiveSessionResumeSpawnOptions';
@@ -25,6 +26,29 @@ import type {
 } from '@/session/runtimeActivity/types';
 
 type SessionFoundHookData = NonNullable<Parameters<Session['onSessionFound']>[1]>;
+
+it('preserves primary tool identity for consumers registered after the native broker until Session retires it', async () => {
+  const session = createSession(createSessionClientStub());
+  const broker = new ClaudeUnifiedDialogChoiceBroker(session);
+  session.addClaudeSessionHookCallback((data) => broker.observeSessionHook(data));
+  const facts = { sessionId: 'native-session', toolName: 'ExitPlanMode', toolInput: { plan: '# Harmless plan' } };
+  try {
+    session.onClaudeSessionHook({ hook_event_name: 'PreToolUse', session_id: facts.sessionId,
+      tool_name: facts.toolName, tool_input: facts.toolInput, tool_use_id: 'primary-tool-id' });
+    session.onClaudeSessionHook({ hook_event_name: 'Stop', session_id: facts.sessionId, agent_id: 'headless-agent' });
+    expect(session.claudeToolHookCorrelation.findToolUseId(facts)).toBe('primary-tool-id');
+    let observedToolId: unknown;
+    session.addClaudeSessionHookCallback((data) => {
+      if (data.hook_event_name === 'PostToolUse') observedToolId = session.claudeToolHookCorrelation.get('primary-tool-id')?.tool_use_id;
+    });
+    session.onClaudeSessionHook({ hook_event_name: 'PostToolUse', session_id: facts.sessionId, tool_use_id: 'primary-tool-id' });
+    expect(observedToolId).toBe('primary-tool-id');
+    expect(session.claudeToolHookCorrelation.get('primary-tool-id')).toBeUndefined();
+  } finally {
+    await broker.dispose();
+    session.cleanup();
+  }
+});
 
 function createMetadataStub(overrides?: Partial<Metadata>): Metadata {
   return {

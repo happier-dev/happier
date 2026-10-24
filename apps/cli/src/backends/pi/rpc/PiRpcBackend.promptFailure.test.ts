@@ -7,15 +7,32 @@ import { join } from 'node:path';
 import { HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY } from '@/daemon/connectedServices/connectedServiceChildEnvironment';
 import { logger } from '@/ui/logger';
 import type { AgentMessage } from '@/agent/core';
-import { CONNECTED_SERVICE_RUNTIME_AUTH_FAILURE_REPORT_TIMEOUT_MS } from '@/daemon/connectedServices/runtimeAuth/reportConnectedServiceRuntimeAuthFailureToDaemon';
+import { buildUsageLimitIssueFingerprint } from '@happier-dev/protocol';
+import type { SessionTurnMutationV1 } from '@/api/session/mutations/sessionMutationTypes';
+import { createSessionTurnLifecycle } from '@/agent/runtime/session/turn/lifecycle';
+import { createTestAcpRuntime } from '@/testkit/backends/acpRuntime';
+import { createApprovedPermissionHandler } from '@/testkit/backends/permissionHandler';
+import { createBasicSessionClientWithOverrides } from '@/testkit/backends/sessionFixtures';
+import { MessageBuffer } from '@/ui/ink/messageBuffer';
+import { agent } from '../index';
 
 import { PiRpcBackend } from './PiRpcBackend';
 
-const mockNotifyDaemonConnectedServiceRuntimeAuthFailure = vi.hoisted(() => vi.fn(async () => ({})));
+const daemonBoundary = vi.hoisted(() => ({ outboxRoot: '' }));
+const mockNotifyDaemonConnectedServiceRuntimeAuthFailure = vi.hoisted(() => vi.fn(async (_body: unknown, _options?: unknown) => ({
+  ok: true, result: { status: 'recovery_superseded' },
+})));
 
 vi.mock('@/daemon/controlClient', () => ({
   notifyDaemonConnectedServiceRuntimeAuthFailure: mockNotifyDaemonConnectedServiceRuntimeAuthFailure,
 }));
+// The daemon transport and its durable outbox are external boundaries; use disposable custody.
+vi.mock('@/configuration', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/configuration')>();
+  return { ...actual, configuration: Object.create(actual.configuration, {
+    activeServerDir: { get: () => daemonBoundary.outboxRoot || actual.configuration.activeServerDir },
+  }) };
+});
 
 function makeTempDir(prefix: string): string {
   return mkdtempSync(join(tmpdir(), prefix));
@@ -666,7 +683,7 @@ rl.on('line', (line) => {
   return scriptPath;
 }
 
-function makeFakePiRpcStructuredTurnFailedScript(dir: string): string {
+function makeFakePiRpcStructuredTurnFailedScript(dir: string, input: Readonly<{ usageLimit?: boolean }> = {}): string {
   const scriptPath = join(dir, 'fake-pi-rpc-structured-turn-failed.js');
   const script = `
 const readline = require('node:readline');
@@ -716,9 +733,9 @@ rl.on('line', (line) => {
       setTimeout(() => {
         out({
           type: 'turn_failed',
-          code: 'provider_auth_failed',
-          errorMessage: 'OpenAI Codex token sk-proj-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa was rejected',
-          data: { status: 401 }
+          code: ${JSON.stringify(input.usageLimit ? 'usage_limit_reached' : 'provider_auth_failed')},
+          errorMessage: ${JSON.stringify(input.usageLimit ? 'OpenAI Codex usage limit reached' : 'OpenAI Codex token sk-proj-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa was rejected')},
+          data: { status: ${input.usageLimit ? 429 : 401} }
         });
         out({ type: 'agent_end' });
       }, 10);
@@ -1612,6 +1629,7 @@ describe('PiRpcBackend prompt error handling', () => {
 
   afterEach(async () => {
     mockNotifyDaemonConnectedServiceRuntimeAuthFailure.mockClear();
+    daemonBoundary.outboxRoot = '';
     while (tempDirs.length > 0) {
       const dir = tempDirs.pop();
       if (dir) rmSync(dir, { recursive: true, force: true });
@@ -2111,7 +2129,69 @@ describe('PiRpcBackend prompt error handling', () => {
     }
   });
 
-  it('reports classified Pi assistant provider failures to the daemon', async () => {
+  it.each([
+    { kind: 'usage_limit', serviceId: 'claude-subscription', profileId: 'claude-primary', groupId: 'claude-main', script: makeFakePiRpcUsageLimitScript },
+    { kind: 'dependency_failure', serviceId: 'openai-codex', profileId: 'codex-primary', groupId: 'codex-main', script: makeFakePiRpcCompactionDependencyFailureScript },
+    { kind: 'rate_limit', serviceId: 'openai-codex', profileId: 'codex-primary', groupId: 'codex-main', script: (dir: string) => makeFakePiRpcStructuredTurnFailedScript(dir, { usageLimit: true }) },
+  ] as const)('reports accepted Pi $kind with the exact canonical failed-turn issue fingerprint', async (input) => {
+    const workDir = makeTempDir('happier-pi-rpc-canonical-limit-');
+    tempDirs.push(workDir);
+    daemonBoundary.outboxRoot = workDir;
+    const fakeScript = input.script(workDir);
+    const happierSessionId = `happy-pi-canonical-${input.kind}-${input.serviceId}`;
+    const mutations: SessionTurnMutationV1[] = [];
+    let turnCount = 0;
+    const sessionTurnLifecycle = createSessionTurnLifecycle({
+      sessionId: happierSessionId, createId: () => `canonical-pi-turn-${++turnCount}`,
+      enqueueSessionTurn: async (mutation) => { mutations.push(mutation); },
+    });
+    const env = { HAPPIER_PI_RPC_COMPACTION_RESUME_GRACE_MS: '10', [HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]: JSON.stringify([
+      { kind: 'group', serviceId: input.serviceId, groupId: input.groupId, activeProfileId: input.profileId, fallbackProfileId: 'fallback', generation: 4 },
+      { kind: 'profile', serviceId: input.serviceId === 'openai-codex' ? 'claude-subscription' : 'openai-codex', profileId: 'other-provider' },
+    ]) };
+    const backend = new PiRpcBackend({ cwd: workDir, command: process.execPath, args: [fakeScript],
+      happierSessionId, env });
+    const runtime = createTestAcpRuntime({ provider: 'pi', directory: workDir,
+      happierSessionId, processEnv: env,
+      session: { ...createBasicSessionClientWithOverrides({
+        sendAgentMessage: (provider, body) => {
+          void sessionTurnLifecycle.observeAcpLifecycleMarker({ provider, body }).pendingWrite;
+        },
+      }), sessionTurnLifecycle },
+      messageBuffer: new MessageBuffer(), mcpServers: {}, permissionHandler: createApprovedPermissionHandler(),
+      onThinkingChange: () => {}, ensureBackend: async () => backend,
+      hooks: await agent.getAcpRuntimeTurnHooks(),
+    });
+    try {
+      await runtime.startOrLoad({ resumeId: null });
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        runtime.beginTurn();
+        const error = await runtime.sendPrompt('continue').then(() => null, (error: unknown) => error);
+        await runtime.failTurn(error);
+        await runtime.flushTurn();
+      }
+      const issues = mutations.flatMap((mutation) => mutation.action === 'fail' && mutation.issue ? [mutation.issue] : []);
+      expect(issues).toHaveLength(2);
+      const fingerprints = issues.map((issue) => buildUsageLimitIssueFingerprint(issue));
+      expect(new Set(fingerprints).size).toBe(2);
+      await vi.waitFor(() => {
+        const reports = mockNotifyDaemonConnectedServiceRuntimeAuthFailure.mock.calls.map(([body]) => body)
+          .filter((body) => body && typeof body === 'object' && Reflect.get(body, 'sessionId') === happierSessionId);
+        expect(reports).toHaveLength(fingerprints.length);
+        expect(reports).toEqual(expect.arrayContaining(fingerprints.map((runtimeIssueFingerprint) => expect.objectContaining({
+          sessionId: happierSessionId, classification: expect.objectContaining({
+            kind: input.kind, serviceId: input.serviceId, profileId: input.profileId, groupId: input.groupId,
+            runtimeIssueFingerprint,
+          }),
+        }))));
+      });
+    } finally {
+      await runtime.reset();
+      await backend.dispose();
+    }
+  });
+
+  it('preserves classified Pi assistant failures for the canonical turn owner', async () => {
     const workDir = makeTempDir('happier-pi-rpc-usage-limit-');
     tempDirs.push(workDir);
     const fakeScript = makeFakePiRpcUsageLimitScript(workDir);
@@ -2148,32 +2228,13 @@ describe('PiRpcBackend prompt error handling', () => {
         },
       });
 
-      // Fail-closed escalation: a genuinely-unfinished usage-limit turn MUST report the
-      // classified runtime-auth failure to the daemon. We assert the escalation body's
-      // stable contract via objectContaining (kind/service/profile/group + reset hints)
-      // and the canonical delivery-timeout policy, without pinning every diagnostic field.
-      await vi.waitFor(() => {
-        expect(mockNotifyDaemonConnectedServiceRuntimeAuthFailure).toHaveBeenCalledWith(
-          expect.objectContaining({
-            sessionId: 'happy-session-usage-limit',
-            switchesThisTurn: 0,
-            classification: expect.objectContaining({
-              kind: 'usage_limit',
-              serviceId: 'claude-subscription',
-              profileId: 'claude-primary',
-              groupId: 'claude-main',
-              retryAfterMs: 150_000,
-            }),
-          }),
-          expect.objectContaining({ timeoutMs: CONNECTED_SERVICE_RUNTIME_AUTH_FAILURE_REPORT_TIMEOUT_MS }),
-        );
-      });
+      expect(mockNotifyDaemonConnectedServiceRuntimeAuthFailure).not.toHaveBeenCalled();
     } finally {
       await backend.dispose();
     }
   });
 
-  it('reports classified terminal compaction dependency failures to the daemon', async () => {
+  it('preserves classified terminal compaction failures for the canonical turn owner', async () => {
     const workDir = makeTempDir('happier-pi-rpc-compaction-dependency-');
     tempDirs.push(workDir);
     const fakeScript = makeFakePiRpcCompactionDependencyFailureScript(workDir);
@@ -2210,24 +2271,7 @@ describe('PiRpcBackend prompt error handling', () => {
         },
       });
 
-      // Fail-closed escalation: a terminal compaction dependency failure that interrupted
-      // genuinely-unfinished work MUST still escalate to the daemon (this is what guards the
-      // Pi post-final-compaction reorder from silently swallowing real interruptions).
-      await vi.waitFor(() => {
-        expect(mockNotifyDaemonConnectedServiceRuntimeAuthFailure).toHaveBeenCalledWith(
-          expect.objectContaining({
-            sessionId: 'happy-session-compaction-dependency',
-            switchesThisTurn: 0,
-            classification: expect.objectContaining({
-              kind: 'dependency_failure',
-              serviceId: 'openai-codex',
-              profileId: 'codex-primary',
-              groupId: 'codex-main',
-            }),
-          }),
-          expect.objectContaining({ timeoutMs: CONNECTED_SERVICE_RUNTIME_AUTH_FAILURE_REPORT_TIMEOUT_MS }),
-        );
-      });
+      expect(mockNotifyDaemonConnectedServiceRuntimeAuthFailure).not.toHaveBeenCalled();
     } finally {
       await backend.dispose();
     }

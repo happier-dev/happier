@@ -23,6 +23,27 @@ function createLifecycleStub(overrides: Partial<SessionTurnLifecycle>): SessionT
 }
 
 describe('surfacePrimarySessionRuntimeIssue', () => {
+  it('exposes the accepted failed issue synchronously while durable failure publication is pending', async () => {
+    let releaseWrite: () => void = () => {};
+    const pendingWrite = new Promise<void>((resolve) => { releaseWrite = resolve; });
+    const lifecycle = createSessionTurnLifecycle({ sessionId: 'surface-witness', enqueueSessionTurn: async (mutation) => {
+      if (mutation.action === 'fail') await pendingWrite;
+    } });
+    await lifecycle.beginTurn({ provider: 'agy' });
+    const witnesses: unknown[] = [];
+    const pending = runtimeIssueSurface.surfacePrimarySessionRuntimeIssue({ provider: 'agy', cause: 'session_error',
+      error: new Error('provider failed'), occurredAt: 1_000, session: { sessionTurnLifecycle: lifecycle },
+      onFailureTurn: (failure) => { witnesses.push(failure.issue); } });
+    expect(witnesses).toHaveLength(1);
+    const duplicate = runtimeIssueSurface.surfacePrimarySessionRuntimeIssue({ provider: 'agy', cause: 'session_error',
+      error: new Error('provider failed'), occurredAt: 2_000, session: { sessionTurnLifecycle: lifecycle },
+      suppressUntrustedDuplicate: true, onFailureTurn: (failure) => { witnesses.push(failure.issue); } });
+    expect(witnesses[1]).toEqual(witnesses[0]);
+    releaseWrite();
+    expect(await pending).toEqual(witnesses[0]);
+    expect(await duplicate).toEqual(witnesses[0]);
+  });
+
   it('surfaces provider failures as failed primary turn runtime issues', async () => {
     const sendAgentMessage = vi.fn();
     const failTurn = vi.fn();

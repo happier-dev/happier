@@ -14,6 +14,7 @@ import {
   buildReadWindowsScheduledTaskStatusPowerShellCommand,
   buildServiceDefinition,
   parseWindowsScheduledTaskStatusPowerShellJson,
+  parsePowerShellQuotedString,
   planServiceAction,
   resolveServiceBackend,
   type ServiceBackend,
@@ -539,10 +540,8 @@ function parseLaunchdPlistWorkingDirectory(plistText: string): string | null {
 }
 
 function parseWindowsWrapperWorkingDirectory(wrapperText: string): string | null {
-  const match = String(wrapperText ?? '').match(/Set-Location\s+-LiteralPath\s+"((?:`.|[^"])*)"/iu);
-  const raw = match?.[1]?.trim();
-  if (!raw) return null;
-  return raw.replace(/`(["`])/gu, '$1') || null;
+  const match = String(wrapperText ?? '').match(/Set-Location\s+-LiteralPath\s+(.+)/iu);
+  return match ? parsePowerShellQuotedString(match[1])?.trim() || null : null;
 }
 
 function parseServiceDefinitionWorkingDirectory(params: Readonly<{

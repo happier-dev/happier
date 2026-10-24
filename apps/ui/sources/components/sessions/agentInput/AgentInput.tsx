@@ -48,7 +48,8 @@ import { t } from '@/text';
 
 import { Metadata } from '@/sync/domains/state/storageTypes';
 import { getProfileEnvironmentVariables, type AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
-import { DEFAULT_AGENT_ID, getAgentBehavior, getAgentCore, resolveAgentIdFromFlavor, type AgentId } from '@/agents/catalog/catalog';
+import { DEFAULT_AGENT_ID, getAgentBehavior, getAgentCore, type AgentId } from '@/agents/catalog/catalog';
+import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import { AgentIcon } from '@/agents/registry/AgentIcon';
 // From the registry rather than the catalog facade: this narrows an id the picker
 // supplied, which is the same check the send control's presentation resolver makes.
@@ -1261,16 +1262,22 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
             updateLayoutHeight(setComposerAttentionHeightPx, 0);
         }
     }, [hasComposerAttentionRequests]);
-    const agentId: AgentId = resolveAgentIdFromFlavor(props.metadata?.flavor) ?? props.agentType ?? DEFAULT_AGENT_ID;
+    const sessionAgentId = resolveAgentIdFromSessionMetadata(props.metadata);
+    const agentId: AgentId = sessionAgentId ?? props.agentType ?? DEFAULT_AGENT_ID;
     const armedComposerTarget = resolveArmedComposerContinuation({
         armedContinuationTarget: props.armedContinuationTarget,
     });
     // Outbound controls describe the armed Agent; runtime status stays with the running Agent.
-    const engineChipAgentId: AgentId = (
-        armedComposerTarget && isAgentId(armedComposerTarget.agentId)
-            ? armedComposerTarget.agentId
-            : agentId
-    );
+    const armedAgentId = armedComposerTarget && isAgentId(armedComposerTarget.agentId)
+        ? armedComposerTarget.agentId
+        : null;
+    const engineChipAgentId = armedAgentId ?? props.agentType ?? agentId;
+    // Existing Sessions may need a policy default while their identity is unavailable.
+    // That default is not evidence for a brand; new-session selection and armed targets are.
+    const engineChipMarkAgentId = armedComposerTarget
+        ? armedAgentId
+        : props.sessionId && !sessionAgentId ? null : engineChipAgentId;
+    const displayedAgentLabel = engineChipMarkAgentId ? props.agentLabel : t('status.unknown');
     const permissionMetadata = armedComposerTarget ? null : props.metadata ?? null;
     const modelOptions = React.useMemo(() => {
         if (props.modelOptionsOverride) return props.modelOptionsOverride;
@@ -1842,6 +1849,10 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         // to the composer-view anchor — the "menu appears at the top of the composer,
         // then jumps on the next keystroke" report.
         enabled: isInputFocused && !props.disabled,
+        // Only the command menu consumes the rect, and it can only open over an active `@`/`/`
+        // word. Web skips its per-keystroke mirror-div measurement otherwise and measures before
+        // paint in the commit the word activates; native ignores this and keeps D38 above.
+        demanded: activeWord !== null,
     });
     const commandMenuAnchor: CommandMenuAnchor = React.useMemo(
         () => resolveAgentInputCommandMenuAnchor(caretRect, composerAnchorRef),
@@ -2215,17 +2226,17 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         props.agentType
             ? {
                 id: `engine:${props.agentType}`,
-                label: props.agentLabel ?? t(getAgentCore(props.agentType).displayNameKey),
+                label: displayedAgentLabel ?? t(getAgentCore(props.agentType).displayNameKey),
                 icon: (
                     <AgentIcon
-                        agentId={props.agentType}
+                        agentId={engineChipMarkAgentId}
                         size={12}
-                        style={{ transform: [{ scale: getAgentPickerIconScale(props.agentType) }] }}
+                        style={{ transform: [{ scale: engineChipMarkAgentId ? getAgentPickerIconScale(engineChipMarkAgentId) : 1 }] }}
                     />
                 ),
             }
             : null
-    ), [props.agentLabel, props.agentType]);
+    ), [displayedAgentLabel, engineChipMarkAgentId, props.agentType]);
 
     const internalAgentPickerOptions = React.useMemo<ReadonlyArray<AgentInputChipPickerOption>>(() => {
         if (!hasInternalAgentPickerOptions || !props.agentType || !currentAgentPickerRow) return [];
@@ -2410,7 +2421,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         handleResumePress,
     } = useAgentInputCoreControlHandlers({
         agentType: props.agentType,
-        agentLabel: props.agentLabel,
+        agentLabel: displayedAgentLabel,
         hasAgentPickerOptions: hasAgentPickerSurface,
         onAgentClick: props.onAgentClick,
         onAgentPickerIntent: props.onAgentPickerIntent,
@@ -2439,8 +2450,9 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         if (armedComposerTarget) {
             return armedComposerTarget.modelLabel ?? armedComposerTarget.label;
         }
+        if (!engineChipMarkAgentId) return t('status.unknown');
         return hasAgentPickerOptions ? selectedModelLabel : resolvedAgentLabel;
-    }, [armedComposerTarget, hasAgentPickerOptions, resolvedAgentLabel, selectedModelLabel]);
+    }, [armedComposerTarget, engineChipMarkAgentId, hasAgentPickerOptions, resolvedAgentLabel, selectedModelLabel]);
     const hasRecipient = React.useMemo(() => {
         return (props.extraActionChips ?? []).some((chip) => chip.controlId === 'recipient');
     }, [props.extraActionChips]);
@@ -2586,6 +2598,17 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     }, [canStopFromComposer, handleComposerAbortShortcut, handleComposerFocusShortcut]);
     useKeyboardShortcutHandlers(keyboardShortcutHandlers);
 
+    // Identity-stable handlers: these feed the action-menu and control-row memos, which an inline
+    // arrow would invalidate on every keystroke render.
+    const handleStopFromComposer = React.useCallback(() => {
+        void handleAbortPress();
+    }, [handleAbortPress]);
+    const handleToggleExtraChipCollapsedPopover = React.useCallback((chipKey: string) => {
+        toggleSelectionOverlay('collapsedExtra', 'chip', chipKey);
+    }, [toggleSelectionOverlay]);
+    const blurComposerInput = React.useCallback(() => {
+        inputRef.current?.blur();
+    }, []);
     const {
         handleActionMenuPress,
         actionMenuActions,
@@ -2611,7 +2634,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         hasAnyActions,
         tint: theme.colors.composer.chipTint,
         // The engine control names what runs NEXT, so it follows the armed target.
-        agentId: engineChipAgentId,
+        agentId: engineChipMarkAgentId,
         profileLabel,
         profileIcon,
         envVarsCount: props.envVarsCount,
@@ -2638,9 +2661,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         onResumeClick: handleResumePress,
         onFileViewerPress: props.onFileViewerPress,
         canStop: canStopFromComposer,
-        onStop: () => {
-            void handleAbortPress();
-        },
+        onStop: handleStopFromComposer,
         hasProfile,
         hasEnvVars,
         hasAgent,
@@ -2653,9 +2674,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         layout: effectiveActionBarLayout,
         chips: props.extraActionChips,
         overlayAnchorRef,
-        onToggleExtraChipCollapsedPopover: (chipKey) => {
-            toggleSelectionOverlay('collapsedExtra', 'chip', chipKey);
-        },
+        onToggleExtraChipCollapsedPopover: handleToggleExtraChipCollapsedPopover,
         themeTint: theme.colors.composer.chipTint,
         showChipLabels,
         showAutoHideChipLabels,
@@ -2688,7 +2707,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         envVarsCount: props.envVarsCount,
         onEnvVarsPress: handleEnvVarsPress,
         // The engine chip names what runs NEXT, so it follows the armed target.
-        agentId: engineChipAgentId,
+        agentId: engineChipMarkAgentId,
         hasAgentSelection: hasAgent,
         agentChipAnchorRef,
         agentLabel: resolvedAgentLabel,
@@ -2703,7 +2722,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         currentPath: props.currentPath,
         resumeChipAnchorRef,
         onResumePress: handleResumePress,
-        blurInput: () => inputRef.current?.blur(),
+        blurInput: blurComposerInput,
         resumeSessionId: props.resumeSessionId,
         resumeIsChecking: props.resumeIsChecking,
         onAbort: props.onAbort,

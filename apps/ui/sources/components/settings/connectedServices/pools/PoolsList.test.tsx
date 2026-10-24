@@ -12,7 +12,7 @@ import type {
   getConnectedServiceQuotaSnapshotPlain,
   requestConnectedServiceQuotaSnapshotRefreshV3,
 } from '@/sync/api/account/apiConnectedServicesQuotasV3';
-import { __resetConnectedServiceQuotaSnapshotStore } from '@/hooks/server/connectedServices/connectedServiceQuotaSnapshotStore';
+import { __resetConnectedServiceQuotaSnapshotStore } from '@/sync/domains/connectedServices/connectedServiceQuotaSnapshotStore';
 import { flushHookEffects, renderScreen } from '@/dev/testkit';
 import type { ConnectedServiceAuthGroupsLoadStatus } from '../model/useConnectedServiceAuthGroups';
 

@@ -250,6 +250,7 @@ export async function claudeRemote(opts: {
         supportedLevels: resolveModeEffortLevelsForModel(initial.mode, argOverrides.model ?? initial.mode.model),
     });
     const rawExtraArgs = [
+        '--replay-user-messages',
         ...(opts.hookPluginDir ? ['--plugin-dir', opts.hookPluginDir] : []),
         ...effortArgs,
         ...(settingSourcesArgs ?? []),
@@ -325,6 +326,7 @@ export async function claudeRemote(opts: {
         prompt: messages,
         options: sdkOptions,
         onMessageReceived: (message) => {
+            if (promptSettlements.observeProviderMessage(message)) return;
             if (isClaudeHookLifecycleStreamMessage(message)) return;
             logger.debugLargeJson(`[claudeRemote] Message ${message.type}`, message);
             opts.onMessage(message);
@@ -348,12 +350,12 @@ export async function claudeRemote(opts: {
     opts.setUserMessageSender?.((message: SDKUserMessage) => messages.push(message));
     messages.push({
         type: 'user',
+        uuid: promptSettlements.submit(initial),
         message: {
             role: 'user',
             content: initial.message,
         },
     });
-    promptSettlements.accept(initial);
 
     const interruptTurn = async (): Promise<void> => {
         try {
@@ -429,8 +431,7 @@ export async function claudeRemote(opts: {
                 }
                 promptSettlements.track(next);
                 mode = next.mode;
-                messages.push({ type: 'user', message: { role: 'user', content: next.message } });
-                promptSettlements.accept(next);
+                messages.push({ type: 'user', uuid: promptSettlements.submit(next), message: { role: 'user', content: next.message } });
             }
 
             // Handle tool result

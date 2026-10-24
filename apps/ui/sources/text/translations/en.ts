@@ -1271,6 +1271,8 @@ export const en = {
         secretKeyPlaceholder: 'XXXXX-XXXXX-XXXXX...',
         linkNewDeviceTitle: 'Link New Device',
         linkNewDeviceSubtitle: 'Scan the QR code shown on your new device to link it to this account',
+        pairingConnectionWarningTitle: "Server disconnected",
+        pairingConnectionWarningBody: "Pairing needs a reachable server. Check your connection, or scan a code for another server.",
         linkNewDeviceQrInstructions: 'Open Happier on your new device and display the QR code',
         scanQrCodeOnDevice: 'Scan QR Code',
         unsupported: {
@@ -3783,6 +3785,11 @@ export const en = {
 	        plugins: {
             claude: {
                 title: "Claude Code",
+                responseLocationOptions: {
+                    app_and_terminal: { title: "App and terminal", subtitle: "Respond in the Happier app or Claude Code terminal." },
+                    app_only: { title: "App prompts", subtitle: "Use the existing app request flow. Claude may still accept responses in its terminal." },
+                    terminal_only: { title: "Terminal only", subtitle: "Respond in the Claude Code terminal." },
+                },
                 sections: {
                     claudeModelDiscovery: {
                         title: "Model discovery",
@@ -3827,6 +3834,14 @@ export const en = {
                                 subtitle: "Use Happier's bundled zellij host."
                             }
                         }
+                    },
+                    claudeUnifiedTerminalQuestionResponseLocation: {
+                        title: "Answer questions",
+                        subtitle: "Choose where to answer questions during unified terminal sessions."
+                    },
+                    claudeUnifiedTerminalPermissionResponseLocation: {
+                        title: "Approve permission requests",
+                        subtitle: "Choose where to approve permission requests during unified terminal sessions."
                     },
                     claudeUnifiedTerminalResumeChoice: {
                         title: "Large-session resume",
@@ -3930,7 +3945,7 @@ export const en = {
                     },
                     claudeLocalPermissionBridgeEnabled: {
                         title: "Experimental: local permission bridge",
-                        subtitle: "Forward Claude local-mode permission prompts to Happier so you can approve or deny from the app UI."
+                        subtitle: "Forward permission prompts from classic local Claude sessions to Happier. Unified terminal sessions use the response choices above."
                     },
                     claudeLocalPermissionBridgeWaitIndefinitely: {
                         title: "Keep requests open until answered",
@@ -9448,6 +9463,7 @@ settingsSession: {
             checking: 'Checking…',
             failedGeneric: 'The update didn’t finish. Try again.',
             remoteUnsupported: 'This machine can’t update its command line remotely. Update it on the machine.',
+            archiveExpandedByteLimit: "The downloaded runtime exceeds the extraction size limit. Update Happier before retrying.",
             updateNotVerified: 'The update ran, but the version didn’t change.',
             rolledBackLocal: 'The update didn’t start, so this computer went back to the previous version.',
             smokeFailed: 'The new version didn’t run on this computer, so nothing changed.',

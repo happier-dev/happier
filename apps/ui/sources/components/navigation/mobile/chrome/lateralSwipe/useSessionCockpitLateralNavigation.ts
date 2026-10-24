@@ -13,7 +13,6 @@
 
 import * as React from 'react';
 
-import { DEFAULT_AGENT_ID, resolveAgentIdFromFlavor } from '@/agents/catalog/catalog';
 import type { AgentId } from '@/agents/registry/registryCore';
 import { announceAccessibilityMessage } from '@/components/ui/accessibility/announceAccessibilityMessage';
 import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
@@ -37,7 +36,7 @@ import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 export type SessionLateralNavigationTarget = Readonly<{
     sessionId: string;
     serverId?: string;
-    agentId: AgentId;
+    agentId: AgentId | null;
     title: string;
     /** 1-based position inside the captured order, for the readout and its announcement. */
     position: number;
@@ -131,9 +130,7 @@ function buildTarget(
     return {
         sessionId: entry.sessionId,
         ...(entry.serverId ? { serverId: entry.serverId } : null),
-        agentId: resolveAgentIdFromSessionMetadata(metadata)
-            ?? resolveAgentIdFromFlavor(metadata?.flavor)
-            ?? DEFAULT_AGENT_ID,
+        agentId: resolveAgentIdFromSessionMetadata(metadata),
         title: getSessionName({ id: entry.sessionId, metadata: metadata ?? null }),
         position,
         total: cursor.entries.length,

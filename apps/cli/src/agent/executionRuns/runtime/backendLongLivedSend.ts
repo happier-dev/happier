@@ -7,6 +7,7 @@ import type { ExecutionRunState } from '@/agent/executionRuns/runtime/executionR
 import { resetExecutionRunBackendOutput, type ExecutionRunBackendController, type ExecutionRunController } from '@/agent/executionRuns/controllers/types';
 import type { FinishExecutionRun } from '@/agent/executionRuns/runtime/executionRunFinishRun';
 import { resumeBackendControllerForResumableRun, type ResumedExecutionRunBackend } from '@/agent/executionRuns/runtime/resumeBackendController';
+import { disposeExecutionRunBackendController } from './settleExecutionRunControllerOccurrence';
 import { isAbortLikeError, normalizeExecutionRunSendDelivery, resolveInFlightDeliveryAction } from '@/agent/executionRuns/runtime/turnDelivery';
 import {
   EXECUTION_RUN_SEND_OUTCOME_UNKNOWN_CODE,
@@ -20,6 +21,7 @@ type BackendLongLivedRunSendArgs = Readonly<{
   controllers: Map<string, ExecutionRunController>;
   budgetRegistry: ExecutionBudgetRegistry | null;
   createBackend: () => Promise<ResumedExecutionRunBackend>;
+  isSessionClosing?: () => boolean;
   maxTurns: number | null;
   getNowMs: () => number;
   finishRun: FinishExecutionRun;
@@ -66,7 +68,10 @@ export async function prepareBackendLongLivedRunResume(
 
   const backendCtrl = ctrl && ctrl.kind === 'backend' ? ctrl : null;
 
-  if (!backendCtrl || !backendCtrl.childSessionId) {
+  // Public terminal state can precede native teardown and controller removal.
+  // Resume must acquire a fresh occurrence, as Ensure does, rather than send into
+  // the terminal occurrence while its disposal is still pending.
+  if (run.status !== 'running' || !backendCtrl || !backendCtrl.childSessionId) {
     if (wantsResume && run.retentionPolicy === 'resumable') {
       const resumed = await resumeBackendControllerForResumableRun({
         runId: args.runId,
@@ -75,6 +80,7 @@ export async function prepareBackendLongLivedRunResume(
         controllers: args.controllers,
         budgetRegistry: args.budgetRegistry,
         createBackend: args.createBackend,
+        isSessionClosing: args.isSessionClosing,
         sendAcp: args.sendAcp,
         parentProvider: args.parentProvider,
         streamedTranscriptSession: args.streamedTranscriptSession,
@@ -291,7 +297,7 @@ export async function sendPreparedBackendLongLivedRun(
         );
       }
       try {
-        await ctrl2.backend.dispose();
+        await disposeExecutionRunBackendController(ctrl2);
       } catch {
         // ignore
       }

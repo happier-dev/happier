@@ -28,6 +28,7 @@ import { resolveConnectedServiceSelectionHomeDir, type ConnectedServiceHomeSelec
 import { buildDefaultConnectedServiceCredentialLifecycleDescriptor } from '../credentials/lifecycleTypes';
 import { ConnectedServiceRuntimeRegistry } from '../runtimeRegistry/registry';
 import { computeConnectedServiceAccessTokenFingerprint } from './credentialFreshness/tokenFingerprint';
+import { ConnectedServiceQuotasCoordinator } from '../quotas/ConnectedServiceQuotasCoordinator';
 
 const { spawnSpy } = vi.hoisted(() => ({
   spawnSpy: vi.fn(),
@@ -6295,6 +6296,130 @@ afterEach(() => {
     });
     expect(JSON.stringify(logRefreshDiagnostic.mock.calls)).not.toContain('old-refresh');
   });
+
+  it.each(['missing', 'joined', 'present', 'unavailable', 'different_user'] as const)(
+    'enriches unexpired provider context through the credential authority (%s)', async (context) => {
+      const baseDir = await mkdtemp(join(tmpdir(), 'happier-context-enrichment-'));
+      const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-context-server-'));
+      const now = 1_000_000;
+      const credentials = {
+        token: 'happy-token',
+        encryption: { type: 'legacy', secret: new Uint8Array(32).fill(9) },
+      } satisfies Credentials;
+      let storedRecord = buildConnectedServiceCredentialRecord({
+        now: now - 100,
+        serviceId: 'claude-subscription', profileId: 'work', kind: 'oauth', expiresAt: now + 3_600_000,
+        oauth: {
+          accessToken: 'unchanged-access', refreshToken: 'unchanged-refresh', idToken: null,
+          scope: 'user:profile', tokenType: 'Bearer', providerAccountId: 'acct', providerEmail: 'user@example.com',
+          raw: context === 'present' ? { claudeAiOauth: { organizationUuid: 'org-existing' } } : null,
+        },
+      });
+      const originalRecord = structuredClone(storedRecord);
+      let credentialRevision = 'csr_abcdefghijklmnopqrstuv';
+      let releaseRead = () => {};
+      let markReadStarted = () => {};
+      const readReleased = new Promise<void>((resolve) => { releaseRead = resolve; });
+      const readStarted = new Promise<void>((resolve) => { markReadStarted = resolve; });
+      let readCount = 0;
+      const readBoundary = vi.fn(async () => {
+        readCount += 1;
+        if (context === 'joined' && readCount === 1) {
+          markReadStarted();
+          await readReleased;
+        }
+        return {
+          revisionSemantics: 'revisioned' as const, credentialRevision,
+          content: { t: 'plain' as const, v: storedRecord },
+        };
+      });
+      const writeBoundary = vi.fn(async (params: { content: { v: typeof storedRecord } }) => {
+        storedRecord = params.content.v;
+        credentialRevision = 'csr_bcdefghijklmnopqrstuvw';
+        return { success: true as const, credentialRevision };
+      });
+      const healthBoundary = vi.fn(async () => ({ success: true as const }));
+      // The API persistence/lease transport is the genuine boundary; all refresh logic stays real.
+      const api = {
+        getAccountEncryptionMode: async () => 'plain' as const,
+        getConnectedServiceCredentialPlain: readBoundary,
+        acquireConnectedServiceRefreshLease: async () => ({
+          acquired: true, leaseUntil: now + 60_000, ownerId: 'machine-context', credentialRevision,
+        }),
+        registerConnectedServiceCredentialPlain: writeBoundary,
+        updateConnectedServiceCredentialHealth: healthBoundary,
+        getConnectedServiceQuotaSnapshotPlain: async () => null,
+        getConnectedServiceQuotaSnapshotSealed: async () => null,
+      } as unknown as ApiClient;
+      const providerRequests: Array<{ url: string; method: string }> = [];
+      vi.stubGlobal('fetch', vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+        providerRequests.push({ url: String(url), method: init?.method ?? 'GET' });
+        return new Response(JSON.stringify({
+          account: { uuid: context === 'different_user' ? 'other-acct' : 'acct' },
+          organization: { uuid: 'org-attested' },
+        }), { status: context === 'unavailable' ? 503 : 200 });
+      }));
+      const coordinator = new ConnectedServiceRefreshCoordinator({
+        api, credentials, machineIdProvider: () => 'machine-context', activeServerDir, baseDir,
+        refreshWindowMs: 60_000, refreshLeaseMs: 30_000, now: () => now,
+      });
+      const ordinary = context === 'joined' ? coordinator.refreshConnectedServiceCredentialForSpawnPreflight({
+        serviceId: 'claude-subscription', profileId: 'work', force: false,
+      }) : null;
+      if (ordinary) await readStarted;
+      const quotaRecords: unknown[] = [];
+      let quotaRefreshResult: Awaited<ReturnType<typeof coordinator.refreshConnectedServiceCredentialForQuota>> | undefined;
+      const quotaCoordinator = new ConnectedServiceQuotasCoordinator({
+        api, credentials, now: () => now, randomBytes,
+        quotaFetchers: [{ serviceId: 'claude-subscription', fetch: async ({ record }) => {
+          quotaRecords.push(record);
+          return null;
+        } }],
+        refreshConnectedServiceCredentialForQuota: async (input) => {
+          quotaRefreshResult = await coordinator.refreshConnectedServiceCredentialForQuota(input);
+          return quotaRefreshResult;
+        },
+      });
+      quotaCoordinator.registerSpawnTarget({
+        pid: 123,
+        connectedServicesBindingsRaw: { v: 1, bindingsByServiceId: {
+          'claude-subscription': { source: 'connected', profileId: 'work' },
+        } },
+      });
+      const enrichment = context === 'missing'
+        ? quotaCoordinator.tickOnce().then(() => quotaRefreshResult)
+        : coordinator.refreshConnectedServiceCredentialForQuota({
+          serviceId: 'claude-subscription', profileId: 'work', force: false, reason: 'provider_context',
+        });
+      releaseRead();
+      if (ordinary) await ordinary;
+      const result = await enrichment;
+      expect(providerRequests.every((request) => request.method === 'GET')).toBe(true);
+      expect(providerRequests).toHaveLength(context === 'present' ? 0 : 1);
+      const shouldEnrich = context === 'missing' || context === 'joined';
+      expect(storedRecord.oauth).toEqual(shouldEnrich
+        ? { ...originalRecord.oauth, raw: { claudeAiOauth: { organizationUuid: 'org-attested' } } }
+        : originalRecord.oauth);
+      expect(storedRecord.expiresAt).toBe(originalRecord.expiresAt);
+      expect(writeBoundary).toHaveBeenCalledTimes(shouldEnrich ? 1 : 0);
+      expect(healthBoundary).not.toHaveBeenCalled();
+      expect(result?.record).toEqual(storedRecord);
+      expect(result?.credentialRevision).toBe(credentialRevision);
+      if (context === 'missing') expect(quotaRecords).toEqual([expect.objectContaining({
+        oauth: expect.objectContaining({ raw: { claudeAiOauth: { organizationUuid: 'org-attested' } } }),
+      })]);
+      if (shouldEnrich) {
+        expect(writeBoundary).toHaveBeenCalledWith(expect.objectContaining({
+          expectedCredentialRevision: 'csr_abcdefghijklmnopqrstuv', refreshLeaseOwnerId: 'machine-context',
+        }));
+        const again = await coordinator.refreshConnectedServiceCredentialForQuota({
+          serviceId: 'claude-subscription', profileId: 'work', force: false, reason: 'provider_context',
+        });
+        expect(again.record).toEqual(storedRecord);
+        expect(providerRequests).toHaveLength(1);
+      }
+    },
+  );
 
   it('preserves stored OAuth scope and token type when refresh omits them', async () => {
     const baseDir = await mkdtemp(join(tmpdir(), 'happier-connected-services-refresh-scope-preserve-'));

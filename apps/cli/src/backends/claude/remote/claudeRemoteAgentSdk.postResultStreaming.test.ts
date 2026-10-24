@@ -6,6 +6,8 @@ import type { SessionTurnMutationV1 } from '@/api/session/mutations/sessionMutat
 import { claudeRemoteAgentSdk } from './claudeRemoteAgentSdk';
 import { makeMode } from './claudeRemoteAgentSdk.testkit';
 
+type CreateQuery = NonNullable<Parameters<typeof claudeRemoteAgentSdk>[0]['createQuery']>;
+
 describe('claudeRemoteAgentSdk post-result streaming', () => {
     it.each(['success', 'error_during_execution'] as const)('keeps the submitted turn active when a %s result reports queued user sends', async (subtype) => {
         let releaseQueuedTurn!: () => void;
@@ -13,8 +15,11 @@ describe('claudeRemoteAgentSdk post-result streaming', () => {
         let finishInput!: () => void;
         const inputFinished = new Promise<void>((resolve) => { finishInput = resolve; });
         let reachedQueuedContinuation = false;
-        const createQuery = (() => ({
+        const createQuery = (({ prompt }: Parameters<CreateQuery>[0]) => ({
             async *[Symbol.asyncIterator]() {
+                const input = await (prompt as AsyncIterable<import('@anthropic-ai/claude-agent-sdk').SDKUserMessage>)[Symbol.asyncIterator]().next();
+                if (input.done) throw new Error('Expected initial prompt');
+                yield { ...input.value, isReplay: true, session_id: 'claude-resumed' };
                 yield { type: 'system', subtype: 'init', session_id: 'claude-resumed' };
                 yield { type: 'result', subtype, session_id: 'claude-resumed', queued_turn_count: 1, result: 'notification finished' };
                 reachedQueuedContinuation = true;

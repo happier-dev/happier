@@ -65,6 +65,18 @@ describe('generateHookSettingsFile', () => {
     envScope = createEnvKeyScope(envKeys);
   });
 
+  it('observes exact native tool identities without adding a second question interceptor', () => {
+    const plugin = generateHookPluginDir(43124, { enableLocalPermissionBridge: true, observeNativeToolPrompts: true });
+    if (!plugin) throw new Error('expected hook plugin');
+    createdPluginDirs.push(plugin);
+    const parsed = JSON.parse(readFileSync(join(plugin, 'hooks', 'hooks.json'), 'utf8')) as {
+      hooks: Record<string, { matcher: string; hooks: { command: string }[] }[]>;
+    };
+    const pre = parsed.hooks.PreToolUse!;
+    expect(pre.filter((group) => group.matcher === 'AskUserQuestion')).toHaveLength(1);
+    expect(pre.find((group) => group.matcher === '*')?.hooks[0]?.command).toContain('session_hook_forwarder.cjs');
+  });
+
   it('writes only the non-hook permissions.allow block to the settings file', () => {
     const filePath = generateHookSettingsFile(43123);
     createdFiles.push(filePath);

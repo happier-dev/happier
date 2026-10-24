@@ -910,18 +910,31 @@ function mergeRuntimeAuthRecoveryIntent(
     // not revive it merely because its caller omitted the report id.
     return next.lastSettledTransition === 'working' ? next : previous;
   }
-  const sameEvidence = hasSameRuntimeAuthRecoveryEvidence(previous, next);
+  // Older observers have no accepted issue association. They cannot erase a
+  // current one while repeating otherwise identical evidence.
+  const classification = previous.classification.runtimeIssueFingerprint
+    && !next.classification.runtimeIssueFingerprint
+    && isSameRuntimeFailureClassification(
+      { ...previous.classification, runtimeIssueFingerprint: undefined },
+      { ...next.classification, runtimeIssueFingerprint: undefined },
+    )
+    ? { ...next.classification, runtimeIssueFingerprint: previous.classification.runtimeIssueFingerprint }
+    : next.classification;
+  const sameEvidence = hasSameRuntimeAuthRecoveryEvidence(previous, { ...next, classification });
   const previousSourceKey = previous.classification.sourceKey;
   const nextSourceKey = next.classification.sourceKey;
   const hasExplicitNewEvidenceEpoch = typeof previousSourceKey === 'string'
     && previousSourceKey.length > 0
     && typeof nextSourceKey === 'string'
     && nextSourceKey.length > 0
-    && previousSourceKey !== nextSourceKey;
+    && previousSourceKey !== nextSourceKey
+    || Boolean(next.classification.runtimeIssueFingerprint
+      && previous.classification.runtimeIssueFingerprint !== next.classification.runtimeIssueFingerprint);
   if (!sameEvidence && hasExplicitNewEvidenceEpoch) return next;
   if (!sameEvidence && previous.status !== 'checking' && previous.status !== 'resumed_awaiting_proof') return next;
   return {
     ...next,
+    classification,
     v: 2,
     attemptId: previous.attemptId ?? next.attemptId,
     // This merge branch retains the previous attempt identity. Its resolved
@@ -997,6 +1010,8 @@ function isSameRuntimeFailureClassification(
     && left.sourceKey === right.sourceKey
     && left.providerAccountUsageRecordId === right.providerAccountUsageRecordId
     && left.sourceProviderAccountId === right.sourceProviderAccountId
+    && left.runtimeIssueFingerprint === right.runtimeIssueFingerprint
+    && left.sourceProviderOrganizationId === right.sourceProviderOrganizationId
     && left.failingAccessTokenFingerprint === right.failingAccessTokenFingerprint
     && left.planType === right.planType
     && left.source === right.source;

@@ -1,3 +1,5 @@
+import { buildUsageLimitIssueFingerprint } from '@happier-dev/protocol';
+import { createSessionTurnLifecycle } from '@/agent/runtime/session/turn/lifecycle';
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -8613,6 +8615,15 @@ describe('createOpenCodeServerRuntime', () => {
   it('maps structured OpenCode usage-limit session errors into runtime issue details', async () => {
     const client = createFakeClient();
     const session = createFakeSession('happy_sess_opencode_usage_error');
+    const acceptedIssues: Array<import('@happier-dev/protocol').SessionRuntimeIssueV1> = [];
+    const lifecycle = createSessionTurnLifecycle({ sessionId: session.sessionId, enqueueSessionTurn: async (mutation) => {
+      if (mutation.action === 'fail' && mutation.issue) acceptedIssues.push(mutation.issue);
+    } });
+    session.sessionTurnLifecycle = lifecycle;
+    const failTurn = vi.spyOn(lifecycle, 'failTurn');
+    session.sendAgentMessage.mockImplementation((provider: import('@/api/session/sessionMessageTypes').ACPProvider, body: import('@/api/session/sessionMessageTypes').ACPMessageData) => {
+      void lifecycle.observeAcpLifecycleMarker({ provider, body }).pendingWrite;
+    });
     const runtime = createOpenCodeServerRuntime({
       directory: '/tmp',
       env: {
@@ -8670,7 +8681,7 @@ describe('createOpenCodeServerRuntime', () => {
       { timeout: 5_000 },
     ).toBe(1);
 
-    expect(session.sessionTurnLifecycle.failTurn).toHaveBeenCalledWith(expect.objectContaining({
+    expect(failTurn).toHaveBeenCalledWith(expect.objectContaining({
       provider: 'opencode',
       issue: expect.objectContaining({
         source: 'usage_limit',
@@ -8697,6 +8708,7 @@ describe('createOpenCodeServerRuntime', () => {
       sessionId: 'happy_sess_opencode_usage_error',
       switchesThisTurn: 0,
       classification: expect.objectContaining({
+        runtimeIssueFingerprint: buildUsageLimitIssueFingerprint(acceptedIssues[0]!),
         kind: 'rate_limit',
         serviceId: 'openai',
         profileId: 'primary',

@@ -13,6 +13,19 @@ const intent = {
 } satisfies RuntimeAuthRecoveryIntent;
 
 describe('daemon recovery intent metadata projection', () => {
+  it('projects the captured failure identity separately from its runtime attempt, including a legacy projection', () => {
+    const issueFingerprint = 'usage-limit:claude:turn-b:2000:5000';
+    const legacy = buildRuntimeAuthUsageLimitRecoveryMetadataUpdater({ intent })!({});
+    const updater = buildRuntimeAuthUsageLimitRecoveryMetadataUpdater({
+      intent: { ...intent, classification: { ...intent.classification, runtimeIssueFingerprint: issueFingerprint } },
+    })!;
+    for (const metadata of [{}, legacy]) {
+      expect(updater(metadata)).toMatchObject({ sessionUsageLimitRecoveryV1: {
+        issueFingerprint, runtimeAuthRecoveryAttemptId: 'attempt-1',
+      } });
+    }
+  });
+
   it.each(['standard', 'custom', 'off'] as const)('preserves the scheduler prompt mode %s and exact wait timing', (resumePromptMode) => {
     const updater = buildRuntimeAuthUsageLimitRecoveryMetadataUpdater({ intent: { ...intent, resumePromptMode } });
     expect(updater?.({ unrelated: true })).toMatchObject({

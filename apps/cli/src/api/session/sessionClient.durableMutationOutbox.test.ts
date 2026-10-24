@@ -1138,8 +1138,10 @@ describe('ApiSessionClient durable mutation outbox', () => {
     it.each([
       'publisher readiness',
       'version-mismatch acknowledgement and matching hint',
+      'version-mismatch acknowledgement without another hint',
     ] as const)('delivers Pending through the real consumer after %s without another queue mutation', async (contract) => {
-      const versionMismatch = contract === 'version-mismatch acknowledgement and matching hint';
+      const versionMismatch = contract !== 'publisher readiness';
+      const withoutSecondHint = contract === 'version-mismatch acknowledgement without another hint';
       useRealSupervisor = true;
       vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
         features: { sharing: { pendingQueueV2: { enabled: true }, pendingDeliveryState: { enabled: true } } },
@@ -1173,7 +1175,10 @@ describe('ApiSessionClient durable mutation outbox', () => {
           if (event === 'pending-materialize-next') {
             pendingClaims += 1;
             if (versionMismatch) {
-              expect(payload).toMatchObject({ sid: 's1', expectedPendingVersion: pendingClaims === 1 ? 1 : 2 });
+              expect(payload).toMatchObject({
+                sid: 's1',
+                expectedPendingVersion: pendingClaims === 1 ? 1 : 2,
+              });
             }
             if (versionMismatch && pendingClaims === 1) {
               return {
@@ -1258,12 +1263,14 @@ describe('ApiSessionClient durable mutation outbox', () => {
             && 'deferredReason' in detail && detail.deferredReason === 'pending_version_mismatch'
           )).length).toBe(1);
           expect(pendingClaims).toBeGreaterThanOrEqual(1);
-          // The ordinary hint may arrive after the ACK taught us this same projection.
-          // Deduplicating that hint must not strand the newly learned deliverable row.
-          sessionSocketStub.trigger('update', {
-            id: 'matching-pending-hint', seq: 2, createdAt: 2,
-            body: { t: 'pending-changed', sid: 's1', pendingCount: 1, pendingBlockedCount: 0, pendingVersion: 2 },
-          });
+          if (!withoutSecondHint) {
+            // The ordinary hint may arrive after the ACK taught us this same projection.
+            // Deduplicating that hint must not strand the newly learned deliverable row.
+            sessionSocketStub.trigger('update', {
+              id: 'matching-pending-hint', seq: 2, createdAt: 2,
+              body: { t: 'pending-changed', sid: 's1', pendingCount: 1, pendingBlockedCount: 0, pendingVersion: 2 },
+            });
+          }
         }
         await expect.poll(() => received).toEqual([expect.objectContaining({
           message: 'prompt accepted before publisher readiness',

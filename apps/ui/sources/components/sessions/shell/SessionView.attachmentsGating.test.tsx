@@ -210,14 +210,14 @@ vi.mock('@/utils/platform/responsive', () => ({
   useIsTablet: () => false,
 }));
 vi.mock('@/hooks/session/useDraft', () => ({
-  useDraft: (_sessionId: string, value: string, onChange: (next: string) => void) => ({
-    clearDraft: () => onChange(''),
+  useDraft: (_sessionId: string, textStore: { getPrompt: () => string; setPrompt: (next: string) => void }) => ({
+    clearDraft: () => textStore.setPrompt(''),
     setDraftValue: (nextValueOrUpdater: string | ((currentValue: string) => string)) => {
-      onChange(typeof nextValueOrUpdater === 'function' ? nextValueOrUpdater(value) : nextValueOrUpdater);
+      textStore.setPrompt(typeof nextValueOrUpdater === 'function' ? nextValueOrUpdater(textStore.getPrompt()) : nextValueOrUpdater);
     },
     clearDraftForSessionIfCurrentValueMatches: (snapshot: Readonly<{ text: string }>) => {
-      if (value !== snapshot.text) return false;
-      onChange('');
+      if (textStore.getPrompt() !== snapshot.text) return false;
+      textStore.setPrompt('');
       return true;
     },
   }),

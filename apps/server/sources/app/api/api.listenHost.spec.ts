@@ -202,4 +202,56 @@ describe('enableContentTypeParsers', () => {
       code: 'FST_ERR_CTP_INVALID_MEDIA_TYPE',
     }));
   });
+  it('treats an empty application/json body as no body', async () => {
+    const app = fastify();
+    enableContentTypeParsers(app);
+    app.delete('/test-empty-json', async (request) => {
+      return { bodyIsUndefined: request.body === undefined };
+    });
+
+    const response = await app.inject({
+      method: 'DELETE',
+      url: '/test-empty-json',
+      headers: {
+        'content-type': 'application/json',
+      },
+    });
+    await app.close();
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ bodyIsUndefined: true });
+  });
+
+  it('keeps default JSON parsing and prototype-poisoning protection for non-empty bodies', async () => {
+    const app = fastify();
+    enableContentTypeParsers(app);
+    app.post('/test-json', async (request) => {
+      return { received: request.body };
+    });
+
+    const parsed = await app.inject({
+      method: 'POST',
+      url: '/test-json',
+      headers: { 'content-type': 'application/json; charset=utf-8' },
+      payload: '{"hello":"world"}',
+    });
+    const poisoned = await app.inject({
+      method: 'POST',
+      url: '/test-json',
+      headers: { 'content-type': 'application/json' },
+      payload: '{"__proto__":{"polluted":true}}',
+    });
+    const malformed = await app.inject({
+      method: 'POST',
+      url: '/test-json',
+      headers: { 'content-type': 'application/json' },
+      payload: '{',
+    });
+    await app.close();
+
+    expect(parsed.statusCode).toBe(200);
+    expect(parsed.json()).toEqual({ received: { hello: 'world' } });
+    expect(poisoned.statusCode).toBe(400);
+    expect(malformed.statusCode).toBe(400);
+  });
 });

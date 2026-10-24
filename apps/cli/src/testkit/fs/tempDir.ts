@@ -32,6 +32,11 @@ export async function withTempDir<T>(
   }
 }
 
+/** Unix sockets need a short pathname even when the caller's TMPDIR is long. */
+export async function withSocketTempDir<T>(fn: (dirPath: string) => Promise<T> | T): Promise<T> {
+  return await withTempDir('hs-', fn, process.platform === 'win32' ? tmpdir() : '/tmp')
+}
+
 export function withTempDirSync<T>(
   prefix: string,
   fn: (dirPath: string) => T,

@@ -497,6 +497,7 @@ export const ConnectedServiceQuotaSnapshotV1Schema = z
         accountLabel: z.string().min(1).nullable(),
         providerId: z.string().trim().min(1).optional(),
         activeAccountId: z.string().trim().min(1).optional(),
+        providerOrganizationId: z.string().trim().min(1).max(256).optional(),
         fetchedAtMs: z.number().int().nonnegative().optional(),
         staleAtMs: z.number().int().nonnegative().optional(),
         source: ConnectedServiceQuotaSourceV1Schema.optional(),

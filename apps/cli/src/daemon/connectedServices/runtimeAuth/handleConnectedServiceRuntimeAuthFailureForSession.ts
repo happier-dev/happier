@@ -277,6 +277,19 @@ export async function authorizeConnectedServiceRuntimeAuthFailureSource(input: R
     if (
       resolvedClassification.serviceId === classification.serviceId
       && resolvedClassification.groupId === classification.groupId
+      && !resolvedClassification.profileId
+    ) {
+      return {
+        status: 'recovery_superseded',
+        reason: 'source_tuple_unavailable',
+        serviceId: classification.serviceId,
+        groupId: classification.groupId,
+        profileId: null,
+      };
+    }
+    if (
+      resolvedClassification.serviceId === classification.serviceId
+      && resolvedClassification.groupId === classification.groupId
       && resolvedClassification.profileId !== classification.profileId
       && resolvedClassification.profileId
     ) {

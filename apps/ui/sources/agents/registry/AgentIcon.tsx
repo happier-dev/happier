@@ -17,7 +17,7 @@ import {
 } from '@/agents/catalog/catalog';
 
 type AgentIconProps = Readonly<{
-    agentId: AgentId;
+    agentId: AgentId | null;
     size: number;
     color?: string;
     style?: StyleProp<ImageStyle>;
@@ -43,6 +43,18 @@ function applySvgIconColor(svgXml: string, color: string): string {
 export const AgentIcon = React.memo(function AgentIcon(props: AgentIconProps) {
     const { agentId, size, color, style, testID } = props;
     const { theme } = useUnistyles();
+
+    if (agentId === null) {
+        return (
+            <Icon
+                name="stack-simple"
+                size={size}
+                color={color ?? theme.colors.text.secondary}
+                style={style as StyleProp<ViewStyle>}
+                testID={testID}
+            />
+        );
+    }
 
     const svgXml = getAgentIconSvgXml(agentId, theme);
     if (svgXml) {

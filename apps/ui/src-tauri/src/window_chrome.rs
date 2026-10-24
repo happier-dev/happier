@@ -4,6 +4,10 @@ use serde::Serialize;
 #[cfg(desktop)]
 use tauri::{App, Emitter, Manager, Runtime, TitleBarStyle, WebviewWindow, Window, WindowEvent};
 
+#[cfg(target_os = "macos")]
+#[path = "macos_window_frame.rs"]
+mod macos_window_frame;
+
 #[cfg(desktop)]
 const MAIN_WINDOW_LABEL: &str = "main";
 
@@ -449,6 +453,17 @@ fn configure_main_window(app: &tauri::AppHandle, window: &WebviewWindow) {
 
     if let Err(error) = apply_desktop_window_chrome_runtime_policy(window, policy) {
         log::warn!("failed to apply main-window chrome policy: {error}");
+    }
+
+    #[cfg(target_os = "macos")]
+    if let Err(error) = window.with_webview(|webview| {
+        // Tauri runs this callback on the main thread and keeps the NSWindow alive for it.
+        let native_window = unsafe { &*webview.ns_window().cast::<objc2_app_kit::NSWindow>() };
+        if !macos_window_frame::restore_and_track_frame(native_window, MAIN_WINDOW_LABEL) {
+            eprintln!("failed to enable main-window frame autosave: name already in use");
+        }
+    }) {
+        eprintln!("failed to configure main-window frame autosave: {error}");
     }
 
     if desktop_window_chrome_policy_tracks_maximized_state(policy) {

@@ -1,6 +1,8 @@
 import { normalizeCapturedScreen, stripTerminalControlSequences } from '@/integrations/terminalHost/controlCapture';
 
 import { hasComposerLineStyleEvidence, SGR_SEQUENCE_PREFIX } from './composerStyleEvidence';
+import { parseClaudeNativeQuestionScreen, type ClaudeNativeQuestionPresentation } from './nativeQuestionScreen';
+import { parseClaudeNativePermissionScreen } from './nativePermissionScreen';
 import type { ClaudeTuiModeMarker } from './types';
 
 export type ClaudeUnifiedSafeguardPauseChoice = 'switch_model' | 'edit_prompt_and_retry';
@@ -52,6 +54,8 @@ export type ClaudeScreenState = Readonly<{
   visibleNumberedDialog: ClaudeUnifiedGenericNumberedDialog | null;
   /** Current provider-rendered selection mechanics, used to derive answers at send time. */
   visibleDialogSelection: ClaudeUnifiedDialogSelectionPresentation | null;
+  /** Hook-owned AskUserQuestion presentation; tab and checkbox progress are not completion. */
+  nativeQuestionPresentation: ClaudeNativeQuestionPresentation | null;
   /** Heavy-session startup interstitial: "Resume from summary" / "Resume full session". */
   resumeChoiceDialogVisible: boolean;
   /** Proven option order for the heavy-session resume interstitial. */
@@ -754,7 +758,8 @@ export function parseClaudeScreenState(rawText: string, context?: ClaudeScreenPa
     ? ((EFFORT_CHANGE_DIALOG_TARGET.exec(text)?.[1] ?? EFFORT_DEFAULT_NUDGE_DIALOG.exec(text)?.[1])?.toLowerCase() ?? null)
     : null;
   const trustFolderPromptVisible = TRUST_FOLDER_PROMPT.test(text) || TRUST_FOLDER_NUMBERED_CHOICES.test(text);
-  const permissionPromptVisible = !trustFolderPromptVisible && PERMISSION_PROMPT.test(text);
+  const permissionPromptVisible = !trustFolderPromptVisible
+    && (PERMISSION_PROMPT.test(text) || parseClaudeNativePermissionScreen(text) !== null);
   const permissionEditorOpen = PERMISSION_EDITOR.test(text) || PERMISSION_EDITOR_HEADER.test(text);
   const queuedMessageBannerVisible = QUEUED_MESSAGE_BANNER.test(text);
   const generating = ESC_TO_INTERRUPT.test(text) || GENERATING_SPINNER_LINE.test(text) || queuedMessageBannerVisible;
@@ -778,6 +783,7 @@ export function parseClaudeScreenState(rawText: string, context?: ClaudeScreenPa
     && !composerHasSlash
     && visibleDialogSelection?.kind !== 'focused';
 
+  const nativeQuestionPresentation = parseClaudeNativeQuestionScreen(text);
   const unrecognizedConfirmationDialogVisible =
     (NUMBERED_SELECTION_OPTION.test(text) || visibleDialogSelection?.kind === 'focused')
     && !activeComposerOwnsInput
@@ -788,13 +794,15 @@ export function parseClaudeScreenState(rawText: string, context?: ClaudeScreenPa
     && !effortChangeDialogVisible
     && !trustFolderPromptVisible
     && !permissionPromptVisible
-    && !permissionEditorOpen;
+    && !permissionEditorOpen
+    && nativeQuestionPresentation === null;
   const genericNumberedDialog = unrecognizedConfirmationDialogVisible
     ? resolveGenericSelectionDialog(visibleTail, visibleNumberedDialog, visibleDialogSelection)
     : null;
 
   const anyDialog =
-    switchModelDialogVisible
+    nativeQuestionPresentation !== null
+    || switchModelDialogVisible
     || usageLimitDialogVisible
     || resumeChoiceDialogVisible
     || safeguardPauseDialogVisible
@@ -825,6 +833,7 @@ export function parseClaudeScreenState(rawText: string, context?: ClaudeScreenPa
     usageLimitWaitVisible,
     visibleNumberedDialog,
     visibleDialogSelection,
+    nativeQuestionPresentation,
     resumeChoiceDialogVisible,
     resumeChoiceDialogOptions,
     safeguardPauseDialogVisible,
@@ -869,6 +878,7 @@ function hasBlockingOverlay(state: ClaudeScreenState): boolean {
     || state.safeguardPauseDialogVisible
     || state.effortChangeDialogVisible
     || state.unrecognizedConfirmationDialogVisible
+    || state.nativeQuestionPresentation !== null
     || state.queuedMessageBannerVisible
     || state.userDraftPresent
     || state.selectionListVisible
@@ -914,6 +924,7 @@ export function isSafeWindowForModeCycle(state: ClaudeScreenState): boolean {
  * /heavy-resume renders) — those fail closed to the deferred path.
  */
 export function resolveClaudeScreenInFlightSteerVeto(state: ClaudeScreenState): string | null {
+  if (state.nativeQuestionPresentation !== null) return 'native_question';
   if (state.permissionPromptVisible) return 'permission_prompt';
   if (state.trustFolderPromptVisible) return 'trust_prompt';
   if (state.switchModelDialogVisible) return 'switch_model_dialog';

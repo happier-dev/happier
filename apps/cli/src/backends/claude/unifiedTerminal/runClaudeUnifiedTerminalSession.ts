@@ -22,6 +22,7 @@ import {
 } from './createClaudeUnifiedController';
 import {
   createClaudeUnifiedHookLifecycleBridge,
+  type ClaudeUnifiedDialogProbeOutcome,
   type ClaudeUnifiedPromptTurnTerminalEvent,
   type ClaudeUnifiedSessionEndEvent,
   type ClaudeUnifiedSessionHookSubscription,
@@ -94,6 +95,7 @@ import {
 import {
   createClaudeUnifiedDialogChoiceScreenProbe,
   type ClaudeUnifiedDialogChoiceScreenProbe,
+  type ClaudeUnifiedDialogChoiceScreenProbeResult,
 } from './dialogChoice/claudeUnifiedDialogChoiceScreenProbe';
 import type { ClaudeUnifiedDialogChoiceBroker } from './dialogChoice/claudeUnifiedDialogChoiceBroker';
 import { hasClaudeUnifiedVisibleDialog } from './tuiControls/dialogRegistry';
@@ -300,6 +302,7 @@ export type ClaudeUnifiedTerminalSessionOptions<Mode extends EnhancedMode = Enha
   onThinkingChange?: ((thinking: boolean) => void) | undefined;
   onReady?: (() => void | Promise<void>) | undefined;
   onUsageLimitDetails?: ((details: NormalizedProviderUsageLimitDetailsV1) => void | Promise<void>) | undefined;
+  onQuotaEvidence?: ((windows: readonly NormalizedProviderUsageLimitDetailsV1[]) => void | Promise<void>) | undefined;
   onTerminalScreenObserved?: ((observation: ClaudeUnifiedTerminalScreenObservation) => void) | undefined;
   onRuntimeAuthFailureEvent?: ((error: unknown) => void | Promise<void>) | undefined;
   onProviderPromptStarted?: (() => void | Promise<void>) | undefined;
@@ -569,6 +572,24 @@ const DEFAULT_DIALOG_TURN_END_SCREEN_PROBE_DELAYS_MS: readonly number[] = [
   30_000,
   60_000,
 ];
+
+// A screen with no dialog, an owner answering, or a published/pending surface is resolved (stop the
+// probe window). A capture failure or a still-hidden dialog keeps the bounded re-arm going and, at
+// exhaustion, escalates once.
+function resolveDialogProbeOutcome(
+  result: ClaudeUnifiedDialogChoiceScreenProbeResult | undefined,
+): ClaudeUnifiedDialogProbeOutcome {
+  switch (result?.kind) {
+    case 'not_visible':
+    case 'owned':
+    case 'request_published':
+    case 'already_pending':
+    case 'automatic_answer_started':
+      return 'resolved';
+    default:
+      return 'pending';
+  }
+}
 const MAX_RECENT_ACCEPTED_TRANSCRIPT_CANDIDATES = 64;
 const PROVIDER_ACCEPTANCE_PENDING_PREFIX_RESIDUE_MIN_CHARS = 16;
 
@@ -2415,7 +2436,12 @@ export async function runClaudeUnifiedTerminalSession<Mode extends EnhancedMode 
       };
       lifecycleBridge = activeHookSubscription.subscribe
         ? createClaudeUnifiedHookLifecycleBridge({
-            subscribeClaudeSessionHooks: activeHookSubscription.subscribe,
+            subscribeClaudeSessionHooks: (callback) => activeHookSubscription.subscribe?.((data, observation) => {
+              // Subscribe with the startup bridges: an earlier subscriber would close the
+              // replay window before provider-launch SessionStart reaches identity validation.
+              opts.dialogChoiceBroker?.observeSessionHook(data);
+              callback(data, observation);
+            }),
             arbiter,
             completionQuiescenceMs:
               opts.lifecycleCompletionQuiescenceMs ?? configuration.claudeLocalTurnCompletionQuiescenceMs,
@@ -2425,6 +2451,7 @@ export async function runClaudeUnifiedTerminalSession<Mode extends EnhancedMode 
               await opts.onReady?.();
             },
             onUsageLimitDetails: opts.onUsageLimitDetails,
+            onQuotaEvidence: opts.onQuotaEvidence,
             onRuntimeAuthFailureEvent: opts.onRuntimeAuthFailureEvent,
             onProviderPromptStarted: opts.onProviderPromptStarted,
             onProviderPromptSubmitMetadata: runtimeControlBridge
@@ -2455,18 +2482,13 @@ export async function runClaudeUnifiedTerminalSession<Mode extends EnhancedMode 
                       ?? DEFAULT_DIALOG_TURN_STALL_SCREEN_PROBE_QUIET_MS,
                     maxAttempts: opts.dialogTurnStallScreenProbeMaxAttempts
                       ?? DEFAULT_DIALOG_TURN_STALL_SCREEN_PROBE_MAX_ATTEMPTS,
-                    onStalled: async () => {
-                      await dialogChoiceScreenProbe?.probe();
-                    },
+                    onStalled: async () => resolveDialogProbeOutcome(await dialogChoiceScreenProbe?.probe()),
                     onStarvation: () => {
-                      // Mid-turn stall budget exhausted with the turn still active (e.g. an API-retry
-                      // loop that never reaches turn-terminal, incident cmr3dpuka). Make one FINAL
-                      // user-visible probe so a dialog stuck on the mid-turn screen — the Fable
-                      // safeguard chooser — is still published through the dialog-choice broker, and
-                      // emit a one-shot escalation so the residual stuck-turn is observable instead of
-                      // a silent "computing…". This is the mid-turn analog of the turn-end tail's
-                      // one-shot starvation — ONE escalation discipline, never silent.
-                      void dialogChoiceScreenProbe?.probe().catch(() => undefined);
+                      // Mid-turn stall budget exhausted with the turn still active and the last probe
+                      // unable to clear the screen (e.g. an API-retry loop that never reaches
+                      // turn-terminal, incident cmr3dpuka). Emit a one-shot escalation so the residual
+                      // stuck-turn is observable instead of a silent "computing…". This is the mid-turn
+                      // analog of the turn-end tail's one-shot starvation — ONE escalation discipline.
                       const quietMs = opts.dialogTurnStallScreenProbeQuietMs
                         ?? DEFAULT_DIALOG_TURN_STALL_SCREEN_PROBE_QUIET_MS;
                       const attempts = opts.dialogTurnStallScreenProbeMaxAttempts
@@ -2475,7 +2497,7 @@ export async function runClaudeUnifiedTerminalSession<Mode extends EnhancedMode 
                         attempts,
                         windowMs: Math.max(0, quietMs) * Math.max(0, attempts),
                       });
-                      logger.warn('[unified]: mid-turn stall dialog probe budget exhausted with the turn still active', {
+                      logger.warnFile('[unified]: mid-turn stall dialog probe budget exhausted with the turn still active', {
                         attempts,
                       });
                     },
@@ -2483,22 +2505,7 @@ export async function runClaudeUnifiedTerminalSession<Mode extends EnhancedMode 
                   turnEndScreenProbe: {
                     delaysMs: opts.dialogTurnEndScreenProbeDelaysMs
                       ?? DEFAULT_DIALOG_TURN_END_SCREEN_PROBE_DELAYS_MS,
-                    onProbe: async () => {
-                      const result = await dialogChoiceScreenProbe?.probe();
-                      // A screen with no dialog, an owner answering, or a published/pending surface is
-                      // resolved (stop the tail). A capture failure or a still-hidden dialog keeps the
-                      // bounded re-arm going and, at exhaustion, escalates once.
-                      switch (result?.kind) {
-                        case 'not_visible':
-                        case 'owned':
-                        case 'request_published':
-                        case 'already_pending':
-                        case 'automatic_answer_started':
-                          return 'resolved';
-                        default:
-                          return 'pending';
-                      }
-                    },
+                    onProbe: async () => resolveDialogProbeOutcome(await dialogChoiceScreenProbe?.probe()),
                     onStarvation: () => {
                       const delays = opts.dialogTurnEndScreenProbeDelaysMs
                         ?? DEFAULT_DIALOG_TURN_END_SCREEN_PROBE_DELAYS_MS;
@@ -2506,7 +2513,7 @@ export async function runClaudeUnifiedTerminalSession<Mode extends EnhancedMode 
                         shots: delays.length,
                         windowMs: delays.length > 0 ? delays[delays.length - 1] ?? 0 : 0,
                       });
-                      logger.warn('[unified]: turn-end idle dialog re-arm exhausted with a dialog still unresolved', {
+                      logger.warnFile('[unified]: turn-end idle dialog re-arm exhausted with a dialog still unresolved', {
                         shots: delays.length,
                       });
                     },
@@ -2560,6 +2567,11 @@ export async function runClaudeUnifiedTerminalSession<Mode extends EnhancedMode 
               lifecycleBridge?.handleProviderActivityObservationLoss(reason);
             },
             onRawTranscriptValue: (value, observation) => {
+              if (!observation.historicalReplay) {
+                void opts.dialogChoiceBroker?.observeTranscript(value).catch((error) => {
+                  logger.infoFile('[unified]: Native prompt transcript settlement failed', error);
+                });
+              }
               acceptedPromptTranscriptDiscovery.observeControlCommandTranscript(value);
               // Native Claude `/goal` source (plan H7): the goal_status attachment +
               // system/init slash_commands survive only on this raw channel (the

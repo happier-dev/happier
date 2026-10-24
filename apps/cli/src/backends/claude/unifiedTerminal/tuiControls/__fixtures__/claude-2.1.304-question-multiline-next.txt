@@ -1,0 +1,35 @@
+  ⎿  · Which multiline value? (A / B)
+     · Which comma value? (Alpha, beta / Plain)
+     · Which Unicode value? (雪 🦦 / Plain)
+
+● The user rejected that call so they can clarify. Their note says the multiline answer
+  was "owned canonical first LF / owned canonical second LF — 雪 🦦", and the comma and
+  Unicode questions got no answers. What would you like to clarify before I re-ask the
+  three questions?
+
+✻ Crunched for 4s · done 3:09 PM
+
+❯ 雪 🦦
+
+● Do you mean 雪 🦦 as the answer to the Unicode question, or as something else? I'll
+  re-ask the three questions once you confirm.
+
+✻ Baked for 3s · done 3:09 PM
+
+❯ Repeat exactly the same three-question AskUserQuestion tool now, no other tools.
+──────────────────────────────────────────────────────────────────────────────────────────
+←  ☒ Multi  ☐ Comma  ☐ Unicode  ✔ Submit  →
+
+Which multiline value?
+
+  1. [ ] A
+         Option A.
+  2. [ ] B
+         Option B.
+  3. [✔] owned canonical first LF
+         owned canonical second LF — 雪 🦦
+❯    Next
+──────────────────────────────────────────────────────────────────────────────────────────
+  4. Chat about this
+
+Enter to select · Tab/Arrow keys to navigate · ctrl+g to edit in Vim · Esc to cancel

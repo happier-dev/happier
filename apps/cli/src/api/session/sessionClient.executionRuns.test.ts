@@ -62,6 +62,7 @@ vi.mock('@happier-dev/connection-supervisor', () => ({
 vi.mock('@/rpc/handlers/executionRuns', () => ({
   registerExecutionRunHandlers: (_rpc: unknown, ctx: unknown) => {
     sessionSocketStubState.executionRunHandlerContext = ctx;
+    return { dispose: async () => {} };
   },
 }));
 

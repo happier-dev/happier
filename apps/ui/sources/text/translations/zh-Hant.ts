@@ -2100,6 +2100,8 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             `我們找到了與 ${provider} 關聯的既有 Happier 帳戶。要在此裝置上完成登入，請使用 QR code 或你的密鑰來還原帳戶金鑰。`,
         linkNewDeviceTitle: '連結新裝置',
         linkNewDeviceSubtitle: '掃描新裝置上顯示的 QR Code 以將其連結至此帳戶',
+        pairingConnectionWarningTitle: "伺服器已中斷連線",
+        pairingConnectionWarningBody: "配對需要能夠存取伺服器。請檢查連線，或掃描其他伺服器的 QR Code。",
         linkNewDeviceQrInstructions: '在新裝置上開啟 Happier 並顯示 QR Code',
         scanQrCodeOnDevice: '掃描 QR Code',
         unsupported: {
@@ -3737,6 +3739,11 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         plugins: {
             claude: {
                 title: "Claude Code",
+                responseLocationOptions: {
+                    app_and_terminal: { title: "應用程式和終端機", subtitle: "在 Happier 應用程式或 Claude Code 終端機中回應。" },
+                    app_only: { title: "應用程式內請求", subtitle: "使用現有的應用程式請求流程。Claude 仍可能在其終端機中接受回應。" },
+                    terminal_only: { title: "僅終端機", subtitle: "在 Claude Code 終端機中回應。" },
+                },
                 sections: {
                     claudeModelDiscovery: {
                         title: "模型探索",
@@ -3799,6 +3806,14 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
                                 subtitle: "拒絕 Happier 開啟的工作區中目前重新擷取的 Claude 提示。"
                             }
                         }
+                    },
+                    claudeUnifiedTerminalQuestionResponseLocation: {
+                        title: "回答問題",
+                        subtitle: "選擇在統一終端機工作階段中回答問題的位置。"
+                    },
+                    claudeUnifiedTerminalPermissionResponseLocation: {
+                        title: "核准權限請求",
+                        subtitle: "選擇在統一終端機工作階段中核准權限請求的位置。"
                     },
                     claudeUnifiedTerminalResumeChoice: {
                         title: "大型會話恢復",
@@ -3884,7 +3899,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
                     },
                     claudeLocalPermissionBridgeEnabled: {
                         title: "實驗性：本機權限橋接",
-                        subtitle: "將 Claude 本機模式的權限請求轉送到 Happier，讓你可以在介面中核准或拒絕。"
+                        subtitle: "將傳統本機 Claude 工作階段的權限請求轉送到 Happier。統一終端機工作階段使用上方的回應選項。"
                     },
                     claudeLocalPermissionBridgeWaitIndefinitely: {
                         title: "保持請求開啟直到回應",
@@ -8036,6 +8051,7 @@ settingsSession: {
             checking: '正在檢查…',
             failedGeneric: '更新未完成，請再試一次。',
             remoteUnsupported: '這台機器無法遠端更新其命令列工具。請直接在該機器上更新。',
+            archiveExpandedByteLimit: "下載的執行環境超過了解壓縮大小限制。請更新 Happier 後重試。",
             updateNotVerified: '更新已執行，但版本沒有變更。',
             rolledBackLocal: '更新未能啟動，因此這台電腦已回復到先前的版本。',
             smokeFailed: '新版本無法在這台電腦上執行，因此沒有任何變更。',

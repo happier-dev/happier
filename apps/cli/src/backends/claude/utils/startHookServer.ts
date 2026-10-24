@@ -143,7 +143,7 @@ export interface HookServerOptions {
     /** Called when a session hook is received with a valid session ID */
     onSessionHook: (sessionId: string, data: SessionHookData) => void;
     /** Called when a permission hook is received */
-    onPermissionHook?: (data: PermissionHookData) => PermissionHookResponse | Promise<PermissionHookResponse>;
+    onPermissionHook?: (data: PermissionHookData, options?: Readonly<{ signal?: AbortSignal }>) => PermissionHookResponse | Promise<PermissionHookResponse>;
     /**
      * Called when the statusline forwarder posts a Claude statusline payload.
      *
@@ -314,12 +314,20 @@ export async function startHookServer(options: HookServerOptions): Promise<HookS
                     }
                 }
 
+                const controller = new AbortController();
+                const abort = () => controller.abort();
+                const onResponseClose = () => {
+                    if (!res.writableEnded) abort();
+                };
+                req.once('aborted', abort);
+                res.once('close', onResponseClose);
                 const permissionRequestTimeoutMs = resolvePermissionRequestTimeoutMs();
                 const responseTimeout = permissionRequestTimeoutMs === null
                     ? null
                     : setTimeout(() => {
                         if (!res.headersSent) {
                             logger.debug('[hookServer] Permission hook request timeout');
+                            abort();
                             res.writeHead(408).end('timeout');
                         }
                     }, permissionRequestTimeoutMs);
@@ -328,6 +336,7 @@ export async function startHookServer(options: HookServerOptions): Promise<HookS
                 const readTimeout = setTimeout(() => {
                     if (!res.headersSent) {
                         logger.debug('[hookServer] Permission hook request read timeout');
+                        abort();
                         res.writeHead(408).end('timeout');
                     }
                 }, 5000);
@@ -335,6 +344,7 @@ export async function startHookServer(options: HookServerOptions): Promise<HookS
                 try {
                     const rawBody = await readBoundedRequestBody(req);
                     clearTimeout(readTimeout);
+                    if (controller.signal.aborted || res.headersSent) return;
                     if (rawBody === null) {
                         if (responseTimeout) {
                             clearTimeout(responseTimeout);
@@ -364,24 +374,31 @@ export async function startHookServer(options: HookServerOptions): Promise<HookS
                     });
 
                     const response = onPermissionHook
-                        ? await onPermissionHook(data)
+                        ? await onPermissionHook(data, { signal: controller.signal })
                         : buildDefaultPermissionHookResponse(data);
 
                     if (responseTimeout) {
                         clearTimeout(responseTimeout);
                     }
-                    res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify(response));
+                    if (!res.headersSent && !res.destroyed) {
+                        res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify(response));
+                    }
                 } catch (error) {
                     clearTimeout(readTimeout);
                     if (responseTimeout) {
                         clearTimeout(responseTimeout);
                     }
                     logger.debug('[hookServer] Error handling permission hook:', error);
-                    if (!res.headersSent) {
+                    if (!res.headersSent && !res.destroyed) {
                         res.writeHead(200, { 'Content-Type': 'application/json' }).end(
                             JSON.stringify(buildDefaultPermissionHookResponse()),
                         );
                     }
+                } finally {
+                    clearTimeout(readTimeout);
+                    if (responseTimeout) clearTimeout(responseTimeout);
+                    req.off('aborted', abort);
+                    res.off('close', onResponseClose);
                 }
                 return;
             }

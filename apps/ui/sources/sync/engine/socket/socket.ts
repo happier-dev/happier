@@ -8,7 +8,7 @@ import type { Machine } from '@/sync/domains/state/storageTypes';
 import { buildPendingChangedSessionPatch } from './pendingChangedSessionPatch';
 import { isSessionVisible } from '@/sync/domains/session/activeViewingSession';
 import { computeNextSessionSeqFromUpdate } from '@/sync/domains/session/sequence/realtimeSessionSeq';
-import { resolveSessionPresence } from '@/sync/domains/session/sessionLifecycleProjection';
+import { normalizeSessionOrderingNumber, reconcileSessionSnapshot, resolveSessionPresence, shouldPreserveSessionRequestProjection } from '@/sync/domains/session/sessionLifecycleProjection';
 import { resolveSessionLiveConsumption } from '@/sync/runtime/sessionLiveConsumption';
 import type { MachineActivityUpdate } from '@/sync/reducer/machineActivityAccumulator';
 import { storage } from '@/sync/domains/state/storage';
@@ -433,6 +433,10 @@ function buildCacheOnlySessionProjectionPatch(params: Readonly<{
     if (typeof updateBody.pendingUserActionRequestCount === 'number') {
         patch.hasPendingUserActionRequests = updateBody.pendingUserActionRequestCount > 0;
     }
+    if (typeof patch.hasPendingPermissionRequests === 'boolean' || typeof patch.hasPendingUserActionRequests === 'boolean') {
+        const requestVersion = normalizeSessionOrderingNumber(updateBody.agentState?.version);
+        if (requestVersion !== null) patch.agentStateVersion = requestVersion;
+    }
     if (typeof updateBody.pendingRequestObservedAt === 'number' || updateBody.pendingRequestObservedAt === null) {
         patch.pendingRequestObservedAt = updateBody.pendingRequestObservedAt;
     }
@@ -770,6 +774,7 @@ function applyCacheOnlySessionUpdateProjectionPatch(params: Readonly<{
     const patchUpdatedAt = finiteNumber(params.patch.updatedAt);
     const patchSeq = finiteNumber(params.patch.seq);
     const patchMetadataVersion = finiteNumber(params.patch.metadataVersion);
+    const patchRequestVersion = finiteNumber(params.patch.agentStateVersion);
     const shouldContinue = () => {
         if (params.shouldContinue && !params.shouldContinue()) return false;
         const currentRenderable = storage.getState().sessionListRenderables[params.sessionId];
@@ -777,6 +782,9 @@ function applyCacheOnlySessionUpdateProjectionPatch(params: Readonly<{
             patchMetadataVersion !== null
             && patchMetadataVersion > (finiteNumber(currentRenderable?.metadataVersion) ?? 0)
         ) {
+            return true;
+        }
+        if (patchRequestVersion !== null && patchRequestVersion > (finiteNumber(currentRenderable?.agentStateVersion) ?? 0)) {
             return true;
         }
         if (patchUpdatedAt === null) return true;
@@ -1817,7 +1825,7 @@ export async function handleUpdateContainer(params: {
         }
         const hydrateSessionStateEffective = shouldHydrateSessionState && !missingEncryptionForState;
 
-        const { nextSession, agentState } = hydrateSessionStateEffective
+        const resolvedUpdate = hydrateSessionStateEffective
             ? await buildUpdatedSessionFromSocketUpdate({
                 session,
                 updateBody: updateData.body,
@@ -1836,12 +1844,49 @@ export async function handleUpdateContainer(params: {
                     updateSeq: updateData.seq,
                     updateCreatedAt: updateData.createdAt,
                 }),
-                agentState: session.agentState,
             };
 
         if (!shouldContinue()) return;
+        const currentSession = getSocketSessionApplyBase(updateData.body.id) ?? session;
+        let nextSession = reconcileSessionSnapshot(currentSession, resolvedUpdate.nextSession);
+        let currentRenderable = storage.getState().sessionListRenderables[session.id];
+        if ((!fullContentConsumerActive || missingEncryptionForState) && updateData.body.agentState && currentRenderable
+            && (typeof updateData.body.pendingPermissionRequestCount === 'number'
+                || typeof updateData.body.pendingUserActionRequestCount === 'number')) {
+            applyCacheOnlySessionUpdateProjectionPatch({
+                sessionId: session.id,
+                renderable: currentRenderable,
+                patch: buildCacheOnlySessionProjectionPatch({
+                    renderable: currentRenderable,
+                    updateBody: updateData.body,
+                    updateSeq: updateData.seq,
+                    updateCreatedAt: updateData.createdAt,
+                }),
+                updateSeq: updateData.seq,
+                shouldContinue,
+            });
+        }
+        currentRenderable = storage.getState().sessionListRenderables[session.id];
+        const sourceRequestVersion = normalizeSessionOrderingNumber(updateData.body.agentState?.version)
+            ?? resolvedUpdate.nextSession.agentStateVersion;
+        if (shouldPreserveSessionRequestProjection(currentRenderable, {
+            ...resolvedUpdate.nextSession,
+            agentStateVersion: sourceRequestVersion,
+        })) {
+            // Public counts can advance while hidden or unavailable detail is retained.
+            // Preserve the detail we actually have; the public envelope version must not label it.
+            nextSession = {
+                ...nextSession,
+                agentState: currentSession.agentState,
+                agentStateVersion: currentSession.agentStateVersion,
+                pendingPermissionRequestCount: currentSession.pendingPermissionRequestCount,
+                pendingUserActionRequestCount: currentSession.pendingUserActionRequestCount,
+                pendingRequestObservedAt: currentSession.pendingRequestObservedAt,
+            };
+        }
+        const agentState = nextSession.agentState;
         if (
-            shouldReportReadyProjectionAdvance(session, nextSession.latestReadyEventSeq)
+            shouldReportReadyProjectionAdvance(currentSession, nextSession.latestReadyEventSeq)
             && typeof nextSession.latestReadyEventSeq === 'number'
         ) {
             onReadyProjectionAdvance?.(updateData.body.id, nextSession.latestReadyEventSeq);
@@ -1867,7 +1912,7 @@ export async function handleUpdateContainer(params: {
         // SCM refresh cadence is handled by screen-scoped intervals (session/files views) and
         // by explicit invalidations after SCM mutations.
         if (hydrateSessionStateEffective && updateData.body.agentState) {
-            for (const nextRequest of deriveNewAgentRequests(session.agentState?.requests, agentState?.requests)) {
+            for (const nextRequest of deriveNewAgentRequests(currentSession.agentState?.requests, agentState?.requests)) {
                 notifyActivityAgentRequest({
                     sessionId: updateData.body.id,
                     requestId: nextRequest.requestId,
@@ -1879,13 +1924,13 @@ export async function handleUpdateContainer(params: {
 
             // Check for new permission requests and notify voice assistant
             reportNewAgentRequestsFromSessionTransition(
-                { id: updateData.body.id, agentState: session.agentState ?? null } as Session,
+                { id: updateData.body.id, agentState: currentSession.agentState ?? null } as Session,
                 { id: updateData.body.id, agentState: agentState ?? null } as Session,
             );
 
             // Re-fetch messages when control returns to mobile (local -> remote mode switch)
             // This catches up on any messages that were exchanged while desktop had control
-            const wasControlledByUser = session.agentState?.controlledByUser;
+            const wasControlledByUser = currentSession.agentState?.controlledByUser;
             const isNowControlledByUser = agentState?.controlledByUser;
             if (didControlReturnToMobile(wasControlledByUser, isNowControlledByUser)) {
                 writeSyncDebugLog(log, `🔄 Control returned to mobile for session ${updateData.body.id}, re-fetching messages`);

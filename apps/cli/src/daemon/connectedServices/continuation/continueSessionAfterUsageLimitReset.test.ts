@@ -85,11 +85,12 @@ describe('continueSessionAfterUsageLimitReset', () => {
     expect(input.ensureRuntime).toHaveBeenCalled();
   });
 
-  it.each([true, false])('qualifies the provider account before Pending admission with a live runner=%s', async (live) => {
+  it.each([true, false])('qualifies the provider account and organization before Pending admission with a live runner=%s', async (live) => {
     const input = fixture({ active: live });
     const classification: ConnectedServiceRuntimeFailureClassification = {
       kind: 'usage_limit', serviceId: 'claude-subscription', profileId: 'account-1', groupId: null,
       credentialRevision: 'original-revision', sourceProviderAccountId: 'original-account',
+      sourceProviderOrganizationId: 'original-organization',
       resetsAtMs: 200, planType: null, rateLimits: null, source: 'structured_provider_error',
     };
     const tracked = { startedBy: 'daemon' as const, happySessionId: sessionId, pid: 123,
@@ -103,17 +104,19 @@ describe('continueSessionAfterUsageLimitReset', () => {
       });
       return authorization.status === 'authorized' || authorization.status === 'current_credential_revision';
     };
-    const run = (providerAccountId: string) => continueSessionAfterUsageLimitReset({
+    const run = (providerAccountId: string, organizationUuid = 'original-organization') => continueSessionAfterUsageLimitReset({
       ...input, isCurrent: () => isCurrentUsageLimitRecoverySource({ classification,
         resolveCredential: async () => ({ credentialRevision: 'refreshed-revision',
           record: buildConnectedServiceCredentialRecord({ now: 100, serviceId: 'claude-subscription',
             profileId: 'account-1', kind: 'oauth', expiresAt: 1000,
             oauth: { accessToken: 'access', refreshToken: 'refresh', providerAccountId,
-              idToken: null, scope: null, tokenType: null, providerEmail: null } }),
+              idToken: null, scope: null, tokenType: null, providerEmail: null,
+              raw: { claudeAiOauth: { organizationUuid } } } }),
         }), ...(live ? { authorizeLiveSource } : {}),
       }),
     });
     expect(await run('replacement-account')).toEqual({ status: 'superseded' });
+    expect(await run('original-account', 'replacement-organization')).toEqual({ status: 'superseded' });
     expect(transport.enqueuePendingQueueV2MessageViaHttp).not.toHaveBeenCalled();
     expect(await run('original-account')).toEqual({ status: 'continued' });
     expect(transport.enqueuePendingQueueV2MessageViaHttp).toHaveBeenCalledOnce();

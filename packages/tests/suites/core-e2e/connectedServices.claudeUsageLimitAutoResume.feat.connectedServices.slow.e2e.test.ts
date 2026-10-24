@@ -93,6 +93,7 @@ describe('core e2e: Claude due usage-limit continuation', () => {
       accessToken: 'claude-usage-limit-access', refreshToken: 'claude-usage-limit-refresh',
       scope: CLAUDE_CODE_E2E_OAUTH_SCOPE, tokenType: 'Bearer',
       providerAccountId: 'acct-claude-usage-limit', expiresAt: Date.now() + 3600_000,
+      oauthRaw: { claudeAiOauth: { organizationUuid: 'org-claude-usage-limit' } },
     });
     const sessionId = await spawnConnectedClaudeSession({ fixture, sessionId: randomUUID(), profileId: 'work' });
     const initialPrompt = `CLAUDE_INTERRUPTED_WORK_${randomUUID()}`;
@@ -304,6 +305,7 @@ describe('core e2e: Claude due usage-limit continuation', () => {
       accessToken: 'refreshed-access', refreshToken: 'refreshed-refresh',
       scope: CLAUDE_CODE_E2E_OAUTH_SCOPE, tokenType: 'Bearer',
       providerAccountId: replaceAccount ? 'acct-replacement' : 'acct-claude-usage-limit',
+      oauthRaw: { claudeAiOauth: { organizationUuid: replaceAccount ? 'org-replacement' : 'org-claude-usage-limit' } },
       expiresAt: Date.now() + 3600_000, allowProviderIdentityChange: replaceAccount,
     });
     expect(credentialRevision).not.toBe(record(failed?.classification)?.credentialRevision);

@@ -420,9 +420,8 @@ describe('buildTranscriptTurnUnits', () => {
             isGroupExpanded: collapsedAlways,
             collapsedPreviewCount: 0,
         });
-        expect(noTail.map((item) => item.kind)).toEqual(['tool-group-header', 'tool-group-expand', 'tool-group-footer']);
+        expect(noTail.map((item) => item.kind)).toEqual(['tool-group-header', 'tool-group-footer']);
         expect(noTail[0]).toMatchObject({ hiddenCount: 3 });
-        expect(noTail[1]).toMatchObject({ hiddenCount: 3 });
 
         const negative = buildTranscriptTurnUnits({
             items,
@@ -430,7 +429,7 @@ describe('buildTranscriptTurnUnits', () => {
             isGroupExpanded: collapsedAlways,
             collapsedPreviewCount: -4,
         });
-        expect(negative.map((item) => item.kind)).toEqual(['tool-group-header', 'tool-group-expand', 'tool-group-footer']);
+        expect(negative.map((item) => item.kind)).toEqual(['tool-group-header', 'tool-group-footer']);
 
         const fractional = buildTranscriptTurnUnits({
             items,

@@ -19,6 +19,7 @@ export async function ensureExecutionRun(args: Readonly<{
   budgetRegistry: ExecutionBudgetRegistry | null;
   /** Async backend factory owning launch rehydration; see resumeBackendControllerForResumableRun. */
   createBackend: () => Promise<ResumedExecutionRunBackend>;
+  isSessionClosing?: () => boolean;
   sendAcp: AcpSendFn;
   parentProvider: ACPProvider;
   streamedTranscriptSession: StreamedTranscriptWriterSession | null;
@@ -160,6 +161,7 @@ export async function ensureExecutionRun(args: Readonly<{
     controllers: args.controllers,
     budgetRegistry: args.budgetRegistry,
     createBackend: args.createBackend,
+    isSessionClosing: args.isSessionClosing,
     sendAcp: args.sendAcp,
     parentProvider: args.parentProvider,
     streamedTranscriptSession: args.streamedTranscriptSession,

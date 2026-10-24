@@ -115,6 +115,18 @@ describe('logger', () => {
         logSpy.mockRestore();
     });
 
+    it('writes file-only warn diagnostics without polluting the interactive console', async () => {
+        const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+        const { logger } = (await import('@/ui/logger')) as typeof import('@/ui/logger');
+
+        logger.warnFile('[TEST] file-only warning', { attempts: 3 });
+        logger.flushSync();
+
+        expect(logSpy).not.toHaveBeenCalled();
+        expect(readFileSync(logger.getLogPath(), 'utf8')).toContain('[WARN] [TEST] file-only warning');
+        logSpy.mockRestore();
+    });
+
     it('durably records sanitized fatal errors without serializing argv or env fields', async () => {
         const { logger } = (await import('@/ui/logger')) as typeof import('@/ui/logger');
         const error = Object.assign(

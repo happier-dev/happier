@@ -1,3 +1,5 @@
+import { parsePowerShellQuotedString } from '@happier-dev/cli-common/service';
+
 import type { DaemonServicePlatform } from './plan';
 
 /**
@@ -31,7 +33,10 @@ function readProgramArguments(platform: DaemonServicePlatform, contents: string)
     return array ? [...array.matchAll(/<string>([\s\S]*?)<\/string>/gu)].map((match) => unescapeXml(String(match[1]))) : null;
   }
   const command = /^& (.*)$/mu.exec(contents)?.[1];
-  return command ? [...command.matchAll(/"((?:[^"`]|`.)*)"/gu)].map((match) => String(match[1]).replace(/`(.)/gu, '$1')) : null;
+  return command ? [...command.matchAll(/"((?:[^"`]|`.)*)"/gu)].flatMap((match) => {
+    const value = parsePowerShellQuotedString(match[0]);
+    return value === null ? [] : [value];
+  }) : null;
 }
 
 function unescapeSystemdQuoted(value: string): string {

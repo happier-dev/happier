@@ -87,7 +87,7 @@ describe('runClaudeUnifiedTerminalSession resumed hook activation', () => {
     }
   });
 
-  it('fails closed before prompt injection when Claude starts a different session than the explicit resume', async () => {
+  it.each([false, true])('fails closed before prompt injection when Claude starts a different session than the explicit resume (native broker: %s)', async (withNativeBroker) => {
     const dir = await mkdtemp(join(tmpdir(), 'happier-claude-resume-identity-mismatch-'));
     tempDirs.push(dir);
     const workspaceDir = join(dir, 'workspace');
@@ -102,6 +102,9 @@ describe('runClaudeUnifiedTerminalSession resumed hook activation', () => {
     const previousClaudeConfigDir = process.env.CLAUDE_CONFIG_DIR;
     process.env.CLAUDE_CONFIG_DIR = claudeConfigDir;
     const abortController = new AbortController();
+    const broker = withNativeBroker
+      ? new ClaudeUnifiedDialogChoiceBroker(createPermissionHandlerSessionStub('resume-mismatch-broker').session)
+      : undefined;
     const onSessionFound = vi.fn(() => abortController.abort());
     let subscribedHook: ((data: SessionHookData) => void) | undefined;
     let pendingPulled = false;
@@ -154,6 +157,7 @@ describe('runClaudeUnifiedTerminalSession resumed hook activation', () => {
         expectedProviderResumeSessionId: requestedSessionId,
         hookPluginDir: join(dir, 'owned-happier-hook-plugin'),
         signal: abortController.signal,
+        dialogChoiceBroker: broker,
         nextMessage: async () => {
           if (pendingPulled) return await new Promise(() => undefined);
           pendingPulled = true;
@@ -186,6 +190,7 @@ describe('runClaudeUnifiedTerminalSession resumed hook activation', () => {
       expect(injectUserPrompt).not.toHaveBeenCalled();
     } finally {
       abortController.abort();
+      await broker?.dispose();
       if (previousClaudeConfigDir === undefined) {
         delete process.env.CLAUDE_CONFIG_DIR;
       } else {

@@ -12,6 +12,7 @@ import type { NormalizedProviderUsageLimitDetailsV1 } from '../connectedServices
 import { adoptClaudePermissionModeFromMetadata } from '../utils/syncPermissionModeFromMetadata';
 import {
   isClaudeRuntimeAuthRecoveryContinuing,
+  recordClaudeRateLimitQuotaEvidence,
   surfaceClaudeRuntimeAuthFailure,
   surfaceClaudeRateLimitRuntimeIssue,
 } from '../connectedServices/surfaceClaudeRuntimeIssues';
@@ -717,7 +718,7 @@ export async function claudeUnifiedTerminalLauncher(
       return;
     }
     recoveryProbeInconclusiveEscalated = true;
-    logger.warn('[unified]: terminal host recovery probe inconclusive repeatedly; escalating to a durable attention state without disposing (no positive death evidence)', {
+    logger.warnFile('[unified]: terminal host recovery probe inconclusive repeatedly; escalating to a durable attention state without disposing (no positive death evidence)', {
       hostKind: error.hostKind,
       reason: error.reason,
       consecutiveInconclusiveProbes: consecutiveRecoveryProbeInconclusive,
@@ -1238,6 +1239,7 @@ export async function claudeUnifiedTerminalLauncher(
         session.onThinkingChange(thinking);
       },
       onUsageLimitDetails: surfaceRateLimit,
+      onQuotaEvidence: (windows) => recordClaudeRateLimitQuotaEvidence(session, windows, '[unified-terminal]'),
       onRuntimeAuthFailureEvent: async (error) => {
         try {
           const surfaced = await surfaceClaudeRuntimeAuthFailure(session, error, '[unified]');

@@ -45,6 +45,8 @@ import type { ConnectionHealthPresentation } from './connectionStatus/connection
 import { ThisComputerStatusRow } from './connectionStatus/ThisComputerStatusRow';
 import { isAccountSettingsSyncAttentionStatus } from '@/sync/domains/settings/accountSettingsSyncStatus';
 import { Icon } from '@/components/ui/icons/Icon';
+import { IconAction } from '@/components/ui/buttons/IconAction';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 type Variant = 'sidebar' | 'header';
 const RELAY_SETTINGS_ROUTE = '/settings/server';
@@ -134,12 +136,9 @@ const stylesheet = StyleSheet.create((theme) => ({
         gap: 6,
         flexShrink: 0,
     },
-    popoverRetryButton: {
-        width: 24,
-        height: 24,
-        borderRadius: 12,
-        alignItems: 'center',
-        justifyContent: 'center',
+    popoverRetryBusy: {
+        // An active operation still needs full-contrast feedback while its action is disabled.
+        opacity: 1,
     },
     popoverSection: {
         paddingHorizontal: 16,
@@ -434,7 +433,10 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
     const canRetryServerConnection =
         connectionHealth.kind === 'connecting'
         || connectionHealth.kind === 'server_unreachable'
-        || connectionHealth.kind === 'server_error';
+        || connectionHealth.kind === 'server_error'
+        || connectionHealth.kind === 'server_restarting';
+    const isRetrying = connectionHealth.endpointStatus === 'connecting' || socketStatus.status === 'connecting';
+    const nextRetryAt = connectionHealth.nextRetryAt ?? primarySyncIssue?.nextRetryAt;
     const handleRetryConnection = React.useCallback(() => {
         sync.retryNow();
     }, []);
@@ -522,20 +524,31 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
                                     <Text style={styles.popoverLabel}>{t('profile.status')}</Text>
                                     <View style={styles.popoverStatusActions}>
                                         {canRetryServerConnection ? (
-                                            <Pressable
+                                            <IconAction
                                                 testID="connection-popover-retry"
                                                 accessibilityRole="button"
-                                                accessibilityLabel={t('common.retry')}
-                                                hitSlop={8}
+                                                accessibilityLabel={t(isRetrying ? 'status.connecting' : 'common.retry')}
+                                                accessibilityState={{ busy: isRetrying, disabled: isRetrying }}
+                                                disabled={isRetrying}
+                                                style={isRetrying ? styles.popoverRetryBusy : undefined}
+                                                size="sm"
+                                                hitSlop={10}
                                                 onPress={handleRetryConnection}
-                                                style={styles.popoverRetryButton}
                                             >
-                                                <Icon
-                                                    name="arrow-clockwise"
-                                                    size={16}
-                                                    color={theme.colors.text.secondary}
-                                                />
-                                            </Pressable>
+                                                {isRetrying ? (
+                                                    <ActivitySpinner
+                                                        testID="connection-popover-retry-progress"
+                                                        size={16}
+                                                        color={theme.colors.text.secondary}
+                                                    />
+                                                ) : (
+                                                    <Icon
+                                                        name="arrow-clockwise"
+                                                        size={16}
+                                                        color={theme.colors.text.secondary}
+                                                    />
+                                                )}
+                                            </IconAction>
                                         ) : null}
                                         <StatusPill
                                             testID="connection-popover-health-status"
@@ -580,11 +593,11 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
                                     <Text style={styles.popoverValue}>{formatTime(lastSyncAt)}</Text>
                                 </View>
 
-                                {primarySyncIssue?.nextRetryAt ? (
+                                {nextRetryAt ? (
                                     <View style={styles.popoverRow}>
                                         <Text style={styles.popoverLabel}>{t('connectionStatus.labels.nextRetry')}</Text>
-                                        <Text style={styles.popoverValue}>
-                                            {formatTime(primarySyncIssue.nextRetryAt)}
+                                        <Text testID="connection-popover-next-retry" style={styles.popoverValue}>
+                                            {formatTime(nextRetryAt)}
                                         </Text>
                                     </View>
                                 ) : null}

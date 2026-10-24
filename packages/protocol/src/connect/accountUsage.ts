@@ -90,6 +90,28 @@ export const ProviderAccountUsageRecordKeyV1Schema = z.object({
 }).strict();
 export type ProviderAccountUsageRecordKeyV1 = z.infer<typeof ProviderAccountUsageRecordKeyV1Schema>;
 
+export type ProviderAccountUsageOrganizationContext = Readonly<{
+  providerAccountId: string | null;
+  providerOrganizationId: string | null;
+}>;
+
+/** Compare the account-owned organization allowance across PAU and its quota projection. */
+export function isProviderAccountUsageOrganizationContextMatch(
+  observed: Pick<ProviderAccountUsageRecordKeyV1, 'accountSubjectId' | 'subjectKind' | 'quotaScope' | 'quotaScopeId'>
+    | Pick<ConnectedServiceQuotaSnapshotV1, 'activeAccountId' | 'providerOrganizationId'>,
+  current: ProviderAccountUsageOrganizationContext | null,
+): boolean {
+  if (!current?.providerAccountId || !current.providerOrganizationId) return false;
+  if ('quotaScope' in observed) {
+    return observed.subjectKind === 'account'
+      && observed.quotaScope === 'organization'
+      && observed.accountSubjectId === current.providerAccountId
+      && observed.quotaScopeId === current.providerOrganizationId;
+  }
+  return observed.activeAccountId === current.providerAccountId
+    && observed.providerOrganizationId === current.providerOrganizationId;
+}
+
 export const ProviderAccountSubjectRefV1Schema = z.object({
   kind: z.enum(['providerSubject', 'provisionalLocalSubject']),
   id: z.string().trim().min(1).max(512),
@@ -309,6 +331,9 @@ export function projectProviderAccountUsageToConnectedServiceQuotaSnapshot(
     accountLabel: parsed.accountLabel ?? null,
     providerId: parsed.providerId,
     activeAccountId: parsed.recordKey.accountSubjectId,
+    ...(parsed.recordKey.quotaScope === 'organization' && parsed.recordKey.quotaScopeId
+      ? { providerOrganizationId: parsed.recordKey.quotaScopeId }
+      : {}),
     fetchedAtMs: parsed.fetchedAtMs,
     staleAtMs: parsed.fetchedAtMs + parsed.staleAfterMs,
     source: mapUsageSourceToQuotaSource(parsed.source),

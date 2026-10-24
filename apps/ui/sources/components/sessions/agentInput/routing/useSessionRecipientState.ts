@@ -6,6 +6,7 @@ import type { SessionParticipantTarget } from '@/sync/domains/session/participan
 import { isParticipantRecipientAvailable } from '@/sync/domains/input/participants/resolveParticipantRoutedSend';
 import { recipientsEqual } from './recipientOptions';
 import { existingSessionDraftSemanticValues } from '@/sync/domains/input/drafts/existingSessionDraftSemanticValues';
+import { useExistingSessionDraftSemanticValue } from '@/hooks/session/useExistingSessionDraftSemanticValue';
 import {
     areServerAccountScopesEqual,
     type ServerAccountScope,
@@ -35,22 +36,9 @@ export function useSessionRecipientState(params: Readonly<{
     const scope = useStableServerAccountScope(useActiveServerAccountScope());
     const persistedSessionId = normalizeSessionId(params.draftPersistence?.sessionId);
     const persistenceEnabled = params.draftPersistence?.surface === 'mainComposer' && persistedSessionId !== null;
-    const subscribeToDraft = React.useCallback((listener: () => void) => {
-        if (!scope || !persistenceEnabled || !persistedSessionId) return () => undefined;
-        return existingSessionDraftSemanticValues.subscribe(scope, persistedSessionId, listener);
-    }, [persistedSessionId, persistenceEnabled, scope]);
-    const readRoutingSignature = React.useCallback(() => {
-        if (!scope || !persistenceEnabled || !persistedSessionId) return 'disabled';
-        const recipient = existingSessionDraftSemanticValues.read(scope, persistedSessionId, 'routing.recipient');
-        const delivery = existingSessionDraftSemanticValues.read(scope, persistedSessionId, 'routing.executionRunDelivery');
-        return JSON.stringify([
-            typeof recipient === 'undefined' ? 'unset' : 'set',
-            recipient ?? null,
-            typeof delivery === 'undefined' ? 'unset' : 'set',
-            delivery ?? null,
-        ]);
-    }, [persistedSessionId, persistenceEnabled, scope]);
-    const routingSignature = React.useSyncExternalStore(subscribeToDraft, readRoutingSignature, readRoutingSignature);
+    const persistedRoutingScope = persistenceEnabled ? scope : null;
+    const persistedRecipientValue = useExistingSessionDraftSemanticValue(persistedRoutingScope, persistedSessionId, 'routing.recipient');
+    const persistedDeliveryValue = useExistingSessionDraftSemanticValue(persistedRoutingScope, persistedSessionId, 'routing.executionRunDelivery');
     const [manualRecipient, setManualRecipientState] = React.useState<ParticipantRecipientV1 | null>(null);
     const [didManualOverride, setDidManualOverride] = React.useState(false);
     const [executionRunDelivery, setExecutionRunDelivery] = React.useState<ExecutionRunDeliveryMode>('steer_if_supported');
@@ -143,7 +131,7 @@ export function useSessionRecipientState(params: Readonly<{
         }
 
         applyHydratedRecipient(persistedRecipient, true);
-    }, [applyHydratedRecipient, flushPendingDraftValues, params.targets, persistedSessionId, persistenceEnabled, routingSignature, scope]);
+    }, [applyHydratedRecipient, flushPendingDraftValues, params.targets, persistedDeliveryValue, persistedRecipientValue, persistedSessionId, persistenceEnabled, scope]);
 
     React.useEffect(() => {
         return () => {

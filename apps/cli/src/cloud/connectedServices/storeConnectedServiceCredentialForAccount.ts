@@ -3,7 +3,9 @@ import { isDeepStrictEqual } from 'node:util';
 
 import {
   sealConnectedServiceCredentialCiphertext,
+  buildConnectedServiceCredentialMetadata,
   type ConnectedServiceCredentialCompatibleMutationResponseV1,
+  type ConnectedServiceCredentialMetadata,
   type ConnectedServiceCredentialRecordV1,
   type ConnectedServiceCredentialRevisionBoundaryV1,
   type ConnectedServiceCredentialRevisionV1,
@@ -18,12 +20,7 @@ type CredentialBinding = Readonly<{
   profileId: string;
 }>;
 
-type CredentialMetadata = Readonly<{
-  kind: 'oauth' | 'token';
-  providerEmail: string | null;
-  providerAccountId: string | null;
-  expiresAt: number | null;
-}>;
+type CredentialMetadata = ConnectedServiceCredentialMetadata;
 
 type PreparedCredentialWrite =
   | Readonly<{
@@ -54,6 +51,7 @@ export type ConnectedServiceCredentialStorageApi = Readonly<{
       kind: 'oauth' | 'token';
       providerEmail?: string | null;
       providerAccountId?: string | null;
+      providerOrganizationId?: string | null;
       expiresAt?: number | null;
     };
   } & ConnectedServiceCredentialRevisionBoundaryV1) | null>;
@@ -93,25 +91,18 @@ export class ConnectedServiceCredentialStorageResultUnknownError extends Error {
   constructor() { super('The entered credential write could not be settled'); this.name = 'ConnectedServiceCredentialStorageResultUnknownError'; }
 }
 
-function metadataForRecord(record: ConnectedServiceCredentialRecordV1): CredentialMetadata {
-  return {
-    kind: record.kind,
-    providerEmail: record.kind === 'oauth' ? record.oauth.providerEmail ?? null : record.token.providerEmail ?? null,
-    providerAccountId: record.kind === 'oauth' ? record.oauth.providerAccountId ?? null : record.token.providerAccountId ?? null,
-    expiresAt: record.expiresAt,
-  };
-}
-
 function normalizeMetadata(metadata: {
   kind: 'oauth' | 'token';
   providerEmail?: string | null;
   providerAccountId?: string | null;
+  providerOrganizationId?: string | null;
   expiresAt?: number | null;
 }): CredentialMetadata {
   return {
     kind: metadata.kind,
     providerEmail: metadata.providerEmail ?? null,
     providerAccountId: metadata.providerAccountId ?? null,
+    ...(metadata.providerOrganizationId ? { providerOrganizationId: metadata.providerOrganizationId } : {}),
     expiresAt: metadata.expiresAt ?? null,
   };
 }
@@ -151,7 +142,14 @@ async function didStorePreparedCredential(params: Readonly<{
   return {
     stored: current !== null
       && isDeepStrictEqual(current.sealed, params.prepared.sealed)
-      && isDeepStrictEqual(normalizeMetadata(current.metadata), params.prepared.metadata),
+      && isDeepStrictEqual(normalizeMetadata({
+        ...current.metadata,
+        // Released relays accept and strip this additive metadata field. Ciphertext readback
+        // still proves the complete intended credential when that relay omits the projection.
+        ...(current.metadata.providerOrganizationId === undefined
+          ? { providerOrganizationId: params.prepared.metadata.providerOrganizationId }
+          : {}),
+      }), params.prepared.metadata),
     credentialRevision: current?.credentialRevision ?? null,
   };
 }
@@ -200,8 +198,8 @@ export async function storeConnectedServiceCredentialForAccount(params: Readonly
   const currentRevision = await readCurrentRevision({ api: params.api, mode, binding, signal: params.signal });
   params.signal?.throwIfAborted();
   if (params.identityPolicy === 'same_account_or_empty' && currentRevision !== null) {
-    const existing = 'content' in currentRevision ? metadataForRecord(currentRevision.content.v) : normalizeMetadata(currentRevision.metadata);
-    const incoming = metadataForRecord(params.record);
+    const existing = 'content' in currentRevision ? buildConnectedServiceCredentialMetadata(currentRevision.content.v) : normalizeMetadata(currentRevision.metadata);
+    const incoming = buildConnectedServiceCredentialMetadata(params.record);
     const sameAccount = existing.kind === incoming.kind && (
       existing.providerAccountId && incoming.providerAccountId
         ? existing.providerAccountId === incoming.providerAccountId
@@ -235,7 +233,7 @@ export async function storeConnectedServiceCredentialForAccount(params: Readonly
             randomBytes: params.randomBytes ?? ((length) => randomBytes(length)),
           }),
         },
-        metadata: metadataForRecord(params.record),
+        metadata: buildConnectedServiceCredentialMetadata(params.record),
       };
     })();
 

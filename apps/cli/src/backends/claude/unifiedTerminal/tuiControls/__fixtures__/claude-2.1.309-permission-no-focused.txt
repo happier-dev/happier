@@ -1,0 +1,24 @@
+❯ Use Bash exactly once with this exact harmless command: ruby -e 'puts
+  "SOURCE_PERMISSION_REPROMPT_671"'. No other tools. Do not retry after denial.
+  After result say only PERMISSION_DONE.
+
+  Printing a marker string using ruby
+  ⎿  $ ruby -e 'puts "SOURCE_PERMISSION_REPROMPT_671"'
+
+────────────────────────────────────────────────────────────────────────────────
+ Bash command
+ Tip: auto mode handles these prompts for you — choose "switch to auto mode"
+ below
+ Print a marker string using ruby
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ ruby -e 'puts "SOURCE_PERMISSION_REPROMPT_671"'
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ This command requires approval
+
+ Do you want to proceed?
+   1. Yes
+   2. Yes, and don’t ask again for: ruby *
+   3. Yes, and switch to auto mode · auto mode handles these prompts for you
+ ❯ 4. No
+
+ Esc to cancel · Tab to amend

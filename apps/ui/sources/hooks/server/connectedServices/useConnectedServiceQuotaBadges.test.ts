@@ -68,7 +68,7 @@ beforeEach(() => {
 describe('useConnectedServiceQuotaBadges', () => {
   beforeEach(async () => {
     vi.clearAllMocks();
-    const { __resetConnectedServiceQuotaSnapshotStore } = await import('./connectedServiceQuotaSnapshotStore');
+    const { __resetConnectedServiceQuotaSnapshotStore } = await import('@/sync/domains/connectedServices/connectedServiceQuotaSnapshotStore');
     __resetConnectedServiceQuotaSnapshotStore();
     const { __resetProviderAccountUsageSnapshotCache } = await import('@/sync/domains/connectedServices/accountUsage/cache');
     __resetProviderAccountUsageSnapshotCache();

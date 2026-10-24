@@ -13,7 +13,8 @@ export function buildSessionAgentInputActionChips(params: Readonly<{
     sessionId: string;
     defaultBackendTarget?: BackendTargetRefV1 | null;
     defaultBackendId: string | null;
-    instructionsText: string;
+    /** Read when a chip is pressed: the chips must not change identity on every keystroke. */
+    getInstructionsText: () => string;
 }>): ReadonlyArray<AgentInputExtraActionChip> {
     const stateSnapshot = storage.getState() as any;
     const actionIds = listAgentInputActionChipActionIds(stateSnapshot);
@@ -22,17 +23,8 @@ export function buildSessionAgentInputActionChips(params: Readonly<{
     const backendId = typeof params.defaultBackendId === 'string' && params.defaultBackendId.trim().length > 0
         ? params.defaultBackendId.trim()
         : null;
-    const instructions = String(params.instructionsText ?? '');
-
     return actionIds.map((actionId) => {
         const spec = getActionSpec(actionId as any);
-        const input = buildExecutionRunActionDraftInputForUi({
-            actionId: actionId as any,
-            sessionId: params.sessionId,
-            defaultBackendTarget: params.defaultBackendTarget ?? null,
-            defaultBackendId: backendId,
-            instructions,
-        });
 
         return createAgentInputActionShortcutChip({
             key: `session-action:${actionId}`,
@@ -41,7 +33,13 @@ export function buildSessionAgentInputActionChips(params: Readonly<{
             onPress: () => {
                 storage.getState().createSessionActionDraft(params.sessionId, {
                     actionId,
-                    input,
+                    input: buildExecutionRunActionDraftInputForUi({
+                        actionId: actionId as any,
+                        sessionId: params.sessionId,
+                        defaultBackendTarget: params.defaultBackendTarget ?? null,
+                        defaultBackendId: backendId,
+                        instructions: params.getInstructionsText(),
+                    }),
                 });
             },
         });

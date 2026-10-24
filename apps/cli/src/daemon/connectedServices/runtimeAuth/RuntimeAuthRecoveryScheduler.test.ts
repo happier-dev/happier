@@ -52,6 +52,21 @@ function createDeferred<T>(): {
 }
 
 describe('RuntimeAuthRecoveryScheduler', () => {
+  it('keeps current issue association when an unscoped legacy observer repeats the same failure', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'happier-legacy-observer-'));
+    const store = createRecoveryIntentFileStore<RuntimeAuthRecoveryIntent>(join(dir, 'recovery.json'));
+    const scheduler = new RuntimeAuthRecoveryScheduler({ nowMs: () => 1000, recover: async () => ({}), durableStore: store });
+    try {
+      const first = await scheduler.beginClassifiedFailure({ reportId: 'runtime-auth-report:first', sessionId: 'legacy-observer', switchesThisTurn: 0,
+        classification: classificationFor({ runtimeIssueFingerprint: 'usage-limit:current' }) });
+      const repeated = await scheduler.beginClassifiedFailure({ sessionId: 'legacy-observer', switchesThisTurn: 0, classification: classification() });
+      expect(repeated).toMatchObject({ attemptId: first.attemptId });
+      expect(scheduler.readForSession('legacy-observer')[0]).toMatchObject({
+        attemptId: first.attemptId, classification: { runtimeIssueFingerprint: 'usage-limit:current' },
+      });
+    } finally { scheduler.dispose(); await rm(dir, { recursive: true, force: true }); }
+  });
+
   it.each(['checking', 'waiting'] as const)('coalesces manual mode changes after an existing claim (%s)', async (status) => {
     const dir = await mkdtemp(join(tmpdir(), 'happier-claimed-mode-'));
     const store = createRecoveryIntentFileStore<RuntimeAuthRecoveryIntent>(join(dir, 'recovery.json'));
@@ -422,7 +437,11 @@ describe('RuntimeAuthRecoveryScheduler', () => {
     scheduler.dispose();
   });
 
-  it('does not let an older successful effect remove newer failure evidence', async () => {
+  it.each([
+    { identityField: 'sourceKey', previousIdentity: 'old-evidence' },
+    { identityField: 'runtimeIssueFingerprint', previousIdentity: 'old-evidence' },
+    { identityField: 'runtimeIssueFingerprint', previousIdentity: undefined },
+  ] as const)('does not let an older successful effect remove newer $identityField failure evidence after $previousIdentity', async ({ identityField, previousIdentity }) => {
     const dir = await mkdtemp(join(tmpdir(), 'happier-runtime-auth-success-fence-'));
     const filePath = join(dir, 'runtime-auth.json');
     const recoveryStarted = createDeferred<void>();
@@ -456,7 +475,7 @@ describe('RuntimeAuthRecoveryScheduler', () => {
         reportId: 'runtime-auth-report:old',
         sessionId: 'session-fenced',
         switchesThisTurn: 0,
-        classification: classificationFor({ sourceKey: 'old-evidence' }),
+        classification: classificationFor({ [identityField]: previousIdentity }),
       });
       wake = first.wakeByKey({ recoveryKey, reason: 'manual' });
       await recoveryStarted.promise;
@@ -464,7 +483,7 @@ describe('RuntimeAuthRecoveryScheduler', () => {
         reportId: 'runtime-auth-report:new',
         sessionId: 'session-fenced',
         switchesThisTurn: 0,
-        classification: classificationFor({ sourceKey: 'new-evidence' }),
+        classification: classificationFor({ [identityField]: 'new-evidence' }),
       });
       expect(newer.attemptId).not.toBe(older.attemptId);
 
@@ -473,7 +492,7 @@ describe('RuntimeAuthRecoveryScheduler', () => {
 
       expect(createRecoveryIntentFileStore<RuntimeAuthRecoveryIntent>(filePath).read(recoveryKey)).toMatchObject({
         attemptId: newer.attemptId,
-        classification: expect.objectContaining({ sourceKey: 'new-evidence' }),
+        classification: expect.objectContaining({ [identityField]: 'new-evidence' }),
       });
       expect(diagnostics).not.toContainEqual(expect.objectContaining({
         event: 'runtime_auth_recovery_success',

@@ -1,0 +1,40 @@
+❯ Call ExitPlanMode once for the same current plan. No tools except ExitPlanMode. Never execute the plan
+  after a decision. Say only PROBE_DONE.
+▔▔▔▔▔▔▔ tmux focus-events off · add 'set -g focus-events on' to ~/.tmux.conf and reattach for focus tracking ▔
+
+  ──────────────────────────────────────────────────────────────────────────────────────────────────────────
+   Ready to code?
+
+   Here is Claude's plan:
+  ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+   Plan
+
+   Context
+
+   Probe of native plan approval.
+
+   Steps
+
+   1. Create /tmp/issue671-native-probe/workspace/plan-result.txt containing the harmless text PROBE.
+
+   Verification
+
+   Read the file and confirm it contains PROBE.
+  ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+
+
+
+
+
+
+
+  ──────────────────────────────────────────────────────────────────────────────────────────────────────────
+   Claude has written up a plan and is ready to execute. Would you like to proceed?
+
+     1. Yes, and use auto mode
+     2. Yes, manually approve edits
+   ❯ 3. Keep    this harmless probe.
+        Do not execute the plan.
+        shift+tab to approve with this feedback
+
+   ctrl+g to edit in Vim · /tmp/issue671-native-probe/claude-home/plans/abstract-purring-aho.md

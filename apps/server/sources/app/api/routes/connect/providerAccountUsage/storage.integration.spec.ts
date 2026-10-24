@@ -31,12 +31,14 @@ import {
     writeProviderAccountUsageRecordAndLinkConnectedServiceUsageSource,
 } from "./index";
 import { writeProviderAccountUsageRecordWithPolicy } from "./routeWritePolicy";
+import { mutateConnectedServiceCredential } from "../credentials/mutation";
 
 async function createProfileBinding(params: Readonly<{
     accountId: string;
     serviceId?: string;
     profileId?: string;
     providerAccountId?: string | null;
+    providerOrganizationId?: string;
 }>): Promise<void> {
     await db.serviceAccountToken.create({
         data: {
@@ -46,6 +48,7 @@ async function createProfileBinding(params: Readonly<{
             token: Buffer.from(`token:${params.serviceId ?? "openai-codex"}:${params.profileId ?? "work"}`, "utf8"),
             metadata: {
                 kind: "oauth",
+                ...(params.providerOrganizationId ? { providerOrganizationId: params.providerOrganizationId } : {}),
                 ...(params.providerAccountId === null
                     ? {}
                     : { providerAccountId: params.providerAccountId ?? "acct_provider_subject" }),
@@ -168,6 +171,65 @@ describe("providerAccountUsage storage", () => {
         await db.connectedServiceAuthGroup.deleteMany().catch(() => {});
         await db.serviceAccountToken.deleteMany().catch(() => {});
         await db.account.deleteMany().catch(() => {});
+    });
+
+    it("invalidates every alias only for the credential whose organization changes and retains same-context token rotation", async () => {
+        const user = await db.account.create({ data: { publicKey: null, encryptionMode: "plain" }, select: { id: true } });
+        const writeCredential = (profileId: string, organizationId: string) => mutateConnectedServiceCredential({
+            accountId: user.id, serviceId: "claude-subscription", profileId,
+            token: Buffer.from(`token:${organizationId}`), storageMode: "plain", expiresAt: null,
+            metadata: { v: 3, storage: "plain_json_v1", kind: "oauth", providerAccountId: "same-user", providerOrganizationId: organizationId },
+            incomingIdentity: { providerAccountId: "same-user" }, allowProviderIdentityChange: false,
+        });
+        for (const profileId of ["work", "other"]) await writeCredential(profileId, "org-a");
+        const group = await db.connectedServiceAuthGroup.create({ data: {
+            accountId: user.id, vendor: "claude-subscription", groupId: "team", displayName: "Team",
+            policyJson: "{}", activeProfileId: "work", generation: 1,
+        } });
+        await db.connectedServiceAuthGroupMember.create({ data: {
+            groupDbId: group.id, accountId: user.id, vendor: "claude-subscription", groupId: "team",
+            profileId: "work", priority: 1, enabled: true,
+        } });
+        const snapshot = createUsageSnapshot({ fetchedAt: Date.now(), recordKey: createProviderAccountUsageRecordKey({
+            providerId: "claude", accountSubjectId: "same-user", quotaScope: "organization", quotaScopeId: "org-a",
+        }) });
+        await writeProviderAccountUsageRecord({ accountId: user.id, recordId: snapshot.recordId, recordKey: snapshot.recordKey,
+            payloadMode: "plain_json_v1", snapshot, status: "ok", fetchedAt: snapshot.fetchedAtMs, staleAfterMs: snapshot.staleAfterMs });
+        const sources: ConnectedServiceUsageSourceV1[] = [
+            { serviceId: "claude-subscription", profileId: "work", bindingKind: "profile" },
+            { serviceId: "claude-subscription", profileId: "work", bindingKind: "group_member", groupId: "team", groupGeneration: 1 },
+            { serviceId: "claude-subscription", profileId: "other", bindingKind: "profile" },
+        ];
+        for (const source of sources) await linkConnectedServiceUsageSource({ accountId: user.id, providerAccountUsageRecordId: snapshot.recordId, source });
+        await writeCredential("work", "org-a");
+        expect(await db.connectedServiceUsageSource.count({ where: { accountId: user.id } })).toBe(3);
+        await expect(readConnectedServiceQuotaView({ accountId: user.id, serviceId: "claude-subscription", profileId: "work" })).resolves.not.toBeNull();
+        await writeCredential("work", "org-b");
+        await expect(readConnectedServiceQuotaView({ accountId: user.id, serviceId: "claude-subscription", profileId: "work" })).resolves.toBeNull();
+        expect(await db.connectedServiceUsageSource.count({ where: { accountId: user.id, profileId: "work" } })).toBe(0);
+        await expect(readExactConnectedServiceUsageSource({ accountId: user.id, source: sources[2]! })).resolves.not.toBeNull();
+        await expect(linkConnectedServiceUsageSource({ accountId: user.id, providerAccountUsageRecordId: snapshot.recordId, source: sources[0]! })).rejects.toBeInstanceOf(ConnectedServiceUsageSourceOwnershipError);
+    });
+
+    it("requires organization proof for organization usage and rejects a legacy account alias once the credential has organization proof", async () => {
+        const user = await db.account.create({ data: { publicKey: null, encryptionMode: "plain" }, select: { id: true } });
+        await createProfileBinding({ accountId: user.id, serviceId: "claude-subscription", providerAccountId: "same-user" });
+        for (const recordKey of [
+            createProviderAccountUsageRecordKey({ providerId: "claude", accountSubjectId: "same-user", quotaScope: "organization", quotaScopeId: "org-a" }),
+            createProviderAccountUsageRecordKey({ providerId: "claude", accountSubjectId: "same-user" }),
+        ]) {
+            const snapshot = createUsageSnapshot({ fetchedAt: Date.now(), recordKey });
+            await writeProviderAccountUsageRecord({ accountId: user.id, recordId: snapshot.recordId, recordKey,
+                payloadMode: "plain_json_v1", snapshot, status: "ok", fetchedAt: snapshot.fetchedAtMs, staleAfterMs: snapshot.staleAfterMs });
+            const source = { serviceId: "claude-subscription", profileId: "work", bindingKind: "profile" } as const;
+            if (recordKey.quotaScope === "organization") {
+                await expect(linkConnectedServiceUsageSource({ accountId: user.id, providerAccountUsageRecordId: snapshot.recordId, source })).rejects.toBeInstanceOf(ConnectedServiceUsageSourceOwnershipError);
+            } else {
+                await linkConnectedServiceUsageSource({ accountId: user.id, providerAccountUsageRecordId: snapshot.recordId, source });
+                await db.serviceAccountToken.updateMany({ where: { accountId: user.id }, data: { metadata: { kind: "oauth", providerAccountId: "same-user", providerOrganizationId: "org-a" } } });
+                await expect(readConnectedServiceUsageSource({ accountId: user.id, ...source })).resolves.toBeNull();
+            }
+        }
     });
 
     it("merges sealed subscription observations independently of quota clocks and preserves them for older writers", async () => {
@@ -465,6 +527,39 @@ describe("providerAccountUsage storage", () => {
                 providerId: snapshot.providerId,
             }),
         }));
+    });
+
+    it("preserves organization scope and supplemental facts in the connected-service quota view", async () => {
+        const user = await db.account.create({ data: { publicKey: null, encryptionMode: "plain" }, select: { id: true } });
+        await createProfileBinding({ accountId: user.id, serviceId: "anthropic", providerAccountId: "acct-user", providerOrganizationId: "org-work" });
+        const snapshot = ProviderAccountUsageSnapshotV1Schema.parse({
+            ...createUsageSnapshot({
+                fetchedAt: Date.now(),
+                recordKey: {
+                    providerId: "claude", accountSubjectId: "acct-user", subjectKind: "account",
+                    quotaScope: "organization", quotaScopeId: "org-work",
+                },
+            }),
+            subscription: { status: "none", renewal: "unknown", observedAtMs: 1000, staleAfterMs: 60000 },
+            recoveryCreditDetails: {},
+        });
+        await upsertProviderAccountUsageRecord({
+            accountId: user.id, recordId: snapshot.recordId, recordKey: snapshot.recordKey,
+            payloadMode: "plain_json_v1", snapshot, status: "ok", fetchedAt: snapshot.fetchedAtMs,
+            staleAfterMs: snapshot.staleAfterMs,
+        });
+        await upsertConnectedServiceUsageSource({
+            accountId: user.id, serviceId: "anthropic", profileId: "work",
+            providerAccountUsageRecordId: snapshot.recordId, bindingKind: "profile",
+        });
+        await expect(readConnectedServiceQuotaView({
+            accountId: user.id, serviceId: "anthropic", profileId: "work",
+        })).resolves.toMatchObject({
+            snapshot: {
+                activeAccountId: "acct-user", providerOrganizationId: "org-work",
+                subscription: snapshot.subscription, recoveryCreditDetails: {},
+            },
+        });
     });
 
     it("upserts provider usage records and source links idempotently", async () => {

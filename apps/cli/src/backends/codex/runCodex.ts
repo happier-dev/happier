@@ -96,6 +96,10 @@ import {
 } from './localControl/codexSharedControlEndpoint';
 import { isCodexAppServerTerminalOwnedGroupRecoveryClassification } from './appServer/recovery/terminalGroupRecovery';
 import {
+    readCodexRuntimeAuthClassification as readRuntimeAuthClassification,
+    createCodexRuntimeAuthFailureTurnHook,
+} from './connectedServices/classifyCodexConnectedServiceAuthFailure';
+import {
     createCodexAcpProviderInputOutcomeBridge,
     createCodexAppServerProviderInputOutcomeBridge,
     type CodexAcpProviderInputOutcomeBridge,
@@ -202,32 +206,6 @@ import {
 	import { resolveCodexRequestedDirectory } from './utils/resolveCodexRequestedDirectory';
 import { readDaemonInitialGoalFromEnv } from '@/agent/runtime/sessionInitialGoal';
 import { withCurrentHappierSessionId } from '@/agent/runtime/session/currentSessionIdEnv';
-
-function isRuntimeAuthFailureClassification(value: unknown): value is ConnectedServiceRuntimeFailureClassification {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-    const record = value as Record<string, unknown>;
-    if (typeof record.kind !== 'string') return false;
-    if (typeof record.serviceId !== 'string') return false;
-    if (typeof record.profileId !== 'string' && record.profileId !== null) return false;
-    if (typeof record.groupId !== 'string' && record.groupId !== null) return false;
-    if (typeof record.resetsAtMs !== 'number' && record.resetsAtMs !== null) return false;
-    if (typeof record.planType !== 'string' && record.planType !== null) return false;
-    if (
-        record.source !== 'structured_provider_error'
-        && record.source !== 'stable_provider_message'
-        && record.source !== 'provider_runtime_marker'
-    ) {
-        return false;
-    }
-    return true;
-}
-
-function readRuntimeAuthClassification(error: unknown): ConnectedServiceRuntimeFailureClassification | null {
-    if (!error || typeof error !== 'object' || Array.isArray(error)) return null;
-    const record = error as Record<string, unknown>;
-    const classification = record.runtimeAuthClassification ?? null;
-    return isRuntimeAuthFailureClassification(classification) ? classification : null;
-}
 
 function readRuntimeAuthClassificationLogField(
     classification: Record<string, unknown>,
@@ -888,6 +866,7 @@ export async function runCodex(opts: {
                 SESSION_CONFIG_OPTIONS_STATE_KEY,
             ],
         startupSideEffectsOrder: 'persist-first',
+        terminalHostOwner: hasHostedTerminal ? 'runtime' : 'startup',
         allowOfflineStub: true,
         deferPendingFirstInputCommitUntilRuntimeReady: true,
         onSessionSwap: (newSession) => {
@@ -1864,6 +1843,42 @@ export async function runCodex(opts: {
         providerInputDispatchDrain = inputConsumer.closeProviderInputAdmissionAndWaitForDispatches();
     }
 
+    const reportRuntimeAuthFailure = async (
+        classification: ConnectedServiceRuntimeFailureClassification,
+        failure?: Readonly<{ error: unknown }>,
+    ) => {
+        const report = await reportConnectedServiceRuntimeAuthFailureToDaemon({
+            sessionId: session.sessionId,
+            switchesThisTurn: 0,
+            classification,
+            logPrefix: '[Codex]',
+        });
+        let emitted = projectConnectedServiceRuntimeAuthRecoveryReport({
+            report,
+            classification,
+            addStatusMessage: (message) => {
+                messageBuffer.addMessage(message, 'status');
+            },
+            sendGenericStatusMessage: (message) => {
+                session.sendSessionEvent({ type: 'message', message });
+            },
+            commitTypedProjection: (projection) => {
+                if (projection.transcriptEvent) {
+                    session.sendSessionEvent(projection.transcriptEvent);
+                    return true;
+                }
+                return false;
+            },
+        }).emitted;
+        if (!emitted && failure) {
+            const message = `Codex process error: ${formatErrorForUi(failure.error)}`;
+            messageBuffer.addMessage(message, 'status');
+            session.sendSessionEvent({ type: 'message', message });
+            emitted = true;
+        }
+        return { report, emitted };
+    };
+
     if (useCodexAcp) {
         codexAcpRuntime = createCodexAcpRuntime({
             directory,
@@ -1877,6 +1892,9 @@ export async function runCodex(opts: {
             onThinkingChange: (value) => { thinking = value; },
             pendingQueueDrainMaxPopPerWake,
             providerInputConsumer: inputConsumer as SessionProviderInputConsumer<unknown, unknown>,
+            onTurnFailure: createCodexRuntimeAuthFailureTurnHook(async (classification, error) => {
+                await reportRuntimeAuthFailure(classification, { error });
+            }),
         });
         try {
             publishInFlightSteerCapability({ session, runtime: codexAcpRuntime });
@@ -1952,30 +1970,7 @@ export async function runCodex(opts: {
                 });
             },
             onUsageLimitGroupRecovery: async ({ classification }) => {
-                const recoveryReport = await reportConnectedServiceRuntimeAuthFailureToDaemon({
-                    sessionId: session.sessionId,
-                    switchesThisTurn: 0,
-                    classification,
-                    logPrefix: '[Codex]',
-                });
-                projectConnectedServiceRuntimeAuthRecoveryReport({
-                    report: recoveryReport,
-                    classification,
-                    addStatusMessage: (message) => {
-                        messageBuffer.addMessage(message, 'status');
-                    },
-                    sendGenericStatusMessage: (message) => {
-                        session.sendSessionEvent({ type: 'message', message });
-                    },
-                    commitTypedProjection: (projection) => {
-                        if (projection.transcriptEvent) {
-                            session.sendSessionEvent(projection.transcriptEvent);
-                            return true;
-                        }
-                        return false;
-                    },
-                });
-                return recoveryReport;
+                return (await reportRuntimeAuthFailure(classification)).report;
             },
             onConnectedServiceAuthGenerationApplied: ({ selection }) => {
                 const previousSelection = liveAppliedCodexRefreshSelection;
@@ -2020,29 +2015,7 @@ export async function runCodex(opts: {
                             credentialHealthStatus?: string;
                         }> : undefined,
                     );
-                    const recoveryReport = await reportConnectedServiceRuntimeAuthFailureToDaemon({
-                        sessionId: session.sessionId,
-                        switchesThisTurn: 0,
-                        classification,
-                        logPrefix: '[Codex]',
-                    });
-                    projectConnectedServiceRuntimeAuthRecoveryReport({
-                        report: recoveryReport,
-                        classification,
-                        addStatusMessage: (message) => {
-                            messageBuffer.addMessage(message, 'status');
-                        },
-                        sendGenericStatusMessage: (message) => {
-                            session.sendSessionEvent({ type: 'message', message });
-                        },
-                        commitTypedProjection: (projection) => {
-                            if (projection.transcriptEvent) {
-                                session.sendSessionEvent(projection.transcriptEvent);
-                                return true;
-                            }
-                            return false;
-                        },
-                    });
+                    await reportRuntimeAuthFailure(classification);
                     throw attachRuntimeAuthClassificationToError(error, classification);
                 }
             },
@@ -3028,7 +3001,7 @@ export async function runCodex(opts: {
                     // Do not clear session state here; the next user message should continue on the
                     // existing session if possible.
                 } else {
-                    const runtimeAuthClassification = readRuntimeAuthClassification(error);
+                    let runtimeAuthClassification = readRuntimeAuthClassification(error);
                     let runtimeAuthRecoveryStatusEmitted = false;
                     if (runtimeAuthClassification) {
                         const appServerTerminalOwnsRecovery = useCodexAppServer
@@ -3049,6 +3022,9 @@ export async function runCodex(opts: {
                                 ? getCodexRemoteRuntime()
                                 : null;
                             if (runtime) {
+                                if (useCodexAcp) {
+                                    await codexAcpRuntime?.failTurn(error);
+                                }
                                 // The exact provider turn has already failed. Publish its terminal
                                 // boundary before Connected Services attempts refresh/switch/continuation
                                 // so recovery cannot wait on the turn that is waiting on recovery.
@@ -3061,30 +3037,11 @@ export async function runCodex(opts: {
                                     };
                                 }
                                 providerTurnSettledBeforeRuntimeAuthRecovery = true;
+                                runtimeAuthClassification = readRuntimeAuthClassification(error) ?? runtimeAuthClassification;
                             }
-                            const recoveryReport = await reportConnectedServiceRuntimeAuthFailureToDaemon({
-                                sessionId: session.sessionId,
-                                switchesThisTurn: 0,
-                                classification: runtimeAuthClassification,
-                                logPrefix: '[Codex]',
-                            });
-                            runtimeAuthRecoveryStatusEmitted = projectConnectedServiceRuntimeAuthRecoveryReport({
-                                report: recoveryReport,
-                                classification: runtimeAuthClassification,
-                                addStatusMessage: (message) => {
-                                    messageBuffer.addMessage(message, 'status');
-                                },
-                                sendGenericStatusMessage: (message) => {
-                                    session.sendSessionEvent({ type: 'message', message });
-                                },
-                                commitTypedProjection: (projection) => {
-                                    if (projection.transcriptEvent) {
-                                        session.sendSessionEvent(projection.transcriptEvent);
-                                        return true;
-                                    }
-                                    return false;
-                                },
-                            }).emitted;
+                            runtimeAuthRecoveryStatusEmitted = useCodexAcp && Boolean(runtimeAuthClassification.runtimeIssueFingerprint)
+                                ? true
+                                : (await reportRuntimeAuthFailure(runtimeAuthClassification)).emitted;
                         }
                     } else {
                         logger.warn('Error in codex session:', error);

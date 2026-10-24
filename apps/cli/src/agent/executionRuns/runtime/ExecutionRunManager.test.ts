@@ -77,6 +77,45 @@ function createDelayedJsonBackend(responseText: string, delayMs: number): AgentB
 }
 
 describe('ExecutionRunManager start request idempotency', () => {
+  it('recreates a terminal resumable occurrence while its original backend disposal is pending', async () => {
+    let releaseDisposal!: () => void;
+    const disposalGate = new Promise<void>((resolve) => { releaseDisposal = resolve; });
+    let markDisposalStarted!: () => void;
+    const disposalStarted = new Promise<void>((resolve) => { markDisposalStarted = resolve; });
+    const loadSession = vi.fn(async (_sessionId: SessionId) => ({ sessionId: 'child_session_1' as SessionId }));
+    const initial = {
+      ...createStaticJsonBackend('{"summary":"Complete","deliverables":[]}'),
+      loadSession,
+      async dispose() { markDisposalStarted(); await disposalGate; },
+    };
+    const replacement = { ...createStaticJsonBackend('{"summary":"Continued","deliverables":[]}'), loadSession };
+    let acquired = 0;
+    const manager = new ExecutionRunManager({
+      parentProvider: 'claude', cwd: process.cwd(), sendAcp: () => {},
+      createBackend: () => acquired++ === 0 ? initial : replacement,
+    });
+    const started = await manager.start({
+      sessionId: 'parent-pending-disposal', intent: 'delegate',
+      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      instructions: 'Complete', permissionMode: 'read_only', retentionPolicy: 'resumable',
+      runClass: 'bounded', ioMode: 'request_response',
+    });
+    try {
+      await disposalStarted;
+      expect(manager.get(started.runId)?.status).toBe('succeeded');
+      await expect(manager.send(started.runId, { message: 'Continue', resume: true })).resolves.toEqual({ ok: true });
+      expect(acquired).toBe(2);
+      expect(loadSession).toHaveBeenCalledWith('child_session_1');
+      expect(manager.get(started.runId)?.status).toBe('running');
+      releaseDisposal();
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      await expect(manager.send(started.runId, { message: 'Continue again', resume: true })).resolves.toEqual({ ok: true });
+    } finally {
+      releaseDisposal();
+      await manager.dispose();
+    }
+  });
+
   it('keeps a waiter from the first running publication pending until canonical terminal state', async () => {
     const backend = createStaticJsonBackend('{"summary":"unused","findings":[]}');
     backend.sendPrompt = async () => {};

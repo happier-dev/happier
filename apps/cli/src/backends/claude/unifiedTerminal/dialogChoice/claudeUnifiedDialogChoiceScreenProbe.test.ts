@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { CLAUDE_UNIFIED_TERMINAL_DIALOG_CHOICE_REQUEST_SOURCE } from '@happier-dev/agents';
 
 import { createPermissionHandlerSessionStub } from '../../utils/permissionHandler.testkit';
@@ -92,6 +93,15 @@ const HIDDEN_TRUST_ACCEPT_FOCUSED = HIDDEN_TRUST_REJECT_FOCUSED
   .replace('  Yes, I trust this folder', '❯ Yes, I trust this folder');
 
 const IDLE = ['──────────────────────────────', '❯ ', '──────────────────────────────'].join('\n');
+const NATIVE_QUESTION_SCREEN = readFileSync(new URL('../tuiControls/__fixtures__/claude-2.1.304-question-single.txt', import.meta.url), 'utf8');
+const NATIVE_QUESTION_HOOK = {
+  hook_event_name: 'ClaudeNativePrompt', session_id: 'native-render', tool_use_id: 'native-render-question',
+  tool_name: 'AskUserQuestion', tool_input: { questions: [{
+    question: 'Which probe color?', header: 'Header Color',
+    options: [{ label: 'Amber', description: 'Warm amber probe color.' }, { label: 'Blue', description: 'Cool blue probe color.' }],
+    multiSelect: false,
+  }] },
+};
 
 // Live runner pid 57509 published claude_dialog_choice_639f8db8-a03f-4b66-9af6-06e1b3c02dd6
 // at 2026-07-23 14:04:49.874 after seeing an incomplete selection-shaped screen. The stable
@@ -150,6 +160,89 @@ function createHarness(params: Readonly<{
 }
 
 describe('createClaudeUnifiedDialogChoiceScreenProbe', () => {
+  it('observes a native question that renders after its lifecycle screen hint', async () => {
+    const { broker, client, probe } = createHarness({
+      captures: [...Array.from({ length: 7 }, () => ''), NATIVE_QUESTION_SCREEN, NATIVE_QUESTION_SCREEN],
+    });
+    broker.observeSessionHook(NATIVE_QUESTION_HOOK);
+
+    try {
+      await expect(probe.evaluateScreenState(parseClaudeScreenState('✻ Thinking…'))).resolves.toEqual({
+        kind: 'request_published', dialogId: 'ask_user_question',
+      });
+      expect(Object.values(client.agentState.requests)).toEqual([expect.objectContaining({
+        tool: 'AskUserQuestion', arguments: expect.objectContaining({
+          questions: [expect.objectContaining({ question: 'Which probe color?' })],
+        }),
+      })]);
+    } finally {
+      probe.dispose();
+      await broker.dispose();
+    }
+  });
+
+  it.each(['retirement', 'dispose'] as const)('stops observing an unpainted native question after %s', async (action) => {
+    let releaseWait!: () => void;
+    const waiting = new Promise<void>((resolve) => { releaseWait = resolve; });
+    const { broker, client, port, probe } = createHarness({
+      captures: [NATIVE_QUESTION_SCREEN], wait: () => waiting,
+    });
+    broker.observeSessionHook(NATIVE_QUESTION_HOOK);
+    const observation = probe.evaluateScreenState(parseClaudeScreenState(''));
+    try {
+      if (action === 'dispose') probe.dispose();
+      else broker.observeSessionHook({ hook_event_name: 'PostToolUse', tool_use_id: 'native-render-question' });
+      releaseWait();
+      await expect(observation).resolves.toEqual(action === 'dispose'
+        ? { kind: 'failed', reason: 'disposed' }
+        : { kind: 'not_visible' });
+      expect(port.captureCount()).toBe(0);
+      expect(client.agentState.requests).toEqual({});
+    } finally {
+      releaseWait();
+      probe.dispose();
+      await broker.dispose();
+    }
+  });
+
+  it('keeps an unpainted native question pending after the terminal verification budget', async () => {
+    let elapsedMs = 0;
+    const { broker, client, probe } = createHarness({
+      captures: [''], wait: async (ms) => { elapsedMs += ms; },
+    });
+    broker.observeSessionHook(NATIVE_QUESTION_HOOK);
+    try {
+      await expect(probe.evaluateScreenState(parseClaudeScreenState(''))).resolves.toEqual({ kind: 'not_visible' });
+      expect(elapsedMs).toBe(8);
+      expect(broker.hasNativePrompt()).toBe(true);
+      expect(client.agentState.requests).toEqual({});
+    } finally {
+      probe.dispose();
+      await broker.dispose();
+    }
+  });
+
+  it.each(['retirement', 'dispose'] as const)('does not publish a native screen captured across %s', async (action) => {
+    const { broker, client, port, probe } = createHarness({ captures: [NATIVE_QUESTION_SCREEN] });
+    broker.observeSessionHook(NATIVE_QUESTION_HOOK);
+    const capture = port.captureScreen.bind(port);
+    vi.spyOn(port, 'captureScreen').mockImplementation(async () => {
+      const result = await capture();
+      if (action === 'dispose') probe.dispose();
+      else broker.observeSessionHook({ hook_event_name: 'PostToolUse', tool_use_id: 'native-render-question' });
+      return result;
+    });
+    try {
+      await expect(probe.evaluateScreenState(parseClaudeScreenState(NATIVE_QUESTION_SCREEN))).resolves.toEqual(action === 'dispose'
+        ? { kind: 'failed', reason: 'disposed' }
+        : { kind: 'not_visible' });
+      expect(client.agentState.requests).toEqual({});
+    } finally {
+      probe.dispose();
+      await broker.dispose();
+    }
+  });
+
   it('does not publish an action-required episode for an idle DIM suggestion with stale incomplete selection-shaped output', async () => {
     const { client, port, probe } = createHarness({
       captures: [

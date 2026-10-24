@@ -7,6 +7,7 @@ import { isClaudeTranscriptTaskNotification } from './readClaudeTranscriptProvid
 
 const STOP_HOOK_FEEDBACK_PREFIX = 'Stop hook feedback:\n';
 const REQUEST_INTERRUPTED_TEXT = '[Request interrupted by user]';
+const REQUEST_INTERRUPTED_FOR_TOOL_USE_TEXT = '[Request interrupted by user for tool use]';
 const SYNTHETIC_NO_RESPONSE_TEXT = 'No response requested.';
 
 function firstTextContent(value: unknown): string | null {
@@ -156,7 +157,7 @@ export function readClaudeTranscriptTurnSignal(message: RawJSONLines): LocalTurn
   const content = readMessageRecord(message)?.content;
   const text = firstTextContent(content);
 
-  if (text === REQUEST_INTERRUPTED_TEXT) {
+  if (text === REQUEST_INTERRUPTED_TEXT || text === REQUEST_INTERRUPTED_FOR_TOOL_USE_TEXT) {
     return {
       type: 'turn_terminal',
       providerTurnId: null,

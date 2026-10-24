@@ -8,6 +8,7 @@ export type ConnectedServiceCredentialMetadataV2 = Readonly<{
     kind: "oauth" | "token";
     providerEmail?: string | null;
     providerAccountId?: string | null;
+    providerOrganizationId?: string | null;
     credentialRevision?: string;
     health?: ConnectedServiceCredentialHealthV1;
 }>;

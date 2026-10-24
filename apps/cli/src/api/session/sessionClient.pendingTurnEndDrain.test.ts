@@ -533,6 +533,10 @@ describe('ApiSessionClient pending-queue turn-end drain', () => {
       if (!String(url).includes('/messages/by-local-id/released-local-1')) {
         throw new Error(`Unexpected HTTP GET in released adapter test: ${String(url)}`);
       }
+      sessionSocketStub!.trigger('update', {
+        id: 'released-materialization-pending-hint', seq: 1, createdAt: 1,
+        body: { t: 'pending-changed', sid: 's1', pendingCount: 1, pendingBlockedCount: 0, pendingVersion: 2 },
+      });
       return {
         status: 200,
         data: {
@@ -553,7 +557,7 @@ describe('ApiSessionClient pending-queue turn-end drain', () => {
     });
     const client = await createClient({
       latestTurnStatus: 'completed',
-      pendingCount: 1,
+      pendingCount: 2,
       pendingBlockedCount: 0,
       pendingVersion: 1,
     }, {
@@ -582,6 +586,7 @@ describe('ApiSessionClient pending-queue turn-end drain', () => {
       });
     expect(materializeNextMock).not.toHaveBeenCalled();
     expect(delivered).toHaveLength(1);
+    expect(client.shouldAttemptPendingMaterialization()).toBe(true);
   });
 
   it.each([

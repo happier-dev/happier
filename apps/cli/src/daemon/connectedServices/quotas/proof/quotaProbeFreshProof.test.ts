@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import type { ConnectedServiceQuotaSnapshotV1 } from '@happier-dev/protocol';
+import { buildConnectedServiceCredentialRecord, type ConnectedServiceQuotaSnapshotV1 } from '@happier-dev/protocol';
+import { computeConnectedServiceAccessTokenFingerprint } from '../../refresh/credentialFreshness/tokenFingerprint';
 
-import { resolveQuotaProbeFreshProof } from './quotaProbeFreshProof';
+import { matchesCurrentQuotaObservationCredential, resolveQuotaProbeFreshProof } from './quotaProbeFreshProof';
 
 function quotaSnapshot(overrides: Partial<ConnectedServiceQuotaSnapshotV1> = {}): ConnectedServiceQuotaSnapshotV1 {
   return {
@@ -205,5 +206,34 @@ describe('resolveQuotaProbeFreshProof', () => {
       maxAgeMs: 30_000,
       snapshotAppliedIdentity: { ...appliedIdentity, materialFingerprint: 'fingerprint-b' },
     })).toEqual({ status: 'no_proof', reason: 'provider_operation_identity_mismatch' });
+  });
+});
+
+describe('matchesCurrentQuotaObservationCredential', () => {
+  const record = buildConnectedServiceCredentialRecord({
+    now: 1000, serviceId: 'claude-subscription', profileId: 'primary', kind: 'oauth', expiresAt: 10000,
+    oauth: { accessToken: 'current-token', refreshToken: 'refresh', providerAccountId: 'same-user',
+      idToken: null, scope: null, tokenType: null, providerEmail: null,
+      raw: { claudeAiOauth: { organizationUuid: 'current-org' } },
+    },
+  });
+  const observation = { providerAccountId: 'same-user',
+    credentialFingerprint: computeConnectedServiceAccessTokenFingerprint('current-token')!,
+  };
+
+  it('proves the current profile token without inventing missing observation organization evidence', () => {
+    expect(matchesCurrentQuotaObservationCredential({ record, ...observation })).toBe(true);
+  });
+
+  it.each([
+    { providerAccountId: 'other-user' },
+    { providerOrganizationId: 'other-org' },
+    { credentialFingerprint: computeConnectedServiceAccessTokenFingerprint('old-token')! },
+  ])('rejects conflicting credential evidence %j', (patch) => {
+    expect(matchesCurrentQuotaObservationCredential({ record, ...observation, ...patch })).toBe(false);
+  });
+
+  it('accepts an organization when the observation independently attests the current one', () => {
+    expect(matchesCurrentQuotaObservationCredential({ record, ...observation, providerOrganizationId: 'current-org' })).toBe(true);
   });
 });

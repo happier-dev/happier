@@ -1,6 +1,35 @@
 import { describe, expect, it } from 'vitest';
 
-import { readKnownPendingQueueState } from './pendingQueueState';
+import {
+    applyKnownPendingQueueState,
+    readKnownPendingQueueState,
+} from './pendingQueueState';
+
+describe('pendingQueueState ordering', () => {
+    it('does not let a delayed empty snapshot hide a newer pending row', () => {
+        const current = { known: true as const, pendingCount: 1, pendingBlockedCount: 0, pendingVersion: 10 };
+        const applied = applyKnownPendingQueueState(current, {
+            known: true,
+            pendingCount: 0,
+            pendingBlockedCount: 0,
+            pendingVersion: 8,
+        });
+        expect(applied.changed).toBe(false);
+        expect(applied.state).toEqual(current);
+    });
+
+    it('still deduplicates same-version replays without waking', () => {
+        const current = { known: true as const, pendingCount: 2, pendingBlockedCount: 0, pendingVersion: 8 };
+        const applied = applyKnownPendingQueueState(current, {
+            known: true,
+            pendingCount: 2,
+            pendingBlockedCount: 0,
+            pendingVersion: 8,
+        });
+        expect(applied.changed).toBe(false);
+        expect(applied.state).toEqual(current);
+    });
+});
 
 describe('pendingQueueState', () => {
     it('rejects fractional pending counters instead of truncating them', () => {

@@ -1,0 +1,35 @@
+
+✻ Baked for 3s · done 3:09 PM
+
+❯ Repeat exactly the same three-question AskUserQuestion tool now, no other tools.
+
+● User answered Claude's questions:
+  ⎿  · Which multiline value? → owned canonical first LF
+     owned canonical second LF — 雪 🦦
+     · Which comma value? → Alpha, beta
+     · Which Unicode value? → 雪 🦦
+
+● PROBE_DONE
+
+✻ Churned for 4s · done 3:13 PM
+
+❯ Use AskUserQuestion once: Which blank-lines probe? header Blank, options Alpha and
+  Beta, multiSelect false. No other tools. After answer say PROBE_DONE.
+──────────────────────────────────────────────────────────────────────────────────────────
+ ☐ Blank
+
+Which blank-lines probe?
+
+  1. Alpha
+     Option Alpha.
+  2. Beta
+     Option Beta.
+❯ 3.
+     first paragraph
+
+     second paragraph        雪 🦦
+
+──────────────────────────────────────────────────────────────────────────────────────────
+  4. Chat about this
+
+Enter to select · ↑/↓ to navigate · ctrl+g to edit in Vim · Esc to cancel

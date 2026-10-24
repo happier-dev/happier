@@ -1,11 +1,12 @@
-import { buildUsageLimitIssueFingerprint } from '@/session/usageLimitRecoveryControls/buildUsageLimitIssueFingerprint';
+import { buildUsageLimitIssueFingerprint } from '@happier-dev/protocol';
+import { readLatestUsageLimitFailureIssue } from '@/session/usageLimitRecoveryControls/readLatestUsageLimitFailureIssue';
 import { readSessionMetadataRuntimeDescriptor } from '@happier-dev/agents';
 import {
   buildRecoveryCreditConsumeIdempotencyKey,
   ConnectedServiceQuotaRecoveryCreditConsumeResponseV1Schema,
   SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY,
   SessionRuntimeIssueV1Schema,
-  SessionUsageLimitRecoveryV1Schema,
+  readSessionUsageLimitRecoveryForIssue,
   type ConnectedServiceQuotaRecoveryCreditsV1,
   type SessionUsageLimitRecoveryV1,
 } from '@happier-dev/protocol';
@@ -89,11 +90,6 @@ function readCodexBackendMode(metadata: MetadataRecord): string | null {
   const provider = readRecord(descriptor?.provider);
   const backendMode = provider?.backendMode;
   return typeof backendMode === 'string' && backendMode.trim().length > 0 ? backendMode.trim() : null;
-}
-
-function readRecoveryIntent(metadata: MetadataRecord): SessionUsageLimitRecoveryV1 | null {
-  const parsed = SessionUsageLimitRecoveryV1Schema.safeParse(metadata[SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY]);
-  return parsed.success ? parsed.data : null;
 }
 
 function buildRecoveryIntentFromLatestUsageLimitIssue(
@@ -260,7 +256,9 @@ export function createCodexAppServerUsageLimitRecoveryControlAdapter(deps: Reado
       return stableError('codex_quota_probe_unsupported_for_backend_mode');
     }
 
-    const persistedIntent = readRecoveryIntent(params.metadata);
+    const persistedIntent = readSessionUsageLimitRecoveryForIssue(
+        params.metadata[SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY], readLatestUsageLimitFailureIssue(params.rawSession), 'codex',
+      );
     const intent = persistedIntent && persistedIntent.status !== 'cancelled'
       ? persistedIntent
       : buildRecoveryIntentFromLatestUsageLimitIssue(params);
@@ -318,7 +316,9 @@ export function createCodexAppServerUsageLimitRecoveryControlAdapter(deps: Reado
     consumeResetCredit: async (
       params: SessionUsageLimitRecoveryControlAdapterParams,
     ): Promise<CodexAppServerUsageLimitRecoveryControlResult> => {
-      const persistedIntent = readRecoveryIntent(params.metadata);
+      const persistedIntent = readSessionUsageLimitRecoveryForIssue(
+        params.metadata[SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY], readLatestUsageLimitFailureIssue(params.rawSession), 'codex',
+      );
       const intent = persistedIntent && persistedIntent.status !== 'cancelled'
         ? persistedIntent
         : buildRecoveryIntentFromLatestUsageLimitIssue(params);

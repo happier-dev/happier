@@ -243,19 +243,43 @@ describe('readClaudeTranscriptTurnSignal', () => {
     });
   });
 
-  it('detects request interruption transcript records as aborted terminal events', () => {
-    expect(
-      readClaudeTranscriptTurnSignal({
-        type: 'user',
-        uuid: 'u4',
-        message: { content: '[Request interrupted by user]' },
-      } as any),
-    ).toEqual({
-      type: 'turn_terminal',
-      providerTurnId: null,
-      reason: 'aborted',
-      source: 'claude_transcript_request_interrupted',
-    });
+  it.each([
+    '[Request interrupted by user]',
+    '[Request interrupted by user for tool use]',
+  ])('detects %s as an aborted terminal event', (text) => {
+    for (const content of [text, [{ type: 'text', text }]]) {
+      expect(
+        readClaudeTranscriptTurnSignal({
+          type: 'user',
+          uuid: 'u4',
+          message: { role: 'user', content },
+        } satisfies RawJSONLines),
+      ).toEqual({
+        type: 'turn_terminal',
+        providerTurnId: null,
+        reason: 'aborted',
+        source: 'claude_transcript_request_interrupted',
+      });
+    }
+  });
+
+  it('keeps quoted interruption markers as ordinary user prompts', () => {
+    expect(readClaudeTranscriptTurnSignal({
+      type: 'user', uuid: 'quoted-interruption',
+      message: { role: 'user', content: 'Explain [Request interrupted by user for tool use]' },
+    } satisfies RawJSONLines)).toMatchObject({ type: 'turn_started' });
+  });
+
+  it('does not abort the main turn for a sidechain interruption or tool-result text', () => {
+    const text = '[Request interrupted by user for tool use]';
+    expect(readClaudeTranscriptTurnSignal({
+      type: 'user', uuid: 'sidechain-interruption', isSidechain: true,
+      message: { role: 'user', content: [{ type: 'text', text }] },
+    } satisfies RawJSONLines)).toBeNull();
+    expect(readClaudeTranscriptTurnSignal({
+      type: 'user', uuid: 'tool-result-interruption',
+      message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'tool_1', content: text }] },
+    } satisfies RawJSONLines)).toBeNull();
   });
 
   it('ignores sidechain and tool result records for main turn lifecycle', () => {
