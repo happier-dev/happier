@@ -2,6 +2,7 @@ import {
   mergeDirectSessionEnvironmentVariables,
   type DirectSessionProviderOps,
 } from '@/backends/directSessions/providerOps';
+import { bareNameMatches, pathContains, processTokens } from '@/backends/directSessions/processMatch';
 
 import { createPollingDirectSessionFollowLease } from '@/api/directSessions/backgroundFollow/createPollingDirectSessionFollowLease';
 import { getOpenCodeDirectSessionActivity } from './getOpenCodeDirectSessionActivity';
@@ -22,6 +23,13 @@ export const openCodeDirectSessionProviderOps: DirectSessionProviderOps = {
       isRunning: res.isBusy === true,
     };
   },
+  getWorkingDirectory: async ({ source, remoteSessionId }) =>
+    await getOpenCodeDirectSessionWorkingDirectory({ source, remoteSessionId }),
+  // No passiveObservationSource: listing without an explicit server URL starts a managed OpenCode
+  // server, which background observation must never do.
+  // Patterns from AgentMonitor's OpenCode adapter (MIT, see processMatch.ts).
+  matchesProviderProcess: (observed) => processTokens(observed).some((token) =>
+    bareNameMatches(token, 'opencode') || pathContains(token, '/opencode')),
   pageTranscript: async ({ source, remoteSessionId, direction, cursor, maxBytes, maxItems }) => {
     const res = await pageOpenCodeTranscript({ source, remoteSessionId, direction, cursor, maxBytes, maxItems });
     return {

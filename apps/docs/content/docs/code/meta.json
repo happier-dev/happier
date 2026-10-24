@@ -6,6 +6,7 @@
     "diffs",
     "review-comments",
     "git",
-    "pull-requests"
+    "pull-requests",
+    "code-intelligence"
   ]
 }

@@ -267,6 +267,8 @@ import { createDaemonSpawnAttemptRegistry } from './spawn/daemonSpawnAttemptRegi
 import { normalizeSpawnSessionDirectory } from '@/rpc/handlers/spawnSessionOptionsContract';
 import { startAutomationWorker, type AutomationWorkerHandle } from './automation/automationWorker';
 import { startMemoryWorker, type MemoryWorkerHandle } from './memory/memoryWorker';
+import { startDaemonCodeIntelligenceWorker } from './codeIntelligence/startDaemonCodeIntelligenceWorker';
+import type { CodeIntelligenceWorkerHandle } from './codeIntelligence/codeIntelligenceWorker';
 import { createDaemonConnectivityCoordinator } from './connection/createDaemonConnectivityCoordinator';
 import {
   createDaemonServerWorkBudget,
@@ -2063,6 +2065,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
       let apiMachineForSessions: ApiMachineClient | null = null;
       let automationWorker: AutomationWorkerHandle | null = null;
       let memoryWorker: MemoryWorkerHandle | null = null;
+      let codeIntelligenceWorker: CodeIntelligenceWorkerHandle | null = null;
       let cliUpdateMetadataPublisher: CliUpdateMetadataPublisher | null = null;
       let apiMachine: ApiMachineClient | null = null;
       const eventLoopStallMonitor = createDaemonEventLoopStallMonitor({
@@ -8530,6 +8533,11 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
               }
             })();
 
+            codeIntelligenceWorker = await startDaemonCodeIntelligenceWorker().catch((error: unknown) => {
+              logger.warn('[DAEMON RUN] Failed to start code intelligence worker (best-effort)', error);
+              return null;
+            });
+
             if (connectedApiMachine) {
               await connectedApiMachine.recoverDaemonTerminalSessionMutationJournals().catch((error) => {
                 logger.warn('[DAEMON RUN] Failed to recover daemon terminal mutation journals at startup', {
@@ -8680,6 +8688,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                   void beforeShutdown().finally(() => requestShutdown('happier-app'));
                 },
                 ...(memoryWorker ? { memory: memoryWorker } : {}),
+                ...(codeIntelligenceWorker ? { codeIntelligence: codeIntelligenceWorker } : {}),
                 daemonServerWorkScheduler,
                 machineTransferChannel: {
                   onEnvelope: (listener) => connectedApiMachine.onMachineTransferEnvelope(listener),
@@ -9138,6 +9147,11 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
       cliUpdateMetadataPublisher?.stop();
       if (memoryWorker) {
         memoryWorker.stop();
+      }
+      if (codeIntelligenceWorker) {
+        await codeIntelligenceWorker.stop().catch((error: unknown) => {
+          logger.warn('[DAEMON RUN] Failed to stop code intelligence worker cleanly', error);
+        });
       }
 
       // Best-effort cleanup for provider-managed background processes (e.g. shared OpenCode server).

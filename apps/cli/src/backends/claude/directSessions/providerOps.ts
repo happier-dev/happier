@@ -14,6 +14,7 @@ import {
   mergeDirectSessionEnvironmentVariables,
   type DirectSessionProviderOps,
 } from '@/backends/directSessions/providerOps';
+import { bareNameMatches, pathContains, pathEndsWith, processTokens } from '@/backends/directSessions/processMatch';
 
 export const claudeDirectSessionProviderOps: DirectSessionProviderOps = {
   listCandidates: async ({ source, cursor, limit, searchTerm, searchMode }) => {
@@ -27,6 +28,16 @@ export const claudeDirectSessionProviderOps: DirectSessionProviderOps = {
       isRunning: false,
     };
   },
+  getWorkingDirectory: async ({ source, remoteSessionId }) =>
+    await getClaudeDirectSessionWorkingDirectory({ source, remoteSessionId, env: process.env }),
+  // Listing reads `<CLAUDE_CONFIG_DIR>/projects/**` only.
+  passiveObservationSource: () => ({ kind: 'claudeConfig' }),
+  // Patterns from AgentMonitor's Claude adapter (MIT, see processMatch.ts).
+  matchesProviderProcess: (observed) => processTokens(observed).some((token) =>
+    pathEndsWith(token, '/bin/claude')
+    || bareNameMatches(token, 'claude')
+    || pathContains(token, '/.claude/local/')
+    || pathContains(token, '/@anthropic-ai/claude-code')),
   pageTranscript: async ({ source, remoteSessionId, direction, cursor, maxBytes, maxItems }) => {
     const res = await pageClaudeTranscript({ source, remoteSessionId, direction, cursor, maxBytes, maxItems });
     return {

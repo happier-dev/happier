@@ -429,6 +429,12 @@ const FEATURE_CATALOG_DEFINITION = {
     dependencies: [],
     representation: 'client',
   },
+  codeIntelligence: {
+    description: 'Daemon-local repository observation, commit intelligence, and activity feed surfaces.',
+    defaultFailMode: 'fail_closed',
+    dependencies: [],
+    representation: 'client',
+  },
   // Generalized, provider-agnostic umbrella gate for agent session goals + work-state goal
   // projection. New capability-driven goal gating reads `agent.goals`; provider-specific goal
   // sub-gates (e.g. `providers.codex.appServer.goals`) remain as independent back-compat flags so

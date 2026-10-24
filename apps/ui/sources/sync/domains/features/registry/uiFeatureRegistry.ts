@@ -229,6 +229,16 @@ export const UI_FEATURE_REGISTRY = {
             icon: { ioniconName: 'albums-outline', color: '#34C759' },
         },
     },
+    codeIntelligence: {
+        settingsToggle: {
+            showInSettings: true,
+            isExperimental: true,
+            defaultEnabled: false,
+            titleKey: 'settingsFeatures.expCodeIntelligence',
+            subtitleKey: 'settingsFeatures.expCodeIntelligenceSubtitle',
+            icon: { ioniconName: 'pulse-outline', color: '#5856D6' },
+        },
+    },
     'agent.goals': {
         settingsToggle: undefined,
     },

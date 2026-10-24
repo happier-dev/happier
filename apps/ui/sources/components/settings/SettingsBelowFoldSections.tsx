@@ -16,6 +16,7 @@ type SettingsBelowFoldSectionsProps = Readonly<{
     appVersion: string;
     attachmentsUploadsEnabled: boolean;
     automationsNeedLocalEnablement: boolean;
+    codeIntelligenceEnabled: boolean;
     connectedServicesEnabled: boolean;
     devModeEnabled: boolean;
     executionRunsEnabled: boolean;
@@ -41,6 +42,7 @@ export const SettingsBelowFoldSections = React.memo(function SettingsBelowFoldSe
     appVersion,
     attachmentsUploadsEnabled,
     automationsNeedLocalEnablement,
+    codeIntelligenceEnabled,
     connectedServicesEnabled,
     devModeEnabled,
     executionRunsEnabled,
@@ -68,6 +70,7 @@ export const SettingsBelowFoldSections = React.memo(function SettingsBelowFoldSe
                     connectedServicesEnabled={connectedServicesEnabled}
                     mcpServersEnabled={mcpServersEnabled}
                     memorySearchEnabled={memorySearchEnabled}
+                    codeIntelligenceEnabled={codeIntelligenceEnabled}
                     promptsLibraryEnabled={promptsLibraryEnabled}
                     router={router}
                     theme={theme}
@@ -114,6 +117,7 @@ export const SettingsBelowFoldSections = React.memo(function SettingsBelowFoldSe
 });
 
 type SettingsAiAndAgentsSectionProps = Readonly<Pick<SettingsBelowFoldSectionsProps,
+    | 'codeIntelligenceEnabled'
     | 'connectedServicesEnabled'
     | 'mcpServersEnabled'
     | 'memorySearchEnabled'
@@ -125,6 +129,7 @@ type SettingsAiAndAgentsSectionProps = Readonly<Pick<SettingsBelowFoldSectionsPr
 >>;
 
 const SettingsAiAndAgentsSection = React.memo(function SettingsAiAndAgentsSection({
+    codeIntelligenceEnabled,
     connectedServicesEnabled,
     mcpServersEnabled,
     memorySearchEnabled,
@@ -200,6 +205,14 @@ const SettingsAiAndAgentsSection = React.memo(function SettingsAiAndAgentsSectio
                     subtitle={t('settings.memorySearchSubtitle')}
                     icon={<Icon name="magnifying-glass" size={29} color={theme.colors.state.success.foreground} />}
                     onPress={() => router.push('/settings/memory')}
+                />
+            ) : null}
+            {codeIntelligenceEnabled ? (
+                <Item
+                    title={t('codeIntelligence.title')}
+                    subtitle={t('codeIntelligence.entrySubtitle')}
+                    icon={<Icon name="pulse" size={29} color={theme.colors.accent.purple} />}
+                    onPress={() => router.push('/intelligence')}
                 />
             ) : null}
         </ItemGroup>

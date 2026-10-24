@@ -11,6 +11,7 @@ import {
   mergeDirectSessionEnvironmentVariables,
   type DirectSessionProviderOps,
 } from '@/backends/directSessions/providerOps';
+import { bareNameMatches, pathContains, pathEndsWith, processTokens } from '@/backends/directSessions/processMatch';
 
 import { getCodexDirectSessionActivity } from './getCodexDirectSessionActivity';
 import { getCodexDirectSessionWorkingDirectory } from './getCodexDirectSessionWorkingDirectory';
@@ -65,7 +66,27 @@ function resolveCodexTakeoverSourceAuth(params: Readonly<{
   };
 }
 
+// Patterns from AgentMonitor's Codex adapter (MIT, see processMatch.ts): the CLI in any install
+// layout plus the macOS Codex desktop app bundle.
+function isCodexProcessToken(token: string): boolean {
+  return pathEndsWith(token, '/bin/codex')
+    || bareNameMatches(token, 'codex')
+    || pathContains(token, '/@openai/codex-')
+    || pathContains(token, '/codex-cli/')
+    || token.endsWith('/Codex.app/Contents/MacOS/Codex')
+    || token.endsWith('/Codex.app/Contents/Resources/codex');
+}
+
 export const codexDirectSessionProviderOps: DirectSessionProviderOps = {
+  getWorkingDirectory: async ({ source, remoteSessionId }) => await getCodexDirectSessionWorkingDirectory({
+    source,
+    activeServerDir: configuration.activeServerDir,
+    remoteSessionId,
+    env: process.env,
+  }),
+  matchesProviderProcess: (observed) => processTokens(observed).some(isCodexProcessToken),
+  // Listing reads the user's Codex home rollout files only (CLI and desktop app share it).
+  passiveObservationSource: () => ({ kind: 'codexHome', home: 'user' }),
   listCandidates: async ({ source, cursor, limit, searchTerm, searchMode }) => {
     const res = await listCodexSessionCandidates({ source, activeServerDir: configuration.activeServerDir, cursor, limit, searchTerm, searchMode });
     return { candidates: res.candidates, nextCursor: res.nextCursor ?? null, ...(res.searchIncomplete ? { searchIncomplete: true } : {}) };

@@ -1,8 +1,10 @@
 import type { AgentId } from '@/agent/core';
 import { AGENTS_CORE, supportsExistingSessionHandoffState } from '@happier-dev/agents';
 import {
+  DirectSessionsProviderIdSchema,
   type ConnectedServiceId,
   type DirectSessionsProviderId,
+  type DirectSessionsSource,
 } from '@happier-dev/protocol';
 import { BUILT_IN_CATALOG_DEFINED_ACP_AGENTS } from '@/agent/acp/catalog';
 import { agent as auggie } from '@/backends/auggie';
@@ -205,6 +207,23 @@ export async function getDirectSessionProviderOps(providerId: DirectSessionsProv
     providerId,
     entry.getDirectSessionProviderOps,
   );
+}
+
+/** Direct-session providers whose stores can be swept for background observation without side effects. */
+export async function listPassiveSessionObservationProviders(): Promise<Array<Readonly<{
+  providerId: DirectSessionsProviderId;
+  source: DirectSessionsSource;
+  ops: DirectSessionProviderOps;
+}>>> {
+  const providers: Array<Readonly<{ providerId: DirectSessionsProviderId; source: DirectSessionsSource; ops: DirectSessionProviderOps }>> = [];
+  for (const [agentId, entry] of Object.entries(AGENTS)) {
+    const providerId = DirectSessionsProviderIdSchema.safeParse(agentId);
+    if (!entry?.getDirectSessionProviderOps || !providerId.success) continue;
+    const ops = await getDirectSessionProviderOps(providerId.data);
+    const source = ops.passiveObservationSource?.();
+    if (source) providers.push({ providerId: providerId.data, source, ops });
+  }
+  return providers;
 }
 
 export async function getProviderAttachOps(agentId?: AgentId | null): Promise<ProviderAttachOps | null> {

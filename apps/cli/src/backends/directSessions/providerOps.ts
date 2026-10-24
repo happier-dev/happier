@@ -12,6 +12,8 @@ import type {
 import type { LoadedLinkedDirectSession } from '@/api/directSessions/takeover/loadLinkedDirectSession';
 import type { SpawnSessionOptions } from '@/rpc/handlers/registerSessionHandlers';
 
+import type { ObservedProcess } from './processMatch';
+
 export type DirectSessionCandidatesPage = Readonly<{
   candidates: DirectSessionCandidateV1[];
   nextCursor: string | null;
@@ -74,6 +76,22 @@ export type DirectSessionProviderOps = Readonly<{
     source: DirectSessionsSource;
     remoteSessionId: string;
   }>) => Promise<DirectSessionActivitySample>;
+  /** The directory the provider session runs in, read from the provider's own session store. */
+  getWorkingDirectory?: (params: Readonly<{
+    source: DirectSessionsSource;
+    remoteSessionId: string;
+  }>) => Promise<string | null>;
+  /**
+   * Whether a process from a snapshot is this provider's agent. Evidence of a live provider
+   * process only; it does not identify which of the provider's sessions the process serves.
+   */
+  matchesProviderProcess?: (process: ObservedProcess) => boolean;
+  /**
+   * The source to sweep for background observation, present only when listing candidates from it
+   * with `searchMode: 'fast'` (how passive sweeps list) is read-only and starts nothing — no
+   * provider server or agent process. Absent means the provider is not passively observed.
+   */
+  passiveObservationSource?: () => DirectSessionsSource;
   pageTranscript?: (params: Readonly<{
     source: DirectSessionsSource;
     remoteSessionId: string;

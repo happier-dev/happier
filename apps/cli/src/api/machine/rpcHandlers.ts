@@ -78,7 +78,9 @@ import type { DaemonExecutionRunEntry, DaemonExecutionRunProcessInfo } from '@ha
 
 import type { RpcHandlerManager } from '../rpc/RpcHandlerManager';
 import type { MemoryWorkerHandle } from '@/daemon/memory/memoryWorker';
+import type { CodeIntelligenceWorkerHandle } from '@/daemon/codeIntelligence/codeIntelligenceWorker';
 import { registerMachineMemoryRpcHandlers } from './rpcHandlers.memory';
+import { registerMachineCodeIntelligenceRpcHandlers } from './rpcHandlers.codeIntelligence';
 import { registerMachineTerminalRpcHandlers } from './rpcHandlers.terminal';
 import { registerMachineMcpServersRpcHandlers } from './rpcHandlers.mcpServers';
 import { registerMachineDirectSessionsRpcHandlers } from './rpcHandlers.directSessions';
@@ -253,6 +255,7 @@ export type MachineRpcHandlers = {
   resolveExistingStateEnvironment?: NonNullable<Parameters<typeof registerMachineSessionHandoffRpcHandlers>[0]['resolveExistingStateEnvironment']>;
   requestShutdown: () => void;
   memory?: MemoryWorkerHandle;
+  codeIntelligence?: CodeIntelligenceWorkerHandle;
   daemonServerWorkScheduler?: Pick<DaemonServerWorkScheduler, 'getSnapshot'>;
   machineTransferChannel?: Readonly<{
     onEnvelope: (listener: (payload: MachineTransferReceiveEnvelope) => void) => () => void;
@@ -1126,6 +1129,16 @@ export function registerMachineRpcHandlers(params: Readonly<{
     registerMachineMemoryRpcHandlers({
       rpcHandlerManager,
       memoryWorker,
+    });
+  }
+  if (handlers.codeIntelligence) {
+    registerMachineCodeIntelligenceRpcHandlers({
+      rpcHandlerManager,
+      worker: handlers.codeIntelligence,
+      deps: {
+        ...(effectiveMachineRpcWorkingDirectory ? { workingDirectory: effectiveMachineRpcWorkingDirectory } : {}),
+        ...(accessPolicy ? { accessPolicy } : {}),
+      },
     });
   }
   if (handlers.daemonServerWorkScheduler) {

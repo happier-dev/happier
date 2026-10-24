@@ -1,0 +1,68 @@
+---
+title: Code intelligence
+description: Watch the agents, repositories and commits on a machine from one screen, and optionally have a model you choose review each new commit.
+---
+
+Code intelligence lets you see what the coding agents on a machine are doing without starting them from Happier: which Claude Code and Codex sessions are active, which repository and worktree each one is in, and every commit that lands — with the functions and classes it touched. If you want, a model you configure can review each new commit and flag likely problems.
+
+## Availability
+
+Code intelligence is **experimental and off by default**.
+
+1. Turn on **Code intelligence** in **Settings → Features**.
+2. Open **Settings → AI & Agents → Code intelligence**.
+3. Pick the machine (when more than one is online) and turn on the switch next to **Watching is off on this machine**.
+
+Watching is per machine. The machine must be online, and its daemon must include code intelligence.
+
+## What gets watched
+
+- **Agent sessions started outside Happier.** Claude Code and Codex sessions written to their usual session stores in the last day appear under **Agents**, observed read-only. Happier never sends input to them; to continue one from Happier, open it as a direct session. OpenCode and Gemini sessions are not watched yet.
+- **Repositories and worktrees.** When a session works in a git checkout, its repository is added. Linked worktrees of one repository are grouped together. You can also add a repository by path.
+- **Commits.** Each new commit is recorded once, whether an agent, your editor or the git command line made it. A pull that brings in many commits records the newest 50. The first time Happier sees a checkout it records where it stands and does not import older history.
+- **Changed symbols.** For TypeScript/JavaScript, Python, Rust, Go, Java, Kotlin and C# files, Happier lists the functions, methods, classes and types a commit added, changed or removed, and other files that mention them by name. This comes from scanning declarations, not compiling the code, so unusual formatting can hide a symbol.
+
+A session that was active in the same worktree when a commit landed is shown as a hint. It is not proof of who wrote the commit.
+
+What Happier records is stored on the machine and shown only to your own signed-in devices. Watching reads git and the agents' session files; it never changes your files, branches or git state. If the machine limits which folders Happier may reach, repositories outside them are not watched.
+
+## Remote review
+
+Remote review sends a commit to a model you configure and shows its findings next to the commit. It is off until you do all of the following:
+
+1. Turn on **Remote review**.
+2. Add a model.
+3. Switch on remote review for each repository you want reviewed.
+
+What is sent: the commit message, the list of changed files and symbols, and the changed lines with a few lines of context, up to about 48 KB per commit. Dependency and build folders, lockfiles, `.env` files and private-key files are left out, and text that looks like a token, key or password is replaced with `[REDACTED]` first. Redaction is pattern-based, so do not enable remote review for a repository whose diffs you cannot share with that model provider.
+
+Findings are a model's suspicion. Each one is marked **Suspected by a model, not verified**.
+
+### Add a Groq model
+
+1. Create an API key in the Groq console.
+2. Tap **Add a Groq model**, enter a model ID from the console, then the key.
+
+The key is encrypted on the machine with your account's settings key and is not shown again. Groq models added here are marked as free tier, so use them only with a Groq account on the free plan.
+
+### Costs and limits
+
+- Only models marked free are used by default. Happier never switches to a paid model on its own: paid use needs an explicit opt-in, per-token prices and a monthly budget, and a request that could exceed the remaining budget is not sent.
+- If the model is rate limited, Happier waits as long as the service asks and tries again. Another free model is tried first if you configured one. The commit shows **Rate limited, will retry** in the meantime.
+- If the reply cannot be validated, the commit shows **Review failed**. Use **Review again** to retry.
+
+The machine settings also accept OpenRouter, OpenCode Zen, OpenCode Go and any OpenAI-compatible chat-completions endpoint, but the app can only add Groq models today. OpenCode Go is a paid subscription and is never treated as free.
+
+## When it goes wrong
+
+- **"Watching is off on this machine"** — turn on the switch next to it; watching is per machine.
+- **"Couldn't reach this machine"** — the machine is offline or its daemon is not running. The screen keeps the last update.
+- **A repository is missing** — it appears once a Claude Code or Codex session works in it. Otherwise use **Add a repository** with a path inside the checkout.
+- **"Happier isn't allowed to read that folder on this machine"** — the machine limits which folders clients may reach, and the path is outside them. Add a repository inside an allowed folder.
+- **"Not reviewed · remote review is off" / "not allowed for this repository"** — remote review needs both the global switch and the repository switch.
+- **"No eligible model"** — no enabled model is allowed by the cost policy.
+
+## Related
+
+- [Git](/code/git)
+- [Feature flags](/extras/feature-flags)

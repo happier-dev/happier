@@ -15,6 +15,7 @@ This folder documents how Happier works internally, with a focus on protocol, ba
 - backend-architecture.md: Internal backend structure, data flow, and key subsystems.
 - deployment.md: How to deploy the backend and required infrastructure.
 - cli-architecture.md: CLI and daemon architecture and how they interact with the server.
+- code-intelligence.md: Daemon-local observation of agent sessions, repositories and commits, the remote review policy, and its owners.
 - codex-feature-matrix.md: Low-level Codex implementation matrix and unified-architecture migration notes.
 - claude-feature-matrix.md: Low-level Claude implementation matrix and unified-architecture migration notes.
 - opencode-feature-matrix.md: Low-level OpenCode implementation matrix and unified-architecture migration notes.

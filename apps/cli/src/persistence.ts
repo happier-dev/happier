@@ -198,6 +198,12 @@ export interface Settings {
    * Parsed/normalized by `settings/memorySettings.ts`.
    */
   memory?: unknown
+
+  /**
+   * Device-local code intelligence observer settings (opaque JSON payload with sealed secrets).
+   * Parsed/normalized by `settings/codeIntelligenceSettings.ts`.
+   */
+  codeIntelligence?: unknown
 }
 
 const defaultSettings: Settings = {
