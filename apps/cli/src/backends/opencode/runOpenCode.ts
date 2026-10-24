@@ -12,8 +12,6 @@ import { formatProviderPromptErrorMessage } from '@/agent/runtime/formatProvider
 import { runStandardAcpProvider, type StandardAcpProviderConfig, type StandardAcpProviderRunOptions } from '@/agent/runtime/runStandardAcpProvider';
 import { updateAgentStateBestEffort } from '@/api/session/sessionWritesBestEffort';
 
-import { OpenCodeTerminalDisplay } from '@/backends/opencode/ui/OpenCodeTerminalDisplay';
-
 import { maybeUpdateOpenCodeSessionIdMetadata, type OpenCodeSessionMetadataPublicationState } from './utils/opencodeSessionIdMetadata';
 import { createOpenCodeAcpRuntime } from './acp/runtime';
 import {
@@ -90,7 +88,7 @@ export async function runOpenCode(opts: StandardAcpProviderRunOptions & {
     startRuntimeBeforeFirstPrompt: backendMode === 'server',
     machineMetadata: initialMachineMetadata,
     terminalHostOwner: hasHostedTerminal ? 'runtime' : 'startup',
-    terminalDisplay: OpenCodeTerminalDisplay,
+    loadTerminalDisplay: async () => (await import('@/backends/opencode/ui/OpenCodeTerminalDisplay')).OpenCodeTerminalDisplay,
     resolveRuntimeDirectory: ({ session, metadata }) => session.getMetadataSnapshot()?.path ?? metadata.path,
     resolveKeepAliveMode: localControl.resolveKeepAliveMode,
     shouldRenderTerminalDisplay: () => localControl.shouldRenderTerminalDisplay(),

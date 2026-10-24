@@ -1,14 +1,10 @@
-import React from 'react';
-
 import type { Credentials } from '@/persistence';
 import type { PermissionMode } from '@/api/types';
 import { logger } from '@/ui/logger';
 import { initialMachineMetadata } from '@/daemon/machine/metadata';
 import { formatProviderPromptErrorMessage } from '@/agent/runtime/formatProviderPromptErrorMessage';
 import { runStandardAcpProvider, type StandardAcpProviderRunOptions } from '@/agent/runtime/runStandardAcpProvider';
-import type { MessageBuffer } from '@/ui/ink/messageBuffer';
 
-import { CatalogDefinedAcpTerminalDisplay } from '../ui/CatalogDefinedAcpTerminalDisplay';
 import { materializeConfiguredAcpEnvironment } from './materializeConfiguredAcpEnvironment';
 import { resolveConfiguredAcpBackendFromAccountSettings } from './resolveConfiguredAcpBackendFromAccountSettings';
 import { resolveConfiguredAcpBackendStartupOverrides } from './resolveConfiguredAcpBackendStartupOverrides';
@@ -38,12 +34,6 @@ export async function runConfiguredAcpBackend(
     credentials: opts.credentials,
   });
 
-  const TerminalDisplay = (props: Readonly<{
-    messageBuffer: MessageBuffer;
-    logPath?: string;
-    onExit?: () => void | Promise<void>;
-  }>) => React.createElement(CatalogDefinedAcpTerminalDisplay, { ...props, title: backend.title });
-
   await runStandardAcpProvider({
     ...opts,
     backendTarget: { kind: 'configuredAcpBackend', backendId: backend.backendId },
@@ -56,7 +46,13 @@ export async function runConfiguredAcpBackend(
     waitingForCommandLabel: backend.title,
     agentMessageType: `acp:${backend.backendId}`,
     machineMetadata: initialMachineMetadata,
-    terminalDisplay: TerminalDisplay,
+    loadTerminalDisplay: async () => {
+      const [{ default: React }, { CatalogDefinedAcpTerminalDisplay }] = await Promise.all([
+        import('react'),
+        import('../ui/CatalogDefinedAcpTerminalDisplay'),
+      ]);
+      return (props) => React.createElement(CatalogDefinedAcpTerminalDisplay, { ...props, title: backend.title });
+    },
     // Same configured-backend declaration the ACP protocol owner enforces against the
     // negotiated handshake, so a backend that promises resume never silently starts fresh.
     declaredSessionLoadSupport: backend.capabilities.supportsLoadSession,

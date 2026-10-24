@@ -2,8 +2,6 @@ import type { CommandContext } from '@/cli/commandRegistry';
 import { runBackendSessionCliCommand } from '@/cli/runBackendSessionCliCommand';
 import { readOptionalFlagValue } from '@/cli/sessionStartArgs';
 
-import { runConfiguredAcpBackend } from './runConfiguredAcpBackend';
-
 export async function handleConfiguredAcpCatalogCliCommand(context: CommandContext): Promise<void> {
   const configuredAcpBackendId = readOptionalFlagValue(context.args, '--backend');
   const backendId = typeof configuredAcpBackendId === 'string' ? configuredAcpBackendId.trim() : '';
@@ -14,9 +12,12 @@ export async function handleConfiguredAcpCatalogCliCommand(context: CommandConte
   await runBackendSessionCliCommand({
     context,
     loadAccountSettings: true,
-    loadRun: async () => (opts) => runConfiguredAcpBackend({
-      ...opts,
-      configuredAcpBackendId: backendId,
-    }),
+    loadRun: async () => {
+      const { runConfiguredAcpBackend } = await import('./runConfiguredAcpBackend');
+      return (opts) => runConfiguredAcpBackend({
+        ...opts,
+        configuredAcpBackendId: backendId,
+      });
+    },
   });
 }

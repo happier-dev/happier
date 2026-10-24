@@ -1,9 +1,6 @@
-import { render } from "ink";
 import { Session } from "./session";
 import type { Metadata } from '@/api/types';
 import { MessageBuffer } from "@/ui/ink/messageBuffer";
-import { RemoteModeDisplay } from "@/backends/claude/ui/RemoteModeDisplay";
-import React from "react";
 import {
     claudeRemoteDispatch,
     type ClaudeRemoteRunnerKind,
@@ -445,6 +442,12 @@ export async function claudeRemoteLauncher(
     const suppressedExplicitDiffCallIds = new Set<string>();
 
     if (shouldRenderInkUi) {
+        // Ink and React load only for an attached terminal UI, keeping them out of daemon-started runners.
+        const [{ render }, { default: React }, { RemoteModeDisplay }] = await Promise.all([
+            import('ink'),
+            import('react'),
+            import('@/backends/claude/ui/RemoteModeDisplay'),
+        ]);
         console.clear();
         const inkStdout = createNonBlockingStdout(process.stdout as any);
         inkInstance = render(React.createElement(RemoteModeDisplay, {

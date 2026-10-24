@@ -1,15 +1,25 @@
-import { render } from 'ink';
-import React from 'react';
+import type { render } from 'ink';
 
 import { cleanupStdinAfterInk } from '@/ui/ink/cleanupStdinAfterInk';
-import { MessageBuffer } from '@/ui/ink/messageBuffer';
+import type { MessageBuffer } from '@/ui/ink/messageBuffer';
 import { createNonBlockingStdout } from '@/ui/ink/nonBlockingStdout';
-import { CodexTerminalDisplay } from '@/backends/codex/ui/CodexTerminalDisplay';
+import { logger } from '@/ui/logger';
 import {
     startRemoteModeStaticControl,
     type RemoteModeControlSurface,
     type RemoteModeStaticControl,
 } from '@/ui/remoteControl/remoteModeControl';
+
+async function loadCodexInkUi() {
+    const [{ render }, { default: React }, { CodexTerminalDisplay }] = await Promise.all([
+        import('ink'),
+        import('react'),
+        import('@/backends/codex/ui/CodexTerminalDisplay'),
+    ]);
+    return { render, React, CodexTerminalDisplay };
+}
+
+type CodexInkUi = Awaited<ReturnType<typeof loadCodexInkUi>>;
 
 export function createCodexRemoteTerminalUi(params: {
     messageBuffer: MessageBuffer;
@@ -25,8 +35,14 @@ export function createCodexRemoteTerminalUi(params: {
     let staticControl: RemoteModeStaticControl | null = null;
     let allowSwitchToLocal = false;
     const surface: RemoteModeControlSurface = params.surface ?? (params.hasTTY ? 'ink' : 'none');
+    // Ink and React load on the first ink mount, so runners that never show the ink surface never load them.
+    let inkUi: CodexInkUi | null = null;
+    let inkUiLoad: Promise<CodexInkUi> | null = null;
+    let inkRequested = false;
+    // An unmount drains stdin, then restores cooked mode and pauses it; a remount must not render until that finishes.
+    let unmountInFlight: Promise<void> | null = null;
 
-    const renderRemoteUi = () => React.createElement(CodexTerminalDisplay, {
+    const renderRemoteUi = (ui: CodexInkUi) => ui.React.createElement(ui.CodexTerminalDisplay, {
         messageBuffer: params.messageBuffer,
         logPath: params.logPath,
         allowSwitchToLocal,
@@ -49,9 +65,37 @@ export function createCodexRemoteTerminalUi(params: {
             return;
         }
         if (surface !== 'ink' || !params.hasTTY) return;
+        inkRequested = true;
+        if (inkUi && !unmountInFlight) {
+            try {
+                renderInk(inkUi);
+            } catch (error) {
+                reportInkFailure(error);
+            }
+            return;
+        }
+        inkUiLoad ??= loadCodexInkUi().catch((error: unknown) => {
+            inkUiLoad = null;
+            throw error;
+        });
+        void Promise.all([inkUiLoad, unmountInFlight])
+            .then(([ui]) => {
+                inkUi = ui;
+                if (inkRequested && !unmountInFlight) renderInk(ui);
+            })
+            .catch(reportInkFailure);
+    };
+
+    // The terminal UI is a local convenience view: a failure to load or render it is
+    // logged and leaves the session running for remote clients.
+    const reportInkFailure = (error: unknown) => {
+        logger.warnFile('[codex] Failed to show the terminal display', error);
+    };
+
+    const renderInk = (ui: CodexInkUi) => {
         if (!inkInstance) {
             console.clear();
-            inkInstance = render(renderRemoteUi(), {
+            inkInstance = ui.render(renderRemoteUi(ui), {
                 exitOnCtrlC: false,
                 patchConsole: false,
                 stdout: createNonBlockingStdout(process.stdout as any),
@@ -64,10 +108,19 @@ export function createCodexRemoteTerminalUi(params: {
             params.stdin.setEncoding('utf8');
             return;
         }
-        inkInstance.rerender(renderRemoteUi());
+        inkInstance.rerender(renderRemoteUi(ui));
     };
 
-    const unmount = async () => {
+    const unmount = (): Promise<void> => {
+        inkRequested = false;
+        const unmounting = unmountUi().finally(() => {
+            if (unmountInFlight === unmounting) unmountInFlight = null;
+        });
+        unmountInFlight = unmounting;
+        return unmounting;
+    };
+
+    const unmountUi = async () => {
         if (staticControl) {
             await staticControl.stop();
             staticControl = null;
@@ -109,8 +162,8 @@ export function createCodexRemoteTerminalUi(params: {
                 onSwitchToLocal: params.onSwitchToLocal,
             });
         }
-        if (inkInstance) {
-            inkInstance.rerender(renderRemoteUi());
+        if (inkUi && inkInstance) {
+            inkInstance.rerender(renderRemoteUi(inkUi));
         }
     };
 

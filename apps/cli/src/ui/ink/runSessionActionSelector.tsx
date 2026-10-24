@@ -1,10 +1,7 @@
-import React from 'react';
-import { render } from 'ink';
-
 import { cleanupStdinAfterInk } from '@/ui/ink/cleanupStdinAfterInk';
 import { createNonBlockingStdout } from '@/ui/ink/nonBlockingStdout';
 import { restoreStdinBestEffort } from '@/ui/ink/restoreStdinBestEffort';
-import { SessionActionSelector, type SessionActionSelectorRow } from './SessionActionSelector';
+import type { SessionActionSelectorRow } from './SessionActionSelector';
 
 type InkInstance = {
   unmount: () => void;
@@ -25,6 +22,12 @@ export async function runSessionActionSelector(params: Readonly<{
   rows: ReadonlyArray<SessionActionSelectorRow>;
   onProbe?: (sessionId: string) => Promise<{ reachable: boolean; reason?: string }>;
 }>): Promise<{ type: 'selected'; sessionId: string } | { type: 'cancelled' }> {
+  // Ink and React load only when a selector is shown, keeping them out of every session runner.
+  const [{ render }, { default: React }, { SessionActionSelector }] = await Promise.all([
+    import('ink'),
+    import('react'),
+    import('./SessionActionSelector'),
+  ]);
   let inkInstance: InkInstance | null = null;
   let resolveSelection: ((value: { type: 'selected'; sessionId: string } | { type: 'cancelled' }) => void) | null = null;
   const selectionPromise = new Promise<{ type: 'selected'; sessionId: string } | { type: 'cancelled' }>((resolve) => {

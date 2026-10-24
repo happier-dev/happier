@@ -115,7 +115,7 @@ function createHarness() {
       happyHomeDir: '/tmp/.happy',
       happyLibDir: '/tmp/lib',
     },
-    terminalDisplay: (() => null) as any,
+    loadTerminalDisplay: async () => () => null,
     beforeInitializeSession: ({ metadata }: any) => {
       beforeInitializeCalls += 1;
       (metadata as any).auggieAllowIndexing = true;
@@ -930,9 +930,70 @@ describe('runStandardAcpProvider', () => {
     expect(keepAliveModes[0]).toBe('local');
   });
 
-  it('skips terminal rendering when the provider disables the remote terminal UI', async () => {
+  it.each([
+    ['loading', { loadFails: true, renderFails: false }],
+    ['rendering', { loadFails: false, renderFails: true }],
+  ])('keeps the session running when %s the terminal display fails', async (_phase, failure) => {
+    const harness = createHarness();
+    harness.config.loadTerminalDisplay = async () => {
+      if (failure.loadFails) throw new Error('display chunk missing');
+      return () => null;
+    };
+    const renderFn = vi.fn(() => {
+      if (failure.renderFails) throw new Error('render failed');
+      return { unmount: vi.fn() };
+    });
+    let readySent = false;
+    harness.deps.runPermissionModePromptLoopFn = async (params: any) => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      params.sendReady();
+      readySent = true;
+    };
+
+    const stdoutDescriptor = Object.getOwnPropertyDescriptor(process.stdout, 'isTTY');
+    const stdinDescriptor = Object.getOwnPropertyDescriptor(process.stdin, 'isTTY');
+    Object.defineProperty(process.stdout, 'isTTY', { configurable: true, value: true });
+    Object.defineProperty(process.stdin, 'isTTY', { configurable: true, value: true });
+
+    try {
+      await runStandardAcpProvider(harness.opts, harness.config, { ...harness.deps, renderFn });
+    } finally {
+      if (stdoutDescriptor) Object.defineProperty(process.stdout, 'isTTY', stdoutDescriptor);
+      else delete (process.stdout as { isTTY?: boolean }).isTTY;
+      if (stdinDescriptor) Object.defineProperty(process.stdin, 'isTTY', stdinDescriptor);
+      else delete (process.stdin as { isTTY?: boolean }).isTTY;
+    }
+
+    expect(readySent).toBe(true);
+  });
+
+  it('does not load the terminal display without an attached TTY', async () => {
+    const harness = createHarness();
+    const loadTerminalDisplay = vi.fn(async () => () => null);
+    harness.config.loadTerminalDisplay = loadTerminalDisplay;
+
+    const stdoutDescriptor = Object.getOwnPropertyDescriptor(process.stdout, 'isTTY');
+    const stdinDescriptor = Object.getOwnPropertyDescriptor(process.stdin, 'isTTY');
+    Object.defineProperty(process.stdout, 'isTTY', { configurable: true, value: false });
+    Object.defineProperty(process.stdin, 'isTTY', { configurable: true, value: false });
+
+    try {
+      await runStandardAcpProvider(harness.opts, harness.config, harness.deps);
+    } finally {
+      if (stdoutDescriptor) Object.defineProperty(process.stdout, 'isTTY', stdoutDescriptor);
+      else delete (process.stdout as { isTTY?: boolean }).isTTY;
+      if (stdinDescriptor) Object.defineProperty(process.stdin, 'isTTY', stdinDescriptor);
+      else delete (process.stdin as { isTTY?: boolean }).isTTY;
+    }
+
+    expect(loadTerminalDisplay).not.toHaveBeenCalled();
+  });
+
+  it('skips loading and rendering the terminal UI when the provider disables it', async () => {
     const harness = createHarness();
     const renderFn = vi.fn(() => ({ unmount: vi.fn() }));
+    const loadTerminalDisplay = vi.fn(async () => () => null);
+    harness.config.loadTerminalDisplay = loadTerminalDisplay;
     (harness.config as any).shouldRenderTerminalDisplay = () => false;
 
     const stdoutDescriptor = Object.getOwnPropertyDescriptor(process.stdout, 'isTTY');
@@ -951,6 +1012,7 @@ describe('runStandardAcpProvider', () => {
     }
 
     expect(renderFn).not.toHaveBeenCalled();
+    expect(loadTerminalDisplay).not.toHaveBeenCalled();
   });
 
   it('exposes a terminal display controller for provider-managed mount and unmount transitions', async () => {
@@ -974,13 +1036,16 @@ describe('runStandardAcpProvider', () => {
       controller = value;
     };
     harness.deps.runPermissionModePromptLoopFn = async (params: any) => {
-      if (!controller) throw new Error('Expected terminal display controller');
-      expect(controller.isMounted()).toBe(false);
-      controller.mount();
-      expect(controller.isMounted()).toBe(true);
-      await controller.unmount();
-      expect(controller.isMounted()).toBe(false);
-      controller.mount();
+      const terminalDisplay = controller;
+      if (!terminalDisplay) throw new Error('Expected terminal display controller');
+      expect(terminalDisplay.isMounted()).toBe(false);
+      // The first mount loads the terminal UI; later mounts render synchronously.
+      terminalDisplay.mount();
+      await vi.waitFor(() => expect(terminalDisplay.isMounted()).toBe(true));
+      await terminalDisplay.unmount();
+      expect(terminalDisplay.isMounted()).toBe(false);
+      terminalDisplay.mount();
+      expect(terminalDisplay.isMounted()).toBe(true);
       params.sendReady();
     };
 

@@ -10,8 +10,6 @@ import type { Credentials } from '@/persistence';
 import { initialMachineMetadata } from '@/daemon/machine/metadata';
 import { runStandardAcpProvider, type StandardAcpProviderRunOptions } from '@/agent/runtime/runStandardAcpProvider';
 
-import { QwenTerminalDisplay } from '@/backends/qwen/ui/QwenTerminalDisplay';
-
 import { createQwenAcpRuntime } from './acp/runtime';
 
 export async function runQwen(opts: StandardAcpProviderRunOptions & {
@@ -26,7 +24,7 @@ export async function runQwen(opts: StandardAcpProviderRunOptions & {
     waitingForCommandLabel: 'Qwen Code',
     agentMessageType: 'qwen',
     machineMetadata: initialMachineMetadata,
-    terminalDisplay: QwenTerminalDisplay,
+    loadTerminalDisplay: async () => (await import('@/backends/qwen/ui/QwenTerminalDisplay')).QwenTerminalDisplay,
     createRuntime: ({ directory, machineId, session, messageBuffer, mcpServers, permissionHandler, setThinking, getPermissionMode, memoryRecallGuidanceEnabled, processEnv, pendingQueueDrainMaxPopPerWake, providerInputConsumer }) => createQwenAcpRuntime({
       directory,
       machineId,

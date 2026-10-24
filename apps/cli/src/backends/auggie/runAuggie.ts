@@ -13,7 +13,6 @@ import { formatProviderPromptErrorMessage } from '@/agent/runtime/formatProvider
 
 import { createAuggieAcpRuntime } from '@/backends/auggie/acp/runtime';
 import { readAuggieAllowIndexingFromEnv } from '@/backends/auggie/utils/env';
-import { AuggieTerminalDisplay } from '@/backends/auggie/ui/AuggieTerminalDisplay';
 
 const AUGGIE_AUTH_HINT = 'Auggie appears not authenticated. Run `auggie login` on this machine (the same user running the daemon) and try again.';
 
@@ -31,7 +30,7 @@ export async function runAuggie(opts: StandardAcpProviderRunOptions & {
     waitingForCommandLabel: 'Auggie',
     agentMessageType: 'auggie',
     machineMetadata: initialMachineMetadata,
-    terminalDisplay: AuggieTerminalDisplay,
+    loadTerminalDisplay: async () => (await import('@/backends/auggie/ui/AuggieTerminalDisplay')).AuggieTerminalDisplay,
     beforeInitializeSession: ({ metadata }) => {
       (metadata as any).auggieAllowIndexing = allowIndexingFromEnv;
     },
