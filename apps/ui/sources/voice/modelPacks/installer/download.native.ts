@@ -1,5 +1,6 @@
 import { sha256 } from '@noble/hashes/sha2';
 import { bytesToHex } from '@noble/hashes/utils';
+import { requireOptionalNativeModule } from 'expo-modules-core';
 import { Platform } from 'react-native';
 
 import type { ModelPackManifest } from '@/voice/modelPacks/manifest';
@@ -8,8 +9,8 @@ import type { InstallerDirectory, InstallerFile, InstallerFs, ModelPackDownloadP
 import { getPackFile } from './paths';
 import { cacheBustUrl, throwIfAborted } from './network';
 
-// Model files are tens to hundreds of MB; whole-file reads exceed Android's per-app JS heap, so
-// files are hashed through bounded reads.
+// Model files are tens to hundreds of MB; whole-file reads exceed Android's per-app JS heap, so the JS
+// fallback hashes files through bounded reads.
 const HASH_READ_CHUNK_BYTES = 1024 * 1024;
 
 // Packs hold hundreds of small espeak-ng files, so per-request latency dominates a sequential install.
@@ -54,7 +55,24 @@ async function abortableDelay(ms: number, signal: AbortSignal): Promise<void> {
   throwIfAborted(signal);
 }
 
-async function sha256FileHex(
+type NativeFileHasher = { sha256File(fileUri: string): Promise<string> };
+
+let reportedJsHashFallback = false;
+
+// Hermes has no JIT, so a JS SHA-256 is orders of magnitude slower than native and blocks the JS thread
+// for minutes over a pack's largest files, starving the other downloads, progress events, and UI. The
+// native hasher streams the file on a background queue. Builds whose native module predates it still verify in JS.
+function getNativeFileHasher(): NativeFileHasher | null {
+  const native = requireOptionalNativeModule<Partial<NativeFileHasher>>('HappierCryptoWorker');
+  if (native && typeof native.sha256File === 'function') return native as NativeFileHasher;
+  if (!reportedJsHashFallback) {
+    reportedJsHashFallback = true;
+    console.warn('[modelPacks] Native SHA-256 unavailable; verifying model files on the JS thread');
+  }
+  return null;
+}
+
+async function sha256FileHexInJs(
   file: Pick<InstallerFile, 'open'>,
   signal: AbortSignal,
   onHashed?: (bytes: number) => void,
@@ -77,6 +95,22 @@ async function sha256FileHex(
     handle.close();
   }
   return bytesToHex(hash.digest());
+}
+
+async function sha256FileHex(
+  file: Pick<InstallerFile, 'uri' | 'open'>,
+  signal: AbortSignal,
+  onHashed?: (bytes: number) => void,
+): Promise<string> {
+  const native = getNativeFileHasher();
+  if (!native) return sha256FileHexInJs(file, signal, onHashed);
+  throwIfAborted(signal);
+  // One native call per file, so verification reports no intermediate bytes; the file counts as
+  // verified once its hash matches. Native hashing is short even for the largest files,
+  // so cancellation is honored once it returns.
+  const hex = await native.sha256File(file.uri);
+  throwIfAborted(signal);
+  return hex.toLowerCase();
 }
 
 type NativeDownloader = Pick<typeof import('expo-file-system/legacy'), 'createDownloadResumable' | 'FileSystemSessionType'>;

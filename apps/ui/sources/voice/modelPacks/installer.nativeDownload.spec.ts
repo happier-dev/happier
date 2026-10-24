@@ -12,6 +12,7 @@ type NativeTask = {
 
 const nativeBoundary = vi.hoisted(() => ({
   platform: { OS: 'android' as 'android' | 'ios' },
+  cryptoWorker: null as null | { sha256File?: (fileUri: string) => Promise<string> },
   createDownloadResumable: vi.fn<(
     url: string, uri: string, options: DownloadOptions | undefined,
     onProgress?: (progress: DownloadProgressData) => void,
@@ -22,6 +23,9 @@ const nativeBoundary = vi.hoisted(() => ({
 vi.mock('expo-file-system/legacy', () => ({
   createDownloadResumable: nativeBoundary.createDownloadResumable,
   FileSystemSessionType: { BACKGROUND: 0, FOREGROUND: 1 },
+}));
+vi.mock('expo-modules-core', () => ({
+  requireOptionalNativeModule: (name: string) => (name === 'HappierCryptoWorker' ? nativeBoundary.cryptoWorker : null),
 }));
 vi.mock('react-native', async () => {
   const { createReactNativeNativeMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -46,6 +50,7 @@ async function createHarness(options: { status?: number; pending?: boolean; fail
   const written = deferred<void>();
   const terminal = deferred<FileSystemDownloadResult | undefined>();
   const lifecycle = { subscribed: false, retainedNativeTask: false, stopRequested: false };
+  const jsHashReads = { count: 0 };
   const requestedUrls: string[] = [];
   const nativeUrls: string[] = [];
   const nativeOptions: DownloadOptions[] = [];
@@ -86,6 +91,7 @@ async function createHarness(options: { status?: number; pending?: boolean; fail
       const fileUri = this.uri;
       return {
         readBytes(length: number) {
+          jsHashReads.count += 1;
           if (length > 4 * 1024 * 1024) throw new Error('whole_file_read');
           const chunk = (files.get(fileUri) ?? new Uint8Array()).slice(offset, offset + length);
           offset += chunk.length;
@@ -149,13 +155,14 @@ async function createHarness(options: { status?: number; pending?: boolean; fail
     timeoutMs: 120_000, signal, onProgress,
   }, { fs: { Directory, File, Paths: { document: 'file:///docs/' } }, fetch: fetchImpl });
 
-  return { bytes, files, fileUri, metaUri, written, terminal, lifecycle, requestedUrls, nativeUrls, nativeOptions, cleanupError, install };
+  return { bytes, sha256, files, fileUri, metaUri, written, terminal, lifecycle, jsHashReads, requestedUrls, nativeUrls, nativeOptions, cleanupError, install };
 }
 
 describe('native model pack file downloads', () => {
   beforeEach(() => {
     nativeBoundary.createDownloadResumable.mockReset();
     nativeBoundary.platform.OS = 'android';
+    nativeBoundary.cryptoWorker = null;
   });
   afterEach(() => { vi.useRealTimers(); });
 
@@ -179,6 +186,43 @@ describe('native model pack file downloads', () => {
       { loaded: 4, total: 4, verified: 4, filesDone: 1, filesTotal: 1 },
     ]);
     expect(harness.lifecycle).toMatchObject({ subscribed: false, retainedNativeTask: false });
+  });
+
+  it('verifies downloaded files with the native hasher instead of hashing bytes on the JS thread', async () => {
+    const harness = await createHarness();
+    const { createHash } = await import('node:crypto');
+    const hashedUris: string[] = [];
+    nativeBoundary.cryptoWorker = {
+      async sha256File(fileUri) {
+        hashedUris.push(fileUri);
+        return createHash('sha256').update(harness.files.get(fileUri) ?? new Uint8Array()).digest('hex');
+      },
+    };
+    const progress: ModelPackDownloadProgress[] = [];
+    await harness.install(new AbortController().signal, (value) => progress.push(value));
+
+    expect(hashedUris).toEqual([harness.fileUri]);
+    expect(harness.jsHashReads.count).toBe(0);
+    expect(harness.files.has(harness.metaUri)).toBe(true);
+    expect(progress.at(-1)).toEqual({ loaded: 4, total: 4, verified: 4, filesDone: 1, filesTotal: 1 });
+  });
+
+  it('rejects a downloaded file whose native hash does not match the manifest', async () => {
+    const harness = await createHarness();
+    nativeBoundary.cryptoWorker = { sha256File: async () => '0'.repeat(64) };
+    await expect(harness.install(new AbortController().signal)).rejects.toThrow('model_pack_sha256_mismatch');
+    expect(harness.files.has(harness.fileUri)).toBe(false);
+    expect(harness.files.has(harness.metaUri)).toBe(false);
+  });
+
+  it('fails the install and removes the file when native hashing fails', async () => {
+    const harness = await createHarness();
+    const hashError = new Error('native_hash_failed');
+    nativeBoundary.cryptoWorker = { sha256File: async () => { throw hashError; } };
+    await expect(harness.install(new AbortController().signal)).rejects.toBe(hashError);
+    expect(harness.jsHashReads.count).toBe(0);
+    expect(harness.files.has(harness.fileUri)).toBe(false);
+    expect(harness.files.has(harness.metaUri)).toBe(false);
   });
 
   it('rejects a non-success HTTP result and removes the native-downloaded file', async () => {
