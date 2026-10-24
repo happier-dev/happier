@@ -26,6 +26,23 @@ how a session behaves — steering, queued input, which runtime controls apply
 live — to be worth reading about first:
 [Claude unified terminal](/sessions/claude-unified-terminal).
 
+### Idle remote sessions
+
+With the Agent SDK and legacy runtimes, Happier stops the background `claude`
+process — and the MCP servers it started — after a remote session has been
+idle for 30 minutes. The session stays open. Your next message starts Claude
+again and resumes the same conversation, so the first reply after a long pause
+can take a few extra seconds.
+
+Idle time counts from the end of the last turn. A session is never stopped
+while a turn, a permission request, or a background task or agent is still
+running, or after Claude scheduled its own follow-up (a session cron or `/loop`
+wakeup). Sessions with file checkpointing enabled and unified terminal sessions
+are not affected.
+
+To change the idle time, set `HAPPIER_CLAUDE_REMOTE_IDLE_EXIT_MS` (milliseconds)
+in the Happier CLI/daemon environment (up to about 24 days). `0` turns idle shutdown off.
+
 ## Start in Happier, continue in the terminal
 
 Claude supports Happier’s attach flow for app-started sessions:

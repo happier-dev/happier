@@ -247,6 +247,17 @@ function readRecord(value: unknown): Record<string, unknown> | null {
     return value as Record<string, unknown>;
 }
 
+const SCHEDULED_PROVIDER_WORK_TOOL_NAMES: ReadonlySet<string> = new Set(['CronCreate', 'ScheduleWakeup']);
+
+function startsScheduledProviderWork(message: SDKMessage): boolean {
+    if (message.type !== 'assistant') return false;
+    const content: unknown = (message as { message?: { content?: unknown } }).message?.content;
+    return Array.isArray(content) && content.some((block) => {
+        const record = readRecord(block);
+        return record?.type === 'tool_use' && typeof record.name === 'string' && SCHEDULED_PROVIDER_WORK_TOOL_NAMES.has(record.name);
+    });
+}
+
 function readNonEmptyString(value: unknown): string | null {
     if (typeof value !== 'string') return null;
     const trimmed = value.trim();
@@ -865,7 +876,12 @@ export async function claudeRemoteLauncher(
         }
     }
 
+    // Session crons and /loop wakeups live inside the Claude child; idle exit would silently drop them.
+    let launchStartedScheduledProviderWork = false;
     function onMessage(message: SDKMessage) {
+        if (!launchStartedScheduledProviderWork && startsScheduledProviderWork(message)) {
+            launchStartedScheduledProviderWork = true;
+        }
         // The Agent SDK owns its live provider-task feed internally and Unified owns the raw JSONL
         // feed. Legacy stream-json reaches this shared callback, so route only that mode here to
         // keep one tuple ledger without double publication.
@@ -1375,6 +1391,9 @@ export async function claudeRemoteLauncher(
             const sessionIdAtLaunchStart = session.sessionId;
             const controller = new AbortController();
             abortController = controller;
+            // Idle exit only stops a child this launch actually started with a prompt.
+            let launchDeliveredPrompt = false;
+            launchStartedScheduledProviderWork = false;
             if (terminationSignal?.aborted) {
                 // Termination arrived between launches; never start another provider run.
                 controller.abort(terminationSignal.reason ?? 'claude-runner-termination');
@@ -1497,6 +1516,55 @@ export async function claudeRemoteLauncher(
                         activeRuntimeModeKind === 'agentSdk' && workflowActivitySource !== null,
                     );
                     return pinnedBatch;
+                };
+                const isProviderIdleForExit = (): boolean => {
+                    if (session.thinking || session.client.hasActiveCanonicalTurn?.() !== false) return false;
+                    const providerTaskState = providerTaskRuntimeActivityAdapter?.readCurrentState()
+                        ?? (providerRuntimeActivityEvidence.providerActivityLedger.hasActiveProviderTasks() ? 'active' : 'idle');
+                    return providerTaskState === 'idle';
+                };
+                // Stops an idle provider child (and the MCP servers it spawned) by ending its prompt
+                // stream, the same clean path as a mode-change relaunch. The next launch spawns lazily
+                // on the next prompt and resumes the same Claude session.
+                const waitForNextBatchOrIdleExit = async (): Promise<MessageBatch<EnhancedMode, string> | null> => {
+                    const next = waitForNextBatch();
+                    const idleExitMs = configuration.claudeRemoteIdleExitMs;
+                    if (idleExitMs <= 0 || !launchDeliveredPrompt || activeRuntimeModeKind === 'unifiedTerminal') return next;
+                    // `/checkpoints` and `/rewind` read checkpoint ids held only by the running Agent SDK
+                    // runner; a restart would forget them.
+                    if (mode?.claudeRemoteEnableFileCheckpointing === true) return next;
+                    // The Agent SDK pump asks for the next prompt while a turn is still running, so
+                    // idle time is measured from the last observed activity, not from this call.
+                    let lastBusyAtMs = Date.now();
+                    let waitMs = idleExitMs;
+                    for (;;) {
+                        let idleTimer: ReturnType<typeof setTimeout> | undefined;
+                        const idle = new Promise<'idle'>((resolve) => {
+                            idleTimer = setTimeout(() => resolve('idle'), waitMs);
+                        });
+                        const winner = await Promise.race([next, idle]).finally(() => clearTimeout(idleTimer));
+                        if (winner !== 'idle') return winner;
+                        const now = Date.now();
+                        if (launchStartedScheduledProviderWork || !isProviderIdleForExit()) {
+                            lastBusyAtMs = now;
+                            waitMs = idleExitMs;
+                            continue;
+                        }
+                        const quietForMs = now - Math.max(lastBusyAtMs, session.thinkingChangedAtMs);
+                        if (quietForMs < idleExitMs) {
+                            waitMs = idleExitMs - quietForMs;
+                            continue;
+                        }
+                        logger.infoFile('[remote]: stopping idle Claude provider', { idleExitMs, quietForMs, sessionId: session.sessionId });
+                        // Leave the input wait to the launch-finished abort instead of cancelling it here:
+                        // a batch it already took becomes the next launch's first prompt.
+                        void next.then((batch) => {
+                            if (batch) pending = batch;
+                        }, (error: unknown) => {
+                            logger.infoFile('[remote]: input wait failed after idle provider exit', { error: String(error) });
+                        });
+                        return null;
+                    }
                 };
 
                 const takeBatchDeliveryAttributionForProvider = (batch: MessageBatch<EnhancedMode, string>) =>
@@ -1685,6 +1753,7 @@ export async function claudeRemoteLauncher(
                             } else {
                                 unifiedBinding.noteNextInjectedPromptShouldSuppressEcho();
                             }
+                            launchDeliveredPrompt = true;
                             return {
                                 message: providerMessage,
                                 mode: p.mode,
@@ -1692,7 +1761,7 @@ export async function claudeRemoteLauncher(
                             };
                         }
 
-                        const msg = await waitForNextBatch();
+                        const msg = await waitForNextBatchOrIdleExit();
                         if (!msg) {
                             return null;
                         }
@@ -1727,6 +1796,7 @@ export async function claudeRemoteLauncher(
                             unifiedBinding.noteNextInjectedPromptShouldSuppressEcho();
                         }
 
+                        launchDeliveredPrompt = true;
                         return {
                             message: providerMessage,
                             mode: msg.mode,

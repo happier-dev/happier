@@ -16,6 +16,7 @@ import { claudeRemoteLauncher } from './claudeRemoteLauncher';
 import { hashClaudeEnhancedModeForQueue } from './remote/modeHash';
 import { Session } from './session';
 import { logger } from '@/ui/logger';
+import { reloadConfiguration } from '@/configuration';
 import { completedNativeChildTranscript } from './workflows/claudeWorkflowActivitySource.testkit';
 import type { SessionWorkflowRunSnapshotV1 } from '@happier-dev/protocol';
 import type { Query } from '@anthropic-ai/claude-agent-sdk';
@@ -897,4 +898,197 @@ describe.sequential('claudeRemoteLauncher legacy Runtime Activity subscriber', (
       ]));
     }
   }, 60_000);
+
+  describe('idle provider exit', () => {
+    const previousIdleExitMs = process.env.HAPPIER_CLAUDE_REMOTE_IDLE_EXIT_MS;
+    const idleExitMs = 50;
+
+    beforeEach(() => {
+      process.env.HAPPIER_CLAUDE_REMOTE_IDLE_EXIT_MS = String(idleExitMs);
+      reloadConfiguration();
+    });
+
+    afterEach(() => {
+      if (previousIdleExitMs === undefined) delete process.env.HAPPIER_CLAUDE_REMOTE_IDLE_EXIT_MS;
+      else process.env.HAPPIER_CLAUDE_REMOTE_IDLE_EXIT_MS = previousIdleExitMs;
+      reloadConfiguration();
+    });
+
+    const agentSdkMode = {
+      permissionMode: 'default',
+      claudeRemoteAgentSdkEnabled: true,
+      claudeUnifiedTerminalEnabled: false,
+    } as const;
+
+    type LaunchRecord = { sessionId: unknown; firstMessage: string | null; idleNext: 'pending' | 'ended' | 'message' };
+
+    // The Agent SDK runner owns the Claude child process. Each launch reads its prompts through the
+    // real launcher `nextMessage`; returning from the runner is the child exiting.
+    function recordLaunches(): LaunchRecord[] {
+      const launches: LaunchRecord[] = [];
+      mockClaudeRemoteAgentSdk.mockImplementation(async (opts: Readonly<{
+        sessionId?: unknown;
+        nextMessage: () => Promise<Readonly<{ message: string }> | null>;
+      }>) => {
+        const launch: LaunchRecord = { sessionId: opts.sessionId, firstMessage: null, idleNext: 'pending' };
+        launches.push(launch);
+        launch.firstMessage = (await opts.nextMessage())?.message ?? null;
+        const next = await opts.nextMessage();
+        launch.idleNext = next ? 'message' : 'ended';
+      });
+      return launches;
+    }
+
+    // The harness client omits the optional turn query; the production SessionClient implements it,
+    // and idle exit treats a missing answer as busy.
+    function markCanonicalTurnIdle(session: Session): void {
+      Object.assign(session.client, { hasActiveCanonicalTurn: () => false });
+    }
+
+    it('stops an idle provider child and resumes the same Claude session on the next prompt', async () => {
+      const { session, switchHandlerReady } = createHarness();
+      markCanonicalTurnIdle(session);
+      const launches = recordLaunches();
+      session.queue.push('first prompt', agentSdkMode, { userMessageLocalId: 'idle-first' });
+
+      const launcher = claudeRemoteLauncher(session);
+      const switchHandler = await switchHandlerReady;
+      try {
+        await vi.waitFor(() => expect(launches[0]?.idleNext).toBe('ended'), { timeout: 2_000 });
+        // No child is spawned again until a prompt arrives.
+        await new Promise<void>((resolve) => setTimeout(resolve, idleExitMs * 4));
+        expect(launches).toHaveLength(1);
+
+        session.queue.push('after idle', agentSdkMode, { userMessageLocalId: 'idle-second' });
+
+        await vi.waitFor(() => expect(launches[1]?.firstMessage).toBe('after idle'), { timeout: 2_000 });
+        expect(launches[0]).toMatchObject({ sessionId: 'claude-current', firstMessage: 'first prompt' });
+        expect(launches[1]?.sessionId).toBe('claude-current');
+      } finally {
+        await Promise.all([Promise.resolve(switchHandler({ to: 'local' })), session.cleanup(), launcher]);
+      }
+    }, 30_000);
+
+    it('keeps the provider child alive while a background task is still running', async () => {
+      const { session, switchHandlerReady } = createHarness();
+      markCanonicalTurnIdle(session);
+      session.onSessionFound('claude-current');
+      expect(session.getProviderTaskActivityLedger()?.apply({
+        type: 'started',
+        sessionId: 'claude-current',
+        taskId: 'background-agent',
+      })).toBe(true);
+      const launches = recordLaunches();
+      session.queue.push('start background work', agentSdkMode, { userMessageLocalId: 'busy-first' });
+
+      const launcher = claudeRemoteLauncher(session);
+      const switchHandler = await switchHandlerReady;
+      try {
+        await vi.waitFor(() => expect(launches[0]?.firstMessage).toBe('start background work'));
+        await new Promise<void>((resolve) => setTimeout(resolve, idleExitMs * 6));
+        expect(launches).toHaveLength(1);
+        expect(launches[0]?.idleNext).toBe('pending');
+
+        session.queue.push('check on it', agentSdkMode, { userMessageLocalId: 'busy-second' });
+        await vi.waitFor(() => expect(launches[0]?.idleNext).toBe('message'));
+        expect(launches).toHaveLength(1);
+      } finally {
+        await Promise.all([Promise.resolve(switchHandler({ to: 'local' })), session.cleanup(), launcher]);
+      }
+    }, 30_000);
+
+    it('measures idle time from the end of the turn when the provider waits for input mid-turn', async () => {
+      const turnIdleExitMs = 300;
+      process.env.HAPPIER_CLAUDE_REMOTE_IDLE_EXIT_MS = String(turnIdleExitMs);
+      reloadConfiguration();
+      const { session, switchHandlerReady } = createHarness();
+      markCanonicalTurnIdle(session);
+      const turnEnd = createDeferred<void>();
+      let idleNext: 'pending' | 'ended' | 'message' = 'pending';
+      let turnEndedAt = 0;
+      let endedAt = 0;
+      // Like the Agent SDK pump, ask for the next prompt while the first turn is still running.
+      mockClaudeRemoteAgentSdk.mockImplementation(async (opts: Readonly<{
+        nextMessage: () => Promise<Readonly<{ message: string }> | null>;
+      }>) => {
+        await opts.nextMessage();
+        session.onThinkingChange(true);
+        void turnEnd.promise.then(() => {
+          turnEndedAt = Date.now();
+          session.onThinkingChange(false);
+        });
+        const next = await opts.nextMessage();
+        endedAt = Date.now();
+        idleNext = next ? 'message' : 'ended';
+      });
+      session.queue.push('long turn', agentSdkMode, { userMessageLocalId: 'turn-first' });
+
+      const launcher = claudeRemoteLauncher(session);
+      const switchHandler = await switchHandlerReady;
+      try {
+        await new Promise<void>((resolve) => setTimeout(resolve, turnIdleExitMs * 0.8));
+        turnEnd.resolve(undefined);
+        await vi.waitFor(() => expect(idleNext).toBe('ended'), { timeout: 5_000 });
+        expect(endedAt - turnEndedAt).toBeGreaterThanOrEqual(turnIdleExitMs - 20);
+      } finally {
+        await Promise.all([Promise.resolve(switchHandler({ to: 'local' })), session.cleanup(), launcher]);
+      }
+    }, 30_000);
+
+    it('keeps the provider child alive while file checkpoints exist only in that runner', async () => {
+      const { session, switchHandlerReady } = createHarness();
+      markCanonicalTurnIdle(session);
+      const launches = recordLaunches();
+      session.queue.push('edit with checkpoints', { ...agentSdkMode, claudeRemoteEnableFileCheckpointing: true },
+        { userMessageLocalId: 'checkpoint-first' });
+
+      const launcher = claudeRemoteLauncher(session);
+      const switchHandler = await switchHandlerReady;
+      try {
+        await vi.waitFor(() => expect(launches[0]?.firstMessage).toBe('edit with checkpoints'));
+        await new Promise<void>((resolve) => setTimeout(resolve, idleExitMs * 6));
+        expect(launches).toHaveLength(1);
+        expect(launches[0]?.idleNext).toBe('pending');
+      } finally {
+        await Promise.all([Promise.resolve(switchHandler({ to: 'local' })), session.cleanup(), launcher]);
+      }
+    }, 30_000);
+
+    it('keeps the provider child alive after Claude scheduled its own wakeup', async () => {
+      const { session, switchHandlerReady } = createHarness();
+      markCanonicalTurnIdle(session);
+      let idleNext: 'pending' | 'ended' | 'message' = 'pending';
+      mockClaudeRemoteAgentSdk.mockImplementation(async (opts: Readonly<{
+        nextMessage: () => Promise<Readonly<{ message: string }> | null>;
+        onMessage: (message: unknown) => void;
+      }>) => {
+        await opts.nextMessage();
+        // A session cron or /loop wakeup lives inside the Claude child; stopping it would drop it.
+        opts.onMessage({
+          type: 'assistant',
+          message: {
+            id: 'msg-cron',
+            role: 'assistant',
+            content: [{ type: 'tool_use', id: 'toolu-cron', name: 'CronCreate', input: { cron: '*/5 * * * *', prompt: 'check' } }],
+          },
+          parent_tool_use_id: null,
+          session_id: 'claude-current',
+          uuid: 'assistant-cron',
+        });
+        const next = await opts.nextMessage();
+        idleNext = next ? 'message' : 'ended';
+      });
+      session.queue.push('watch every 5 minutes', agentSdkMode, { userMessageLocalId: 'cron-first' });
+
+      const launcher = claudeRemoteLauncher(session);
+      const switchHandler = await switchHandlerReady;
+      try {
+        await new Promise<void>((resolve) => setTimeout(resolve, idleExitMs * 6));
+        expect(idleNext).toBe('pending');
+        expect(mockClaudeRemoteAgentSdk).toHaveBeenCalledTimes(1);
+      } finally {
+        await Promise.all([Promise.resolve(switchHandler({ to: 'local' })), session.cleanup(), launcher]);
+      }
+    }, 30_000);
+  });
 });
