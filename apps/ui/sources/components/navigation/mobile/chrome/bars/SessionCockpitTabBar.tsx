@@ -1,7 +1,7 @@
 import * as React from 'react';
 
 import { AgentIcon } from '@/agents/registry/AgentIcon';
-import { DEFAULT_AGENT_ID, getAgentCore, resolveAgentIdFromFlavor } from '@/agents/catalog/catalog';
+import { getAgentCore } from '@/agents/catalog/catalog';
 import { t } from '@/text';
 import { useSessionMetadata, useSessionProjectScmStatus, useSetting } from '@/sync/domains/state/storage';
 import { resolveGitTabBadge } from '@/components/ui/navigation/tabBadge/tabBadgeModel';
@@ -55,15 +55,12 @@ export const SessionCockpitTabBar = React.memo((props: SessionCockpitTabBarProps
     const scmStatus = useSessionProjectScmStatus(props.sessionId);
     const gitBadgeMode = useSetting('tabBarGitBadgeMode');
     const openTabsBadgeEnabled = useSetting('tabBarOpenTabsBadgeEnabled');
-    const chatAgentId =
-        resolveAgentIdFromSessionMetadata(sessionMetadata)
-        ?? resolveAgentIdFromFlavor(sessionMetadata?.flavor)
-        ?? DEFAULT_AGENT_ID;
+    const chatAgentId = resolveAgentIdFromSessionMetadata(sessionMetadata);
     const gitBadge = resolveGitTabBadge(gitBadgeMode, scmStatus);
     const tabs: readonly SessionCockpitTabDefinition[] = [
         {
             id: 'chat',
-            label: t(getAgentCore(chatAgentId).displayNameKey),
+            label: chatAgentId ? t(getAgentCore(chatAgentId).displayNameKey) : t('status.unknown'),
             icon: {
                 render: ({ size, active }) => (
                     <AgentIcon

@@ -74,7 +74,7 @@ import {
     resolveSessionRuntimePresenceFields,
     SESSION_RESUMING_PRESENTATION_TIMEOUT_MS,
 } from '../../domains/session/attention/deriveSessionRuntimePresentationState';
-import { normalizeSessionOrderingNumber, reconcileSessionLifecycleProjection, resolveSessionPresence } from '../../domains/session/sessionLifecycleProjection';
+import { reconcileSessionLifecycleProjection, reconcileSessionSnapshot, resolveSessionPresence } from '../../domains/session/sessionLifecycleProjection';
 import { setActiveServerSessionListCache, setServerSessionListCache } from '../sessionListCache';
 import { resolveSessionListCacheServerId } from '../../domains/session/listing/sessionListPresentation';
 import { getActiveServerSnapshot } from '../../domains/server/serverRuntime';
@@ -308,62 +308,6 @@ let actionDraftIdCounter = 0;
 function createActionDraftId(nowMs: number): string {
     actionDraftIdCounter += 1;
     return `action_draft_${nowMs}_${actionDraftIdCounter}`;
-}
-
-type IncomingSessionApply = Omit<Session, 'presence'> & { presence?: 'online' | number };
-
-function isIncomingOrderingTimestampOlder(incoming: unknown, previous: unknown): boolean {
-    const incomingNumber = normalizeSessionOrderingNumber(incoming);
-    const previousNumber = normalizeSessionOrderingNumber(previous);
-    return incomingNumber !== null && previousNumber !== null && incomingNumber < previousNumber;
-}
-
-function resolveOrderedSessionApply(
-    previousSession: Session | undefined,
-    incomingSession: IncomingSessionApply,
-): IncomingSessionApply {
-    if (!previousSession) return incomingSession;
-
-    let nextSession: IncomingSessionApply = reconcileSessionLifecycleProjection(previousSession, incomingSession);
-    const applyPatch = (patch: Partial<IncomingSessionApply>): void => {
-        nextSession = { ...nextSession, ...patch };
-    };
-
-    const previousMetadataVersion = normalizeSessionOrderingNumber(previousSession.metadataVersion);
-    const incomingMetadataVersion = normalizeSessionOrderingNumber(incomingSession.metadataVersion);
-    if (
-        previousMetadataVersion !== null
-        && incomingMetadataVersion !== null
-        && incomingMetadataVersion < previousMetadataVersion
-    ) {
-        applyPatch({
-            metadata: previousSession.metadata,
-            metadataVersion: previousSession.metadataVersion,
-        });
-    }
-
-    const previousAgentStateVersion = normalizeSessionOrderingNumber(previousSession.agentStateVersion);
-    const incomingAgentStateVersion = normalizeSessionOrderingNumber(incomingSession.agentStateVersion);
-    if (
-        previousAgentStateVersion !== null
-        && incomingAgentStateVersion !== null
-        && incomingAgentStateVersion < previousAgentStateVersion
-    ) {
-        applyPatch({
-            agentState: previousSession.agentState,
-            agentStateVersion: previousSession.agentStateVersion,
-        });
-    }
-
-    if (isIncomingOrderingTimestampOlder(incomingSession.pendingRequestObservedAt, previousSession.pendingRequestObservedAt)) {
-        applyPatch({
-            pendingPermissionRequestCount: previousSession.pendingPermissionRequestCount,
-            pendingUserActionRequestCount: previousSession.pendingUserActionRequestCount,
-            pendingRequestObservedAt: previousSession.pendingRequestObservedAt,
-        });
-    }
-
-    return nextSession;
 }
 
 function measureSessionApplyPhase<T>(
@@ -723,7 +667,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                 const session = stripLegacySessionDraftField(
                     reconcileSessionLifecycleProjection(
                         state.sessionListRenderables[incomingSession.id],
-                        resolveOrderedSessionApply(previousSession, incomingSession),
+                        reconcileSessionSnapshot(previousSession, incomingSession),
                     ),
                 );
                 const presence = resolveSessionPresence(session);

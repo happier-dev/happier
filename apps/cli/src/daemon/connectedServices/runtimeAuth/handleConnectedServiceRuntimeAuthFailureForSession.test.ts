@@ -19,6 +19,7 @@ import type {
 } from './connectedServiceSessionAuthSwitchCore';
 import type { RuntimeAuthRecoveryIntent } from './RuntimeAuthRecoveryScheduler';
 import type { ConnectedServiceRuntimeFailureClassification } from './types';
+import { resolveRuntimeAuthFailureSourceProfile } from './resolveRuntimeAuthFailureSourceProfile';
 import { HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY } from '../connectedServiceChildEnvironment';
 import type { ConnectedServiceRuntimeAuthApplyCapability } from '../credentials/lifecycleTypes';
 
@@ -119,6 +120,29 @@ describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
       },
     });
     expect(resolveProviderQualifiedRuntimeAuthFailureSource).toHaveBeenCalledOnce();
+  });
+
+  it('does not authorize a stale launch tuple when the observed quota context is ambiguous', async () => {
+    const classification = createTemporaryThrottleClassification({
+      serviceId: 'claude-subscription', kind: 'usage_limit',
+      profileId: 'spawn-profile', groupGeneration: 7,
+      credentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa', sourceProviderAccountId: 'same-user',
+    });
+    const tracked = { startedBy: 'daemon' as const, happySessionId: 'ambiguous-context', pid: 123,
+      spawnOptions: { directory: '/tmp/project' } } satisfies TrackedSession;
+    const result = await authorizeConnectedServiceRuntimeAuthFailureSource({
+      getChildren: () => [tracked], sessionId: tracked.happySessionId, classification,
+      runtimeAuthApply: registryOnlyRuntimeAuthCapability,
+      resolveRegisteredRuntimeAuthFailureSource: () => ({ serviceId: 'claude-subscription', groupId: 'main',
+        profileId: 'spawn-profile', generation: 7, credentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa' }),
+      resolveProviderQualifiedRuntimeAuthFailureSource: async ({ classification }) => (
+        await resolveRuntimeAuthFailureSourceProfile({ classification,
+          getGroupMembers: async () => [{ profileId: 'spawn-profile', enabled: true }, { profileId: 'other-org', enabled: true }],
+          resolveProviderAccountIdentity: async () => ({ providerAccountId: 'same-user' }),
+        })
+      ),
+    });
+    expect(result.status).toBe('recovery_superseded');
   });
 
   it('authorizes a reattached exact Codex report from the matching registered runtime binding', async () => {

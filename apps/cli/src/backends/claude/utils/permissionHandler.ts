@@ -19,13 +19,11 @@ import { extractAgentIdFromTaskResultText } from '@/backends/claude/remote/sidec
 import { resolveClaudeSdkPermissionModeFromEnhancedMode } from '@/backends/claude/utils/permissionMode';
 import { syncClaudePermissionModeFromMetadata } from '@/backends/claude/utils/syncPermissionModeFromMetadata';
 import type { PermissionRpcPayload } from './permissionRpc';
-import { updateAgentStateBestEffort, updateMetadataBestEffort } from '@/api/session/sessionWritesBestEffort';
+import { updateAgentStateBestEffort } from '@/api/session/sessionWritesBestEffort';
 import { configuration } from '@/configuration';
 import { waitForSessionMetadataRetryBackoff } from '@/agent/runtime/sessionMetadataWaitRetryBackoff';
 import { readNonBlankOpaqueIdentifier } from '@/utils/opaqueIdentifiers';
 import { readPendingLocalId } from '@happier-dev/protocol';
-import { cloneStringKeyedRecordToNullProto } from '@/api/session/agentStateRecords';
-import type { Metadata } from '@/api/types';
 import { resolveAgentRequestKind } from '@/agent/permissions/requestKind';
 import { isToolAllowedForSession } from '@/agent/permissions/permissionToolIdentifier';
 import {
@@ -44,10 +42,8 @@ import {
     type PermissionRequestCoordinatorStore,
 } from '@/agent/permissions/permissionRequestCoordinator';
 import {
-    computeNextMetadataStringOverrideV1,
     isClaudeLocalPermissionBridgeAgentStateRequest,
     isClaudeUnifiedTerminalDialogChoiceAgentStateRequest,
-    SESSION_MODE_OVERRIDE_KEY,
 } from '@happier-dev/agents';
 import { isChangeTitleToolLikeName } from '@happier-dev/protocol/tools/v2';
 import { isAskUserQuestionToolName, type StructuredQuestionAnswersV1 } from '@happier-dev/protocol';
@@ -58,14 +54,14 @@ import {
 } from '@/agent/questions/normalizeStructuredQuestionAnswersV1';
 import { buildAskUserQuestionAnswersForClaude } from './askUserQuestionAnswersForClaude';
 import { normalizeClaudeAskUserQuestionInputForPublication } from './normalizeClaudeAskUserQuestionInput';
+import { clearClaudePlanModeMetadataBestEffort } from './clearPlanModeMetadataBestEffort';
 
 type PermissionResponse = PermissionRpcPayload;
 
 function isInteractiveTool(toolName: string): boolean {
     return (
         isAskUserQuestionToolName(toolName) ||
-        toolName === 'ExitPlanMode' ||
-        toolName === 'exit_plan_mode'
+        getToolDescriptor(toolName).exitPlan
     );
 }
 
@@ -227,23 +223,6 @@ export class PermissionHandler {
         }
 
         return nowMs <= this.exitedPlanModeFallbackUntilMs;
-    }
-
-    private clearAcpSessionModeOverrideBestEffort(): void {
-        const updatedAt = Date.now();
-        updateMetadataBestEffort(
-            this.session.client,
-            (metadata): Metadata =>
-                computeNextMetadataStringOverrideV1({
-                    metadata: cloneStringKeyedRecordToNullProto(metadata),
-                    overrideKey: SESSION_MODE_OVERRIDE_KEY,
-                    valueKey: 'modeId',
-                    value: '',
-                    updatedAt,
-                }) as unknown as Metadata,
-            '[Claude]',
-            'exit_plan_mode_clear_session_mode_override',
-        );
     }
 
     private isToolTraceEnabled(): boolean {
@@ -423,12 +402,12 @@ export class PermissionHandler {
 
         if (
             response.approved
-            && (toolName === 'ExitPlanMode' || toolName === 'exit_plan_mode')
+            && toolName !== null && getToolDescriptor(toolName).exitPlan
         ) {
             if (sourceLocalId) {
                 this.noteExitPlanModeApproved(sourceLocalId);
             }
-            this.clearAcpSessionModeOverrideBestEffort();
+            clearClaudePlanModeMetadataBestEffort(this.session.client, '[Claude]');
         }
     }
 

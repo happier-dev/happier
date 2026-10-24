@@ -22,16 +22,25 @@ describe('normalizeClaudeOauthProfileEntitlement', () => {
         uuid: 'private-account-id',
       },
       organization: {
+        uuid: 'organization-id',
         organization_type: 'claude_max',
         rate_limit_tier: 'default_claude_max_20x',
         subscription_status: 'active',
       },
     })).toEqual({
       claudeAiOauth: {
+        organizationUuid: 'organization-id',
         subscriptionType: 'max',
         rateLimitTier: 'default_claude_max_20x',
       },
     });
+  });
+
+  it('keeps provider organization context without requiring an entitlement descriptor', () => {
+    expect(normalizeClaudeOauthProfileEntitlement({ organization: { uuid: ' org-only ' } }))
+      .toEqual({ claudeAiOauth: { organizationUuid: 'org-only' } });
+    expect(normalizeClaudeOauthProfileEntitlement({ organization_uuid: 'token-organization' }))
+      .toEqual({ claudeAiOauth: { organizationUuid: 'token-organization' } });
   });
 
   it('returns null for unknown or malformed entitlement data', () => {

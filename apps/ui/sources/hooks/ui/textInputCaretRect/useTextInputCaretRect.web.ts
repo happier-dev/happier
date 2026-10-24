@@ -28,57 +28,69 @@ export function computeWebCaretRect(
     };
 }
 
+function isSameCaretRect(a: CaretRect, b: CaretRect): boolean {
+    return a.left === b.left && a.top === b.top && a.height === b.height;
+}
+
 /**
  * Cross-platform caret-rect hook (web implementation).
  *
  * Uses `textarea-caret` to measure caret position in a `<textarea>` element,
  * then transforms to viewport-relative coordinates.
  *
- * Returns `null` while disabled, before first measurement, or when the textarea
- * ref is unavailable.
+ * Returns `null` while disabled or undemanded, before first measurement, or when
+ * the textarea ref is unavailable.
  */
 export function useTextInputCaretRect(input: UseTextInputCaretRectInput): CaretRect | null {
-    const { inputRef, selection, enabled = true } = input;
+    const { inputRef, selection, enabled = true, demanded = true } = input;
+    const active = enabled && demanded;
+    const selectionStart = selection?.start ?? 0;
 
     const [rect, setRect] = React.useState<CaretRect | null>(null);
+    const selectionStartRef = React.useRef(selectionStart);
 
-    // Recompute on selection, value, or enabled changes.
-    React.useEffect(() => {
-        if (!enabled) {
+    const measure = React.useCallback((el: HTMLTextAreaElement) => {
+        const caretCoords = getCaretCoordinates(el, selectionStartRef.current);
+        const elRect = el.getBoundingClientRect();
+        const next = computeWebCaretRect(
+            { left: elRect.left, top: elRect.top },
+            { left: el.scrollLeft, top: el.scrollTop },
+            caretCoords,
+        );
+        // Equal geometry keeps the previous identity so the consumer does not re-render.
+        setRect((previous) => (previous !== null && isSameCaretRect(previous, next) ? previous : next));
+    }, []);
+
+    // Layout phase: the update is flushed synchronously before paint, so the commit that
+    // turns demand on (or moves the caret) never paints a menu anchored to a stale rect.
+    React.useLayoutEffect(() => {
+        selectionStartRef.current = selectionStart;
+        if (!active) {
             setRect(null);
             return;
         }
-
         const el = inputRef.current?.getInputElement();
         if (el == null) {
             setRect(null);
             return;
         }
+        measure(el);
+    }, [active, inputRef, measure, selectionStart]);
 
-        const selectionStart = selection?.start ?? 0;
-
-        const measure = () => {
-            const caretCoords = getCaretCoordinates(el, selectionStart);
-            const elRect = el.getBoundingClientRect();
-
-            setRect(computeWebCaretRect(
-                { left: elRect.left, top: elRect.top },
-                { left: el.scrollLeft, top: el.scrollTop },
-                caretCoords,
-            ));
-        };
-
-        measure();
-
-        // Subscribe to scroll for live tracking (D18).
-        el.addEventListener('scroll', measure);
-
+    // Scroll tracking (D18): one listener per demanded period; it reads the latest caret
+    // position from the ref instead of resubscribing on every caret move.
+    React.useEffect(() => {
+        if (!active) return;
+        const el = inputRef.current?.getInputElement();
+        if (el == null) return;
+        const handleScroll = () => measure(el);
+        el.addEventListener('scroll', handleScroll);
         return () => {
-            el.removeEventListener('scroll', measure);
+            el.removeEventListener('scroll', handleScroll);
         };
-    }, [inputRef, selection?.start, selection?.end, enabled]);
+    }, [active, inputRef, measure]);
 
-    if (!enabled) return null;
+    if (!active) return null;
 
     return rect;
 }

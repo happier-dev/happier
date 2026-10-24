@@ -17,14 +17,18 @@ import type {
   ProviderAccountUsageSnapshotV1,
 } from '@happier-dev/protocol';
 import { randomBytes } from 'node:crypto';
+import { sealLegacyConnectedServiceQuotaSnapshotFixtureCiphertext } from '@happier-dev/protocol/testing/accountScopedCipherFixtures';
 
 import type { Credentials } from '@/persistence';
+import { logger } from '@/ui/logger';
 import { dispatchConnectedServiceAutomaticQuotaResetNotificationAsync } from '../notifications/dispatchConnectedServiceQuotaLifecycleNotification';
 import { createOpenAiCodexQuotaFetcher } from '@/backends/codex/connectedServices/quotaFetcher';
+import { createClaudeSubscriptionQuotaFetcher } from '@/backends/claude/connectedServices/quotaFetcher';
 import { invalidateConnectedServiceAccountMode } from '@/cloud/connectedServices/resolveConnectedServiceAccountMode';
 import { HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY } from '../connectedServiceChildEnvironment';
 import { ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore } from '../accountGroups/quotas/ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore';
 import { createProviderAccountUsageStore } from '../accountUsage/store';
+import { computeConnectedServiceAccessTokenFingerprint } from '../refresh/credentialFreshness/tokenFingerprint';
 import { CLAUDE_SUBSCRIPTION_OAUTH_SCOPE } from '../descriptors/connectedAccountDescriptors';
 import { ConnectedServiceQuotasCoordinator } from './ConnectedServiceQuotasCoordinator';
 import type { RuntimeAccountIdentityProbeResult } from './identity/runtimeAccountIdentityTypes';
@@ -303,6 +307,236 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     vi.useRealTimers();
     vi.restoreAllMocks();
     invalidateConnectedServiceAccountMode();
+  });
+
+  it.each([
+    ['plain', undefined, true, false],
+    ['e2ee', undefined, true, false],
+    ['plain', 'org-other', false, false],
+    ['plain', 'org-work', false, false],
+    ['plain', 'org-work', false, true],
+  ] as const)('refreshes legacy Claude quota and validates current credential scope (%s, %s, fetch=%s, credentialUnavailable=%s)', async (mode, organizationId, expectedFetch, credentialUnavailable) => {
+    const now = 1_000_000;
+    const secret = new Uint8Array(32).fill(9);
+    const credentials = { token: 'happy-token', encryption: { type: 'legacy', secret } } satisfies Credentials;
+    const snapshot = {
+      ...buildQuotaSnapshotFixture({ serviceId: 'claude-subscription', profileId: 'work', now, remainingPct: 90 }),
+      activeAccountId: 'acct-user',
+      ...(organizationId ? { providerOrganizationId: organizationId } : {}),
+    };
+    const record = buildConnectedServiceCredentialRecord({
+      now, serviceId: 'claude-subscription', profileId: 'work', kind: 'oauth', expiresAt: now + 60_000,
+      oauth: { accessToken: 'access', refreshToken: 'refresh', idToken: null, scope: CLAUDE_SUBSCRIPTION_OAUTH_SCOPE,
+        tokenType: null, providerAccountId: 'acct-user', providerEmail: null,
+        raw: { claudeAiOauth: { organizationUuid: 'org-work' } } },
+    });
+    const metadata = { fetchedAt: now, staleAfterMs: snapshot.staleAfterMs, status: 'ok' as const };
+    const api = {
+      getAccountEncryptionMode: async () => mode,
+      listConnectedServiceProfiles: async () => ({ serviceId: 'claude-subscription', profiles: [{ profileId: 'work', status: 'connected' }] }),
+      getConnectedServiceQuotaSnapshotPlain: async () => ({ content: { t: 'plain', v: snapshot }, metadata }),
+      getConnectedServiceQuotaSnapshotSealed: async () => ({
+        sealed: { format: 'account_scoped_v1', ciphertext: sealLegacyConnectedServiceQuotaSnapshotFixtureCiphertext({
+          material: { type: 'legacy', secret }, payload: snapshot,
+          randomBytes: (length) => randomBytes(length),
+        }) }, metadata,
+      }),
+      getConnectedServiceCredentialPlain: async () => {
+        if (credentialUnavailable) throw new Error('credential transport unavailable');
+        return { content: { t: 'plain', v: record } };
+      },
+      getConnectedServiceCredentialSealed: async () => ({
+        sealed: { format: 'account_scoped_v1', ciphertext: sealAccountScopedBlobCiphertext({
+          kind: 'connected_service_credential', material: { type: 'legacy', secret }, payload: record,
+          randomBytes: (length) => randomBytes(length),
+        }) },
+      }),
+    } as unknown as QuotaApi;
+    const fetchQuota = vi.fn(async () => { throw new ConnectedServiceQuotaFetchError('offline', { quotaFetchErrorCode: 'network' }); });
+    const accountUsageStore = createProviderAccountUsageStore();
+    const runtimeQuotaSnapshots = new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore();
+    const source = { serviceId: 'claude-subscription', profileId: 'work', bindingKind: 'profile' } as const;
+    const groupSource = { ...source, bindingKind: 'group_member', groupId: 'team', groupGeneration: 1 } as const;
+    const otherSource = { ...source, profileId: 'other' };
+    const oldRecordKey = {
+      providerId: 'claude', accountSubjectId: 'acct-user', subjectKind: 'account',
+      quotaScope: 'organization', quotaScopeId: 'org-other',
+    } as const;
+    const oldUsage = ProviderAccountUsageSnapshotV1Schema.parse({
+      v: 1, recordKey: oldRecordKey, recordId: buildProviderAccountUsageRecordId(oldRecordKey), providerId: 'claude',
+      accountSubject: { kind: 'providerSubject', id: 'acct-user' }, observedAtMs: now, fetchedAtMs: now,
+      staleAfterMs: snapshot.staleAfterMs, source: 'providerHttp', confidence: 'confirmed', meters: snapshot.meters,
+    });
+    const currentRecordKey = { ...oldRecordKey, quotaScopeId: 'org-work' };
+    const currentUsage = { ...oldUsage, recordKey: currentRecordKey, recordId: buildProviderAccountUsageRecordId(currentRecordKey) };
+    const currentGroupSource = { ...groupSource, groupId: 'current-team' };
+    if (organizationId === 'org-other') {
+      accountUsageStore.recordSnapshot(oldUsage, { sources: [groupSource, otherSource] });
+      accountUsageStore.recordSnapshot(currentUsage, { sources: [source, currentGroupSource] });
+      runtimeQuotaSnapshots.recordSnapshot({ serviceId: source.serviceId, profileId: 'work', groupId: 'team', snapshot });
+      runtimeQuotaSnapshots.recordSnapshot({ serviceId: source.serviceId, profileId: 'work', groupId: 'current-team',
+        snapshot: { ...snapshot, providerOrganizationId: 'org-work' } });
+    } else if (credentialUnavailable) {
+      accountUsageStore.recordSnapshot(currentUsage, { sources: [source, groupSource, otherSource] });
+      runtimeQuotaSnapshots.recordSnapshot({ serviceId: source.serviceId, profileId: 'work', groupId: 'team',
+        snapshot: { ...snapshot, fetchedAt: now - 30_000,
+          meters: [{ ...snapshot.meters[0]!, utilizationPct: 5, remainingPct: 95 }] } });
+      runtimeQuotaSnapshots.recordSnapshot({ serviceId: source.serviceId, profileId: 'work', groupId: 'team', snapshot });
+      expect(runtimeQuotaSnapshots.getRecentBurn({ serviceId: source.serviceId, profileId: 'work', groupId: 'team' })).not.toBeNull();
+    }
+    const coordinator = new ConnectedServiceQuotasCoordinator({
+      api, credentials, accountUsageStore, runtimeQuotaSnapshots, quotaFetchers: [{ serviceId: 'claude-subscription', fetch: fetchQuota }],
+      now: () => now, randomBytes: (length) => randomBytes(length), discoveryEnabled: true,
+    });
+
+    await coordinator.tickOnce();
+
+    expect(fetchQuota).toHaveBeenCalledTimes(expectedFetch ? 1 : 0);
+    expect(accountUsageStore.listSnapshots()).toEqual(organizationId === 'org-other'
+      ? expect.arrayContaining([oldUsage, currentUsage]) : credentialUnavailable ? [currentUsage] : []);
+    if (organizationId === 'org-other') {
+      expect(accountUsageStore.resolveBySource(source)).toEqual(currentUsage);
+      expect(accountUsageStore.resolveBySource(groupSource)).toBeNull();
+      expect(accountUsageStore.resolveBySource(otherSource)).toEqual(oldUsage);
+      expect(accountUsageStore.resolveBySource(currentGroupSource)).toEqual(currentUsage);
+      expect(runtimeQuotaSnapshots.getSnapshot({ serviceId: source.serviceId, groupId: 'team', profileId: 'work' }))
+        .toMatchObject({ providerOrganizationId: 'org-work' });
+    } else if (credentialUnavailable) {
+      expect(accountUsageStore.resolveBySource(source)).toEqual(currentUsage);
+      expect(accountUsageStore.resolveBySource(groupSource)).toEqual(currentUsage);
+      expect(runtimeQuotaSnapshots.getSnapshot({ serviceId: source.serviceId, groupId: 'team', profileId: 'work' })).toEqual(snapshot);
+      expect(runtimeQuotaSnapshots.getRecentBurn({ serviceId: source.serviceId, profileId: 'work', groupId: 'team' })).not.toBeNull();
+    } else {
+      expect(runtimeQuotaSnapshots.getSnapshot({ serviceId: source.serviceId, groupId: 'team', profileId: 'work' })).toBeNull();
+    }
+  });
+
+  it('reuses verified current-token local usage with unknown organization and refreshes after token replacement', async () => {
+    let now = 1_000_000;
+    let currentAccessToken = 'access-a';
+    let credentialUnavailable = false;
+    // The default file logger is the diagnostic output boundary for failed credential reads.
+    const diagnosticSink = vi.spyOn(logger, 'infoFile').mockImplementation(() => {});
+    const credentials = { token: 'happy-token', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(9) } } satisfies Credentials;
+    const buildRecord = () => buildConnectedServiceCredentialRecord({
+      now, serviceId: 'claude-subscription', profileId: 'work', kind: 'oauth', expiresAt: now + 3_600_000,
+      oauth: { accessToken: currentAccessToken, refreshToken: 'refresh', idToken: null, scope: CLAUDE_SUBSCRIPTION_OAUTH_SCOPE,
+        tokenType: null, providerAccountId: 'acct-user', providerEmail: 'user@example.com', raw: {} },
+    });
+    const api = {
+      getAccountEncryptionMode: async () => 'plain',
+      getConnectedServiceQuotaSnapshotPlain: async () => null,
+      getConnectedServiceQuotaSnapshotSealed: async () => null,
+      getConnectedServiceCredentialPlain: async () => {
+        if (credentialUnavailable) throw new Error('Credential read unavailable');
+        return { content: { t: 'plain', v: buildRecord() } };
+      },
+      registerProviderAccountUsageSnapshotPlain: async () => {},
+    } as unknown as QuotaApi;
+    const providerRequests: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: string | URL | Request) => {
+      providerRequests.push(String(url));
+      return new Response(JSON.stringify({ five_hour: { utilization: 20, resets_at: new Date(now + 300_000).toISOString() } }), { status: 200 });
+    }));
+    const accountUsageStore = createProviderAccountUsageStore();
+    const runtimeQuotaSnapshots = new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore();
+    const coordinator = new ConnectedServiceQuotasCoordinator({ api, credentials, accountUsageStore, runtimeQuotaSnapshots,
+      quotaFetchers: [createClaudeSubscriptionQuotaFetcher({ staleAfterMs: 60_000 })], now: () => now, randomBytes,
+    });
+    coordinator.registerSpawnTarget({ pid: 123, connectedServicesBindingsRaw: {
+      v: 1, bindingsByServiceId: { 'claude-subscription': { source: 'connected', profileId: 'work' } },
+    } });
+    await coordinator.tickOnce();
+    expect(runtimeQuotaSnapshots.getSnapshotEntry({ serviceId: 'claude-subscription', profileId: 'work' })?.verifiedCredentialFingerprint)
+      .toBe(computeConnectedServiceAccessTokenFingerprint('access-a'));
+    expect(providerRequests.filter((url) => url.endsWith('/api/oauth/usage'))).toHaveLength(1);
+    expect(accountUsageStore.resolveBySource({ serviceId: 'claude-subscription', profileId: 'work', bindingKind: 'profile' })).toBeNull();
+    now += 120_000;
+    await coordinator.tickOnce();
+    expect(providerRequests.filter((url) => url.endsWith('/api/oauth/usage'))).toHaveLength(1);
+    const acceptedEntry = runtimeQuotaSnapshots.getSnapshotEntry({ serviceId: 'claude-subscription', profileId: 'work' });
+    credentialUnavailable = true;
+    now += 1;
+    await coordinator.tickOnce();
+    expect(runtimeQuotaSnapshots.getSnapshotEntry({ serviceId: 'claude-subscription', profileId: 'work' })).toEqual(acceptedEntry);
+    expect(diagnosticSink.mock.calls.some(([, details]) => typeof details === 'object' && details !== null
+      && 'code' in details && details.code === 'quota_credential_lookup_unavailable'
+      && 'serviceId' in details && details.serviceId === 'claude-subscription'
+      && 'profileId' in details && details.profileId === 'work')).toBe(true);
+    credentialUnavailable = false;
+    now += 1;
+    await coordinator.tickOnce();
+    expect(providerRequests.filter((url) => url.endsWith('/api/oauth/usage'))).toHaveLength(1);
+    currentAccessToken = 'access-c';
+    now += 1;
+    await coordinator.tickOnce();
+    expect(providerRequests.filter((url) => url.endsWith('/api/oauth/usage'))).toHaveLength(2);
+  });
+
+  it('uses the qualified local observation budget when the released plaintext relay projection omits organization', async () => {
+    let now = 1_000_000;
+    let organizationId = 'org-a';
+    const credentials = {
+      token: 'happy-token', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(9) },
+    } satisfies Credentials;
+    // Server v0.2.16 (22ac8263cfdbcdb845441b9044ff18199cf7652e),
+    // providerAccountUsage/projections.ts: the released quota view omits organization scope.
+    const releasedQuotaView = {
+      content: { t: 'plain', v: {
+        v: 1, serviceId: 'claude-subscription', profileId: 'work', fetchedAt: now, staleAfterMs: 60_000,
+        planLabel: 'Pro', accountLabel: 'user@example.com', providerId: 'claude', activeAccountId: 'acct-user',
+        fetchedAtMs: now, staleAtMs: now + 60_000, source: 'provider_api', confidence: 'exact', meters: [],
+      } },
+      metadata: { fetchedAt: now, staleAfterMs: 60_000, status: 'ok', refreshRequestedAt: 0 },
+    };
+    const api = {
+      getAccountEncryptionMode: async () => 'plain',
+      getConnectedServiceQuotaSnapshotPlain: async () => releasedQuotaView,
+      getConnectedServiceQuotaSnapshotSealed: async () => null,
+      getConnectedServiceCredentialPlain: async () => ({ content: { t: 'plain', v: buildConnectedServiceCredentialRecord({
+        now, serviceId: 'claude-subscription', profileId: 'work', kind: 'oauth', expiresAt: now + 3_600_000,
+        oauth: { accessToken: `access-${organizationId}`, refreshToken: 'refresh', idToken: null,
+          scope: CLAUDE_SUBSCRIPTION_OAUTH_SCOPE, tokenType: null, providerAccountId: 'acct-user', providerEmail: 'user@example.com',
+          raw: { claudeAiOauth: { organizationUuid: organizationId } } },
+      }) } }),
+      registerProviderAccountUsageSnapshotPlain: async () => {},
+    } as unknown as QuotaApi;
+    const providerRequests: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: string | URL | Request) => {
+      providerRequests.push(String(url));
+      return new Response(JSON.stringify({ five_hour: { utilization: 20, resets_at: new Date(now + 300_000).toISOString() } }), { status: 200 });
+    }));
+    const accountUsageStore = createProviderAccountUsageStore();
+    const coordinator = new ConnectedServiceQuotasCoordinator({
+      api, credentials, accountUsageStore, quotaFetchers: [createClaudeSubscriptionQuotaFetcher({ staleAfterMs: 60_000 })],
+      now: () => now, randomBytes,
+    });
+    coordinator.registerSpawnTarget({ pid: 123, connectedServicesBindingsRaw: {
+      v: 1, bindingsByServiceId: { 'claude-subscription': { source: 'connected', profileId: 'work' } },
+    } });
+    await coordinator.tickOnce();
+    const source = { serviceId: 'claude-subscription', profileId: 'work', bindingKind: 'profile' } as const;
+    expect(accountUsageStore.resolveBySource(source)?.recordKey).toMatchObject({ quotaScope: 'organization', quotaScopeId: 'org-a' });
+    expect(providerRequests.filter((url) => url.endsWith('/api/oauth/usage'))).toHaveLength(1);
+
+    const requestsAfterFirstObservation = providerRequests.length;
+    now += 120_000;
+    await coordinator.tickOnce();
+    expect(providerRequests.filter((url) => url.endsWith('/api/oauth/usage'))).toHaveLength(1);
+
+    expect(providerRequests).toHaveLength(requestsAfterFirstObservation);
+
+    organizationId = 'org-b';
+    now += 1;
+    await coordinator.tickOnce();
+    expect(providerRequests.filter((url) => url.endsWith('/api/oauth/usage'))).toHaveLength(2);
+    expect(providerRequests.some((url) => url.endsWith('/api/oauth/profile'))).toBe(false);
+    expect(accountUsageStore.resolveBySource(source)?.recordKey).toMatchObject({ quotaScope: 'organization', quotaScopeId: 'org-b' });
+
+    now += 1;
+    releasedQuotaView.metadata.refreshRequestedAt = now;
+    await coordinator.tickOnce();
+    expect(providerRequests.filter((url) => url.endsWith('/api/oauth/usage'))).toHaveLength(3);
   });
 
   it('skips quota bridge fetches for known reconnect-required profiles', async () => {
@@ -1157,6 +1391,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
         tokenType: null,
         providerAccountId: 'acct',
         providerEmail: 'user@example.com',
+        raw: { claudeAiOauth: { organizationUuid: 'org-work' } },
       },
     });
     const staleUsefulSnapshot: ConnectedServiceQuotaSnapshotV1 = {
@@ -1167,6 +1402,8 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       staleAfterMs: 1_000,
       planLabel: 'Max',
       accountLabel: 'user@example.com',
+      activeAccountId: 'acct',
+      providerOrganizationId: 'org-work',
       meters: [
         {
           meterId: 'five_hour',
@@ -1401,6 +1638,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
         tokenType: null,
         providerAccountId: 'claude-provider-account',
         providerEmail: 'claude@example.com',
+        raw: { claudeAiOauth: { organizationUuid: 'org-work' } },
       },
     });
     const api = {
@@ -1414,12 +1652,12 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     } as unknown as QuotaApi;
     const fetcher: ConnectedServiceQuotaFetcher = {
       serviceId: 'claude-subscription',
-      fetch: vi.fn(async ({ record: inputRecord }: FetchArgs) => buildQuotaSnapshotFixture({
+      fetch: vi.fn(async ({ record: inputRecord }: FetchArgs) => ({ ...buildQuotaSnapshotFixture({
         serviceId: inputRecord.serviceId,
         profileId: inputRecord.profileId,
         now,
         remainingPct: 72,
-      })),
+      }), providerOrganizationId: 'org-work' })),
     };
     const coordinator = new ConnectedServiceQuotasCoordinator({
       api,
@@ -4148,6 +4386,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
         tokenType: 'Bearer',
         providerAccountId: 'acct',
         providerEmail: 'user@example.com',
+        raw: { claudeAiOauth: { organizationUuid: 'org-work' } },
       },
     });
     const softSwitchEligibility = createSoftSwitchEligibilityFixture({
@@ -4174,6 +4413,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
         staleAfterMs: 300_000,
         planLabel: 'Pro',
         accountLabel: 'user@example.com',
+        providerOrganizationId: 'org-work',
         meters: [
           {
             meterId: 'monthly',
@@ -9963,6 +10203,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
         tokenType: null,
         providerAccountId: 'acct',
         providerEmail: 'user@example.com',
+        raw: { claudeAiOauth: { organizationUuid: 'org-work' } },
       },
     });
     const api = {
@@ -10043,6 +10284,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
         tokenType: null,
         providerAccountId: 'acct',
         providerEmail: 'user@example.com',
+        raw: { claudeAiOauth: { organizationUuid: 'org-work' } },
       },
     });
     const api = {
@@ -10136,6 +10378,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
         tokenType: null,
         providerAccountId: 'acct',
         providerEmail: 'user@example.com',
+        raw: { claudeAiOauth: { organizationUuid: 'org-work' } },
       },
     });
     const api = {
@@ -10244,6 +10487,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
         tokenType: null,
         providerAccountId: 'acct',
         providerEmail: 'user@example.com',
+        raw: { claudeAiOauth: { organizationUuid: 'org-work' } },
       },
     });
     const refreshedRecord = buildConnectedServiceCredentialRecord({
@@ -10260,6 +10504,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
         tokenType: null,
         providerAccountId: 'acct',
         providerEmail: 'user@example.com',
+        raw: { claudeAiOauth: { organizationUuid: 'org-work' } },
       },
     });
     const updateConnectedServiceCredentialHealth = vi.fn<

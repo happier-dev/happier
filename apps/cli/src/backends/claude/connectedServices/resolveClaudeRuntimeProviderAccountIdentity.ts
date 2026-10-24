@@ -7,6 +7,7 @@ import { readClaudeOauthAccountIdentity, readClaudeRootConfigFile } from './clau
 export type ClaudeRuntimeProviderAccountIdentity = Readonly<{
   providerAccountId: string | null;
   providerEmail: string | null;
+  providerOrganizationId: string | null;
 }>;
 
 /**
@@ -23,6 +24,7 @@ export async function readClaudeMaterializedOAuthAccountIdentity(
   return {
     providerAccountId: identity.accountId,
     providerEmail: identity.email,
+    providerOrganizationId: identity.providerOrganizationId,
   };
 }
 

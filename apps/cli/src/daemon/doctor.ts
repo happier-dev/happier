@@ -10,6 +10,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { readFile, readlink } from 'node:fs/promises';
 import { listProcessSnapshot } from './processSnapshotCache';
+import { posixPsEnvironment } from './posixPs';
 
 const SAFE_RESPAWN_ENVIRONMENT_VARIABLE_KEYS = ['CLAUDE_CONFIG_DIR', 'CODEX_HOME', 'CODEX_SQLITE_HOME'] as const;
 const DAEMON_OWNERSHIP_ENVIRONMENT_VARIABLE_KEYS = [
@@ -107,6 +108,7 @@ function readDaemonOwnershipEnvironmentVariablesFromPosixPs(
     const raw = execFileSync('ps', ['eww', '-p', String(pid), '-o', 'command='], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
+      env: posixPsEnvironment(),
     });
     const pairs = parseEnvironmentEntries(raw.split(/\s+/u).filter(Boolean));
     return pickEnvironmentVariables(pairs, DAEMON_OWNERSHIP_ENVIRONMENT_VARIABLE_KEYS);
@@ -244,6 +246,7 @@ function getProcessInfoByPidPosix(pid: number): RawProcessInfo | null {
     const output = execFileSync('ps', ['-o', 'stat=,ucomm=,command=', '-p', String(pid)], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
+      env: posixPsEnvironment(),
     }).trim();
     const line = output
       .split('\n')

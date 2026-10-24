@@ -33,6 +33,7 @@ export function createCodexAcpRuntime(params: {
   permissionMode: PermissionMode;
   getPermissionMode?: () => PermissionMode | null | undefined;
   onThinkingChange: (thinking: boolean) => void;
+  onTurnFailure?: NonNullable<Parameters<typeof createAcpRuntime>[0]['hooks']>['onTurnFailure'];
   pendingQueueDrainMaxPopPerWake?: number;
   providerInputConsumer: SessionProviderInputConsumer<unknown, unknown>;
 }) {
@@ -72,6 +73,7 @@ export function createCodexAcpRuntime(params: {
     onThinkingChange: params.onThinkingChange,
     changeTitleInstruction: { enabled: false },
     hooks: {
+      onTurnFailure: params.onTurnFailure,
       onPermissionRequest: ({ permissionId, toolName }) => {
         if (!params.pushSender) return;
         sendPermissionRequestPushNotificationForActiveAccount({

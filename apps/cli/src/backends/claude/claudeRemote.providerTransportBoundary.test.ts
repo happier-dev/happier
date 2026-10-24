@@ -33,6 +33,7 @@ vi.mock('./utils/resolveClaudeCliPath', () => ({
 type RemoteOptions = Parameters<(typeof import('./claudeRemote'))['claudeRemote']>[0];
 type QueryConfig = Readonly<{
   prompt: AsyncIterable<SDKUserMessage>;
+  onMessageReceived: (message: SDKMessage) => void;
 }>;
 
 function defaultMode(): EnhancedMode {
@@ -87,7 +88,7 @@ describe('claudeRemote provider transport boundary', () => {
     expect(onReady).toHaveBeenCalledOnce();
   });
 
-  it('accepts the queued prompt when the Claude query input API takes custody', async () => {
+  it('does not accept a queued prompt when startup fails before input consumption', async () => {
     const onPromptAcceptedByProvider = vi.fn();
 
     mockQuery.mockImplementation((_rawConfig: QueryConfig) => {
@@ -101,10 +102,7 @@ describe('claudeRemote provider transport boundary', () => {
     await expect(claudeRemote(createOptions({
       onPromptAcceptedByProvider,
     }))).rejects.toThrow('provider failed after input admission');
-    expect(onPromptAcceptedByProvider).toHaveBeenCalledExactlyOnceWith({
-      maxUserMessageSeq: 17,
-      userMessageLocalIds: ['local-17'],
-    });
+    expect(onPromptAcceptedByProvider).not.toHaveBeenCalled();
   });
 
   it('keeps prompt settlement accepted when the provider stream later fails', async () => {
@@ -116,6 +114,7 @@ describe('claudeRemote provider transport boundary', () => {
         async *[Symbol.asyncIterator](): AsyncIterableIterator<SDKMessage> {
           const consumed = await providerRead;
           if (consumed.done) throw new Error('expected exact queued SDK prompt');
+          rawConfig.onMessageReceived({ ...consumed.value, isReplay: true, session_id: 'native-session' });
           throw new Error('stdin EPIPE after write attempt');
         },
       };
@@ -133,8 +132,9 @@ describe('claudeRemote provider transport boundary', () => {
     expect(onPromptTransportFailure).not.toHaveBeenCalled();
   });
 
-  it('accepts independently of when the provider starts consuming its input iterable', async () => {
+  it('reports uncertainty without accepting when the provider fails before acknowledgment', async () => {
     const acceptedLocalIds: Array<readonly string[]> = [];
+    const onPromptTransportFailure = vi.fn();
     mockQuery.mockReturnValue({
       async *[Symbol.asyncIterator](): AsyncIterableIterator<SDKMessage> {
         throw new Error('SDK admission rejected before prompt consumption');
@@ -145,9 +145,13 @@ describe('claudeRemote provider transport boundary', () => {
       onPromptAcceptedByProvider: (acceptance) => {
         acceptedLocalIds.push(acceptance.userMessageLocalIds);
       },
+      onPromptTransportFailure,
     }))).rejects.toThrow('SDK admission rejected before prompt consumption');
 
-    expect(acceptedLocalIds).toEqual([['local-17']]);
+    expect(acceptedLocalIds).toEqual([]);
+    expect(onPromptTransportFailure).toHaveBeenCalledExactlyOnceWith({
+      kind: 'effect_may_have_occurred', maxUserMessageSeq: 17, userMessageLocalIds: ['local-17'],
+    });
   });
 
   it('keeps the provider prompt stream closed when Runtime Activity observer activation rejects', async () => {

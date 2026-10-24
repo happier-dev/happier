@@ -1,4 +1,5 @@
 import type { EnhancedMode } from '../loop';
+import { randomUUID } from 'node:crypto';
 import { readPendingLocalId } from '@happier-dev/protocol';
 import type { PendingProviderAction } from '@/agent/runtime/modeMessageQueue';
 
@@ -95,16 +96,17 @@ export function reportClaudeRemoteProviderPromptTransportFailure(
 /**
  * Owns settlement for prompts claimed from Happier's durable pending queue.
  *
- * Direct Claude runtimes accept custody at their supported prompt-input API.
- * Anything still tracked when the runtime exits never crossed that boundary and
- * can be retried safely. Claude Unified's TUI injection has its own stronger
- * settlement contract and deliberately does not use this tracker.
+ * Both remote runtimes request Claude's supported --replay-user-messages acknowledgment.
+ * Enqueuing input locally, reading the iterable and writing stdin cannot prove that
+ * Claude accepted it. Only the exact main-chain user UUID echoed by Claude settles
+ * Pending and permits replay-seed retirement. Unified TUI injection has its own
+ * provider-evidence owner and deliberately does not use this tracker.
  */
 export function createClaudeRemotePromptSettlementTracker(options: Readonly<{
     onAccepted?: ClaudeRemoteProviderPromptAcceptedHandler | null;
     onTransportFailure?: ClaudeRemoteProviderPromptTransportFailureHandler | null;
 }>) {
-    const unresolved = new Set<ClaudeRemoteProviderAcceptedPrompt>();
+    const unresolved = new Map<ClaudeRemoteProviderAcceptedPrompt, string | null>();
 
     const remove = (prompt: ClaudeRemoteProviderAcceptedPrompt): boolean => unresolved.delete(prompt);
     const rejectBeforeEffect = (prompt: ClaudeRemoteProviderAcceptedPrompt): void => {
@@ -118,16 +120,41 @@ export function createClaudeRemotePromptSettlementTracker(options: Readonly<{
 
     return {
         track(prompt: ClaudeRemoteProviderAcceptedPrompt): void {
-            unresolved.add(prompt);
+            unresolved.set(prompt, null);
         },
+        submit(prompt: ClaudeRemoteProviderAcceptedPrompt): string {
+            if (!unresolved.has(prompt)) throw new Error('Cannot submit an untracked Claude prompt');
+            const uuid = randomUUID();
+            unresolved.set(prompt, uuid);
+            return uuid;
+        },
+        observeProviderMessage(message: unknown): boolean {
+            if (!message || typeof message !== 'object') return false;
+            const record = message as Record<string, unknown>;
+            if (record.type !== 'user' || record.isSynthetic === true || record.parent_tool_use_id != null) return false;
+            if (typeof record.uuid !== 'string') return false;
+            for (const [prompt, uuid] of unresolved) {
+                if (uuid !== record.uuid) continue;
+                unresolved.delete(prompt);
+                confirmClaudeRemoteProviderPromptAccepted(options.onAccepted, prompt);
+                return true;
+            }
+            return false;
+        },
+        /** Commands handled locally have no provider transport to acknowledge. */
         accept(prompt: ClaudeRemoteProviderAcceptedPrompt): void {
             if (!remove(prompt)) return;
             confirmClaudeRemoteProviderPromptAccepted(options.onAccepted, prompt);
         },
         rejectBeforeEffect,
         settleUnresolved(): void {
-            for (const prompt of [...unresolved]) {
-                rejectBeforeEffect(prompt);
+            for (const [prompt, uuid] of unresolved) {
+                unresolved.delete(prompt);
+                reportClaudeRemoteProviderPromptTransportFailure(
+                    options.onTransportFailure,
+                    prompt,
+                    uuid === null ? 'rejected_before_effect' : 'effect_may_have_occurred',
+                );
             }
         },
     };

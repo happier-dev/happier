@@ -23,6 +23,17 @@ export type CaptureOutcome =
   | Readonly<{ kind: 'state'; state: ClaudeScreenState }>
   | CaptureFailure;
 
+/** Display verification for exact text already written by this operation, never a preexisting draft. */
+export function doesClaudeOwnedTextMatchCapture(expected: string, captured: string): boolean {
+  const visibleText = (text: string) => text.trim().replace(/\s+/gu, ' ');
+  return visibleText(expected) === visibleText(captured);
+}
+
+/** Native question and plan editors preserve TAB/LF/CR inside bracketed paste (2.1.304 probes). */
+export function hasUnsupportedClaudeNativeTextControls(text: string): boolean {
+  return /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u.test(text);
+}
+
 export async function captureScreenState(port: TerminalControlPort): Promise<CaptureOutcome> {
   const result = await port.captureScreen();
   switch (result.status) {

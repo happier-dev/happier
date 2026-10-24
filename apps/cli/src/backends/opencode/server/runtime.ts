@@ -1,3 +1,4 @@
+import { buildUsageLimitIssueFingerprint } from '@happier-dev/protocol';
 import { randomUUID } from 'node:crypto';
 import type { McpServerConfig } from '@/agent';
 import type { ProviderEnforcedPermissionHandler } from '@/agent/permissions/ProviderEnforcedPermissionHandler';
@@ -279,16 +280,17 @@ export function createOpenCodeServerRuntime(params: {
         ? Object.assign(error, { runtimeAuthClassification })
         : { ...(asRecord(error) ?? {}), runtimeAuthClassification }
       : error;
-    if (runtimeAuthClassification) {
+    const reportFailure = (classification = runtimeAuthClassification): void => {
+      if (!classification) return;
       void reportConnectedServiceRuntimeAuthFailureToDaemon({
         sessionId: params.session.sessionId,
         switchesThisTurn: 0,
-        classification: runtimeAuthClassification,
+        classification,
         logPrefix: '[opencode]',
       }).then((recoveryReport) => {
         projectConnectedServiceRuntimeAuthRecoveryReport({
           report: recoveryReport,
-          classification: runtimeAuthClassification,
+          classification,
           sendGenericStatusMessage: (message) => {
             params.session.sendSessionEvent({ type: 'message', message });
             return true;
@@ -300,16 +302,25 @@ export function createOpenCodeServerRuntime(params: {
           },
         });
       });
-    }
+    };
+    let acceptedFailure = false;
     void surfacePrimarySessionRuntimeIssue({
       cause,
       provider,
       providerTurnId,
       error: errorWithClassification,
       session: params.session,
+      suppressUntrustedDuplicate: true,
+      onFailureTurn: ({ issue }) => {
+        acceptedFailure = true;
+        reportFailure(runtimeAuthClassification
+          ? { ...runtimeAuthClassification, runtimeIssueFingerprint: buildUsageLimitIssueFingerprint(issue) } : null);
+      },
     }).catch((surfaceError) => {
       logger.debug('[opencode] Failed to persist primary session runtime issue (non-fatal)', surfaceError);
     });
+    // An idle provider diagnostic has no accepted failed-turn witness; retain diagnostic coalescing.
+    if (!acceptedFailure) reportFailure();
   };
 
   let client: OpenCodeServerRuntimeClient | null = null;

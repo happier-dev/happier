@@ -219,13 +219,13 @@ export const PROVIDER_CLI_RUNTIME_SPECS: Readonly<Record<AgentId, ProviderCliRun
           },
         ],
       },
-      // OpenAI Codex rust-v0.147.0's checksum-pinned x64 Windows package
-      // expands to 370,442,135 bytes, including one 298,668,336-byte
-      // executable. A 384 MiB ceiling leaves bounded headroom while retaining
-      // generic archive, entry-count, path, and compression-ratio protections.
+      // Digest-verified rust-v0.163.0 Windows x64 expands to 465,689,987 bytes;
+      // its largest file is 341,270,320 bytes. Reuse the 0.3 Agent manifest's
+      // 512 MiB total budget while retaining the existing per-file budget and
+      // shared archive, entry-count, path and compression-ratio protections.
       archiveExtractionLimits: {
         maxFileBytes: 384 * 1024 * 1024,
-        maxExpandedBytes: 384 * 1024 * 1024,
+        maxExpandedBytes: 512 * 1024 * 1024,
       },
     },
     manualInstallKind: 'command',

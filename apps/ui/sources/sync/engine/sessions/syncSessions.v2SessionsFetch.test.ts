@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { encodeBase64 } from '@/encryption/base64';
 import {
+    applySessionListRenderablePatch,
     buildSessionListRenderableFromSession,
     preserveSessionListRenderableStaleFields,
     type SessionListRenderableSession,
@@ -1652,7 +1653,7 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
         );
     });
 
-    it('reuses warm cache list data when metadata and agentState versions match and the canonical session already exists', async () => {
+    it('prefers canonical session metadata over matching warm cache while reusing cached agent-state flags', async () => {
         const requestSpy = vi.fn(async () =>
             jsonResponse({
                 sessions: [
@@ -1743,14 +1744,14 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
                 pendingCount: 2,
                 pendingVersion: 11,
                 metadata: expect.objectContaining({
-                    name: 'Cached title',
-                    summaryText: 'Cached summary',
+                    name: 'Hydrated title',
+                    summaryText: null,
                     path: '/home/u/repo',
-                    homeDir: '/home/u',
+                    homeDir: null,
                     host: 'mbp',
                     machineId: 'm1',
-                    flavor: 'claude',
-                    directSessionV1: { v: 1, providerId: 'codex' },
+                    flavor: null,
+                    directSessionV1: null,
                     hiddenSystemSession: false,
                 }),
                 hasPendingUserActionRequests: true,
@@ -3460,6 +3461,54 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
                 }),
             },
         ]);
+    });
+
+    it('settles legacy pending flags from a newer hydrated request version after unrelated metadata advances', async () => {
+        const existing = buildExistingSession({
+            id: 's_legacy_pending', encryptionMode: 'plain', metadataVersion: 1,
+            metadata: { path: '/repo', host: 'host' }, agentStateVersion: 2,
+            agentState: { requests: { r1: { tool: 'Bash', arguments: {}, createdAt: 50 } } },
+            pendingPermissionRequestCount: 1, pendingUserActionRequestCount: 0, pendingRequestObservedAt: 50,
+        });
+        let current = buildSessionListRenderableFromSession(existing);
+        const resumeHydration = createDeferred<void>();
+        await fetchAndApplySessions({
+            credentials: { token: 't', secret: 's' },
+            encryption: Encryption.createWithoutKeyMaterial(),
+            sessionDataKeys: new Map(),
+            request: vi.fn(async () => jsonResponse({
+                sessions: [buildSessionRow({
+                    id: existing.id, encryptionMode: 'plain', updatedAt: 100,
+                    metadata: JSON.stringify(existing.metadata), metadataVersion: 1,
+                    agentState: JSON.stringify({ requests: {} }), agentStateVersion: 3,
+                })],
+                nextCursor: null, hasNext: false,
+            })),
+            getExistingSession: () => existing,
+            getCurrentSessionListRenderable: () => current,
+            applySessionListRenderables: rows => {
+                for (const row of rows) current = preserveSessionListRenderableStaleFields(current, row);
+            },
+            applySessionListRenderablePatches: patches => {
+                for (const { patch } of patches) current = applySessionListRenderablePatch(current, patch);
+            },
+            applySessions: () => { throw new Error('The older whole snapshot must not replace current metadata'); },
+            cachedSessionListEntries: {},
+            sessionListBackgroundHydrationYield: () => resumeHydration.promise,
+            repairInvalidReadStateV1: async () => {},
+            log: { log: () => {} },
+        });
+        expect(current).toMatchObject({ agentStateVersion: 2, hasPendingPermissionRequests: true });
+        current = applySessionListRenderablePatch(current, {
+            metadataVersion: 2, metadata: { path: '/renamed', host: 'host' }, updatedAt: 400,
+        });
+        resumeHydration.resolve();
+
+        await expect.poll(() => current.agentStateVersion).toBe(3);
+        expect(current).toMatchObject({
+            hasPendingPermissionRequests: false, hasPendingUserActionRequests: false,
+            pendingRequestObservedAt: null, metadataVersion: 2, metadata: { path: '/renamed' },
+        });
     });
 
     it('does not wait for background-yield scheduling before required session hydration', async () => {

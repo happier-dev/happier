@@ -2,9 +2,7 @@ import { open, stat } from 'node:fs/promises';
 
 import { tryParseJsonlLine } from './jsonlParse';
 import type { JsonlParsedLine } from './jsonlBackwardPager';
-
-const DEFAULT_CHUNK_BYTES = 64 * 1024;
-const DEFAULT_MAX_OVERSIZE_LINE_BYTES = 8 * 1024 * 1024;
+import { assertJsonlReadProgress, resolveJsonlReadBudget } from './jsonlReadBudget';
 
 export async function readJsonlFileForward(params: Readonly<{
   filePath: string;
@@ -20,13 +18,7 @@ export async function readJsonlFileForward(params: Readonly<{
   reachedEnd: boolean;
   hitPageLimit: boolean;
 }>> {
-  const maxBytes = Math.max(1, Math.trunc(params.maxBytes));
-  const maxItems = Math.max(1, Math.trunc(params.maxItems));
-  const chunkBytes = Math.max(1024, Math.trunc(params.chunkBytes ?? DEFAULT_CHUNK_BYTES));
-  const maxOversizeLineBytes = Math.max(
-    maxBytes,
-    Math.trunc(params.maxOversizeLineBytes ?? DEFAULT_MAX_OVERSIZE_LINE_BYTES),
-  );
+  const { maxBytes, maxItems, chunkBytes, maxOversizeLineBytes } = resolveJsonlReadBudget(params);
 
   let fileSize = 0;
   try {
@@ -108,6 +100,8 @@ export async function readJsonlFileForward(params: Readonly<{
   }
 
   const reachedEnd = carry.length === 0 && nextReadOffset >= fileSize;
+  assertJsonlReadProgress({ consumedBytes: carryStartOffset - offsetBytes, remainingSourceBytes: fileSize - nextReadOffset,
+    pendingLineBytes: carry.length, maxLineBytes: maxOversizeLineBytes, direction: 'forward', offsetBytes });
   // An incomplete terminal line alone is not a backlog: retain its start until the writer completes it.
   const hitPageLimit = !reachedEnd && (items.length >= maxItems || nextReadOffset < fileSize);
   return { items, nextOffsetBytes: carryStartOffset, truncated: false, reachedEnd, hitPageLimit };

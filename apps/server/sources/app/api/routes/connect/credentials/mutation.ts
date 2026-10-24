@@ -3,6 +3,7 @@ import type { ConnectedServiceCredentialHealthV1 } from "@happier-dev/protocol";
 
 import { inTx, type Tx } from "@/storage/inTx";
 import { resolveEffectiveAccountEncryptionModeFromAccountRow } from "@/app/encryption/accountEncryptionMode";
+import { deleteConnectedServiceUsageSourcesForProfile } from "../providerAccountUsage/sourceStorage";
 import { recordConnectedServiceAccountProfileChange } from "../connectedServicesAccountProfileChange";
 import {
     isConnectedServiceProviderIdentityMismatch,
@@ -67,6 +68,7 @@ export type ConnectedServiceCredentialMutationParams = Readonly<{
 function readExistingIdentity(metadata: unknown): Readonly<{
     providerEmail?: string | null;
     providerAccountId?: string | null;
+    providerOrganizationId?: string | null;
 }> | null {
     if (isConnectedServiceCredentialMetadataV2(metadata)) {
         return normalizeConnectedServiceCredentialMetadataV2(metadata);
@@ -178,6 +180,14 @@ export async function mutateConnectedServiceCredentialInTx(
                     ...data,
                 },
             });
+        }
+        if (current && (
+            (existingIdentity?.providerAccountId ?? null) !== (params.metadata.providerAccountId ?? null)
+            || (existingIdentity?.providerOrganizationId ?? null) !== (params.metadata.providerOrganizationId ?? null)
+        )) {
+            // Aliases are projections of this exact credential context. Retain them for token
+            // rotation, but remove every profile/group alias atomically on a context change.
+            await deleteConnectedServiceUsageSourcesForProfile(params, tx);
         }
         return { status: "written", credentialRevision };
 }

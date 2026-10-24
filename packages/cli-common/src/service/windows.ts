@@ -1,10 +1,19 @@
 function psDoubleQuote(s: string): string {
-  // PowerShell double-quoted string escape: `"
-  return String(s ?? '').replaceAll('`', '``').replaceAll('"', '`"');
+  // Escape the escape character before interpolation and quote characters.
+  return String(s ?? '').replaceAll('`', '``').replaceAll('$', '`$').replaceAll('"', '`"');
 }
 
 function psQuoted(s: string): string {
   return `"${psDoubleQuote(s)}"`;
+}
+
+/** Read a literal emitted by this renderer, or a legacy single-quoted definition value. */
+export function parsePowerShellQuotedString(value: string): string | null {
+  const match = /^"((?:[^"`]|`.)*)"|^'((?:[^']|'')*)'/u.exec(value.trim());
+  if (!match) return null;
+  return match[1] === undefined
+    ? match[2].replaceAll("''", "'")
+    : match[1].replace(/`([`$"])/gu, '$1');
 }
 
 export function splitQualifiedWindowsScheduledTaskName(qualifiedTaskName: string): Readonly<{

@@ -335,4 +335,37 @@ describe('AgentInput (chip ordering)', () => {
         expect(deliveryIndex).toBeGreaterThan(recipientIndex);
     }, 90_000);
 
+    it('does not rebuild the control rows when only the composer text changes', async () => {
+        const renderRecipientChip = vi.fn(() => React.createElement('Pressable', { testID: 'agent-input-recipient-chip' }));
+        const extraActionChips = [{
+            key: 'participants-recipient',
+            controlId: 'recipient' as const,
+            collapsedOptionsPopover: {
+                title: 'session.participants.sendToTitle',
+                options: [{ id: 'lead', label: 'Lead' }],
+                selectedOptionId: 'lead',
+                onSelect: () => {},
+            },
+            render: renderRecipientChip,
+        }];
+        const stableProps = {
+            placeholder: 'placeholder',
+            onChangeText: () => {},
+            onSend: () => {},
+            autocompleteKinds: [],
+            autocompleteSuggestions: async () => [],
+            onPermissionClick: () => {},
+            agentType: 'codex' as const,
+            extraActionChips,
+        };
+        const screen = await renderScreen(React.createElement(AgentInput, { ...stableProps, value: '' }));
+        expect(renderRecipientChip).toHaveBeenCalled();
+        renderRecipientChip.mockClear();
+
+        await screen.update(React.createElement(AgentInput, { ...stableProps, value: 'h' }));
+        await screen.update(React.createElement(AgentInput, { ...stableProps, value: 'he' }));
+
+        expect(renderRecipientChip).not.toHaveBeenCalled();
+    }, 90_000);
+
 });

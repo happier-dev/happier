@@ -44,6 +44,8 @@ export interface StatusMessage {
   status: AgentStatus;
   /** Additional details (e.g., error message) */
   detail?: string;
+  /** In-process terminal error evidence for the host; never serialized to the transcript. */
+  error?: unknown;
   /** The provider conclusively settled its response; an unqualified idle may be transient. */
   turnFinished?: true;
 }

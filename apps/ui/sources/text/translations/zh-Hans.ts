@@ -1401,6 +1401,8 @@ export const zhHans: TranslationStructure = {
     secretKeyPlaceholder: "XXXXX-XXXXX-XXXXX...",
     linkNewDeviceTitle: "链接新设备",
     linkNewDeviceSubtitle: "扫描新设备上显示的二维码以将其链接到此账户",
+    pairingConnectionWarningTitle: "服务器已断开连接",
+    pairingConnectionWarningBody: "配对需要能够访问服务器。请检查连接，或扫描其他服务器的二维码。",
     linkNewDeviceQrInstructions: "在新设备上打开 Happier 并显示二维码",
     scanQrCodeOnDevice: "扫描二维码",
     unsupported: {
@@ -3960,6 +3962,11 @@ export const zhHans: TranslationStructure = {
     plugins: {
             claude: {
                 title: "Claude Code",
+                responseLocationOptions: {
+                    app_and_terminal: { title: "应用和终端", subtitle: "在 Happier 应用或 Claude Code 终端中响应。" },
+                    app_only: { title: "应用内请求", subtitle: "使用现有的应用请求流程。Claude 仍可能在其终端中接受响应。" },
+                    terminal_only: { title: "仅终端", subtitle: "在 Claude Code 终端中响应。" },
+                },
                 sections: {
                     claudeModelDiscovery: {
                         title: "模型发现",
@@ -4004,6 +4011,14 @@ export const zhHans: TranslationStructure = {
                                 subtitle: "使用 Happier 内置的 zellij 主机。"
                             }
                         }
+                    },
+                    claudeUnifiedTerminalQuestionResponseLocation: {
+                        title: "回答问题",
+                        subtitle: "选择在统一终端会话中回答问题的位置。"
+                    },
+                    claudeUnifiedTerminalPermissionResponseLocation: {
+                        title: "批准权限请求",
+                        subtitle: "选择在统一终端会话中批准权限请求的位置。"
                     },
                     claudeUnifiedTerminalResumeChoice: {
                         title: "大型会话恢复",
@@ -4107,7 +4122,7 @@ export const zhHans: TranslationStructure = {
                     },
                     claudeLocalPermissionBridgeEnabled: {
                         title: "实验性：本地权限桥接",
-                        subtitle: "将 Claude 本地模式的权限请求转发到 Happier，以便你可以在界面中批准或拒绝。"
+                        subtitle: "将传统本地 Claude 会话的权限请求转发到 Happier。统一终端会话使用上方的响应选项。"
                     },
                     claudeLocalPermissionBridgeWaitIndefinitely: {
                         title: "保持请求打开直到回应",
@@ -9615,6 +9630,7 @@ settingsSession: {
       checking: "正在检查…",
       failedGeneric: "更新未完成，请重试。",
       remoteUnsupported: "这台机器无法远程更新其命令行工具。请在该机器上直接更新。",
+      archiveExpandedByteLimit: "下载的运行时超过了解压大小限制。请更新 Happier 后重试。",
       updateNotVerified: "更新已运行，但版本没有变化。",
       rolledBackLocal: "更新未能启动，因此这台电脑已恢复到之前的版本。",
       smokeFailed: "新版本无法在这台电脑上运行，因此没有任何更改。",

@@ -1,4 +1,6 @@
 import type { ClaudeScreenState } from './screenState';
+import type { StructuredQuestionLike } from '@happier-dev/protocol';
+import type { ClaudeNativePermissionPresentation } from './nativePermissionScreen';
 
 export type ClaudeUnifiedRecognizedDialogId =
   | 'switch_model'
@@ -8,7 +10,7 @@ export type ClaudeUnifiedRecognizedDialogId =
   | 'effort_change'
   | 'trust_folder';
 
-export type ClaudeUnifiedDialogId = ClaudeUnifiedRecognizedDialogId | 'unrecognized_confirmation';
+export type ClaudeUnifiedDialogId = ClaudeUnifiedRecognizedDialogId | 'unrecognized_confirmation' | 'ask_user_question' | 'tool_permission';
 
 export type ClaudeUnifiedDialogBlockedReason =
   | 'switch_model_dialog'
@@ -17,6 +19,8 @@ export type ClaudeUnifiedDialogBlockedReason =
   | 'safeguard_pause_dialog'
   | 'effort_change_dialog'
   | 'trust_folder_prompt'
+  | 'ask_user_question'
+  | 'permission_prompt'
   | 'unrecognized_confirmation_dialog';
 
 export type ClaudeUnifiedDialogDetectorStateKey =
@@ -96,7 +100,25 @@ export type ClaudeUnifiedVisibleUnrecognizedDialog =
 
 export type ClaudeUnifiedVisibleDialog =
   | ClaudeUnifiedVisibleRecognizedDialog
-  | ClaudeUnifiedVisibleUnrecognizedDialog;
+  | ClaudeUnifiedVisibleUnrecognizedDialog
+  | ClaudeUnifiedVisibleNativeToolDialog;
+
+export type ClaudeUnifiedVisibleNativeToolDialog = Readonly<{
+  kind: 'native';
+  dialogId: 'ask_user_question' | 'tool_permission';
+  occurrenceId: string;
+  toolName: string;
+  toolInput: unknown;
+  questions: readonly StructuredQuestionLike[];
+  responseLocation: 'app_and_terminal' | 'terminal_only';
+  owner: null;
+  questionId: string;
+  requestReason: string;
+  header: string;
+  question: string;
+  options: readonly ClaudeUnifiedDialogOption[];
+  permissionPresentation?: ClaudeNativePermissionPresentation;
+}>;
 
 function option(
   choice: string,
@@ -139,7 +161,7 @@ function exactLabelMatcher(label: string): RegExp {
   return new RegExp(`^${label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'iu');
 }
 
-const CLAUDE_UNIFIED_UNRECOGNIZED_DIALOG_NOTICE = Object.freeze({
+export const CLAUDE_UNIFIED_UNRECOGNIZED_DIALOG_NOTICE = Object.freeze({
   kind: 'unrecognized' as const,
   mode: 'notice' as const,
   dialogId: 'unrecognized_confirmation' as const,
@@ -303,6 +325,8 @@ const BLOCKED_REASON_BY_DIALOG_ID: Readonly<Record<ClaudeUnifiedDialogId, Claude
   safeguard_pause: 'safeguard_pause_dialog',
   effort_change: 'effort_change_dialog',
   trust_folder: 'trust_folder_prompt',
+  ask_user_question: 'ask_user_question',
+  tool_permission: 'permission_prompt',
   unrecognized_confirmation: 'unrecognized_confirmation_dialog',
 };
 
@@ -401,7 +425,14 @@ function normalizeChoiceToken(value: string): string {
 export function buildClaudeUnifiedDialogQuestionInput(
   dialog: ClaudeUnifiedVisibleDialog,
 ): Readonly<Record<string, unknown>> {
-  const options = dialog.options.map((entryOption) => ({
+  if (dialog.kind === 'native' && dialog.dialogId === 'ask_user_question') {
+    return {
+      happierDialog: { kind: 'recognized', dialogId: dialog.dialogId, secondaryAction: 'open_terminal' },
+      questions: dialog.questions,
+    };
+  }
+  const feedback = dialog.kind === 'native' ? dialog.permissionPresentation?.feedback : undefined;
+  const options = dialog.options.filter((_, index) => index !== feedback?.optionIndex).map((entryOption) => ({
     choice: entryOption.choice,
     label: entryOption.label,
     description: entryOption.description,
@@ -425,12 +456,24 @@ export function buildClaudeUnifiedDialogQuestionInput(
       question: dialog.question,
       multiSelect: false,
       options,
+      ...(feedback ? { freeform: { multiline: true } } : {}),
     }],
   };
 }
 
 /** Full visible identity used for request replacement and the final pre-byte recapture guard. */
 export function getClaudeUnifiedDialogIdentity(dialog: ClaudeUnifiedVisibleDialog): string {
+  if (dialog.kind === 'native') {
+    // A tab, focus move or checkbox is progress inside this occurrence. Only a new tool call
+    // or a changed native permission scope replaces the published request.
+    return JSON.stringify({
+      dialogId: dialog.dialogId, occurrenceId: dialog.occurrenceId,
+      toolName: dialog.toolName, toolInput: dialog.toolInput,
+      ...(dialog.dialogId === 'tool_permission'
+        ? { context: dialog.permissionPresentation?.context, options: dialog.options }
+        : {}),
+    });
+  }
   return JSON.stringify({
     dialogId: dialog.dialogId,
     kind: dialog.kind,

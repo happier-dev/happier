@@ -87,6 +87,40 @@ function createGroup(): ConnectedServiceAuthGroupV1 {
 }
 
 describe('hydrateProviderAccountUsageStoreFromConnectedServiceInventory', () => {
+  it.each([
+    ['org-work', true],
+    ['org-other', false],
+    [null, false],
+  ] as const)('adopts scoped Claude quota only when the current credential proves the same organization (%s)', async (currentOrganizationId, expectedHydrated) => {
+    const recordKey = {
+      providerId: 'claude', accountSubjectId: 'acct-work', subjectKind: 'account' as const,
+      quotaScope: 'organization' as const, quotaScopeId: 'org-work',
+    };
+    const snapshot = ProviderAccountUsageSnapshotV1Schema.parse({
+      ...createUsageSnapshot(), recordKey, recordId: buildProviderAccountUsageRecordId(recordKey), providerId: 'claude',
+    });
+    const source = { serviceId: 'claude-subscription', profileId: 'work', bindingKind: 'profile' } as const;
+    const store = createProviderAccountUsageStore();
+    const result = await hydrateProviderAccountUsageStoreFromConnectedServiceInventory({
+      serviceIds: ['claude-subscription'],
+      api: {
+        listConnectedServiceProfiles: async () => ({ serviceId: 'claude-subscription', profiles: [{ profileId: 'work' }] }),
+        listConnectedServiceAuthGroups: async () => [],
+        resolveProviderAccountUsageSource: async () => ({
+          source, recordId: snapshot.recordId, providerAccountId: 'acct-work',
+          fetchedAt: snapshot.fetchedAtMs, staleAfterMs: snapshot.staleAfterMs,
+        }),
+        getAccountEncryptionMode: async () => 'plain',
+        getProviderAccountUsageSnapshotPlain: async () => ({ content: { t: 'plain', v: snapshot }, sources: [source] }),
+      },
+      resolveCurrentProviderAccountIdentityForSource: async () => currentOrganizationId
+        ? { providerAccountId: 'acct-work', providerOrganizationId: currentOrganizationId } : null,
+      credentials: createCredentials(), store, nowMs: snapshot.fetchedAtMs + 1,
+    });
+    expect(result.hydration.refreshSources).toEqual(expectedHydrated ? [] : [source]);
+    expect(store.listSnapshots()).toEqual(expectedHydrated ? [snapshot] : []);
+  });
+
   it('preserves the API receiver while resolving the current source inventory', async () => {
     const store = createProviderAccountUsageStore();
     const receiverToken = Symbol('receiver-token');

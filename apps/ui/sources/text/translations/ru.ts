@@ -1377,6 +1377,8 @@ export const ru: TranslationStructure = {
     secretKeyPlaceholder: "XXXXX-XXXXX-XXXXX...",
     linkNewDeviceTitle: "Привязать новое устройство",
     linkNewDeviceSubtitle: "Отсканируйте QR-код, отображаемый на новом устройстве, чтобы привязать его к этой учетной записи",
+    pairingConnectionWarningTitle: "Нет подключения к серверу",
+    pairingConnectionWarningBody: "Для сопряжения сервер должен быть доступен. Проверьте подключение или отсканируйте код другого сервера.",
     linkNewDeviceQrInstructions: "Откройте Happier на новом устройстве и отобразите QR-код",
     scanQrCodeOnDevice: "Сканировать QR-код",
     unsupported: {
@@ -4024,6 +4026,11 @@ export const ru: TranslationStructure = {
     plugins: {
             claude: {
                 title: "Claude Code",
+                responseLocationOptions: {
+                    app_and_terminal: { title: "Приложение и терминал", subtitle: "Отвечайте в приложении Happier или терминале Claude Code." },
+                    app_only: { title: "Запросы в приложении", subtitle: "Используйте существующий процесс запросов в приложении. Claude по-прежнему может принимать ответы в своём терминале." },
+                    terminal_only: { title: "Только терминал", subtitle: "Отвечайте в терминале Claude Code." },
+                },
                 sections: {
                     claudeModelDiscovery: {
                         title: "Обнаружение моделей",
@@ -4068,6 +4075,14 @@ export const ru: TranslationStructure = {
                                 subtitle: "Использовать встроенный в Happier хост zellij."
                             }
                         }
+                    },
+                    claudeUnifiedTerminalQuestionResponseLocation: {
+                        title: "Ответы на вопросы",
+                        subtitle: "Выберите, где отвечать на вопросы в сеансах единого терминала."
+                    },
+                    claudeUnifiedTerminalPermissionResponseLocation: {
+                        title: "Подтверждение запросов разрешений",
+                        subtitle: "Выберите, где подтверждать запросы разрешений в сеансах единого терминала."
                     },
                     claudeUnifiedTerminalResumeChoice: {
                         title: "Возобновление больших сессий",
@@ -4171,7 +4186,7 @@ export const ru: TranslationStructure = {
                     },
                     claudeLocalPermissionBridgeEnabled: {
                         title: "Экспериментально: локальный мост разрешений",
-                        subtitle: "Перенаправляет запросы разрешений Claude в локальном режиме в Happier, чтобы вы могли одобрять или отклонять их из интерфейса."
+                        subtitle: "Передавайте запросы разрешений из классических локальных сеансов Claude в Happier. Сеансы единого терминала используют варианты ответа выше."
                     },
                     claudeLocalPermissionBridgeWaitIndefinitely: {
                         title: "Оставлять запросы открытыми до ответа",
@@ -9935,6 +9950,7 @@ settingsSession: {
       checking: "Проверка…",
       failedGeneric: "Обновление не завершилось. Попробуйте ещё раз.",
       remoteUnsupported: "Эта машина не может обновить командную строку удалённо. Обновите её на самой машине.",
+      archiveExpandedByteLimit: "Загруженная среда превышает ограничение размера распаковки. Обновите Happier перед повторной попыткой.",
       updateNotVerified: "Обновление выполнилось, но версия не изменилась.",
       rolledBackLocal: "Обновление не запустилось, поэтому на этом компьютере восстановлена предыдущая версия.",
       smokeFailed: "Новая версия не заработала на этом компьютере, поэтому ничего не изменилось.",

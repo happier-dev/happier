@@ -2,7 +2,8 @@ import React from 'react';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 import type { ToolCall } from '@/sync/domains/messages/messageTypes';
-import { collectHostText, makeToolCall, makeToolViewProps } from '@/dev/testkit';
+import type { AgentState } from '@/sync/domains/state/storageTypes';
+import { collectHostText, createSessionFixture, createStorageModuleStub, makeToolCall, makeToolViewProps } from '@/dev/testkit';
 import { renderScreen } from '@/dev/testkit';
 import {
     installWorkflowRendererCommonModuleMocks,
@@ -17,9 +18,25 @@ const sessionAllowWithPermissionUpdates = vi.fn();
 const sessionDeny = vi.fn();
 const sendMessage = vi.fn();
 const modalAlert = vi.fn();
-const safeParsePlan = vi.fn();
+let liveRequests: NonNullable<AgentState['requests']> = {};
+
+function readSession() {
+    return createSessionFixture({
+        id: 's1',
+        active: true,
+        agentState: { controlledByUser: null, requests: liveRequests, completedRequests: {} },
+    });
+}
+
+function setLivePlanRequest(id: string, tool = 'ExitPlanMode') {
+    liveRequests = { [id]: { tool, arguments: { plan: 'plan' }, createdAt: 1 } };
+}
 
 installWorkflowRendererCommonModuleMocks({
+    storage: () => createStorageModuleStub({
+        useSession: readSession,
+        storage: { getState: () => ({ sessions: { s1: readSession() } }) },
+    }),
     modal: () =>
         import('@/dev/testkit/mocks/modal').then(({ createModalModuleMock }) =>
             createModalModuleMock({
@@ -32,16 +49,6 @@ installWorkflowRendererCommonModuleMocks({
 
 vi.mock('@/components/markdown/MarkdownView', () => ({
     MarkdownView: (props: { markdown: string }) => React.createElement('MarkdownView', props),
-}));
-
-vi.mock('../../catalog', () => ({
-    knownTools: {
-        ExitPlanMode: {
-            input: {
-                safeParse: (...args: unknown[]) => safeParsePlan(...args),
-            },
-        },
-    },
 }));
 
 vi.mock('@/sync/ops', () => ({
@@ -90,8 +97,50 @@ describe('ExitPlanToolView', () => {
         sessionDeny.mockReset();
         sendMessage.mockReset();
         modalAlert.mockReset();
-        safeParsePlan.mockReset();
-        safeParsePlan.mockReturnValue({ success: true, data: { plan: 'plan' } });
+        setLivePlanRequest('perm1');
+    });
+
+    it.each(['missing', 'native-wrapper', 'same-id-question'] as const)('hides original plan actions for a %s request', async (request) => {
+        liveRequests = request === 'missing' ? {} : {
+            [request === 'native-wrapper' ? 'claude_dialog_choice_native' : 'perm1']: {
+                tool: 'AskUserQuestion', kind: 'user_action',
+                arguments: { questions: [] }, createdAt: 1,
+            },
+        };
+        const tree = await renderView(makeRunningTool());
+
+        expect(tree.findAllByTestId('exit-plan-approve')).toHaveLength(0);
+        expect(tree.findAllByTestId('exit-plan-reject')).toHaveLength(0);
+        expect(tree.findAllByTestId('exit-plan-request-changes')).toHaveLength(0);
+        expect(sessionAllow).not.toHaveBeenCalled();
+        expect(sessionDeny).not.toHaveBeenCalled();
+    });
+
+    it.each(['approve', 'reject', 'request-changes'] as const)('does not dispatch stale %s after the request retires', async (action) => {
+        const tree = await renderView(makeRunningTool());
+        if (action === 'request-changes') {
+            await tree.pressByTestIdAsync('exit-plan-request-changes');
+            await act(async () => { tree.changeTextByTestId('exit-plan-request-changes-input', 'Change the plan'); });
+        }
+        liveRequests = {};
+        await tree.pressByTestIdAsync(action === 'request-changes' ? 'exit-plan-request-changes-send' : `exit-plan-${action}`);
+
+        expect(sessionAllow).not.toHaveBeenCalled();
+        expect(sessionDeny).not.toHaveBeenCalled();
+        expect(collectHostText(tree)).not.toContain('tools.exitPlanMode.responded');
+    });
+
+    it('does not dispatch an approval menu choice after the request retires', async () => {
+        const tree = await renderView(makeRunningTool());
+        await tree.pressByTestIdAsync('exit-plan-approve-menu');
+        const buttons = modalAlert.mock.calls.at(-1)?.[2] as Array<{ text?: string; onPress?: () => void }> | undefined;
+        const option = buttons?.find((button) => button.text?.includes('agentInput.permissionMode.acceptEdits'));
+        expect(option?.onPress).toBeTypeOf('function');
+        liveRequests = {};
+        await act(async () => { option?.onPress?.(); });
+
+        expect(sessionAllowWithPermissionUpdates).not.toHaveBeenCalled();
+        expect(collectHostText(tree)).not.toContain('tools.exitPlanMode.responded');
     });
 
     it('approves via permission RPC and does not send a follow-up user message', async () => {
@@ -228,6 +277,7 @@ describe('ExitPlanToolView', () => {
     });
 
     it('falls back to tool.id when approve is pressed before permission metadata is reattached', async () => {
+        setLivePlanRequest('toolu_reconnect');
         sessionAllow.mockResolvedValueOnce(undefined);
         const tree = await renderView(makeRunningTool({ id: 'toolu_reconnect', permission: undefined }));
 
@@ -241,6 +291,7 @@ describe('ExitPlanToolView', () => {
     });
 
     it('falls back to tool.id when reject is pressed before permission metadata is reattached', async () => {
+        setLivePlanRequest('toolu_reconnect', 'exit_plan_mode');
         sessionDeny.mockResolvedValueOnce(undefined);
         const tree = await renderView(makeRunningTool({ id: 'toolu_reconnect', permission: undefined }));
 
@@ -254,6 +305,7 @@ describe('ExitPlanToolView', () => {
     });
 
     it('falls back to tool.id when requesting changes before permission metadata is reattached', async () => {
+        setLivePlanRequest('toolu_reconnect');
         sessionDeny.mockResolvedValueOnce(undefined);
         const tree = await renderView(makeRunningTool({ id: 'toolu_reconnect', permission: undefined }));
 
@@ -312,32 +364,11 @@ describe('ExitPlanToolView', () => {
         expect(modalAlert).toHaveBeenCalledWith('common.error', 'tools.exitPlanMode.requestChangesEmpty');
     });
 
-    it('does not mark as responded when approve is pressed without any permission request id', async () => {
+    it('hides actions without any permission request id', async () => {
         const tree = await renderView(makeRunningTool({ id: undefined, permission: undefined }));
-
-        await act(async () => {
-            await tree.pressByTestIdAsync('exit-plan-approve');
-        });
-
-        expect(sessionAllow).toHaveBeenCalledTimes(0);
-        expect(modalAlert).toHaveBeenCalledWith('common.error', 'errors.missingPermissionId');
-
-        const buttonsAfter = tree.findAllByType('TouchableOpacity' as any);
-        expect(buttonsAfter.length).toBeGreaterThanOrEqual(2);
-    });
-
-    it('does not mark as responded when reject is pressed without any permission request id', async () => {
-        const tree = await renderView(makeRunningTool({ id: undefined, permission: undefined }));
-
-        await act(async () => {
-            await tree.pressByTestIdAsync('exit-plan-reject');
-        });
-
-        expect(sessionDeny).toHaveBeenCalledTimes(0);
-        expect(modalAlert).toHaveBeenCalledWith('common.error', 'errors.missingPermissionId');
-
-        const buttonsAfter = tree.findAllByType('TouchableOpacity' as any);
-        expect(buttonsAfter.length).toBeGreaterThanOrEqual(2);
+        expect(tree.findAllByTestId('exit-plan-approve')).toHaveLength(0);
+        expect(tree.findAllByTestId('exit-plan-reject')).toHaveLength(0);
+        expect(modalAlert).not.toHaveBeenCalled();
     });
 
     it('does not allow responding when canApprovePermissions is false', async () => {
@@ -359,7 +390,6 @@ describe('ExitPlanToolView', () => {
     });
 
     it('shows a placeholder when no plan text is provided', async () => {
-        safeParsePlan.mockReturnValueOnce({ success: true, data: {} });
         const tree = await renderView(makeRunningTool({ input: {} }));
 
         const markdownNode = tree.findByType('MarkdownView' as any);
@@ -367,8 +397,7 @@ describe('ExitPlanToolView', () => {
     });
 
     it('shows a placeholder when plan input schema parse fails', async () => {
-        safeParsePlan.mockReturnValueOnce({ success: false });
-        const tree = await renderView(makeRunningTool({ input: { unexpected: true } }));
+        const tree = await renderView(makeRunningTool({ input: 'invalid' }));
 
         const markdownNode = tree.findByType('MarkdownView' as any);
         expect(markdownNode.props.markdown).toBe('tools.exitPlanMode.planMissing');

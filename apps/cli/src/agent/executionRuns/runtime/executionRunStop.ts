@@ -2,7 +2,7 @@ import type { VoiceAgentManager } from '@/agent/voice/agent/VoiceAgentManager';
 import type { ExecutionRunState } from '@/agent/executionRuns/runtime/executionRunTypes';
 import type { ExecutionRunController } from '@/agent/executionRuns/controllers/types';
 import type { FinishExecutionRun } from '@/agent/executionRuns/runtime/executionRunFinishRun';
-import { settleExecutionRunControllerOccurrence } from '@/agent/executionRuns/runtime/settleExecutionRunControllerOccurrence';
+import { disposeExecutionRunBackendController, settleExecutionRunControllerOccurrence } from '@/agent/executionRuns/runtime/settleExecutionRunControllerOccurrence';
 import { logger } from '@/ui/logger';
 
 export async function stopExecutionRun(args: Readonly<{
@@ -22,13 +22,15 @@ export async function stopExecutionRun(args: Readonly<{
   ctrl.cancelled = true;
   const leafCancellation = Promise.resolve().then(async () => {
     if (ctrl.kind === 'backend') {
-      if (ctrl.childSessionId) {
+      if (ctrl.childSessionId && !ctrl.disposalPromise) {
         await ctrl.backend.cancel(ctrl.childSessionId);
       }
       return;
     }
     await args.voiceAgentManager.stop({ voiceAgentId: ctrl.voiceAgentId });
   });
+  ctrl.cancellationPromise = leafCancellation;
+  if (ctrl.kind === 'voice_agent') ctrl.disposalPromise = leafCancellation;
   void leafCancellation.catch((error) => {
     logger.warn('[EXECUTION RUN] Provider cancellation failed after host stop', {
       runId: args.runId,
@@ -59,7 +61,7 @@ export async function stopExecutionRun(args: Readonly<{
       // ignore
     }
     if (ctrl.kind === 'backend') {
-      const leafDisposal = Promise.resolve().then(() => ctrl.backend.dispose());
+      const leafDisposal = disposeExecutionRunBackendController(ctrl);
       void leafDisposal.catch((error) => {
         logger.warn('[EXECUTION RUN] Backend disposal failed after host stop', {
           runId: args.runId,

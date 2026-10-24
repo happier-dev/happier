@@ -109,7 +109,7 @@ describe("connectRoutes (connected services v2) sealed credential endpoints (int
             headers: { "content-type": "application/json", "x-test-user-id": user.id },
             payload: {
                 sealed: { format: "account_scoped_v1", ciphertext: "c2VhbGVk" },
-                metadata: { kind: "oauth", providerEmail: "user@example.com", expiresAt: Date.now() + 3600_000 },
+                metadata: { kind: "oauth", providerEmail: "user@example.com", providerOrganizationId: "organization-work", expiresAt: Date.now() + 3600_000 },
             },
         });
         expect(register.statusCode).toBe(200);
@@ -124,7 +124,7 @@ describe("connectRoutes (connected services v2) sealed credential endpoints (int
         expect(getOne.json()).toEqual({
             credentialRevision: expect.any(String),
             sealed: { format: "account_scoped_v1", ciphertext: "c2VhbGVk" },
-            metadata: expect.objectContaining({ kind: "oauth", providerEmail: "user@example.com" }),
+            metadata: expect.objectContaining({ kind: "oauth", providerEmail: "user@example.com", providerOrganizationId: "organization-work" }),
         });
 
         const change = await db.accountChange.findUnique({

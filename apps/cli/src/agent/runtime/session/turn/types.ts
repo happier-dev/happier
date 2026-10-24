@@ -64,6 +64,10 @@ export type FailTurnInput = Readonly<{
      * fails it so the issue is surfaced instead of silently dropped.
      */
     allocateWhenIdle?: boolean;
+    /** Repeated observers may reuse the last failure until a new turn begins. */
+    suppressUntrustedDuplicate?: boolean;
+    /** Accepted terminal evidence, available before its durable write settles. */
+    onFailureTurn?: (failure: Readonly<{ turnId: string; issue: SessionRuntimeIssueV1 }>) => void;
 }>;
 
 export type CancelTurnInput = Readonly<{

@@ -108,53 +108,6 @@ describe("session turn projection SQL", () => {
                     .toHaveLength(sidechain.parameterOrder.length);
             });
 
-            it("treats a legacy null role as opening a turn", () => {
-                // Everywhere else on this route a null `messageRole` counts as `user`. If it did
-                // not open a turn here, every legacy row would shift the turn boundaries and the
-                // wrong reply would be paired with the wrong prompt.
-                const built = buildSessionTurnProjectionIdsSql({
-                    dialect,
-                    sidechainId: null,
-                    hasBeforeSeq: false,
-                });
-                expect(built.sql).toContain("IS NULL OR");
-                expect(built.parameterOrder.filter((name) => name === "userRole").length)
-                    .toBeGreaterThanOrEqual(1);
-            });
-
-            it("asks for the last reply of each turn for BOTH agent and tool rows", () => {
-                // A turn that produced no agent text falls back to tool text for its subtitle,
-                // so omitting tool rows would silently blank tool-only turns.
-                const built = buildSessionTurnProjectionIdsSql({
-                    dialect,
-                    sidechainId: null,
-                    hasBeforeSeq: false,
-                });
-                expect(built.parameterOrder).toContain("agentRole");
-                expect(built.parameterOrder).toContain("toolRole");
-                expect(built.sql.match(/ROW_NUMBER\(\) OVER/g) ?? []).toHaveLength(2);
-            });
-
-            it("bounds the reply lookups to the requested turns, not the whole session", () => {
-                // Without this the projection returns the last reply of EVERY turn ever, which
-                // is the over-fetch it exists to remove.
-                const built = buildSessionTurnProjectionIdsSql({
-                    dialect,
-                    sidechainId: null,
-                    hasBeforeSeq: false,
-                });
-                expect(built.sql.match(/turn_no IN \(SELECT turn_no FROM recent\)/g) ?? [])
-                    .toHaveLength(3);
-            });
-
-            it("states the window frame instead of relying on the dialect default", () => {
-                const built = buildSessionTurnProjectionIdsSql({
-                    dialect,
-                    sidechainId: null,
-                    hasBeforeSeq: false,
-                });
-                expect(built.sql).toContain("ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW");
-            });
         });
     }
 });

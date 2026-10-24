@@ -36,7 +36,7 @@ export function resolveIsolation(request: BackendIsolationRequest, baseBundle: B
     settingsPath,
     cleanup: async () => {
       try {
-        await rm(settingsDir, { recursive: true, force: true });
+        await rm(root, { recursive: true, force: true });
       } finally {
         await baseBundle.cleanup?.();
       }

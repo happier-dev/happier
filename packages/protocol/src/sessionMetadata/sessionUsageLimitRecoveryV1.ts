@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { SessionRuntimeIssueV1 } from '../sessions/control/runtimeIssueV1.js';
 
 import {
   ConnectedServiceAuthGroupIdSchema,
@@ -66,6 +67,33 @@ export const SessionUsageLimitRecoveryV1Schema = z
   .strict();
 
 export type SessionUsageLimitRecoveryV1 = z.infer<typeof SessionUsageLimitRecoveryV1Schema>;
+
+/** Stable issue identity shared by recovery producers, controls, and presentation. */
+export function buildUsageLimitIssueFingerprint(issue: SessionRuntimeIssueV1, fallbackProviderId = 'unknown-provider'): string {
+  return ['usage-limit', issue.provider ?? fallbackProviderId, issue.providerTurnId ?? 'unknown-turn',
+    String(issue.occurredAt), String(issue.usageLimit?.resetAtMs ?? 'no-reset')].join(':');
+}
+
+export function isSessionUsageLimitRecoveryForIssue(
+  issue: SessionRuntimeIssueV1,
+  recovery: Pick<SessionUsageLimitRecoveryV1, 'issueFingerprint'>,
+  fallbackProviderId?: string,
+): boolean {
+  return recovery.issueFingerprint === buildUsageLimitIssueFingerprint(issue, fallbackProviderId);
+}
+
+/** A different observed failure cannot inherit an earlier recovery's authority. */
+export function readSessionUsageLimitRecoveryForIssue(
+  value: unknown,
+  issue?: SessionRuntimeIssueV1 | null,
+  fallbackProviderId?: string,
+): SessionUsageLimitRecoveryV1 | null {
+  const parsed = SessionUsageLimitRecoveryV1Schema.safeParse(value);
+  if (!parsed.success) return null;
+  return issue && !isSessionUsageLimitRecoveryForIssue(issue, parsed.data, fallbackProviderId)
+    ? null
+    : parsed.data;
+}
 
 function readRecord(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value)

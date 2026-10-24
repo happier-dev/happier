@@ -32,7 +32,7 @@ export function useAgentInputActionMenuControls(params: Readonly<{
     actionBarIsCollapsed: boolean;
     hasAnyActions: boolean;
     tint: string;
-    agentId: AgentId;
+    agentId: AgentId | null;
     profileLabel: string | null;
     profileIcon: string;
     envVarsCount?: number;

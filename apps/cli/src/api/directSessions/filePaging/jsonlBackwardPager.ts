@@ -1,9 +1,7 @@
 import { open, stat } from 'node:fs/promises';
 
 import { tryParseJsonlLine } from './jsonlParse';
-
-const DEFAULT_CHUNK_BYTES = 64 * 1024;
-const DEFAULT_MAX_OVERSIZE_LINE_BYTES = 8 * 1024 * 1024;
+import { assertJsonlReadProgress, resolveJsonlReadBudget } from './jsonlReadBudget';
 
 export type JsonlParsedLine = Readonly<{
   value: unknown;
@@ -26,13 +24,7 @@ export async function readJsonlFileBackwardPage(params: Readonly<{
   // Null means the existing read budget could not locate that line's start.
   tailOffsetBytes: number | null;
 }>> {
-  const maxBytes = Math.max(1, Math.trunc(params.maxBytes));
-  const maxItems = Math.max(1, Math.trunc(params.maxItems));
-  const chunkBytes = Math.max(1024, Math.trunc(params.chunkBytes ?? DEFAULT_CHUNK_BYTES));
-  const maxOversizeLineBytes = Math.max(
-    maxBytes,
-    Math.trunc(params.maxOversizeLineBytes ?? DEFAULT_MAX_OVERSIZE_LINE_BYTES),
-  );
+  const { maxBytes, maxItems, chunkBytes, maxOversizeLineBytes } = resolveJsonlReadBudget(params);
 
   let fileSize = 0;
   try {
@@ -134,6 +126,8 @@ export async function readJsonlFileBackwardPage(params: Readonly<{
   const nextEndOffsetBytes = items.length > 0
     ? items[0].startOffsetBytes
     : (oldestConsumedStartOffsetBytes ?? initialEnd);
+  assertJsonlReadProgress({ consumedBytes: initialEnd - nextEndOffsetBytes, remainingSourceBytes: end,
+    pendingLineBytes: carry.length, maxLineBytes: maxOversizeLineBytes, direction: 'backward', offsetBytes: initialEnd });
   const reachedStart = nextEndOffsetBytes <= 0;
   return { items, nextEndOffsetBytes, reachedStart, tailOffsetBytes };
 }

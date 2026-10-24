@@ -26,9 +26,11 @@ import { join, resolve } from 'node:path';
 import type { Duplex } from 'node:stream';
 
 import {
+  buildConnectedServiceCredentialMetadata,
   buildConnectedServiceCredentialRecord,
   sealAccountScopedBlobCiphertext,
   type ConnectedServiceId,
+  type ConnectedServiceOauthCredentialRawMetadata,
   type ConnectedServiceQuotaSnapshotV1,
 } from '@happier-dev/protocol';
 
@@ -309,6 +311,7 @@ export async function createConnectedServiceProfile(params: Readonly<{
   scope?: string | null;
   tokenType?: string | null;
   providerAccountId?: string;
+  oauthRaw?: ConnectedServiceOauthCredentialRawMetadata;
   expiresAt?: number;
   allowProviderIdentityChange?: boolean;
 }>): Promise<string> {
@@ -329,6 +332,7 @@ export async function createConnectedServiceProfile(params: Readonly<{
       tokenType: params.tokenType ?? null,
       providerAccountId,
       providerEmail: params.providerEmail,
+      raw: params.oauthRaw,
     },
   });
   const machineKey = params.fixture.machineKey;
@@ -352,12 +356,7 @@ export async function createConnectedServiceProfile(params: Readonly<{
       body: JSON.stringify({
         sealed: { format: 'account_scoped_v1', ciphertext },
         ...(params.allowProviderIdentityChange ? { reconnect: { allowProviderIdentityChange: true } } : {}),
-        metadata: {
-          kind: 'oauth',
-          providerEmail: params.providerEmail,
-          providerAccountId,
-          expiresAt: record.expiresAt,
-        },
+        metadata: buildConnectedServiceCredentialMetadata(record),
       }),
       timeoutMs: 20_000,
     },

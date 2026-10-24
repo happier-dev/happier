@@ -16,6 +16,15 @@ const WINDOWS_INVALID_PATH_CHARACTER = /[\u0000-\u001f<>:"|?*]/u;
 const WINDOWS_RESERVED_PATH_SEGMENT = /^(?:con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])(?:\.|$)/iu;
 const MAX_TAR_METADATA_ENTRY_BYTES = 1024 * 1024;
 
+export class ArchiveExpandedByteLimitError extends Error {
+  readonly code = 'archive-expanded-byte-limit';
+
+  constructor() {
+    super('[release-runtime] archive exceeds expanded-byte limit');
+    this.name = 'ArchiveExpandedByteLimitError';
+  }
+}
+
 export type ArchiveExtractionLimits = Readonly<{
   maxArchiveBytes: number;
   maxEntries: number;
@@ -116,7 +125,7 @@ function createArchiveBudget(params: Readonly<{
       }
       expandedBytes += byteLength;
       if (expandedBytes > params.limits.maxExpandedBytes) {
-        throw new Error('[release-runtime] archive exceeds expanded-byte limit');
+        throw new ArchiveExpandedByteLimitError();
       }
       if (expandedBytes / Math.max(1, params.archiveBytes) > params.limits.maxCompressionRatio) {
         throw new Error('[release-runtime] archive exceeds compression ratio limit');

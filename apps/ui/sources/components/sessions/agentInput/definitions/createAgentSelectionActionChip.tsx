@@ -19,7 +19,7 @@ const AGENT_CHIP_LOGO_SLOT_STYLE = {
 
 export function createAgentSelectionActionChip(params: Readonly<{
     anchorRef: React.RefObject<ViewInstance | null>;
-    agentId: AgentId;
+    agentId: AgentId | null;
     tint: string;
     showLabel: boolean;
     label: string;
@@ -29,7 +29,7 @@ export function createAgentSelectionActionChip(params: Readonly<{
     onIntent?: () => void;
 }>): React.ReactNode {
     const testID = 'agent-input-agent-chip';
-    const iconScale = getAgentPickerIconScale(params.agentId);
+    const iconScale = params.agentId ? getAgentPickerIconScale(params.agentId) : 1;
     return (
         <Pressable
             ref={params.anchorRef}

@@ -4,6 +4,7 @@ import {
     applySessionListRenderablePatch,
     areSessionListRenderablesEqual,
     buildSessionListRenderableFromSession,
+    buildSessionListRenderableMetadata,
     derivePendingRequestFlagsFromAgentState,
     didSessionListRenderableAttentionPromotionFieldsChange,
     didSessionListRenderablePlacementRelevantTimingChange,
@@ -21,6 +22,7 @@ import type { Session } from '@/sync/domains/state/storageTypes';
 // passing after the real one moves.
 import { buildAgentActivityEntryId } from '@happier-dev/protocol';
 import { EMPTY_AGENT_ACTIVITY_COUNTS } from '@/sync/domains/session/agentActivity/deriveAgentActivityCounts';
+import { createSessionFixture } from '@/dev/testkit';
 
 const storageState = vi.hoisted(() => ({
     sessionMessages: {} as Record<string, unknown>,
@@ -93,6 +95,43 @@ describe('derivePendingRequestFlagsFromAgentState', () => {
 });
 
 describe('preserveSessionListRenderableStaleFields', () => {
+    it.each(['replacement', 'patch'] as const)('keeps a settled request projection across an older %s', (mode) => {
+        const settled = buildRenderable({
+            id: 's_settled', active: true, presence: 'online', updatedAt: 200,
+            agentStateVersion: 2, hasPendingPermissionRequests: false,
+            hasPendingUserActionRequests: false, pendingRequestObservedAt: null,
+        });
+        const stale = {
+            updatedAt: 100, agentStateVersion: 1,
+            hasPendingPermissionRequests: true, hasPendingUserActionRequests: true,
+            pendingRequestObservedAt: 100,
+            metadataVersion: 3, metadata: { path: '/new-name' },
+        };
+        const result = mode === 'patch'
+            ? applySessionListRenderablePatch(settled, stale)
+            : preserveSessionListRenderableStaleFields(settled, { ...settled, ...stale });
+
+        expect(result).toMatchObject({
+            agentStateVersion: 2, hasPendingPermissionRequests: false,
+            hasPendingUserActionRequests: false, pendingRequestObservedAt: null,
+            metadataVersion: 3, metadata: { path: '/new-name' },
+        });
+    });
+
+    it('accepts a newer request version whose pending observation is older', () => {
+        const previous = buildRenderable({
+            id: 's_pending', active: true, agentStateVersion: 1,
+            hasPendingPermissionRequests: true, hasPendingUserActionRequests: true,
+            pendingRequestObservedAt: 200,
+        });
+        const result = preserveSessionListRenderableStaleFields(previous, {
+            ...previous, agentStateVersion: 2, hasPendingUserActionRequests: false,
+            pendingRequestObservedAt: 100,
+        });
+        expect(result.hasPendingUserActionRequests).toBe(false);
+        expect(result.pendingRequestObservedAt).toBe(100);
+    });
+
     it('reuses the previous metadata object when the rebuilt one is field-identical', () => {
         // Metadata is re-derived on every projection pass. When nothing in it changed, handing back
         // a fresh-but-equal object silently defeats identity all the way up: the session object is
@@ -189,6 +228,22 @@ describe('preserveSessionListRenderableStaleFields', () => {
         expect(next.metadata).toBe(previousMetadata);
         expect(next.metadataVersion).toBe(4);
         expect((next as { metadataUnavailable?: boolean }).metadataUnavailable).not.toBe(true);
+    });
+});
+
+describe('buildSessionListRenderableMetadata agent identity', () => {
+    it.each([
+        {
+            evidence: { flavor: 'claude', agentRuntimeDescriptorV1: { v: 1, providerId: 'codex', provider: { backendMode: 'mcp' } } as const },
+            expected: 'codex',
+        },
+        { evidence: { codexSessionId: 'codex-thread' }, expected: 'codex' },
+        { evidence: { flavor: 'unknown-provider' }, expected: null },
+        { evidence: { claudeSessionId: 'old-thread', codexSessionId: 'codex-thread' }, expected: null },
+    ])('retains resolved identity $expected when compacting $evidence', ({ evidence, expected }) => {
+        const session = createSessionFixture({ metadata: { path: '/repo', host: 'host', ...evidence } });
+
+        expect(buildSessionListRenderableMetadata(session.metadata)?.flavor).toBe(expected);
     });
 });
 

@@ -1,5 +1,99 @@
 # Changelog
 
+## Release 2026-10-22.1 - 2026-10-22
+
+<!-- happier-release-note-projections:v1
+{
+  "expo": { "message": "Happier 0.2.17 adds Antigravity and CodeBuddy Code Agents, automatic Claude resume after usage limits, existing-state session handoff, chat code wrapping and haptics. Local voice, model pack downloads, session archiving and Claude background-task reliability are much improved. Update the native app for the refreshed runtime." },
+  "appStore": { "whatsNew": "Add Antigravity accounts and CodeBuddy Code as Agents. Claude sessions resume automatically after a usage limit resets. Continue a session from existing native state when handing it to another computer. Wrap long lines in chat code blocks, choose where unread replies appear while background work continues, and enable optional haptics for reordering. Local voice is more dependable: model packs download faster with progress and cancel, hands-free speech ends cleanly, and spoken replies are more accurate. Archiving sessions, session lists and Claude background agents are more reliable." },
+  "playStore": { "whatsNew": "New Antigravity and CodeBuddy Code Agents. Claude sessions resume after usage limits reset. Wrap long chat code lines and enable optional haptics. Local voice model packs download faster with progress and cancel. Fixes Android Sherpa speech, the splash logo, navigation-bar overlap and long-press reordering. Update the native app." },
+  "storyDeck": { "summary": "Antigravity and CodeBuddy Agents, automatic Claude resume after usage limits, wrapped chat code, and far more dependable local voice." }
+}
+-->
+
+Happier 0.2.17 adds Antigravity and CodeBuddy Code, automatic Claude resume after usage limits, handoff from existing native session state, wrapped chat code and optional haptics. It also makes local voice, session archiving and Claude background work much more dependable, and gives self-hosters OIDC token exchange, AWS web-identity storage credentials, JSON logs and a stricter proxy-trust setting.
+
+### New Agents and accounts
+
+- **CodeBuddy Code** is available as a catalog-defined Agent, with read-only mode enforced through its own permission mode.
+- **Antigravity** accounts can be connected and used for sessions, including the session modes the Agent advertises. Native provider sign-in choices are kept when you start, resume or hand off a session.
+- Catalog-defined Agents now receive the Happier session id, and custom Agent sessions can be resumed from the app.
+- MiniMax defaults to Flash, and models discovered for your account are kept.
+- OpenCode tool names stay within the 64-character model limit, and OpenCode scripting discovery gives clearer diagnostics.
+- Pi sessions show turns started by the provider and prompts injected by extensions.
+
+### Usage limits and recovery
+
+- Claude turns **resume automatically after a usage limit resets**, keeping the native provider identity.
+- Connected-service recovery keeps the selected account, restores your healthy primary account after an automatic quota fallback, and records why an account switch happened.
+- Recovery credit facts are shown with unavailable actions disabled, and quota refreshes survive navigation.
+
+### Handoff
+
+- A session can be handed to another computer **using the state that already exists there**, instead of always copying it. Happier checks that the destination supports this before stopping the source, and shows the real error in the picker when it cannot.
+
+### Chat and sessions
+
+- **Wrap long lines in chat code**, per block or as a preference, including nested code.
+- Choose where unread replies appear while a session's background work continues; replies and pending requests stay ahead of background activity.
+- Optional **haptic feedback** (device-local setting) for reordering lists, sessions and todos.
+- Archiving is more reliable: you see an archiving state, sessions whose runner is gone can still be archived, archives survive server discovery, and the confirmation setting is honored.
+- Session lists bring a row online when its runtime reattaches, remove rows that are no longer present, and show when a pinned session is not live.
+- Native approval and mode choices are shown correctly in the permission picker.
+- Messages starting with `!` reach Claude Code's bash mode.
+- Smoother typing in the composer, steadier transcript scrolling and lazier loading of unused modules.
+
+### Claude background work
+
+- Agents waiting on their own background work stay active, and stopped, failed or orphaned background tasks settle instead of hanging.
+- Stopping a session waits for the Claude process to exit, and a retry loop ends when the runner is terminated.
+- Restarting a runner that has background agents now asks first, one confirmation at a time.
+- A pending-queue deadlock that could leave queued messages undelivered is fixed.
+
+### Voice
+
+- Local voice model packs download in parallel with progress, can be cancelled with partial files discarded, and resume safely; Android no longer runs out of memory or hits 404s.
+- Hands-free speech recognition stops on trailing silence, Gemini transcription is more reliable, and Android Sherpa recognition is repaired.
+- Spoken replies include the final answer, never read unterminated code, keep links and inline code readable, and can be stopped.
+
+### Desktop, installers and platforms
+
+- Linux downloads offer package formats and compatible builds, and the desktop app starts correctly on NVIDIA Wayland.
+- Windows installation retries GitHub requests without a rejected token, supports PowerShell 5.1, and keeps the service wrapper running; service discovery lists only Happier's scheduled-task folder.
+- Bundled desktop sign-in returns to the app correctly.
+- Android: no square behind the splash logo, the new-session composer clears the navigation bar, headers stay tappable during long-press drag, text selection no longer fights scrolling, and native libraries meet the 16 KB page requirement.
+- The web scrollbar is visible at rest.
+
+### Security
+
+- Server dependencies are updated to patched versions, including Fastify, socket.io components, `ws` and Zod.
+- Forwarded client addresses are trusted only from proxies you list (see operator notes).
+
+### For self-hosters and operators
+
+- `HAPPIER_SERVER_TRUST_PROXY` now takes a comma-separated list of proxy addresses, CIDRs or `loopback`, `linklocal`, `uniquelocal`.
+- OIDC providers can exchange an access token for a Happier token without a browser at `POST /v1/auth/external/:provider/token-exchange`, once `tokenExchange.allowedClientIds` is configured. Provider config can read its client secret from a named environment variable with `clientSecretEnv`.
+- The S3 files backend supports AWS web-identity credentials (IRSA) when no static keys are set.
+- `HAPPIER_SERVER_LOG_FORMAT=json` emits newline-delimited JSON logs.
+- Kubernetes examples are corrected.
+- New opt-in `happier daemon restart-session-runners --on-update on` restarts stale session runners after a CLI update.
+
+### Compatibility and operator notes
+
+- **Action required if you set `HAPPIER_SERVER_TRUST_PROXY` to a number (for example `1`):** the server now refuses to start. Replace it with the proxy address form, such as `10.0.0.0/8` or `loopback`.
+- **Database:** the server adds a migration with two additive columns for pairing and credential support. It runs automatically; older clients are unaffected.
+- **Native app:** the app runtime moves from `0.2.8-native` to `0.2.9-native` (Unistyles and Nitro upgrades). Install the new native app to receive this release; an OTA update does not reach older native builds.
+- **Update the machine's CLI and daemon** to use Antigravity, handoff from existing state and automatic Claude resume. Older daemons keep their previous behavior.
+
+### Thank you
+
+- [@danljungstrom](https://github.com/danljungstrom) for local voice and model packs, session archiving, Claude background-task and runner-termination reliability, Android fixes and Windows installer retries across many pull requests.
+- [@wangdong233](https://github.com/wangdong233) for the pending-queue wake fix, UTF-8 daemon process scans and WebKit header dragging in [#658](https://github.com/happier-dev/happier/pull/658), [#643](https://github.com/happier-dev/happier/pull/643) and [#592](https://github.com/happier-dev/happier/pull/592).
+- [@aron-muon](https://github.com/aron-muon) for OIDC token exchange, client-secret env vars, AWS web identity, JSON logs and proxy trust in [#573](https://github.com/happier-dev/happier/pull/573), [#567](https://github.com/happier-dev/happier/pull/567), [#571](https://github.com/happier-dev/happier/pull/571), [#569](https://github.com/happier-dev/happier/pull/569) and [#576](https://github.com/happier-dev/happier/pull/576).
+- [@duanwei99](https://github.com/duanwei99) for CodeBuddy Code in [#507](https://github.com/happier-dev/happier/pull/507), and [@sergedc](https://github.com/sergedc) for Claude auto-resume after usage limits in [#513](https://github.com/happier-dev/happier/pull/513).
+- [@ravensorb](https://github.com/ravensorb) for catalog Agent session ids in [#631](https://github.com/happier-dev/happier/pull/631) and Windows scheduled-task discovery in [#543](https://github.com/happier-dev/happier/pull/543); [@Kunde21](https://github.com/Kunde21) for Pi provider-initiated turns in [#587](https://github.com/happier-dev/happier/pull/587); [@DiezelPush](https://github.com/DiezelPush) for OpenCode tool names and prompt-loop backoff in [#551](https://github.com/happier-dev/happier/pull/551) and [#556](https://github.com/happier-dev/happier/pull/556).
+- [@octo-patch](https://github.com/octo-patch) for MiniMax Flash in [#625](https://github.com/happier-dev/happier/pull/625); [@johannes-wirtz](https://github.com/johannes-wirtz) for Claude bash-mode messages in [#580](https://github.com/happier-dev/happier/pull/580); [@Jacob-Lasky](https://github.com/Jacob-Lasky) for NVIDIA Wayland in [#585](https://github.com/happier-dev/happier/pull/585); [@galinilin](https://github.com/galinilin) for Windows PowerShell 5.1 in [#549](https://github.com/happier-dev/happier/pull/549); Mani Japra for desktop OAuth return in [#564](https://github.com/happier-dev/happier/pull/564).
+
 ## Release 2026-10-09.1 - 2026-10-09
 
 <!-- happier-release-note-projections:v1

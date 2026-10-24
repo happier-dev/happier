@@ -76,6 +76,7 @@ export type ConnectedServiceCredentialSealedResponse = Readonly<{
     kind: 'oauth' | 'token';
     providerEmail?: string | null;
     providerAccountId?: string | null;
+    providerOrganizationId?: string | null;
     expiresAt?: number | null;
   };
 }> & ConnectedServiceCredentialRevisionBoundaryV1;
@@ -237,6 +238,7 @@ export async function getConnectedServiceCredentialSealed(params: Readonly<{
       kind: z.enum(['oauth', 'token']),
       providerEmail: z.string().nullable().optional(),
       providerAccountId: z.string().nullable().optional(),
+      providerOrganizationId: z.string().nullable().optional(),
       expiresAt: z.number().nullable().optional(),
     }).safeParse((raw as Record<string, unknown>).metadata);
 

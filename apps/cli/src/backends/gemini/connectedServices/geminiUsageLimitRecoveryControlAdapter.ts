@@ -1,9 +1,10 @@
-import { buildUsageLimitIssueFingerprint } from '@/session/usageLimitRecoveryControls/buildUsageLimitIssueFingerprint';
+import { buildUsageLimitIssueFingerprint } from '@happier-dev/protocol';
+import { readLatestUsageLimitFailureIssue } from '@/session/usageLimitRecoveryControls/readLatestUsageLimitFailureIssue';
 import {
   ConnectedServiceQuotaSnapshotV1Schema,
   SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY,
   SessionRuntimeIssueV1Schema,
-  SessionUsageLimitRecoveryV1Schema,
+  readSessionUsageLimitRecoveryForIssue,
   type ConnectedServiceCredentialRecordV1,
   type ConnectedServiceQuotaSnapshotV1,
   type SessionUsageLimitRecoveryV1,
@@ -43,11 +44,6 @@ const DEFAULT_USAGE_LIMIT_RECOVERY_MAX_ATTEMPTS = 3;
 
 function stableError(errorCode: string): Readonly<{ ok: false; errorCode: string; error: string }> {
   return { ok: false, errorCode, error: errorCode };
-}
-
-function readRecoveryIntent(metadata: MetadataRecord): SessionUsageLimitRecoveryV1 | null {
-  const parsed = SessionUsageLimitRecoveryV1Schema.safeParse(metadata[SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY]);
-  return parsed.success ? parsed.data : null;
 }
 
 function buildRecoveryIntentFromLatestUsageLimitIssue(
@@ -211,7 +207,9 @@ export function createGeminiUsageLimitRecoveryControlAdapter(deps: Readonly<{
         return stableError('session_usage_limit_recovery_control_credentials_unavailable');
       }
 
-      const persistedIntent = readRecoveryIntent(params.metadata);
+      const persistedIntent = readSessionUsageLimitRecoveryForIssue(
+        params.metadata[SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY], readLatestUsageLimitFailureIssue(params.rawSession), 'gemini',
+      );
       const intent = persistedIntent && persistedIntent.status !== 'cancelled'
         ? persistedIntent
         : buildRecoveryIntentFromLatestUsageLimitIssue(params);

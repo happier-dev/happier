@@ -83,6 +83,7 @@ describe('materializeClaudeCodeNativeAuth', () => {
           claudeAiOauth: {
             subscriptionType: 'max',
             rateLimitTier: 'max_20x',
+            organizationUuid: 'organization-a',
           },
         },
       },
@@ -133,6 +134,26 @@ describe('materializeClaudeCodeNativeAuth', () => {
       rateLimitTier: 'max_20x',
     });
     expect(groupCredential.claudeAiOauth).not.toHaveProperty('refreshToken');
+    const readRoot = async () => JSON.parse(await readFile(join(groupClaudeConfigDir, '.claude.json'), 'utf8'));
+    expect((await readRoot()).oauthAccount.organizationUuid).toBe('organization-a');
+    await writeFile(join(groupClaudeConfigDir, '.claude.json'), JSON.stringify({
+      ...await readRoot(), modelAccessCache: ['organization-a-model'],
+    }));
+    const rematerialize = async (nextRecord: typeof record) => await materializeClaudeSubscriptionNativeAuthHome({
+      record: nextRecord,
+      targetClaudeConfigDir: groupClaudeConfigDir,
+      sourceEnv: { HOME: homeDir, CLAUDE_CONFIG_DIR: sourceClaudeConfigDir },
+      selectionDescriptor: { kind: 'group', serviceId: 'claude-subscription', groupId: 'claude-team',
+        activeProfileId: 'work-profile', fallbackProfileId: 'fallback-profile', generation: 7 },
+    });
+    await rematerialize(record);
+    expect((await readRoot()).modelAccessCache).toEqual(['organization-a-model']);
+    if (record.kind !== 'oauth') throw new Error('Expected OAuth fixture');
+    await rematerialize({ ...record, oauth: { ...record.oauth,
+      raw: { claudeAiOauth: { subscriptionType: 'max', rateLimitTier: 'max_20x', organizationUuid: 'organization-b' } },
+    } });
+    expect((await readRoot()).oauthAccount.organizationUuid).toBe('organization-b');
+    expect(await readRoot()).not.toHaveProperty('modelAccessCache');
     await expect(readFile(join(profileClaudeConfigDir, 'settings.json'), 'utf8')).resolves.toBe('{"theme":"source"}\n');
     await expect(readFile(join(groupClaudeConfigDir, 'settings.json'), 'utf8')).resolves.toBe('{"theme":"source"}\n');
 

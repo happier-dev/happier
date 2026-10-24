@@ -697,6 +697,7 @@ describe('AgentInput (send button accessibility)', () => {
                     onChangeText={() => {}}
                     onSend={() => {}}
                     agentType="codex"
+                    metadata={{ path: '/repo', host: 'test.local', flavor: 'codex' }}
                     onAgentClick={() => {}}
                     armedContinuationTarget={null}
                     autocompleteKinds={[]}

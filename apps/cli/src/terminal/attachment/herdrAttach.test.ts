@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { withHerdrApi } from '@/integrations/herdr/herdrApi.testkit';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
-import { withTempDir } from '@/testkit/fs/tempDir';
+import { withSocketTempDir } from '@/testkit/fs/tempDir';
 import { reloadConfiguration } from '@/configuration';
 
 const boundary = vi.hoisted(() => ({ spawn: vi.fn(), sessionList: vi.fn() }));
@@ -44,7 +44,7 @@ afterEach(() => { envScope.restore(); reloadConfiguration(); });
 describe('runHerdrAttach server admission', () => {
   it.each([['work', false], ['default', false], ['work', true]] as const)('opens only the recorded restored pane using its new terminal identity after cold %s server startup (delayed=%s)', async (sessionName, delayed) => {
     const relativeSessionDir = sessionName === 'default' ? 'herdr' : `herdr/sessions/${sessionName}`;
-    await withTempDir('herdr-cold-recorded-', async root => await withHerdrApi(async (api) => {
+    await withSocketTempDir(async root => await withHerdrApi(async (api) => {
       await api.stop();
       api.panes.add('managed');
       envScope.patch({ XDG_CONFIG_HOME: join(root, 'ambient') });
@@ -83,7 +83,7 @@ describe('runHerdrAttach server admission', () => {
   });
 
   it.each(['custom_socket', 'mismatched_inventory'])('does not cold-start an unverified namespace or substitute a live ambient server (%s)', async evidence => {
-    await withTempDir('herdr-unverified-root-', async root => await withHerdrApi(async ambient => {
+    await withSocketTempDir(async root => await withHerdrApi(async ambient => {
       boundary.sessionList.mockReturnValue([{ name: 'work', socket_path: ambient.socketPath,
         session_dir: join(root, 'foreign/herdr/sessions/work'), running: true }]);
       const socketPath = evidence === 'custom_socket' ? join(root, 'custom.sock') : join(root, 'herdr/sessions/work/herdr.sock');

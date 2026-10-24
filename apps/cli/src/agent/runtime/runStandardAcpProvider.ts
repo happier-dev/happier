@@ -28,7 +28,7 @@ import type { SessionProviderInputConsumer } from '@/agent/runtime/sessionInput/
 import { createSessionMetadata, type CreateSessionMetadataOptions } from '@/agent/runtime/createSessionMetadata';
 import { createStartupMetadataOverrides } from '@/agent/runtime/createStartupMetadataOverrides';
 import { initializeBackendApiContext } from '@/agent/runtime/initializeBackendApiContext';
-import { initializeBackendRunSession } from '@/agent/runtime/initializeBackendRunSession';
+import { initializeBackendRunSession, type InitializeBackendRunSessionOptions } from '@/agent/runtime/initializeBackendRunSession';
 import { registerRunnerTerminationHandlers } from '@/agent/runtime/runnerTerminationHandlers';
 import { runPermissionModePromptLoop, type ProviderStartupControls, type ReadyNotificationTurnContext } from '@/agent/runtime/runPermissionModePromptLoop';
 import { getSessionNotificationTitle } from '@/agent/runtime/readyNotificationContext';
@@ -129,6 +129,7 @@ export type StandardAcpProviderConfig = {
   agentMessageType: Parameters<ApiSessionClient['sendAgentMessage']>[0];
   supportsMcpServers?: boolean;
   machineMetadata: MachineMetadata;
+  terminalHostOwner?: InitializeBackendRunSessionOptions['terminalHostOwner'];
   terminalDisplay: React.ComponentType<TerminalDisplayProps>;
   formatPromptErrorMessage: (error: unknown) => string;
   /**
@@ -298,6 +299,7 @@ export async function runStandardAcpProvider(
     existingSessionId: opts.existingSessionId,
     uiLogPrefix: config.uiLogPrefix,
     terminalAgentLabel: policyAgentId,
+    terminalHostOwner: config.terminalHostOwner,
     startupMetadataOverrides: createStartupMetadataOverrides(opts),
     onSessionSwap: async (newSession) => {
       session = newSession;

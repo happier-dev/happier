@@ -1,3 +1,4 @@
+import { connectedServiceUsageRequiresOrganizationId } from '@happier-dev/protocol';
 import type {
   ConnectedServiceId,
   ConnectedServiceQuotaSnapshotV1,
@@ -10,7 +11,6 @@ import type { TrackedSession } from '@/daemon/types';
 import type { ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore } from '../accountGroups/quotas/ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore';
 import { buildProviderAccountUsageSnapshotFromConnectedServiceQuotaObservation } from '../accountUsage/fromConnectedServiceQuotaObservation';
 import {
-  canRecordProviderAccountUsageSourceLinks,
   recordProviderAccountUsageSnapshotForSession,
   type ProviderAccountUsageRecordIdPublisher,
 } from '../accountUsage/record';
@@ -144,11 +144,13 @@ export async function recordConnectedServiceRuntimeQuotaSnapshotForSession(input
     serviceId: ConnectedServiceId;
     groupId: string;
     providerAccountId: string;
+    providerOrganizationId?: string | null;
   }>) => Promise<Readonly<{ profileId: string; groupGeneration: number }> | null>;
   verifyCredentialFingerprint?: (input: Readonly<{
     serviceId: ConnectedServiceId;
     profileId: string;
     providerAccountId: string;
+    providerOrganizationId?: string | null;
     credentialFingerprint: string;
   }>) => Promise<boolean>;
   resolveCurrentGroupGenerationForProfile?: (input: Readonly<{
@@ -193,6 +195,7 @@ export async function recordConnectedServiceRuntimeQuotaSnapshotForSession(input
           serviceId: input.serviceId,
           groupId: selection.groupId,
           providerAccountId: sourceProviderAccountId,
+          providerOrganizationId: input.snapshot.providerOrganizationId,
         }).catch(() => null)
       : null;
   const effectiveSnapshot = providerQualifiedGroupSource
@@ -214,6 +217,7 @@ export async function recordConnectedServiceRuntimeQuotaSnapshotForSession(input
           serviceId: input.serviceId,
           profileId: effectiveSnapshot.profileId,
           providerAccountId: sourceProviderAccountId,
+          ...(input.snapshot.providerOrganizationId ? { providerOrganizationId: input.snapshot.providerOrganizationId } : {}),
           credentialFingerprint,
         }
       : null;
@@ -221,8 +225,15 @@ export async function recordConnectedServiceRuntimeQuotaSnapshotForSession(input
     credentialVerificationCandidate && verifyCredentialFingerprint
       ? await verifyCredentialFingerprint(credentialVerificationCandidate)
       : null;
-  const credentialFingerprintVerified =
-    sourceAccountMatchesSnapshot && credentialFingerprintMatchesCurrentSource === true;
+  const snapshotProviderAccountId = normalizeNullableString(effectiveSnapshot.activeAccountId);
+  const snapshotAccountDoesNotConflict = snapshotProviderAccountId === null
+    || sourceProviderAccountId === null
+    || snapshotProviderAccountId === sourceProviderAccountId;
+  // Exact current-token proof authorizes this profile's observation independently of whether
+  // its quota organization is known well enough for globally shareable account usage.
+  const credentialFingerprintVerified = sourceProviderAccountId !== null
+    && snapshotAccountDoesNotConflict
+    && credentialFingerprintMatchesCurrentSource === true;
   const activeGroupSelection = readConnectedServiceChildSelectionsFromEnv(tracked.spawnOptions?.environmentVariables ?? {})
     .find((candidate) => (
       candidate.kind === 'group'
@@ -234,21 +245,29 @@ export async function recordConnectedServiceRuntimeQuotaSnapshotForSession(input
     activeGroupSelection?.kind === 'group'
     && activeGroupSelection.activeProfileId === effectiveSnapshot.profileId;
   const reportedGroupGeneration = normalizeNonNegativeInt(input.groupGeneration);
+  const providerGroupSourceWasResolved = selection?.kind === 'group'
+    && reportedGroupId === selection.groupId
+    && sourceProviderAccountId !== null
+    && input.resolveProviderQualifiedGroupSource !== undefined;
+  const requiredQuotaContextAttested = !connectedServiceUsageRequiresOrganizationId(input.serviceId)
+    || (snapshotAccountDoesNotConflict
+      && accountUsageSnapshot.accountSubject.kind === 'providerSubject'
+      && (sourceProviderAccountId === null || sourceAccountMatchesSnapshot));
+  const sourceContextIsQualified = credentialFingerprintVerified
+    || (requiredQuotaContextAttested && (!providerGroupSourceWasResolved || providerQualifiedGroupSource !== null));
   const activeGroupGeneration = activeGroupSelectionMatchesSnapshotProfile
+    && sourceContextIsQualified
     && selection?.kind === 'group'
     && reportedGroupId === selection.groupId
     && reportedGroupGeneration === activeGroupSelection.generation
     ? reportedGroupGeneration
     : null;
 
-  const exactCurrentCredentialAccountBinding =
-    selection?.kind === 'group'
-    && credentialFingerprintVerified
-    && canRecordProviderAccountUsageSourceLinks({
-      snapshot: accountUsageSnapshot,
-      sourceProviderAccountId: input.sourceProviderAccountId,
-    });
-  const resolvedCurrentGroupGeneration = exactCurrentCredentialAccountBinding
+  // Profile-local runtime quota and recovery proof do not grant global PAU source links;
+  // the account-usage writer independently authorizes those below.
+  const exactCurrentCredentialProfileBinding =
+    selection?.kind === 'group' && credentialFingerprintVerified;
+  const resolvedCurrentGroupGeneration = exactCurrentCredentialProfileBinding
     && input.resolveCurrentGroupGenerationForProfile
     ? await input.resolveCurrentGroupGenerationForProfile({
         serviceId: input.serviceId,
@@ -258,7 +277,7 @@ export async function recordConnectedServiceRuntimeQuotaSnapshotForSession(input
     : null;
   const exactCurrentReportedGroupGeneration =
     selection?.kind === 'group'
-    && exactCurrentCredentialAccountBinding
+    && exactCurrentCredentialProfileBinding
     && reportedGroupId === selection.groupId
     && reportedGroupGeneration !== null
     && reportedGroupGeneration === resolvedCurrentGroupGeneration
@@ -266,7 +285,7 @@ export async function recordConnectedServiceRuntimeQuotaSnapshotForSession(input
     : null;
   // A surviving runner's launch environment is immutable. After exact hot apply, current
   // credential + provider-account + reported/current generation are the live authority.
-  const providerQualifiedGroupGeneration = exactCurrentCredentialAccountBinding
+  const providerQualifiedGroupGeneration = exactCurrentCredentialProfileBinding
     ? normalizeNonNegativeInt(providerQualifiedGroupSource?.groupGeneration)
     : null;
   const runtimeGroupGeneration = activeGroupGeneration
@@ -277,7 +296,7 @@ export async function recordConnectedServiceRuntimeQuotaSnapshotForSession(input
   // Provider-account usage is a different fact: once the current credential and provider account
   // are proven, bind it to authoritative current group truth even when a sibling advanced the
   // generation without changing the logical account.
-  const accountUsageGroupGeneration = exactCurrentCredentialAccountBinding
+  const accountUsageGroupGeneration = exactCurrentCredentialProfileBinding
     ? resolvedCurrentGroupGeneration ?? providerQualifiedGroupGeneration ?? activeGroupGeneration
     : activeGroupGeneration;
 
@@ -342,7 +361,10 @@ export async function recordConnectedServiceRuntimeQuotaSnapshotForSession(input
       groupId: selection.groupId,
       profileId: effectiveSnapshot.profileId,
       groupGeneration: runtimeGroupGeneration,
-      snapshot: effectiveSnapshot,
+      snapshot: credentialFingerprintVerified && snapshotProviderAccountId === null
+        ? { ...effectiveSnapshot, activeAccountId: sourceProviderAccountId! }
+        : effectiveSnapshot,
+      ...(credentialFingerprintVerified ? { verifiedCredentialFingerprint: credentialFingerprint } : {}),
     });
   }
 
@@ -376,7 +398,7 @@ export async function recordConnectedServiceRuntimeQuotaSnapshotForSession(input
     if (
       selectionMatchesSnapshot
       && credentialFingerprintVerified
-      && exactCurrentCredentialAccountBinding
+      && exactCurrentCredentialProfileBinding
       && input.resolveExpectedQuotaProbeAppliedIdentity
       && input.resolveQuotaProbeFreshProof
       && input.recordQuotaProbeFreshProof

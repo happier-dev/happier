@@ -8,7 +8,6 @@ import { shadowLevelStyle } from '@/shadowElevation';
 import { getGeneratedAvatarComponentForStyle } from './avatarComponentRegistry';
 import { normalizeAvatarStyleId } from './avatarStyleOptions';
 import {
-    DEFAULT_AGENT_ID,
     resolveAgentIdFromFlavor,
     getAgentAvatarOverlaySizes,
 } from '@/agents/catalog/catalog';
@@ -78,20 +77,21 @@ export const Avatar = React.memo((props: AvatarProps) => {
 
         const showFlavorOverlay = Boolean(showFlavorIcons && agentId);
         if (showFlavorOverlay || hasUnreadMessages) {
-            const iconAgentId = agentId ?? DEFAULT_AGENT_ID;
-            const { circleSize, iconSize } = getAgentAvatarOverlaySizes(iconAgentId, size);
+            const { circleSize, iconSize } = agentId
+                ? getAgentAvatarOverlaySizes(agentId, size)
+                : { circleSize: 0, iconSize: 0 };
 
             return (
                 <View style={[styles.container, { width: size, height: size }]}>
                     {imageElement}
-                    {showFlavorOverlay && (
+                    {showFlavorOverlay && agentId && (
                         <View style={[styles.flavorIcon, {
                             width: circleSize,
                             height: circleSize,
                             alignItems: 'center',
                             justifyContent: 'center',
                         }]}>
-                            <AgentIcon agentId={iconAgentId} size={iconSize} />
+                            <AgentIcon agentId={agentId} size={iconSize} />
                         </View>
                     )}
                     {unreadBadgeElement}
@@ -105,21 +105,23 @@ export const Avatar = React.memo((props: AvatarProps) => {
     const displayAvatarStyle = normalizeAvatarStyleId(avatarStyle);
     const AvatarComponent = getGeneratedAvatarComponentForStyle(displayAvatarStyle);
 
-    const iconAgentId = agentId ?? DEFAULT_AGENT_ID;
-    const { circleSize, iconSize } = getAgentAvatarOverlaySizes(iconAgentId, size);
+    const overlayAgentId = showFlavorIcons ? agentId : null;
+    const { circleSize, iconSize } = overlayAgentId
+        ? getAgentAvatarOverlaySizes(overlayAgentId, size)
+        : { circleSize: 0, iconSize: 0 };
 
-    if (showFlavorIcons || hasUnreadMessages) {
+    if (overlayAgentId || hasUnreadMessages) {
         return (
             <View style={[styles.container, { width: size, height: size }]}>
                 <AvatarComponent {...avatarProps} size={size} styleId={displayAvatarStyle} />
-                {showFlavorIcons && (
+                {overlayAgentId && (
                     <View style={[styles.flavorIcon, {
                         width: circleSize,
                         height: circleSize,
                         alignItems: 'center',
                         justifyContent: 'center',
                     }]}>
-                        <AgentIcon agentId={iconAgentId} size={iconSize} />
+                        <AgentIcon agentId={overlayAgentId} size={iconSize} />
                     </View>
                 )}
                 {unreadBadgeElement}

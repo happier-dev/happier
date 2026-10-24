@@ -31,6 +31,7 @@ import {
 import { reportConnectedServiceRuntimeAuthFailureToDaemon } from '@/daemon/connectedServices/runtimeAuth/reportConnectedServiceRuntimeAuthFailureToDaemon';
 import { projectConnectedServiceRuntimeAuthRecoveryReport } from '@/daemon/connectedServices/runtimeAuth/projection/connectedServiceRuntimeAuthRecoverySessionEvent';
 import type { ConnectedServiceRuntimeFailureClassification } from '@/daemon/connectedServices/runtimeAuth/types';
+import { sanitizeConnectedServiceRuntimeFailureClassification } from '@/daemon/connectedServices/runtimeAuth/sanitizeConnectedServiceRuntimeFailureClassification';
 import { redactBugReportSensitiveText } from '@happier-dev/protocol';
 
 import {
@@ -2034,11 +2035,11 @@ export class PiRpcBackend implements AgentBackend {
   }
 
   private classifyPiRuntimeAuthFailure(error: unknown) {
-    return this.connectedServiceRuntimeAuthAdapter.classifyRuntimeAuthFailure({
+    return sanitizeConnectedServiceRuntimeFailureClassification(this.connectedServiceRuntimeAuthAdapter.classifyRuntimeAuthFailure({
       target: { agentId: 'pi', targetId: this.sessionId },
       error,
       selection: readConnectedServiceChildSelectionsFromEnv(this.options.env),
-    });
+    }));
   }
 
   private createPiAssistantFailureError(
@@ -2067,7 +2068,8 @@ export class PiRpcBackend implements AgentBackend {
     projectConnectedServiceRuntimeAuthRecoveryReport({
       report: recoveryReport,
       sendGenericStatusMessage: (message) => {
-        this.emitMessage({ type: 'status', status: 'error', detail: message });
+        // Recovery of diagnostic evidence does not prove Pi's native turn has failed.
+        this.emitMessage({ type: 'terminal-output', data: message });
         return true;
       },
       commitTypedProjection: (projection) => {
@@ -2125,22 +2127,22 @@ export class PiRpcBackend implements AgentBackend {
     if (isTerminalFailure) {
       this.tracePiRpcFailureBoundary('failed_assistant_terminal_event_matched', event);
     }
-    if (classification) {
-      void this.reportPiRuntimeAuthFailureToDaemon(classification);
-    }
     this.surfacePiProviderFailure(failure, classification, event);
   }
 
   private handlePiTurnFailedEvent(event: Record<string, unknown>): void {
     if (!this.pendingTurn) return;
     const failure = normalizePiProviderFailure('turn_failed', event);
-    const detail = failure.sanitizedPreview;
+    const classification = this.classifyPiAssistantRuntimeAuthFailure(event);
     if (this.isAcceptedPromptAwaitingAgentStart()) {
-      this.pendingTurn.preStartTerminalFailure ??= createPiProviderFailureError(failure);
+      this.pendingTurn.preStartTerminalFailure ??= Object.assign(
+        createPiProviderFailureError(failure),
+        classification ? { runtimeAuthClassification: classification } : {},
+      );
       return;
     }
     this.tracePiRpcFailureBoundary('turn_failed_event_matched', event);
-    this.surfacePiProviderFailure(failure, null, event);
+    this.surfacePiProviderFailure(failure, classification, event);
   }
 
   private readCompactionLifecycleId(event: Record<string, unknown>): string | null {
@@ -2226,7 +2228,7 @@ export class PiRpcBackend implements AgentBackend {
         if (!this.pendingTurn.agentStartObserved && this.pendingTurn.preStartTerminalFailure) {
           const failure = this.pendingTurn.preStartTerminalFailure;
           this.emitPiProviderFailureDiagnostic(failure.message);
-          this.emitMessage({ type: 'status', status: 'error', detail: failure.message });
+          this.emitMessage({ type: 'status', status: 'error', detail: failure.message, error: failure });
           this.rejectPendingTurn(failure);
           return;
         }
@@ -2607,11 +2609,18 @@ export class PiRpcBackend implements AgentBackend {
   ): void {
     this.logPiProviderFailure(failure, failureRecord);
     this.emitPiProviderFailureDiagnostic(failure.sanitizedPreview);
-    this.emitMessage({ type: 'status', status: 'error', detail: failure.sanitizedPreview });
-    this.rejectPendingTurn(Object.assign(
+    const classification = runtimeAuthClassification ?? this.classifyPiRuntimeAuthFailure({
+      provider: this.currentModelProvider,
+      message: failure.sanitizedPreview,
+    });
+    const error = Object.assign(
       createPiProviderFailureError(failure),
-      runtimeAuthClassification ? { runtimeAuthClassification } : {},
-    ));
+      classification ? { runtimeAuthClassification: classification } : {},
+    );
+    // ACP owns the accepted failed-turn witness. Preserve this same error for its status and
+    // rejected-prompt observers instead of reporting before that canonical terminal transition.
+    this.emitMessage({ type: 'status', status: 'error', detail: failure.sanitizedPreview, error });
+    this.rejectPendingTurn(error);
   }
 
   private emitPiProviderFailureDiagnostic(result: string): void {
@@ -2657,11 +2666,9 @@ export class PiRpcBackend implements AgentBackend {
     this.pendingTurn = null;
     this.clearPendingTurnTimers(pending);
     this.openPromptRequestIds.clear();
-    this.emitMessage({ type: 'status', status: 'error', detail });
-    if (classification) {
-      void this.reportPiRuntimeAuthFailureToDaemon(classification);
-    }
-    pending.reject(this.createPiAssistantFailureError(detail, classification));
+    const error = this.createPiAssistantFailureError(detail, classification);
+    this.emitMessage({ type: 'status', status: 'error', detail, error });
+    pending.reject(error);
   }
 
   private getPendingTurnStallTimeoutMs(): number {

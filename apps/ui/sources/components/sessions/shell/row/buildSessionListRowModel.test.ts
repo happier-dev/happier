@@ -572,6 +572,49 @@ describe('buildSessionListRowModel', () => {
         expect(model.presentation.titleTone).toBe('quiet');
     });
 
+    it('says a quiet pinned session is offline, because the pinned band has no Active/Inactive header', () => {
+        const buildPinned = (overrides: Partial<SessionListRenderableSession>) => buildSessionListRowModel({
+            item: createSessionItem(createRenderable('s1', { lastViewedSessionSeq: 10, ...overrides }), {
+                groupKind: 'pinned',
+            }),
+            state: {},
+            isFirst: true,
+            isLast: true,
+            isSingle: true,
+            settings: createSettings({ runtimeNowMs: NOW_MS }),
+        });
+
+        const stopped = buildPinned({ active: false, presence: 0 });
+        expect(stopped.attention.rowState).toBe('quiet');
+        expect(stopped.status.state).toBe('disconnected');
+        expect(stopped.presentation.secondaryLine).toBe('status');
+        expect(stopped.presentation.statusTextKey).toBeUndefined();
+
+        // A live session keeps the quiet row: "online" on every pinned row is the noise the
+        // list deliberately avoids, so an empty status line is what reads as live.
+        const live = buildPinned({ active: true, activeAt: NOW_MS, presence: 'online' });
+        expect(live.attention.rowState).toBe('quiet');
+        expect(live.status.isConnected).toBe(true);
+        expect(live.presentation.secondaryLine).toBe('none');
+    });
+
+    it('keeps quiet offline rows silent where the band already says they are inactive', () => {
+        const model = buildSessionListRowModel({
+            item: createSessionItem(createRenderable('s1', { lastViewedSessionSeq: 10, active: false, presence: 0 }), {
+                section: 'inactive',
+                groupKind: 'project',
+            }),
+            state: {},
+            isFirst: true,
+            isLast: true,
+            isSingle: true,
+            settings: createSettings({ runtimeNowMs: NOW_MS }),
+        });
+
+        expect(model.status.state).toBe('disconnected');
+        expect(model.presentation.secondaryLine).toBe('none');
+    });
+
     it('does not present standing for a row promoted for any other reason', () => {
         const model = buildSessionListRowModel({
             item: createSessionItem(createRenderable('s1'), {

@@ -23,6 +23,12 @@ acceptance remain owned by the existing terminal readiness and custody paths.
 Once a provider effect may have occurred, steering failures do not automatically
 replay the prompt through ordinary delivery.
 
+In development source, Claude's main-chain `[Request interrupted by user]` and
+`[Request interrupted by user for tool use]` transcript markers both abort the
+foreground turn through the shared transcript lifecycle classifier. This releases
+a waiting **Send now** prompt through the existing arbiter; the interruption
+itself does not establish provider acceptance of that follow-up.
+
 ## Composer busy-steer policy (development)
 
 `decideSessionMessageDelivery` owns the requested action for ordinary composer
@@ -38,6 +44,17 @@ Provider acceptance carries the exact Pending `localId` to `SessionClient`, whic
 requests server settlement. The server transaction commits or updates the
 transcript message and removes that Pending row before publishing the message
 event and the separate Pending count/version event.
+
+In development source, Claude's Agent SDK and legacy remote runtimes share
+`createClaudeRemotePromptSettlementTracker`. They request the documented
+[`--replay-user-messages`](https://code.claude.com/docs/en/cli-reference) acknowledgment and correlate its main-chain user UUID
+with the exact submitted Pending prompt. Local enqueue, SDK iterable consumption,
+and stdin writes do not settle Pending or retire its replay handoff. A submitted
+prompt without acknowledgment has an uncertain delivery outcome; its handoff
+remains available and Pending does not automatically resend it. Inputs rejected
+before submission remain retryable. Matching acknowledgment echoes carry
+provider-only context and are excluded from the visible transcript. Locally
+handled commands retain their explicit local settlement.
 
 In development source, Claude unified terminal reports exact transcript-proven acceptance before stopping
 for missing required session hooks. The hook failure still stops the wrapper and
@@ -113,6 +130,12 @@ crashes. The diagnostic is present at the default session file log level and
 does not write to the provider's interactive terminal.
 
 ## Live runner wake-up recovery (development)
+
+Pending counts and versions come from the server's projection. A materialization
+acknowledgement without that projection, including the released-server adapter,
+retains the last server state. It does not decrement counts or increment versions:
+the same claim's post-commit hint may already have arrived during transcript lookup.
+Older snapshots and hints remain unable to replace newer pending state.
 
 The session client owns pending-input wake subscriptions. A transient socket
 disconnect does not end those subscriptions: idle and active-turn consumers must

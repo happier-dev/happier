@@ -117,7 +117,7 @@ export const ChatHeaderView = React.memo(function ChatHeaderView({
             return agentId ? <AgentIcon agentId={agentId} size={26} /> : null;
         }
         return avatarId
-            ? <Avatar id={avatarId} size={32} monochrome={!isConnected} flavor={flavor} />
+            ? <Avatar id={avatarId} size={32} monochrome={!isConnected} flavor={agentId ?? flavor} />
             : null;
     }, [agentId, avatarId, flavor, identityMode, isConnected]);
 

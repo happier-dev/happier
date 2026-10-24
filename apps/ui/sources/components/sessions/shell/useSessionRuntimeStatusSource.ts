@@ -27,7 +27,7 @@ type SessionRuntimeStatusFields = Pick<
     | 'optimisticThinkingAt'
     | 'resumingAt'
     | 'thinkingGraceUntil'
->;
+> & Pick<SessionListRenderableSession, 'hasPendingPermissionRequests' | 'hasPendingUserActionRequests'>;
 
 type UseSessionRuntimeStatusSourceOptions = Readonly<{
     subscribeToRuntimeActivity?: boolean;
@@ -36,6 +36,7 @@ type UseSessionRuntimeStatusSourceOptions = Readonly<{
 function selectSessionRuntimeStatusFields(
     session: Session,
     subscribeToRuntimeActivity: boolean,
+    renderable: SessionListRenderableSession | undefined,
 ): Partial<SessionRuntimeStatusFields> {
     const foregroundFields = {
         active: session.active,
@@ -53,6 +54,13 @@ function selectSessionRuntimeStatusFields(
         optimisticThinkingAt: session.optimisticThinkingAt,
         resumingAt: session.resumingAt,
         thinkingGraceUntil: session.thinkingGraceUntil,
+        // Transcript-only permission settlements update this canonical summary without
+        // changing the runtime session. Subscribe to its flags instead of every message.
+        ...(renderable ? {
+            hasPendingPermissionRequests: renderable.hasPendingPermissionRequests,
+            hasPendingUserActionRequests: renderable.hasPendingUserActionRequests,
+            pendingRequestObservedAt: renderable.pendingRequestObservedAt,
+        } : {}),
     };
     return subscribeToRuntimeActivity
         ? {
@@ -65,7 +73,10 @@ function selectSessionRuntimeStatusFields(
         : foregroundFields;
 }
 
-export type SessionRuntimeStatusSource = Session & Pick<SessionListRenderableSession, 'archiving'>;
+export type SessionRuntimeStatusSource = Session & Pick<
+    SessionListRenderableSession,
+    'archiving' | 'hasPendingPermissionRequests' | 'hasPendingUserActionRequests'
+>;
 
 export function useSessionRuntimeStatusSource(
     session: Session,
@@ -77,7 +88,11 @@ export function useSessionRuntimeStatusSource(
         useShallow((state) => {
             const liveSession = state.sessions[sessionId] ?? null;
             return liveSession
-                ? selectSessionRuntimeStatusFields(liveSession, subscribeToRuntimeActivity)
+                ? selectSessionRuntimeStatusFields(
+                    liveSession,
+                    subscribeToRuntimeActivity,
+                    state.sessionListRenderables[sessionId],
+                )
                 : null;
         }),
     );

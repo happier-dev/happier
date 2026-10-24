@@ -1,3 +1,4 @@
+import { matchesCurrentQuotaObservationCredential } from './connectedServices/quotas/proof/quotaProbeFreshProof';
 import fs from 'fs/promises';
 import os from 'os';
 import { randomBytes, randomUUID } from 'node:crypto';
@@ -1759,15 +1760,13 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
           });
           return group?.members ?? null;
         },
-        resolveProviderAccountId: async (profileId) => {
+        resolveProviderAccountIdentity: async (profileId) => {
           const resolved = await resolveConnectedServiceCredentialsWithRevisions({
             credentials,
             api,
             bindings: [{ serviceId: serviceId.data, profileId }],
           }).then((byServiceId) => byServiceId.get(serviceId.data) ?? null);
-          return resolved
-            ? readCredentialAccountIdentity(resolved.record)?.providerAccountId ?? null
-            : null;
+          return resolved ? readCredentialAccountIdentity(resolved.record) : null;
         },
       });
     };
@@ -7295,16 +7294,15 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
           if (!group) return null;
           const profileId = await resolveConnectedServiceGroupMemberByProviderAccountId({
             providerAccountId: candidate.providerAccountId,
+            providerOrganizationId: candidate.providerOrganizationId,
             members: group.members,
-            resolveProviderAccountId: async (memberProfileId) => {
+            resolveProviderAccountIdentity: async (memberProfileId) => {
               const resolved = await resolveConnectedServiceCredentialsWithRevisions({
                 credentials,
                 api,
                 bindings: [{ serviceId: candidate.serviceId, profileId: memberProfileId }],
               }).then((byServiceId) => byServiceId.get(candidate.serviceId) ?? null);
-              return resolved
-                ? readCredentialAccountIdentity(resolved.record)?.providerAccountId ?? null
-                : null;
+              return resolved ? readCredentialAccountIdentity(resolved.record) : null;
             },
           });
           return profileId ? { profileId, groupGeneration: group.generation } : null;
@@ -7315,9 +7313,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
             api,
             bindings: [{ serviceId: candidate.serviceId, profileId: candidate.profileId }],
           }).then((byServiceId) => byServiceId.get(candidate.serviceId) ?? null);
-          return record?.kind === 'oauth'
-            && record.oauth.providerAccountId === candidate.providerAccountId
-            && computeConnectedServiceAccessTokenFingerprint(record.oauth.accessToken) === candidate.credentialFingerprint;
+          return matchesCurrentQuotaObservationCredential({ record, ...candidate });
         },
         resolveCurrentGroupGenerationForProfile: async (candidate) => {
           const currentBinding = connectedServiceRuntimeRegistry
@@ -7836,6 +7832,14 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                   credentials,
                   store: providerAccountUsageStore,
                   nowMs: Date.now(),
+                  resolveCurrentProviderAccountIdentityForSource: async (source) => {
+                    const record = await resolveConnectedServiceCredentials({
+                      credentials,
+                      api,
+                      bindings: [{ serviceId: source.serviceId, profileId: source.profileId }],
+                    }).then((records) => records.get(source.serviceId) ?? null);
+                    return record ? readCredentialAccountIdentity(record) : null;
+                  },
                 })
               ).hydration,
               createCoordinator: () => new ConnectedServiceQuotasCoordinator({
@@ -8135,16 +8139,8 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                 if (!consumer) throw new Error('durable_generation_consumer_unavailable');
                 return await consumer.consume(input);
               },
-              refreshConnectedServiceCredentialForQuota: async (input: Readonly<{
-                serviceId: ConnectedServiceId;
-                profileId: string;
-                force: boolean;
-              }>) =>
-                connectedServiceRefreshCoordinator?.refreshConnectedServiceCredentialForQuota({
-                  serviceId: input.serviceId,
-                  profileId: input.profileId,
-                  force: input.force,
-                }) ?? null,
+              refreshConnectedServiceCredentialForQuota: async (input) =>
+                connectedServiceRefreshCoordinator?.refreshConnectedServiceCredentialForQuota(input) ?? null,
               now: () => Date.now(),
               randomBytes: (length) => randomBytes(length),
               }),

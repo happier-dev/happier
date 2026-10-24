@@ -52,7 +52,7 @@ export function buildUpdatedOauthRecord(params: Readonly<{
       tokenType: params.next.tokenType ?? params.record.oauth.tokenType,
       providerAccountId: params.next.providerAccountId ?? params.record.oauth.providerAccountId,
       providerEmail: params.next.providerEmail ?? params.record.oauth.providerEmail,
-      raw: params.next.raw ?? params.record.oauth.raw,
+      raw: params.next.raw === undefined ? params.record.oauth.raw : params.next.raw,
     },
   });
 }

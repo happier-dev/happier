@@ -12,6 +12,7 @@ import { resolvePiConnectedServiceSwitchContinuity } from '@/backends/pi/connect
 import type { AgentCatalogEntry } from '../types';
 import type { ConnectedServiceCredentialLifecycleDescriptor } from '@/daemon/connectedServices/credentials/lifecycleTypes';
 import { piDaemonSpawnHooks } from '@/backends/pi/daemon/spawnHooks';
+import { reportPiTurnFailure } from './connectedServices/reportPiTurnFailure';
 
 const piConnectedServiceCredentialLifecycleDescriptor: ConnectedServiceCredentialLifecycleDescriptor = {
   providerId: 'pi',
@@ -70,6 +71,7 @@ export const agent = {
   vendorResumeSupport: AGENTS_CORE.pi.resume.vendorResume,
   getPreflightSessionControlsProbeAdapter: async () =>
     (await import('@/backends/pi/preflight/piPreflightModelsProbeAdapter')).piPreflightModelsProbeAdapter,
+  getAcpRuntimeTurnHooks: async () => ({ onTurnFailure: reportPiTurnFailure }),
   getAcpBackendFactory: async () => {
     const { createPiBackend } = await import('@/backends/pi/acp/backend');
     return (opts) => ({ backend: createPiBackend(opts as any) });

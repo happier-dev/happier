@@ -438,6 +438,8 @@ describe('ApiClient connected service auth groups v3', () => {
         params: { expectedGeneration: 3 },
       }),
     );
+    // Bodiless DELETE: a JSON content type makes Fastify reject it (FST_ERR_CTP_EMPTY_JSON_BODY).
+    expect(vi.mocked(axios.delete).mock.calls[0]?.[1]?.headers).not.toHaveProperty('Content-Type');
   });
 
   it('rejects auth group member mutations that omit expectedGeneration before sending a request', async () => {

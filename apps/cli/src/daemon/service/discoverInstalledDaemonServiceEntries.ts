@@ -2,6 +2,7 @@ import * as fs from 'node:fs';
 import { spawnBackgroundSync } from '@happier-dev/cli-common/process';
 import {
   buildListWindowsScheduledTaskFolderPowerShellCommand,
+  parsePowerShellQuotedString,
   parseWindowsScheduledTaskFolderPowerShellJson,
 } from '@happier-dev/cli-common/service';
 import { basename, join, win32 as win32Path } from 'node:path';
@@ -186,8 +187,8 @@ function parseDarwinPlistBoolean(contents: string, key: string): boolean | null 
 }
 
 function parseWindowsWrapperValue(contents: string, key: string): string | null {
-  const match = new RegExp(`\\$env:${key}\\s*=\\s*['"]([^'"]+)['"]`, 'i').exec(contents);
-  return String(match?.[1] ?? '').trim() || null;
+  const match = new RegExp(`^\\$env:${key}\\s*=\\s*(.+)$`, 'im').exec(contents);
+  return match ? parsePowerShellQuotedString(match[1])?.trim() || null : null;
 }
 
 function normalizeWindowsScheduledTaskName(taskName: string): string | null {

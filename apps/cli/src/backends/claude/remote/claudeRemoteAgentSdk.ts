@@ -72,7 +72,7 @@ import { parseCheckpointsCommand, parseRewindCommand } from './agentSdk/claudeAg
 import {
     mapClaudeRateLimitEventToQuotaEvidence,
     readClaudeRateLimitEventWindows,
-    mapClaudeRateLimitEventToUsageDetails,
+    mapClaudeProviderFailureToUsageDetails,
     type NormalizedProviderUsageLimitDetailsV1,
 } from '../connectedServices/mapClaudeRateLimitEventToUsageDetails';
 import { classifyClaudeConnectedServiceRuntimeAuthFailure } from '../connectedServices/classifyClaudeConnectedServiceRuntimeAuthFailure';
@@ -710,7 +710,7 @@ export async function claudeRemoteAgentSdk(opts: {
         });
         const extraArgs = (() => {
             const out: Record<string, string | null> = Object.create(null);
-            if (enableFileCheckpointing) out['replay-user-messages'] = null;
+            out['replay-user-messages'] = null;
             if (debugEnabled) out.debug = debugCategories.length > 0 ? debugCategories.join(',') : null;
             if (verboseEnabled) out.verbose = null;
             if (resolvedUltracode) out.settings = buildClaudeUltracodeSettingsJson();
@@ -1030,6 +1030,7 @@ export async function claudeRemoteAgentSdk(opts: {
         opts.setUserMessageSender?.((message: SDKUserMessage) => messages.push(message));
         messages.push({
             type: 'user',
+            uuid: promptSettlements.submit(initial),
             session_id: '',
             parent_tool_use_id: null,
             message: {
@@ -1037,7 +1038,6 @@ export async function claudeRemoteAgentSdk(opts: {
                 content: [{ type: 'text', text: initial.message }],
             },
         });
-        promptSettlements.accept(initial);
 
         let foregroundTaskInterruptId: string | null = null;
         let detachedTaskInterruptId: string | null = null;
@@ -1615,6 +1615,7 @@ export async function claudeRemoteAgentSdk(opts: {
                         foregroundTurnInterruptActive = true;
                         messages.push({
                             type: 'user',
+                            uuid: promptSettlements.submit(next),
                             session_id: '',
                             parent_tool_use_id: null,
                             message: {
@@ -1622,7 +1623,6 @@ export async function claudeRemoteAgentSdk(opts: {
                                 content: [{ type: 'text', text: next.message }],
                             },
                         });
-                        promptSettlements.accept(next);
 
                         updateThinking(true);
                         opts.onInFlightSteerAvailabilityChange?.(true);
@@ -1765,6 +1765,7 @@ export async function claudeRemoteAgentSdk(opts: {
         }
 
         for await (const message of response as any) {
+            const isAcceptedPromptEcho = promptSettlements.observeProviderMessage(message);
             const inboundType = (() => {
                 if (!message || typeof message !== 'object') return 'unknown';
                 const raw = (message as any).type;
@@ -1800,7 +1801,7 @@ export async function claudeRemoteAgentSdk(opts: {
                 if (quotaEvidence.length > 0) {
                     await opts.onQuotaEvidence?.(quotaEvidence);
                 }
-                const rateLimitDetails = mapClaudeRateLimitEventToUsageDetails(message);
+                const rateLimitDetails = mapClaudeProviderFailureToUsageDetails(message);
                 if (rateLimitDetails) {
                     await opts.onRateLimitEvent?.(rateLimitDetails, readClaudeRateLimitEventWindows(message));
                 }
@@ -2108,7 +2109,9 @@ export async function claudeRemoteAgentSdk(opts: {
                     );
                 }
 
-                emitMessage(messageToEmit);
+                // Pending owns the visible user message; the native acknowledgment can
+                // contain provider-only replay context and must not become another message.
+                if (!isAcceptedPromptEcho) emitMessage(messageToEmit);
                 recordSeenToolBlocks(messageToEmit, seen);
 
                 if (

@@ -117,26 +117,25 @@ export function createGeminiBackendMessageHandler(params: {
           // Connected-services producer: await the STRUCTURED daemon recovery result before
           // deciding whether the existing sanitized raw-error fallback is still needed.
           void (async () => {
+            if (hadActiveTurn && !params.state.taskStartedSent && params.session.sessionTurnLifecycle) {
+              void params.session.sessionTurnLifecycle.beginTurn({ provider: 'gemini' }).catch((error) => {
+                logger.debug('[gemini] Failed to persist accepted turn start (non-fatal)', error);
+              });
+            }
             const runtimeAuthResult = await reportGeminiConnectedServiceRuntimeAuthFailureBestEffort({
               session: params.session,
               error: msg.detail && typeof msg.detail === 'object' ? msg.detail : errorMessage,
               logPrefix: '[gemini]',
+              failedTurn: { sessionSeq: params.session.getLastObservedMessageSeq?.() ?? null },
             });
             if (runtimeAuthResult?.recoveryReport?.handled === true) return;
 
             params.messageBuffer.addMessage(`Error: ${errorMessage}`, 'status');
             try {
-              if (hadActiveTurn && !params.state.taskStartedSent && params.session.sessionTurnLifecycle) {
-                await params.session.sessionTurnLifecycle.beginTurn({ provider: 'gemini' });
-              }
-              await surfacePrimarySessionRuntimeIssue({
+              if (!runtimeAuthResult) await surfacePrimarySessionRuntimeIssue({
                 cause: 'status_error',
                 provider: 'gemini',
-                error: runtimeAuthResult
-                  ? Object.assign(new Error(errorMessage), {
-                      runtimeAuthClassification: runtimeAuthResult.classification,
-                    })
-                  : errorMessage,
+                error: errorMessage,
                 sessionSeq: params.session.getLastObservedMessageSeq?.() ?? null,
                 session: params.session,
               });

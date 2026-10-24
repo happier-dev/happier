@@ -24,6 +24,7 @@ import {
   type ConnectedServiceCredentialHealthV1,
   type ConnectedServiceCredentialRecordV1,
   type ConnectedServiceOauthCredentialRawMetadata,
+  readConnectedServiceCredentialOrganizationId as readCredentialOrganizationId,
 } from '@happier-dev/protocol';
 
 import {
@@ -46,6 +47,8 @@ export type ConnectedAccountRefreshCredentialEvidence =
   | Readonly<{
       status: 'accepted';
       raw: ConnectedServiceOauthCredentialRawMetadata | null;
+      providerAccountId?: string | null;
+      providerEmail?: string | null;
     }>
   | Readonly<{
       status: 'rejected';
@@ -54,6 +57,9 @@ export type ConnectedAccountRefreshCredentialEvidence =
     }>
   | Readonly<{
       status: 'unavailable';
+    }>
+  | Readonly<{
+      status: 'identity_mismatch';
     }>;
 
 export type ConnectedAccountOAuthDescriptor = Readonly<{
@@ -81,6 +87,7 @@ export type ConnectedAccountOAuthDescriptor = Readonly<{
   }>) => ConnectedAccountOauthRefreshResponseIdentity;
   resolveRefreshCredentialEvidence?: (input: Readonly<{
     accessToken: string;
+    expectedProviderAccountId?: string | null;
     fetcher: typeof fetch;
     signal?: AbortSignal;
   }>) => Promise<ConnectedAccountRefreshCredentialEvidence>;
@@ -126,6 +133,7 @@ export type ResolvedConnectedAccountOauthConfig = Readonly<{
   }>) => ConnectedAccountOauthRefreshResponseIdentity;
   resolveRefreshCredentialEvidence?: (input: Readonly<{
     accessToken: string;
+    expectedProviderAccountId?: string | null;
     fetcher: typeof fetch;
     signal?: AbortSignal;
   }>) => Promise<ConnectedAccountRefreshCredentialEvidence>;
@@ -183,29 +191,39 @@ function resolveExpiresAtFromPayload(input: Readonly<{
   return null;
 }
 
-function resolveClaudeSubscriptionNativeOauthRaw(
-  data: Record<string, unknown>,
-): ConnectedServiceOauthCredentialRawMetadata | null {
-  const native = isRecord(data.claudeAiOauth)
-    ? data.claudeAiOauth
-    : isRecord(data['claude.ai_oauth'])
-      ? data['claude.ai_oauth']
-      : {};
-  const subscriptionType =
-    readString(native.subscriptionType)
-    ?? readString(native.subscription_type)
-    ?? readString(data.subscriptionType)
-    ?? readString(data.subscription_type);
-  const rateLimitTier =
-    readString(native.rateLimitTier)
-    ?? readString(native.rate_limit_tier)
-    ?? readString(data.rateLimitTier)
-    ?? readString(data.rate_limit_tier);
-  const claudeAiOauth = {
-    ...(subscriptionType ? { subscriptionType } : {}),
-    ...(rateLimitTier ? { rateLimitTier } : {}),
-  };
-  return Object.keys(claudeAiOauth).length > 0 ? { claudeAiOauth } : null;
+export type ClaudeSubscriptionProfileContextResult =
+  | Readonly<{ status: 'accepted'; raw: ConnectedServiceOauthCredentialRawMetadata | null;
+      providerAccountId: string | null; providerEmail: string | null }>
+  | Readonly<{ status: 'rejected'; providerStatus: number; providerErrorCode: null }>
+  | Readonly<{ status: 'unavailable' }>
+  | Readonly<{ status: 'identity_mismatch' }>;
+
+export async function fetchClaudeSubscriptionProfileContext(input: Readonly<{
+  accessToken: string;
+  expectedProviderAccountId?: string | null;
+  profileUrl?: string;
+  fetcher?: typeof fetch;
+  signal?: AbortSignal;
+}>): Promise<ClaudeSubscriptionProfileContextResult> {
+  const response = await (input.fetcher ?? fetch)(input.profileUrl ?? CLAUDE_OAUTH_PROFILE_URL, {
+    method: 'GET',
+    headers: { Authorization: `Bearer ${input.accessToken}`, 'anthropic-beta': CLAUDE_OAUTH_PROFILE_BETA_HEADER },
+    signal: input.signal,
+  });
+  if (response.status === 401) return { status: 'rejected', providerStatus: response.status, providerErrorCode: null };
+  if (!response.ok) return { status: 'unavailable' };
+  const payload: unknown = await response.json();
+  const account = isRecord(payload) && isRecord(payload.account) ? payload.account : null;
+  const providerAccountId = readString(account?.uuid);
+  const expectedProviderAccountId = input.expectedProviderAccountId?.trim();
+  if (expectedProviderAccountId && !providerAccountId) return { status: 'unavailable' };
+  if (expectedProviderAccountId && providerAccountId !== expectedProviderAccountId) return { status: 'identity_mismatch' };
+  return { status: 'accepted', raw: normalizeClaudeOauthProfileEntitlement(payload),
+    providerAccountId, providerEmail: readString(account?.email_address) ?? readString(account?.email) };
+}
+
+export function readConnectedServiceCredentialOrganizationId(record: ConnectedServiceCredentialRecordV1): string | null {
+  return readCredentialOrganizationId(record);
 }
 
 export const CONNECTED_ACCOUNT_DESCRIPTORS = [
@@ -310,31 +328,10 @@ export const CONNECTED_ACCOUNT_DESCRIPTORS = [
           providerAccountId: readString(account.uuid),
           providerEmail: readString(account.email_address),
           expiresAt: resolveExpiresAtFromPayload({ now, payload: data }),
-          raw: resolveClaudeSubscriptionNativeOauthRaw(data),
+          raw: normalizeClaudeOauthProfileEntitlement(data),
         };
       },
-      resolveRefreshCredentialEvidence: async ({ accessToken, fetcher, signal }) => {
-        const response = await fetcher(CLAUDE_OAUTH_PROFILE_URL, {
-          method: 'GET',
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-            'anthropic-beta': CLAUDE_OAUTH_PROFILE_BETA_HEADER,
-          },
-          signal,
-        });
-        if (response.status === 401) {
-          return {
-            status: 'rejected',
-            providerStatus: response.status,
-            providerErrorCode: null,
-          };
-        }
-        if (!response.ok) return { status: 'unavailable' };
-        return {
-          status: 'accepted',
-          raw: normalizeClaudeOauthProfileEntitlement(await response.json()),
-        };
-      },
+      resolveRefreshCredentialEvidence: fetchClaudeSubscriptionProfileContext,
     },
     resolvePostRefreshCredentialHealth: ({ credential, now }) => {
       if (

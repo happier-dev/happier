@@ -1,5 +1,9 @@
+import type { ConnectedServiceRuntimeFailureClassification } from '@/daemon/connectedServices/runtimeAuth/types';
+import { sanitizeConnectedServiceRuntimeFailureClassification } from '@/daemon/connectedServices/runtimeAuth/sanitizeConnectedServiceRuntimeFailureClassification';
 import {
   ConnectedServiceCredentialRevisionV1Schema,
+  buildUsageLimitIssueFingerprint,
+  type SessionRuntimeIssueV1,
   type ConnectedServiceCredentialRevisionV1,
   type ConnectedServiceId,
   type ConnectedServiceLimitCategoryV1,
@@ -22,6 +26,7 @@ export type CodexConnectedServiceRuntimeFailureKind =
   | 'unknown';
 
 export type CodexConnectedServiceRuntimeFailureClassification = Readonly<{
+  runtimeIssueFingerprint?: string | null;
   kind: CodexConnectedServiceRuntimeFailureKind;
   limitCategory?: ConnectedServiceLimitCategoryV1;
   serviceId: ConnectedServiceId;
@@ -310,4 +315,32 @@ export function classifyCodexConnectedServiceAuthFailure(
     });
   }
   return null;
+}
+
+export function readCodexRuntimeAuthClassification(error: unknown): ConnectedServiceRuntimeFailureClassification | null {
+  if (!error || typeof error !== 'object' || Array.isArray(error)) return null;
+  const record = error as Record<string, unknown>;
+  return sanitizeConnectedServiceRuntimeFailureClassification(record.runtimeAuthClassification);
+}
+
+export function attachCodexRuntimeAuthFailureIssue(error: unknown, issue: SessionRuntimeIssueV1): void {
+  const classification = readCodexRuntimeAuthClassification(error);
+  if (!classification) return;
+  Object.assign(error as object, {
+    runtimeAuthClassification: {
+      ...classification,
+      runtimeIssueFingerprint: buildUsageLimitIssueFingerprint(issue),
+    },
+  });
+}
+
+export function createCodexRuntimeAuthFailureTurnHook(
+  reportFailure: (classification: ConnectedServiceRuntimeFailureClassification, error: unknown) => Promise<void>,
+): (failure: Readonly<{ error: unknown; issue?: SessionRuntimeIssueV1 | null }>) => Promise<void> {
+  return async ({ error, issue }) => {
+    if (!issue) return;
+    attachCodexRuntimeAuthFailureIssue(error, issue);
+    const classification = readCodexRuntimeAuthClassification(error);
+    if (classification?.runtimeIssueFingerprint) await reportFailure(classification, error);
+  };
 }

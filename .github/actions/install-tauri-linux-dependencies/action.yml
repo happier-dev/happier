@@ -62,6 +62,10 @@ runs:
             libsoup-3.0-dev libsqlite3-dev libsystemd-dev libgudev-1.0-dev
             libwoff-dev libjpeg-dev libopenjp2-7-dev libpng-dev libtasn1-6-dev
             libwebp-dev libxt-dev libgstreamer1.0-dev
+            # Request libunwind-dev explicitly: the runner image's libunwind-14-dev
+            # Breaks it, and apt replaces that installed package only for an explicit
+            # request; otherwise libgstreamer1.0-dev's libunwind-dev dependency is unmet.
+            libunwind-dev
             libgstreamer-plugins-base1.0-dev libgstreamer-plugins-bad1.0-dev
             libenchant-2-dev libsecret-1-dev gobject-introspection
             libgirepository1.0-dev libegl-dev libgl-dev libgles-dev libepoxy-dev

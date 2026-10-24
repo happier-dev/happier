@@ -657,7 +657,7 @@ vi.mock('@/sync/domains/session/control/localControlSwitch', async (importOrigin
 const { createDeferred, createPendingMessageFixture, pressTestInstanceAsync, renderScreen, resetBrowserSessionDraftPersistenceForTest, standardCleanup } = await import('@/dev/testkit');
 const { existingSessionDraftSemanticValues } = await import('@/sync/domains/input/drafts/existingSessionDraftSemanticValues');
 const { deleteSessionDraft, getSessionDraftSnapshot } = await import('@/sync/ops/sessionDrafts/sessionDraftRepository');
-const { __resetConnectedServiceQuotaSnapshotStore } = await import('@/hooks/server/connectedServices/connectedServiceQuotaSnapshotStore');
+const { __resetConnectedServiceQuotaSnapshotStore } = await import('@/sync/domains/connectedServices/connectedServiceQuotaSnapshotStore');
 const { SessionView } = await import('./SessionView');
 
 describe('SessionView (direct sessions)', () => {

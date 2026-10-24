@@ -1,6 +1,17 @@
 import { randomUUID } from 'node:crypto';
 
 import { logger } from '@/ui/logger';
+import { deepEqual } from '@/utils/deterministicJson';
+import { isAskUserQuestionToolName, type StructuredQuestionLike, type StructuredQuestionAnswersV1 } from '@happier-dev/protocol';
+import { normalizeLegacyStructuredQuestionAnswers, normalizeStructuredQuestionAnswersV1 } from '@/agent/questions/normalizeStructuredQuestionAnswersV1';
+import { normalizeClaudeAskUserQuestionInputForPublication } from '../../utils/normalizeClaudeAskUserQuestionInput';
+import { buildNativeAskUserQuestionAnswersForClaude } from '../../utils/askUserQuestionAnswersForClaude';
+import { isClaudeSidechainRuntimeEvidence, isSidechainSessionHook } from '../../utils/sessionHookAttribution';
+import { matchesClaudeNativeQuestionScreen } from '../tuiControls/nativeQuestionScreen';
+import { parseClaudeNativePermissionScreen } from '../tuiControls/nativePermissionScreen';
+import { clearClaudePlanModeMetadataBestEffort } from '../../utils/clearPlanModeMetadataBestEffort';
+import { getToolDescriptor } from '../../utils/getToolDescriptor';
+import { readClaudeToolResultPermissionApproval } from '../../utils/claudeToolResultPermission';
 
 import { AgentStateRequestStore, type AgentStateOutstandingRequest } from '@/agent/permissions/agentStateRequestStore';
 import {
@@ -15,17 +26,22 @@ import {
 } from '@happier-dev/agents';
 
 import type { Session } from '../../session';
+import type { SessionHookData } from '../../utils/startHookServer';
+import type { ClaudeScreenState } from '../tuiControls/screenState';
 import type { PermissionRpcPayload } from '../../utils/permissionRpc';
 import type { PermissionRpcConsumerOutcome } from '../../utils/permissionRpcRouter';
 import type {
   ClaudeUnifiedDialogId,
   ClaudeUnifiedDialogOption,
   ClaudeUnifiedVisibleDialog,
+  ClaudeUnifiedVisibleNativeToolDialog,
 } from '../tuiControls/dialogRegistry';
 import {
   buildClaudeUnifiedDialogQuestionInput,
   getClaudeUnifiedDialogIdentity,
   resolveClaudeUnifiedDialogSelectedOption,
+  resolveClaudeUnifiedVisibleDialog,
+  CLAUDE_UNIFIED_UNRECOGNIZED_DIALOG_NOTICE,
 } from '../tuiControls/dialogRegistry';
 
 export const CLAUDE_UNIFIED_DIALOG_CHOICE_QUESTION = 'How should Claude continue?' as const;
@@ -36,6 +52,8 @@ const REQUEST_ID_PREFIX = 'claude_dialog_choice_';
 export type ClaudeUnifiedDialogChoiceDecision = Readonly<{
   dialogId: ClaudeUnifiedDialogId;
   choice: string;
+  structuredAnswersV1?: StructuredQuestionAnswersV1;
+  feedback?: string;
 }>;
 
 type PendingChoice = Readonly<{
@@ -43,6 +61,8 @@ type PendingChoice = Readonly<{
   dialogId: ClaudeUnifiedDialogId;
   identity: string;
   promise: Promise<ClaudeUnifiedDialogChoiceDecision>;
+  nativePrompt?: NativePrompt;
+  feedbackChoice?: string;
 }>;
 
 type TerminalAnswerAcknowledgement = Readonly<{
@@ -54,7 +74,18 @@ type TerminalAnswerAcknowledgement = Readonly<{
 type DialogChoiceRequestParams = Readonly<{
   dialog: ClaudeUnifiedVisibleDialog;
   signal?: AbortSignal | undefined;
+  /** Native answers must be applied and verified before acknowledging the app response. */
+  applyDecision?: (decision: ClaudeUnifiedDialogChoiceDecision) => Promise<void>;
 }>;
+
+type NativePrompt = Readonly<{
+  occurrenceId: string;
+  toolUseId: string | null;
+  sessionId: string;
+  toolName: string;
+  toolInput: unknown;
+  responseLocation: 'app_and_terminal' | 'terminal_only';
+}> & { observedAnswers?: unknown; observedApproval?: boolean };
 
 type RequestOption = Readonly<{
   choice: string;
@@ -149,6 +180,9 @@ export class ClaudeUnifiedDialogChoiceBroker {
   private readonly terminalAnswerAcknowledgements = new Map<string, TerminalAnswerAcknowledgement>();
   private activated = false;
   private disposed = false;
+  private nativePrompt: NativePrompt | null = null;
+  private applyPendingDecision: DialogChoiceRequestParams['applyDecision'];
+  private applyingNativeAnswer = false;
 
   constructor(session: Session, opts?: Readonly<{
     createRequestId?: (() => string) | undefined;
@@ -176,6 +210,179 @@ export class ClaudeUnifiedDialogChoiceBroker {
       name: 'claude-unified-dialog-choice',
       tryHandlePermissionRpc: (payload) => this.tryHandlePermissionRpc(payload),
     });
+  }
+
+  observeSessionHook(data: SessionHookData): void {
+    if (this.disposed || isSidechainSessionHook(data)) return;
+    const event = data.hook_event_name ?? data.hookEventName;
+    const id = typeof data.tool_use_id === 'string' ? data.tool_use_id : null;
+    if (event === 'ClaudeNativePrompt') {
+      const toolName = data.tool_name ?? data.toolName;
+      const sessionId = data.session_id ?? data.sessionId;
+      if (typeof toolName !== 'string' || typeof sessionId !== 'string') return;
+      const toolInput = data.tool_input ?? data.toolInput;
+      const toolUseId = id ?? this.session.claudeToolHookCorrelation.findToolUseId({ sessionId, toolName, toolInput });
+      const previous = this.nativePrompt;
+      if (previous && previous.occurrenceId !== toolUseId) this.clearNativePrompt();
+      this.nativePrompt = {
+        occurrenceId: toolUseId ?? randomUUID(), toolUseId, sessionId, toolName, toolInput,
+        responseLocation: data.happierResponseLocation === 'terminal_only' ? 'terminal_only' : 'app_and_terminal',
+      };
+      this.publishNativeLifecycle(this.nativePrompt, 'PermissionRequest');
+      if (previous && previous.occurrenceId !== this.nativePrompt.occurrenceId && !this.applyingNativeAnswer) {
+        void this.cancelPendingChoice('claude_native_prompt_replaced').catch(() => {
+          logger.infoFile('[claude-unified-dialog-choice] Native prompt replacement settlement failed');
+        });
+      }
+    } else if ((event === 'PostToolUse' || event === 'PostToolUseFailure') && id) {
+      const prompt = this.nativePromptForTool(id);
+      const result = readObject(data.tool_response ?? data.toolResponse);
+      if (prompt && result?.answers !== undefined) prompt.observedAnswers = result.answers;
+      if (event === 'PostToolUse') this.clearAcceptedNativePlanMetadata(id, data.session_id ?? data.sessionId);
+      void this.retireNativeTool(id, true).catch(() => {
+        logger.infoFile('[claude-unified-dialog-choice] Native tool settlement failed');
+      });
+    } else if (event === 'Stop' || event === 'StopFailure' || event === 'SessionEnd' || event === 'UserPromptSubmit') {
+      if (this.nativePrompt && !this.applyingNativeAnswer) {
+        this.clearNativePrompt();
+        void this.cancelPendingChoice('claude_native_prompt_ended').catch(() => {
+          logger.infoFile('[claude-unified-dialog-choice] Native prompt lifecycle settlement failed');
+        });
+      }
+    }
+  }
+
+  async observeTranscript(message: unknown): Promise<void> {
+    const row = readObject(message);
+    if (!row || isClaudeSidechainRuntimeEvidence(row)) return;
+    const content = readObject(row.message)?.content;
+    if (!Array.isArray(content)) return;
+    for (const value of content) {
+      const block = readObject(value);
+      if (block?.type === 'tool_result' && typeof block.tool_use_id === 'string') {
+        const prompt = this.nativePromptForTool(block.tool_use_id);
+        const hook = this.session.claudeToolHookCorrelation.get(block.tool_use_id);
+        const sessionId = prompt?.sessionId ?? hook?.session_id ?? hook?.sessionId;
+        if (typeof sessionId !== 'string' || row.sessionId !== sessionId) continue;
+        const result = readObject(row.toolUseResult);
+        if (prompt && result?.answers !== undefined) prompt.observedAnswers = result.answers;
+        const approved = readClaudeToolResultPermissionApproval(row);
+        if (approved === true) this.clearAcceptedNativePlanMetadata(block.tool_use_id, row.sessionId);
+        await this.retireNativeTool(block.tool_use_id, approved ?? block.is_error !== true);
+        this.session.claudeToolHookCorrelation.delete(block.tool_use_id);
+      }
+    }
+  }
+
+  private nativePromptForTool(toolUseId: string): NativePrompt | null {
+    if (this.nativePrompt?.toolUseId === toolUseId) return this.nativePrompt;
+    return this.pendingChoice?.nativePrompt?.toolUseId === toolUseId ? this.pendingChoice.nativePrompt : null;
+  }
+
+  private clearAcceptedNativePlanMetadata(toolUseId: string, sessionId: unknown): void {
+    const prompt = this.nativePromptForTool(toolUseId);
+    const hook = this.session.claudeToolHookCorrelation.get(toolUseId);
+    const toolSessionId = prompt?.sessionId ?? hook?.session_id ?? hook?.sessionId;
+    const toolName = prompt?.toolName ?? hook?.tool_name ?? hook?.toolName;
+    if (typeof sessionId === 'string' && sessionId === toolSessionId
+      && typeof toolName === 'string' && getToolDescriptor(toolName).exitPlan) {
+      clearClaudePlanModeMetadataBestEffort(this.session.client, '[claude-unified-dialog-choice]');
+    }
+  }
+
+  verifyNativeQuestionAnswer(
+    dialog: ClaudeUnifiedVisibleNativeToolDialog,
+    answers: StructuredQuestionAnswersV1,
+  ): 'pending' | 'matched' | 'mismatched' {
+    const prompt = this.nativePromptForTool(dialog.occurrenceId);
+    if (prompt?.observedAnswers === undefined) return 'pending';
+    return deepEqual(prompt.observedAnswers, buildNativeAskUserQuestionAnswersForClaude(dialog.questions, answers)) ? 'matched' : 'mismatched';
+  }
+
+  private async retireNativeTool(toolUseId: string, approved: boolean): Promise<void> {
+    const prompt = this.nativePromptForTool(toolUseId);
+    if (!prompt) return;
+    prompt.observedApproval = approved;
+    if (this.applyingNativeAnswer) return;
+    const pending = this.pendingChoice;
+    if (this.nativePrompt === prompt) this.clearNativePrompt();
+    if (approved && pending?.nativePrompt === prompt && !this.isSourceOwnedRequestClaimed(pending.requestId)) {
+      // Retire the app waiter without replaying the already-applied terminal answer.
+      // Record the provider's result rather than mislabeling a local success as canceled.
+      this.permissionCoordinator.cancelRequest(pending.requestId, 'claude_native_tool_resolved_in_terminal');
+      await this.trackSourceCompletion(pending.requestId, this.requestStore.completeRequest({
+        requestId: pending.requestId, status: 'approved', decision: 'allow',
+        reason: 'Answered in Claude terminal', observedCompletion: true,
+        extraCompletedFields: prompt.observedAnswers === undefined ? {} : { answers: prompt.observedAnswers },
+      }));
+      this.clearTerminalAnswerFailure();
+      return;
+    }
+    if (pending?.nativePrompt === prompt) await this.cancelPendingChoice('claude_native_tool_resolved_in_terminal');
+  }
+
+  private publishNativeLifecycle(prompt: NativePrompt, hookEventName: 'PermissionRequest' | 'PermissionRequestCompleted'): void {
+    this.session.onClaudeSessionHook?.({
+      hook_event_name: hookEventName, hookEventName,
+      session_id: prompt.sessionId, tool_use_id: prompt.toolUseId ?? prompt.occurrenceId,
+      tool_name: prompt.toolName,
+    });
+  }
+
+  private clearNativePrompt(): void {
+    const prompt = this.nativePrompt;
+    this.nativePrompt = null;
+    if (prompt) this.publishNativeLifecycle(prompt, 'PermissionRequestCompleted');
+  }
+
+  resolveVisibleDialog(state: ClaudeScreenState): ClaudeUnifiedVisibleDialog | null {
+    const prompt = this.nativePrompt;
+    if (prompt) {
+      if (isAskUserQuestionToolName(prompt.toolName) && state.nativeQuestionPresentation) {
+        const normalized = readObject(normalizeClaudeAskUserQuestionInputForPublication(prompt.toolName, prompt.toolInput));
+        // The canonical publication normalizer validates the external provider question schema.
+        const questions = Array.isArray(normalized?.questions) ? normalized.questions as readonly StructuredQuestionLike[] : [];
+        if (prompt.toolUseId && matchesClaudeNativeQuestionScreen(state.nativeQuestionPresentation, questions)) {
+          return {
+            ...prompt, kind: 'native', dialogId: 'ask_user_question', owner: null,
+            questions, questionId: 'claudeNativeQuestion', requestReason: 'claude_native_question',
+            header: 'Claude question', question: '', options: [],
+          };
+        }
+        return CLAUDE_UNIFIED_UNRECOGNIZED_DIALOG_NOTICE;
+      }
+      const permission = !isAskUserQuestionToolName(prompt.toolName) ? parseClaudeNativePermissionScreen(state.text) : null;
+      if (permission && prompt.toolUseId && (!permission.amended || permission.kind === 'plan')) {
+        return {
+          ...prompt, kind: 'native', dialogId: 'tool_permission', owner: null,
+          questions: [], questionId: 'claudeNativePermission', requestReason: 'claude_native_permission',
+          header: prompt.toolName, question: permission.context,
+          permissionPresentation: permission,
+          options: permission.options.map((option, index) => ({
+            choice: `option_${index + 1}`, label: option.label, description: '',
+            answer: { kind: 'selection', targetLabel: option.label },
+          })),
+        };
+      }
+      if (state.nativeQuestionPresentation || state.permissionPromptVisible || state.unrecognizedConfirmationDialogVisible) {
+        // An uncharacterized/cropped native form is never a generic numbered approval.
+        return CLAUDE_UNIFIED_UNRECOGNIZED_DIALOG_NOTICE;
+      }
+    }
+    return resolveClaudeUnifiedVisibleDialog(state);
+  }
+
+  shouldPublishDialog(dialog: ClaudeUnifiedVisibleDialog): boolean {
+    if (dialog.kind === 'native') return dialog.responseLocation === 'app_and_terminal';
+    return !(dialog === CLAUDE_UNIFIED_UNRECOGNIZED_DIALOG_NOTICE && this.nativePrompt?.responseLocation === 'terminal_only');
+  }
+
+  isNativeAnswerInFlight(): boolean { return this.applyingNativeAnswer; }
+
+  hasNativePrompt(): boolean { return this.nativePrompt !== null; }
+
+  isCurrentNativeDialog(dialog: ClaudeUnifiedVisibleNativeToolDialog): boolean {
+    return !this.disposed && this.nativePrompt?.occurrenceId === dialog.occurrenceId;
   }
 
   hasPendingChoice(dialogId?: ClaudeUnifiedDialogId): boolean {
@@ -235,9 +442,14 @@ export class ClaudeUnifiedDialogChoiceBroker {
     if (this.pendingChoice?.identity === identity) return this.pendingChoice.promise;
     await this.cancelAllSourceOwnedRequests('claude_unified_dialog_changed');
 
-    const requestId = this.createRequestId();
+    // Native questions join their transcript tool by ID. Permission wrappers retain a
+    // separate ID so their exact native choices use the structured-question renderer.
+    const requestId = params.dialog.kind === 'native' && params.dialog.dialogId === 'ask_user_question'
+      ? params.dialog.occurrenceId
+      : this.createRequestId();
     const toolInput = buildClaudeUnifiedDialogQuestionInput(params.dialog);
     this.pendingOptions = requestOptions(params.dialog);
+    this.applyPendingDecision = params.applyDecision;
     const promise = this.permissionCoordinator.requestDecision({
       requestId,
       toolName: REQUEST_TOOL_NAME,
@@ -266,10 +478,17 @@ export class ClaudeUnifiedDialogChoiceBroker {
       if (this.pendingChoice?.requestId === requestId) {
         this.pendingChoice = null;
         this.pendingOptions = [];
+          this.applyPendingDecision = undefined;
       }
     });
 
-    this.pendingChoice = { requestId, dialogId: params.dialog.dialogId, identity, promise };
+    this.pendingChoice = {
+      requestId, dialogId: params.dialog.dialogId, identity, promise,
+      ...(params.dialog.kind === 'native' && this.nativePrompt ? { nativePrompt: this.nativePrompt } : {}),
+      ...(params.dialog.kind === 'native' && params.dialog.permissionPresentation?.feedback
+        ? { feedbackChoice: params.dialog.options[params.dialog.permissionPresentation.feedback.optionIndex]?.choice }
+        : {}),
+    };
     return promise;
   }
 
@@ -280,6 +499,7 @@ export class ClaudeUnifiedDialogChoiceBroker {
   }
 
   async noteDialogResolvedInTerminal(reason: string): Promise<void> {
+    if (this.applyingNativeAnswer) return;
     this.clearTerminalAnswerFailure();
     await this.cancelAllSourceOwnedRequests(reason);
   }
@@ -287,6 +507,7 @@ export class ClaudeUnifiedDialogChoiceBroker {
   async dispose(): Promise<void> {
     if (this.disposed) return;
     this.disposed = true;
+    this.clearNativePrompt();
     for (const acknowledgement of this.terminalAnswerAcknowledgements.values()) {
       acknowledgement.reject(new Error('claude_unified_dialog_choice_broker_disposed'));
     }
@@ -363,7 +584,24 @@ export class ClaudeUnifiedDialogChoiceBroker {
     const options = this.pendingChoice?.requestId === requestId && this.pendingOptions.length > 0
       ? this.pendingOptions
       : readOptionsFromToolInput(context.toolInput);
-    const decision = dialogId ? decodeDialogChoice(payload, dialogId, options) : null;
+    const input = readObject(context.toolInput);
+    const questions = Array.isArray(input?.questions) ? input.questions as readonly StructuredQuestionLike[] : [];
+    let decision: ClaudeUnifiedDialogChoiceDecision | null = dialogId === 'ask_user_question'
+      ? {
+        dialogId, choice: '',
+        structuredAnswersV1: payload.structuredAnswersV1 !== undefined
+          ? normalizeStructuredQuestionAnswersV1(payload.structuredAnswersV1, questions)
+          : normalizeLegacyStructuredQuestionAnswers({ answers: payload.answers, questions }),
+      }
+      : dialogId ? decodeDialogChoice(payload, dialogId, options) : null;
+    const feedbackChoice = this.pendingChoice?.requestId === requestId ? this.pendingChoice.feedbackChoice : undefined;
+    if (!decision && dialogId === 'tool_permission' && feedbackChoice) {
+      const answers = payload.structuredAnswersV1 !== undefined
+        ? normalizeStructuredQuestionAnswersV1(payload.structuredAnswersV1, questions)
+        : normalizeLegacyStructuredQuestionAnswers({ answers: payload.answers, questions });
+      const feedback = Object.values(answers)[0]?.[0];
+      if (feedback) decision = { dialogId, choice: feedbackChoice, feedback, structuredAnswersV1: answers };
+    }
     if (!decision) {
       // Recognized dialogs are selection-only, so an approved answer that matches no option
       // (e.g. a freeform "Other" entry) cannot be injected. Fail closed with a typed cancellation
@@ -398,8 +636,15 @@ export class ClaudeUnifiedDialogChoiceBroker {
       this.terminalAnswerAcknowledgements.set(identity, acknowledgement);
     }
 
-    let completion: boolean;
+    let completion = false;
+    const applyDecision = this.applyPendingDecision;
+    const nativePrompt = this.nativePrompt;
+    if (applyDecision && this.applyingNativeAnswer) return false;
     try {
+      if (applyDecision) {
+        this.applyingNativeAnswer = true;
+        await applyDecision(decision);
+      }
       completion = await this.permissionCoordinator.completeRpcResponse({
         context,
         completion: {
@@ -411,6 +656,7 @@ export class ClaudeUnifiedDialogChoiceBroker {
               answers: payload.answers ?? {},
               dialogId: decision.dialogId,
               dialogChoice: decision.choice,
+              ...(decision.structuredAnswersV1 ? { structuredAnswersV1: decision.structuredAnswersV1 } : {}),
               ...(decision.dialogId === 'safeguard_pause' ? { safeguardChoice: decision.choice } : {}),
             },
           },
@@ -418,8 +664,19 @@ export class ClaudeUnifiedDialogChoiceBroker {
       });
     } catch (error) {
       if (identity) this.terminalAnswerAcknowledgements.delete(identity);
+      if (applyDecision) logger.infoFile('[claude-unified-dialog-choice] Native answer was not acknowledged', error);
       throw error;
+    } finally {
+      if (applyDecision) {
+        this.applyingNativeAnswer = false;
+        // A terminal answer can win while an app answer is being verified. Its
+        // observed result owns history even when it differs from the app payload.
+        if (!completion && nativePrompt?.toolUseId && nativePrompt.observedApproval !== undefined) {
+          await this.retireNativeTool(nativePrompt.toolUseId, nativePrompt.observedApproval);
+        }
+      }
     }
+    if (applyDecision && completion && this.nativePrompt === nativePrompt) this.clearNativePrompt();
     if (!acknowledgement || completion !== true) {
       if (identity) this.terminalAnswerAcknowledgements.delete(identity);
       return completion;

@@ -23,6 +23,7 @@ import {
     writeExistingSessionDraft,
     type SessionDraftCurrentness,
 } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
+import type { ComposerTextStore } from '@/components/sessions/agentInput/composerTextStore';
 
 interface UseDraftOptions {
     autoSaveInterval?: number; // in milliseconds, default 2000
@@ -36,13 +37,21 @@ export type SessionDraftTextSnapshot = Readonly<{
     currentness?: SessionDraftCurrentness;
 }>;
 
+const ABSENT_STORED_DRAFT = Symbol('absentStoredDraft');
+
+/**
+ * Binds one Session's live composer text (`textStore`) to its canonical draft replica. The text
+ * store is the composer's live value; this owner adopts, seeds, persists, restores and clears it.
+ * It never renders its host for a keystroke: it subscribes only to a stored draft that differs
+ * from the text on screen, which the repository echo of this composer's own edits never does.
+ */
 export function useDraft(
     sessionId: string | null | undefined,
-    value: string,
-    onChange: (value: string) => void,
+    textStore: ComposerTextStore,
     options: UseDraftOptions = {}
 ) {
     const { autoSaveInterval = 2000 } = options;
+    const onChange = textStore.setPrompt;
     const scope = useActiveServerAccountScope();
     const address = useMemo(() => sessionId ? { kind: 'session' as const, sessionId } : null, [sessionId]);
     const subscribeToDraft = useCallback((listener: () => void) => {
@@ -53,12 +62,27 @@ export function useDraft(
         if (!scope || !address) return null;
         return getSessionDraftSnapshot(scope, address);
     }, [address, scope]);
-    const draftSnapshot = useSyncExternalStore(subscribeToDraft, readDraftSnapshot, readDraftSnapshot);
+    // A load trigger, not a text projection: only a stored draft that differs from the live text
+    // (a remote edit, a remote clear, a finished materialization) re-runs the load owner below. The
+    // repository echo of this composer's own edits equals the live text, so it neither renders the
+    // host per keystroke nor re-adopts the value that is still waiting for its debounced flush.
+    const readStoredDraftTrigger = useCallback((): string | typeof ABSENT_STORED_DRAFT | null => {
+        if (!scope || !address) return null;
+        const snapshot = getSessionDraftSnapshot(scope, address);
+        if (!snapshot) return ABSENT_STORED_DRAFT;
+        const stored = snapshot.document.composer.text.value;
+        return stored === textStore.getPrompt() ? null : stored;
+    }, [address, scope, textStore]);
+    const storedDraft = useSyncExternalStore(subscribeToDraft, readStoredDraftTrigger, readStoredDraftTrigger);
+    const readDraftConflict = useCallback(() => readDraftSnapshot()?.conflict ?? null, [readDraftSnapshot]);
+    const draftConflict = useSyncExternalStore(subscribeToDraft, readDraftConflict, readDraftConflict);
+    const readDraftStatus = useCallback(() => readDraftSnapshot()?.status ?? null, [readDraftSnapshot]);
+    const draftStatus = useSyncExternalStore(subscribeToDraft, readDraftStatus, readDraftStatus);
     const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const lastSavedValue = useRef<string>('');
     const lastSessionId = useRef<string | null>(null);
     const lastSessionScope = useRef<ServerAccountScope | null>(null);
-    const latestValue = useRef<string>(value);
+    const latestValue = useRef<string>(textStore.getPrompt());
     const autosaveSkip = useRef<Readonly<{ sessionId: string; value: string }> | null>(null);
     const observedRepositoryDraftRef = useRef<Readonly<{
         serverId: string;
@@ -69,8 +93,11 @@ export function useDraft(
     }> | null>(null);
     const routeFocused = useIsFocused();
     const active = options.active ?? routeFocused;
+    const activeRef = useRef(active);
+    useLayoutEffect(() => {
+        activeRef.current = active;
+    }, [active]);
     const session = sessionId ? storage.getState().sessions[sessionId] : null;
-    const storedDraft = draftSnapshot?.document.composer.text.value ?? null;
     const forkInitialPrompt = readForkInitialPromptV1(session?.metadata);
     const forkInitialPromptText = forkInitialPrompt?.text ?? null;
     const sessionInitialPrompt = readSessionInitialPromptV1(session?.metadata);
@@ -102,13 +129,6 @@ export function useDraft(
         });
     }, [active, scope, sessionId]);
 
-    // A render that React later abandons must not become the imperative draft authority. Sync
-    // controlled values only after commit; input handlers and draft lifecycle operations update
-    // this ref synchronously when they take custody.
-    useLayoutEffect(() => {
-        latestValue.current = value;
-    }, [value]);
-
     const saveDraftForSession = useCallback((targetScope: ServerAccountScope | null, targetSessionId: string, draft: string) => {
         if (!targetScope) return;
         writeExistingSessionDraft({
@@ -118,6 +138,18 @@ export function useDraft(
         });
         if (lastSessionId.current === targetSessionId) {
             lastSavedValue.current = draft;
+            // The load owner no longer re-runs for this composer's own echo, so record the
+            // repository state this write produced exactly as that re-run used to observe it.
+            if (activeRef.current) {
+                const written = getSessionDraftSnapshot(targetScope, { kind: 'session', sessionId: targetSessionId });
+                observedRepositoryDraftRef.current = {
+                    serverId: targetScope.serverId,
+                    accountId: targetScope.accountId,
+                    sessionId: targetSessionId,
+                    present: written !== null,
+                    text: written?.document.composer.text.value ?? null,
+                };
+            }
         }
     }, []);
 
@@ -219,6 +251,12 @@ export function useDraft(
     }, []);
 
     const adoptPersistedDraftText = useCallback((draft: string) => {
+        // The local replica already holds the live text (its own echo, or a remote value equal to
+        // it): there is nothing to adopt, and a debounced flush of that text must stay scheduled.
+        if (latestValue.current === draft) {
+            lastSavedValue.current = draft;
+            return;
+        }
         if (saveTimeoutRef.current) {
             clearTimeout(saveTimeoutRef.current);
             saveTimeoutRef.current = null;
@@ -316,8 +354,9 @@ export function useDraft(
                 }
                 clearSessionInitialPrompt('useDraft.consumeSessionInitialPrompt.sessionChange');
             } else if (currentValue.trim()) {
-                onChange('');
+                latestValue.current = '';
                 lastSavedValue.current = '';
+                onChange('');
             } else {
                 lastSavedValue.current = '';
             }
@@ -375,13 +414,8 @@ export function useDraft(
     }, [active, activeSessionInitialPrompt, adoptPersistedDraftText, clearForkInitialPrompt, clearSessionInitialPrompt, composeSessionInitialPromptText, flushDraftForSession, forkInitialPromptText, onChange, persistSeededDraftText, readDraftSnapshot, saveDraftForSession, scope, sessionId, storedDraft]);
 
     // Auto-save with smart debouncing
-    useEffect(() => {
+    const autosaveValue = useCallback((value: string) => {
         if (!scope || !sessionId) return;
-
-        // A later input/lifecycle operation can supersede this committed render before passive
-        // effects run. In that case its value is historical and must never be written back over
-        // the canonical replica (notably after an outbound handoff clears the composer).
-        if (value !== latestValue.current) return;
 
         // Only save if value has changed
         const skip = autosaveSkip.current;
@@ -395,7 +429,22 @@ export function useDraft(
             saveDraft(value);
             scheduleDraftFlush(previousSavedValue, value);
         }
-    }, [value, sessionId, scope, saveDraft, scheduleDraftFlush]);
+    }, [sessionId, scope, saveDraft, scheduleDraftFlush]);
+
+    // This owner's own operations update `latestValue` before writing the text store. Any other
+    // writer of the live text is adopted here, synchronously, and persisted like an edit.
+    useLayoutEffect(() => textStore.subscribe(() => {
+        const next = textStore.getPrompt();
+        if (next === latestValue.current) return;
+        latestValue.current = next;
+        autosaveValue(next);
+    }), [autosaveValue, textStore]);
+
+    // A persistence target that becomes available (the account scope) or changes receives the
+    // text typed before it.
+    useEffect(() => {
+        autosaveValue(latestValue.current);
+    }, [autosaveValue]);
 
     // The debounce belongs to the mounted session, not to an individual render. Clearing it on
     // every value-effect cleanup can cancel the timer scheduled synchronously by setDraftValue.
@@ -480,10 +529,10 @@ export function useDraft(
 
         saveDraftForSession(scope, targetSessionId, '');
         flushDraftForSession(scope, targetSessionId);
-        onChange('');
         latestValue.current = '';
         lastSavedValue.current = '';
         autosaveSkip.current = { sessionId: targetSessionId, value: '' };
+        onChange('');
         return true;
     }, [flushDraftForSession, onChange, saveDraftForSession, scope]);
 
@@ -503,9 +552,9 @@ export function useDraft(
             saveTimeoutRef.current = null;
         }
 
+        latestValue.current = draft;
         onChange(draft);
         saveDraftForSession(scope, sessionId, draft);
-        latestValue.current = draft;
         lastSavedValue.current = draft;
         autosaveSkip.current = { sessionId, value: draft };
     }, [onChange, saveDraftForSession, scope, sessionId]);
@@ -524,9 +573,9 @@ export function useDraft(
             saveTimeoutRef.current = null;
         }
 
+        latestValue.current = snapshot.text;
         onChange(snapshot.text);
         saveDraftForSession(scope, targetSessionId, snapshot.text);
-        latestValue.current = snapshot.text;
         lastSavedValue.current = snapshot.text;
         autosaveSkip.current = { sessionId: targetSessionId, value: snapshot.text };
     }, [onChange, saveDraftForSession, scope]);
@@ -558,9 +607,9 @@ export function useDraft(
             saveTimeoutRef.current = null;
         }
 
+        latestValue.current = snapshot.text;
         onChange(snapshot.text);
         saveDraftForSession(scope, targetSessionId, snapshot.text);
-        latestValue.current = snapshot.text;
         lastSavedValue.current = snapshot.text;
         autosaveSkip.current = { sessionId: targetSessionId, value: snapshot.text };
         return true;
@@ -603,10 +652,10 @@ export function useDraft(
         const didClear = !areSessionDraftCurrentnessCapturesEqual(beforeClear, afterClear);
         if (lastSessionId.current === targetSessionId) {
             const remainingText = getSessionDraftSnapshot(snapshot.scope, targetAddress)?.document.composer.text.value ?? '';
-            onChange(remainingText);
             latestValue.current = remainingText;
             lastSavedValue.current = remainingText;
             autosaveSkip.current = { sessionId: targetSessionId, value: remainingText };
+            onChange(remainingText);
         }
         return didClear;
     }, [onChange, saveDraftForSession]);
@@ -621,7 +670,8 @@ export function useDraft(
         restoreComposerSnapshot,
         captureDraftForOutboundHandoff,
         clearDraftCurrentness,
-        draftSnapshot,
+        draftConflict,
+        draftStatus,
         draftScope: scope,
     };
 }

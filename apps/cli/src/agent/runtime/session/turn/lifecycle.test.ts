@@ -1,9 +1,52 @@
 import { describe, expect, it } from 'vitest';
 
 import type { SessionTurnMutationV1 } from '@/api/session/mutations/sessionMutationTypes';
+import type { SessionRuntimeIssueV1 } from '@happier-dev/protocol';
 import { createSessionTurnLifecycle } from './lifecycle';
 
 describe('SessionTurnLifecycle', () => {
+    it('shares the synchronous failed-turn witness with duplicate observers and admits a fresh begun turn', async () => {
+        let sequence = 0;
+        let releaseFailureWrite: () => void = () => {};
+        const failureWrite = new Promise<void>((resolve) => { releaseFailureWrite = resolve; });
+        const mutations: SessionTurnMutationV1[] = [];
+        const lifecycle = createSessionTurnLifecycle({
+            sessionId: 'failure-occurrences', createId: () => String(++sequence),
+            enqueueSessionTurn: async (mutation) => {
+                mutations.push(mutation);
+                if (mutation.action === 'fail') await failureWrite;
+            },
+        });
+        const issue: SessionRuntimeIssueV1 = { v: 1, scope: 'primary_session', status: 'failed', provider: 'claude', code: 'usage_limit', source: 'usage_limit', occurredAt: 1_000 };
+        const witnesses: Array<Readonly<{ turnId: string; issue: SessionRuntimeIssueV1 }>> = [];
+        const pending = lifecycle.failTurn({ provider: 'claude', issue, allocateWhenIdle: true, suppressUntrustedDuplicate: true, onFailureTurn: (witness) => { witnesses.push(witness); } });
+        expect(witnesses).toHaveLength(1);
+        const duplicate = lifecycle.failTurn({ provider: 'claude', issue: { ...issue, occurredAt: 1_001 }, allocateWhenIdle: true, suppressUntrustedDuplicate: true, onFailureTurn: (witness) => { witnesses.push(witness); } });
+        expect(witnesses[1]).toEqual(witnesses[0]);
+        const fresh = await lifecycle.beginTurn({ provider: 'claude' });
+        const freshPending = lifecycle.failTurn({ provider: 'claude', issue: { ...issue, occurredAt: 2_000 }, allocateWhenIdle: true, suppressUntrustedDuplicate: true, onFailureTurn: (witness) => { witnesses.push(witness); } });
+        expect(witnesses[2]).toEqual({ turnId: fresh.turnId, issue: { ...issue, occurredAt: 2_000 } });
+        expect(witnesses[2]?.turnId).not.toBe(witnesses[0]?.turnId);
+        expect(mutations.filter((mutation) => mutation.action === 'fail')).toHaveLength(2);
+        releaseFailureWrite();
+        await Promise.all([pending, duplicate, freshPending]);
+    });
+
+    it('preserves independent idle failures and distinct failure causes', async () => {
+        const mutations: SessionTurnMutationV1[] = [];
+        const lifecycle = createSessionTurnLifecycle({
+            sessionId: 'independent-failures',
+            enqueueSessionTurn: async (mutation) => { mutations.push(mutation); },
+        });
+        const issue: SessionRuntimeIssueV1 = { v: 1, scope: 'primary_session', status: 'failed', provider: 'claude', code: 'usage_limit', source: 'usage_limit', occurredAt: 1_000 };
+        await lifecycle.failTurn({ issue, allocateWhenIdle: true });
+        await lifecycle.failTurn({ issue: { ...issue, occurredAt: 2_000 }, allocateWhenIdle: true });
+        await lifecycle.failTurn({ issue: { ...issue, code: 'provider_exit', source: 'provider_process_exit' }, allocateWhenIdle: true, suppressUntrustedDuplicate: true });
+        const failures = mutations.filter((mutation) => mutation.action === 'fail');
+        expect(failures).toHaveLength(3);
+        expect(failures.at(-1)?.issue?.code).toBe('provider_exit');
+    });
+
     it('exposes the exact runner-local active turn witness only while that turn is active', async () => {
         const lifecycle = createSessionTurnLifecycle({
             sessionId: 's1',

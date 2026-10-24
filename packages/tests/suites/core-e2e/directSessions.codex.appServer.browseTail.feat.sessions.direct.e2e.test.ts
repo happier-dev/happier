@@ -16,12 +16,13 @@ import { waitFor } from '../../src/testkit/timing';
 
 const run = createRunDirs({ runLabel: 'core' });
 
-function jsonlLine(value: unknown): string {
-  return `${JSON.stringify(value)}\n`;
-}
-
-function responseItemLine(params: { timestamp: string; payload: Record<string, unknown> }): string {
-  return jsonlLine({ type: 'response_item', timestamp: params.timestamp, payload: params.payload });
+function nativeMessage(id: string, text: string, role: 'user' | 'agent') {
+  return {
+    turnId: `turn-${id}`,
+    startedAtMs: 1_000,
+    completedAtMs: 2_000,
+    item: role === 'user' ? { id, type: 'userMessage', content: [{ type: 'text', text }] } : { id, type: 'agentMessage', text },
+  };
 }
 
 async function writeFakeCodexAppServerThreadListScript(params: Readonly<{
@@ -30,6 +31,7 @@ async function writeFakeCodexAppServerThreadListScript(params: Readonly<{
   title: string;
   cwd: string;
   updatedAtSeconds: number;
+  nativeItemsPath: string;
 }>): Promise<string> {
   const scriptPath = resolve(join(params.dir, 'fake-codex-app-server.mjs'));
   await writeFile(
@@ -37,6 +39,7 @@ async function writeFakeCodexAppServerThreadListScript(params: Readonly<{
     [
       '#!/usr/bin/env node',
       'import readline from "node:readline";',
+      'import { readFile } from "node:fs/promises";',
       'const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });',
       'for await (const line of rl) {',
       '  if (!line.trim()) continue;',
@@ -48,6 +51,19 @@ async function writeFakeCodexAppServerThreadListScript(params: Readonly<{
       '  if (msg.method === "initialized") continue;',
       '  if (msg.method === "thread/list") {',
       `    process.stdout.write(JSON.stringify({ id: msg.id, result: { data: [{ id: ${JSON.stringify(params.remoteSessionId)}, name: ${JSON.stringify(params.title)}, preview: ${JSON.stringify(params.title)}, updatedAt: ${JSON.stringify(params.updatedAtSeconds)}, cwd: ${JSON.stringify(params.cwd)} }], nextCursor: null } }) + "\\n");`,
+      '    continue;',
+      '  }',
+      // Codex thread/items/list: newest-first pages; cursors are item indexes (reverse cursors include the anchor).
+      '  if (msg.method === "thread/items/list") {',
+      `    const all = JSON.parse(await readFile(${JSON.stringify(params.nativeItemsPath)}, "utf8"));`,
+      '    const desc = msg.params.sortDirection === "desc";',
+      '    const anchor = msg.params.cursor ? JSON.parse(msg.params.cursor) : null;',
+      '    const candidates = all.map((entry, index) => ({ entry, index })).filter(({ index }) => !anchor || (desc ? (anchor.inclusive ? index <= anchor.index : index < anchor.index) : (anchor.inclusive ? index >= anchor.index : index > anchor.index)));',
+      '    if (desc) candidates.reverse();',
+      '    const page = candidates.slice(0, msg.params.limit ?? 100);',
+      '    const cursor = (index, inclusive) => JSON.stringify({ index, inclusive });',
+      '    const result = { data: page.map(({ entry }) => entry), nextCursor: candidates.length > page.length ? cursor(page.at(-1).index, false) : null, backwardsCursor: page.length ? cursor(page[0].index, true) : null };',
+      '    process.stdout.write(JSON.stringify({ id: msg.id, result }) + "\\n");',
       '    continue;',
       '  }',
       '  process.stdout.write(JSON.stringify({ id: msg.id, error: { code: -32601, message: "method not found" } }) + "\\n");',
@@ -74,19 +90,27 @@ describe('core e2e: direct Codex app-server sessions browse/link/tail', () => {
     await server?.stop().catch(() => {});
   });
 
-  it('surfaces app-server fallback metadata when browsing, opening, and tailing a linked direct session', async () => {
+  it('browses app-server metadata, then pages and follows native Codex history for a linked direct session', async () => {
     const testDir = run.testDir('direct-sessions-codex-app-server-browse-tail');
     const daemonHomeDir = resolve(join(testDir, 'daemon-home'));
     const codexHomeDir = resolve(join(testDir, '.codex'));
     const remoteSessionId = '33333333-3333-3333-3333-333333333333';
     const appServerTitle = 'Codex app-server fallback title';
     const appServerCwd = '/tmp/direct-codex-app-server-project';
+    const nativeItemsPath = resolve(join(testDir, 'codex-native-items.json'));
+    const initialNativeItems = [
+      nativeMessage('u1', 'native question', 'user'),
+      nativeMessage('a1', 'native answer', 'agent'),
+    ];
+    await mkdir(testDir, { recursive: true });
+    await writeFile(nativeItemsPath, JSON.stringify(initialNativeItems), 'utf8');
     const fakeAppServer = await writeFakeCodexAppServerThreadListScript({
       dir: testDir,
       remoteSessionId,
       title: appServerTitle,
       cwd: appServerCwd,
       updatedAtSeconds: 1_741_590_000,
+      nativeItemsPath,
     });
 
     await mkdir(daemonHomeDir, { recursive: true });
@@ -198,21 +222,12 @@ describe('core e2e: direct Codex app-server sessions browse/link/tail', () => {
         direction: 'older',
       });
       const pageResult = unwrapDataKeyRpcResult(page, 'direct Codex app-server transcript page');
-      expect(pageResult).toEqual(expect.objectContaining({
-        ok: true,
-        items: expect.arrayContaining([
-          expect.objectContaining({
-            raw: expect.objectContaining({
-              role: 'agent',
-              content: expect.objectContaining({
-                data: expect.objectContaining({
-                  message: appServerTitle,
-                }),
-              }),
-            }),
-          }),
-        ]),
-      }));
+      // The list preview is metadata, never transcript: history comes from thread/items/list.
+      expect(pageResult).toEqual(expect.objectContaining({ ok: true }));
+      const pageItems = (pageResult as any).items as Array<{ raw?: { role?: string } }>;
+      expect(pageItems.map(item => item.raw?.role)).toEqual(['user', 'agent']);
+      expect(JSON.stringify(pageItems)).toContain('native answer');
+      expect(JSON.stringify(pageItems)).not.toContain(appServerTitle);
 
       const tailStart = await machineRpc.call(`${seeded.machineId}:${RPC_METHODS.DAEMON_DIRECT_SESSION_TRANSCRIPT_READ_AFTER}`, {
         machineId: seeded.machineId,
@@ -228,54 +243,10 @@ describe('core e2e: direct Codex app-server sessions browse/link/tail', () => {
       }));
       expect((tailStartResult as any)?.nextCursor).toEqual(expect.any(String));
 
-      const rolloutDir = resolve(join(codexHomeDir, 'sessions', '2026', '03', '11'));
-      const rolloutFile = resolve(join(rolloutDir, `rollout-2026-03-11T00-00-00-${remoteSessionId}.jsonl`));
-      await mkdir(rolloutDir, { recursive: true });
       await writeFile(
-        rolloutFile,
-        [
-          jsonlLine({
-            type: 'session_meta',
-            payload: {
-              id: remoteSessionId,
-              timestamp: '2026-03-11T00:00:00.000Z',
-              cwd: appServerCwd,
-            },
-          }),
-        ].join(''),
+        nativeItemsPath,
+        JSON.stringify([...initialNativeItems, nativeMessage('u2', 'native follow-up', 'user')]),
         'utf8',
-      );
-
-      let refreshTailResult: any = null;
-      await waitFor(
-        async () => {
-          const res = await machineRpc.call(`${seeded.machineId}:${RPC_METHODS.DAEMON_DIRECT_SESSION_TRANSCRIPT_READ_AFTER}`, {
-            machineId: seeded.machineId,
-            providerId: 'codex',
-            remoteSessionId,
-            source: { kind: 'codexHome', home: 'user' },
-            cursor: (tailStartResult as any)?.nextCursor,
-          });
-          if (!res.ok) return false;
-          refreshTailResult = unwrapDataKeyRpcResult(res, 'direct Codex app-server transcript refresh after rollout appears');
-          return (refreshTailResult as any)?.truncated === true && typeof (refreshTailResult as any)?.nextCursor === 'string';
-        },
-        { timeoutMs: 20_000, context: 'direct Codex app-server tail refreshes cursor after rollout appears' },
-      );
-
-      expect(refreshTailResult).toEqual(expect.objectContaining({
-        ok: true,
-        items: [],
-        truncated: true,
-      }));
-
-      await writeFile(
-        rolloutFile,
-        responseItemLine({
-          timestamp: '2026-03-11T00:00:01.000Z',
-          payload: { type: 'message', role: 'user', content: [{ type: 'text', text: 'rollout arrives after app-server fallback' }] },
-        }),
-        { encoding: 'utf8', flag: 'a' },
       );
 
       let tailResult: any = null;
@@ -286,29 +257,18 @@ describe('core e2e: direct Codex app-server sessions browse/link/tail', () => {
             providerId: 'codex',
             remoteSessionId,
             source: { kind: 'codexHome', home: 'user' },
-            cursor: (refreshTailResult as any)?.nextCursor,
+            cursor: (tailStartResult as any)?.nextCursor,
           });
           if (!res.ok) return false;
-          tailResult = unwrapDataKeyRpcResult(res, 'direct Codex app-server transcript tail read_after');
-          return Array.isArray((tailResult as any)?.items)
-            && (tailResult as any).items.some((item: any) => item?.raw?.content?.text === 'rollout arrives after app-server fallback');
+          tailResult = unwrapDataKeyRpcResult(res, 'direct Codex app-server native tail read_after');
+          return Array.isArray((tailResult as any)?.items) && (tailResult as any).items.length > 0;
         },
-        { timeoutMs: 20_000, context: 'direct Codex app-server tail catches rollout after refreshed cursor' },
+        { timeoutMs: 20_000, context: 'direct Codex app-server tail follows native appends' },
       );
 
-      expect(tailResult).toEqual(expect.objectContaining({
-        ok: true,
-        items: expect.arrayContaining([
-          expect.objectContaining({
-            raw: expect.objectContaining({
-              role: 'user',
-              content: expect.objectContaining({
-                text: 'rollout arrives after app-server fallback',
-              }),
-            }),
-          }),
-        ]),
-      }));
+      expect(tailResult).toEqual(expect.objectContaining({ ok: true }));
+      expect((tailResult as any).items.map((item: any) => item?.raw?.role)).toEqual(['user']);
+      expect(JSON.stringify((tailResult as any).items)).toContain('native follow-up');
     } finally {
       ui.close();
     }

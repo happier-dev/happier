@@ -194,7 +194,7 @@ describe('ChatHeaderView', () => {
     // already made.
     async function renderWithIdentity(
         mode: 'avatar' | 'agentLogo' | 'none',
-        props: { avatarId?: string; agentId?: string } = { avatarId: 'avatar-1', agentId: 'claude' },
+        props: { avatarId?: string; agentId?: string; flavor?: string } = { avatarId: 'avatar-1', agentId: 'claude' },
     ) {
         headerMocks.identityMode = mode;
         const { ChatHeaderView } = await import('./ChatHeaderView');
@@ -202,8 +202,9 @@ describe('ChatHeaderView', () => {
     }
 
     it('leads with the generated avatar by default', async () => {
-        const screen = await renderWithIdentity('avatar');
+        const screen = await renderWithIdentity('avatar', { avatarId: 'avatar-1', agentId: 'codex', flavor: 'claude' });
         expect(screen.root.findAllByType('Avatar' as never)).toHaveLength(1);
+        expect(screen.root.findByType('Avatar' as never).props.flavor).toBe('codex');
         expect(screen.root.findAllByType('AgentIcon' as never)).toHaveLength(0);
     });
 

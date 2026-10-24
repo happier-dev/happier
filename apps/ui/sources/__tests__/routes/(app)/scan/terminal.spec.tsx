@@ -2,6 +2,7 @@ import React from 'react';
 import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import { AuthProvider } from '@/auth/context/AuthContext';
 import {
     installScanRouteCommonModuleMocks,
 } from './scanRouteTestHelpers';
@@ -61,7 +62,7 @@ describe('/scan/terminal', () => {
     it('processes scanned terminal URLs', async () => {
         const { default: Screen } = await import('@/app/(app)/scan/terminal');
 
-        await renderScreen(<Screen />);
+        await renderScreen(<AuthProvider initialCredentials={null}><Screen /></AuthProvider>);
 
         expect(typeof lastScannerProps?.onScan).toBe('function');
 
@@ -77,7 +78,7 @@ describe('/scan/terminal', () => {
     it('routes scanned account URLs to account auth even from the terminal scanner', async () => {
         const { default: Screen } = await import('@/app/(app)/scan/terminal');
 
-        await renderScreen(<Screen />);
+        await renderScreen(<AuthProvider initialCredentials={null}><Screen /></AuthProvider>);
 
         expect(typeof lastScannerProps?.onScan).toBe('function');
 

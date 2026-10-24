@@ -25,7 +25,7 @@ export function useSessionAgentInputExtraActionChips(params: Readonly<{
     reviewCommentDrafts: readonly ReviewCommentDraft[];
     defaultBackendTarget?: BackendTargetRefV1 | null;
     defaultBackendId: string | null;
-    instructionsText: string;
+    getInstructionsText: () => string;
 }>): ReadonlyArray<AgentInputExtraActionChip> | undefined {
     const reviewWorkspaceCacheKey = React.useMemo(() => (
         params.reviewScope ? tryBuildWorkspaceCacheKey(params.reviewScope) : null
@@ -94,7 +94,7 @@ export function useSessionAgentInputExtraActionChips(params: Readonly<{
             sessionId: params.sessionId,
             defaultBackendTarget: params.defaultBackendTarget ?? null,
             defaultBackendId: params.defaultBackendId,
-            instructionsText: params.instructionsText,
+            getInstructionsText: params.getInstructionsText,
         }));
 
         return chips.length > 0 ? chips : undefined;
@@ -102,7 +102,7 @@ export function useSessionAgentInputExtraActionChips(params: Readonly<{
         params.attachmentsUploadsEnabled,
         params.defaultBackendId,
         params.defaultBackendTarget,
-        params.instructionsText,
+        params.getInstructionsText,
         params.isReadOnly,
         params.isUploadingAttachments,
         params.onAppendLinkedPath,

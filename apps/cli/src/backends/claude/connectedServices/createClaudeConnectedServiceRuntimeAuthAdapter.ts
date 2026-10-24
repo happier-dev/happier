@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 
 import { classifyClaudeConnectedServiceRuntimeAuthFailure } from './classifyClaudeConnectedServiceRuntimeAuthFailure';
-import { mapClaudeRateLimitEventToUsageDetails } from './mapClaudeRateLimitEventToUsageDetails';
+import { mapClaudeProviderFailureToUsageDetails } from './mapClaudeRateLimitEventToUsageDetails';
 import { resolveClaudeConnectedServiceRuntimeAuthSwitchPlan } from './claudeConnectedServiceRuntimeAuthSwitchPlan';
 import { resolveClaudeSharedGroupHotApplyTarget } from './claudeSharedGroupHotApplyTarget';
 import { materializeClaudeSharedGroupRuntimeAuth } from './materializeClaudeSharedGroupRuntimeAuth';
@@ -14,6 +14,7 @@ import {
 import type { ClaudeSubscriptionNativeAuthSelectionDescriptor } from './nativeAuth/materializeClaudeCodeNativeAuth';
 import { verifyClaudeCodeNativeAuth } from './nativeAuth/verifyClaudeCodeNativeAuth';
 import { readClaudeSubscriptionCredentialIdentity } from './nativeAuth/claudeSubscriptionCredentialIdentity';
+import { readClaudeMaterializedOAuthAccountIdentity } from './resolveClaudeRuntimeProviderAccountIdentity';
 import { verifyClaudeSharedGroupGenerationApplication } from './verifyClaudeSharedGroupGenerationApplication';
 import type {
   ConnectedServiceProviderRuntimeAuthAdapter,
@@ -54,7 +55,11 @@ async function materializedCredentialMatchesRecord(params: Readonly<{
     const raw = JSON.parse(await readFile(resolveClaudeCodeCredentialsFilePath(params.claudeConfigDir), 'utf8')) as unknown;
     const actual = computeClaudeCodeCredentialAccountProofFingerprint(raw);
     const expected = computeClaudeCodeCredentialAccountProofFingerprint(built.payload);
-    return actual !== null && actual === expected;
+    if (actual === null || actual !== expected) return false;
+    const recordIdentity = readClaudeSubscriptionCredentialIdentity(params.record);
+    const materializedIdentity = await readClaudeMaterializedOAuthAccountIdentity(params.claudeConfigDir);
+    return recordIdentity?.providerAccountId === materializedIdentity.providerAccountId
+      && recordIdentity?.providerOrganizationId === materializedIdentity.providerOrganizationId;
   } catch {
     return false;
   }
@@ -89,15 +94,18 @@ function attachClaudeSourceAccountIdentity(
   classification: ReturnType<typeof classifyClaudeConnectedServiceRuntimeAuthFailure>,
   input: ConnectedServiceRuntimeFailureInput,
 ): ReturnType<typeof classifyClaudeConnectedServiceRuntimeAuthFailure> {
-  if (!classification || classification.sourceProviderAccountId) return classification;
+  if (!classification) return classification;
+  if (classification.sourceProviderAccountId && classification.sourceProviderOrganizationId) return classification;
   const record = readCredentialRecord(input);
   const sourceIdentity = readClaudeSubscriptionCredentialIdentity(record);
   const sourceProviderAccountId = sourceIdentity?.providerAccountId ?? null;
+  if (classification.sourceProviderAccountId && classification.sourceProviderAccountId !== sourceProviderAccountId) return classification;
   if (!sourceProviderAccountId) return classification;
   const sourceAccountLabel = sourceIdentity?.providerEmail ?? null;
   return {
     ...classification,
     sourceProviderAccountId,
+    ...(sourceIdentity?.providerOrganizationId ? { sourceProviderOrganizationId: sourceIdentity.providerOrganizationId } : {}),
     ...(sourceAccountLabel ? { sourceAccountLabel } : {}),
   };
 }
@@ -111,7 +119,7 @@ export function createClaudeConnectedServiceRuntimeAuthAdapter(): ConnectedServi
       });
       if (authClassification) return attachClaudeSourceAccountIdentity(authClassification, input);
 
-      const details = mapClaudeRateLimitEventToUsageDetails(input.error);
+      const details = mapClaudeProviderFailureToUsageDetails(input.error);
       // The raw payload rides along even when details mapped, so the classifier can recover reset
       // timing the mapper could not place in the details (INC-4).
       return attachClaudeSourceAccountIdentity(classifyClaudeConnectedServiceRuntimeAuthFailure({

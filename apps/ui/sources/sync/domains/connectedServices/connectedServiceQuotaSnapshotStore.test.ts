@@ -28,7 +28,7 @@ vi.mock('@/sync/ops/connectedServiceQuotaRecoveryCredits', async (importOriginal
 
 describe('connectedServiceQuotaSnapshotStore recovery-credit receipts', () => {
     beforeEach(async () => {
-        const { __resetConnectedServiceQuotaSnapshotStore } = await import('./connectedServiceQuotaSnapshotStore');
+        const { __resetConnectedServiceQuotaSnapshotStore } = await import('@/sync/domains/connectedServices/connectedServiceQuotaSnapshotStore');
         __resetConnectedServiceQuotaSnapshotStore();
         vi.clearAllMocks();
     });
@@ -49,7 +49,7 @@ describe('connectedServiceQuotaSnapshotStore recovery-credit receipts', () => {
             snapshot,
             receipt: { idempotencyKey: 'aggregate-key', status: 'nothing_to_reset' },
         });
-        const { buildQuotaSnapshotScopeKey, consumeQuotaRecoveryCredit } = await import('./connectedServiceQuotaSnapshotStore');
+        const { buildQuotaSnapshotScopeKey, consumeQuotaRecoveryCredit } = await import('@/sync/domains/connectedServices/connectedServiceQuotaSnapshotStore');
         const ctx = {
             credentials: { token: 't', secret: 's' },
             credentialScope: 'scope',

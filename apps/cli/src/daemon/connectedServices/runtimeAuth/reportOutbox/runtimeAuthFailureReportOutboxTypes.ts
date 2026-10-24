@@ -1,13 +1,7 @@
 import type {
   ConnectedServiceRuntimeFailureClassification,
-  ConnectedServiceRuntimeAuthFailureKind,
-  ConnectedServiceRuntimeLimitCategory,
-  ConnectedServiceRuntimeQuotaScope,
 } from '../types';
 import type {
-  ConnectedServiceCredentialHealthStatusV1,
-  ConnectedServiceCredentialRevisionV1,
-  ProviderAccountUsageRecordId,
   SessionUsageLimitRecoveryResumePromptModeV1,
 } from '@happier-dev/protocol';
 
@@ -20,32 +14,9 @@ export type RuntimeAuthFailureReportOutboxRecoveryAction =
   | Readonly<{ kind: 'provider_state_sharing_required' }>
   | Readonly<{ kind: 'quota_recovery_required' }>;
 
-export type RuntimeAuthFailureReportOutboxClassification = Readonly<{
-  kind: ConnectedServiceRuntimeAuthFailureKind;
-  limitCategory?: ConnectedServiceRuntimeLimitCategory;
-  serviceId: string;
-  profileId: string | null;
-  groupId: string | null;
-  groupGeneration?: number | null;
-  credentialRevision?: ConnectedServiceCredentialRevisionV1 | null;
-  activeProfileId?: string | null;
-  credentialHealthStatus?: ConnectedServiceCredentialHealthStatusV1 | null;
-  identityProofVersion?: number | null;
-  sourceKey?: string | null;
-  providerAccountUsageRecordId?: ProviderAccountUsageRecordId | null;
-  resetsAtMs: number | null;
-  retryAfterMs?: number | null;
-  quotaScope?: ConnectedServiceRuntimeQuotaScope;
-  providerLimitId?: string | null;
-  sourceProviderAccountId?: string | null;
-  sourceAccountLabel?: string | null;
-  failingAccessTokenFingerprint?: string | null;
-  action?: RuntimeAuthFailureReportOutboxAction | null;
-  planType: string | null;
-  rateLimits: null;
-  source: ConnectedServiceRuntimeFailureClassification['source'];
-  recoveryAction?: RuntimeAuthFailureReportOutboxRecoveryAction | null;
-}>;
+export type RuntimeAuthFailureReportOutboxClassification = Readonly<
+  Omit<ConnectedServiceRuntimeFailureClassification, 'rateLimits'> & { rateLimits: null }
+>;
 
 export type RuntimeAuthFailureReportOutboxReport = Readonly<{
   reportId?: string;

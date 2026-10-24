@@ -4,6 +4,8 @@ import {
     CLAUDE_UNIFIED_TERMINAL_RESUME_CHOICES,
     type ClaudeUnifiedTerminalHost,
     type ClaudeUnifiedTerminalResumeChoice,
+    type ClaudeUnifiedTerminalResponseLocation,
+    CLAUDE_UNIFIED_TERMINAL_RESPONSE_LOCATIONS,
 } from '@happier-dev/agents';
 
 export type ClaudeRemoteMetaState = Readonly<{
@@ -11,6 +13,8 @@ export type ClaudeRemoteMetaState = Readonly<{
     claudeUnifiedTerminalEnabled: boolean;
     claudeUnifiedTerminalHost: ClaudeUnifiedTerminalHost;
     claudeUnifiedTerminalResumeChoice: ClaudeUnifiedTerminalResumeChoice;
+    claudeUnifiedTerminalQuestionResponseLocation: ClaudeUnifiedTerminalResponseLocation | null;
+    claudeUnifiedTerminalPermissionResponseLocation: ClaudeUnifiedTerminalResponseLocation | null;
     /**
      * v2 multi-select representation of Claude Code setting sources.
      *
@@ -68,6 +72,9 @@ export const DEFAULT_CLAUDE_REMOTE_META_STATE: ClaudeRemoteMetaState = Object.fr
     claudeUnifiedTerminalEnabled: false,
     claudeUnifiedTerminalHost: 'auto',
     claudeUnifiedTerminalResumeChoice: 'ask_every_time',
+    // Preserve absence until the shared resolver can see an older explicit bridge opt-out.
+    claudeUnifiedTerminalQuestionResponseLocation: null,
+    claudeUnifiedTerminalPermissionResponseLocation: null,
     claudeRemoteSettingSourcesV2: ['user', 'project', 'local'] as const,
     // Default to loading BOTH user + project settings so Claude Code can see the user's
     // globally configured MCP servers (and other preferences) when launched by Happier.
@@ -99,6 +106,12 @@ export function applyClaudeRemoteMetaState(prev: ClaudeRemoteMetaState, meta: un
     };
 
     const record = meta as Record<string, unknown>;
+    for (const key of ['claudeUnifiedTerminalQuestionResponseLocation', 'claudeUnifiedTerminalPermissionResponseLocation'] as const) {
+        const value = record[key];
+        if (typeof value === 'string' && (CLAUDE_UNIFIED_TERMINAL_RESPONSE_LOCATIONS as readonly string[]).includes(value)) {
+            next[key] = value as ClaudeUnifiedTerminalResponseLocation;
+        }
+    }
 
     if (typeof record.claudeRemoteAgentSdkEnabled === 'boolean') {
         next.claudeRemoteAgentSdkEnabled = record.claudeRemoteAgentSdkEnabled;

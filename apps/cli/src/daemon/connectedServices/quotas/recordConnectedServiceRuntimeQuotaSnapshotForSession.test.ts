@@ -1,11 +1,15 @@
-import type { ConnectedServiceQuotaSnapshotV1, ProviderAccountUsageSnapshotV1 } from '@happier-dev/protocol';
+import { buildConnectedServiceCredentialRecord, type ConnectedServiceQuotaSnapshotV1, type ProviderAccountUsageSnapshotV1 } from '@happier-dev/protocol';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createProviderAccountUsageStore } from '../accountUsage/store';
 import { HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY } from '../connectedServiceChildEnvironment';
 import { ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore } from '../accountGroups/quotas/ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore';
 import { recordConnectedServiceRuntimeQuotaSnapshotForSession } from './recordConnectedServiceRuntimeQuotaSnapshotForSession';
-import { resolveQuotaProbeFreshProof } from './proof/quotaProbeFreshProof';
+import { matchesCurrentQuotaObservationCredential, resolveQuotaProbeFreshProof } from './proof/quotaProbeFreshProof';
+import { computeConnectedServiceAccessTokenFingerprint } from '../refresh/credentialFreshness/tokenFingerprint';
+import { readCredentialAccountIdentity } from './coordinator/support';
+import { ConnectedServiceRuntimeRegistry } from '../runtimeRegistry/registry';
+import { resolveConnectedServiceGroupMemberByProviderAccountId } from '../shared/resolveConnectedServiceGroupMemberByProviderAccountId';
 
 function createSnapshot(overrides: Partial<ConnectedServiceQuotaSnapshotV1> = {}): ConnectedServiceQuotaSnapshotV1 {
   return {
@@ -83,6 +87,131 @@ function currentGroupEnv(profileId = 'primary') {
 }
 
 describe('recordConnectedServiceRuntimeQuotaSnapshotForSession', () => {
+  it('does not apply ambiguous provider context evidence to the immutable launch member', async () => {
+    const runtimeQuotaSnapshots = new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore();
+    const accountUsage = createAccountUsageHarness();
+    const resolveSource = vi.fn(async () => null);
+    const result = await recordConnectedServiceRuntimeQuotaSnapshotForSession({
+      getChildren: () => [{ startedBy: 'daemon', happySessionId: 'ambiguous-org', pid: 123,
+        spawnOptions: { directory: '/tmp/project',
+          connectedServices: { v: 1, bindingsByServiceId: { 'openai-codex': {
+            source: 'connected', selection: 'group', profileId: 'primary', groupId: 'main',
+          } } }, environmentVariables: currentGroupEnv(),
+        } }],
+      accountUsageRecorder: accountUsage.accountUsageRecorder, runtimeQuotaSnapshots,
+      sessionId: 'ambiguous-org', serviceId: 'openai-codex', groupId: 'main', groupGeneration: 7,
+      sourceProviderAccountId: 'acct_live_codex', resolveProviderQualifiedGroupSource: resolveSource,
+      snapshot: createExhaustedSnapshot({ providerOrganizationId: 'org-observed' }),
+    });
+    expect(resolveSource).toHaveBeenCalledWith(expect.objectContaining({ providerOrganizationId: 'org-observed' }));
+    expect(result).toMatchObject({ status: 'recorded', groupRuntimeStateRecorded: false });
+    expect(runtimeQuotaSnapshots.getSnapshot({ serviceId: 'openai-codex', groupId: 'main', profileId: 'primary' })).toBeNull();
+  });
+
+  it.each([true, false])('keeps organization-unknown Claude usage out of group policy with user evidence %s', async (hasUserEvidence) => {
+    const runtimeQuotaSnapshots = new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore();
+    const result = await recordConnectedServiceRuntimeQuotaSnapshotForSession({
+      getChildren: () => [{ startedBy: 'daemon', happySessionId: 'unknown-org', pid: 123,
+        spawnOptions: { directory: '/tmp/project',
+          connectedServices: { v: 1, bindingsByServiceId: { 'claude-subscription': {
+            source: 'connected', selection: 'group', profileId: 'primary', groupId: 'main',
+          } } }, environmentVariables: {
+            [HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]: JSON.stringify([{
+              kind: 'group', serviceId: 'claude-subscription', groupId: 'main',
+              activeProfileId: 'primary', fallbackProfileId: 'backup', generation: 7,
+            }]),
+          },
+        } }],
+      runtimeQuotaSnapshots, sessionId: 'unknown-org', serviceId: 'claude-subscription',
+      groupId: 'main', groupGeneration: 7, sourceProviderAccountId: hasUserEvidence ? 'same-user' : undefined,
+      resolveProviderQualifiedGroupSource: async (context) => {
+        const profileId = await resolveConnectedServiceGroupMemberByProviderAccountId({
+          ...context, members: [{ profileId: 'primary' }],
+          resolveProviderAccountIdentity: async () => ({ providerAccountId: 'same-user' }),
+        });
+        return profileId ? { profileId, groupGeneration: 7 } : null;
+      },
+      snapshot: createExhaustedSnapshot({ serviceId: 'claude-subscription', providerId: 'claude', activeAccountId: 'same-user' }),
+    });
+    expect(result).toMatchObject({ status: 'recorded', groupRuntimeStateRecorded: false });
+    expect(runtimeQuotaSnapshots.getSnapshot({ serviceId: 'claude-subscription', groupId: 'main', profileId: 'primary' })).toBeNull();
+  });
+
+  it.each([
+    { snapshotAccountId: 'same-user', groupRuntimeStateRecorded: true },
+    { snapshotAccountId: undefined, groupRuntimeStateRecorded: true },
+    { snapshotAccountId: 'different-user', groupRuntimeStateRecorded: false },
+  ])('uses exact current-token proof for profile-local quota without global source links (%j)', async ({ snapshotAccountId, groupRuntimeStateRecorded }) => {
+    const record = buildConnectedServiceCredentialRecord({
+      now: 1000, serviceId: 'claude-subscription', profileId: 'primary', kind: 'oauth', expiresAt: 10000,
+      oauth: { accessToken: 'current-token', refreshToken: 'refresh', providerAccountId: 'same-user',
+        idToken: null, scope: null, tokenType: null, providerEmail: null,
+        raw: { claudeAiOauth: { organizationUuid: 'current-org' } },
+      },
+    });
+    const fingerprint = computeConnectedServiceAccessTokenFingerprint('current-token')!;
+    const bindings = { v: 1, bindingsByServiceId: { 'claude-subscription': {
+      source: 'connected', selection: 'group', profileId: 'primary', groupId: 'main',
+    } } };
+    const selectionEnv = (generation: number) => ({
+      [HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]: JSON.stringify([{
+        kind: 'group', serviceId: 'claude-subscription', groupId: 'main',
+        activeProfileId: 'primary', fallbackProfileId: 'backup', generation,
+      }]),
+    });
+    const registry = new ConnectedServiceRuntimeRegistry();
+    registry.registerTarget({ pid: 123, sessionId: 'exact-local', connectedServicesBindingsRaw: bindings,
+      connectedServiceSelectionsEnv: selectionEnv(8),
+    });
+    const runtimeQuotaSnapshots = new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore();
+    const accountUsage = createAccountUsageHarness();
+    const proofs: unknown[] = [];
+    const snapshot = createExhaustedSnapshot({ serviceId: 'claude-subscription', providerId: 'claude',
+      activeAccountId: snapshotAccountId, meters: createExhaustedSnapshot().meters.map((meter) => ({
+        ...meter, utilizationPct: 20, remainingPct: 80,
+      })),
+    });
+    const result = await recordConnectedServiceRuntimeQuotaSnapshotForSession({
+      getChildren: () => [{ startedBy: 'daemon', happySessionId: 'exact-local', pid: 123,
+        spawnOptions: { directory: '/tmp/project', connectedServices: bindings, environmentVariables: selectionEnv(7) },
+      }],
+      accountUsageRecorder: accountUsage.accountUsageRecorder, runtimeQuotaSnapshots,
+      sessionId: 'exact-local', serviceId: 'claude-subscription', groupId: 'main', groupGeneration: 8,
+      sourceProviderAccountId: 'same-user', credentialFingerprint: fingerprint, snapshot,
+      resolveProviderQualifiedGroupSource: async (context) => {
+        const profileId = await resolveConnectedServiceGroupMemberByProviderAccountId({
+          ...context, members: [{ profileId: 'primary' }],
+          resolveProviderAccountIdentity: async () => readCredentialAccountIdentity(record),
+        });
+        return profileId ? { profileId, groupGeneration: 8 } : null;
+      },
+      verifyCredentialFingerprint: async (candidate) => matchesCurrentQuotaObservationCredential({ record, ...candidate }),
+      resolveCurrentGroupGenerationForProfile: async (candidate) => registry.getBySessionId('exact-local')?.activeBindings.find(
+        (binding) => binding.serviceId === candidate.serviceId && binding.groupId === candidate.groupId && binding.profileId === candidate.profileId,
+      )?.generation ?? null,
+      resolveExpectedQuotaProbeAppliedIdentity: async () => ({ serviceId: 'claude-subscription', profileId: 'primary',
+        groupId: 'main', groupGeneration: 8, providerAccountId: 'same-user', materialFingerprint: fingerprint,
+      }),
+      resolveQuotaProbeFreshProof: (input) => resolveQuotaProbeFreshProof({ ...input, nowMs: 1000, maxAgeMs: 300_000 }),
+      recordQuotaProbeFreshProof: async (proof) => { proofs.push(proof); },
+    });
+    expect(result).toMatchObject({ status: 'recorded', groupRuntimeStateRecorded, quotaStateRecorded: true });
+    if (groupRuntimeStateRecorded) {
+      await vi.waitFor(() => expect(proofs).toEqual([{
+        sessionId: 'exact-local', serviceId: 'claude-subscription', profileId: 'primary', groupId: 'main',
+        proofKind: 'quota_probe_fresh', observedAtMs: 1000,
+      }]));
+    } else {
+      expect(proofs).toEqual([]);
+    }
+    expect(runtimeQuotaSnapshots.getSnapshotEntry({ serviceId: 'claude-subscription', groupId: 'main', profileId: 'primary' }))
+      .toEqual(groupRuntimeStateRecorded ? {
+        snapshot: { ...snapshot, activeAccountId: 'same-user' }, verifiedCredentialFingerprint: fingerprint,
+      } : null);
+    expect(accountUsage.recordedSnapshots.at(-1)?.accountSubject.kind).toBe('provisionalLocalSubject');
+    expect(accountUsage.store.resolveBySource({ serviceId: 'claude-subscription', profileId: 'primary', bindingKind: 'group_member', groupId: 'main', groupGeneration: 8 })).toBeNull();
+  });
+
   it('does not acknowledge canonical quota intake when persistence cannot take custody', async () => {
     const accountUsage = createAccountUsageHarness();
     accountUsage.persistence!.recordInBandSnapshot.mockRejectedValueOnce(
@@ -1000,6 +1129,7 @@ describe('recordConnectedServiceRuntimeQuotaSnapshotForSession', () => {
     const snapshot = createSnapshot({
       serviceId: 'claude-subscription',
       providerId: 'claude',
+      providerOrganizationId: 'claude-live-org',
       profileId: 'stale-launch-profile',
       activeAccountId: 'claude-live-account',
     });

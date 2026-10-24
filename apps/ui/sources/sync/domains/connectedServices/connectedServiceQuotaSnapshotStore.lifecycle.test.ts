@@ -31,7 +31,7 @@ import {
     refreshQuotaSnapshot,
     retainQuotaSnapshotPolling,
     subscribeQuotaSnapshotEntry,
-} from './connectedServiceQuotaSnapshotStore';
+} from '@/sync/domains/connectedServices/connectedServiceQuotaSnapshotStore';
 
 const ctx = {
     credentials: { token: 't', secret: 's' },

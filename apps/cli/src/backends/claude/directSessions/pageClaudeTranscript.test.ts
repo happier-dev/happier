@@ -20,8 +20,8 @@ describe('pageClaudeTranscript', () => {
     await writeFile(sessionFile, JSON.stringify({ text: 'x'.repeat(8 * 1024 * 1024) }).slice(0, -1), 'utf8');
     const params = { source: { kind: 'claudeConfig' as const, configDir, projectId: 'proj-a' }, env: {}, remoteSessionId: 'sess-1', maxBytes: 1024, maxItems: 1 };
 
-    await expect(pageClaudeTranscript({ ...params, direction: 'older' })).rejects.toThrow(/tail boundary/);
-    await expect(readAfterClaudeTranscript({ ...params, cursor: 'tail' })).rejects.toThrow(/tail boundary/);
+    await expect(pageClaudeTranscript({ ...params, direction: 'older' })).rejects.toMatchObject({ code: 'JSONL_RECORD_TOO_LARGE' });
+    await expect(readAfterClaudeTranscript({ ...params, cursor: 'tail' })).rejects.toMatchObject({ code: 'JSONL_RECORD_TOO_LARGE' });
   });
 
   it.each([true, false])('delivers a terminal message completed after the latest-page snapshot (earlier message: %s)', async (hasEarlierMessage) => {

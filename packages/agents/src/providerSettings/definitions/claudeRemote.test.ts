@@ -10,6 +10,47 @@ import {
 } from './claudeRemote.js';
 
 describe('buildClaudeRemoteOutgoingMessageMetaExtras', () => {
+  it('defaults both unified response locations to app and terminal', () => {
+    expect(buildClaudeRemoteOutgoingMessageMetaExtras({})).toMatchObject({
+      claudeUnifiedTerminalQuestionResponseLocation: 'app_and_terminal',
+      claudeUnifiedTerminalPermissionResponseLocation: 'app_and_terminal',
+    });
+  });
+
+  it('preserves a legacy bridge opt-out until each response location is explicitly chosen', () => {
+    expect(buildClaudeRemoteOutgoingMessageMetaExtras({ claudeLocalPermissionBridgeEnabled: false })).toMatchObject({
+      claudeUnifiedTerminalQuestionResponseLocation: 'terminal_only',
+      claudeUnifiedTerminalPermissionResponseLocation: 'terminal_only',
+      claudeLocalPermissionBridgeEnabled: false,
+    });
+    expect(buildClaudeRemoteOutgoingMessageMetaExtras({
+      claudeLocalPermissionBridgeEnabled: false,
+      claudeUnifiedTerminalQuestionResponseLocation: 'app_only',
+    })).toMatchObject({
+      claudeUnifiedTerminalQuestionResponseLocation: 'app_only',
+      claudeUnifiedTerminalPermissionResponseLocation: 'terminal_only',
+      claudeLocalPermissionBridgeEnabled: false,
+    });
+  });
+
+  it('keeps response locations independent and rejects malformed choices', () => {
+    expect(buildClaudeRemoteOutgoingMessageMetaExtras({
+      claudeUnifiedTerminalQuestionResponseLocation: 'terminal_only',
+      claudeUnifiedTerminalPermissionResponseLocation: 'app_only',
+    })).toMatchObject({
+      claudeUnifiedTerminalQuestionResponseLocation: 'terminal_only',
+      claudeUnifiedTerminalPermissionResponseLocation: 'app_only',
+    });
+    expect(buildClaudeRemoteOutgoingMessageMetaExtras({
+      claudeLocalPermissionBridgeEnabled: false,
+      claudeUnifiedTerminalQuestionResponseLocation: 'nowhere',
+      claudeUnifiedTerminalPermissionResponseLocation: true,
+    })).toMatchObject({
+      claudeUnifiedTerminalQuestionResponseLocation: 'terminal_only',
+      claudeUnifiedTerminalPermissionResponseLocation: 'terminal_only',
+    });
+  });
+
   it('keeps native session history attribution opt-in and carries only explicit booleans', () => {
     expect(buildClaudeRemoteOutgoingMessageMetaExtras({}).claudeCodeIncludeInNativeHistory).toBe(false);
     expect(buildClaudeRemoteOutgoingMessageMetaExtras({ claudeCodeIncludeInNativeHistory: true }).claudeCodeIncludeInNativeHistory).toBe(true);

@@ -1,3 +1,6 @@
+import { sanitizeConnectedServiceRuntimeFailureClassification } from '@/daemon/connectedServices/runtimeAuth/sanitizeConnectedServiceRuntimeFailureClassification';
+import { buildUsageLimitIssueFingerprint, type SessionRuntimeIssueV1 } from '@happier-dev/protocol';
+import { createSessionTurnLifecycle } from '@/agent/runtime/session/turn/lifecycle';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { mkdtemp } from 'node:fs/promises';
@@ -136,6 +139,34 @@ describe('classifyGeminiConnectedServiceRuntimeAuthFailure', () => {
 });
 
 describe('surfaceGeminiConnectedServiceRuntimeAuthFailure', () => {
+  it('reports each accepted terminal quota occurrence without waiting for durable failure publication', async () => {
+    const reportOutboxDir = await mkdtemp(join(tmpdir(), 'gemini-failure-occurrences-'));
+    let releaseWrite: () => void = () => {};
+    const writePending = new Promise<void>((resolve) => { releaseWrite = resolve; });
+    const acceptedIssues: SessionRuntimeIssueV1[] = [];
+    const lifecycle = createSessionTurnLifecycle({ sessionId: 'gemini-occurrences', enqueueSessionTurn: async (mutation) => {
+      if (mutation.action === 'fail' && mutation.issue) { acceptedIssues.push(mutation.issue); await writePending; }
+    } });
+    const session = { ...buildSessionClient(), sessionTurnLifecycle: lifecycle };
+    const classification = classifyGeminiConnectedServiceRuntimeAuthFailure({
+      error: { status: 429, message: 'RESOURCE_EXHAUSTED' }, env: GEMINI_GROUP_SELECTION_ENV });
+    if (!classification) throw new Error('Expected quota classification');
+    const fingerprints: Array<string | null | undefined> = [];
+    try {
+      for (let turn = 0; turn < 2; turn += 1) {
+        await lifecycle.beginTurn({ provider: 'gemini' });
+        for (let observer = 0; observer < 2; observer += 1) await surfaceGeminiConnectedServiceRuntimeAuthFailure({ session, classification, failedTurn: {},
+          reportOutboxDir, notify: async (body) => {
+            fingerprints.push(sanitizeConnectedServiceRuntimeFailureClassification(body.classification)?.runtimeIssueFingerprint);
+            return { ok: true, result: { status: 'recovery_superseded', reason: 'source_tuple_mismatch', serviceId: 'gemini' } };
+          } });
+      }
+      expect(fingerprints).toEqual(acceptedIssues.map((issue) => buildUsageLimitIssueFingerprint(issue)));
+      expect(fingerprints).toHaveLength(2);
+      expect(fingerprints[0]).not.toBe(fingerprints[1]);
+    } finally { releaseWrite(); }
+  });
+
   it('projects the truthful interrupted-turn status when the exact source tuple was superseded', async () => {
     const reportOutboxDir = await mkdtemp(join(tmpdir(), 'gemini-runtime-auth-report-'));
     const session = buildSessionClient();

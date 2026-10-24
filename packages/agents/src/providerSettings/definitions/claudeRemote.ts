@@ -18,6 +18,24 @@ export const CLAUDE_UNIFIED_TERMINAL_RESUME_CHOICES = [
 ] as const;
 export type ClaudeUnifiedTerminalResumeChoice = (typeof CLAUDE_UNIFIED_TERMINAL_RESUME_CHOICES)[number];
 
+export const CLAUDE_UNIFIED_TERMINAL_RESPONSE_LOCATIONS = ['app_and_terminal', 'app_only', 'terminal_only'] as const;
+export type ClaudeUnifiedTerminalResponseLocation = (typeof CLAUDE_UNIFIED_TERMINAL_RESPONSE_LOCATIONS)[number];
+
+export function resolveClaudeUnifiedTerminalResponseLocations(settings: Readonly<Record<string, unknown>>): Readonly<{
+  question: ClaudeUnifiedTerminalResponseLocation;
+  permission: ClaudeUnifiedTerminalResponseLocation;
+}> {
+  const fallback = settings.claudeLocalPermissionBridgeEnabled === false ? 'terminal_only' : 'app_and_terminal';
+  const resolve = (value: unknown): ClaudeUnifiedTerminalResponseLocation =>
+    typeof value === 'string' && (CLAUDE_UNIFIED_TERMINAL_RESPONSE_LOCATIONS as readonly string[]).includes(value)
+      ? value as ClaudeUnifiedTerminalResponseLocation
+      : fallback;
+  return {
+    question: resolve(settings.claudeUnifiedTerminalQuestionResponseLocation),
+    permission: resolve(settings.claudeUnifiedTerminalPermissionResponseLocation),
+  };
+}
+
 export const CLAUDE_UNIFIED_TERMINAL_WORKSPACE_TRUST_POLICIES = [
   'ask_every_time',
   'always_trust_happier_workspaces',
@@ -159,6 +177,20 @@ export const CLAUDE_REMOTE_PROVIDER_FIELDS = {
     schema: z.enum(CLAUDE_UNIFIED_TERMINAL_RESUME_CHOICES),
     default: 'ask_every_time' as ClaudeUnifiedTerminalResumeChoice,
     description: 'How Claude unified terminal should answer heavy-session resume prompts',
+    storageScope: 'account',
+    analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },
+  },
+  claudeUnifiedTerminalQuestionResponseLocation: {
+    schema: z.enum(CLAUDE_UNIFIED_TERMINAL_RESPONSE_LOCATIONS),
+    default: 'app_and_terminal' as ClaudeUnifiedTerminalResponseLocation,
+    description: 'Where users can answer Claude unified terminal questions',
+    storageScope: 'account',
+    analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },
+  },
+  claudeUnifiedTerminalPermissionResponseLocation: {
+    schema: z.enum(CLAUDE_UNIFIED_TERMINAL_RESPONSE_LOCATIONS),
+    default: 'app_and_terminal' as ClaudeUnifiedTerminalResponseLocation,
+    description: 'Where users can approve Claude unified terminal permission requests',
     storageScope: 'account',
     analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },
   },
@@ -332,10 +364,13 @@ export function buildClaudeRemoteOutgoingMessageMetaExtras(settings: Readonly<Re
   const debugCategories =
     normalizeClaudeRemoteDebugCategories(settings.claudeRemoteDebugCategories)
     ?? (CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFAULTS.claudeRemoteDebugCategories as readonly ClaudeRemoteDebugCategory[]);
+  const responseLocations = resolveClaudeUnifiedTerminalResponseLocations(settings);
 
   return {
     claudeRemoteAgentSdkEnabled: readBoolean('claudeRemoteAgentSdkEnabled'),
     claudeUnifiedTerminalEnabled: readBoolean('claudeUnifiedTerminalEnabled'),
+    claudeUnifiedTerminalQuestionResponseLocation: responseLocations.question,
+    claudeUnifiedTerminalPermissionResponseLocation: responseLocations.permission,
     claudeUnifiedTerminalHost:
       normalizeClaudeUnifiedTerminalHost(settings.claudeUnifiedTerminalHost)
       ?? CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFAULTS.claudeUnifiedTerminalHost,

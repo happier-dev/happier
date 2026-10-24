@@ -52,6 +52,7 @@ const inputFormat = findArgValue(argv, '--input-format');
 const isStreamJson = outputFormat === 'stream-json';
 const isSdkStreamJson = isStreamJson && inputFormat === 'stream-json';
 const hasPrint = argv.includes('--print');
+const replayUserMessages = argv.includes('--replay-user-messages');
 const mode = isSdkStreamJson ? 'sdk' : 'local';
 const scenario = process.env.HAPPIER_E2E_FAKE_CLAUDE_SCENARIO || process.env.HAPPY_E2E_FAKE_CLAUDE_SCENARIO || '';
 const localActiveTurnEnabled = ['1', 'true', 'yes'].includes(
@@ -829,6 +830,21 @@ async function runSdkStreamUntilEof() {
       emitSdk(createSystemInitMessage());
     }
 
+    // Like Claude, --replay-user-messages acknowledges the accepted stdin prompt by echoing
+    // its uuid on stdout; Happier settles the Pending prompt only on that acknowledgment.
+    if (replayUserMessages && typeof msg?.uuid === 'string') {
+      const echo = {
+        type: 'user',
+        message: msg.message,
+        parent_tool_use_id: null,
+        session_id: sessionId,
+        uuid: msg.uuid,
+        isReplay: true,
+      };
+      process.stdout.write(`${JSON.stringify(echo)}\n`);
+      safeAppendJsonl(logPath, { type: 'sdk_stdout', invocationId, ts: Date.now(), messageType: 'user', messageSubtype: 'replay' });
+    }
+
     const now = Date.now();
     turn += 1;
 
@@ -845,7 +861,10 @@ async function runSdkStreamUntilEof() {
           uuid: randomUUID(),
           session_id: sessionId,
         });
-        emitSdk({ ...createResultSuccess(), subtype: 'error_during_execution', is_error: true, errors: ['Usage limit reached'], result: 'Usage limit reached' });
+        // The failed parent result carries its own supported pipe-epoch reset evidence.
+        // The preceding availability event can describe an unrelated optional allowance.
+        const failureText = `Claude AI usage limit reached|${Math.floor(resetAtMs / 1000)}`;
+        emitSdk({ ...createResultSuccess(), subtype: 'error_during_execution', is_error: true, errors: [failureText], result: failureText });
         continue;
       }
       const acceptSignal = process.env.HAPPIER_E2E_FAKE_CLAUDE_CONTINUATION_ACCEPT_SIGNAL;

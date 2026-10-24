@@ -515,7 +515,9 @@ describe('runGemini input consumer migration', () => {
       type: 'message',
       message: 'Connected-service account already updated; the old turn was interrupted.',
     });
-    expect(surfacePrimarySessionRuntimeIssueMock).not.toHaveBeenCalled();
+    expect(surfacePrimarySessionRuntimeIssueMock).toHaveBeenCalledWith(expect.objectContaining({
+      provider: 'gemini', cause: 'status_error', error: expect.objectContaining({ runtimeAuthClassification: expect.objectContaining({ kind: 'usage_limit' }) }),
+    }));
   });
 
   it('uses a slower heartbeat cadence while idle and the foreground cadence during an active turn', async () => {

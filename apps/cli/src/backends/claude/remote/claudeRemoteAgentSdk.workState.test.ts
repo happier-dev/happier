@@ -53,8 +53,9 @@ async function runAgentSdkMessagesForRateLimitTest(params: Readonly<{
 }
 
 describe('claudeRemoteAgentSdk work-state projection', () => {
-  it('consumes rate_limit_event before transcript conversion drops it', async () => {
+  it('consumes a rejected rate_limit_event as quota evidence, not a parent failure, before transcript conversion drops it', async () => {
     const onRateLimitEvent = vi.fn();
+    const onQuotaEvidence = vi.fn();
     const onMessage = vi.fn();
 
     await runAgentSdkMessagesForRateLimitTest({
@@ -78,26 +79,16 @@ describe('claudeRemoteAgentSdk work-state projection', () => {
       ],
       onMessage,
       onRateLimitEvent,
+      onQuotaEvidence,
     });
 
-    expect(onRateLimitEvent).toHaveBeenCalledWith({
-      v: 1,
-      resetAtMs: 1_768_100_000_000,
-      retryAfterMs: null,
-      limitCategory: 'usage_limit',
-      quotaScope: 'account',
-      recoverability: 'wait',
-      providerLimitId: 'five_hour',
-      planType: null,
-      utilization: 100,
-      overage: null,
-      action: null,
-      connectedService: null,
-    }, [
-      // Every window the event reported travels with the limit, so its snapshot keeps them all.
+    // Availability telemetry never fails the parent turn; only the provider's result or error does.
+    expect(onRateLimitEvent).not.toHaveBeenCalled();
+    // Every window the event reported travels with the evidence, so its snapshot keeps them all.
+    expect(onQuotaEvidence).toHaveBeenCalledWith(expect.arrayContaining([
       expect.objectContaining({ providerLimitId: 'five_hour', utilization: 100 }),
       expect.objectContaining({ providerLimitId: 'seven_day', utilization: 42 }),
-    ]);
+    ]));
     expect(onMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'rate_limit_event' }));
   });
 

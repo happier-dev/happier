@@ -36,4 +36,12 @@ export type UseTextInputCaretRectInput = Readonly<{
     selection?: { start: number; end: number };
     /** When false, the hook returns null and releases native/web tracking. */
     enabled?: boolean;
+    /**
+     * Whether a consumer currently needs the rect (defaults to true). Web measures — a forced
+     * mirror-div layout that grows with the text — only while `enabled && demanded`, in a layout
+     * effect, so the commit that turns demand on already paints with the caret rect. Native
+     * ignores it: its selection subscription stays focus-scoped (D38) because the trigger
+     * keystroke's selection event arrives before the consumer knows it needs the rect.
+     */
+    demanded?: boolean;
 }>;

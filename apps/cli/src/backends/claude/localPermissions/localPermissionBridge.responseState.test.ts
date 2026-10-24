@@ -533,7 +533,10 @@ describe('ClaudeLocalPermissionBridge (response state)', () => {
   it('reconciles ExitPlanMode approval into a setMode hook update and clears plan metadata', async () => {
     const { session, client } = createPermissionHandlerSessionStubWithMetadata({
       sessionId: 'session-exit-plan',
-      metadata: { sessionModeOverrideV1: { v: 1, updatedAt: 5, modeId: 'plan' } },
+      metadata: {
+        sessionModeOverrideV1: { v: 1, updatedAt: 5, modeId: 'plan' },
+        acpSessionModeOverrideV1: { v: 1, updatedAt: 5, modeId: 'plan' },
+      },
     });
     const bridge = new ClaudeLocalPermissionBridge(session, { responseTimeoutMs: 5_000 });
     bridge.activate();
@@ -558,6 +561,7 @@ describe('ClaudeLocalPermissionBridge (response state)', () => {
       },
     });
     expect(client.getMetadataSnapshot().sessionModeOverrideV1).toMatchObject({ modeId: null });
+    expect(client.getMetadataSnapshot().acpSessionModeOverrideV1).toMatchObject({ modeId: null });
     bridge.dispose();
   });
 

@@ -489,7 +489,7 @@ export async function materializeClaudeSubscriptionNativeAuthHome(params: Readon
     targetClaudeConfigDir: params.targetClaudeConfigDir,
   });
   const oauthIdentity = readClaudeSubscriptionCredentialIdentity(params.record)
-    ?? { providerAccountId: null, providerEmail: null };
+    ?? { providerAccountId: null, providerEmail: null, providerOrganizationId: null };
   const identityDiagnostic = buildClaudeSubscriptionNativeAuthIdentityDiagnostic({
     record: params.record,
     selectionDescriptor: params.selectionDescriptor,

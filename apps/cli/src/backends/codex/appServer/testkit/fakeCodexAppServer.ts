@@ -70,11 +70,15 @@ export async function writeFakeCodexAppServerThreadListScript(params: Readonly<{
     allowedCodexHomes?: readonly string[];
     fileName?: string;
     initializeName?: string;
+    nativeItemsPath?: string;
+    requestsPath?: string;
 }>): Promise<string> {
     return await writeFakeCodexAppServerScript({
         dir: params.dir,
         fileName: params.fileName,
         setupLines: [
+            `const nativeItemsPath = ${JSON.stringify(params.nativeItemsPath ?? null)};`,
+            `const requestsPath = ${JSON.stringify(params.requestsPath ?? null)};`,
             `const nonArchivedThreads = ${JSON.stringify(params.nonArchivedThreads ?? [])};`,
             `const archivedThreads = ${JSON.stringify(params.archivedThreads ?? [])};`,
             `const loadedThreadIds = ${JSON.stringify(params.loadedThreadIds ?? [])};`,
@@ -88,11 +92,25 @@ export async function writeFakeCodexAppServerThreadListScript(params: Readonly<{
             'for await (const line of rl) {',
             '  if (!line.trim()) continue;',
             '  const msg = JSON.parse(line);',
+            '  if (requestsPath && msg.method) await import("node:fs/promises").then(({ appendFile }) => appendFile(requestsPath, JSON.stringify(msg) + "\\n"));',
             '  if (msg.method === "initialize") {',
             `    process.stdout.write(JSON.stringify({ id: msg.id, result: { serverInfo: { name: ${JSON.stringify(params.initializeName ?? 'fake-codex-app-server')}, version: "0.0.0" } } }) + "\\n");`,
             '    continue;',
             '  }',
             '  if (msg.method === "initialized") continue;',
+            // Codex 0.162.1 ThreadItemsListResponse: reverse cursors include the anchor.
+            '  if (msg.method === "thread/items/list" && nativeItemsPath) {',
+            '    const all = JSON.parse(await import("node:fs/promises").then(({ readFile }) => readFile(nativeItemsPath, "utf8")));',
+            '    const desc = msg.params.sortDirection === "desc";',
+            '    const anchor = msg.params.cursor ? JSON.parse(msg.params.cursor) : null;',
+            '    const candidates = all.map((entry, index) => ({ entry, index })).filter(({ index }) => !anchor || (desc ? (anchor.inclusive ? index <= anchor.index : index < anchor.index) : (anchor.inclusive ? index >= anchor.index : index > anchor.index)));',
+            '    if (desc) candidates.reverse();',
+            '    const page = candidates.slice(0, msg.params.limit ?? 100);',
+            '    const cursor = (index, inclusive) => JSON.stringify({ index, inclusive });',
+            '    const result = { data: page.map(({ entry }) => entry), nextCursor: candidates.length > page.length ? cursor(page.at(-1).index, false) : null, backwardsCursor: page.length ? cursor(page[0].index, true) : null };',
+            '    process.stdout.write(JSON.stringify({ id: msg.id, result }) + "\\n");',
+            '    continue;',
+            '  }',
             '  if (msg.method === "thread/list") {',
             '    const archived = msg.params?.archived === true;',
             '    const data = archived ? archivedThreads : nonArchivedThreads;',

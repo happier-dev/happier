@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createConnection, type Socket } from 'node:net';
 import { Duplex } from 'node:stream';
+import { access } from 'node:fs/promises';
+
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { withTempDir } from '@/testkit/fs/tempDir';
 
 vi.mock('node:net', async (importOriginal) => {
   const original = await importOriginal<typeof import('node:net')>();
@@ -28,6 +32,26 @@ const clientFor = (socketPath: string) => {
 };
 
 describe('Herdr client workspace placement', () => {
+  it.skipIf(process.platform === 'win32')('serves and cleans up a socket fixture when TMPDIR exceeds the Unix socket path budget', async () => {
+    const env = createEnvKeyScope(['TMPDIR']);
+    let socketPath = '';
+    try {
+      await withTempDir(`herdr-${'long-'.repeat(24)}`, async directory => {
+        env.patch({ TMPDIR: directory });
+        await withHerdrApi(async api => {
+          socketPath = api.socketPath;
+          await expect(clientFor(socketPath).ensureServer()).resolves.toBe(socketPath);
+          await api.stop();
+          await api.start();
+          await expect(clientFor(socketPath).ensureServer()).resolves.toBe(socketPath);
+        });
+        await expect(access(socketPath)).rejects.toMatchObject({ code: 'ENOENT' });
+      });
+    } finally {
+      env.restore();
+    }
+  });
+
   it('retains an admitted server socket when the ambient named-server inventory changes', async () => {
     await withHerdrApi(async selected => {
       await withHerdrApi(async ambient => {

@@ -23,7 +23,7 @@ import type {
 
 import { flushHookEffects, renderHook, renderScreen } from '@/dev/testkit';
 import { useConnectedServiceQuotaSnapshot } from './useConnectedServiceQuotaSnapshot';
-import { __resetConnectedServiceQuotaSnapshotStore } from './connectedServiceQuotaSnapshotStore';
+import { __resetConnectedServiceQuotaSnapshotStore } from '@/sync/domains/connectedServices/connectedServiceQuotaSnapshotStore';
 import { resolveAuthCredentialsScopeKey } from '@/auth/storage/resolveAuthCredentialsScopeKey';
 import { __resetProviderAccountUsageSnapshotCache } from '@/sync/domains/connectedServices/accountUsage/cache';
 

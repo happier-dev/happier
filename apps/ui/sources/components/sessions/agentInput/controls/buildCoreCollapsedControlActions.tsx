@@ -15,7 +15,7 @@ import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 
 export function buildCoreCollapsedControlActions(opts: Readonly<{
     tint: string;
-    agentId: AgentId;
+    agentId: AgentId | null;
     profileLabel: string | null;
     profileIcon: string;
     envVarsCount?: number;
@@ -81,7 +81,7 @@ export function buildCoreCollapsedControlActions(opts: Readonly<{
                     agentId={opts.agentId}
                     size={16}
                     color={opts.tint}
-                    style={{ transform: [{ scale: getAgentPickerIconScale(opts.agentId) }] }}
+                    style={{ transform: [{ scale: opts.agentId ? getAgentPickerIconScale(opts.agentId) : 1 }] }}
                     testID="agent-input-agent-action-logo"
                 />
             ),
@@ -146,7 +146,8 @@ export function buildCoreCollapsedControlActions(opts: Readonly<{
     }
 
     if (opts.onResumeClick) {
-        const resumeAgentLabel = t(getAgentCore(opts.agentType ?? opts.agentId).displayNameKey);
+        const resumeAgentId = opts.agentType ?? opts.agentId;
+        const resumeAgentLabel = resumeAgentId ? t(getAgentCore(resumeAgentId).displayNameKey) : t('status.unknown');
         const resumeChipTitle = t('newSession.resume.chipOptional', { agent: resumeAgentLabel });
         controlActionsById.resume = [{
             id: 'resume',
