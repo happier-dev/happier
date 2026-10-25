@@ -10,13 +10,13 @@ import { Avatar } from '@/components/ui/avatar/Avatar';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
-import { useAllSessions, useSessionListViewDataByServerId, useSessionOrganizationPinnedSessionKeys, useSetting } from '@/sync/domains/state/storage';
+import { useAllSessions, useProfile, useSessionListViewDataByServerId, useSessionOrganizationPinnedSessionKeys, useSetting } from '@/sync/domains/state/storage';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import { getSessionAvatarId, getSessionName, getSessionSubtitle } from '@/utils/sessions/sessionUtils';
 import { executeSessionAction } from '@/components/sessions/actions/sessionActionExecution';
 import { createSessionActionTarget } from '@/components/sessions/actions/sessionActionContext';
-import { SESSION_ACTION_UNARCHIVE_ID } from '@/components/sessions/actions/sessionActionIds';
+import { SESSION_ACTION_DELETE_ID, SESSION_ACTION_UNARCHIVE_ID } from '@/components/sessions/actions/sessionActionIds';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { sync } from '@/sync/sync';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -151,6 +151,8 @@ export default function ArchivedSessionsScreen() {
     const sessionListViewDataByServerId = useSessionListViewDataByServerId();
     const hideInactiveSessions = useSetting('hideInactiveSessions') === true;
     const pinnedSessionKeys = useSessionOrganizationPinnedSessionKeys();
+    const profile = useProfile();
+    const currentUserId = typeof profile?.id === 'string' ? profile.id : null;
 
     React.useEffect(() => {
         void sync.fetchArchivedSessions().catch(() => undefined);
@@ -279,6 +281,33 @@ export default function ArchivedSessionsScreen() {
         });
     }, []);
 
+    const handleDelete = React.useCallback((session: ArchivedScreenSession) => {
+        const serverId = typeof session.serverId === 'string' && session.serverId.trim()
+            ? session.serverId.trim()
+            : null;
+
+        const target = createSessionActionTarget({ session, serverId, currentUserId });
+
+        const performDelete = () => {
+            fireAndForget(executeSessionAction({
+                actionId: SESSION_ACTION_DELETE_ID,
+                target,
+            }), {
+                tag: 'ArchivedSessions.delete',
+                onError: (error) => Modal.alert(t('common.error'), error instanceof Error ? error.message : t('sessionInfo.failedToDeleteSession')),
+            });
+        };
+
+        Modal.alert(
+            t('sessionInfo.deleteSession'),
+            t('sessionInfo.deleteSessionWarning'),
+            [
+                { text: t('common.cancel'), style: 'cancel' },
+                { text: t('sessionInfo.deleteSession'), style: 'destructive', onPress: performDelete },
+            ],
+        );
+    }, [currentUserId]);
+
     const renderItem = React.useCallback(
         ({ item, index, section }: { item: ArchivedScreenSession; index: number; section: { key: 'archived' | 'hidden_inactive'; data: ArchivedScreenSession[] } }) => {
             const sessionName = getSessionName(item);
@@ -289,6 +318,14 @@ export default function ArchivedSessionsScreen() {
             const isLast = index === section.data.length - 1;
             const isSingle = section.data.length === 1;
             const canShowUnarchive = section.key === 'archived' && canManageArchive(item);
+            const deleteTarget = section.key === 'archived'
+                ? createSessionActionTarget({
+                    session: item,
+                    serverId: typeof item.serverId === 'string' && item.serverId.trim() ? item.serverId.trim() : null,
+                    currentUserId,
+                })
+                : null;
+            const canShowDelete = deleteTarget?.canDelete === true;
 
             return (
                 <Pressable
@@ -323,10 +360,21 @@ export default function ArchivedSessionsScreen() {
                             <Icon name="arrow-arc-left" size={16} color={theme.colors.text.secondary} />
                         </Pressable>
                     ) : null}
+                    {canShowDelete ? (
+                        <Pressable
+                            style={styles.actionButton}
+                            onPress={() => handleDelete(item)}
+                            accessibilityRole="button"
+                            accessibilityLabel={t('sessionInfo.deleteSession')}
+                            hitSlop={8}
+                        >
+                            <Icon name="trash" size={16} color={theme.colors.state.danger.foreground} />
+                        </Pressable>
+                    ) : null}
                 </Pressable>
             );
         },
-        [handleUnarchive, navigateToSession, theme.colors.text.secondary],
+        [currentUserId, handleDelete, handleUnarchive, navigateToSession, theme.colors.state.danger.foreground, theme.colors.text.secondary],
     );
 
     const renderSectionHeader = React.useCallback(
