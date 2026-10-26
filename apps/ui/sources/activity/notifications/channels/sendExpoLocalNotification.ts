@@ -1,10 +1,12 @@
 import { loadExpoNotifications } from '@/utils/platform/loadExpoNotifications';
+import { Platform } from 'react-native';
 
 export async function sendExpoLocalNotification(params: Readonly<{
     title: string;
     body: string;
     data?: Record<string, unknown>;
     categoryIdentifier?: string | null;
+    channelId?: string | null;
 }>): Promise<string> {
     const Notifications = await loadExpoNotifications();
     const categoryIdentifier = typeof params.categoryIdentifier === 'string' && params.categoryIdentifier.trim().length > 0
@@ -18,6 +20,6 @@ export async function sendExpoLocalNotification(params: Readonly<{
             ...(categoryIdentifier ? { categoryIdentifier } : {}),
             sound: 'default',
         },
-        trigger: null,
+        trigger: Platform.OS === 'android' && params.channelId?.trim() ? { channelId: params.channelId } : null,
     });
 }

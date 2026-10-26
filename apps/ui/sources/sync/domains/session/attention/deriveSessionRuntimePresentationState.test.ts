@@ -72,7 +72,7 @@ describe('deriveSessionRuntimePresentationState', () => {
         });
     });
 
-    it('stops attesting background activity once every observation of it has aged out', () => {
+    it('preserves reported background work while the publisher remains online despite delayed observations', () => {
         expect(deriveSessionRuntimePresentationState({
             active: true,
             activeAt: nowMs - 300_000,
@@ -84,10 +84,10 @@ describe('deriveSessionRuntimePresentationState', () => {
             runtimeActivityObservedAt: nowMs - 300_000,
             runtimeActivityRevision: 7,
         }, nowMs)).toMatchObject({
-            freshProviderRuntimeActivity: false,
-            backgroundActive: false,
-            backgroundActiveCount: 0,
-            activityState: 'idle',
+            freshProviderRuntimeActivity: true,
+            backgroundActive: true,
+            backgroundActiveCount: 2,
+            activityState: 'backgroundActive',
         });
     });
 

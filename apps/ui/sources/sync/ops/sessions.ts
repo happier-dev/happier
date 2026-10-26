@@ -21,6 +21,7 @@ import { emitSessionMetadataUpdateWithServerScope } from '@/sync/runtime/orchest
 import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
 import { resolveServerScopedSessionContext } from '@/sync/runtime/orchestration/serverScopedRpc/resolveServerScopedSessionContext';
 import { sessionRpcWithPreferredSessionScope } from '@/sync/runtime/orchestration/serverScopedRpc/sessionRpcWithPreferredSessionScope';
+import { sessionRespondToStructuredQuestion } from './sessionStructuredQuestion';
 import { sessionRpcWithServerScope, sessionRpcWithServerAccountScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc';
 import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
 import { areServerAccountScopesEqual, createServerAccountScope, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
@@ -681,10 +682,9 @@ export async function sessionAllowWithAnswers(
     payload: SendableAskUserQuestionAnswerPayload,
 ): Promise<void> {
     if (payload.protocol === 'structured-question-v1') {
-        await sessionRpcWithPreferredSessionScope<void, { id: string; structuredAnswersV1: typeof payload.structuredAnswersV1 }>({
+        await sessionRespondToStructuredQuestion({
             sessionId,
-            method: SESSION_RPC_METHODS.SESSION_STRUCTURED_QUESTION_RESPOND_V1,
-            payload: { id, structuredAnswersV1: payload.structuredAnswersV1 },
+            request: { id, structuredAnswersV1: payload.structuredAnswersV1 },
         });
         return;
     }

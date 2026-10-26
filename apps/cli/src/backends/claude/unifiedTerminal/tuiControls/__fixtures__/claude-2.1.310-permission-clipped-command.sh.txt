@@ -1,0 +1,32 @@
+cat <<'ISSUE671_SYNTHETIC_EOF'
+SYNTHETIC harmless fixture line 01: inspect only this task-owned public text.
+SYNTHETIC harmless fixture line 02: inspect only this task-owned public text.
+SYNTHETIC harmless fixture line 03: inspect only this task-owned public text.
+SYNTHETIC harmless fixture line 04: inspect only this task-owned public text.
+SYNTHETIC harmless fixture line 05: inspect only this task-owned public text.
+SYNTHETIC harmless fixture line 06: inspect only this task-owned public text.
+SYNTHETIC harmless fixture line 07: inspect only this task-owned public text.
+SYNTHETIC harmless fixture line 08: inspect only this task-owned public text.
+SYNTHETIC harmless fixture line 09: inspect only this task-owned public text.
+SYNTHETIC harmless fixture line 10: inspect only this task-owned public text.
+SYNTHETIC harmless fixture line 11: inspect only this task-owned public text.
+SYNTHETIC harmless fixture line 12: inspect only this task-owned public text.
+SYNTHETIC harmless fixture line 13: inspect only this task-owned public text.
+SYNTHETIC harmless fixture line 14: inspect only this task-owned public text.
+SYNTHETIC harmless fixture line 15: inspect only this task-owned public text.
+SYNTHETIC harmless fixture line 16: inspect only this task-owned public text.
+SYNTHETIC harmless fixture line 17: inspect only this task-owned public text.
+SYNTHETIC harmless fixture line 18: inspect only this task-owned public text.
+SYNTHETIC harmless fixture line 19: inspect only this task-owned public text.
+SYNTHETIC harmless fixture line 20: inspect only this task-owned public text.
+SYNTHETIC harmless fixture line 21: inspect only this task-owned public text.
+SYNTHETIC harmless fixture line 22: inspect only this task-owned public text.
+SYNTHETIC harmless fixture line 23: inspect only this task-owned public text.
+SYNTHETIC harmless fixture line 24: inspect only this task-owned public text.
+SYNTHETIC harmless fixture line 25: inspect only this task-owned public text.
+SYNTHETIC harmless fixture line 26: inspect only this task-owned public text.
+SYNTHETIC harmless fixture line 27: inspect only this task-owned public text.
+SYNTHETIC harmless fixture line 28: inspect only this task-owned public text.
+SYNTHETIC harmless fixture line 29: inspect only this task-owned public text.
+ISSUE671_SYNTHETIC_EOF
+printf '%s\n' ISSUE671_SAFE_COMMAND_DONE

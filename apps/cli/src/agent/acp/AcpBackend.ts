@@ -1275,7 +1275,7 @@ export class AcpBackend implements AgentBackend {
       logger.debug(`[AcpBackend] Process error:`, err);
       this.abortPendingExtensionHandlers('ACP process error');
       this.failPendingResponseWait(err instanceof Error ? err : new Error(String(err)));
-      this.emit({ type: 'status', status: 'error', detail: err.message });
+      this.emit({ type: 'status', status: 'error', detail: err.message, error: err });
     });
 
 	    this.process.on('exit', (code, signal) => {
@@ -1895,7 +1895,7 @@ export class AcpBackend implements AgentBackend {
         this.sendPrompt(sessionId, initialPrompt).catch((error) => {
           // Log to file only, not console
           logger.debug('[AcpBackend] Error sending initial prompt:', error);
-          this.emit({ type: 'status', status: 'error', detail: String(error) });
+          this.emit({ type: 'status', status: 'error', detail: String(error), error });
         });
       }
 
@@ -1910,7 +1910,8 @@ export class AcpBackend implements AgentBackend {
       this.emit({ 
         type: 'status', 
         status: 'error', 
-        detail: error instanceof Error ? error.message : String(error) 
+        detail: error instanceof Error ? error.message : String(error),
+        error,
       });
       await this.cleanupInitializedProcessConnection({ graceMs: 250 });
       throw error;
@@ -2002,7 +2003,8 @@ export class AcpBackend implements AgentBackend {
       this.emit({
         type: 'status',
         status: 'error',
-        detail: error instanceof Error ? error.message : String(error)
+        detail: error instanceof Error ? error.message : String(error),
+        error,
       });
       await this.cleanupInitializedProcessConnection({ graceMs: 250 });
       throw error;
@@ -2080,6 +2082,7 @@ export class AcpBackend implements AgentBackend {
         type: 'status',
         status: 'error',
         detail: error instanceof Error ? error.message : String(error),
+        error,
       });
       throw error;
     }
@@ -3229,6 +3232,7 @@ export class AcpBackend implements AgentBackend {
         type: 'status',
         status: 'error',
         detail: errorDetail,
+        error,
       });
 
       return 'failed';
@@ -3611,7 +3615,7 @@ export class AcpBackend implements AgentBackend {
         if (!this.disposed && this.waitingForResponse) {
           const normalizedError = error instanceof Error ? error : new Error(String(error));
           this.failPendingResponseWait(normalizedError);
-          this.emit({ type: 'status', status: 'error', detail: normalizedError.message });
+          this.emit({ type: 'status', status: 'error', detail: normalizedError.message, error: normalizedError });
         }
         throw toAcpPromptSubmissionPhaseError('effect_may_have_occurred', error);
       });

@@ -700,7 +700,7 @@ describe('sessions domain: sessionListViewData rebuild gating', () => {
         }
     });
 
-    it('refreshes the row without rebuilding placement for a higher-revision observation with unchanged runtime activity semantics', async () => {
+    it('keeps committed list placement stable for a higher-revision observation with unchanged background work', async () => {
         vi.useFakeTimers();
         vi.setSystemTime(new Date('2026-07-02T13:30:00.000Z'));
         vi.doMock('../../runtime/orchestration/projectManager', () => ({
@@ -727,7 +727,7 @@ describe('sessions domain: sessionListViewData rebuild gating', () => {
                 {
                     id: 's1',
                     seq: 1,
-                    // Read: an unread session would place as unread ahead of background working placement.
+                    // Isolate observation timing from read-cursor changes.
                     lastViewedSessionSeq: 1,
                     createdAt: 1,
                     updatedAt: 1,
@@ -760,19 +760,18 @@ describe('sessions domain: sessionListViewData rebuild gating', () => {
                 } as any,
             ]);
 
-            // A newer observation of the SAME semantics is no longer inert: background activity is
-            // now held only while something still witnesses it, so a fresher observation genuinely
-            // extends the working window. That is the working-signal refresh case below — no
-            // structural rebuild, one row refresh so placement is later evaluated against the fresh
-            // instant instead of demoting at the stale one.
+            // Observation age affects the subscribed row's freshness presentation, not placement.
+            // Keep the committed list stable; the canonical row-store overlay receives the update.
             const next = get().sessionListViewData;
+            expect(next).toBe(initial);
             expect(readSessionListRowIds(next)).toEqual(readSessionListRowIds(initial));
+            expect(get().sessionListRenderables.s1?.runtimeActivityObservedAt).toBe(now + 10_000);
 
             const changedEvent = syncPerformanceTelemetry
                 .snapshot()
                 .events.find((candidate) => candidate.name === 'sync.store.sessions.apply.changed');
             expect(changedEvent?.fields.listRebuild).toBe(0);
-            expect(changedEvent?.fields.listRowRefreshes).toBe(1);
+            expect(changedEvent?.fields.listRowRefreshes).toBe(0);
         } finally {
             syncPerformanceTelemetry.configure({ enabled: false });
             vi.useRealTimers();

@@ -47,7 +47,7 @@ describe('startDaemon usage-limit recovery composition', () => {
       nowMs: 1,
       fallbackRetryDelayMs: 1_000,
     })).toEqual({
-      status: 'ready',
+      status: 'resumed',
       selectedAuth: { kind: 'native', serviceId: 'openai-codex' },
     });
 
@@ -57,7 +57,7 @@ describe('startDaemon usage-limit recovery composition', () => {
     const hydrationEnd = source.indexOf('}).then((result)', hydrationStart);
     const hydrationComposition = source.slice(hydrationStart, hydrationEnd);
     expect(hydrationComposition).toContain('observe: ({ sessionId, recovery, runCheckNow })');
-    expect(hydrationComposition).toContain('inactiveUsageLimitRecoveryCheckOwner.observe({ sessionId, recovery, runCheckNow })');
+    expect(hydrationComposition).toContain('inactiveUsageLimitRecoveryCheckOwner.schedule({');
     expect(hydrationComposition).not.toContain('inactiveUsageLimitRecoveryScheduler.upsert');
     expect(hydrationComposition).not.toContain('resumeInactiveSessionWhenReady');
 
@@ -66,6 +66,6 @@ describe('startDaemon usage-limit recovery composition', () => {
     expect(source).toContain('createRuntimeAuthRecoverySchedulerForDaemon({');
     expect(source).toContain('runtimeAuthRecoveryComposition.hydratedIntents');
     expect(source).toContain('resolveInactiveUsageLimitRecoverySchedulerResult({');
-    expect(source).toContain('resumeInactiveSessionWhenUsageLimitReady: async ({ sessionId, rawSession, metadata })');
+    expect(source).toContain('resumeInactiveSessionWhenUsageLimitReady: async ({ sessionId, rawSession, metadata, readiness })');
   });
 });

@@ -19,6 +19,7 @@ import { resolveConfiguredCodexHome } from '@/backends/codex/utils/resolveConfig
 export function createCodexAcpRuntime(params: {
   directory: string;
   processEnv?: NodeJS.ProcessEnv;
+  reasoningSummary?: 'auto' | 'none';
   session: ApiSessionClient;
   messageBuffer: MessageBuffer;
   mcpServers: Record<string, McpServerConfig>;
@@ -99,6 +100,7 @@ export function createCodexAcpRuntime(params: {
         mcpServers: params.mcpServers,
         permissionHandler: params.permissionHandler,
         permissionMode,
+        reasoningSummary: params.reasoningSummary,
       });
       logger.debug(`[CodexACP] Backend created (command=${created.spawn.command})`);
       return created.backend as unknown as AgentBackend;

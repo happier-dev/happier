@@ -22,8 +22,6 @@ import type {
 import { cloneStringKeyedRecordToNullProto } from '@/api/session/agentStateRecords';
 import { resolveAgentRequestKind } from './requestKind';
 import {
-    SESSION_RPC_METHODS,
-    StructuredQuestionResponseV1Schema,
     isAskUserQuestionToolName,
     type StructuredQuestionAnswersV1,
 } from '@happier-dev/protocol';
@@ -47,7 +45,7 @@ import {
 } from './permissionRequestCoordinator';
 import type { PermissionResult } from './permissionResult';
 import type { SessionPermissionRpcPayload } from './sessionPermissionRpc';
-import type { SessionPermissionRpcRouter } from './sessionPermissionRpcRouter';
+import { getOrCreateSessionPermissionRpcRouter } from './sessionPermissionRpcRouter';
 
 export type { PermissionResult } from './permissionResult';
 
@@ -309,43 +307,19 @@ export abstract class BasePermissionHandler {
     protected setupRpcHandler(): void {
         this.unregisterPermissionRpcConsumer?.();
         this.unregisterPermissionRpcConsumer = null;
-        const sessionWithRouter = this.session as ApiSessionClient & {
-            getOrCreatePermissionRpcRouter?: () => SessionPermissionRpcRouter;
-        };
-        if (typeof sessionWithRouter.getOrCreatePermissionRpcRouter === 'function') {
-            this.unregisterPermissionRpcConsumer = sessionWithRouter.getOrCreatePermissionRpcRouter().registerConsumer({
-                name: this.permissionRpcConsumerName,
-                tryHandlePermissionRpc: (response) => this.tryHandlePermissionRpc(response, true),
-            });
-            return;
-        }
-
-        this.session.rpcHandlerManager.registerHandler<PermissionResponse, void>(
-            SESSION_RPC_METHODS.SESSION_PERMISSION_RESPOND_LEGACY,
-            async (response) => {
-                await this.tryHandlePermissionRpc(response);
-            }
-        );
-        this.session.rpcHandlerManager.registerHandler<unknown, void>(
-            SESSION_RPC_METHODS.SESSION_STRUCTURED_QUESTION_RESPOND_V1,
-            async (rawResponse) => {
-                const parsed = StructuredQuestionResponseV1Schema.safeParse(rawResponse);
-                if (!parsed.success) {
-                    throw new PublicRpcHandlerError(PUBLIC_RPC_HANDLER_ERROR_CODES.STRUCTURED_QUESTION_INVALID);
-                }
-                await this.tryHandlePermissionRpc({
-                    id: parsed.data.id,
-                    approved: true,
-                    structuredAnswersV1: parsed.data.structuredAnswersV1,
-                });
-            },
-        );
+        // The session's accessor is optional (the offline stub a provider starts on has none); the
+        // fallback is the same manager-keyed router the live session client returns.
+        const router = this.session.getOrCreatePermissionRpcRouter?.()
+            ?? getOrCreateSessionPermissionRpcRouter(this.session.rpcHandlerManager);
+        this.unregisterPermissionRpcConsumer = router.registerConsumer({
+            name: this.permissionRpcConsumerName,
+            tryHandlePermissionRpc: (response) => this.tryHandlePermissionRpc(response),
+        });
     }
 
-    private async tryHandlePermissionRpc(response: SessionPermissionRpcPayload, requireLocalPending: boolean = false): Promise<boolean> {
+    private async tryHandlePermissionRpc(response: SessionPermissionRpcPayload): Promise<boolean> {
         const localPending = this.pendingRequests.get(response.id);
-        if (requireLocalPending && !localPending) return false;
-        if (!localPending && !this.ownsPersistedRequest(response.id)) return false;
+        if (!localPending) return false;
         const hasStructuredAnswers = response.answers !== undefined || response.structuredAnswersV1 !== undefined;
         const candidateContext = hasStructuredAnswers
             ? null
@@ -353,7 +327,7 @@ export abstract class BasePermissionHandler {
         const requiresLocalQuestionOwner = hasStructuredAnswers
             || (candidateContext !== null && this.isStructuredQuestionContext(candidateContext));
         const context = requiresLocalQuestionOwner
-            ? this.requireLocallyOwnedStructuredResponseContext(response.id, localPending)
+            ? this.requireLocallyOwnedStructuredResponseContext(response.id, localPending, response.occurrenceId)
             : candidateContext;
         if (!context) {
             logger.debug(
@@ -385,8 +359,9 @@ export abstract class BasePermissionHandler {
     private requireLocallyOwnedStructuredResponseContext(
         requestId: string,
         localPending: PendingRequest | undefined,
+        expectedOccurrenceId?: string,
     ): PermissionRequestCoordinatorContext {
-        const context = this.requestCoordinator.getLocallyOwnedLiveResponseContext(requestId);
+        const context = this.requestCoordinator.getLocallyOwnedLiveResponseContext(requestId, expectedOccurrenceId);
         if (!context || !localPending || !this.isStructuredQuestionContext(context)) {
             throw new PublicRpcHandlerError(PUBLIC_RPC_HANDLER_ERROR_CODES.STRUCTURED_QUESTION_RECEIVER_NOT_OWNER);
         }

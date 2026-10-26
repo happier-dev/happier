@@ -14,6 +14,7 @@ import { BrandWordmark } from './BrandWordmark';
 import { ProviderMarkRow } from '@/components/onboarding/preAuth/ProviderMarkRow';
 import { PlanetBackground } from './PlanetBackground';
 import { useBrandPaneTokens } from './brandPaneTokens';
+import { useScreenSafeAreaBleed } from '@/components/navigation/safeArea/HorizontalSafeArea';
 
 // Mobile brand-hero content padding. Top matches horizontal so the wordmark
 // sits visually flush with the left margin from both directions (instead of
@@ -58,6 +59,9 @@ export const BrandPanel = React.memo(function BrandPanel(props: BrandPanelProps)
     const rootStyle = [styles.root, { backgroundColor: tokens.background }];
     const fadeColors = [tokens.backgroundTransparent, tokens.background] as const;
     const markTone: 'on-dark' | 'on-light' = theme.dark ? 'on-dark' : 'on-light';
+    // The full-screen hero reaches the window edge (artwork under the side insets); its content
+    // below is already inset by the window safe area.
+    const screenBleed = useScreenSafeAreaBleed();
 
     if (props.variant === 'desktop') {
         return (
@@ -92,7 +96,13 @@ export const BrandPanel = React.memo(function BrandPanel(props: BrandPanelProps)
     return (
         <View
             testID={props.testID ?? 'unauth-shell-brand-pane'}
-            style={rootStyle}
+            style={[
+                rootStyle,
+                {
+                    marginLeft: screenBleed.left ? -screenBleed.left : 0,
+                    marginRight: screenBleed.right ? -screenBleed.right : 0,
+                },
+            ]}
         >
             <PlanetBackground variant="mobile" />
             <LinearGradient

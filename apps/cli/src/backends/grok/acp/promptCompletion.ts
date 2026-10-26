@@ -5,6 +5,7 @@ import type { AcpExtensionHandlers } from '@/agent/acp/AcpBackend';
 import { defineAcpExtensionNotification } from '@/agent/acp/connection/types';
 import { readNonBlankOpaqueIdentifier } from '@/utils/opaqueIdentifiers';
 import { formatErrorForUi } from '@/ui/formatErrorForUi';
+import { classifyProviderLimitEvidence, parseProviderResetAt } from '@/daemon/connectedServices/quotas/normalization';
 
 export const GROK_PROMPT_COMPLETE_METHODS = [
   'x.ai/session/prompt_complete',
@@ -58,7 +59,18 @@ function buildGrokPromptCompletionError(notification: GrokPromptCompleteParams):
   const detail = notification.agentResult == null
     ? ''
     : formatErrorForUi(notification.agentResult, { maxChars: 1_000 }).trim();
-  return new Error(detail ? `${summary}: ${detail}` : summary);
+  const error = new Error(detail ? `${summary}: ${detail}` : summary);
+  const result = notification.agentResult && typeof notification.agentResult === 'object' && !Array.isArray(notification.agentResult)
+    ? notification.agentResult as Record<string, unknown>
+    : null;
+  const limitCategory = notification.stopReason === 'rate_limit'
+    ? 'rate_limit'
+    : classifyProviderLimitEvidence(notification.agentResult);
+  if (limitCategory !== 'rate_limit' && limitCategory !== 'usage_limit') return error;
+  return Object.assign(error, {
+    code: limitCategory === 'rate_limit' ? 'rate_limit' : 'usage_limit_reached',
+    data: { limitCategory, ...parseProviderResetAt({ body: notification.agentResult, headers: result?.headers, nowMs: Date.now() }) },
+  });
 }
 
 function toPromptCompletionOutcome(notification: GrokPromptCompleteParams):

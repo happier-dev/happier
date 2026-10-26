@@ -46,18 +46,21 @@ const styles = StyleSheet.create({
     },
 });
 
-export const TabBarNewSessionButton = React.memo(function TabBarNewSessionButton() {
+export function useTabBarNewSessionPress() {
     const router = useRouter();
     const resolveNewSessionOrdinaryEntryRoute = useResolveNewSessionOrdinaryEntryRoute();
-    const { theme } = useUnistyles();
-    const metrics = resolveTabBarMetrics(useSetting('tabBarSize'), useSetting('tabBarShowLabels'));
-
-    const handlePress = React.useCallback((event?: unknown) => {
+    return React.useCallback((event?: unknown) => {
         const { draftId, draftOrigin } = resolveNewSessionOrdinaryEntryRoute({
             forceFresh: shouldForceFreshNewSessionEntryFromPressEvent(event),
         });
         router.push({ pathname: '/new', params: { draftId, draftOrigin } });
     }, [resolveNewSessionOrdinaryEntryRoute, router]);
+}
+
+export const TabBarNewSessionButton = React.memo(function TabBarNewSessionButton() {
+    const handlePress = useTabBarNewSessionPress();
+    const { theme } = useUnistyles();
+    const metrics = resolveTabBarMetrics(useSetting('tabBarSize'), useSetting('tabBarShowLabels'));
 
     return (
         <GlassPanel radius={CAPSULE_RADIUS} style={styles.capsule}>

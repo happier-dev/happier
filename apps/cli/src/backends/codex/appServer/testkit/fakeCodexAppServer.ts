@@ -16,6 +16,7 @@ const CODEX_APP_SERVER_TEST_ENV_KEYS = [
     'HAPPIER_CODEX_APP_SERVER_THREAD_LIST_PAGE_SIZE',
     'HAPPIER_TRANSCRIPT_STORAGE',
     'CODEX_HOME',
+    'CODEX_SQLITE_HOME',
     'OPENAI_API_KEY',
     'CODEX_API_KEY',
     HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY,
@@ -35,6 +36,8 @@ export function createCodexAppServerProcessEnv(
         ...process.env,
         HAPPIER_CODEX_APP_SERVER_BIN: fakeAppServer,
         HAPPIER_CODEX_APP_SERVER_RPC_TIMEOUT_MS: '2000',
+        // A test must select SQLite explicitly, never the controller's live native store.
+        CODEX_SQLITE_HOME: undefined,
         [HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]: undefined,
         [HAPPIER_CONNECTED_SERVICE_MATERIALIZED_ENV_KEYS_ENV_KEY]: undefined,
         [HAPPIER_SPAWN_EXPLICIT_ENV_KEYS_JSON_ENV_VAR]: undefined,
@@ -48,11 +51,13 @@ export async function writeFakeCodexAppServerScript(params: Readonly<{
     importLines?: readonly string[];
     setupLines?: readonly string[];
     fileName?: string;
+    versionOutput?: string;
 }>): Promise<string> {
     const scriptPath = join(params.dir, params.fileName ?? 'fake-codex-app-server.mjs');
     const script = [
         '#!/usr/bin/env node',
         ...(params.importLines ?? []),
+        `if (process.argv.includes("--version")) { process.stdout.write(${JSON.stringify(`${params.versionOutput ?? 'fake-codex'}\n`)}); process.exit(0); }`,
         'import readline from "node:readline";',
         'const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });',
         ...(params.setupLines ?? []),

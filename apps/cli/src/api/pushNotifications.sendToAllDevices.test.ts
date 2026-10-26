@@ -63,6 +63,86 @@ describe('PushNotificationClient.sendToAllDevicesAsync', () => {
     (axios as any).delete.mockReset();
   });
 
+  it('reports service acceptance separately from rejected recipients', async () => {
+    sendPushNotificationsAsyncSpy.mockResolvedValueOnce([
+      { status: 'ok', id: 'accepted' },
+      { status: 'error', details: { error: 'MessageTooBig' } },
+    ]);
+    const result = await new PushNotificationClient('t').sendPushNotifications([
+      { to: 'ExponentPushToken[a]', body: 'Test' },
+      { to: 'ExponentPushToken[b]', body: 'Test' },
+    ]);
+    expect(result).toMatchObject({ acceptedCount: 1, failedCount: 1 });
+  });
+
+  it('rejects an ordinary broadcast when the service accepted no recipients', async () => {
+    vi.mocked(axios.get).mockResolvedValue({ data: { tokens: [{ id: 'phone', token: 'ExponentPushToken[a]' }] } });
+    sendPushNotificationsAsyncSpy.mockResolvedValueOnce([{ status: 'error', details: { error: 'MessageTooBig' } }]);
+    await expect(new PushNotificationClient('t').sendToAllDevicesAsync('Title', 'Body')).rejects.toThrow('Push service did not accept any recipients');
+  });
+
+  it('keeps partial broadcast success observable without triggering an automatic broadcast retry', async () => {
+    vi.mocked(axios.get).mockResolvedValue({ data: { tokens: [
+      { id: 'a', token: 'ExponentPushToken[a]' }, { id: 'b', token: 'ExponentPushToken[b]' },
+    ] } });
+    sendPushNotificationsAsyncSpy.mockResolvedValueOnce([{ status: 'ok' }, { status: 'error', details: { error: 'MessageTooBig' } }]);
+    await expect(new PushNotificationClient('t').sendToAllDevicesAsync('Title', 'Body')).resolves.toBeUndefined();
+    expect(sendPushNotificationsAsyncSpy).toHaveBeenCalledTimes(1);
+    expect(logger.infoFile).toHaveBeenCalledWith('[PUSH] Push service did not accept every recipient', { acceptedCount: 1, failedCount: 1 });
+  });
+
+  it('reports exhausted network retries as failure, never service acceptance', async () => {
+    vi.useFakeTimers();
+    try {
+      sendPushNotificationsAsyncSpy.mockRejectedValue(new Error('Network unavailable'));
+      const pending = new PushNotificationClient('t').sendPushNotifications([{ to: 'ExponentPushToken[a]', body: 'Test' }]);
+      await vi.advanceTimersByTimeAsync(300_000);
+      expect(await pending).toMatchObject({ acceptedCount: 0, failedCount: 1 });
+    } finally {
+      sendPushNotificationsAsyncSpy.mockImplementation(async (chunk) => chunk.map(() => ({ status: 'ok' })));
+      vi.useRealTimers();
+    }
+  });
+
+  it('sends the diagnostic only to the selected token registered to this Account', async () => {
+    vi.mocked(axios.get).mockResolvedValueOnce({ data: { tokens: [
+      { id: 'phone-a', token: 'ExponentPushToken[a]', clientServerUrl: 'https://home-a.test' },
+      { id: 'phone-b', token: 'ExponentPushToken[b]' },
+    ] } });
+    const result = await new PushNotificationClient('account-a', 'https://relay-a.test').sendTestNotificationAsync('phone-a');
+    expect(result).toEqual({ status: 'accepted' });
+    expect(sendPushNotificationsAsyncSpy.mock.calls[0][0]).toEqual([
+      expect.objectContaining({ to: 'ExponentPushToken[a]', data: { url: '/settings/notifications', serverUrl: 'https://home-a.test' } }),
+    ]);
+    expect(axios.get).toHaveBeenCalledWith('https://relay-a.test/v1/push-tokens', expect.objectContaining({ headers: expect.objectContaining({ Authorization: 'Bearer account-a' }) }));
+  });
+
+  it('never broadcasts a diagnostic when the selected registration is missing', async () => {
+    vi.mocked(axios.get).mockResolvedValueOnce({ data: { tokens: [{ id: 'other-phone', token: 'ExponentPushToken[b]' }] } });
+    expect(await new PushNotificationClient('t').sendTestNotificationAsync('missing')).toEqual({ status: 'not_registered' });
+    expect(sendPushNotificationsAsyncSpy).not.toHaveBeenCalled();
+  });
+
+  it('binds remote request notifications to the authenticated Account rather than caller metadata', async () => {
+    vi.mocked(axios.get).mockResolvedValue({ data: { tokens: [{ id: 'phone', token: 'ExponentPushToken[a]' }] } });
+    const token = `header.${Buffer.from(JSON.stringify({ sub: 'account-a' })).toString('base64url')}.signature`;
+    await new PushNotificationClient(token).sendToAllDevicesAsync('Question', 'Answer in Happier', { kind: 'user_action', accountId: 'spoofed-account' });
+    expect(sendPushNotificationsAsyncSpy.mock.calls[0][0][0].data).toMatchObject({ accountId: 'account-a' });
+  });
+
+  it.each([
+    [{ kind: 'choices', questionKey: 'pick', values: ['a'] }, PUSH_NOTIFICATION_CATEGORY_IDS.questionChoices1V1],
+    [{ kind: 'choices', questionKey: 'pick', values: ['a', 'b'] }, PUSH_NOTIFICATION_CATEGORY_IDS.questionChoices2V1],
+    [{ kind: 'choices', questionKey: 'pick', values: ['a', 'b', 'c'] }, PUSH_NOTIFICATION_CATEGORY_IDS.questionChoices3V1],
+    [{ kind: 'text', questionKey: 'reply', allowEmpty: false }, PUSH_NOTIFICATION_CATEGORY_IDS.questionTextV1],
+  ])('selects the actionable question category at the actual remote sender boundary: %s', async (questionAnswerV1, categoryId) => {
+    vi.mocked(axios.get).mockResolvedValue({ data: { tokens: [{ id: 'phone', token: 'ExponentPushToken[a]' }] } });
+    await new PushNotificationClient('t').sendToAllDevicesAsync('Question', 'Your input is needed', {
+      kind: 'user_action', sessionId: 'session', requestId: 'request', occurrenceId: 'occurrence', questionAnswerV1,
+    });
+    expect(sendPushNotificationsAsyncSpy.mock.calls[0][0][0]).toMatchObject({ categoryId, data: { questionAnswerV1, occurrenceId: 'occurrence' } });
+  });
+
   it('bounds the serialized outbound message while preserving Unicode and routing data', async () => {
     vi.mocked(axios.get).mockResolvedValue({ data: { tokens: [{ id: '1', token: 'ExponentPushToken[a]' }] } });
     const data = { sessionId: 's_1', requestId: 'p_1', kind: 'permission', tool: 'Bash' };
@@ -301,7 +381,7 @@ describe('PushNotificationClient.sendToAllDevicesAsync', () => {
     sendPushNotificationsAsyncSpy.mockResolvedValueOnce(deviceNotRegisteredTickets);
 
     const client = new PushNotificationClient('t', 'https://api.example.test');
-    await client.sendToAllDevicesAsync('Title', 'Body', { sessionId: 's_1' });
+    await expect(client.sendToAllDevicesAsync('Title', 'Body', { sessionId: 's_1' })).rejects.toThrow('Push service did not accept any recipients');
 
     expect((axios as any).delete).toHaveBeenCalledWith(
       'https://api.example.test/v1/push-tokens/ExponentPushToken%5Bdead-token%5D',
@@ -374,7 +454,7 @@ describe('PushNotificationClient.sendToAllDevicesAsync', () => {
     (axios as any).delete.mockRejectedValueOnce(new Error('delete failed'));
 
     const client = new PushNotificationClient('t', 'https://api.example.test');
-    await client.sendToAllDevicesAsync('Title', 'Body', { sessionId: 's_1' });
+    await expect(client.sendToAllDevicesAsync('Title', 'Body', { sessionId: 's_1' })).rejects.toThrow('Push service did not accept any recipients');
 
     expect(logger.debug).toHaveBeenCalledWith(
       '[PUSH] Failed to delete invalid push token:',

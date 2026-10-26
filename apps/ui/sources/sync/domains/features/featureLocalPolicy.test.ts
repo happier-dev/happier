@@ -24,20 +24,20 @@ describe('featureLocalPolicy', () => {
         }
     });
 
-    it('disables connectedServices by default when experiments are on', () => {
+    it('enables connectedServices by default without the experiments switch', () => {
         expect(resolveLocalFeaturePolicyEnabled('connectedServices', {
             ...settingsDefaults,
-            experiments: true,
+            experiments: false,
             featureToggles: {},
-        })).toBe(false);
+        })).toBe(true);
     });
 
-    it('disables connectedServices.quotas by default when experiments are on', () => {
+    it('enables connectedServices.quotas by default without the experiments switch', () => {
         expect(resolveLocalFeaturePolicyEnabled('connectedServices.quotas', {
             ...settingsDefaults,
-            experiments: true,
+            experiments: false,
             featureToggles: {},
-        })).toBe(false);
+        })).toBe(true);
     });
 
     it('enables connectedServices.quotas when explicitly enabled', () => {
@@ -56,12 +56,12 @@ describe('featureLocalPolicy', () => {
         })).toBe(false);
     });
 
-    it('disables terminal.embeddedPty by default when experiments are on', () => {
+    it('enables terminal.embeddedPty by default without the experiments switch', () => {
         expect(resolveLocalFeaturePolicyEnabled('terminal.embeddedPty', {
             ...settingsDefaults,
-            experiments: true,
+            experiments: false,
             featureToggles: {},
-        })).toBe(false);
+        })).toBe(true);
     });
 
     it('enables terminal.embeddedPty when explicitly enabled', () => {
@@ -88,12 +88,12 @@ describe('featureLocalPolicy', () => {
         })).toBe(false);
     });
 
-    it('disables attachments.uploads by default when experiments are on', () => {
+    it('enables attachments.uploads by default without the experiments switch', () => {
         expect(resolveLocalFeaturePolicyEnabled('attachments.uploads', {
             ...settingsDefaults,
-            experiments: true,
+            experiments: false,
             featureToggles: {},
-        })).toBe(false);
+        })).toBe(true);
     });
 
     it('enables attachments.uploads when explicitly enabled', () => {
@@ -168,12 +168,12 @@ describe('featureLocalPolicy', () => {
         })).toBe(true);
     });
 
-    it('disables automations when experiments are off', () => {
+    it('enables automations when experiments are off', () => {
         expect(resolveLocalFeaturePolicyEnabled('automations', {
             ...settingsDefaults,
             experiments: false,
             featureToggles: { automations: true },
-        })).toBe(false);
+        })).toBe(true);
     });
 
     it('respects explicit featureToggles overrides', () => {

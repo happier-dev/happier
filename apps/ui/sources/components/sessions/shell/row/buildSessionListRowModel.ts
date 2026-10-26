@@ -1,4 +1,5 @@
 import { readStoredSessionMessagesReadProjectionFromStateLike } from '@/sync/domains/messages/readStoredSessionMessages';
+import { deriveSessionWorkObservation } from '@/sync/domains/session/attention/deriveSessionWorkObservation';
 import {
     deriveSessionListAttentionState,
     deriveSessionListMeaningfulActivityAt,
@@ -413,7 +414,8 @@ export function buildSessionListRowModel(input: BuildSessionListRowModelInput): 
             rowState: rowAttentionState,
         },
         presentation,
-        workingIndicatorPaused: presentsRetainedWorking,
+        workingIndicatorPaused: presentsRetainedWorking || (status.state === 'background_active'
+            && deriveSessionWorkObservation(resolvedSession, settings.runtimeNowMs).state === 'unobserved'),
         activity: {
             mode: activityMode,
             timestamp: activityTimestamp,

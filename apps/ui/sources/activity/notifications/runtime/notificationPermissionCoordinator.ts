@@ -4,7 +4,7 @@ export type NotificationPermissionRequest = ServerAccountScope & Readonly<{
     sessionId: string;
     requestId: string;
     occurrenceId: string;
-    action: 'allow' | 'deny';
+    action: 'allow' | 'deny' | Readonly<{ answers: Readonly<Record<string, readonly string[]>> }>;
 }>;
 export type NotificationPermissionOutcome = Readonly<{
     status: 'not_sent' | 'confirmed' | 'rejected' | 'unconfirmed' | 'ignored' | 'conflict';
@@ -12,16 +12,17 @@ export type NotificationPermissionOutcome = Readonly<{
 
 /** Shares callback work and confirmed CLI acknowledgements within this JS runtime. */
 export function createNotificationPermissionCoordinator() {
-    const responses = new Map<string, { action: 'allow' | 'deny'; promise: Promise<NotificationPermissionOutcome> }>();
+    const responses = new Map<string, { action: string; promise: Promise<NotificationPermissionOutcome> }>();
 
     return function run(
         request: NotificationPermissionRequest,
         send: (onIssued: () => void, signal: AbortSignal) => Promise<unknown>,
         options: Readonly<{ allowExecution?: boolean; signal?: AbortSignal }> = {},
     ): Promise<NotificationPermissionOutcome> {
-        const key = JSON.stringify([request.serverId, request.accountId, request.sessionId, request.requestId, request.occurrenceId]);
+        const action = typeof request.action === 'string' ? request.action : JSON.stringify(Object.entries(request.action.answers).sort(([a], [b]) => a.localeCompare(b)));
+        const key = JSON.stringify([request.serverId, request.accountId, request.sessionId, request.requestId, request.occurrenceId, typeof request.action === 'string' ? 'permission' : 'question']);
         const previous = responses.get(key);
-        if (previous) return previous.action === request.action ? previous.promise : Promise.resolve({ status: 'conflict' });
+        if (previous) return previous.action === action ? previous.promise : Promise.resolve({ status: 'conflict' });
         // Observing a cached response must never acquire execution ownership.
         if (options.allowExecution === false || options.signal?.aborted) return Promise.resolve({ status: 'not_sent' });
 
@@ -55,7 +56,7 @@ export function createNotificationPermissionCoordinator() {
                 lifetime.abort();
             }
         })();
-        responses.set(key, { action: request.action, promise });
+        responses.set(key, { action, promise });
         void promise.then((outcome) => {
             // Retain only an actual CLI acknowledgement for this immutable occurrence.
             // Every other outcome stays retryable; nothing survives JS runtime recreation.

@@ -1273,6 +1273,14 @@ does not automatically recreate a pane. Terminal supervision retires the exact
 optional attachment without treating its loss as controller death. An explicit
 switch or attach can request a local client again; this is not a claim that every
 cold host-restoration path has completed live validation.
+Tmux terminal commands retain the exact owning session together with the window
+ID. Window IDs survive window renames but are reused when the tmux server restarts;
+a bare ID cannot establish recovered ownership. The shared liveness probe resolves
+the complete target with `has-session` before reading pane fields, because
+`display-message` may succeed with a different current pane for an absent window.
+Recovery, prompt/control delivery, foreground attachment, and owned-window disposal
+retain that same target rather than dropping the session name.
+
 Detached tmux creation uses the configured session `default-size` when no client
 is attached to that session. The shared tmux command owner reconciles the exact
 created window instead of inheriting dimensions from clients of unrelated sessions
@@ -1673,23 +1681,54 @@ builder publishes the resolved home even when the daemon inherited no home overr
 
 ### Usage-limit reset continuation (development)
 
-`RuntimeAuthRecoveryScheduler` owns a daemon-backed wait for the exact failed
-turn. When a directly selected profile reaches its reported reset time, recovery
-admits a continuation through the existing dispatcher and Pending queue instead
-of reclassifying the old failure or merely restarting an idle runner. Native
-quota probes use the same continuation owner when they confirm readiness.
-Admission and provider acceptance are not recovery proof; the existing outcome
-proof must observe successful execution under the selected credential.
+`createSessionUsageLimitRecoveryRuntime` owns ordinary usage-limit waits in a
+live session, including foreground CLI sessions without a daemon. It uses the
+shared `UsageLimitRecoveryScheduler` and control router. The daemon restores
+inactive waits through its registered machine control after those handlers are
+available; each wake reads current session metadata. Account-owned recovery
+attempts retain their `RuntimeAuthRecoveryScheduler` owner rather than starting
+a second ordinary wait.
 
-Active Session RPC checks and CLI/MCP checks route
-daemon-owned attempts to that same scheduler. Provider-local checks remain for
-attempts without daemon ownership; account-switch and reset-credit controls keep
-their existing owners. A failed daemon check does not fall back to a competing
-provider-local scheduler. Explicit user input is admitted through Pending rather
+Provider adapters report quota evidence and optional probe/reset-credit support.
+A reported reset time can drive a continuation without a provider-specific quota
+probe. Missing timing uses the existing recovery backoff, and transient probe
+errors keep the authorized wait alive. Readiness admits the configured
+continuation through the existing dispatcher and Pending queue instead of merely
+reattaching a thread or restarting an idle runner.
+Admission hands continuation custody to Pending and its existing queued,
+delivering and activation-failure presentation; it does not prove quota recovery.
+Connected Account recovery additionally requires its existing outcome proof to
+observe successful execution under the selected credential.
+
+After a primary Claude limit failure, the existing quota outbox and runtime-auth
+reporter deliver their observations independently; recovery reporting does not
+wait for the quota transport acknowledgement. The failure's quota snapshot uses
+the existing evidence-only disposition, so recording it does not also initiate
+a competing predictive switch. Sidechain quota observations retain their usual
+quota policy path and do not fail or recover the parent turn.
+
+Pool-switch lease contention remains retryable through the runtime-auth
+scheduler's existing bounded local-recovery budget, without spending normal
+provider attempts while waiting. Coalesced switches share the committed account
+and credential generation; each Session's application retains its own trigger
+reason and corresponding predictive or reactive policy. Claude applies a newer
+credential revision in the proven shared group home even when the selected
+member is unchanged; other continuity checks and restart restrictions remain in
+their existing owners.
+
+Active Session RPC checks and CLI/MCP checks route account-owned attempts to
+that same scheduler; ordinary live waits use the shared session controller.
+Account-switch and reset-credit controls keep their existing owners. A failed
+daemon check does not fall back to a competing provider-local scheduler.
+Native usage limits do not enter connected-service authentication recovery.
+Explicit user input is admitted through Pending rather
 than waking an automatic continuation during pre-admission revalidation; the
 existing dispatcher suppresses obsolete continuation when newer input is queued.
 Cancellation, newer user input, and disabled automatic
 resume take precedence, and the original interrupted input is never replayed.
+The UI keeps a usage-limit issue actionable after readiness, switch or launch
+acknowledgements; those replies alone do not prove provider recovery. A failed
+reset-credit request leaves the action available for another attempt.
 
 Protocol's `buildUsageLimitIssueFingerprint` owns usage-limit issue identity for
 the CLI and UI. Runtime-auth reporting captures that identity from the actual

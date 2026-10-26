@@ -258,6 +258,18 @@ export class CodexRolloutMirror {
                 continue;
             }
 
+            if (projected.type === 'thinking') {
+                // Rollout reasoning items are complete snapshots, not deltas of one shared segment.
+                await this.flushTranscriptBoundary(context);
+                this.itemTranscriptBridge.appendThinkingDelta({
+                    deltaText: projected.text,
+                    streamKey: `${context.streamScopeId}:assistant`,
+                    sidechainId: projected.sidechainId,
+                });
+                await this.flushTranscriptBoundary(context);
+                continue;
+            }
+
             if (projected.type === 'assistant-text') {
                 this.itemTranscriptBridge.appendAssistantDelta({
                     deltaText: projected.text,

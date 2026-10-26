@@ -30,6 +30,32 @@ yarn ios:preview
 yarn ios:production
 ```
 
+### Generated iOS lifecycle (development source)
+
+`plugins/withIosSceneLifecycle.js` adapts Expo 54's generated iOS project to
+UIKit scenes for builds linked against the iOS 27 SDK. It appends the scene
+delegate to `AppDelegate.swift` and keeps link and lifecycle dispatch in the Expo
+AppDelegate. Debug scene startup reconstructs React Native's cold-link launch options.
+Debug builds finish Expo subscriber startup after the scene window exists,
+because Expo 54's dev launcher requires that window. Every Release launch bootstraps
+React Native once without a window and keeps early subscriber startup: UIKit reports
+`applicationState == .background` here even for ordinary user cold launches. A scene
+attaches the retained controller rather than starting React Native again; background
+notification actions can run without creating a scene. The `expo-updates` patch
+completes its deferred view in place if no window exists yet, keeping bundle selection
+in Expo's existing updates handler and retaining its launch screen while startup waits.
+
+The [SDK 57 backport reference](https://github.com/expo/expo/blob/008a21874e177800f983be16f5c14315e96f33fd/packages/expo/ios/AppDelegates/ExpoAppSceneDelegate.swift#L45-L72)
+starts React Native only when a scene connects. That does not cover windowless
+notification actions; SDK 54 also predates the newer dev-launcher setup. Keep the
+SDK-specific startup ordering and updates adaptation until an Expo upgrade covers both flows.
+
+`plugins/withIosPodDeploymentTargetFloor.js` raises pod targets, including resource bundles, to the app's
+deployment target from `Podfile.properties.json` without lowering higher targets.
+`app.config.js` remains the deployment-target and React Native source-build owner.
+Unknown native templates fail prebuild; update the plugins and their generated
+fixtures when upgrading Expo. CI continues to select Xcode 26.2.
+
 ### Android Development
 
 ```bash

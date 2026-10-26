@@ -104,7 +104,7 @@ describe('openCodeUsageLimitRecoveryControlAdapter', () => {
           status: 'waiting',
           resetAtMs: null,
           nextCheckAtMs: 1_700_000_060_000,
-          attemptCount: 1,
+          attemptCount: 0,
           selectedAuth: {
             kind: 'profile',
             serviceId: 'openai',
@@ -134,7 +134,7 @@ describe('openCodeUsageLimitRecoveryControlAdapter', () => {
           status: 'paused',
           resetAtMs: null,
           nextCheckAtMs: null,
-          attemptCount: 1,
+          attemptCount: 0,
         },
       },
     });
@@ -230,7 +230,7 @@ describe('openCodeUsageLimitRecoveryControlAdapter', () => {
       metadata: {
         sessionUsageLimitRecoveryV1: {
           status: 'exhausted',
-          attemptCount: 2,
+          attemptCount: 1,
           lastProbeError: 'usage_limit_recovery_max_attempts_exhausted',
         },
       },

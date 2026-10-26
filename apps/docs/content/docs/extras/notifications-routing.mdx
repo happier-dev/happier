@@ -22,54 +22,54 @@ This avoids landing on the wrong server or silently approving a request on an un
 
 ## What happens when you tap a notification
 
-If the notification contains a session route, Happier opens that session.
+If the notification contains a session route, Happier opens that session. In development builds, a notification that names an Account also requires that Account’s saved sign-in details. Signing in to a different Account on the same Home cannot inherit the destination, including after adding a Home. Older notifications without an Account keep their existing review navigation.
 
 If the notification belongs to a different saved server than the one currently active, Happier opens the session on that saved server. The destination keeps the notification's server even if you change servers while an action is running.
 
-This is the default behavior for normal notification taps and for the `Answer` action used by action-request notifications.
+This is the default behavior for normal notification taps and for the `Answer` action that opens an action request in context.
 
 ## What happens when you press a notification action
 
-The Android background-action behavior below is an unreleased development candidate, not a verified stable-release capability.
+Background permission actions are development-only. On an iOS 18.6 simulator, banner `Allow` and `Deny` actions settled the exact CLI request without opening Happier. Notification Center expansion remains unresolved, and physical-device validation is still pending. This is not a verified stable-release capability.
 
 On the mobile app, current interactive notification actions are:
 
 - **Permission requests**: `Allow`, `Deny`
-- **User-action requests**: `Answer`
+- **User-action requests**: `Answer`; development builds can also offer numbered choices or `Reply` for simple questions
 
 Their behavior is intentionally different:
 
 - On Android builds with background notification actions available, `Allow` and `Deny` send the permission response without opening Happier or switching the selected server. A successful response does not navigate away from your current screen.
 - If Android background registration is unavailable, fails, or times out, the buttons retain foreground behavior. Happier handles live responses in the app without navigating; a terminated-state press that arrives only as a saved launch response is not executed and instead navigates to the session for review.
-- On iOS, `Allow` and `Deny` retain their foreground behavior: open the app, send the permission response when safe, and open the session.
+- On compatible iOS development builds, `Allow` and `Deny` require you to unlock the device, then respond without opening Happier, switching servers, or navigating. Both buttons require unlock so Happier can use your protected saved sign-in.
+- Older iOS app binaries and development hosts without background-action support retain foreground buttons. Live responses still use the same permission checks without navigating; saved launch responses open review without sending a decision.
 - `Answer` opens the app directly on the session so you can answer in context
+- In development builds, a single-choice question with up to three options can show numbered buttons matching the options in the notification. A simple text question can offer `Reply` with the system's text input. These actions use the existing question-answer operation for the exact request; they never send a permission approval.
 
-Automatic permission responses require an updated CLI and a notification identifying the exact request you saw. On Android, a live or background response to an older notification sends no decision and leaves a review notice for when Happier is active, without opening the session. An unhandled saved Android launch response opens the session for review. On iOS, older notifications also open for review without sending a decision.
+Automatic permission responses require an updated CLI and a notification identifying the exact request you saw. A live or background response to an older notification sends no decision and leaves a review notice for when Happier is active, without opening the session. An unhandled saved launch response opens the session for review on either platform.
 
 User-action requests include cases such as:
 
 - **AskUserQuestion**
 - **Exit Plan Mode**
 
-Happier does **not** currently try to send freeform or multiple-choice answers directly from the notification itself. The action button is a fast path back into the correct session.
+Inline answers require an updated app and CLI, a notification identifying the exact request and account, and request previews enabled. Questions with multiple selections, several questions, longer forms, or content that cannot fit safely retain `Answer`. The session remains available for every question, including custom answers and full context. Older notifications and saved launch responses open review rather than replaying an answer.
 
 ## Server-aware safety rules
 
-The navigation rules below apply to ordinary taps, `Answer`, and iOS permission actions. Android `Allow` / `Deny` use the separate rules in the next section.
+The navigation rules below apply to ordinary taps, `Answer`, and saved permission responses opened for review. Live `Allow` / `Deny` responses use the permission checks below without navigating.
 
 ### 1) Server is already active
 
 If the notification targets the server that is already active:
 
-- Happier performs the action immediately (for example `Allow` / `Deny`)
-- then opens the session
+Happier opens the session.
 
 ### 2) Server is saved, but not active
 
 If the notification targets a saved server profile that is not currently active:
 
-- Happier sends the response to that saved server when applicable
-- opens the session with that server selected
+Happier opens the session with that server selected.
 
 Generated session destinations use the notification's saved server. Explicit links to other app routes retain their existing routing behavior.
 
@@ -79,7 +79,6 @@ If this is effectively the first server on the device:
 
 - Happier may auto-add and switch to that server so the notification deep link still works
 - Happier opens the session
-- for security, Happier still does **not** auto-send `Allow` / `Deny` on an unsaved server
 
 This is mainly a bootstrap convenience for first-run or self-hosted setups.
 
@@ -94,36 +93,27 @@ Instead it:
 - prefills the incoming server URL
 - shows a hint that this server is not saved yet
 
-After you choose **Add & Use**, Happier continues to the original session automatically.
+After you choose **Add & Use**, Happier continues to the original session when its target Account is available. If the notification names an Account whose sign-in details are missing, sign in to that Account and tap the notification again.
 
-## Why this flow is strict
+## Permission action safety and recovery
 
-Notification actions are convenient, but permission responses are security-sensitive.
-
-For the foreground navigation flow above, Happier only auto-sends a permission response when the targeted server is:
-
-- already active, or
-- already saved locally and can be switched to explicitly
-
-If the server is unknown, Happier falls back to navigation and review instead of silently performing the approval.
-
-## Android permission action safety and recovery
-
-Android permission actions require a saved server and saved sign-in details for an account that can access the session. They can respond on an inactive saved server without changing the selected server. They never add an unknown server or queue an approval for later sign-in. If the notification names an account, it must match the saved sign-in.
+Permission actions require a saved server and saved sign-in details for an account that can access the session. They can respond on an inactive saved server without changing the selected server. They never add an unknown server or queue an approval for later sign-in. If the notification names an account, it must match the saved sign-in.
 
 The CLI checks that the request is still the one shown in the notification. An old notification cannot answer a replacement request. Only an accepted response is confirmed; a rejection, timeout, or missing result is not reported as approval success.
 
 Decisions are never automatically retried after a failed or uncertain response. Open the relevant server and session to check the current request before responding again.
 
-If Android opens Happier from a terminated state but only exposes an unhandled saved response, the saved response does not send the approval. Instead, Happier navigates to the relevant session — using the same server-safety rules as an ordinary notification tap — so you can review and answer the current request in the app. This also applies to the foreground fallback when background registration is unavailable. A cached response already handled in the running app does not reopen the session or change the selected server on a later routing mount.
+If Happier opens from a terminated state but only exposes an unhandled saved response, that response does not send a decision. Happier opens the relevant session using the ordinary notification navigation rules so you can review the current request. This also applies to the foreground fallback when background registration is unavailable. A cached response already handled in the running app does not reopen the session or change the selected server on a later routing mount.
 
-If an action cannot be confirmed, a generic recovery notice is saved for when Happier is active. The notice does not open the app from the background and does not reveal session content.
+If an action cannot be confirmed, a recovery notice is saved for when Happier is active. Choose **Review pending requests** to open the Inbox on the saved Home and Account for that response, when they remain available. Older notices without a target open the aggregate Inbox. Happier checks the saved sign-in before opening a targeted Inbox; it does not resend the decision. Only presentation scope is retained, without request content or the decision itself. The notice does not open the app from the background. If iOS ends the action's background execution time, Happier cancels its remaining work; review the current request before responding again.
+
+**Development builds:** Happier removes a permission or question notification when synced session state positively confirms that exact request occurrence has settled. Notices from another account, unloaded sessions, and older notifications without exact identity remain untouched. Removal is best-effort OS presentation cleanup; it does not cancel or decide a request.
 
 ### Native build and lifecycle limits
 
-Background actions require a new Android app build. An over-the-air update alone cannot add this support to an older installed app.
+The new iOS background actions require a new native app build. An over-the-air update alone cannot add this support to an older installed app. Android background actions also require a compatible native build.
 
-Android delivery still depends on battery restrictions and whether the app has been force-stopped. Physical-device validation is not yet complete. Normal notification taps, `Answer`, web startup, and iOS foreground behavior are unchanged.
+On iOS, this background work follows your button press; it does not guarantee delivery or execution of silent pushes. The operating system controls the available execution time. Android delivery still depends on battery restrictions and whether the app has been force-stopped. The iOS simulator checks used simulated APNs delivery; delivery through the remote push service, terminated-state actions, and physical-device validation remain pending. Normal notification taps, `Answer`, and web startup are unchanged.
 
 ## Prerequisites
 
@@ -140,7 +130,7 @@ If notification taps open the wrong context:
 3. Confirm push token registration for that server profile.
 4. If the notification came from a server that is not saved yet, add it from the prefilled **Server settings** screen first.
 
-## Related pages
+## Related
 
 - [Multi-server](/accounts/multi-server)
 - [Permissions](/sessions/permissions)

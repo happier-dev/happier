@@ -19,6 +19,21 @@ const classifiedFailure = {
 } as const;
 
 describe('runtimeAuthFailureReportOutboxDrain', () => {
+  it.each(['usage_limit', 'auth_expired'] as const)('drops an obsolete persisted native %s report without daemon recovery', async (kind) => {
+    const outboxDir = await createTempDir('happier-runtime-auth-report-outbox-native-');
+    try {
+      await enqueueRuntimeAuthFailureReportOutboxItem({ outboxDir,
+        report: { sessionId: 'native-session', switchesThisTurn: 0,
+          classification: { ...classifiedFailure, kind, profileId: null, groupId: null } },
+        nowMs: () => 1_700_000_000_000 });
+      expect(await readRuntimeAuthFailureReportOutboxItems({ outboxDir })).toHaveLength(1);
+      const notify = vi.fn(async () => ({ ok: true, result: { status: 'recovery_action_required' } }));
+      expect(await drainRuntimeAuthFailureReportOutboxToDaemon({ outboxDir, notify,
+        nowMs: () => 1_700_000_000_500 })).toEqual({ delivered: 0, dropped: 1, retried: 0 });
+      expect(notify).not.toHaveBeenCalled();
+      expect(await readRuntimeAuthFailureReportOutboxItems({ outboxDir })).toEqual([]);
+    } finally { await removeTempDir(outboxDir); }
+  });
   it('drains a persisted old-generation item without forwarding launcher-daemon authority', async () => {
     const outboxDir = await createTempDir('happier-runtime-auth-report-outbox-legacy-generation-');
     const reportKey = 'runtime-auth-failure-report:v1:legacy-generation-key';

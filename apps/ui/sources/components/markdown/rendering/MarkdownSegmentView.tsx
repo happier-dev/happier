@@ -5,7 +5,7 @@ import { StyleSheet } from 'react-native-unistyles';
 
 import { EnrichedMarkdownTextAdapter } from '../enriched/EnrichedMarkdownTextAdapter';
 import type { Option, OptionLongPressHandler } from '../MarkdownBlockView';
-import type { MarkdownSourceRange, MarkdownSourceRangeAction, MarkdownSourceRangeLayoutObserver } from '../MarkdownView';
+import type { MarkdownSelectionAction, MarkdownSourceRange, MarkdownSourceRangeAction, MarkdownSourceRangeLayoutObserver } from '../MarkdownView';
 import type { StreamingTextRevealPreset } from '../streaming/streamingTextRevealConfig';
 import type { MarkdownRenderingProfile } from './MarkdownRenderingProfile';
 import type { MarkdownRenderSegment } from './markdownRenderSegmentTypes';
@@ -33,6 +33,7 @@ type MarkdownSegmentViewProps = Readonly<{
     onPressSourceRange?: (action: MarkdownSourceRangeAction) => void;
     renderAfterSourceRange?: (action: MarkdownSourceRangeAction) => React.ReactNode;
     highlightSourceRange?: MarkdownSourceRange | null;
+    selectionActions?: readonly MarkdownSelectionAction[];
     agentTexMath: boolean;
 }>;
 
@@ -56,6 +57,7 @@ export const MarkdownSegmentView = React.memo((props: MarkdownSegmentViewProps) 
                 streamingRevealPreset={props.streamingRevealPreset}
                 testID="markdown-enriched-run"
                 suppressLeadingTopMargin={props.segment.first}
+                selectionActions={props.selectionActions}
                 agentTexMath={props.agentTexMath}
             />
         )
@@ -69,6 +71,7 @@ export const MarkdownSegmentView = React.memo((props: MarkdownSegmentViewProps) 
                 textStyle={props.textStyle}
                 streamingReveal={props.streamingReveal}
                 streamingRevealPreset={props.streamingRevealPreset}
+                selectionActions={props.selectionActions}
                 agentTexMath={props.agentTexMath}
             />
         ) : (

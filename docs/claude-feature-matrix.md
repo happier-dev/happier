@@ -243,6 +243,14 @@ the permission authority before a request reaches these hooks.
 | Manual resume (`happier resume`, explicit `resume`, vendor `--resume`) | `supported` | `apps/cli/src/rpc/handlers/registerSessionHandlers.ts`, `apps/cli/src/backends/claude/runClaude.ts`, `apps/cli/src/backends/claude/session.ts`, `apps/cli/src/backends/claude/claudeLocal.ts`, `packages/agents/src/manifest.ts`, `packages/agents/src/sessionControls/vendorResumePolicy.ts` | Claude is a first-class vendor-resume provider keyed by `claudeSessionId`; local runs consume one-time `--resume` / `--continue` flags after spawn, and `session.ts` rewrites metadata when Claude forks to a new vendor session id. | Keep a single provider resume record carrying vendor id, transcript path, and source affinity instead of scattering them across session metadata fields. |
 | Wake resume / background wake | `supported` | `apps/ui/sources/agents/runtime/resumeCapabilities.ts`, `apps/ui/sources/agents/providers/claude/core.ts`, `apps/ui/sources/agents/registry/registryUiBehavior.ts`, `packages/agents/src/sessionControls/vendorResumePolicy.ts` | Claude uses the generic vendor-resume wake path; unlike Codex/OpenCode there is no Claude-specific `buildWakeResumeExtras` override, so wake relies on persisted metadata plus the generic resume capability contract. | Replace generic wake heuristics plus provider-specific metadata fields with a serialized provider runtime descriptor that wake can replay directly. |
 
+Development source caches Claude provider-title state in the direct-session title
+reader and scans appended records after validating the cached prefix. Manual
+titles retain precedence over AI titles. Identical concurrent Claude candidate
+listings share their filesystem scan; other agent listings retain their existing
+request lifecycle. Handoff imports publish complete transcripts through
+`atomicFileWrite`, replacing file identity so incremental readers invalidate
+their previous state. A failed import leaves the previous transcript intact.
+
 ## Installables, auth, and coverage
 
 | Feature | Status | Exact source files | Current behavior / special cases | Unified architecture migration notes |

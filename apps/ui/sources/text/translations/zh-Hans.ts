@@ -625,7 +625,8 @@ export const zhHans: TranslationStructure = {
         commands: {
             composerAbortConfirm: '确认中止',
             composerFocus: '聚焦输入框',
-            composerSendImmediate: '立即发送',
+            composerSendImmediate: '切换发送方式（排队 / 引导）',
+            composerSendInterrupt: '中断并发送',
             composerSendPending: '发送到待处理队列',
             commandPaletteOpen: '打开命令面板',
             modeCycle: '切换模式',
@@ -661,6 +662,14 @@ export const zhHans: TranslationStructure = {
   },
 
   transcript: {
+
+    quote: {
+
+      action: '引用',
+
+      actionA11y: '在消息中引用所选文本',
+
+    },
 
     selection: {
 
@@ -3632,6 +3641,17 @@ export const zhHans: TranslationStructure = {
         openSettingsFailed: '无法打开系统设置。',
     },
     pushTroubleshooting: {
+            remoteTest: {
+                title: "发送远程测试",
+                subtitle: "通过连接到此 Home 的机器，向此手机发送真实的推送通知。",
+                notRegistered: "请注册此手机的令牌，然后重试。",
+                noMachine: "请将机器连接到此 Home，以发送远程测试。",
+                accepted: "推送服务已接受测试。这并不确认手机已收到或显示通知。请检查通知。",
+                rejected: "推送服务未确认接受。再次尝试前，请检查通知和注册状态。",
+                invalidCredentials: "推送提供商拒绝了此应用的凭据。请检查 APNs 或 FCM 配置。",
+                unsupported: "请更新所连接机器的 Happier CLI，以发送远程测试。",
+                unconfirmed: "无法确认结果。请求仍可能完成；再次尝试前请检查通知。",
+            },
       status: {
         title: "状态",
         footer: "检查账户设置、系统权限以及服务器注册状态。",
@@ -3768,8 +3788,12 @@ export const zhHans: TranslationStructure = {
   },
 
   notifications: {
-      permissionActionNeedsReview: "无法确认通知中的权限请求回复。再次回复前，请打开会话并检查当前请求。",
+      permissionActionNeedsReview: "无法确认从通知发送的回复。请先查看待处理请求，再次回复。",
+      permissionActionReviewUnavailable: "无法打开此回复对应的 Home 和账户。请在设置中检查连接和登录状态，然后查看待处理请求。",
     actions: {
+          reviewPendingRequests: "查看待处理请求",
+          questionReply: "回复",
+          questionPlaceholder: "你的回答",
       allow: '允许',
       deny: '拒绝',
       answer: '回答',
@@ -4273,6 +4297,16 @@ export const zhHans: TranslationStructure = {
           },
         },
         fields: {
+          codexReasoningSummaries: {
+              title: "推理摘要",
+              footer: "控制 Codex 是否生成摘要，与对话中的显示方式无关。在启动或恢复会话时生效。可用性取决于模型。",
+              generation: "生成",
+              options: {
+                  default: "使用 Codex 配置或模型默认值。",
+                  enabled: "在模型支持时请求摘要。",
+                  disabled: "不生成推理摘要。",
+              },
+          },
           codexBackendMode: {
             title: "Codex 路由模式",
             subtitle: "选择 App Server、ACP 或 MCP。",
@@ -4308,6 +4342,8 @@ export const zhHans: TranslationStructure = {
 
   settingsAppearance: {
     tabBarAppearance: {
+      sideRailTitle: "在侧边栏中显示标签页",
+      sideRailSubtitle: "关闭后使用 Happier 的标签栏及其滑动手势。",
       title: '标签栏',
       footer: '自定义底部标签栏。',
       showLabels: '显示标签栏文字',
@@ -6602,6 +6638,11 @@ export const zhHans: TranslationStructure = {
   },
 
   agentInput: {
+      sendOptions: {
+          title: "发送选项",
+          queue: "加入队列",
+          hint: "长按选择发送方式",
+      },
       chipPicker: {
           selectedOptionAccessibilityLabel: ({ option }: { option: string }) => `${option}。已选择。`,
       },

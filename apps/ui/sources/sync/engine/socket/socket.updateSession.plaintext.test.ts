@@ -137,9 +137,9 @@ describe('socket update handling: plaintext update-session', () => {
                 event, session, serverUrl: 'https://stack.example.test',
             }));
             expect(notifications.map(notification => notification.data)).toEqual([
-                { sessionId, serverUrl: 'https://stack.example.test', requestId: 'reused', occurrenceId: 'producer-occurrence-a' },
-                { sessionId, serverUrl: 'https://stack.example.test', requestId: 'reused', occurrenceId: 'producer-occurrence-b' },
-                { sessionId, serverUrl: 'https://stack.example.test', requestId: 'legacy' },
+                { sessionId, serverUrl: 'https://stack.example.test', requestId: 'reused', kind: 'permission', occurrenceId: 'producer-occurrence-a' },
+                { sessionId, serverUrl: 'https://stack.example.test', requestId: 'reused', kind: 'permission', occurrenceId: 'producer-occurrence-b' },
+                { sessionId, serverUrl: 'https://stack.example.test', requestId: 'legacy', kind: 'permission' },
             ]);
         } finally {
             unsubscribe();

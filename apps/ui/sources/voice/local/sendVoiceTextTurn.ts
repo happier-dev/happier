@@ -71,21 +71,20 @@ export async function sendVoiceTextTurn(params: {
     resolveVoiceSessionBindingByControlSessionId({ controlSessionId: sessionId })
     ?? resolveVoiceSessionBindingByConversationSessionId({ conversationSessionId: sessionId })
     ?? null;
-  const syntheticTranscriptBinding = resolveVoiceSessionBindingByControlSessionId({ controlSessionId: sessionId });
   const syntheticConversationSessionId =
-    syntheticTranscriptBinding?.transcriptMode === 'synthetic'
-      ? syntheticTranscriptBinding.conversationSessionId
+    sessionBinding?.transcriptMode === 'synthetic'
+      ? sessionBinding.conversationSessionId
       : null;
   const currentToolSessionId =
     sessionBinding?.targetSessionId
     ?? (sessionId === VOICE_AGENT_GLOBAL_SESSION_ID ? null : sessionId);
 
   if (conversationMode === 'agent' && !params.durableDispatch) {
-    if (!syntheticConversationSessionId) {
+    if (!sessionBinding) {
       throw new Error('voice_session_binding_required');
     }
     const result = await submitDurableVoiceTextTurn({
-      conversationSessionId: syntheticConversationSessionId,
+      conversationSessionId: sessionBinding.conversationSessionId,
       text: userText,
       pendingPort: params.pendingPort,
       dispatch: async (durableDispatch) => {

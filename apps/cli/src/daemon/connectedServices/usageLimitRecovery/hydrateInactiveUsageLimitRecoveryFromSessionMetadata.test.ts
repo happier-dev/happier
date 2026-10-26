@@ -14,7 +14,7 @@ const credentials = {
 } as const;
 
 describe('hydrateInactiveUsageLimitRecoveryFromSessionMetadata', () => {
-  it('observes inactive persisted recovery intents and rebuilds check-now runners without scheduling', async () => {
+  it('restores pending recovery through the current machine control instead of a captured session snapshot', async () => {
     const recovery = {
       v: 1 as const,
       status: 'waiting' as const,
@@ -28,13 +28,14 @@ describe('hydrateInactiveUsageLimitRecoveryFromSessionMetadata', () => {
       selectedAuth: { kind: 'native' as const },
     };
     const observe = vi.fn();
-    const routeCheckNow = vi.fn(async () => ({ ok: true, status: 'ready' }));
+    let currentRecovery = recovery;
+    const checkCurrentSession = vi.fn(async () => ({ ok: true, status: 'waiting' }));
     const fetchSessionsPage = vi.fn(async () => {
       const response = createSessionListResponseFixture([
         createSessionRecordFixture({
           id: 'session-1',
           active: false,
-          metadata: 'ignored-by-test-decryptor',
+          metadata: JSON.stringify({ machineId: 'machine-1', [SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY]: recovery }),
           encryptionMode: 'plain',
         }),
       ]);
@@ -51,11 +52,11 @@ describe('hydrateInactiveUsageLimitRecoveryFromSessionMetadata', () => {
       currentMachineHost: 'host.local',
       currentMachineHomeDir: '/Users/example',
       fetchSessionsPage,
-      decryptMetadata: () => ({
-        [SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY]: recovery,
-      }),
       observe,
-      routeCheckNow,
+      runCheckNow: checkCurrentSession,
+      fetchSessionById: async () => createSessionRecordFixture({ id: 'session-1', active: false,
+        encryptionMode: 'plain', metadata: JSON.stringify({ machineId: 'machine-1',
+          [SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY]: currentRecovery }) }),
     });
 
     expect(result).toEqual({ scanned: 1, observed: 1 });
@@ -66,24 +67,10 @@ describe('hydrateInactiveUsageLimitRecoveryFromSessionMetadata', () => {
     });
 
     const runCheckNow = observe.mock.calls[0]?.[0]?.runCheckNow as (() => Promise<unknown>) | undefined;
-    await expect(runCheckNow?.()).resolves.toEqual({ ok: true, status: 'ready' });
-    await expect(runCheckNow?.()).resolves.toEqual({ ok: true, status: 'ready' });
-    expect(routeCheckNow).toHaveBeenCalledWith(expect.objectContaining({
-      token: 'token',
-      sessionId: 'session-1',
-      currentMachineId: 'machine-1',
-      currentMachineHost: 'host.local',
-      currentMachineHomeDir: '/Users/example',
-      rawSession: expect.objectContaining({ id: 'session-1' }),
-      metadata: expect.objectContaining({
-        [SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY]: recovery,
-      }),
-      request: { sessionId: 'session-1' },
-    }));
-    expect(routeCheckNow).not.toHaveBeenCalledWith(expect.objectContaining({
-      resumeInactiveSessionWhenReady: expect.any(Function),
-    }));
-    expect(routeCheckNow).toHaveBeenCalledTimes(2);
+    await expect(runCheckNow?.()).resolves.toEqual({ ok: true, status: 'waiting' });
+    currentRecovery = { ...recovery, armedAtMs: recovery.armedAtMs + 1 };
+    await expect(runCheckNow?.()).resolves.toMatchObject({ status: 'cancelled' });
+    expect(checkCurrentSession).toHaveBeenCalledTimes(1);
   });
 
   it('skips persisted pending intents whose latest turn is no longer failed', async () => {
@@ -137,10 +124,11 @@ describe('hydrateInactiveUsageLimitRecoveryFromSessionMetadata', () => {
       currentMachineHomeDir: '/Users/example',
       fetchSessionsPage,
       decryptMetadata: () => ({
+        machineId: 'machine-1',
         [SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY]: recovery,
       }),
       observe,
-      routeCheckNow: vi.fn(),
+      runCheckNow: async () => ({ ok: true, status: 'waiting' }),
     });
 
     expect(result).toEqual({ scanned: 3, observed: 2 });
@@ -183,10 +171,46 @@ describe('hydrateInactiveUsageLimitRecoveryFromSessionMetadata', () => {
         },
       }),
       observe,
-      routeCheckNow: vi.fn(),
+      runCheckNow: async () => ({ ok: true, status: 'waiting' }),
     });
 
     expect(result).toEqual({ scanned: 2, observed: 0 });
     expect(observe).not.toHaveBeenCalled();
+  });
+
+  it('restores an untimed generic wait but leaves account-owned recovery with its existing scheduler', async () => {
+    const observed: string[] = [];
+    const sessions = ['untimed', 'account-owned'].map((kind) => createSessionRecordFixture({
+      id: kind,
+      active: false,
+      latestTurnStatus: 'failed',
+      encryptionMode: 'plain',
+      metadata: JSON.stringify({
+        machineId: 'machine-1',
+        [SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY]: {
+          v: 1,
+          status: 'waiting',
+          issueFingerprint: 'limit',
+          armedAtMs: 100,
+          resetAtMs: null,
+          nextCheckAtMs: null,
+          attemptCount: 0,
+          maxAttempts: 3,
+          lastProbeError: null,
+          selectedAuth: { kind: 'native' },
+          ...(kind === 'account-owned' ? { runtimeAuthRecoveryAttemptId: 'auth-attempt' } : {}),
+        },
+      }),
+    }));
+    await hydrateInactiveUsageLimitRecoveryFromSessionMetadata({
+      credentials,
+      currentMachineId: 'machine-1',
+      currentMachineHost: 'host.local',
+      currentMachineHomeDir: '/Users/example',
+      fetchSessionsPage: async () => ({ sessions, nextCursor: null, hasNext: false }),
+      observe: ({ sessionId }) => { observed.push(sessionId); },
+      runCheckNow: async () => ({ ok: true, status: 'waiting' }),
+    });
+    expect(observed).toEqual(['untimed']);
   });
 });

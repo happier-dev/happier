@@ -239,7 +239,7 @@ function estimateWrappedLineCount(text: string): number {
  * | `feed_background` |   50   |   28   |  28  |   34   |
  *
  * Headers now reserve the 44px disclosure touch target (48px on Android, replaced by
- * onLayout); plain feed footers reserve only the compact 8px message gap.
+ * onLayout); plain feed footers reserve 8px for header-only groups and the normal 22px message gap plus 6px body padding after visible tools.
  * These cap values are derived from those styles; the original measurements above predate them.
  *
  * `cards` is deliberately NOT a key here: a tool GROUP cannot exist in that mode. Grouping is
@@ -584,9 +584,16 @@ export function estimateTranscriptRowHeightFromContent(params: Readonly<{
     // `getEstimatedItemSize` is called against. Their calibration is what accumulation gaps are
     // made of.
     if (item.kind === 'tool-group-tool') return unitRowHeights?.tool;
-    if (item.kind === 'tool-group-expand') return unitRowHeights?.expand;
-    if (item.kind === 'tool-group-header') return unitRowHeights?.header;
-    if (item.kind === 'tool-group-footer') return unitRowHeights?.footer;
+    if (item.kind === 'tool-group-expand') return params.platformIsWeb && unitRowHeights ? 24 : unitRowHeights?.expand;
+    if (item.kind === 'tool-group-header') {
+        if (params.platformIsWeb && toolCallsGroupChromeVariant !== 'cards') {
+            return toolCallsGroupChromeVariant === 'feed_background' ? 34 : 28;
+        }
+        return unitRowHeights?.header;
+    }
+    if (item.kind === 'tool-group-footer') {
+        return toolCallsGroupChromeVariant === 'feed' && item.hasVisibleTools ? 28 : unitRowHeights?.footer;
+    }
     if (
         item.kind === 'pending-user-action'
         || item.kind === 'action-draft'

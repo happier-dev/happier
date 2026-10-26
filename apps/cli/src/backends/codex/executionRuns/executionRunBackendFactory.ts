@@ -1,4 +1,4 @@
-import { readSpawnConfigOptionOverrideValue } from '@happier-dev/protocol';
+import { readSpawnConfigOptionOverrideValue, resolveCodexReasoningSummaryOverride } from '@happier-dev/protocol';
 
 import { readNonBlankSessionControlIdentifier } from '@/agent/runtime/sessionControlIdentifiers';
 import { createCodexAcpBackend } from '@/backends/codex/acp/backend';
@@ -50,6 +50,7 @@ export const executionRunBackendFactory: ExecutionRunBackendFactory = (opts) => 
     'reasoning_effort',
   );
   const reasoningEffort = readNonBlankSessionControlIdentifier(reasoningEffortValue) ?? undefined;
+  const reasoningSummary = resolveCodexReasoningSummaryOverride(opts.accountSettings?.codexReasoningSummaries);
   const baseEnv = buildCodexExecutionRunBaseEnv(opts.isolation?.env);
   const env = buildCodexAcpEnvOverrides({ baseEnv, projectDir: opts.cwd });
   const permissionMode = permissionModeForExecutionRunPolicy(opts.permissionMode);
@@ -75,6 +76,7 @@ export const executionRunBackendFactory: ExecutionRunBackendFactory = (opts) => 
     return withExecutionRunBackendModelOptions(
       createCodexAppServerExecutionRunBackend({
         cwd: opts.cwd,
+        reasoningSummary,
         env,
         permissionHandler: opts.permissionHandler,
         permissionMode,
@@ -101,6 +103,7 @@ export const executionRunBackendFactory: ExecutionRunBackendFactory = (opts) => 
   if (shouldUseMcp) {
     return createCodexMcpExecutionRunBackend({
       cwd: opts.cwd,
+      reasoningSummary,
       env,
       modelId: opts.modelId,
       ...(reasoningEffort ? { reasoningEffort } : {}),
@@ -111,6 +114,7 @@ export const executionRunBackendFactory: ExecutionRunBackendFactory = (opts) => 
   return withExecutionRunBackendModelOptions(
     createCodexAcpBackend({
       cwd: opts.cwd,
+      reasoningSummary,
       env,
       permissionHandler: opts.permissionHandler,
       permissionMode,

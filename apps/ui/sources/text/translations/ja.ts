@@ -610,7 +610,8 @@ export const ja: TranslationStructure = {
         commands: {
             composerAbortConfirm: '中断を確認',
             composerFocus: 'コンポーザーにフォーカス',
-            composerSendImmediate: 'すぐに送信',
+            composerSendImmediate: '別の方法で送信（キュー / 方向修正）',
+            composerSendInterrupt: '中断して送信',
             composerSendPending: '保留キューに送信',
             commandPaletteOpen: 'コマンドパレットを開く',
             modeCycle: 'モードを切り替え',
@@ -646,6 +647,14 @@ export const ja: TranslationStructure = {
   },
 
   transcript: {
+
+    quote: {
+
+      action: '引用',
+
+      actionA11y: '選択したテキストをメッセージに引用',
+
+    },
 
     selection: {
 
@@ -4026,6 +4035,17 @@ localTailscale: {
         openSettingsFailed: 'システム設定を開けませんでした。',
     },
     pushTroubleshooting: {
+            remoteTest: {
+                title: "リモートテストを送信",
+                subtitle: "この Home に接続されたマシンから、この電話に実際のプッシュ通知を送信します。",
+                notRegistered: "この電話のトークンを登録してから、再試行してください。",
+                noMachine: "リモートテストを送信するには、この Home にマシンを接続してください。",
+                accepted: "プッシュサービスがテストを受け付けました。電話での受信や表示を確認したわけではありません。通知を確認してください。",
+                rejected: "プッシュサービスによる受付を確認できませんでした。再試行する前に通知と登録状態を確認してください。",
+                invalidCredentials: "プッシュプロバイダーがこのアプリの認証情報を拒否しました。APNs または FCM の設定を確認してください。",
+                unsupported: "リモートテストを送信するには、接続されたマシンの Happier CLI を更新してください。",
+                unconfirmed: "結果を確認できませんでした。リクエストはまだ完了する可能性があります。再試行する前に通知を確認してください。",
+            },
       status: {
         title: "状態",
         footer: "アカウント設定、OS 権限、サーバー登録状態を確認します。",
@@ -4170,8 +4190,12 @@ localTailscale: {
   },
 
   notifications: {
-      permissionActionNeedsReview: "通知からの権限リクエストへの応答を確認できませんでした。再度応答する前にセッションを開き、現在のリクエストを確認してください。",
+      permissionActionNeedsReview: "通知から送信した応答を確認できませんでした。再度応答する前に、保留中のリクエストを確認してください。",
+      permissionActionReviewUnavailable: "この応答のHomeとアカウントを開けませんでした。設定で接続とサインインを確認してから、保留中のリクエストを確認してください。",
     actions: {
+          reviewPendingRequests: "保留中のリクエストを確認",
+          questionReply: "返信",
+          questionPlaceholder: "回答",
       allow: "許可",
       deny: "拒否",
       answer: "回答",
@@ -4677,6 +4701,16 @@ localTailscale: {
           },
         },
         fields: {
+          codexReasoningSummaries: {
+              title: "推論の要約",
+              footer: "会話内の表示とは個別に、Codex が要約を生成するかを設定します。セッションの開始時または再開時に適用されます。利用できるかどうかはモデルによって異なります。",
+              generation: "生成",
+              options: {
+                  default: "Codex の設定またはモデルの既定値を使用します。",
+                  enabled: "モデルが対応している場合に要約を要求します。",
+                  disabled: "推論の要約を生成しません。",
+              },
+          },
           codexBackendMode: {
             title: "Codex ルーティングモード",
             subtitle: "アプリサーバー、ACP、または MCP を選択します。",
@@ -4712,6 +4746,8 @@ localTailscale: {
 
   settingsAppearance: {
     tabBarAppearance: {
+      sideRailTitle: "サイドレールにタブを表示",
+      sideRailSubtitle: "オフにすると、Happier のタブバーとスワイプ操作を使用できます。",
       title: 'タブバー',
       footer: '下部のタブバーをカスタマイズします。',
       showLabels: 'タブのラベルを表示',
@@ -7082,6 +7118,11 @@ localTailscale: {
   },
 
   agentInput: {
+      sendOptions: {
+          title: "送信オプション",
+          queue: "キューに追加",
+          hint: "長押しして送信方法を選択",
+      },
       chipPicker: {
           selectedOptionAccessibilityLabel: ({ option }: { option: string }) => `${option}。選択中。`,
       },

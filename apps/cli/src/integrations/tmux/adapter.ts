@@ -26,6 +26,7 @@ import {
 } from '../terminalHost/promptSubmitVerification';
 import { resolveTerminalPromptWriteTimeoutMs } from '@/agent/runtime/terminal/injection/promptWriteTimeout';
 import { createTmuxTerminalHostHandle } from './hostHandle';
+import { formatTmuxSessionIdentifier } from './identifiers';
 
 /**
  * Stability sampling delay between the two full-pane captures used to detect that the user is
@@ -34,9 +35,11 @@ import { createTmuxTerminalHostHandle } from './hostHandle';
 const INPUT_STABILITY_DELAY_MS = 50;
 
 function targetFromHandle(handle: TerminalHostHandle): string {
-  const ownedWindow = handle.paneId?.trim();
-  if (ownedWindow?.startsWith('@')) return ownedWindow;
-  return ownedWindow ? `${handle.sessionName}:${ownedWindow}` : handle.sessionName;
+  // Window IDs are reused after a server restart. Keep the exact owning session.
+  return formatTmuxSessionIdentifier({
+    session: handle.sessionName,
+    window: handle.paneId?.trim(),
+  }, { exactSession: true });
 }
 
 export function resolveTmuxCommandEnvironmentForHostHandle(
@@ -313,7 +316,7 @@ export function createTmuxTerminalHostAdapter(params?: Readonly<{
     async dispose(handle: TerminalHostHandle) {
       const handleTmux = tmuxForHandle(handle);
       if (handle.attachMetadata.topology === 'exclusive') {
-        const result = await handleTmux.executeTmuxCommand(['kill-session'], handle.sessionName);
+        const result = await handleTmux.executeTmuxCommand(['kill-session'], targetFromHandle({ ...handle, paneId: undefined }));
         if (!result || result.returncode !== 0) {
           throw new Error(`Failed to destroy owned tmux session ${handle.sessionName}`);
         }

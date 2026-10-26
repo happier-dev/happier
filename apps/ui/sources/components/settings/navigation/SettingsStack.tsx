@@ -4,6 +4,8 @@ import { Stack } from 'expo-router';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { createAppStackScreenOptions } from '@/components/navigation/createAppStackScreenOptions';
+import { composeAppStackScreenLayout } from '@/components/navigation/appStackScreenLayout';
+import { NavigatorSafeAreaBleed } from '@/components/navigation/safeArea/HorizontalSafeArea';
 import { getSettingsStackScreenDefinitions, type SettingsStackScope } from './settingsRouteRegistry';
 import { t } from '@/text';
 import { isRunningOnMac } from '@/utils/platform/platform';
@@ -20,16 +22,19 @@ export function SettingsStack({ scope = 'settings', screenLayout }: Readonly<{
         theme,
     }), [shouldUseCustomHeader, theme]);
     const screenDefinitions = React.useMemo(() => getSettingsStackScreenDefinitions(t, scope), [scope]);
+    const appScreenLayout = React.useMemo(() => composeAppStackScreenLayout(screenLayout), [screenLayout]);
 
     return (
-        <Stack screenOptions={screenOptions} screenLayout={screenLayout}>
-            {screenDefinitions.map((definition) => (
-                <Stack.Screen
-                    key={definition.name}
-                    name={definition.name}
-                    options={definition.options}
-                />
-            ))}
-        </Stack>
+        <NavigatorSafeAreaBleed>
+            <Stack screenOptions={screenOptions} screenLayout={appScreenLayout}>
+                {screenDefinitions.map((definition) => (
+                    <Stack.Screen
+                        key={definition.name}
+                        name={definition.name}
+                        options={definition.options}
+                    />
+                ))}
+            </Stack>
+        </NavigatorSafeAreaBleed>
     );
 }

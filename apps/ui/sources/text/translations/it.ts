@@ -625,7 +625,8 @@ export const it: TranslationStructure = {
         commands: {
             composerAbortConfirm: 'Conferma interruzione',
             composerFocus: 'Metti a fuoco il compositore',
-            composerSendImmediate: 'Invia subito',
+            composerSendImmediate: 'Invio alternativo (coda / indirizza)',
+            composerSendInterrupt: 'Interrompi e invia',
             composerSendPending: 'Invia alla coda in sospeso',
             commandPaletteOpen: 'Apri palette comandi',
             modeCycle: 'Cambia modalità',
@@ -661,6 +662,14 @@ export const it: TranslationStructure = {
   },
 
   transcript: {
+
+    quote: {
+
+      action: 'Cita',
+
+      actionA11y: 'Cita il testo selezionato nel tuo messaggio',
+
+    },
 
     selection: {
 
@@ -4078,6 +4087,17 @@ export const it: TranslationStructure = {
         openSettingsFailed: 'Impossibile aprire le impostazioni di sistema.',
     },
     pushTroubleshooting: {
+            remoteTest: {
+                title: "Invia un test remoto",
+                subtitle: "Invia una vera notifica push a questo telefono tramite una macchina connessa a questa Home.",
+                notRegistered: "Registra il token di questo telefono, poi riprova.",
+                noMachine: "Connetti una macchina a questa Home per inviare un test remoto.",
+                accepted: "Il servizio push ha accettato il test. Questo non conferma che il telefono l’abbia ricevuto o mostrato. Controlla le notifiche.",
+                rejected: "Il servizio push non ha confermato l’accettazione. Controlla le notifiche e la registrazione prima di riprovare.",
+                invalidCredentials: "Il provider push ha rifiutato le credenziali di questa app. Controlla la configurazione APNs o FCM.",
+                unsupported: "Aggiorna la CLI Happier della macchina connessa per inviare test remoti.",
+                unconfirmed: "Non è stato possibile confermare il risultato. La richiesta potrebbe ancora completarsi; controlla le notifiche prima di riprovare.",
+            },
       status: {
         title: "Stato",
         footer: "Controlla l’impostazione dell’account, il permesso del sistema e la registrazione sul server.",
@@ -4221,8 +4241,12 @@ export const it: TranslationStructure = {
   },
 
     notifications: {
-        permissionActionNeedsReview: "Non è stato possibile confermare la risposta alla richiesta di autorizzazione ricevuta tramite notifica. Apri la sessione e controlla la richiesta attuale prima di rispondere di nuovo.",
+        permissionActionNeedsReview: "Non è stato possibile confermare la risposta inviata dalla notifica. Controlla le richieste in sospeso prima di rispondere di nuovo.",
+        permissionActionReviewUnavailable: "Impossibile aprire l’Home e l’account di questa risposta. Controlla la connessione e l’accesso nelle impostazioni, poi le richieste in sospeso.",
       actions: {
+            reviewPendingRequests: "Controlla le richieste in sospeso",
+            questionReply: "Rispondi",
+            questionPlaceholder: "La tua risposta",
         allow: 'Consenti',
         deny: 'Nega',
         answer: 'Rispondi',
@@ -4730,6 +4754,16 @@ export const it: TranslationStructure = {
             },
           },
           fields: {
+            codexReasoningSummaries: {
+                title: "Riepiloghi del ragionamento",
+                footer: "Controlla se Codex genera riepiloghi, indipendentemente dalla visualizzazione nella conversazione. Si applica all’avvio o alla ripresa di una sessione. La disponibilità dipende dal modello.",
+                generation: "Generazione",
+                options: {
+                    default: "Usa la configurazione di Codex o il valore predefinito del modello.",
+                    enabled: "Richiedi riepiloghi quando il modello li supporta.",
+                    disabled: "Non generare riepiloghi del ragionamento.",
+                },
+            },
             codexBackendMode: {
               title: "Modalità di instradamento di Codex",
               subtitle: "Seleziona App Server, ACP o MCP.",
@@ -4765,6 +4799,8 @@ export const it: TranslationStructure = {
 
   settingsAppearance: {
     tabBarAppearance: {
+      sideRailTitle: "Schede nella barra laterale",
+      sideRailSubtitle: "Disattiva questa opzione per usare la barra delle schede di Happier e i suoi gesti di scorrimento.",
       title: 'Barra schede',
       footer: 'Personalizza la barra delle schede in basso.',
       showLabels: 'Mostra etichette schede',
@@ -7152,6 +7188,11 @@ export const it: TranslationStructure = {
   },
 
   agentInput: {
+      sendOptions: {
+          title: "Opzioni di invio",
+          queue: "Accoda",
+          hint: "Tieni premuto per scegliere come inviare",
+      },
       chipPicker: {
           selectedOptionAccessibilityLabel: ({ option }: { option: string }) => `${option}. Selezionato.`,
       },

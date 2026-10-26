@@ -207,6 +207,9 @@ export const ToolCallsGroupViewWithSessionCommon = React.memo((props: ToolCallsG
                 normalizedChromeMode === 'activity_feed'
                     ? (showFeedBackground ? feedBackgroundStyle : styles.containerFeed)
                     : styles.containerCards,
+                normalizedChromeMode === 'activity_feed' && !showFeedBackground && !expanded && !showCollapsedPreview
+                    ? styles.containerFeedHeaderOnly
+                    : null,
             ]}
         >
             <ToolCallsGroupHeaderChrome
@@ -319,8 +322,10 @@ const styles = StyleSheet.create((theme) => ({
         backgroundColor: theme.colors.surface.inset ?? theme.colors.surface.base,
         overflow: 'hidden',
     },
-    containerFeed: {
+    containerFeedHeaderOnly: {
         marginBottom: 8,
+    },
+    containerFeed: {
         borderRadius: 0,
         backgroundColor: 'transparent',
         overflow: 'visible',
@@ -358,7 +363,6 @@ const styles = StyleSheet.create((theme) => ({
     },
     previewFeed: {
         paddingHorizontal: 0,
-        paddingBottom: 0,
     },
     previewRow: {
     },
@@ -372,7 +376,7 @@ const styles = StyleSheet.create((theme) => ({
         paddingBottom: 6,
     },
     bodyCards: {},
-    bodyFeed: { paddingBottom: 0 },
+    bodyFeed: {},
     toolRow: {
     },
     toolRowCards: {

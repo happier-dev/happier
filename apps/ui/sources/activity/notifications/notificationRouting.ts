@@ -1,4 +1,4 @@
-import { isLoopbackHostname, PUSH_NOTIFICATION_ACTION_IDS } from '@happier-dev/protocol';
+import { isLoopbackHostname, PUSH_NOTIFICATION_ACTION_IDS, isNotificationQuestionAnswerAction, readNotificationQuestionAnswer } from '@happier-dev/protocol';
 
 import { canonicalizeServerUrl as normalizeServerUrl } from '@/sync/domains/server/url/serverUrlCanonical';
 import { coerceRelativeRoute } from '@/utils/path/routeUtils';
@@ -101,11 +101,16 @@ export type ParsedNotificationTap = Readonly<{
     serverUrl: string | null;
     accountId?: string | null;
     permissionAction: Readonly<{ action: 'allow' | 'deny'; sessionId: string; requestId: string; occurrenceId?: string }> | null;
+    questionAction?: Readonly<{ sessionId: string; requestId: string; occurrenceId: string; answers: Readonly<Record<string, readonly string[]>> }> | null;
 }>;
 
 export function isNotificationPermissionAction(parsed: ParsedNotificationTap): boolean {
     return parsed.actionIdentifier === PUSH_NOTIFICATION_ACTION_IDS.permissionAllowV1
         || parsed.actionIdentifier === PUSH_NOTIFICATION_ACTION_IDS.permissionDenyV1;
+}
+
+export function isNotificationExecutionAction(parsed: ParsedNotificationTap): boolean {
+    return isNotificationPermissionAction(parsed) || parsed.questionAction != null;
 }
 
 export function parseNotificationTap(params: Readonly<{
@@ -121,8 +126,9 @@ export function parseNotificationTap(params: Readonly<{
                 ? ('deny' as const)
                 : null;
 
-    const isOpenAction = isDefaultTap || actionIdentifier === PUSH_NOTIFICATION_ACTION_IDS.userActionOpenV1;
-    const isKnownActionIdentifier = isOpenAction || permissionAction !== null;
+    const isQuestionAction = isNotificationQuestionAnswerAction(actionIdentifier);
+    let isOpenAction = isDefaultTap || actionIdentifier === PUSH_NOTIFICATION_ACTION_IDS.userActionOpenV1;
+    const isKnownActionIdentifier = isOpenAction || permissionAction !== null || isQuestionAction;
     if (!isKnownActionIdentifier) return null;
 
     const data = readNotificationData({ response: params.response });
@@ -132,6 +138,14 @@ export function parseNotificationTap(params: Readonly<{
     const sessionId = readSessionIdFromNotificationData(data);
     const requestId = readRequestIdFromNotificationData(data);
     const occurrenceId = isRecord(data) && typeof data.occurrenceId === 'string' ? data.occurrenceId.trim() : '';
+    const accountId = isRecord(data) && typeof data.accountId === 'string' ? data.accountId.trim() : null;
+    const answers = isQuestionAction && isRecord(data)
+        ? readNotificationQuestionAnswer(data.questionAnswerV1, actionIdentifier, isRecord(params.response) ? params.response.userText : undefined)
+        : null;
+    const questionAction = answers && sessionId && requestId && occurrenceId && accountId
+        ? { sessionId, requestId, occurrenceId, answers } : null;
+    // Unsupported or incomplete question payloads retain the existing open-session path.
+    if (isQuestionAction && !questionAction) isOpenAction = true;
     const resolvedPermissionAction =
         permissionAction && sessionId && requestId
             ? { action: permissionAction, sessionId, requestId, ...(occurrenceId ? { occurrenceId } : {}) }
@@ -148,7 +162,8 @@ export function parseNotificationTap(params: Readonly<{
         route,
         routeSessionId,
         serverUrl,
-        accountId: isRecord(data) && typeof data.accountId === 'string' ? data.accountId.trim() : null,
+        accountId,
         permissionAction: resolvedPermissionAction,
+        ...(isQuestionAction ? { questionAction } : {}),
     };
 }

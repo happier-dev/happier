@@ -1,8 +1,10 @@
 import { randomUUID } from 'node:crypto';
 
 import {
+  parseSessionRuntimeActivityProjectionFields,
   SessionRuntimeIssueV1Schema,
   type PrimaryTurnStatusV1,
+  type SessionRuntimeActivityState,
   type SessionRuntimeIssueV1,
 } from '@happier-dev/protocol';
 
@@ -359,6 +361,10 @@ export type SessionV2 = {
   pendingPermissionRequestCount?: number;
   pendingUserActionRequestCount?: number;
   pendingRequestObservedAt?: number | null;
+  runtimeActivityState?: SessionRuntimeActivityState;
+  runtimeActivityActiveCount?: number;
+  runtimeActivityObservedAt?: number | null;
+  runtimeActivityRevision?: number;
   latestTurnStatus: PrimaryTurnStatusV1 | null;
   lastRuntimeIssue: SessionRuntimeIssueV1 | null;
 };
@@ -389,6 +395,10 @@ function parseSessionV2Common(value: unknown, context: string): SessionV2 {
   const pendingRequestObservedAt = value.pendingRequestObservedAt;
   const latestTurnStatus = parseLatestTurnStatus(value.latestTurnStatus, context);
   const lastRuntimeIssue = parseLastRuntimeIssue(value.lastRuntimeIssue, context);
+  const runtimeActivity = parseSessionRuntimeActivityProjectionFields(value);
+  if (runtimeActivity.kind === 'invalid') {
+    throw new Error(`Invalid v2 session runtime activity projection (${context})`);
+  }
 
   if (typeof id !== 'string' || id.length === 0) throw new Error(`Invalid v2 session id (${context})`);
   if (typeof seq !== 'number' || !Number.isFinite(seq)) throw new Error(`Invalid v2 session seq (${context})`);
@@ -454,6 +464,12 @@ function parseSessionV2Common(value: unknown, context: string): SessionV2 {
     ...(typeof pendingPermissionRequestCount === 'number' ? { pendingPermissionRequestCount } : {}),
     ...(typeof pendingUserActionRequestCount === 'number' ? { pendingUserActionRequestCount } : {}),
     ...(typeof pendingRequestObservedAt === 'number' || pendingRequestObservedAt === null ? { pendingRequestObservedAt } : {}),
+    ...(runtimeActivity.kind === 'valid' ? {
+      runtimeActivityState: runtimeActivity.projection.state,
+      runtimeActivityActiveCount: runtimeActivity.projection.activeCount,
+      runtimeActivityObservedAt: runtimeActivity.projection.observedAt,
+      runtimeActivityRevision: runtimeActivity.projection.revision,
+    } : {}),
     latestTurnStatus,
     lastRuntimeIssue,
   };

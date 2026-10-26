@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { buildConnectedServiceCredentialRecord, V2SessionRecordSchema, type SessionRuntimeIssueV1, type SessionUsageLimitRecoveryV1 } from '@happier-dev/protocol';
+import { buildConnectedServiceCredentialRecord, buildUsageLimitIssueFingerprint, V2SessionRecordSchema, type SessionRuntimeIssueV1, type SessionUsageLimitRecoveryV1 } from '@happier-dev/protocol';
 import { createPiUsageLimitRecoveryControlAdapter } from '@/backends/pi/connectedServices/piUsageLimitRecoveryControlAdapter';
 import { createOpenCodeUsageLimitRecoveryControlAdapter } from '@/backends/opencode/connectedServices/openCodeUsageLimitRecoveryControlAdapter';
 import type { Credentials } from '@/persistence';
@@ -60,6 +60,20 @@ describe('continueSessionAfterUsageLimitReset', () => {
     vi.resetAllMocks();
     transport.enqueuePendingQueueV2MessageViaHttp.mockResolvedValue({ didWrite: true, terminal: false });
     transport.callSessionRpc.mockResolvedValue({ ok: true });
+  });
+
+  it('continues the same untimed failure after a provider probe supplies its due reset', async () => {
+    const untimedIssue: SessionRuntimeIssueV1 = { ...issue,
+      usageLimit: { ...issue.usageLimit!, resetAtMs: null } };
+    const input = fixture({ lastRuntimeIssue: untimedIssue });
+    const enriched: SessionUsageLimitRecoveryV1 = { ...recovery, runtimeAuthRecoveryAttemptId: undefined,
+      issueFingerprint: buildUsageLimitIssueFingerprint(untimedIssue), resetAtMs: 200, nextCheckAtMs: 200 };
+    const metadata = { ...input.metadata, sessionUsageLimitRecoveryV1: enriched };
+    input.rawSession.metadata = JSON.stringify(metadata);
+
+    expect(await continueSessionAfterUsageLimitReset({ ...input, metadata, recovery: enriched }))
+      .toEqual({ status: 'continued' });
+    expect(transport.enqueuePendingQueueV2MessageViaHttp).toHaveBeenCalledOnce();
   });
 
   it('uses the exact owner mode while fresh presentation still has off mode', async () => {

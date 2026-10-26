@@ -1,4 +1,7 @@
+import { SESSION_RPC_METHODS } from '@happier-dev/protocol';
 import { describe, expect, it } from 'vitest';
+
+import { createOfflineSessionStub } from '@/api/offline/offlineSessionStub';
 
 import { createProviderEnforcedPermissionHandler } from './createProviderEnforcedPermissionHandler';
 
@@ -49,5 +52,14 @@ describe('createProviderEnforcedPermissionHandler', () => {
     if (!respond) throw new Error('Permission RPC was not registered');
     await respond({ id: 'pending-1', approved: false, decision: 'denied' });
     await expect(pending).resolves.toEqual({ decision: 'denied' });
+  });
+
+  it('binds permission responses on the offline session stub a provider starts with', () => {
+    // Providers start on this stub when the server is unreachable and swap sessions later.
+    const session = createOfflineSessionStub('permission-offline');
+    createProviderEnforcedPermissionHandler({ session, logPrefix: '[TestProvider]' });
+
+    expect(session.rpcHandlerManager.hasHandler(SESSION_RPC_METHODS.SESSION_PERMISSION_RESPOND_LEGACY)).toBe(true);
+    expect(session.rpcHandlerManager.hasHandler(SESSION_RPC_METHODS.SESSION_STRUCTURED_QUESTION_RESPOND_V1)).toBe(true);
   });
 });

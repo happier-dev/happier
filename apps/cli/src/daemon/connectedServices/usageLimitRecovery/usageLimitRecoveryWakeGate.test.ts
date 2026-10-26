@@ -65,7 +65,7 @@ describe('createUsageLimitRecoveryWakeGate', () => {
     await vi.advanceTimersByTimeAsync(1);
 
     expect(recover).toHaveBeenCalledTimes(1);
-    expect(scheduler.read('session-1')?.status).toBe('cancelled');
+    expect(scheduler.read('session-1')?.status).toBe('paused');
     expect(scheduler.read('session-2')).toMatchObject({
       status: 'waiting',
       attemptCount: 0,

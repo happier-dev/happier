@@ -4633,22 +4633,27 @@
     redux-thunk "^3.1.0"
     reselect "^5.1.0"
 
-"@revenuecat/purchases-js-hybrid-mappings@17.29.0":
-  version "17.29.0"
-  resolved "https://registry.npmjs.org/@revenuecat/purchases-js-hybrid-mappings/-/purchases-js-hybrid-mappings-17.29.0.tgz"
-  integrity sha512-5EaggRPgF2GkhEtpH02RxlrRgfKCR6cX51Ocnv8PB96cdYxLzDBOyfAGJEyI+8JG8x45BP1KZ08OCbo7DC+bcw==
+"@revenuecat/purchases-js-hybrid-mappings@19.14.1":
+  version "19.14.1"
+  resolved "https://registry.yarnpkg.com/@revenuecat/purchases-js-hybrid-mappings/-/purchases-js-hybrid-mappings-19.14.1.tgz#500c55a8dc64f86907a373832aa8bde18ba02963"
+  integrity sha512-Sj/sqXuQu0D3GKQQIhL8KQtAqpMUBGJjeXACrgzbvZBGbDu4AKPrnix0kwTOlGDoS4Cw5NZHJEnNU9D8jOxBmQ==
   dependencies:
-    "@revenuecat/purchases-js" "1.24.3"
+    "@revenuecat/purchases-js" "1.71.0"
 
-"@revenuecat/purchases-js@1.24.3", "@revenuecat/purchases-js@^1.11.1":
+"@revenuecat/purchases-js@1.71.0":
+  version "1.71.0"
+  resolved "https://registry.yarnpkg.com/@revenuecat/purchases-js/-/purchases-js-1.71.0.tgz#bb3a4b7dba46da3e02ede945ed8b45fe177d66b4"
+  integrity sha512-FC118I8NvBh1gvFCw/JtL6oRoZwXws4TnfGtUY7YFPZIA39+kTpmWkGxQwSwn9XXqXPtBVD1b3Hvs7d+OgBpHQ==
+
+"@revenuecat/purchases-js@^1.11.1":
   version "1.24.3"
   resolved "https://registry.npmjs.org/@revenuecat/purchases-js/-/purchases-js-1.24.3.tgz"
   integrity sha512-shkbf0zBG23rabEMDnHh8RZt6dqTey0eU1YJyRLTAB0Mr7ZqfiND/8h8K9PQ8SNmwgdma+NuuEgRbyk/AeFr2A==
 
-"@revenuecat/purchases-typescript-internal@17.29.0":
-  version "17.29.0"
-  resolved "https://registry.npmjs.org/@revenuecat/purchases-typescript-internal/-/purchases-typescript-internal-17.29.0.tgz"
-  integrity sha512-ZcPlit5aOz3IDUAW1JDIhHUjeVZxqB4hh4loSof4OFdRd3dBYvX+oGHgz4CtKqhxRdAIJOfDTthATTUioWai2Q==
+"@revenuecat/purchases-typescript-internal@19.14.1":
+  version "19.14.1"
+  resolved "https://registry.yarnpkg.com/@revenuecat/purchases-typescript-internal/-/purchases-typescript-internal-19.14.1.tgz#f3e633db143fd14df0757bbada3fe5e5c621692a"
+  integrity sha512-knMoRyyLvIG4+yvPXprjddxLB/Y05Ca7pjrAONNL1/7gaq6ezlVC+/YksK8dr/3LHP6kCbJ1tMF+YD6LW4O63Q==
 
 "@rolldown/pluginutils@1.0.0-beta.27":
   version "1.0.0-beta.27"
@@ -10204,7 +10209,7 @@ expo-system-ui@~6.0.7:
 
 expo-task-manager@~14.0.9:
   version "14.0.9"
-  resolved "https://registry.npmjs.org/expo-task-manager/-/expo-task-manager-14.0.9.tgz#7e410711cf3fd0c465a191916d699c6560c93192"
+  resolved "https://registry.yarnpkg.com/expo-task-manager/-/expo-task-manager-14.0.9.tgz#7e410711cf3fd0c465a191916d699c6560c93192"
   integrity sha512-GKWtXrkedr4XChHfTm5IyTcSfMtCPxzx89y4CMVqKfyfROATibrE/8UI5j7UC/pUOfFoYlQvulQEvECMreYuUA==
   dependencies:
     unimodules-app-loader "~6.0.8"
@@ -15582,20 +15587,20 @@ react-native-nitro-modules@0.37.1:
   resolved "https://registry.yarnpkg.com/react-native-nitro-modules/-/react-native-nitro-modules-0.37.1.tgz#368bda3038ebe796b219d98e0a364f9166e2cc7c"
   integrity sha512-KpW6EQVQ/bfegpCGxN9Be+ndvsfj56t4IESEvCASu9gWpJa/NDfHpIeIwCOvZQ3eXmLEj6YD4wCLqcC1FJPr2w==
 
-react-native-purchases-ui@^9.4.2:
-  version "9.7.2"
-  resolved "https://registry.npmjs.org/react-native-purchases-ui/-/react-native-purchases-ui-9.7.2.tgz"
-  integrity sha512-7eweawwqWpPpM0PxxidH029wzvZEd7ycSOmEH3a4V8U9SYzPSbZZQ75Jc43i+VafbIxcMReV6KDX3oJNzihKNw==
+react-native-purchases-ui@10.15.1:
+  version "10.15.1"
+  resolved "https://registry.yarnpkg.com/react-native-purchases-ui/-/react-native-purchases-ui-10.15.1.tgz#bb63bbd7f958f5da90ae51ae2d14184b67b5a956"
+  integrity sha512-3ggic2R6UD7c4ACHNJlYFtqRfQFHpHXxifvHWW9fnjzVgXKMKVTAZHUgFvGbFSlpPjPWExq4H66HkIYKj9/ZRQ==
   dependencies:
-    "@revenuecat/purchases-typescript-internal" "17.29.0"
+    "@revenuecat/purchases-typescript-internal" "19.14.1"
 
-react-native-purchases@^9.4.2:
-  version "9.7.2"
-  resolved "https://registry.npmjs.org/react-native-purchases/-/react-native-purchases-9.7.2.tgz"
-  integrity sha512-vOHDhPlK/XDS+o0VZzKoXoRPdAN6/E/m2bnnp3PKWxxVX4aFcytlh3tY/KiWpHlQPCraWcZay+oF+E4zGgxkZw==
+react-native-purchases@10.15.1:
+  version "10.15.1"
+  resolved "https://registry.yarnpkg.com/react-native-purchases/-/react-native-purchases-10.15.1.tgz#3704876497871a25a44eac555fbffea58f7c3859"
+  integrity sha512-ooyXWMdC1/BJnokE+Pro+6yWInxzkQbFN4lR3EOvkSPhYh3H/j0Esk/LRnQApCqzkIbWEpfUhPnQdq/CMGofHA==
   dependencies:
-    "@revenuecat/purchases-js-hybrid-mappings" "17.29.0"
-    "@revenuecat/purchases-typescript-internal" "17.29.0"
+    "@revenuecat/purchases-js-hybrid-mappings" "19.14.1"
+    "@revenuecat/purchases-typescript-internal" "19.14.1"
 
 react-native-quick-base64@^2.2.1:
   version "2.2.2"
@@ -18055,7 +18060,7 @@ unified@^11.0.0, unified@^11.0.5:
 
 unimodules-app-loader@~6.0.8:
   version "6.0.8"
-  resolved "https://registry.npmjs.org/unimodules-app-loader/-/unimodules-app-loader-6.0.8.tgz#81c868b726e24b7e37d708fe0117e1869c721cdb"
+  resolved "https://registry.yarnpkg.com/unimodules-app-loader/-/unimodules-app-loader-6.0.8.tgz#81c868b726e24b7e37d708fe0117e1869c721cdb"
   integrity sha512-fqS8QwT/MC/HAmw1NKCHdzsPA6WaLm0dNmoC5Pz6lL+cDGYeYCNdHMO9fy08aL2ZD7cVkNM0pSR/AoNRe+rslA==
 
 unique-string@~2.0.0:

@@ -11,6 +11,7 @@ import {
     cliDetectionState,
     clearNewSessionDraftMock,
     computeNewSessionInputMaxHeightMock,
+    enableLiveSessionDraftSubscriptions,
     featureFlags,
     flushInteractionQueue,
     loadNewSessionDraftMock,
@@ -62,6 +63,7 @@ describe('useNewSessionScreenModel (draft hydration — core)', () => {
         const { deleteSessionDraft, getSessionDraftSnapshot } = await import('@/sync/ops/sessionDrafts/sessionDraftRepository');
         const { useNewSessionScreenModel } = await useNewSessionScreenModelModulePromise;
         const onDraftRemoved = vi.fn();
+        enableLiveSessionDraftSubscriptions();
         const hook = await renderHook(() => useNewSessionScreenModel({ draftId: TEST_DRAFT_ID, onDraftRemoved }));
         const model = hook.getCurrent();
         if (model.variant !== 'simple') throw new Error('Expected the simple composer');

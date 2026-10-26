@@ -145,6 +145,7 @@ import type {
     AgentInputStatusBadge as AgentInputStatusBadgeDescriptor,
 } from './agentInputContracts';
 import type { AgentInputSendIntentOptions, AgentInputSendOptions } from './agentInputSendOptions';
+import type { MessageSendMode } from '@/sync/domains/session/control/submitMode';
 import { APPLIED_RUNTIME_MARKER_ICON, resolveAppliedRuntimeStatus } from './appliedRuntimeMarker';
 import { resolveArmedComposerContinuation } from './components/agentContinuationSubmitPresentation';
 import { AgentInputStatusBadge } from './status/AgentInputStatusBadge';
@@ -166,6 +167,7 @@ import {
     resolveComposerEnterAction,
     resolveComposerEscapeAction,
     resolveComposerSendShortcutAction,
+    buildComposerSendShortcutLabels,
     shouldRunComposerModeCycleShortcut,
 } from '@/keyboard/composer';
 import { useKeyboardShortcutHandlers } from '@/keyboard/KeyboardShortcutProvider';
@@ -253,6 +255,9 @@ interface AgentInputProps {
     onChangeText: (text: string) => void;
     sessionId?: string;
     onSend: (options?: AgentInputSendOptions) => void;
+    sendMenuModes?: readonly MessageSendMode[];
+    alternateSendMode?: MessageSendMode;
+    canSendNextQueued?: boolean;
     submitAccessibilityLabel?: string;
     sendIcon?: React.ReactNode;
     onMicPress?: () => void;
@@ -1234,6 +1239,11 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     const liveTextStatusRef = React.useRef(liveTextStatus);
     const hasText = liveTextStatus.hasText;
     const hasSendableContent = hasText || props.hasSendableAttachments === true;
+    const sendMenuShortcuts = React.useMemo(() => buildComposerSendShortcutLabels({
+        alternateMode: props.alternateSendMode ?? 'agent_queue', keyboardShortcutsV2Enabled,
+        keyboardSingleKeyShortcutsEnabled, keyboardShortcutOverridesV1, keyboardShortcutDisabledCommandIdsV1,
+        platformOS: Platform.OS,
+    }), [props.alternateSendMode, keyboardShortcutsV2Enabled, keyboardSingleKeyShortcutsEnabled, keyboardShortcutOverridesV1, keyboardShortcutDisabledCommandIdsV1]);
     const micPressHandler = voiceEnabled ? props.onMicPress : undefined;
     const micActive = voiceEnabled && props.isMicActive === true;
     const [fileDragActive, setFileDragActive] = React.useState(false);
@@ -2752,17 +2762,20 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
             keyboardShortcutOverridesV1,
             keyboardShortcutDisabledCommandIdsV1,
             hasSendableInput,
+            canSendNextQueued: props.canSendNextQueued,
             sendActionDisabled,
             platformOS: Platform.OS,
         });
-        if (sendShortcutAction === 'sendImmediate') {
-            // Explicit immediate-send bypasses autocomplete.
-            handleSend({ forceImmediate: true });
-            return true;
-        }
-        if (sendShortcutAction === 'sendPending') {
-            // Explicit pending-send bypasses steering so the message can be reviewed/reordered.
-            handleSend({ deliveryIntent: 'server_pending' });
+        if (sendShortcutAction) {
+            const deliveryIntent = sendShortcutAction === 'sendInterrupt' ? 'interrupt'
+                : sendShortcutAction === 'sendPending' ? 'server_pending'
+                    : hasSendableInput ? (props.alternateSendMode ?? 'agent_queue') : 'agent_queue';
+            if (!hasSendableInput) {
+                if (deliveryIntent === 'server_pending') return false;
+                props.onSend({ deliveryIntent, sendNextQueued: true });
+            } else {
+                handleSend({ deliveryIntent });
+            }
             return true;
         }
 
@@ -2845,7 +2858,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
             }
         }
         return false; // Key was not handled
-    }, [handleCommandMenuKey, props.hasSendableAttachments, handleSend, props.onPermissionModeChange, keyboardShortcutsV2Enabled, keyboardSingleKeyShortcutsEnabled, keyboardShortcutOverridesV1, keyboardShortcutDisabledCommandIdsV1, permissionModeOrder, effectivePermissionPolicy.effectiveMode, messageHistory, applyHistoryInputText, sendActionDisabled, isHistoryBrowsing, hasRetainedHistorySession, enterToSendEnabled, canStopFromComposer, isAborting, runAbortShortcutAction]);
+    }, [handleCommandMenuKey, props.hasSendableAttachments, props.canSendNextQueued, props.alternateSendMode, props.onSend, handleSend, props.onPermissionModeChange, keyboardShortcutsV2Enabled, keyboardSingleKeyShortcutsEnabled, keyboardShortcutOverridesV1, keyboardShortcutDisabledCommandIdsV1, permissionModeOrder, effectivePermissionPolicy.effectiveMode, messageHistory, applyHistoryInputText, sendActionDisabled, isHistoryBrowsing, hasRetainedHistorySession, enterToSendEnabled, canStopFromComposer, isAborting, runAbortShortcutAction]);
 
     const handleSubmitEditing = React.useCallback(() => {
         if (Platform.OS === 'web') return;
@@ -3076,6 +3089,8 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                         micActive={micActive}
                         armedContinuationTarget={props.armedContinuationTarget ?? null}
                         onSend={handleSend}
+                        sendMenuModes={props.sendMenuModes}
+                        sendMenuShortcuts={sendMenuShortcuts}
                         onStop={handleAbortPress}
                     />
                 </View>,

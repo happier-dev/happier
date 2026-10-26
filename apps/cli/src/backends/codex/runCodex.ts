@@ -36,7 +36,8 @@ import { applyRunnerMcpSessionContext } from '@/mcp/runtime/applyRunnerMcpSessio
 import { MessageBuffer } from "@/ui/ink/messageBuffer";
 import { trimIdent } from "@/utils/trimIdent";
 import { readNonBlankOpaqueIdentifier } from '@/utils/opaqueIdentifiers';
-import { readPendingLocalId } from '@happier-dev/protocol';
+import { readPendingLocalId, resolveCodexReasoningSummaryOverride } from '@happier-dev/protocol';
+import { appendCodexCliConfigOverridesArgs } from './utils/appendCodexCliConfigOverridesArgs';
 import { readNewestSessionModelsMetadataStateV1 } from '@happier-dev/agents';
 import type { CodexSessionConfig } from './types';
 import { registerKillSessionHandler } from '@/rpc/handlers/killSession';
@@ -110,7 +111,6 @@ import {
     isCodexAppServerInvalidRequestForMethodError,
     isCodexAppServerNoActiveTurnToSteerError,
 } from './appServer/appServerCompatibility';
-import { rememberCodexUsageLimitRecoveryPreference } from './appServer/rememberCodexUsageLimitRecoveryPreference';
 import { resolveConfiguredCodexHome } from './utils/resolveConfiguredCodexHome';
 import { buildCodexAppServerConfigOverrides } from './appServer/buildCodexAppServerConfigOverrides';
 import { reconcileCodexAppServerOverridesBeforeTurn } from './appServer/reconcileCodexAppServerOverridesBeforeTurn';
@@ -408,6 +408,8 @@ export async function runCodex(opts: {
     const explicitPermissionMode = opts.permissionMode;
     const hasResumeArg = typeof opts.resume === 'string' && opts.resume.trim().length > 0;
     const loadedAccountSettings = opts.accountSettingsContext?.settings ?? null;
+    const reasoningSummary = resolveCodexReasoningSummaryOverride(loadedAccountSettings?.codexReasoningSummaries);
+    const codexConfigOverrides = reasoningSummary === undefined ? [] : [`model_reasoning_summary=${JSON.stringify(reasoningSummary)}`];
     // Resume suppresses account defaults only for permission seeding. MCP selection is
     // persisted session configuration and must remain available when reattaching.
     const accountSettings = hasResumeArg ? null : loadedAccountSettings;
@@ -662,6 +664,7 @@ export async function runCodex(opts: {
                     permissionMode: initialPermissionMode,
                     resumeId: resumeIdFromArgs,
                     codexArgs: opts.codexArgs ?? [],
+                    configOverrides: codexConfigOverrides,
                 });
             },
         };
@@ -1344,6 +1347,7 @@ export async function runCodex(opts: {
                 permissionMode: initialPermissionMode,
                 resumeId: resumeIdFromArgs,
                 codexArgs: opts.codexArgs ?? [],
+                configOverrides: codexConfigOverrides,
             }));
         if (localResult.type === 'exit') {
             await cleanupRunResourcesOnce();
@@ -1732,7 +1736,10 @@ export async function runCodex(opts: {
     mcpServers = happierBridge.mcpServers;
     if (useCodexAppServer) {
         codexAppServerConfigOverrides = buildCodexAppServerConfigOverrides(mcpServers, {
-            codexArgs: opts.codexArgs,
+            codexArgs: appendCodexCliConfigOverridesArgs(
+                { command: 'codex', args: opts.codexArgs ?? [] },
+                codexConfigOverrides,
+            ).args,
             happierSessionId: codexProviderProcessEnv.HAPPIER_SESSION_ID,
             happierMcpToolCallTimeoutMs: configuration.codexHappierMcpToolCallTimeoutMs,
             processEnv: codexAppServerProcessEnv,
@@ -1882,6 +1889,7 @@ export async function runCodex(opts: {
     if (useCodexAcp) {
         codexAcpRuntime = createCodexAcpRuntime({
             directory,
+            reasoningSummary,
             processEnv: codexProviderProcessEnv,
             session,
             messageBuffer,
@@ -1917,6 +1925,7 @@ export async function runCodex(opts: {
         const initialConnectedServiceRuntimeIdentity = resolveCodexInitialConnectedServiceRuntimeIdentity(codexAppServerProcessEnv, session);
         codexAppServerRuntime = createCodexAppServerRuntime({
             directory,
+            reasoningSummary,
             activeServerDir: configuration.activeServerDir,
             daemonStatePath: configuration.daemonStateFile,
             processEnv: codexAppServerProcessEnv,
@@ -2033,11 +2042,7 @@ export async function runCodex(opts: {
                 }),
             ...(opts.credentials
                 ? {
-                    rememberUsageLimitRecoveryPreference: async () => {
-                        await rememberCodexUsageLimitRecoveryPreference({
-                            credentials: opts.credentials as Credentials,
-                        });
-                    },
+
                 }
                 : {}),
         });
@@ -2315,6 +2320,7 @@ export async function runCodex(opts: {
                     permissionMode: currentPermissionMode ?? initialPermissionMode,
                     resumeId: storedSessionIdForResume,
                     codexArgs: opts.codexArgs ?? [],
+                    configOverrides: codexConfigOverrides,
                     formatError: formatErrorForUi,
                     launchLocal: codexLocalLauncher,
                 });
@@ -2914,6 +2920,7 @@ export async function runCodex(opts: {
                         )
                         : undefined;
                     const startConfig: CodexSessionConfig = buildCodexMcpStartConfigForMessage({
+                        reasoningSummary,
                         message: providerPromptText,
                         first,
                         sandbox: mcpPolicy.sandbox,
@@ -3003,7 +3010,11 @@ export async function runCodex(opts: {
                 } else {
                     let runtimeAuthClassification = readRuntimeAuthClassification(error);
                     let runtimeAuthRecoveryStatusEmitted = false;
-                    if (runtimeAuthClassification) {
+                    if (runtimeAuthClassification?.kind === 'usage_limit' && !runtimeAuthClassification.profileId && !runtimeAuthClassification.groupId) {
+                        // Native quota waits belong to the shared Session recovery owner.
+                        // Connected Accounts has no authentication selection to repair.
+                        runtimeAuthRecoveryStatusEmitted = true;
+                    } else if (runtimeAuthClassification) {
                         const appServerTerminalOwnsRecovery = useCodexAppServer
                             && isCodexAppServerTerminalOwnedGroupRecoveryClassification(runtimeAuthClassification);
                         if (appServerTerminalOwnsRecovery) {

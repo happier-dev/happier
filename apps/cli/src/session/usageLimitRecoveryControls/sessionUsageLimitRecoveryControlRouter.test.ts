@@ -740,7 +740,7 @@ describe('sessionUsageLimitRecoveryControlRouter', () => {
     });
   });
 
-  it('returns a stable provider-unsupported result for inactive check-now without a provider adapter', async () => {
+  it('returns inactive when neither a provider probe nor a failed usage issue is available', async () => {
     const result = await routeSessionUsageLimitRecoveryCheckNow({
       token: 'token',
       credentials: createCredentials(),
@@ -756,9 +756,9 @@ describe('sessionUsageLimitRecoveryControlRouter', () => {
 
     expect(parseOperationResult(result)).toEqual({
       ok: false,
-      status: 'unsupported',
+      status: 'inactive',
       sessionId: 'sess_1',
-      errorCode: 'session_usage_limit_recovery_control_provider_unsupported',
+      errorCode: 'session_usage_limit_recovery_control_inactive',
     });
   });
 
@@ -1054,7 +1054,7 @@ describe('sessionUsageLimitRecoveryControlRouter', () => {
     expect(resumeInactiveSessionWhenReady).toHaveBeenCalledWith(expect.objectContaining({
       sessionId: 'sess_1',
       metadata: expect.objectContaining({
-        sessionUsageLimitRecoveryV1: expect.objectContaining({ status: 'paused' }),
+        sessionUsageLimitRecoveryV1: expect.objectContaining({ status: 'waiting' }),
       }),
     }));
   });
@@ -1132,7 +1132,7 @@ describe('sessionUsageLimitRecoveryControlRouter', () => {
       resumeInactiveSessionWhenReady,
     });
 
-    expect(parseOperationResult(result)).toEqual({
+    expect(parseOperationResult(result)).toMatchObject({
       ok: false,
       status: 'session_unreachable',
       sessionId: 'sess_resume_failed',

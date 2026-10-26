@@ -44,9 +44,10 @@ type NotificationBackgroundTaskBootstrap = {
 };
 try {
     const platform = require('react-native') as { Platform?: { OS?: string } };
-    if (platform.Platform?.OS === 'android') {
+    const platformOS = platform.Platform?.OS;
+    if (platformOS === 'android' || platformOS === 'ios') {
         const { initializeNotificationBackgroundTask } = require('./sources/activity/notifications/runtime/notificationBackgroundTaskState') as NotificationBackgroundTaskBootstrap;
-        void initializeNotificationBackgroundTask('android', () =>
+        void initializeNotificationBackgroundTask(platformOS, () =>
             require('./sources/activity/notifications/runtime/notificationBackgroundTask') as NotificationBackgroundTaskModule);
     }
 } catch {

@@ -5,6 +5,8 @@ import { Typography } from '@/constants/Typography';
 import type { DiscardedPendingMessage, PendingMessage } from '@/sync/domains/state/storageTypes';
 import { useSession, useSetting } from '@/sync/domains/state/storage';
 import { sync } from '@/sync/sync';
+import { canSteerUserMessageNow, supportsInFlightSteerUserMessage } from '@/sync/domains/session/control/submitMode';
+import { getPendingMaterializingKey, getPendingMessageSendPresentation, sendPendingMessageWithIntent } from './pendingMessageSendActions';
 import { Modal } from '@/modal';
 import { MarkdownView } from '@/components/markdown/MarkdownView';
 import { useLayoutMaxWidth } from '@/components/ui/layout/layout';
@@ -25,6 +27,8 @@ import { deriveSessionInputReadinessState, type SessionInputReadinessState } fro
 import { deriveSessionRuntimePresentationState } from '@/sync/domains/session/attention/deriveSessionRuntimePresentationState';
 import {
     getPendingMessageVisualState,
+    canUseDirectPendingDeliveryActions,
+    isAcceptedLocalPendingProjection,
     isPendingMessageProviderDeliveryInFlight,
     isPendingMessageProviderEffectPossible,
     paintsPendingMessageActionRow,
@@ -71,10 +75,6 @@ async function copyPendingMessageText(message: PendingMessage | DiscardedPending
     }
 }
 
-function getPendingMaterializingKey(message: Pick<PendingMessage, 'id' | 'localId'>): string {
-    return typeof message.localId === 'string' && message.localId.length > 0 ? message.localId : message.id;
-}
-
 type PendingMessageMenuPressAnchor = Extract<PopoverAnchor, { kind: 'rect' }>;
 
 function resolvePendingMessageMenuPressAnchor(event: unknown): PendingMessageMenuPressAnchor | null {
@@ -90,10 +90,6 @@ function resolvePendingMessageMenuPressAnchor(event: unknown): PendingMessageMen
     };
 }
 
-function isAcceptedLocalPendingProjection(message: PendingMessage): boolean {
-    return message.deliveryStatus === 'accepted' && message.source !== 'server_pending';
-}
-
 function isActivePendingFifoRow(message: PendingMessage): boolean {
     return message.source === 'server_pending' || message.deliveryStatus === 'accepted';
 }
@@ -102,35 +98,6 @@ function hasPendingDeliveryResolutionState(visualState: PendingMessageVisualStat
     return visualState.kind === 'blocked'
         || visualState.kind === 'delivering'
         || visualState.kind === 'delivery_uncertain';
-}
-
-function canUseDirectPendingDeliveryActions(message: PendingMessage, hasDecryptFailure: boolean): boolean {
-    // Send/Steer mutate a server Pending row; local delivery remains owned by its sender.
-    return message.source !== 'local_outbound'
-        && !isAcceptedLocalPendingProjection(message)
-        && !hasDecryptFailure;
-}
-
-function supportsInFlightSteerForPendingActions(session: ReturnType<typeof useSession>): boolean {
-    const capabilities = session?.agentState?.capabilities;
-    return Boolean(
-        session?.presence === 'online'
-        && (session?.agentStateVersion ?? 0) > 0
-        && session?.agentState?.controlledByUser !== true
-        && (capabilities?.inFlightSteerSupported ?? capabilities?.inFlightSteer) === true
-    );
-}
-
-function canSteerNowForPendingActions(
-    session: ReturnType<typeof useSession>,
-    inputReadiness: SessionInputReadinessState,
-): boolean {
-    const capabilities = session?.agentState?.capabilities;
-    return Boolean(
-        inputReadiness.disposition === 'steer_available'
-        && supportsInFlightSteerForPendingActions(session)
-        && (capabilities?.inFlightSteerAvailable ?? capabilities?.inFlightSteer) === true
-    );
 }
 
 export type PendingMessageEditRequest = Readonly<{
@@ -230,7 +197,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
             session?.agentState?.capabilities?.inFlightSteerAvailable
             ?? session?.agentState?.capabilities?.inFlightSteer,
     }, Date.now());
-    const canSteerNow = canSteerNowForPendingActions(session, inputReadiness);
+    const canSteerNow = canSteerUserMessageNow({ session });
     const pendingQueueDeliveryTiming = useSetting('sessionPendingQueueDeliveryTiming');
 
     // Join the canonical runtime working state into the pending presentation so a message queued
@@ -249,21 +216,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
         runtimeActivityObservedAt: session?.runtimeActivityObservedAt,
         runtimeActivityRevision: session?.runtimeActivityRevision,
     }, Date.now());
-    const sendNowActionLabel = canSteerNow
-        ? t('session.pendingMessages.actions.sendNowInterrupt')
-        : sessionRuntimePresentation.backgroundActive
-            ? t('session.pendingMessages.actions.sendToAgentNow')
-            : t('session.pendingMessages.actions.sendNow');
-    const sendNowConfirmationTitle = canSteerNow
-        ? t('session.pendingMessages.sendConfirm.interruptTitle')
-        : sessionRuntimePresentation.backgroundActive
-            ? t('session.pendingMessages.sendConfirm.backgroundTitle')
-            : t('session.pendingMessages.sendConfirm.title');
-    const sendNowConfirmationBody = inputReadiness.disposition === 'offline'
-        ? t('session.pendingMessages.sendConfirm.resumeBody')
-        : sessionRuntimePresentation.backgroundActive
-            ? t('session.pendingMessages.sendConfirm.backgroundBody')
-            : t('session.pendingMessages.sendConfirm.body');
+    const { sendNowActionLabel, sendNowConfirmationTitle, sendNowConfirmationBody } = getPendingMessageSendPresentation(session);
     const sessionRuntimeInput = React.useMemo(() => ({
         isWorking: sessionRuntimePresentation.working,
         runtimeReachable: session?.active === true && session?.presence === 'online',
@@ -563,69 +516,13 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
         });
     }, [pendingInputInterruptAndRun, runPendingDeliveryAction]);
 
-    const deleteAfterSend = React.useCallback(async (pendingId: string) => {
-        await sync.deletePendingMessage(props.sessionId, pendingId);
-    }, [props.sessionId]);
-
-    const shouldRemoveDurableRowAfterSend = React.useCallback((result: Awaited<ReturnType<typeof sync.sendPendingMessageNow>>) => (
-        result.type === 'committed'
-        && result.persistence === 'provider_direct'
-        && result.providerAcceptancePending !== true
-    ), []);
-
-    // Lane Q (Q5): tapping "Steer now" is already an explicit user action on a specific message —
-    // it executes directly. The not-steerable decision modal (composer affordance) is a separate
-    // mechanism and is unaffected.
-    const handleSteerNow = React.useCallback(async (message: PendingMessage) => {
-        const localId = getPendingMaterializingKey(message);
-        try {
-            setPendingMaterializing(message, true);
-            const result = await sync.sendPendingMessageNow(props.sessionId, {
-                localId,
-                createdAt: message.createdAt,
-                rawRecord: message.rawRecord,
-                text: message.text,
-                displayText: message.displayText,
-                deliveryIntent: 'steer_now',
-            });
-            if (shouldRemoveDurableRowAfterSend(result)) {
-                await deleteAfterSend(message.id);
-            }
-        } catch (e) {
-            Modal.alert(t('common.error'), e instanceof Error ? e.message : t('session.pendingMessages.errors.sendFailed'));
-        } finally {
-            setPendingMaterializing(message, false);
-        }
-    }, [deleteAfterSend, props.sessionId, setPendingMaterializing, shouldRemoveDurableRowAfterSend]);
-
-    const handleSendNow = React.useCallback(async (message: PendingMessage) => {
-        const localId = getPendingMaterializingKey(message);
-        const confirmed = await Modal.confirm(
-            sendNowConfirmationTitle,
-            sendNowConfirmationBody,
-            { confirmText: sendNowActionLabel },
-        );
-        if (!confirmed) return;
-
-        try {
-            setPendingMaterializing(message, true);
-            const result = await sync.sendPendingMessageNow(props.sessionId, {
-                localId,
-                createdAt: message.createdAt,
-                rawRecord: message.rawRecord,
-                text: message.text,
-                displayText: message.displayText,
-                deliveryIntent: 'interrupt_and_send',
-            });
-            if (shouldRemoveDurableRowAfterSend(result)) {
-                await deleteAfterSend(message.id);
-            }
-        } catch (e) {
-            Modal.alert(t('common.error'), e instanceof Error ? e.message : t('session.pendingMessages.errors.sendFailed'));
-        } finally {
-            setPendingMaterializing(message, false);
-        }
-    }, [deleteAfterSend, props.sessionId, sendNowActionLabel, sendNowConfirmationBody, sendNowConfirmationTitle, setPendingMaterializing, shouldRemoveDurableRowAfterSend]);
+    const handlePendingSend = React.useCallback(async (message: PendingMessage, deliveryIntent: 'steer_now' | 'interrupt_and_send') => {
+        await runPendingDeliveryAction(message, () => sendPendingMessageWithIntent({
+            sessionId: props.sessionId, session, message, deliveryIntent,
+        }));
+    }, [props.sessionId, session, runPendingDeliveryAction]);
+    const handleSteerNow = React.useCallback((message: PendingMessage) => handlePendingSend(message, 'steer_now'), [handlePendingSend]);
+    const handleSendNow = React.useCallback((message: PendingMessage) => handlePendingSend(message, 'interrupt_and_send'), [handlePendingSend]);
 
     const handleRequeueDiscarded = React.useCallback(async (pendingId: string) => {
         try {
@@ -650,48 +547,12 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
     }, [props.sessionId]);
 
     // Lane Q (Q5): same direct execution for discarded-message "Steer now".
-    const handleSteerDiscardedNow = React.useCallback(async (message: DiscardedPendingMessage) => {
-        try {
-            const result = await sync.sendPendingMessageNow(props.sessionId, {
-                localId: getPendingMaterializingKey(message),
-                createdAt: message.createdAt,
-                rawRecord: message.rawRecord,
-                text: message.text,
-                displayText: message.displayText,
-                deliveryIntent: 'steer_now',
-            });
-            if (shouldRemoveDurableRowAfterSend(result)) {
-                await sync.deleteDiscardedPendingMessage(props.sessionId, message.id);
-            }
-        } catch (e) {
-            Modal.alert(t('common.error'), e instanceof Error ? e.message : t('session.pendingMessages.errors.sendDiscardedFailed'));
-        }
-    }, [props.sessionId, shouldRemoveDurableRowAfterSend]);
-
-    const handleSendDiscardedNow = React.useCallback(async (message: DiscardedPendingMessage) => {
-        const confirmed = await Modal.confirm(
-            sendNowConfirmationTitle,
-            sendNowConfirmationBody,
-            { confirmText: sendNowActionLabel },
-        );
-        if (!confirmed) return;
-
-        try {
-            const result = await sync.sendPendingMessageNow(props.sessionId, {
-                localId: getPendingMaterializingKey(message),
-                createdAt: message.createdAt,
-                rawRecord: message.rawRecord,
-                text: message.text,
-                displayText: message.displayText,
-                deliveryIntent: 'interrupt_and_send',
-            });
-            if (shouldRemoveDurableRowAfterSend(result)) {
-                await sync.deleteDiscardedPendingMessage(props.sessionId, message.id);
-            }
-        } catch (e) {
-            Modal.alert(t('common.error'), e instanceof Error ? e.message : t('session.pendingMessages.errors.sendDiscardedFailed'));
-        }
-    }, [props.sessionId, sendNowActionLabel, sendNowConfirmationBody, sendNowConfirmationTitle, shouldRemoveDurableRowAfterSend]);
+    const handleSteerDiscardedNow = React.useCallback((message: DiscardedPendingMessage) => sendPendingMessageWithIntent({
+        sessionId: props.sessionId, session, message, deliveryIntent: 'steer_now',
+    }), [props.sessionId, session]);
+    const handleSendDiscardedNow = React.useCallback((message: DiscardedPendingMessage) => sendPendingMessageWithIntent({
+        sessionId: props.sessionId, session, message, deliveryIntent: 'interrupt_and_send',
+    }), [props.sessionId, session]);
 
     const renderMessage = React.useCallback((args: {
         message: PendingMessage;
@@ -767,10 +628,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
         const blockedDeliveryLabel = deliveryBlockedPresentation
             ? t(deliveryBlockedPresentation.labelKey)
             : null;
-        const canUseDirectDeliveryActions = !hasDurableOutboxOperation
-            && !isCancellationState
-            && !providerEffectPossible
-            && canUseDirectPendingDeliveryActions(message, hasDecryptFailure);
+        const canUseDirectDeliveryActions = canUseDirectPendingDeliveryActions(message, deliveryVisualState);
         const transientAction = session && deliveryVisualState.kind === 'delivering'
             ? resolvePendingDeliveryTransientActionForSession({
                 session,

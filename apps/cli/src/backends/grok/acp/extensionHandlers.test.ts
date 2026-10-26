@@ -1,3 +1,4 @@
+import { SessionPermissionRpcRouter } from '@/agent/permissions/sessionPermissionRpcRouter';
 import { describe, expect, it } from 'vitest';
 
 import type {
@@ -80,6 +81,10 @@ class BaseBackedSession {
       this.rpcHandlerManager.handlers.set(method, handler as (payload: unknown) => unknown);
     },
   };
+  private permissionRpcRouter: SessionPermissionRpcRouter | null = null;
+  getOrCreatePermissionRpcRouter(): SessionPermissionRpcRouter {
+    return this.permissionRpcRouter ??= new SessionPermissionRpcRouter(this.rpcHandlerManager);
+  }
   agentState: Record<string, unknown> & {
     requests: Record<string, unknown>;
     completedRequests: Record<string, unknown>;

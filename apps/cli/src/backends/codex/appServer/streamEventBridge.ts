@@ -1,3 +1,4 @@
+import { readCodexReasoningText } from '../utils/readCodexReasoningText';
 import { extractMcpToolCallResultOutput } from '../runtime/sessionTurnLifecycle';
 import { readCodexMessageContentText } from '../utils/readCodexMessageContentText';
 import { canonicalizeCodexMcpToolName } from '../utils/canonicalizeCodexMcpToolName';
@@ -184,17 +185,6 @@ function readToolResultOutput(item: RecordLike, itemType: string | null, input?:
     return itemType === 'mcptoolcall' && 'result' in item ? extractMcpToolCallResultOutput(item.result) : output;
 }
 
-function readFinalReasoningText(item: RecordLike): string | null {
-    const content = Array.isArray(item.content)
-        ? item.content.filter((entry): entry is string => typeof entry === 'string' && entry.length > 0)
-        : [];
-    if (content.length > 0) return content.join('\n\n');
-    const summary = Array.isArray(item.summary)
-        ? item.summary.filter((entry): entry is string => typeof entry === 'string' && entry.length > 0)
-        : [];
-    return summary.length > 0 ? summary.join('\n\n') : null;
-}
-
 export function createCodexAppServerStreamEventBridge(): Readonly<{
     onNotification: (notification: NotificationEnvelope) => CodexAppServerStreamUpdate[];
     onServerRequest: (request: ServerRequestEnvelope) => CodexAppServerStreamUpdate[];
@@ -321,7 +311,7 @@ export function createCodexAppServerStreamEventBridge(): Readonly<{
             }
 
             if (itemType === 'reasoning') {
-                const text = readFinalReasoningText(item);
+                const text = readCodexReasoningText(item);
                 return text ? [{ type: 'reasoning-final', itemId, text }] : [];
             }
 

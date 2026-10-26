@@ -617,7 +617,8 @@ export const ca: TranslationStructure = {
         commands: {
             composerAbortConfirm: 'Confirma la interrupció',
             composerFocus: 'Enfoca el compositor',
-            composerSendImmediate: 'Envia immediatament',
+            composerSendImmediate: 'Enviament alternatiu (cua / orientar)',
+            composerSendInterrupt: 'Interromp i envia',
             composerSendPending: 'Envia a la cua pendent',
             commandPaletteOpen: 'Obre la paleta d’ordres',
             modeCycle: 'Canvia de mode',
@@ -653,6 +654,10 @@ export const ca: TranslationStructure = {
     },
 
     transcript: {
+        quote: {
+            action: 'Cita',
+            actionA11y: 'Cita el text seleccionat al teu missatge',
+        },
         selection: {
             enterA11y: 'Entra al mode de selecció',
             exitA11y: 'Surt del mode de selecció',
@@ -3543,6 +3548,17 @@ export const ca: TranslationStructure = {
             openSettingsFailed: 'No s\'ha pogut obrir la configuració del sistema.',
         },
         pushTroubleshooting: {
+            remoteTest: {
+                title: "Envia una prova remota",
+                subtitle: "Envia una notificació push real a aquest telèfon mitjançant una màquina connectada a aquest Home.",
+                notRegistered: "Registra el token d’aquest telèfon i torna-ho a provar.",
+                noMachine: "Connecta una màquina a aquest Home per enviar una prova remota.",
+                accepted: "El servei push ha acceptat la prova. Això no confirma que el telèfon l’hagi rebut o mostrat. Revisa les notificacions.",
+                rejected: "El servei push no ha confirmat l’acceptació. Revisa les notificacions i el registre abans de tornar-ho a provar.",
+                invalidCredentials: "El proveïdor push ha rebutjat les credencials d’aquesta app. Revisa la configuració d’APNs o FCM.",
+                unsupported: "Actualitza la CLI de Happier de la màquina connectada per enviar proves remotes.",
+                unconfirmed: "No s’ha pogut confirmar el resultat. La sol·licitud encara es pot completar; revisa les notificacions abans de tornar-ho a provar.",
+            },
             status: {
                 title: 'Estat',
                 footer: 'Comprova l’ajust del compte, el permís del sistema i el registre al servidor.',
@@ -3679,8 +3695,12 @@ export const ca: TranslationStructure = {
     },
 
     notifications: {
-        permissionActionNeedsReview: "No s’ha pogut confirmar la resposta de permís de la notificació. Obre la sessió i comprova la sol·licitud actual abans de tornar a respondre.",
+        permissionActionNeedsReview: "No s’ha pogut confirmar la resposta enviada des de la notificació. Revisa les sol·licituds pendents abans de tornar a respondre.",
+        permissionActionReviewUnavailable: "No s’han pogut obrir el Home i el compte d’aquesta resposta. Comprova la connexió i l’inici de sessió a Configuració i, després, les sol·licituds pendents.",
         actions: {
+            reviewPendingRequests: "Revisa les sol·licituds pendents",
+            questionReply: "Respon",
+            questionPlaceholder: "La teva resposta",
             allow: 'Permetre',
             deny: 'Denegar',
             answer: 'Respondre',
@@ -4183,6 +4203,16 @@ export const ca: TranslationStructure = {
 	                    },
 	                },
 	                fields: {
+	                    codexReasoningSummaries: {
+	                        title: "Resums del raonament",
+	                        footer: "Controla si Codex genera resums, independentment de la visualització a la conversa. S’aplica en iniciar o reprendre una sessió. La disponibilitat depèn del model.",
+	                        generation: "Generació",
+	                        options: {
+	                            default: "Fes servir la configuració de Codex o el valor per defecte del model.",
+	                            enabled: "Demana resums si el model els admet.",
+	                            disabled: "No generis resums del raonament.",
+	                        },
+	                    },
 	                    codexBackendMode: {
 	                        title: 'Mode d\'encaminament de Codex',
 	                        subtitle: 'Selecciona el servidor d’aplicacions, ACP o MCP.',
@@ -4218,6 +4248,8 @@ export const ca: TranslationStructure = {
 
     settingsAppearance: {
       tabBarAppearance: {
+        sideRailTitle: "Pestanyes a la barra lateral",
+        sideRailSubtitle: "Desactiva aquesta opció per utilitzar la barra de pestanyes de Happier i els seus gestos de lliscament.",
         title: 'Barra de pestanyes',
         footer: 'Personalitza la barra de pestanyes inferior.',
         showLabels: 'Mostra les etiquetes de les pestanyes',
@@ -6438,6 +6470,11 @@ deps: {
     },
 
     agentInput: {
+        sendOptions: {
+            title: "Opcions d’enviament",
+            queue: "Posa a la cua",
+            hint: "Mantén premut per triar com enviar",
+        },
         chipPicker: {
             selectedOptionAccessibilityLabel: ({ option }: { option: string }) => `${option}. Seleccionat.`,
         },

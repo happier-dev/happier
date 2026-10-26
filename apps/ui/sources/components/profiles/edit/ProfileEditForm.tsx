@@ -14,7 +14,7 @@ import { Item } from '@/components/ui/lists/Item';
 import { Switch } from '@/components/ui/forms/Switch';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { getBuiltInProfileDocumentation } from '@/sync/domains/profiles/profileUtils';
-import { EnvironmentVariablesList } from '@/components/profiles/environmentVariables/EnvironmentVariablesList';
+import { EnvironmentVariablesList, type EnvironmentVariableAddition, type ProfileSecretPickerSelection } from '@/components/profiles/environmentVariables/EnvironmentVariablesList';
 import { useSetting, useSettings, useAllMachines, useMachine, useSettingMutable } from '@/sync/domains/state/storage';
 import { Modal } from '@/modal';
 import { isMachineOnline } from '@/utils/sessions/machineUtils';
@@ -355,13 +355,22 @@ export function ProfileEditForm({
         return out;
     }, [sourceRequirementsByName, usedRequirementVarNames]);
 
-    const getDefaultSecretNameForSourceVar = React.useCallback((sourceVarName: string): string | null => {
-        const id = secretBindingsDraft[sourceVarName] ?? null;
+    const getDefaultSecretNameForSourceVar = React.useCallback((sourceVarName: string, secretId?: string | null): string | null => {
+        const id = secretId !== undefined ? secretId : secretBindingsDraft[sourceVarName] ?? null;
         if (!id) return null;
         return secrets.find((s: SavedSecret) => s.id === id)?.name ?? null;
     }, [secretBindingsDraft, secrets]);
 
-    const openDefaultSecretModalForSourceVar = React.useCallback((sourceVarName: string) => {
+    const setDefaultSecretForSourceVar = React.useCallback((sourceVarName: string, secretId: string | null) => {
+        setSecretBindingsDraft(existing => {
+            const next = { ...existing };
+            if (secretId) next[sourceVarName] = secretId;
+            else delete next[sourceVarName];
+            return next;
+        });
+    }, []);
+
+    const openDefaultSecretModalForSourceVar = React.useCallback((sourceVarName: string, selection?: ProfileSecretPickerSelection) => {
         const normalized = sourceVarName.trim().toUpperCase();
         if (!normalized) return;
 
@@ -372,18 +381,16 @@ export function ProfileEditForm({
             envVarRequirements: derivedEnvVarRequirements,
         };
 
-        const defaultSecretId = secretBindingsDraft[normalized] ?? null;
+        const defaultSecretId = selection?.secretId !== undefined
+            ? selection.secretId
+            : secretBindingsDraft[normalized] ?? null;
 
         const setDefaultSecretId = (id: string | null) => {
-            setSecretBindingsDraft((existing) => {
-                const nextBindings = { ...existing };
-                if (!id) {
-                    delete nextBindings[normalized];
-                } else {
-                    nextBindings[normalized] = id;
-                }
-                return nextBindings;
-            });
+            if (selection) {
+                selection.onSelect(id);
+                return;
+            }
+            setDefaultSecretForSourceVar(normalized, id);
         };
 
         const handleResolve = (result: SecretRequirementModalResult) => {
@@ -410,7 +417,7 @@ export function ProfileEditForm({
             onRequestClose: () => handleResolve({ action: 'cancel' } as SecretRequirementModalResult),
             closeOnBackdrop: true,
         });
-    }, [derivedEnvVarRequirements, name, profile, secretBindingsDraft, secrets, setSecrets]);
+    }, [derivedEnvVarRequirements, name, profile, secretBindingsDraft, secrets, setDefaultSecretForSourceVar, setSecrets]);
 
     const updateSourceRequirement = React.useCallback((
         sourceVarName: string,
@@ -439,6 +446,15 @@ export function ProfileEditForm({
             });
         }
     }, []);
+
+    const addEnvironmentVariable = React.useCallback(({ variable, requirement }: EnvironmentVariableAddition) => {
+        setEnvironmentVariables(existing => [...existing, variable]);
+        if (!requirement) return;
+        updateSourceRequirement(requirement.name, requirement);
+        if (requirement.useSecretVault && requirement.secretId !== undefined) {
+            setDefaultSecretForSourceVar(requirement.name, requirement.secretId);
+        }
+    }, [setDefaultSecretForSourceVar, updateSourceRequirement]);
 
     const compatibleBackendEntries = React.useMemo(() => {
         return resolvedBackendEntries.filter((entry) => compatibilityByTargetKeyState[entry.targetKey] === true);
@@ -1107,6 +1123,7 @@ export function ProfileEditForm({
                 machineName={resolvedMachine ? (resolvedMachine.metadata?.displayName || resolvedMachine.metadata?.host || resolvedMachine.id) : null}
                 profileDocs={profileDocs}
                 onChange={setEnvironmentVariables}
+                onAddVariable={addEnvironmentVariable}
                 sourceRequirementsByName={sourceRequirementsByName}
                 onUpdateSourceRequirement={updateSourceRequirement}
                 getDefaultSecretNameForSourceVar={getDefaultSecretNameForSourceVar}

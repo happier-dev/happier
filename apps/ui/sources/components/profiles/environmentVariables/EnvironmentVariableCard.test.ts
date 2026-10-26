@@ -5,7 +5,8 @@ import { renderScreen } from '@/dev/testkit';
 import { installProfilesCommonModuleMocks } from '../profilesTestHelpers';
 import { EnvironmentVariableCard, type EnvironmentVariableCardProps } from './EnvironmentVariableCard';
 import { Switch } from '@/components/ui/forms/Switch';
-import { EnvironmentVariablesList } from './EnvironmentVariablesList';
+import { EnvironmentVariablesList, type ProfileSecretPickerSelection } from './EnvironmentVariablesList';
+import { InlineAddExpander } from '@/components/ui/forms/InlineAddExpander';
 
 (
     globalThis as typeof globalThis & {
@@ -63,6 +64,43 @@ function findUseMachineSwitch(screen: RenderedCard) {
 }
 
 describe('EnvironmentVariableCard', () => {
+    it('configures a saved-secret variable before adding it and cancels without changing the profile', async () => {
+        const onChange = vi.fn();
+        const onUpdateSourceRequirement = vi.fn();
+        const onAddVariable = vi.fn();
+        const onPickDefaultSecretForSourceVar = vi.fn((_name: string, selection?: ProfileSecretPickerSelection) => selection?.onSelect('saved-1'));
+        const screen = await renderScreen(React.createElement(EnvironmentVariablesList, {
+            environmentVariables: [], machineId: null, onChange,
+            sourceRequirementsByName: {}, onUpdateSourceRequirement,
+            getDefaultSecretNameForSourceVar: (_name: string, id?: string | null) => id === 'saved-1' ? 'Work credential' : null,
+            onPickDefaultSecretForSourceVar, onAddVariable,
+        }));
+        await act(async () => screen.findByType(InlineAddExpander).props.onOpenChange(true));
+        await act(async () => screen.changeTextByTestId('profile-environment-add-name', 'custom_credential'));
+        // The same card used for existing variables must be reachable before Add/Save.
+        expect(screen.findAllByType(EnvironmentVariableCard)).toHaveLength(1);
+        expect(screen.findByType(EnvironmentVariableCard).props.variable.name).toBe('CUSTOM_CREDENTIAL');
+        const vaultSwitch = () => screen.findAllByType(Switch).find(node => node.props.testID === 'profile-environment-add-vault')!;
+        await act(async () => vaultSwitch().props.onValueChange(true));
+        expect(findTextInputs(screen).map(input => input.props.value)).toEqual(['CUSTOM_CREDENTIAL']);
+        await act(async () => screen.pressByTestId('profile-environment-add-secret'));
+        expect(screen.findAllByType(EnvironmentVariableCard)[0].props.defaultSecretNameForSourceVar).toBe('Work credential');
+        expect(onChange).not.toHaveBeenCalled();
+        expect(onUpdateSourceRequirement).not.toHaveBeenCalled();
+        await act(async () => screen.findByType(InlineAddExpander).props.onCancel());
+        expect(onAddVariable).not.toHaveBeenCalled();
+        await act(async () => screen.findByType(InlineAddExpander).props.onOpenChange(true));
+        await act(async () => screen.changeTextByTestId('profile-environment-add-name', 'custom_credential'));
+        expect(vaultSwitch().props.value).toBe(false);
+        await act(async () => vaultSwitch().props.onValueChange(true));
+        await act(async () => screen.pressByTestId('profile-environment-add-secret'));
+        await act(async () => screen.findByType(InlineAddExpander).props.onSave());
+        expect(onAddVariable).toHaveBeenCalledWith({
+            variable: { name: 'CUSTOM_CREDENTIAL', value: '', isSecret: true },
+            requirement: { name: 'CUSTOM_CREDENTIAL', required: true, useSecretVault: true, secretId: 'saved-1' },
+        });
+    });
+
     it.each([null, 'machine-1'])('keeps rapid edits through the real list and preview hook (machine: %s)', async (machineId) => {
         function Editor() {
             const [variables, setVariables] = React.useState([{ name: 'FOO', value: '' }]);
@@ -70,6 +108,7 @@ describe('EnvironmentVariableCard', () => {
                 environmentVariables: variables,
                 machineId,
                 onChange: setVariables,
+                onAddVariable: ({ variable }) => setVariables(existing => [...existing, variable]),
                 sourceRequirementsByName: {},
                 onUpdateSourceRequirement: () => {},
                 getDefaultSecretNameForSourceVar: () => null,

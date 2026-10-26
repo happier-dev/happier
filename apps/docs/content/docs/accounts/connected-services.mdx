@@ -136,20 +136,31 @@ interoperability and authenticated launch remain validation gates.
 
 ## Continuing after a usage limit
 
-Development-only usage-limit recovery lets a waiting session continue after a directly selected account's reported
-usage-limit reset. It requires usage-limit recovery support on the relay and
+Development-only usage-limit recovery lets a waiting session continue after a
+reported usage-limit reset, including sessions using a native provider login.
+It requires usage-limit recovery support on the relay and
 automatic resume to be enabled. The same recovery attempt handles checks from
 an active session, the CLI, and MCP; changing how you check does not start a
 separate recovery loop.
 
+Happier manages the wait even when the provider has no separate quota-check
+command. A reported reset time determines when it can try to continue; without
+a reliable reset time, Happier tries again using its recovery backoff.
+Temporary check failures keep the wait active.
+
 Happier sends the configured continuation prompt, not a replay of your original
-request. A queued prompt is not confirmation that the Agent recovered: recovery
-remains pending until the Agent runs successfully. Cancelling the wait, stopping
+request. Once the continuation is accepted into Pending, its normal queue and
+delivery status take over from the usage-limit wait. A queued prompt does not
+confirm that the provider will accept another turn. Cancelling the wait, stopping
 the session, or sending newer work takes precedence over automatic continuation.
 
 Development corrections keep recovery state associated with the failure that
 created it. Cancelling an earlier wait does not hide a newer usage-limit failure,
 and checking the newer failure does not revive the earlier wait.
+Quota readiness, an account switch, or a successful runtime launch alone does
+not dismiss the warning. Accepted Pending delivery, explicit cancellation, or
+subsequent Agent activity can end the wait presentation.
+If **Apply reset** fails, its action becomes available again.
 
 Pool quota selection determines which meters affect account eligibility before
 a request. A supported limit error that actually fails the Agent's main operation

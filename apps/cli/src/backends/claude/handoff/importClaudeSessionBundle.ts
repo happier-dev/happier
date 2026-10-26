@@ -1,5 +1,6 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { atomicFileWrite } from '@/utils/fileAtomic';
 
 import type { ImportedSessionHandoffBundle } from '../../../session/handoff/types';
 import type { ClaudeSessionBundle } from '../../../session/handoff/types';
@@ -27,12 +28,16 @@ export async function importClaudeSessionBundle(params: Readonly<{
   const transcriptPath = resolveClaudeTranscriptPath(projectDir, params.bundle.remoteSessionId);
   await mkdir(projectDir, { recursive: true });
 
-  if (params.bundle.transcriptFile) {
-    await copySessionHandoffFileSlice({ source: params.bundle.transcriptFile, targetFilePath: transcriptPath });
-  } else {
-    const transcript = Buffer.from(params.bundle.transcriptBase64, 'base64').toString('utf8');
-    await writeFile(transcriptPath, transcript, 'utf8');
-  }
+  // Replace the file identity as well as its contents. Incremental transcript readers
+  // must distinguish a handoff replacement from an append to the existing file.
+  await atomicFileWrite(transcriptPath, async (temporaryPath) => {
+    if (params.bundle.transcriptFile) {
+      await copySessionHandoffFileSlice({ source: params.bundle.transcriptFile, targetFilePath: temporaryPath });
+    } else {
+      const transcript = Buffer.from(params.bundle.transcriptBase64, 'base64').toString('utf8');
+      await writeFile(temporaryPath, transcript, { encoding: 'utf8', mode: 0o600 });
+    }
+  });
 
   return {
     remoteSessionId: params.bundle.remoteSessionId,

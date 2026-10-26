@@ -348,9 +348,6 @@ vi.mock('@/sync/domains/input/slashCommands/resolveSessionComposerSend', () => (
 vi.mock('@/sync/domains/input/slashCommands/executeSessionComposerResolution', () => ({
   executeSessionComposerResolution: executeSessionComposerResolutionMock,
 }));
-vi.mock('@/sync/domains/session/control/submitMode', () => ({
-  chooseSubmitMode: () => 'direct',
-}));
 vi.mock('@/sync/domains/session/control/localControlSwitch', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/sync/domains/session/control/localControlSwitch')>()),
   shouldRenderChatTimelineForSession: () => true,

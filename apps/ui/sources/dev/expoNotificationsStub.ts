@@ -63,3 +63,11 @@ export function addNotificationResponseReceivedListener(_listener: unknown) {
 export async function dismissAllNotificationsAsync(): Promise<void> {
     // no-op
 }
+
+export async function getPresentedNotificationsAsync(): Promise<unknown[]> {
+    return [];
+}
+
+export async function dismissNotificationAsync(_identifier: string): Promise<void> {
+    // no-op
+}

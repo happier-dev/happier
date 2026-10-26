@@ -134,7 +134,8 @@ export function registerSessionAgentTransitionRoute(
         await Promise.all(result.participantCursors.map(async ({ accountId, cursor }) => {
             eventRouter.emitUpdate({
                 userId: accountId,
-                payload: buildUpdateSessionUpdate(sessionId, cursor, randomKeyNaked(12), metadataUpdate, agentStateUpdate),
+                payload: buildUpdateSessionUpdate(sessionId, cursor, randomKeyNaked(12), metadataUpdate, agentStateUpdate,
+                    result.primaryTurnProjection ?? undefined),
                 recipientFilter: { type: 'all-interested-in-session', sessionId },
             });
         }));

@@ -20,6 +20,7 @@ import {
 } from '../recovery/providerOutcomeProof';
 import type { ConnectedServiceRuntimeFailureClassification } from './types';
 import { readConnectedServiceAuthGenerationApplyFailure } from './connectedServiceAuthGenerationApplyFailure';
+import { ConnectedServiceAuthGroupSwitchLeaseExpiredError } from '../accountGroups/switching/pipeline/switchPipeline';
 import { sanitizeConnectedServiceRuntimeFailureClassification } from './sanitizeConnectedServiceRuntimeFailureClassification';
 import {
   isProvenRuntimeAuthRecoverySuccess,
@@ -702,6 +703,15 @@ function resolveRuntimeAuthRecoveryDisposition(input: Readonly<{
 }
 
 function classifyHandlerError(error: unknown): RetryDecision {
+  if (error instanceof ConnectedServiceAuthGroupSwitchLeaseExpiredError) {
+    return {
+      retryable: true,
+      classification: { kind: 'timeout', retryable: true },
+      failurePhase: 'handler',
+      failureReason: 'connected_service_auth_group_switch_lease_expired',
+      lastError: error.message,
+    };
+  }
   const applyFailure = readConnectedServiceAuthGenerationApplyFailure(error);
   if (applyFailure) {
     return classifyApplyFailure({
@@ -1483,17 +1493,18 @@ export class RuntimeAuthRecoveryScheduler {
           }
           // S2: a connection-level endpoint outage thrown during the recovery fetch
           // (ECONNREFUSED / socket hang up / reset = `network`) is a degraded local condition, not a
-          // provider failure. Route it onto the bounded degraded-retry track so a long local outage
-          // cannot dead-letter the session before the normal attempt budget. A `timeout` is left on
+          // provider failure. Group lease contention likewise waits for local coordination without
+          // spending provider attempts. Both use the existing bounded degraded-retry track. Other timeouts stay on
           // the normal track: a slow-but-reachable endpoint can be a genuine recoverable failure.
-          if (decision.retryable && decision.classification.kind === 'network') {
+          if (decision.classification.kind === 'network'
+            || decision.failureReason === 'connected_service_auth_group_switch_lease_expired') {
             return buildDegradedRecoveryOutcome({
               intent: {
                 ...intent,
                 lastError: decision.lastError,
                 lastErrorClassification: decision.classification,
               },
-              reason: 'session_endpoint_unavailable',
+              reason: decision.failureReason,
               nowMs: deps.nowMs(),
               maxDegradedAttempts: this.maxDegradedAttempts,
               degradedBackoffMs: this.degradedBackoffMs,

@@ -1024,6 +1024,7 @@ export const ChainTranscriptList = React.memo(function ChainTranscriptList(props
         if (item.kind === 'tool-group-footer') {
             return (
                 <ToolCallsGroupUnitFooterRowWithSessionCommon
+                    hasVisibleTools={item.hasVisibleTools}
                     sessionId={props.sessionId}
                     groupId={item.groupId}
                     metadata={props.metadata}

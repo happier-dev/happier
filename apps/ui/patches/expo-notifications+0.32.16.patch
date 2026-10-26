@@ -25,3 +25,297 @@ diff --git a/node_modules/expo-notifications/android/src/main/java/expo/modules/
      // NOTE the listeners are not set up when the app is killed
      // and is launched in response to tapping a notification button
      // this code is a noop in that case
+diff --git a/node_modules/expo-notifications/ios/EXNotifications/Notifications/NotificationCenterManager.swift b/node_modules/expo-notifications/ios/EXNotifications/Notifications/NotificationCenterManager.swift
+--- a/node_modules/expo-notifications/ios/EXNotifications/Notifications/NotificationCenterManager.swift
++++ b/node_modules/expo-notifications/ios/EXNotifications/Notifications/NotificationCenterManager.swift
+@@ -3,6 +3,7 @@
+ import ExpoModulesCore
+ import Foundation
+ import UserNotifications
++import UIKit
+ 
+ /**
+  Protocol that NotificationCenterManager delegates may implement
+@@ -11,6 +12,8 @@
+   func willPresent(_ notification: UNNotification, completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) -> Bool
+   func didReceive(_ response: UNNotificationResponse, completionHandler: @escaping () -> Void) -> Bool
+   func didReceive(_ userInfo: [AnyHashable: Any], completionHandler: @escaping (UIBackgroundFetchResult) -> Void) -> Bool
++  func didReceiveBackground(_ response: UNNotificationResponse, deliveryId: String)
++  func didExpireBackgroundResponse(deliveryId: String)
+   func openSettings(_ notification: UNNotification?)
+   func didRegister(_ deviceToken: String)
+   func didFailRegistration(_ error: Error)
+@@ -26,6 +29,8 @@
+   func didReceive(_ userInfo: [AnyHashable: Any], completionHandler: @escaping (UIBackgroundFetchResult) -> Void) -> Bool {
+     return false
+   }
++  func didReceiveBackground(_ response: UNNotificationResponse, deliveryId: String) {}
++  func didExpireBackgroundResponse(deliveryId: String) {}
+   func openSettings(_ notification: UNNotification?) {}
+   func didRegister(_ deviceToken: String) {}
+   func didFailRegistration(_ error: Error) {}
+@@ -44,6 +49,144 @@
+   var delegates: [NotificationDelegate] = []
+   var pendingResponses: [UNNotificationResponse] = []
+   let userNotificationCenter: UNUserNotificationCenter = UNUserNotificationCenter.current()
++
++  // HAPPIER PATCH: Keep Apple's live action completion separate from cached
++  // responses. This process-local lifetime ends on JS completion or OS expiration.
++  private final class BackgroundResponse {
++    let response: UNNotificationResponse
++    let completion: () -> Void
++    var task: UIBackgroundTaskIdentifier = .invalid
++    var isBackgroundAction = false
++    var isClaimed = false
++
++    init(response: UNNotificationResponse, completion: @escaping () -> Void) {
++      self.response = response
++      self.completion = completion
++    }
++  }
++  private var backgroundResponses: [String: BackgroundResponse] = [:]
++
++  private func onMain(_ block: @escaping () -> Void) {
++    if Thread.isMainThread {
++      block()
++    } else {
++      DispatchQueue.main.async(execute: block)
++    }
++  }
++
++  public func getPendingBackgroundNotificationResponses() -> [(deliveryId: String, response: UNNotificationResponse)] {
++    precondition(Thread.isMainThread)
++    return backgroundResponses.compactMap { deliveryId, delivery in
++      delivery.isBackgroundAction && !delivery.isClaimed ? (deliveryId: deliveryId, response: delivery.response) : nil
++    }
++  }
++
++  // Admission belongs to the native OS-response lifetime, so recreating the
++  // JavaScript runtime cannot retry an action whose RPC may already be issued.
++  public func claimBackgroundNotificationResponse(_ deliveryId: String) -> Bool {
++    precondition(Thread.isMainThread)
++    guard let delivery = backgroundResponses[deliveryId],
++          delivery.isBackgroundAction, !delivery.isClaimed else {
++      return false
++    }
++    delivery.isClaimed = true
++    return true
++  }
++
++  @discardableResult
++  public func completeBackgroundNotificationResponse(_ deliveryId: String) -> Bool {
++    precondition(Thread.isMainThread)
++    return finishBackgroundResponse(deliveryId, expired: false)
++  }
++
++  @discardableResult
++  private func finishBackgroundResponse(_ deliveryId: String, expired: Bool) -> Bool {
++    precondition(Thread.isMainThread)
++    guard let delivery = backgroundResponses.removeValue(forKey: deliveryId) else {
++      return false
++    }
++    if expired {
++      NSLog("[expo-notifications] Background notification response expired before JavaScript completion")
++      if delivery.isBackgroundAction {
++        for delegate in delegates {
++          delegate.didExpireBackgroundResponse(deliveryId: deliveryId)
++        }
++      }
++    }
++    delivery.completion()
++    if delivery.task != .invalid {
++      UIApplication.shared.endBackgroundTask(delivery.task)
++    }
++    return true
++  }
++
++  private func deliverForegroundResponse(_ response: UNNotificationResponse, completion: @escaping () -> Void) {
++    var completed = false
++    let finish = {
++      if !completed {
++        completed = true
++        completion()
++      }
++    }
++    var handled = false
++    for delegate in delegates {
++      handled = delegate.didReceive(response, completionHandler: finish) || handled
++    }
++    if !handled {
++      pendingResponses.append(response)
++    }
++    finish()
++  }
++
++  private func receiveResponse(_ response: UNNotificationResponse, completion: @escaping () -> Void) {
++    if response.actionIdentifier == UNNotificationDefaultActionIdentifier ||
++       response.actionIdentifier == UNNotificationDismissActionIdentifier {
++      deliverForegroundResponse(response, completion: completion)
++      return
++    }
++
++    let deliveryId = UUID().uuidString
++    let delivery = BackgroundResponse(response: response, completion: completion)
++    backgroundResponses[deliveryId] = delivery
++    userNotificationCenter.getNotificationCategories { [weak self] categories in
++      self?.onMain {
++        guard let self, let pending = self.backgroundResponses[deliveryId] else {
++          return
++        }
++        let categoryId = response.notification.request.content.categoryIdentifier
++        let action = categories.first(where: { $0.identifier == categoryId })?
++          .actions.first(where: { $0.identifier == response.actionIdentifier })
++        guard let action, !action.options.contains(.foreground) else {
++          // DEFAULT, Answer and unregistered actions retain Expo's existing path.
++          self.backgroundResponses.removeValue(forKey: deliveryId)
++          self.deliverForegroundResponse(response, completion: pending.completion)
++          return
++        }
++        pending.isBackgroundAction = true
++        let task = UIApplication.shared.beginBackgroundTask(withName: "notification response") { [weak self] in
++          self?.onMain {
++            self?.finishBackgroundResponse(deliveryId, expired: true)
++          }
++        }
++        // The OS may expire the assertion synchronously while it is requested.
++        guard self.backgroundResponses[deliveryId] != nil else {
++          if task != .invalid {
++            UIApplication.shared.endBackgroundTask(task)
++          }
++          return
++        }
++        pending.task = task
++        guard task != .invalid else {
++          self.finishBackgroundResponse(deliveryId, expired: true)
++          return
++        }
++        for delegate in self.delegates {
++          delegate.didReceiveBackground(response, deliveryId: deliveryId)
++        }
++      }
++    }
++  }
++
+ 
+   private override init() {
+     super.init()
+@@ -61,19 +204,26 @@
+   }
+ 
+   public func addDelegate(_ delegate: NotificationDelegate) {
+-    delegates.append(delegate)
+-    var handled = false
+-    for pendingResponse in pendingResponses {
+-      handled = delegate.didReceive(pendingResponse, completionHandler: {}) || handled
+-    }
+-    if handled {
+-      pendingResponses.removeAll()
++    onMain {
++      self.delegates.append(delegate)
++      var handled = false
++      for pendingResponse in self.pendingResponses {
++        handled = delegate.didReceive(pendingResponse, completionHandler: {}) || handled
++      }
++      if handled {
++        self.pendingResponses.removeAll()
++      }
++      for (deliveryId, delivery) in self.backgroundResponses where delivery.isBackgroundAction && !delivery.isClaimed {
++        delegate.didReceiveBackground(delivery.response, deliveryId: deliveryId)
++      }
+     }
+   }
+ 
+   public func removeDelegate(_ delegate: AnyObject) {
+-    if let index = delegates.firstIndex(where: { $0 === delegate }) {
+-      delegates.remove(at: index)
++    onMain {
++      if let index = self.delegates.firstIndex(where: { $0 === delegate }) {
++        self.delegates.remove(at: index)
++      }
+     }
+   }
+ 
+@@ -112,14 +262,9 @@
+     didReceive response: UNNotificationResponse,
+     withCompletionHandler completionHandler: @escaping () -> Void
+   ) {
+-    var handled = false
+-    for delegate in delegates {
+-      handled = delegate.didReceive(response, completionHandler: completionHandler) || handled
+-    }
+-    if !handled {
+-      pendingResponses.append(response)
+-    }
+-    completionHandler()
++    onMain {
++      self.receiveResponse(response, completion: completionHandler)
++    }
+   }
+ 
+   public func userNotificationCenter(_ center: UNUserNotificationCenter, openSettingsFor notification: UNNotification?) {
+diff --git a/node_modules/expo-notifications/ios/EXNotifications/Notifications/Emitter/EmitterModule.swift b/node_modules/expo-notifications/ios/EXNotifications/Notifications/Emitter/EmitterModule.swift
+--- a/node_modules/expo-notifications/ios/EXNotifications/Notifications/Emitter/EmitterModule.swift
++++ b/node_modules/expo-notifications/ios/EXNotifications/Notifications/Emitter/EmitterModule.swift
+@@ -7,13 +7,16 @@
+ let onDidReceiveNotification = "onDidReceiveNotification"
+ let onDidReceiveNotificationResponse = "onDidReceiveNotificationResponse"
+ let onDidClearNotificationResponse = "onDidClearNotificationResponse"
++let onDidReceiveBackgroundNotificationResponse = "onDidReceiveBackgroundNotificationResponse"
++let onDidExpireBackgroundNotificationResponse = "onDidExpireBackgroundNotificationResponse"
+ 
+ open class EmitterModule: Module, NotificationDelegate {
+   private var lastResponse: [String: Any]?
+   public func definition() -> ModuleDefinition {
+     Name("ExpoNotificationsEmitter")
+ 
+-    Events([onDidReceiveNotification, onDidReceiveNotificationResponse, onDidClearNotificationResponse])
++    Events([onDidReceiveNotification, onDidReceiveNotificationResponse, onDidClearNotificationResponse,
++      onDidReceiveBackgroundNotificationResponse, onDidExpireBackgroundNotificationResponse])
+ 
+     OnCreate {
+       NotificationCenterManager.shared.addDelegate(self)
+@@ -22,6 +25,24 @@
+     OnDestroy {
+       NotificationCenterManager.shared.removeDelegate(self)
+     }
++
++    // These methods deliberately expose live process-local deliveries only.
++    AsyncFunction("getPendingBackgroundNotificationResponses") { () -> [[String: Any]] in
++      return NotificationCenterManager.shared.getPendingBackgroundNotificationResponses().map { delivery in
++        ["deliveryId": delivery.deliveryId, "response": self.serializedResponse(delivery.response)]
++      }
++    }
++    .runOnQueue(.main)
++
++    AsyncFunction("claimBackgroundNotificationResponse") { (deliveryId: String) -> Bool in
++      return NotificationCenterManager.shared.claimBackgroundNotificationResponse(deliveryId)
++    }
++    .runOnQueue(.main)
++
++    AsyncFunction("completeBackgroundNotificationResponse") { (deliveryId: String) -> Bool in
++      return NotificationCenterManager.shared.completeBackgroundNotificationResponse(deliveryId)
++    }
++    .runOnQueue(.main)
+ 
+     Function("getLastNotificationResponse") { () -> [String: Any]? in
+       return lastResponse
+@@ -45,6 +66,19 @@
+     return true
+   }
+ 
++  public func didReceiveBackground(_ response: UNNotificationResponse, deliveryId: String) {
++    // Never copy a live background action into lastResponse or the ordinary
++    // response event: cached observations cannot authorize another execution.
++    sendEvent(onDidReceiveBackgroundNotificationResponse, [
++      "deliveryId": deliveryId,
++      "response": serializedResponse(response)
++    ])
++  }
++
++  public func didExpireBackgroundResponse(deliveryId: String) {
++    sendEvent(onDidExpireBackgroundNotificationResponse, ["deliveryId": deliveryId])
++  }
++
+   open func willPresent(_ notification: UNNotification, completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) -> Bool {
+     self.sendEvent(onDidReceiveNotification, serializedNotification(notification))
+     return false

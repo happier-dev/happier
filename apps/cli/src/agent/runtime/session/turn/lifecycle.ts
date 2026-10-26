@@ -45,6 +45,7 @@ type CreateSessionTurnLifecycleParams = Readonly<{
     createId?: () => string;
     now?: () => number;
     activeTurnTouchIntervalMs?: number;
+    onTurnFailure?: (issue: SessionRuntimeIssueV1) => void;
     onTurnLifecycleEvent?: (
         event: 'prompt_or_steer' | 'task_started' | 'assistant_message_end' | 'turn_cancelled',
         // REV-1: failTurn / turn_failed markers emit `assistant_message_end` too; the
@@ -202,6 +203,9 @@ export function createSessionTurnLifecycle(
         try {
             await result.pendingWrite;
             terminalWriteAccepted = true;
+            if (status === 'failed' && result.turn.lastRuntimeIssue) {
+                params.onTurnFailure?.(result.turn.lastRuntimeIssue);
+            }
         } catch (error) {
             firstError ??= error;
         } finally {

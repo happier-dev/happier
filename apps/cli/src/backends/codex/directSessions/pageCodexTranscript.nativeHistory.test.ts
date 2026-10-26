@@ -48,6 +48,24 @@ async function fixture(items: readonly unknown[] | null) {
 }
 
 describe('Codex native paginated direct history (0.162.1 contract)', () => {
+  it('imports native reasoning as thinking between the user and answer, without exposing encrypted content', async () => {
+    const f = await fixture([message('u1', 'question', 'user'),
+      { turnId: 'turn-a1', startedAtMs: 1_000, completedAtMs: 2_000,
+        item: { id: 'r1', type: 'reasoning', content: [], summary: ['Check the boundary', 'Then verify'], encrypted_content: 'opaque-private-reasoning' } },
+      { turnId: 'turn-a1', startedAtMs: 1_000, completedAtMs: 2_000,
+        item: { id: 'r2', type: 'reasoning', content: [], summary: [], encrypted_content: 'opaque-private-reasoning' } },
+      message('a1', 'answer', 'agent')]);
+    const items = await loadDirectSessionTranscriptItems({ readPage: cursor => pageCodexTranscript({
+      ...f.params, maxItems: 1, direction: 'older', cursor,
+    }) });
+    expect(items.map(item => item.raw)).toMatchObject([
+      { role: 'user', content: { type: 'text', text: 'question' } },
+      { role: 'agent', content: { type: 'codex', data: { type: 'thinking', text: 'Check the boundary\n\nThen verify' } } },
+      { role: 'agent', content: { type: 'codex', data: { type: 'message', message: 'answer' } } },
+    ]);
+    expect(JSON.stringify(items)).not.toContain('opaque-private-reasoning');
+  });
+
   it('imports every native history page instead of importing the list preview, without resuming the thread', async () => {
     const f = await fixture([message('u1', 'question one', 'user'), message('a1', 'answer one', 'agent'),
       message('u2', 'question two', 'user'), message('a2', 'answer two', 'agent')]);

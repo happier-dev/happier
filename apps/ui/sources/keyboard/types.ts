@@ -7,6 +7,7 @@ export type KeyboardCommandId =
     | 'composer.focus'
     | 'composer.sendImmediate'
     | 'composer.sendPending'
+    | 'composer.sendInterrupt'
     | 'commandPalette.open'
     | 'mode.cycle'
     | 'permission.cycle'
@@ -74,6 +75,8 @@ export type ParsedKeybindingRule = KeybindingRule & Readonly<{
 
 export type KeyboardCommand = Readonly<{
     id: KeyboardCommandId;
+    /** Default editable-target policy also applies to custom bindings of unbound commands. */
+    allowInEditable?: boolean;
     defaultBinding?: KeybindingRule;
     defaultBindings?: readonly KeybindingRule[];
     settingsTitleKey?: TranslationKey;

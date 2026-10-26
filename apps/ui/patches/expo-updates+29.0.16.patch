@@ -1,0 +1,50 @@
+diff --git a/node_modules/expo-updates/ios/EXUpdates/ReactDelegateHandler/ExpoUpdatesReactDelegateHandler.swift b/node_modules/expo-updates/ios/EXUpdates/ReactDelegateHandler/ExpoUpdatesReactDelegateHandler.swift
+index 78f7fdb..865d8fd 100644
+--- a/node_modules/expo-updates/ios/EXUpdates/ReactDelegateHandler/ExpoUpdatesReactDelegateHandler.swift
++++ b/node_modules/expo-updates/ios/EXUpdates/ReactDelegateHandler/ExpoUpdatesReactDelegateHandler.swift
+@@ -111,10 +111,24 @@ public final class ExpoUpdatesReactDelegateHandler: ExpoReactDelegateHandler, Ap
+     let rootViewController = reactDelegate.createRootViewController()
+ #if os(iOS) || os(tvOS)
+     rootView.backgroundColor = self.deferredRootView?.backgroundColor ?? UIColor.white
+-    rootViewController.view = rootView
+-    window.rootViewController = rootViewController
+-    window.makeKeyAndVisible()
++    if let window {
++      rootViewController.view = rootView
++      window.rootViewController = rootViewController
++      window.makeKeyAndVisible()
++    } else {
++      // Updates can finish before a scene connects, or without a scene for
++      // notification actions. Complete the returned view in place so its
++      // retained controller can attach later; this handler still owns OTA selection.
++      guard let deferredRootView = self.deferredRootView else {
++        fatalError("Missing deferred root view during windowless updates startup")
++      }
++      deferredRootView.subviews.forEach { $0.removeFromSuperview() }
++      rootView.frame = deferredRootView.bounds
++      rootView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
++      deferredRootView.addSubview(rootView)
++    }
+ #else
++    guard let window else { fatalError("Cannot find the current window.") }
+     rootViewController.view = rootView
+     rootView.frame = window.frame
+     window.contentViewController = rootViewController
+@@ -159,15 +173,13 @@ public final class ExpoUpdatesReactDelegateHandler: ExpoReactDelegateHandler, Ap
+   }
+ #endif
+ 
+-  private func getWindow() -> UIWindow {
++  private func getWindow() -> UIWindow? {
+     #if os(macOS)
+     guard let window = NSApplication.shared.windows.first(where: { $0.isKeyWindow }) ?? NSApplication.shared.mainWindow else {
+       fatalError("Cannot find the current window.")
+     }
+     #else
+-    guard let window = UIApplication.shared.windows.filter(\.isKeyWindow).first ?? UIApplication.shared.delegate?.window as? UIWindow else {
+-      fatalError("Cannot find the current window.")
+-    }
++    let window = UIApplication.shared.windows.filter(\.isKeyWindow).first ?? UIApplication.shared.delegate?.window as? UIWindow
+     #endif
+     return window
+   }

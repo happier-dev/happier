@@ -8,8 +8,65 @@ import { resolveClaudeProjectId } from '../utils/path';
 import { resolveExistingClaudeSessionHandoffState } from '../sessionHandoff/resolveExistingSessionHandoffState';
 import { exportClaudeSessionBundle } from './exportClaudeSessionBundle';
 import { importClaudeSessionBundle } from './importClaudeSessionBundle';
+import { readClaudeSessionTitle } from '../directSessions/readClaudeSessionTitle';
 
 describe('claude session handoff bundle', () => {
+  it.each(['inline', 'file'] as const)('refreshes cached titles when a %s handoff replaces an existing transcript', async (storage) => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-claude-handoff-title-'));
+    const targetPath = join(root, 'workspace');
+    const env = { HOME: root, USERPROFILE: root };
+    const transcriptPath = join(root, '.claude', 'projects', resolveClaudeProjectId(targetPath), 'session-one.jsonl');
+    const padding = `${JSON.stringify({ type: 'progress', data: 'x'.repeat(5_000) })}\n`;
+    const transcript = (title: string) => `${padding}${JSON.stringify({ type: 'custom-title', customTitle: title })}\n${padding}`;
+    const importTranscript = async (contents: string) => {
+      const sourcePath = join(root, 'source.jsonl');
+      await writeFile(sourcePath, contents, 'utf8');
+      return importClaudeSessionBundle({
+        bundle: {
+          providerId: 'claude',
+          remoteSessionId: 'session-one',
+          ...(storage === 'file'
+            ? { transcriptFile: { t: 'happier.handoff.file.v1' as const, filePath: sourcePath, offsetBytes: 0, sizeBytes: Buffer.byteLength(contents) } }
+            : { transcriptBase64: Buffer.from(contents).toString('base64') }),
+        },
+        targetPath,
+        env,
+      });
+    };
+
+    await importTranscript(transcript('Original title'));
+    await expect(readClaudeSessionTitle(transcriptPath)).resolves.toBe('Original title');
+    // Neither rewrite changes the head or the previous boundary sample.
+    await importTranscript(transcript('Modified title'));
+    await expect(readClaudeSessionTitle(transcriptPath)).resolves.toBe('Modified title');
+    await importTranscript(`${transcript('Replaced title')}${JSON.stringify({ type: 'progress', data: 'more' })}\n`);
+    await expect(readClaudeSessionTitle(transcriptPath)).resolves.toBe('Replaced title');
+  });
+
+  it('preserves the previous transcript when importing an incomplete file slice fails', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-claude-handoff-failed-copy-'));
+    const targetPath = join(root, 'workspace');
+    const env = { HOME: root, USERPROFILE: root };
+    const contents = '{"type":"custom-title","customTitle":"Original title"}\n';
+    await importClaudeSessionBundle({
+      bundle: { providerId: 'claude', remoteSessionId: 'session-one', transcriptBase64: Buffer.from(contents).toString('base64') },
+      targetPath,
+      env,
+    });
+    const sourcePath = join(root, 'incomplete.jsonl');
+    await writeFile(sourcePath, 'incomplete', 'utf8');
+    await expect(importClaudeSessionBundle({
+      bundle: {
+        providerId: 'claude', remoteSessionId: 'session-one',
+        transcriptFile: { t: 'happier.handoff.file.v1', filePath: sourcePath, offsetBytes: 0, sizeBytes: 100 },
+      },
+      targetPath,
+      env,
+    })).rejects.toThrow();
+    const transcriptPath = join(root, '.claude', 'projects', resolveClaudeProjectId(targetPath), 'session-one.jsonl');
+    await expect(readFile(transcriptPath, 'utf8')).resolves.toBe(contents);
+  });
+
   it('keeps native default authentication unset for imported and existing target state', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-claude-handoff-native-auth-'));
     const targetPath = join(root, 'workspace');

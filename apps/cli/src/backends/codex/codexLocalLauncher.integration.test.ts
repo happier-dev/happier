@@ -363,7 +363,7 @@ describe('codexLocalLauncher', () => {
     }
   });
 
-  it('omits --ask-for-approval and --sandbox when permissionMode is "default" so ~/.codex/config.toml wins', async () => {
+  it.each(['auto', 'none', undefined] as const)('applies reasoning summary %s without changing local resume or native permission defaults', async (reasoningSummary) => {
     const fixture = await createCodexBinaryFixture();
     const argsPath = join(fixture.binDir, 'argv.json');
     const sessionId = randomUUID();
@@ -392,20 +392,28 @@ describe('codexLocalLauncher', () => {
         messageQueue,
         permissionMode: 'default',
         resumeId: sessionId,
+        ...{ configOverrides: reasoningSummary === undefined ? [] : [`model_reasoning_summary="${reasoningSummary}"`] },
       });
 
       await waitFor(() => {
         expect(existsSync(argsPath)).toBe(true);
       });
       const argv = JSON.parse(await readFile(argsPath, 'utf8')) as string[];
-      expect(argv).not.toContain('--ask-for-approval');
-      expect(argv).not.toContain('--sandbox');
-
       messageQueue.push('hi', { permissionMode: 'default' });
       await expect(launcherPromise).resolves.toEqual({ type: 'switch', resumeId: sessionId });
       await waitFor(() => {
         expect(existsSync(fixture.terminatedFlag)).toBe(true);
       });
+      expect(argv).not.toContain('--ask-for-approval');
+      expect(argv).not.toContain('--sandbox');
+      expect(argv).toContain('resume');
+      expect(argv).toContain(sessionId);
+      if (reasoningSummary === undefined) {
+        expect(argv.some((arg) => arg.startsWith('model_reasoning_summary='))).toBe(false);
+      } else {
+        expect(argv).toContain(`model_reasoning_summary="${reasoningSummary}"`);
+      }
+
     } finally {
       restoreEnv();
       await cleanupCodexBinaryFixture(fixture);

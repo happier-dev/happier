@@ -1,3 +1,4 @@
+import { projectNotificationQuestion } from '@happier-dev/protocol';
 import type { AgentRequestKind } from '../../agent/permissions/requestKind';
 
 function firstString(value: unknown): string | null {
@@ -15,19 +16,22 @@ export function buildAgentRequestNotificationContent(params: Readonly<{
   occurrenceId?: string;
   toolName: string;
   toolDetails?: string | null;
+  toolInput?: unknown;
 }>): Readonly<{ title: string; body: string; data: Record<string, unknown> }> {
   const type = params.kind === 'user_action' ? 'user_action_request' : 'permission_request';
   const title = firstString(params.sessionTitle) ?? firstString(params.sessionId) ?? 'Session';
   const agentDisplayName = firstString(params.agentDisplayName) ?? 'Agent';
   const toolName = firstString(params.toolName) ?? 'tool';
   const details = typeof params.toolDetails === 'string' && params.toolDetails.trim() ? params.toolDetails.trim() : null;
-  const body = params.kind === 'user_action'
+  const question = params.kind === 'user_action' && params.occurrenceId
+    ? projectNotificationQuestion(params.toolName, params.toolInput) : null;
+  const body = question?.body ?? (params.kind === 'user_action'
     ? details
       ? `${agentDisplayName} needs your input for ${toolName}\n${details}`
       : `${agentDisplayName} needs your input for ${toolName}`
     : details
       ? `${agentDisplayName} asks permission to use ${toolName}\n${details}`
-      : `${agentDisplayName} asks permission to use ${toolName}`;
+      : `${agentDisplayName} asks permission to use ${toolName}`);
 
   return {
     title,
@@ -35,6 +39,7 @@ export function buildAgentRequestNotificationContent(params: Readonly<{
     data: {
       sessionId: params.sessionId,
       requestId: params.requestId,
+      ...(question ? { questionAnswerV1: question.descriptor } : {}),
       ...(params.occurrenceId ? { occurrenceId: params.occurrenceId } : {}),
       tool: params.toolName,
       type,

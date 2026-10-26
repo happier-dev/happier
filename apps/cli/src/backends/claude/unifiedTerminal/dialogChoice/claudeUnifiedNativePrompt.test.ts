@@ -55,6 +55,26 @@ function createHarness() {
 }
 
 describe('native prompts through the existing terminal dialog owner', () => {
+  it('publishes the full correlated Bash command with the native explanation instead of a clipped command tail', async () => {
+    const { session, broker, client } = createHarness();
+    const command = readFileSync(new URL('../tuiControls/__fixtures__/claude-2.1.310-permission-clipped-command.sh.txt', import.meta.url), 'utf8').trim();
+    const tool = { session_id: 'claude-native-session', tool_name: 'Bash', tool_input: { command } };
+    session.onClaudeSessionHook({ ...tool, hook_event_name: 'PreToolUse', tool_use_id: 'toolu-long-command' });
+    session.onClaudeSessionHook({ ...tool, hook_event_name: 'ClaudeNativePrompt' });
+    const explanation = 'Permission rule Bash(cat *) requires confirmation for this command.\n /permissions to update rules\n\n Do you want to proceed?';
+    const screen = readFileSync(new URL('../tuiControls/__fixtures__/claude-2.1.310-permission-clipped-command.txt', import.meta.url), 'utf8');
+    const dialog = broker.resolveVisibleDialog(parseClaudeScreenState(screen));
+    expect(dialog).toMatchObject({ kind: 'native', dialogId: 'tool_permission', question: `${command}\n\n${explanation}` });
+    if (!dialog) throw new Error('expected current native permission');
+    const pending = broker.requestDialogChoice({ dialog });
+    void pending.catch(() => {});
+    await vi.waitFor(() => expect(client.agentState.requests['native-1']).toMatchObject({ arguments: { questions: [{
+      question: `${command}\n\n${explanation}`,
+      options: [{ label: 'Yes', choice: 'option_1' }, { label: 'No', choice: 'option_2' }],
+    }] } }));
+    await broker.dispose();
+  });
+
   it('publishes the full hook-owned questions while their native tab header is above the viewport', async () => {
     const { session, broker, client } = createHarness();
     const screen = readFileSync(new URL('../tuiControls/__fixtures__/claude-2.1.310-question-clipped.txt', import.meta.url), 'utf8');

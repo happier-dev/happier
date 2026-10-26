@@ -1,14 +1,20 @@
 import { randomUUID } from "node:crypto";
 
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
     SESSION_AGENT_TRANSITION_DIVIDER_MESSAGE,
     buildSessionAgentTransitionDividerLocalId,
+    type SessionRuntimeIssueV1,
 } from "@happier-dev/protocol";
 
 import { db } from "@/storage/db";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
+import { eventRouter } from "@/app/events/eventRouter";
+import { registerSessionAgentTransitionRoute } from "@/app/api/routes/session/registerSessionAgentTransitionRoute";
+import { createFakeRouteApp, createReplyStub, getRouteHandler } from "@/app/api/testkit/routeHarness";
+import { createRouteRequest } from "@/app/api/testkit/requestFixtures";
+import { applySessionTurnMutation } from "@/app/session/sessionWriteService";
 
 import { applySessionAgentTransitionCutover } from "./applySessionAgentTransitionCutover";
 
@@ -137,6 +143,84 @@ describe("applySessionAgentTransitionCutover on SQLite", () => {
         const row = await db.session.findUniqueOrThrow({ where: { id: session.id }, select: { metadata: true } });
         expect(JSON.parse(row.metadata)).toEqual({ flavor: "claude" });
         await expect(db.sessionMessage.count({ where: { sessionId: session.id } })).resolves.toBe(0);
+    });
+
+    it.each([false, true])("retires the departed Agent's failure projection (runner clock ahead: %s)", async (clockAhead) => {
+        // Runtime observations come from another machine whose clock can be ahead.
+        const departedObservedAt = clockAhead ? BigInt(Date.now() + 60_000) : 200n;
+        const issue: SessionRuntimeIssueV1 = {
+            v: 1, scope: "primary_session", status: "failed", source: "usage_limit",
+            code: "usage_limit", provider: "codex", occurredAt: 200,
+            usageLimit: { v: 1, resetAtMs: 9_000, retryAfterMs: null, quotaScope: "account", recoverability: "wait" },
+        };
+        const session = await seed({
+            metadata: JSON.stringify({ flavor: "codex" }),
+            latestTurnId: "departed-turn", latestTurnStatus: "failed",
+            latestTurnStatusObservedAt: departedObservedAt, lastRuntimeIssue: JSON.stringify(issue),
+        });
+        const historicalTurn = await db.sessionTurn.create({ data: {
+            sessionId: session.id, turnId: "departed-turn", provider: "codex", status: "failed",
+            startedAt: 100n, updatedAt: 200n, terminalAt: 200n, lastRuntimeIssueJson: JSON.stringify(issue),
+        } });
+        const request = {
+            actorUserId: session.ownerId, sessionId: session.id,
+            currentView: currentView(session, "claude"),
+            divider: { localId: dividerLocalId, content: dividerContent("claude") },
+        };
+
+        // Keep the route and persistence real; only stand in for outbound socket delivery.
+        const emit = vi.spyOn(eventRouter, "emitUpdate").mockImplementation(() => {});
+        try {
+            const app = createFakeRouteApp();
+            registerSessionAgentTransitionRoute(app as never, {});
+            const reply = createReplyStub();
+            await getRouteHandler(app, "POST", "/v2/sessions/:sessionId/agent-transition/cutover")(
+                createRouteRequest({ userId: session.ownerId, params: { sessionId: session.id },
+                    body: { v: 1, currentView: request.currentView, divider: request.divider } }), reply,
+            );
+            expect(reply.statusCode).toBe(200);
+            expect(reply.send).toHaveBeenCalledWith(expect.objectContaining({ success: true }));
+            expect(emit.mock.calls.map(([event]) => event.payload.body)).toContainEqual(expect.objectContaining({
+                t: "update-session", id: session.id,
+                latestTurnId: null, latestTurnStatus: null, latestTurnStatusObservedAt: expect.any(Number), lastRuntimeIssue: null,
+            }));
+        } finally {
+            emit.mockRestore();
+        }
+        const clearedProjection = await db.session.findUniqueOrThrow({ where: { id: session.id }, select: {
+            latestTurnId: true, latestTurnStatus: true, latestTurnStatusObservedAt: true, lastRuntimeIssue: true,
+        } });
+        expect(clearedProjection).toEqual({
+            latestTurnId: null, latestTurnStatus: null, latestTurnStatusObservedAt: expect.any(BigInt), lastRuntimeIssue: null,
+        });
+        expect(clearedProjection.latestTurnStatusObservedAt).toBe(departedObservedAt + 1n);
+        await expect(db.sessionTurn.findUniqueOrThrow({ where: { id: historicalTurn.id } })).resolves.toEqual(historicalTurn);
+        // The durable mutation outbox can replay historical anchors after cutover.
+        await expect(applySessionTurnMutation({ actorUserId: session.ownerId, mutation: {
+            v: 1, sessionId: session.id, mutationId: randomUUID(), action: "append_transcript_anchors",
+            turnId: "departed-turn", observedAt: 201, transcriptAnchors: { userMessageSeqs: [1] },
+        } })).resolves.toMatchObject({ ok: true, didApply: true, latestTurnId: null, lastRuntimeIssue: null });
+        const historyWithAnchors = await db.sessionTurn.findUniqueOrThrow({ where: { id: historicalTurn.id } });
+        expect(historyWithAnchors.status).toBe("failed");
+        expect(JSON.parse(historyWithAnchors.lastRuntimeIssueJson ?? "null")).toEqual(issue);
+        expect(JSON.parse(historyWithAnchors.transcriptAnchorsJson ?? "null")).toMatchObject({ userMessageSeqs: [1] });
+        await expect(db.session.findUniqueOrThrow({ where: { id: session.id }, select: {
+            latestTurnId: true, latestTurnStatus: true, latestTurnStatusObservedAt: true, lastRuntimeIssue: true,
+        } })).resolves.toEqual(clearedProjection);
+        await expect(applySessionTurnMutation({ actorUserId: session.ownerId, mutation: {
+            v: 1, sessionId: session.id, mutationId: randomUUID(), action: "begin",
+            turnId: "target-turn", provider: "claude", observedAt: Number(departedObservedAt) + 2,
+        } })).resolves.toMatchObject({ ok: true, didApply: true, latestTurnId: "target-turn", latestTurnStatus: "in_progress" });
+
+        // An exact transport retry after activation must preserve the TARGET's new failure.
+        await db.session.update({ where: { id: session.id }, data: {
+            active: true, latestTurnId: "target-turn", latestTurnStatus: "failed",
+            latestTurnStatusObservedAt: 300n, lastRuntimeIssue: JSON.stringify({ ...issue, provider: "claude", occurredAt: 300 }),
+        } });
+        expect((await applySessionAgentTransitionCutover(request)).ok).toBe(true);
+        const target = await db.session.findUniqueOrThrow({ where: { id: session.id } });
+        expect(target.latestTurnId).toBe("target-turn");
+        expect(JSON.parse(target.lastRuntimeIssue ?? "null")).toMatchObject({ provider: "claude", occurredAt: 300 });
     });
 
     it("refuses to cut over an archived Session", async () => {

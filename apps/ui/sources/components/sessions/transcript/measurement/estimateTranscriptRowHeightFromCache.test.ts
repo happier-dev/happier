@@ -380,6 +380,25 @@ describe('P · a tool row is sized by the chrome it actually paints', () => {
 
     const MEASURED_FEED_TOOL_ROW_PX = 28;
 
+    it('estimates compact desktop disclosure rows without the native touch-height reservation', () => {
+        const estimate = (kind: string, variant: 'feed' | 'feed_background') => estimateTranscriptRowHeightFromContent({
+            platformIsWeb: true, getMessageById: () => null,
+            item: toolUnitItem(kind, false), toolCallsGroupChromeVariant: variant,
+        });
+        expect(estimate('tool-group-header', 'feed')).toBe(28);
+        expect(estimate('tool-group-header', 'feed_background')).toBe(34);
+        expect(estimate('tool-group-expand', 'feed')).toBe(24);
+    });
+
+
+    it('reserves the normal message gap after visible tools, including collapsed previews', () => {
+        for (const expanded of [false, true]) {
+            const footer = { ...toolUnitItem('tool-group-footer', expanded), hasVisibleTools: true };
+            expect(estimateFor(footer, 'feed')).toBe(28);
+        }
+    });
+
+
     it('keeps the feed variants on their measured single-line caps', () => {
         expect(estimateFor(toolUnitItem('tool-group-tool', false), 'feed')).toBe(MEASURED_FEED_TOOL_ROW_PX);
         expect(estimateFor(toolUnitItem('tool-group-tool', false), 'feed_background')).toBe(MEASURED_FEED_TOOL_ROW_PX);

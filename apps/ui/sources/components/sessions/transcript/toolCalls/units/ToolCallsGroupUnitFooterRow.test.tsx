@@ -23,6 +23,7 @@ async function renderFooterRow(props: Record<string, unknown>) {
     return renderScreen(React.createElement(ToolCallsGroupUnitFooterRowWithSessionCommon, {
         sessionId: 's1',
         groupId: 'toolCalls:t1:m1',
+        hasVisibleTools: false,
         metadata: null,
         interaction,
         ...createTranscriptSessionCommonPropsFixture(),

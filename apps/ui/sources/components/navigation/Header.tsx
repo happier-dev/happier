@@ -11,6 +11,7 @@ import { Text } from '@/components/ui/text/Text';
 import { useDesktopWindowDragMouseProps } from '@/components/navigation/desktopWindowChrome/DesktopWindowDragRegion';
 import { Icon } from '@/components/ui/icons/Icon';
 import { t } from '@/text';
+import { useHorizontalSafeAreaContentPadding } from './safeArea/HorizontalSafeArea';
 
 
 interface HeaderProps {
@@ -51,6 +52,8 @@ export const Header = React.memo((props: HeaderProps) => {
 
     const insets = useSafeAreaInsets();
     const paddingTop = safeAreaEnabled ? insets.top : 0;
+    // As stack chrome the header reaches the window edge; its controls stay inside the side insets.
+    const horizontalSafeAreaPadding = useHorizontalSafeAreaContentPadding();
     const headerHeight = useHeaderHeight();
     const desktopDragProps = useDesktopWindowDragMouseProps();
 
@@ -61,6 +64,7 @@ export const Header = React.memo((props: HeaderProps) => {
         {
             paddingTop,
         },
+        horizontalSafeAreaPadding,
         headerShadowVisible && styles.shadow,
         headerStyle,
     ];

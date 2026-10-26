@@ -21,8 +21,7 @@ export function projectCodexNativeHistoryItem(item: Readonly<Record<string, unkn
       case 'tool-call': actions.push({ type: 'tool-call', callId: update.callId, name: update.name, input: update.input }); break;
       case 'tool-result': actions.push({ type: 'tool-result', callId: update.callId, output: update.output }); break;
       case 'context-compaction': actions.push({ type: 'context-compaction', phase: 'completed', lifecycleId: `codex:context-compaction:${update.itemId}`, source: 'provider-event', providerEventId: update.itemId }); break;
-      // Reasoning and harness prompts have no row in the existing Direct transcript vocabulary.
-      case 'reasoning-final': break;
+      case 'reasoning-final': actions.push({ type: 'thinking', text: update.text }); break;
       default: throw new Error('Codex native history contains an unsupported transcript item');
     }
   }

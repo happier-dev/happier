@@ -25,9 +25,9 @@ import {
 import { publishSessionPendingQueueWake } from './sessions/publishSessionPendingQueueWake';
 import { checkRuntimeAuthUsageLimitRecovery } from './connectedServices/runtimeAuth/checkRuntimeAuthUsageLimitRecovery';
 import { isCurrentUsageLimitRecoverySource } from './connectedServices/runtimeAuth/isCurrentUsageLimitRecoveryCredential';
-import { continueSessionAfterUsageLimitReset } from './connectedServices/continuation/continueSessionAfterUsageLimitReset';
+import { continueSessionAfterUsageLimitReset, type UsageLimitContinuationResult } from './connectedServices/continuation/continueSessionAfterUsageLimitReset';
 import { buildRuntimeAuthUsageLimitRecoveryMetadataUpdater } from './connectedServices/runtimeAuth/projection/connectedServiceRuntimeAuthRecoveryUsageLimitMetadata';
-import { SessionUsageLimitRecoveryV1Schema } from '@happier-dev/protocol';
+import { RPC_METHODS, SessionUsageLimitRecoveryV1Schema } from '@happier-dev/protocol';
 import { createRuntimeAuthRecoverySchedulerForDaemon } from './connectedServices/runtimeAuth/createRuntimeAuthRecoverySchedulerForDaemon';
 import { projectTemporaryThrottleRecoveryMetadata } from './connectedServices/runtimeAuth/projection/temporaryThrottleRecoveryMetadata';
 import { deriveConnectedServiceBrokerRefreshToken } from './connectedServices/broker/brokerRefreshCapabilityToken';
@@ -784,7 +784,8 @@ async function resumeInactiveSessionWhenUsageLimitReady(params: Readonly<{
   sessionId: string;
   rawSession: RawSessionRecord;
   metadata: Record<string, unknown>;
-}>): Promise<boolean> {
+  readiness?: 'provider_ready';
+}>): Promise<boolean | UsageLimitContinuationResult> {
   const recovery = SessionUsageLimitRecoveryV1Schema.safeParse(params.metadata.sessionUsageLimitRecoveryV1);
   if (!recovery.success) return false;
   const spawnOptions = buildInactiveUsageLimitResumeSpawnOptions({
@@ -807,7 +808,7 @@ async function resumeInactiveSessionWhenUsageLimitReady(params: Readonly<{
     },
     ensureRuntime: async () => (await params.spawnSession(spawnOptions)).type === 'success',
   });
-  return result.status === 'continued';
+  return result;
 }
 
 async function persistExplicitSessionStopRecoveryCancellation(params: Readonly<{
@@ -4272,7 +4273,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                   tmuxWindowId: tmuxResult.windowId ?? '',
                   ...(tmuxTmpDir ? { tmuxTmpDir } : {}),
                   disposeUnboundHost: async () => {
-                    const target = tmuxResult.windowId ?? '';
+                    const target = `${tmuxSession}:${tmuxResult.windowId ?? ''}`;
                     if (!await tmux.killWindow(target)) {
                       throw new Error(`Failed to dispose unbound tmux window ${target}`);
                     }
@@ -5642,23 +5643,6 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                 ...(result.diagnostics ? { diagnostics: result.diagnostics } : {}),
               };
         };
-
-        void hydrateInactiveUsageLimitRecoveryFromSessionMetadata({
-          credentials,
-          currentMachineId: machineId,
-          currentMachineHost: preferredHost,
-          currentMachineHomeDir: os.homedir(),
-          observe: ({ sessionId, recovery, runCheckNow }) => {
-            inactiveUsageLimitRecoveryCheckOwner.observe({ sessionId, recovery, runCheckNow });
-          },
-        }).then((result) => {
-          if (result.observed === 0) return;
-          logger.debug('[DAEMON RUN] Reconstructed inactive usage-limit recovery checks passively from session metadata', result);
-        }).catch((error) => {
-          logger.warn('[DAEMON RUN] Failed to rehydrate inactive usage-limit recovery checks from session metadata', {
-            error: serializeAxiosErrorForLog(error),
-          });
-        });
 
             // Handle child process exit
             const onChildExitedBase = createOnChildExited({
@@ -8707,7 +8691,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                 checkRuntimeAuthUsageLimitRecovery: async (input) => await checkRuntimeAuthUsageLimitRecovery({
                   scheduler: runtimeAuthRecoveryScheduler, ...input,
                 }),
-                resumeInactiveSessionWhenUsageLimitReady: async ({ sessionId, rawSession, metadata }) =>
+                resumeInactiveSessionWhenUsageLimitReady: async ({ sessionId, rawSession, metadata, readiness }) =>
                   await resumeInactiveSessionWhenUsageLimitReady({
                     spawnSession,
                     fallbackMachineId: machineId,
@@ -8716,6 +8700,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                     sessionId,
                     rawSession,
                     metadata,
+                    ...(readiness ? { readiness } : {}),
                 }),
                 scheduleInactiveSessionUsageLimitRecoveryCheck: ({ sessionId, recovery, runCheckNow }) => {
                   inactiveUsageLimitRecoveryCheckOwner.schedule({
@@ -8766,6 +8751,34 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                 readTemporaryThrottleRecovery: (sessionId) => temporaryThrottleRecoveryScheduler.read(sessionId),
                 cancelTemporaryThrottleRecovery: async (input) =>
                   await temporaryThrottleRecoveryScheduler.stopRetrying(input),
+              });
+
+              void hydrateInactiveUsageLimitRecoveryFromSessionMetadata({
+                credentials,
+                currentMachineId: machineId,
+                currentMachineHost: preferredHost,
+                currentMachineHomeDir: os.homedir(),
+                runCheckNow: async (sessionId) => await connectedApiMachine.invokeLocalMachineAction(
+                  RPC_METHODS.DAEMON_SESSION_USAGE_LIMIT_CHECK_NOW,
+                  { sessionId },
+                ),
+                observe: ({ sessionId, recovery, runCheckNow }) => {
+                  inactiveUsageLimitRecoveryCheckOwner.schedule({
+                    sessionId, recovery, runCheckNow,
+                    scheduler: inactiveUsageLimitRecoveryScheduler,
+                    onPersistenceError: (error) => logger.warn(
+                      '[DAEMON RUN] Failed to restore usage-limit recovery check',
+                      { sessionId, error: serializeAxiosErrorForLog(error) },
+                    ),
+                  });
+                },
+              }).then((result) => {
+                if (result.observed === 0) return;
+                logger.debug('[DAEMON RUN] Restored inactive usage-limit recovery checks from session metadata', result);
+              }).catch((error) => {
+                logger.warn('[DAEMON RUN] Failed to rehydrate inactive usage-limit recovery checks from session metadata', {
+                  error: serializeAxiosErrorForLog(error),
+                });
               });
 
               connectedApiMachine.onUpdate((update) => {

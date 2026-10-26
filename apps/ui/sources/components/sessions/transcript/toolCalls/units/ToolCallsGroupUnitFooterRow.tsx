@@ -13,7 +13,9 @@ import {
 } from './toolCallsGroupChrome';
 import type { ToolCallsGroupUnitRowCommonProps } from './unitRowProps';
 
-type ToolCallsGroupUnitFooterRowProps = ToolCallsGroupUnitRowCommonProps;
+type ToolCallsGroupUnitFooterRowProps = ToolCallsGroupUnitRowCommonProps & Readonly<{
+    hasVisibleTools: boolean;
+}>;
 
 export const ToolCallsGroupUnitFooterRow = React.memo(function ToolCallsGroupUnitFooterRow(
     props: ToolCallsGroupUnitFooterRowProps,
@@ -44,9 +46,10 @@ export const ToolCallsGroupUnitFooterRowWithSessionCommon = React.memo(function 
         <ToolCallsGroupUnitRowFrame
             variant={variant}
             position="footer"
+            hasVisibleTools={props.hasVisibleTools}
             unitTestID="transcript-tool-calls-unit-footer"
         >
-            <View style={variant === 'cards' ? styles.footerBodyCards : variant === 'feed' ? styles.footerBodyPlainFeed : styles.footerBodyFeed} />
+            <View style={variant === 'cards' ? styles.footerBodyCards : variant === 'feed' && !props.hasVisibleTools ? styles.footerBodyPlainFeed : styles.footerBodyFeed} />
         </ToolCallsGroupUnitRowFrame>
     );
 });

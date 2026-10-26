@@ -5,6 +5,7 @@ import {
     type PrimaryTurnStatusV1,
     type SessionRuntimeIssueV1,
     type SessionUsageLimitRecoveryV1,
+    type SessionUsageLimitRecoveryOperationResultV1,
 } from '@happier-dev/protocol';
 
 import type { AgentInputStatusBadgeTone } from '@/components/sessions/agentInput/agentInputContracts';
@@ -15,7 +16,34 @@ import {
 import { t, type TranslationParams } from '@/text';
 
 export type UsageLimitRecoveryRememberedMode = 'ask' | 'auto_wait';
-export type UsageLimitRecoveryOperationStatus = 'checking' | 'ready' | 'waiting' | 'resumed' | 'exhausted' | 'inactive';
+export type UsageLimitRecoveryOperationStatus = 'checking' | 'ready' | 'waiting' | 'exhausted' | 'inactive';
+
+/** Control acknowledgements do not prove that the provider accepted another turn. */
+export function resolveSessionUsageLimitRecoveryOperationStatus(
+    status: SessionUsageLimitRecoveryOperationResultV1['status'] | undefined,
+): UsageLimitRecoveryOperationStatus | 'cancelled' | null {
+    switch (status) {
+        case 'ready':
+        case 'already_ready':
+        case 'no_recovery_needed':
+            return 'ready';
+        case 'resumed':
+        case 'switch_attempted':
+        case 'switch_applied':
+        case 'switch_observed':
+        case 'waiting':
+        case 'rate_limited':
+            return 'waiting';
+        case 'exhausted':
+            return 'exhausted';
+        case 'inactive':
+            return 'inactive';
+        case 'cancelled':
+            return 'cancelled';
+        default:
+            return null;
+    }
+}
 
 export type SessionUsageLimitRecoveryActionKind =
     | 'enable'
@@ -303,7 +331,6 @@ function isReadyForResume(params: Readonly<{
     hasInterruptedWorkToResume?: boolean;
 }>): boolean {
     return params.operationStatus === 'ready'
-        || params.operationStatus === 'resumed'
         || (
             params.hasInterruptedWorkToResume === true
             && isResetElapsed(params.resetAtMs, params.nowMs)
@@ -324,7 +351,6 @@ function resolveVisibleRecoveryStatus(params: Readonly<{
         case 'inactive':
             return 'paused';
         case 'ready':
-        case 'resumed':
         case null:
         case undefined:
             return params.recoveryStatus ?? null;

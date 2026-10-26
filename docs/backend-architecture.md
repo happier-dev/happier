@@ -227,11 +227,19 @@ The current development server has separate session and machine presence owners:
 - Machine heartbeats use the existing ActivityCache/batched persistence path in `sources/app/presence`.
 - Released `session-alive` events enter `sources/app/session/runtimeActivity/socketEvents.ts`. The adapter delegates authorization, registration, and conditional liveness writes to `createSessionPublisherPresence`; machine batching is not a second session-presence writer.
 - `publishSessionPublisherLifecycleUpdate` invalidates account badges through the existing debounced refresh owner whenever it publishes reachability, including registration, close, and timeout. Activity-only updates retain their explicit badge-change signal. Closing reachability does not clear pending approval or user-action counts; those remain request-owner facts.
-- Session heartbeat coalescing retains the latest server-received observation. Its next flush deadline is the earlier of 60 seconds after the preceding write settles and half the configured session expiry after that write's observation time. This preserves the default write budget while bounding durable observation age for short expiries. Delayed writes retain the observation time rather than inventing a newer heartbeat. Close/disconnect clears pending work, and generation/fence checks prevent a replaced publisher from refreshing its successor. Database failures remain observable and use the adapter's retry backoff; coalescing cannot guarantee liveness during an outage.
+- Session heartbeat coalescing retains the latest server-received observation until shared persistence admission, so heartbeats received while queued replace the older pending observation before it is written. An accepted heartbeat keeps its original observation if a queued close clears pending work, preserving heartbeat-before-close ordering. Its next flush deadline is the earlier of 60 seconds after the preceding write settles and half the configured session expiry after that write's observation time. This preserves the default write budget while bounding durable observation age for short expiries. Delayed writes retain the observation time rather than inventing a newer heartbeat. Disconnect clears pending work, and generation/fence checks prevent a replaced publisher from refreshing its successor. Database failures remain observable and use the adapter's retry backoff; coalescing cannot guarantee liveness during an outage.
 - Stop completion uses the publisher's acknowledged runtime-activity close or the fenced explicit machine-stop finalizer after the daemon reports a proven stop. An accepted stop request, an opaque encrypted RPC reply, and an ordinary socket disconnect do not prove that the runner exited. Ordinary disconnect makes runtime activity unobserved; it does not mark the session inactive or end its turn. Archive continues to require the server's authoritative inactive state.
 - `runPresenceTimeoutTick` reads durable timestamps and conditionally expires the observed session fence. Session and machine expiry default to ten minutes, with a separate timeout-loop tick; these are not a ten-minute flush timer. Runtime activity snapshots describe agent activity separately from reachability.
 
 These are development-source semantics, not a claim that every published server already contains them.
+
+The development UI keeps reported background work in its configured Working placement
+while publisher presence remains active and online. Observation age does not settle that
+work or move an unread reply into Needs attention. The existing session-work observation
+owner states uncertainty separately: stale list rows pause their working indicator and
+say "working, awaiting updates…" until fresh evidence arrives. An explicit idle activity
+snapshot, offline presence, archive, or actionable request still changes presentation
+through the normal lifecycle and attention owners.
 
 The development UI can retain a hidden detailed Session while updating only its
 list projection. `sessionLifecycleProjection.ts` owns ordering of the public
@@ -293,6 +301,12 @@ or its owning Session closes. Backend disposal joins the existing per-backend
 cleanup rather than repeating native teardown. Voice owns chat and commit
 backends as soon as they are acquired, including while native session opening is
 pending, and releases them before waiting for an active turn to settle.
+
+Resuming a bounded execution run keeps its bounded completion contract. The
+recreated provider occurrence runs through the same intent parsing, terminal
+result and activity publication, marker update, and cleanup as its initial turn.
+A retained resume handle alone does not turn that run into a long-lived run;
+subsequent input to an active bounded turn uses its existing steering queue.
 
 ## Storage and persistence
 ### Database (Prisma)

@@ -270,12 +270,15 @@ export function registerSessionRuntimeActivitySnapshotSocketEvent(params: Readon
             }
             return;
         }
-        const observedAtMs = pendingLegacyAliveAtMs;
-        clearPendingLegacyAlive();
+        let observedAtMs = pendingLegacyAliveAtMs;
         legacyAliveInFlight = true;
         try {
             const persisted = await serializeReleasedAliveOperation(params.presence, async () => {
                 if (legacyAliveStopped) return { status: 'unchanged' as const };
+                // Coalesce until shared admission. A queued close may clear pending observations,
+                // but the accepted alive still precedes that close using its genuine receipt time.
+                observedAtMs = pendingLegacyAliveAtMs ?? observedAtMs;
+                clearPendingLegacyAlive();
                 const observedAt = new Date(observedAtMs);
                 const touched = await params.presence.touchPublisher({ socket: params.socket, observedAt });
                 if (touched.status === 'touched') {

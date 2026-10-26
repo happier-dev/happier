@@ -28,7 +28,7 @@ describe('listAgentInputActionChipActionIds', () => {
         const state: any = {
             settings: {
                 experiments: false,
-                featureToggles: {},
+                featureToggles: { 'execution.runs': false },
                 actionsSettingsV1: {
                     v: 1,
                     actions: {

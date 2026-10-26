@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Pressable, StyleProp, View, ViewStyle } from 'react-native';
+import { Pressable, StyleProp, View, ViewStyle, type PressableProps } from 'react-native';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -35,6 +35,13 @@ export const PrimaryCircleIconButton = React.memo(
       accessibilityState?: { disabled?: boolean } & Record<string, unknown>;
       hitSlop?: any;
       onPress?: () => void;
+      onHoverIn?: PressableProps['onHoverIn'];
+      onHoverOut?: PressableProps['onHoverOut'];
+      onFocus?: PressableProps['onFocus'];
+      onBlur?: PressableProps['onBlur'];
+      onLongPress?: () => void;
+      accessibilityActions?: PressableProps['accessibilityActions'];
+      onAccessibilityAction?: PressableProps['onAccessibilityAction'];
       style?: StyleProp<ViewStyle>;
       children?: React.ReactNode;
     }>,
@@ -60,6 +67,13 @@ export const PrimaryCircleIconButton = React.memo(
           hitSlop={props.hitSlop}
           disabled={computedDisabled}
           onPress={props.onPress}
+          onHoverIn={props.onHoverIn}
+          onHoverOut={props.onHoverOut}
+          onFocus={props.onFocus}
+          onBlur={props.onBlur}
+          onLongPress={props.onLongPress}
+          accessibilityActions={props.accessibilityActions}
+          onAccessibilityAction={props.onAccessibilityAction}
           style={({ pressed }) => [
             styles.inner,
             {

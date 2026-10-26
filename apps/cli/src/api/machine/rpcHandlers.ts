@@ -101,6 +101,8 @@ import {
 } from './rpcHandlers.promptRegistryTransfers';
 import { registerMachineSessionGoalRpcHandlers } from './rpcHandlers.sessionGoals';
 import { registerMachineServerWorkRpcHandlers } from './rpcHandlers.serverWork';
+import { registerMachineNotificationRpcHandlers } from './rpcHandlers.notifications';
+import type { PushNotificationClient } from '../pushNotifications';
 import type { DaemonServerWorkScheduler } from '@/daemon/serverWork';
 import type {
   CancelConnectedServiceRuntimeAuthRecovery,
@@ -262,6 +264,7 @@ export type MachineRpcHandlers = {
 };
 
 export type MachineRpcHandlerDeps = Readonly<{
+  pushNotifications?: PushNotificationClient;
   connectedServiceImportAccount?: ConnectedServiceImportAccount;
   runReplaySummaryForDialog?: typeof runReplaySummaryForDialog;
   promptAssetsHomedir?: () => string;
@@ -404,6 +407,9 @@ export function registerMachineRpcHandlers(params: Readonly<{
   deps?: MachineRpcHandlerDeps;
 }>): MachineRpcLifecycleRegistration {
   const { rpcHandlerManager, handlers } = params;
+  if (params.deps?.pushNotifications) {
+    registerMachineNotificationRpcHandlers({ rpcHandlerManager, pushNotifications: params.deps.pushNotifications });
+  }
   const { spawnSession, stopSession, requestShutdown, resolveSpawnSessionByNonce, abandonSpawnSessionByNonce } = handlers;
   const stopSessionConfirmed = async (sessionId: string): Promise<boolean> => (
     normalizeMachineStopSessionResult(await stopSession(sessionId)).status === 'stopped'

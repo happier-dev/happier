@@ -197,6 +197,14 @@ through the canonical message owner. Missing, conflicting, unreadable, or
 unverifiable divider evidence after that committed view maps to the one public
 `divider_unavailable` result; storage-specific evidence stays internal.
 
+In current development source, the cutover also retires the departed Agent's
+current turn and runtime-issue projection. It advances the previous observation
+timestamp in the runner's clock domain and publishes that clear alongside the
+target identity. Historical `SessionTurn` rows and their failures remain intact.
+Later transcript-anchor or provider-id
+bookkeeping updates those historical rows without selecting them as current.
+An exact cutover retry leaves the target runtime's new status and issue intact.
+
 **7.4 Admit input, then activate.** Input custody is taken **before** the target
 runtime is started, matching this tree's `sendSessionMessage` invariant:
 starting a runtime with no durable Pending row creates work the user cannot

@@ -15,7 +15,7 @@ import {
 import { readCodexAppServerStartupRpcTimeoutMs } from './client/codexAppServerRpcTimeout';
 import { appendCodexCliConfigOverridesArgs } from '../utils/appendCodexCliConfigOverridesArgs';
 import { resolveCodexCliInvocation } from '../utils/resolveCodexCliInvocation';
-import { withCodexNativeStartupLock } from '../utils/withCodexNativeStartupLock';
+import { readCodexNativeStartupVersion, withCodexNativeStartupLock } from '../utils/withCodexNativeStartupLock';
 
 type InvocationResolver = (params: Readonly<{
   args: string[];
@@ -89,16 +89,23 @@ type CodexSharedAppServer = Readonly<{
 }>;
 
 export async function createCodexSharedAppServer(params: CodexSharedAppServerParams): Promise<CodexSharedAppServer> {
+  const dependencies = { ...defaultDependencies(), ...params.dependencies };
   const processEnv = sanitizeCodexAppServerEnv(params.processEnv ?? process.env);
+  // Resolve only once so the version probe and actual native process agree.
+  const invocation = await dependencies.resolveInvocation({ args: ['app-server'], cwd: params.directory, processEnv });
+  const versionOutput = await readCodexNativeStartupVersion(invocation, processEnv, params.directory);
   // Failed initialization remains exclusive until native process shutdown,
   // too. The returned server's ongoing session activity is not locked.
-  return await withCodexNativeStartupLock(readCodexAppServerStartupRpcTimeoutMs(processEnv), async () => (
-    await createUnlockedCodexSharedAppServer(params)
-  ));
+  return await withCodexNativeStartupLock(readCodexAppServerStartupRpcTimeoutMs(processEnv), async configOverrides => (
+    await createUnlockedCodexSharedAppServer({ ...params, configOverrides }, dependencies, invocation)
+  ), undefined, { processEnv, cwd: params.directory, configOverrides: params.configOverrides, versionOutput });
 }
 
-async function createUnlockedCodexSharedAppServer(params: CodexSharedAppServerParams): Promise<CodexSharedAppServer> {
-  const dependencies = { ...defaultDependencies(), ...params.dependencies };
+async function createUnlockedCodexSharedAppServer(
+  params: CodexSharedAppServerParams,
+  dependencies: SharedServerDependencies,
+  resolvedInvocation: Readonly<{ command: string; args: string[] }>,
+): Promise<CodexSharedAppServer> {
   const processEnv = sanitizeCodexAppServerEnv(params.processEnv ?? process.env);
   const runtimeDirectory = await dependencies.createRuntimeDirectory();
   // Leave the socket parent absent so Codex creates it with its cross-platform
@@ -109,11 +116,7 @@ async function createUnlockedCodexSharedAppServer(params: CodexSharedAppServerPa
   let initialClient: DisposableCodexAppServerClient | null = null;
   let disposed = false;
   try {
-    const baseInvocation = await dependencies.resolveInvocation({
-      args: ['app-server', '--listen', endpoint],
-      cwd: params.directory,
-      processEnv,
-    });
+    const baseInvocation = { command: resolvedInvocation.command, args: [...resolvedInvocation.args, '--listen', endpoint] };
     const resolved = appendCodexCliConfigOverridesArgs(baseInvocation, params.configOverrides ?? []);
     const invocation = resolveWindowsCommandInvocation({
       command: resolved.command,

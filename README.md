@@ -13,6 +13,8 @@
 
   **Open source · Self-hostable · End-to-end encrypted**
 
+  <p><a href="README.md">English</a> | <a href="README.ja.md">日本語</a> | <a href="README.zh-CN.md">简体中文</a> | <a href="README.ko.md">한국어</a> | <a href="README.es.md">Español</a></p>
+
   <p>
     <a href="#get-started">Get started</a> ·
     <a href="#downloads">Downloads</a> ·
@@ -153,56 +155,125 @@ Either way, the session shows up everywhere at once: keep typing in the terminal
 
 ## What you can do
 
-### Run and coordinate agents
+<h3 align="center">📱 Run your agents from your phone, desktop or the web</h3>
 
-**Parallel sessions, on every machine you own.** Start as many sessions as you like and pick the machine, folder, agent and model for each one. Add a new machine over SSH from the app or the CLI. [Starting a session](https://docs.happier.dev/sessions/new-session-shortcuts) · [Machines and the daemon](https://docs.happier.dev/apps/daemon)
+<p align="center">Start, steer, review and approve sessions from whichever device is in your hand. Sessions are cross-device, so you pick up the same session wherever you are, including Claude Code, Codex or OpenCode sessions already running on your machine. <a href="https://docs.happier.dev/sessions/continuing-a-session">Continuing a session</a></p>
 
-**Git worktrees, when you want them.** Start each session in its own Git worktree: a real checkout, its own branch, the same repository. Happier creates it from any local or remote branch, suggests a name, and offers to reuse an existing one instead of duplicating it. Or start in the folder you are already in; it is a choice per session, not a mode you switch on: all your sessions, none of them, or just this one. [New session options](https://docs.happier.dev/sessions/new-session-shortcuts)
+<p align="center"><img src=".github/screenshots/session.png" width="640" alt="A Happier session showing the agent thinking, tool calls and the final reply" /></p>
 
-**Prefer the terminal? Keep it.** Run Claude Code, Codex or OpenCode in their own terminal UIs: Happier mirrors those sessions to every device, so you can follow along, send messages and approve from anywhere, then switch between the terminal and the app whenever you like. [Claude unified terminal](https://docs.happier.dev/sessions/claude-unified-terminal)
+<br/>
 
-**Your existing sessions? Already there.** Open any Claude Code, Codex or OpenCode session already running on your machine: live, from any device, nothing to migrate and nothing to learn. [Continuing a session](https://docs.happier.dev/sessions/continuing-a-session)
+<h3 align="center">🖥️ Orchestrate parallel sessions across machines</h3>
 
-**Subagents across agents.** Any session can launch review, plan or delegate runs on another agent and read the results: Claude handing work to Codex subagents, Codex to Claude, or any other pairing. [Subagents](https://docs.happier.dev/extending/subagents)
+<p align="center">Run as many sessions as you like and pick the machine, folder, agent and model for each one. Follow all of them from one list, whichever machine they run on. <a href="https://docs.happier.dev/sessions/new-session-shortcuts">Starting a session</a> · <a href="https://docs.happier.dev/apps/daemon">Machines and the daemon</a></p>
 
-**Switch agents mid-session.** Change the engine and the same session keeps going. A returning agent resumes its own thread and receives only what it missed. [Continue with another agent](https://docs.happier.dev/sessions/continue-with-another-agent)
+<p align="center"><img src=".github/screenshots/session-list.png" width="360" alt="Session list with several sessions running in parallel" /></p>
 
-**Hand a session to another machine.** Move a live Claude Code or OpenCode session to your desktop, a VPS or a dev box, and bring the working tree along if you want it. [Session handoff](https://docs.happier.dev/sessions/session-handoff)
+<br/>
 
-**Queue it, steer it.** Queue messages while the agent works, reorder or edit them before they run, and steer a running turn without interrupting it. [Steering](https://docs.happier.dev/sessions/steering) · [Pending queue](https://docs.happier.dev/sessions/pending-queue)
+<h3 align="center">🔄 Switch agents mid-session</h3>
 
-### Review and ship
+<p align="center">Move a session from Claude to Codex, or back, in place. The session keeps its id, history and settings, and the arriving agent gets a summary of the recent conversation. <a href="https://docs.happier.dev/sessions/continue-with-another-agent">Continue with another agent</a></p>
 
-**Review diffs, line by line.** Browse your agent's changes, mark the exact lines you want addressed, and send the notes straight back: same session, or a new one. [Review comments](https://docs.happier.dev/code/review-comments)
+<p align="center"><img src=".github/screenshots/agent-switch.png" width="380" alt="Agent and model picker with OpenCode, Claude, Codex and other agents" /></p>
 
-**Git from any device.** Stage, commit, push, branch and open pull requests without leaving the app. [Git](https://docs.happier.dev/code/git)
+<br/>
 
-**Files, editor, terminal.** Open any file in a real editor, and drop into a live terminal on the connected machine when you need a shell. [Files and editor](https://docs.happier.dev/code/files-and-editor) · [Embedded terminal](https://docs.happier.dev/extras/embedded-terminal)
+<h3 align="center">🔔 An inbox for what needs you</h3>
 
-### From anywhere
+<p align="center">Permission requests, agent questions and unread sessions gather in one attention center across all sessions and machines. A push notification opens the exact session that asked. <a href="https://docs.happier.dev/sessions/inbox-and-approvals">Inbox and approvals</a></p>
 
-**An inbox for what needs you.** Permission requests, agent questions and unread sessions gather in one attention center across all sessions and machines, and push notifications open the exact session that asked. [Inbox and approvals](https://docs.happier.dev/sessions/inbox-and-approvals)
+<p align="center"><img src=".github/screenshots/inbox-popover.png" width="300" alt="Needs attention inbox with sessions waiting on you" /></p>
 
-**A colleague you can talk to.** The voice assistant follows your running sessions, answers permission requests for you, and sends the messages you dictate. Bring your own ElevenLabs key or run a local voice pipeline. [Voice](https://docs.happier.dev/voice)
+<br/>
 
-**Share a session.** Invite someone with view or edit access, or publish a read-only public link. [Session sharing](https://docs.happier.dev/accounts/session-sharing)
+<h3 align="center">📝 Review diffs and send notes back</h3>
 
-### Yours to run
+<p align="center">Browse your agent's changes and mark the exact lines you want addressed. Send the notes straight back to the same session or to a new one. <a href="https://docs.happier.dev/code/review-comments">Review comments</a></p>
 
-**Every action, from every surface.** Everything Happier can do (create a session, send it a message, set the model, start a review) is defined once, in one registry. The app, slash commands, voice, in-session agents, the CLI and an external MCP host all call the same definition, and for each action you choose which surfaces can run it and which have to ask you first. [Happier as an MCP server](https://docs.happier.dev/extending/happier-as-mcp-server) · [CLI](https://docs.happier.dev/apps/cli)
+<p align="center"><img src=".github/screenshots/diff-short.png" width="640" alt="Diff review of an agent change" /></p>
 
-```bash
-happier mcp serve                # drive Happier from any MCP host
-happier session list
-happier session send <id> "rerun the failing test"
-happier session actions execute <id> session.spawn_new
-```
+<br/>
 
-**MCP servers, configured once.** Define your MCP servers once and use them with every agent on every machine, even agents with no native MCP support. [MCP servers](https://docs.happier.dev/extending/mcp-servers)
+<h3 align="center">🌿 Git and worktrees from any device</h3>
 
-**A usage limit should not end your session.** Link provider subscriptions and API keys once, sealed on your device before they sync, and pick which account each session runs under. When a provider limit bites, Happier shows the reset time, waits, and resumes the session on its own (Claude Code, Codex, OpenCode, Gemini, Pi). [Connected services](https://docs.happier.dev/accounts/connected-services) · [Usage limits](https://happier.dev/features/usage-limits)
+<p align="center">Stage, commit, push, branch and open pull requests without leaving the app. Start a session in its own Git worktree from any local or remote branch, or in the folder you are already in. <a href="https://docs.happier.dev/code/git">Git</a> · <a href="https://docs.happier.dev/sessions/new-session-shortcuts">New session options</a></p>
 
-**Self-host, same features.** The self-hosted relay runs the same apps, the same encryption and the same features as the hosted one. [Self-hosting](https://docs.happier.dev/self-hosting)
+<p align="center"><img src=".github/screenshots/git.png" width="600" alt="Review diff with stage buttons next to the Git panel with changed files and a commit message field"></p>
+
+<br/>
+
+<h3 align="center">📬 Queue it, steer it</h3>
+
+<p align="center">Queue messages while the agent works and reorder or edit them before they run. Steer a running turn without interrupting it. <a href="https://docs.happier.dev/sessions/steering">Steering</a> · <a href="https://docs.happier.dev/sessions/pending-queue">Pending queue</a></p>
+
+<p align="center"><img src=".github/screenshots/queue.png" width="640" alt="Pending queue with messages waiting while the agent works" /></p>
+
+<br/>
+
+<h3 align="center">🪪 Subscriptions, account pools and usage limits</h3>
+
+<p align="center">Connect several accounts you own for the same service and group them in a pool. With automatic switching turned on, a pool moves sessions to another account when one hits a usage limit or its sign-in expires, so the work keeps going. When there is nowhere to switch, Claude sessions resume on their own once the limit resets. <a href="https://docs.happier.dev/accounts/connected-services">Connected services and pools</a> · <a href="https://happier.dev/features/usage-limits">Usage limits</a></p>
+
+<p align="center"><img src=".github/screenshots/account-pools.png" width="390" alt="Account pools list with an automatic and a manual pool and a Create pool button" /></p>
+
+<br/>
+
+<h3 align="center">📊 Track your accounts usage</h3>
+
+<p align="center">See how much is left on each of your connected accounts and subscriptions. For a Claude subscription that means the 5-hour and weekly limits, with the time until each one resets. <a href="https://docs.happier.dev/accounts/connected-services">Connected services</a></p>
+
+<p align="center"><img src=".github/screenshots/account-usage.png" width="420" alt="Claude subscription usage card with 5-hour and weekly limits and reset times" /></p>
+
+<br/>
+
+<h3 align="center">🤝 Subagents across agents</h3>
+
+<p align="center">A session can hand work to another agent. Claude can start a review, plan or delegate run on Codex, for example, and you follow every run from the Agents tab in the session. <a href="https://docs.happier.dev/extending/subagents">Delegated work</a></p>
+
+<p align="center"><img src=".github/screenshots/subagents.png" width="480" alt="Agents panel listing working and finished subagents" /></p>
+
+<br/>
+
+<h3 align="center">🗂️ Files, editor and terminal</h3>
+
+<p align="center">Browse, search and edit the files in a session's folder from any device. Open a terminal on the connected machine when you need a quick command. <a href="https://docs.happier.dev/code/files-and-editor">Files and editor</a> · <a href="https://docs.happier.dev/extras/embedded-terminal">Embedded terminal</a></p>
+
+<p align="center"><img src=".github/screenshots/files-terminal.png" width="560" alt="File editor open on a project file next to the project file list" /></p>
+
+<br/>
+
+<h3 align="center">⌨️ Love the terminal? Keep using it!</h3>
+
+<p align="center">Run Claude Code, Codex or OpenCode in their own terminal UIs. Happier mirrors those sessions to every device, so you can follow along, send messages and approve from anywhere. <a href="https://docs.happier.dev/sessions/claude-unified-terminal">Claude unified terminal</a></p>
+
+
+<br/>
+
+<h3 align="center">🎙️ Voice</h3>
+
+<p align="center">The voice assistant follows your running sessions, answers permission requests for you and sends the messages you dictate. Use realtime ElevenLabs voice, or build a local pipeline from on-device speech, OpenAI-compatible endpoints, Google Gemini and Google Cloud, or Kokoro. <a href="https://docs.happier.dev/voice">Voice</a></p>
+
+<p align="center">
+<picture><source media="(prefers-color-scheme: dark)" srcset=".github/screenshots/voice/elevenlabs-dark.svg"><img src=".github/screenshots/voice/elevenlabs-light.svg" height="32" alt="ElevenLabs"></picture>&nbsp;&nbsp;&nbsp;
+<picture><source media="(prefers-color-scheme: dark)" srcset=".github/screenshots/voice/openai-dark.svg"><img src=".github/screenshots/voice/openai-light.svg" height="32" alt="OpenAI"></picture>&nbsp;&nbsp;&nbsp;
+<picture><source media="(prefers-color-scheme: dark)" srcset=".github/screenshots/voice/googlegemini-dark.svg"><img src=".github/screenshots/voice/googlegemini-light.svg" height="32" alt="Google Gemini"></picture>&nbsp;&nbsp;&nbsp;
+<picture><source media="(prefers-color-scheme: dark)" srcset=".github/screenshots/voice/googlecloud-dark.svg"><img src=".github/screenshots/voice/googlecloud-light.svg" height="32" alt="Google Cloud"></picture>
+</p>
+
+<br/>
+
+### Also in the box
+
+- **Session handoff.** Move a live Claude Code or OpenCode session to another machine and bring the working tree along if you want it. [Session handoff](https://docs.happier.dev/sessions/session-handoff)
+- **Session sharing.** Invite someone with view or edit access, or publish a read-only public link. [Session sharing](https://docs.happier.dev/accounts/session-sharing)
+- **Happier as an MCP server.** `happier mcp serve` lets any MCP host create sessions, send messages and run session actions. [Happier as an MCP server](https://docs.happier.dev/extending/happier-as-mcp-server) · [CLI](https://docs.happier.dev/apps/cli)
+- **MCP servers, configured once.** Use them with every agent on every machine. [MCP servers](https://docs.happier.dev/extending/mcp-servers)
+- **Add a machine over SSH** from the app or the CLI. [Machines and the daemon](https://docs.happier.dev/apps/daemon)
+- **Self-hosting.** The self-hosted relay runs the same apps, encryption and features. [Self-hosting](https://docs.happier.dev/self-hosting)
+- **End-to-end encryption.** Content is encrypted on your devices by default. [Security](#security)
+
+Step-by-step guides live at [guides.happier.dev](https://guides.happier.dev).
 
 ## How Happier works
 

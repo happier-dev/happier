@@ -8,6 +8,12 @@ import { settingsDefaults } from '@/sync/domains/settings/settings';
 import type { FeatureId } from '@happier-dev/protocol';
 
 const promotedFeatureIds = [
+    'attachments.uploads',
+    'automations',
+    'connectedServices',
+    'connectedServices.quotas',
+    'execution.runs',
+    'terminal.embeddedPty',
     'files.reviewComments',
     'files.syntaxHighlighting.advanced',
     'sessions.direct',

@@ -609,12 +609,7 @@ export async function startExecutionRun(args: Readonly<{
           const childSessionId = await provisionBackendController();
           if (!childSessionId) return;
 
-          void args
-            .executeBoundedRun({ runId, callId, sidechainId, startedAtMs, params: args.params })
-            .finally(() => {
-              // Ensure terminal promise resolves even if executeBoundedRun throws unexpectedly.
-              settleExecutionRunControllerOccurrence(args.controllers, runId, ctrl);
-            });
+          void args.executeBoundedRun({ runId, callId, sidechainId, startedAtMs, params: args.params });
         } catch (error: unknown) {
           await failBackendProvisioning(error);
         }

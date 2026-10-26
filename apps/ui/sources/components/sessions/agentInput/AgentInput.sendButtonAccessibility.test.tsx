@@ -204,12 +204,13 @@ vi.mock('@/components/autocomplete/applySuggestion', () => ({
 }));
 
 vi.mock('@/components/ui/popover', () => ({
-    Popover: () => null,
+    Popover: ({ open, children }: { open: boolean; children: (args: { maxHeight: number }) => React.ReactNode }) =>
+        open ? children({ maxHeight: 400 }) : null,
     PopoverScope: ({ children }: any) => React.createElement(React.Fragment, null, children),
 }));
 
 vi.mock('@/components/ui/overlays/FloatingOverlay', () => ({
-    FloatingOverlay: () => null,
+    FloatingOverlay: ({ children }: { children?: React.ReactNode }) => React.createElement(React.Fragment, null, children),
 }));
 
 vi.mock('@/components/ui/scroll/useScrollEdgeFades', () => ({
@@ -253,6 +254,91 @@ vi.mock('@/sync/domains/sessionControl/configOptionsControl', () => ({
 }));
 
 describe('AgentInput (send button accessibility)', () => {
+    it('exposes available send choices to assistive technology and dismisses without changing the draft', async () => {
+        const { AgentInput } = await import('./AgentInput');
+        const { Popover } = await import('@/components/ui/popover');
+        const onSend = vi.fn();
+        const onChangeText = vi.fn();
+        const screen = await renderScreen(<AgentInput
+            sessionId="session-1"
+            value="Keep this draft"
+            placeholder="Type"
+            onChangeText={onChangeText}
+            onSend={onSend}
+            sendMenuModes={['server_pending', 'interrupt']}
+            autocompleteKinds={[]}
+            autocompleteSuggestions={async () => []}
+        />);
+        const send = screen.findByTestId('session-composer-send');
+        await act(async () => { send?.props.onAccessibilityAction({ nativeEvent: { actionName: 'longpress' } }); });
+        expect(screen.findByTestId('agent-input-send-option-server_pending')).toBeTruthy();
+        expect(screen.findByTestId('agent-input-send-option-agent_queue')).toBeNull();
+        await act(async () => {
+            screen.root.findAllByType(Popover).find((popover) => popover.props.open)?.props.onRequestClose();
+        });
+        expect(screen.findByTestId('agent-input-send-option-server_pending')).toBeNull();
+        expect(onSend).not.toHaveBeenCalled();
+        expect(onChangeText).not.toHaveBeenCalled();
+        await act(async () => { screen.pressByTestId('session-composer-send'); });
+        expect(onSend).toHaveBeenCalledExactlyOnceWith(undefined);
+        await screen.unmount();
+    });
+
+    it.each([
+        { value: '', onMicPress: () => {} },
+        { value: '', showAbortButton: true, onAbort: () => {} },
+        { value: 'draft', disabled: true },
+        { value: 'draft', isSending: true },
+        { value: 'draft', armedContinuationTarget: { agentId: 'claude', label: 'Claude' } },
+    ])('keeps send choices off non-send or unavailable controls: %j', async (props) => {
+        const { AgentInput } = await import('./AgentInput');
+        const screen = await renderScreen(<AgentInput
+            {...props}
+            sessionId="session-1"
+            placeholder="Type"
+            onChangeText={() => {}}
+            onSend={() => {}}
+            sendMenuModes={['server_pending', 'interrupt']}
+            autocompleteKinds={[]}
+            autocompleteSuggestions={async () => []}
+        />);
+        expect(screen.findByTestId('session-composer-send')?.props.onLongPress).toBeUndefined();
+        expect(screen.findByTestId('agent-input-send-option-server_pending')).toBeNull();
+        await screen.unmount();
+    });
+
+    it.each(['agent_queue', 'server_pending', 'interrupt'] as const)(
+        'opens send choices without submitting and sends once with the selected %s intent',
+        async (mode) => {
+            const { AgentInput } = await import('./AgentInput');
+            const onSend = vi.fn();
+            const onChangeText = vi.fn();
+            const screen = await renderScreen(<AgentInput
+                sessionId="session-1"
+                value="Keep this draft"
+                placeholder="Type"
+                onChangeText={onChangeText}
+                onSend={onSend}
+                sendMenuModes={['agent_queue', 'server_pending', 'interrupt']}
+                autocompleteKinds={[]}
+                autocompleteSuggestions={async () => []}
+            />);
+
+            const send = screen.findByTestId('session-composer-send');
+            expect(send?.props.onLongPress).toBeTypeOf('function');
+            await act(async () => { send?.props.onLongPress(); });
+            expect(onSend).not.toHaveBeenCalled();
+            expect(onChangeText).not.toHaveBeenCalled();
+            expect(screen.findByTestId(`agent-input-send-option-${mode}`)).toBeTruthy();
+
+            await act(async () => { screen.pressByTestId(`agent-input-send-option-${mode}`); });
+            expect(onSend).toHaveBeenCalledExactlyOnceWith({ deliveryIntent: mode });
+            expect(screen.findByTestId(`agent-input-send-option-${mode}`)).toBeNull();
+            expect(onChangeText).not.toHaveBeenCalledWith('');
+            await screen.unmount();
+        },
+    );
+
     afterEach(() => {
         translateOverride.fn = null;
         featureEnabledState.voice = true;

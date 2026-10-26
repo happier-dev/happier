@@ -15,7 +15,7 @@ import {
 } from '@/agent/executionRuns/runtime/executionRunErrors';
 import { buildReviewGuidanceBlock } from '@/agent/reviews/prompt/buildStandardReviewPrompt';
 import { logger } from '@/ui/logger';
-import { disposeExecutionRunBackendController } from './settleExecutionRunControllerOccurrence';
+import { disposeExecutionRunBackendController, settleExecutionRunControllerOccurrence } from './settleExecutionRunControllerOccurrence';
 
 function stripTrailingJsonObjectFromText(text: string): string {
   const trimmed = String(text ?? '');
@@ -44,7 +44,7 @@ export async function executeBoundedBackendRun(args: Readonly<{
   sidechainId: string;
   startedAtMs: number;
   params: ExecutionRunManagerStartParams;
-  controllers: ReadonlyMap<string, ExecutionRunController>;
+  controllers: Map<string, ExecutionRunController>;
   sendAcp: AcpSendFn;
   parentProvider: ACPProvider;
   getNowMs: () => number;
@@ -484,6 +484,6 @@ export async function executeBoundedBackendRun(args: Readonly<{
     } catch {
       // ignore
     }
-    backendCtrl.resolveTerminal();
+    settleExecutionRunControllerOccurrence(args.controllers, runId, backendCtrl);
   }
 }

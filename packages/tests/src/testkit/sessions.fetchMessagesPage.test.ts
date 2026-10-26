@@ -131,7 +131,7 @@ describe('fetchSessionV2', () => {
     globalThis.fetch = originalFetch;
   });
 
-  it('normalizes omitted primary-turn projection fields to null', async () => {
+  it('preserves runtime activity while normalizing omitted primary-turn projection fields', async () => {
     globalThis.fetch = vi.fn(async () => createFakeResponse({
       session: {
         id: 'ses_1',
@@ -147,6 +147,10 @@ describe('fetchSessionV2', () => {
         activeAt: 20,
         pendingCount: 0,
         pendingVersion: 4,
+        runtimeActivityState: 'idle',
+        runtimeActivityActiveCount: 0,
+        runtimeActivityObservedAt: 20,
+        runtimeActivityRevision: 1,
       },
     })) as any;
 
@@ -159,6 +163,10 @@ describe('fetchSessionV2', () => {
       lastRuntimeIssue: null,
       pendingCount: 0,
       pendingVersion: 4,
+      runtimeActivityState: 'idle',
+      runtimeActivityActiveCount: 0,
+      runtimeActivityObservedAt: 20,
+      runtimeActivityRevision: 1,
     }));
   });
 

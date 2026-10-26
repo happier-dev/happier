@@ -448,7 +448,9 @@ const baseExpoConfig = {
                         }
                     }
                 }
-            ]
+            ],
+            require("./plugins/withIosPodDeploymentTargetFloor.js"),
+            require("./plugins/withIosSceneLifecycle.js"),
         ],
         updates: updatesConfig,
         ...(devClientSilentLaunch === true && !iosMemoryProfilingRuntime ? { developmentClient: { silentLaunch: true } } : {}),

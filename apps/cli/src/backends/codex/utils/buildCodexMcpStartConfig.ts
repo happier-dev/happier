@@ -14,6 +14,7 @@ export function buildCodexMcpStartConfig(opts: Readonly<{
   // Reasoning effort for the run's model (Codex `model_reasoning_effort`). Written into the start
   // config so an execution run applies effort exactly like a spawned session's config option.
   modelReasoningEffort?: string | null;
+  reasoningSummary?: 'auto' | 'none';
   cwd?: string | null;
 }>): CodexSessionConfig {
   const model = readNonBlankSessionControlIdentifier(opts.model);
@@ -29,6 +30,7 @@ export function buildCodexMcpStartConfig(opts: Readonly<{
     config: {
       mcp_servers: opts.mcpServers,
       ...(modelReasoningEffort !== null ? { model_reasoning_effort: modelReasoningEffort } : {}),
+      ...(opts.reasoningSummary !== undefined ? { model_reasoning_summary: opts.reasoningSummary } : {}),
     },
     ...(model !== null ? { model } : {}),
     ...(cwd ? { cwd } : {}),

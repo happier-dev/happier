@@ -747,6 +747,32 @@ export class ExecutionRunManager {
       );
       if (!prepared.ok) return prepared;
       if (this.disposalPromise) return { ok: false, errorCode: 'execution_run_not_allowed', error: 'Session is closing' };
+      if (run.runClass === 'bounded') {
+        if (this.controllers.get(runId) !== prepared.controller || prepared.controller.cancelled
+          || prepared.controller.disposalPromise || !prepared.controller.childSessionId) {
+          return { ok: false, errorCode: 'execution_run_not_allowed', error: 'Resume was retired' };
+        }
+        // Resume recreates the provider occurrence, not the run's completion semantics.
+        // An existing bounded turn still owns steering and outcome processing.
+        if (prepared.controller.turnEpoch > 0) {
+          return this.send(runId, { ...params, resume: false });
+        }
+        void this.executeBoundedRun({
+          runId, callId: run.callId, sidechainId: run.sidechainId, startedAtMs: run.startedAtMs,
+          params: {
+            sessionId: run.sessionId,
+            intent: run.intent,
+            backendTarget: run.backendTarget,
+            instructions: params.message,
+            intentInput: run.intentInput,
+            permissionMode: run.permissionMode,
+            retentionPolicy: run.retentionPolicy,
+            runClass: run.runClass,
+            ioMode: run.ioMode,
+          },
+        });
+        return { ok: true };
+      }
       return sendPreparedBackendLongLivedRun(sendArgs, prepared.controller);
     }
 

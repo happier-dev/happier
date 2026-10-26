@@ -14,6 +14,7 @@ import type {
 import { deriveUsageLimitRecoveryTiming } from './deriveUsageLimitRecoveryTiming';
 import { readLatestUsageLimitFailureIssue } from './readLatestUsageLimitFailureIssue';
 import { resolveUsageLimitRecoverySelectedAuthFromIssue } from './usageLimitRecoverySelectedAuth';
+import { isPendingUsageLimitRecoveryStatus } from './mergeUsageLimitRecoveryIntent';
 
 type MetadataRecord = Record<string, unknown>;
 
@@ -24,6 +25,8 @@ type BackoffUsageLimitRecoveryControlResult =
 const USAGE_LIMIT_RECOVERY_MAX_ATTEMPTS_EXHAUSTED_ERROR =
   'usage_limit_recovery_max_attempts_exhausted' as const;
 
+export const DEFAULT_USAGE_LIMIT_RECOVERY_BACKOFF_MS = 600_000;
+
 export const USAGE_LIMIT_RECOVERY_SUPERSEDED_BY_TURN_COMPLETION_ERROR =
   'session_usage_limit_recovery_control_superseded_by_turn_completion' as const;
 
@@ -33,16 +36,13 @@ function stableError(errorCode: string): Readonly<{ ok: false; errorCode: string
 
 function readNonNegativeIntegerFromEnv(
   env: NodeJS.ProcessEnv,
-  key: string,
+  key: string | undefined,
   defaultValue: number,
 ): number {
+  if (!key) return defaultValue;
   const raw = typeof env[key] === 'string' ? env[key]?.trim() : '';
   const parsed = raw ? Number.parseInt(raw, 10) : Number.NaN;
   return Number.isFinite(parsed) && parsed >= 0 ? Math.trunc(parsed) : defaultValue;
-}
-
-function isPendingRecoveryIntentStatus(status: SessionUsageLimitRecoveryV1['status']): boolean {
-  return status === 'waiting' || status === 'armed' || status === 'checking';
 }
 
 function normalizePersistedNativeSelection(
@@ -51,7 +51,7 @@ function normalizePersistedNativeSelection(
   metadata: MetadataRecord,
 ): SessionUsageLimitRecoveryV1 | null {
   if (!intent || !issue || intent.runtimeAuthRecoveryAttemptId
-    || (!isPendingRecoveryIntentStatus(intent.status) && intent.status !== 'paused') || intent.selectedAuth.kind !== 'profile'
+    || (!isPendingUsageLimitRecoveryStatus(intent.status) && intent.status !== 'paused') || intent.selectedAuth.kind !== 'profile'
     || intent.selectedAuth.profileId !== issue.usageLimit?.connectedService?.profileId) return intent;
   const selection = resolveUsageLimitRecoverySelectedAuthFromIssue({ issue,
     requiredConnectedServiceId: intent.selectedAuth.serviceId, connectedServices: metadata.connectedServices ?? null });
@@ -69,7 +69,7 @@ function isPersistedIntentSupersededByTurnCompletion(input: Readonly<{
   intent: SessionUsageLimitRecoveryV1 | null;
   latestTurnStatus: SessionUsageLimitRecoveryControlAdapterParams['rawSession']['latestTurnStatus'];
 }>): boolean {
-  if (!input.intent || !isPendingRecoveryIntentStatus(input.intent.status)) return false;
+  if (!input.intent || !isPendingUsageLimitRecoveryStatus(input.intent.status)) return false;
   return input.latestTurnStatus != null && input.latestTurnStatus !== 'failed';
 }
 
@@ -181,7 +181,6 @@ function buildNextIntent(params: Readonly<{
     ...params.intent,
     nextCheckAtMs,
   };
-  const attemptCount = baseIntent.attemptCount + 1;
 
   if (baseIntent.maxAttempts > 0 && baseIntent.attemptCount >= baseIntent.maxAttempts) {
     return {
@@ -189,7 +188,6 @@ function buildNextIntent(params: Readonly<{
       intent: {
         ...baseIntent,
         status: 'exhausted',
-        attemptCount,
         lastProbeError: baseIntent.lastProbeError ?? USAGE_LIMIT_RECOVERY_MAX_ATTEMPTS_EXHAUSTED_ERROR,
       },
     };
@@ -202,7 +200,6 @@ function buildNextIntent(params: Readonly<{
         ...baseIntent,
         status: 'paused',
         nextCheckAtMs: null,
-        attemptCount,
         lastProbeError: null,
       },
     };
@@ -213,7 +210,6 @@ function buildNextIntent(params: Readonly<{
     intent: {
       ...baseIntent,
       status: 'waiting',
-      attemptCount,
       lastProbeError: null,
     },
   };
@@ -221,8 +217,8 @@ function buildNextIntent(params: Readonly<{
 
 export function createBackoffSessionUsageLimitRecoveryControlAdapter(options: Readonly<{
   providerId: string;
-  fallbackBackoffEnvKey: string;
-  maxAttemptsEnvKey: string;
+  fallbackBackoffEnvKey?: string;
+  maxAttemptsEnvKey?: string;
   defaultFallbackBackoffMs?: number;
   defaultMaxAttempts?: number;
   defaultNativeServiceId?: ConnectedServiceId | null;
@@ -264,7 +260,7 @@ export function createBackoffSessionUsageLimitRecoveryControlAdapter(options: Re
       const fallbackBackoffMs = readNonNegativeIntegerFromEnv(
         processEnv,
         options.fallbackBackoffEnvKey,
-        options.defaultFallbackBackoffMs ?? 600_000,
+        options.defaultFallbackBackoffMs ?? DEFAULT_USAGE_LIMIT_RECOVERY_BACKOFF_MS,
       );
       const intent = persistedIntent && persistedIntent.status !== 'cancelled'
         ? persistedIntent

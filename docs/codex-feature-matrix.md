@@ -63,6 +63,34 @@ this bootstrap does not establish cold-start readiness for a custom profile's
 different SQLite location. No partial profile configuration loader is introduced.
 Windows native execution remains unverified for this storage change.
 
+## Reasoning summaries (development)
+
+`packages/protocol/src/providers/codex/reasoningSummary.ts` owns the account
+preference policy. The provider setting `codexReasoningSummaries` defaults to
+`default`, which omits a Happier override and preserves native Codex configuration
+and model behavior. `enabled` requests `auto`; `disabled` requests `none`. The
+agents provider field and provider-owned settings UI reuse this policy. Generation
+is independent of `sessionThinkingDisplayMode` and does not change reasoning
+effort. Runtime adapters apply the choice when starting or resuming a Codex session.
+
+The App Server runtime also sends an explicit choice on `turn/start`, using the
+preference captured when that runtime opens. Thread configuration alone is
+insufficient when rejoining a loaded thread: Codex CLI 0.162.1 can ignore
+`thread/resume` configuration while existing subscribers still observe that
+thread. `default` omits the turn override as well as the thread override.
+
+`apps/cli/src/backends/codex/utils/readCodexReasoningText.ts` reads only exposed
+plaintext from native app-server items and rollout response items. The live event
+bridge, native-history projection, and rollout mapper share that reader. The
+shared rollout action projector carries thinking into both Direct transcript
+messages and terminal mirroring; it preserves child-session sidechains. No path
+uses `encrypted_content` as a readable transcript source.
+
+Model support remains external. Bounded connected-service probes of Codex CLI
+0.162.1 with GPT-6.1 Sol accepted `auto` and `none` but returned empty readable
+reasoning for both a short task and a constraint puzzle. Those observations do not
+establish a universal model limitation or the incremental cost of summaries.
+
 ## Tests and QA surfaces
 
 | Feature | Status | Exact source files | Special cases | Unified architecture migration notes |

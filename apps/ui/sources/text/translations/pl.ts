@@ -638,7 +638,8 @@ export const pl: TranslationStructure = {
         commands: {
             composerAbortConfirm: 'Potwierdź przerwanie',
             composerFocus: 'Ustaw fokus na edytorze',
-            composerSendImmediate: 'Wyślij natychmiast',
+            composerSendImmediate: 'Alternatywne wysyłanie (kolejka / sterowanie)',
+            composerSendInterrupt: 'Przerwij i wyślij',
             composerSendPending: 'Wyślij do kolejki oczekujących',
             commandPaletteOpen: 'Otwórz paletę poleceń',
             modeCycle: 'Przełącz tryb',
@@ -674,6 +675,14 @@ export const pl: TranslationStructure = {
   },
 
   transcript: {
+
+    quote: {
+
+      action: 'Cytuj',
+
+      actionA11y: 'Zacytuj zaznaczony tekst w wiadomości',
+
+    },
 
     selection: {
 
@@ -3763,6 +3772,17 @@ export const pl: TranslationStructure = {
         openSettingsFailed: 'Nie udało się otworzyć ustawień systemu.',
     },
     pushTroubleshooting: {
+            remoteTest: {
+                title: "Wyślij zdalny test",
+                subtitle: "Wyślij prawdziwe powiadomienie push na ten telefon przez komputer połączony z tym Home.",
+                notRegistered: "Zarejestruj token tego telefonu i spróbuj ponownie.",
+                noMachine: "Połącz komputer z tym Home, aby wysłać zdalny test.",
+                accepted: "Usługa push przyjęła test. Nie potwierdza to odbioru ani wyświetlenia na telefonie. Sprawdź powiadomienia.",
+                rejected: "Usługa push nie potwierdziła przyjęcia. Sprawdź powiadomienia i rejestrację przed ponowną próbą.",
+                invalidCredentials: "Dostawca push odrzucił dane uwierzytelniające tej aplikacji. Sprawdź konfigurację APNs lub FCM.",
+                unsupported: "Zaktualizuj CLI Happier na połączonym komputerze, aby wysyłać zdalne testy.",
+                unconfirmed: "Nie udało się potwierdzić wyniku. Żądanie może się jeszcze zakończyć; sprawdź powiadomienia przed ponowną próbą.",
+            },
       status: {
         title: "Stan",
         footer: "Sprawdza ustawienie konta, uprawnienie systemu i rejestrację na serwerze.",
@@ -3907,8 +3927,12 @@ export const pl: TranslationStructure = {
   },
 
     notifications: {
-        permissionActionNeedsReview: "Nie udało się potwierdzić odpowiedzi na prośbę o uprawnienie z powiadomienia. Otwórz sesję i sprawdź bieżącą prośbę, zanim odpowiesz ponownie.",
+        permissionActionNeedsReview: "Nie udało się potwierdzić odpowiedzi wysłanej z powiadomienia. Sprawdź oczekujące prośby, zanim odpowiesz ponownie.",
+        permissionActionReviewUnavailable: "Nie udało się otworzyć Home i konta tej odpowiedzi. Sprawdź połączenie i logowanie w Ustawieniach, a następnie oczekujące prośby.",
       actions: {
+            reviewPendingRequests: "Sprawdź oczekujące prośby",
+            questionReply: "Odpowiedz",
+            questionPlaceholder: "Twoja odpowiedź",
         allow: 'Zezwól',
         deny: 'Odmów',
         answer: 'Odpowiedz',
@@ -4418,6 +4442,16 @@ export const pl: TranslationStructure = {
             },
           },
           fields: {
+            codexReasoningSummaries: {
+                title: "Podsumowania rozumowania",
+                footer: "Określa, czy Codex generuje podsumowania, niezależnie od wyświetlania w rozmowie. Dotyczy uruchamiania lub wznawiania sesji. Dostępność zależy od modelu.",
+                generation: "Generowanie",
+                options: {
+                    default: "Użyj konfiguracji Codex lub ustawienia domyślnego modelu.",
+                    enabled: "Żądaj podsumowań, jeśli model je obsługuje.",
+                    disabled: "Nie generuj podsumowań rozumowania.",
+                },
+            },
             codexBackendMode: {
               title: "Tryb routingu Codex",
               subtitle: "Wybierz Serwer aplikacji, ACP lub MCP.",
@@ -4453,6 +4487,8 @@ export const pl: TranslationStructure = {
 
   settingsAppearance: {
     tabBarAppearance: {
+      sideRailTitle: "Karty na pasku bocznym",
+      sideRailSubtitle: "Wyłącz, aby używać paska kart Happier i gestów przesuwania.",
       title: 'Pasek kart',
       footer: 'Dostosuj dolny pasek kart.',
       showLabels: 'Pokaż etykiety kart',
@@ -6828,6 +6864,11 @@ export const pl: TranslationStructure = {
   },
 
   agentInput: {
+      sendOptions: {
+          title: "Opcje wysyłania",
+          queue: "Dodaj do kolejki",
+          hint: "Przytrzymaj, aby wybrać sposób wysłania",
+      },
       chipPicker: {
           selectedOptionAccessibilityLabel: ({ option }: { option: string }) => `${option}. Wybrano.`,
       },

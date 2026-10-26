@@ -7,6 +7,7 @@ import { findGestureByKind, type TestGestureChain } from '@/dev/testkit/mocks/ge
 import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
 import { createStorageModuleStub } from '@/dev/testkit/mocks/storage';
 import { buildSessionNavigationCursor } from '@/sync/domains/session/navigation/sessionNavigationCursor';
+import { SessionCockpitChromeRegistryProvider, useSessionCockpitBottomChromeHeight } from '@/components/workspaceCockpit/session/SessionCockpitChromeRegistry';
 import {
     publishSessionNavigationCursor,
     resetSessionNavigationCursorForTests,
@@ -17,6 +18,28 @@ import {
 const pathState = vi.hoisted(() => ({
     pathname: '/',
 }));
+const foldBoundary = vi.hoisted(() => ({ emitters: new Set<(value: unknown) => void>() }));
+
+// Only the two Expo/UIKit views are substituted; metrics normalization, presenter,
+// shared cockpit definitions, and the host's routing remain real in the rail test.
+vi.mock('expo-modules-core', async () => {
+    const stub = await import('@/dev/expoModulesCoreStub');
+    function Observer({ onMetricsChange }: { onMetricsChange: (event: { nativeEvent: unknown }) => void }) {
+        React.useEffect(() => {
+            const emit = (value: unknown) => onMetricsChange({ nativeEvent: value });
+            foldBoundary.emitters.add(emit);
+            return () => { foldBoundary.emitters.delete(emit); };
+        }, [onMetricsChange]);
+        return null;
+    }
+    return {
+        ...stub,
+        requireOptionalNativeModule: (name: string) => name === 'HappierWindowFoldMetrics' || name === 'HappierSystemTabBar' ? {} : null,
+        requireNativeViewManager: (name: string) => name === 'HappierWindowFoldMetrics'
+            ? Observer
+            : (props: Record<string, unknown>) => React.createElement('SystemNativeTabBar', { ...props, testID: 'system-tabs' }),
+    };
+});
 const reanimatedSpringState = vi.hoisted(() => ({
     targets: [] as unknown[],
 }));
@@ -39,6 +62,7 @@ const tabBarRenderState = vi.hoisted(() => ({
     renderSpy: vi.fn(),
 }));
 const settingsState = vi.hoisted(() => ({
+    systemTabBarEnabled: true,
     mobileWorkspaceExperienceV1: undefined as 'classic' | 'cockpit' | undefined,
     sessionCockpitSwipeNavigationEnabled: true as boolean,
     sessionLastMobileSurfaceBySessionId: null as Record<string, string> | null,
@@ -304,6 +328,7 @@ const storageMock = createStorageModuleStub({
         return [null, vi.fn()];
     },
     useSessionMetadata: (sessionId: string) => sessionMetadataState.bySessionId[sessionId] ?? null,
+    useSessionProjectScmStatus: () => null,
     useSessionLastMobileSurface: (sessionId: string | null) => {
         if (!sessionId) return null;
         return settingsState.sessionLastMobileSurfaceBySessionId?.[sessionId] ?? null;
@@ -349,6 +374,7 @@ function readSettingValue(key: string): unknown {
 }
 
 function readLocalSettingValue(key: string): unknown {
+    if (key === 'systemTabBarEnabled') return settingsState.systemTabBarEnabled;
     if (key === 'sessionLastMobileSurfaceBySessionId') {
         return settingsState.sessionLastMobileSurfaceBySessionId;
     }
@@ -398,6 +424,10 @@ async function renderCockpitBandOnSession(sessionId: string) {
     return renderScreen(<MobileBottomChromeHost />);
 }
 
+function ChromeReserveProbe() {
+    return React.createElement('ChromeReserve', { value: useSessionCockpitBottomChromeHeight() });
+}
+
 describe('MobileBottomChromeHost', () => {
     afterEach(() => {
         standardCleanup();
@@ -424,6 +454,7 @@ describe('MobileBottomChromeHost', () => {
         settingsState.sessionLastMobileSurfaceBySessionId = null;
         settingsState.embeddedTerminalDockLocation = 'sidebar';
         settingsState.sessionCockpitSwipeNavigationEnabled = true;
+        settingsState.systemTabBarEnabled = true;
         deviceTypeState.value = 'phone';
         featureState.terminalEmbeddedPtyEnabled = true;
         featureState.terminalEmbeddedPtyServerId = null;
@@ -435,6 +466,33 @@ describe('MobileBottomChromeHost', () => {
         hapticsState.selections = 0;
         reducedMotionState.value = false;
         resetSessionNavigationCursorForTests();
+    });
+
+    it('presents shared cockpit definitions in the rail, routes presses, and restores the unchanged bar on opt-out', async () => {
+        pathState.pathname = '/session/s1';
+        settingsState.mobileWorkspaceExperienceV1 = 'cockpit';
+        const { WindowFoldMetricsProvider } = await import('@/utils/platform/useWindowFoldMetrics');
+        const { MobileBottomChromeHost } = await import('./MobileBottomChromeHost');
+        const screen = await renderScreen(<WindowFoldMetricsProvider><SessionCockpitChromeRegistryProvider>
+            <ChromeReserveProbe /><MobileBottomChromeHost />
+        </SessionCockpitChromeRegistryProvider></WindowFoldMetricsProvider>);
+        const band = screen.tree.findAllByType('View' as never).find(node => typeof node.props.onLayout === 'function');
+        expect(band).toBeDefined();
+        await act(async () => { band?.props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 466, height: 72 } } }); });
+        expect(screen.tree.findByType('ChromeReserve' as never).props.value).toBe(72);
+        await act(async () => {
+            for (const emit of foldBoundary.emitters) emit({ width: 466, height: 678, divisions: [], verticalBarEdge: 'trailing' });
+        });
+        const bridge = screen.tree.findByType('SystemNativeTabBar' as never);
+        expect(screen.tree.findByType('ChromeReserve' as never).props.value).toBe(0);
+        expect(bridge.props.items.map((item: { id: string }) => item.id)).toEqual(['chat', 'browse', 'git', 'navigation', 'tabs', 'terminal']);
+        expect(screen.tree.findAllByType('SessionCockpitTabBar' as never)).toHaveLength(0);
+        expect(screen.tree.findAllByType('SessionCockpitLateralPicker' as never)).toHaveLength(0);
+        await act(async () => { bridge.props.onTabPress({ nativeEvent: { id: 'browse' } }); });
+        expect(settingsState.sessionLastMobileSurfaceBySessionId?.s1).toBe('browse');
+        await act(async () => { settingsState.systemTabBarEnabled = false; notifyStorageListeners(); });
+        expect(screen.tree.findAllByType('SystemNativeTabBar' as never)).toHaveLength(0);
+        expect(screen.tree.findByType('SessionCockpitTabBar' as never).props.activeSurface).toBe('browse');
     });
 
     it('renders the main app tab bar on the root sessions route', async () => {

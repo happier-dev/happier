@@ -46,9 +46,9 @@ describe('notification native task adapter', () => {
         expect(native.register).not.toHaveBeenCalled();
     });
 
-    it('bounds the task import without invoking a handler that loads after timeout', async () => {
+    it('keeps valid cold loading alive beyond the optional SDK load budget', async () => {
         const { runNotificationBackgroundTask } = await import('./notificationBackgroundTask');
-        const actions = await import('./notificationPermissionActions');
+        const actions = await import('./notificationPermissionActionExecution');
         const { consumeNotificationPermissionRecoveryNeeded } = await import('./notificationPermissionRecovery');
         consumeNotificationPermissionRecoveryNeeded();
         let release!: () => void;
@@ -56,17 +56,15 @@ describe('notification native task adapter', () => {
         vi.useFakeTimers();
         try {
             // This malformed action would mark recovery if the real handler ran late.
-            const pending = runNotificationBackgroundTask({ data: { actionIdentifier: PUSH_NOTIFICATION_ACTION_IDS.permissionAllowV1 } }, () => stalled);
+            const pending = runNotificationBackgroundTask({ data: { actionIdentifier: PUSH_NOTIFICATION_ACTION_IDS.permissionAllowV1 } }, { importExecution: () => stalled });
             let settled = false;
             void pending.then(() => { settled = true; });
-            await vi.advanceTimersByTimeAsync(EXPO_NOTIFICATIONS_LOAD_TIMEOUT_MS - 1);
+            await vi.advanceTimersByTimeAsync(EXPO_NOTIFICATIONS_LOAD_TIMEOUT_MS + 1_436);
             expect(settled).toBe(false);
-            await vi.advanceTimersByTimeAsync(1);
+            expect(consumeNotificationPermissionRecoveryNeeded()).toBe(false);
+            release();
             await pending;
             expect(consumeNotificationPermissionRecoveryNeeded()).toBe(true);
-            release();
-            await vi.advanceTimersByTimeAsync(0);
-            expect(consumeNotificationPermissionRecoveryNeeded()).toBe(false);
         } finally { vi.useRealTimers(); }
     });
 

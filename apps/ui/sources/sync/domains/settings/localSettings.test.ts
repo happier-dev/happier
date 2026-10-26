@@ -4,6 +4,17 @@ import { THEME_PROFILE_MAX_OVERRIDES_PER_MODE } from '@/theme/profiles/themeProf
 import { applyLocalSettings, localSettingsDefaults, localSettingsParse } from './localSettings';
 
 describe('localSettingsParse', () => {
+    it('defaults system tabs on, preserves the device opt-out, and catches malformed values without resetting preferences', () => {
+        expect(localSettingsParse({})).toMatchObject({ systemTabBarEnabled: true });
+        expect(localSettingsParse({ systemTabBarEnabled: false, themePreference: 'dark' })).toMatchObject({
+            systemTabBarEnabled: false,
+            themePreference: 'dark',
+        });
+        expect(localSettingsParse({ systemTabBarEnabled: 'off', themePreference: 'dark' })).toMatchObject({
+            systemTabBarEnabled: true,
+            themePreference: 'dark',
+        });
+    });
     it('defaults haptics on and keeps its opt-out device-local without coupling visual preferences', () => {
         expect(localSettingsParse({})).toMatchObject({ hapticsEnabled: true });
         const parsed = localSettingsParse({ hapticsEnabled: false, uiBackdropBlurEnabled: false, themePreference: 'dark' });

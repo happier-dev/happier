@@ -13,11 +13,11 @@ vi.mock('expo-router', async () => {
         ...mock.module,
         Stack: Object.assign((props: {
             children?: React.ReactNode;
-            screenLayout?: (props: { children: React.ReactNode }) => React.ReactNode;
+            screenLayout?: (props: { children: React.ReactNode; options: Record<string, unknown> }) => React.ReactNode;
         }) => {
             const content = React.createElement('PromptRouteContent');
             return React.createElement('PromptNavigator', null, props.children,
-                props.screenLayout ? props.screenLayout({ children: content }) : content);
+                props.screenLayout ? props.screenLayout({ children: content, options: {} }) : content);
         }, { Screen: mock.module.Stack.Screen }),
     };
 });

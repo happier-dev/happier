@@ -1,12 +1,12 @@
 import { Stack, router } from 'expo-router';
 import 'react-native-reanimated';
 import * as React from 'react';
-import { Keyboard, Platform, Pressable, TouchableOpacity, useWindowDimensions } from 'react-native';
+import { Keyboard, Platform, Pressable, useWindowDimensions } from 'react-native';
 import { isRunningOnMac } from '@/utils/platform/platform';
 import { useUnistyles } from 'react-native-unistyles';
 import { t } from '@/text';
 import { useAuth } from '@/auth/context/AuthContext';
-import { useFriendsIdentityReadiness } from '@/hooks/server/useFriendsIdentityReadiness';
+import { FriendsAddButton } from '@/components/friends/FriendsAddButton';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import {
@@ -19,6 +19,8 @@ import { PushNotificationPermissionPrimingRuntime } from '@/activity/notificatio
 import { DesktopTrayRuntime } from '@/desktop/tray/DesktopTrayRuntime';
 import { ReleaseNotesAutoShowMount } from '@/changelog/releaseNotes';
 import { createAppStackScreenOptions } from '@/components/navigation/createAppStackScreenOptions';
+import { renderAppStackScreen } from '@/components/navigation/appStackScreenLayout';
+import { NavigatorSafeAreaBleed } from '@/components/navigation/safeArea/HorizontalSafeArea';
 import { MobileBottomChromeHost } from '@/components/navigation/mobile/chrome/MobileBottomChromeHost';
 import { AppHeaderCloseButton } from '@/components/navigation/AppHeaderCloseButton';
 import { DesktopPetOverlayRuntimeMount } from '@/components/pets/runtime/DesktopPetOverlayRuntimeMount';
@@ -118,8 +120,6 @@ const AuthenticatedAppShellRuntimes = React.memo(function AuthenticatedAppShellR
 const RootLayoutShell = React.memo(function RootLayoutShell(): React.ReactElement {
     const auth = useAuth();
     const { theme } = useUnistyles();
-    const friendsIdentityReadiness = useFriendsIdentityReadiness();
-    const friendsIdentityReady = friendsIdentityReadiness.isReady;
 
     // `/new` renders either the bare composer (simple) or the profile wizard, and the two want
     // different native presentations. A native stack reads `modalPresentationStyle` at present time
@@ -195,7 +195,8 @@ const RootLayoutShell = React.memo(function RootLayoutShell(): React.ReactElemen
             <ActivityLocalNotificationRuntime />
             <DesktopTrayRuntime />
             {auth.isAuthenticated ? <AuthenticatedAppShellRuntimes /> : null}
-            <Stack screenOptions={baseStackScreenOptions}>
+            <NavigatorSafeAreaBleed>
+            <Stack screenOptions={baseStackScreenOptions} screenLayout={renderAppStackScreen}>
             <Stack.Screen
                 name="desktop/pet-overlay"
                 options={DESKTOP_PET_OVERLAY_SCREEN_OPTIONS}
@@ -435,24 +436,12 @@ const RootLayoutShell = React.memo(function RootLayoutShell(): React.ReactElemen
             />
             <Stack.Screen
                 name="friends/manage"
-                options={({ navigation }) => ({
+                options={{
                     headerShown: true,
                     headerTitle: t('navigation.friends'),
                     headerBackTitle: t('common.back'),
-                    headerRight: () =>
-                        (
-                            <TouchableOpacity
-                                onPress={() => navigation.navigate('friends/search' as never)}
-                                style={{ paddingHorizontal: 16, opacity: friendsIdentityReady ? 1 : 0.5 }}
-                                disabled={!friendsIdentityReady}
-                                accessibilityState={{ disabled: !friendsIdentityReady }}
-                            >
-                                <Text style={{ color: theme.colors.button.primary.tint, fontSize: 16 }}>
-                                    {t('friends.addFriend')}
-                                </Text>
-                            </TouchableOpacity>
-                        ),
-                })}
+                    headerRight: () => <FriendsAddButton variant="text" />,
+                }}
             />
             <Stack.Screen
                 name="friends/search"
@@ -642,6 +631,7 @@ const RootLayoutShell = React.memo(function RootLayoutShell(): React.ReactElemen
                 }}
             />
             </Stack>
+            </NavigatorSafeAreaBleed>
             <MobileBottomChromeHost newSessionRendersFloatingComposer={newSessionRendersFloatingComposer} />
         </SessionCockpitChromeRegistryProvider>
     );

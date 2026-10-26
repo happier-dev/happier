@@ -443,7 +443,8 @@ export const fr: TranslationStructure = {
         commands: {
             composerAbortConfirm: 'Confirmer l’interruption',
             composerFocus: 'Placer le focus sur le composer',
-            composerSendImmediate: 'Envoyer immédiatement',
+            composerSendImmediate: 'Envoi alternatif (file / orienter)',
+            composerSendInterrupt: 'Interrompre et envoyer',
             composerSendPending: 'Envoyer dans la file d’attente',
             commandPaletteOpen: 'Ouvrir la palette de commandes',
             modeCycle: 'Changer de mode',
@@ -479,6 +480,10 @@ export const fr: TranslationStructure = {
     },
 
     transcript: {
+        quote: {
+            action: 'Citer',
+            actionA11y: 'Citer le texte sélectionné dans votre message',
+        },
         selection: {
             enterA11y: 'Activer le mode sélection',
             exitA11y: 'Quitter le mode sélection',
@@ -3457,6 +3462,17 @@ export const fr: TranslationStructure = {
             openSettingsFailed: 'Impossible d’ouvrir les réglages système.',
         },
         pushTroubleshooting: {
+            remoteTest: {
+                title: "Envoyer un test distant",
+                subtitle: "Envoyez une véritable notification push à ce téléphone via une machine connectée à ce Home.",
+                notRegistered: "Enregistrez le jeton de ce téléphone, puis réessayez.",
+                noMachine: "Connectez une machine à ce Home pour envoyer un test distant.",
+                accepted: "Le service push a accepté le test. Cela ne confirme pas sa réception ou son affichage sur le téléphone. Vérifiez vos notifications.",
+                rejected: "Le service push n’a pas confirmé l’acceptation. Vérifiez vos notifications et l’enregistrement avant de réessayer.",
+                invalidCredentials: "Le fournisseur push a rejeté les identifiants de cette app. Vérifiez la configuration APNs ou FCM.",
+                unsupported: "Mettez à jour la CLI Happier de la machine connectée pour envoyer des tests distants.",
+                unconfirmed: "Le résultat n’a pas pu être confirmé. La demande peut encore aboutir ; vérifiez vos notifications avant de réessayer.",
+            },
             status: {
                 title: 'Statut',
                 footer: 'Vérifie le réglage du compte, la permission de l’OS et l’état d’enregistrement sur le serveur.',
@@ -3592,8 +3608,12 @@ export const fr: TranslationStructure = {
     },
 
     notifications: {
-        permissionActionNeedsReview: "La réponse envoyée depuis la notification n’a pas pu être confirmée. Ouvrez la session et vérifiez la demande d’autorisation en cours avant de répondre à nouveau.",
+        permissionActionNeedsReview: "La réponse envoyée depuis la notification n’a pas pu être confirmée. Vérifiez les demandes en attente avant de répondre à nouveau.",
+        permissionActionReviewUnavailable: "Impossible d’ouvrir le Home et le compte de cette réponse. Vérifiez votre connexion et votre identification dans les réglages, puis les demandes en attente.",
         actions: {
+            reviewPendingRequests: "Vérifier les demandes en attente",
+            questionReply: "Répondre",
+            questionPlaceholder: "Votre réponse",
             allow: 'Autoriser',
             deny: 'Refuser',
             answer: 'Répondre',
@@ -4094,6 +4114,16 @@ export const fr: TranslationStructure = {
 	                    },
 	                },
 	                fields: {
+	                    codexReasoningSummaries: {
+	                        title: "Résumés du raisonnement",
+	                        footer: "Contrôle si Codex génère des résumés, indépendamment de l’affichage dans la conversation. S’applique au démarrage ou à la reprise d’une session. La disponibilité dépend du modèle.",
+	                        generation: "Génération",
+	                        options: {
+	                            default: "Utilise ta configuration Codex ou le choix par défaut du modèle.",
+	                            enabled: "Demande des résumés si le modèle les prend en charge.",
+	                            disabled: "Ne génère pas de résumés du raisonnement.",
+	                        },
+	                    },
 	                    codexBackendMode: {
 	                        title: 'Mode de routage Codex',
 	                        subtitle: 'Choisis App Server, ACP ou MCP.',
@@ -4129,6 +4159,8 @@ export const fr: TranslationStructure = {
 
     settingsAppearance: {
       tabBarAppearance: {
+        sideRailTitle: "Onglets dans la barre latérale",
+        sideRailSubtitle: "Désactivez cette option pour utiliser la barre d’onglets de Happier et ses gestes de balayage.",
         title: 'Barre d’onglets',
         footer: 'Personnalise la barre d’onglets du bas.',
         showLabels: 'Afficher les libellés d’onglets',
@@ -6424,6 +6456,11 @@ export const fr: TranslationStructure = {
     },
 
     agentInput: {
+        sendOptions: {
+            title: "Options d’envoi",
+            queue: "Mettre en attente",
+            hint: "Maintiens pour choisir comment envoyer",
+        },
         chipPicker: {
             selectedOptionAccessibilityLabel: ({ option }: { option: string }) => `${option}. Sélectionné.`,
         },

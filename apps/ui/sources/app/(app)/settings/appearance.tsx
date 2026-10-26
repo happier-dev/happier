@@ -13,6 +13,7 @@ import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropd
 import { ThemeSelectionDropdown, type ThemeSelectionOption } from '@/components/settings/appearance/themeProfiles/ThemeSelectionDropdown';
 import { t, getLanguageNativeName, SUPPORTED_LANGUAGES } from '@/text';
 import { useDeviceType } from '@/utils/platform/responsive';
+import { useWindowFoldMetrics } from '@/utils/platform/useWindowFoldMetrics';
 import {
     AVATAR_STYLE_OPTIONS,
     isAvatarStyleId,
@@ -92,6 +93,8 @@ export default React.memo(function AppearanceSettingsScreen() {
     const { theme } = useUnistyles();
     const router = useRouter();
     const deviceType = useDeviceType();
+    const foldMetrics = useWindowFoldMetrics();
+    const [systemTabBarEnabled, setSystemTabBarEnabled] = useLocalSettingMutable('systemTabBarEnabled');
     const reduceMotion = useReducedMotionPreference();
     const panelsSupported = Platform.OS === 'web' || deviceType === 'tablet';
     const [avatarStyle, setAvatarStyle] = useSettingMutable('avatarStyle');
@@ -671,6 +674,15 @@ export default React.memo(function AppearanceSettingsScreen() {
 
             {/* Tab bar appearance */}
             <ItemGroup title={t('settingsAppearance.tabBarAppearance.title')} footer={t('settingsAppearance.tabBarAppearance.footer')}>
+                {Platform.OS === 'ios' && foldMetrics?.verticalBarEdge != null ? (
+                    <Item
+                        title={t('settingsAppearance.tabBarAppearance.sideRailTitle')}
+                        subtitle={t('settingsAppearance.tabBarAppearance.sideRailSubtitle')}
+                        icon={<Icon name="stack" size={29} color={theme.colors.accent.blue} />}
+                        rightElement={<Switch testID="settings-appearance-systemTabBar-switch" value={systemTabBarEnabled} onValueChange={setSystemTabBarEnabled} />}
+                        showChevron={false}
+                    />
+                ) : null}
                 <DropdownMenu
                     open={openTabBarSizeMenu}
                     onOpenChange={setOpenTabBarSizeMenu}

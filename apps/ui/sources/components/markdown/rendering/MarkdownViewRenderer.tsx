@@ -3,7 +3,7 @@ import type { StyleProp, TextStyle } from 'react-native';
 import { Platform, View } from 'react-native';
 
 import type { Option, OptionLongPressHandler } from '../MarkdownBlockView';
-import type { MarkdownSourceRange, MarkdownSourceRangeAction, MarkdownSourceRangeLayoutObserver } from '../MarkdownView';
+import type { MarkdownSelectionAction, MarkdownSourceRange, MarkdownSourceRangeAction, MarkdownSourceRangeLayoutObserver } from '../MarkdownView';
 import { usePreparedStreamingMarkdown, type MarkdownStreamingMode } from '../streaming/usePreparedStreamingMarkdown';
 import type { StreamingTextRevealPreset } from '../streaming/streamingTextRevealConfig';
 import type { MarkdownRenderingProfile } from './MarkdownRenderingProfile';
@@ -37,6 +37,7 @@ type MarkdownViewRendererProps = Readonly<{
     onPressSourceRange?: (action: MarkdownSourceRangeAction) => void;
     renderAfterSourceRange?: (action: MarkdownSourceRangeAction) => React.ReactNode;
     highlightSourceRange?: MarkdownSourceRange | null;
+    selectionActions?: readonly MarkdownSelectionAction[];
     agentTexMath: boolean;
 }>;
 
@@ -177,6 +178,7 @@ export const MarkdownViewRenderer = React.memo((props: MarkdownViewRendererProps
                             onPressSourceRange={props.onPressSourceRange}
                             renderAfterSourceRange={props.renderAfterSourceRange}
                             highlightSourceRange={props.highlightSourceRange}
+                            selectionActions={props.selectionActions}
                             agentTexMath={props.agentTexMath}
                         />
                     </MarkdownCodeBlockWrapKeyProvider>

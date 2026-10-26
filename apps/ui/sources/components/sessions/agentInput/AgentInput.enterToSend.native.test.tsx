@@ -645,7 +645,7 @@ describe('AgentInput (enter to send on native)', () => {
         });
 
         expect(mocks.onSend).toHaveBeenCalledTimes(2);
-        expect(mocks.onSend).toHaveBeenNthCalledWith(1, { forceImmediate: true });
-        expect(mocks.onSend).toHaveBeenNthCalledWith(2, { forceImmediate: true });
+        expect(mocks.onSend).toHaveBeenNthCalledWith(1, { deliveryIntent: 'agent_queue' });
+        expect(mocks.onSend).toHaveBeenNthCalledWith(2, { deliveryIntent: 'agent_queue' });
     });
 });

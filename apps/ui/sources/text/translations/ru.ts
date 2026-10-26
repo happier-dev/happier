@@ -642,7 +642,8 @@ export const ru: TranslationStructure = {
         commands: {
             composerAbortConfirm: 'Подтвердить остановку',
             composerFocus: 'Перейти к вводу',
-            composerSendImmediate: 'Отправить сразу',
+            composerSendImmediate: 'Альтернативная отправка (очередь / направление)',
+            composerSendInterrupt: 'Прервать и отправить',
             composerSendPending: 'Отправить в очередь ожидания',
             commandPaletteOpen: 'Открыть палитру команд',
             modeCycle: 'Переключить режим',
@@ -678,6 +679,14 @@ export const ru: TranslationStructure = {
   },
 
   transcript: {
+
+    quote: {
+
+      action: 'Цитировать',
+
+      actionA11y: 'Процитировать выделенный текст в сообщении',
+
+    },
 
     selection: {
 
@@ -3641,6 +3650,17 @@ export const ru: TranslationStructure = {
         openSettingsFailed: 'Не удалось открыть системные настройки.',
     },
     pushTroubleshooting: {
+            remoteTest: {
+                title: "Отправить удалённый тест",
+                subtitle: "Отправьте настоящее push-уведомление на этот телефон через компьютер, подключённый к этому Home.",
+                notRegistered: "Зарегистрируйте токен этого телефона и повторите попытку.",
+                noMachine: "Подключите компьютер к этому Home для отправки удалённого теста.",
+                accepted: "Push-сервис принял тест. Это не подтверждает получение или показ на телефоне. Проверьте уведомления.",
+                rejected: "Push-сервис не подтвердил приём. Проверьте уведомления и регистрацию перед повторной попыткой.",
+                invalidCredentials: "Поставщик push отклонил учётные данные приложения. Проверьте настройки APNs или FCM.",
+                unsupported: "Обновите CLI Happier на подключённом компьютере для отправки удалённых тестов.",
+                unconfirmed: "Не удалось подтвердить результат. Запрос ещё может завершиться; проверьте уведомления перед повторной попыткой.",
+            },
       status: {
         title: "Статус",
         footer: "Проверяет настройку аккаунта, разрешение ОС и состояние регистрации на сервере.",
@@ -3828,8 +3848,12 @@ export const ru: TranslationStructure = {
   },
 
     notifications: {
-        permissionActionNeedsReview: "Не удалось подтвердить ответ на запрос разрешения из уведомления. Откройте сессию и проверьте текущий запрос, прежде чем отвечать снова.",
+        permissionActionNeedsReview: "Не удалось подтвердить ответ, отправленный из уведомления. Проверьте ожидающие запросы, прежде чем отвечать снова.",
+        permissionActionReviewUnavailable: "Не удалось открыть Home и аккаунт этого ответа. Проверьте соединение и вход в настройках, затем ожидающие запросы.",
       actions: {
+            reviewPendingRequests: "Проверить ожидающие запросы",
+            questionReply: "Ответить",
+            questionPlaceholder: "Ваш ответ",
         allow: 'Разрешить',
         deny: 'Отклонить',
         answer: 'Ответить',
@@ -4338,6 +4362,16 @@ export const ru: TranslationStructure = {
           },
         },
         fields: {
+          codexReasoningSummaries: {
+              title: "Сводки рассуждений",
+              footer: "Определяет, создаёт ли Codex сводки, независимо от отображения в переписке. Применяется при запуске или возобновлении сессии. Доступность зависит от модели.",
+              generation: "Создание",
+              options: {
+                  default: "Использовать конфигурацию Codex или настройку модели по умолчанию.",
+                  enabled: "Запрашивать сводки, если модель их поддерживает.",
+                  disabled: "Не создавать сводки рассуждений.",
+              },
+          },
           codexBackendMode: {
             title: "Режим маршрутизации Codex",
             subtitle: "Выберите App Server, ACP или MCP.",
@@ -4373,6 +4407,8 @@ export const ru: TranslationStructure = {
 
   settingsAppearance: {
     tabBarAppearance: {
+      sideRailTitle: "Вкладки на боковой панели",
+      sideRailSubtitle: "Отключите, чтобы использовать панель вкладок Happier и жесты смахивания.",
       title: 'Панель вкладок',
       footer: 'Настройте нижнюю панель вкладок.',
       showLabels: 'Показывать подписи вкладок',
@@ -6811,6 +6847,11 @@ export const ru: TranslationStructure = {
       },
 
     agentInput: {
+        sendOptions: {
+            title: "Варианты отправки",
+            queue: "В очередь",
+            hint: "Удерживайте, чтобы выбрать способ отправки",
+        },
         chipPicker: {
             selectedOptionAccessibilityLabel: ({ option }: { option: string }) => `${option}. Выбрано.`,
         },

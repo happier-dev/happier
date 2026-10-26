@@ -1,8 +1,10 @@
 import { PassThrough } from 'node:stream';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { CLAUDE_UNIFIED_TERMINAL_DIALOG_CHOICE_REQUEST_SOURCE } from '@happier-dev/agents';
-import { SESSION_RPC_METHODS } from '@happier-dev/protocol';
+import { PUSH_NOTIFICATION_ACTION_IDS, PUSH_NOTIFICATION_CATEGORY_IDS, readNotificationQuestionAnswer, SESSION_RPC_METHODS } from '@happier-dev/protocol';
+import { buildAgentRequestNotificationContent } from '@/activity/notifications/buildAgentRequestNotificationContent';
 import { AgentStateRequestStore } from '@/agent/permissions/agentStateRequestStore';
+import { boundExpoPushMessage } from '@/api/boundExpoPushMessage';
 
 import type { SDKAssistantMessage } from '../sdk';
 import { Query } from '../sdk/query';
@@ -31,6 +33,86 @@ function bashToolUseMessage(): SDKAssistantMessage {
 const defaultMode = { permissionMode: 'default' } as EnhancedMode;
 
 describe('permission RPC routing', () => {
+  it('delivers projected notification answers through the real structured receiver and rejects stale or unowned answers', async () => {
+    const { session, client } = createPermissionHandlerSessionStub('structured-notification-occurrence');
+    const requests = new AgentStateRequestStore({ session: session.client, logPrefix: 'permission-rpc-test' });
+    const { PermissionHandler } = await import('./permissionHandler');
+    const handler = new PermissionHandler(session);
+    const controller = new AbortController();
+    const input = { questions: [{ id: 'provider-question-id', question: 'Which branch?', options: [
+      { value: 'unused-first', label: 'Human first' },
+      { value: 'first,wire\nvalue', label: 'Human second' },
+    ] }] };
+    const buildNotification = () => {
+      const pending = requests.readOutstandingRequest('reused-question');
+      if (!pending) throw new Error('Expected a live request to notify');
+      const content = buildAgentRequestNotificationContent({
+        kind: 'user_action', sessionId: client.sessionId, requestId: 'reused-question',
+        occurrenceId: pending.occurrenceId, toolName: pending.toolName, toolInput: pending.toolInput,
+      });
+      return boundExpoPushMessage({
+        to: 'ExponentPushToken[token]', ...content, categoryId: PUSH_NOTIFICATION_CATEGORY_IDS.questionChoices2V1,
+      });
+    };
+    const answerFromNotification = (notification: ReturnType<typeof buildNotification>) => ({
+      id: notification.data?.requestId,
+      occurrenceId: notification.data?.occurrenceId,
+      structuredAnswersV1: readNotificationQuestionAnswer(
+        notification.data?.questionAnswerV1, PUSH_NOTIFICATION_ACTION_IDS.questionChoice2V1, undefined,
+      ),
+    });
+    try {
+      const first = handler.handleToolCall('AskUserQuestion', input, defaultMode, {
+        signal: controller.signal, toolUseId: 'reused-question',
+      });
+      void first.catch(() => undefined);
+      const firstOccurrence = requests.readOutstandingRequest('reused-question')?.occurrenceId;
+      const respond = client.rpcHandlerManager.getHandler<unknown>(SESSION_RPC_METHODS.SESSION_STRUCTURED_QUESTION_RESPOND_V1)!;
+      expect(firstOccurrence).toEqual(expect.any(String));
+      const firstNotification = buildNotification();
+      expect(firstNotification.body).toBe('Which branch?\n1. Human first\n2. Human second');
+      const firstAnswer = answerFromNotification(firstNotification);
+      expect(firstAnswer).toMatchObject({
+        occurrenceId: firstOccurrence, structuredAnswersV1: { 'provider-question-id': ['first,wire\nvalue'] },
+      });
+      await expect(respond(firstAnswer)).resolves.toEqual({ ok: true });
+      await expect(first).resolves.toMatchObject({
+        behavior: 'allow', updatedInput: { answers: { 'provider-question-id': 'first,wire\nvalue' } },
+      });
+
+      const replacement = handler.handleToolCall('AskUserQuestion', {
+        questions: [{ id: 'provider-question-id', question: 'Which branch now?', options: [
+          { value: 'unused-replacement', label: 'Human first' },
+          { value: 'replacement,wire\nvalue', label: 'Human second' },
+        ] }],
+      }, defaultMode, {
+        signal: controller.signal, toolUseId: 'reused-question',
+      });
+      void replacement.catch(() => undefined);
+      let replacementSettled = false;
+      void replacement.then(() => { replacementSettled = true; }, () => { replacementSettled = true; });
+      const replacementOccurrence = requests.readOutstandingRequest('reused-question')?.occurrenceId;
+      expect(replacementOccurrence).not.toBe(firstOccurrence);
+      await expect(respond(firstAnswer)).rejects.toMatchObject({ rpcErrorCode: 'STRUCTURED_QUESTION_RECEIVER_NOT_OWNER' });
+      expect(requests.readOutstandingRequest('reused-question')?.occurrenceId).toBe(replacementOccurrence);
+      expect(replacementSettled).toBe(false);
+      const replacementAnswer = answerFromNotification(buildNotification());
+      expect(replacementAnswer.occurrenceId).toBe(replacementOccurrence);
+      await expect(respond(replacementAnswer)).resolves.toEqual({ ok: true });
+      await expect(replacement).resolves.toMatchObject({
+        behavior: 'allow', updatedInput: { answers: { 'provider-question-id': 'replacement,wire\nvalue' } },
+      });
+
+      handler.dispose();
+      const completedState = client.getAgentStateSnapshot();
+      await expect(respond(replacementAnswer)).rejects.toMatchObject({ rpcErrorCode: 'STRUCTURED_QUESTION_RECEIVER_NOT_OWNER' });
+      expect(client.getAgentStateSnapshot()).toEqual(completedState);
+    } finally {
+      controller.abort();
+      handler.dispose();
+    }
+  });
+
   it('answers only the occurrence carried by a notification while legacy approvals remain supported', async () => {
     const { session, client } = createPermissionHandlerSessionStub('notification-occurrence');
     const requests = new AgentStateRequestStore({ session: session.client, logPrefix: 'permission-rpc-test' });

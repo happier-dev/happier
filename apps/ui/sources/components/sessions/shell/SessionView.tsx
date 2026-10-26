@@ -1,3 +1,5 @@
+import { canUseDirectPendingDeliveryActions } from '@/components/sessions/pending/pendingMessageVisualState';
+import { sendPendingMessageWithIntent } from '@/components/sessions/pending/pendingMessageSendActions';
 import { resolveNewSessionCapabilityProbeContext } from '@/components/sessions/new/modules/newSessionCapabilityProbeContext';
 import type { SessionModelDiscoveryContext } from '@/components/sessions/agentInput/components/AgentInputModelDiscoveryDetail';
 import Color from 'color';
@@ -65,6 +67,10 @@ import { ChatList, type TranscriptViewportChangeState } from '@/components/sessi
 import { applyTranscriptJumpHighlightForJumpResult } from '@/components/sessions/transcript/navigation/transcriptJumpHighlightStore';
 import { TranscriptFirstPaintPlaceholder } from '@/components/sessions/transcript/TranscriptFirstPaintPlaceholder';
 import { TranscriptMessageSelectionProvider } from '@/components/sessions/transcript/messageSelection/TranscriptMessageSelectionContext';
+import { TranscriptQuoteProvider } from '@/components/sessions/transcript/quote/TranscriptQuoteContext';
+import { TranscriptQuoteSelectionControls } from '@/components/sessions/transcript/quote/TranscriptQuoteSelectionControls';
+import { appendTranscriptQuoteToDraft } from '@/components/sessions/transcript/quote/transcriptQuote';
+import { useKeyboardCommand } from '@/keyboard/KeyboardShortcutProvider';
 import { TranscriptSelectionToolbarController } from '@/components/sessions/transcript/messageSelection/TranscriptSelectionToolbarController';
 import type { TranscriptSelectionToolbarMessage } from '@/components/sessions/transcript/messageSelection/TranscriptSelectionToolbar';
 import { appendTranscriptSelectionToNewSessionDraft } from '@/components/sessions/transcript/messageSelection/appendTranscriptSelectionToNewSessionDraft';
@@ -209,7 +215,7 @@ import {
 } from '@/components/sessions/shell/resolveSessionViewContentBottomSpacing';
 import type { SessionRouteHydrationState } from '@/sync/domains/session/sessionRouteHydrationState';
 import { confirmNonSteerableSend } from '@/components/sessions/agentInput/confirmNonSteerableSend';
-import { canApplySteerConfigInFlight, decideSessionMessageDelivery, type MessageSendMode } from '@/sync/domains/session/control/submitMode';
+import { canApplySteerConfigInFlight, resolveSessionComposerSendActions, decideSessionMessageDelivery, type MessageSendMode } from '@/sync/domains/session/control/submitMode';
 import {
     buildArmedAgentContinuationTransitionInput,
     continueSessionWithArmedAgent,
@@ -468,6 +474,7 @@ import {
 import {
     buildSessionUsageLimitRecoveryPresentation,
     buildSessionUsageLimitStatusBadgePresentation,
+    resolveSessionUsageLimitRecoveryOperationStatus,
     translateSessionUsageLimitRecovery,
     type SessionUsageLimitRecoveryActionKind,
     type UsageLimitRecoveryOperationStatus,
@@ -771,24 +778,6 @@ function readUsageLimitRecoveryDiagnosticProfileActionRoute(
         profileId,
         profileKind,
     });
-}
-
-function resolveUsageLimitRecoveryStatusFromTypedFailure(
-    result: Extract<SessionUsageLimitRecoveryOperationResult, { ok: false }>,
-): UsageLimitRecoveryOperationStatus | 'resolved' | null {
-    switch (result.status) {
-        case 'exhausted':
-            return 'exhausted';
-        case 'inactive':
-        case 'not_found':
-            return 'inactive';
-        case 'rate_limited':
-            return 'waiting';
-        case 'cancelled':
-            return 'resolved';
-        default:
-            return null;
-    }
 }
 
 function isUsageLimitRecoveryCheckAction(kind: SessionUsageLimitRecoveryActionKind): boolean {
@@ -3355,12 +3344,13 @@ function SessionViewLoaded({
             });
             Modal.alert(alert.title, alert.body, alert.buttons);
         };
-        const applyTypedUsageLimitRecoveryFailureStatus = (
-            result: Extract<SessionUsageLimitRecoveryOperationResult, { ok: false }>,
+        const applyUsageLimitRecoveryOperationStatus = (
+            result: SessionUsageLimitRecoveryOperationResult,
         ): boolean => {
-            const status = resolveUsageLimitRecoveryStatusFromTypedFailure(result);
+            const status = resolveSessionUsageLimitRecoveryOperationStatus(result.status);
             if (!status) return false;
-            if (status === 'resolved') {
+            if (status === 'cancelled') {
+                if (!result.ok) return false;
                 markUsageLimitRecoveryIssueResolved();
                 return true;
             }
@@ -3390,14 +3380,10 @@ function SessionViewLoaded({
                     });
                     if (!result.ok) {
                         setUsageLimitRecoveryOperationStatus(null);
-                        if (applyTypedUsageLimitRecoveryFailureStatus(result)) {
+                        if (applyUsageLimitRecoveryOperationStatus(result)) {
                             return;
                         }
                         showUsageLimitRecoveryOperationFailure(result);
-                        return;
-                    }
-                    if (result.status === 'resumed') {
-                        markUsageLimitRecoveryIssueResolved();
                         return;
                     }
                     if (result.status === 'ready') {
@@ -3406,30 +3392,16 @@ function SessionViewLoaded({
                             resumeInactiveSession: async () => (
                                 await handleUsageLimitRecoveryResumeNowRef.current?.({ silent: true }) === true
                             ),
-                            markResolved: markUsageLimitRecoveryIssueResolved,
                             markReady: () => markCurrentUsageLimitRecoveryOperationStatus('ready'),
                         });
                         return;
                     }
-                    if (result.status === 'waiting') {
-                        const issueFingerprint = usageLimitRecoveryPresentation?.issueFingerprint;
-                        if (issueFingerprint) {
-                            setUsageLimitRecoveryOperationStatus({
-                                issueFingerprint,
-                                status: result.status,
-                            });
-                        }
-                        return;
-                    }
-                    if (result.status === 'cancelled') {
-                        markUsageLimitRecoveryIssueResolved();
-                        return;
-                    }
+                    if (applyUsageLimitRecoveryOperationStatus(result)) return;
                 }
 
                 const resumed = await handleUsageLimitRecoveryResumeNowRef.current?.({ silent: false });
                 if (resumed) {
-                    markUsageLimitRecoveryIssueResolved();
+                    markCurrentUsageLimitRecoveryOperationStatus('waiting');
                 }
                 return;
             }
@@ -3439,7 +3411,7 @@ function SessionViewLoaded({
                     rememberPreference: true,
                 }, usageLimitRecoveryOperationOptions);
                 if (!result.ok) {
-                    if (!applyTypedUsageLimitRecoveryFailureStatus(result)) {
+                    if (!applyUsageLimitRecoveryOperationStatus(result)) {
                         showUsageLimitRecoveryOperationFailure(result);
                     }
                 } else {
@@ -3447,7 +3419,7 @@ function SessionViewLoaded({
                         usageLimitRecoverySettingsV1,
                         'auto_wait',
                     ));
-                    setUsageLimitRecoveryOperationStatus(null);
+                    if (!applyUsageLimitRecoveryOperationStatus(result)) setUsageLimitRecoveryOperationStatus(null);
                 }
                 return;
             }
@@ -3461,7 +3433,7 @@ function SessionViewLoaded({
                         : {}),
                 }, usageLimitRecoveryOperationOptions);
                 if (!result.ok) {
-                    if (applyTypedUsageLimitRecoveryFailureStatus(result)) {
+                    if (applyUsageLimitRecoveryOperationStatus(result)) {
                         return;
                     }
                     showUsageLimitRecoveryOperationFailure(result);
@@ -3471,13 +3443,7 @@ function SessionViewLoaded({
                     usageLimitRecoverySettingsV1,
                     'ask',
                 ));
-                if (result.status === 'cancelled' || result.status === 'resumed' || result.status === 'ready') {
-                    markUsageLimitRecoveryIssueResolved();
-                } else if (result.status === 'waiting') {
-                    markCurrentUsageLimitRecoveryOperationStatus(result.status);
-                } else {
-                    setUsageLimitRecoveryOperationStatus(null);
-                }
+                if (!applyUsageLimitRecoveryOperationStatus(result)) setUsageLimitRecoveryOperationStatus(null);
                 return;
             }
 
@@ -3485,12 +3451,9 @@ function SessionViewLoaded({
                 markCurrentUsageLimitRecoveryOperationStatus('checking');
             }
             if (kind === 'consume_reset_credit' && usageLimitRecoveryQuotaProfileRef && usageLimitRecoveryQuotaProfileKey) {
-                const consumed = await consumeConnectedServiceRecoveryCreditForProfile({
+                await consumeConnectedServiceRecoveryCreditForProfile({
                     profileRef: usageLimitRecoveryQuotaProfileRef,
                 });
-                if (consumed) {
-                    setUsageLimitRecoveryOperationStatus(null);
-                }
                 return;
             }
             const result = kind === 'enable'
@@ -3526,7 +3489,7 @@ function SessionViewLoaded({
                 if (isUsageLimitRecoveryControlAction(kind)) {
                     setUsageLimitRecoveryOperationStatus(null);
                 }
-                if (applyTypedUsageLimitRecoveryFailureStatus(result)) {
+                if (applyUsageLimitRecoveryOperationStatus(result)) {
                     return;
                 }
                 showUsageLimitRecoveryOperationFailure(result);
@@ -3537,19 +3500,9 @@ function SessionViewLoaded({
                 setUsageLimitRecoveryOperationStatus(null);
                 return;
             }
-            if (isUsageLimitRecoveryControlAction(kind) && result.status && usageLimitRecoveryPresentation?.issueFingerprint) {
-                if (result.status === 'resumed' || result.status === 'ready' || result.status === 'cancelled') {
-                    markUsageLimitRecoveryIssueResolved();
-                    return;
-                }
-                setUsageLimitRecoveryOperationStatus({
-                    issueFingerprint: usageLimitRecoveryPresentation.issueFingerprint,
-                    status: result.status,
-                });
-            } else if (kind === 'enable' || kind === 'cancel') {
-                setUsageLimitRecoveryOperationStatus(null);
-            }
+            if (!applyUsageLimitRecoveryOperationStatus(result)) setUsageLimitRecoveryOperationStatus(null);
         } finally {
+            setUsageLimitRecoveryOperationStatus((current) => current?.status === 'checking' ? null : current);
             usageLimitRecoveryPendingActionRef.current = false;
             setUsageLimitRecoveryPendingAction(null);
         }
@@ -5224,6 +5177,13 @@ function SessionViewLoaded({
                 return `${base}${spacer}@${path} `;
             });
         }, [setDraftValue]);
+        const executeKeyboardCommand = useKeyboardCommand();
+        const handleQuoteTranscriptSelection = React.useCallback((selectedText: string) => {
+            setDraftValue((prev) => appendTranscriptQuoteToDraft(prev, selectedText) ?? prev);
+            requestAnimationFrame(() => { executeKeyboardCommand('composer.focus'); });
+        }, [executeKeyboardCommand, setDraftValue]);
+        // The transcript quotes into the composer only while this surface's composer is shown and writable.
+        const transcriptQuoteHandler = surfaceFocused && shouldShowInput && !isReadOnly ? handleQuoteTranscriptSelection : null;
         const extraActionChips = useSessionAgentInputExtraActionChips({
             sessionId,
             attachmentsUploadsEnabled,
@@ -5373,6 +5333,14 @@ function SessionViewLoaded({
             `${t('profiles.sessionUses', { profile: profileInfo })}\n\n${t('profiles.profilesFixedPerSession')}`,
         );
     }, [composerProfileId]);
+    const queuedSendInFlight = React.useRef(false);
+    const composerSendActions = resolveSessionComposerSendActions({
+        configuredMode: settings.sessionMessageSendMode,
+        busySteerSendPolicy: settings.sessionBusySteerSendPolicy,
+        session: sessionRuntimeStatusSource,
+    });
+    const canChooseComposerSendActions = !pendingMessageEdit && !recipientState.recipient && !armedContinuationTarget
+        && persistedVoiceComposerRouting?.kind !== 'adapter_text';
     const handleAgentInputSend = useStableAgentInputOnSend((sendOptions) => {
         if (!hasWriteAccess) {
             Modal.alert(t('common.error'), t('session.sharing.noEditPermission'));
@@ -5380,6 +5348,20 @@ function SessionViewLoaded({
         }
 
         const composerMessage = sendOptions?.inputTextOverride ?? composerTextStore.getPrompt();
+        if (sendOptions?.sendNextQueued) {
+            const message = pendingMessages[0];
+            if (!canChooseComposerSendActions || composerMessage.trim() || attachmentDrafts.length > 0 || hasIncludedReviewCommentDrafts
+                || pendingMessageEditRef.current
+                || queuedSendInFlight.current || isReadOnly || !shouldShowInput || isResuming || isUploadingAttachments
+                || !message || !canUseDirectPendingDeliveryActions(message)
+                || (sendOptions.deliveryIntent !== 'agent_queue' && sendOptions.deliveryIntent !== 'interrupt')) return;
+            queuedSendInFlight.current = true;
+            setIsComposerSendPending(true);
+            fireAndForget(sendPendingMessageWithIntent({ sessionId, session: sessionRuntimeStatusSource, message,
+                deliveryIntent: sendOptions.deliveryIntent === 'interrupt' ? 'interrupt_and_send' : 'steer_now',
+            }).finally(() => { queuedSendInFlight.current = false; setIsComposerSendPending(false); }), { tag: 'SessionView.pendingMessageShortcut' });
+            return;
+        }
         const activePendingEdit = pendingMessageEditRef.current;
         if (activePendingEdit) {
             const nextText = composerMessage;
@@ -5414,6 +5396,7 @@ function SessionViewLoaded({
             const nonSteerableSendPrompt = storage.getState().settings.sessionNonSteerableSendPrompt;
             const sessionInactiveResumePolicy = storage.getState().settings.sessionInactiveResumePolicy;
             const forceImmediateSend = sendIntent?.forceImmediate === true;
+            const explicitSendMode = !forceImmediateSend ? sendIntent?.deliveryIntent : undefined;
             const armedContinuationTargetLabel = armedContinuationTarget?.label ?? '';
             const resolveSendDestination = (
                 route: SessionComposerSendRoute,
@@ -5448,9 +5431,11 @@ function SessionViewLoaded({
                 && nonSteerableSendPrompt === 'ask'
                 && !forceImmediateSend
                 && sendIntent?.deliveryIntent !== 'server_pending'
+                && sendIntent?.deliveryIntent !== 'interrupt'
             ) {
                 const preflight = decideSessionMessageDelivery({
                     configuredMode,
+                    explicitMode: explicitSendMode,
                     busySteerSendPolicy,
                     session: sessionRuntimeStatusSource,
                     text: trimmedText,
@@ -5875,10 +5860,7 @@ function SessionViewLoaded({
                             providerNonSteerablePayloadReason,
                             ...(nonSteerableApplyConfigAndSteer ? { applyConfigAndSteer: true } : {}),
                             ...(nonSteerableSteerWithoutConfig ? { steerWithoutConfig: true } : {}),
-                            explicitMode: nonSteerableExplicitMode
-                                ?? (!forceImmediateSend && sendIntent?.deliveryIntent === 'server_pending'
-                                    ? 'server_pending'
-                                    : undefined),
+                            explicitMode: nonSteerableExplicitMode ?? explicitSendMode,
                             forceImmediate: forceImmediateSend,
                             profileId: liveComposerState.profileId,
                             resumeCapabilityOptions,
@@ -6112,10 +6094,7 @@ function SessionViewLoaded({
                         providerNonSteerablePayloadReason,
                         ...(nonSteerableApplyConfigAndSteer ? { applyConfigAndSteer: true } : {}),
                         ...(nonSteerableSteerWithoutConfig ? { steerWithoutConfig: true } : {}),
-                        explicitMode: nonSteerableExplicitMode
-                            ?? (!forceImmediateSend && sendIntent?.deliveryIntent === 'server_pending'
-                                ? 'server_pending'
-                                : undefined),
+                        explicitMode: nonSteerableExplicitMode ?? explicitSendMode,
                         forceImmediate: forceImmediateSend,
                         profileId: liveComposerState.profileId,
                         resumeCapabilityOptions,
@@ -6469,6 +6448,9 @@ function SessionViewLoaded({
                 onActiveStatusBadgeKeyChange={setActiveStatusBadgeKey}
                 connectedServicesRestartState={sessionConnectedServicesAuthSwitch.restartState}
                 onSend={handleAgentInputSend}
+                sendMenuModes={canChooseComposerSendActions ? composerSendActions.modes : undefined}
+                alternateSendMode={composerSendActions.alternateMode}
+                canSendNextQueued={canChooseComposerSendActions}
                 isSendDisabled={!shouldShowInput || isResuming || isReadOnly || isUploadingAttachments}
                 isSending={isComposerSendPending}
                 onMicPress={micButtonState.onMicPress}
@@ -6597,19 +6579,22 @@ function SessionViewLoaded({
                         latestTurnStatus={session.latestTurnStatus}
                         surfaceFocused={surfaceFocused}
                     />
-                    <SessionTranscriptAgentContentView
-                        sessionId={sessionId}
-                        session={session}
-                        isEncryptedSessionLocked={isEncryptedSessionLocked}
-                        isForkedSessionV1={isForkedSessionV1}
-                        isLocallyAttached={isLocallyAttached}
-                        pendingMessagesCount={pendingMessages.length}
-                        hasDirectControlFooter={directControlFooter != null}
-                        content={content}
-                        input={inputWithTranscriptSelection}
-                        placeholder={placeholder}
-                        safeAreaBottom={agentContentSafeAreaBottom}
-                    />
+                    <TranscriptQuoteSelectionControls sessionId={sessionId} onQuote={transcriptQuoteHandler} />
+                    <TranscriptQuoteProvider value={transcriptQuoteHandler}>
+                        <SessionTranscriptAgentContentView
+                            sessionId={sessionId}
+                            session={session}
+                            isEncryptedSessionLocked={isEncryptedSessionLocked}
+                            isForkedSessionV1={isForkedSessionV1}
+                            isLocallyAttached={isLocallyAttached}
+                            pendingMessagesCount={pendingMessages.length}
+                            hasDirectControlFooter={directControlFooter != null}
+                            content={content}
+                            input={inputWithTranscriptSelection}
+                            placeholder={placeholder}
+                            safeAreaBottom={agentContentSafeAreaBottom}
+                        />
+                    </TranscriptQuoteProvider>
                 </TranscriptMessageSelectionProvider>
             </View >
 

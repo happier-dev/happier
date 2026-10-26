@@ -80,7 +80,7 @@ function getCommandBindings(
     const override = overrides[commandId];
     const command = defaultKeyboardCommands.find((entry) => entry.id === commandId);
     if (override && override.length > 0) {
-        const defaultAllowInEditable = command?.defaultBindings?.find((rule) => rule.allowInEditable != null)?.allowInEditable
+        const defaultAllowInEditable = command?.allowInEditable ?? command?.defaultBindings?.find((rule) => rule.allowInEditable != null)?.allowInEditable
             ?? command?.defaultBinding?.allowInEditable;
         return override.map((rule) => (
             rule.allowInEditable == null && defaultAllowInEditable != null

@@ -5,16 +5,12 @@ import {
 } from '@happier-dev/protocol';
 
 import type { Credentials } from '@/persistence';
-import {
-  resolveSessionEncryptionContextFromCredentials,
-  resolveSessionStoredContentEncryptionMode,
-  tryDecryptSessionMetadata,
-} from '@/session/transport/encryption/sessionEncryptionContext';
-import { fetchSessionsPage as fetchSessionsPageDefault, type RawSessionRecord } from '@/session/transport/http/sessionsHttp';
-import { routeSessionUsageLimitRecoveryCheckNow } from '@/session/usageLimitRecoveryControls/sessionUsageLimitRecoveryControlRouter';
+import { tryDecryptSessionMetadata } from '@/session/transport/encryption/sessionEncryptionContext';
+import { fetchSessionById as fetchSessionByIdDefault, fetchSessionsPage as fetchSessionsPageDefault, type RawSessionRecord } from '@/session/transport/http/sessionsHttp';
+import { resolveMachineControlLocalityProof } from '@/session/machineControlLocality';
+import { hasSameUsageLimitRecoveryIdentity, isPendingUsageLimitRecoveryStatus } from '@/session/usageLimitRecoveryControls/mergeUsageLimitRecoveryIntent';
 
 type FetchSessionsPage = typeof fetchSessionsPageDefault;
-type RouteCheckNow = typeof routeSessionUsageLimitRecoveryCheckNow;
 
 type HydrateInactiveUsageLimitRecoveryResult = Readonly<{
   scanned: number;
@@ -43,14 +39,8 @@ function readActiveRecoveryIntent(metadata: Record<string, unknown> | null): Ses
   );
   if (!parsed.success) return null;
   const recovery = parsed.data;
-  if (
-    recovery.status !== 'waiting'
-    && recovery.status !== 'armed'
-    && recovery.status !== 'checking'
-  ) {
-    return null;
-  }
-  if (typeof (recovery.nextCheckAtMs ?? recovery.resetAtMs) !== 'number') return null;
+  if (!isPendingUsageLimitRecoveryStatus(recovery.status)) return null;
+  if (recovery.runtimeAuthRecoveryAttemptId) return null;
   return recovery;
 }
 
@@ -60,11 +50,13 @@ export async function hydrateInactiveUsageLimitRecoveryFromSessionMetadata(param
   currentMachineHost: string | null;
   currentMachineHomeDir: string | null;
   fetchSessionsPage?: FetchSessionsPage;
+  fetchSessionById?: typeof fetchSessionByIdDefault;
   decryptMetadata?: (input: Readonly<{
     credentials: Credentials;
     rawSession: RawSessionRecord;
   }>) => Record<string, unknown> | null;
-  routeCheckNow?: RouteCheckNow;
+  /** Use the registered machine control so every wake resolves current session state. */
+  runCheckNow: (sessionId: string) => Promise<unknown>;
   observe(input: Readonly<{
     sessionId: string;
     recovery: SessionUsageLimitRecoveryV1;
@@ -74,7 +66,6 @@ export async function hydrateInactiveUsageLimitRecoveryFromSessionMetadata(param
 }>): Promise<HydrateInactiveUsageLimitRecoveryResult> {
   const fetchSessionsPage = params.fetchSessionsPage ?? fetchSessionsPageDefault;
   const decryptMetadata = params.decryptMetadata ?? ((input) => tryDecryptSessionMetadata(input));
-  const routeCheckNow = params.routeCheckNow ?? routeSessionUsageLimitRecoveryCheckNow;
   const maxPages = Math.max(1, Math.trunc(params.maxPages ?? 50));
   const seenCursors = new Set<string>();
   let cursor: string | undefined;
@@ -99,30 +90,30 @@ export async function hydrateInactiveUsageLimitRecoveryFromSessionMetadata(param
       });
       const recovery = readActiveRecoveryIntent(metadata);
       if (!metadata || !recovery) continue;
+      if (!await resolveMachineControlLocalityProof({
+        sessionMachineId: metadata.machineId ?? rawSession.machineId,
+        currentMachineId: params.currentMachineId,
+        sessionHost: metadata.host ?? rawSession.host,
+        sessionHomeDir: metadata.homeDir ?? rawSession.homeDir,
+        currentMachineHost: params.currentMachineHost,
+        currentMachineHomeDir: params.currentMachineHomeDir,
+        credentials: params.credentials,
+      })) continue;
       await params.observe({
         sessionId,
         recovery,
         runCheckNow: async () => {
-          const ctx = resolveSessionEncryptionContextFromCredentials(params.credentials, rawSession);
-          const mode = resolveSessionStoredContentEncryptionMode(rawSession);
-          return await routeCheckNow({
-            token: params.credentials.token,
-            credentials: params.credentials,
-            sessionId,
-            rawSession,
-            metadata,
-            currentMachineId: params.currentMachineId,
-            currentMachineHost: params.currentMachineHost,
-            currentMachineHomeDir: params.currentMachineHomeDir,
-            ctx,
-            mode,
-            request: { sessionId },
-            callLiveSessionRpc: async () => ({
-              ok: false,
-              errorCode: 'session_rpc_unavailable',
-              error: 'session_rpc_unavailable',
-            }),
+          const currentSession = await (params.fetchSessionById ?? fetchSessionByIdDefault)({
+            token: params.credentials.token, sessionId,
           });
+          if (!currentSession) return { ok: false, errorCode: 'usage_limit_recovery_session_unavailable' };
+          const currentMetadata = decryptMetadata({ credentials: params.credentials, rawSession: currentSession });
+          if (!currentMetadata) return { ok: false, errorCode: 'usage_limit_recovery_session_unavailable' };
+          const current = readActiveRecoveryIntent(currentMetadata);
+          if (currentSession.archivedAt != null || !current || !hasSameUsageLimitRecoveryIdentity(current, recovery)) {
+            return { ok: false, status: 'cancelled', errorCode: 'usage_limit_recovery_attempt_superseded' };
+          }
+          return await params.runCheckNow(sessionId);
         },
       });
       observed += 1;

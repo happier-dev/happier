@@ -52,6 +52,7 @@ import { normalizeVoiceAgentTurnTranscriptText } from '@happier-dev/agents';
 import { MessageSelectionCheckbox } from '@/components/sessions/transcript/messageSelection/MessageSelectionCheckbox';
 import { SelectMessageButton } from '@/components/sessions/transcript/messageSelection/SelectMessageButton';
 import { useOptionalTranscriptSelectionRow } from '@/components/sessions/transcript/messageSelection/TranscriptMessageSelectionContext';
+import { useTranscriptQuoteMarkdownProps } from '@/components/sessions/transcript/quote/TranscriptQuoteContext';
 import {
   resolveSelectableMessageText,
   stripLegacyAttachmentsBlock,
@@ -514,6 +515,7 @@ function UserTextBlock(props: {
   const isWeb = Platform.OS === 'web';
   const router = useRouter();
   const isDiscarded = isCommittedMessageDiscarded(props.metadata, props.message.localId);
+  const quoteMarkdownProps = useTranscriptQuoteMarkdownProps(props.sessionId, !isDiscarded && props.historical !== true);
   const handleJumpToAnchor = useStructuredMessageJumpHandler(props.sessionId, props.canOpenFiles);
 
   const isVoiceAgentTurn = React.useMemo(() => {
@@ -830,7 +832,7 @@ function UserTextBlock(props: {
                 interaction={props.interaction}
                 onJumpToAnchor={handleJumpToAnchor}
               />
-              <MarkdownView codeBlockStateKey={JSON.stringify([props.sessionId, props.message.id])} markdown={renderedMarkdownText} onOptionPress={handleOptionPress} onOptionLongPress={handleOptionLongPress} onLinkPress={handleMarkdownLinkPress} selectable={true} profile="transcript" textStyle={styles.transcriptMarkdownText} />
+              <MarkdownView {...quoteMarkdownProps} codeBlockStateKey={JSON.stringify([props.sessionId, props.message.id])} markdown={renderedMarkdownText} onOptionPress={handleOptionPress} onOptionLongPress={handleOptionLongPress} onLinkPress={handleMarkdownLinkPress} selectable={true} profile="transcript" textStyle={styles.transcriptMarkdownText} />
               {sessionMediaInlineImages.length > 0 ? (
                 <SessionMediaInlineImages
                   sessionId={props.sessionId}
@@ -959,6 +961,7 @@ function AgentTextBlock(props: {
   messageDisplayCommon: TranscriptMessageDisplayCommon;
 }) {
   const { isHovered: isMessageHovered, hoverProps } = useRowActionHoverHost();
+  const quoteMarkdownProps = useTranscriptQuoteMarkdownProps(props.sessionId, props.historical !== true && !props.message.isThinking);
   const [isCopyButtonHovered, setIsCopyButtonHovered] = React.useState(false);
   const [isActionRowFocused, setIsActionRowFocused] = React.useState(false);
   const handleActionsFocus = React.useCallback(() => setIsActionRowFocused(true), []);
@@ -1340,6 +1343,7 @@ function AgentTextBlock(props: {
                 </Text>
               ) : (
                 <MarkdownView
+                  {...quoteMarkdownProps}
                   markdown={markdown}
                   codeBlockStateKey={JSON.stringify([props.sessionId, props.message.id])}
                   agentTexMath

@@ -20,7 +20,7 @@ const previousDev = (globalThis as { __DEV__?: boolean }).__DEV__;
 const enqueuePendingMessageSpy = vi.hoisted(() => vi.fn(async (..._args: any[]) => {}));
 const sendMessageSpy = vi.hoisted(() => vi.fn(async (..._args: any[]) => {}));
 const submitMessageSpy = vi.hoisted(() => vi.fn(async (..._args: any[]) => {}));
-const sendPendingMessageNowSpy = vi.hoisted(() => vi.fn(async (..._args: any[]) => {}));
+const sendPendingMessageNowSpy = vi.hoisted(() => vi.fn(async (..._args: any[]) => ({ type: 'retry_scheduled' as const, persistence: 'pending' as const })));
 const updatePendingRequestedActionSpy = vi.hoisted(() => vi.fn(async (..._args: any[]) => {}));
 const resumeSessionSpy = vi.hoisted(() =>
     vi.fn<(..._args: any[]) => Promise<ResumeSessionResult>>(async (..._args: any[]) => ({
@@ -841,6 +841,42 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
         await screen.unmount();
     });
 
+    it('keeps queue-head shortcuts out of voice adapter conversations', async () => {
+        const { writeVoiceConversationBindingMetadata } = await import('@/voice/sessionBinding/voiceConversationBindingMetadata');
+        const { voiceSessionBindingStore } = await import('@/voice/sessionBinding/voiceSessionBindingStore');
+        sessionMetadataOverrides.current = writeVoiceConversationBindingMetadata(
+            { systemSessionV1: { v: 1, key: 'voice_conversation', hidden: true } },
+            { adapterId: 'realtime_elevenlabs', controlSessionId: 'voice-global', conversationSessionId: 's1',
+                transcriptMode: 'synthetic', targetSessionId: 'target', updatedAt: 123 },
+        );
+        pendingMessagesState.current = { messages: [durablePendingRow('queue-head', 'enqueue')], discarded: [], isLoaded: true };
+        const screen = await renderSessionView();
+        try {
+            await act(async () => { findAgentInput(screen).props.onChangeText(''); });
+            await act(async () => { findAgentInput(screen).props.onSend({ deliveryIntent: 'agent_queue', sendNextQueued: true }); });
+            await act(async () => { await Promise.all(pendingFireAndForget); });
+            expect(sendPendingMessageNowSpy).not.toHaveBeenCalled();
+            expect(enqueuePendingMessageSpy).not.toHaveBeenCalled();
+        } finally {
+            await screen.unmount();
+            voiceSessionBindingStore.getState().unbind('s1');
+        }
+    });
+
+    it('delivers the existing queue head from an empty composer without enqueuing a copy', async () => {
+        const row = durablePendingRow('queue-head', 'enqueue');
+        pendingMessagesState.current = { messages: [row, durablePendingRow('second-row', 'enqueue')], discarded: [], isLoaded: true };
+        sendPendingMessageNowSpy.mockResolvedValueOnce({ type: 'retry_scheduled', persistence: 'pending' });
+        const screen = await renderSessionView();
+        await act(async () => { findAgentInput(screen).props.onChangeText(''); });
+        await act(async () => { findAgentInput(screen).props.onSend({ deliveryIntent: 'agent_queue', sendNextQueued: true }); });
+        await act(async () => { await Promise.all(pendingFireAndForget); });
+        expect(sendPendingMessageNowSpy).toHaveBeenCalledExactlyOnceWith('s1', expect.objectContaining({ localId: 'queue-head', deliveryIntent: 'steer_now', rawRecord: row.rawRecord }));
+        expect(enqueuePendingMessageSpy).not.toHaveBeenCalled();
+        expect(submitMessageSpy).not.toHaveBeenCalled();
+        await screen.unmount();
+    });
+
     it('shows an offline queued banner and authorizes the exact durable row for processing when online', async () => {
         const row = durablePendingRow('queued-row', 'enqueue');
         pendingMessagesState.current = { messages: [row], discarded: [], isLoaded: true };
@@ -1176,6 +1212,45 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
             'The pending queue is unavailable for this session. Update the agent runtime or send this message immediately.',
         );
 
+        await screen.unmount();
+    });
+
+    it.each([
+        ['agent_queue', 'steer_now'],
+        ['server_pending', 'enqueue'],
+        ['interrupt', 'send_now'],
+    ] as const)('honors a composer %s choice over standing send preferences', async (mode, action) => {
+        settingsState.current = {
+            experiments: true,
+            featureToggles: {},
+            codexBackendMode: 'acp',
+            sessionMessageSendMode: mode === 'interrupt' ? 'agent_queue' : 'interrupt',
+            sessionBusySteerSendPolicy: 'server_pending',
+        };
+        sessionStateOverrides.current = {
+            active: true,
+            presence: 'online',
+            thinking: true,
+            thinkingAt: Date.now(),
+            agentStateVersion: 1,
+            agentState: {
+                controlledByUser: false,
+                capabilities: { inFlightSteerSupported: true, inFlightSteerAvailable: true },
+            },
+        };
+        publishLiveSessionState.current?.(sessionStateOverrides.current);
+        const screen = await renderSessionView({ routeServerId: 'server-cache' });
+        pendingFireAndForget.length = 0;
+        await act(async () => { findAgentInput(screen).props.onChangeText('chosen delivery'); });
+        await act(async () => { findAgentInput(screen).props.onSend({ deliveryIntent: mode }); });
+        await act(async () => { await Promise.all(pendingFireAndForget); });
+
+        expect(enqueuePendingMessageSpy).toHaveBeenCalledTimes(1);
+        expect(enqueuePendingMessageSpy.mock.calls[0]?.slice(0, 2)).toEqual(['s1', 'chosen delivery']);
+        expect(enqueuePendingMessageSpy.mock.calls[0]?.[4]).toEqual(expect.objectContaining({
+            requestedAction: { v: 1, kind: action },
+        }));
+        expect(submitMessageSpy).not.toHaveBeenCalled();
         await screen.unmount();
     });
 

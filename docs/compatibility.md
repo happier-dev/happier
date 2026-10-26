@@ -580,11 +580,10 @@ The actual agent-state update rechecks it, so a delayed response cannot settle a
 new occurrence sharing the local request ID. Existing `permission` callers retain
 their released method and payload; no second permission executor is introduced.
 
-Updated notification handlers do not fall back to the legacy method. An Android
-live or headless response without occurrence identity records a generic review
-notice without navigating. An unhandled cached Android launch response and an
-iOS response without occurrence identity navigate for review without sending a
-decision. An unsupported receiver or relay produces operation-scoped recovery.
+Updated notification handlers do not fall back to the legacy method. A live or
+background response without occurrence identity records a generic review notice
+without navigating on either mobile platform. An unhandled cached launch response
+opens review without sending a decision. An unsupported receiver or relay produces operation-scoped recovery.
 Other app operations and in-app
 permission controls remain available. An older UI can continue using its legacy
 permission operation against an updated CLI. No phone-side permission journal,
@@ -596,16 +595,49 @@ An optional Account hint must match saved credentials. Background actions use a
 caller-owned one-shot socket while foreground networking is paused, retaining
 the same authenticated-origin checks. Completion or cancellation disconnects
 that socket even when native encryption is pending; a late connection cannot
-send an expired action. The action reuses the scoped RPC timeout budget across
-preparation and dispatch. That budget is not an Android execution guarantee and
-does not resume background sync or change the active server.
+send an expired action. The lightweight permission-action entry owns one scoped
+RPC timeout budget across cold execution-module loading, preparation, and
+dispatch. Loading does not borrow the optional notification SDK's shorter
+timeout or restart the operation budget. Cancellation settles even while the
+module is loading, and a later load cannot send an expired action.
+That budget is not an Android execution guarantee and
+does not resume background sync or change the active server. It is not an iOS
+background-execution guarantee either.
 
-iOS permission callbacks use that same URL-bound executor while retaining their
-foreground and cold-start eligibility. Generated Session destinations use the
-canonical Session navigator with the captured saved server profile, rather than
-inferring the server from a session cache after an asynchronous response. Explicit
-notification URLs retain their existing routing. Legacy pending decisions remain
-review-only and do not gain execution authority from navigation.
+All live mobile permission callbacks use that same Account- and URL-bound
+executor and coordinator without switching Home or navigating. Cached permission
+responses and legacy pending decisions are review-only and gain no execution
+authority from navigation. Ordinary taps, Answer, and cached review destinations
+use the canonical Session navigator with the captured saved server profile;
+explicit notification URLs retain their existing routing.
+
+The development-only iOS path extends Expo's existing NotificationCenterManager
+and Emitter. Apple's live response completion stays pending until the shared JS
+executor finishes or UIKit expires its background assertion. Live pending
+deliveries and their events are separate from cached response observations;
+expiration aborts the shared executor, and native completion ends the assertion.
+Before execution, JS atomically claims the existing native delivery record.
+Expo's manager and unfinished records can survive an in-process JS reload, so
+claimed deliveries are excluded from later events and pending-response drains.
+They remain only for Apple completion or OS expiry, preventing the same OS intent
+from automatically executing again after a reload. This claim is process-local;
+it adds no journal, persistent identity, server state, or separate permission owner.
+Both Allow and Deny require authentication to unlock the device, preserving the
+existing SecureStore WHEN_UNLOCKED credential policy. Default taps and Answer
+retain foreground behavior. An older native binary or development host missing
+the live-delivery methods uses foreground buttons, while cached cold-start responses
+remain review-only. This is user-initiated notification response work, not a
+silent-push delivery guarantee.
+
+The iOS extension requires a new native runtime; an OTA-only update cannot add it
+to an older binary. Native lifecycle tests, UIKit compilation, and simulator
+category registration pass. On the iOS 18.6 test simulator, actual banner Allow
+and Deny presses reached the encrypted occurrence-bound RPC and settled the CLI
+request without foregrounding Happier or changing Home. Delivery used simulated
+APNs payloads, not the remote push service. Notification Center list expansion
+still failed to expose the actions on that simulator; terminated-state actions
+and physical-device validation remain pending. This is not released or physically
+validated behavior.
 
 The foreground listener and native task share one coordinator. Identical active
 decisions share work; conflicting active decisions cannot overwrite it. Only
@@ -615,8 +647,11 @@ so a second native delivery cannot produce a false recovery notice. Other outcom
 release their work slot and require fresh intent to retry; no confirmation memory
 survives JS runtime recreation. Runtime response-consumption notes prevent a
 handled cached response from navigating again after remount. Only a generic
-presentation-recovery flag is persisted, without permission decisions, tokens,
-tool arguments, or a lifetime request quota.
+presentation-recovery notice is persisted, optionally naming the saved Home and
+Account for explicit Inbox review. It contains no request identity, permission
+decision, token, tool arguments, or lifetime request quota. The previous `1` flag
+remains readable as untargeted aggregate-Inbox review; neither shape authorizes
+execution.
 
 Android task registration is attempted once per runtime using the existing
 notification native-call budget; late completion still delivers through the
@@ -646,6 +681,62 @@ existing task dispatch; background Allow and Deny delivery is retained. That
 module is also selected for Android source compilation and checked by the same
 postinstall verifier. SDK 55 already includes this correction, so the 0.3 line
 needs neither predecessor patch nor its source-build overrides.
+
+### Inline question replies and notification presentation (development)
+
+The existing structured-question descriptor normalizer projects supported single
+questions into optional `questionAnswerV1` notification data. Static native
+categories offer up to three numbered choices, whose complete mapping remains in
+the body, or a system text-input reply. Disabled previews omit both inline data
+and controls. Complex questions retain the existing session-review action. The
+Expo payload-budget owner drops inline controls and metadata before truncating a
+body that would otherwise lose its choice mapping; it never retains actionable
+buttons with an incomplete mapping.
+
+Replies reuse `session.structuredQuestion.respond.v1` with an optional
+`occurrenceId`, checked by the existing live request coordinator and again at
+settlement. The same question-response operation serves ordinary session UI,
+Actions, and exact Account-scoped notification replies. Notification replies
+require their captured Account and occurrence, share the existing action lifetime
+and coordinator, and require an explicit success acknowledgement. Cached replies
+never replay. No second question store, permission-response fallback, or answer
+journal is added.
+
+Released CLI `cli-v0.2.17` and `cli-v0.2.17-preview.1` at
+`a2c45c86804b24e60ac0b76146a3ef36dfcaa15b` use a strict structured-question request
+schema without `occurrenceId`; they reject these new notification replies rather
+than answering without the occurrence check. Ordinary older callers that omit
+the optional field retain their existing contract. Older apps that have not
+registered the new native categories retain ordinary notification-tap review.
+
+The canonical local notification producer captures the current Account alongside
+Home and request identity; the remote sender derives Account from its own
+authenticated credential, replacing caller-supplied Account data. Android local
+delivery now passes the already-selected channel through the native adapter.
+Presented ordinary permission/question notices are removed only when the loaded
+canonical session has a matching completed occurrence and no matching pending
+occurrence. Inventory is rechecked against current Home/Account after native
+awaits. Missing pending state alone, unloaded sessions, foreign Accounts, and
+legacy notices without exact identity prove no settlement. This best-effort OS
+presentation cleanup does not write request state or depend on local sending
+being enabled.
+
+### Remote-push diagnostics (development)
+
+The push troubleshooting action captures Home, Account, phone token, and an online
+machine, then resolves that phone's registration on the captured Home. The
+owner-account machine RPC `daemon.notifications.testPush` accepts the existing
+registration ID and uses the canonical CLI `PushNotificationClient`; callers
+cannot supply an arbitrary recipient or message. Older daemons report the method
+as unsupported. There is no new server sender or server endpoint in this line.
+
+The sender reports accepted and failed tickets separately. An exhausted or
+terminally rejected send is not success, and a token-lookup failure cooldown
+reports unavailability rather than an empty registration list. Ordinary broadcast
+delivery retains partial acceptance without automatically resending successful
+siblings. A transport timeout leaves the diagnostic unconfirmed and does not
+automatically resubmit it. Expo acceptance is service evidence only; phone
+receipt and display require separate observation.
 
 ## Migration history
 

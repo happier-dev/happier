@@ -33,6 +33,9 @@ describe('pendingNotificationNav', () => {
         setPendingNotificationNav({ serverUrl: 'https://stack.example.test/', route: '/session/s_1' });
         expect(getPendingNotificationNav()).toEqual({ serverUrl: 'https://stack.example.test', route: '/session/s_1' });
 
+        setPendingNotificationNav({ serverUrl: 'https://stack.example.test/', route: '/session/s_1', accountId: 'expected-account' });
+        expect(getPendingNotificationNav()).toEqual({ serverUrl: 'https://stack.example.test', route: '/session/s_1', accountId: 'expected-account' });
+
         clearPendingNotificationNav();
         expect(getPendingNotificationNav()).toBeNull();
     });

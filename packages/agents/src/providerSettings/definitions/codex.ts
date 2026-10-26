@@ -1,6 +1,8 @@
 import { z } from 'zod';
 import {
   buildSettingArtifacts,
+  CODEX_REASONING_SUMMARIES_DEFAULT,
+  CodexReasoningSummariesSchema,
   normalizeCodexBackendMode as normalizeCanonicalCodexBackendMode,
   type CodexBackendMode as CanonicalCodexBackendMode,
   type SettingDefinitionMap,
@@ -12,6 +14,12 @@ export type CodexBackendMode = CanonicalCodexBackendMode;
 export const normalizeCodexBackendMode = normalizeCanonicalCodexBackendMode;
 
 export const CODEX_PROVIDER_FIELDS = {
+  codexReasoningSummaries: {
+    schema: CodexReasoningSummariesSchema,
+    default: CODEX_REASONING_SUMMARIES_DEFAULT,
+    description: 'Whether Codex should generate reasoning summaries, independently of transcript display',
+    storageScope: 'account',
+  },
   codexBackendMode: {
     // Back-compat: `mcp_resume` was a legacy fork that has been removed. Treat it as ACP.
     schema: z

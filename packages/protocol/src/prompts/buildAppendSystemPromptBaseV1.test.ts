@@ -124,12 +124,12 @@ describe('buildAppendSystemPromptBaseV1', () => {
     expect(out).toContain('# Attachments');
   });
 
-  it('uses start-only session title instructions for initial title updates', () => {
+  it.each([undefined, 'initial'] as const)('uses start-only session title instructions for %s title updates', (sessionTitleUpdates) => {
     const out = buildAppendSystemPromptBaseV1({
       settings: {
         codingPromptBehaviorV1: {
           v: 1,
-          sessionTitleUpdates: 'initial',
+          sessionTitleUpdates,
           responseOptions: 'disabled',
         },
       },

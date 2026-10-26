@@ -1,12 +1,10 @@
 import * as React from 'react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
-import { renderScreen } from '@/dev/testkit';
-import {
-    createActivityNotificationTextModuleMock,
-    installActivityNotificationRuntimeCommonModuleMocks,
-} from './activityNotificationRuntimeTestHelpers';
-import type { LocalSettings } from '@/sync/domains/settings/localSettings';
+import { createSessionFixture, renderScreen } from '@/dev/testkit';
+import { storage } from '@/sync/domains/state/storage';
+import * as profiles from '@/sync/domains/server/serverProfiles';
+import { setActiveViewingSessionId, clearActiveViewingSessionsForServerScopeReset } from '@/sync/domains/session/activeViewingSession';
 
 
 type ReactActEnvironmentGlobal = typeof globalThis & {
@@ -16,33 +14,15 @@ type ReactActEnvironmentGlobal = typeof globalThis & {
 
 const reactNativeRuntime = vi.hoisted(() => ({
     platformOs: 'ios' as 'web' | 'ios' | 'android',
+    isTauri: false,
 }));
 
-let isTauriDesktopValue = false;
-let activeViewingSessionIdValue: string | null = null;
-let localSettingsValue: Partial<LocalSettings> = {
-    localNotificationsEnabled: true,
-    localNotificationsShowReady: true,
-    localNotificationsShowReadyMessageText: true,
-    localNotificationsShowPendingPermissionRequests: true,
-    localNotificationsShowPendingUserActionRequests: true,
-};
-let sessionsByIdValue: Record<string, unknown> = {
-    'session-1': {
-        id: 'session-1',
-        metadata: {
-            summary: {
-                text: 'Ready session',
-            },
-        },
-    },
-};
+const initialState = storage.getState();
 
 const sendExpoLocalNotification = vi.hoisted(() => vi.fn(async () => 'notif-1'));
 const sendTauriLocalNotification = vi.hoisted(() => vi.fn(async () => true));
 
-installActivityNotificationRuntimeCommonModuleMocks({
-    reactNative: async () => {
+vi.mock('react-native', async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
         return createReactNativeWebMock({
             Platform: {
@@ -51,70 +31,50 @@ installActivityNotificationRuntimeCommonModuleMocks({
                 },
             },
         });
-    },
-    text: async () => {
-        return createActivityNotificationTextModuleMock();
-    },
-    storage: async () => {
-        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-        const { localSettingsDefaults } = await import('@/sync/domains/settings/localSettings');
-        const useLocalSetting = <K extends keyof LocalSettings>(key: K): LocalSettings[K] => {
-            return (localSettingsValue[key] ?? localSettingsDefaults[key]) as LocalSettings[K];
-        };
-        return createStorageModuleStub({
-            useLocalSetting,
-            storage: {
-                getState: () => ({
-                    sessions: sessionsByIdValue,
-                    localSettings: localSettingsValue,
-                }),
-            },
-        });
-    },
+});
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    const labels: Record<string, string> = {
+        'notifications.activity.defaultSessionTitle': 'Session',
+        'notifications.activity.readyFallbackBody': 'Turn finished. Open the session to continue.',
+        'notifications.activity.requestLabels.command': 'Command',
+    };
+    return createTextModuleMock({ translate: (key) => labels[key] ?? key });
 });
 
-vi.mock('@/sync/domains/server/serverProfiles', () => ({
-    getActiveServerUrl: () => 'https://stack.example.test',
-}));
-
-vi.mock('@/sync/domains/session/activeViewingSession', () => ({
-    getActiveViewingSessionId: () => activeViewingSessionIdValue,
-}));
-
 vi.mock('@/utils/platform/tauri', () => ({
-    isTauriDesktop: () => isTauriDesktopValue,
+    isTauriDesktop: () => reactNativeRuntime.isTauri,
 }));
 
-vi.mock('../channels/sendExpoLocalNotification', () => ({
-    sendExpoLocalNotification,
+vi.mock('expo-notifications', () => ({
+    scheduleNotificationAsync: sendExpoLocalNotification,
+    getPresentedNotificationsAsync: async () => [],
+    addNotificationReceivedListener: () => ({ remove() {} }),
 }));
 
-vi.mock('../channels/sendTauriLocalNotification', () => ({
-    sendTauriLocalNotification,
+vi.mock('@tauri-apps/plugin-notification', () => ({
+    isPermissionGranted: async () => true,
+    requestPermission: async () => 'granted',
+    sendNotification: sendTauriLocalNotification,
 }));
 
 describe('ActivityLocalNotificationRuntime', () => {
+    beforeEach(() => {
+        storage.setState(initialState, true);
+        const profile = profiles.upsertServerProfile({ serverUrl: 'https://stack.example.test', name: 'Test' });
+        profiles.setActiveServerId(profile.id, { scope: 'device' });
+        storage.setState({ profileScope: { serverId: profile.id, accountId: 'account-1' } });
+        storage.getState().applyLocalSettings({ localNotificationsEnabled: true, localNotificationsShowReady: true,
+            localNotificationsShowReadyMessageText: true, localNotificationsShowPendingPermissionRequests: true,
+            localNotificationsShowPendingUserActionRequests: true });
+        const session = createSessionFixture();
+        storage.getState().applySessions([{ ...session, metadata: { ...session.metadata!, summary: { text: 'Ready session', updatedAt: 1 } } }]);
+    });
     afterEach(async () => {
         reactNativeRuntime.platformOs = 'ios';
-        isTauriDesktopValue = false;
-        activeViewingSessionIdValue = null;
-        localSettingsValue = {
-            localNotificationsEnabled: true,
-            localNotificationsShowReady: true,
-            localNotificationsShowReadyMessageText: true,
-            localNotificationsShowPendingPermissionRequests: true,
-            localNotificationsShowPendingUserActionRequests: true,
-        };
-        sessionsByIdValue = {
-            'session-1': {
-                id: 'session-1',
-                metadata: {
-                    summary: {
-                        text: 'Ready session',
-                    },
-                },
-            },
-        };
+        reactNativeRuntime.isTauri = false;
+        clearActiveViewingSessionsForServerScopeReset();
+        await act(async () => { storage.setState(initialState, true); });
         sendExpoLocalNotification.mockClear();
         sendTauriLocalNotification.mockClear();
 
@@ -140,11 +100,11 @@ describe('ActivityLocalNotificationRuntime', () => {
             ]);
         });
 
-        expect(sendExpoLocalNotification).toHaveBeenCalledWith(expect.objectContaining({
+        expect(sendExpoLocalNotification).toHaveBeenCalledWith(expect.objectContaining({ content: expect.objectContaining({
             title: 'Ready session',
             body: 'Everything is ready.',
             data: expect.objectContaining({ sessionId: 'session-1' }),
-        }));
+        }) }));
         expect(sendTauriLocalNotification).not.toHaveBeenCalled();
 
         await act(async () => {
@@ -156,10 +116,7 @@ describe('ActivityLocalNotificationRuntime', () => {
         const { ActivityLocalNotificationRuntime } = await import('./ActivityLocalNotificationRuntime');
         const { notifyActivityReady } = await import('./activityLocalNotificationBus');
 
-        localSettingsValue = {
-            ...localSettingsValue,
-            localNotificationsShowReadyMessageText: false,
-        };
+        storage.getState().applyLocalSettings({ localNotificationsShowReadyMessageText: false });
 
         let tree: renderer.ReactTestRenderer | null = null;
         tree = (await renderScreen(<ActivityLocalNotificationRuntime />)).tree;
@@ -175,10 +132,10 @@ describe('ActivityLocalNotificationRuntime', () => {
             ]);
         });
 
-        expect(sendExpoLocalNotification).toHaveBeenCalledWith(expect.objectContaining({
+        expect(sendExpoLocalNotification).toHaveBeenCalledWith(expect.objectContaining({ content: expect.objectContaining({
             title: 'Ready session',
             body: 'Turn finished. Open the session to continue.',
-        }));
+        }) }));
 
         await act(async () => {
             tree?.unmount();
@@ -186,7 +143,7 @@ describe('ActivityLocalNotificationRuntime', () => {
     });
 
     it('suppresses same-session notifications while the session is already open', async () => {
-        activeViewingSessionIdValue = 'session-1';
+        setActiveViewingSessionId('session-1');
 
         const { ActivityLocalNotificationRuntime } = await import('./ActivityLocalNotificationRuntime');
         const { notifyActivityReady } = await import('./activityLocalNotificationBus');
@@ -214,8 +171,8 @@ describe('ActivityLocalNotificationRuntime', () => {
             hasFocus: () => false,
         };
         reactNativeRuntime.platformOs = 'web';
-        isTauriDesktopValue = true;
-        activeViewingSessionIdValue = 'session-1';
+        reactNativeRuntime.isTauri = true;
+        setActiveViewingSessionId('session-1');
 
         try {
             const { ActivityLocalNotificationRuntime } = await import('./ActivityLocalNotificationRuntime');
@@ -243,11 +200,8 @@ describe('ActivityLocalNotificationRuntime', () => {
 
     it('respects per-topic device-local toggles and routes tauri events to the desktop channel', async () => {
         reactNativeRuntime.platformOs = 'web';
-        isTauriDesktopValue = true;
-        localSettingsValue = {
-            ...localSettingsValue,
-            localNotificationsShowReady: false,
-        };
+        reactNativeRuntime.isTauri = true;
+        storage.getState().applyLocalSettings({ localNotificationsShowReady: false });
 
         const { ActivityLocalNotificationRuntime } = await import('./ActivityLocalNotificationRuntime');
         const { notifyActivityReady, notifyActivityAgentRequest } = await import('./activityLocalNotificationBus');

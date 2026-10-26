@@ -145,7 +145,7 @@ const claudeQuotaSnapshotDeliveryOutbox = createConnectedServiceQuotaSnapshotDel
     deliver: deliverConnectedServiceQuotaSnapshotToDaemon,
     retryDelayMs: 1_000,
     onDiagnostic: (diagnostic) => {
-        logger.debug('[claude] Connected-service quota snapshot delivery diagnostic', diagnostic);
+        logger.warnFile('[claude] Connected-service quota snapshot delivery diagnostic', diagnostic);
     },
 });
 
@@ -403,7 +403,7 @@ export async function recordClaudeRateLimitQuotaEvidence(
     // All windows come from one provider response, so one account identity covers them.
     const enrichedPrimaryWindow = await enrichClaudeRuntimeEvidenceWithAccountIdentity(primaryWindow);
     const observedAt = Date.now();
-    await claudeQuotaSnapshotDeliveryOutbox.enqueueAndFlush({
+    void claudeQuotaSnapshotDeliveryOutbox.enqueueAndFlush({
         sessionId: session.client.sessionId,
         serviceId: target.serviceId,
         ...(target.groupId ? { groupId: target.groupId } : {}),
@@ -569,10 +569,14 @@ export async function surfaceClaudeRateLimitRuntimeIssue(
     // RD-QUO-2: in-band rate-limit evidence is the freshest usage signal for the real quota
     // subject. Record it for BOTH the native identity and the selected member (mirroring Codex)
     // so the canonical quota row does not lag behind the background fetcher for group sessions.
+    // The existing best-effort outbox retains evidence before starting delivery.
+    // Quota HTTP acknowledgement must not block durable failure admission or
+    // the caller's terminal/readiness transition.
     if (profileId) {
-        await claudeQuotaSnapshotDeliveryOutbox.enqueueAndFlush({
+        void claudeQuotaSnapshotDeliveryOutbox.enqueueAndFlush({
             sessionId: session.client.sessionId,
             serviceId: connectedServiceId,
+            ...(!sidechainSourced ? { policyDisposition: 'evidence_only' as const } : {}),
             ...(effectiveGroupId ? { groupId: effectiveGroupId } : {}),
             ...(effectiveGroupGeneration !== null ? { groupGeneration: effectiveGroupGeneration } : {}),
             ...(enrichedDetails.sourceProviderAccountId !== undefined ? { sourceProviderAccountId: enrichedDetails.sourceProviderAccountId } : {}),

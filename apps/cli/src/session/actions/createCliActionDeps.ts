@@ -120,12 +120,15 @@ import {
   usageLimitRecoveryFeatureDisabledResult,
 } from '@/features/usageLimitRecoveryFeatureGate';
 import { normalizeCliSessionUsageLimitRecoveryOperationResult } from '@/session/usageLimitRecoveryControls/sessionUsageLimitRecoveryOperationResult';
+import { hasSameUsageLimitRecoveryIdentity, isPendingUsageLimitRecoveryStatus } from '@/session/usageLimitRecoveryControls/mergeUsageLimitRecoveryIntent';
+import type { UsageLimitContinuationResult } from '@/daemon/connectedServices/continuation/continueSessionAfterUsageLimitReset';
 
 export type ResumeInactiveSessionWhenUsageLimitReady = (input: Readonly<{
   sessionId: string;
   rawSession: RawSessionRecord;
   metadata: Record<string, unknown>;
-}>) => Promise<boolean> | boolean;
+  readiness?: 'provider_ready';
+}>) => Promise<boolean | UsageLimitContinuationResult> | boolean | UsageLimitContinuationResult;
 
 export type ScheduleInactiveSessionUsageLimitRecoveryCheck = (input: Readonly<{
   sessionId: string;
@@ -413,10 +416,7 @@ function readUsageLimitRecoveryFromResult(result: unknown): SessionUsageLimitRec
 }
 
 function shouldScheduleUsageLimitRecoveryCheck(recovery: SessionUsageLimitRecoveryV1): boolean {
-  return (
-    (recovery.status === 'armed' || recovery.status === 'waiting' || recovery.status === 'checking')
-    && typeof recovery.nextCheckAtMs === 'number'
-  );
+  return isPendingUsageLimitRecoveryStatus(recovery.status);
 }
 
 function readSessionModesState(metadata: Record<string, unknown> | null): Readonly<{
@@ -646,7 +646,6 @@ export function createCliActionDeps(params: Readonly<{
   }>;
 
   const sessionTransportCache = new Map<string, ResolvedSessionTransport>();
-  let usageLimitRecoveryFeatureEnabledPromise: Promise<boolean> | null = null;
   let accountProfilePromise: Promise<Awaited<ReturnType<typeof fetchAccountProfile>> | null> | null = null;
   const ambiguousSpawnActionRequestIds = new Set<string>();
 
@@ -766,6 +765,7 @@ export function createCliActionDeps(params: Readonly<{
 
   const resolveTransportForSession = async (
     idOrPrefix: string,
+    options?: { fresh?: boolean },
   ): Promise<CliSessionTransportLookupResult> => {
     if (!params.credentials) {
       return { ok: false, code: 'not_authenticated' };
@@ -776,7 +776,7 @@ export function createCliActionDeps(params: Readonly<{
       return { ok: false, code: 'session_not_found' };
     }
     const cachedTransport = sessionTransportCache.get(normalized);
-    if (cachedTransport) return { ok: true, ...cachedTransport };
+    if (cachedTransport && !options?.fresh) return { ok: true, ...cachedTransport };
 
     const resolved = await resolveSessionTransportContext({ credentials: params.credentials, idOrPrefix: normalized });
     if (!resolved.ok) {
@@ -984,6 +984,7 @@ export function createCliActionDeps(params: Readonly<{
     sessionId: string,
     operation: 'enable' | 'cancel' | 'checkNow' | 'switchAccountNow' | 'consumeResetCredit',
     request: Record<string, unknown>,
+    expectedRecovery?: SessionUsageLimitRecoveryV1,
   ): Promise<unknown> => {
     if (!params.credentials) {
       return normalizeCliSessionUsageLimitRecoveryOperationResult({
@@ -993,7 +994,7 @@ export function createCliActionDeps(params: Readonly<{
     }
     const credentials = params.credentials;
 
-    const transport = await resolveTransportForSession(sessionId);
+    const transport = await resolveTransportForSession(sessionId, { fresh: true });
     if (!transport.ok) {
       return normalizeCliSessionUsageLimitRecoveryOperationResult({
         sessionId,
@@ -1012,6 +1013,13 @@ export function createCliActionDeps(params: Readonly<{
     });
 
     const recovery = SessionUsageLimitRecoveryV1Schema.safeParse(metadata?.[SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY]);
+    if (expectedRecovery && (!recovery.success
+      || !hasSameUsageLimitRecoveryIdentity(recovery.data, expectedRecovery)
+      || !isPendingUsageLimitRecoveryStatus(recovery.data.status))) {
+      return normalizeCliSessionUsageLimitRecoveryOperationResult({ sessionId: transport.sessionId,
+        result: { ok: false, status: 'cancelled', errorCode: 'usage_limit_recovery_attempt_superseded' },
+      });
+    }
     if (operation === 'checkNow' && recovery.success && recovery.data.runtimeAuthRecoveryAttemptId
       && !params.checkRuntimeAuthUsageLimitRecovery) {
       const machineId = normalizeString(transport.rawSession.machineId) ?? normalizeString(metadata?.machineId);
@@ -1107,10 +1115,6 @@ export function createCliActionDeps(params: Readonly<{
     });
   };
 
-  const usageLimitRecoveryFeatureEnabled = async (): Promise<boolean> => {
-    usageLimitRecoveryFeatureEnabledPromise ??= resolveUsageLimitRecoveryFeatureEnabled();
-    return await usageLimitRecoveryFeatureEnabledPromise;
-  };
 
   const scheduleUsageLimitRecoveryCheckFromResult = (
     sessionId: string,
@@ -1124,7 +1128,7 @@ export function createCliActionDeps(params: Readonly<{
         recovery,
         // No explicit mode: the stored intent supplies the resume prompt mode
         // at its own precedence tier when the routed check runs.
-        runCheckNow: async () => await runUsageLimitCheckNow({ sessionId }),
+        runCheckNow: async () => await runUsageLimitCheckNow({ sessionId, expectedRecovery: recovery }),
       });
       return;
     }
@@ -1150,7 +1154,7 @@ export function createCliActionDeps(params: Readonly<{
   );
 
   const runUsageLimitCheckNow = async (
-    input: Readonly<{ sessionId: string; provider?: string; resumePromptMode?: 'standard' | 'off' | 'custom' }>,
+    input: Readonly<{ sessionId: string; provider?: string; resumePromptMode?: 'standard' | 'off' | 'custom'; expectedRecovery?: SessionUsageLimitRecoveryV1 }>,
   ): Promise<unknown> => {
     const normalizedProvider = typeof input.provider === 'string' ? input.provider.trim() : '';
     const resumePromptMode = readExplicitUsageLimitRecoveryResumePromptMode(input.resumePromptMode);
@@ -1158,7 +1162,7 @@ export function createCliActionDeps(params: Readonly<{
       sessionId: input.sessionId,
       ...(normalizedProvider.length > 0 ? { provider: normalizedProvider } : {}),
       ...(resumePromptMode ? { resumePromptMode } : {}),
-    });
+    }, input.expectedRecovery);
     scheduleUsageLimitRecoveryCheckFromResult(input.sessionId, result);
     return result;
   };
@@ -1859,7 +1863,7 @@ export function createCliActionDeps(params: Readonly<{
     },
 
     sessionUsageLimitWaitResumeEnable: async ({ sessionId, issueFingerprint, remember, resumePromptMode }) => {
-      if (!await usageLimitRecoveryFeatureEnabled()) {
+      if (!await resolveUsageLimitRecoveryFeatureEnabled()) {
         return usageLimitRecoveryFeatureDisabledResult({ sessionId });
       }
       const explicitResumePromptMode = readExplicitUsageLimitRecoveryResumePromptMode(resumePromptMode);
@@ -1877,7 +1881,7 @@ export function createCliActionDeps(params: Readonly<{
     },
 
     sessionUsageLimitWaitResumeCancel: async ({ sessionId, issueFingerprint, armedAtMs, runtimeAuthRecoveryAttemptId }) => {
-      if (!await usageLimitRecoveryFeatureEnabled()) {
+      if (!await resolveUsageLimitRecoveryFeatureEnabled()) {
         return usageLimitRecoveryFeatureDisabledResult({ sessionId });
       }
       const normalizedIssueFingerprint = typeof issueFingerprint === 'string' ? issueFingerprint.trim() : issueFingerprint;
@@ -1925,7 +1929,7 @@ export function createCliActionDeps(params: Readonly<{
     },
 
     sessionUsageLimitCheckNow: async ({ sessionId, provider, resumePromptMode }) => {
-      if (!await usageLimitRecoveryFeatureEnabled()) {
+      if (!await resolveUsageLimitRecoveryFeatureEnabled()) {
         return usageLimitRecoveryFeatureDisabledResult({ sessionId });
       }
       return await runUsageLimitCheckNow({
@@ -1936,7 +1940,7 @@ export function createCliActionDeps(params: Readonly<{
     },
 
     sessionUsageLimitSwitchAccountNow: async ({ sessionId, provider, resumePromptMode }) => {
-      if (!await usageLimitRecoveryFeatureEnabled()) {
+      if (!await resolveUsageLimitRecoveryFeatureEnabled()) {
         return usageLimitRecoveryFeatureDisabledResult({ sessionId });
       }
       return await runUsageLimitSwitchAccountNow({
@@ -1947,7 +1951,7 @@ export function createCliActionDeps(params: Readonly<{
     },
 
     sessionUsageLimitConsumeResetCredit: async ({ sessionId, provider, resumePromptMode }) => {
-      if (!await usageLimitRecoveryFeatureEnabled()) {
+      if (!await resolveUsageLimitRecoveryFeatureEnabled()) {
         return usageLimitRecoveryFeatureDisabledResult({ sessionId });
       }
       return await runUsageLimitConsumeResetCredit({

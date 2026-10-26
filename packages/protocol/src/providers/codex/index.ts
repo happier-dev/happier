@@ -1,5 +1,11 @@
 export { CODEX_BACKEND_MODES, normalizeCodexBackendMode, type CodexBackendMode } from './backendMode.js';
 export {
+  CODEX_REASONING_SUMMARIES_DEFAULT,
+  CodexReasoningSummariesSchema,
+  resolveCodexReasoningSummaryOverride,
+  type CodexReasoningSummaries,
+} from './reasoningSummary.js';
+export {
   CodexAppServerGoalSchema,
   CodexAppServerGoalStatusSchema,
   normalizeCodexAppServerGoalToSessionWorkStateItem,

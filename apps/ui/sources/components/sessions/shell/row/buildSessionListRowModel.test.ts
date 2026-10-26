@@ -1,5 +1,6 @@
 import { buildSessionListRenderableMetadata } from '@/sync/domains/session/listing/sessionListRenderable';
 import { describe, expect, it } from 'vitest';
+import { t } from '@/text';
 
 import type { Message } from '@/sync/domains/messages/messageTypes';
 import { buildTranscriptRenderableAggregate } from '@/sync/domains/messages/transcriptRenderableAggregate';
@@ -775,7 +776,7 @@ describe('buildSessionListRowModel', () => {
         expect(model.nextRuntimeFreshnessAtMs).toBe(NOW_MS - 1_000 + 120_000);
     });
 
-    it('does not schedule a clock refresh once nothing witnesses the detached activity', () => {
+    it('keeps delayed background work paused in Working while awaiting a fresh observation', () => {
         const model = buildSessionListRowModel({
             item: createSessionItem(createRenderable('s1', {
                 active: true,
@@ -793,6 +794,10 @@ describe('buildSessionListRowModel', () => {
         });
 
         expect(model.nextRuntimeFreshnessAtMs).toBeNull();
+        expect(model.attention.rowState).toBe('working');
+        expect(model.status.state).toBe('background_active');
+        expect(model.status.statusText).toBe(t('status.workingRetained'));
+        expect(model.workingIndicatorPaused).toBe(true);
     });
 
     it('keeps foreground working presentation when detached runtime activity overlaps an active turn', () => {

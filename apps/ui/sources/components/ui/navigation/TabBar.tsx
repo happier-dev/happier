@@ -2,18 +2,14 @@ import * as React from 'react';
 import { View, Pressable } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { t } from '@/text';
 import { Typography } from '@/constants/Typography';
-import { useInboxHasContent } from '@/hooks/inbox/useInboxHasContent';
-import { useInboxAvailable } from '@/hooks/inbox/useInboxAvailable';
-import { useFriendsEnabled } from '@/hooks/server/useFriendsEnabled';
 import { Text } from '@/components/ui/text/Text';
 import { FloatingTabBarSurface } from '@/components/ui/navigation/FloatingTabBarSurface';
 import { TabBadge } from '@/components/ui/navigation/tabBadge/TabBadge';
 import { resolveTabBarMetrics } from '@/components/ui/navigation/tabBarMetrics';
-import { useFriendRequestCount, useSetting } from '@/sync/domains/state/storage';
+import { useSetting } from '@/sync/domains/state/storage';
 import type { TabType } from './tabTypes';
-import { resolveTabBarTabs } from './resolveTabBarTabs';
+import { useMainTabDefinitions } from './useMainTabDefinitions';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
 
 
@@ -74,30 +70,8 @@ const styles = StyleSheet.create((theme) => ({
 export const TabBar = React.memo(({ activeTab, onTabPress, trailingAccessory }: TabBarProps) => {
     const { theme } = useUnistyles();
     const insets = useSafeAreaInsets();
-    const friendsEnabled = useFriendsEnabled();
-    const friendRequestCount = useFriendRequestCount();
-    const inboxEnabled = useInboxAvailable();
-    const inboxHasContent = useInboxHasContent();
-    const friendsBadgeEnabled = useSetting('tabBarFriendsBadgeEnabled');
-    const inboxBadgeEnabled = useSetting('tabBarInboxBadgeEnabled');
+    const tabs = useMainTabDefinitions();
     const metrics = resolveTabBarMetrics(useSetting('tabBarSize'), useSetting('tabBarShowLabels'));
-
-    const tabs: { key: TabType; label: string }[] = React.useMemo(() => {
-        const tabKeys = resolveTabBarTabs({ inboxEnabled, friendsEnabled });
-        return tabKeys.map((key) => {
-            switch (key) {
-                case 'inbox':
-                    return { key, label: t('tabs.inbox') };
-                case 'friends':
-                    return { key, label: t('tabs.friends') };
-                case 'settings':
-                    return { key, label: t('tabs.settings') };
-                case 'sessions':
-                default:
-                    return { key: 'sessions', label: t('tabs.sessions') };
-            }
-        });
-    }, [friendsEnabled, inboxEnabled]);
 
     return (
         <FloatingTabBarSurface bottomInset={insets.bottom} trailingAccessory={trailingAccessory}>
@@ -124,10 +98,10 @@ export const TabBar = React.memo(({ activeTab, onTabPress, trailingAccessory }: 
                                     metrics.iconSize,
                                     isActive ? theme.colors.text.primary : theme.colors.text.secondary,
                                 )}
-                                {tab.key === 'friends' && friendsBadgeEnabled && friendRequestCount > 0 && (
-                                    <TabBadge variant="count" value={friendRequestCount} />
+                                {tab.badge?.kind === 'count' && (
+                                    <TabBadge variant="count" value={tab.badge.value} />
                                 )}
-                                {tab.key === 'inbox' && inboxBadgeEnabled && inboxHasContent ? (
+                                {tab.badge?.kind === 'dot' ? (
                                     <TabBadge variant="dot" />
                                 ) : null}
                             </View>

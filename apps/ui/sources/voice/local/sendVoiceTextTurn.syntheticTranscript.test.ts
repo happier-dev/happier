@@ -1,15 +1,19 @@
 import { createRequire, Module } from 'node:module';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
+import { SESSION_RPC_METHODS } from '@happier-dev/protocol';
 
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { createSessionMessagesFixture } from '@/dev/testkit/fixtures/transcriptFixtures';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { apiSocket } from '@/sync/api/session/apiSocket';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { settingsParse } from '@/sync/domains/settings/settings';
 import type { Message } from '@/sync/domains/messages/messageTypes';
 import { storage } from '@/sync/domains/state/storageStore';
 import { Encryption } from '@/sync/encryption/encryption';
 import { sync } from '@/sync/sync';
+import { createVoiceAgentSessionController } from '@/voice/agent/VoiceAgentSessionController';
+import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
 import * as voiceConversationTranscript from '@/voice/sessionBinding/voiceConversationTranscript';
 import { voiceSessionBindingStore } from '@/voice/sessionBinding/voiceSessionBindingStore';
 import { patchLocalVoiceState } from './localVoiceState';
@@ -63,7 +67,8 @@ describe('sendVoiceTextTurn synthetic transcript mirroring', () => {
     const token = `e30.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`;
     vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token, secret: '' });
     vi.stubGlobal('fetch', vi.fn(async () => Response.json({
-      features: { sharing: { pendingQueueV2: { enabled: true }, pendingDeliveryState: { enabled: true } } },
+      features: { voice: { enabled: true },
+        sharing: { pendingQueueV2: { enabled: true }, pendingDeliveryState: { enabled: true } } },
       capabilities: { compatibility: { pendingInput: { currentPendingInputProtocolVersion: 1 } },
         session: { pendingInput: { protocolVersion: 1 } } },
     })));
@@ -71,6 +76,9 @@ describe('sendVoiceTextTurn synthetic transcript mirroring', () => {
     boundaryEvents.length = 0;
     // HTTP acknowledgements are the boundary; durable custody, handlers and transcript projection stay real.
     vi.spyOn(apiSocket, 'request').mockImplementation(async (path, init) => {
+      if (/^\/v[12]\/sessions\/[^/]+\/messages(?:\?|$)/.test(path)) {
+        return Response.json({ messages: [], hasMore: false });
+      }
       const route = /^\/v2\/sessions\/([^/]+)\/pending(?:\/([^/]+)\/delivery\/block)?$/.exec(path);
       if (!route) throw new Error(`Unexpected pending route: ${path}`);
       const sessionId = route[1]!;
@@ -191,6 +199,69 @@ describe('sendVoiceTextTurn synthetic transcript mirroring', () => {
       abort.abort();
       await sending;
     }
+  });
+
+  it.each([VOICE_AGENT_GLOBAL_SESSION_ID, 'carrier-s1'])('dispatches speech from %s through its native conversation binding without synthetic transcript writes', async (sessionId) => {
+    voiceSessionBindingStore.getState().bind({
+      adapterId: 'local_conversation', controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID, conversationSessionId: 'carrier-s1',
+      transcriptMode: 'native_session', targetSessionId: 's1', updatedAt: 2,
+    });
+    const settings = settingsParse({
+      ...voiceSettings(), experiments: true,
+      featureToggles: { voice: true, 'voice.agent': true, 'execution.runs': true },
+    });
+    storage.setState({ settings, sessions: Object.fromEntries(Object.entries(storage.getState().sessions)
+      .map(([id, session]) => [id, { ...session, metadata: session.metadata ? { ...session.metadata, machineId: undefined } : null }])) });
+    // The daemon RPC transport is the boundary; controller initialization and streaming stay real.
+    let streamCount = 0;
+    const rpc = vi.spyOn(apiSocket, 'sessionRPC').mockImplementation(async <R, A>(_sessionId: string, method: string, payload: A): Promise<R> => {
+      // This generic transport fixture returns the response owned by each real RPC schema.
+      const respond = (response: unknown): R => response as R;
+      if (method === SESSION_RPC_METHODS.EXECUTION_RUN_LIST) return respond({ runs: [] });
+      if (method === SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START) return respond({ ok: true, runId: 'voice-run', created: true });
+      if (method === SESSION_RPC_METHODS.EXECUTION_RUN_GET) return respond({ run: { runId: 'voice-run' } });
+      if (method === SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_START_V2) {
+        const request = payload as { userTranscript: { mode: string; localId?: string }; displayMessage: string };
+        streamCount += 1;
+        if (streamCount === 1) boundaryEvents.push(`dispatch:${request.userTranscript.localId}`);
+        else {
+          expect(request.userTranscript).toEqual({ mode: 'suppress' });
+          expect(request.displayMessage).toContain('VOICE_TOOL_RESULTS_JSON:');
+          boundaryEvents.push('tool-followup');
+        }
+        return respond({ streamId: 'voice-stream' });
+      }
+      if (method === SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_READ) return respond({
+        streamId: 'voice-stream', nextCursor: 1, done: true,
+        events: [{ t: 'done', assistantText: 'Native session reply.',
+          actions: streamCount === 1 ? [{ t: 'listAgentBackends', args: {} }] : [] }],
+      });
+      throw new Error(`Unexpected voice RPC: ${method}`);
+    });
+    const voiceAgentSessions = createVoiceAgentSessionController();
+    await voiceAgentSessions.ensureRunning(sessionId);
+    const { sendVoiceTextTurn } = await import('./sendVoiceTextTurn');
+
+    await sendVoiceTextTurn({
+      sessionId, settings: voiceSettings(), userText: 'from microphone',
+      playbackController: {
+        registerStopper: () => () => {}, interrupt: () => {},
+        captureEpoch: () => 1, isEpochCurrent: () => true,
+      },
+      voiceAgentSessions,
+    });
+
+    const localId = enqueuePendingMessage.mock.calls[0]?.[4]?.localId;
+    expect(localId).toEqual(expect.any(String));
+    expect(enqueuePendingMessage).toHaveBeenCalledWith('carrier-s1', 'from microphone', undefined, undefined,
+      expect.objectContaining({ localId, deliveryMode: 'external_handoff' }));
+    expect(rpc).toHaveBeenCalledWith('carrier-s1', SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_START_V2,
+      expect.objectContaining({ displayMessage: 'from microphone', userTranscript: { mode: 'persist', localId } }),
+      expect.anything());
+    expect(boundaryEvents).toEqual([`enqueue:${localId}`, `dispatch:${localId}`, 'tool-followup']);
+    expect(appendUser).not.toHaveBeenCalled();
+    expect(appendAssistant).not.toHaveBeenCalled();
+    expect(appendNote).not.toHaveBeenCalled();
   });
 
   it('delegates the durable user row to the daemon while mirroring assistant turns locally', async () => {

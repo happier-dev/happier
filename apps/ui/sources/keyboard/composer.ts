@@ -1,6 +1,7 @@
 import { Platform } from 'react-native';
 
-import { createKeyboardShortcutDispatcher } from './runtime';
+import { buildKeyboardShortcutLabels, createKeyboardShortcutDispatcher } from './runtime';
+import type { MessageSendMode } from '@/sync/domains/session/control/submitMode';
 import type { KeyboardPlatform, KeybindingRule } from './types';
 
 export const COMPOSER_ABORT_CONFIRMATION_WINDOW_MS = 1500;
@@ -19,7 +20,7 @@ export type ComposerKeyEvent = Readonly<{
 }>;
 
 export type ComposerEnterAction = 'send';
-export type ComposerSendShortcutAction = 'sendImmediate' | 'sendPending';
+export type ComposerSendShortcutAction = 'sendAlternate' | 'sendPending' | 'sendInterrupt';
 export type ComposerEscapeAction = 'armAbort' | 'confirmAbort';
 
 export type ComposerShortcutSettings = Readonly<{
@@ -107,18 +108,19 @@ export function resolveComposerSendShortcutAction(
     event: ComposerKeyEvent,
     input: ComposerShortcutSettings & Readonly<{
         hasSendableInput: boolean;
+        canSendNextQueued?: boolean;
         sendActionDisabled: boolean;
         platformOS?: string;
         webPlatform?: string;
     }>,
 ): ComposerSendShortcutAction | null {
     if (shouldIgnoreComposerKeyboardEvent(event)) return null;
-    if (input.sendActionDisabled || !input.hasSendableInput) return null;
+    if (input.sendActionDisabled || (!input.hasSendableInput && !input.canSendNextQueued)) return null;
 
     let action: ComposerSendShortcutAction | null = null;
     const dispatcher = createKeyboardShortcutDispatcher({
         enabled: input.keyboardShortcutsV2Enabled,
-        enabledWhenDisabledCommandIds: ['composer.sendImmediate'],
+        enabledWhenDisabledCommandIds: ['composer.sendImmediate', 'composer.sendInterrupt'],
         platform: resolveComposerKeyboardPlatform({
             platformOS: event.platformOS ?? input.platformOS,
             webPlatform: event.webPlatform ?? input.webPlatform,
@@ -129,10 +131,13 @@ export function resolveComposerSendShortcutAction(
         overrides: input.keyboardShortcutOverridesV1,
         handlers: {
             'composer.sendImmediate': () => {
-                action = 'sendImmediate';
+                action = 'sendAlternate';
             },
             'composer.sendPending': () => {
-                action = 'sendPending';
+                if (input.hasSendableInput) action = 'sendPending';
+            },
+            'composer.sendInterrupt': () => {
+                action = 'sendInterrupt';
             },
         },
         getContext: () => ({
@@ -151,6 +156,23 @@ export function resolveComposerSendShortcutAction(
         isComposing: event.isComposing === true,
     });
     return action;
+}
+
+export function buildComposerSendShortcutLabels(input: ComposerShortcutSettings & Readonly<{
+    alternateMode: MessageSendMode;
+    platformOS?: string;
+    webPlatform?: string;
+}>): Partial<Record<MessageSendMode, string>> {
+    const labels = buildKeyboardShortcutLabels(resolveComposerKeyboardPlatform(input), Platform.OS === 'web' ? 'web' : 'native', {
+        overrides: input.keyboardShortcutOverridesV1,
+        disabledCommandIds: input.keyboardShortcutDisabledCommandIdsV1,
+        singleKeyShortcutsEnabled: input.keyboardSingleKeyShortcutsEnabled,
+    });
+    return {
+        ...(input.keyboardShortcutsV2Enabled && labels['composer.sendPending'] ? { server_pending: labels['composer.sendPending'] } : {}),
+        ...(labels['composer.sendImmediate'] ? { [input.alternateMode]: labels['composer.sendImmediate'] } : {}),
+        ...(labels['composer.sendInterrupt'] ? { interrupt: labels['composer.sendInterrupt'] } : {}),
+    };
 }
 
 export function resolveComposerEnterAction(

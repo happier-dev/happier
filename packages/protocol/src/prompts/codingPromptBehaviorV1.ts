@@ -13,12 +13,12 @@ const CodingPromptSessionTitleUpdatesInputV1Schema = z
 export const CodingPromptBehaviorV1Schema = z
   .object({
     v: z.literal(1).default(1),
-    sessionTitleUpdates: CodingPromptSessionTitleUpdatesInputV1Schema.default('ongoing'),
+    sessionTitleUpdates: CodingPromptSessionTitleUpdatesInputV1Schema.default('initial'),
     responseOptions: CodingPromptBehaviorModeV1Schema.default('agent'),
   })
   .catch({
     v: 1,
-    sessionTitleUpdates: 'ongoing',
+    sessionTitleUpdates: 'initial',
     responseOptions: 'agent',
   });
 

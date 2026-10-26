@@ -283,6 +283,7 @@ export type SendableAskUserQuestionAnswerPayload = Extract<
 
 export const StructuredQuestionResponseV1Schema = z.object({
   id: z.string().trim().min(1).max(512),
+  occurrenceId: z.string().trim().min(1).optional(),
   structuredAnswersV1: StructuredQuestionAnswersV1Schema,
 }).strict();
 

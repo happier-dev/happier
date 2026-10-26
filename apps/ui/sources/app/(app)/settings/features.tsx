@@ -252,13 +252,12 @@ export default React.memo(function FeaturesSettingsScreen() {
     }, [toggleSettings, toggleableFeatureIdSet]);
 
     const embeddedTerminalDockSettingVisible = React.useMemo(() => {
-        if (!experiments) return false;
         const embeddedTerminalDockToggle =
             toggleDefinitions.find((definition) => definition.featureId === 'terminal.embeddedPty') ?? null;
         if (embeddedTerminalDockToggle && isFeatureHardDisabledByServer(embeddedTerminalDockToggle)) return false;
         if (isLocallyBlockedByDependencies('terminal.embeddedPty')) return false;
         return resolveUiFeatureToggleEnabled(toggleSettings, 'terminal.embeddedPty');
-    }, [experiments, isFeatureHardDisabledByServer, isLocallyBlockedByDependencies, toggleDefinitions, toggleSettings]);
+    }, [isFeatureHardDisabledByServer, isLocallyBlockedByDependencies, toggleDefinitions, toggleSettings]);
 
     const embeddedTerminalDockLocationLabel = React.useMemo(() => {
         switch (embeddedTerminalDockLocation) {
@@ -400,14 +399,6 @@ export default React.memo(function FeaturesSettingsScreen() {
                             />
                         );
                     })}
-                </ItemGroup>
-            )}
-
-            {experiments && experimentalToggleDefinitions.length > 0 && (
-                <ItemGroup
-                    title={t('settingsFeatures.experimentalOptions')}
-                    footer={t('settingsFeatures.experimentalOptionsDescription')}
-                >
                     {embeddedTerminalDockSettingVisible ? (
                         <DropdownMenu
                             open={embeddedTerminalDockMenuOpen}
@@ -438,7 +429,14 @@ export default React.memo(function FeaturesSettingsScreen() {
                             }}
                         />
                     ) : null}
+                </ItemGroup>
+            )}
 
+            {experiments && experimentalToggleDefinitions.length > 0 && (
+                <ItemGroup
+                    title={t('settingsFeatures.experimentalOptions')}
+                    footer={t('settingsFeatures.experimentalOptionsDescription')}
+                >
                     {experimentalToggleDefinitions.map((d) => {
                         const blockedByDependencies = isLocallyBlockedByDependencies(d.featureId);
                         const enabled = blockedByDependencies ? false : resolveUiFeatureToggleEnabled(toggleSettings, d.featureId);

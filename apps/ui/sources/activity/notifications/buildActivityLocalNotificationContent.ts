@@ -3,6 +3,7 @@ import {
     PUSH_NOTIFICATION_CATEGORY_IDS,
     buildReadyNotificationContent,
     summarizeToolInputForNotification,
+    projectNotificationQuestion,
 } from '@happier-dev/protocol';
 
 import type { Message } from '@/sync/domains/messages/messageTypes';
@@ -62,6 +63,7 @@ export function buildActivityLocalNotificationContent(params: Readonly<{
     event: ActivityLocalNotificationEvent;
     session: Session | null | undefined;
     serverUrl: string;
+    accountId?: string;
     includeReadyMessageText?: boolean;
     includeRequestMessageText?: boolean;
 }>): ActivityLocalNotificationContent {
@@ -69,6 +71,7 @@ export function buildActivityLocalNotificationContent(params: Readonly<{
     const baseData = {
         sessionId: params.event.sessionId,
         serverUrl: params.serverUrl,
+        ...(params.accountId ? { accountId: params.accountId } : {}),
     };
 
     if (params.event.kind === 'ready') {
@@ -91,12 +94,17 @@ export function buildActivityLocalNotificationContent(params: Readonly<{
         };
     }
 
+    const question = params.event.requestKind === 'user_action' && params.event.occurrenceId && params.accountId
+        && params.includeRequestMessageText !== false
+        ? projectNotificationQuestion(params.event.toolName, params.event.toolArgs) : null;
     return {
         title,
-        body: summarizeAgentRequestBody(params.event.requestKind, params.event.toolName, params.event.toolArgs, params.includeRequestMessageText !== false),
+        body: question?.body ?? summarizeAgentRequestBody(params.event.requestKind, params.event.toolName, params.event.toolArgs, params.includeRequestMessageText !== false),
         data: {
             ...baseData,
             requestId: params.event.requestId,
+            ...(question ? { questionAnswerV1: question.descriptor } : {}),
+            kind: params.event.requestKind,
             ...(typeof params.event.occurrenceId === 'string' ? { occurrenceId: params.event.occurrenceId } : {}),
         },
         expo: {
@@ -107,7 +115,7 @@ export function buildActivityLocalNotificationContent(params: Readonly<{
             categoryIdentifier:
                 params.event.requestKind === 'permission'
                     ? PUSH_NOTIFICATION_CATEGORY_IDS.permissionRequestV1
-                    : PUSH_NOTIFICATION_CATEGORY_IDS.userActionRequestV1,
+                    : question?.categoryId ?? PUSH_NOTIFICATION_CATEGORY_IDS.userActionRequestV1,
         },
     };
 }

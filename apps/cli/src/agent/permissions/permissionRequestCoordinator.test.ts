@@ -512,11 +512,13 @@ describe('PermissionRequestCoordinator', () => {
     });
 
     it('exposes structured-response ownership only while a local waiter is live', async () => {
-        const { coordinator } = createHarness();
+        const { coordinator, session } = createHarness();
         const abort = new AbortController();
         const pending = coordinator.requestDecision(bashRequest, { signal: abort.signal });
-
-        expect(coordinator.getLocallyOwnedLiveResponseContext(bashRequest.requestId)).toEqual(
+        const occurrenceId = session.agentState.requests?.[bashRequest.requestId]?.occurrenceId;
+        expect(occurrenceId).toEqual(expect.any(String));
+        expect(coordinator.getLocallyOwnedLiveResponseContext(bashRequest.requestId, 'stale-occurrence')).toBeNull();
+        expect(coordinator.getLocallyOwnedLiveResponseContext(bashRequest.requestId, occurrenceId)).toEqual(
             expect.objectContaining({
                 requestId: bashRequest.requestId,
                 correlation: 'record',

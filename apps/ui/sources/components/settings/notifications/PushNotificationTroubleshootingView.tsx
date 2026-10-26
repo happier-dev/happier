@@ -6,12 +6,18 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { useAuth } from '@/auth/context/AuthContext';
-import { useSettings } from '@/sync/domains/state/storage';
+import { useSettings, useActiveServerAccountScope, useMachineListByServerId } from '@/sync/domains/state/storage';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
-import { isExpoPushNotificationChannelEnabled } from '@happier-dev/protocol';
+import { isExpoPushNotificationChannelEnabled, PushNotificationTestResultSchema } from '@happier-dev/protocol';
+import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
+import { parseToken } from '@/utils/auth/parseToken';
+import { isMachineOnline } from '@/utils/sessions/machineUtils';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { deletePushToken, fetchPushTokens, type PushToken } from '@/sync/api/session/apiPush';
 import { loadLastRegisteredExpoPushToken } from '@/sync/domains/state/pushTokenRegistration';
 import {
@@ -93,6 +99,8 @@ export const PushNotificationTroubleshootingView = React.memo(function PushNotif
     const settings = useSettings();
 
     const activeServer = useActiveServerSnapshot();
+    const accountScope = useActiveServerAccountScope();
+    const machinesByServerId = useMachineListByServerId();
 
     const [permission, setPermission] = React.useState<PushPermissionOutcome | null>(null);
     const [tokenOutcome, setTokenOutcome] = React.useState<ExpoPushTokenOutcome | null>(null);
@@ -207,6 +215,64 @@ export const PushNotificationTroubleshootingView = React.memo(function PushNotif
         }
     }, [auth.credentials, loadTroubleshootingState]);
 
+    const testRemotePush = async () => {
+        const notify = (message: string) => Modal.alert(t('settingsNotifications.pushTroubleshooting.remoteTest.title'), message);
+        if (!currentToken || !tokens.some((row) => row.token === currentToken)) {
+            await notify(t('settingsNotifications.pushTroubleshooting.remoteTest.notRegistered'));
+            return;
+        }
+        // Capture the user's target before the first await. A Home/Account switch while
+        // fetching registrations must not redirect this external side effect.
+        const credentials = auth.credentials;
+        const scope = accountScope;
+        const serverUrl = activeServer.serverUrl;
+        const deviceToken = currentToken;
+        let authenticatedAccountId: string | null = null;
+        try { authenticatedAccountId = credentials ? parseToken(credentials.token) : null; } catch { /* reported below */ }
+        if (!credentials || !scope || authenticatedAccountId !== scope.accountId
+            || !areServerProfileIdentifiersEquivalent(scope.serverId, activeServer.serverId)) {
+            await notify(t('settingsNotifications.pushTroubleshooting.authRequired'));
+            return;
+        }
+        const machine = (machinesByServerId[scope.serverId] ?? []).find((candidate) => isMachineOnline(candidate));
+        if (!machine) {
+            await notify(t('settingsNotifications.pushTroubleshooting.remoteTest.noMachine'));
+            return;
+        }
+        try {
+            const registrations = await fetchPushTokens(credentials, { apiEndpoint: serverUrl });
+            const registration = registrations.find((row) => row.token === deviceToken);
+            if (!registration) {
+                await notify(t('settingsNotifications.pushTroubleshooting.remoteTest.notRegistered'));
+                return;
+            }
+            const { machineRpcWithServerScope } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc');
+            const raw = await machineRpcWithServerScope<unknown, { tokenId: string }>({
+                machineId: machine.id,
+                serverId: scope.serverId,
+                accountId: scope.accountId,
+                method: RPC_METHODS.DAEMON_NOTIFICATIONS_TEST_PUSH,
+                payload: { tokenId: registration.id },
+                // This is an outward write: never retry automatically after emission.
+                onIssued: () => {},
+            });
+            const result = PushNotificationTestResultSchema.safeParse(raw);
+            if (!result.success) throw raw;
+            const messages = {
+                accepted: t('settingsNotifications.pushTroubleshooting.remoteTest.accepted'),
+                not_registered: t('settingsNotifications.pushTroubleshooting.remoteTest.notRegistered'),
+                rejected: t('settingsNotifications.pushTroubleshooting.remoteTest.rejected'),
+                invalid_credentials: t('settingsNotifications.pushTroubleshooting.remoteTest.invalidCredentials'),
+            };
+            await notify(messages[result.data.status]);
+        } catch (error) {
+            const code = readRpcErrorCode(error);
+            await notify(code === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE || code === RPC_ERROR_CODES.METHOD_NOT_FOUND
+                ? t('settingsNotifications.pushTroubleshooting.remoteTest.unsupported')
+                : t('settingsNotifications.pushTroubleshooting.remoteTest.unconfirmed'));
+        }
+    };
+
     const tokenFingerprint = currentToken ? formatPushTokenFingerprint(currentToken) : null;
     const currentTokenPresentOnServer = Boolean(currentToken && tokens.some((row) => row.token === currentToken));
     const permissionDetail = resolvePermissionDetail(permission);
@@ -257,6 +323,21 @@ export const PushNotificationTroubleshootingView = React.memo(function PushNotif
                 title={t('settingsNotifications.pushTroubleshooting.actions.title')}
                 footer={t('settingsNotifications.pushTroubleshooting.actions.footer')}
             >
+                <Item
+                    title={t('settingsNotifications.pushTroubleshooting.remoteTest.title')}
+                    subtitle={t('settingsNotifications.pushTroubleshooting.remoteTest.subtitle')}
+                    subtitleLines={0}
+                    icon={<Icon name="paper-plane-tilt" size={29} color={theme.colors.accent.blue} />}
+                    rightElement={<RoundButton
+                        testID="settings-notifications-push-troubleshooting-test-remote"
+                        title={t('common.send')}
+                        size="small"
+                        display="inverted"
+                        disabled={!isPushNotificationRuntimeSupported()}
+                        action={testRemotePush}
+                    />}
+                    showChevron={false}
+                />
                 <Item
                     testID="settings-notifications-push-troubleshooting-request-permission"
                     title={t('settingsNotifications.pushTroubleshooting.actions.requestPermissionTitle')}

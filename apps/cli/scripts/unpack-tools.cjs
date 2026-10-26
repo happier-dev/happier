@@ -333,12 +333,12 @@ module.exports = { unpackTools, getPlatformDir, getToolsDir, areToolsUnpacked, g
 
 // Run if executed directly
 if (require.main === module) {
-    unpackTools()
-        .then(result => {
-            process.exit(0);
-        })
-        .catch(error => {
-            console.error('Error:', error);
-            process.exit(1);
-        });
+    // Mitigation for nodejs/node#54918: process.exit() right after this JS-heavy
+    // unpack can deadlock Node 24 in NodePlatform::Shutdown while V8 background
+    // compile jobs wait for a main-thread GC. It wedged the CI install after the
+    // success line. Exit by draining the event loop until upstream fixes it.
+    unpackTools().catch((error) => {
+        console.error('Error:', error);
+        process.exitCode = 1;
+    });
 }

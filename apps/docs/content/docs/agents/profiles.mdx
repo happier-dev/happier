@@ -65,9 +65,7 @@ If Profiles is turned off, the app falls back to the machine environment without
 3. Give the profile a clear name
 4. Choose which backend choices it should be compatible with
 5. Add the environment variables Happier should inject when the session starts
-6. Mark any required values as:
-   - **Secret** when Happier should satisfy them from a saved secret, machine env, or prompt flow
-   - **Config** when the variable must already exist on the target machine
+6. On each variable's card, turn on **Required** to block session creation when the variable is missing. Turn on **Use secret vault** for credentials you want to resolve through saved secrets; this also makes the variable required.
 7. Save the profile
 
 Recommended pattern:
@@ -155,6 +153,24 @@ If the CLI is running non-interactively and a required secret is still missing, 
 Required config environment variables must already exist in the shell environment for local CLI starts.
 
 ## Saved secrets and bindings
+
+### Bind a saved secret on iOS
+
+In **unreleased development source**, **Add Variable** uses the same full editor as an existing variable, so you can configure its saved secret before adding it to the profile draft.
+
+1. Save the credential in **Settings → Secrets**, or create it from the picker below.
+2. Open **Settings → Profiles** and add or edit a profile.
+3. Under **Environment Variables**, tap **Add Variable** and enter the variable name (for example, `OPENAI_API_KEY`).
+4. Turn on **Use secret vault**. This also turns on **Required** and replaces the value input with a **Default secret** picker.
+5. Tap **Default secret** and select or create a saved secret. The card shows the secret's name rather than its value.
+6. Tap **Save** to add the configured variable, then save the profile using the checkmark in the screen header. When editing a built-in profile, save it as a custom copy with a distinct name.
+7. Start a new session, select the daemon machine and this profile, and review the secret selection before starting.
+
+Canceling **Add Variable** discards its variable configuration and binding. A secret created in the picker remains saved in **Settings → Secrets**.
+
+These controls are also used by the Android and web profile editors. **Hide value in UI** only masks a value; use **Use secret vault** to bind a saved secret without storing its value in the profile. Changing a binding affects future starts, not sessions that are already running.
+
+On builds where **Add Variable** only shows **Name** and **Value**, enter the name, leave the value empty, and save the variable first. Then configure **Use secret vault** and **Default secret** on its card before saving the profile. If those controls are still missing, include your app version and release channel when reporting it. Do not paste the credential into the profile value, an issue, or a session message.
 
 Profiles work best with saved secrets:
 

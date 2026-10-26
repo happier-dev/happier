@@ -10,7 +10,7 @@ import {
   redactBugReportSensitiveText,
 } from '@happier-dev/protocol';
 
-import { classifyProviderLimitEvidence } from '@/daemon/connectedServices/quotas/normalization';
+import { classifyProviderLimitEvidence, parseProviderResetAt } from '@/daemon/connectedServices/quotas/normalization';
 import { classifyProviderOutputFailure } from '@/agent/runtime/classifyProviderOutputFailure';
 import { ProviderCliNotFoundError } from '@/runtime/managedTools/requireProviderCliCommand';
 
@@ -83,7 +83,16 @@ function extractErrorText(error: unknown): string {
     .join(' ');
 }
 
-function refineStatusErrorSource(input: ClassifyPrimarySessionRuntimeIssueInput): SessionRuntimeIssueSourceV1 {
+function readProviderLimitCategory(error: unknown) {
+  const data = readRecord(readRecord(error)?.data);
+  return readConnectedServiceLimitCategoryV1(data?.limitCategory)
+    ?? classifyProviderLimitEvidence([error, data]);
+}
+
+function refineProviderFailureSource(
+  input: ClassifyPrimarySessionRuntimeIssueInput,
+  fallback: SessionRuntimeIssueSourceV1,
+): SessionRuntimeIssueSourceV1 {
   const text = extractErrorText(input.error).toLowerCase();
   if (/\btemporar(?:y|ily)\s+limiting\s+requests\b/u.test(text) && /\bnot\s+your\s+usage\s+limit\b/u.test(text)) {
     return 'provider_status_error';
@@ -97,14 +106,14 @@ function refineStatusErrorSource(input: ClassifyPrimarySessionRuntimeIssueInput)
   if (/\bdependency\b/u.test(text) && /\b(failed|missing|not found|unavailable)\b/u.test(text)) {
     return 'dependency_failure';
   }
-  const providerLimitCategory = classifyProviderLimitEvidence(input.error);
+  const providerLimitCategory = readProviderLimitCategory(input.error);
   if (providerLimitCategory === 'usage_limit' || providerLimitCategory === 'rate_limit') {
     return 'usage_limit';
   }
   if (providerLimitCategory !== 'unknown') {
     return 'provider_status_error';
   }
-  return 'provider_status_error';
+  return fallback;
 }
 
 function normalizeNonEmptyString(value: unknown): string | null {
@@ -227,27 +236,23 @@ function normalizeUrl(value: unknown): string | null {
   }
 }
 
-function readStableRetryTimeResetAtMs(text: string, nowMs: number): number | null {
-  const match = /\btry\s+again\s+at\s+(\d{1,2})(?::(\d{2}))?\s*(AM|PM)\b/iu.exec(text);
-  if (!match) return null;
-  void nowMs;
-  // Provider wall-clock text does not include a timezone/offset. Treat it as
-  // advisory instead of assuming the daemon host timezone and arming a durable
-  // reset at the wrong instant.
-  return null;
-}
-
-function buildUsageLimitDetailsFromStableText(
+function buildUsageLimitDetailsFromProviderFailure(
   error: unknown,
   nowMs: number,
 ): SessionRuntimeUsageLimitDetailsV1 {
-  const retryAfterMs = readTemporaryThrottleRetryAfterMs(error, nowMs);
+  const record = readRecord(error);
+  const data = readRecord(record?.data);
+  const timing = parseProviderResetAt({ body: data ?? error, headers: record?.headers ?? data?.headers, nowMs });
+  const limitCategory = readProviderLimitCategory(error);
+  const retryAfterMs = readTemporaryThrottleRetryAfterMs(error, nowMs) ?? timing.retryAfterMs;
   return {
     v: 1,
-    resetAtMs: readStableRetryTimeResetAtMs(extractErrorText(error), nowMs),
+    resetAtMs: normalizeNonNegativeInteger(record?.resetAtMs ?? data?.resetAtMs)
+      ?? timing.resetAtMs,
     retryAfterMs,
     quotaScope: 'unknown',
     recoverability: 'wait',
+    ...(limitCategory === 'usage_limit' || limitCategory === 'rate_limit' ? { limitCategory } : {}),
   };
 }
 
@@ -418,12 +423,12 @@ export function classifyPrimarySessionRuntimeIssue(
     ? runtimeAuthSource
     : input.cause === 'process_exit' && providerProcessExitAfterSwitch
     ? 'provider_process_exit_after_switch'
-    : input.cause === 'status_error'
-    ? refineStatusErrorSource(input)
+    : input.cause === 'status_error' || input.cause === 'session_error'
+    ? refineProviderFailureSource(input, causeSourceMap[input.cause])
     : causeSourceMap[input.cause ?? 'unknown'] ?? 'unknown';
   const occurredAt = normalizeNonNegativeInteger(input.occurredAt) ?? Date.now();
   const usageLimit = runtimeAuthUsageLimit ?? (source === 'usage_limit'
-    ? buildUsageLimitDetailsFromStableText(input.error, occurredAt)
+    ? buildUsageLimitDetailsFromProviderFailure(input.error, occurredAt)
     : null);
   const temporaryThrottle = source === 'provider_status_error'
     ? buildTemporaryThrottleDetails(input.error, occurredAt)

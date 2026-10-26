@@ -189,6 +189,9 @@ function normalizeAcpPromptFailureRuntimeIssueError(params: Readonly<{
   error: unknown;
   turnInFlight: boolean;
 }>): unknown {
+  if (params.error instanceof AcpPromptSubmissionPhaseError) {
+    return normalizeAcpPromptFailureRuntimeIssueError({ ...params, error: params.error.cause });
+  }
   if (params.provider !== 'pi') return params.error;
   const brokerReadinessCarrier = findPiRuntimeIssueCarrier(params.error, 'piBrokerReadinessFailure');
   if (brokerReadinessCarrier) return brokerReadinessCarrier;

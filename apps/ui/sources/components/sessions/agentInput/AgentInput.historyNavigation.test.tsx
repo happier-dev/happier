@@ -460,6 +460,30 @@ describe('AgentInput (history navigation)', () => {
     expect(mocks.historyReset).not.toHaveBeenCalled();
   });
 
+  it.each(['agent_queue', 'server_pending'] as const)('uses the resolved %s alternative for a typed draft', async (alternateSendMode) => {
+    const { AgentInput } = await import('./AgentInput');
+    const screen = await renderScreen(<AgentInput sessionId="s1" value="draft" placeholder="p"
+      onChangeText={mocks.onChangeText} onSend={mocks.onSend} alternateSendMode={alternateSendMode}
+      autocompleteKinds={[]} autocompleteSuggestions={async () => []} />);
+    await act(async () => { findMultiTextInput(screen).props.onKeyPress?.({ key: 'Enter', metaKey: true,
+      platformOS: 'web', webPlatform: 'MacIntel' }); });
+    expect(mocks.onSend).toHaveBeenCalledExactlyOnceWith({ deliveryIntent: alternateSendMode });
+    await screen.unmount();
+  });
+
+  it.each([false, true])('sends the next queued message from an empty composer (interrupt=%s)', async (shiftKey) => {
+    const { AgentInput } = await import('./AgentInput');
+    const screen = await renderScreen(<AgentInput sessionId="s1" value="" placeholder="p"
+      onChangeText={mocks.onChangeText} onSend={mocks.onSend} canSendNextQueued
+      alternateSendMode="server_pending" autocompleteKinds={[]} autocompleteSuggestions={async () => []} />);
+    await act(async () => { findMultiTextInput(screen).props.onKeyPress?.({ key: 'Enter', metaKey: true, shiftKey,
+      platformOS: 'web', webPlatform: 'MacIntel' }); });
+    expect(mocks.onSend).toHaveBeenCalledExactlyOnceWith({ deliveryIntent: shiftKey ? 'interrupt' : 'agent_queue', sendNextQueued: true });
+    expect(mocks.onChangeText).not.toHaveBeenCalled();
+    expect(mocks.historyReset).not.toHaveBeenCalled();
+    await screen.unmount();
+  });
+
   it('uses immediate-send bypass on Cmd+Enter (web)', async () => {
     const { AgentInput } = await import('./AgentInput');
     const screen = await renderScreen(
@@ -492,7 +516,7 @@ describe('AgentInput (history navigation)', () => {
 
     expect(handled).toBe(true);
     expect(mocks.onSend).toHaveBeenCalledTimes(1);
-    expect(mocks.onSend).toHaveBeenCalledWith({ forceImmediate: true });
+    expect(mocks.onSend).toHaveBeenCalledWith({ deliveryIntent: 'agent_queue' });
   });
 
   it('uses immediate-send bypass on Ctrl+Enter for non-Apple web platforms', async () => {
@@ -527,7 +551,7 @@ describe('AgentInput (history navigation)', () => {
 
     expect(handled).toBe(true);
     expect(mocks.onSend).toHaveBeenCalledTimes(1);
-    expect(mocks.onSend).toHaveBeenCalledWith({ forceImmediate: true });
+    expect(mocks.onSend).toHaveBeenCalledWith({ deliveryIntent: 'agent_queue' });
   });
 
   it('uses the configured immediate-send shortcut instead of hardcoded Mod+Enter', async () => {
@@ -580,10 +604,21 @@ describe('AgentInput (history navigation)', () => {
 
     expect(handled).toBe(true);
     expect(mocks.onSend).toHaveBeenCalledTimes(1);
-    expect(mocks.onSend).toHaveBeenCalledWith({ forceImmediate: true });
+    expect(mocks.onSend).toHaveBeenCalledWith({ deliveryIntent: 'agent_queue' });
   });
 
-  it('sends to the pending queue intent with the configured pending-send shortcut', async () => {
+  it('preserves an explicitly rebound queue command', async () => {
+    localSettingState.values.keyboardShortcutOverridesV1 = { 'composer.sendPending': [{ binding: 'Alt+Enter' }] };
+    const { AgentInput } = await import('./AgentInput');
+    const screen = await renderScreen(<AgentInput sessionId="s1" value="draft" placeholder="p"
+      onChangeText={mocks.onChangeText} onSend={mocks.onSend} autocompleteKinds={[]} autocompleteSuggestions={async () => []} />);
+    await act(async () => { findMultiTextInput(screen).props.onKeyPress?.({ key: 'Enter', altKey: true,
+      platformOS: 'web', webPlatform: 'MacIntel' }); });
+    expect(mocks.onSend).toHaveBeenCalledExactlyOnceWith({ deliveryIntent: 'server_pending' });
+    await screen.unmount();
+  });
+
+  it('interrupts with Mod+Shift+Enter', async () => {
     const { AgentInput } = await import('./AgentInput');
     const screen = await renderScreen(
       <AgentInput
@@ -616,7 +651,7 @@ describe('AgentInput (history navigation)', () => {
 
     expect(handled).toBe(true);
     expect(mocks.onSend).toHaveBeenCalledTimes(1);
-    expect(mocks.onSend).toHaveBeenCalledWith({ deliveryIntent: 'server_pending' });
+    expect(mocks.onSend).toHaveBeenCalledWith({ deliveryIntent: 'interrupt' });
   });
 
   it('does not treat Ctrl+Enter as immediate-send on Apple web platforms', async () => {

@@ -1,3 +1,4 @@
+import { resolveSessionComposerSendActions } from './submitMode';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -38,6 +39,31 @@ describe('selectSessionPendingRequestedAction', () => {
             },
         },
     } as any;
+
+    it('derives the alternate send from the saved busy-turn policy and queue availability', () => {
+        const session = { ...activeSteerable, pendingVersion: 2, metadata: { version: '999.0.0' } };
+        expect(resolveSessionComposerSendActions({ session, configuredMode: 'server_pending', busySteerSendPolicy: 'server_pending', nowMs: now }))
+            .toMatchObject({ alternateMode: 'agent_queue', modes: ['agent_queue', 'server_pending', 'interrupt'] });
+        expect(resolveSessionComposerSendActions({ session, configuredMode: 'server_pending', busySteerSendPolicy: 'steer_immediately', nowMs: now }))
+            .toMatchObject({ alternateMode: 'server_pending' });
+        expect(resolveSessionComposerSendActions({ session: { ...session, metadata: { version: '0.0.1' } }, configuredMode: 'agent_queue', busySteerSendPolicy: 'steer_immediately', nowMs: now }))
+            .toMatchObject({ alternateMode: 'agent_queue', modes: ['agent_queue'] });
+    });
+
+    it('preserves an explicit steer choice across the foreground ready boundary without interrupting', () => {
+        const session = { ...activeSteerable, pendingVersion: 2, metadata: { version: '999.0.0' } };
+        const options = { configuredMode: 'interrupt' as const, explicitMode: 'agent_queue' as const,
+            busySteerSendPolicy: 'server_pending' as const, session, nowMs: now };
+        expect(decideSessionMessageDelivery(options)).toMatchObject({
+            mode: 'server_pending', requestedAction: { v: 1, kind: 'steer_now' },
+        });
+        expect(decideSessionMessageDelivery({ ...options, session: { ...session, thinking: false } })).toMatchObject({
+            mode: 'server_pending', requestedAction: { v: 1, kind: 'steer_now' },
+        });
+        expect(decideSessionMessageDelivery({ ...options, text: '/clear' })).toMatchObject({
+            mode: 'server_pending', requestedAction: { v: 1, kind: 'enqueue' },
+        });
+    });
 
     it('keeps Always enqueue distinct from Always steer and resolves immediate actions exactly', () => {
         expect(selectSessionPendingRequestedAction({ session: activeSteerable, nowMs: now, preferSteer: false })).toEqual({

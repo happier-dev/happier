@@ -3,6 +3,8 @@ import { readClaudeNativeDialogScreenLines } from './nativeScreenCapture';
 export type ClaudeNativePermissionPresentation = Readonly<{
     kind: 'tool' | 'plan';
     context: string;
+    /** Native text below the command block, when its closing rule is visible. */
+    explanation?: string;
     options: readonly Readonly<{ label: string; focused: boolean }>[];
     amended: boolean;
     feedback?: Readonly<{ optionIndex: number; placeholder: string; text: string }>;
@@ -91,6 +93,10 @@ export function parseClaudeNativePermissionScreen(text: string): ClaudeNativePer
     if (new Set(options.map((option) => option.label)).size !== options.length) return null;
     const start = lastLineIndex(lines.slice(0, question), /^\s*[─━]{2,}\s*$/u);
     const context = lines.slice(start + 1, question + 1).map((line) => line.trimEnd()).join('\n').trim();
+    const commandEnd = lastLineIndex(lines.slice(start + 1, question), /^\s*╌{2,}\s*$/u);
+    const explanation = commandEnd >= 0
+        ? lines.slice(start + commandEnd + 2, question + 1).map((line) => line.trimEnd()).join('\n').trim()
+        : undefined;
     const readOutside = lines[question]!.trim() === 'Allow this read outside the working directories?'
         && context.split('\n').some((line) => line.trim() === 'Read outside the working directories');
     // Auto-mode read scopes are not ordered as Yes ... No. Recognize the native labels
@@ -106,6 +112,7 @@ export function parseClaudeNativePermissionScreen(text: string): ClaudeNativePer
     return {
         kind: 'tool',
         context,
+        ...(explanation ? { explanation } : {}),
         options,
         amended: !readOutside && options[0]?.label !== 'Yes',
     };

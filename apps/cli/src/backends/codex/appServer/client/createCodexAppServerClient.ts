@@ -6,7 +6,7 @@ import { expandHomeDirPath } from '@happier-dev/cli-common/providers';
 import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process';
 
 import { resolveCodexCliInvocation } from '../../utils/resolveCodexCliInvocation';
-import { withCodexNativeStartupLock } from '../../utils/withCodexNativeStartupLock';
+import { readCodexNativeStartupVersion, withCodexNativeStartupLock } from '../../utils/withCodexNativeStartupLock';
 import { appendCodexCliConfigOverridesArgs } from '../../utils/appendCodexCliConfigOverridesArgs';
 import { resolveConfiguredCodexConfigTomlPath } from '../../utils/resolveConfiguredCodexHome';
 import { createCodexAppServerJsonLineReader } from './codexAppServerJsonLineReader';
@@ -380,25 +380,34 @@ type CreateCodexAppServerClientParams = Readonly<{
 }>;
 
 export async function createCodexAppServerClient(params: CreateCodexAppServerClientParams): Promise<DisposableCodexAppServerClient> {
+    params.initializeRequestOptions?.signal?.throwIfAborted();
     if (params.transport && params.transport.kind !== 'stdio') return await createUnlockedCodexAppServerClient(params);
+    const processEnv = sanitizeCodexAppServerEnv(params.processEnv ?? process.env);
+    const baseInvocation = await resolveCodexCliInvocation({
+        args: ['app-server', '--listen', 'stdio://'],
+        cwd: params.cwd,
+        processEnv,
+        overrideEnvVarKeys: ['HAPPIER_CODEX_APP_SERVER_BIN', 'HAPPIER_CODEX_TUI_BIN', 'HAPPY_CODEX_TUI_BIN'],
+        targetLabel: 'Codex app-server',
+    });
+    const versionOutput = await readCodexNativeStartupVersion(baseInvocation, processEnv, params.cwd, params.initializeRequestOptions?.signal);
     const timeoutMs = params.initializeRequestOptions?.timeoutMs
         ?? readCodexAppServerRequestTimeoutMs('initialize', params.processEnv ?? process.env);
-    return await withCodexNativeStartupLock(timeoutMs ?? Number.POSITIVE_INFINITY, async () => (
-        await createUnlockedCodexAppServerClient(params)
-    ), params.initializeRequestOptions?.signal);
+    return await withCodexNativeStartupLock(timeoutMs ?? Number.POSITIVE_INFINITY, async configOverrides => (
+        await createUnlockedCodexAppServerClient({ ...params, configOverrides }, baseInvocation)
+    ), params.initializeRequestOptions?.signal, { processEnv, cwd: params.cwd, configOverrides: params.configOverrides, versionOutput });
 }
 
 /** Warm managed disk-auth homes through the same native initialization owner. */
 export async function bootstrapCodexNativeHome(params: Omit<CreateCodexAppServerClientParams, 'transport'>): Promise<void> {
-    const timeoutMs = params.initializeRequestOptions?.timeoutMs
-        ?? readCodexAppServerRequestTimeoutMs('initialize', params.processEnv ?? process.env);
-    await withCodexNativeStartupLock(timeoutMs ?? Number.POSITIVE_INFINITY, async () => {
-        const client = await createUnlockedCodexAppServerClient(params);
-        await client.dispose();
-    }, params.initializeRequestOptions?.signal);
+    const client = await createCodexAppServerClient(params);
+    await client.dispose();
 }
 
-async function createUnlockedCodexAppServerClient(params: CreateCodexAppServerClientParams): Promise<DisposableCodexAppServerClient> {
+async function createUnlockedCodexAppServerClient(
+    params: CreateCodexAppServerClientParams,
+    resolvedInvocation?: Awaited<ReturnType<typeof resolveCodexCliInvocation>>,
+): Promise<DisposableCodexAppServerClient> {
     params.initializeRequestOptions?.signal?.throwIfAborted();
     const sourceProcessEnv = params.processEnv ?? process.env;
     const rpcLogger = createRpcLogger(sourceProcessEnv);
@@ -434,7 +443,7 @@ async function createUnlockedCodexAppServerClient(params: CreateCodexAppServerCl
             socket.once('close', onCloseBeforeOpen);
         });
     } else {
-        const baseInvocation = await resolveCodexCliInvocation({
+        const baseInvocation = resolvedInvocation ?? await resolveCodexCliInvocation({
             args: transport.kind === 'daemonProxy'
                 ? ['app-server', 'proxy']
                 : ['app-server', '--listen', 'stdio://'],

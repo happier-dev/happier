@@ -1,6 +1,7 @@
 import { ExecutionRunLaunchOriginSchema, type BackendTargetRefV1, type ExecutionRunLaunchOrigin } from '@happier-dev/protocol';
 
 import type { Message, ToolCallMessage } from '@/sync/domains/messages/messageTypes';
+import { compareTranscriptMessagesOldestFirst } from '@/sync/domains/messages/transcriptOrdering';
 import { resolveToolTranscriptSidechainId } from '@/components/tools/shell/views/resolveToolTranscriptSidechainId';
 import { readExecutionRunIdFromToolPayload } from '@/sync/domains/session/participants/deriveExecutionRunPollingRefreshKey';
 
@@ -48,23 +49,6 @@ export type TranscriptExecutionRunStateIndex = Readonly<{
     explicitlyStoppedRunIds: ReadonlyMap<string, number | null>;
     orderedMessages: readonly Message[];
 }>;
-
-function sortMessagesChronologically(messages: readonly Message[]): readonly Message[] {
-    return [...messages]
-        .map((message, index) => ({ message, index }))
-        .sort((left, right) => {
-            const leftSeq = typeof (left.message as any)?.seq === 'number' ? Number((left.message as any).seq) : null;
-            const rightSeq = typeof (right.message as any)?.seq === 'number' ? Number((right.message as any).seq) : null;
-            if (leftSeq != null && rightSeq != null && leftSeq !== rightSeq) return leftSeq - rightSeq;
-
-            const leftCreatedAt = typeof (left.message as any)?.createdAt === 'number' ? Number((left.message as any).createdAt) : null;
-            const rightCreatedAt = typeof (right.message as any)?.createdAt === 'number' ? Number((right.message as any).createdAt) : null;
-            if (leftCreatedAt != null && rightCreatedAt != null && leftCreatedAt !== rightCreatedAt) return leftCreatedAt - rightCreatedAt;
-
-            return left.index - right.index;
-        })
-        .map((entry) => entry.message);
-}
 
 export function readOptionalString(record: Record<string, unknown>, key: string): string | null {
     const value = record[key];
@@ -116,7 +100,7 @@ export function resolveTranscriptBackendLabel(state: TranscriptExecutionRunState
 
 export function deriveTranscriptExecutionRunStateIndex(messages: readonly Message[]): TranscriptExecutionRunStateIndex {
     const byRunId = new Map<string, TranscriptExecutionRunState>();
-    const orderedMessages = sortMessagesChronologically(messages);
+    const orderedMessages = [...messages].sort(compareTranscriptMessagesOldestFirst);
     const explicitlyStoppedRunIds = deriveExplicitlyStoppedExecutionRuns(messages);
 
     for (const message of orderedMessages) {

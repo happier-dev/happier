@@ -8,8 +8,21 @@ import { View, useWindowDimensions, Platform } from 'react-native';
 import { useLocalSetting, useLocalSettingMutable } from '@/sync/domains/state/storage';
 import { ResizableDockedPane, type ResizableDockedPaneCommitMeta } from '@/components/ui/panels/ResizableDockedPane';
 import { PANE_SIZING_DEFAULTS, resolveScaledPaneWidthPx } from '@/components/appShell/panes/layout/paneSizing';
-import { StyleSheet } from 'react-native-unistyles';
-import { resolveSidebarDockMaxWidthPx, SIDEBAR_COLLAPSED_WIDTH_PX, SIDEBAR_DOCK_MIN_WIDTH_PX } from './sidebarSizing';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import {
+    resolveFoldAlignedSidebarWidthPx,
+    resolveSidebarDockMaxWidthPx,
+    SIDEBAR_COLLAPSED_WIDTH_PX,
+    SIDEBAR_DOCK_MIN_WIDTH_PX,
+} from './sidebarSizing';
+import { useWindowFoldMetrics } from '@/utils/platform/useWindowFoldMetrics';
+import {
+    HorizontalSafeAreaProvider,
+    NavigatorSafeAreaBleed,
+    useHorizontalSafeArea,
+} from '@/components/navigation/safeArea/HorizontalSafeArea';
+import { renderAppStackScreen } from '@/components/navigation/appStackScreenLayout';
+import { resolveSidebarInsetSplit } from '@/components/navigation/safeArea/horizontalSafeArea';
 import { useAppPaneContext } from '@/components/appShell/panes/AppPaneProvider';
 import { resolvePaneFocusModeRouteScopeId } from '@/components/appShell/panes/focusMode/resolvePaneFocusModeRouteScopeId';
 import { isTauriDesktop } from '@/utils/platform/tauri';
@@ -92,6 +105,7 @@ const stylesheet = StyleSheet.create((theme) => ({
 
 export const SidebarNavigator = React.memo(() => {
     const styles = stylesheet;
+    const { theme } = useUnistyles();
     const auth = useAuth();
     const isTablet = useIsTablet();
     const pathname = usePathname();
@@ -110,6 +124,8 @@ export const SidebarNavigator = React.memo(() => {
         && paneState.activeScopeId === focusedScopeId
         && Boolean(focusedScope?.right.isOpen || focusedScope?.details.isOpen);
     const { width: windowWidth } = useWindowDimensions();
+    const foldMetrics = useWindowFoldMetrics();
+    const insetSplit = resolveSidebarInsetSplit(useHorizontalSafeArea(), { sidebarShown: showSidebar });
     const sidebarCollapsed = useLocalSetting('sidebarCollapsed');
     const [, setSidebarCollapsed] = useLocalSettingMutable('sidebarCollapsed');
     const sidebarWidthPx = useLocalSetting('sidebarWidthPx');
@@ -163,12 +179,19 @@ export const SidebarNavigator = React.memo(() => {
         });
     }, [sidebarMaxWidthPx, sidebarWidthBasisPx, sidebarWidthPx, windowWidth]);
 
+    // On a window split by a vertical crease the expanded sidebar ends on the crease. This is
+    // presentation only: the persisted width is never written here and applies again once the
+    // division goes away. Resizing is disabled meanwhile (min = max) so a drag cannot fight the crease.
+    const foldAlignedSidebarWidthPx = showSidebar && !effectiveSidebarCollapsed
+        ? resolveFoldAlignedSidebarWidthPx({ foldMetrics, sidebarStartPx: insetSplit.sidebar.padding })
+        : null;
+
     // Hidden chrome occupies no space; the mounted navigation owner is unchanged.
     const sidebarWidth = React.useMemo(() => {
         if (!showSidebar) return 0;
         if (effectiveSidebarCollapsed) return SIDEBAR_COLLAPSED_WIDTH_PX;
-        return dragSidebarWidthPx ?? effectiveSidebarWidthPx;
-    }, [dragSidebarWidthPx, effectiveSidebarCollapsed, effectiveSidebarWidthPx, showSidebar]);
+        return foldAlignedSidebarWidthPx ?? dragSidebarWidthPx ?? effectiveSidebarWidthPx;
+    }, [dragSidebarWidthPx, effectiveSidebarCollapsed, effectiveSidebarWidthPx, foldAlignedSidebarWidthPx, showSidebar]);
 
     const handleSidebarWidthDrag = React.useCallback((nextWidthPx: number | null, dragMeta?: ResizableDockedPaneCommitMeta | null) => {
         if (nextWidthPx == null) {
@@ -230,8 +253,8 @@ export const SidebarNavigator = React.memo(() => {
     ) : (
         <ResizableDockedPane
             widthPx={sidebarWidth}
-            minWidthPx={SIDEBAR_DOCK_MIN_WIDTH_PX}
-            maxWidthPx={sidebarMaxWidthPx}
+            minWidthPx={foldAlignedSidebarWidthPx ?? SIDEBAR_DOCK_MIN_WIDTH_PX}
+            maxWidthPx={foldAlignedSidebarWidthPx ?? sidebarMaxWidthPx}
             resizeEdge="right"
             onDragWidthPx={handleSidebarWidthDrag}
             onCommitWidthPx={handleSidebarWidthCommit}
@@ -261,13 +284,32 @@ export const SidebarNavigator = React.memo(() => {
             style={[styles.root, showSidebar && styles.canvas]}
         >
             {showSidebar ? (
-                <View testID="navigation-sidebar" style={{ width: sidebarWidth, flexShrink: 0 }}>
+                // The sidebar owns the window's leading edge: its canvas reaches the edge, its content stays safe.
+                <View
+                    testID="navigation-sidebar"
+                    style={{
+                        width: sidebarWidth + insetSplit.sidebar.padding,
+                        marginLeft: insetSplit.sidebar.margin,
+                        paddingLeft: insetSplit.sidebar.padding,
+                        flexShrink: 0,
+                        backgroundColor: insetSplit.sidebar.padding > 0 ? theme.colors.background.canvas : undefined,
+                    }}
+                >
                     {sidebar}
                 </View>
             ) : null}
-            <View key="route-content" style={[styles.content, showSidebar && styles.contentSheet]}>
-                <Stack screenOptions={stackNavigationOptions} />
-            </View>
+            {/*
+              * The root stack is a native container that clips its screens, so it must itself reach
+              * the window edge (the content side only, when the sidebar owns the leading edge) for any
+              * nested stack header or screen backdrop to paint under the side insets.
+              */}
+            <HorizontalSafeAreaProvider value={insetSplit.content}>
+                <NavigatorSafeAreaBleed>
+                    <View key="route-content" style={[styles.content, showSidebar && styles.contentSheet]}>
+                        <Stack screenOptions={stackNavigationOptions} screenLayout={renderAppStackScreen} />
+                    </View>
+                </NavigatorSafeAreaBleed>
+            </HorizontalSafeAreaProvider>
             {Platform.OS === 'web' && showSidebar ? (
                 <View
                     pointerEvents="none"

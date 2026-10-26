@@ -125,6 +125,24 @@ For the full user-facing MCP guide in Happier, see:
 
 - [MCP servers](/extending/mcp-servers)
 
+## Reasoning summaries
+
+In development builds, Codex settings include **Reasoning summaries** with a
+**Generation** choice. **Default** keeps your Codex configuration and model
+default. **Enabled** requests readable summaries where supported, and **Disabled**
+requests no summaries. The choice applies when starting or resuming a session.
+
+Generation is separate from the transcript's thinking-display preference. Hiding
+thinking does not disable generation; showing thinking does not enable it.
+Changing generation does not change reasoning effort.
+
+Summaries depend on what Codex and the selected model return. An enabled setting
+can still produce no readable thinking. OpenAI distinguishes readable summaries
+from private reasoning tokens; see its [reasoning documentation](https://developers.openai.com/api/docs/guides/reasoning#reasoning-summaries).
+Happier displays available readable reasoning in live transcripts, Direct
+transcripts, and mirrored terminal sessions. Encrypted reasoning is never
+displayed as text.
+
 ## Interrupting a turn and stopping a session
 
 With the App Server backend, **Stop run** in the main session composer requests interruption of the active Codex turn and keeps the session available for your next message.

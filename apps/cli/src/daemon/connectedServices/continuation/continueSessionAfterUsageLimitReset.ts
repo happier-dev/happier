@@ -60,6 +60,7 @@ export async function continueSessionAfterUsageLimitReset(input: Readonly<{
   recovery: SessionUsageLimitRecoveryV1;
   customResumePrompt?: string | null;
   nowMs: number;
+  readiness?: 'provider_ready';
   isCurrent: () => boolean | Promise<boolean>;
   ensureRuntime: () => Promise<boolean>;
   sendMessage?: typeof sendSessionMessage;
@@ -81,7 +82,7 @@ export async function continueSessionAfterUsageLimitReset(input: Readonly<{
     ? readLatestUsageLimitFailureIssue(input.rawSession) : null;
   if (!issue?.usageLimit || input.rawSession.archivedAt != null
     || issue.usageLimit.recoverability === 'manual' || issue.usageLimit.recoverability === 'switch_account'
-    || issue.usageLimit.resetAtMs !== recovery.resetAtMs
+    || (issue.usageLimit.resetAtMs !== null && issue.usageLimit.resetAtMs !== recovery.resetAtMs)
     || !matchesCurrentBinding(input.metadata, recovery.selectedAuth)) return { status: 'superseded' };
   const failedAuth = resolveUsageLimitRecoverySelectedAuthFromIssue({ issue, connectedServices: input.metadata.connectedServices ?? null });
   if (!failedAuth || !matchesAuth(failedAuth, recovery.selectedAuth)) return { status: 'superseded' };
@@ -101,7 +102,7 @@ export async function continueSessionAfterUsageLimitReset(input: Readonly<{
   // A manual daemon-owned retry is authorized by the provider reset; local backoff only schedules wakes.
   const dueAtMs = owned ? recovery.resetAtMs : recovery.nextCheckAtMs ?? recovery.resetAtMs
     ?? (recovery.status === 'paused' ? input.nowMs : null);
-  if (dueAtMs === null || input.nowMs < dueAtMs) return { status: 'not_ready' };
+  if (input.readiness !== 'provider_ready' && (dueAtMs === null || input.nowMs < dueAtMs)) return { status: 'not_ready' };
   const dispatcher = createConnectedServiceContinuationMessageDispatcher({
     credentials: input.credentials, sendMessage: input.sendMessage,
   });

@@ -11,6 +11,7 @@ import { SpecialMarkdownBlockView } from './SpecialMarkdownBlockView';
 import type { MarkdownRenderingProfile } from './MarkdownRenderingProfile';
 import type { StyleProp, TextStyle } from 'react-native';
 import type { StreamingTextRevealPreset } from '../streaming/streamingTextRevealConfig';
+import type { MarkdownSelectionAction } from '../MarkdownView';
 
 type MarkdownContainerViewProps = Readonly<{
     block: MarkdownContainerBlock;
@@ -21,6 +22,7 @@ type MarkdownContainerViewProps = Readonly<{
     textStyle?: StyleProp<TextStyle>;
     streamingReveal: boolean;
     streamingRevealPreset?: StreamingTextRevealPreset;
+    selectionActions?: readonly MarkdownSelectionAction[];
     agentTexMath: boolean;
 }>;
 
@@ -58,6 +60,7 @@ export const MarkdownContainerView = React.memo((props: MarkdownContainerViewPro
             streamingAnimated={props.streamingReveal}
             streamingRevealPreset={props.streamingRevealPreset}
             suppressLeadingTopMargin
+            selectionActions={props.selectionActions}
             agentTexMath={props.agentTexMath}
         />;
     }

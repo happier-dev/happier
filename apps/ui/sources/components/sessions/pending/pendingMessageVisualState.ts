@@ -325,3 +325,19 @@ export function getPendingMessageVisualState(
         iconName: 'clock',
     };
 }
+
+export function isAcceptedLocalPendingProjection(message: PendingMessage): boolean {
+    return message.deliveryStatus === 'accepted' && message.source !== 'server_pending';
+}
+
+/** Shared by row actions and the empty-composer shortcut; in-flight custody stays with its sender. */
+export function canUseDirectPendingDeliveryActions(message: PendingMessage, visualState = getPendingMessageVisualState(message)): boolean {
+    return message.source !== 'local_outbound'
+        && !isAcceptedLocalPendingProjection(message)
+        && message.pendingDecryptFailure?.kind !== 'decrypt_failed'
+        && !message.pendingOutboxOperation
+        && visualState.kind !== 'cancelling'
+        && visualState.kind !== 'cancel_failed'
+        && visualState.kind !== 'materializing'
+        && !isPendingMessageProviderEffectPossible(message);
+}

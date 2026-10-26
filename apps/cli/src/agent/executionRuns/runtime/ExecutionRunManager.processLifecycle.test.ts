@@ -262,13 +262,13 @@ describe('ExecutionRunManager process lifecycle', () => {
         expect(isProcessAlive(initialPid)).toBe(false);
         expect(manager.get(started.runId)?.resumeHandle).toMatchObject({ vendorSessionId: 'thread-lifecycle' });
         await expect(manager.send(started.runId, { message: 'Continue', resume: true })).resolves.toEqual({ ok: true });
-        await expect.poll(() => manager.getPublic(started.runId)?.turnInFlight).toBe(false);
+        await expect.poll(() => manager.getPublic(started.runId)?.status).toBe('succeeded');
+        await manager.waitForTerminal(started.runId);
+        expect(manager.getLatestToolResult(started.runId)).toMatchObject({ status: 'succeeded', summary: 'Continued' });
         await expect.poll(() => messages.some((message) => message.includes('Continued'))).toBe(true);
         const resumedPid = await children[1]!.readPid();
         expect(resumedPid).not.toBe(initialPid);
-        expect(isProcessAlive(resumedPid)).toBe(true);
-        await manager.stop(started.runId);
-        await expect.poll(() => isProcessAlive(resumedPid)).toBe(false);
+        expect(isProcessAlive(resumedPid)).toBe(false);
       } finally {
         await manager.stop(started.runId);
         await manager.waitForTerminal(started.runId);

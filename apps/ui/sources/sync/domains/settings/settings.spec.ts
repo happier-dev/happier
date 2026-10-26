@@ -134,7 +134,7 @@ describe('settings', () => {
             const settings = settingsParse({});
             expect((settings as any).codingPromptBehaviorV1).toEqual({
                 v: 1,
-                sessionTitleUpdates: 'ongoing',
+                sessionTitleUpdates: 'initial',
                 responseOptions: 'agent',
             });
         });

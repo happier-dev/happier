@@ -17,6 +17,7 @@ export const RPC_METHODS = {
   DAEMON_MEMORY_ENSURE_UP_TO_DATE: 'daemon.memory.ensureUpToDate',
   DAEMON_MEMORY_STATUS: 'daemon.memory.status',
   DAEMON_SERVER_WORK_STATUS: 'daemon.serverWork.status',
+  DAEMON_NOTIFICATIONS_TEST_PUSH: 'daemon.notifications.testPush',
   DAEMON_MEMORY_SETTINGS_GET: 'daemon.memory.settings.get',
   DAEMON_MEMORY_SETTINGS_SET: 'daemon.memory.settings.set',
   DAEMON_MCP_SERVERS_TEST: 'daemon.mcpServers.test',

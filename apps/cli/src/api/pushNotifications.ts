@@ -1,7 +1,9 @@
+import { NotificationQuestionAnswerV1Schema } from '@happier-dev/protocol';
 import axios from 'axios'
 import { boundExpoPushMessage } from './boundExpoPushMessage'
 import { logger } from '@/ui/logger'
 import { Expo, ExpoPushMessage } from 'expo-server-sdk'
+import { decodeJwtPayload } from '@/cloud/decodeJwtPayload'
 import { withServerUrlInPushData } from './pushNotificationData'
 import { serializeAxiosErrorForLog } from './client/serializeAxiosErrorForLog'
 import { summarizeExpoPushTicketErrorsForLog } from './pushTicketLogSummary'
@@ -15,7 +17,15 @@ import {
     getExpoErrorCode,
     PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS,
     PUSH_NOTIFICATION_CATEGORY_IDS,
+    type PushNotificationTestResult,
 } from '@happier-dev/protocol'
+
+export type PushNotificationSendResult = Readonly<{
+    acceptedCount: number
+    failedCount: number
+    invalidTokens: ReadonlyArray<string>
+    invalidCredentials: boolean
+}>
 
 export interface PushToken {
     id: string
@@ -62,7 +72,15 @@ function resolvePushRequestKindFromPushData(data: Record<string, unknown> | unde
 function resolveCategoryIdFromPushData(data: Record<string, unknown> | undefined): string | undefined {
     const kind = resolvePushRequestKindFromPushData(data)
     if (kind === 'permission') return PUSH_NOTIFICATION_CATEGORY_IDS.permissionRequestV1
-    if (kind === 'user_action') return PUSH_NOTIFICATION_CATEGORY_IDS.userActionRequestV1
+    if (kind === 'user_action') {
+        const question = NotificationQuestionAnswerV1Schema.safeParse(data?.questionAnswerV1);
+        if (question.success) {
+            if (question.data.kind === 'text') return PUSH_NOTIFICATION_CATEGORY_IDS.questionTextV1;
+            return [PUSH_NOTIFICATION_CATEGORY_IDS.questionChoices1V1, PUSH_NOTIFICATION_CATEGORY_IDS.questionChoices2V1,
+                PUSH_NOTIFICATION_CATEGORY_IDS.questionChoices3V1][question.data.values.length - 1];
+        }
+        return PUSH_NOTIFICATION_CATEGORY_IDS.userActionRequestV1;
+    }
     return undefined
 }
 
@@ -118,7 +136,7 @@ export class PushNotificationClient {
                 })
                 this.didLogPushTokenFetchCooldown = true
             }
-            return []
+            throw new Error('Push token registration lookup unavailable during failure cooldown')
         }
         try {
             const response = await axios.get<{ tokens: PushToken[] }>(
@@ -218,11 +236,13 @@ export class PushNotificationClient {
      * Send push notification via Expo Push API with retry
      * @param messages - Array of push messages to send
      */
-    async sendPushNotifications(messages: ExpoPushMessage[]): Promise<Readonly<{ invalidTokens: ReadonlyArray<string>; invalidCredentials: boolean }>> {
+    async sendPushNotifications(messages: ExpoPushMessage[]): Promise<PushNotificationSendResult> {
         const debugPush = isPushDebugEnabled()
         if (debugPush) logger.debug(`Sending ${messages.length} push notifications`)
         const invalidTokens = new Set<string>()
         let invalidCredentials = false
+        let acceptedCount = 0
+        const targetCount = messages.reduce((count, message) => count + (Array.isArray(message.to) ? message.to.length : 1), 0)
 
         // Filter out invalid push tokens
         const validMessages = messages.filter(message => {
@@ -234,7 +254,7 @@ export class PushNotificationClient {
 
         if (validMessages.length === 0) {
             if (debugPush) logger.debug('No valid Expo push tokens found')
-            return { invalidTokens: [], invalidCredentials: false }
+            return { acceptedCount: 0, failedCount: targetCount, invalidTokens: [], invalidCredentials: false }
         }
 
         // Create chunks to respect Expo's rate limits
@@ -339,12 +359,20 @@ export class PushNotificationClient {
                         throw new Error('All push notifications in chunk failed')
                     }
                     
+                    // A ticket acknowledges service acceptance, not delivery to the phone. Missing
+                    // tickets and known receipt failures must not make a partial send look complete.
+                    const attemptedTargetCount = retryChunk.reduce((count, message) => count + (Array.isArray(message.to) ? message.to.length : 1), 0)
+                    acceptedCount += Math.min(attemptedTargetCount, ticketChunk.filter((ticket) => {
+                        if (ticket.status !== 'ok') return false
+                        const receipt = receipts?.[ticket.id]
+                        return !(receipt && typeof receipt === 'object' && 'status' in receipt && receipt.status === 'error')
+                    }).length)
                     // Success - break out of retry loop
                     break
                 } catch (error) {
                     const elapsed = Date.now() - startTime
                     if (elapsed >= timeout) {
-                        if (debugPush) logger.debug('[PUSH] Timeout reached after 5 minutes, giving up on chunk')
+                        logger.infoFile('[PUSH] Push send retries exhausted; service acceptance was not confirmed', { error: serializeAxiosErrorForLog(error) })
                         break
                     }
                     
@@ -362,8 +390,28 @@ export class PushNotificationClient {
             }
         }
 
-        if (debugPush && !invalidCredentials) logger.debug(`Push notifications sent successfully`)
-        return { invalidTokens: [...invalidTokens], invalidCredentials }
+        const failedCount = targetCount - acceptedCount
+        if (failedCount > 0) logger.infoFile('[PUSH] Push service did not accept every recipient', { acceptedCount, failedCount })
+        return { acceptedCount, failedCount, invalidTokens: [...invalidTokens], invalidCredentials }
+    }
+
+    async sendTestNotificationAsync(tokenId: string): Promise<PushNotificationTestResult> {
+        const token = (await this.fetchPushTokens()).find((candidate) => candidate.id === tokenId)
+        if (!token) return { status: 'not_registered' }
+        const result = await this.sendPushNotifications([{
+            to: token.token,
+            title: 'Happier notification test',
+            body: 'This is a remote push test requested from notification settings.',
+            data: withServerUrlInPushData({
+                baseUrl: normalizeClientServerUrl(token.clientServerUrl) ?? this.baseUrl,
+                data: { url: '/settings/notifications' },
+            }),
+            sound: 'default',
+            priority: 'high',
+        }])
+        await this.deletePushTokens(result.invalidTokens)
+        if (result.invalidCredentials) return { status: 'invalid_credentials' }
+        return { status: result.acceptedCount === 1 && result.failedCount === 0 ? 'accepted' : 'rejected' }
     }
 
     /**
@@ -395,6 +443,10 @@ export class PushNotificationClient {
             }
 
             const badgeCount = await this.fetchAccountActivityBadgeCount()
+            const subject = decodeJwtPayload(this.token)?.sub
+            const accountId = typeof subject === 'string' ? subject.trim() : ''
+            const { accountId: _untrustedAccountId, ...callerData } = data ?? {}
+            const scopedData = accountId ? { ...callerData, accountId } : callerData
 
             // Create messages for all tokens
             const messages: ExpoPushMessage[] = tokens.map((token, index) => {
@@ -407,7 +459,7 @@ export class PushNotificationClient {
                     to: token.token,
                     title,
                     body,
-                    data: withServerUrlInPushData({ baseUrl, data }),
+                    data: withServerUrlInPushData({ baseUrl, data: scopedData }),
                     sound: 'default',
                     priority: 'high',
                     categoryId,
@@ -424,7 +476,12 @@ export class PushNotificationClient {
             if (sendResult.invalidCredentials) {
                 throw new Error('Expo push failed: InvalidCredentials. Check the app\'s FCM V1 or APNs credentials in Expo.')
             }
-            if (debugPush) logger.debug('[PUSH] Push notifications sent successfully')
+            if (sendResult.acceptedCount === 0 && sendResult.failedCount > 0) {
+                throw new Error('Push service did not accept any recipients')
+            }
+            // Partial broadcasts are already observable at the canonical send boundary.
+            // Do not fail and cause callers to resend to the recipients that accepted it.
+            if (debugPush && sendResult.failedCount === 0) logger.debug('[PUSH] Push service accepted every recipient')
         } catch (error) {
             logger.debug('[PUSH] Error sending to all devices:', serializeAxiosErrorForLog(error))
             throw error

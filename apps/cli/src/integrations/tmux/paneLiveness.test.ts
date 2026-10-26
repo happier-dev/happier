@@ -5,6 +5,7 @@ import { evaluateTmuxPaneLiveness, type TmuxPaneLivenessExecutor } from './paneL
 describe('evaluateTmuxPaneLiveness', () => {
   it('returns live pane metadata from tmux display-message output', async () => {
     const executor: TmuxPaneLivenessExecutor = async (args) => {
+      if (args[0] === 'has-session') return { returncode: 0, stdout: '', stderr: '', command: [...args] };
       expect(args).toEqual([
         'display-message',
         '-p',
@@ -27,8 +28,9 @@ describe('evaluateTmuxPaneLiveness', () => {
   it.each([
     '0\t12345\tclaude\n',
     '0_12345_claude\n',
-  ])('accepts legacy tmux liveness output without probing the target again: %s', async (stdout) => {
+  ])('accepts legacy tmux liveness output after resolving the exact target: %s', async (stdout) => {
     const executor: TmuxPaneLivenessExecutor = async (args) => {
+      if (args[0] === 'has-session') return { returncode: 0, stdout: '', stderr: '', command: [...args] };
       expect(args[0]).toBe('display-message');
       return { returncode: 0, stdout, stderr: '', command: [...args] };
     };
@@ -90,6 +92,16 @@ describe('evaluateTmuxPaneLiveness', () => {
       paneDead: true,
       observedAt: 101,
     });
+  });
+
+  it('rejects a missing target even when display-message falls back to a different live pane', async () => {
+    const executor: TmuxPaneLivenessExecutor = async (args) => args[0] === 'has-session'
+      ? { returncode: 1, stdout: '', stderr: "can't find window: @7", command: [...args] }
+      : { returncode: 0, stdout: '0|999|claude\\n', stderr: '', command: [...args] };
+
+    await expect(evaluateTmuxPaneLiveness({
+      executor, target: '=owner:@7', observedAt: 102,
+    })).resolves.toMatchObject({ paneAlive: false, paneDead: true });
   });
 
   it('checks the exact target when display-message succeeds with no pane fields', async () => {

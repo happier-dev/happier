@@ -57,6 +57,15 @@ describe('buildCodexMcpStartConfig (canonical suite)', () => {
     expect(out.config?.model_reasoning_effort).toBeUndefined();
   });
 
+  it.each(['auto', 'none', undefined] as const)('applies explicit reasoning summary %s without imposing a default', (reasoningSummary) => {
+    const out = buildCodexMcpStartConfig({ prompt: 'hi', mcpServers: {}, ...{ reasoningSummary } });
+    if (reasoningSummary === undefined) {
+      expect(out.config).not.toHaveProperty('model_reasoning_summary');
+    } else {
+      expect(out.config?.model_reasoning_summary).toBe(reasoningSummary);
+    }
+  });
+
   it('includes cwd when provided', () => {
     const out = buildCodexMcpStartConfig({
       prompt: 'hi',

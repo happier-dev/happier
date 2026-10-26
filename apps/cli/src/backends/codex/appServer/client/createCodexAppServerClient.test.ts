@@ -1,9 +1,10 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { createServer } from 'node:http';
 import { join } from 'node:path';
 import * as childProcess from 'node:child_process';
 
-import { describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { WebSocketServer } from 'ws-node';
 
 import { waitForCondition } from '@/testkit/async/waitFor';
@@ -26,7 +27,60 @@ vi.mock('node:child_process', async (importOriginal) => {
     return { ...actual, spawn: vi.fn(actual.spawn) };
 });
 
+// Fallback-lock tests must never contend with real native starts on this host.
+const osBoundary = vi.hoisted(() => ({ home: '' }));
+vi.mock('node:os', async importOriginal => {
+    const actual = await importOriginal<typeof import('node:os')>();
+    return { ...actual, userInfo: () => ({ ...actual.userInfo(), homedir: osBoundary.home }) };
+});
+beforeAll(async () => { osBoundary.home = await mkdtemp(join(tmpdir(), 'codex-client-lock-home-')); });
+afterAll(async () => { await rm(osBoundary.home, { recursive: true, force: true }); });
+
 describe('createCodexAppServerClient', () => {
+    it.each([false, true])('pins projected SQLite through the actual binary with auth/config fallback=%s', async authConfigFallback => {
+        await withTempDir('happier-codex-startup-root-', async root => {
+            const sqliteHome = join(root, 'sqlite');
+            const codexHome = join(root, 'auth-home');
+            if (authConfigFallback) {
+                await mkdir(codexHome);
+                await writeFile(join(codexHome, 'auth.json'), '{}');
+                await writeFile(join(codexHome, 'config.toml'), 'sqlite_home = "relative-store"\n');
+            }
+            const fakeAppServer = await writeFakeCodexAppServerScript({
+                dir: root,
+                importLines: ['import { mkdir, writeFile } from "node:fs/promises";', 'import { join } from "node:path";'],
+                versionOutput: 'codex-cli 0.162.1',
+                bodyLines: [
+                    'for await (const line of rl) {',
+                    '  if (!line.trim()) continue;',
+                    '  const msg = JSON.parse(line);',
+                    '  if (msg.method === "initialize") {',
+                    '    await mkdir(process.env.CODEX_SQLITE_HOME, { recursive: true });',
+                    '    await writeFile(join(process.env.CODEX_SQLITE_HOME, "state_5.sqlite"), "SQLite format 3");',
+                    '    process.stdout.write(JSON.stringify({ id: msg.id, result: {} }) + "\\n");',
+                    '  } else if (msg.method === "test/argv") {',
+                    '    process.stdout.write(JSON.stringify({ id: msg.id, result: process.argv.slice(2) }) + "\\n");',
+                    '  }',
+                    '}',
+                ],
+            });
+            const client = await createCodexAppServerClient({
+                cwd: root,
+                processEnv: createCodexAppServerProcessEnv(fakeAppServer, { CODEX_HOME: codexHome, CODEX_SQLITE_HOME: sqliteHome }),
+                configOverrides: ['model="kept"'],
+            });
+            try {
+                const argv = await client.request('test/argv');
+                expect(argv).toEqual(['app-server', '--listen', 'stdio://', '-c', 'model="kept"', '-c', `sqlite_home=${JSON.stringify(sqliteHome)}`]);
+                if (authConfigFallback) {
+                    await expect(readFile(join(sqliteHome, '.happier-codex-native-startup.version'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+                } else {
+                    expect(await readFile(join(sqliteHome, '.happier-codex-native-startup.version'), 'utf8')).toBe('0.162.1\n');
+                }
+            } finally { await client.dispose(); }
+        });
+    });
+
     it('serializes native initialization for shared SQLite state without serializing ongoing clients', async () => {
         await withTempDir('happier-codex-app-server-native-startup-', async (root) => {
             await mkdir(join(root, 'sqlite'), { recursive: true });

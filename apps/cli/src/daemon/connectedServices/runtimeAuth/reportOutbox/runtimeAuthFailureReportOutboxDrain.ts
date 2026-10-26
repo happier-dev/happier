@@ -4,6 +4,7 @@ import {
   drainRuntimeAuthFailureReportOutboxItems,
 } from './runtimeAuthFailureReportOutbox';
 import { resolveRuntimeAuthFailureReportOutboxDelivery } from './resolveRuntimeAuthFailureReportOutboxDelivery';
+import { isConnectedServiceRuntimeFailureReportApplicable } from '../sanitizeConnectedServiceRuntimeFailureClassification';
 import type {
   DrainRuntimeAuthFailureReportOutboxItemsResult,
   RuntimeAuthFailureReportOutboxItem,
@@ -31,6 +32,7 @@ export async function drainRuntimeAuthFailureReportOutboxToDaemon(input: Readonl
     ...(input.nowMs === undefined ? {} : { nowMs: input.nowMs }),
     ...(input.maxItemAgeMs === undefined ? {} : { maxItemAgeMs: input.maxItemAgeMs }),
     deliver: async (item) => {
+      if (!isConnectedServiceRuntimeFailureReportApplicable(item.classification)) return { status: 'drop' };
       const response = await notify({
         reportId: item.reportId,
         sessionId: item.sessionId,

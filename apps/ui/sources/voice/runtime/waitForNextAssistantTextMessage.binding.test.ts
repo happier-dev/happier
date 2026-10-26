@@ -6,7 +6,7 @@ import type { Message } from '@/sync/domains/messages/messageTypes';
 import { storage } from '@/sync/domains/state/storageStore';
 import type { Session } from '@/sync/domains/state/storageTypes';
 
-import { captureSessionTurnBaseline, waitForTurnFinalAssistantText } from './waitForNextAssistantTextMessage';
+import { captureSessionTurnBaseline, collectFinalAssistantReplySinceBaseline, waitForTurnFinalAssistantText } from './waitForNextAssistantTextMessage';
 
 const initialState = storage.getState();
 let abort: AbortController;
@@ -55,6 +55,36 @@ afterEach(() => {
 });
 
 describe('voice reply binding through the real transcript store', () => {
+  it('reads a delayed committed voice input before its reply when an unsequenced permission row is present', () => {
+    storage.setState({ sessions: { s1: createSessionFixture({
+      id: 's1',
+      agentState: { requests: { permission: {
+        tool: 'Bash', arguments: { command: 'pwd' }, createdAt: 2_000,
+      } } },
+    }) } });
+    storage.getState().applyMessages('s1', []);
+    const baseline = captureSessionTurnBaseline('s1');
+
+    storage.getState().applyMessages('s1', [{
+      id: 'reply', seq: 13, localId: null, createdAt: 1_000,
+      isSidechain: false, role: 'agent',
+      content: [{ type: 'text', text: 'Your answer.', uuid: 'reply', parentUUID: null }],
+    }]);
+    // The sending client and provider can have different clocks. The delayed user
+    // acknowledgement still owns an earlier transcript sequence than the answer.
+    storage.getState().applyMessages('s1', [{
+      id: 'submitted', seq: 12, localId: 'voice-input', createdAt: 3_000,
+      isSidechain: false, role: 'user', content: { type: 'text', text: 'question' },
+    }]);
+
+    expect(collectFinalAssistantReplySinceBaseline('s1', baseline, {
+      localId: 'voice-input', endSeqInclusive: 13,
+    })).toBe('Your answer.');
+    const entry = storage.getState().sessionMessages.s1!;
+    expect(entry.messageIdsOldestFirst.map((id) => entry.messagesById[id]?.seq)
+      .filter((seq) => typeof seq === 'number')).toEqual([12, 13]);
+  });
+
   it('completes when the voice input steered the already-running turn', async () => {
     publish(turns('turn-a', 'in_progress', [10]), []);
     const baseline = captureSessionTurnBaseline('s1');

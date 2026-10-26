@@ -76,13 +76,18 @@ const stylesheet = StyleSheet.create((theme) => ({
         color: theme.colors.status.connecting,
         marginBottom: 12,
     },
+    // Buttons share the row while their labels fit and stack once a label would truncate
+    // (narrow phones, larger text, longer translations).
     buttonRow: {
         flexDirection: 'row',
+        flexWrap: 'wrap',
         gap: 12,
         marginBottom: 12,
     },
     buttonWrapper: {
-        flex: 1,
+        flexGrow: 1,
+        flexShrink: 0,
+        flexBasis: 'auto',
     },
     statusText: {
         ...Typography.default(),

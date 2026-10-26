@@ -121,7 +121,12 @@ async function startRecording(sessionId: string): Promise<void> {
     return;
   }
 
-  const nextRecorder = new AudioModule.AudioRecorder(RecordingPresets.HIGH_QUALITY);
+  // Expo's types describe the native module; its web namespace exposes AudioRecorderWeb.
+  const audioModule = AudioModule as typeof AudioModule & {
+    AudioRecorderWeb?: typeof AudioModule.AudioRecorder;
+  };
+  const Recorder = audioModule.AudioRecorderWeb ?? audioModule.AudioRecorder;
+  const nextRecorder = new Recorder(RecordingPresets.HIGH_QUALITY);
   try {
     await nextRecorder.prepareToRecordAsync();
     nextRecorder.record();

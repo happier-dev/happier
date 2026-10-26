@@ -20,14 +20,14 @@ Happier can notify you when a session needs attention, including:
 On the mobile app, permission and action-request notifications can also expose **action buttons**:
 
 - **Permission requests**: `Allow` / `Deny`
-- **User-action requests**: `Answer`
+- **User-action requests**: `Answer`; development builds can also offer numbered choices or `Reply` for simple questions
 
 Current behavior is intentionally conservative:
 
 - tapping the notification opens the targeted session
-- `Answer` opens the app on the targeted session
-- `Allow` and `Deny` open the app on iOS and on Android builds without background actions
-- **Development builds only:** Android background actions can send `Allow` and `Deny` without opening the app when registration succeeds. If registration is unavailable, the buttons open the app. Registration does not guarantee delivery: background work can still fail without opening Happier. Open the session to check the current request if the response is unconfirmed.
+- `Answer` opens the app on the targeted session. In development builds, supported simple questions can instead be answered with numbered choices or the system's `Reply` text input; complex questions keep the session flow.
+- `Allow` and `Deny` open the app on builds without background actions
+- **Development builds only:** Android and compatible new iOS builds can send `Allow` and `Deny` without opening the app when background registration succeeds. Both iOS buttons require unlock. Banner actions have been validated on an iOS 18.6 simulator using simulated APNs delivery; Notification Center expansion remains unresolved, and remote delivery and physical-device validation remain pending. If registration is unavailable, the buttons open the app. Background work can still fail without opening Happier; open the session to check an unconfirmed response.
 - Happier only auto-sends a permission response when the notification’s server is already active or already saved on the device
 - when an action opens Happier and its server is not saved yet, Happier uses the safest add/switch flow instead of silently approving on the wrong server
 
@@ -39,7 +39,9 @@ For the exact routing behavior, see [Notification routing](/extras/notifications
 
 With previews enabled, permission notifications include the requested command or file path and any supplied explanation. Question notifications include the question text, answer options and their descriptions, and whether multiple selections or a custom answer are allowed. Happier formats the supported request fields rather than sending raw tool-input JSON. Supported requests can also include a plan for approval, a history-import explanation, or a web URL or search query.
 
-These details may appear on the lock screen or be received by your webhook endpoint. Turn request previews off to retain a generic notification without its command or question content. The notification still opens the session; the `Answer` action opens the question in the app.
+For inline push replies, the push payload also contains the question key and exact option values needed to submit a choice. Disable request previews to omit that answer mapping.
+
+Request details may appear on the lock screen or be received by your webhook endpoint. Turn request previews off to retain a generic notification without its command or question content. This also disables inline question answers. The notification still opens the session; the `Answer` action opens the question in the app.
 
 Long push previews are shortened with an ellipsis to fit the outbound payload budget while preserving session and request routing. Open the session for the complete content. Expo also enforces its own [notification payload limits](https://docs.expo.dev/push-notifications/sending-notifications/).
 
@@ -124,6 +126,12 @@ Current settings include:
 When you are already looking at a given session, Happier suppresses notifications for that same session to avoid duplicate noise while you are actively reading it.
 
 ## What you need to configure
+
+### Test remote delivery in development builds
+
+The push troubleshooting screen includes **Send a remote test**. It asks a connected, updated machine on the selected Home to send a real push to this phone's registered token through the normal Expo sender. It requires that phone's registration and an online machine signed into the same Home and Account.
+
+The result distinguishes service acceptance, registration problems, rejected app credentials, an unsupported CLI, and an unconfirmed result. **Service acceptance does not prove that the phone received or displayed the notification.** Check the phone's notifications separately. If the result is unconfirmed, the request may still complete; check before sending another test. A local sound preview does not test remote delivery.
 
 ### 1) Server (any deployment)
 

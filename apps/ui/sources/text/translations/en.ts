@@ -441,7 +441,8 @@ export const en = {
         commands: {
             composerAbortConfirm: 'Confirm abort',
             composerFocus: 'Focus composer',
-            composerSendImmediate: 'Send immediately',
+            composerSendImmediate: 'Alternate send (queue / steer)',
+            composerSendInterrupt: 'Interrupt and send',
             composerSendPending: 'Send to pending queue',
             commandPaletteOpen: 'Open command palette',
             modeCycle: 'Cycle mode',
@@ -477,6 +478,10 @@ export const en = {
     },
 
     transcript: {
+        quote: {
+            action: 'Quote',
+            actionA11y: 'Quote the selected text in your message',
+        },
         selection: {
             enterA11y: 'Enter selection mode',
             exitA11y: 'Exit selection mode',
@@ -3458,6 +3463,17 @@ export const en = {
             openSettingsFailed: 'Could not open system settings.',
         },
         pushTroubleshooting: {
+            remoteTest: {
+                title: "Send a remote test",
+                subtitle: "Send a real push to this phone through a connected machine on this Home.",
+                notRegistered: "Register this phone’s token, then try again.",
+                noMachine: "Connect a machine on this Home to send a remote test.",
+                accepted: "The push service accepted the test. This does not confirm that your phone received or displayed it. Check your notifications.",
+                rejected: "The push service did not confirm acceptance. Check your notifications and registration before trying again.",
+                invalidCredentials: "The push provider rejected this app’s credentials. Check APNs or FCM configuration.",
+                unsupported: "Update the connected machine’s Happier CLI to send remote tests.",
+                unconfirmed: "The result could not be confirmed. The request may still complete; check your notifications before trying again.",
+            },
             status: {
                 title: 'Status',
                 footer: 'Checks the account setting, OS permission, and server registration state.',
@@ -3593,8 +3609,12 @@ export const en = {
     },
 
     notifications: {
-        permissionActionNeedsReview: "The notification permission response could not be confirmed. Open the session and check its current request before responding again.",
+        permissionActionNeedsReview: "The response sent from the notification could not be confirmed. Review pending requests before responding again.",
+        permissionActionReviewUnavailable: "We couldn’t open the Home and Account for this response. Check your connection and sign-in in Settings, then review pending requests.",
         actions: {
+            reviewPendingRequests: "Review pending requests",
+            questionReply: "Reply",
+            questionPlaceholder: "Your answer",
             allow: 'Allow',
             deny: 'Deny',
             answer: 'Answer',
@@ -4114,6 +4134,16 @@ export const en = {
 	                    },
 	                },
 	                fields: {
+	                    codexReasoningSummaries: {
+	                        title: "Reasoning summaries",
+	                        footer: "Controls whether Codex generates summaries, independently of transcript display. Applies when starting or resuming a session. Availability depends on the model.",
+	                        generation: "Generation",
+	                        options: {
+	                            default: "Use your Codex configuration or model default.",
+	                            enabled: "Request summaries when the model supports them.",
+	                            disabled: "Do not generate reasoning summaries.",
+	                        },
+	                    },
 	                    codexBackendMode: {
 	                        title: 'Codex routing mode',
 	                        subtitle: 'Select App Server, ACP, or MCP.',
@@ -4149,6 +4179,8 @@ export const en = {
 
     settingsAppearance: {
       tabBarAppearance: {
+        sideRailTitle: "Tabs in side rail",
+        sideRailSubtitle: "Turn off to use Happier's tab bar and its swipe gestures.",
         title: 'Tab bar',
         footer: 'Customize the bottom tab bar.',
         showLabels: 'Show tab labels',
@@ -6469,6 +6501,11 @@ export const en = {
     },
 
     agentInput: {
+        sendOptions: {
+            title: "Send options",
+            queue: "Queue",
+            hint: "Hold to choose how to send",
+        },
         chipPicker: {
             selectedOptionAccessibilityLabel: ({ option }: { option: string }) => `${option}. Selected.`,
         },

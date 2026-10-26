@@ -35,6 +35,7 @@ import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSes
 import { teleportVoiceAgentToSessionRoot } from '@/voice/agent/teleportVoiceAgentToSessionRoot';
 import { storage } from '@/sync/domains/state/storage';
 import { getStructuredQuestionAnswersV1Supported } from '@/sync/domains/state/agentStateCapabilities';
+import { sessionRespondToStructuredQuestion } from '../sessionStructuredQuestion';
 import { resetVoiceAgentPersistenceState } from '@/voice/persistence/resetVoiceAgentPersistenceState';
 import type { ArtifactHeader } from '@/sync/domains/artifacts/artifactTypes';
 import { openSessionForVoiceTool } from '@/voice/tools/actionImpl/openSession';
@@ -362,11 +363,10 @@ export function createDefaultActionExecutor(opts?: Readonly<{
         return { ok: false, errorCode: 'cli_update_required', errorMessage: 'cli_update_required', sessionId };
       }
       if (answerPayload?.send.protocol === 'structured-question-v1') {
-        return await sessionRpcWithServerScope({
+        return await sessionRespondToStructuredQuestion({
           sessionId,
-          serverId,
-          method: SESSION_RPC_METHODS.SESSION_STRUCTURED_QUESTION_RESPOND_V1,
-          payload: { id: reqId, structuredAnswersV1: answerPayload.send.structuredAnswersV1 },
+          target: { serverId },
+          request: { id: reqId, structuredAnswersV1: answerPayload.send.structuredAnswersV1 },
         });
       }
       return await sessionRespondToPermission({

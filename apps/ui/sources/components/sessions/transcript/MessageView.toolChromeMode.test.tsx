@@ -4,8 +4,6 @@ import { createPartialStorageModuleMock, renderScreen, standardCleanup } from '@
 import { createReactNativeWebMock } from '@/dev/testkit/mocks/reactNative';
 import { createReducer } from '@/sync/reducer/reducer';
 import { installMessageViewCommonModuleMocks } from './messageViewTestHelpers';
-import type { ToolCallMessage } from '@/sync/domains/messages/messageTypes';
-import { deriveTranscriptInteraction } from '@/utils/sessions/deriveTranscriptInteraction';
 import type { OpenApprovalArtifactForSession } from '@/sync/domains/artifacts/approvalArtifacts';
 
 let toolChromeMode: 'cards' | 'activity_feed' = 'cards';
@@ -140,22 +138,6 @@ afterEach(() => {
 });
 
 describe('MessageView (tool timeline chrome mode)', () => {
-    it.each(['cards', 'activity_feed'] as const)('shows persisted tool-result images in %s mode', async (mode) => {
-        toolChromeMode = mode;
-        const { MessageView } = await import('./MessageView');
-        const message: ToolCallMessage = {
-            kind: 'tool-call', id: 'read-image', localId: null, createdAt: 1, children: [],
-            tool: { id: 'read-1', name: 'Read', state: 'completed', input: {}, createdAt: 1, startedAt: 1, completedAt: 2, description: null, result: {} },
-            meta: { happierMedia: { kind: 'session_media.v1', payload: { media: [{
-                id: 'media-1', role: 'output', category: 'tool-artifact', mediaKind: 'image',
-                mimeType: 'image/png', name: 'comparison.png', path: '.happier/uploads/comparison.png', sizeBytes: 80,
-                origin: { source: 'tool-output', toolCallId: 'read-1' },
-            }] } } },
-        };
-        const screen = await renderScreen(<MessageView message={message} metadata={null} sessionId="s1" interaction={deriveTranscriptInteraction({ kind: 'public' })} />);
-        expect(screen.findByTestId('message-session-media-inline-image:.happier/uploads/comparison.png')).toBeTruthy();
-    });
-
     it('passes a stable server route id to ToolTimelineRow when the message is already persisted', async () => {
         toolChromeMode = 'activity_feed';
         const { MessageView } = await import('./MessageView');

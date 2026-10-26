@@ -1017,6 +1017,7 @@ export class ConnectedServiceAuthGroupSwitchCoordinator {
       const result = await this.applyObservedGeneration(buildSessionApplyFromLeaseCompletion({
         completion: observed,
         ...(input.sessionId ? { sessionId: input.sessionId } : {}),
+        reason: input.reason,
       }));
       this.maybeEmitSwitchPipelineResult({
         trigger,

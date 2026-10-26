@@ -239,6 +239,7 @@ export function buildActivityNotificationContent(
       occurrenceId: event.occurrenceId,
       toolName: event.toolName,
       toolDetails,
+      toolInput: options.requestIncludeMessageText === false ? undefined : event.toolInput,
     });
     return {
       title: built.title,

@@ -499,8 +499,7 @@ describe('App RootLayout notifications', () => {
 
         await renderRootLayout();
 
-        expect(mockState.navigateSpy).toHaveBeenCalledWith('/session/s_allow', expect.any(Object));
-        expect(mockState.navigateSpy.mock.calls[0]?.[1]?.dangerouslySingular?.()).toBe('session');
+        expect(mockState.pushSpy).toHaveBeenCalledWith('/session/s_allow');
     });
 
     it('switches to the saved server and opens review for an older permission notification', async () => {
@@ -729,7 +728,6 @@ describe('App RootLayout notifications', () => {
 
         await renderRootLayout();
 
-        expect(mockState.navigateSpy).toHaveBeenCalledWith('/session/s_deny', expect.any(Object));
-        expect(mockState.navigateSpy.mock.calls[0]?.[1]?.dangerouslySingular?.()).toBe('session');
+        expect(mockState.pushSpy).toHaveBeenCalledWith('/session/s_deny');
     });
 });

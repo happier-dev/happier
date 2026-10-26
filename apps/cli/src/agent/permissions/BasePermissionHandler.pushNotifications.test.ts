@@ -21,6 +21,10 @@ class FakeRpcHandlerManager {
 class FakeSession {
   sessionId = 'session-test';
   rpcHandlerManager = new FakeRpcHandlerManager();
+  private permissionRpcRouter: SessionPermissionRpcRouter | null = null;
+  getOrCreatePermissionRpcRouter(): SessionPermissionRpcRouter {
+    return this.permissionRpcRouter ??= new SessionPermissionRpcRouter(this.rpcHandlerManager);
+  }
   agentState: any = { requests: {}, completedRequests: {} };
   metadata: any = {
     flavor: 'codex',

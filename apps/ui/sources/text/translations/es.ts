@@ -627,7 +627,8 @@ export const es: TranslationStructure = {
         commands: {
             composerAbortConfirm: 'Confirmar cancelación',
             composerFocus: 'Enfocar el compositor',
-            composerSendImmediate: 'Enviar de inmediato',
+            composerSendImmediate: 'Envío alternativo (cola / dirigir)',
+            composerSendInterrupt: 'Interrumpir y enviar',
             composerSendPending: 'Enviar a la cola pendiente',
             commandPaletteOpen: 'Abrir paleta de comandos',
             modeCycle: 'Cambiar modo',
@@ -663,6 +664,14 @@ export const es: TranslationStructure = {
   },
 
   transcript: {
+
+    quote: {
+
+      action: 'Citar',
+
+      actionA11y: 'Citar el texto seleccionado en tu mensaje',
+
+    },
 
     selection: {
 
@@ -3732,6 +3741,17 @@ export const es: TranslationStructure = {
         openSettingsFailed: 'No se pudieron abrir los ajustes del sistema.',
     },
     pushTroubleshooting: {
+            remoteTest: {
+                title: "Enviar prueba remota",
+                subtitle: "Envía una notificación push real a este teléfono mediante una máquina conectada a este Home.",
+                notRegistered: "Registra el token de este teléfono y vuelve a intentarlo.",
+                noMachine: "Conecta una máquina a este Home para enviar una prueba remota.",
+                accepted: "El servicio push aceptó la prueba. Esto no confirma que el teléfono la haya recibido o mostrado. Revisa tus notificaciones.",
+                rejected: "El servicio push no confirmó la aceptación. Revisa tus notificaciones y el registro antes de intentarlo de nuevo.",
+                invalidCredentials: "El proveedor push rechazó las credenciales de esta app. Revisa la configuración de APNs o FCM.",
+                unsupported: "Actualiza la CLI de Happier de la máquina conectada para enviar pruebas remotas.",
+                unconfirmed: "No se pudo confirmar el resultado. La solicitud aún puede completarse; revisa tus notificaciones antes de intentarlo de nuevo.",
+            },
       status: {
         title: "Estado",
         footer:
@@ -3879,8 +3899,12 @@ export const es: TranslationStructure = {
   },
 
     notifications: {
-        permissionActionNeedsReview: "No se pudo confirmar la respuesta de permiso de la notificación. Abre la sesión y revisa la solicitud actual antes de volver a responder.",
+        permissionActionNeedsReview: "No se pudo confirmar la respuesta enviada desde la notificación. Revisa las solicitudes pendientes antes de volver a responder.",
+        permissionActionReviewUnavailable: "No se pudieron abrir el Home y la cuenta de esta respuesta. Revisa la conexión y el inicio de sesión en Ajustes y, después, las solicitudes pendientes.",
       actions: {
+            reviewPendingRequests: "Revisar solicitudes pendientes",
+            questionReply: "Responder",
+            questionPlaceholder: "Tu respuesta",
         allow: 'Permitir',
         deny: 'Denegar',
         answer: 'Responder',
@@ -4383,6 +4407,16 @@ export const es: TranslationStructure = {
 	          },
 	        },
 	        fields: {
+	          codexReasoningSummaries: {
+	              title: "Resúmenes del razonamiento",
+	              footer: "Controla si Codex genera resúmenes, independientemente de su visualización en la conversación. Se aplica al iniciar o reanudar una sesión. La disponibilidad depende del modelo.",
+	              generation: "Generación",
+	              options: {
+	                  default: "Usa tu configuración de Codex o el valor predeterminado del modelo.",
+	                  enabled: "Solicita resúmenes si el modelo los admite.",
+	                  disabled: "No generes resúmenes del razonamiento.",
+	              },
+	          },
 	          codexBackendMode: {
 	            title: "Modo de enrutamiento de Codex",
 	            subtitle: "Selecciona App Server, ACP o MCP.",
@@ -4418,6 +4452,8 @@ export const es: TranslationStructure = {
 
   settingsAppearance: {
     tabBarAppearance: {
+      sideRailTitle: "Pestañas en la barra lateral",
+      sideRailSubtitle: "Desactiva esta opción para usar la barra de pestañas de Happier y sus gestos de deslizamiento.",
       title: 'Barra de pestañas',
       footer: 'Personaliza la barra de pestañas inferior.',
       showLabels: 'Mostrar etiquetas de pestañas',
@@ -6810,6 +6846,11 @@ export const es: TranslationStructure = {
   },
 
   agentInput: {
+      sendOptions: {
+          title: "Opciones de envío",
+          queue: "Poner en cola",
+          hint: "Mantén pulsado para elegir cómo enviar",
+      },
       chipPicker: {
           selectedOptionAccessibilityLabel: ({ option }: { option: string }) => `${option}. Seleccionado.`,
       },

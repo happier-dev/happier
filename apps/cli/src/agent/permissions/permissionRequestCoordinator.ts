@@ -243,24 +243,13 @@ export class PermissionRequestCoordinator<TResult> {
      * Returns response context only when this runtime still owns an active provider waiter.
      * Persisted agent state and detached records are deliberately insufficient for structured answers.
      */
-    getLocallyOwnedLiveResponseContext(requestId: string): PermissionRequestCoordinatorContext | null {
-        if (this.isRequestClaimed(requestId)) return null;
-        this.pruneDetachedRecords();
+    getLocallyOwnedLiveResponseContext(requestId: string, expectedOccurrenceId?: string): PermissionRequestCoordinatorContext | null {
+        const context = this.getResponseContext(requestId, expectedOccurrenceId);
         const entry = this.pendingRequests.get(requestId);
-        if (!entry || entry.status !== 'live') return null;
+        if (!context || !entry || entry.status !== 'live') return null;
         const hasLiveWaiter = [...entry.waiters.values()].some((waiter) => !waiter.aborted);
         if (!hasLiveWaiter) return null;
-        return {
-            requestId,
-            toolName: entry.toolName,
-            toolInput: entry.toolInput,
-            createdAt: entry.createdAt,
-            ...(typeof entry.kind === 'string' ? { kind: entry.kind } : {}),
-            ...(typeof entry.source === 'string' ? { source: entry.source } : {}),
-            sourceLocalId: entry.sourceLocalId,
-            correlation: 'record',
-            status: 'live',
-        };
+        return context;
     }
 
     private isInvalidatedDecision(requestId: string, status: string): boolean {

@@ -38,6 +38,31 @@ the session supports steering. An explicit per-send Pending intent or the
 **Server pending** busy policy keeps `enqueue`. Runtime readiness and payload
 steerability still gate delivery through the existing Pending owner.
 
+The existing-session composer's send button offers per-message choices on long
+press (or right-click on web): **Steer now** when steering is supported, **Queue**,
+and **Send now (interrupt)**. Selecting a choice submits the current draft through
+the same submission owner, overriding the saved send preference for that message.
+A normal tap keeps the saved behavior; dismissing the menu preserves the draft.
+Voice, Stop, pending-message editing, participant routing, and armed Agent
+continuations retain their own actions without this menu.
+
+Composer shortcuts in development source use the platform modifier: Command on
+Apple platforms and Control elsewhere. Normal submit follows the saved delivery
+preference. `Mod+Enter` selects the other noninterrupting action (steer when the
+default queues; queue when the default steers). `Mod+Shift+Enter` explicitly
+interrupts and sends. With no composer text or attachments, these two shortcuts
+instead steer or interrupt-and-send the first queued row, respectively; they do
+not replay history or create a new copy. An unavailable row or empty queue is a
+no-op. Pending interrupt actions retain their confirmation, and failures leave
+queued custody intact.
+
+The send menu and hover/focus tooltip show the effective shortcuts, including
+custom bindings. The existing persisted `composer.sendImmediate` command id now
+names alternate send; `composer.sendPending` remains rebindable with no default,
+and `composer.sendInterrupt` owns the new Shift binding. No settings format or
+Pending wire shape changes. Explicit steering never selects interrupt as a fallback.
+
+
 ## UI settlement convergence (development)
 
 Provider acceptance carries the exact Pending `localId` to `SessionClient`, which

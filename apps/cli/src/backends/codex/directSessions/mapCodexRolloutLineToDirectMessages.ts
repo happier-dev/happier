@@ -77,6 +77,26 @@ export function mapCodexProjectedEventsToDirectMessages(params: Readonly<{
       continue;
     }
 
+    if (action.type === 'thinking') {
+      out.push({
+        id: stableId,
+        localId: stableId,
+        createdAtMs,
+        raw: {
+          role: 'agent',
+          content: {
+            type: 'codex',
+            data: {
+              type: 'thinking',
+              text: action.text,
+              ...(action.sidechainId ? { sidechainId: action.sidechainId } : {}),
+            },
+          },
+        },
+      });
+      continue;
+    }
+
     if (action.type === 'assistant-text') {
       out.push({
         id: stableId,

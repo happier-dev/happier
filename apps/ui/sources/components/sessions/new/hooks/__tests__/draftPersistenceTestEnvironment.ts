@@ -147,6 +147,7 @@ export const TEST_DRAFT_ID = '8e0a5dd1-b1df-43dd-b51e-b7787b30362e';
 const repositoryHarnessState = vi.hoisted(() => ({
     seeding: false,
     seeded: false,
+    liveSubscriptions: false,
     lastSavedDraft: {} as Record<string, unknown>,
 }));
 const computeNewSessionInputMaxHeightMock = vi.hoisted(() => vi.fn((_params: unknown) => 100));
@@ -577,8 +578,11 @@ vi.mock('@/sync/ops/sessionDrafts/sessionDraftRepository', async (importOriginal
         // This legacy screen-model harness drives repository replacement and hook rerenders
         // explicitly. Repository subscription behavior is covered by the projection owner tests;
         // suppressing notifications here prevents unrelated autosave updates from recursively
-        // re-entering the oversized mocked screen graph.
-        subscribeSessionDraft: () => () => undefined,
+        // re-entering the oversized mocked screen graph. A test that asserts the screen's own
+        // reaction to a repository change opts in with `enableLiveSessionDraftSubscriptions()`.
+        subscribeSessionDraft: (...args: Parameters<typeof actual.subscribeSessionDraft>) => (
+            repositoryHarnessState.liveSubscriptions ? actual.subscribeSessionDraft(...args) : () => undefined
+        ),
         getSessionDraftSnapshot: (...args: Parameters<typeof actual.getSessionDraftSnapshot>) => {
             if (!repositoryHarnessState.seeding) loadNewSessionDraftMock();
             return actual.getSessionDraftSnapshot(...args);
@@ -978,6 +982,7 @@ export async function resetDraftPersistenceState(): Promise<void> {
     });
     repositoryHarnessState.seeding = false;
     repositoryHarnessState.seeded = false;
+    repositoryHarnessState.liveSubscriptions = false;
     repositoryHarnessState.lastSavedDraft = {};
     platformOsState.value = 'web';
     modalShowMock.mockReset();
@@ -1173,6 +1178,11 @@ export async function resetDraftPersistenceState(): Promise<void> {
     createSessionActionDraftMock.mockClear();
 }
 
+/** Delivers repository notifications to screens mounted after this call (reset per test). */
+export function enableLiveSessionDraftSubscriptions(): void {
+    repositoryHarnessState.liveSubscriptions = true;
+}
+
 export async function flushInteractionQueue(): Promise<void> {
     while (interactionQueueState.callbacks.length > 0) {
         const callback = interactionQueueState.callbacks.shift();
@@ -1221,6 +1231,9 @@ export async function renderNewSessionScreenModel(assignModel: (nextModel: unkno
 }
 
 export async function replaceRepositoryDraftFromPersistedFixture(): Promise<void> {
+    // Settle the screen-model import graph first: these adapter imports belong to it, and
+    // importing them while that graph is still evaluating deadlocks the module runner.
+    await useNewSessionScreenModelModulePromise;
     const scope = activeServerAccountScopeState.value;
     if (!scope) return;
     const { buildNewSessionAuthoringDraftFromPersistedDraft } = await import('@/components/sessions/authoring/draft/sessionAuthoringDraftAdapters');

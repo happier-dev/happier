@@ -1,10 +1,11 @@
-import type { notifyDaemonConnectedServiceRuntimeAuthFailure } from '@/daemon/controlClient';
+import type { notifyDaemonConnectedServiceRuntimeAuthFailure, notifyDaemonConnectedServiceQuotaSnapshot } from '@/daemon/controlClient';
 import { sanitizeConnectedServiceRuntimeFailureClassification } from '@/daemon/connectedServices/runtimeAuth/sanitizeConnectedServiceRuntimeFailureClassification';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { logger } from '@/ui/logger';
 import type { SessionRuntimeIssueV1 } from '@happier-dev/protocol';
 
 import { HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY } from '@/daemon/connectedServices/connectedServiceChildEnvironment';
@@ -21,6 +22,9 @@ import { readClaudeMaterializedOAuthAccountIdentity } from './resolveClaudeRunti
 import { createSessionTurnLifecycle } from '@/agent/runtime/session/turn/lifecycle';
 import type { SessionTurnMutationV1 } from '@/api/session/mutations/sessionMutationTypes';
 import type { FailTurnInput } from '@/agent/runtime/session/turn/types';
+import { createClaudeUnifiedHookLifecycleBridge } from '../unifiedTerminal/createClaudeUnifiedHookLifecycleBridge';
+import { createClaudeUnifiedInputArbiter } from '../unifiedTerminal/createClaudeUnifiedInputArbiter';
+import type { SessionHookData } from '../utils/startHookServer';
 
 import {
   recordClaudeRateLimitQuotaEvidence,
@@ -29,7 +33,7 @@ import {
 } from './surfaceClaudeRuntimeIssues';
 
 const mockNotifyDaemonConnectedServiceRuntimeAuthFailure = vi.hoisted(() => vi.fn<(input: Parameters<typeof notifyDaemonConnectedServiceRuntimeAuthFailure>[0]) => Promise<unknown>>(async () => ({})));
-const mockNotifyDaemonConnectedServiceQuotaSnapshot = vi.hoisted(() => vi.fn(async () => ({ ok: true })));
+const mockNotifyDaemonConnectedServiceQuotaSnapshot = vi.hoisted(() => vi.fn<(input: Parameters<typeof notifyDaemonConnectedServiceQuotaSnapshot>[0]) => Promise<unknown>>(async () => ({ ok: true })));
 vi.mock('@/daemon/controlClient', () => ({
   notifyDaemonConnectedServiceRuntimeAuthFailure: mockNotifyDaemonConnectedServiceRuntimeAuthFailure,
   notifyDaemonConnectedServiceQuotaSnapshot: mockNotifyDaemonConnectedServiceQuotaSnapshot,
@@ -598,6 +602,155 @@ describe('surfaceClaudeRuntimeIssues runtime-auth projection', () => {
     }
   });
 
+  it.each([false, true])('marks rejected primary quota delivery as evidence-only without changing sidechain eligibility (sidechain=%s)', async sidechain => {
+    const previousSelectionEnv = installClaudeSelectionEnv();
+    try {
+      await surfaceClaudeRateLimitRuntimeIssue({ client: { sessionId: `claude-policy-source-${sidechain}` } }, {
+        v: 1, resetAtMs: Date.now() + 60_000, retryAfterMs: null, limitCategory: 'usage_limit',
+        quotaScope: 'account', recoverability: 'switch_account', providerLimitId: 'five_hour',
+        planType: null, utilization: 100, overage: null, action: null, connectedService: null,
+        sourceProviderAccountId: 'policy-account', sourceProviderOrganizationId: 'policy-org',
+        ...(sidechain ? { sourcedFromSidechain: true } : {}),
+      }, '[test]');
+      const delivered = mockNotifyDaemonConnectedServiceQuotaSnapshot.mock.calls[0]?.[0];
+      expect(delivered).toMatchObject({ sourceProviderAccountId: 'policy-account', groupId: 'team-pool',
+        snapshot: { activeAccountId: 'policy-account', providerOrganizationId: 'policy-org', profileId: 'claude-main' } });
+      if (sidechain) expect(delivered).not.toHaveProperty('policyDisposition');
+      else expect(delivered).toHaveProperty('policyDisposition', 'evidence_only');
+      expect(mockNotifyDaemonConnectedServiceRuntimeAuthFailure).toHaveBeenCalledTimes(sidechain ? 0 : 1);
+    } finally { restoreClaudeSelectionEnv(previousSelectionEnv); }
+  });
+
+  it('retains failed quota delivery for retry and reports it on the default file log', async () => {
+    const previousSelectionEnv = installClaudeSelectionEnv();
+    const diagnostic = vi.spyOn(logger, 'warnFile').mockImplementation(() => {});
+    mockNotifyDaemonConnectedServiceQuotaSnapshot.mockResolvedValueOnce({ ok: false, errorCode: 'quota_transport_unavailable' });
+    mockNotifyDaemonConnectedServiceQuotaSnapshot.mockResolvedValue({ ok: true });
+    try {
+      await recordClaudeRateLimitQuotaEvidence({ client: { sessionId: 'quota-background-retry' } }, [{
+        v: 1, resetAtMs: Date.now() + 60_000, retryAfterMs: null, quotaScope: 'account',
+        recoverability: 'wait', providerLimitId: 'five_hour', planType: null, utilization: 95,
+        overage: null, action: null, connectedService: null,
+        sourceProviderAccountId: 'retry-account', sourceProviderOrganizationId: 'retry-org',
+      }], '[test]');
+      await vi.waitFor(() => expect(diagnostic).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
+        event: 'quota_snapshot_delivery_retrying', sessionId: 'quota-background-retry', attemptCount: 1,
+      })));
+      // The outbox's existing retry cadence, not a new report queue, owns redelivery.
+      await vi.waitFor(() => expect(mockNotifyDaemonConnectedServiceQuotaSnapshot).toHaveBeenCalledTimes(2), { timeout: 3_000 });
+      expect(mockNotifyDaemonConnectedServiceRuntimeAuthFailure).not.toHaveBeenCalled();
+    } finally {
+      // Drain the real timer before restoring the shared transport boundary.
+      await vi.waitFor(() => expect(mockNotifyDaemonConnectedServiceQuotaSnapshot).toHaveBeenCalledTimes(2), { timeout: 3_000 });
+      diagnostic.mockRestore();
+      restoreClaudeSelectionEnv(previousSelectionEnv);
+    }
+  });
+
+  it.each([false, true])('releases unified terminal Pending delivery while quota HTTP is held (earlier sidechain quota=%s)', async passiveFirst => {
+    const previousSelectionEnv = installClaudeSelectionEnv();
+    let releaseQuota!: () => void;
+    const quotaHeld = new Promise<void>(resolve => { releaseQuota = resolve; });
+    let quotaSettled = false;
+    mockNotifyDaemonConnectedServiceQuotaSnapshot.mockImplementation(async () => {
+      await quotaHeld;
+      quotaSettled = true;
+      return { ok: true };
+    });
+    mockNotifyDaemonConnectedServiceRuntimeAuthFailure.mockResolvedValue(createScheduledRuntimeAuthRecoveryReport());
+    const injected: string[] = [];
+    const lifecycle = createSessionTurnLifecycle({ sessionId: `unified-quota-held-${passiveFirst}`,
+      enqueueSessionTurn: async () => {},
+    });
+    const session = { client: { sessionId: `unified-quota-held-${passiveFirst}`, sessionTurnLifecycle: lifecycle } };
+    const arbiter = createClaudeUnifiedInputArbiter({ quietPeriodMs: 0,
+      injectPrompt: async batch => { injected.push(batch.message); return { status: 'injected', at: Date.now(), bytesWritten: batch.message.length }; },
+    });
+    let hook: ((data: SessionHookData) => void) | undefined;
+    const bridge = createClaudeUnifiedHookLifecycleBridge({
+      subscribeClaudeSessionHooks: callback => { hook = callback; return () => { hook = undefined; }; },
+      arbiter, completionQuiescenceMs: 0,
+      onUsageLimitDetails: details => surfaceClaudeRateLimitRuntimeIssue(session, details, '[test]'),
+      onQuotaEvidence: windows => recordClaudeRateLimitQuotaEvidence(session, windows, '[test]'),
+    });
+    try {
+      await lifecycle.beginTurn({ provider: 'claude' });
+      bridge.start({ abortSignal: new AbortController().signal });
+      if (!hook) throw new Error('Expected hook transport subscription');
+      hook({ hook_event_name: 'UserPromptSubmit', session_id: 'provider-quota-test' });
+      await arbiter.enqueueUiMessage({ message: 'continue after recovery', origin: { kind: 'ui_pending' } });
+      expect(injected).toEqual([]);
+      if (passiveFirst) bridge.observeTranscript({ type: 'assistant', uuid: 'quota-sidechain-observation',
+        isSidechain: true, isApiErrorMessage: true, apiErrorStatus: 429,
+        error: 'rate_limit_error', message: { content: [{ type: 'text', text: 'Usage limit reached' }] },
+      });
+      hook({ hook_event_name: 'StopFailure', session_id: 'provider-quota-test', error: 'rate_limit' });
+      await vi.waitFor(() => {
+        expect(mockNotifyDaemonConnectedServiceQuotaSnapshot).toHaveBeenCalled();
+        expect(mockNotifyDaemonConnectedServiceRuntimeAuthFailure).toHaveBeenCalledOnce();
+        expect(arbiter.snapshot().turnState).toBe('idle');
+        expect(injected).toEqual(['continue after recovery']);
+      });
+      expect(quotaSettled).toBe(false);
+      expect(lifecycle.hasActiveTurn()).toBe(false);
+    } finally {
+      releaseQuota();
+      await vi.waitFor(() => expect(quotaSettled).toBe(true));
+      bridge.dispose();
+      await arbiter.dispose();
+      restoreClaudeSelectionEnv(previousSelectionEnv);
+    }
+  });
+
+  it('admits durable usage-limit recovery without waiting for best-effort quota delivery', async () => {
+    const previousSelectionEnv = installClaudeSelectionEnv();
+    let releaseQuota!: () => void;
+    const quotaDelivery = new Promise<void>(resolve => { releaseQuota = resolve; });
+    mockNotifyDaemonConnectedServiceQuotaSnapshot.mockImplementationOnce(async () => {
+      await quotaDelivery;
+      return { ok: true };
+    });
+    mockNotifyDaemonConnectedServiceRuntimeAuthFailure.mockResolvedValueOnce(createScheduledRuntimeAuthRecoveryReport());
+    const mutations: SessionTurnMutationV1[] = [];
+    const lifecycle = createSessionTurnLifecycle({ sessionId: 'quota-delivery-held-recovery',
+      enqueueSessionTurn: async mutation => { mutations.push(mutation); },
+    });
+    let settled = false;
+    let surfaced: Promise<void> | undefined;
+    try {
+      await lifecycle.beginTurn({ provider: 'claude' });
+      surfaced = surfaceClaudeRateLimitRuntimeIssue({ client: {
+        sessionId: 'quota-delivery-held-recovery', sessionTurnLifecycle: lifecycle, sendSessionEvent: vi.fn(),
+      } }, {
+        v: 1, resetAtMs: 1_781_221_200_000, retryAfterMs: null, limitCategory: 'usage_limit',
+        quotaScope: 'account', recoverability: 'switch_account', providerLimitId: 'five_hour',
+        planType: null, utilization: 100, overage: null, action: null, connectedService: null,
+        sourceProviderAccountId: 'provider-account-current', sourceProviderOrganizationId: 'provider-org-current',
+      }, '[claude-test]');
+      void surfaced.then(() => { settled = true; });
+      await vi.waitFor(() => {
+        expect(mockNotifyDaemonConnectedServiceQuotaSnapshot).toHaveBeenCalledOnce();
+        expect(mockNotifyDaemonConnectedServiceRuntimeAuthFailure).toHaveBeenCalledOnce();
+      });
+      expect(mutations.at(-1)).toMatchObject({ action: 'fail', issue: { source: 'usage_limit' } });
+      expect(mockNotifyDaemonConnectedServiceRuntimeAuthFailure.mock.calls[0]?.[0]).toMatchObject({
+        classification: { kind: 'usage_limit', profileId: 'claude-main', groupId: 'team-pool',
+          sourceProviderAccountId: 'provider-account-current', sourceProviderOrganizationId: 'provider-org-current',
+          runtimeIssueFingerprint: expect.any(String) },
+      });
+      expect(mockNotifyDaemonConnectedServiceQuotaSnapshot.mock.calls[0]?.[0]).toMatchObject({
+        groupId: 'team-pool', groupGeneration: 4, sourceProviderAccountId: 'provider-account-current',
+        snapshot: { profileId: 'claude-main' },
+      });
+      await vi.waitFor(() => expect(settled).toBe(true));
+    } finally {
+      releaseQuota();
+      await surfaced;
+      restoreClaudeSelectionEnv(previousSelectionEnv);
+    }
+    expect(settled).toBe(true);
+  });
+
   it('does not let a stalled durable turn write block connected-service usage-limit recovery', async () => {
     const previousSelectionEnv = installClaudeSelectionEnv();
     let releaseTurnWrite!: () => void;
@@ -1072,6 +1225,7 @@ describe('surfaceClaudeRuntimeIssues runtime-auth projection', () => {
       expect(mockNotifyDaemonConnectedServiceQuotaSnapshot).toHaveBeenCalledWith({
         sessionId: 'sess_native_claude',
         serviceId: 'claude-subscription',
+        policyDisposition: 'evidence_only',
         snapshot: expect.objectContaining({
           serviceId: 'claude-subscription',
           profileId: expect.stringMatching(/^native:[a-f0-9]{48}$/u),

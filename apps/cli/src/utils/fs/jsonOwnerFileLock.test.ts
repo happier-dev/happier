@@ -176,6 +176,47 @@ afterEach(() => {
 });
 
 describe('withJsonOwnerFileLock', () => {
+  it('reports the active owner once while waiting and leaves acquisition cancellable', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-owner-lock-wait-'));
+    const lockPath = join(root, 'owner.lock');
+    const onWait = vi.fn();
+    const controller = new AbortController();
+    let releaseOwner = () => {};
+    let markEntered = () => {};
+    const entered = new Promise<void>((resolve) => { markEntered = resolve; });
+    const released = new Promise<void>((resolve) => { releaseOwner = resolve; });
+    const owner = withJsonOwnerFileLock({
+      lockPath, timeoutMs: Number.POSITIVE_INFINITY, staleAfterMs: 1_000,
+      errorCode: 'lock_timeout', onWait,
+    }, async () => { markEntered(); await released; });
+    let contender: Promise<void> | undefined;
+    try {
+      await entered;
+      expect(onWait).not.toHaveBeenCalled();
+      const originalOwner = await readFile(lockPath, 'utf8');
+      contender = withJsonOwnerFileLock({
+        lockPath, timeoutMs: Number.POSITIVE_INFINITY, staleAfterMs: 1_000,
+        errorCode: 'lock_timeout', pollIntervalMs: 2, signal: controller.signal, onWait,
+      }, async () => { throw new Error('Contender acquired the active lock'); });
+      await vi.waitFor(() => expect(onWait).toHaveBeenCalledOnce());
+      expect(onWait).toHaveBeenCalledWith({
+        pid: process.pid, heldForMs: expect.any(Number), waitedForMs: expect.any(Number),
+      });
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      expect(onWait).toHaveBeenCalledOnce();
+      const cancelled = expect(contender).rejects.toMatchObject({ name: 'AbortError' });
+      controller.abort();
+      await cancelled;
+      expect(await readFile(lockPath, 'utf8')).toBe(originalOwner);
+    } finally {
+      controller.abort();
+      await contender?.catch(() => {});
+      releaseOwner();
+      await owner;
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('cancels lock acquisition without disturbing the active owner', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-owner-lock-cancel-'));
     const lockPath = join(root, 'owner.lock');

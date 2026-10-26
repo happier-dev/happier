@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 import { logger } from '@/ui/logger';
 import { deepEqual } from '@/utils/deterministicJson';
-import { isAskUserQuestionToolName, type StructuredQuestionLike, type StructuredQuestionAnswersV1 } from '@happier-dev/protocol';
+import { extractShellCommand, isAskUserQuestionToolName, type StructuredQuestionLike, type StructuredQuestionAnswersV1 } from '@happier-dev/protocol';
 import { normalizeLegacyStructuredQuestionAnswers, normalizeStructuredQuestionAnswersV1 } from '@/agent/questions/normalizeStructuredQuestionAnswersV1';
 import { normalizeClaudeAskUserQuestionInputForPublication } from '../../utils/normalizeClaudeAskUserQuestionInput';
 import { buildNativeAskUserQuestionAnswersForClaude } from '../../utils/askUserQuestionAnswersForClaude';
@@ -365,10 +365,12 @@ export class ClaudeUnifiedDialogChoiceBroker {
       }
       const permission = !isAskUserQuestionToolName(prompt.toolName) ? parseClaudeNativePermissionScreen(state.text) : null;
       if (permission && prompt.toolUseId && (!permission.amended || permission.kind === 'plan')) {
+        const command = prompt.toolName === 'Bash' ? extractShellCommand(prompt.toolInput) : null;
         return {
           ...prompt, kind: 'native', dialogId: 'tool_permission', owner: null,
           questions: [], questionId: 'claudeNativePermission', requestReason: 'claude_native_permission',
-          header: prompt.toolName, question: permission.context,
+          header: prompt.toolName,
+          question: command ? `${command}\n\n${permission.explanation ?? permission.context}` : permission.context,
           permissionPresentation: permission,
           options: permission.options.map((option, index) => ({
             choice: `option_${index + 1}`, label: option.label, description: '',

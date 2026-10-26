@@ -66,7 +66,7 @@ describe('PushNotificationClient.fetchPushTokens', () => {
     const client = new PushNotificationClient('t', 'https://api.example.test');
 
     await expect(client.fetchPushTokens()).rejects.toThrow('Failed to fetch push tokens: server failed');
-    await expect(client.fetchPushTokens()).resolves.toEqual([]);
+    await expect(client.fetchPushTokens()).rejects.toThrow('Push token registration lookup unavailable during failure cooldown');
 
     expect((axios as any).get).toHaveBeenCalledTimes(1);
 
@@ -76,5 +76,14 @@ describe('PushNotificationClient.fetchPushTokens', () => {
     await expect(client.fetchPushTokens()).resolves.toEqual([]);
 
     expect((axios as any).get).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not turn an immediate diagnostic retry after a lookup failure into false absence', async () => {
+    process.env.HAPPIER_PUSH_FETCH_TOKENS_FAILURE_COOLDOWN_MS = '1000';
+    vi.mocked(axios.get).mockRejectedValueOnce(new Error('offline'));
+    const client = new PushNotificationClient('account-a');
+    await expect(client.sendTestNotificationAsync('phone')).rejects.toThrow('Failed to fetch push tokens');
+    await expect(client.sendTestNotificationAsync('phone')).rejects.toThrow('lookup unavailable');
+    expect(axios.get).toHaveBeenCalledTimes(1);
   });
 });

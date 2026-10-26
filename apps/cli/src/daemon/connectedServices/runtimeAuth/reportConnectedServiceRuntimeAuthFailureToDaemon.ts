@@ -22,6 +22,7 @@ import {
 import { scheduleRuntimeAuthFailureReportOutboxDrainToDaemon } from './reportOutbox/runtimeAuthFailureReportOutboxDrainScheduler';
 import type { RuntimeAuthFailureReportOutboxItem } from './reportOutbox/runtimeAuthFailureReportOutboxTypes';
 import { resolveRuntimeAuthFailureReportOutboxDelivery } from './reportOutbox/resolveRuntimeAuthFailureReportOutboxDelivery';
+import { isConnectedServiceRuntimeFailureReportApplicable } from './sanitizeConnectedServiceRuntimeFailureClassification';
 
 type RuntimeAuthFailureNotifyBody = Readonly<{
   reportId: string;
@@ -129,6 +130,11 @@ export async function reportConnectedServiceRuntimeAuthFailureToDaemon(input: Re
   nowMs?: () => number;
   createReportId?: () => string;
 }>): Promise<ConnectedServiceRuntimeAuthFailureDaemonReport> {
+  // Native credentials have no Connected Account binding to repair. Preserve
+  // their provider failure; ordinary quota waits remain with the Session owner.
+  if (!isConnectedServiceRuntimeFailureReportApplicable(input.classification)) {
+    return { handled: false, report: null, statusCode: null, statusMessage: null };
+  }
   const notify = input.notify ?? notifyDaemonConnectedServiceRuntimeAuthFailure;
   const logger = input.logger ?? defaultLogger;
   const logPrefix = input.logPrefix ?? '[connected-services]';

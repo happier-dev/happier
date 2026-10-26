@@ -20,6 +20,7 @@ import {
     SESSION_RUNTIME_STATUS_STALE_SIGNAL_MS,
 } from '@/sync/domains/session/attention/deriveSessionRuntimePresentationState';
 import { deriveSessionAttentionState } from '@/sync/domains/session/attention/deriveSessionAttentionState';
+import { deriveSessionWorkObservation } from '@/sync/domains/session/attention/deriveSessionWorkObservation';
 import {
     readDisplayMachineIdForSession,
     readDisplayMachineTargetForSession,
@@ -409,7 +410,9 @@ export function getSessionStatus(session: SessionStatusSource, nowMs: number = D
             // The count the provider ledger already published, said out loud. It is deliberately
             // kind-neutral: the projection sums every runtime-activity contributor, so the number
             // is attested but the noun would not be.
-            statusText: t('status.backgroundActive', { count: runtimeStatus.backgroundActiveCount }),
+            statusText: deriveSessionWorkObservation(session, nowMs).state === 'unobserved'
+                ? t('status.workingRetained')
+                : t('status.backgroundActive', { count: runtimeStatus.backgroundActiveCount }),
             shouldShowStatus: true,
             statusColor: statusColors.default,
             statusDotColor: statusColors.default,

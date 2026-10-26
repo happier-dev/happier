@@ -320,7 +320,7 @@ describe('resolveEffectiveCodingPromptText', () => {
     expect(out).not.toContain('# Options');
   });
 
-  it('uses start-only shell-bridge title guidance for initial title updates', async () => {
+  it.each([undefined, 'initial'] as const)('uses start-only shell-bridge title guidance for %s title updates', async (sessionTitleUpdates) => {
     const credentials = createCredentials();
 
     const out = await resolveEffectiveCodingPromptText({
@@ -328,7 +328,7 @@ describe('resolveEffectiveCodingPromptText', () => {
       settings: {
         codingPromptBehaviorV1: {
           v: 1,
-          sessionTitleUpdates: 'initial',
+          sessionTitleUpdates,
           responseOptions: 'disabled',
         },
       },
@@ -397,7 +397,7 @@ describe('resolveEffectiveCodingPromptText', () => {
     // Override wins: responseOptions disabled => options block omitted.
     expect(out).not.toContain('# Options');
     expect(out).not.toContain('<options>');
-    // The other knob still inherits the global default (ongoing title updates).
+    // The other knob still inherits the global default (initial title update).
     expect(out).toContain('# Session title');
   });
 

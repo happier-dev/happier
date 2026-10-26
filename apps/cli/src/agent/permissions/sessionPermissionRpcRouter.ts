@@ -55,6 +55,7 @@ export class SessionPermissionRpcRouter {
       }
       const result = await this.dispatch({
         id: parsed.data.id,
+        occurrenceId: parsed.data.occurrenceId,
         approved: true,
         structuredAnswersV1: parsed.data.structuredAnswersV1,
       });
@@ -103,4 +104,20 @@ export class SessionPermissionRpcRouter {
     }
     return { ok: false, errorCode: 'permission_request_not_found', errorMessage: 'permission_request_not_found', requestId };
   }
+}
+
+const routersByRpcHandlerManager = new WeakMap<RpcHandlerManagerLike, SessionPermissionRpcRouter>();
+
+/**
+ * A router owns the permission-response methods of one RPC handler manager, so each manager has
+ * exactly one: the live session client, the offline stub a provider starts on, and test sessions
+ * all reach the same router through the manager they expose.
+ */
+export function getOrCreateSessionPermissionRpcRouter(rpcHandlerManager: RpcHandlerManagerLike): SessionPermissionRpcRouter {
+  let router = routersByRpcHandlerManager.get(rpcHandlerManager);
+  if (!router) {
+    router = new SessionPermissionRpcRouter(rpcHandlerManager);
+    routersByRpcHandlerManager.set(rpcHandlerManager, router);
+  }
+  return router;
 }

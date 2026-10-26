@@ -113,8 +113,8 @@ describe('codexAppServerUsageLimitRecoveryControlAdapter', () => {
       status: 'ready',
       metadata: {
         sessionUsageLimitRecoveryV1: {
-          status: 'cancelled',
-          attemptCount: 1,
+          status: 'paused',
+          attemptCount: 0,
         },
       },
     });
@@ -163,7 +163,7 @@ describe('codexAppServerUsageLimitRecoveryControlAdapter', () => {
       status: 'ready',
       metadata: {
         sessionUsageLimitRecoveryV1: {
-          status: 'cancelled',
+          status: 'paused',
           issueFingerprint: 'usage-limit:codex:turn-1:1700000000000:1700000060000',
           selectedAuth: { kind: 'native', serviceId: 'openai-codex' },
         },
@@ -267,7 +267,7 @@ describe('codexAppServerUsageLimitRecoveryControlAdapter', () => {
       metadata: {
         sessionUsageLimitRecoveryV1: {
           status: 'waiting',
-          attemptCount: 1,
+          attemptCount: 0,
           nextCheckAtMs: Date.parse('2026-05-18T10:00:00.000Z'),
         },
       },
@@ -478,8 +478,8 @@ describe('codexAppServerUsageLimitRecoveryControlAdapter', () => {
       status: 'ready',
       metadata: {
         sessionUsageLimitRecoveryV1: {
-          status: 'cancelled',
-          attemptCount: 1,
+          status: 'paused',
+          attemptCount: 0,
         },
       },
     });

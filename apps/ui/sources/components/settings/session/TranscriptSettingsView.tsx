@@ -484,6 +484,7 @@ export const TranscriptSettingsView = React.memo(function TranscriptSettingsView
                     itemTrigger={{
                         title: t('settingsSession.thinking.displayModeTitle'),
                         icon: <Icon name="lightbulb" size={29} color={theme.colors.accent.blue} />,
+                        itemProps: { testID: 'settings-session-thinking-display-mode' },
                     }}
                     items={thinkingDisplayOptions.map((opt) => ({
                         id: opt.id,

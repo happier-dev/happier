@@ -24,6 +24,43 @@ const metadata = {
 };
 
 describe('resolveInactiveUsageLimitRecoverySchedulerResult', () => {
+  it('keeps recovery waiting when only the transport operation was cancelled', () => {
+    expect(resolveInactiveUsageLimitRecoverySchedulerResult({
+      result: { ok: false, status: 'cancelled', errorCode: 'rpc_cancelled' },
+      nowMs: 5_000,
+      fallbackRetryDelayMs: 60_000,
+    })).toMatchObject({ status: 'wait', nextCheckAtMs: 65_000 });
+  });
+
+  it('settles a successful cancel acknowledgement without recovery metadata', () => {
+    expect(resolveInactiveUsageLimitRecoverySchedulerResult({
+      result: { ok: true, status: 'cancelled' },
+      nowMs: 5_000,
+      fallbackRetryDelayMs: 60_000,
+    })).toMatchObject({ status: 'superseded' });
+  });
+
+  it('settles a canonical cancelled recovery even when the transport operation failed', () => {
+    expect(resolveInactiveUsageLimitRecoverySchedulerResult({
+      result: { ok: false, status: 'cancelled', errorCode: 'rpc_cancelled', metadata: {
+        ...metadata,
+        [SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY]: {
+          ...metadata[SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY], status: 'cancelled',
+        },
+      } },
+      nowMs: 5_000,
+      fallbackRetryDelayMs: 60_000,
+    })).toMatchObject({ status: 'superseded' });
+  });
+
+  it('settles a stale cancelled result even when it carries no recovery metadata', () => {
+    expect(resolveInactiveUsageLimitRecoverySchedulerResult({
+      result: { ok: false, status: 'cancelled', errorCode: 'usage_limit_recovery_attempt_superseded', sessionId: 'session-1' },
+      nowMs: 5_000,
+      fallbackRetryDelayMs: 60_000,
+    })).toMatchObject({ status: 'superseded' });
+  });
+
   it('keeps provider-ready startup reconstruction passive', () => {
     expect(resolveInactiveUsageLimitRecoverySchedulerResult({
       result: { ok: true, status: 'ready', metadata },
@@ -41,7 +78,7 @@ describe('resolveInactiveUsageLimitRecoverySchedulerResult', () => {
       nowMs: 5_000,
       fallbackRetryDelayMs: 60_000,
     })).toEqual({
-      status: 'ready',
+      status: 'resumed',
       selectedAuth: metadata[SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY].selectedAuth,
     });
   });

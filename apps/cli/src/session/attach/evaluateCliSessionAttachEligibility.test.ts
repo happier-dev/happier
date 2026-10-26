@@ -163,7 +163,7 @@ describe('evaluateCliSessionAttachEligibility', () => {
       attachStrategy: 'terminal_host',
       agentId: 'claude',
       attachScope: 'local',
-      plan: expect.objectContaining({ type: 'tmux', target: 'happy:session-1' }),
+      plan: expect.objectContaining({ type: 'tmux', target: '=happy:session-1' }),
     });
   });
 
@@ -197,7 +197,7 @@ describe('evaluateCliSessionAttachEligibility', () => {
       attachStrategy: 'terminal_host',
       agentId: 'claude',
       attachScope: 'local',
-      plan: expect.objectContaining({ type: 'tmux', target: 'happy:session-2' }),
+      plan: expect.objectContaining({ type: 'tmux', target: '=happy:session-2' }),
     });
   });
 
@@ -231,7 +231,7 @@ describe('evaluateCliSessionAttachEligibility', () => {
       attachStrategy: 'terminal_host',
       agentId: 'claude',
       attachScope: 'local',
-      plan: expect.objectContaining({ type: 'tmux', target: 'happy:session-3' }),
+      plan: expect.objectContaining({ type: 'tmux', target: '=happy:session-3' }),
     });
   });
 
@@ -295,7 +295,7 @@ describe('evaluateCliSessionAttachEligibility', () => {
       attachStrategy: 'terminal_host',
       agentId: 'claude',
       attachScope: 'local',
-      plan: expect.objectContaining({ type: 'tmux', target: 'happy:session-1' }),
+      plan: expect.objectContaining({ type: 'tmux', target: '=happy:session-1' }),
     });
   });
 
@@ -331,7 +331,7 @@ describe('evaluateCliSessionAttachEligibility', () => {
         attachStrategy: 'terminal_host',
         agentId,
         attachScope: 'local',
-        plan: expect.objectContaining({ type: 'tmux', target: `happy:${agentId}-session-1` }),
+        plan: expect.objectContaining({ type: 'tmux', target: `=happy:${agentId}-session-1` }),
       });
     },
   );
@@ -520,7 +520,7 @@ describe('evaluateCliSessionAttachEligibility', () => {
       attachStrategy: 'terminal_host',
       agentId: 'opencode',
       attachScope: 'local',
-      plan: expect.objectContaining({ type: 'tmux', target: 'happy:opencode-1' }),
+      plan: expect.objectContaining({ type: 'tmux', target: '=happy:opencode-1' }),
     });
   });
 

@@ -9,10 +9,10 @@ import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
  * `capabilities.describe`, through `machineRpcWithServerScope`) instead of inferring readiness
  * from a panel leaving the screen.
  *
- * One fault can be armed: answering a machine method the way the relay answers when the machine's
- * socket is connected but never acknowledges the forwarded request (`rpcHandler` forwards with a
- * timeout and acknowledges `{ ok: false, error: 'operation has timed out' }`). Nothing else is
- * altered; every other frame passes through unchanged in both directions.
+ * A fault can answer an exact RPC route with a supplied acknowledgement, or answer a machine
+ * method the way the relay answers when its socket never acknowledges the forwarded request
+ * (`rpcHandler` forwards with a timeout and acknowledges `{ ok: false, error: 'operation has timed out' }`).
+ * Every other frame passes through unchanged in both directions.
  *
  * Socket.IO over a WebSocket only: the app must be built with `EXPO_PUBLIC_HAPPIER_SOCKET_FORCE_WEBSOCKET=1`
  * so no call travels over the HTTP long-polling transport this route cannot see.
@@ -31,6 +31,8 @@ export type RelayMachineRpcTap = Readonly<{
     calls: () => readonly RelayMachineRpcCall[];
     /** Answer every call whose method is `<machineId>:<method>` as an unresponsive machine; `null` disarms. */
     setUnresponsiveMethod: (method: string | null) => void;
+    /** Answer one exact RPC route at the relay boundary; encrypted routes supply an encrypted result. */
+    setMethodResponse: (response: Readonly<{ method: string; ack: RelayRpcAck }> | null) => void;
 }>;
 
 /** The relay's own acknowledgement when the forwarded request times out (socket.io's timeout error). */
@@ -75,6 +77,7 @@ function safeJsonArray(raw: string): unknown[] | null {
 export async function attachRelayMachineRpcTap(page: Page): Promise<RelayMachineRpcTap> {
     const calls: RelayMachineRpcCall[] = [];
     let unresponsiveMethod: string | null = null;
+    let methodResponse: Readonly<{ method: string; ack: RelayRpcAck }> | null = null;
     const matchesUnresponsive = (method: string) => unresponsiveMethod !== null && method.endsWith(`:${unresponsiveMethod}`);
 
     await page.routeWebSocket((url) => url.pathname === RELAY_SOCKET_PATH, (ws) => {
@@ -85,6 +88,12 @@ export async function attachRelayMachineRpcTap(page: Page): Promise<RelayMachine
             if (call) {
                 const record: RelayMachineRpcCall = { method: call.method, ack: null, injected: false };
                 calls.push(record);
+                if (methodResponse?.method === call.method) {
+                    record.ack = methodResponse.ack;
+                    record.injected = true;
+                    ws.send(buildAckFrame(call.ackId, methodResponse.ack));
+                    return;
+                }
                 if (matchesUnresponsive(call.method)) {
                     record.ack = RELAY_FORWARD_TIMEOUT_ACK;
                     record.injected = true;
@@ -110,6 +119,9 @@ export async function attachRelayMachineRpcTap(page: Page): Promise<RelayMachine
         calls: () => calls,
         setUnresponsiveMethod: (method) => {
             unresponsiveMethod = method;
+        },
+        setMethodResponse: (response) => {
+            methodResponse = response;
         },
     };
 }

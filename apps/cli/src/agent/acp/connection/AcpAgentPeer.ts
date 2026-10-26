@@ -31,6 +31,7 @@ import {
 } from '@happier-dev/protocol';
 
 import type { AcpClientConnectionOptions } from './types';
+import { classifyProviderLimitEvidence, parseProviderResetAt } from '@/daemon/connectedServices/quotas/normalization';
 
 const ACP_ERROR_DIAGNOSTIC_MAX_BYTES = 16_384;
 
@@ -91,12 +92,19 @@ export class AcpAgentPeer {
             ACP_ERROR_DIAGNOSTIC_MAX_BYTES,
           ).trim()
           : '';
+        const limitCategory = classifyProviderLimitEvidence([error, dataRecord]);
+        const sanitizedData = {
+          ...(sanitizedDetails ? { details: sanitizedDetails } : {}),
+          ...(limitCategory === 'usage_limit' || limitCategory === 'rate_limit' ? {
+            limitCategory,
+            ...parseProviderResetAt({ body: dataRecord, headers: dataRecord?.headers, nowMs: Date.now() }),
+          } : {}),
+        };
         let safeError = error as Error & { data?: unknown };
         if (dataRecord) {
           // JSON-RPC error data is provider-controlled. Happier consumes only the
-          // bounded diagnostic detail; retaining arbitrary sibling fields would
+          // bounded diagnostic and normalized limit evidence; arbitrary sibling fields would
           // surface unbounded payloads and secrets through callers/loggers.
-          const sanitizedData = sanitizedDetails ? { details: sanitizedDetails } : {};
           try {
             safeError.data = sanitizedData;
           } catch {
@@ -119,7 +127,7 @@ export class AcpAgentPeer {
         if (authenticationSetupFailure) {
           if (!Object.isExtensible(safeError)
             || Object.getOwnPropertyDescriptor(safeError, 'authenticationSetupFailure')?.configurable === false) {
-            safeError = cloneErrorWithSanitizedData(safeError, sanitizedDetails ? { details: sanitizedDetails } : {});
+            safeError = cloneErrorWithSanitizedData(safeError, sanitizedData);
           }
           Object.defineProperty(safeError, 'authenticationSetupFailure', {
             configurable: true,

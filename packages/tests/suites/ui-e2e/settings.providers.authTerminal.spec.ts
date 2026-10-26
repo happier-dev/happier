@@ -105,6 +105,54 @@ test.describe('ui e2e: provider settings auth status', () => {
     }
   });
 
+  test('persists Codex reasoning summary generation independently of thinking display', async ({ page }) => {
+    test.setTimeout(180_000);
+    if (!uiBaseUrl) throw new Error('missing ui base url');
+    const browserDiagnostics = collectBrowserDiagnostics({ page });
+    const codexSettingsUrl = `${uiBaseUrl}/settings/providers/codex?happier_hmr=0`;
+    const transcriptSettingsUrl = `${uiBaseUrl}/settings/session/transcript?happier_hmr=0`;
+    const summaryField = page.getByTestId('settings-provider-field-codexReasoningSummaries');
+    const thinkingField = page.getByTestId('settings-session-thinking-display-mode');
+
+    try {
+      await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/?happier_hmr=0`);
+      await ensureAccountReadyForConnect({ page, timeoutMs: 120_000 });
+      await gotoDomContentLoadedWithRetries(page, codexSettingsUrl);
+      await expect(summaryField).toContainText('Default');
+
+      await gotoDomContentLoadedWithRetries(page, transcriptSettingsUrl);
+      await thinkingField.click();
+      await page.getByTestId('dropdown-option-hidden').click();
+      await expect(thinkingField).toContainText('Hidden');
+
+      await gotoDomContentLoadedWithRetries(page, codexSettingsUrl);
+      await summaryField.click();
+      await page.getByTestId('dropdown-option-enabled').click();
+      await expect(summaryField).toContainText('Enabled');
+
+      await gotoDomContentLoadedWithRetries(page, transcriptSettingsUrl);
+      await expect(thinkingField).toContainText('Hidden');
+      await thinkingField.click();
+      await page.getByTestId('dropdown-option-inline_full').click();
+      await expect(thinkingField).toContainText('Inline');
+
+      await gotoDomContentLoadedWithRetries(page, codexSettingsUrl);
+      await expect(summaryField).toContainText('Enabled');
+
+      for (const [optionId, selectedLabel] of [['disabled', 'Disabled'], ['default', 'Default']] as const) {
+        await summaryField.click();
+        await page.getByTestId(`dropdown-option-${optionId}`).click();
+        await expect(summaryField).toContainText(selectedLabel);
+        await gotoDomContentLoadedWithRetries(page, transcriptSettingsUrl);
+        await expect(thinkingField).toContainText('Inline');
+        await gotoDomContentLoadedWithRetries(page, codexSettingsUrl);
+        await expect(summaryField).toContainText(selectedLabel);
+      }
+    } catch (error) {
+      throw appendBrowserDiagnostics(error, browserDiagnostics());
+    }
+  });
+
   test('shows provider auth status in web settings and refreshes auth state', async ({ page }) => {
     test.setTimeout(180_000);
     if (!server || !uiBaseUrl) throw new Error('missing fixtures');

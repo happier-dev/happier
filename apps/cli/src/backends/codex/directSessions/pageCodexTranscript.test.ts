@@ -30,6 +30,28 @@ function eventMsgLine(params: { timestamp: string; payload: Record<string, unkno
 }
 
 describe('pageCodexTranscript', () => {
+  it('preserves rollout reasoning summaries as thinking instead of ordinary assistant text', async () => withTempDir('happier-codex-reasoning-', async root => {
+    const codexHome = join(root, 'home');
+    const sessionsDir = join(codexHome, 'sessions');
+    await mkdir(sessionsDir, { recursive: true });
+    const sessionId = 'reasoning-session';
+    await writeFile(join(sessionsDir, `rollout-2026-01-02T00-00-00-${sessionId}.jsonl`),
+      responseItemLine({ timestamp: '2026-01-02T00:00:01.000Z', payload: {
+        type: 'reasoning', summary: [{ type: 'summary_text', text: 'Check the boundary' }], encrypted_content: 'opaque-private-reasoning',
+      } }) + responseItemLine({ timestamp: '2026-01-02T00:00:02.000Z', payload: {
+        type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'answer' }],
+      } }));
+    const page = await pageCodexTranscript({ source: { kind: 'codexHome', home: 'user' },
+      env: { CODEX_HOME: codexHome }, activeServerDir: join(root, 'server'), remoteSessionId: sessionId,
+      direction: 'older', maxItems: 10, maxBytes: 64 * 1024,
+    });
+    expect(page.items.map(item => item.raw)).toMatchObject([
+      { role: 'agent', content: { type: 'codex', data: { type: 'thinking', text: 'Check the boundary' } } },
+      { role: 'agent', content: { type: 'codex', data: { type: 'message', message: 'answer' } } },
+    ]);
+    expect(JSON.stringify(page.items)).not.toContain('opaque-private-reasoning');
+  }));
+
   it('fails an import explicitly when a nine-MiB native record exceeds the existing read allowance', async () => withTempDir('happier-codex-direct-oversized-', async (root) => {
     const codexHome = join(root, 'codex-home');
     const sessionsDir = join(codexHome, 'sessions');
@@ -483,6 +505,9 @@ describe('pageCodexTranscript', () => {
       childFilePath,
       responseItemLine({
         timestamp: '2026-01-02T00:00:02.000Z',
+        payload: { type: 'reasoning', summary: [{ type: 'summary_text', text: 'child reasoning' }] },
+      }) + responseItemLine({
+        timestamp: '2026-01-02T00:00:02.500Z',
         payload: { type: 'message', role: 'assistant', content: [{ type: 'text', text: 'child summary' }] },
       }) + responseItemLine({
         timestamp: '2026-01-02T00:00:03.000Z',
@@ -503,6 +528,14 @@ describe('pageCodexTranscript', () => {
 
     expect(result.items).toEqual(
       expect.arrayContaining([
+        expect.objectContaining({
+          raw: expect.objectContaining({
+            role: 'agent',
+            content: expect.objectContaining({ data: expect.objectContaining({
+              type: 'thinking', text: 'child reasoning', sidechainId: childThreadId,
+            }) }),
+          }),
+        }),
         expect.objectContaining({
           raw: expect.objectContaining({
             role: 'agent',

@@ -4,10 +4,22 @@ import {
     getStorage,
     registerLocalVoiceEngineHarnessHooks,
     setNextRecorderPrepareError,
+    setPlatformOs,
 } from './localVoiceEngine.testHarness';
 
 describe('local voice engine recording lifecycle', () => {
     registerLocalVoiceEngineHarnessHooks();
+
+    it('starts and stops browser recording with the web-only Expo constructor', async () => {
+        setPlatformOs('web');
+
+        const { toggleLocalVoiceTurn, stopLocalVoiceSession, getLocalVoiceState } = await import('./localVoiceEngine');
+        await toggleLocalVoiceTurn('s1');
+        expect(getLocalVoiceState()).toMatchObject({ status: 'recording', sessionId: 's1', error: null });
+
+        await stopLocalVoiceSession();
+        expect(getLocalVoiceState()).toMatchObject({ status: 'idle', sessionId: null, error: null });
+    });
 
     it('cleans up and reports an error when recording initialization fails', async () => {
         setNextRecorderPrepareError(new Error('prepare failed'));

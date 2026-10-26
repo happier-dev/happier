@@ -378,23 +378,27 @@ vi.mock('react-native', async () => {
     );
 });
 
-vi.mock('expo-audio', () => ({
+vi.mock('expo-audio', () => {
+    class AudioRecorder {
+        uri: string | null = null;
+        async prepareToRecordAsync() {
+            if (nextRecorderPrepareError) {
+                const error = nextRecorderPrepareError;
+                nextRecorderPrepareError = null;
+                throw error;
+            }
+        }
+        record() { }
+        async stop() {
+            this.uri = platformOs === 'web' ? 'blob:voice-recording' : 'file:///tmp/rec.m4a';
+        }
+    }
+    return {
     RecordingPresets: { HIGH_QUALITY: { extension: '.m4a' } },
     AudioModule: {
-        AudioRecorder: class {
-            uri: string | null = null;
-            async prepareToRecordAsync() {
-                if (nextRecorderPrepareError) {
-                    const error = nextRecorderPrepareError;
-                    nextRecorderPrepareError = null;
-                    throw error;
-                }
-            }
-            record() { }
-            async stop() {
-                this.uri = 'file:///tmp/rec.m4a';
-            }
-        },
+        // expo-audio 1.0.16 exposes different constructor names on native and web.
+        get AudioRecorder() { return platformOs === 'web' ? undefined : AudioRecorder; },
+        get AudioRecorderWeb() { return platformOs === 'web' ? AudioRecorder : undefined; },
     },
     createAudioPlayer: (source?: any) => {
         const listeners = new Map<string, (arg: any) => void>();
@@ -412,7 +416,8 @@ vi.mock('expo-audio', () => ({
         createdAudioPlayers.push(player);
         return player;
     },
-}));
+    };
+});
 
 vi.mock('expo-file-system', () => ({
     Paths: { cache: 'file:///tmp/' },

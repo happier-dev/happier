@@ -48,9 +48,14 @@ import {
     isOverlaySurfaceRoutePathname,
     normalizeSurfaceRoutePathname,
 } from '@/components/sessions/shell/surface/sessionSurfaceAnchorPathname';
-import { usePersistSessionLastMobileSurface, useSessionLastMobileSurface, useSetting } from '@/sync/domains/state/storage';
+import { useLocalSetting, usePersistSessionLastMobileSurface, useSessionLastMobileSurface, useSetting } from '@/sync/domains/state/storage';
 import { useDeviceType } from '@/utils/platform/responsive';
+import { useWindowFoldMetrics } from '@/utils/platform/useWindowFoldMetrics';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import type { MobileBottomChromeModel } from './mobileBottomChromeTypes';
+import { resolveMobileBottomChromePresenter } from './resolveMobileBottomChromePresenter';
+import { systemTabBarAvailable } from './SystemTabBar';
+import { SystemMobileBottomChrome } from './SystemMobileBottomChrome';
 
 type TabRouteHref = Parameters<typeof expoRouter.replace>[0];
 
@@ -101,6 +106,8 @@ type BottomChromeItem = Readonly<{
     key: string;
     signature: string;
     node: React.ReactElement;
+    model: Exclude<MobileBottomChromeModel, { kind: 'hidden' }>;
+    openDetailsTabCount?: number;
     /** Set only for session cockpit chrome — the one answer to "whose band is this". */
     cockpitSessionId?: string;
 }>;
@@ -151,6 +158,8 @@ export const MobileBottomChromeHost = React.memo(function MobileBottomChromeHost
     const params = useGlobalSearchParams<{ mobileSurface?: string | string[]; serverId?: string | string[] }>();
     const auth = useAuth();
     const deviceType = useDeviceType();
+    const foldMetrics = useWindowFoldMetrics();
+    const systemTabBarEnabled = useLocalSetting('systemTabBarEnabled');
     // Passive settled keyboard height, for chrome suppression and for keeping the lateral
     // swipe out of the rows the keyboard occupies. Composer positioning must use the
     // keyboard scaffold instead of this React-state path.
@@ -242,6 +251,7 @@ export const MobileBottomChromeHost = React.memo(function MobileBottomChromeHost
     const buildMainChrome = React.useCallback((tab: TabType): BottomChromeItem => ({
         key: 'mainAppTabs',
         signature: `mainAppTabs:${tab}`,
+        model: { kind: 'mainAppTabs', activeTab: tab },
         node: (
             <TabBar
                 activeTab={tab}
@@ -315,6 +325,8 @@ export const MobileBottomChromeHost = React.memo(function MobileBottomChromeHost
                 key: buildSessionCockpitChromeKey(activeCockpitRoute.sessionId),
                 signature: `sessionCockpitTabs:${activeCockpitRoute.sessionId}:${activeSurface}:${terminalTabAvailable ? 'terminal' : 'no-terminal'}:tabs${openDetailsTabCount}`,
                 cockpitSessionId: activeCockpitRoute.sessionId,
+                model: { kind: 'sessionCockpit', sessionId: activeCockpitRoute.sessionId, surface: activeSurface, terminalTabAvailable },
+                openDetailsTabCount,
                 node: (
                     <SessionCockpitTabBar
                         sessionId={activeCockpitRoute.sessionId}
@@ -345,6 +357,13 @@ export const MobileBottomChromeHost = React.memo(function MobileBottomChromeHost
     if (!overlayRouteActive) {
         frozenChromeRef.current = resolvedChrome;
     }
+    const presenter = resolveMobileBottomChromePresenter({
+        platform: Platform.OS,
+        bridgeAvailable: systemTabBarAvailable,
+        verticalBarEdge: foldMetrics?.verticalBarEdge ?? null,
+        enabled: systemTabBarEnabled,
+        model: resolvedChrome?.model ?? { kind: 'hidden' },
+    });
 
     // ---------------------------------------------------------------------------
     // Lateral session swipe.
@@ -356,7 +375,7 @@ export const MobileBottomChromeHost = React.memo(function MobileBottomChromeHost
     // ---------------------------------------------------------------------------
     const cockpitSessionId = resolvedChrome?.cockpitSessionId ?? null;
     const lateralSwipe = useSessionLateralSwipe();
-    const lateralNavigation = useSessionCockpitLateralNavigation({ sessionId: cockpitSessionId, serverId });
+    const lateralNavigation = useSessionCockpitLateralNavigation({ sessionId: presenter === 'happier' ? cockpitSessionId : null, serverId });
     const lateralSwipeSettingEnabled = useSetting('sessionCockpitSwipeNavigationEnabled');
     const lateralNavigate = lateralNavigation.navigate;
     const canStepPrevious = lateralNavigation.previous !== null;
@@ -364,6 +383,7 @@ export const MobileBottomChromeHost = React.memo(function MobileBottomChromeHost
     // Native phones only: this is a touch shortcut for the mobile cockpit, and on
     // mobile web the browser owns horizontal edge gestures.
     const lateralNavigationAvailable = Platform.OS !== 'web'
+        && presenter === 'happier'
         && deviceType === 'phone'
         && cockpitSessionId !== null
         && lateralSwipeSettingEnabled === true;
@@ -632,6 +652,14 @@ export const MobileBottomChromeHost = React.memo(function MobileBottomChromeHost
 
     React.useLayoutEffect(() => {
         const currentRenderedChrome = renderedChromeRef.current.current;
+        if (presenter === 'system') {
+            stopChromeAnimation();
+            progress.setValue(1);
+            if (currentRenderedChrome || renderedChromeRef.current.previous) {
+                setRenderedChromeState({ current: null, previous: null });
+            }
+            return;
+        }
 
         if (!resolvedChrome) {
             if (!currentRenderedChrome) {
@@ -749,17 +777,26 @@ export const MobileBottomChromeHost = React.memo(function MobileBottomChromeHost
             progress.setValue(1);
             setRenderedChromeState({ current: latestResolvedChromeRef.current ?? resolvedChrome, previous: null });
         });
-    }, [progress, reduceMotion, resolvedChrome, setRenderedChromeState, stopChromeAnimation]);
+    }, [presenter, progress, reduceMotion, resolvedChrome, setRenderedChromeState, stopChromeAnimation]);
 
     React.useLayoutEffect(() => () => {
         stopChromeAnimation();
     }, [stopChromeAnimation]);
 
     React.useLayoutEffect(() => {
-        if (!renderedChrome.current) {
+        if (presenter === 'system' || !renderedChrome.current) {
             setBottomChromeHeight(0);
         }
-    }, [renderedChrome.current, setBottomChromeHeight]);
+    }, [presenter, renderedChrome.current, setBottomChromeHeight]);
+
+    if (presenter === 'system' && resolvedChrome) {
+        return <SystemMobileBottomChrome
+            model={resolvedChrome.model}
+            openDetailsTabCount={resolvedChrome.openDetailsTabCount ?? 0}
+            onMainTabPress={handleTabPress}
+            onSurfacePress={handleCockpitSurfacePress}
+        />;
+    }
 
     // `previous` outlives `current` while the bar dissolves on its way out, so the host keeps
     // rendering until BOTH are gone. The published chrome height already dropped to 0 above, so

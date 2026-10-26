@@ -155,11 +155,11 @@ function buildNextIntent(params: Readonly<{
   resetAtMs: number | null;
   recoveryCredits?: ConnectedServiceQuotaRecoveryCreditsV1 | null;
 }>): SessionUsageLimitRecoveryV1 {
-  const attemptCount = params.intent.attemptCount + 1;
+  const attemptCount = params.intent.attemptCount;
   if (!params.exhausted) {
     return {
       ...params.intent,
-      status: 'cancelled',
+      status: 'paused',
       attemptCount,
       lastProbeError: null,
       ...(params.recoveryCredits ? { recoveryCredits: params.recoveryCredits } : {}),

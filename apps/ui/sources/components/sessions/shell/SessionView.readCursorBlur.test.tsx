@@ -432,9 +432,6 @@ vi.mock('@/sync/domains/session/resume/resumeSessionBase', () => ({
 vi.mock('@/sync/domains/session/resume/happierReplayPrompt', () => ({
     resolveHappierReplayConfig: () => null,
 }));
-vi.mock('@/sync/domains/session/control/submitMode', () => ({
-    chooseSubmitMode: () => 'submit',
-}));
 vi.mock('@/sync/domains/session/control/effectiveRuntimeControlSurface', () => ({
     supportsEffectiveLocalControlForSession: () => true,
     // The in-session Agent picker reads this to decide whether a transcript can be

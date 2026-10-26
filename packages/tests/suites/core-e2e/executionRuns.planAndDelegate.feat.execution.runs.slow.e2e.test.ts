@@ -6,6 +6,7 @@ import { join, resolve } from 'node:path';
 import {
   ExecutionRunGetResponseSchema,
   ExecutionRunStartResponseSchema,
+  ExecutionRunSendResponseSchema,
 } from '@happier-dev/protocol';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 
@@ -19,6 +20,7 @@ import { waitFor } from '../../src/testkit/timing';
 import { seedCliAuthForServer } from '../../src/testkit/cliAuth';
 import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
 import { callLegacyEncryptedSessionRpc as callSessionRpc } from '../../src/testkit/sessionRpc';
+import { fetchSessionV2 } from '../../src/testkit/sessions';
 
 const run = createRunDirs({ runLabel: 'core' });
 
@@ -120,7 +122,7 @@ describe('core e2e: execution runs (plan/delegate) produce structured meta', () 
             backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
             instructions: `Run ${params.intent}.`,
             permissionMode: 'read_only',
-            retentionPolicy: 'ephemeral',
+            retentionPolicy: params.intent === 'delegate' ? 'resumable' : 'ephemeral',
             runClass: 'bounded',
             ioMode: 'request_response',
           },
@@ -129,24 +131,37 @@ describe('core e2e: execution runs (plan/delegate) produce structured meta', () 
           timeoutMs: 40_000,
         });
 
-        let finished: any = null;
-        await waitFor(async () => {
-          const res = await callSessionRpc({
-            ui: ui!,
-            sessionId: params.sessionId,
-            method: SESSION_RPC_METHODS.EXECUTION_RUN_GET,
-            req: { runId: started.runId, includeStructured: true },
-            secret,
-            schema: ExecutionRunGetResponseSchema,
-            timeoutMs: 40_000,
-          });
-          if (res.run.status === 'running') return false;
-          finished = res;
-          return true;
-        }, { timeoutMs: 60_000, intervalMs: 250 });
-
-        expect(finished?.run?.status).toBe('succeeded');
-        expect(finished?.structuredMeta?.kind).toBe(params.expectedKind);
+        const readRun = () => callSessionRpc({
+          ui: ui!,
+          sessionId: params.sessionId,
+          method: SESSION_RPC_METHODS.EXECUTION_RUN_GET,
+          req: { runId: started.runId, includeStructured: true },
+          secret,
+          schema: ExecutionRunGetResponseSchema,
+          timeoutMs: 40_000,
+        });
+        const assertCompleted = async () => {
+          await waitFor(async () => (await readRun()).run.status !== 'running', { timeoutMs: 60_000, intervalMs: 250 });
+          const finished = await readRun();
+          expect(finished.run.status).toBe('succeeded');
+          expect(finished.structuredMeta?.kind).toBe(params.expectedKind);
+          await waitFor(async () => {
+            const session = await fetchSessionV2(serverBaseUrl, auth.token, params.sessionId);
+            return session.runtimeActivityState === 'idle' && session.runtimeActivityActiveCount === 0;
+          }, { timeoutMs: 60_000, intervalMs: 250, context: 'completed bounded run clears session runtime activity' });
+        };
+        await assertCompleted();
+        if (params.intent === 'delegate') {
+          for (const message of ['Continue the delegated task.', 'Finish the delegated task.']) {
+            const resumed = await callSessionRpc({
+              ui: ui!, sessionId: params.sessionId, method: SESSION_RPC_METHODS.EXECUTION_RUN_SEND,
+              req: { runId: started.runId, message, resume: true }, secret,
+              schema: ExecutionRunSendResponseSchema, timeoutMs: 40_000,
+            });
+            expect(resumed.ok).toBe(true);
+            await assertCompleted();
+          }
+        }
       };
 
       const sessionId = await spawnSession(`${params.intent}-json`);

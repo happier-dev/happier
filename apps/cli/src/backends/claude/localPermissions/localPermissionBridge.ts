@@ -720,7 +720,7 @@ export class ClaudeLocalPermissionBridge {
 
         const hasStructuredAnswers = payload.answers !== undefined || payload.structuredAnswersV1 !== undefined;
         const structuredContext = hasStructuredAnswers
-            ? this.permissionCoordinator.getLocallyOwnedLiveResponseContext(requestId)
+            ? this.permissionCoordinator.getLocallyOwnedLiveResponseContext(requestId, payload.occurrenceId)
             : null;
         const isAskUserQuestion = isAskUserQuestionToolName(pending?.toolName);
         if (hasStructuredAnswers && (!pending || !structuredContext || !isAskUserQuestion)) return false;

@@ -14,6 +14,84 @@ import {
 } from './UsageLimitRecoveryScheduler';
 
 describe('UsageLimitRecoveryScheduler', () => {
+  it('backs off a pending probe whose supplied check time has already passed', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    const recover = vi.fn(async () => ({ status: 'wait' as const, nextCheckAtMs: Date.now() - 1 }));
+    const scheduler = new UsageLimitRecoveryScheduler({ nowMs: () => Date.now(), recover });
+    try {
+      await scheduler.enable({ sessionId: 'session-stale-probe', issueFingerprint: 'limit', resetAtMs: 500,
+        selectedAuth: { kind: 'native' } });
+      await scheduler.wake({ sessionId: 'session-stale-probe', reason: 'check_now' });
+      expect(scheduler.read('session-stale-probe')).toMatchObject({ status: 'waiting', attemptCount: 0,
+        nextCheckAtMs: 601_000 });
+      await vi.advanceTimersByTimeAsync(599_999);
+      expect(recover).toHaveBeenCalledOnce();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(recover).toHaveBeenCalledTimes(2);
+    } finally { scheduler.dispose(); vi.useRealTimers(); }
+  });
+
+  it('schedules missing reset timing from the shared fallback without reviving terminal intents', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(1_000));
+    try {
+      const recoveredSessions: string[] = [];
+      const scheduler = new UsageLimitRecoveryScheduler({
+        nowMs: () => Date.now(),
+        recover: async (_intent, { sessionId }) => {
+          recoveredSessions.push(sessionId);
+          return { status: 'pause' };
+        },
+      });
+      const enabled = await scheduler.enable({
+        sessionId: 'session-1',
+        issueFingerprint: 'limit',
+        resetAtMs: null,
+        selectedAuth: { kind: 'native' },
+      });
+      expect(enabled.nextCheckAtMs).toBe(601_000);
+      const scheduled = await scheduler.upsertScheduled({
+        sessionId: 'session-2',
+        intent: { ...enabled, status: 'checking', nextCheckAtMs: null },
+      });
+      expect(scheduled).toMatchObject({ status: 'waiting', nextCheckAtMs: 601_000 });
+      const cancelled = await scheduler.upsertScheduled({
+        sessionId: 'session-3',
+        intent: { ...enabled, status: 'cancelled', nextCheckAtMs: null },
+      });
+      expect(cancelled).toMatchObject({ status: 'cancelled', nextCheckAtMs: null });
+      await vi.advanceTimersByTimeAsync(599_999);
+      expect(recoveredSessions).toEqual([]);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(recoveredSessions.sort()).toEqual(['session-1', 'session-2']);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('stops scheduled recovery when its live owner disposes', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(1_000));
+    try {
+      const recover = vi.fn(async () => ({ status: 'pause' as const }));
+      const scheduler = new UsageLimitRecoveryScheduler({ nowMs: () => Date.now(), recover });
+      await scheduler.enable({
+        sessionId: 'session-1',
+        issueFingerprint: 'limit',
+        resetAtMs: 2_000,
+        selectedAuth: { kind: 'native' },
+      });
+      scheduler.dispose();
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(recover).not.toHaveBeenCalled();
+      await expect(scheduler.wake({ sessionId: 'session-1', reason: 'check_now' }))
+        .resolves.toEqual({ status: 'disposed' });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('stores one active intent per session and supersedes older intents', async () => {
     const scheduler = new UsageLimitRecoveryScheduler({ nowMs: () => 1_000 });
 
@@ -343,7 +421,7 @@ describe('UsageLimitRecoveryScheduler', () => {
     }), { sessionId: 'session-1', reason: 'check_now' });
     expect(scheduler.read('session-1')).toMatchObject({
       status: 'waiting',
-      attemptCount: 1,
+      attemptCount: 0,
       nextCheckAtMs: 3_000,
     });
   });
@@ -572,6 +650,7 @@ describe('UsageLimitRecoveryScheduler', () => {
     expect(scheduler.read('session-1')).toMatchObject({
       status: 'paused',
       nextCheckAtMs: null,
+      attemptCount: 0,
     });
     expect(resume).not.toHaveBeenCalled();
     expect(recordRestartDiagnostic).not.toHaveBeenCalled();
@@ -1058,11 +1137,76 @@ describe('UsageLimitRecoveryScheduler', () => {
     });
   });
 
-  it('exhausts an intent after its max attempts instead of retrying forever', async () => {
-    const recover = vi.fn(async () => ({ status: 'wait' as const, nextCheckAtMs: 2_000 }));
+  it.each(['pending', 'probe_error'] as const)('preserves continuation attempts while readiness is %s', async (probeResult) => {
+    let probes = 0;
+    const scheduler = new UsageLimitRecoveryScheduler({
+      nowMs: () => 2_000,
+      resume: async () => {},
+      recover: async () => {
+        probes += 1;
+        if (probes > 4) return { status: 'ready' };
+        if (probeResult === 'probe_error') throw new Error('provider unavailable');
+        return { status: 'wait', nextCheckAtMs: 3_000 };
+      },
+    });
+    await scheduler.enable({
+      sessionId: 'session-1',
+      issueFingerprint: 'limit',
+      resetAtMs: 1_000,
+      selectedAuth: { kind: 'native' },
+    });
+
+    for (let probe = 0; probe < 4; probe += 1) {
+      await expect(scheduler.wake({ sessionId: 'session-1', reason: 'check_now' }))
+        .resolves.toEqual({ status: 'waiting' });
+      expect(scheduler.read('session-1')).toMatchObject({ status: 'waiting', attemptCount: 0 });
+    }
+    await expect(scheduler.wake({ sessionId: 'session-1', reason: 'check_now' }))
+      .resolves.toEqual({ status: 'resumed' });
+    expect(scheduler.read('session-1')).toMatchObject({ status: 'cancelled', attemptCount: 1 });
+  });
+
+  it('reports readiness without claiming continuation when no resume owner is supplied', async () => {
+    const scheduler = new UsageLimitRecoveryScheduler({
+      nowMs: () => 2_000,
+      recover: async () => ({ status: 'ready' }),
+    });
+    await scheduler.enable({
+      sessionId: 'session-1',
+      issueFingerprint: 'limit',
+      resetAtMs: 1_000,
+      selectedAuth: { kind: 'native' },
+    });
+
+    await expect(scheduler.wake({ sessionId: 'session-1', reason: 'check_now' }))
+      .resolves.toEqual({ status: 'ready' });
+    expect(scheduler.read('session-1')).toMatchObject({ status: 'paused', attemptCount: 0 });
+  });
+
+  it('settles an accepted external continuation without requesting another resume', async () => {
+    const scheduler = new UsageLimitRecoveryScheduler({
+      nowMs: () => 2_000,
+      recover: async () => ({ status: 'resumed' }),
+      resume: async () => { throw new Error('continuation already accepted'); },
+    });
+    await scheduler.enable({
+      sessionId: 'session-1',
+      issueFingerprint: 'limit',
+      resetAtMs: 1_000,
+      selectedAuth: { kind: 'native' },
+    });
+
+    await expect(scheduler.wake({ sessionId: 'session-1', reason: 'check_now' }))
+      .resolves.toEqual({ status: 'resumed' });
+    expect(scheduler.read('session-1')).toMatchObject({ status: 'cancelled', attemptCount: 1 });
+  });
+
+  it('exhausts an intent after its max continuation attempts', async () => {
+    const recover = vi.fn(async () => ({ status: 'ready' as const }));
     const scheduler = new UsageLimitRecoveryScheduler({
       nowMs: () => 2_000,
       recover,
+      resume: async () => { throw new Error('resume failed'); },
     });
     await scheduler.enable({
       sessionId: 'session-1',
@@ -1082,7 +1226,7 @@ describe('UsageLimitRecoveryScheduler', () => {
     expect(recover).toHaveBeenCalledTimes(1);
     expect(scheduler.read('session-1')).toMatchObject({
       status: 'exhausted',
-      attemptCount: 2,
+      attemptCount: 1,
     });
   });
 

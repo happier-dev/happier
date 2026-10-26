@@ -9,6 +9,7 @@ import { resolveEnrichedMarkdownFlavor } from './resolveEnrichedMarkdownFlavor';
 import { useEnrichedMarkdownStyle } from './useEnrichedMarkdownStyle';
 import { useNativeTextSelectable } from '@/components/ui/text/nativeTextSelection';
 import type { MarkdownRenderingProfile } from '../rendering/MarkdownRenderingProfile';
+import type { MarkdownSelectionAction } from '../MarkdownView';
 import {
     resolveStreamingTextRevealConfig,
     type StreamingTextRevealPreset,
@@ -84,6 +85,7 @@ type EnrichedMarkdownTextAdapterProps = Readonly<{
     testID?: string;
     suppressLeadingTopMargin?: boolean;
     fillContainer?: boolean;
+    selectionActions?: readonly MarkdownSelectionAction[];
     agentTexMath: boolean;
 }>;
 
@@ -143,13 +145,20 @@ export const EnrichedMarkdownTextAdapter = React.memo((props: EnrichedMarkdownTe
             return webProps;
         }
 
+        const contextMenuItems: EnrichedMarkdownTextProps['contextMenuItems'] = props.selectionActions?.length
+            ? props.selectionActions.map((action) => ({
+                text: action.label,
+                onPress: (event: Readonly<{ text: string }>) => action.onPress({ text: event.text }),
+            }))
+            : undefined;
         return {
             testID: props.testID,
             enableLinkPreview: false,
             allowFontScaling: true,
             streamingAnimation: props.streamingAnimated && flavor === 'commonmark',
+            ...(contextMenuItems ? { contextMenuItems } : {}),
         };
-    }, [flavor, props.streamingAnimated, props.suppressLeadingTopMargin, props.testID, runtimeStatus]);
+    }, [flavor, props.selectionActions, props.streamingAnimated, props.suppressLeadingTopMargin, props.testID, runtimeStatus]);
 
     const containerStyle = React.useMemo(() => {
         const baseContainerStyle = props.fillContainer === false

@@ -1,6 +1,6 @@
 ---
 title: Navigating a transcript
-description: Jump between turns, pin the messages that matter, and select messages to copy or send into another session.
+description: Jump between turns, pin the messages that matter, quote a passage into your reply, and select messages to copy or send into another session.
 ---
 
 A long session is hard to move around in. Scrolling back through a day of work
@@ -68,6 +68,20 @@ carry an instruction rather than a bare quote. Three placeholders are available:
 
 A template without `{{MESSAGES}}` is accepted but warned about, since the
 selection would have nowhere to go.
+
+## Quoting a passage
+
+In development builds, you can quote part of a message into your reply. Select
+some text in a user or agent message, then choose **Quote**: on web and desktop
+it appears next to the selection, and on iOS and Android it is in the text
+selection menu next to Copy. The passage lands at the end of the composer as a
+Markdown quote, with an empty line below it for what you want to say about it.
+Nothing is sent until you send the message yourself.
+
+Quote is offered only while the session's composer is open and you can write to
+it, and only on the prose of current messages: not on reasoning, tool output,
+rolled-back or discarded messages, or, on iOS and Android, inside code blocks
+and tables.
 
 ## Copying code blocks and tables
 

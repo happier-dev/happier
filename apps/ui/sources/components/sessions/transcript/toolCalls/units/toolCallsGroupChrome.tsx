@@ -10,6 +10,7 @@ import { ActivitySpinner, iconMatchedSpinnerSize } from '@/components/ui/feedbac
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import { Typography } from '@/constants/Typography';
+import { readCoarsePrimaryPointer } from '@/components/sessions/transcript/messageActions/rowActionRevealHost';
 import { useLayoutMaxWidth } from '@/components/ui/layout/layout';
 import { resolveInactiveSessionToolCallFailure } from '@/components/tools/shell/permissions/resolveInactiveSessionToolCallFailure';
 import { resolveToolStatusIndicatorKind } from '@/components/tools/shell/presentation/resolveToolStatusIndicatorKind';
@@ -67,10 +68,11 @@ export function resolveToolCallsGroupStatus(params: Readonly<{
 export function resolveToolCallsGroupUnitContainerStyle(
     variant: ToolCallsGroupChromeVariant,
     position: ToolCallsGroupUnitPosition,
+    hasVisibleTools = false,
 ): StyleProp<ViewStyle> {
     const pieces: StyleProp<ViewStyle>[] = [unitStyles.container];
     if (position === 'footer') {
-        pieces.push(variant === 'feed' ? unitStyles.containerPlainFeedFooterMargin : unitStyles.containerFooterMargin);
+        pieces.push(variant === 'feed' && !hasVisibleTools ? unitStyles.containerPlainFeedFooterMargin : unitStyles.containerFooterMargin);
     }
     if (variant === 'cards') {
         pieces.push(unitStyles.unitCards);
@@ -97,6 +99,7 @@ export function resolveToolCallsGroupUnitContainerStyle(
 export function ToolCallsGroupUnitRowFrame(props: Readonly<{
     variant: ToolCallsGroupChromeVariant;
     position: ToolCallsGroupUnitPosition;
+    hasVisibleTools?: boolean;
     unitTestID: string;
     children: React.ReactNode;
 }>) {
@@ -106,7 +109,7 @@ export function ToolCallsGroupUnitRowFrame(props: Readonly<{
             <View style={[unitStyles.centeredContent, { maxWidth: contentMaxWidth }]}>
                 <View
                     testID={props.unitTestID}
-                    style={resolveToolCallsGroupUnitContainerStyle(props.variant, props.position)}
+                    style={resolveToolCallsGroupUnitContainerStyle(props.variant, props.position, props.hasVisibleTools)}
                 >
                     {props.children}
                 </View>
@@ -156,6 +159,7 @@ export const ToolCallsGroupHeaderChrome = React.memo(function ToolCallsGroupHead
             aria-expanded={props.expanded}
             style={({ pressed }) => [
                 chromeStyles.header,
+                Platform.OS === 'web' && !readCoarsePrimaryPointer() ? chromeStyles.headerDesktop : null,
                 pressed && (props.chromeMode === 'activity_feed' ? chromeStyles.headerFeedPressed : chromeStyles.headerCardsPressed),
             ]}
         >
@@ -198,7 +202,11 @@ export const ToolCallsGroupExpandMoreChrome = React.memo(function ToolCallsGroup
         <Pressable
             testID="transcript-tool-calls-preview-more"
             onPress={props.onExpand}
-            style={({ pressed }) => [chromeStyles.previewMore, pressed && chromeStyles.previewMorePressed]}
+            style={({ pressed }) => [
+                chromeStyles.previewMore,
+                Platform.OS === 'web' && !readCoarsePrimaryPointer() ? chromeStyles.previewMoreDesktop : null,
+                pressed && chromeStyles.previewMorePressed,
+            ]}
         >
             <Text style={chromeStyles.previewMoreText}>
                 {t('session.toolCallsCollapsedPreviewMore', { count: props.hiddenCount })}
@@ -217,6 +225,9 @@ const chromeStyles = StyleSheet.create((theme) => ({
         paddingTop: 4,
         paddingBottom: 6,
         gap: 8,
+    },
+    headerDesktop: {
+        minHeight: 28,
     },
     headerCardsPressed: {
         opacity: 0.92,
@@ -254,6 +265,9 @@ const chromeStyles = StyleSheet.create((theme) => ({
         paddingTop: 6,
         paddingBottom: 6,
         alignSelf: 'flex-start',
+    },
+    previewMoreDesktop: {
+        paddingTop: 2,
     },
     previewMorePressed: {
         opacity: 0.9,

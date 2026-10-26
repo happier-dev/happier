@@ -7,6 +7,7 @@ import {
 } from "@happier-dev/protocol";
 
 import { db } from "@/storage/db";
+import type { PrimaryTurnMaterializedProjection } from "@/app/session/turns/materializePrimaryTurnProjection";
 
 import type { SessionParticipantCursor } from "@/app/session/changeTracking/markSessionParticipantsChanged";
 import { createSessionMessage, type CreateSessionMessageResult } from "@/app/session/sessionWriteService";
@@ -74,6 +75,7 @@ export type ApplySessionAgentTransitionCutoverResult =
         currentView: SessionAgentTransitionCommittedCurrentViewV1;
         metadataCiphertext: string;
         agentStateCiphertext: null;
+        primaryTurnProjection: PrimaryTurnMaterializedProjection | null;
         participantCursors: SessionParticipantCursor[];
         dividerParticipantCursors: SessionParticipantCursor[];
         attentionImpact: SessionMessageAttentionImpact;
@@ -86,6 +88,7 @@ export type ApplySessionAgentTransitionCutoverResult =
         currentView: SessionAgentTransitionCommittedCurrentViewV1;
         metadataCiphertext: string;
         agentStateCiphertext: null;
+        primaryTurnProjection: PrimaryTurnMaterializedProjection | null;
         participantCursors: SessionParticipantCursor[];
       };
 
@@ -113,6 +116,7 @@ export async function applySessionAgentTransitionCutover(
         currentView: committed.currentView,
         metadataCiphertext: committed.metadataCiphertext,
         agentStateCiphertext: committed.agentStateCiphertext,
+        primaryTurnProjection: committed.primaryTurnProjection,
         participantCursors: committed.participantCursors,
     } as const;
 

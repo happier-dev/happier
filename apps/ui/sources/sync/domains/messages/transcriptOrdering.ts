@@ -35,6 +35,8 @@ export function compareTranscriptMessagesOldestFirst(
 ): number {
     const aSeq = normalizeTranscriptSeq(a.seq);
     const bSeq = normalizeTranscriptSeq(b.seq);
+    // Comparing mixed sequenced/unsequenced pairs by time makes the comparator
+    // non-transitive, which can leave incremental transcript merges out of order.
     if (aSeq !== null && bSeq !== null) {
         if (aSeq !== bSeq) return aSeq - bSeq;
 
@@ -43,6 +45,10 @@ export function compareTranscriptMessagesOldestFirst(
         if (aBlock !== null && bBlock !== null && aBlock !== bBlock) {
             return aBlock - bBlock;
         }
+    } else if (aSeq !== null) {
+        return -1;
+    } else if (bSeq !== null) {
+        return 1;
     }
 
     if (a.createdAt !== b.createdAt) {

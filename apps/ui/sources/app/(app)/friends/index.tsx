@@ -3,6 +3,7 @@ import { View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StyleSheet } from 'react-native-unistyles';
 
+import { FriendsAddButton } from '@/components/friends/FriendsAddButton';
 import { FriendsView } from '@/components/navigation/shell/FriendsView';
 import { useHeaderHeight, useIsTablet } from '@/utils/platform/responsive';
 import { Typography } from '@/constants/Typography';
@@ -23,6 +24,7 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 16,
+    justifyContent: 'space-between',
   },
   headerTitle: {
     fontSize: 17,
@@ -48,6 +50,7 @@ export default function FriendsPage() {
       <View style={[styles.header, { paddingTop: insets.top }]}>
         <View style={[styles.headerContent, { height: headerHeight }]}>
           <Text style={styles.headerTitle}>{t('tabs.friends')}</Text>
+          <FriendsAddButton />
         </View>
       </View>
       <FriendsView />

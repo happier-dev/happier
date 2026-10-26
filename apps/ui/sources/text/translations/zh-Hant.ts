@@ -647,7 +647,8 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
       commands: {
           composerAbortConfirm: '確認中止',
           composerFocus: '聚焦輸入框',
-          composerSendImmediate: '立即傳送',
+          composerSendImmediate: '切換傳送方式（排隊 / 引導）',
+            composerSendInterrupt: '中斷並傳送',
           composerSendPending: '傳送到待處理佇列',
           commandPaletteOpen: '開啟命令面板',
           modeCycle: '切換模式',
@@ -757,6 +758,14 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
     },
 
     transcript: {
+
+      quote: {
+
+        action: '引用',
+
+        actionA11y: '在訊息中引用所選文字',
+
+      },
 
       selection: {
 
@@ -3430,6 +3439,17 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             openSettingsFailed: '無法開啟系統設定。',
         },
         pushTroubleshooting: {
+            remoteTest: {
+                title: "傳送遠端測試",
+                subtitle: "透過連線至此 Home 的機器，向此手機傳送真實的推播通知。",
+                notRegistered: "請註冊此手機的權杖，然後重試。",
+                noMachine: "請將機器連線至此 Home，以傳送遠端測試。",
+                accepted: "推播服務已接受測試。這並不確認手機已收到或顯示通知。請檢查通知。",
+                rejected: "推播服務未確認接受。再次嘗試前，請檢查通知和註冊狀態。",
+                invalidCredentials: "推播供應商拒絕了此應用程式的憑證。請檢查 APNs 或 FCM 設定。",
+                unsupported: "請更新所連線機器的 Happier CLI，以傳送遠端測試。",
+                unconfirmed: "無法確認結果。請求仍可能完成；再次嘗試前請檢查通知。",
+            },
             status: {
                 title: '狀態',
                 footer: '檢查帳戶設定、作業系統權限與伺服器註冊狀態。',
@@ -3566,8 +3586,12 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
     },
 
     notifications: {
-        permissionActionNeedsReview: "無法確認通知中的權限請求回覆。再次回覆前，請開啟工作階段並檢查目前的請求。",
+        permissionActionNeedsReview: "無法確認從通知傳送的回覆。請先檢查待處理請求，再次回覆。",
+        permissionActionReviewUnavailable: "無法開啟此回覆對應的 Home 和帳戶。請在設定中檢查連線與登入狀態，再檢查待處理請求。",
         actions: {
+            reviewPendingRequests: "檢查待處理請求",
+            questionReply: "回覆",
+            questionPlaceholder: "你的回答",
             allow: '允許',
             deny: '拒絕',
             answer: '回答',
@@ -4044,6 +4068,16 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
                     },
                 },
                 fields: {
+                    codexReasoningSummaries: {
+                        title: "推理摘要",
+                        footer: "控制 Codex 是否產生摘要，與對話中的顯示方式無關。在啟動或恢復工作階段時生效。可用性取決於模型。",
+                        generation: "產生",
+                        options: {
+                            default: "使用 Codex 設定或模型預設值。",
+                            enabled: "在模型支援時請求摘要。",
+                            disabled: "不產生推理摘要。",
+                        },
+                    },
                     codexBackendMode: {
                         title: 'Codex 路由模式',
                         subtitle: '選擇 App Server、ACP 或 MCP。',
@@ -4079,6 +4113,8 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
 
     settingsAppearance: {
       tabBarAppearance: {
+        sideRailTitle: "在側邊欄顯示分頁",
+        sideRailSubtitle: "關閉後即可使用 Happier 的分頁列與滑動手勢。",
         title: '標籤列',
         footer: '自訂底部標籤列。',
         showLabels: '顯示標籤列文字',
@@ -5741,6 +5777,11 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
     },
 
     agentInput: {
+        sendOptions: {
+            title: "傳送選項",
+            queue: "加入佇列",
+            hint: "長按選擇傳送方式",
+        },
         chipPicker: {
             selectedOptionAccessibilityLabel: ({ option }: { option: string }) => `${option}。已選擇。`,
         },

@@ -443,7 +443,8 @@ export const de: TranslationStructure = {
         commands: {
             composerAbortConfirm: 'Abbruch bestätigen',
             composerFocus: 'Composer fokussieren',
-            composerSendImmediate: 'Sofort senden',
+            composerSendImmediate: 'Alternativ senden (Warteschlange / steuern)',
+            composerSendInterrupt: 'Unterbrechen und senden',
             composerSendPending: 'An die Warteschlange senden',
             commandPaletteOpen: 'Befehlspalette öffnen',
             modeCycle: 'Modus wechseln',
@@ -479,6 +480,10 @@ export const de: TranslationStructure = {
     },
 
     transcript: {
+        quote: {
+            action: 'Zitieren',
+            actionA11y: 'Ausgewählten Text in deiner Nachricht zitieren',
+        },
         selection: {
             enterA11y: 'Auswahlmodus starten',
             exitA11y: 'Auswahlmodus beenden',
@@ -3457,6 +3462,17 @@ export const de: TranslationStructure = {
             openSettingsFailed: 'Die Systemeinstellungen ließen sich nicht öffnen.',
         },
         pushTroubleshooting: {
+            remoteTest: {
+                title: "Remote-Test senden",
+                subtitle: "Einen echten Push über einen verbundenen Computer auf diesem Home an dieses Telefon senden.",
+                notRegistered: "Registriere den Token dieses Telefons und versuche es erneut.",
+                noMachine: "Verbinde einen Computer auf diesem Home, um einen Remote-Test zu senden.",
+                accepted: "Der Push-Dienst hat den Test angenommen. Das bestätigt weder Empfang noch Anzeige auf deinem Telefon. Prüfe deine Benachrichtigungen.",
+                rejected: "Der Push-Dienst hat die Annahme nicht bestätigt. Prüfe vor einem weiteren Versuch deine Benachrichtigungen und Registrierung.",
+                invalidCredentials: "Der Push-Anbieter hat die Zugangsdaten dieser App abgelehnt. Prüfe die APNs- oder FCM-Konfiguration.",
+                unsupported: "Aktualisiere die Happier-CLI des verbundenen Computers, um Remote-Tests zu senden.",
+                unconfirmed: "Das Ergebnis konnte nicht bestätigt werden. Die Anfrage kann noch abgeschlossen werden. Prüfe deine Benachrichtigungen vor einem weiteren Versuch.",
+            },
             status: {
                 title: 'Status',
                 footer: 'Prüft die Kontoeinstellung, die OS-Berechtigung und die Registrierung auf dem Server.',
@@ -3592,8 +3608,12 @@ export const de: TranslationStructure = {
     },
 
     notifications: {
-        permissionActionNeedsReview: "Die Berechtigungsantwort aus der Benachrichtigung konnte nicht bestätigt werden. Öffne die Sitzung und prüfe die aktuelle Anfrage, bevor du erneut antwortest.",
+        permissionActionNeedsReview: "Die Antwort aus der Benachrichtigung konnte nicht bestätigt werden. Prüfe die ausstehenden Anfragen, bevor du erneut antwortest.",
+        permissionActionReviewUnavailable: "Home und Konto dieser Antwort konnten nicht geöffnet werden. Prüfe Verbindung und Anmeldung in den Einstellungen und dann die ausstehenden Anfragen.",
         actions: {
+            reviewPendingRequests: "Ausstehende Anfragen prüfen",
+            questionReply: "Antworten",
+            questionPlaceholder: "Deine Antwort",
             allow: 'Erlauben',
             deny: 'Ablehnen',
             answer: 'Antworten',
@@ -4094,6 +4114,16 @@ export const de: TranslationStructure = {
 	                    },
 	                },
 	                fields: {
+	                    codexReasoningSummaries: {
+	                        title: "Denkzusammenfassungen",
+	                        footer: "Legt unabhängig von der Anzeige im Gespräch fest, ob Codex Zusammenfassungen erzeugt. Gilt beim Starten oder Fortsetzen einer Sitzung. Die Verfügbarkeit hängt vom Modell ab.",
+	                        generation: "Erzeugung",
+	                        options: {
+	                            default: "Codex-Konfiguration oder Modellstandard verwenden.",
+	                            enabled: "Zusammenfassungen anfordern, wenn das Modell sie unterstützt.",
+	                            disabled: "Keine Denkzusammenfassungen erzeugen.",
+	                        },
+	                    },
 	                    codexBackendMode: {
 	                        title: 'Codex-Routing-Modus',
 	                        subtitle: 'Wähl App Server, ACP oder MCP.',
@@ -4129,6 +4159,8 @@ export const de: TranslationStructure = {
 
     settingsAppearance: {
       tabBarAppearance: {
+        sideRailTitle: "Tabs in der Seitenleiste",
+        sideRailSubtitle: "Deaktiviere diese Option, um Happiers Tableiste und ihre Wischgesten zu verwenden.",
         title: 'Tab-Leiste',
         footer: 'Die untere Tab-Leiste anpassen.',
         showLabels: 'Tab-Beschriftungen zeigen',
@@ -6437,6 +6469,11 @@ export const de: TranslationStructure = {
     },
 
     agentInput: {
+        sendOptions: {
+            title: "Sendeoptionen",
+            queue: "Einreihen",
+            hint: "Gedrückt halten, um die Sendeart zu wählen",
+        },
         chipPicker: {
             selectedOptionAccessibilityLabel: ({ option }: { option: string }) => `${option}. Ausgewählt.`,
         },

@@ -167,11 +167,7 @@ describe('projectSessionListPlacement', () => {
         expect(placement.retainedWorking).toBe(false);
     });
 
-    it('drops background activity out of Working once nothing witnesses the runtime any more', () => {
-        // Was: "keeps canonical background activity in Working without an observedAt freshness
-        // lease" — the contract that kept a session published `active` moments before an
-        // unwitnessed death pinned to Working forever. With the session keep-alive at 15 s, a
-        // three-minute silence is twelve missed pings, not a slow session.
+    it('keeps unread background work in Working when heartbeat persistence trails the live publisher', () => {
         const nowMs = 10_000_000;
 
         const placement = projectSessionListPlacement({
@@ -192,7 +188,7 @@ describe('projectSessionListPlacement', () => {
             }),
         });
 
-        expect(placement.kind).not.toBe('working');
+        expect(placement.kind).toBe('working');
     });
 
     it.each(['active', 'unknown'] as const)('does not call an unread completed turn ready when background activity is %s after disconnection', (runtimeActivityState) => {
