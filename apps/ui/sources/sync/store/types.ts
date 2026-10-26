@@ -149,7 +149,7 @@ export interface SessionsDomainSlice {
     markSessionViewed: (sessionId: string) => void;
     updateSessionPermissionMode: (sessionId: string, mode: PermissionMode) => void;
     updateSessionModelMode: (sessionId: string, mode: SessionModelMode, context?: SessionModelOptionsContext) => void;
-    deleteSession: (sessionId: string) => void;
+    deleteSession: (sessionId: string, serverId?: string | null) => void;
 }
 
 export type SessionListRenderableDelta = Readonly<{

@@ -24,6 +24,11 @@ vi.mock('react-native-mmkv', () => {
 import { createSessionsDomain } from './sessions';
 import { clearPersistence } from '@/sync/domains/state/persistence';
 import { registerSessionTranscriptDerivedCacheClear } from '@/sync/runtime/sessionTranscriptDerivedCaches';
+import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { setServerProfileIdentityForUrl, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
+import type { SessionListViewItem } from '@/sync/domains/session/listing/sessionListViewData';
 
 function createHarness() {
   let state: any = {
@@ -53,7 +58,7 @@ function createHarness() {
 
   const domain = createSessionsDomain({ get, set } as any);
   set(domain as any);
-  return { get, domain };
+  return { get, set, domain };
 }
 
 describe('sessions domain: deleteSession transcript memory release', () => {
@@ -126,5 +131,42 @@ describe('sessions domain: deleteSession transcript memory release', () => {
 
     expect(get().sessionListRenderables.s_gone).toBeUndefined();
     expect(get().sessionListRenderables.s_kept).toBeDefined();
+  });
+
+  it.each([false, true])('deletes only the owning Home cache with an identity alias: %s', (useIdentityAlias) => {
+    const remote = upsertServerProfile({ serverUrl: 'https://delete-remote.example' });
+    const remoteServerId = useIdentityAlias
+      ? setServerProfileIdentityForUrl(remote.serverUrl, 'srv_delete_remote')!.serverIdentityId!
+      : remote.id;
+    const activeServerId = getActiveServerSnapshot().serverId;
+    const activeSession = createSessionFixture({ id: 'same-id', serverId: activeServerId });
+    const renderable = buildSessionListRenderableFromSession(activeSession);
+    const remoteRows = [
+      { type: 'session', session: renderable, serverId: remote.id },
+      { type: 'session', session: { ...renderable, id: 'remote-kept' }, serverId: remote.id },
+    ] satisfies SessionListViewItem[];
+    const activeRows = [{ type: 'session', session: renderable, serverId: activeServerId }] satisfies SessionListViewItem[];
+    const cleared: string[] = [];
+    unregisterFns.push(registerSessionTranscriptDerivedCacheClear((sessionId) => cleared.push(sessionId)));
+    const { get, set, domain } = createHarness();
+    set({
+      sessions: { 'same-id': activeSession },
+      sessionListRenderables: { 'same-id': renderable },
+      sessionListViewDataByServerId: { [activeServerId]: activeRows, [remote.id]: remoteRows },
+    });
+
+    domain.deleteSession('same-id', remoteServerId);
+
+    expect(get().sessions['same-id']).toBe(activeSession);
+    expect(get().sessionListRenderables['same-id']).toBe(renderable);
+    expect(get().sessionListViewDataByServerId[activeServerId]).toBe(activeRows);
+    expect(get().sessionListViewDataByServerId[remoteServerId]).toEqual([
+      expect.objectContaining({ session: expect.objectContaining({ id: 'remote-kept' }) }),
+    ]);
+    expect(cleared).toEqual([]);
+
+    const afterDelete = get();
+    domain.deleteSession('same-id', remoteServerId);
+    expect(get().sessionListViewDataByServerId).toBe(afterDelete.sessionListViewDataByServerId);
   });
 });

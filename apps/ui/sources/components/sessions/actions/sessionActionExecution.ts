@@ -45,6 +45,35 @@ import type {
 } from './sessionActionTypes';
 import { resolveSessionArchiveActionPolicy } from './sessionActionMetadata';
 import { resolveSessionArchiveServerId } from '@/sync/domains/session/listing/sessionArchiveState';
+import { resolveSessionListCacheServerId } from '@/sync/domains/session/listing/sessionListPresentation';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { getSessionStatus } from '@/utils/sessions/sessionUtils';
+import { nowServerMs } from '@/sync/runtime/time';
+import { createSessionActionTarget } from './sessionActionContext';
+
+function canDeleteCurrentSession(target: SessionActionTarget): boolean {
+    if (!target.canDelete) return false;
+    const state = storage.getState();
+    const serverId = resolveSessionArchiveServerId(target.serverId);
+    const localSession = areServerProfileIdentifiersEquivalent(serverId, getActiveServerSnapshot().serverId)
+        ? state.sessionListRenderables[target.sessionId] ?? state.sessions[target.sessionId]
+        : undefined;
+    const cacheServerId = resolveSessionListCacheServerId(state.sessionListViewDataByServerId, serverId);
+    const cachedRow = cacheServerId
+        ? state.sessionListViewDataByServerId[cacheServerId]?.find((row) => row.type === 'session' && row.session.id === target.sessionId)
+        : undefined;
+    const session = localSession ?? (cachedRow?.type === 'session' ? cachedRow.session : undefined);
+    if (!session) return false;
+
+    // The target captures the owning Account; another Home's active profile must not replace it.
+    return createSessionActionTarget({
+        session,
+        serverId,
+        currentUserId: target.isOwnedByCurrentUser ? target.session.owner : null,
+        isConnected: getSessionStatus(session, nowServerMs()).isConnected,
+    }).canDelete;
+}
 
 function resolveStopArchiveFlow(context: SessionActionExecutionContext | undefined) {
     return context?.operations?.stopArchiveFlow ?? stopSessionAndMaybeArchive;
@@ -233,6 +262,10 @@ export async function executeSessionAction(params: Readonly<{
             );
             return;
         case SESSION_ACTION_DELETE_ID:
+            // Confirmation can outlive a restore/resume or terminal-host update on another device.
+            if (!canDeleteCurrentSession(params.target)) {
+                throw new HappyError(t('sessionInfo.failedToDeleteSession'), false);
+            }
             throwIfFailed(
                 await resolveDeleteSession(params.context)(params.target.sessionId, { serverId: params.target.serverId }),
                 t('sessionInfo.failedToDeleteSession'),

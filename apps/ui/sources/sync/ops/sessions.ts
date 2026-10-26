@@ -959,12 +959,14 @@ export async function sessionDeleteWithServerScope(
     sessionId: string,
     opts?: Readonly<{ serverId?: string | null }>,
 ): Promise<{ success: boolean; message?: string }> {
-    const context = await resolveServerScopedSessionContext({ serverId: opts?.serverId ?? null });
+    const serverId = resolveSessionArchiveServerId(opts?.serverId);
+    const context = await resolveServerScopedSessionContext({ serverId });
     try {
         if (context.scope === 'active') {
             const response = await apiSocket.request(`/v1/sessions/${sessionId}`, { method: 'DELETE' });
             if (response.ok) {
                 await response.json().catch(() => null);
+                storage.getState().deleteSession(sessionId, serverId);
                 return { success: true };
             }
             const error = await response.text().catch(() => '');
@@ -984,6 +986,7 @@ export async function sessionDeleteWithServerScope(
         });
         if (response.ok) {
             await response.json().catch(() => null);
+            storage.getState().deleteSession(sessionId, serverId);
             return { success: true };
         }
         const error = await response.text().catch(() => '');

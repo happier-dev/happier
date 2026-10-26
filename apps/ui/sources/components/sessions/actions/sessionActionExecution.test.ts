@@ -1,7 +1,11 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol';
 import { Modal } from '@/modal';
 import { storage } from '@/sync/domains/state/storage';
+import { apiSocket } from '@/sync/api/session/apiSocket';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
 
 vi.mock('@/modal', async () => {
     const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
@@ -16,6 +20,7 @@ import { createSessionActionTarget } from './sessionActionContext';
 import {
     SESSION_ACTION_ARCHIVE_ID,
     SESSION_ACTION_CLEAR_ATTENTION_STANDING_ID,
+    SESSION_ACTION_DELETE_ID,
     SESSION_ACTION_EDIT_TAGS_ID,
     SESSION_ACTION_MARK_READ_ID,
     SESSION_ACTION_MOVE_TO_FOLDER_ID,
@@ -63,6 +68,74 @@ function createTarget(overrides: Partial<SessionListRenderableSession> = {}) {
         isPinned: true,
     });
 }
+
+describe('delete eligibility at execution', () => {
+    afterEach(() => {
+        vi.restoreAllMocks();
+    });
+
+    it.each(['active', 'preserved-terminal'] as const)('rejects a stale target after the session becomes %s', async (state) => {
+        const serverId = getActiveServerSnapshot().serverId;
+        const session = createSessionFixture({ id: 'delete-after-confirmation', archivedAt: 123, presence: 0, serverId });
+        const target = createSessionActionTarget({ session, serverId });
+        expect(target.canDelete).toBe(true);
+        const latestSession = state === 'active'
+            ? { ...session, active: true, archivedAt: null }
+            : createSessionFixture({
+                ...session,
+                metadata: {
+                    path: '/tmp/project',
+                    host: 'local',
+                    terminal: {
+                        mode: 'zellij',
+                        controlServiceabilityV1: { v: 1, state: 'unknown', observedAt: 124, reason: 'attachment_changed' },
+                    },
+                },
+            });
+        storage.setState({ sessions: { [session.id]: latestSession }, sessionListRenderables: {} });
+        // apiSocket is the HTTP transport boundary; eligibility and deletion remain real.
+        const request = vi.spyOn(apiSocket, 'request').mockResolvedValue(new Response('{"success":true}'));
+
+        await expect(executeSessionAction({ actionId: SESSION_ACTION_DELETE_ID, target })).rejects.toBeInstanceOf(HappyError);
+        expect(request).not.toHaveBeenCalled();
+    });
+
+    it('uses the current list projection when terminal metadata hydration is deferred', async () => {
+        const serverId = getActiveServerSnapshot().serverId;
+        const session = createSessionFixture({ id: 'delete-cache-only-update', archivedAt: 123, presence: 0, serverId });
+        const target = createSessionActionTarget({ session, serverId });
+        const latest = createSessionFixture({
+            ...session,
+            metadata: {
+                path: '/tmp/project',
+                host: 'local',
+                terminal: {
+                    mode: 'zellij',
+                    controlServiceabilityV1: { v: 1, state: 'unknown', observedAt: 124, reason: 'attachment_changed' },
+                },
+            },
+        });
+        storage.setState({
+            sessions: { [session.id]: session },
+            sessionListRenderables: { [session.id]: buildSessionListRenderableFromSession(latest) },
+        });
+        const request = vi.spyOn(apiSocket, 'request').mockResolvedValue(new Response('{"success":true}'));
+
+        await expect(executeSessionAction({ actionId: SESSION_ACTION_DELETE_ID, target })).rejects.toBeInstanceOf(HappyError);
+        expect(request).not.toHaveBeenCalled();
+    });
+
+    it('still deletes an eligible inactive session that is not archived', async () => {
+        const serverId = getActiveServerSnapshot().serverId;
+        const session = createSessionFixture({ id: 'delete-inactive', archivedAt: null, presence: 0, serverId });
+        storage.setState({ sessions: { [session.id]: session }, sessionListRenderables: {} });
+        const request = vi.spyOn(apiSocket, 'request').mockResolvedValue(new Response('{"success":true}'));
+
+        await executeSessionAction({ actionId: SESSION_ACTION_DELETE_ID, target: createSessionActionTarget({ session, serverId }) });
+
+        expect(request).toHaveBeenCalledWith(`/v1/sessions/${session.id}`, { method: 'DELETE' });
+    });
+});
 
 describe('executeSessionAction', () => {
     beforeEach(() => {

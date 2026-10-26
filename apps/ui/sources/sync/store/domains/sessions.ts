@@ -78,6 +78,7 @@ import { reconcileSessionLifecycleProjection, reconcileSessionSnapshot, resolveS
 import { setActiveServerSessionListCache, setServerSessionListCache } from '../sessionListCache';
 import { resolveSessionListCacheServerId } from '../../domains/session/listing/sessionListPresentation';
 import { getActiveServerSnapshot } from '../../domains/server/serverRuntime';
+import { areServerProfileIdentifiersEquivalent } from '../../domains/server/serverProfiles';
 import { areScmWorkingSnapshotsEquivalentIgnoringFetchedAt } from '@/scm/sync/snapshotDiff';
 import type { ReviewCommentDraft } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
 import type { SessionActionDraft } from '@/sync/domains/sessionActions/sessionActionDraftTypes';
@@ -146,8 +147,8 @@ export type SessionsDomain = {
      * (measured live: `sessions \ renderables` = 0, `renderables \ sessions` = 97), so it cannot
      * cover an evicted row either.
      *
-     * `deleteSession` is the one signal that does mean gone. Every caller reaches it through
-     * `handleDeleteSessionSocketUpdate`, on exactly three pieces of server evidence: the socket
+     * `deleteSession` is the one signal that does mean gone. It follows a successful deletion
+     * response, or `handleDeleteSessionSocketUpdate` on three other pieces of server evidence: the socket
      * `delete-session` update, the socket `session-share-revoked` update (the session survives for
      * its owner but not for this viewer), and an exact session fetch answering `not_found`. Those
      * are the same grounds the session route states as "deleted, or you may no longer have
@@ -267,7 +268,7 @@ export type SessionsDomain = {
     ) => BeginScmOperationResult;
     finishSessionProjectScmOperation: (sessionId: string, operationId: string) => boolean;
 
-    deleteSession: (sessionId: string) => void;
+    deleteSession: (sessionId: string, serverId?: string | null) => void;
 };
 
 type SessionsDomainDependencies = {
@@ -1987,7 +1988,19 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
             }
             return finished;
         },
-        deleteSession: (sessionId: string) => set((state) => {
+        deleteSession: (sessionId: string, serverId?: string | null) => set((state) => {
+            if (serverId && !areServerProfileIdentifiersEquivalent(serverId, getActiveServerSnapshot().serverId)) {
+                const cacheServerId = resolveSessionListCacheServerId(state.sessionListViewDataByServerId, serverId);
+                const cached = cacheServerId ? state.sessionListViewDataByServerId[cacheServerId] : null;
+                if (!cached) return state;
+                const remaining = cached.filter((item) => item.type !== 'session' || item.session.id !== sessionId);
+                if (remaining.length === cached.length) return state;
+                // Full session state and its local persistence belong to the active Home.
+                return {
+                    ...state,
+                    sessionListViewDataByServerId: setServerSessionListCache(state.sessionListViewDataByServerId, serverId, remaining),
+                };
+            }
             optimisticThinkingTimeouts.cancel(sessionId);
             resumingTimeouts.cancel(sessionId);
             thinkingGraceTimeouts.cancel(sessionId);

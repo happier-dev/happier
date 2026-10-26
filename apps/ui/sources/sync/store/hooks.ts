@@ -225,7 +225,7 @@ export type SessionReferenceTarget = Readonly<{
  * "Session isn't available" screen — owns the failure the client cannot predict.
  *
  * `deleted` therefore comes from `deletedSessionIds`, written only by `deleteSession` — reached
- * on a `delete-session` update, a `session-share-revoked` update, or an exact session fetch
+ * on a successful deletion response, a `delete-session` update, a `session-share-revoked` update, or an exact session fetch
  * answering `not_found`, which is the server telling this viewer it cannot have the session at
  * all. That is the same ground the route states. `metadata` is whichever cached copy exists so
  * a known session still shows its live title; it is always a *stored* object, never a projection,

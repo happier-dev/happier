@@ -1,295 +1,231 @@
 import React from 'react';
-import { act } from 'react-test-renderer';
+import { act, type ReactTestInstance } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
-import { settingsDefaults } from '@/sync/domains/settings/settings';
-import { createStorageStoreMock } from '@/dev/testkit/mocks/storage';
+import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { createServerFetchWithReachabilityProbe, matchServerFetchUrl } from '@/dev/testkit/mocks/serverFetch';
 import { createTextModuleMock } from '@/dev/testkit/mocks/text';
-
-const mockNavigateToSession = vi.fn();
-const mockSessions = vi.hoisted(() => ({
-    all: [] as any[],
-    listViewDataByServerId: {} as Record<string, any[] | null>,
-    hideInactiveSessions: false,
-    pinnedSessionKeysV1: [] as string[],
-    activeServerId: 'server-1' as string | null,
-    organizationProjection: null as any,
-    organizationProjectionByServerId: {} as Record<string, any>,
-    profile: null as any,
-}));
-const modalMock = vi.hoisted(() => ({
-    alert: vi.fn(),
-}));
-const fetchArchivedSessionsSpy = vi.hoisted(() => vi.fn(async () => {}));
-const fetchMoreArchivedSessionsSpy = vi.hoisted(() => vi.fn(async () => {}));
-const fetchMoreSessionsSpy = vi.hoisted(() => vi.fn(async () => {}));
-const executeSessionActionMock = vi.hoisted(() => vi.fn(async () => undefined));
+import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
+import type { Session } from '@/sync/domains/state/storageTypes';
 
 vi.mock('@/text', () => createTextModuleMock({ translate: (key: string) => key }));
 vi.mock('@react-navigation/native', async () => {
     const { createReactNavigationNativeMock } = await import('@/dev/testkit/mocks/reactNavigation');
     return createReactNavigationNativeMock();
 });
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
-}));
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    type Row = Session | (SessionListRenderableSession & { serverId?: string });
+    type Section = { key: string; title: string; data: Row[] };
     return createReactNativeWebMock({
-        SectionList: ({ sections, renderItem, renderSectionHeader, keyExtractor, contentContainerStyle, ...rest }: any) => {
-            return React.createElement(
-                'SectionList',
-                { sections, contentContainerStyle, ...rest },
-                sections.flatMap((section: any) => {
-                    const sectionNodes = [];
-                    if (renderSectionHeader) {
-                        sectionNodes.push(
-                            React.createElement(
-                                React.Fragment,
-                                { key: `${section.key}:header` },
-                                renderSectionHeader({ section }),
-                            ),
-                        );
-                    }
-                    for (const [index, item] of section.data.entries()) {
-                        sectionNodes.push(
-                            React.createElement(
-                                React.Fragment,
-                                { key: keyExtractor?.(item, index) ?? `${section.key}:${index}` },
-                                renderItem({ item, index, section }),
-                            ),
-                        );
-                    }
-                    return sectionNodes;
-                }),
-            );
-        },
+        SectionList: ({ sections, renderItem, renderSectionHeader }: {
+            sections: Section[];
+            renderItem: (info: { item: Row; index: number; section: Section }) => React.ReactNode;
+            renderSectionHeader: (info: { section: Section }) => React.ReactNode;
+        }) => React.createElement('SectionList', null, sections.map((section) => (
+            React.createElement(React.Fragment, { key: section.key },
+                renderSectionHeader({ section }),
+                section.data.map((item, index) => React.createElement(
+                    React.Fragment,
+                    { key: `${item.serverId}:${item.id}` },
+                    renderItem({ item, index, section }),
+                )),
+            )
+        ))),
     });
 });
 vi.mock('react-native-safe-area-context', () => ({
     useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: 0, left: 0 }),
 }));
-vi.mock('@/components/ui/text/Text', () => ({
-    Text: (props: any) => React.createElement('Text', props, props.children),
-}));
-vi.mock('@/components/ui/avatar/Avatar', () => ({
-    Avatar: (props: any) => React.createElement('Avatar', props, null),
-}));
 vi.mock('@/modal', async () => {
     const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            alert: modalMock.alert,
-        },
-    }).module;
+    return createModalModuleMock().module;
 });
-vi.mock('@/hooks/session/useNavigateToSession', () => ({
-    useNavigateToSession: () => mockNavigateToSession,
-}));
-vi.mock('@/hooks/server/useEffectiveServerSelection', () => ({
-    useResolvedActiveServerSelection: () => ({
-        activeServerId: mockSessions.activeServerId,
-    }),
-}));
-vi.mock('@/components/sessions/actions/sessionActionExecution', () => ({
-    executeSessionAction: executeSessionActionMock,
-}));
-vi.mock('@/sync/ops', () => ({
-    sessionUnarchiveWithServerScope: vi.fn(async () => ({ success: true, archivedAt: null })),
-}));
-vi.mock('@/sync/sync', () => ({
-    sync: {
-        fetchArchivedSessions: fetchArchivedSessionsSpy,
-        fetchMoreArchivedSessions: fetchMoreArchivedSessionsSpy,
-        fetchMoreSessions: fetchMoreSessionsSpy,
-    },
-}));
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleMock({
-        importOriginal,
-        overrides: {
-            storage: createStorageStoreMock({
-                settings: settingsDefaults,
-                sessions: {},
-                machines: {},
-            }),
-            useAllSessions: () => mockSessions.all,
-            useSessionListViewDataByServerId: () => mockSessions.listViewDataByServerId,
-            useProfile: () => mockSessions.profile,
-            useSessionOrganizationProjection: (serverId: string | null | undefined) => {
-                const normalizedServerId = typeof serverId === 'string' ? serverId.trim() : '';
-                return mockSessions.organizationProjectionByServerId[normalizedServerId] ?? mockSessions.organizationProjection;
-            },
-            useSessionOrganizationPinnedSessionKeys: () => {
-                const projections = Object.keys(mockSessions.organizationProjectionByServerId).length > 0
-                    ? Object.entries(mockSessions.organizationProjectionByServerId)
-                    : mockSessions.activeServerId
-                        ? [[mockSessions.activeServerId, mockSessions.organizationProjection]]
-                        : [];
-                return projections.flatMap(([serverId, projection]) => (
-                    (projection as any)?.pinnedSessionIds ?? []
-                ).map((sessionId: string) => `${serverId}:${sessionId}`));
-            },
-            useSetting: (key: string) => {
-                if (key === 'hideInactiveSessions') return mockSessions.hideInactiveSessions;
-                if (key === 'pinnedSessionKeysV1') return mockSessions.pinnedSessionKeysV1;
-                return null;
-            },
+
+import { TokenStorage } from '@/auth/storage/tokenStorage';
+import { Modal } from '@/modal';
+import { apiSocket } from '@/sync/api/session/apiSocket';
+import { profileDefaults } from '@/sync/domains/profiles/profile';
+import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
+import { setActiveServerId, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
+import { settingsDefaults } from '@/sync/domains/settings/settings';
+import { storage } from '@/sync/domains/state/storage';
+import * as runtimeFetch from '@/utils/system/runtimeFetch';
+
+let serverA: ReturnType<typeof upsertServerProfile>;
+let serverB: ReturnType<typeof upsertServerProfile>;
+const modalAlert = vi.mocked(Modal.alert);
+const token = 'header.eyJzdWIiOiJtZSJ9.signature';
+
+function httpWithReachabilityProbe(handler: typeof runtimeFetch.runtimeFetch): typeof runtimeFetch.runtimeFetch {
+    const fetch = createServerFetchWithReachabilityProbe(handler);
+    return async (input, init) => {
+        const response = await fetch(input, init);
+        if (!(response instanceof Response)) throw new Error('Expected an HTTP response from the transport fixture');
+        return response;
+    };
+}
+
+function archivedSession(overrides: Partial<Session> = {}): Session {
+    return createSessionFixture({
+        id: 'archived-owned',
+        serverId: serverA.id,
+        archivedAt: 1710000000000,
+        presence: 0,
+        metadata: { name: 'Owned Archived Session', path: '/tmp/owned', host: 'tester.local' },
+        ...overrides,
+    });
+}
+
+function cacheArchivedSession(session: Session): void {
+    storage.setState({
+        sessionListViewDataByServerId: {
+            [serverA.id]: [{ type: 'session', serverId: serverA.id, session: buildSessionListRenderableFromSession(session) }],
         },
     });
-});
-
-import { executeSessionAction } from '@/components/sessions/actions/sessionActionExecution';
-import { storage } from '@/sync/domains/state/storage';
-
-function createOrganizationProjection(overrides: Record<string, unknown> = {}) {
-    return {
-        schemaVersion: 1,
-        version: 1,
-        pinnedSessionIds: [],
-        pinsBySessionId: {},
-        foldersById: {},
-        folderAssignmentsBySessionId: {},
-        tagsById: {},
-        tagAssignmentsBySessionId: {},
-        attentionStandingsBySessionId: {},
-        orderEntriesByScopeKey: {},
-        labelsByLabelKey: {},
-        ...overrides,
-    };
 }
 
-function createOwnedArchivedSession(overrides: Record<string, unknown> = {}) {
-    return {
-        id: 'archived-owned',
-        active: false,
-        archivedAt: 1710000000000,
-        updatedAt: 20,
-        metadata: { name: 'Owned Archived Session', path: '/tmp/owned' },
-        serverId: 'server-archived',
-        ...overrides,
-    };
+function actionButtons(root: ReactTestInstance, label: string): ReactTestInstance[] {
+    return root.findAll((node) => node.props.accessibilityLabel === label && typeof node.props.onPress === 'function');
 }
 
-function findNodesByAccessibilityLabel(root: any, label: string) {
-    return root.findAll((node: any) => node.props?.accessibilityLabel === label);
+async function acceptDelete(): Promise<void> {
+    const args = modalAlert.mock.calls.at(-1);
+    const confirm = args?.[2]?.find((button) => button.style === 'destructive');
+    expect(confirm?.onPress).toBeTypeOf('function');
+    await act(async () => { await confirm?.onPress?.(); });
 }
 
+// Exercise the real store, targeting, executor, sync operations, and server context.
+// Only platform presentation, authentication persistence, and HTTP transport are stubbed.
 describe('Archived sessions delete action', () => {
     beforeEach(() => {
-        storage.getState().settings = settingsDefaults;
-        mockNavigateToSession.mockReset();
-        modalMock.alert.mockReset();
-        executeSessionActionMock.mockClear();
-        fetchArchivedSessionsSpy.mockReset();
-        fetchMoreArchivedSessionsSpy.mockReset();
-        fetchMoreSessionsSpy.mockReset();
-        mockSessions.hideInactiveSessions = false;
-        mockSessions.pinnedSessionKeysV1 = [];
-        mockSessions.activeServerId = 'server-1';
-        mockSessions.organizationProjection = createOrganizationProjection();
-        mockSessions.organizationProjectionByServerId = {};
-        mockSessions.profile = null;
-        mockSessions.all = [];
-        mockSessions.listViewDataByServerId = {};
-    });
-
-    it('deletes an owned archived session only after destructive confirmation', async () => {
-        mockSessions.all = [createOwnedArchivedSession()];
-
-        const Screen = (await import('@/app/(app)/session/archived')).default;
-        const screen = await renderScreen(<Screen />);
-
-        const deleteButtons = findNodesByAccessibilityLabel(screen.root, 'sessionInfo.deleteSession');
-        expect(deleteButtons.length).toBeGreaterThan(0);
-        const deleteButton = deleteButtons.find((node: any) => typeof node.props?.onPress === 'function');
-        expect(deleteButton).toBeTruthy();
-
-        await pressTestInstanceAsync(deleteButton, 'delete session button');
-
-        expect(modalMock.alert).toHaveBeenCalledTimes(1);
-        expect(modalMock.alert).toHaveBeenCalledWith(
-            'sessionInfo.deleteSession',
-            'sessionInfo.deleteSessionWarning',
-            expect.arrayContaining([
-                expect.objectContaining({ text: 'common.cancel', style: 'cancel' }),
-                expect.objectContaining({ text: 'sessionInfo.deleteSession', style: 'destructive' }),
-            ]),
-        );
-
-        // Nothing executes before the destructive confirmation is accepted.
-        expect(executeSessionAction).not.toHaveBeenCalled();
-
-        const alertButtons = modalMock.alert.mock.calls[0]?.[2] as Array<{ text?: string; style?: string; onPress?: () => void }>;
-        const confirmOnPress = alertButtons?.find((button) => button.style === 'destructive')?.onPress;
-        if (typeof confirmOnPress !== 'function') {
-            throw new Error('expected the destructive confirmation button to expose onPress');
-        }
-        await act(async () => {
-            await confirmOnPress();
+        vi.restoreAllMocks();
+        modalAlert.mockReset();
+        serverA = upsertServerProfile({ serverUrl: 'https://archive-a.example', name: 'Archive A' });
+        serverB = upsertServerProfile({ serverUrl: 'https://archive-b.example', name: 'Archive B' });
+        setActiveServerId(serverA.id);
+        storage.setState({
+            ...storage.getInitialState(),
+            isDataReady: true,
+            settings: settingsDefaults,
+            profile: { ...profileDefaults, id: 'me' },
+            sessions: {},
+            sessionListViewDataByServerId: {},
         });
+        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token });
+        vi.spyOn(apiSocket, 'request').mockResolvedValue(Response.json({}));
+        vi.spyOn(runtimeFetch, 'runtimeFetch').mockImplementation(httpWithReachabilityProbe(
+            async () => Response.json({}),
+        ));
+    });
 
-        expect(executeSessionAction).toHaveBeenCalledTimes(1);
-        expect(executeSessionAction).toHaveBeenCalledWith(expect.objectContaining({
-            actionId: 'ui.session.delete',
-            target: expect.objectContaining({
-                sessionId: 'archived-owned',
-                serverId: 'server-archived',
-                canDelete: true,
-            }),
+    it('waits for confirmation and deletes the captured server row after a server switch, preserving a same-ID active session', async () => {
+        const archived = archivedSession();
+        storage.setState({ sessions: { [archived.id]: archived } });
+        cacheArchivedSession(archived);
+        const Screen = (await import('@/app/(app)/session/archived')).default;
+        const screen = await renderScreen(<Screen />);
+
+        await pressTestInstanceAsync(actionButtons(screen.root, 'sessionInfo.deleteSession')[0]);
+        const buttons = modalAlert.mock.calls[0]?.[2];
+        expect(buttons).toEqual(expect.arrayContaining([
+            expect.objectContaining({ style: 'cancel' }),
+            expect.objectContaining({ style: 'destructive' }),
+        ]));
+        expect(apiSocket.request).not.toHaveBeenCalled();
+        expect(runtimeFetch.runtimeFetch).not.toHaveBeenCalled();
+        await act(async () => { await buttons?.find((button) => button.style === 'cancel')?.onPress?.(); });
+        expect(apiSocket.request).not.toHaveBeenCalled();
+        expect(runtimeFetch.runtimeFetch).not.toHaveBeenCalled();
+        expect(screen.getTextContent()).toContain('Owned Archived Session');
+
+        await pressTestInstanceAsync(actionButtons(screen.root, 'sessionInfo.deleteSession')[0]);
+        const collision = archivedSession({ serverId: serverB.id, active: true, archivedAt: null });
+        await act(async () => {
+            setActiveServerId(serverB.id);
+            storage.setState({ sessions: { [collision.id]: collision } });
+        });
+        await acceptDelete();
+
+        await vi.waitFor(() => expect(screen.getTextContent()).not.toContain('Owned Archived Session'));
+        const request = vi.mocked(runtimeFetch.runtimeFetch).mock.calls.find(([, init]) => init?.method === 'DELETE');
+        expect(request?.[0]).toEqual(matchServerFetchUrl(`${serverA.serverUrl}/v1/sessions/${archived.id}`));
+        expect(new Headers(request?.[1]?.headers).get('Authorization')).toBe(`Bearer ${token}`);
+        expect(apiSocket.request).not.toHaveBeenCalled();
+        expect(storage.getState().sessions[collision.id]).toBe(collision);
+    });
+
+    it('shows a server delete error, keeps the archived row, and lets the user retry', async () => {
+        const archived = archivedSession();
+        setActiveServerId(serverB.id);
+        cacheArchivedSession(archived);
+        const fetch = vi.mocked(runtimeFetch.runtimeFetch);
+        let attempts = 0;
+        fetch.mockImplementation(httpWithReachabilityProbe(async () => {
+            attempts += 1;
+            return attempts === 1 ? new Response('Delete rejected', { status: 500 }) : Response.json({});
         }));
-    });
-
-    it('does not render the delete action for a session owned by another user, even while unarchive stays available', async () => {
-        mockSessions.profile = { id: 'me' };
-        mockSessions.all = [createOwnedArchivedSession({
-            id: 'archived-shared',
-            owner: 'someone-else',
-            updatedAt: 30,
-            metadata: { name: 'Shared Archived Session', path: '/tmp/shared' },
-        })];
-
         const Screen = (await import('@/app/(app)/session/archived')).default;
         const screen = await renderScreen(<Screen />);
 
-        // The row itself renders and unarchive remains available at this access level...
-        expect(screen.getTextContent()).toContain('Shared Archived Session');
-        expect(findNodesByAccessibilityLabel(screen.root, 'sessionInfo.unarchiveSession').length).toBeGreaterThan(0);
-        // ...but delete is owner-only and must stay hidden.
-        expect(findNodesByAccessibilityLabel(screen.root, 'sessionInfo.deleteSession')).toHaveLength(0);
+        await pressTestInstanceAsync(actionButtons(screen.root, 'sessionInfo.deleteSession')[0]);
+        await acceptDelete();
+        await vi.waitFor(() => expect(modalAlert).toHaveBeenLastCalledWith('common.error', 'Delete rejected'));
+        expect(screen.getTextContent()).toContain('Owned Archived Session');
+
+        await pressTestInstanceAsync(actionButtons(screen.root, 'sessionInfo.deleteSession')[0]);
+        await acceptDelete();
+        await vi.waitFor(() => expect(screen.getTextContent()).not.toContain('Owned Archived Session'));
+        expect(fetch.mock.calls.filter(([, init]) => init?.method === 'DELETE')).toHaveLength(2);
     });
 
-    it('does not render the delete action for rows in the hidden inactive section', async () => {
-        mockSessions.hideInactiveSessions = true;
-        mockSessions.all = [
-            {
-                id: 'inactive-1',
-                active: false,
-                archivedAt: null,
-                updatedAt: 10,
-                metadata: { name: 'Inactive Session', path: '/tmp/inactive' },
-                serverId: 'server-1',
-            },
+    it('withholds delete from shared, active, connected, preserved-host, and hidden inactive rows', async () => {
+        const rows = [
+            archivedSession({ id: 'shared', owner: 'someone-else', accessLevel: 'admin', metadata: {
+                name: 'Shared archive', path: '/tmp/shared', host: 'tester.local',
+            } }),
+            archivedSession({ id: 'active', active: true, metadata: {
+                name: 'Active archive', path: '/tmp/active', host: 'tester.local',
+            } }),
+            archivedSession({ id: 'connected', presence: 'online', metadata: {
+                name: 'Connected archive', path: '/tmp/connected', host: 'tester.local',
+            } }),
+            archivedSession({ id: 'preserved', metadata: {
+                name: 'Preserved terminal', path: '/tmp/preserved', host: 'tester.local',
+                terminal: { mode: 'zellij', controlServiceabilityV1: {
+                    v: 1, attachmentId: 'preserved-terminal', state: 'unknown', observedAt: 124,
+                } },
+            } }),
+            archivedSession({ id: 'hidden', archivedAt: null, metadata: {
+                name: 'Hidden inactive', path: '/tmp/hidden', host: 'tester.local',
+            } }),
         ];
-
+        storage.setState({ sessions: Object.fromEntries(rows.map((session) => [session.id, session])), settings: {
+            ...settingsDefaults, hideInactiveSessions: true,
+        } });
         const Screen = (await import('@/app/(app)/session/archived')).default;
         const screen = await renderScreen(<Screen />);
 
-        expect(screen.getTextContent()).toContain('Inactive Session');
-        expect(screen.getTextContent()).toContain('settingsFeatures.hiddenInactiveSessionsSectionTitle');
-        expect(findNodesByAccessibilityLabel(screen.root, 'sessionInfo.deleteSession')).toHaveLength(0);
+        expect(screen.getTextContent()).toContain('Hidden inactive');
+        expect(screen.getTextContent()).toContain('Preserved terminal');
+        expect(screen.getTextContent()).toContain('Shared archive');
+        expect(screen.getTextContent()).toContain('Active archive');
+        expect(screen.getTextContent()).toContain('Connected archive');
+        expect(actionButtons(screen.root, 'sessionInfo.deleteSession')).toHaveLength(0);
+        expect(actionButtons(screen.root, 'sessionInfo.unarchiveSession').length).toBeGreaterThan(0);
     });
 
-    it('still renders the unarchive action for an owned archived session', async () => {
-        mockSessions.all = [createOwnedArchivedSession()];
-
+    it('unarchives through the real operation and removes the row from the archive screen', async () => {
+        const archived = archivedSession();
+        storage.setState({ sessions: { [archived.id]: archived } });
         const Screen = (await import('@/app/(app)/session/archived')).default;
         const screen = await renderScreen(<Screen />);
 
-        const unarchiveButtons = findNodesByAccessibilityLabel(screen.root, 'sessionInfo.unarchiveSession');
-        expect(unarchiveButtons.length).toBeGreaterThan(0);
-        expect(unarchiveButtons.some((node: any) => typeof node.props?.onPress === 'function')).toBe(true);
+        await pressTestInstanceAsync(actionButtons(screen.root, 'sessionInfo.unarchiveSession')[0]);
+        await vi.waitFor(() => expect(storage.getState().sessions[archived.id]?.archivedAt).toBeNull());
+        expect(apiSocket.request).toHaveBeenCalledWith(`/v2/sessions/${archived.id}/unarchive`, { method: 'POST' });
+        expect(screen.getTextContent()).not.toContain('Owned Archived Session');
     });
 });
