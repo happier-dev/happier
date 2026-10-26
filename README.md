@@ -9,7 +9,7 @@
 
   Claude Code, Codex, OpenCode, Pi and more, working together and in parallel on your own machines.
 
-  Sessions can spawn subagents across agents: e.g. Claude asking Codex for a review, or Codex delegating work to Claude subagents. Switch agents mid-session. Approve, steer, review and commit from wherever you are.
+  Sessions can spawn subagents across agents: e.g. Claude asking Codex for a review, or Codex delegating work to Claude subagents. Approve, steer, review and commit from wherever you are.
 
   **Open source · Self-hostable · End-to-end encrypted**
 
@@ -165,7 +165,7 @@ Either way, the session shows up everywhere at once: keep typing in the terminal
 
 **Subagents across agents.** Any session can launch review, plan or delegate runs on another agent and read the results: Claude handing work to Codex subagents, Codex to Claude, or any other pairing. [Subagents](https://docs.happier.dev/extending/subagents)
 
-**Switch agents mid-session.** Change the engine and the same session keeps going. A returning agent resumes its own thread and receives only what it missed. [Continue with another agent](https://docs.happier.dev/sessions/continue-with-another-agent)
+**Switch agents mid-session (coming soon).** Not in released builds yet. Change the engine and the same session keeps going. A returning agent resumes its own thread and receives only what it missed. [Continue with another agent](https://docs.happier.dev/sessions/continue-with-another-agent)
 
 **Hand a session to another machine.** Move a live Claude Code or OpenCode session to your desktop, a VPS or a dev box, and bring the working tree along if you want it. [Session handoff](https://docs.happier.dev/sessions/session-handoff)
 
