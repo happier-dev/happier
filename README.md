@@ -171,6 +171,15 @@ Either way, the session shows up everywhere at once: keep typing in the terminal
 
 <br/>
 
+<h3 align="center">🔄 Switch agents mid-session</h3>
+
+<p align="center">Move a session from Claude to Codex, or back, in place. The session keeps its id, history and settings, and the arriving agent gets a summary of the recent conversation. <a href="https://docs.happier.dev/sessions/continue-with-another-agent">Continue with another agent</a></p>
+
+<!-- TODO screenshot: .github/screenshots/agent-switch.png -->
+<p align="center"><img src=".github/screenshots/agent-switch.png" alt="TODO: switching the agent of a running session" width="100%" /></p>
+
+<br/>
+
 <h3 align="center">🔔 An inbox for what needs you</h3>
 
 <p align="center">Permission requests, agent questions and unread sessions gather in one attention center across all sessions and machines. A push notification opens the exact session that asked. <a href="https://docs.happier.dev/sessions/inbox-and-approvals">Inbox and approvals</a></p>
