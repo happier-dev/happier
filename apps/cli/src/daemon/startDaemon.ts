@@ -3105,7 +3105,12 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
               settings: getActiveAccountSettingsSnapshot()?.settings as Record<string, unknown> | undefined,
               existingSessionId: normalizedExistingSessionId,
             });
-            if (backendDisabledError) return backendDisabledError;
+            if (backendDisabledError) {
+              logger.debug('[DAEMON RUN] Denying spawn: backend disabled by account settings', {
+                backendTarget: normalizedOptions.backendTarget,
+              });
+              return backendDisabledError;
+            }
             // Same admission gate for availability: deny fresh spawns naming a built-in
             // backend whose CLI cannot be resolved in the runner's environment (daemon env
             // merged with the spawn's own overrides), with install guidance, instead of
@@ -3115,7 +3120,12 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
               existingSessionId: normalizedExistingSessionId,
               spawnEnvironmentVariables: normalizedOptions.environmentVariables,
             });
-            if (providerUnavailableError) return providerUnavailableError;
+            if (providerUnavailableError) {
+              logger.debug('[DAEMON RUN] Denying spawn: provider CLI unavailable on this machine', {
+                backendTarget: normalizedOptions.backendTarget,
+              });
+              return providerUnavailableError;
+            }
             if (normalizedExistingSessionId) {
               const inFlightStop = stopSessionInFlightBySessionId.get(normalizedExistingSessionId);
               let precedingStopResult: StopSessionResult | null = null;

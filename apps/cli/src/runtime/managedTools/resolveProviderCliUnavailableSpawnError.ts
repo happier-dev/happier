@@ -2,6 +2,9 @@ import type { BackendTargetRefV1, SpawnSessionErrorCode } from '@happier-dev/pro
 import { AGENT_IDS, type AgentId } from '@happier-dev/agents';
 import { resolveProviderCliCommand } from '@happier-dev/cli-common/providers';
 
+import { stripDaemonOwnedChildEnvOverrides } from '@/daemon/spawn/stripDaemonOwnedChildEnvOverrides';
+import { expandEnvironmentVariables } from '@/utils/expandEnvVars';
+
 import { buildProviderCliUnavailableMessage } from './buildProviderCliUnavailableMessage';
 
 function isKnownAgentId(value: string): value is AgentId {
@@ -34,8 +37,18 @@ export function resolveProviderCliUnavailableSpawnError(params: Readonly<{
   if (!isKnownAgentId(agentId)) return null;
   if (params.existingSessionId) return null;
   const processEnv = params.processEnv ?? process.env;
+  // Mirror how the runner child env is constructed for these overrides: daemon-owned keys
+  // are stripped and ${VAR} references are expanded against the surrounding environment,
+  // so the probe sees exactly the resolution environment the runner would see.
   const probeEnv = params.spawnEnvironmentVariables
-    ? { ...processEnv, ...params.spawnEnvironmentVariables }
+    ? {
+        ...processEnv,
+        ...expandEnvironmentVariables(
+          stripDaemonOwnedChildEnvOverrides({ ...params.spawnEnvironmentVariables }),
+          processEnv,
+          { warnOnUndefined: false },
+        ),
+      }
     : processEnv;
   if (resolveProviderCliCommand(agentId, { processEnv: probeEnv })) return null;
   return {

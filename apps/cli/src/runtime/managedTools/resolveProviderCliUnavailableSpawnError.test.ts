@@ -52,6 +52,21 @@ describe('resolveProviderCliUnavailableSpawnError', () => {
         })).toBeNull();
     });
 
+    it('expands ${VAR} references in spawn overrides the way the runner child env does', () => {
+        const dir = mkdtempSync(join(tmpdir(), 'happier-provider-availability-expand-'));
+        tempDirs.push(dir);
+        writeFileSync(join(dir, 'codex'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+        chmodSync(dir, 0o755);
+        expect(resolveProviderCliUnavailableSpawnError({
+            backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+            spawnEnvironmentVariables: {
+                HAPPIER_CODEX_PATH: '${HAPPIER_TEST_CODEX_ROOT}/codex',
+                HAPPIER_HOME_DIR: '/definitely-not-the-probe-home',
+            },
+            processEnv: { HAPPIER_TEST_CODEX_ROOT: dir },
+        })).toBeNull();
+    });
+
     it('leaves existing-session requests and configured ACP backends to their own handling', () => {
         const unavailableEnv = { HAPPIER_CODEX_PATH: '/definitely-missing-happier-codex/codex' };
         expect(resolveProviderCliUnavailableSpawnError({
