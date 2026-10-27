@@ -4,6 +4,7 @@ import {
   type AgentId,
 } from '@happier-dev/agents';
 import { buildBackendTargetKey } from '@happier-dev/protocol';
+import { resolveProviderCliCommand } from '@happier-dev/cli-common/providers';
 
 import { isBackendEnabledByAccountSettings } from '@/settings/backendEnabled';
 
@@ -16,14 +17,17 @@ export type AgentBackendItem = Readonly<{
 
 /**
  * Inventory for `agents.backends.list`: every catalog backend, filtered by the account's
- * provider disable setting. Disabled backends are omitted unless `includeDisabled` is set,
- * in which case they are reported with `enabled: false`.
+ * provider disable setting and by local CLI availability. Disabled backends are omitted
+ * unless `includeDisabled` is set (reported with `enabled: false`); backends whose CLI
+ * cannot be resolved on this machine are omitted so agents choose only launchable targets.
  */
 export function buildAgentBackendItems(params: Readonly<{
   settings: Record<string, unknown> | undefined;
   includeDisabled?: boolean;
   limit?: unknown;
+  processEnv?: NodeJS.ProcessEnv;
 }>): readonly AgentBackendItem[] {
+  const processEnv = params.processEnv ?? process.env;
   const items = AGENT_IDS.map((agentId) => {
     const backendTarget = { kind: 'builtInAgent', agentId } as const;
     return {
@@ -34,7 +38,9 @@ export function buildAgentBackendItems(params: Readonly<{
         : true,
       agentId,
     };
-  }).filter((item) => params.includeDisabled === true || item.enabled);
+  })
+    .filter((item) => params.includeDisabled === true || item.enabled)
+    .filter((item) => Boolean(resolveProviderCliCommand(item.agentId, { processEnv })));
   const limit = normalizeLimit(params.limit);
   return limit ? items.slice(0, limit) : items;
 }

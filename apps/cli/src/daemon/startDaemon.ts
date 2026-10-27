@@ -464,6 +464,7 @@ import { refreshAccountSettingsForMinimumVersion } from '@/settings/accountSetti
 import { warmActiveAccountSettingsSnapshotBestEffort } from '@/settings/accountSettings/warmActiveAccountSettingsSnapshot';
 import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { isBackendEnabledByAccountSettings, resolveBackendDisabledSpawnError } from '@/settings/backendEnabled';
+import { resolveProviderCliUnavailableSpawnError } from '@/runtime/managedTools/resolveProviderCliUnavailableSpawnError';
 import { resolveConfiguredAcpBackendFromAccountSettings } from '@/agent/acp/catalog/configured/resolveConfiguredAcpBackendFromAccountSettings';
 import { fetchSessionByIdCompat, type RawSessionRecord } from '@/session/transport/http/sessionsHttp';
 import { listRetainedConnectedServiceMaterializationIdentityIds } from './connectedServices/materialize/cleanup/listRetainedConnectedServiceMaterializationIdentityIds';
@@ -3105,6 +3106,16 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
               existingSessionId: normalizedExistingSessionId,
             });
             if (backendDisabledError) return backendDisabledError;
+            // Same admission gate for availability: deny fresh spawns naming a built-in
+            // backend whose CLI cannot be resolved in the runner's environment (daemon env
+            // merged with the spawn's own overrides), with install guidance, instead of
+            // letting the runner fail deep in its first turn.
+            const providerUnavailableError = resolveProviderCliUnavailableSpawnError({
+              backendTarget: normalizedOptions.backendTarget,
+              existingSessionId: normalizedExistingSessionId,
+              spawnEnvironmentVariables: normalizedOptions.environmentVariables,
+            });
+            if (providerUnavailableError) return providerUnavailableError;
             if (normalizedExistingSessionId) {
               const inFlightStop = stopSessionInFlightBySessionId.get(normalizedExistingSessionId);
               let precedingStopResult: StopSessionResult | null = null;

@@ -164,17 +164,18 @@ describe('createSpawnedSession — Replay-seeded creation', () => {
     expect(archiveSessionByIdBestEffort).toHaveBeenCalledWith({ token: 'token', sessionId: 'sess_child' });
   });
 
-  it('settles the orphaned row when a disabled backend rejects the spawn before admission', async () => {
+  it.each([
+    SPAWN_SESSION_ERROR_CODES.BACKEND_DISABLED,
+    SPAWN_SESSION_ERROR_CODES.PROVIDER_UNAVAILABLE,
+  ])('settles the orphaned row when a %s rejection denies the spawn before admission', async (errorCode) => {
     getOrCreateSessionByTag.mockResolvedValue({ session: rawSession(CANONICAL_METADATA), created: true });
     spawnDaemonSession.mockResolvedValue({
       type: 'error',
-      errorCode: SPAWN_SESSION_ERROR_CODES.BACKEND_DISABLED,
-      errorMessage: 'codex is disabled in your account settings',
+      errorCode,
+      errorMessage: 'spawn denied before admission',
     });
 
-    await expect(createSpawnedSession(replaySeededParams())).rejects.toMatchObject({
-      code: SPAWN_SESSION_ERROR_CODES.BACKEND_DISABLED,
-    });
+    await expect(createSpawnedSession(replaySeededParams())).rejects.toMatchObject({ code: errorCode });
 
     expect(archiveSessionByIdBestEffort).toHaveBeenCalledTimes(1);
     expect(archiveSessionByIdBestEffort).toHaveBeenCalledWith({ token: 'token', sessionId: 'sess_child' });
