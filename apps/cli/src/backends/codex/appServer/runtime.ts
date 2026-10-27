@@ -38,6 +38,7 @@ import { logger } from '@/ui/logger';
 import { delay } from '@/utils/time';
 import { createSerializedWorkQueueDiagnostics, type SerializedWorkDiagnosticContext } from '@/utils/serializedWorkQueueDiagnostics';
 import { readNonBlankOpaqueIdentifier } from '@/utils/opaqueIdentifiers';
+import { surfaceMissingCodexCliIssue } from '../utils/surfaceMissingCodexCliIssue';
 import type {
     ActiveTurnPendingPumpOptions,
     DrainPendingOptions,
@@ -4395,6 +4396,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
                 break;
             } catch (error) {
                 if (!isRetryableCodexStateRuntimeInitializationFailure(error)) {
+                    await surfaceMissingCodexCliIssue({ session: params.session, error });
                     throw error;
                 }
                 stateRuntimeRetryAttempt += 1;

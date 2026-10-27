@@ -30,6 +30,7 @@ import { createCodexAppServerExecutionRunBackend } from '@/backends/codex/execut
 import { createExecutionRunPermissionHandler } from '@/agent/executionRuns/policy/executionRunPermissionDecision';
 import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
 import { createSessionProviderInputConsumer } from '@/agent/runtime/sessionInput/SessionProviderInputConsumer';
+import { ProviderCliNotFoundError } from '@/runtime/managedTools/requireProviderCliCommand';
 import { waitForCondition } from '@/testkit/async/waitFor';
 import { createApiSessionClientFixture, createMutableApiSessionClientFixture } from '@/testkit/backends/sessionFixtures';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
@@ -1877,6 +1878,43 @@ describe('createCodexAppServerRuntime', () => {
                 expect.objectContaining({ method: 'thread/start' }),
             ]),
         );
+    });
+
+    it('fails the session with a provider_cli_not_found runtime issue when the codex CLI is missing at startOrLoad', async () => {
+        const { root } = await createRuntimeFixture('happier-codex-app-server-runtime-missing-cli-');
+        // The explicit override is exclusive: a bogus HAPPIER_CODEX_PATH defeats the fixture's
+        // fake app-server binary and makes requireProviderCliCommand throw ProviderCliNotFoundError.
+        envScope.patch({ HAPPIER_CODEX_APP_SERVER_BIN: undefined });
+        const savedCodexPath = process.env.HAPPIER_CODEX_PATH;
+        process.env.HAPPIER_CODEX_PATH = '/definitely-missing-happier-codex/codex';
+        try {
+            const metadata = createRuntimeMetadata(root);
+            const session = createApiSessionClientFixture({ metadata });
+            const sendAgentMessage = vi.spyOn(session, 'sendAgentMessage');
+            const runtime = createCodexAppServerRuntime({
+                directory: root,
+                session,
+                onThinkingChange: vi.fn(),
+            });
+
+            const error = await runtime.startOrLoad({}).then(() => null, (caught: unknown) => caught);
+
+            expect(error).toBeInstanceOf(ProviderCliNotFoundError);
+            expect(sendAgentMessage).toHaveBeenCalledWith('codex', expect.objectContaining({
+                type: 'turn_failed',
+                issue: expect.objectContaining({
+                    code: 'provider_cli_not_found',
+                    source: 'dependency_failure',
+                    sanitizedPreview: expect.stringContaining('HAPPIER_CODEX_PATH'),
+                }),
+            }));
+        } finally {
+            if (savedCodexPath === undefined) {
+                delete process.env.HAPPIER_CODEX_PATH;
+            } else {
+                process.env.HAPPIER_CODEX_PATH = savedCodexPath;
+            }
+        }
     });
 
     it('retries native resume when Codex transiently cannot initialize its shared SQLite state runtime', async () => {

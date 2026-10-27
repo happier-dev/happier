@@ -1,6 +1,7 @@
 import { applyPermissionModeToCodexPermissionHandler } from './utils/applyPermissionModeToHandler';
 import { createCodexPermissionHandler, type CodexRuntimePermissionHandler } from './utils/createCodexPermissionHandler';
 import { DiffProcessor } from './utils/diffProcessor';
+import { surfaceMissingCodexCliIssue } from './utils/surfaceMissingCodexCliIssue';
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { logger } from '@/ui/logger';
@@ -1760,13 +1761,18 @@ export async function runCodex(opts: {
         });
 
     if (!useCodexAcp && !useCodexAppServer) {
-        const codexMcpServer = await resolveCodexMcpServerSpawn();
-        const { CodexMcpClient: CodexMcpClientClass } = await import('./codexMcpClient');
-        client = new CodexMcpClientClass({
-            mode: codexMcpServer.mode,
-            command: codexMcpServer.command,
-            env: codexProviderProcessEnv,
-        });
+        try {
+            const codexMcpServer = await resolveCodexMcpServerSpawn();
+            const { CodexMcpClient: CodexMcpClientClass } = await import('./codexMcpClient');
+            client = new CodexMcpClientClass({
+                mode: codexMcpServer.mode,
+                command: codexMcpServer.command,
+                env: codexProviderProcessEnv,
+            });
+        } catch (error) {
+            await surfaceMissingCodexCliIssue({ session, error });
+            throw error;
+        }
     }
 
             // NOTE: Codex resume support varies by build; forks may seed `codex-reply` with a stored session id.
