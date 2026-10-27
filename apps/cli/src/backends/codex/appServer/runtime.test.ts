@@ -13,6 +13,7 @@ import {
     buildConnectedServiceCredentialRecord,
     buildUsageLimitIssueFingerprint,
     type SessionRuntimeIssueV1,
+    type SessionTurnMutationV1,
     SESSION_MEDIA_MESSAGE_MAX_ENTRIES_V1,
     SessionMediaMessageMetaEnvelopeV1Schema,
     SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY,
@@ -1907,6 +1908,49 @@ describe('createCodexAppServerRuntime', () => {
                     source: 'dependency_failure',
                     sanitizedPreview: expect.stringContaining('HAPPIER_CODEX_PATH'),
                 }),
+            }));
+        } finally {
+            if (savedCodexPath === undefined) {
+                delete process.env.HAPPIER_CODEX_PATH;
+            } else {
+                process.env.HAPPIER_CODEX_PATH = savedCodexPath;
+            }
+        }
+    });
+
+    it('dedupes the provider_cli_not_found failed turn across resume-fallback startOrLoad retries', async () => {
+        const { root } = await createRuntimeFixture('happier-codex-app-server-runtime-missing-cli-dedupe-');
+        envScope.patch({ HAPPIER_CODEX_APP_SERVER_BIN: undefined });
+        const savedCodexPath = process.env.HAPPIER_CODEX_PATH;
+        process.env.HAPPIER_CODEX_PATH = '/definitely-missing-happier-codex/codex';
+        try {
+            const mutations: SessionTurnMutationV1[] = [];
+            const lifecycle = createSessionTurnLifecycle({
+                sessionId: 'session-missing-cli-dedupe',
+                enqueueSessionTurn: async (mutation) => { mutations.push(mutation); },
+            });
+            const session = {
+                ...createApiSessionClientFixture({ metadata: createRuntimeMetadata(root) }),
+                sessionTurnLifecycle: lifecycle,
+            } as unknown as Parameters<typeof createCodexAppServerRuntimeProduction>[0]['session'];
+            const runtime = createCodexAppServerRuntime({
+                directory: root,
+                session,
+                onThinkingChange: vi.fn(),
+            });
+
+            // Mirrors runCodex's resume flow with the CLI missing: the resume attempt
+            // fails, then the fresh-session fallback startOrLoad fails the same way.
+            await expect(runtime.startOrLoad({ resumeId: 'thread-resume-missing-cli' })).rejects.toBeInstanceOf(ProviderCliNotFoundError);
+            await expect(runtime.startOrLoad({})).rejects.toBeInstanceOf(ProviderCliNotFoundError);
+
+            const failedTurnIssues = mutations
+                .filter((mutation): mutation is Extract<SessionTurnMutationV1, { action: 'fail' }> => mutation.action === 'fail')
+                .map((mutation) => mutation.issue);
+            expect(failedTurnIssues).toHaveLength(1);
+            expect(failedTurnIssues[0]).toEqual(expect.objectContaining({
+                code: 'provider_cli_not_found',
+                source: 'dependency_failure',
             }));
         } finally {
             if (savedCodexPath === undefined) {

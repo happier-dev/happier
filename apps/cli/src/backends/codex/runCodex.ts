@@ -1462,6 +1462,9 @@ export async function runCodex(opts: {
             cause: 'status_error',
             error: cause,
             allocateTurnWhenIdle: true,
+            // A strict-resume launch failure may already have surfaced from the runtime
+            // layer; reuse that failed turn instead of allocating a duplicate.
+            suppressUntrustedDuplicate: true,
         });
         throw createCodexResumeError(message, cause);
     };

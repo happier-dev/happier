@@ -23,6 +23,10 @@ export async function surfaceMissingCodexCliIssue(params: Readonly<{
         cause: 'status_error',
         error: params.error,
         allocateTurnWhenIdle: true,
+        // The same launch failure surfaces from multiple layers (runtime startOrLoad,
+        // resume-fallback retries, strict-resume reporting); reuse the failed turn
+        // instead of allocating a duplicate session-owned turn for each surface.
+        suppressUntrustedDuplicate: true,
     }).catch((surfaceError) => {
         logger.debug('[codex] Failed to surface missing-CLI session issue (non-fatal)', surfaceError);
     });
