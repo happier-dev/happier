@@ -141,6 +141,13 @@ function expectHeaderValue(headers: HeadersInit | undefined, key: string, value:
     expect(new Headers(headers).get(key)).toBe(value);
 }
 
+// Pushed direct-session transcript deltas flush through the socket's ≤1s per-session apply
+// window before the real sync handler runs. Let the window drain (real timers, with margin for
+// scheduling jitter) before asserting applied transcript state.
+async function settleDirectSessionDeltaApplyWindow(): Promise<void> {
+    await new Promise((resolve) => setTimeout(resolve, 1_100));
+}
+
 function findRuntimeFetchCall(url: string) {
     const call = runtimeFetchMock.mock.calls.find(([input]) => matchServerFetchUrl(url).asymmetricMatch(input));
     expect(call, `expected runtimeFetch to be called with ${url}`).toBeTruthy();
@@ -2246,7 +2253,7 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
             nextCursor: 'tail-cursor-2',
             truncated: false,
         });
-        await new Promise((resolve) => setTimeout(resolve, 0));
+        await settleDirectSessionDeltaApplyWindow();
 
         const sessionMessages = storage.getState().sessionMessages[sessionId];
         const orderedTexts = (sessionMessages?.messageIdsOldestFirst ?? [])
@@ -2272,6 +2279,79 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
         }), expect.anything());
     });
 
+    it('keeps remote delta ordering across a live-to-hidden transition without redundant catch-up RPCs', async () => {
+        // Handler-level equivalence proof for the socket apply window: the real sync handler runs
+        // (only the machine transport is mocked). While the session is live-viewed, pushes A/B sit
+        // in the ≤1s window; the session is then hidden and C arrives before the flush. C must not
+        // overtake A/B — a break in the fromCursor chain would trigger a redundant
+        // machineDirectSessionTranscriptReadAfter catch-up per transition.
+        const sessionId = 'direct_session_live_hidden_delta_order';
+        storage.getState().applySessions([createDirectSession(sessionId)]);
+        machineDirectSessionTranscriptPageMock.mockResolvedValueOnce({
+            ok: true,
+            items: [
+                {
+                    id: 'direct-msg-1',
+                    createdAtMs: 1,
+                    raw: { role: 'user', content: { type: 'text', text: 'hello direct' } },
+                },
+            ],
+            nextCursor: 'older-cursor-1',
+            tailCursor: 'page-tail-cursor-1',
+            hasMore: false,
+        });
+
+        const { sync } = await import('./sync');
+        (sync as any).encryption = {
+            getSessionEncryption: () => null,
+        };
+        (sync as any).activeServerSessionIds = new Set<string>([sessionId]);
+        (sync as any).hasFetchedSessionsSnapshotForActiveServer = true;
+
+        markSessionVisible(sessionId);
+        await (sync as any).fetchMessages(sessionId);
+
+        const pushDelta = (itemId: string, createdAtMs: number, text: string, fromCursor: string, nextCursor: string) =>
+            (sync as any).handleEphemeralUpdate({
+                type: 'direct-session-transcript-delta',
+                sessionId,
+                items: [
+                    {
+                        id: itemId,
+                        createdAtMs,
+                        raw: { role: 'user', content: { type: 'text', text } },
+                    },
+                ],
+                fromCursor,
+                nextCursor,
+                truncated: false,
+            });
+
+        await pushDelta('direct-delta-a', 2, 'A', 'page-tail-cursor-1', 'tail-cursor-a');
+        await pushDelta('direct-delta-b', 3, 'B', 'tail-cursor-a', 'tail-cursor-b');
+
+        markSessionHidden(sessionId);
+
+        await pushDelta('direct-delta-c', 4, 'C', 'tail-cursor-b', 'tail-cursor-c');
+
+        // Let the ≤1s apply window flush (real timers; generous margin for scheduling jitter).
+        await new Promise((resolve) => setTimeout(resolve, 1_500));
+
+        const sessionMessages = storage.getState().sessionMessages[sessionId];
+        const orderedTexts = (sessionMessages?.messageIdsOldestFirst ?? [])
+            .map((id) => sessionMessages?.messagesById[id])
+            .filter((message): message is NonNullable<typeof message> => Boolean(message))
+            .filter((message) => message.kind === 'user-text')
+            .map((message) => message.text);
+        expect(orderedTexts).toEqual(['hello direct', 'A', 'B', 'C']);
+
+        const internals = sync as unknown as { getDirectSessionTailCursor: (id: string) => string | null };
+        expect(internals.getDirectSessionTailCursor(sessionId)).toBe('tail-cursor-c');
+
+        // The seamless cursor chain never strands the handler, so no catch-up RPC fires.
+        expect(machineDirectSessionTranscriptReadAfterMock).not.toHaveBeenCalled();
+    });
+
     it('anchors an initial tail push and continues later reads from its next cursor', async () => {
         const sessionId = 'direct_session_initial_tail_push';
         storage.getState().applySessions([createDirectSession(sessionId)]);
@@ -2290,7 +2370,7 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
             nextCursor: 'tail-after-initial-push',
             truncated: false,
         });
-        await new Promise((resolve) => setTimeout(resolve, 0));
+        await settleDirectSessionDeltaApplyWindow();
 
         expect(internals.getDirectSessionTailCursor(sessionId)).toBe('tail-after-initial-push');
         expect(Object.values(storage.getState().sessionMessages[sessionId]?.messagesById ?? {}))
@@ -2353,7 +2433,9 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
             nextCursor: 'tail-cursor-3',
             truncated: false,
         });
-        await vi.waitFor(() => expect(machineDirectSessionTranscriptReadAfterMock).toHaveBeenCalledTimes(1));
+        // The pushed delta reaches the handler through the ≤1s apply window first, so the
+        // catch-up probe fires at window time — the default 1s waitFor timeout would race it.
+        await vi.waitFor(() => expect(machineDirectSessionTranscriptReadAfterMock).toHaveBeenCalledTimes(1), { timeout: 3_000 });
 
         expect(machineDirectSessionTranscriptReadAfterMock).toHaveBeenCalledTimes(1);
         expect(machineDirectSessionTranscriptReadAfterMock).toHaveBeenCalledWith(expect.objectContaining({
@@ -2401,7 +2483,7 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
             nextCursor: 'ready-tail-cursor-1',
             truncated: false,
         });
-        await new Promise((resolve) => setTimeout(resolve, 0));
+        await settleDirectSessionDeltaApplyWindow();
 
         expect(notifyActivityReadyMock).toHaveBeenCalledWith(sessionId, expect.any(Array));
     });
@@ -2438,7 +2520,7 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
             nextCursor: 'agent-reply-tail-cursor-1',
             truncated: false,
         });
-        await new Promise((resolve) => setTimeout(resolve, 0));
+        await settleDirectSessionDeltaApplyWindow();
 
         expect(notifyActivityReadyMock).toHaveBeenCalledWith(sessionId, [
             expect.objectContaining({
@@ -2492,7 +2574,7 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
             truncated,
             truncationReason: 'page_limit',
         });
-        await new Promise((resolve) => setTimeout(resolve, 0));
+        await settleDirectSessionDeltaApplyWindow();
 
         expect(machineDirectSessionTranscriptPageMock).toHaveBeenCalledTimes(1);
         expect(sync.hasDeferredNewerMessages(sessionId)).toBe(true);

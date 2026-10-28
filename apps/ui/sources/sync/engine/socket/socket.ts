@@ -14,7 +14,10 @@ import type { MachineActivityUpdate } from '@/sync/reducer/machineActivityAccumu
 import { storage } from '@/sync/domains/state/storage';
 import { projectManager } from '@/sync/runtime/orchestration/projectManager';
 import { notifyExecutionRunActivity } from '@/sync/runtime/executionRuns/executionRunActivityBus';
-import { recordDirectSessionDeltaArrival } from '@/sync/runtime/directSessions/directSessionDeltaArrival';
+import {
+    clearDirectSessionDeltaArrivals,
+    recordDirectSessionDeltaArrival,
+} from '@/sync/runtime/directSessions/directSessionDeltaArrival';
 import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
 import { scmStatusSync } from '@/scm/scmStatusSync';
 import { ingestWorkspaceMutationMessages } from '@/scm/refresh/workspaceMutationIngestionRuntime';
@@ -45,6 +48,7 @@ import {
     createSessionShellRefreshCoalescer,
 } from '@/sync/engine/sessions/sessionShellRefreshCoalescer';
 import { recordSessionInvalidationRequested } from '@/sync/engine/sessions/sessionInvalidationTelemetry';
+import { registerSessionTranscriptDerivedCacheClear } from '@/sync/runtime/sessionTranscriptDerivedCaches';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 import type { Settings } from '@/sync/domains/settings/settings';
 import type { AccountSettingsScope } from '@/sync/domains/settings/scope/accountSettingsScope';
@@ -306,6 +310,15 @@ export function resetSocketSessionProjectionStateForServerScope(): void {
     activityRenderableProjectionPatchCoalescer.reset();
     cacheOnlySessionMetadataHydrationCoalescer.reset();
     cacheOnlySessionUpdateSeqBySession.clear();
+    // The scope generation already stale-marks every buffered delta's continuation guard; release
+    // them (and their arrival hints) explicitly so no timer fires for a superseded scope.
+    const droppedDeltaEntries = releaseAllDeferredDirectSessionTranscriptDeltasForServerScope();
+    clearDirectSessionDeltaArrivals();
+    if (droppedDeltaEntries > 0) {
+        syncPerformanceTelemetry.count('sync.socket.directSessionTranscriptDelta.windowDroppedScopeReset', {
+            messages: droppedDeltaEntries,
+        });
+    }
 }
 
 function setSocketSessionApplyHandler(applySessions: ApplySessions): void {
@@ -1145,17 +1158,21 @@ function enqueueDeferredTranscriptStreamSegment(entry: DeferredTranscriptStreamS
     scheduleDeferredTranscriptStreamSegmentFlush(sessionId, state, config.windowMs);
 }
 
-// Remote direct sessions push tail deltas up to ~4Hz. While a live full-content consumer is
-// watching the session, batch those pushes into the ~1s apply cadence the local streaming path
-// already delivers, instead of one handler round per push. Entries are applied sequentially in
-// arrival order at flush time, so the sync-side tail-cursor reconciliation sees the exact chain
-// an apply-immediately delivery would have produced — only up to one window later. When the
-// session is not a live full-content consumer, deltas keep flowing immediately so the existing
-// sync-side defer policy is unchanged.
+// Remote direct sessions push tail deltas up to ~4Hz. Every push — live-viewed or not — enters
+// this per-session ≤1s window and is applied sequentially in arrival order at flush time, so the
+// sync-side tail-cursor reconciliation sees the exact chain an apply-immediately delivery would
+// have produced — only up to one window later. A separate apply-immediately lane for non-live
+// sessions reordered pushes across a live→non-live transition: the immediate delta applied before
+// the buffered window, broke the fromCursor chain, and fired a redundant catch-up RPC per
+// stranded delta. Routing every push through one queue removes that lane; the sync-side handler
+// still decides what an applied delta does (a session no longer live at flush time takes the
+// handler's existing defer branch, at most one window after the push arrived).
 const DIRECT_SESSION_TRANSCRIPT_DELTA_APPLY_WINDOW_MS = 1_000;
 
 type DeferredDirectSessionTranscriptDeltaEntry = Readonly<{
     update: DirectSessionTranscriptUpdatedEphemeralUpdate;
+    sourceServerId?: string | null;
+    arrivedAtMs: number;
     shouldContinue: () => boolean;
     updateDirectSessionTranscript: (update: DirectSessionTranscriptUpdatedEphemeralUpdate) => Promise<void> | void;
 }>;
@@ -1178,27 +1195,37 @@ function getOrCreateDeferredDirectSessionTranscriptDeltaQueue(
     return created;
 }
 
+function clearDeferredDirectSessionTranscriptDeltaTimer(state: DeferredDirectSessionTranscriptDeltaQueueState): void {
+    if (!state.timer) return;
+    clearTimeout(state.timer);
+    state.timer = null;
+}
+
 async function flushDeferredDirectSessionTranscriptDeltas(sessionId: string): Promise<void> {
     const state = deferredDirectSessionTranscriptDeltaQueues.get(sessionId);
     if (!state) return;
-    if (state.timer) {
-        clearTimeout(state.timer);
-        state.timer = null;
-    }
+    clearDeferredDirectSessionTranscriptDeltaTimer(state);
     // Only one drain loop per session: a timer firing while an apply is still awaiting must not
     // start a second loop, or entries could apply out of order. The active loop drains until the
     // queue is empty, so it picks up everything a late enqueue appended.
     if (state.flushing) return;
     state.flushing = true;
+    let flushed = 0;
+    let flushedWhileNotLiveViewed = 0;
+    let maxArrivalToApplyMs = 0;
     try {
         for (;;) {
             const entry = state.queued.shift();
             if (!entry) {
                 // A timer scheduled by a late enqueue during this drain must not survive the
                 // queue it belonged to: firing later it would drain a fresh window early.
-                if (state.timer) {
-                    clearTimeout(state.timer);
-                    state.timer = null;
+                clearDeferredDirectSessionTranscriptDeltaTimer(state);
+                if (flushed > 0) {
+                    syncPerformanceTelemetry.count('sync.socket.directSessionTranscriptDelta.windowFlushed', {
+                        entries: flushed,
+                        entriesWhileNotLiveViewed: flushedWhileNotLiveViewed,
+                        maxArrivalToApplyMs,
+                    });
                 }
                 deferredDirectSessionTranscriptDeltaQueues.delete(sessionId);
                 return;
@@ -1209,7 +1236,22 @@ async function flushDeferredDirectSessionTranscriptDeltas(sessionId: string): Pr
                 });
                 continue;
             }
-            await entry.updateDirectSessionTranscript(entry.update);
+            if (!isSessionFullContentConsumerActiveForRealtime(entry.update.sessionId, entry.sourceServerId)) {
+                flushedWhileNotLiveViewed += 1;
+            }
+            try {
+                await entry.updateDirectSessionTranscript(entry.update);
+            } catch (error) {
+                // Report and keep draining: one failing entry must not strand the rest of the
+                // window behind it (its successors continue the cursor chain it broke).
+                syncPerformanceTelemetry.count('sync.socket.directSessionTranscriptDelta.windowApplyFailed', {
+                    messages: 1,
+                });
+                console.error(`Failed to apply deferred direct-session transcript delta for ${sessionId}`, error);
+                continue;
+            }
+            flushed += 1;
+            maxArrivalToApplyMs = Math.max(maxArrivalToApplyMs, Date.now() - entry.arrivedAtMs);
         }
     } finally {
         state.flushing = false;
@@ -1226,9 +1268,41 @@ function enqueueDeferredDirectSessionTranscriptDelta(entry: DeferredDirectSessio
     if (state.timer) return;
     state.timer = setTimeout(() => {
         state.timer = null;
-        void flushDeferredDirectSessionTranscriptDeltas(sessionId);
+        void flushDeferredDirectSessionTranscriptDeltas(sessionId).catch((error) => {
+            // The per-entry catches above make this belt-and-braces: a drain-level failure must
+            // never surface as an unhandled rejection off the bare timer `void`.
+            syncPerformanceTelemetry.count('sync.socket.directSessionTranscriptDelta.windowFlushFailed', {
+                messages: 1,
+            });
+            console.error(`Failed to flush deferred direct-session transcript deltas for ${sessionId}`, error);
+        });
     }, DIRECT_SESSION_TRANSCRIPT_DELTA_APPLY_WINDOW_MS);
 }
+
+function releaseDeferredDirectSessionTranscriptDeltasForSession(sessionId: string): number {
+    const state = deferredDirectSessionTranscriptDeltaQueues.get(sessionId);
+    if (!state) return 0;
+    clearDeferredDirectSessionTranscriptDeltaTimer(state);
+    const dropped = state.queued.length;
+    state.queued.length = 0;
+    deferredDirectSessionTranscriptDeltaQueues.delete(sessionId);
+    return dropped;
+}
+
+function releaseAllDeferredDirectSessionTranscriptDeltasForServerScope(): number {
+    let dropped = 0;
+    for (const sessionId of [...deferredDirectSessionTranscriptDeltaQueues.keys()]) {
+        dropped += releaseDeferredDirectSessionTranscriptDeltasForSession(sessionId);
+    }
+    return dropped;
+}
+
+// Session deletion / transcript eviction releases the buffered window so a deleted session's
+// queue cannot flush into a handler for state that no longer exists. (The arrival-hint map
+// clears itself through its own registration in directSessionDeltaArrival.ts.)
+registerSessionTranscriptDerivedCacheClear((sessionId) => {
+    releaseDeferredDirectSessionTranscriptDeltasForSession(sessionId);
+});
 
 export async function handleSocketUpdate(params: {
     getAccountEncryptionMode?: () => Promise<'plain' | 'e2ee'>;
@@ -2532,16 +2606,18 @@ export function handleEphemeralSocketUpdate(params: {
         if (!shouldContinue()) return Promise.resolve();
         recordDirectSessionDeltaArrival(updateData.sessionId);
         if (!updateDirectSessionTranscript) return Promise.resolve();
-        const needsLiveTranscript = isSessionFullContentConsumerActiveForRealtime(updateData.sessionId, sourceServerId);
-        if (needsLiveTranscript) {
-            enqueueDeferredDirectSessionTranscriptDelta({
-                update: updateData,
-                shouldContinue,
-                updateDirectSessionTranscript,
-            });
-            return Promise.resolve();
-        }
-        return Promise.resolve(updateDirectSessionTranscript(updateData));
+        // Single lane: every push enters the per-session ≤1s window in arrival order, live or
+        // not, so a live→non-live transition can never apply a newer push before older buffered
+        // ones (which would break the fromCursor chain and fire redundant catch-up RPCs). The
+        // sync-side handler decides what an applied delta does for the session's current state.
+        enqueueDeferredDirectSessionTranscriptDelta({
+            update: updateData,
+            sourceServerId,
+            arrivedAtMs: Date.now(),
+            shouldContinue,
+            updateDirectSessionTranscript,
+        });
+        return Promise.resolve();
     } else if (updateData.type === 'transcript-stream-segment') {
         const needsLiveTranscript = isSessionFullContentConsumerActiveForRealtime(updateData.sessionId, sourceServerId);
         const entry: DeferredTranscriptStreamSegmentEntry = {

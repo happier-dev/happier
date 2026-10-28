@@ -16,7 +16,7 @@ import type { DirectSessionTranscriptUpdatedEphemeralUpdate } from './socketPars
 import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
 import * as executionRunActivityBus from '@/sync/runtime/executionRuns/executionRunActivityBus';
 import { resetTranscriptStreamSegmentAssemblyForTests } from '@/sync/engine/sessions/transcriptStreamSegmentAssembly';
-import { flushMachineActivityUpdates, handleEphemeralSocketUpdate, handleSocketUpdate, handleUpdateContainer } from './socket';
+import { flushMachineActivityUpdates, handleEphemeralSocketUpdate, handleSocketUpdate, handleUpdateContainer, resetSocketSessionProjectionStateForServerScope } from './socket';
 import { Encryption } from '@/sync/encryption/encryption';
 import { encodeBase64 } from '@/encryption/base64';
 import { createMachineFixture } from '@/dev/testkit';
@@ -1193,6 +1193,12 @@ describe('socket update handling: transcript stream segment ephemerals', () => {
 });
 
 describe('socket direct-session transcript delta apply window', () => {
+    // Queue-mechanics unit tests: `updateDirectSessionTranscript` is a mock standing in for the
+    // sync-side handler. They prove enqueue/drain ordering only — NOT the end-to-end cursor-chain
+    // equivalence. The handler-level proof (real sync handler, only the machine transport mocked,
+    // no redundant catch-up across a live→hidden transition) lives in
+    // sync/sync.sessionMissingServerScope.test.ts ('keeps remote delta ordering across a
+    // live-to-hidden transition without redundant catch-up RPCs').
     beforeEach(() => {
         storage.setState(initialStorageState, true);
     });
@@ -1314,7 +1320,54 @@ describe('socket direct-session transcript delta apply window', () => {
         expect(updateDirectSessionTranscript).toHaveBeenCalledTimes(2);
     });
 
-    it('keeps applying deltas immediately without a window when the session is not live-viewed', async () => {
+    it('keeps arrival order when a delta arrives on the non-live path while the window still holds earlier deltas', async () => {
+        vi.useFakeTimers();
+        const sessionId = 'live_to_hidden_order_direct_delta_session';
+        setActiveViewingSessionId(sessionId, 1);
+        markSessionVisible(sessionId);
+        storage.getState().applySessions([buildSession(sessionId, 'plain')]);
+
+        const updateDirectSessionTranscript = vi.fn(async (_update: DirectSessionTranscriptUpdatedEphemeralUpdate) => {});
+        const baseParams = buildDirectDeltaParams(sessionId, updateDirectSessionTranscript);
+
+        // Live: A and B enter the ≤1s apply window.
+        await handleEphemeralSocketUpdate({
+            ...baseParams,
+            update: buildDirectSessionTranscriptDeltaUpdate(sessionId, {
+                itemId: 'delta-item-a', text: 'first', fromCursor: 'tail', nextCursor: 'cursor-a',
+            }),
+        });
+        await handleEphemeralSocketUpdate({
+            ...baseParams,
+            update: buildDirectSessionTranscriptDeltaUpdate(sessionId, {
+                itemId: 'delta-item-b', text: 'second', fromCursor: 'cursor-a', nextCursor: 'cursor-b',
+            }),
+        });
+
+        // Live→non-live transition before the window flushed; C then arrives.
+        markSessionHidden(sessionId);
+        await handleEphemeralSocketUpdate({
+            ...baseParams,
+            update: buildDirectSessionTranscriptDeltaUpdate(sessionId, {
+                itemId: 'delta-item-c', text: 'third', fromCursor: 'cursor-b', nextCursor: 'cursor-c',
+            }),
+        });
+
+        await vi.advanceTimersByTimeAsync(1_000);
+
+        // Application order must remain arrival order and the cursor chain must stay seamless:
+        // C overtaking the buffered A/B would break fromCursor continuity downstream.
+        const appliedCursors = updateDirectSessionTranscript.mock.calls
+            .map((call) => [call[0].fromCursor, call[0].nextCursor] as [string | null, string | null]);
+        expect(appliedCursors).toEqual([
+            ['tail', 'cursor-a'],
+            ['cursor-a', 'cursor-b'],
+            ['cursor-b', 'cursor-c'],
+        ]);
+    });
+
+    it('routes non-live-viewed deltas through the same single-lane window as live ones', async () => {
+        vi.useFakeTimers();
         const sessionId = 'hidden_direct_delta_session';
         storage.getState().applySessions([buildSession(sessionId, 'plain')]);
 
@@ -1326,8 +1379,14 @@ describe('socket direct-session transcript delta apply window', () => {
             }),
         });
 
-        expect(updateDirectSessionTranscript).toHaveBeenCalledTimes(1);
+        // Non-live deltas share the live lane (rather than an apply-immediate bypass) so a
+        // live→non-live transition can never reorder pushes around the buffered window. The
+        // arrival freshness signal is still recorded at push time for the tail-poll gate.
         expect(readDirectSessionDeltaArrivedAt(sessionId)).not.toBeNull();
+        expect(updateDirectSessionTranscript).not.toHaveBeenCalled();
+
+        await vi.advanceTimersByTimeAsync(1_000);
+        expect(updateDirectSessionTranscript).toHaveBeenCalledTimes(1);
     });
 
     it('skips buffered deltas whose captured socket scope guard is stale at flush time', async () => {
@@ -1350,6 +1409,46 @@ describe('socket direct-session transcript delta apply window', () => {
         });
         socketScopeLive = false;
 
+        await vi.advanceTimersByTimeAsync(1_000);
+        expect(updateDirectSessionTranscript).not.toHaveBeenCalled();
+    });
+
+    it('releases buffered deltas at the server-scope reset even when their captured scope guard is still live', async () => {
+        vi.useFakeTimers();
+        const sessionId = 'scope_reset_direct_delta_session';
+        setActiveViewingSessionId(sessionId, 1);
+        markSessionVisible(sessionId);
+        storage.getState().applySessions([buildSession(sessionId, 'plain')]);
+
+        const updateDirectSessionTranscript = vi.fn(async () => {});
+        await handleEphemeralSocketUpdate({
+            ...buildDirectDeltaParams(sessionId, updateDirectSessionTranscript),
+            update: buildDirectSessionTranscriptDeltaUpdate(sessionId, {
+                itemId: 'delta-item-1', text: 'superseded scope', fromCursor: 'tail', nextCursor: 'cursor-1',
+            }),
+        });
+
+        resetSocketSessionProjectionStateForServerScope();
+        await vi.advanceTimersByTimeAsync(1_000);
+        expect(updateDirectSessionTranscript).not.toHaveBeenCalled();
+    });
+
+    it('releases a deleted session buffered deltas instead of flushing them', async () => {
+        vi.useFakeTimers();
+        const sessionId = 'deleted_direct_delta_session';
+        setActiveViewingSessionId(sessionId, 1);
+        markSessionVisible(sessionId);
+        storage.getState().applySessions([buildSession(sessionId, 'plain')]);
+
+        const updateDirectSessionTranscript = vi.fn(async () => {});
+        await handleEphemeralSocketUpdate({
+            ...buildDirectDeltaParams(sessionId, updateDirectSessionTranscript),
+            update: buildDirectSessionTranscriptDeltaUpdate(sessionId, {
+                itemId: 'delta-item-1', text: 'deleted session tail', fromCursor: 'tail', nextCursor: 'cursor-1',
+            }),
+        });
+
+        storage.getState().deleteSession(sessionId);
         await vi.advanceTimersByTimeAsync(1_000);
         expect(updateDirectSessionTranscript).not.toHaveBeenCalled();
     });
