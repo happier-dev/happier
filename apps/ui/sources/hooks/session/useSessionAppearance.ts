@@ -1,8 +1,10 @@
 import * as React from 'react';
 import { getStorage } from '@/sync/domains/state/storageStore';
 import type { SessionAppearanceColor } from '@/sync/domains/session/organization/appearanceColor';
+import type { SessionWorkspacePresentationMetadata } from '@/sync/domains/session/listing/sessionWorkspacePresentation';
 import {
     createCustomSessionAppearanceColorsSelector,
+    selectEffectiveSessionAppearanceColor,
     selectSessionAppearanceColor,
     selectSessionAppearancesSupported,
     type SessionAppearanceSelectorState,
@@ -48,6 +50,20 @@ export function useSessionOwnAppearanceColor(
     const select = React.useCallback(
         (state: SessionAppearanceSelectorState) => (serverId ? selectSessionAppearanceColor(state, { serverId, sessionId }) : null),
         [serverId, sessionId],
+    );
+    return useEnabledStorageSelection(options?.enabled !== false, select, null);
+}
+
+/** The colour a session shows (its own, else its project's). Mount enabled only while its menu is open. */
+export function useEffectiveSessionAppearanceColor(
+    serverId: string | null | undefined,
+    sessionId: string,
+    metadata: SessionWorkspacePresentationMetadata,
+    options?: SessionAppearanceHookOptions,
+): SessionAppearanceColor | null {
+    const select = React.useCallback(
+        (state: SessionAppearanceSelectorState) => (serverId ? selectEffectiveSessionAppearanceColor(state, { serverId, sessionId, metadata }) : null),
+        [metadata, serverId, sessionId],
     );
     return useEnabledStorageSelection(options?.enabled !== false, select, null);
 }

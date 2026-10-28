@@ -25,7 +25,8 @@ import {
     subscribeServerReachabilityState,
 } from '@/sync/runtime/connectivity/serverReachabilitySupervisorPool';
 import { createNotAuthenticatedError } from '@/sync/runtime/connectivity/authErrors';
-import { isSocketIoAckTimeoutError, raceSocketIoAckTimeout } from '@/sync/runtime/socketIoAckTimeout';
+import { isSocketIoAckTimeoutError } from '@happier-dev/protocol/rpcErrors';
+import { raceSocketIoAckTimeout } from '@/sync/runtime/socketIoAckTimeout';
 import type { SocketRpcAuthorizationContext } from '@happier-dev/protocol/rpc';
 import { t } from '@/text';
 

@@ -140,60 +140,44 @@ describe('resolveOpenCodeSseReadIdleTimeoutMs', () => {
 
 describe('createOpenCodeServerRuntimeClient read idle configuration', () => {
   afterEach(() => {
-    vi.resetModules();
-    vi.doUnmock('./openCodeSse');
+    vi.useRealTimers();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
 
-  it('passes the resolved read-idle timeout to the instance SSE subscription', async () => {
-    vi.resetModules();
-
-    const subscribeSseJsonMock = vi.fn(async (params: unknown) => {
-      let resolveDone!: () => void;
-      const done = new Promise<void>((resolve) => {
-        resolveDone = resolve;
-      });
-      return {
-        close: vi.fn(() => resolveDone()),
-        done,
-        params,
-      };
-    });
-
-    vi.doMock('./openCodeSse', () => ({
-      subscribeSseJson: subscribeSseJsonMock,
-    }));
-
-    vi.doMock('./sharedManagedServer', () => ({
-      ensureSharedManagedOpenCodeServerBaseUrl: vi.fn(),
-      isLoopbackManagedOpenCodeBaseUrl: () => false,
-      readSharedManagedOpenCodeServerStateBestEffort: vi.fn(),
-    }));
-
-    vi.stubGlobal('fetch', vi.fn(async () => {
-      return new Response(JSON.stringify({ healthy: true, version: 'test' }), { status: 200, statusText: 'OK' });
+  it('aborts an idle HTTP event stream at the configured lower bound', async () => {
+    const { createOpenCodeSseResponse } = await import('./managedOpenCodeClient.testkit');
+    const streams: ReturnType<typeof createOpenCodeSseResponse>[] = [];
+    const signals: AbortSignal[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = new URL(typeof input === 'string' || input instanceof URL ? String(input) : input.url);
+      if (url.pathname === '/event') {
+        if (init?.signal) signals.push(init.signal);
+        const stream = createOpenCodeSseResponse(init?.signal);
+        streams.push(stream);
+        return stream.response;
+      }
+      return new Response(JSON.stringify({ healthy: true, version: 'fixture' }), { status: 200 });
     }) satisfies typeof fetch);
-
     const { createOpenCodeServerRuntimeClient } = await import('./client');
+    // Explicit external endpoint: no owned local server or shared state is involved.
     const client = await createOpenCodeServerRuntimeClient({
-      directory: '/tmp',
-      messageBuffer: new MessageBuffer(),
-      env: {
-        HAPPIER_OPENCODE_SERVER_URL: 'http://127.0.0.1:9999',
-        HAPPIER_OPENCODE_SSE_READ_IDLE_TIMEOUT_MS: '6',
-      } as NodeJS.ProcessEnv,
+      directory: '/tmp', messageBuffer: new MessageBuffer(),
+      env: { HAPPIER_OPENCODE_SERVER_URL: 'http://example.test', HAPPIER_OPENCODE_SSE_READ_IDLE_TIMEOUT_MS: '6' },
     });
-
-    const controller = new AbortController();
-    await client.subscribeGlobalEvents({ signal: controller.signal, onEvent: vi.fn() });
-    await expect.poll(() => subscribeSseJsonMock.mock.calls.length).toBe(1);
-
-    expect(subscribeSseJsonMock).toHaveBeenCalledWith(expect.objectContaining({
-      readIdleTimeoutMs: 5_000,
-    }));
-
-    controller.abort();
-    await client.dispose();
+    vi.useFakeTimers();
+    try {
+      await client.subscribeGlobalEvents({ signal: new AbortController().signal, onEvent: vi.fn() });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(streams).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(4_999);
+      expect(signals[0]?.aborted).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(signals[0]?.aborted).toBe(true);
+      expect(signals[0]?.reason).toMatchObject({ code: 'OPENCODE_SSE_READ_IDLE_TIMEOUT', timeoutMs: 5_000 });
+    } finally {
+      for (const stream of streams) stream.close();
+      await client.dispose();
+    }
   });
 });

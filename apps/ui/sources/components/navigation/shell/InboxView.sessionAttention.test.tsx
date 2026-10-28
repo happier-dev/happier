@@ -367,10 +367,7 @@ describe('InboxView session attention', () => {
         await renderer.act(async () => {
             openSession.props.onPress();
         });
-        expect(navigateSpy).toHaveBeenCalledWith(
-            '/session/session-1?serverId=server-attention',
-            expect.any(Object),
-        );
+        expect(pushSpy).toHaveBeenCalledWith('/session/session-1?serverId=server-attention');
     });
 
     it('keeps permission and user-action rows of an idle live session past the runtime staleness window', async () => {
@@ -598,14 +595,12 @@ describe('InboxView session attention', () => {
         expect(items.some((item) => item.props.title === 'Unread session')).toBe(true);
         expect(items.some((item) => item.props.title === 'Shared session')).toBe(false);
 
-        // Opening from the inbox goes through the canonical session navigator, so the session route
-        // stays singular instead of stacking a second `/session/<id>` entry behind the list.
+        // Web inbox entries share the canonical opener's chronological browser history.
         const unread = items.find((item) => item.props.title === 'Unread session');
         await renderer.act(async () => {
             unread!.props.onPress();
         });
-        expect(pushSpy).not.toHaveBeenCalledWith('/session/session-unread');
-        expect(navigateSpy).toHaveBeenCalledWith('/session/session-unread', expect.any(Object));
-        expect(navigateSpy.mock.calls[0]?.[1]?.dangerouslySingular?.()).toBe('session');
+        expect(pushSpy).toHaveBeenCalledWith('/session/session-unread');
+        expect(navigateSpy).not.toHaveBeenCalled();
     });
 });

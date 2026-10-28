@@ -11,8 +11,6 @@ import type { OpenApprovalArtifactForSession } from '@/sync/domains/artifacts/ap
 import { useLayoutMaxWidth } from "@/components/ui/layout/layout";
 import { ToolView } from '@/components/tools/shell/views/ToolView';
 import { ToolTimelineRow } from '@/components/tools/shell/views/ToolTimelineRow';
-import { resolveToolStatusIndicatorKind } from '@/components/tools/shell/presentation/resolveToolStatusIndicatorKind';
-import { resolveInactiveSessionToolCallFailure } from '@/components/tools/shell/permissions/resolveInactiveSessionToolCallFailure';
 import { buildMessageRouteId, resolveMessageRouteIdForDisplay } from '@/sync/domains/messages/messageRouteIds';
 import { sync } from '@/sync/sync';
 import { Option, type OptionLongPressHandler } from '@/components/markdown/MarkdownView';
@@ -21,7 +19,7 @@ import { shouldShowTranscriptRowActions, shouldShowTranscriptRowPinAction } from
 import { renderStructuredMessage, StructuredMessageBlock } from '@/components/sessions/transcript/structured/StructuredMessageBlock';
 import type { StructuredMessageRendererParams } from '@/components/sessions/transcript/structured/structuredMessageRegistry';
 import { useRouter } from 'expo-router';
-import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
+import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
 import { buildSessionFileDeepLink } from '@/utils/url/sessionFileDeepLink';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { Text } from '@/components/ui/text/Text';
@@ -64,7 +62,6 @@ import { MessageActionRow } from '@/components/sessions/transcript/messageAction
 import { MessagePinButton } from '@/components/sessions/transcript/messageActions/MessagePinButton';
 import { resolveMessagePinAvailability } from '@/components/sessions/transcript/messageActions/resolveMessagePinAvailability';
 import { readCoarsePrimaryPointer, useRowActionHoverHost } from '@/components/sessions/transcript/messageActions/rowActionRevealHost';
-import { RowActionRevealSlot } from '@/components/sessions/transcript/messageActions/RowActionRevealSlot';
 import { resolveToolRowPinAction } from '@/components/sessions/transcript/toolCalls/ToolCallPinAction';
 import type { TranscriptRollbackAction } from '@/sync/domains/sessionRollback/rollbackUiSupport';
 import type { PersistedSessionMessagePinV1 } from '@/sync/domains/messages/pins/sessionMessagePins';
@@ -1486,6 +1483,7 @@ function ForkMessageButton(props: {
 }) {
   const { theme } = useUnistyles();
   const router = useRouter();
+  const navigateToSession = useNavigateToSession();
   const sessionForkSupportSource = props.forkCommon.sessionForkSupportSource;
   const hitSlop = Platform.OS === 'web' ? undefined : 15;
   const executionRunsEnabled = props.forkCommon.executionRunsEnabled;
@@ -1522,15 +1520,9 @@ function ForkMessageButton(props: {
       sourceMessageId: props.messageId,
       sourcePreview: restored,
       writeForkInitialPrompt: true,
-      // Keep the transcript row independent of the session-opening hook, but
-      // carry the fork's server scope into the route so child hydration and
-      // navigation agree on the same Session.
-      navigateToSession: (childSessionId, options) => {
-        router.push(buildScopedSessionRouteHref({
-          sessionId: childSessionId,
-          serverId: options?.serverId ?? serverId,
-        }) as any);
-      },
+      navigateToSession: (childSessionId, options) => navigateToSession(childSessionId, {
+        serverId: options?.serverId ?? serverId,
+      }),
       navigateToNewSession: (route) => {
         router.push(route as any);
       },
@@ -1538,6 +1530,7 @@ function ForkMessageButton(props: {
   }, [
     agentSwitchingEnabled,
     executionRunsEnabled,
+    navigateToSession,
     props.isForkAllowed,
     props.messageId,
     props.restoredDraftText,
@@ -1652,7 +1645,6 @@ function ToolCallBlock(props: {
   toolChromeCommon: TranscriptToolChromeCommon;
   toolRouteCommon: TranscriptToolRouteCommon;
 }) {
-  const structuredPinHost = useRowActionHoverHost();
   const router = useRouter();
   const sessionMedia = React.useMemo(
     () => parseSessionMediaMessageMeta(props.message.meta),
@@ -1693,18 +1685,6 @@ function ToolCallBlock(props: {
     interaction: props.interaction,
     onJumpToAnchor: handleJumpToAnchor,
   });
-  const toolForSession = resolveInactiveSessionToolCallFailure({
-    tool: props.message.tool,
-    permissionDisabledReason: props.interaction.permissionDisabledReason,
-  });
-  const statusKind = resolveToolStatusIndicatorKind(toolForSession);
-  const shouldForceToolChromeForStatus = statusKind === 'error' || statusKind === 'permission_blocked';
-  const shouldRenderToolChrome = !(
-    toolViewTimelineChromeMode === 'activity_feed' &&
-    structuredNode != null &&
-    !shouldForceToolChromeForStatus &&
-    !hasToolMedia
-  );
   const toolRouteMessageId = props.interaction.disableToolNavigation
     ? undefined
     : resolveMessageRouteIdForDisplay({
@@ -1732,23 +1712,7 @@ function ToolCallBlock(props: {
   ];
   const containerContent = (
     <>
-      {structuredNode}
-      {!shouldRenderToolChrome && toolPinAction ? (
-        <RowActionRevealSlot
-          revealed={shouldShowTranscriptRowPinAction({
-            platformOS: Platform.OS,
-            isRowHovered: structuredPinHost.isHovered,
-            isActionHovered: false,
-            coarsePrimaryPointer: readCoarsePrimaryPointer(),
-            pinned: toolPinAction.pinned,
-          })}
-          style={styles.structuredToolPinAction}
-          testID={`transcript-tool-call-pin-slot:${props.message.id}`}
-        >
-          {toolPinAction.node}
-        </RowActionRevealSlot>
-      ) : null}
-      {shouldRenderToolChrome ? (toolViewTimelineChromeMode === 'activity_feed' ? (
+      {toolViewTimelineChromeMode === 'activity_feed' ? (
         <ToolTimelineRow
           tool={props.message.tool}
           metadata={props.metadata}
@@ -1761,6 +1725,7 @@ function ToolCallBlock(props: {
           forcePermissionPromptsInTranscript={props.forcePermissionPromptsInTranscript}
           interaction={props.interaction}
         >
+          {structuredNode}
           {toolMedia}
         </ToolTimelineRow>
       ) : (
@@ -1777,31 +1742,14 @@ function ToolCallBlock(props: {
           interaction={props.interaction}
           embedded={props.layoutContext === 'tool_calls_group'}
         >
+          {structuredNode}
           {toolMedia}
         </ToolView>
-      )) : null}
+      )}
     </>
   );
-  // The tool chrome (ToolView / ToolTimelineRow) owns the jump-landing attention
-  // when it renders. A suppressed-chrome structured row has no chrome to own it,
-  // so the row container carries the same treatment — one highlight store, one
-  // timing owner, one ring per landed row.
-  if (!shouldRenderToolChrome) {
-    return (
-      <TranscriptJumpAttention
-        sessionId={props.sessionId}
-        routeMessageId={toolRouteMessageId ?? null}
-        seq={toolSeq}
-        radius={TRANSCRIPT_MESSAGE_HIGHLIGHT_RADIUS}
-        viewProps={structuredPinHost.hoverProps}
-        style={containerStyle}
-      >
-        {containerContent}
-      </TranscriptJumpAttention>
-    );
-  }
   return (
-    <View {...structuredPinHost.hoverProps} style={containerStyle}>
+    <View style={containerStyle}>
       {containerContent}
     </View>
   );
@@ -1901,10 +1849,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   toolContainerEmbedded: {
     marginHorizontal: 0,
-  },
-  structuredToolPinAction: {
-    alignSelf: 'flex-end',
-    marginTop: 4,
   },
   toolContainerCards: {
     paddingBottom: 0,

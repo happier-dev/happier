@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
 import { createRpcCallError } from '@/sync/runtime/rpcErrors';
+import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import type { SessionMachineTargetState } from './sessionMachineTarget';
 
 const getStateSpy = vi.fn();
 
@@ -14,6 +16,90 @@ vi.mock('@/sync/domains/state/storage', async () => {
 });
 
 describe('sessionMachineTarget', () => {
+    it.each(['replacement', 'locality'] as const)('does not recover an old workspace on a %s target', async (kind) => {
+        const { resolveMachineControlTargetForSessionFromState } = await import('./sessionMachineTarget');
+        const current = createMachineFixture({ id: 'machine-new' });
+        const old = createMachineFixture({ id: 'machine-old', active: false, replacedByMachineId: 'machine-new' });
+        const state: SessionMachineTargetState = {
+            sessions: { direct: { active: false, metadata: {
+                path: '', machineId: 'machine-old', host: current.metadata!.host, homeDir: current.metadata!.homeDir,
+                sessionWorkspaceLocationV1: { v: 1, machineId: 'machine-old',
+                    agentPath: '/agent/old', machinePath: '/host/old' },
+            } } },
+            machines: kind === 'replacement' ? { 'machine-old': old, 'machine-new': current } : { 'machine-new': current },
+        };
+        expect(resolveMachineControlTargetForSessionFromState(state, 'direct')).toBeNull();
+        expect(resolveMachineControlTargetForSessionFromState({ ...state,
+            getProjectForSession: () => ({ key: { machineId: 'machine-new', path: '/new/project' } }),
+        }, 'direct')).toMatchObject({ machineId: 'machine-new', basePath: '/new/project' });
+    });
+
+    it('targets an existing Direct session with an empty path using its same-machine workspace mapping', async () => {
+        const { resolveMachineControlTargetForSessionFromState } = await import('./sessionMachineTarget');
+        const state = {
+            sessions: { direct: { active: true, metadata: {
+                path: '', machineId: 'machine-1',
+                sessionWorkspaceLocationV1: { v: 1, machineId: 'machine-1',
+                    agentPath: '/agent/project', machinePath: '/host/project' },
+            } } },
+            machines: {},
+        };
+        expect(resolveMachineControlTargetForSessionFromState(state, 'direct')).toEqual({
+            machineId: 'machine-1', basePath: '/host/project', agentBasePath: '/agent/project',
+            confidence: 'metadata_direct',
+        });
+        expect(resolveMachineControlTargetForSessionFromState({
+            ...state, sessions: { direct: { active: true, metadata: {
+                ...state.sessions.direct.metadata, machineId: 'other-machine',
+            } } },
+        }, 'direct')).toBeNull();
+    });
+
+    it('keeps a foreign Home display target separate from a colliding active Session and project', async () => {
+        const { resolveDisplayMachineTargetForSessionFromState } = await import('./sessionMachineTarget');
+        const state = {
+            sessions: { same: { active: false, metadata: { machineId: 'active-machine', path: '/active-session' } } },
+            machines: {},
+            getProjectForSession: () => ({ key: { machineId: 'active-machine', path: '/active-project' } }),
+        };
+        const input = { state, sessionId: 'same', serverId: 'foreign-home', activeServerId: 'active-home' };
+        expect(resolveDisplayMachineTargetForSessionFromState({ ...input,
+            metadata: { machineId: 'foreign-machine', path: '/foreign-session' },
+        })).toMatchObject({ machineId: 'foreign-machine', basePath: '/foreign-session' });
+        expect(resolveDisplayMachineTargetForSessionFromState(input)).toBeNull();
+    });
+
+    it('uses active Session and project overlays only for the matching Home or an unscoped caller', async () => {
+        const { resolveDisplayMachineTargetForSessionFromState } = await import('./sessionMachineTarget');
+        const state = {
+            sessions: { same: { active: false, metadata: { machineId: 'active-machine', path: '/active-session' } } },
+            machines: {},
+            getProjectForSession: () => ({ key: { machineId: 'active-machine', path: '/active-project' } }),
+        };
+        const input = { state, sessionId: 'same', metadata: { machineId: 'row-machine', path: '/row-session' } };
+        for (const scope of [{}, { serverId: 'active-home', activeServerId: 'active-home' }]) {
+            expect(resolveDisplayMachineTargetForSessionFromState({ ...input, ...scope }))
+                .toMatchObject({ machineId: 'active-machine', basePath: '/active-project' });
+        }
+        expect(resolveDisplayMachineTargetForSessionFromState({ ...input, serverId: 'foreign-home' }))
+            .toMatchObject({ machineId: 'row-machine', basePath: '/row-session' });
+    });
+
+    it('captures the current Home for an explicitly scoped display-target read', async () => {
+        const { readDisplayMachineTargetForSession } = await import('./sessionMachineTarget');
+        const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
+        const activeServerId = getActiveServerSnapshot().serverId;
+        getStateSpy.mockReturnValue({
+            sessions: { same: { metadata: { machineId: 'active-machine', path: '/active-session' } } },
+            machines: {},
+        });
+        const input = { sessionId: 'same', metadata: { machineId: 'row-machine', path: '/row-session' } };
+        expect(readDisplayMachineTargetForSession({ ...input, serverId: `foreign-${activeServerId}` }))
+            .toMatchObject({ machineId: 'row-machine', basePath: '/row-session' });
+        expect(readDisplayMachineTargetForSession({ ...input, serverId: activeServerId }))
+            .toMatchObject({ machineId: 'active-machine', basePath: '/active-session' });
+    });
+
     it('reads machine target from session metadata when available', async () => {
         const { readMachineTargetForSession } = await import('./sessionMachineTarget');
         getStateSpy.mockReturnValue({

@@ -23,6 +23,7 @@
     "scripts/**/*.d.ts",
     "scripts/**/*.d.mts",
     "scripts/**/*.d.cts",
+    "scripts/network-transfer-report.ts",
     "vitest.*.ts"
   ],
   "exclude": ["node_modules", "dist"]

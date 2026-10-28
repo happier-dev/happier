@@ -32,6 +32,7 @@ import { bugReportDiagnosticsRoutes } from "./routes/diagnostics/bugReportDiagno
 import { automationRoutes } from "./routes/automations/automationRoutes";
 import { V2_SESSION_LIST_SERVER_TIMING_REQUEST_HEADER } from "./routes/session/v2SessionListServerTiming";
 import { resolveApiRateLimitPluginOptions, resolveApiTrustProxy } from "./utils/apiRateLimitPolicy";
+import { enableApiCompression } from "./utils/enableApiCompression";
 
 export function resolveApiListenHost(env: Record<string, string | undefined>): string {
     const host = (env.HAPPIER_SERVER_HOST ?? env.HAPPY_SERVER_HOST ?? '').toString().trim();
@@ -107,6 +108,7 @@ export async function startApi() {
         ...(typeof trustProxy !== "undefined" ? { trustProxy } : null),
     });
     enableContentTypeParsers(app);
+    await enableApiCompression(app);
     app.register(import('@fastify/cors'), createApiCorsOptions(process.env));
     app.register(import('@fastify/rate-limit'), resolveApiRateLimitPluginOptions(process.env));
 

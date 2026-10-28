@@ -252,7 +252,7 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
             getSessionEncryption: () => null,
         };
 
-        requestMock.mockResolvedValue(new Response('not found', { status: 404 }));
+        requestMock.mockImplementation(async () => Response.json({ error: 'Session not found' }, { status: 404 }));
 
         await expect(sync.ensureSessionVisibleForMessageRoute(sessionId, { serverId: activeServer.id })).resolves.toEqual({
             kind: 'missing',
@@ -276,12 +276,35 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
             getSessionEncryption: () => null,
         };
 
-        requestMock.mockResolvedValue(new Response('not found', { status: 404 }));
+        requestMock.mockImplementation(async () => Response.json({ error: 'Session not found' }, { status: 404 }));
 
         await expect(sync.ensureSessionVisibleForMessageRoute(sessionId)).resolves.toEqual({
             kind: 'missing',
             sessionId,
             cause: 'not_found',
+        });
+    });
+
+    it('keeps an unrecognized 404 retryable instead of treating the session as missing', async () => {
+        const sessionId = 'deep_link_unrecognized_404';
+
+        const { sync } = await import('./sync');
+
+        (sync as any).credentials = { token: 't' };
+        (sync as any).activeServerSessionIds = new Set<string>();
+        (sync as any).hasFetchedSessionsSnapshotForActiveServer = false;
+        (sync as any).encryption = {
+            decryptEncryptionKey: async () => null,
+            initializeSessions: async () => {},
+            getSessionEncryption: () => null,
+        };
+
+        // A proxy or misrouted endpoint is not the server's missing-session contract.
+        requestMock.mockImplementation(async () => new Response('<html>Not Found</html>', { status: 404 }));
+
+        await expect(sync.ensureSessionVisibleForMessageRoute(sessionId)).resolves.toMatchObject({
+            kind: 'retryable_failure',
+            sessionId,
         });
     });
 

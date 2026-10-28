@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { RPC_ERROR_CODES, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { createSocketIoAckTimeoutError } from '@/sync/runtime/socketIoAckTimeout';
+import { createSocketIoAckTimeoutError } from '@happier-dev/protocol/rpcErrors';
 import { installVoiceAgentCommonModuleMocks } from './voiceAgentTestHelpers';
 
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc', () => ({

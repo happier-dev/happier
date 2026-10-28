@@ -244,6 +244,7 @@ async function refreshServerSnapshot(entry: ManagedConcurrentServer): Promise<vo
             localSettings: storage.getState().settings,
         }),
         serverId: entry.id,
+        serverUrl: entry.serverUrl,
         credentials: entry.credentials,
         encryption,
         sessionDataKeys: entry.sessionDataKeys,

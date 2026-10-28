@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import os from 'node:os';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -1325,6 +1325,7 @@ describe('stopSharedManagedOpenCodeServerFromEnvBestEffort daemon shutdown', () 
   );
 
   it('retires every owned idle pooled server and preserves live claims independently of ambient fingerprint', async () => {
+    const poolPath = (name: string) => join(dirname(resolveSharedManagedOpenCodeServerStatePathForEnv({})), name);
     const command = 'opencode serve --hostname=127.0.0.1 --port=1234';
     const makeState = (pid: number, launchEnvFingerprint: string): SharedManagedOpenCodeServerState => ({
       v: 2, baseUrl: 'http://127.0.0.1:1234', pid, startedAtMs: 1,
@@ -1334,15 +1335,15 @@ describe('stopSharedManagedOpenCodeServerFromEnvBestEffort daemon shutdown', () 
       apiGeneration: 'v2', authPassword: `secret-${pid}`,
     });
     const states = new Map([
-      ['connected-one.json', makeState(111, 'connected-one')],
-      ['connected-two.json', makeState(222, 'connected-two')],
-      ['active.json', makeState(333, 'active')],
-      ['borrowed.json', { ...makeState(444, 'borrowed'), daemonInstanceId: 'other-daemon' }],
+      [poolPath('connected-one.json'), makeState(111, 'connected-one')],
+      [poolPath('connected-two.json'), makeState(222, 'connected-two')],
+      [poolPath('active.json'), makeState(333, 'active')],
+      [poolPath('borrowed.json'), { ...makeState(444, 'borrowed'), daemonInstanceId: 'other-daemon' }],
     ]);
     const killed: number[] = [];
     const probes: unknown[] = [];
     const deps = {
-      statePath: 'ambient-default.json',
+      statePath: poolPath('ambient-default.json'),
       listStateKeys: async () => [...states.keys()],
       withStateLock: async <T>(_key: string, fn: () => Promise<T>) => await fn(),
       readState: async (key: string) => states.get(key) ?? null,
@@ -1360,16 +1361,16 @@ describe('stopSharedManagedOpenCodeServerFromEnvBestEffort daemon shutdown', () 
       await stopSharedManagedOpenCodeServerFromEnvBestEffort({ daemonInstanceId: 'current-daemon' }, deps);
 
       expect(killed).toEqual([111, 222]);
-      expect([...states.keys()]).toEqual(['active.json', 'borrowed.json']);
+      expect([...states.keys()]).toEqual(['active.json', 'borrowed.json'].map(poolPath));
       expect(probes).toEqual([
         { username: 'opencode', password: 'secret-111' },
         { username: 'opencode', password: 'secret-222' },
       ]);
       await writeClaimMarker('unknown-claim-session', { flavor: 'opencode' });
-      states.set('unknown-claim.json', makeState(555, 'unknown-claim'));
+      states.set(poolPath('unknown-claim.json'), makeState(555, 'unknown-claim'));
       await stopSharedManagedOpenCodeServerFromEnvBestEffort({ daemonInstanceId: 'current-daemon' }, deps);
       expect(killed).toEqual([111, 222]);
-      expect([...states.keys()]).toEqual(['active.json', 'borrowed.json', 'unknown-claim.json']);
+      expect([...states.keys()]).toEqual(['active.json', 'borrowed.json', 'unknown-claim.json'].map(poolPath));
     } finally {
       await rm(markerPath, { force: true });
     }

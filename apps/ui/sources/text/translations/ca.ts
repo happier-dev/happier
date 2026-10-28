@@ -1111,6 +1111,13 @@ export const ca: TranslationStructure = {
     },
 
     appCrash: {
+        copyFailed: "No s’han pogut copiar els detalls de l’error. Torna-ho a provar.",
+        discardFailed: "No s’ha pogut descartar l’error desat. Torna-ho a provar.",
+        restartWithoutReport: "Reinicia sense desar",
+        reportSaveFailed: "No s’han pogut desar els detalls de l’error. Copia’ls abans de reiniciar o torna a provar l’informe.",
+        savedReportNotice: "L’error desat es mostra a continuació. Revisa’l i edita’l abans d’enviar-lo. Es conserva en aquest dispositiu fins que l’enviïs o el descartis.",
+        discardSavedReport: "Descarta l’error desat",
+        stackTruncated: "La pila s’ha escurçat per a aquest camp. L’error complet continua desat en aquest dispositiu.",
         title: 'Alguna cosa ha fallat',
         subtitle:
             'Happier ha patit un error inesperat. Pots reiniciar la interfície de l\'app o copiar els detalls per al suport.',
@@ -6402,6 +6409,9 @@ deps: {
         tmuxFallback: 'Fallback de tmux',
         copyMetadata: 'Copia les metadades',
         copyDebugInformation: 'Copia la informació',
+        sessionInformation: "Informació de la sessió",
+        happierSessionId: "ID de sessió de Happier",
+        providerSessionId: ({ provider }: { provider: string }) => `ID de sessió de ${provider}`,
         debugInformationCopyLabel: 'Informació',
         providerSessionLogs: ({ provider }: { provider: string }) => `Registres de sessió de ${provider}`,
         agentState: 'Estat de l\'agent',
@@ -9664,6 +9674,7 @@ settingsSession: {
         failedToConnectTerminal: 'Ha fallat connectar el terminal',
         cameraPermissionsRequiredToConnectTerminal: 'Es requereixen permisos de càmera per connectar el terminal',
         failedToLinkDevice: 'Ha fallat enllaçar el dispositiu',
+        deviceLinkRequestNotFound: "No s’ha trobat cap sol·licitud d’enllaç pendent en aquest relay. Comprova que tots dos dispositius utilitzin el mateix relay i genera un codi QR nou.",
         cameraPermissionsRequiredToScanQr: 'Es requereixen permisos de càmera per escanejar codis QR',
         qrScannerUnavailable: 'No s’ha pogut obrir l’escàner de QR. Torna-ho a provar o introdueix l’URL manualment.'
     },

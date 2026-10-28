@@ -32,7 +32,7 @@ import { sync } from '../sync';
 import { storage } from '../domains/state/storage';
 import { machineRpcWithServerScope } from '../runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
 import { isRpcMethodNotAvailableError, readRpcErrorCode } from '../runtime/rpcErrors';
-import { isSocketIoAckTimeoutError } from '../runtime/socketIoAckTimeout';
+import { isSocketIoAckTimeoutError } from '@happier-dev/protocol/rpcErrors';
 
 import { resumeSession } from './sessions';
 import { readMachineControlTargetForSession, shouldFallbackFromMachineRpc } from './sessionMachineTarget';

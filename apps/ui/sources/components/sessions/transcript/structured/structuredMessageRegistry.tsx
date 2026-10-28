@@ -67,7 +67,7 @@ export type StructuredMessageRegistryEntry<T> = Readonly<{
 }>;
 
 // A structured card that quotes the message body only exists when the message carries one
-// (a `subagent_launch.v1` envelope can ride a tool call, which has no user text). Callers read
+// (a `subagent_launch.v1` envelope can ride a tool call, which has no user text). Text-message callers read
 // `renderStructuredMessage(...) != null` to decide whether the structured card *replaces* the
 // surrounding chrome, so that emptiness has to be decided here, before an element exists — a
 // card that returns null from its own body still yields a non-null element and would suppress

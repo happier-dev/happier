@@ -63,7 +63,7 @@ import {
 } from '@/agent/acp/runtime/sessionModelsState';
 import {
   isAcpModeConfigOptionLike,
-  isAcpModelConfigOptionLike,
+  resolveAcpModelConfigOption,
 } from '@/agent/acp/configOptionChoiceNormalization';
 import { readNonBlankSessionControlIdentifier } from '@/agent/runtime/sessionControlIdentifiers';
 import { readNonBlankOpaqueIdentifier } from '@/utils/opaqueIdentifiers';
@@ -1945,12 +1945,12 @@ export function createAcpRuntime(params: {
               && Array.isArray(asRecord(msg.payload)?.configOptions)) {
               const payloadRecord = asRecord(msg.payload);
               const configOptions = normalizeConfigOptionsArray(payloadRecord?.configOptions);
+              const modelOpt = resolveAcpModelConfigOption(configOptions, resolveAcpModelConfigOptionId());
               const derivedModels = (() => {
                 if (params.deriveSessionModelsFromConfigOptions) {
                   return params.deriveSessionModelsFromConfigOptions(configOptions);
                 }
 
-                const modelOpt = configOptions.find(isAcpModelConfigOptionLike);
                 if (!modelOpt || !Array.isArray(modelOpt.options)) return null;
 
                 const currentValue = modelOpt.currentValue;
@@ -2009,7 +2009,7 @@ export function createAcpRuntime(params: {
                   const modelSnapshot = derivedModels ?? (
                     !params.deriveSessionModelsFromConfigOptions
                       && Array.isArray(payloadRecord?.configOptions)
-                      && !configOptions.some(isAcpModelConfigOptionLike)
+                      && !modelOpt
                       && previousModels?.provider === params.provider
                       ? previousModels
                       : null
@@ -2020,7 +2020,7 @@ export function createAcpRuntime(params: {
                       : applyObservedAcpModelOptions(
                         modelSnapshot.availableModels,
                         modelSnapshot.currentModelId,
-                        collectAcpModelScopedConfigOptions(configOptions),
+                        collectAcpModelScopedConfigOptions(configOptions.filter((option) => option !== modelOpt)),
                         previousModels?.provider === params.provider ? previousModels.availableModels : [],
                       );
                     next.sessionModelsV1 = {
@@ -2233,6 +2233,18 @@ export function createAcpRuntime(params: {
     }
   };
 
+  function resolveAcpModelConfigOptionId(): string | null {
+    try {
+      return getAgentModelConfig(params.provider as AgentId).acpModelConfigOptionId ?? null;
+    } catch (error) {
+      logger.debug(
+        `[${params.provider}] Failed to resolve provider model config option id; config-option fallback is unavailable`,
+        error
+      );
+      return null;
+    }
+  }
+
   const applySessionModelControl = async (modelId: string): Promise<void> => {
     const normalizedModelId = readNonBlankSessionControlIdentifier(modelId) ?? '';
     if (!normalizedModelId) return;
@@ -2240,18 +2252,7 @@ export function createAcpRuntime(params: {
       throw new Error(`${params.provider} ACP session was not started`);
     }
     const activeSessionId = sessionId;
-
-    const modelConfigOptionId = (() => {
-      try {
-        return getAgentModelConfig(params.provider as AgentId).acpModelConfigOptionId ?? null;
-      } catch (error) {
-        logger.debug(
-          `[${params.provider}] Failed to resolve provider model config option id; config-option fallback is unavailable`,
-          error
-        );
-        return null;
-      }
-    })();
+    const modelConfigOptionId = resolveAcpModelConfigOptionId();
     const modelSetMethod = (() => {
       try {
         return getAgentModelConfig(params.provider as AgentId).acpModelSetMethod ?? 'set_model';

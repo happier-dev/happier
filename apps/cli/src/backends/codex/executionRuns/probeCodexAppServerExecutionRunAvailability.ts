@@ -4,13 +4,10 @@ import { spawnSync } from 'node:child_process';
 import { commandExistsInPath } from '@/daemon/service/commandExistsInPath';
 import { resolveProviderCliCommand } from '@/runtime/managedTools/providerCliResolution';
 import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process';
-import { resolveCodexOverrideCommand } from '@/backends/codex/utils/resolveCodexCliInvocation';
-
-const CODEX_APP_SERVER_OVERRIDE_KEYS = [
-  'HAPPIER_CODEX_APP_SERVER_BIN',
-  'HAPPIER_CODEX_TUI_BIN',
-  'HAPPY_CODEX_TUI_BIN',
-] as const;
+import {
+  CODEX_APP_SERVER_OVERRIDE_ENV_KEYS,
+  resolveCodexOverrideCommand,
+} from '@/backends/codex/utils/resolveCodexCliInvocation';
 
 function looksLikeFilePath(command: string): boolean {
   return command.includes('/') || command.includes('\\') || command.startsWith('.');
@@ -47,10 +44,10 @@ export function probeCodexAppServerExecutionRunAvailability(opts: Readonly<{
 }> = {}): boolean {
   const env = opts.env ?? process.env;
   const cwd = opts.cwd ?? process.cwd();
-  const rawOverrideCommand = resolveCodexOverrideCommand(env, CODEX_APP_SERVER_OVERRIDE_KEYS, cwd);
+  const rawOverrideCommand = resolveCodexOverrideCommand(env, CODEX_APP_SERVER_OVERRIDE_ENV_KEYS, cwd);
   const overrideCommand = rawOverrideCommand
     ?? (() => {
-      for (const key of CODEX_APP_SERVER_OVERRIDE_KEYS) {
+      for (const key of CODEX_APP_SERVER_OVERRIDE_ENV_KEYS) {
         const value = typeof env[key] === 'string' ? env[key].trim() : '';
         if (value) return value;
       }

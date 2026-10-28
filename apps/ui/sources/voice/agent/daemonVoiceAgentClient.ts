@@ -1,7 +1,7 @@
 import { createRpcCallError } from '@/sync/runtime/rpcErrors';
 import { sessionRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc';
 import { storage } from '@/sync/domains/state/storage';
-import { isSocketIoAckTimeoutError } from '@/sync/runtime/socketIoAckTimeout';
+import { isSocketIoAckTimeoutError } from '@happier-dev/protocol/rpcErrors';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import {
   ExecutionRunActionResponseSchema,

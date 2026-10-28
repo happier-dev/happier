@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Appearance, Image, Platform, Pressable, ScrollView, View } from 'react-native';
+import { Appearance, Image, Platform, Pressable, ScrollView, View, type StyleProp, type TextStyle } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import { StyleSheet } from 'react-native-unistyles';
 
@@ -26,6 +26,9 @@ type AppCrashRecoveryBoundaryProps = Readonly<{
 type AppCrashRecoveryBoundaryState = {
   error: Error | null;
   copied: boolean;
+  componentStack: string;
+  capturedAtMs: number;
+  saveFailed: boolean;
 };
 
 export type AppBlockingScreenAction = Readonly<{
@@ -55,10 +58,11 @@ export function resolveCrashRecoveryFallbackTheme() {
   }
 }
 
-function formatErrorDetails(error: Error): string {
+function formatErrorDetails(error: Error, componentStack: string): string {
   const message = typeof error.message === 'string' ? error.message : String(error);
   const stack = typeof error.stack === 'string' ? error.stack : '';
-  return stack ? `${message}\n\n${stack}` : message;
+  const details = stack ? `${message}\n\n${stack}` : message;
+  return componentStack ? `${details}\n\n${componentStack}` : details;
 }
 
 function readOriginForDiagnostics(): string | null {
@@ -111,6 +115,7 @@ export function AppBlockingScreen(props: Readonly<{
   detailsTitle: string;
   details: string;
   actions: ReadonlyArray<AppBlockingScreenAction>;
+  notice?: string;
 }>): React.ReactElement {
   const theme = resolveCrashRecoveryFallbackTheme();
 
@@ -163,6 +168,11 @@ export function AppBlockingScreen(props: Readonly<{
           />
         </View>
 
+        {props.notice && (
+          <View testID="app-crash-report-save-failed" accessibilityRole="alert">
+            <TextBlock text={props.notice} style={[styles.subtitle, { color: theme.colors.text.primary }]} />
+          </View>
+        )}
         <View style={styles.actions}>
           {ordered.map((action) => {
             if (action.variant === 'primary') {
@@ -219,10 +229,10 @@ export class AppCrashRecoveryBoundary extends React.PureComponent<
   AppCrashRecoveryBoundaryProps,
   AppCrashRecoveryBoundaryState
 > {
-  state: AppCrashRecoveryBoundaryState = { error: null, copied: false };
+  state: AppCrashRecoveryBoundaryState = { error: null, copied: false, componentStack: '', capturedAtMs: 0, saveFailed: false };
 
   override componentDidCatch(error: Error, info: React.ErrorInfo): void {
-    this.setState({ error, copied: false });
+    this.setState({ error, copied: false, componentStack: info.componentStack ?? '', capturedAtMs: Date.now(), saveFailed: false });
     try {
       this.props.onError?.(error, info);
     } catch {
@@ -233,7 +243,7 @@ export class AppCrashRecoveryBoundary extends React.PureComponent<
   private readonly onCopyDetails = () => {
     const error = this.state.error;
     if (!error) return;
-    const details = formatErrorDetails(error);
+    const details = formatErrorDetails(error, this.state.componentStack);
     void Clipboard.setStringAsync(details)
       .then(() => {
         this.setState({ copied: true });
@@ -241,14 +251,17 @@ export class AppCrashRecoveryBoundary extends React.PureComponent<
       .catch(() => {});
   };
 
-  private readonly onReportBug = () => {
+  private readonly onRestart = () => this.persistAndRestart(false);
+  private readonly onReportBug = () => this.persistAndRestart(true);
+
+  private readonly persistAndRestart = (openReport: boolean) => {
     const error = this.state.error;
     if (!error) return;
 
-    const createdAtMs = Date.now();
+    const createdAtMs = this.state.capturedAtMs;
     const origin = readOriginForDiagnostics();
     const isSecureContext = readIsSecureContextForDiagnostics();
-    const errorDetails = formatErrorDetails(error);
+    const errorDetails = formatErrorDetails(error, this.state.componentStack);
 
     void (async () => {
       try {
@@ -264,19 +277,13 @@ export class AppCrashRecoveryBoundary extends React.PureComponent<
           userActions: getBugReportUserActionTrail(),
         });
 
-        await persistRestartBugReportIntent({
-          v: 1,
-          createdAtMs,
-          reason: 'crash',
-        });
-      } catch {
-        // ignore
-      } finally {
-        try {
-          this.props.onRestart();
-        } catch {
-          // ignore
+        if (openReport) {
+          await persistRestartBugReportIntent({ v: 1, createdAtMs: Date.now(), reason: 'crash' });
         }
+        this.props.onRestart();
+      } catch {
+        // Keep the only copy visible and copyable when capture or routing could not be saved.
+        this.setState({ saveFailed: true });
       }
     })();
   };
@@ -290,8 +297,8 @@ export class AppCrashRecoveryBoundary extends React.PureComponent<
 
     const primaryAction: AppBlockingScreenAction = {
       testID: 'app-crash-restart',
-      label: t('appCrash.restart'),
-      onPress: this.props.onRestart,
+      label: this.state.saveFailed ? t('appCrash.restartWithoutReport') : t('appCrash.restart'),
+      onPress: this.state.saveFailed ? this.props.onRestart : this.onRestart,
       variant: 'primary',
     };
     const secondaryAction: AppBlockingScreenAction = {
@@ -313,7 +320,8 @@ export class AppCrashRecoveryBoundary extends React.PureComponent<
         title={t('appCrash.title')}
         subtitle={t('appCrash.subtitle')}
         detailsTitle={t('appCrash.detailsTitle')}
-        details={formatErrorDetails(error)}
+        details={formatErrorDetails(error, this.state.componentStack)}
+        notice={this.state.saveFailed ? t('appCrash.reportSaveFailed') : undefined}
         actions={[primaryAction, reportBugAction, secondaryAction]}
       />
     );
@@ -337,7 +345,7 @@ export class AppCrashRecoveryBoundary extends React.PureComponent<
   }
 }
 
-function TextBlock(props: { text: string; style: any; selectable?: boolean }) {
+function TextBlock(props: { text: string; style: StyleProp<TextStyle>; selectable?: boolean }) {
   // Avoid pulling in app-specific Text components/hooks in the crash fallback path.
   const { text, style, selectable } = props;
   const Text = require('react-native').Text as typeof import('react-native').Text;

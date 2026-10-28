@@ -59,6 +59,25 @@ mode-bearing transport must not be contradicted by a `none` mode descriptor.
 Antigravity uses the shared model/mode probes and startup overrides, with no
 provider-owned picker or static mode catalog.
 
+ACP model selection has one resolver in
+`apps/cli/src/agent/acp/configOptionChoiceNormalization.ts`, shared by runtime
+metadata publication and preflight probing. It prefers the catalog's exact
+`acpModelConfigOptionId`, then an unambiguous Model id/name, then a single
+selector with category `model`. Several model-category fields are not a model
+catalog: agents may use that category for provider or fast controls too. Other
+configuration fields remain available through generic configuration controls;
+observed model-scoped choices apply to the observed model. Full successful
+`set_config_option` response snapshots refresh dependent choices even without
+notifications; rejected setters preserve the previous observed state.
+
+Generic ACP permission mappings may declare ordered native mode candidates.
+The catalog backend uses `resolveAcpPermissionModeId` from `packages/agents` to
+resolve those candidates against the session's advertised modes on both new and
+load, failing closed when none matches. UI permission explanations use the same
+resolver with the matching session's advertised modes. Agent-specific
+candidate ids stay in `packages/agents/src/acp.ts`; string mappings and null
+delegation retain their existing semantics.
+
 The session-control compatibility reader derives an implicit Plan request from
 legacy permission metadata only when the advertised or static options actually
 contain that mode. Explicit requested modes retain their pending state even when

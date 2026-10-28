@@ -1197,6 +1197,13 @@ export const ru: TranslationStructure = {
   },
 
   appCrash: {
+      copyFailed: "Не удалось скопировать сведения о сбое. Повторите попытку.",
+      discardFailed: "Не удалось удалить сохранённый сбой. Повторите попытку.",
+      restartWithoutReport: "Перезапустить без сохранения",
+      reportSaveFailed: "Не удалось сохранить сведения о сбое. Скопируйте их перед перезапуском или повторите отправку отчёта.",
+      savedReportNotice: "Сохранённый сбой показан ниже. Проверьте и отредактируйте его перед отправкой. Он останется на устройстве до отправки или удаления.",
+      discardSavedReport: "Удалить сохранённый сбой",
+      stackTruncated: "Стек сокращён для этого поля. Полные сведения о сбое сохранены на этом устройстве.",
     title: "Что-то пошло не так",
     subtitle:
       "В Happier произошла непредвиденная ошибка. Можно перезапустить интерфейс приложения или скопировать детали для поддержки.",
@@ -5712,6 +5719,9 @@ export const ru: TranslationStructure = {
     tmuxFallback: "Запасной tmux",
     copyMetadata: "Копировать метаданные",
     copyDebugInformation: "Копировать информацию",
+    sessionInformation: "Информация о сессии",
+    happierSessionId: "ID сессии Happier",
+    providerSessionId: ({ provider }: { provider: string }) => `ID сессии ${provider}`,
     debugInformationCopyLabel: "Информация",
     providerSessionLogs: ({ provider }: { provider: string }) => `Журналы сеанса ${provider}`,
     agentState: "Состояние агента",
@@ -10261,6 +10271,7 @@ settingsSession: {
     cameraPermissionsRequiredToConnectTerminal:
       "Для подключения терминала требуется доступ к камере",
     failedToLinkDevice: "Не удалось связать устройство",
+    deviceLinkRequestNotFound: "На этом ретрансляторе не найден ожидающий запрос на привязку. Убедитесь, что оба устройства используют один и тот же ретранслятор, затем создайте новый QR-код.",
     cameraPermissionsRequiredToScanQr:
       "Для сканирования QR-кодов требуется доступ к камере",
     qrScannerUnavailable:

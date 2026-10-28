@@ -39,7 +39,7 @@ type TargetAuthParams = Readonly<{
 async function readMatchingManagedState(params: TargetAuthParams): Promise<SharedManagedOpenCodeServerState | null> {
   if (!isLoopbackManagedOpenCodeBaseUrl(params.baseUrl)) return null;
   if (params.managedServerLaunchFingerprint != null) {
-    const state = await readSharedManagedOpenCodeServerStateByLaunchFingerprintBestEffort(params.managedServerLaunchFingerprint);
+    const state = await readSharedManagedOpenCodeServerStateByLaunchFingerprintBestEffort(params.managedServerLaunchFingerprint, params.baseUrl);
     if (!isOpenCodeManagedServerStateTarget({ state, baseUrl: params.baseUrl })) {
       throw new Error('Managed OpenCode target credential affinity is unavailable.');
     }

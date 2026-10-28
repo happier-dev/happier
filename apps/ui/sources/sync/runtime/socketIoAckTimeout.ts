@@ -1,10 +1,4 @@
-export function createSocketIoAckTimeoutError(): Error {
-    return new Error('operation has timed out');
-}
-
-export function isSocketIoAckTimeoutError(error: unknown): boolean {
-    return error instanceof Error && error.message === 'operation has timed out';
-}
+import { createSocketIoAckTimeoutError } from '@happier-dev/protocol/rpcErrors';
 
 export async function raceSocketIoAckTimeout<T>(promise: Promise<T>, timeoutMs?: number): Promise<T> {
     if (!(typeof timeoutMs === 'number' && timeoutMs > 0)) {

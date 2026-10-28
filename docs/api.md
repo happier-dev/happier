@@ -54,6 +54,22 @@ Auth flows:
 - `GET /v1/sessions/:sessionId/messages`
 - `DELETE /v1/sessions/:sessionId`
 
+In development, the initial `GET /v2/sessions` request also accepts
+`requiredSessionIds`, a URL-encoded JSON array of session IDs. Accessible requested
+rows, including archived rows, join the existing pinned, attention, active and
+ordinary page families without changing `nextCursor` or `hasNext`. Each session
+appears once; the existing families retain their precedence. Cursor continuation
+pages remain ordinary pagination.
+
+For additional ID chunks, `requiredOnly=true` returns only accessible requested
+rows, with `nextCursor: null` and `hasNext: false`. It skips the ordinary page and
+the pinned, attention and active families, and ignores a supplied cursor.
+Missing rows do not distinguish missing sessions from denied access and are never
+deletion evidence. Clients verify returned IDs and retain exact-read fallback for
+older servers that ignore these optional parameters. Explicit HTTP failures
+stay failed, except that a recognized missing legacy detail route can use the
+existing list scan.
+
 ### Machines
 - `POST /v1/machines` (create or load by id)
 - `GET /v1/machines`

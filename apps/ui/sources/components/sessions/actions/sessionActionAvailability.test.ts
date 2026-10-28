@@ -13,6 +13,7 @@ import {
     SESSION_ACTION_MARK_UNREAD_ID,
     SESSION_ACTION_RENAME_ID,
     SESSION_ACTION_RESUME_ID,
+    SESSION_ACTION_SET_APPEARANCE_COLOR_ID,
     SESSION_ACTION_SET_ATTENTION_STANDING_ID,
     SESSION_ACTION_STOP_ID,
 } from './sessionActionIds';
@@ -415,5 +416,21 @@ describe('session action availability', () => {
         });
         expect(listVisibleSessionActionIds({ target: retiredTarget, surface: 'sessionInfo' })).toContain(SESSION_ACTION_DELETE_ID);
         expect(retiredTarget.canDelete).toBe(true);
+    });
+
+    it('offers a session colour on the row and header menus only where the session\'s server stores it', () => {
+        const target = createSessionActionTarget({
+            session: createOwnedRawSession(), serverId: 'server_1', currentUserId: 'current_user', isConnected: false, isPinned: false,
+        });
+        for (const surface of ['rowMenu', 'nativeContextMenu', 'sessionHeader'] as const) {
+            expect(listVisibleSessionActionIds({ target, surface, sessionAppearancesSupported: true })).toContain(SESSION_ACTION_SET_APPEARANCE_COLOR_ID);
+            expect(listVisibleSessionActionIds({ target, surface, sessionAppearancesSupported: false })).not.toContain(SESSION_ACTION_SET_APPEARANCE_COLOR_ID);
+            expect(listVisibleSessionActionIds({ target, surface })).not.toContain(SESSION_ACTION_SET_APPEARANCE_COLOR_ID);
+        }
+        expect(listVisibleSessionActionIds({ target, surface: 'sessionInfo', sessionAppearancesSupported: true }))
+            .not.toContain(SESSION_ACTION_SET_APPEARANCE_COLOR_ID);
+        const unscoped = createSessionActionTarget({ session: createOwnedRawSession(), serverId: null, currentUserId: 'current_user' });
+        expect(listVisibleSessionActionIds({ target: unscoped, surface: 'rowMenu', sessionAppearancesSupported: true }))
+            .not.toContain(SESSION_ACTION_SET_APPEARANCE_COLOR_ID);
     });
 });

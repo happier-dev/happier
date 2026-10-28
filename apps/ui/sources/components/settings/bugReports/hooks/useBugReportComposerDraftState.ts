@@ -1,17 +1,22 @@
 import * as React from 'react';
 import { Platform } from 'react-native';
 import Constants from 'expo-constants';
+import * as Clipboard from 'expo-clipboard';
 
 import {
   inferBugReportDeploymentTypeFromServerUrl as inferDeploymentType,
+  redactBugReportSensitiveText,
   type BugReportDeploymentType,
   type BugReportFrequency,
   type BugReportSeverity,
 } from '@happier-dev/protocol';
 
 import type { Profile } from '@/sync/domains/profiles/profile';
+import { t } from '@/text';
+import { Modal } from '@/modal';
+import { clearPreRestartBugReportSnapshot, peekPreRestartBugReportSnapshot } from '@/utils/system/preRestartBugReportSnapshot';
 
-import { buildBugReportComposerDraftInput } from '../bugReportComposerDraft';
+import { buildBugReportComposerDraftInput, BUG_REPORT_CURRENT_BEHAVIOR_MAX_LENGTH } from '../bugReportComposerDraft';
 import type { BugReportComposerSubmissionInput } from '../bugReportSubmissionFlow';
 
 import { useBugReportReporterGithubUsername } from './useBugReportReporterGithubUsername';
@@ -54,6 +59,9 @@ export function useBugReportComposerDraftState(input: Readonly<{
   setServerVersion: (value: string) => void;
   acceptedPrivacyNotice: boolean;
   setAcceptedPrivacyNotice: (value: boolean) => void;
+  crashReportStatus: 'loading' | 'saved' | 'none' | 'discarded';
+  discardSavedCrash: () => Promise<void>;
+  copySavedCrash: () => Promise<void>;
   buildDraftInput: (input: Readonly<{
     includeDiagnostics: boolean;
     diagnosticsKinds: string[];
@@ -84,6 +92,47 @@ export function useBugReportComposerDraftState(input: Readonly<{
   const [serverVersion, setServerVersion] = React.useState('');
 
   const [acceptedPrivacyNotice, setAcceptedPrivacyNotice] = React.useState(false);
+  const [crashReportStatus, setCrashReportStatus] = React.useState<'loading' | 'saved' | 'none' | 'discarded'>('loading');
+  const edited = React.useRef({ title: false, summary: false, currentBehavior: false });
+
+  React.useEffect(() => {
+    let cancelled = false;
+    void peekPreRestartBugReportSnapshot().then((snapshot) => {
+      if (cancelled) return;
+      setCrashReportStatus(snapshot ? 'saved' : 'none');
+      if (!snapshot) return;
+      const details = redactBugReportSensitiveText(snapshot.errorDetails);
+      const suffix = `\n\n${t('appCrash.stackTruncated')}`;
+      const visibleDetails = details.length > BUG_REPORT_CURRENT_BEHAVIOR_MAX_LENGTH
+        ? details.slice(0, BUG_REPORT_CURRENT_BEHAVIOR_MAX_LENGTH - suffix.length) + suffix
+        : details;
+      if (!edited.current.title) setTitle(t('appCrash.title'));
+      if (!edited.current.summary) setSummary((details.split('\n')[0] || t('appCrash.title')).slice(0, 800));
+      if (!edited.current.currentBehavior) setCurrentBehavior(visibleDetails);
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  const discardSavedCrash = React.useCallback(async () => {
+    if (!await clearPreRestartBugReportSnapshot()) {
+      await Modal.alert(t('common.error'), t('appCrash.discardFailed'));
+      return;
+    }
+    setCrashReportStatus('discarded');
+  }, []);
+
+  const copySavedCrash = React.useCallback(async () => {
+    try {
+      const snapshot = await peekPreRestartBugReportSnapshot();
+      if (snapshot) await Clipboard.setStringAsync(redactBugReportSensitiveText(snapshot.errorDetails));
+    } catch {
+      await Modal.alert(t('common.error'), t('appCrash.copyFailed'));
+    }
+  }, []);
+
+  const editTitle = React.useCallback((value: string) => { edited.current.title = true; setTitle(value); }, []);
+  const editSummary = React.useCallback((value: string) => { edited.current.summary = true; setSummary(value); }, []);
+  const editCurrentBehavior = React.useCallback((value: string) => { edited.current.currentBehavior = true; setCurrentBehavior(value); }, []);
 
   React.useEffect(() => {
     if (!serverUrlEdited) {
@@ -151,13 +200,13 @@ export function useBugReportComposerDraftState(input: Readonly<{
 
   return {
     title,
-    setTitle,
+    setTitle: editTitle,
     reporterGithubUsername,
     setReporterGithubUsername,
     summary,
-    setSummary,
+    setSummary: editSummary,
     currentBehavior,
-    setCurrentBehavior,
+    setCurrentBehavior: editCurrentBehavior,
     expectedBehavior,
     setExpectedBehavior,
     reproductionStepsText,
@@ -184,6 +233,9 @@ export function useBugReportComposerDraftState(input: Readonly<{
     setServerVersion,
     acceptedPrivacyNotice,
     setAcceptedPrivacyNotice,
+    crashReportStatus,
+    discardSavedCrash,
+    copySavedCrash,
     buildDraftInput,
   };
 }

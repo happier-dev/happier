@@ -35,10 +35,7 @@ vi.mock('@/sync/api/session/apiSocket', () => ({
         connect: vi.fn(),
         disconnect: vi.fn(),
         initialize: vi.fn(),
-        request: vi.fn(async () => new Response(
-            JSON.stringify({ sessions: [], nextCursor: null, hasNext: false }),
-            { status: 200, headers: { 'Content-Type': 'application/json' } },
-        )),
+        request: vi.fn(async (path: string) => sessionReadResponse(path)),
         onStatusChange: vi.fn(() => () => undefined),
     },
 }));
@@ -68,6 +65,19 @@ import { clearActiveViewingSessionsForServerScopeReset } from './domains/session
 import { clearWarmCacheAccountScope } from './domains/state/warmCachePersistence';
 
 const ACCOUNT_ID = 'test-account';
+
+function sessionReadResponse(path: string): Response {
+    const exactSession = /^\/v2\/sessions\/([^/?]+)$/.exec(new URL(path, 'http://localhost:53288').pathname);
+    if (exactSession && exactSession[1] !== 'active') {
+        return Response.json({ session: {
+            id: decodeURIComponent(exactSession[1]), seq: 0, createdAt: 1, updatedAt: 1,
+            active: false, activeAt: 1, archivedAt: null, encryptionMode: 'plain',
+            metadata: JSON.stringify({ path: '/workspace', host: 'test' }), metadataVersion: 1,
+            agentState: null, agentStateVersion: 0, dataEncryptionKey: null,
+        } });
+    }
+    return Response.json({ sessions: [], nextCursor: null, hasNext: false });
+}
 
 function organizationSnapshot(overrides?: { version?: number; pinnedSessionIds?: readonly string[] }) {
     return {
@@ -179,10 +189,7 @@ describe('session organization warm cache', () => {
                 });
             }
             if (url.includes('/sessions')) {
-                return new Response(JSON.stringify({ sessions: [], nextCursor: null, hasNext: false }), {
-                    status: 200,
-                    headers: { 'Content-Type': 'application/json' },
-                });
+                return sessionReadResponse(url);
             }
             return new Response(JSON.stringify({}), { status: 200, headers: { 'Content-Type': 'application/json' } });
         }));
@@ -194,6 +201,7 @@ describe('session organization warm cache', () => {
 
         releaseOrganization();
         await fetchSessions;
+        expect(storage.getState().sessions.s_pinned?.metadata).toMatchObject({ path: '/workspace', host: 'test' });
 
         // The refreshed organization has to survive this process, or the next boot is back on
         // the blocking path.

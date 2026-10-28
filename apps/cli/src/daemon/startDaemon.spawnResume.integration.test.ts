@@ -2489,6 +2489,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
     const previousTmuxInlineLimit = process.env.HAPPIER_CLI_TMUX_INLINE_SPAWN_MAX_CHARS;
     const previousHerdrBinary = process.env.HERDR_BIN_PATH;
     const previousClaudeBinary = process.env.HAPPIER_CLAUDE_PATH;
+    const previousCodexBinary = process.env.HAPPIER_CODEX_PATH;
     const isTmuxCreation = contract === 'tmux_creation_unconfirmed' || contract === 'tmux_creation_not_started';
     const isHerdrCreation = contract === 'herdr_creation_unconfirmed' || contract === 'herdr_creation_stopped';
     const isTmux = contract === 'tmux_binding_exit_overlap' || isTmuxCreation;
@@ -2560,6 +2561,12 @@ describe('startDaemon spawn resume wiring (integration)', () => {
         if (previous) target.mockImplementation(previous);
       });
     };
+    if (fixtureAgent === 'codex') {
+      // Spawn admission requires the Codex CLI the runner would launch.
+      process.env.HAPPIER_CODEX_PATH = await writeExecutableShim({
+        dir: fixtureHome, fileName: 'codex', contents: `#!${process.execPath}\nprocess.exit(0);\n`,
+      });
+    }
     if (fixtureAgent === 'claude') {
       process.env.HAPPIER_CLAUDE_PATH = await writeExecutableShim({
         dir: fixtureHome, fileName: 'claude', contents: `#!${process.execPath}\nprocess.exit(0);\n`,
@@ -3209,6 +3216,8 @@ describe('startDaemon spawn resume wiring (integration)', () => {
       else process.env.HERDR_BIN_PATH = previousHerdrBinary;
       if (previousClaudeBinary === undefined) delete process.env.HAPPIER_CLAUDE_PATH;
       else process.env.HAPPIER_CLAUDE_PATH = previousClaudeBinary;
+      if (previousCodexBinary === undefined) delete process.env.HAPPIER_CODEX_PATH;
+      else process.env.HAPPIER_CODEX_PATH = previousCodexBinary;
       replayClock?.mockRestore();
       releaseMarker();
       releaseBinding();

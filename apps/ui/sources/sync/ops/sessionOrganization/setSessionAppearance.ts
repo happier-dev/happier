@@ -3,6 +3,7 @@ import { setSessionAppearance as setSessionAppearanceApi } from '@/sync/api/sess
 import { parseSessionAppearanceColor, type SessionAppearanceColor } from '@/sync/domains/session/organization/appearanceColor';
 import { getStorage } from '@/sync/domains/state/storageStore';
 import { openSessionOrganizationDisplayEnvelope, prepareSessionOrganizationDisplayEnvelopeForWrite } from './sessionOrganizationDisplayEnvelope';
+import { resolveSessionOrganizationMutationScope } from '@/sync/domains/session/organization/mutationScope';
 
 /** Set/clear a session override. Errors reject after rollback and follow the organization mutation error path. */
 export async function setSessionAppearance(params: Readonly<{
@@ -26,4 +27,19 @@ export async function setSessionAppearance(params: Readonly<{
         getStorage().getState().rollbackSessionOrganizationOptimistic(recordId);
         throw error;
     }
+}
+
+/**
+ * The single-session entry used by every surface that colours a session (row menus, the session
+ * header): resolves the session server's credentials, then writes through `setSessionAppearance`.
+ */
+export async function setSessionAppearanceForServer(params: Readonly<{
+    serverId: string | null | undefined;
+    sessionId: string;
+    color: SessionAppearanceColor | null;
+}>): Promise<void> {
+    const resolved = await resolveSessionOrganizationMutationScope(params.serverId ?? null);
+    // Not user copy: callers surface failures through their generic error path.
+    if (!resolved.ok) throw new Error(`session-appearance-scope-${resolved.reason}`);
+    await setSessionAppearance({ ...resolved.scope, sessionId: params.sessionId, color: params.color });
 }

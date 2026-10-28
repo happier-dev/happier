@@ -14,6 +14,7 @@ function createAcceptedPendingPort() {
       accepted: true,
       externalHandoffClaimed: true,
     } as const)),
+    markPendingDeliveryHandled: vi.fn(async () => undefined),
     blockPendingDelivery: vi.fn(async () => undefined),
   };
 }
@@ -37,6 +38,7 @@ describe('sendVoiceSessionComposerText', () => {
       localId: ' opaque-local-id ',
       pendingPort: {
         enqueuePendingMessage,
+        markPendingDeliveryHandled: vi.fn(async () => undefined),
         blockPendingDelivery: vi.fn(async () => undefined),
       },
       dispatch,
@@ -77,6 +79,7 @@ describe('sendVoiceSessionComposerText', () => {
       store,
       pendingPort: {
         enqueuePendingMessage,
+        markPendingDeliveryHandled: vi.fn(async () => undefined),
         blockPendingDelivery: vi.fn(async () => undefined),
       },
       getAdapter: () => ({
@@ -137,6 +140,7 @@ describe('sendVoiceSessionComposerText', () => {
       store,
       pendingPort: {
         enqueuePendingMessage,
+        markPendingDeliveryHandled: vi.fn(async () => undefined),
         blockPendingDelivery: vi.fn(async () => undefined),
       },
       getAdapter: () => ({
@@ -272,6 +276,7 @@ describe('sendVoiceSessionComposerText', () => {
       store,
       pendingPort: {
         enqueuePendingMessage: vi.fn(async () => ({ localId: 'voice-local-1', accepted: false } as const)),
+        markPendingDeliveryHandled: vi.fn(async () => undefined),
         blockPendingDelivery: vi.fn(async () => undefined),
       },
       getAdapter: () => ({
@@ -307,6 +312,7 @@ describe('sendVoiceSessionComposerText', () => {
           accepted: false,
           terminal: true,
         } as const)),
+        markPendingDeliveryHandled: vi.fn(async () => undefined),
         blockPendingDelivery: vi.fn(async () => undefined),
       },
       dispatch,
@@ -331,6 +337,7 @@ describe('sendVoiceSessionComposerText', () => {
           accepted: false,
           waitingForWireMode: true,
         } as const)),
+        markPendingDeliveryHandled: vi.fn(async () => undefined),
         blockPendingDelivery: vi.fn(async () => undefined),
       },
       dispatch,
@@ -355,6 +362,7 @@ describe('sendVoiceSessionComposerText', () => {
           accepted: true,
           settled: true,
         } as const)),
+        markPendingDeliveryHandled: vi.fn(async () => undefined),
         blockPendingDelivery: vi.fn(async () => undefined),
       },
       dispatch,
@@ -385,6 +393,7 @@ describe('sendVoiceSessionComposerText', () => {
       store,
       pendingPort: {
         enqueuePendingMessage: vi.fn(async () => ({ localId: 'voice-local-1', accepted: true, cancelled: true } as const)),
+        markPendingDeliveryHandled: vi.fn(async () => undefined),
         blockPendingDelivery: vi.fn(async () => undefined),
       },
       getAdapter: () => ({
@@ -423,6 +432,7 @@ describe('sendVoiceSessionComposerText', () => {
           accepted: true,
           externalHandoffClaimed: true,
         } as const)),
+        markPendingDeliveryHandled: vi.fn(async () => undefined),
         blockPendingDelivery,
       },
       dispatch,
@@ -455,6 +465,7 @@ describe('sendVoiceSessionComposerText', () => {
           accepted: true,
           externalHandoffClaimed: true,
         } as const)),
+        markPendingDeliveryHandled: vi.fn(async () => undefined),
         blockPendingDelivery: vi.fn(async () => {
           throw new Error('pending_delivery_block_failed');
         }),
@@ -491,7 +502,7 @@ describe('sendVoiceSessionComposerText', () => {
       text: 'hello',
       localId: 'voice-local-1',
       store,
-      pendingPort: { enqueuePendingMessage, blockPendingDelivery },
+      pendingPort: { enqueuePendingMessage, blockPendingDelivery, markPendingDeliveryHandled: vi.fn(async () => undefined) },
       getAdapter: () => ({
         id: 'local_conversation',
         start: vi.fn(),
@@ -529,6 +540,7 @@ describe('sendVoiceSessionComposerText', () => {
       localId: 'voice-local-1',
       pendingPort: {
         enqueuePendingMessage: vi.fn(async () => ({ localId: 'voice-local-1', accepted: true } as const)),
+        markPendingDeliveryHandled: vi.fn(async () => undefined),
         blockPendingDelivery: vi.fn(async () => undefined),
       },
       dispatch,

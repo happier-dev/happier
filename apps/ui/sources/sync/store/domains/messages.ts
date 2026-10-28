@@ -19,6 +19,8 @@ import { shouldIncludeSubagentSourceMessage } from '@/sync/domains/session/subag
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import {
     compareTranscriptMessagesOldestFirst,
+    mergeTranscriptMessageIdsOldestFirst,
+    sortTranscriptMessagesOldestFirst,
     hasTranscriptMessageOrderChanged,
     normalizeTranscriptSeq,
 } from '@/sync/domains/messages/transcriptOrdering';
@@ -128,71 +130,6 @@ type MessagesDomainDependencies = {
     sessionPending: Record<string, SessionPending>;
 };
 
-function mergeSortedMessageIdsOldestFirst(params: Readonly<{
-    existingSortedIds: readonly string[];
-    insertSortedIds: readonly string[];
-    messagesById: Readonly<Record<string, Message>>;
-}>): string[] {
-    const out: string[] = [];
-    const seen = new Set<string>();
-    let i = 0;
-    let j = 0;
-
-    const compare = (aId: string, bId: string): number => {
-        if (aId === bId) return 0;
-        const a = params.messagesById[aId];
-        const b = params.messagesById[bId];
-        if (!a && !b) return String(aId).localeCompare(String(bId));
-        if (!a) return -1;
-        if (!b) return 1;
-        return compareTranscriptMessagesOldestFirst(a, b);
-    };
-
-    while (i < params.existingSortedIds.length || j < params.insertSortedIds.length) {
-        const aId = i < params.existingSortedIds.length ? params.existingSortedIds[i]! : null;
-        const bId = j < params.insertSortedIds.length ? params.insertSortedIds[j]! : null;
-
-        const nextId = (() => {
-            if (aId === null) return bId!;
-            if (bId === null) return aId!;
-            return compare(aId, bId) <= 0 ? aId : bId;
-        })();
-
-        if (!seen.has(nextId)) {
-            out.push(nextId);
-            seen.add(nextId);
-        }
-
-        if (aId !== null && nextId === aId) i += 1;
-        if (bId !== null && nextId === bId) j += 1;
-    }
-
-    return out;
-}
-
-function appendSortedMessageIdsOldestFirst(params: Readonly<{
-    existingSortedIds: readonly string[];
-    insertSortedIds: readonly string[];
-    messagesById: Readonly<Record<string, Message>>;
-}>): string[] | null {
-    if (params.insertSortedIds.length === 0) return params.existingSortedIds as string[];
-    if (params.existingSortedIds.length === 0) return params.insertSortedIds.slice();
-
-    const lastExistingId = params.existingSortedIds[params.existingSortedIds.length - 1];
-    const firstInsertId = params.insertSortedIds[0];
-    if (!lastExistingId || !firstInsertId) return null;
-
-    const lastExisting = params.messagesById[lastExistingId];
-    const firstInsert = params.messagesById[firstInsertId];
-    if (!lastExisting || !firstInsert) return null;
-
-    if (compareTranscriptMessagesOldestFirst(lastExisting, firstInsert) <= 0) {
-        return [...params.existingSortedIds, ...params.insertSortedIds];
-    }
-
-    return null;
-}
-
 function coerceSessionMessages(input: unknown): SessionMessages {
     const raw = input as any;
     const reducerState: ReducerState = raw?.reducerState ? (raw.reducerState as ReducerState) : createReducer();
@@ -209,7 +146,7 @@ function coerceSessionMessages(input: unknown): SessionMessages {
         : (() => {
             const fromMessages: Message[] | null = Array.isArray(raw?.messages) ? (raw.messages as Message[]) : null;
             const list = fromMessages ?? Object.values(messagesById);
-            return list.slice().sort(compareTranscriptMessagesOldestFirst).map((m) => m.id);
+            return sortTranscriptMessagesOldestFirst(list).map((m) => m.id);
         })();
 
     // Intentionally reused (not copied): the record is mutated in place on the
@@ -449,11 +386,7 @@ export function applyAgentStateUpdateToSessionMessages(params: Readonly<{
         const uniqueInsertIds = Array.from(new Set(idsToInsert));
         uniqueInsertIds.sort((a, b) => compareTranscriptMessagesOldestFirst(messagesById[a]!, messagesById[b]!));
 
-        return mergeSortedMessageIdsOldestFirst({
-            existingSortedIds: filtered,
-            insertSortedIds: uniqueInsertIds,
-            messagesById,
-        });
+        return mergeTranscriptMessageIdsOldestFirst(filtered, uniqueInsertIds, messagesById).messageIdsOldestFirst;
     })();
 
     if (shouldRecomputeLatestThinking) {
@@ -788,24 +721,9 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                     indexTelemetryFields.idsChanged = 1;
                     indexTelemetryFields.uniqueInsertedOrMoved = uniqueInsertIds.length;
 
-                    if (idsToRemove.size === 0) {
-                        const appended = appendSortedMessageIdsOldestFirst({
-                            existingSortedIds: existingIds,
-                            insertSortedIds: uniqueInsertIds,
-                            messagesById,
-                        });
-                        if (appended) {
-                            indexTelemetryFields.appendOnly = 1;
-                            return appended;
-                        }
-                    }
-                    indexTelemetryFields.appendOnly = 0;
-
-                    return mergeSortedMessageIdsOldestFirst({
-                        existingSortedIds: filtered,
-                        insertSortedIds: uniqueInsertIds,
-                        messagesById,
-                    });
+                    const merged = mergeTranscriptMessageIdsOldestFirst(filtered, uniqueInsertIds, messagesById);
+                    indexTelemetryFields.appendOnly = merged.appendOnly ? 1 : 0;
+                    return merged.messageIdsOldestFirst;
                     },
                 );
                 telemetryFields.insertedOrMoved = indexTelemetryFields.insertedOrMoved ?? 0;
@@ -1117,8 +1035,7 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                         messagesById[message.id] = message;
                         messageRevisionsById[message.id] = 1;
                     }
-                    messageIdsOldestFirst = Object.values(messagesById)
-                        .sort(compareTranscriptMessagesOldestFirst)
+                    messageIdsOldestFirst = sortTranscriptMessagesOldestFirst(Object.values(messagesById))
                         .map((m) => m.id);
                     latestThinkingMessageId = findLatestThinkingMessageId({ idsOldestFirst: messageIdsOldestFirst, messagesById });
                     latestThinkingMessageActivityAtMs = latestThinkingMessageId ? Date.now() : null;

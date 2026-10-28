@@ -43,12 +43,11 @@ import { createUiSessionSpawnUserAttemptId } from '../domains/session/spawn/spaw
 import { storage } from '../domains/state/storage';
 import { readMachineDaemonCliVersionForServerScope } from '../domains/machines/readMachineDaemonCliVersionForServerScope';
 import { isPlainObject, normalizeSpawnSessionResult } from './_shared';
-import { isSocketIoAckTimeoutError } from '@/sync/runtime/socketIoAckTimeout';
+import { isSocketIoAckTimeoutError, readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { mergeMachineMetadataForVersionMismatch } from './machineMetadataMerge';
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
 import { isMachineRpcTimeoutError } from '@/sync/runtime/orchestration/serverScopedRpc/machineRpcTimeoutError';
 import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
-import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { stopSessionViaDaemonMachineRpc } from './sessionStopStrategy';
 import {
     MACHINE_ENCRYPT_RAW_ATTRIBUTION_EVENTS,

@@ -32,6 +32,7 @@ type V2SessionListInitialPageParams = Readonly<{
     pageRows: ReadonlyArray<V2SessionListRowCompat>;
     limit: number;
     pinnedSessionIds: readonly string[];
+    requiredSessionIds?: readonly string[];
     includeAttentionRows: boolean;
     attentionRowsLimit?: number;
     includeActiveRows?: boolean;
@@ -217,7 +218,7 @@ function collectUnstampedUnreadSessionIds(
 /**
  * The initial page is the union of the row families the client would otherwise have asked for
  * separately, in a fixed precedence: explicitly pinned rows, then rows in a condition, then rows
- * live on a machine, then the page itself. De-duplication is by session id and first occurrence
+ * live on a machine, then the page itself, then explicitly required rows. De-duplication is by session id and first occurrence
  * wins, so a row belonging to several families appears once, at its strongest family's position.
  */
 function mergeInitialRows(params: Readonly<{
@@ -226,6 +227,7 @@ function mergeInitialRows(params: Readonly<{
     attentionRows: ReadonlyArray<V2SessionListRowCompat>;
     activeRows: ReadonlyArray<V2SessionListRowCompat>;
     pageRows: ReadonlyArray<V2SessionListRowCompat>;
+    requiredRows: ReadonlyArray<V2SessionListRowCompat>;
 }>): V2SessionListRowCompat[] {
     const pinnedRowsById = new Map(params.pinnedRows.map((row) => [row.id, row]));
     const seen = new Set<string>();
@@ -246,6 +248,9 @@ function mergeInitialRows(params: Readonly<{
         appendRow(row);
     }
     for (const row of params.pageRows) {
+        appendRow(row);
+    }
+    for (const row of params.requiredRows) {
         appendRow(row);
     }
     return rows;
@@ -556,6 +561,25 @@ export async function createV2SessionListInitialPage(params: V2SessionListInitia
             }))
             : Promise.resolve([]),
     ]);
+    // Reuse every row already read, including the page's pagination probe. Exact requested ids can
+    // include archived sessions, so this family intentionally has no archivedAt predicate. The
+    // existing reader still enforces account/share visibility and selects the viewer's data key.
+    const observedRowsById = new Map([
+        ...params.pageRows, ...pinnedRowsBeyondPage, ...attentionRowsBeyondPage, ...activeRowsBeyondPage,
+    ].map((row) => [row.id, row]));
+    const requiredSessionIds = [...new Set(params.requiredSessionIds ?? [])];
+    const missingRequiredIds = requiredSessionIds.filter((id) => !observedRowsById.has(id));
+    const requiredRowsBeyondFamilies = missingRequiredIds.length > 0
+        ? await measureQuery(() => findV2SessionListRows({
+            userId: params.userId,
+            where: { id: { in: missingRequiredIds } },
+            orderBy: { id: "desc" },
+            take: missingRequiredIds.length,
+            visibilityArms: params.visibilityArms,
+        }))
+        : [];
+    for (const row of requiredRowsBeyondFamilies) observedRowsById.set(row.id, row);
+
     const mergedRows = measurePage(() => mergeInitialRows({
         pinnedSessionIds,
         // Pinned rows are placed by id, so the ones the page already returned need no ordering care.
@@ -569,6 +593,10 @@ export async function createV2SessionListInitialPage(params: V2SessionListInitia
             ? [...activePlan.rowsInPage, ...activeRowsBeyondPage].sort(compareV2ActiveSessionListRows)
             : [],
         pageRows,
+        requiredRows: requiredSessionIds.flatMap((id) => {
+            const row = observedRowsById.get(id);
+            return row ? [row] : [];
+        }),
     }));
 
     // Repair, from what this response already proves, the unread instants an older writer left

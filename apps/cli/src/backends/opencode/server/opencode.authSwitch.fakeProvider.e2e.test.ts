@@ -12,6 +12,7 @@ import {
 } from '@happier-dev/protocol';
 
 import { configuration } from '@/configuration';
+import { MessageBuffer } from '@/ui/ink/messageBuffer';
 import type { TrackedSession } from '@/daemon/types';
 import { prepareIsolatedDaemonTestHome, type PreparedDaemonTestHome } from '@/daemon/testkit/realIntegration.testkit';
 import { removeSessionMarker, writeSessionMarker } from '@/daemon/sessionRegistry';
@@ -28,9 +29,12 @@ import { spawnDetachedInlineNodeTestProcess, waitForProcessExit } from '@/testki
 import { createOpenCodeConnectedServiceRuntimeAuthAdapter } from '../connectedServices/createOpenCodeConnectedServiceRuntimeAuthAdapter';
 import { setOpenCodeConnectedServiceInFlightTurnProvider } from '@/daemon/connectedServices/sessionAuthSwitch/openCodeConnectedServiceInFlightTurnRegistry';
 import { startManagedOpenCodeServer } from './openCodeManagedServer';
+import { createOpenCodeServerRuntimeClient } from './client';
 import { resolveOpenCodeManagedServerLaunchFingerprint } from './openCodeManagedServerEnv';
 import {
   ensureSharedManagedOpenCodeServerBaseUrl,
+  reapUnusedSharedManagedOpenCodeServersBestEffort,
+  resolveSharedManagedOpenCodeServerStatePathForEnv,
   isLoopbackManagedOpenCodeBaseUrl,
   type SharedManagedOpenCodeServerState,
 } from './sharedManagedServer';
@@ -66,8 +70,10 @@ function currentManagedServerDirs(): Readonly<{
   currentStatePath: string;
 }> {
   return {
-    managedServersDir: join(configuration.happyHomeDir, 'opencode', 'managed-servers'),
-    currentStatePath: join(configuration.happyHomeDir, 'opencode', 'current-managed-server.json'),
+    managedServersDir: dirname(resolveSharedManagedOpenCodeServerStatePathForEnv({
+      ...process.env, HAPPIER_OPENCODE_SERVER_STATE_PATH: undefined,
+    })),
+    currentStatePath: resolveSharedManagedOpenCodeServerStatePathForEnv(),
   };
 }
 
@@ -194,7 +200,7 @@ async function startManagedServerResources(params: Readonly<{
   const ownerToken = `owner-${randomUUID()}`;
   const orphanFingerprint = `orphan-${randomUUID()}`;
   const orphanStatePath = join(params.managedServersDir, `${orphanFingerprint}.json`);
-  const currentStatePath = join(configuration.happyHomeDir, 'opencode', 'current-managed-server.json');
+  const currentStatePath = resolveSharedManagedOpenCodeServerStatePathForEnv();
   return {
     currentServer,
     orphanServer,
@@ -233,7 +239,47 @@ describe('OpenCode auth-switch fake-provider e2e', () => {
     }
   });
 
-  it('keeps tracked orphan fingerprints on startup scan and reaps them once no tracked claim remains', async () => {
+  it('retains the launched provider through every client and stops it after the last release', async () => {
+    fakeBinDir = await createFakeBinDir();
+    const fakeOpenCodePath = join(fakeBinDir, 'opencode');
+    await createFakeOpenCodeBinary(fakeOpenCodePath);
+    preparedHome = await prepareIsolatedDaemonTestHome({
+      prefix: 'happier-opencode-managed-clients-',
+      extraEnv: {
+        HAPPIER_OPENCODE_PATH: fakeOpenCodePath,
+        HAPPIER_OPENCODE_SERVER_STATE_PATH: undefined,
+        HAPPIER_OPENCODE_SERVER_URL: undefined,
+      },
+    });
+    const clients: Awaited<ReturnType<typeof createOpenCodeServerRuntimeClient>>[] = [];
+    try {
+      for (let index = 0; index < 2; index++) clients.push(await createOpenCodeServerRuntimeClient({
+        directory: preparedHome.homeDir, messageBuffer: new MessageBuffer(),
+      }));
+      const statePath = resolveSharedManagedOpenCodeServerStatePathForEnv();
+      const state = await readManagedState(statePath);
+      if (!state) throw new Error('Managed provider state was not published');
+      expect(clients[1]!.getManagedServerIdentity()?.pid).toBe(state.pid);
+      await clients[0]!.dispose();
+      await reapUnusedSharedManagedOpenCodeServersBestEffort();
+      expect(isOpenCodeServerPidAlive(state.pid)).toBe(true);
+      await clients[1]!.dispose();
+      expect(isOpenCodeServerPidAlive(state.pid)).toBe(false);
+      expect(await pathExists(statePath)).toBe(false);
+    } finally {
+      for (const client of clients) await client.dispose();
+      const remaining = await readManagedState(resolveSharedManagedOpenCodeServerStatePathForEnv());
+      if (remaining) {
+        const info = await getOpenCodeServerProcessInfoBestEffort(remaining.pid);
+        if (info?.cmd.includes(fakeOpenCodePath)) {
+          killPidBestEffort(remaining.pid);
+          await waitForProcessExit(remaining.pid, { timeoutMs: 5_000 });
+        }
+      }
+    }
+  });
+
+  it('keeps claimed servers during periodic cleanup and reaps them once no tracked claim remains', async () => {
     const localFakeBinDir = await createFakeBinDir();
     fakeBinDir = localFakeBinDir;
     const fakeOpenCodePath = join(localFakeBinDir, 'opencode');
@@ -300,6 +346,7 @@ describe('OpenCode auth-switch fake-provider e2e', () => {
     };
 
     const baseUrl = await ensureSharedManagedOpenCodeServerBaseUrl({ probeHealth });
+    await reapUnusedSharedManagedOpenCodeServersBestEffort();
     expect(baseUrl).toBe(currentServer.baseUrl);
     expect(isLoopbackManagedOpenCodeBaseUrl(baseUrl)).toBe(true);
 
@@ -312,7 +359,7 @@ describe('OpenCode auth-switch fake-provider e2e', () => {
     killPidBestEffort(markerPid);
     await waitForProcessExit(markerPid, { timeoutMs: 5_000 }).catch(() => false);
 
-    await ensureSharedManagedOpenCodeServerBaseUrl({ probeHealth });
+    await reapUnusedSharedManagedOpenCodeServersBestEffort();
 
     await waitForCondition(
       async () => !(await pathExists(orphanStatePath)),

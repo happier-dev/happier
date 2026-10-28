@@ -13,7 +13,7 @@ import {
   resolveApiSessionSocketDefaultAck,
 } from '@/testkit/backends/apiSessionSocketHarness';
 import { encodeBase64, encrypt } from '../encryption';
-import { accountSettingsParse } from '@happier-dev/protocol';
+import { accountSettingsParse, type AcceptedPendingSettlementResponseV1 } from '@happier-dev/protocol';
 import {
   getActiveAccountSettingsSnapshot,
   setActiveAccountSettingsSnapshot,
@@ -2378,30 +2378,37 @@ describe('ApiSessionClient pending-queue turn-end drain', () => {
   });
 
   it('rejoins the same operation after a socket ACK timeout without granting unrelated wakes retry authority', async () => {
+    const actualTransport = await vi.importActual<typeof import('./pendingQueueV2Transport')>('./pendingQueueV2Transport');
+    resolveAcceptedPendingDeliveryMock.mockImplementation(actualTransport.resolveAcceptedPendingQueueV2Delivery);
+    const settlementLocalIds: unknown[] = [];
     const client = await createClient({
       latestTurnStatus: 'completed',
       pendingCount: 1,
       pendingVersion: 1,
       metadata: { deliveredUserMessageSeqV1: 0 },
+    }, {
+      // The real transport constructs and parses ACKs; only the socket boundary is fake.
+      sessionSocketEmitWithAck: (event, payload) => {
+        if (event !== 'pending-delivery-accepted-v1') return { ok: true };
+        settlementLocalIds.push((payload as { localId?: unknown }).localId);
+        if (settlementLocalIds.length === 1) throw new Error('operation has timed out');
+        return {
+          ok: true, didResolve: false,
+          pendingCount: 0, pendingBlockedCount: 0, pendingVersion: 3,
+          message: {
+            id: 'committed-ack-timeout-settlement',
+            seq: 43,
+            localId: 'ack-timeout-settlement',
+            messageRole: 'user',
+            content: createProviderDeliveryMaterializeResult('ack-timeout-settlement').message.content,
+            createdAt: 1000,
+            updatedAt: 1000,
+          },
+        } satisfies AcceptedPendingSettlementResponseV1;
+      },
     });
     await waitForCurrentPendingInputContract(client);
     materializeNextMock.mockResolvedValueOnce(createProviderDeliveryMaterializeResult('ack-timeout-settlement'));
-    const timeoutError = Object.assign(new Error('socket acknowledgement timed out'), {
-      code: 'socket_ack_timeout' as const,
-      retryable: true as const,
-    });
-    resolveAcceptedPendingDeliveryMock
-      .mockRejectedValueOnce(timeoutError)
-      .mockResolvedValueOnce({
-        didResolve: false,
-        pendingQueueState: { known: true, pendingCount: 0, pendingBlockedCount: 0, pendingVersion: 3 },
-        message: {
-          ...createProviderDeliveryMaterializeResult('ack-timeout-settlement').message,
-          id: 'committed-ack-timeout-settlement',
-          seq: 43,
-          deliveryState: null,
-        },
-      });
 
     await client.materializeNextPendingMessageSafely({ reconcileWhenEmpty: 'force' });
     vi.useFakeTimers();
@@ -2425,8 +2432,12 @@ describe('ApiSessionClient pending-queue turn-end drain', () => {
     expect(resolveAcceptedPendingDeliveryMock).toHaveBeenCalledTimes(1);
 
     await vi.advanceTimersByTimeAsync(1);
-    expect(resolveAcceptedPendingDeliveryMock).toHaveBeenCalledTimes(2);
-    expect((client as any).canonicalPendingDeliveryByLocalId.has('ack-timeout-settlement')).toBe(false);
+    expect(settlementLocalIds).toEqual(['ack-timeout-settlement', 'ack-timeout-settlement']);
+    expect(client.hasCanonicalPendingProviderInputDelivery('ack-timeout-settlement')).toBe(false);
+    expect(client.getCommittedUserMessageSeq('ack-timeout-settlement')).toBe(43);
+    expect(materializeNextMock).toHaveBeenCalledTimes(1);
+    expect(sessionSocketStub?.disconnect).not.toHaveBeenCalled();
+    expect(sessionSocketStub?.close).not.toHaveBeenCalled();
   });
 
   it('keeps retrying exact accepted settlement after repeated response loss without requiring reconnect', async () => {

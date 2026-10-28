@@ -83,6 +83,8 @@ final class HappierSystemTabBarView: ExpoView, UITabBarControllerDelegate {
       attachContent(tabs, in: window)
       if focused?.isFirstResponder == false { focused?.becomeFirstResponder() }
     } else if let controller {
+      // Scene reconnection can move the retained controller into a new window.
+      hostWindow = window
       updateItems(controller)
       attachContent(controller, in: window)
     }
@@ -162,6 +164,8 @@ final class HappierSystemTabBarView: ExpoView, UITabBarControllerDelegate {
 private final class RailContentHost: UIViewController {
   override var childForStatusBarStyle: UIViewController? { children.first }
   override var childForStatusBarHidden: UIViewController? { children.first }
+  override var childForHomeIndicatorAutoHidden: UIViewController? { children.first }
+  override var childForScreenEdgesDeferringSystemGestures: UIViewController? { children.first }
   override func viewDidLayoutSubviews() {
     super.viewDidLayoutSubviews()
     children.first?.view.frame = view.bounds

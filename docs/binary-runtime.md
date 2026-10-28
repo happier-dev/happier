@@ -562,7 +562,15 @@ types and helpers, including Homebridge's unconditionally imported `prebuild-fil
 The shared PTY permission owner
 repairs `spawn-helper` in both build and prebuild locations during package installation and
 artifact finalization. Foreign `ps-list` fastlist executables are omitted on non-Windows targets;
-Windows keeps them. Happier's Agent SDK runner always supplies the separately installed Claude
+Windows keeps them. In current development source, the shared Bun compiler loads `ps-list`
+on Windows from the existing on-disk dependency payload through the canonical CLI runtime-root resolver,
+including installed channel shortcuts. This preserves the dependency's own parser and Windows
+helper lookup: bundling its `import.meta.url` would point at Bun's virtual filesystem instead.
+POSIX keeps the dependency's JavaScript embedded, including in detached installer runners.
+The legacy Claude SDK launcher records unverified process cleanup through the existing
+primary-session turn lifecycle, allocating a failed turn when idle, before preserving the
+resume identity and exiting. Failed issue publication is logged and does not admit a replacement.
+Happier's Agent SDK runner always supplies the separately installed Claude
 Code executable, so standalone artifacts keep the SDK's JavaScript package but omit its unused
 optional native CLI fallback packages. Target-specific standalone payloads retain executable
 source maps for Bun and Node diagnostics and dependency declarations for SDK/plugin authoring.

@@ -222,6 +222,43 @@ from this current-work projection.
 ## HTTP endpoints by area
 See `api.md` for the full HTTP endpoint catalog and auth flows.
 
+### Required session rows and resume (development)
+
+The development `GET /v2/sessions` reader accepts `requiredSessionIds` as a JSON
+array in the query. These access-checked rows join the ordinary initial-page
+families without changing its cursor. `requiredOnly=true` reads only that family,
+including visible archived rows, and returns no continuation cursor. The UI chunks
+the encoded GET request line against nginx's default 8 KiB boundary, including
+reader-support parameters and HTTP framing. This is a transport boundary, not an
+account-size or row-count limit.
+
+New UI readers verify every required ID actually returned. Older servers can
+ignore the additive query; omitted IDs use the existing exact-read compatibility
+path. A page omission is never proof of deletion. Exact reads retain the existing
+nondisclosing JSON `404 { error: 'Session not found' }` for both missing and
+inaccessible sessions. Unrecognized or unparseable 404 bodies, explicit permission,
+authentication and transport failures remain failures rather than deletion.
+When an overlapping organization refresh introduces required pins or explicit
+attention standings, the UI awaits their hydration through the required-only list
+operation, even if their IDs appeared in the ordinary page. Returned membership
+alone does not prove readable materialization; omitted rows retain exact fallback.
+
+A missing account changes cursor captures the current cursor before the existing
+snapshot repair and checkpoints it only after successful repair. Every repair
+requires materializing reads started after that capture: active refresh commands
+finish before a fresh queue cycle, and the sessions queue drains any older shared
+direct list read before fetching again. Existing wait budgets, stopped queues and
+terminal failures still prevent checkpointing an incomplete repair. Established
+cursors materialize each page's changed sessions through the same row reader
+before checkpointing. Share, pin and membership changes still reconcile the
+ordinary list; metadata/activity-only pages do not replace it. Targeted reads
+preserve list pagination, while the ordinary resume refresh still recovers missed
+activity ephemerals. Missing folder-assignment reads learn for their captured
+account/server activation even when the requesting render effect is replaced;
+scope changes discard stale results and newer cached assignments take precedence.
+
+These additions describe development source, not released availability.
+
 ### Session organization (development)
 
 `GET /v2/session-organization` returns the account-scoped organization snapshot.
@@ -292,7 +329,7 @@ The following describes the current development implementation, not a new server
 
 Account-change cursors, session sequence hints, and transcript paging cursors serve different purposes. A session hint announces newer durable content; it does not prove that this device has loaded the intervening rows. Likewise, acknowledging an account change need not download the entire transcript: the UI can retain the outstanding forward load in its existing deferred-transcript state. Failed shell loads, message loads, and revision repairs still block the affected checkpoint.
 
-Development UI HTTP reads retain cancellation through response-body completion. Web reads use an inactivity window derived from the server heartbeat contract (15 seconds between pings plus a 45-second timeout); each received body chunk renews it. `EXPO_PUBLIC_HAPPIER_SERVER_READ_INACTIVITY_TIMEOUT_MS` overrides that window. Native fetch exposes no progress before completing a response, so only explicitly server-bounded reads (transcript pages and changes/cursor) use that pre-resolution deadline. Unpaged session metadata, organization snapshots, pending queues and draft hydration remain manually cancellable without a native total deadline. POST-based reads opt in explicitly at their owner, including draft read/list, KV bulk lookup and the native version check; KV value sizes are unbounded despite the key-count cap. Manual Retry cancels superseded reads, lets the old resume unwind and then starts a fresh resume; it preserves mutating requests and rejects stale resume materialization/checkpoints. Supersession is not a failed attempt: the existing API and invalidation retry owners immediately run a replacement without backoff or consuming their failure budget. A still-stalled replacement remains owned by that retry cycle. Read inactivity timeouts are logged by default and enter the existing retry owners.
+Development UI HTTP reads retain cancellation through response-body completion. Web reads use an inactivity window derived from the server heartbeat contract (15 seconds between pings plus a 45-second timeout); each received body chunk renews it. `EXPO_PUBLIC_HAPPIER_SERVER_READ_INACTIVITY_TIMEOUT_MS` overrides that window. Native fetch exposes no progress before completing a response, so only explicitly server-bounded reads (transcript pages and changes/cursor) use that pre-resolution deadline. Unpaged session metadata, organization snapshots, pending queues and draft hydration remain manually cancellable without a native total deadline. POST-based reads opt in explicitly at their owner, including draft read/list, KV bulk lookup and the native version check; KV value sizes are unbounded despite the key-count cap. Manual Retry cancels superseded reads, lets the old resume unwind and then starts a fresh resume; it preserves mutating requests and rejects stale resume materialization/checkpoints. It also cancels that resume's invalidation waits, including waits on a cycle parked in backoff, without stopping the cycle or changing its retry budget. Queued apply actions and later snapshot phases observe the same resume generation fence, so cancelled waits cannot authorize cursor advancement. Supersession is not a failed attempt: the existing API and invalidation retry owners immediately run a replacement without backoff or consuming their failure budget. A still-stalled replacement remains owned by that retry cycle. Read inactivity timeouts are logged by default and enter the existing retry owners.
 
 The development UI supervises HTTP readiness separately from active sync socket recovery. A failed socket dial retains escalating demand through the shared managed connection policy without blocking healthy HTTP requests. Known HTTP unavailability suspends the socket lifecycle until reachability returns; an actual socket connection resets socket retry escalation. HTTP response reports carry the supervisor scope captured before dispatch. An authenticated 401, gateway 502/504, or 503 with a valid `Retry-After` or explicit restart marker can update endpoint readiness. Resource 403, generic 500, and unqualified route-level 503 responses remain operation-scoped. Dedicated authentication probes classify their own endpoint evidence, including account-level rejection.
 

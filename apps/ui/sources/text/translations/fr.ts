@@ -1015,6 +1015,13 @@ export const fr: TranslationStructure = {
     },
 
     appCrash: {
+        copyFailed: "Les détails du plantage n’ont pas pu être copiés. Réessayez.",
+        discardFailed: "Le plantage enregistré n’a pas pu être supprimé. Réessayez.",
+        restartWithoutReport: "Redémarrer sans enregistrer",
+        reportSaveFailed: "Les détails du plantage n’ont pas pu être enregistrés. Copiez-les avant de redémarrer ou réessayez le signalement.",
+        savedReportNotice: "Le plantage enregistré figure ci-dessous. Vérifiez et modifiez les détails avant l’envoi. Ils restent sur cet appareil jusqu’à l’envoi ou la suppression.",
+        discardSavedReport: "Supprimer le plantage enregistré",
+        stackTruncated: "Pile abrégée pour ce champ. Le plantage complet reste enregistré sur cet appareil.",
         title: 'Quelque chose s’est mal passé',
         subtitle: 'Happier a rencontré une erreur inattendue. Tu peux redémarrer l’UI de l’app ou copier les détails pour le support.',
         detailsTitle: 'Détails de l’erreur',
@@ -6375,6 +6382,9 @@ export const fr: TranslationStructure = {
         tmuxFallback: 'Fallback tmux',
         copyMetadata: 'Copier les métadonnées',
         copyDebugInformation: 'Copier les informations',
+        sessionInformation: "Informations de la session",
+        happierSessionId: "ID de session Happier",
+        providerSessionId: ({ provider }: { provider: string }) => `ID de session ${provider}`,
         debugInformationCopyLabel: 'Informations',
         providerSessionLogs: ({ provider }: { provider: string }) => `${provider} logs de session`,
         agentState: 'État de l’agent',
@@ -9715,6 +9725,7 @@ settingsSession: {
         failedToConnectTerminal: 'Échec de la connexion du terminal',
         cameraPermissionsRequiredToConnectTerminal: 'L’accès à la caméra est nécessaire pour connecter le terminal',
         failedToLinkDevice: 'Échec de la liaison de l’appareil',
+        deviceLinkRequestNotFound: "Aucune demande d’association en attente n’a été trouvée sur ce relais. Vérifiez que les deux appareils utilisent le même relais, puis générez un nouveau code QR.",
         cameraPermissionsRequiredToScanQr: 'L’accès à la caméra est nécessaire pour scanner les QR codes',
         qrScannerUnavailable: 'Impossible d’ouvrir le scanner de QR code. Réessaie ou saisis l’URL manuellement.'
     },

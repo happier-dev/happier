@@ -25,6 +25,8 @@ import {
   isLoopbackManagedOpenCodeBaseUrl,
   readSharedManagedOpenCodeServerStateByBaseUrlBestEffort,
   readSharedManagedOpenCodeServerStateBestEffort,
+  retainSharedManagedOpenCodeServerClient,
+  withSharedManagedOpenCodeServerAccess,
   type SharedManagedOpenCodeServerState,
 } from './sharedManagedServer';
 import {
@@ -106,7 +108,7 @@ export function resolveOpenCodeSseReadIdleTimeoutMs(env: NodeJS.ProcessEnv): num
   return Math.max(5_000, Math.min(120_000, Math.trunc(parsed)));
 }
 
-async function fetchJson<T>(params: {
+async function fetchOpenCodeJson<T>(params: {
   url: string;
   method: 'GET' | 'PATCH' | 'POST' | 'PUT' | 'DELETE';
   headers: Record<string, string>;
@@ -570,20 +572,64 @@ async function sleepUntilOrAbort(ms: number, signal: AbortSignal): Promise<void>
   });
 }
 
-export async function createOpenCodeServerRuntimeClient(params: Readonly<{
+type OpenCodeServerRuntimeClientParams = Readonly<{
   directory: string;
   messageBuffer: MessageBuffer;
   baseUrlOverride?: string | null;
   managedServerLaunchFingerprint?: string | null;
   env?: NodeJS.ProcessEnv;
   onManagedServerIdentityChanged?: (change: OpenCodeManagedServerIdentityChange) => void;
-}>): Promise<OpenCodeServerRuntimeClient> {
+}>;
+
+export async function createOpenCodeServerRuntimeClient(params: OpenCodeServerRuntimeClientParams): Promise<OpenCodeServerRuntimeClient> {
   const env = params.env ?? process.env;
+  const explicitBaseUrl = params.baseUrlOverride?.trim() || env.HAPPIER_OPENCODE_SERVER_URL?.trim();
+  return await withSharedManagedOpenCodeServerAccess(async () => {
+    const { client, baseUrl } = await createOpenCodeServerRuntimeClientUnderLock({ ...params, env }, explicitBaseUrl);
+    let release: () => Promise<void>;
+    try {
+      release = await retainSharedManagedOpenCodeServerClient(baseUrl, !explicitBaseUrl, params.managedServerLaunchFingerprint);
+    } catch (error) {
+      await client.dispose();
+      throw error;
+    }
+    const dispose = client.dispose;
+    let disposal: Promise<void> | undefined;
+    return {
+      ...client,
+      dispose: () => disposal ??= (async () => {
+        await dispose();
+        await release().catch(error => logger.warn('[OpenCodeServer] Client release failed; retaining custody', error));
+      })(),
+    };
+  }, explicitBaseUrl, params.managedServerLaunchFingerprint);
+}
+
+async function createOpenCodeServerRuntimeClientUnderLock(
+  params: OpenCodeServerRuntimeClientParams & { env: NodeJS.ProcessEnv },
+  explicitBaseUrl: string | undefined,
+): Promise<{
+  client: OpenCodeServerRuntimeClient; baseUrl: string;
+}> {
+  const env = params.env;
+  let disposed = false;
+  const commandAbort = new AbortController();
+  const pendingRequests = new Set<Promise<unknown>>();
+  const trackRequest = <T>(promise: Promise<T>): Promise<T> => {
+    pendingRequests.add(promise);
+    void promise.then(() => pendingRequests.delete(promise), () => pendingRequests.delete(promise));
+    return promise;
+  };
+  const fetchJson = <T>(request: Parameters<typeof fetchOpenCodeJson>[0]): Promise<T> => {
+    if (disposed) return Promise.reject(new Error('OpenCode client disposed'));
+    return trackRequest(fetchOpenCodeJson<T>({
+      ...request,
+      signal: request.signal ? AbortSignal.any([request.signal, commandAbort.signal]) : commandAbort.signal,
+    }));
+  };
   const httpTimeoutMs = resolveOpenCodeServerHttpTimeoutMs(env);
   const readIdleTimeoutMs = resolveOpenCodeSseReadIdleTimeoutMs(env);
-  const baseUrlOverrideRaw = typeof params.baseUrlOverride === 'string' ? params.baseUrlOverride.trim() : '';
-  const envUrlRaw = typeof env.HAPPIER_OPENCODE_SERVER_URL === 'string' ? env.HAPPIER_OPENCODE_SERVER_URL.trim() : '';
-  const usingManagedServer = baseUrlOverrideRaw.length === 0 && envUrlRaw.length === 0;
+  const usingManagedServer = !explicitBaseUrl;
 
   const headers = resolveOpenCodeServerAuthHeadersFromEnv(env);
 
@@ -603,17 +649,10 @@ export async function createOpenCodeServerRuntimeClient(params: Readonly<{
           ? OPEN_CODE_V2_READINESS_PATHS
           : OPEN_CODE_AUTO_READINESS_PATHS;
       for (const path of paths) {
-        const ctrl = new AbortController();
-        const timer = setTimeout(() => ctrl.abort(), probeTimeoutMs);
-        timer.unref?.();
-        const res = await fetch(buildUrl(candidateBaseUrl, path), { method: 'GET', headers, signal: ctrl.signal }).catch(() => null);
-        clearTimeout(timer);
-        if (res?.ok) {
-          const body = await res.json().catch(() => null) as unknown;
-          if (isOpenCodeServerReadyResponse(path, body)) {
-            return true;
-          }
-        }
+        const body = await fetchJson<unknown>({
+          url: buildUrl(candidateBaseUrl, path), method: 'GET', headers, timeoutMs: probeTimeoutMs,
+        }).catch(() => null);
+        if (isOpenCodeServerReadyResponse(path, body)) return true;
       }
       return false;
     } catch {
@@ -622,8 +661,7 @@ export async function createOpenCodeServerRuntimeClient(params: Readonly<{
   };
 
   let baseUrl = normalizeBaseUrl(
-    baseUrlOverrideRaw
-      || envUrlRaw
+    explicitBaseUrl
       || await ensureSharedManagedOpenCodeServerBaseUrl({
         probeHealth,
         requireBrokerLoadNonce: requiresOpenCodeBrokerLoadNonce(env),
@@ -710,7 +748,7 @@ export async function createOpenCodeServerRuntimeClient(params: Readonly<{
     allowEnsure: boolean;
     reason: OpenCodeManagedServerIdentityChangeReason;
   }>): Promise<void> => {
-    if (!usingManagedServer) return;
+    if (!usingManagedServer || disposed) return;
 
     const state = await readSharedManagedOpenCodeServerStateBestEffort().catch(() => null);
     applyManagedOpenCodeBrokerLoadNonce(env, state);
@@ -749,6 +787,7 @@ export async function createOpenCodeServerRuntimeClient(params: Readonly<{
       }
     }
 
+    if (disposed) return;
     try {
       baseUrl = normalizeBaseUrl(
         await ensureSharedManagedOpenCodeServerBaseUrl({
@@ -769,14 +808,15 @@ export async function createOpenCodeServerRuntimeClient(params: Readonly<{
   };
 
   const waitForManagedServerHealthAfterRefreshBestEffort = async (): Promise<void> => {
-    if (!usingManagedServer) return;
+    if (!usingManagedServer || disposed) return;
     try {
-      await waitForOpenCodeServerHealth({
+      await trackRequest(waitForOpenCodeServerHealth({
         baseUrl,
         timeoutMs: 2_000,
         pollIntervalMs: 100,
         headers,
-      });
+        signal: commandAbort.signal,
+      }));
     } catch {
       // best-effort only; caller will decide whether to propagate the original error
     }
@@ -870,8 +910,6 @@ export async function createOpenCodeServerRuntimeClient(params: Readonly<{
   let subscriptionLoop: Promise<void> | null = null;
   let subscriptionLoopAbort: AbortController | null = null;
   let connectionGeneration = 0;
-  let disposed = false;
-  const commandAbort = new AbortController();
 
   const rememberRequestSessions = (items: unknown[], target: Map<string, string>): void => {
     for (const item of items) {
@@ -1765,8 +1803,9 @@ export async function createOpenCodeServerRuntimeClient(params: Readonly<{
         subscriptionLoop = null;
       }
       subscriptionLoopAbort = null;
+      await Promise.allSettled([...pendingRequests]);
     },
   };
 
-  return client;
+  return { client, baseUrl };
 }

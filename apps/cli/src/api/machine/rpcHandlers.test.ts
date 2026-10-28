@@ -2729,7 +2729,12 @@ describe('registerMachineRpcHandlers', () => {
     expect(String(createdMeta.replaySeedV1?.seedText ?? '')).toContain('ON_DEMAND_SUMMARY');
   });
 
-  it('forks a session by replaying transcript context and storing forkV1/replaySeedV1 in child metadata', async () => {
+  it.each([
+    { path: '/repo', machineId: 'machine-1', directory: '/repo' },
+    { path: '', machineId: 'machine-1', directory: '/repo' },
+    { path: '', machineId: 'replacement-machine', directory: null },
+    { path: '', machineId: undefined, directory: null },
+  ])('forks a session by replaying transcript context with workspace $path on $machineId', async ({ path, machineId, directory }) => {
     const registered = new Map<string, (params: any) => Promise<any>>();
     const rpcHandlerManager = {
       registerHandler: (method: string, handler: (params: any) => Promise<any>) => {
@@ -2741,6 +2746,7 @@ describe('registerMachineRpcHandlers', () => {
     const stopSession = vi.fn(async () => true);
     registerMachineRpcHandlers({
       rpcHandlerManager,
+      machineId,
       handlers: {
         spawnSession,
         stopSession,
@@ -2766,7 +2772,11 @@ describe('registerMachineRpcHandlers', () => {
     });
 
     const parentMetadataCiphertext = encodeBase64(
-      encrypt(sessionEncryptionKey, 'dataKey', { path: '/repo', flavor: 'claude', permissionMode: { v: 1, mode: 'default', updatedAt: 1 } }),
+      encrypt(sessionEncryptionKey, 'dataKey', {
+        path, machineId: 'machine-1', flavor: 'claude',
+        sessionWorkspaceLocationV1: { v: 1, machineId: 'machine-1', agentPath: '/agent/repo', machinePath: '/repo' },
+        permissionMode: { v: 1, mode: 'default', updatedAt: 1 },
+      }),
     );
 
     const encryptedMessages: string[] = [];
@@ -2878,9 +2888,15 @@ describe('registerMachineRpcHandlers', () => {
       forkPoint: { type: 'seq', upToSeqInclusive: 20 },
       strategy: 'replay',
     });
+    if (directory === null) {
+      expect(result).toMatchObject({ ok: false, errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST, errorMessage: 'Session metadata missing path' });
+      expect(spawnSession).not.toHaveBeenCalled();
+      expect(postSpy).not.toHaveBeenCalled();
+      return;
+    }
     expect(result).toMatchObject({ ok: true, childSessionId: 'sess_child' });
     expect(spawnSession).toHaveBeenCalledWith(expect.objectContaining({
-      directory: '/repo',
+      directory,
       backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       existingSessionId: 'sess_child',
     }));

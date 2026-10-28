@@ -1,5 +1,6 @@
 import React from 'react';
 import { act } from 'react-test-renderer';
+import { measureNativeLayout } from '@/dev/testkit/render/measureNativeLayout';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -64,9 +65,10 @@ vi.mock('react-native-safe-area-context', () => ({
     useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
 
-vi.mock('@react-navigation/native', () => ({
-    useNavigation: () => ({ goBack: vi.fn() }),
-}));
+vi.mock('@react-navigation/native', async () => {
+    const { createReactNavigationNativeMock } = await import('@/dev/testkit/mocks/reactNavigation');
+    return createReactNavigationNativeMock();
+});
 
 vi.mock('@/utils/platform/responsive', () => ({
     useHeaderHeight: () => 44,
@@ -80,12 +82,6 @@ vi.mock('@/components/ui/avatar/Avatar', () => ({
 
 vi.mock('@/agents/registry/AgentIcon', () => ({
     AgentIcon: (props: any) => React.createElement('AgentIcon', props),
-}));
-
-vi.mock('@/constants/Typography', () => ({
-    Typography: {
-        default: () => ({}),
-    },
 }));
 
 vi.mock('@/components/ui/layout/layout', () => ({
@@ -105,6 +101,7 @@ function flattenStyle(style: unknown): Record<string, unknown> {
     }
     return style as Record<string, unknown>;
 }
+
 
 describe('ChatHeaderView', () => {
     afterEach(() => {
@@ -187,6 +184,49 @@ describe('ChatHeaderView', () => {
         expect(() => screen.findByProps({ testID: 'session-header-badge:1' })).not.toThrow();
         expect(screen.getTextContent()).toContain('Direct');
         expect(screen.getTextContent()).toContain('Codex · happy-host');
+    });
+
+    it.each([
+        { platform: 'android' as const, width: 320, textScale: 1 },
+        { platform: 'ios' as const, width: 390, textScale: 1.6 },
+        { platform: 'web' as const, width: 768, textScale: 1 },
+    ])('keeps the title above bounded metadata and distinct action targets on $platform', async ({ platform, width, textScale }) => {
+        platformOs = platform;
+        const { ChatHeaderView } = await import('./ChatHeaderView');
+        const { resolveSessionHeaderActionTargetPx } = await import('../actions/sessionHeaderIconMetrics');
+        const target = resolveSessionHeaderActionTargetPx();
+        const title = 'Investigate the session header';
+        const badge = 'Claude · workstation-with-a-very-long-hostname';
+        const screen = await renderScreen(
+            <ChatHeaderView title={title} subtitle="~/projects/happier" avatarId="avatar-1" badges={['Direct', badge]}
+                rightElement={React.createElement('View', { testID: 'actions', style: { width: target * 3, height: target } })} />,
+        );
+        const content = screen.findAllByType('View' as never).find((node) => {
+            const style = flattenStyle(node.props.style);
+            return style.width === '100%' && style.flexDirection === 'row';
+        });
+        if (!content) throw new Error('Missing header content');
+        const text = (value: string) => screen.root.findAll((node) => String(node.type) === 'Text' && node.props.children === value)[0];
+        const layout = measureNativeLayout(content, width, textScale);
+        try {
+            const titleRect = layout.rect(text(title));
+            const badgeRect = layout.rect(text(badge));
+            const actions = layout.rect(screen.root.findByProps({ testID: 'actions' }));
+            const back = layout.rect(screen.root.findAll((node) => String(node.type) === 'Pressable' && node.props.testID === 'session-header-back')[0]);
+            expect(titleRect.width).toBeGreaterThan(0);
+            expect(badgeRect.top).toBeGreaterThanOrEqual(titleRect.top + titleRect.height);
+            for (const label of [title, 'Direct', badge, '~/projects/happier']) {
+                const rect = layout.rect(text(label));
+                expect(rect.left + rect.width).toBeLessThanOrEqual(actions.left + 0.5);
+                expect(rect.top + rect.height, JSON.stringify({ label, rect, content: layout.rect(content) })).toBeLessThanOrEqual(layout.rect(content).height + 0.5);
+            }
+            expect(back.width).toBeGreaterThanOrEqual(target);
+            expect(back.height).toBeGreaterThanOrEqual(target);
+            expect(actions.width).toBe(target * 3);
+            expect(actions.left + actions.width).toBeLessThanOrEqual(width);
+        } finally {
+            layout.free();
+        }
     });
 
     // The header's leading slot is a user preference. `agentLogo` with no resolvable agent renders

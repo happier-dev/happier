@@ -17,7 +17,11 @@ export async function getClaudeDirectSessionWorkingDirectory(params: Readonly<{
   });
   if (!resolved) return null;
 
-  const stream = createReadStream(resolved.filePath, { encoding: 'utf8' });
+  return await readClaudeSessionWorkingDirectory(resolved.filePath);
+}
+
+export async function readClaudeSessionWorkingDirectory(filePath: string): Promise<string | null> {
+  const stream = createReadStream(filePath, { encoding: 'utf8' });
   const lines = createInterface({
     input: stream,
     crlfDelay: Infinity,

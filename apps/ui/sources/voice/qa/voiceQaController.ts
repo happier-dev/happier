@@ -284,12 +284,11 @@ export function createVoiceQaController(
             } catch (error) {
               if (!isVoiceQaTurnAbortedError(error)) throw error;
               const normalizedFollowUpAssistantText = await appendFollowUpAssistantTurn(20_000);
-              if (normalizedFollowUpAssistantText) {
-                providerResult = { assistantText: normalizedFollowUpAssistantText, actions: [] };
-                return;
+              if (!normalizedFollowUpAssistantText) {
+                deps.qaStore.getState().appendSystem('Local voice turn was interrupted by a higher-priority update.');
               }
-              deps.qaStore.getState().appendSystem('Local voice turn was interrupted by a higher-priority update.');
-              providerResult = { assistantText: '', actions: [] };
+              // A later assistant reply does not prove acceptance of this exact input.
+              throw error;
             } finally {
               syncLatestLocalVoiceQaResolvedSessions(deps, sessionId, binding);
             }

@@ -32,6 +32,16 @@ on:
         required: false
         default: ""
         type: string
+      network_transfer:
+        description: "Also run the network transfer workload"
+        required: false
+        default: false
+        type: boolean
+      network_transfer_enforce:
+        description: "Enforce calibrated network ceilings in this run"
+        required: false
+        default: false
+        type: boolean
       installers_channel:
         description: "Installers — Channel for installer smoke tests"
         required: true
@@ -191,6 +201,8 @@ jobs:
       select_jobs_explicitly: true
       runner_pool: ${{ inputs.runner_pool }}
       run_ui_e2e: ${{ needs.resolve.outputs.run_ui_e2e == 'true' }}
+      run_network_transfer: ${{ inputs.network_transfer || inputs.network_transfer_enforce }}
+      network_transfer_enforce: ${{ inputs.network_transfer_enforce }}
       ui_e2e_specs: ${{ needs.resolve.outputs.ui_e2e_specs }}
       run_mobile_e2e_android: ${{ needs.resolve.outputs.run_mobile_e2e_android == 'true' }}
       run_mobile_e2e_ios: ${{ needs.resolve.outputs.run_mobile_e2e_ios == 'true' }}

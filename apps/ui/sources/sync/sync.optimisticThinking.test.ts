@@ -3,7 +3,7 @@ import { act } from 'react-test-renderer';
 import { renderHook, standardCleanup } from '@/dev/testkit';
 import { scopedSessionLocalStateKey } from '@/sync/domains/state/sessionLocalStateKeys';
 import type { ManagedEndpointSupervisor } from '@happier-dev/connection-supervisor';
-import { createSocketIoAckTimeoutError } from '@/sync/runtime/socketIoAckTimeout';
+import { createSocketIoAckTimeoutError } from '@happier-dev/protocol/rpcErrors';
 
 type EndpointSupervisorLookup = typeof import('@/sync/runtime/connectivity/endpointSupervisorPool').getEndpointSupervisorForServer;
 type EndpointSupervisorAcquire = typeof import('@/sync/runtime/connectivity/endpointSupervisorPool').acquireEndpointSupervisor;

@@ -72,7 +72,7 @@ describe('useSessionRowActionMenu', () => {
             isConnected: true,
             isPinned: false,
         });
-        const onSelectLeadingMenuItem = vi.fn(async () => undefined);
+        const onSelectCustomMenuItem = vi.fn(async () => undefined);
 
         const hook = await renderHook(() => useSessionRowActionMenu({
             target,
@@ -85,7 +85,7 @@ describe('useSessionRowActionMenu', () => {
             leadingMenuItems: [
                 { id: 'session.copyDebugInformation', title: 'Copy information' },
             ],
-            onSelectLeadingMenuItem,
+            onSelectCustomMenuItem,
             selectionModeAvailable: false,
             selectionModeActive: false,
             isNativeMobile: false,
@@ -99,7 +99,7 @@ describe('useSessionRowActionMenu', () => {
             await hook.getCurrent().handleMoreMenuSelect('session.copyDebugInformation');
         });
 
-        expect(onSelectLeadingMenuItem).toHaveBeenCalledWith('session.copyDebugInformation');
+        expect(onSelectCustomMenuItem).toHaveBeenCalledWith('session.copyDebugInformation');
     });
 
     it('offers a session colour beside the frequent session actions and writes the chosen colour', async () => {

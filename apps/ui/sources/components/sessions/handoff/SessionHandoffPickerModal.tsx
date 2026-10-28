@@ -35,6 +35,7 @@ import { getRecentMachinesFromSessions } from '@/utils/sessions/recentMachines';
 import { canAttemptMachineSpawn } from '@/sync/domains/machines/identity/resolveMachineSpawnReadiness';
 import { useStableRecentPathsForMachine } from '@/utils/sessions/useStableRecentPathsForMachine';
 import { machineMetadataPlatformToTarget } from '@/utils/path/machinePlatform';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 
 import type { SessionHandoffPickerResult } from './openSessionHandoffPicker';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -185,7 +186,7 @@ export function SessionHandoffPickerModal({ onClose, setChrome, onResolve, sessi
             }
         };
 
-        void run();
+        fireAndForget(run(), { tag: 'SessionHandoffPickerModal.refreshMachines' });
 
         return () => {
             cancelled = true;

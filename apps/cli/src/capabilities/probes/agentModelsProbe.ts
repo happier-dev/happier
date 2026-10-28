@@ -1,7 +1,7 @@
 import { createCatalogAcpBackend } from '@/agent/acp/createCatalogAcpBackend';
 import { resolveCliPathOverride } from '@/agent/acp/resolveCliPathOverride';
 import type { AcpPermissionHandler } from '@/agent/acp/AcpBackend';
-import { isAcpModelConfigOptionLike, normalizeAcpConfigOptionChoices } from '@/agent/acp/configOptionChoiceNormalization';
+import { resolveAcpModelConfigOption, normalizeAcpConfigOptionChoices } from '@/agent/acp/configOptionChoiceNormalization';
 import type { AgentBackend } from '@/agent/core';
 import { AGENTS } from '@/backends/catalog';
 import type { CatalogAgentId } from '@/backends/types';
@@ -352,15 +352,13 @@ function normalizeProbeConfigOptions(configOptionsRaw: unknown[]) {
     .map((parsed) => parsed.data);
 }
 
-function normalizeModelsFromConfigOptions(configOptionsRaw: unknown): ProbedAgentModel[] | null {
+function normalizeModelsFromConfigOptions(configOptionsRaw: unknown, modelConfigOptionId?: string | null): ProbedAgentModel[] | null {
   if (!Array.isArray(configOptionsRaw)) return null;
 
   const configOptions = normalizeProbeConfigOptions(configOptionsRaw);
   if (configOptions.length === 0) return null;
 
-  const candidate =
-    configOptions.find(isAcpModelConfigOptionLike) ??
-    null;
+  const candidate = resolveAcpModelConfigOption(configOptions, modelConfigOptionId);
   if (!candidate) return null;
 
   const optionsRaw = candidate.options ?? null;
@@ -394,14 +392,16 @@ function attachObservedModelOptions(
   models: ProbedAgentModel[],
   configOptionsRaw: unknown,
   currentModelId?: unknown,
+  modelConfigOptionId?: string | null,
 ): ProbedAgentModel[] {
   if (!Array.isArray(configOptionsRaw)) return models;
   const configOptions = normalizeProbeConfigOptions(configOptionsRaw);
+  const selector = resolveAcpModelConfigOption(configOptions, modelConfigOptionId);
   const observedModelId = typeof currentModelId === 'string'
     ? currentModelId
-    : configOptions.find(isAcpModelConfigOptionLike)?.currentValue;
+    : selector?.currentValue;
   const observedOptions = configOptions
-    .filter(isAcpModelScopedConfigOption)
+    .filter((option) => option !== selector && isAcpModelScopedConfigOption(option))
     .map(normalizeProbeModelOption)
     .filter((option): option is ProbedAgentModelOption => option !== null);
   return applyObservedAcpModelOptions(models, observedModelId, observedOptions);
@@ -410,6 +410,7 @@ function attachObservedModelOptions(
 export async function probeModelsFromAcpBackend(params: {
   backend: AgentBackend;
   timeoutMs: number;
+  modelConfigOptionId?: string | null;
 }): Promise<ReadonlyArray<ProbedAgentModel> | null> {
   type ProbeModelsBackend = AgentBackend & Partial<{
     getSessionModelState: () => { currentModelId?: unknown; availableModels?: unknown } | null;
@@ -442,12 +443,12 @@ export async function probeModelsFromAcpBackend(params: {
     const state = backend.getSessionModelState();
     const modelsRaw = state?.availableModels;
     const models = normalizeDynamicModels(modelsRaw);
-    if (models) return attachObservedModelOptions(models, configOptions, state?.currentModelId);
+    if (models) return attachObservedModelOptions(models, configOptions, state?.currentModelId, params.modelConfigOptionId);
   }
 
   if (typeof backend.getSessionConfigOptionsState === 'function') {
-    const models = normalizeModelsFromConfigOptions(configOptions);
-    if (models) return attachObservedModelOptions(models, configOptions);
+    const models = normalizeModelsFromConfigOptions(configOptions, params.modelConfigOptionId);
+    if (models) return attachObservedModelOptions(models, configOptions, undefined, params.modelConfigOptionId);
   }
 
   return null;
@@ -540,7 +541,7 @@ export async function probeAgentModelsBestEffort(params: {
         const ownedBackend = configuredBackend;
         params.onNativeCleanup?.(() => ownedBackend.dispose());
         params.signal?.throwIfAborted();
-        const models = await probeModelsFromAcpBackend({ backend: configuredBackend, timeoutMs }).catch(() => null);
+        const models = await probeModelsFromAcpBackend({ backend: configuredBackend, timeoutMs, modelConfigOptionId: modelConfig.acpModelConfigOptionId }).catch(() => null);
         if (models) {
           const res: ProbedAgentModelsResult = { ...fallback, availableModels: models, source: 'dynamic', observedAt: Date.now() };
           if (!usesProviderOwnedCache) {
@@ -672,7 +673,7 @@ export async function probeAgentModelsBestEffort(params: {
       params.onNativeCleanup?.(() => ownedBackend.dispose());
       params.signal?.throwIfAborted();
 
-      const models = await probeModelsFromAcpBackend({ backend, timeoutMs }).catch(() => null);
+      const models = await probeModelsFromAcpBackend({ backend, timeoutMs, modelConfigOptionId: modelConfig.acpModelConfigOptionId }).catch(() => null);
       if (!models) {
         return failedResult();
       }

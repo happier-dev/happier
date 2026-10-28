@@ -50,7 +50,7 @@ import { RPC_ERROR_CODES, RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/
 import { prepareAccountSettingsForDaemonSpawnIfNeeded } from './accountSettingsDaemonSpawnPreparation';
 import { normalizeSpawnSessionResult } from './_shared';
 import { isAccountSettingsScopeChangedDuringSpawnPreparationError } from '@/sync/engine/settings/accountSettingsSpawnPreparationError';
-import { isSocketIoAckTimeoutError } from '@/sync/runtime/socketIoAckTimeout';
+import { isSocketIoAckTimeoutError } from '@happier-dev/protocol/rpcErrors';
 import { readMachineControlTargetForSession } from './sessionMachineTarget';
 import { stopSessionUsingCanonicalStrategy } from './sessionStopStrategy';
 import type { Metadata } from '../domains/state/storageTypes';

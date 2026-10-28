@@ -1,5 +1,7 @@
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import { createDeferred, renderScreen } from '@/dev/testkit';
+import { createReactNavigationNativeMock } from '@/dev/testkit/mocks/reactNavigation';
+import { measureNativeLayout } from '@/dev/testkit/render/measureNativeLayout';
 import React from 'react';
 import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -65,9 +67,7 @@ vi.mock('@/auth/context/AuthContext', () => ({
     useAuth: () => ({ credentials: { token: 'auth-token' } }),
 }));
 
-vi.mock('@/components/sessions/transcript/ChatHeaderView', () => ({
-    ChatHeaderView: () => null,
-}));
+vi.mock('@react-navigation/native', () => createReactNavigationNativeMock());
 
 vi.mock('@/components/sessions/transcript/TranscriptList', () => ({
     TranscriptList: (props: any) => {
@@ -229,7 +229,7 @@ describe('PublicShareViewerScreen (plaintext)', () => {
         expect(last).not.toHaveProperty('interaction');
     });
 
-    it('offsets transcript content below the absolute share header', async () => {
+    it('keeps the transcript below the real share header at enlarged text sizes', async () => {
         transcriptListSpy.mockClear();
         serverFetchSpy.mockReset();
 
@@ -268,15 +268,20 @@ describe('PublicShareViewerScreen (plaintext)', () => {
         const screen = await renderScreen(<PublicShareViewerScreen />);
         await flushHookEffects({ cycles: 1, turns: 1 });
 
-        const headerOffset = 84;
-        const transcriptContainers = screen.findAll((node) => {
-            const style = node.props?.style;
-            if (Array.isArray(style)) {
-                return style.some((entry) => entry?.paddingTop === headerOffset);
-            }
-            return style?.paddingTop === headerOffset;
-        });
-        expect(transcriptContainers).toHaveLength(1);
+        const root = screen.root.findAll((node) => String(node.type) === 'View')[0];
+        const header = screen.root.findAll((node) => String(node.type) === 'View'
+            && Array.isArray(node.props.style)
+            && node.props.style.some((style: Record<string, unknown> | null) => style?.zIndex === 100))[0];
+        const transcript = screen.root.findByType('TranscriptList' as never);
+        const layout = measureNativeLayout(root, 390, 2.5, 844);
+        try {
+            const headerRect = layout.rect(header);
+            const transcriptRect = layout.rect(transcript);
+            expect(headerRect.height).toBeGreaterThan(84);
+            expect(transcriptRect.top).toBeGreaterThanOrEqual(headerRect.top + headerRect.height);
+        } finally {
+            layout.free();
+        }
     });
 
     it('normalizes and reduces messages in deterministic oldest-first order by seq when available', async () => {

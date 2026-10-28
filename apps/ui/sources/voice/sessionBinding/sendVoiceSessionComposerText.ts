@@ -18,6 +18,10 @@ export type VoiceTextTurnPendingPort = Readonly<{
     localId: string;
     reason: 'provider_unavailable_before_acceptance' | 'delivery_outcome_uncertain';
   }>) => Promise<void>;
+  markPendingDeliveryHandled: (params: Readonly<{
+    conversationSessionId: string;
+    localId: string;
+  }>) => Promise<void>;
 }>;
 
 export type DurableVoiceTextTurnResult =
@@ -43,6 +47,8 @@ export const voiceTextTurnPendingPort: VoiceTextTurnPendingPort = {
     }),
   blockPendingDelivery: async ({ conversationSessionId, localId, reason }) =>
     await sync.blockPendingDelivery(conversationSessionId, localId, reason),
+  markPendingDeliveryHandled: async ({ conversationSessionId, localId }) =>
+    await sync.markPendingDeliveryHandled(conversationSessionId, localId),
 };
 
 export async function submitDurableVoiceTextTurn(params: Readonly<{
@@ -112,10 +118,18 @@ export async function submitDurableVoiceTextTurn(params: Readonly<{
     };
   }
 
+  let handoffAcknowledged = false;
   try {
     await params.dispatch({ localId, handoffMode: 'interrupt_and_send' });
+    handoffAcknowledged = true;
+    // External voice handoffs have no runner claim to settle. Reuse the Pending
+    // owner to commit the user transcript and retire this exact row atomically.
+    await pendingPort.markPendingDeliveryHandled({
+      conversationSessionId: params.conversationSessionId,
+      localId,
+    });
   } catch (error) {
-    const providerEffectIsDefinitelyFalse = isRpcMethodNotAvailableError(error);
+    const providerEffectIsDefinitelyFalse = !handoffAcknowledged && isRpcMethodNotAvailableError(error);
     const message = error instanceof Error && error.message.trim().length > 0
       ? error.message
       : undefined;

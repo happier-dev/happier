@@ -11,6 +11,7 @@ import { useHeaderHeight } from '@/utils/platform/responsive';
 import { useLayoutMaxWidth } from '@/components/ui/layout/layout';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Text } from '@/components/ui/text/Text';
+import { StatusPill } from '@/components/ui/status/StatusPill';
 import { t } from '@/text';
 import { resolveOptionalSessionScreenTestId, useSessionScreenTestIdsEnabled } from '../shell/sessionScreenTestIds';
 import { resolveChatHeaderContentInsets } from './chatHeaderLayout';
@@ -25,7 +26,7 @@ const GUTTER_TAP_TARGET_PX = 44;
 const GUTTER_MIN_WIDTH_PX = 60;
 
 /** The header's own horizontal inset — the margin every other control in it is measured from. */
-const HEADER_HORIZONTAL_PADDING_PX = Platform.OS === 'ios' ? 8 : 16;
+const HEADER_HORIZONTAL_PADDING_PX = 8;
 
 interface ChatHeaderViewProps {
     title: string;
@@ -137,7 +138,7 @@ export const ChatHeaderView = React.memo(function ChatHeaderView({
             >
                 <View style={[
                     styles.content,
-                    { height: headerHeight, maxWidth },
+                    { minHeight: headerHeight, maxWidth },
                     constrainWidth ? null : { maxWidth: '100%' },
                     wrapperWidth > 0 && contentTrailingInsetPx > 0 && constrainWidth ? {
                         alignSelf: 'flex-start',
@@ -152,12 +153,12 @@ export const ChatHeaderView = React.memo(function ChatHeaderView({
                         testID={backButtonTestId}
                         accessibilityRole="button"
                         accessibilityLabel={t('common.back')}
-                        style={[styles.backButton, {
+                        style={{
                             width: resolveSessionHeaderActionTargetPx(),
                             height: resolveSessionHeaderActionTargetPx(),
                             alignItems: 'center',
                             justifyContent: 'center',
-                        }]}
+                        }}
                     >
                         <Icon
                             name={Platform.OS === 'ios' ? 'caret-left' : 'arrow-left'}
@@ -174,67 +175,58 @@ export const ChatHeaderView = React.memo(function ChatHeaderView({
                 ) : null}
 
                 <View style={styles.titleContainer}>
-                    <View style={styles.titleRow}>
-                        <Text
-                            numberOfLines={1}
-                            ellipsizeMode="tail"
-                            style={[
-                                styles.title,
-                                {
-                                    color: theme.colors.chrome.header.foreground,
-                                    ...Typography.default('semiBold')
-                                }
-                            ]}
-                        >
-                            {title}
-                        </Text>
-                        {badges && badges.length > 0 ? (
-                            badges.map((badge, index) => (
-                                <View
+                    <Text
+                        numberOfLines={1}
+                        ellipsizeMode="tail"
+                        accessibilityRole="header"
+                        style={[
+                            styles.title,
+                            {
+                                color: theme.colors.chrome.header.foreground,
+                                ...Typography.default('semiBold'),
+                            },
+                        ]}
+                    >
+                        {title}
+                    </Text>
+                    {badges?.length || subtitle ? (
+                        <View style={styles.metadataRow}>
+                            {badges?.map((badge, index) => (
+                                <StatusPill
                                     key={`${badge}:${index}`}
-                                    style={[
-                                        styles.badge,
-                                        { backgroundColor: theme.colors.state.neutral.background },
-                                    ]}
+                                    variant="neutral"
+                                    chrome="plain"
+                                    hideDot
+                                    label={badge}
+                                    labelVariant="phrase"
+                                    labelNumberOfLines={1}
+                                    style={styles.badge}
                                     testID={resolveOptionalSessionScreenTestId(sessionScreenTestIdsEnabled, `session-header-badge:${index}`)}
+                                />
+                            ))}
+                            {subtitle ? (
+                                <Text
+                                    numberOfLines={1}
+                                    ellipsizeMode={shouldUseWebSubtitleStartEllipsis ? undefined : subtitleEllipsizeMode}
+                                    style={[
+                                        styles.subtitle,
+                                        shouldUseWebSubtitleStartEllipsis ? styles.subtitleHeadWeb : null,
+                                        {
+                                            color: theme.colors.chrome.header.foreground,
+                                            opacity: 0.7,
+                                            ...Typography.default(),
+                                        },
+                                    ]}
                                 >
-                                    <Text
-                                        numberOfLines={1}
-                                        style={[
-                                            styles.badgeText,
-                                            {
-                                                color: theme.colors.state.neutral.foreground,
-                                                ...Typography.default('semiBold'),
-                                            },
-                                        ]}
-                                    >
-                                        {badge}
-                                    </Text>
-                                </View>
-                            ))
-                        ) : null}
-                    </View>
-                    {subtitle && (
-                        <Text
-                            numberOfLines={1}
-                            ellipsizeMode={shouldUseWebSubtitleStartEllipsis ? undefined : subtitleEllipsizeMode}
-                            style={[
-                                styles.subtitle,
-                                shouldUseWebSubtitleStartEllipsis ? styles.subtitleHeadWeb : null,
-                                {
-                                    color: theme.colors.chrome.header.foreground,
-                                    opacity: 0.7,
-                                    ...Typography.default()
-                                }
-                            ]}
-                        >
-                            {shouldUseWebSubtitleStartEllipsis ? (
-                                <Text style={styles.subtitleHeadTextWeb}>
-                                    {subtitle}
+                                    {shouldUseWebSubtitleStartEllipsis ? (
+                                        <Text style={styles.subtitleHeadTextWeb}>
+                                            {subtitle}
+                                        </Text>
+                                    ) : subtitle}
                                 </Text>
-                            ) : subtitle}
-                        </Text>
-                    )}
+                            ) : null}
+                        </View>
+                    ) : null}
                 </View>
 
                 {rightElement ? (
@@ -286,11 +278,9 @@ const styles = StyleSheet.create(() => ({
         paddingHorizontal: HEADER_HORIZONTAL_PADDING_PX,
         width: '100%',
     },
-    backButton: {
-        marginRight: 8,
-    },
     avatarLeading: {
-        marginRight: 10,
+        marginRight: 8,
+        flexShrink: 0,
     },
     trailingGutter: {
         position: 'absolute',
@@ -307,11 +297,14 @@ const styles = StyleSheet.create(() => ({
         alignItems: 'flex-start',
         minWidth: 0,
     },
-    titleRow: {
+    metadataRow: {
         flexDirection: 'row',
         alignItems: 'center',
         gap: 6,
         width: '100%',
+        minWidth: 0,
+        marginTop: 1,
+        flexShrink: 0,
     },
     title: {
         fontSize: Platform.select({
@@ -320,13 +313,15 @@ const styles = StyleSheet.create(() => ({
             default: 16
         }),
         fontWeight: '600',
-        flexShrink: 1,
+        flexShrink: 0,
+        width: '100%',
     },
     subtitle: {
         fontSize: 12,
         fontWeight: '400',
         lineHeight: 14,
-        marginTop: 1,
+        flexShrink: 1,
+        minWidth: 0,
     },
     subtitleHeadWeb: {
         writingDirection: 'rtl' as const,
@@ -336,21 +331,16 @@ const styles = StyleSheet.create(() => ({
         writingDirection: 'ltr' as const,
         unicodeBidi: 'isolate' as const,
     },
-    // Matches the canonical badge (components/ui/status/StatusPill): background-only, no border
-    // chrome, 8px radius. A bordered capsule in the header read as a different species from every
-    // other badge in the product.
+    // Metadata yields to the session name and stays inside its column, beside the actions.
     badge: {
-        borderWidth: 0,
-        borderRadius: 8,
-        paddingHorizontal: 8,
-        paddingVertical: 2,
-    },
-    badgeText: {
-        fontSize: 10,
-        lineHeight: 14,
+        flexShrink: 1,
+        minWidth: 0,
+        maxWidth: '100%',
+        overflow: 'hidden',
     },
     rightElementContainer: {
         flexDirection: 'row',
         alignItems: 'center',
+        flexShrink: 0,
     },
 }));

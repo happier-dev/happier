@@ -63,6 +63,28 @@ export const BugReportComposerView = React.memo(function BugReportComposerView()
             keyboardShouldPersistTaps="handled"
             contentInsetAdjustmentBehavior={Platform.OS === 'ios' ? 'automatic' : undefined}
           >
+            {model.crashReportStatus === 'saved' && (
+              <View style={styles.section}>
+                <Text style={styles.helperText}>{t('appCrash.savedReportNotice')}</Text>
+                <Pressable
+                  testID="bug-report-copy-saved-crash"
+                  style={styles.previewButton}
+                  accessibilityRole="button"
+                  onPress={() => { void model.copySavedCrash(); }}
+                >
+                  <Text style={styles.previewButtonText}>{t('appCrash.copyDetails')}</Text>
+                </Pressable>
+                <Pressable
+                  testID="bug-report-discard-saved-crash"
+                  style={styles.previewButton}
+                  accessibilityRole="button"
+                  disabled={model.submitting}
+                  onPress={() => { void model.discardSavedCrash(); }}
+                >
+                  <Text style={styles.previewButtonText}>{t('appCrash.discardSavedReport')}</Text>
+                </Pressable>
+              </View>
+            )}
                 <BugReportIssueDetailsSection
                   title={model.title}
                   onTitleChange={model.setTitle}

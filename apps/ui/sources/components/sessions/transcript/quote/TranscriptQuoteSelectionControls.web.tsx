@@ -81,11 +81,13 @@ export function TranscriptQuoteSelectionControls(props: TranscriptQuoteSelection
             backdrop={false}
             placement="auto-vertical"
             gap={6}
+            // Popover gives its box a fixed width (the cap); the surface below centers itself in it at its own size.
+            maxWidthCap={QUOTE_ACTION_MAX_WIDTH}
             followScrollRef={null}
             portal={{ web: { target: 'body' }, matchAnchorWidth: false, anchorAlign: 'center' }}
         >
             {() => (
-                <FloatingOverlay surfaceChrome="theme" scrollEnabled={false}>
+                <FloatingOverlay surfaceChrome="theme" scrollEnabled={false} containerStyle={styles.surface}>
                     <View style={styles.inset}>
                         <Pressable
                             testID="transcript-quote-selection-action"
@@ -107,8 +109,15 @@ export function TranscriptQuoteSelectionControls(props: TranscriptQuoteSelection
     );
 }
 
+// Room for the longest localized label ("Цитировать") at larger text sizes; longer labels truncate.
+const QUOTE_ACTION_MAX_WIDTH = 200;
+
 // The floating overlay is rounded at 12: an action inset by 4 is rounded at 8, so the two stay concentric.
 const styles = StyleSheet.create((theme) => ({
+    surface: {
+        alignSelf: 'center',
+        maxWidth: '100%',
+    },
     inset: {
         padding: 4,
     },

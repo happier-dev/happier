@@ -86,7 +86,8 @@ function hasCopyDebugInformationMenuItem(items: unknown): boolean {
     if (!Array.isArray(items)) return false;
     return items.some((item: unknown) => {
         if (!item || typeof item !== 'object') return false;
-        return (item as { id?: unknown }).id === 'session.copyDebugInformation';
+        const entry = item as { id?: unknown; submenu?: { items?: unknown } };
+        return entry.id === 'session.copyDebugInformation' || hasCopyDebugInformationMenuItem(entry.submenu?.items);
     });
 }
 
@@ -368,6 +369,19 @@ describe('SessionItem context menu press suppression', () => {
             await menus[0].props.onSelect('session.copyDebugInformation');
         });
         expect(Clipboard.setStringAsync).toHaveBeenCalledWith(expect.stringContaining('Happier session ID: sess_debug_menu'));
+        const copyMenu = menus[0].props.items.find((item: { id: string }) => item.id === 'session.copy');
+        expect(menus[0].props.items.at(-1)?.id).toBe('session.copy');
+        expect(copyMenu?.submenu?.items.map((item: { id: string }) => item.id)).toEqual([
+            'session.copyDebugInformation', 'session.copySessionId', 'session.copyProviderSessionId',
+        ]);
+        for (const [itemId, expected] of [
+            ['session.copySessionId', session.id],
+            ['session.copyProviderSessionId', 'claude-session-1'],
+        ]) {
+            await act(async () => { await menus[0].props.onSelect(itemId); });
+            expect(Clipboard.setStringAsync).toHaveBeenLastCalledWith(expected);
+        }
+
     });
 
     it('copies debug information from the full cached session when row metadata is list-projected', async () => {
@@ -416,6 +430,9 @@ describe('SessionItem context menu press suppression', () => {
         await act(async () => {
             await contextMenu.props.onSelect('session.copyDebugInformation');
         });
+
+        await act(async () => { await contextMenu.props.onSelect('session.copyProviderSessionId'); });
+        expect(Clipboard.setStringAsync).toHaveBeenLastCalledWith('claude-session-1');
 
         expect(Clipboard.setStringAsync).toHaveBeenCalledWith([
             'Happier session ID: sess_debug_full',

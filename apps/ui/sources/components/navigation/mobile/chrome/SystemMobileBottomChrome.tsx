@@ -13,14 +13,24 @@ import { SystemTabBar, type SystemTabItem } from './SystemTabBar';
 type Props = Readonly<{
     model: Exclude<MobileBottomChromeModel, { kind: 'hidden' }>;
     openDetailsTabCount: number;
+    hidden: boolean;
     onMainTabPress: (tab: TabType) => void;
     onSurfacePress: (surface: SessionMobileSurface) => void;
 }>;
 
+type TabPresentation = Pick<React.ComponentProps<typeof SystemTabBar>, 'items' | 'selectedId' | 'onPress'>;
+
 export function SystemMobileBottomChrome(props: Props) {
-    return props.model.kind === 'mainAppTabs'
-        ? <MainSystemTabs activeTab={props.model.activeTab} onPress={props.onMainTabPress} />
-        : <CockpitSystemTabs model={props.model} openDetailsTabCount={props.openDetailsTabCount} onPress={props.onSurfacePress} />;
+    const [presentation, setPresentation] = React.useState<TabPresentation | null>(null);
+    const { theme } = useUnistyles();
+    // Only the active family subscribes to its definitions. It publishes before paint;
+    // the sibling native anchor stays mounted even when that family changes.
+    return <>
+        {props.model.kind === 'mainAppTabs'
+            ? <MainTabPresentation activeTab={props.model.activeTab} onPress={props.onMainTabPress} onPresentation={setPresentation} />
+            : <CockpitTabPresentation model={props.model} openDetailsTabCount={props.openDetailsTabCount} onPress={props.onSurfacePress} onPresentation={setPresentation} />}
+        {presentation ? <SystemTabBar {...presentation} hidden={props.hidden} tintColor={theme.colors.accent.blue} /> : null}
+    </>;
 }
 
 function nativeBadge(badge: GitTabBadge | Readonly<{ kind: 'dot' }> | undefined): string | undefined {
@@ -31,10 +41,14 @@ function nativeBadge(badge: GitTabBadge | Readonly<{ kind: 'dot' }> | undefined)
     return [badge.added > 0 ? `+${formatBadgeCount(badge.added, 999)}` : '', badge.removed > 0 ? `−${formatBadgeCount(badge.removed, 999)}` : ''].filter(Boolean).join(' ');
 }
 
-function MainSystemTabs(props: Readonly<{ activeTab: TabType; onPress: (tab: TabType) => void }>) {
+// Memoization prevents the presentation publication from re-running its producer.
+const MainTabPresentation = React.memo(function MainTabPresentation(props: Readonly<{
+    activeTab: TabType;
+    onPress: (tab: TabType) => void;
+    onPresentation: (presentation: TabPresentation) => void;
+}>) {
     const tabs = useMainTabDefinitions();
     const newSessionPress = useTabBarNewSessionPress();
-    const { theme } = useUnistyles();
     const items: SystemTabItem[] = tabs.map(tab => ({ id: tab.key, title: tab.label, sfSymbol: tab.sfSymbol, badge: nativeBadge(tab.badge) }));
     if (props.activeTab === 'sessions') {
         items.push({ id: 'newSession', title: t('newSession.title'), sfSymbol: 'square.and.pencil', action: true });
@@ -44,29 +58,33 @@ function MainSystemTabs(props: Readonly<{ activeTab: TabType; onPress: (tab: Tab
         const tab = tabs.find(tab => tab.key === id);
         if (tab) props.onPress(tab.key);
     }, [newSessionPress, props.activeTab, props.onPress, tabs]);
-    return <SystemTabBar items={items} selectedId={props.activeTab} hidden={false} tintColor={theme.colors.accent.blue} onPress={onPress} />;
-}
+    React.useLayoutEffect(() => {
+        props.onPresentation({ items, selectedId: props.activeTab, onPress });
+    }, [items, onPress, props.activeTab, props.onPresentation]);
+    return null;
+});
 
-function CockpitSystemTabs(props: Readonly<{
+const CockpitTabPresentation = React.memo(function CockpitTabPresentation(props: Readonly<{
     model: Extract<MobileBottomChromeModel, { kind: 'sessionCockpit' }>;
     openDetailsTabCount: number;
     onPress: (surface: SessionMobileSurface) => void;
+    onPresentation: (presentation: TabPresentation) => void;
 }>) {
     const tabs = useSessionCockpitTabDefinitions({
         sessionId: props.model.sessionId,
         terminalTabAvailable: props.model.terminalTabAvailable,
         openDetailsTabCount: props.openDetailsTabCount,
     });
-    const { theme } = useUnistyles();
     const onPress = React.useCallback((id: string) => {
         const tab = tabs.find(tab => tab.id === id);
         if (tab) props.onPress(tab.id);
     }, [props.onPress, tabs]);
-    return <SystemTabBar
-        items={tabs.map(tab => ({ id: tab.id, title: tab.label, sfSymbol: tab.sfSymbol, badge: nativeBadge(tab.badge) }))}
-        selectedId={props.model.surface}
-        hidden={false}
-        tintColor={theme.colors.accent.blue}
-        onPress={onPress}
-    />;
-}
+    React.useLayoutEffect(() => {
+        props.onPresentation({
+            items: tabs.map(tab => ({ id: tab.id, title: tab.label, sfSymbol: tab.sfSymbol, badge: nativeBadge(tab.badge) })),
+            selectedId: props.model.surface,
+            onPress,
+        });
+    }, [tabs, onPress, props.model.surface, props.onPresentation]);
+    return null;
+});

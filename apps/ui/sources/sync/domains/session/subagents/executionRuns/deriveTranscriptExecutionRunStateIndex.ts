@@ -1,7 +1,7 @@
 import { ExecutionRunLaunchOriginSchema, type BackendTargetRefV1, type ExecutionRunLaunchOrigin } from '@happier-dev/protocol';
 
 import type { Message, ToolCallMessage } from '@/sync/domains/messages/messageTypes';
-import { compareTranscriptMessagesOldestFirst } from '@/sync/domains/messages/transcriptOrdering';
+import { sortTranscriptMessagesOldestFirst } from '@/sync/domains/messages/transcriptOrdering';
 import { resolveToolTranscriptSidechainId } from '@/components/tools/shell/views/resolveToolTranscriptSidechainId';
 import { readExecutionRunIdFromToolPayload } from '@/sync/domains/session/participants/deriveExecutionRunPollingRefreshKey';
 
@@ -100,7 +100,7 @@ export function resolveTranscriptBackendLabel(state: TranscriptExecutionRunState
 
 export function deriveTranscriptExecutionRunStateIndex(messages: readonly Message[]): TranscriptExecutionRunStateIndex {
     const byRunId = new Map<string, TranscriptExecutionRunState>();
-    const orderedMessages = [...messages].sort(compareTranscriptMessagesOldestFirst);
+    const orderedMessages = sortTranscriptMessagesOldestFirst(messages);
     const explicitlyStoppedRunIds = deriveExplicitlyStoppedExecutionRuns(messages);
 
     for (const message of orderedMessages) {

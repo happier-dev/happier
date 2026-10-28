@@ -13,6 +13,10 @@ const refreshFromActiveServerSpy = vi.fn(async () => {});
 const resolveServerIdForSessionIdFromLocalCacheSpy = vi.fn();
 
 installSessionHooksCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeNativeMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeNativeMock({ platformOS: 'ios' });
+    },
     router: async () => {
         const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
         const expoRouterMock = createExpoRouterMock({
@@ -37,7 +41,7 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolveServerIdForSessionI
     resolveServerIdForSessionIdFromLocalCache: (sessionId: string) => resolveServerIdForSessionIdFromLocalCacheSpy(sessionId),
 }));
 
-describe('useNavigateToSession (multi-server)', () => {
+describe('useNavigateToSession (multi-server native)', () => {
     it('switches active server when passed a different serverId', async () => {
         routerNavigateSpy.mockClear();
         setActiveServerAndSwitchSpy.mockClear();

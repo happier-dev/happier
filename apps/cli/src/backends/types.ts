@@ -305,6 +305,8 @@ export type AgentCatalogEntry = Readonly<{
    * These are evaluated by the daemon before spawning a child process.
    */
   getDaemonSpawnHooks?: () => Promise<DaemonSpawnHooks>;
+  /** Reconcile provider-owned resources during the daemon's serialized heartbeat. */
+  reconcileDaemonResources?: () => Promise<void>;
   /**
    * Optional direct-session provider operations for browse/tail/takeover flows.
    *

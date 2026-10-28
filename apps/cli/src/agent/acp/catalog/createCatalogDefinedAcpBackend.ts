@@ -1,4 +1,4 @@
-import { type AgentId, getBuiltInAcpConfig } from '@happier-dev/agents';
+import { type AgentId, getBuiltInAcpConfig, resolveAcpPermissionModeId } from '@happier-dev/agents';
 
 import type { AcpBackendOptions, AcpPermissionHandler } from '@/agent/acp/AcpBackend';
 import { HAPPIER_SESSION_ID_ENV_KEY, withCurrentHappierSessionId } from '@/agent/runtime/session/currentSessionIdEnv';
@@ -59,14 +59,21 @@ export function createCatalogDefinedAcpBackend(
   const configurable = backend as AgentBackend & {
     setSessionMode?: (sessionId: SessionId, modeId: string) => Promise<void>;
     clearSessionModeOverride?: (sessionId: SessionId) => Promise<void>;
+    getSessionModeState?: () => { availableModes: ReadonlyArray<{ id: string }> } | null;
   };
   if (typeof configurable.setSessionMode !== 'function') return backend;
 
   const applyPermissionMode = async (sessionId: SessionId): Promise<void> => {
     const permissionMode = options.getPermissionMode?.() ?? options.permissionMode ?? 'default';
-    const sessionModeId = config.permissionModeMapping?.[permissionMode] ?? null;
+    const mapping = config.permissionModeMapping?.[permissionMode] ?? null;
     // A null mapping delegates to provider policy; it does not imply a native reset token.
-    if (sessionModeId) await configurable.setSessionMode?.(sessionId, sessionModeId);
+    if (mapping === null) return;
+    const availableModes = configurable.getSessionModeState?.()?.availableModes ?? [];
+    const sessionModeId = resolveAcpPermissionModeId(mapping, availableModes);
+    if (!sessionModeId) {
+      throw new Error(`Agent '${agentId}' has no advertised permission mode for '${permissionMode}'`);
+    }
+    await configurable.setSessionMode?.(sessionId, sessionModeId);
   };
   configurable.clearSessionModeOverride = applyPermissionMode;
 

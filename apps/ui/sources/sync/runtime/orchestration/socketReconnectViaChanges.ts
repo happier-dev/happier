@@ -45,7 +45,7 @@ export type ChangesCursorBlockedContext = Readonly<{
 }>;
 
 export type SnapshotBaseCursorFetchFailedContext = Readonly<{
-    trigger: 'cursor-gone' | 'forced-snapshot' | 'page-budget';
+    trigger: 'missing-cursor' | 'cursor-gone' | 'forced-snapshot' | 'page-budget';
     fallbackCursor: string;
     error: string;
 }>;
@@ -236,6 +236,17 @@ export async function runSocketReconnectCatchUpViaChanges(params: {
     const maxPages = Math.max(1, Math.trunc(params.maxChangesPagesPerResume ?? 5));
     let forceSnapshotRefresh = params.forceSnapshotRefresh;
     let snapshotCursorAwaitingFinalPersist: string | null = null;
+
+    if (params.afterCursor === null) {
+        // No checkpoint means there is no incremental basis. Reuse the snapshot repair's
+        // pre-read cursor rather than materializing the account's entire history from zero.
+        if (!params.fetchCurrentCursor) return { status: 'fallback' };
+        const snapshot = await runSnapshotRepair(afterCursor, 'missing-cursor');
+        if (snapshot.status === 'fallback') return snapshot;
+        afterCursor = snapshot.cursor;
+        forceSnapshotRefresh = false;
+        snapshotCursorAwaitingFinalPersist = snapshot.checkpointPersisted ? null : snapshot.cursor;
+    }
 
     for (let pageIndex = 0; pageIndex < maxPages; pageIndex += 1) {
         const result = await params.fetchChanges({

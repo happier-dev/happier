@@ -1900,6 +1900,13 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
     },
 
     appCrash: {
+        copyFailed: "無法複製當機詳細資料。請重試。",
+        discardFailed: "無法捨棄已儲存的當機。請重試。",
+        restartWithoutReport: "不儲存並重新啟動",
+        reportSaveFailed: "無法儲存當機詳細資料。請在重新啟動前複製錯誤詳細資料，或重試回報。",
+        savedReportNotice: "已儲存的當機顯示於下方。請在提交前檢查並編輯。提交或捨棄前，資訊會保留在此裝置上。",
+        discardSavedReport: "捨棄已儲存的當機",
+        stackTruncated: "此欄位中的堆疊已縮短。完整當機資訊仍儲存在此裝置上。",
         title: '發生錯誤',
         subtitle: 'Happier 發生了非預期的錯誤。你可以重新啟動應用程式介面，或複製詳細資訊以便支援排查。',
         detailsTitle: '錯誤詳細資訊',
@@ -5747,6 +5754,9 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         happyHome: 'Happier 主目錄',
         copyMetadata: '複製中繼資料',
         copyDebugInformation: '複製資訊',
+        sessionInformation: "工作階段資訊",
+        happierSessionId: "Happier 工作階段 ID",
+        providerSessionId: ({ provider }: { provider: string }) => `${provider} 工作階段 ID`,
         debugInformationCopyLabel: '資訊',
         providerSessionLogs: ({ provider }: { provider: string }) => `${provider} 工作階段日誌`,
         agentState: 'Agent 狀態',
@@ -8347,6 +8357,7 @@ settingsSession: {
         failedToConnectTerminal: '連線終端失敗',
         cameraPermissionsRequiredToConnectTerminal: '連線終端需要相機權限',
         failedToLinkDevice: '連結裝置失敗',
+        deviceLinkRequestNotFound: "此中繼上沒有待處理的裝置連結請求。請確認兩台裝置使用相同的中繼，然後產生新的 QR 碼。",
         cameraPermissionsRequiredToScanQr: '掃描 QR Code 需要相機權限',
         qrScannerUnavailable: '無法開啟 QR 掃描器。請再試一次或手動輸入 URL。'
     },

@@ -1,3 +1,5 @@
+import { isSocketIoAckTimeoutError } from '@happier-dev/protocol/rpcErrors';
+
 import { resolveSessionControlSocketAckTimeoutMs } from './sessionTimeouts';
 
 export type SocketAckError = Error & Readonly<{
@@ -90,7 +92,25 @@ export async function emitSocketWithAck<T = unknown>(params: Readonly<{
     return await withLocalAckDeadline({
         event: params.event,
         timeoutMs,
-        operation: async () => await socketWithTimeout.emitWithAck(params.event, params.payload) as T,
+        operation: async () => {
+            try {
+                return await socketWithTimeout.emitWithAck(params.event, params.payload) as T;
+            } catch (error) {
+                // Socket.IO registers its timer during emit, before our local deadline.
+                // Normalize response loss so settlement retries its exact accepted identity.
+                if (isSocketIoAckTimeoutError(error)) {
+                    const timeout = createSocketAckError({
+                        code: 'socket_ack_timeout',
+                        event: params.event,
+                        message: `${params.event} ack timed out after ${timeoutMs}ms`,
+                        timeoutMs,
+                    });
+                    timeout.cause = error;
+                    throw timeout;
+                }
+                throw error;
+            }
+        },
     });
 }
 

@@ -25,6 +25,15 @@ on:
         required: false
         default: false
         type: boolean
+      run_network_transfer:
+        required: false
+        default: false
+        type: boolean
+      network_transfer_enforce:
+        description: "Opt in to network ceilings outside dev pushes"
+        required: false
+        default: false
+        type: boolean
       ui_e2e_specs:
         description: "Optional comma-separated repo-relative UI E2E spec paths; blank runs all shards"
         required: false
@@ -227,6 +236,7 @@ jobs:
       run_shared_packages: ${{ steps.notes.outputs.notes_only != 'true' && (github.event_name == 'push' || steps.unmatched.outputs.all == 'true' || steps.changes.outputs.all == 'true' || steps.unmatched.outputs.shared_packages == 'true' ) }}
       run_build_smoke: ${{ steps.notes.outputs.notes_only != 'true' && (github.event_name == 'push' || steps.unmatched.outputs.all == 'true' || steps.changes.outputs.changed == 'true' ) }}
       run_ui_e2e: ${{ steps.notes.outputs.notes_only != 'true' && (steps.unmatched.outputs.all == 'true' || steps.changes.outputs.all == 'true' || steps.changes.outputs.ui_e2e == 'true' ) }}
+      run_network_transfer: ${{ steps.notes.outputs.notes_only != 'true' && ((github.event_name == 'push' && github.ref == 'refs/heads/dev') || (github.event_name == 'pull_request' && (steps.unmatched.outputs.all == 'true' || steps.changes.outputs.all == 'true' || steps.changes.outputs.network_transfer == 'true'))) }}
       run_server_db_contract: ${{ steps.notes.outputs.notes_only != 'true' && (steps.unmatched.outputs.all == 'true' || steps.changes.outputs.all == 'true' || steps.changes.outputs.server_db_contract == 'true' ) }}
       run_release_contracts: ${{ steps.notes.outputs.notes_only != 'true' && (steps.unmatched.outputs.all == 'true' || steps.changes.outputs.all == 'true' || steps.changes.outputs.release_contracts == 'true' ) }}
       run_installers_smoke: ${{ steps.notes.outputs.notes_only != 'true' && (steps.unmatched.outputs.all == 'true' || steps.changes.outputs.all == 'true' || steps.changes.outputs.installers_smoke == 'true' ) }}
@@ -308,6 +318,16 @@ jobs:
               - 'packages/protocol/**'
               - 'package.json'
               - 'yarn.lock'
+            network_transfer:
+              - 'apps/ui/sources/sync/**'
+              - 'apps/ui/sources/agents/**'
+              - 'apps/server/**'
+              - 'apps/cli/src/api/**'
+              - 'apps/cli/src/session/transport/**'
+              - 'apps/cli/src/utils/proxy/socketIoProxy.ts'
+              - 'packages/protocol/**'
+              - 'packages/tests/**'
+              - '.github/workflows/tests.yml'
             server_db_contract:
               - 'apps/server/prisma/**'
               - 'apps/server/sources/migrations/**'
@@ -370,6 +390,7 @@ jobs:
           CLASSIFIED_PATHS_CLI: ${{ steps.changes.outputs.cli_files }}
           CLASSIFIED_PATHS_STACK: ${{ steps.changes.outputs.stack_files }}
           CLASSIFIED_PATHS_UI_E2E: ${{ steps.changes.outputs.ui_e2e_files }}
+          CLASSIFIED_PATHS_NETWORK_TRANSFER: ${{ steps.changes.outputs.network_transfer_files }}
           CLASSIFIED_PATHS_SERVER_DB_CONTRACT: ${{ steps.changes.outputs.server_db_contract_files }}
           CLASSIFIED_PATHS_RELEASE_CONTRACTS: ${{ steps.changes.outputs.release_contracts_files }}
           CLASSIFIED_PATHS_INSTALLERS_SMOKE: ${{ steps.changes.outputs.installers_smoke_files }}
@@ -514,6 +535,65 @@ jobs:
           compression-level: 0
           if-no-files-found: error
 
+  network-transfer:
+    if: ${{ (inputs.select_jobs_explicitly && inputs.run_network_transfer) || (!inputs.select_jobs_explicitly && needs.ci_plan.outputs.run_network_transfer == 'true') }}
+    needs: [ci_plan, trusted_ref_guard]
+    name: Network transfer (Home, session, reconnect)
+    permissions:
+      contents: read
+      actions: read
+    continue-on-error: ${{ github.event_name == 'pull_request' && !inputs.network_transfer_enforce }}
+    runs-on: ${{ needs.trusted_ref_guard.outputs.ubuntu_2204 }}
+    timeout-minutes: 120
+    env:
+      HAPPIER_UI_VENDOR_WEB_ASSETS: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version-file: .node-version
+          cache: yarn
+          cache-dependency-path: yarn.lock
+      - name: Enable Corepack
+        uses: ./.github/actions/enable-corepack-yarn
+      - name: Install dependencies
+        env:
+          YARN_PRODUCTION: "false"
+          npm_config_production: "false"
+        uses: ./.github/actions/install-yarn-dependencies
+        with:
+          args: --frozen-lockfile
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+      - name: Install sqlite3 (if missing)
+        run: |
+          if ! command -v sqlite3 >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y sqlite3
+          fi
+      - name: Measure network transfer
+        run: yarn -s test:e2e:ui -- suites/ui-e2e/session.networkTransfer.spec.ts
+      - name: Compare network transfer
+        if: ${{ !cancelled() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NETWORK_TRANSFER_BASE_BRANCH: ${{ github.base_ref || 'dev' }}
+          NETWORK_TRANSFER_ENFORCE: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/dev') || inputs.network_transfer_enforce }}
+        run: yarn --cwd packages/tests -s tsx scripts/network-transfer-report.ts
+      - name: Upload network transfer measurements
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ui-e2e-network-transfer
+          path: packages/tests/.project/logs/e2e/ui-playwright/**/network-transfer.retry-*.json
+          if-no-files-found: error
+
   ui-e2e:
     if: ${{ (inputs.select_jobs_explicitly && inputs.run_ui_e2e) || (!inputs.select_jobs_explicitly && needs.ci_plan.outputs.run_ui_e2e == 'true') }}
     needs: [ci_plan, trusted_ref_guard]
@@ -607,6 +687,16 @@ jobs:
             exit 1
           fi
           yarn -s test:e2e:ui -- "${specs[@]}"
+
+      # Select with ui_e2e_specs=packages/tests/suites/ui-e2e/session.networkTransfer.spec.ts.
+      # Keep every retry's sanitized report on successful and failed calibration runs.
+      - name: Upload Home network transfer measurements
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ui-e2e-network-transfer-shard-${{ matrix.shard }}
+          path: packages/tests/.project/logs/e2e/ui-playwright/**/network-transfer.retry-*.json
+          if-no-files-found: ignore
 
       - name: Upload UI E2E artifacts (Playwright)
         if: failure()
@@ -2931,7 +3021,7 @@ jobs:
   ci_summary:
     name: CI result summary (all lanes)
     if: always()
-    needs: [ci_plan, ui-e2e, mobile-e2e-android, mobile-e2e-ios, ui-unit, ui-integration, ui, shared-packages-unit, server, server-db-contract, cli, stack, release-contracts, installers-smoke-linux, installers-smoke-macos, installers-smoke-windows, binary-smoke, build-smoke, cli-update-continuity, daemon-continuity, session-continuity, release-assets-docker, self-host-systemd-e2e, self-host-launchd-e2e, self-host-schtasks-e2e, self-host-daemon-e2e, typecheck, cli-daemon-e2e, e2e-core, e2e-core-slow, trusted_ref_guard, release_actor_guard, providers, stress, build-windows-service-launcher, build-cli, unit-summary]
+    needs: [ci_plan, network-transfer, ui-e2e, mobile-e2e-android, mobile-e2e-ios, ui-unit, ui-integration, ui, shared-packages-unit, server, server-db-contract, cli, stack, release-contracts, installers-smoke-linux, installers-smoke-macos, installers-smoke-windows, binary-smoke, build-smoke, cli-update-continuity, daemon-continuity, session-continuity, release-assets-docker, self-host-systemd-e2e, self-host-launchd-e2e, self-host-schtasks-e2e, self-host-daemon-e2e, typecheck, cli-daemon-e2e, e2e-core, e2e-core-slow, trusted_ref_guard, release_actor_guard, providers, stress, build-windows-service-launcher, build-cli, unit-summary]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -2942,6 +3032,8 @@ jobs:
           NEEDS_JSON: ${{ toJSON(needs) }}
           SELECT_JOBS_EXPLICITLY: ${{ inputs.select_jobs_explicitly }}
           REQUEST_RUN_UI_E2E: ${{ inputs.run_ui_e2e }}
+          REQUEST_RUN_NETWORK_TRANSFER: ${{ inputs.run_network_transfer }}
+          NETWORK_TRANSFER_REPORT_ONLY: ${{ github.event_name == 'pull_request' && !inputs.network_transfer_enforce }}
           REQUEST_RUN_MOBILE_E2E_ANDROID: ${{ inputs.run_mobile_e2e_android }}
           REQUEST_RUN_MOBILE_E2E_IOS: ${{ inputs.run_mobile_e2e_ios }}
           REQUEST_RUN_UI: ${{ inputs.run_ui }}
@@ -2984,6 +3076,7 @@ jobs:
           }));
           const requestedLaneGroups = {
             REQUEST_RUN_UI_E2E: ['ui-e2e'],
+            REQUEST_RUN_NETWORK_TRANSFER: ['network-transfer'],
             REQUEST_RUN_MOBILE_E2E_ANDROID: ['mobile-e2e-android'],
             REQUEST_RUN_MOBILE_E2E_IOS: ['mobile-e2e-ios'],
             REQUEST_RUN_UI: ['ui-unit', 'ui-integration', 'ui'],
@@ -3018,6 +3111,7 @@ jobs:
             run_cli: ['cli'],
             run_stack: ['stack'],
             run_ui_e2e: ['ui-e2e'],
+            run_network_transfer: ['network-transfer'],
             run_server_db_contract: ['server-db-contract'],
             run_release_contracts: ['release-contracts'],
             run_installers_smoke: ['installers-smoke-linux', 'installers-smoke-macos', 'installers-smoke-windows'],
@@ -3054,13 +3148,17 @@ jobs:
                 ? `blocked by build-cli (${cliBuildResult})`
                 : 'requested lane was skipped',
             }));
-          // Only success and intentionally skipped lanes are acceptable. Treat every other or
+          // Except initial report-only PR network tracking, only success and intentionally
+          // skipped lanes are acceptable. Treat every other or
           // unknown result (timed_out, startup_failure, stale, action_required, null, ...) as a
           // failure so the collector can never report a false-green release attestation.
-          const failures = [
+          const reportOnlyNetwork = ({ id }) => id === 'network-transfer' && process.env.NETWORK_TRANSFER_REPORT_ONLY === 'true';
+          const candidates = [
             ...lanes.filter(({ result }) => result !== 'success' && result !== 'skipped'),
             ...requestedSkips,
           ];
+          const failures = candidates.filter((lane) => !reportOnlyNetwork(lane));
+          for (const lane of candidates.filter(reportOnlyNetwork)) console.log(`Report-only network tracking: ${lane.result ?? 'unknown'}`);
           for (const lane of lanes) console.log(`${lane.id} => ${lane.result ?? 'unknown'}`);
           const summary = {
             schemaVersion: 1,

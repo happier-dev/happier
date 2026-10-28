@@ -8,6 +8,7 @@ import {
     SESSION_ACTION_PIN_ID,
     SESSION_ACTION_RENAME_ID,
     SESSION_ACTION_RESUME_ID,
+    SESSION_ACTION_SET_APPEARANCE_COLOR_ID,
     SESSION_ACTION_SET_ATTENTION_STANDING_ID,
     SESSION_ACTION_STOP_ID,
     SESSION_ACTION_UNARCHIVE_ID,
@@ -32,6 +33,11 @@ export function resolveSessionAttentionStandingActionId(target: SessionActionTar
 export function listVisibleSessionActionIds(params: Readonly<{
     target: SessionActionTarget;
     surface: SessionActionSurface;
+    /**
+     * Whether the session's server stores per-session colours (`useSessionAppearancesSupported`).
+     * Read by menus only while open; the colour action's whole gate is decided here.
+     */
+    sessionAppearancesSupported?: boolean;
 }>): SessionActionId[] {
     const { target, surface } = params;
     const ids: SessionActionId[] = [];
@@ -48,6 +54,15 @@ export function listVisibleSessionActionIds(params: Readonly<{
 
     if (target.canRename) {
         ids.push(SESSION_ACTION_RENAME_ID);
+    }
+
+    // A colour is the person's own organization (like a pin), so access level does not gate it; the
+    // session needs a server, and that server must store session colours. The info screen lists
+    // lifecycle and details, not organization, so it does not offer it.
+    if ((surface === 'rowMenu' || surface === 'nativeContextMenu' || surface === 'sessionHeader')
+        && target.serverId
+        && params.sessionAppearancesSupported === true) {
+        ids.push(SESSION_ACTION_SET_APPEARANCE_COLOR_ID);
     }
 
     if (surface === 'sessionHeader' && target.serverId && !target.isArchived) {

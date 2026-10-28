@@ -30,6 +30,16 @@ Happier supports fresh and resumed FX sessions, cancellation, execution runs,
 and FX's advertised model and mode controls. Happier does not maintain a
 separate static FX model list; the choices shown in the app come from ACP.
 
+In the 0.2 development build, FX's provider selector remains a separate
+configuration control. The model picker shows actual models, with reasoning
+effort and fast controls for the selected model. Changing models refreshes the
+available control values; a rejected provider change keeps the last applied
+configuration and reports the error.
+
+The automatic permission preset in that development build selects an automatic
+review mode advertised by FX, including the renamed mode in FX 0.0.14. It fails
+closed when no matching mode is advertised and never substitutes full access.
+
 When creating a new session, the **Resume** field can browse session IDs that
 `fx acp` reports through ACP `session/list` for the selected directory and pick
 one to resume. These entries are resume-only. Listing them does not establish

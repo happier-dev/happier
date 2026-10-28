@@ -1,7 +1,6 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PersistedSyncReliabilityEvent } from '@/sync/domains/state/persistence';
 import type { SyncPerformanceTelemetrySummary } from '@/sync/runtime/syncPerformanceTelemetry';
-import type { PreRestartBugReportSnapshotV1 } from '@/utils/system/preRestartBugReportSnapshot';
 import { installBugReportComponentCommonModuleMocks } from './bugReportComponentTestHelpers';
 
 vi.mock('expo-constants', () => ({
@@ -16,7 +15,7 @@ installBugReportComponentCommonModuleMocks({
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock({
       Platform: {
-        OS: 'ios',
+        OS: 'web',
         Version: '17.0',
       },
     });
@@ -205,14 +204,11 @@ vi.mock('@/utils/system/bugReportLogBuffer', () => ({
   getBugReportLogText: () => '',
 }));
 
-const { peekPreRestartBugReportSnapshotMock } = vi.hoisted(() => ({
-  peekPreRestartBugReportSnapshotMock: vi.fn(
-    async (..._args: unknown[]): Promise<PreRestartBugReportSnapshotV1 | null> => null,
-  ),
-}));
-vi.mock('@/utils/system/preRestartBugReportSnapshot', () => ({
-  peekPreRestartBugReportSnapshot: peekPreRestartBugReportSnapshotMock,
-}));
+vi.mock('expo-file-system', async () => {
+  const { createExpoFileSystemMock } = await import('@/dev/testkit/mocks/expoFileSystem');
+  return createExpoFileSystemMock().module;
+});
+afterEach(() => vi.unstubAllGlobals());
 
 describe('collectBugReportDiagnosticsArtifacts', () => {
   beforeEach(() => {
@@ -447,17 +443,20 @@ describe('collectBugReportDiagnosticsArtifacts', () => {
     expect(appContextJson.diagnosticsCollection?.machineDiagnostics?.status).toBe('skipped');
   });
 
-  it('includes pre-restart crash artifacts when a persisted snapshot is available', async () => {
-    peekPreRestartBugReportSnapshotMock.mockResolvedValueOnce({
+  it('keeps optional crash context without reattaching an unedited copy of the stack', async () => {
+    const snapshot = {
       v: 1,
       createdAtMs: Date.now(),
       reason: 'crash',
       platform: 'ios',
       origin: 'http://localhost',
       isSecureContext: true,
-      errorDetails: 'boom\nstack: ...',
+      errorDetails: 'private original stack',
       appLogs: '[log] before restart',
       userActions: [{ timestamp: new Date().toISOString(), action: 'tap', route: '/foo' }],
+    };
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => key === 'happier_pre_restart_bug_report_snapshot_v1' ? JSON.stringify(snapshot) : null,
     });
 
     const result = await collectBugReportDiagnosticsArtifacts({
@@ -468,12 +467,11 @@ describe('collectBugReportDiagnosticsArtifacts', () => {
     });
 
     const filenames = result.artifacts.map((artifact) => artifact.filename);
-    expect(filenames).toContain('pre-restart-crash.txt');
+    expect(filenames).not.toContain('pre-restart-crash.txt');
     expect(filenames).toContain('pre-restart-app-console.log');
     expect(filenames).toContain('pre-restart-user-action-trail.json');
 
-    const crashArtifact = result.artifacts.find((artifact) => artifact.filename === 'pre-restart-crash.txt');
-    expect(String(crashArtifact?.content ?? '')).toContain('boom');
+    expect(JSON.stringify(result.artifacts)).not.toContain('private original stack');
   });
 
   it('does not block forever when a machine diagnostics RPC hangs', async () => {

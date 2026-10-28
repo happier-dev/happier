@@ -1,6 +1,6 @@
 import React from 'react';
 import { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 import { installRouteRootCommonModuleMocks } from './routeRootTestHelpers';
 
@@ -8,6 +8,11 @@ import { installRouteRootCommonModuleMocks } from './routeRootTestHelpers';
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 installRouteRootCommonModuleMocks();
+
+vi.mock('expo-file-system', async () => {
+  const { createExpoFileSystemMock } = await import('@/dev/testkit/mocks/expoFileSystem');
+  return createExpoFileSystemMock().module;
+});
 
 vi.mock('@/utils/web/reactNativeScreensCjs', () => ({
   requireReactNativeScreens: () => ({
@@ -20,16 +25,16 @@ vi.mock('expo-clipboard', () => ({
   setStringAsync: vi.fn(async () => true),
 }));
 
-const persistSnapshotMock = vi.fn(async (..._args: unknown[]) => {});
-const persistIntentMock = vi.fn(async (..._args: unknown[]) => {});
-
-vi.mock('@/utils/system/preRestartBugReportSnapshot', () => ({
-  persistPreRestartBugReportSnapshot: persistSnapshotMock,
-}));
-
-vi.mock('@/utils/system/restartBugReportIntent', () => ({
-  persistRestartBugReportIntent: persistIntentMock,
-}));
+const saved = new Map<string, string>();
+beforeEach(() => {
+  saved.clear();
+  vi.stubGlobal('localStorage', {
+    getItem: (key: string) => saved.get(key) ?? null,
+    setItem: (key: string, value: string) => saved.set(key, value),
+    removeItem: (key: string) => saved.delete(key),
+  });
+});
+afterEach(() => vi.unstubAllGlobals());
 
 async function flushPromises(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 0));
@@ -180,6 +185,7 @@ describe('AppCrashRecoveryBoundary', () => {
       restartButton.props.onPress?.();
     });
     expect(onRestart).toHaveBeenCalledTimes(1);
+    expect(saved.has('happier_pre_restart_bug_report_snapshot_v1')).toBe(true);
   });
 
   it('persists a pre-restart snapshot and restarts when the report bug button is pressed', async () => {
@@ -206,8 +212,56 @@ describe('AppCrashRecoveryBoundary', () => {
       await flushPromises();
     });
 
-    expect(persistSnapshotMock).toHaveBeenCalledTimes(1);
-    expect(persistIntentMock).toHaveBeenCalledTimes(1);
+    const snapshot = JSON.parse(saved.get('happier_pre_restart_bug_report_snapshot_v1') ?? '{}');
+    expect(snapshot.errorDetails).toContain('boom');
+    expect(snapshot.errorDetails).toContain('Thrower');
+    expect(snapshot.errorDetails).toContain('AppCrashRecoveryBoundary');
+    expect(saved.has('happier_restart_bug_report_intent_v1')).toBe(true);
     expect(onRestart).toHaveBeenCalledTimes(1);
+  });
+
+  it('opens a fresh report intent even when the crash screen has been left open for over 30 minutes', async () => {
+    const { AppCrashRecoveryBoundary } = await import('@/components/appShell/AppCrashRecoveryBoundary');
+    const { consumeRestartBugReportIntent } = await import('@/utils/system/restartBugReportIntent');
+    const { peekPreRestartBugReportSnapshot } = await import('@/utils/system/preRestartBugReportSnapshot');
+    const crashTime = Date.now();
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(crashTime);
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const Thrower = () => { throw new Error('delayed report'); };
+    try {
+      const screen = await renderScreen(<AppCrashRecoveryBoundary onRestart={() => {}}><Thrower /></AppCrashRecoveryBoundary>);
+      clock.mockReturnValue(crashTime + 31 * 60 * 1000);
+      await act(async () => {
+        const button = screen.findByTestId('app-crash-report-bug');
+        if (!button) throw new Error('missing report action');
+        button.props.onPress();
+        await flushPromises();
+      });
+      expect(await consumeRestartBugReportIntent()).toBe(true);
+      expect((await peekPreRestartBugReportSnapshot())?.createdAtMs).toBe(crashTime);
+    } finally { clock.mockRestore(); consoleError.mockRestore(); }
+  });
+
+  it.each(['snapshot', 'intent'])('keeps the error and copy action available when %s storage fails', async (failedPart) => {
+    const { AppCrashRecoveryBoundary } = await import('@/components/appShell/AppCrashRecoveryBoundary');
+    const Thrower = () => { throw new Error('unsaved original crash'); };
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const onRestart = vi.fn();
+    try {
+      const screen = await renderScreen(<AppCrashRecoveryBoundary onRestart={onRestart}><Thrower /></AppCrashRecoveryBoundary>);
+      vi.stubGlobal('localStorage', { setItem: (key: string, value: string) => {
+        if (key.includes(failedPart)) throw new Error('quota exceeded');
+        saved.set(key, value);
+      } });
+      await act(async () => {
+        const button = screen.findByTestId('app-crash-report-bug');
+        if (!button) throw new Error('missing report action');
+        button.props.onPress();
+        await flushPromises();
+      });
+      expect(onRestart).not.toHaveBeenCalled();
+      expect(screen.findByTestId('app-crash-report-save-failed')).toBeTruthy();
+      expect(screen.findByTestId('app-crash-copy-details')).toBeTruthy();
+    } finally { consoleError.mockRestore(); }
   });
 });

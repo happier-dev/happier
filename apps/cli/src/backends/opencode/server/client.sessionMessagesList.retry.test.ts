@@ -1,15 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('./sharedManagedServer', async (importOriginal) => ({
-    ...await importOriginal<typeof import('./sharedManagedServer')>(),
-    ensureSharedManagedOpenCodeServerBaseUrl: vi.fn(),
-    readSharedManagedOpenCodeServerStateBestEffort: vi.fn(async () => null),
-    readSharedManagedOpenCodeServerStateByBaseUrlBestEffort: vi.fn(async () => null),
-}));
-
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
 
-import { createOpenCodeServerRuntimeClient } from './client';
+import { createManagedOpenCodeClientFixture } from './managedOpenCodeClient.testkit';
 
 function jsonResponse(payload: unknown): Response {
     return new Response(JSON.stringify(payload), {
@@ -23,15 +16,19 @@ describe('createOpenCodeServerRuntimeClient sessionMessagesList managed retry', 
     const originalServerUrl = process.env.HAPPIER_OPENCODE_SERVER_URL;
     const originalHttpTimeoutMs = process.env.HAPPIER_OPENCODE_SERVER_HTTP_TIMEOUT_MS;
 
-    beforeEach(() => {
+    let fixture: Awaited<ReturnType<typeof createManagedOpenCodeClientFixture>>;
+    beforeEach(async () => {
         vi.restoreAllMocks();
         vi.unstubAllGlobals();
         vi.useRealTimers();
         delete process.env.HAPPIER_OPENCODE_SERVER_URL;
         delete process.env.HAPPIER_OPENCODE_SERVER_HTTP_TIMEOUT_MS;
+        fixture = await createManagedOpenCodeClientFixture();
     });
 
-    afterEach(() => {
+    afterEach(async () => {
+        vi.useRealTimers();
+        await fixture.close();
         globalThis.fetch = originalFetch;
         if (typeof originalServerUrl === 'string') {
             process.env.HAPPIER_OPENCODE_SERVER_URL = originalServerUrl;
@@ -80,7 +77,7 @@ describe('createOpenCodeServerRuntimeClient sessionMessagesList managed retry', 
             return jsonResponse({});
         }) as typeof fetch;
 
-        const client = await createOpenCodeServerRuntimeClient({
+        const client = await fixture.createClient({
             directory: '/tmp',
             messageBuffer: new MessageBuffer(),
         });
@@ -131,7 +128,7 @@ describe('createOpenCodeServerRuntimeClient sessionMessagesList managed retry', 
             return jsonResponse({});
         }) as typeof fetch;
 
-        const client = await createOpenCodeServerRuntimeClient({
+        const client = await fixture.createClient({
             directory: '/tmp',
             messageBuffer: new MessageBuffer(),
         });
@@ -143,18 +140,6 @@ describe('createOpenCodeServerRuntimeClient sessionMessagesList managed retry', 
     });
 
     it('retries session messages after a transient managed-server fetch failure', async () => {
-        const { ensureSharedManagedOpenCodeServerBaseUrl, readSharedManagedOpenCodeServerStateBestEffort } = await import('./sharedManagedServer');
-        const ensureMock = ensureSharedManagedOpenCodeServerBaseUrl as unknown as ReturnType<typeof vi.fn>;
-        const readMock = readSharedManagedOpenCodeServerStateBestEffort as unknown as ReturnType<typeof vi.fn>;
-
-        ensureMock.mockResolvedValueOnce('http://127.0.0.1:9999');
-        // Persistent mock: the client reads managed-server state at construction (identity baseline)
-        // and again on the transport-failure retry path; a single once-mock leaves the retry undefined.
-        readMock.mockResolvedValue({
-            baseUrl: 'http://127.0.0.1:10000',
-            pid: process.pid,
-            startedAtMs: Date.now(),
-        });
 
         const fetchUrls: string[] = [];
         let messageAttempts = 0;
@@ -173,6 +158,7 @@ describe('createOpenCodeServerRuntimeClient sessionMessagesList managed retry', 
             if (url.includes('/session/ses_1/message')) {
                 messageAttempts += 1;
                 if (messageAttempts === 1) {
+                    await fixture.publish({ baseUrl: 'http://127.0.0.1:10000', ownerToken: 'gen-B', startedAtMs: 2 });
                     throw new TypeError('fetch failed');
                 }
                 return jsonResponse([{ id: 'msg_1', role: 'assistant', parts: [] }]);
@@ -181,7 +167,7 @@ describe('createOpenCodeServerRuntimeClient sessionMessagesList managed retry', 
             return jsonResponse({});
         }) as typeof fetch;
 
-        const client = await createOpenCodeServerRuntimeClient({
+        const client = await fixture.createClient({
             directory: '/tmp',
             messageBuffer: new MessageBuffer(),
         });
@@ -210,7 +196,7 @@ describe('createOpenCodeServerRuntimeClient sessionMessagesList managed retry', 
             return jsonResponse({});
         }) as typeof fetch;
 
-        const client = await createOpenCodeServerRuntimeClient({
+        const client = await fixture.createClient({
             directory: '/tmp',
             messageBuffer: new MessageBuffer(),
         });
@@ -221,18 +207,6 @@ describe('createOpenCodeServerRuntimeClient sessionMessagesList managed retry', 
     });
 
     it('retries permission list after a transient managed-server fetch failure', async () => {
-        const { ensureSharedManagedOpenCodeServerBaseUrl, readSharedManagedOpenCodeServerStateBestEffort } = await import('./sharedManagedServer');
-        const ensureMock = ensureSharedManagedOpenCodeServerBaseUrl as unknown as ReturnType<typeof vi.fn>;
-        const readMock = readSharedManagedOpenCodeServerStateBestEffort as unknown as ReturnType<typeof vi.fn>;
-
-        ensureMock.mockResolvedValueOnce('http://127.0.0.1:9999');
-        // Persistent mock: the client reads managed-server state at construction (identity baseline)
-        // and again on the transport-failure retry path; a single once-mock leaves the retry undefined.
-        readMock.mockResolvedValue({
-            baseUrl: 'http://127.0.0.1:10000',
-            pid: process.pid,
-            startedAtMs: Date.now(),
-        });
 
         const fetchUrls: string[] = [];
         let attempts = 0;
@@ -250,6 +224,7 @@ describe('createOpenCodeServerRuntimeClient sessionMessagesList managed retry', 
             if (url.includes('/permission')) {
                 attempts += 1;
                 if (attempts === 1) {
+                    await fixture.publish({ baseUrl: 'http://127.0.0.1:10000', ownerToken: 'gen-B', startedAtMs: 2 });
                     throw new TypeError('fetch failed');
                 }
                 return jsonResponse([{ id: 'perm_1', sessionID: 'ses_1' }]);
@@ -258,7 +233,7 @@ describe('createOpenCodeServerRuntimeClient sessionMessagesList managed retry', 
             return jsonResponse({});
         }) as typeof fetch;
 
-        const client = await createOpenCodeServerRuntimeClient({
+        const client = await fixture.createClient({
             directory: '/tmp',
             messageBuffer: new MessageBuffer(),
         });
@@ -275,18 +250,6 @@ describe('createOpenCodeServerRuntimeClient sessionMessagesList managed retry', 
     });
 
     it('retries question list after a transient managed-server fetch failure', async () => {
-        const { ensureSharedManagedOpenCodeServerBaseUrl, readSharedManagedOpenCodeServerStateBestEffort } = await import('./sharedManagedServer');
-        const ensureMock = ensureSharedManagedOpenCodeServerBaseUrl as unknown as ReturnType<typeof vi.fn>;
-        const readMock = readSharedManagedOpenCodeServerStateBestEffort as unknown as ReturnType<typeof vi.fn>;
-
-        ensureMock.mockResolvedValueOnce('http://127.0.0.1:9999');
-        // Persistent mock: the client reads managed-server state at construction (identity baseline)
-        // and again on the transport-failure retry path; a single once-mock leaves the retry undefined.
-        readMock.mockResolvedValue({
-            baseUrl: 'http://127.0.0.1:10000',
-            pid: process.pid,
-            startedAtMs: Date.now(),
-        });
 
         const fetchUrls: string[] = [];
         let attempts = 0;
@@ -304,6 +267,7 @@ describe('createOpenCodeServerRuntimeClient sessionMessagesList managed retry', 
             if (url.includes('/question')) {
                 attempts += 1;
                 if (attempts === 1) {
+                    await fixture.publish({ baseUrl: 'http://127.0.0.1:10000', ownerToken: 'gen-B', startedAtMs: 2 });
                     throw new TypeError('fetch failed');
                 }
                 return jsonResponse([{ id: 'q_1', sessionID: 'ses_1' }]);
@@ -312,7 +276,7 @@ describe('createOpenCodeServerRuntimeClient sessionMessagesList managed retry', 
             return jsonResponse({});
         }) as typeof fetch;
 
-        const client = await createOpenCodeServerRuntimeClient({
+        const client = await fixture.createClient({
             directory: '/tmp',
             messageBuffer: new MessageBuffer(),
         });

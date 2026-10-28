@@ -160,6 +160,13 @@ export const MobileBottomChromeHost = React.memo(function MobileBottomChromeHost
     const deviceType = useDeviceType();
     const foldMetrics = useWindowFoldMetrics();
     const systemTabBarEnabled = useLocalSetting('systemTabBarEnabled');
+    const presenter = resolveMobileBottomChromePresenter({
+        platform: Platform.OS,
+        bridgeAvailable: systemTabBarAvailable,
+        verticalBarEdge: foldMetrics?.verticalBarEdge ?? null,
+        enabled: systemTabBarEnabled,
+        deviceType,
+    });
     // Passive settled keyboard height, for chrome suppression and for keeping the lateral
     // swipe out of the rows the keyboard occupies. Composer positioning must use the
     // keyboard scaffold instead of this React-state path.
@@ -285,7 +292,7 @@ export const MobileBottomChromeHost = React.memo(function MobileBottomChromeHost
         }
 
         if (activeTab) {
-            if (softwareKeyboardVisible) {
+            if (softwareKeyboardVisible && presenter === 'happier') {
                 return null;
             }
 
@@ -350,6 +357,7 @@ export const MobileBottomChromeHost = React.memo(function MobileBottomChromeHost
         dismissingSessionId,
         handleCockpitSurfacePress,
         mobileWorkspaceExperience,
+        presenter,
         softwareKeyboardVisible,
         terminalAvailability.sidebarTabAvailable,
     ]);
@@ -357,13 +365,15 @@ export const MobileBottomChromeHost = React.memo(function MobileBottomChromeHost
     if (!overlayRouteActive) {
         frozenChromeRef.current = resolvedChrome;
     }
-    const presenter = resolveMobileBottomChromePresenter({
-        platform: Platform.OS,
-        bridgeAvailable: systemTabBarAvailable,
-        verticalBarEdge: foldMetrics?.verticalBarEdge ?? null,
-        enabled: systemTabBarEnabled,
-        model: resolvedChrome?.model ?? { kind: 'hidden' },
-    });
+    // Visibility must not own the native container's lifetime: root swaps during keyboard
+    // and route transitions can drop focus. Retain the last display model while hidden.
+    const lastSystemChromeRef = React.useRef<BottomChromeItem | null>(null);
+    if (presenter !== 'system') {
+        lastSystemChromeRef.current = null;
+    } else if (resolvedChrome) {
+        lastSystemChromeRef.current = resolvedChrome;
+    }
+    const systemChrome = lastSystemChromeRef.current;
 
     // ---------------------------------------------------------------------------
     // Lateral session swipe.
@@ -789,13 +799,14 @@ export const MobileBottomChromeHost = React.memo(function MobileBottomChromeHost
         }
     }, [presenter, renderedChrome.current, setBottomChromeHeight]);
 
-    if (presenter === 'system' && resolvedChrome) {
-        return <SystemMobileBottomChrome
-            model={resolvedChrome.model}
-            openDetailsTabCount={resolvedChrome.openDetailsTabCount ?? 0}
+    if (presenter === 'system') {
+        return systemChrome ? <SystemMobileBottomChrome
+            model={systemChrome.model}
+            openDetailsTabCount={systemChrome.openDetailsTabCount ?? 0}
+            hidden={resolvedChrome === null}
             onMainTabPress={handleTabPress}
             onSurfacePress={handleCockpitSurfacePress}
-        />;
+        /> : null;
     }
 
     // `previous` outlives `current` while the bar dissolves on its way out, so the host keeps

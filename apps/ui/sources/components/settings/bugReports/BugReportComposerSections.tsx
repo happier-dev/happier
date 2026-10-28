@@ -9,6 +9,7 @@ import { t, type TranslationKey } from '@/text';
 import { type BugReportDeploymentType, type BugReportFrequency, type BugReportSeverity } from './bugReportFallback';
 import { BugReportChoiceRow } from './BugReportChoiceRow';
 import { bugReportComposerStyles } from './bugReportComposerStyles';
+import { BUG_REPORT_CURRENT_BEHAVIOR_MAX_LENGTH } from './bugReportComposerDraft';
 
 type BugReportDiagnosticsKind = 'ui-mobile' | 'daemon' | 'server' | 'stack-service';
 
@@ -237,7 +238,7 @@ export function BugReportIssueDetailsSection(props: Readonly<{
                         editable={!props.disabled}
                         multiline
                         numberOfLines={4}
-                        maxLength={5000}
+                        maxLength={BUG_REPORT_CURRENT_BEHAVIOR_MAX_LENGTH}
                     />
                 </View>
 

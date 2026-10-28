@@ -1219,6 +1219,13 @@ export const pt: TranslationStructure = {
   },
 
   appCrash: {
+      copyFailed: "Não foi possível copiar os detalhes da falha. Tente novamente.",
+      discardFailed: "Não foi possível descartar a falha guardada. Tente novamente.",
+      restartWithoutReport: "Reiniciar sem guardar",
+      reportSaveFailed: "Não foi possível guardar os detalhes da falha. Copie-os antes de reiniciar ou tente reportar novamente.",
+      savedReportNotice: "A falha guardada aparece abaixo. Reveja e edite antes de enviar. Permanece neste dispositivo até ser enviada ou descartada.",
+      discardSavedReport: "Descartar falha guardada",
+      stackTruncated: "Pilha abreviada para este campo. A falha completa continua guardada neste dispositivo.",
     title: "Algo correu mal",
     subtitle:
       "O Happier encontrou um erro inesperado. Pode reiniciar a interface da app ou copiar os detalhes para suporte.",
@@ -6898,6 +6905,9 @@ export const pt: TranslationStructure = {
     tmuxFallback: "Fallback do tmux",
     copyMetadata: "Copiar metadados",
     copyDebugInformation: "Copiar informações",
+    sessionInformation: "Informações da sessão",
+    happierSessionId: "ID da sessão Happier",
+    providerSessionId: ({ provider }: { provider: string }) => `ID da sessão ${provider}`,
     debugInformationCopyLabel: "Informações",
     providerSessionLogs: ({ provider }: { provider: string }) => `Logs da sessão ${provider}`,
     agentState: "Estado do agente",
@@ -10414,6 +10424,7 @@ settingsSession: {
     cameraPermissionsRequiredToConnectTerminal:
       "Permissões de câmera são necessárias para conectar terminal",
     failedToLinkDevice: "Falha ao vincular dispositivo",
+    deviceLinkRequestNotFound: "Não foi encontrado nenhum pedido de vinculação pendente neste relay. Verifique se ambos os dispositivos usam o mesmo relay e gere um novo código QR.",
     cameraPermissionsRequiredToScanQr:
       "Permissões de câmera são necessárias para escanear códigos QR",
     qrScannerUnavailable:

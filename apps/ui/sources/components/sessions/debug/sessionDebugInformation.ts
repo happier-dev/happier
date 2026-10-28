@@ -11,6 +11,9 @@ export type SessionDebugInformationSession = Readonly<{
 
 export type SessionDebugInformation = Readonly<{
     text: string;
+    happierSessionId: string;
+    providerDisplayName: string | null;
+    providerSessionId: string | null;
     happierSessionLogPath: string | null;
     providerSessionArtifactPath: string | null;
 }>;
@@ -89,6 +92,9 @@ export function buildSessionDebugInformation(params: Readonly<{
 
     return {
         text: lines.join('\n'),
+        happierSessionId: params.session.id,
+        providerDisplayName,
+        providerSessionId,
         happierSessionLogPath,
         providerSessionArtifactPath: providerSessionArtifactPath ?? null,
     };

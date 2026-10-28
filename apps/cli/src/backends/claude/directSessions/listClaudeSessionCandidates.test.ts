@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, writeFile, utimes } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile, utimes } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -22,6 +22,25 @@ describe('listClaudeSessionCandidates', () => {
     const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
     readdirMock.mockReset();
     readdirMock.mockImplementation(actual.readdir);
+  });
+
+  it('publishes the native working directory for linking and browse presentation', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-claude-direct-cwd-'));
+    try {
+      const project = join(root, 'projects', '-srv-project-with-dashes');
+      await mkdir(project, { recursive: true });
+      await writeFile(join(project, 'session-1.jsonl'),
+        jsonlLine({ type: 'queue-operation', operation: 'remove' })
+        + jsonlLine({ type: 'user', cwd: '/srv/project-with-dashes', message: { content: 'hello' } }));
+      const result = await listClaudeSessionCandidates({
+        source: { kind: 'claudeConfig', configDir: root }, limit: 10, env: {},
+      });
+      expect(result.candidates[0]?.details).toMatchObject({
+        projectId: '-srv-project-with-dashes', cwd: '/srv/project-with-dashes',
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it('shares one in-flight listing for identical concurrent calls', async () => {

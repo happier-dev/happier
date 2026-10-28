@@ -85,7 +85,7 @@ import {
 } from '../domains/session/subagents/subagentSourceMessageDetection';
 import { readExecutionRunResultStatus } from '../domains/session/subagents/executionRuns/executionRunSubagentStatus';
 import {
-  compareTranscriptMessagesOldestFirst,
+  sortTranscriptMessagesOldestFirst,
   normalizeTranscriptSeq,
 } from '../domains/messages/transcriptOrdering';
 import { readStoredSessionMessagesReadProjectionFromStateLike } from '../domains/messages/readStoredSessionMessages';
@@ -511,7 +511,7 @@ export function useSessionSubagentSourceMessages(sessionId: string): readonly Me
     const ids = session.messageIdsOldestFirst;
     const orderedMessages = Array.isArray(ids) && ids.length > 0
       ? ids.map((id) => session.messagesById[id]).filter((message): message is Message => message != null)
-      : Object.values(session.messagesById ?? {}).sort(compareTranscriptMessagesOldestFirst);
+      : sortTranscriptMessagesOldestFirst(Object.values(session.messagesById ?? {}));
 
     for (const message of orderedMessages) {
       if (!shouldIncludeSubagentSourceMessage(message)) continue;
@@ -575,7 +575,7 @@ export function useSessionMessages(
           return cached.messages as Message[];
         }
 
-        const out = Object.values(messagesById).slice().sort(compareTranscriptMessagesOldestFirst);
+        const out = sortTranscriptMessagesOldestFirst(Object.values(messagesById));
         sessionMessagesArrayCache.delete(sessionId);
         sessionMessagesArrayCache.set(sessionId, {
           idsRef: ids,

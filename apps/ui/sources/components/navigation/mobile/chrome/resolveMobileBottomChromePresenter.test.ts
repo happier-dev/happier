@@ -3,23 +3,21 @@ import { resolveMobileBottomChromePresenter } from './resolveMobileBottomChromeP
 
 describe('resolveMobileBottomChromePresenter', () => {
     const supported = {
-        platform: 'ios', bridgeAvailable: true, verticalBarEdge: 'trailing', enabled: true,
-        model: { kind: 'mainAppTabs', activeTab: 'sessions' },
+        platform: 'ios', bridgeAvailable: true, verticalBarEdge: 'trailing', enabled: true, deviceType: 'phone',
     } as const;
 
-    it('uses the system rail for main and cockpit tabs on either directional edge', () => {
+    it('uses the system rail on phones on either directional edge independently of chrome visibility', () => {
         expect(resolveMobileBottomChromePresenter(supported)).toBe('system');
         expect(resolveMobileBottomChromePresenter({
             ...supported, verticalBarEdge: 'leading',
-            model: { kind: 'sessionCockpit', sessionId: 'session', surface: 'chat', terminalTabAvailable: false },
         })).toBe('system');
     });
 
     it.each([
         { platform: 'android' }, { platform: 'web' }, { platform: 'macos' },
         { bridgeAvailable: false }, { verticalBarEdge: null }, { enabled: false },
-        { model: { kind: 'hidden' } as const },
-    ])('retains Happier chrome when disqualified by %j', (override) => {
+        { deviceType: 'tablet' },
+    ] satisfies Partial<Parameters<typeof resolveMobileBottomChromePresenter>[0]>[])('retains Happier chrome when disqualified by %j', (override) => {
         expect(resolveMobileBottomChromePresenter({ ...supported, ...override })).toBe('happier');
     });
 });

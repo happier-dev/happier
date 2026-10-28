@@ -8,6 +8,7 @@ import { mapWithConcurrency } from '@/api/directSessions/discovery/mapWithConcur
 import { logger } from '@/utils/logger';
 
 import { readClaudeSessionTitle } from './readClaudeSessionTitle';
+import { readClaudeSessionWorkingDirectory } from './getClaudeDirectSessionWorkingDirectory';
 import { resolveClaudeConfigDirForDirectSessions } from './resolveClaudeConfigDir';
 
 type IndexCursorV1 = Readonly<{ v: 1; kind: 'index'; offset: number }>;
@@ -83,13 +84,14 @@ async function buildClaudeCandidate(params: Readonly<{
   } catch {
     title = null;
   }
+  const cwd = await readClaudeSessionWorkingDirectory(params.session.fullPath);
 
   return {
     remoteSessionId: params.session.remoteSessionId,
     ...(title ? { title } : {}),
     updatedAtMs: params.session.updatedAtMs,
     activity: deriveDirectSessionActivityFromTimestamp({ updatedAtMs: params.session.updatedAtMs, env: params.env }),
-    details: { projectId: params.session.projectId },
+    details: { projectId: params.session.projectId, ...(cwd ? { cwd } : {}) },
   };
 }
 

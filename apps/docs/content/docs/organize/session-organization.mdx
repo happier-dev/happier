@@ -96,11 +96,18 @@ colors stay available.
 
 ## Referencing another session
 
-In development builds, **Copy information** is available from the session's
-three-dot menu, its list menu, and its info screen without developer mode. Paste
-the text into another session to provide its Happier session ID, agent session
-ID, and log paths when available. Review those paths before pasting outside your
-own sessions. Copying information does not grant anyone access to the session.
+In development builds, the session's three-dot menu and list menu include a
+**Copy** submenu near the bottom, without requiring developer mode:
+
+- **Session information** copies the Happier session ID, Agent session ID, and log paths when available.
+- **Happier Session ID** copies only the Happier ID, ready to paste into another session.
+- The Agent's **Session ID** entry, such as **Claude Session ID**, copies only its native ID and appears when that ID is available.
+
+The info screen also lets you copy session information. Review log paths before
+pasting information outside your own sessions. Copying an ID does not grant access
+to the session; an Agent needs authorized Happier tools to retrieve another
+session's transcript using its Happier ID. The native Agent ID identifies that
+Agent's conversation and is separate from the Happier ID.
 
 You can also type `@` in the message composer and choose a session from the
 suggestions; `@session:` narrows the suggestions to sessions.

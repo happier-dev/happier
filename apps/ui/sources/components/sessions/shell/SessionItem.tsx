@@ -71,12 +71,11 @@ import { resolveSessionListSelectionPointerAction } from './selection/sessionLis
 import {
     buildSessionDebugInformationForSession,
 } from '@/components/sessions/debug/sessionDebugInformation';
-import { copySessionDebugInformationToClipboard } from '@/components/sessions/debug/sessionDebugClipboard';
+import { copySessionDebugInformationToClipboard, isSessionCopyActionId } from '@/components/sessions/debug/sessionDebugClipboard';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Modal } from '@/modal';
 import {
-    createCopySessionDebugInformationMenuItem,
-    SESSION_COPY_DEBUG_INFORMATION_MENU_ITEM_ID,
+    createSessionCopyMenuItem,
 } from '@/components/sessions/debug/sessionDebugMenuItem';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { canForkConversation } from '@/sync/domains/sessionFork/forkUiSupport';
@@ -895,7 +894,6 @@ const SessionItemContent = React.memo(
                     icon: <Icon name="trash" size={16} color={rowActionIconColor} />,
                 });
             }
-            items.push(createCopySessionDebugInformationMenuItem({ iconColor: rowActionIconColor }));
             if (showForkAction) {
                 items.push({
                     id: 'session.fork',
@@ -906,7 +904,7 @@ const SessionItemContent = React.memo(
             }
             return items;
         }, [draft, onDeleteDraft, rowActionIconColor, showForkAction]);
-        const handleSelectLeadingMenuItem = React.useCallback(async (itemId: string) => {
+        const handleSelectCustomMenuItem = React.useCallback(async (itemId: string) => {
             if (itemId === SESSION_DELETE_DRAFT_MENU_ITEM_ID) {
                 await confirmDeleteDraft();
                 return;
@@ -915,8 +913,8 @@ const SessionItemContent = React.memo(
                 openForkFlow();
                 return;
             }
-            if (itemId !== SESSION_COPY_DEBUG_INFORMATION_MENU_ITEM_ID) return;
-            const copied = await copySessionDebugInformationToClipboard(resolveSessionDebugInformation());
+            if (!isSessionCopyActionId(itemId)) return;
+            const copied = await copySessionDebugInformationToClipboard(resolveSessionDebugInformation(), itemId);
             if (copied) {
                 copyFeedback.markCopied(resolvedSession.id);
             }
@@ -945,6 +943,10 @@ const SessionItemContent = React.memo(
         const [uncontrolledContextMenuOpen, setUncontrolledContextMenuOpen] = React.useState(false);
         const contextMenuOpen = nativeContextMenuOpen ?? uncontrolledContextMenuOpen;
         const setContextMenuOpen = onNativeContextMenuOpenChange ?? setUncontrolledContextMenuOpen;
+        const trailingMenuItems = React.useMemo(() => (contextMenuOpen || moreMenuOpen) ? [createSessionCopyMenuItem({
+            iconColor: rowActionIconColor,
+            information: resolveSessionDebugInformation(),
+        })] : [], [contextMenuOpen, moreMenuOpen, resolveSessionDebugInformation, rowActionIconColor]);
         const suppressNextPressRef = React.useRef(false);
         const contextMenuWasOpenRef = React.useRef(false);
         const clearSuppressionTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1125,7 +1127,8 @@ const SessionItemContent = React.memo(
             onTogglePinned,
             onMoveToFolder,
             leadingMenuItems,
-            onSelectLeadingMenuItem: handleSelectLeadingMenuItem,
+            trailingMenuItems,
+            onSelectCustomMenuItem: handleSelectCustomMenuItem,
             selectionModeAvailable: Boolean(resolvedSelectionKey),
             selectionModeActive: rowSelection.isSelectionMode,
             onEnterSelectionMode: handleEnterSelectionMode,

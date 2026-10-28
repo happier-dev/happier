@@ -679,7 +679,14 @@ export default React.memo(function AppearanceSettingsScreen() {
                         title={t('settingsAppearance.tabBarAppearance.sideRailTitle')}
                         subtitle={t('settingsAppearance.tabBarAppearance.sideRailSubtitle')}
                         icon={<Icon name="stack" size={29} color={theme.colors.accent.blue} />}
-                        rightElement={<Switch testID="settings-appearance-systemTabBar-switch" value={systemTabBarEnabled} onValueChange={setSystemTabBarEnabled} />}
+                        rightElement={
+                            <Switch
+                                testID="settings-appearance-systemTabBar-switch"
+                                accessibilityLabel={t('settingsAppearance.tabBarAppearance.sideRailTitle')}
+                                value={systemTabBarEnabled}
+                                onValueChange={setSystemTabBarEnabled}
+                            />
+                        }
                         showChevron={false}
                     />
                 ) : null}

@@ -5,7 +5,7 @@ import { appendFile, rename, rm, stat } from 'node:fs/promises';
 import { expandHomeDirPath } from '@happier-dev/cli-common/providers';
 import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process';
 
-import { resolveCodexCliInvocation } from '../../utils/resolveCodexCliInvocation';
+import { CODEX_APP_SERVER_OVERRIDE_ENV_KEYS, resolveCodexCliInvocation } from '../../utils/resolveCodexCliInvocation';
 import { readCodexNativeStartupVersion, withCodexNativeStartupLock } from '../../utils/withCodexNativeStartupLock';
 import { appendCodexCliConfigOverridesArgs } from '../../utils/appendCodexCliConfigOverridesArgs';
 import { resolveConfiguredCodexConfigTomlPath } from '../../utils/resolveConfiguredCodexHome';
@@ -387,7 +387,7 @@ export async function createCodexAppServerClient(params: CreateCodexAppServerCli
         args: ['app-server', '--listen', 'stdio://'],
         cwd: params.cwd,
         processEnv,
-        overrideEnvVarKeys: ['HAPPIER_CODEX_APP_SERVER_BIN', 'HAPPIER_CODEX_TUI_BIN', 'HAPPY_CODEX_TUI_BIN'],
+        overrideEnvVarKeys: CODEX_APP_SERVER_OVERRIDE_ENV_KEYS,
         targetLabel: 'Codex app-server',
     });
     const versionOutput = await readCodexNativeStartupVersion(baseInvocation, processEnv, params.cwd, params.initializeRequestOptions?.signal);
@@ -449,7 +449,7 @@ async function createUnlockedCodexAppServerClient(
                 : ['app-server', '--listen', 'stdio://'],
             cwd: params.cwd,
             processEnv,
-            overrideEnvVarKeys: ['HAPPIER_CODEX_APP_SERVER_BIN', 'HAPPIER_CODEX_TUI_BIN', 'HAPPY_CODEX_TUI_BIN'],
+            overrideEnvVarKeys: CODEX_APP_SERVER_OVERRIDE_ENV_KEYS,
             targetLabel: 'Codex app-server',
         });
         const invocation = appendCodexCliConfigOverridesArgs(baseInvocation, [...baseOverrides, ...(params.configOverrides ?? [])]);

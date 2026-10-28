@@ -65,6 +65,15 @@ Pending wire shape changes. Explicit steering never selects interrupt as a fallb
 
 ## UI settlement convergence (development)
 
+Voice-agent speech and composer text share `submitDurableVoiceTextTurn`. After
+a successful external handoff, it calls the existing Pending handled operation,
+which commits the original user message and retires its exact pending row in one
+server transaction. This also persists input for the OpenAI-compatible backend,
+whose conversation history otherwise lives in UI memory. Definite pre-provider
+rejections remain failed sends. Aborted or unknown-outcome dispatches and settlement
+failures remain ambiguous and do not automatically resend the provider input. The `handoff_acknowledged` result remains distinct from
+runner-proven provider acceptance.
+
 Provider acceptance carries the exact Pending `localId` to `SessionClient`, which
 requests server settlement. The server transaction commits or updates the
 transcript message and removes that Pending row before publishing the message

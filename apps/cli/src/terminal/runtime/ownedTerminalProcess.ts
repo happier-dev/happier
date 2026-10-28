@@ -148,7 +148,7 @@ export async function launchOwnedTerminalProcess(params: Readonly<{
 export async function runOwnedTerminalProcess(params: Parameters<typeof launchOwnedTerminalProcess>[0] & Readonly<{
   onStarted?: (identity: OwnedTerminalProcessIdentity) => Promise<void>;
   onExited?: (identity: OwnedTerminalProcessIdentity) => Promise<void>;
-}>): Promise<Readonly<{ code: number | null; signal: NodeJS.Signals | null }>> {
+}>): Promise<Awaited<OwnedTerminalProcess['whenExited']>> {
   const child = await launchOwnedTerminalProcess(params);
   let admitted = false;
   try {

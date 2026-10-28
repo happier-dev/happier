@@ -2152,7 +2152,7 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
         ]);
     });
 
-    it('marks encrypted metadata unavailable after hydration attempts fail without stale metadata', async () => {
+    it('marks non-required encrypted metadata unavailable after hydration attempts fail without stale metadata', async () => {
         const requestSpy = vi.fn(async () =>
             jsonResponse({
                 sessions: [
@@ -2200,11 +2200,11 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
             getCurrentSessionListRenderable: (sessionId) => currentRenderables[sessionId],
             cachedSessionListEntries: {},
             awaitSessionListHydration: true,
-            requiredHydrationSessionIds: ['s_unavailable_metadata'],
             repairInvalidReadStateV1: async () => {},
             log: { log: () => {} },
         });
 
+        await expect.poll(() => currentRenderables.s_unavailable_metadata?.metadataUnavailable).toBe(true);
         expect(decryptMetadata).toHaveBeenCalledWith(3, 'encrypted-unavailable-meta');
         expect(applySessions).toHaveBeenCalledWith([
             expect.objectContaining({
@@ -2220,7 +2220,7 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
         ]);
     });
 
-    it('does not enqueue encrypted rows that are missing data keys for warm hydration', async () => {
+    it.each([false, true])('rejects required-row hydration when its encrypted data key is unavailable (stale plaintext: %s)', async (withStalePlaintext) => {
         const requestSpy = vi.fn(async () =>
             jsonResponse({
                 sessions: [
@@ -2244,7 +2244,7 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
         const applySessions = vi.fn();
         const applySessionListRenderables = vi.fn();
 
-        await fetchAndApplySessions({
+        await expect(fetchAndApplySessions({
             credentials: { token: 't', secret: 's' },
             encryption,
             sessionDataKeys: new Map<string, Uint8Array>(),
@@ -2253,10 +2253,16 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
             applySessionListRenderables,
             awaitSessionListHydration: true,
             requiredHydrationSessionIds: ['s_missing_data_key'],
+            getExistingSession: withStalePlaintext ? () => buildExistingSession({
+                id: 's_missing_data_key',
+                metadata: { path: '/stale', host: 'host' },
+                metadataVersion: 2,
+                agentStateVersion: 0,
+            }) : undefined,
             cachedSessionListEntries: {},
             repairInvalidReadStateV1: async () => {},
             log: { log: () => {} },
-        });
+        })).rejects.toThrow(/required.*hydration/i);
 
         expect(applySessionListRenderables).toHaveBeenCalledWith([
             expect.objectContaining({
@@ -2270,7 +2276,7 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
         expect(consoleError).not.toHaveBeenCalled();
     });
 
-    it('preserves stale metadata instead of marking unavailable when failed hydration has safe metadata', async () => {
+    it('preserves stale non-required metadata instead of marking unavailable when failed hydration has safe metadata', async () => {
         const previousMetadata = {
             path: '/known/repo',
             homeDir: '/known',
@@ -2334,11 +2340,11 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
             getCurrentSessionListRenderable: (sessionId) => currentRenderables[sessionId],
             cachedSessionListEntries: {},
             awaitSessionListHydration: true,
-            requiredHydrationSessionIds: ['s_stale_metadata'],
             repairInvalidReadStateV1: async () => {},
             log: { log: () => {} },
         });
 
+        await expect.poll(() => applySessionListRenderablePatches.mock.calls.length).toBe(1);
         expect(decryptMetadata).toHaveBeenCalledWith(5, 'encrypted-stale-meta');
         expect(applySessionListRenderablePatches).toHaveBeenCalledWith([
             expect.objectContaining({

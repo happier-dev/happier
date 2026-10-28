@@ -36,7 +36,7 @@ import {
     setSessionTagLabels as setSessionOrganizationTagLabels,
     upsertSessionFolder as upsertSessionOrganizationFolder,
     setWorkspaceDisplay,
-    setSessionAppearance as setSessionAppearanceOperation,
+    setSessionAppearanceForServer,
 } from '@/sync/ops/sessionOrganization';
 import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
 import { Modal } from '@/modal';
@@ -386,10 +386,9 @@ export function useSessionListViewState({
     /** Raw session id (not server:session); pass the row's server in a multi-server list. */
     const setSessionAppearance = React.useCallback((sessionId: string, color: SessionAppearanceColor | null, opts?: Readonly<{ serverId?: string | null }>) => {
         runOrganizationMutation(async () => {
-            const mutation = await getOrganizationMutationContext(opts?.serverId);
-            if (mutation) await setSessionAppearanceOperation({ ...mutation, sessionId, color });
+            await setSessionAppearanceForServer({ serverId: opts?.serverId ?? activeOrganizationServerId, sessionId, color });
         });
-    }, [getOrganizationMutationContext, runOrganizationMutation]);
+    }, [activeOrganizationServerId, runOrganizationMutation]);
 
     const folderPresentedData = React.useMemo(() => {
         const coloredData = applyWorkspaceDisplayToSessionListViewData(data, workspaceLabelsByLabelKey);

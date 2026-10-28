@@ -52,6 +52,8 @@ Classify each source intent as:
 - applicable to a broader 0.3 corridor because the architecture expanded;
 - not applicable because the path is unreachable or deliberately replaced, with evidence.
 
+Tooling intents follow the same rule. Test harnesses, collectors, CI steps and measurement scripts often already have a 0.3 owner under a different name or package (for example 0.3 owns browser network capture in `apps/stack/scripts/perf/`). Search by capability, not by the 0.2 file path, and extend that owner instead of porting the 0.2 harness beside it.
+
 Never use matching filenames as completeness proof. Do not cherry-pick blindly, copy whole files, overwrite evolved logic, restore a 0.2 owner, or add a predecessor exclusion that contradicts an intentional 0.3 generalization.
 
 ## 5. Implement the smallest coherent destination change

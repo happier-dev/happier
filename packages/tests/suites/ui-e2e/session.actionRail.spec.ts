@@ -143,9 +143,14 @@ test.describe('ui e2e: session action rail', () => {
         await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
         await menu.click();
         await expect(page.getByTestId('dropdown-option-ui_session_unpin')).toBeVisible();
+        await page.getByTestId('dropdown-option-session_copy').click();
         await page.getByTestId('dropdown-option-session_copyDebugInformation').click();
         await expect.poll(() => page.evaluate(() => navigator.clipboard.readText()))
           .toContain(`Happier session ID: ${sessionId}`);
+        await menu.click();
+        await page.getByTestId('dropdown-option-session_copy').click();
+        await page.getByTestId('dropdown-option-session_copySessionId').click();
+        await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(sessionId);
         await menu.click();
         await page.screenshot({ path: testInfo.outputPath('session-header-pinned-copy-information.png') });
         await page.getByTestId('dropdown-option-ui_session_unpin').click();
@@ -179,6 +184,13 @@ test.describe('ui e2e: session action rail', () => {
       await expect(send).toBeEnabled({ timeout: 60_000 });
       await send.click();
       await expect(page.getByText('FAKE_CLAUDE_OK_1').first()).toBeVisible({ timeout: 180_000 });
+      await test.step('copies only the native Agent session ID after it is available', async () => {
+        await page.getByTestId('session-header-action-menu-trigger').click();
+        await page.getByTestId('dropdown-option-session_copy').click();
+        await page.getByTestId('dropdown-option-session_copyProviderSessionId').click();
+        await expect.poll(() => page.evaluate(() => navigator.clipboard.readText()))
+          .toBe(`fake-claude-session-${run.runId}`);
+      });
       await expect(page.locator('[data-testid^="transcript-message-"]').first()).toBeVisible({ timeout: 60_000 });
       const measureHeaderAlignment = async () => page.evaluate(() => {
         const avatar = document.querySelector('[data-testid="session-header-avatar"]')!;

@@ -2248,6 +2248,19 @@ export async function claudeRemoteLauncher(
                     exitReason = 'exit';
                 }
                 if (errorDisposition === 'preserve-resume-and-exit') {
+                    if (hasUnverifiedProviderTermination(e)) {
+                        await surfacePrimarySessionRuntimeIssue({
+                            provider: 'claude',
+                            cause: 'session_error',
+                            error: e,
+                            session: session.client,
+                            allocateTurnWhenIdle: true,
+                        }).catch((surfaceError) => {
+                            logger.infoFile('[remote]: failed to record unverified provider termination runtime issue', {
+                                error: formatErrorForUi(surfaceError),
+                            });
+                        });
+                    }
                     session.client.sendSessionEvent({
                         type: 'message',
                         message: formatErrorForUi(e, { maxChars: 12_000 }),

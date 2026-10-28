@@ -14,7 +14,7 @@ import {
 } from './client/createCodexAppServerClient';
 import { readCodexAppServerStartupRpcTimeoutMs } from './client/codexAppServerRpcTimeout';
 import { appendCodexCliConfigOverridesArgs } from '../utils/appendCodexCliConfigOverridesArgs';
-import { resolveCodexCliInvocation } from '../utils/resolveCodexCliInvocation';
+import { CODEX_APP_SERVER_OVERRIDE_ENV_KEYS, resolveCodexCliInvocation } from '../utils/resolveCodexCliInvocation';
 import { readCodexNativeStartupVersion, withCodexNativeStartupLock } from '../utils/withCodexNativeStartupLock';
 
 type InvocationResolver = (params: Readonly<{
@@ -64,7 +64,7 @@ function defaultDependencies(): SharedServerDependencies {
       args,
       cwd,
       processEnv,
-      overrideEnvVarKeys: ['HAPPIER_CODEX_APP_SERVER_BIN', 'HAPPIER_CODEX_TUI_BIN', 'HAPPY_CODEX_TUI_BIN'],
+      overrideEnvVarKeys: CODEX_APP_SERVER_OVERRIDE_ENV_KEYS,
       targetLabel: 'Codex app-server',
     }),
     spawnProcess: spawn,

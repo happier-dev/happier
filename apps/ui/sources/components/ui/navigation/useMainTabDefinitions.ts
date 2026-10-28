@@ -1,4 +1,3 @@
-import * as React from 'react';
 import { useInboxHasContent } from '@/hooks/inbox/useInboxHasContent';
 import { useInboxAvailable } from '@/hooks/inbox/useInboxAvailable';
 import { useFriendsEnabled } from '@/hooks/server/useFriendsEnabled';
@@ -29,12 +28,12 @@ export function useMainTabDefinitions(): readonly MainTabDefinition[] {
     const inboxHasContent = useInboxHasContent();
     const friendsBadgeEnabled = useSetting('tabBarFriendsBadgeEnabled');
     const inboxBadgeEnabled = useSetting('tabBarInboxBadgeEnabled');
-    return React.useMemo(() => resolveTabBarTabs({ inboxEnabled, friendsEnabled }).map((key): MainTabDefinition => ({
+    return resolveTabBarTabs({ inboxEnabled, friendsEnabled }).map((key): MainTabDefinition => ({
         key,
         label: t(MAIN_TAB_FACTS[key].label),
         sfSymbol: MAIN_TAB_FACTS[key].sfSymbol,
         badge: key === 'friends' && friendsBadgeEnabled && friendRequestCount > 0
             ? { kind: 'count', value: friendRequestCount }
             : key === 'inbox' && inboxBadgeEnabled && inboxHasContent ? { kind: 'dot' } : undefined,
-    })), [friendsEnabled, friendRequestCount, inboxEnabled, inboxHasContent, friendsBadgeEnabled, inboxBadgeEnabled]);
+    }));
 }

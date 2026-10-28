@@ -8,7 +8,7 @@ import { SPAWN_SESSION_ERROR_CODES, type SpawnSessionErrorDetail } from '@happie
 import { flushHookEffects, renderHook } from '@/dev/testkit';
 import { createStorageModuleStub } from '@/dev/testkit/mocks/storage';
 import { createTextModuleMock } from '@/dev/testkit/mocks/text';
-import { createSocketIoAckTimeoutError } from '@/sync/runtime/socketIoAckTimeout';
+import { createSocketIoAckTimeoutError } from '@happier-dev/protocol/rpcErrors';
 
 import { installNewSessionScreenModelCommonModuleMocks } from './newSessionScreenModelTestHelpers';
 import { createNewSessionPromptStore } from '@/components/sessions/new/hooks/screenModel/newSessionPromptStore';

@@ -3,7 +3,7 @@ import { Platform, useWindowDimensions } from 'react-native';
 import { router } from 'expo-router';
 import { useAuth } from '@/auth/context/AuthContext';
 import { decodeBase64 } from '@/encryption/base64';
-import { authAccountApprove } from '@/auth/flows/accountApprove';
+import { authAccountApprove, getAccountApproveErrorMessageKey } from '@/auth/flows/accountApprove';
 import { buildAccountLinkResponse } from '@/auth/flows/buildAccountLinkResponse';
 import { Modal } from '@/modal';
 import { t } from '@/text';
@@ -13,7 +13,7 @@ import { isWebMobileLikeQrScannerHost } from '@/utils/platform/webMobileHeuristi
 
 interface UseConnectAccountOptions {
     onSuccess?: () => void;
-    onError?: (error: any) => void;
+    onError?: (error: unknown) => void;
 }
 
 export function useConnectAccount(options?: UseConnectAccountOptions) {
@@ -43,7 +43,8 @@ export function useConnectAccount(options?: UseConnectAccountOptions) {
             ]);
             return true;
         } catch (e) {
-            await Modal.alertAsync(t('common.error'), t('modals.failedToLinkDevice'), [{ text: t('common.ok') }]);
+            const messageKey = getAccountApproveErrorMessageKey(e) ?? 'modals.failedToLinkDevice';
+            await Modal.alertAsync(t('common.error'), t(messageKey), [{ text: t('common.ok') }]);
             options?.onError?.(e);
             return false;
         } finally {

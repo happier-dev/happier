@@ -250,7 +250,7 @@ export async function sendVoiceTextTurn(params: {
       return;
     } catch (error) {
       // An aborted turn hands state back to whoever aborted it (cancel or hang-up).
-      if (isTurnAbortedError(error) || params.signal?.aborted) return;
+      if (isTurnAbortedError(error) || params.signal?.aborted) throw error;
       voiceActivityController.appendError(sessionId, adapterId, 'voice_agent_send_failed', error instanceof Error ? error.message : 'send_failed');
       patchLocalVoiceState({ status: 'idle', sessionId, ...resolveLocalVoiceError(error, 'send_failed') });
       throw error instanceof Error ? error : new Error('send_failed');

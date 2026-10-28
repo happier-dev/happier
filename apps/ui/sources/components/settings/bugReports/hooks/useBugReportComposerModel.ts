@@ -81,6 +81,9 @@ export function useBugReportComposerModel(input: Readonly<{
   validation: BugReportDraftValidation;
   fieldErrors: BugReportDraftFieldErrors;
   handleSubmit: () => Promise<void>;
+  crashReportStatus: ReturnType<typeof useBugReportComposerDraftState>['crashReportStatus'];
+  discardSavedCrash: () => Promise<void>;
+  copySavedCrash: () => Promise<void>;
 } {
   const draft = useBugReportComposerDraftState({
     profile: input.profile,
@@ -169,7 +172,8 @@ export function useBugReportComposerModel(input: Readonly<{
     summary: draftFields.summary,
     currentBehavior: draftFields.currentBehavior,
     expectedBehavior: draftFields.expectedBehavior,
-    disabled: submitting || existingIssueNumber !== null,
+    // Captured exception text stays on device until the user explicitly submits.
+    disabled: submitting || existingIssueNumber !== null || draft.crashReportStatus !== 'none',
   });
 
   return {

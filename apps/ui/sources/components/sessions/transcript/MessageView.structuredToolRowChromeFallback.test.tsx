@@ -1,151 +1,125 @@
 import * as React from 'react';
+import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { collectHostText, createToolCallMessageFixture, makeToolCall, renderScreen, standardCleanup } from '@/dev/testkit';
+import { deriveTranscriptInteraction } from '@/utils/sessions/deriveTranscriptInteraction';
+import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { installMessageViewCommonModuleMocks } from './messageViewTestHelpers';
-import type { ToolCallMessage } from '@/sync/domains/messages/messageTypes';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
+let chromeMode: 'cards' | 'activity_feed' = 'cards';
+
 installMessageViewCommonModuleMocks({
-    text: async () => {
-        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-        return createTextModuleMock({ translate: (key) => key });
-    },
-    storage: async (importOriginal) => {
-        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-        const { createReducer } = await import('@/sync/reducer/reducer');
-        return createStorageModuleMock({
-            importOriginal,
-            overrides: {
-                useSetting: (key: string) => {
-                    if (key === 'sessionThinkingDisplayMode') return 'inline';
-                    // Structured cards only replace the tool chrome in the activity feed.
-                    if (key === 'toolViewTimelineChromeMode') return 'activity_feed';
-                    return null;
+    storage: async () => {
+        const { createStorageModuleStub, createUseSettingMock } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            useSetting: createUseSettingMock({
+                fallback: (key) => {
+                    if (key === 'toolViewTimelineChromeMode') return chromeMode;
+                    if (key === 'toolViewDetailLevelDefault') return 'title';
+                    if (key === 'toolViewTimelineFeedDefaultExpanded') return false;
+                    if (key === 'toolViewTapAction') return 'expand';
+                    return settingsDefaults[key];
                 },
-                useSession: () => null,
-                useSessionForkSupportSource: () => null,
-                useSessionWorkspacePath: () => null,
-                useSessionMessagesById: () => ({}),
-                useSessionMessagesReducerState: () => createReducer(),
-            },
+            }),
         });
     },
 });
-
-vi.mock('@/components/markdown/MarkdownView', () => ({
-    MarkdownView: (props: React.PropsWithChildren<Record<string, unknown>>) =>
-        React.createElement('MarkdownView', props, props.children),
-}));
-
-vi.mock('@/components/sessions/linkedFiles/extractWorkspaceFileMentions', () => ({
-    extractWorkspaceFileMentions: () => [],
-}));
-
-vi.mock('@/components/sessions/transcript/references/StructuredReferencesRow', () => ({
-    StructuredReferencesRow: () => null,
-}));
-
-vi.mock('@/components/tools/shell/views/ToolView', () => ({
-    ToolView: (props: Record<string, unknown>) =>
-        React.createElement('ToolView', { ...props, testID: 'tool-chrome-cards' }),
-}));
-
-vi.mock('@/components/tools/shell/views/ToolTimelineRow', () => ({
-    ToolTimelineRow: (props: Record<string, unknown>) =>
-        React.createElement('ToolTimelineRow', { ...props, testID: 'tool-chrome-feed' }),
-}));
 
 vi.mock('@expo/vector-icons', async () => {
     const { createExpoVectorIconsMock } = await import('@/dev/testkit/mocks/icons');
     return createExpoVectorIconsMock();
 });
 
-function createToolCallMessage(meta: unknown): ToolCallMessage {
-    return {
-        kind: 'tool-call',
-        id: 'm1',
-        localId: 'local-m1',
-        realID: 'server-m1',
-        createdAt: 1,
-        seq: 11,
-        transcriptBlockIndex: 3,
-        meta,
-        tool: {
-            name: 'read',
-            state: 'completed',
-            input: {},
-            createdAt: 1,
-            startedAt: 1,
-            completedAt: 2,
-            description: null,
-            result: {},
-        },
-        children: [],
-    } as unknown as ToolCallMessage;
-}
-
-// A tool-call message that carries a subagent_launch envelope: the registry card only
-// paints for `user-text` messages, so on a tool call it renders nothing at all.
-const EMPTY_STRUCTURED_TOOL_MESSAGE = createToolCallMessage({
-    happier: {
-        kind: 'subagent_launch.v1',
+const runRef = { runId: 'r1', callId: 'c1', backendId: 'b1' };
+const structuredResults = [
+    {
+        kind: 'delegate_output.v1',
         payload: {
-            kind: 'agent_team_member_create',
-            teamId: 'team_1',
-            memberLabel: 'alpha',
-            instructions: 'Handle the linting lane',
-            runInBackground: true,
-        },
-    },
-});
-
-// Control: a structured envelope whose card always paints. The chrome must stay
-// suppressed here, otherwise the row would render the card *and* the tool chrome.
-const PAINTING_STRUCTURED_TOOL_MESSAGE = createToolCallMessage({
-    happier: {
-        kind: 'review_follow_up.v1',
-        payload: {
-            parentRunRef: { runId: 'r1', callId: 'c1', backendId: 'b1' },
-            threadId: 't1',
-            requestMarkdown: 'why is this slow',
-            answerMarkdown: 'because it re-renders',
+            runRef,
+            summary: 'Delegated investigation complete.',
+            deliverables: [{ id: 'report', title: 'Investigation report', details: 'reports/investigation.md' }],
             generatedAtMs: 1,
         },
+        visibleText: 'Delegated investigation complete.',
     },
-});
+    {
+        kind: 'plan_output.v1',
+        payload: {
+            runRef,
+            summary: 'Plan the disclosure correction.',
+            sections: [{ title: 'Implementation', items: ['Reuse the tool disclosure.'] }],
+            generatedAtMs: 1,
+        },
+        visibleText: 'Plan the disclosure correction.',
+    },
+] as const;
 
-async function renderToolRow(message: ToolCallMessage) {
-    const { MessageView } = await import('./MessageView');
-    return renderScreen(
-        <MessageView
-            sessionId="s1"
-            metadata={null}
-            message={message}
-            messagePins={[]}
-        />,
-    );
-}
-
-describe('MessageView tool row with a structured envelope', () => {
-    afterEach(() => {
+describe.each(['cards', 'activity_feed'] as const)('structured tool results in %s', (mode) => {
+    afterEach(async () => {
+        const { clearTranscriptJumpHighlight } = await import('./navigation/transcriptJumpHighlightStore');
+        await act(async () => clearTranscriptJumpHighlight());
         standardCleanup();
     });
 
-    it('keeps the tool chrome when the structured card paints nothing', async () => {
-        const screen = await renderToolRow(EMPTY_STRUCTURED_TOOL_MESSAGE);
+    it.each(structuredResults)('keeps $kind inside the tool disclosure', async (result) => {
+        chromeMode = mode;
+        const { MessageView } = await import('./MessageView');
+        const message = createToolCallMessageFixture({
+            id: 'm1',
+            seq: 11,
+            tool: makeToolCall({
+                name: 'mcp__happier__execution_run_get',
+                state: 'completed',
+                input: { runId: 'r1' },
+                result: { ok: true },
+            }),
+            meta: { happier: { kind: result.kind, payload: result.payload } },
+        });
+        const screen = await renderScreen(<MessageView sessionId="s1" metadata={null} message={message} />);
+        const headerId = mode === 'cards' ? 'tool-view-header-primary' : 'tool-timeline-row';
 
-        // The defect: the structured element exists but paints nothing, so the row
-        // reserves height and renders an empty box.
-        expect(JSON.stringify(screen.tree.toJSON() ?? '')).not.toContain('MarkdownView');
-        expect(screen.findAllByTestId('tool-chrome-feed')).toHaveLength(1);
+        expect(collectHostText(screen.tree).join('\n')).not.toContain(result.visibleText);
+        expect(screen.findByTestId(headerId)).not.toBeNull();
+
+        await screen.pressByTestIdAsync(headerId);
+        expect(collectHostText(screen.tree).join('\n')).toContain(result.visibleText);
+
+        await screen.pressByTestIdAsync(headerId);
+        expect(collectHostText(screen.tree).join('\n')).not.toContain(result.visibleText);
     });
 
-    it('still replaces the tool chrome when the structured card paints', async () => {
-        const screen = await renderToolRow(PAINTING_STRUCTURED_TOOL_MESSAGE);
-
-        expect(screen.findAllByTestId('tool-chrome-feed')).toHaveLength(0);
-        expect(JSON.stringify(screen.tree.toJSON() ?? '')).toContain('because it re-renders');
+    it('keeps pin actions and jump attention on the collapsed tool row', async () => {
+        chromeMode = mode;
+        const { MessageView } = await import('./MessageView');
+        const { applyTranscriptJumpHighlightForJumpResult } = await import('./navigation/transcriptJumpHighlightStore');
+        const { TRANSCRIPT_JUMP_HIGHLIGHT_TEST_ID } = await import('./navigation/TranscriptJumpHighlightOverlay');
+        const onToggleToolPin = vi.fn();
+        const message = createToolCallMessageFixture({
+            id: 'm1',
+            seq: 11,
+            transcriptBlockIndex: 3,
+            tool: makeToolCall({ id: 'c1', name: 'mcp__happier__execution_run_get', state: 'completed', input: {}, result: {} }),
+            meta: { happier: { kind: structuredResults[0].kind, payload: structuredResults[0].payload } },
+        });
+        const screen = await renderScreen(
+            <MessageView
+                sessionId="s1"
+                metadata={null}
+                message={message}
+                onToggleToolPin={onToggleToolPin}
+                interaction={deriveTranscriptInteraction({ kind: 'session', accessLevel: null, canApprovePermissions: true, isSessionActive: true })}
+            />,
+        );
+        await screen.pressByTestIdAsync('transcript-tool-call-pin:m1');
+        expect(onToggleToolPin).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 's1', seq: 11, role: 'tool' }));
+        await act(async () => {
+            applyTranscriptJumpHighlightForJumpResult('s1', {
+                status: 'window-rendered', target: { kind: 'seq', seq: 11 }, windowId: 'w1',
+            });
+        });
+        expect(screen.findAllByTestId(TRANSCRIPT_JUMP_HIGHLIGHT_TEST_ID)).toHaveLength(1);
     });
 });

@@ -1,6 +1,7 @@
 import { createRequire, Module } from 'node:module';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
-import { SESSION_RPC_METHODS } from '@happier-dev/protocol';
+import { RPC_ERROR_CODES, SESSION_RPC_METHODS } from '@happier-dev/protocol';
+import { RpcError } from '@happier-dev/protocol/rpcErrors';
 
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { createSessionMessagesFixture } from '@/dev/testkit/fixtures/transcriptFixtures';
@@ -26,6 +27,10 @@ let submitMessage: MockInstance<typeof sync.submitMessage>;
 let enqueuePendingMessage: MockInstance<typeof sync.enqueuePendingMessage>;
 const accountId = 'voice-transcript-test-account';
 const boundaryEvents: string[] = [];
+const pendingRows = new Map<string, { sessionId: string; row: Record<string, unknown> }>();
+const handledRows = new Map<string, Record<string, unknown>>();
+let handledError: number | Error | null = null;
+let pendingVersion = 0;
 const initialStorageState = storage.getState();
 const initialBindings = voiceSessionBindingStore.getState().bindingsByConversationSessionId;
 const initialEncryption = Reflect.get(sync, 'encryption');
@@ -72,25 +77,38 @@ describe('sendVoiceTextTurn synthetic transcript mirroring', () => {
       capabilities: { compatibility: { pendingInput: { currentPendingInputProtocolVersion: 1 } },
         session: { pendingInput: { protocolVersion: 1 } } },
     })));
-    const pendingRows = new Map<string, { sessionId: string; row: Record<string, unknown> }>();
+    pendingRows.clear();
+    handledRows.clear();
+    handledError = null;
+    pendingVersion = 0;
     boundaryEvents.length = 0;
     // HTTP acknowledgements are the boundary; durable custody, handlers and transcript projection stay real.
     vi.spyOn(apiSocket, 'request').mockImplementation(async (path, init) => {
       if (/^\/v[12]\/sessions\/[^/]+\/messages(?:\?|$)/.test(path)) {
         return Response.json({ messages: [], hasMore: false });
       }
-      const route = /^\/v2\/sessions\/([^/]+)\/pending(?:\/([^/]+)\/delivery\/block)?$/.exec(path);
+      const route = /^\/v2\/sessions\/([^/]+)\/pending(?:\/([^/]+)\/delivery\/(block|handled))?$/.exec(new URL(path, 'http://relay.test').pathname);
       if (!route) throw new Error(`Unexpected pending route: ${path}`);
       const sessionId = route[1]!;
       if (route[2]) {
         const pending = pendingRows.get(route[2]);
         if (!pending) throw new Error('Unknown pending localId');
-        pending.row.deliveryStatus = { status: 'blocked', reason: 'delivery_outcome_uncertain' };
+        if (route[3] === 'handled') {
+          boundaryEvents.push(`handled:${route[2]}`);
+          if (handledError instanceof Error) throw handledError;
+          if (handledError) return Response.json({ error: 'settlement_failed' }, { status: handledError });
+          handledRows.set(route[2], pending.row);
+          pendingRows.delete(route[2]);
+        } else {
+          boundaryEvents.push(`blocked:${route[2]}`);
+          pending.row.deliveryStatus = { status: 'blocked', reason: 'delivery_outcome_uncertain' };
+        }
+        pendingVersion += 1;
         return Response.json({ ok: true });
       }
       if (init?.method === 'GET') {
         return Response.json({ pending: [...pendingRows.values()].filter(value => value.sessionId === sessionId).map(value => value.row),
-          pendingCount: pendingRows.size, pendingVersion: pendingRows.size });
+          pendingCount: pendingRows.size, pendingVersion });
       }
       const body = JSON.parse(String(init?.body)) as { localId: string; content?: unknown; ciphertext?: string; deliveryMode?: string; requestedAction: unknown };
       boundaryEvents.push(`enqueue:${body.localId}`);
@@ -99,8 +117,9 @@ describe('sendVoiceTextTurn synthetic transcript mirroring', () => {
         requestedAction: body.requestedAction, messageRole: 'user',
         deliveryStatus: { status: body.deliveryMode === 'external_handoff' ? 'external_handoff' : 'queued' } };
       pendingRows.set(body.localId, { sessionId, row });
+      pendingVersion += 1;
       return Response.json({ didWrite: true, requestedAction: body.requestedAction, pending: row,
-        pendingCount: pendingRows.size, pendingVersion: pendingRows.size });
+        pendingCount: pendingRows.size, pendingVersion });
     });
     voiceSessionBindingStore.setState({ bindingsByConversationSessionId: initialBindings });
     voiceSessionBindingStore.getState().bind({
@@ -258,7 +277,9 @@ describe('sendVoiceTextTurn synthetic transcript mirroring', () => {
     expect(rpc).toHaveBeenCalledWith('carrier-s1', SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_START_V2,
       expect.objectContaining({ displayMessage: 'from microphone', userTranscript: { mode: 'persist', localId } }),
       expect.anything());
-    expect(boundaryEvents).toEqual([`enqueue:${localId}`, `dispatch:${localId}`, 'tool-followup']);
+    expect(boundaryEvents).toEqual([`enqueue:${localId}`, `dispatch:${localId}`, 'tool-followup', `handled:${localId}`]);
+    expect(pendingRows.size).toBe(0);
+    expect(storage.getState().sessionPending['carrier-s1']?.messages ?? []).toEqual([]);
     expect(appendUser).not.toHaveBeenCalled();
     expect(appendAssistant).not.toHaveBeenCalled();
     expect(appendNote).not.toHaveBeenCalled();
@@ -341,7 +362,81 @@ describe('sendVoiceTextTurn synthetic transcript mirroring', () => {
     expect(events).toEqual([
       `enqueue:${localId}`,
       `dispatch:${localId}`,
+      `handled:${localId}`,
     ]);
+  });
+
+  it.each(['speech', 'composer'] as const)('settles %s input through the real OpenAI-compatible client', async (entry) => {
+    voiceAgentBackend = 'openai_compat';
+    const settings = settingsParse({
+      ...voiceSettings(),
+      voice: { providerId: 'local_conversation', adapters: { local_conversation: {
+        conversationMode: 'agent', agent: { backend: 'openai_compat', openaiCompat: { chatBaseUrl: 'http://voice.test' } },
+        tts: { provider: 'device', autoSpeakReplies: false },
+      } } },
+    });
+    storage.setState({ settings });
+    const featureFetch = globalThis.fetch;
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).startsWith('http://voice.test/')) {
+        boundaryEvents.push('provider-reply');
+        return Response.json({ choices: [{ message: { role: 'assistant', content: 'A real backend reply.' } }] });
+      }
+      return featureFetch(input, init);
+    }));
+    const voiceAgentSessions = createVoiceAgentSessionController();
+    const { sendVoiceTextTurn } = await import('./sendVoiceTextTurn');
+    const sendTurn = (durableDispatch?: { localId: string; handoffMode: 'interrupt_and_send' }) => sendVoiceTextTurn({
+      sessionId: 'voice-global', settings, userText: 'keep this voice input',
+      playbackController: { registerStopper: () => () => {}, interrupt: () => {}, captureEpoch: () => 1, isEpochCurrent: () => true },
+      voiceAgentSessions,
+      ...(durableDispatch ? { durableDispatch } : {}),
+    });
+    if (entry === 'speech') {
+      await sendTurn();
+    } else {
+      const { sendVoiceSessionComposerText } = await import('../sessionBinding/sendVoiceSessionComposerText');
+      await expect(sendVoiceSessionComposerText({
+        conversationSessionId: 'carrier-s1', text: 'keep this voice input',
+        getAdapter: () => ({
+          id: 'local_conversation', start: async () => {}, stop: async () => {}, toggle: async () => {},
+          interrupt: async () => {}, sendContextUpdate: () => {},
+          getSnapshot: () => ({ adapterId: 'local_conversation', sessionId: 'voice-global', status: 'connected', mode: 'idle', canStop: true }),
+          sendTextTurn: async ({ localId, handoffMode }) => sendTurn({ localId, handoffMode }),
+        }),
+      })).resolves.toEqual({ ok: true, localId: expect.any(String), disposition: 'handoff_acknowledged' });
+    }
+    const localId = enqueuePendingMessage.mock.calls[0]?.[4]?.localId;
+    expect(boundaryEvents).toEqual([`enqueue:${localId}`, 'provider-reply', `handled:${localId}`]);
+    expect(handledRows.get(localId!)).toMatchObject({ localId, messageRole: 'user' });
+    expect(pendingRows.size).toBe(0);
+    expect(storage.getState().sessionPending['carrier-s1']?.messages ?? []).toEqual([]);
+  });
+
+  it.each([404, new RpcError('RPC method not available', RPC_ERROR_CODES.METHOD_NOT_AVAILABLE)])(
+    'keeps settlement failure %s ambiguous without another provider dispatch', async (error) => {
+    handledError = error;
+    const { submitDurableVoiceTextTurn } = await import('../sessionBinding/sendVoiceSessionComposerText');
+    const dispatch = vi.fn(async () => {});
+    await expect(submitDurableVoiceTextTurn({
+      conversationSessionId: 'carrier-s1', text: 'accepted but not settled', dispatch,
+    })).resolves.toMatchObject({ ok: true, disposition: 'ambiguous' });
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    expect(handledRows.size).toBe(0);
+    expect([...pendingRows.values()][0]?.row.deliveryStatus).toEqual({ status: 'blocked', reason: 'delivery_outcome_uncertain' });
+  });
+
+  it('does not settle an aborted local turn as a successful handoff', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const { sendVoiceTextTurn } = await import('./sendVoiceTextTurn');
+    await expect(sendVoiceTextTurn({
+      sessionId: 'voice-global', settings: voiceSettings(), userText: 'aborted input', signal: controller.signal,
+      playbackController: { registerStopper: () => () => {}, interrupt: () => {}, captureEpoch: () => 1, isEpochCurrent: () => true },
+      voiceAgentSessions: createVoiceAgentSessionController(),
+    })).rejects.toThrow('voice_turn_dispatch_ambiguous');
+    expect(handledRows.size).toBe(0);
+    expect([...pendingRows.values()][0]?.row.deliveryStatus).toEqual({ status: 'blocked', reason: 'delivery_outcome_uncertain' });
   });
 
   it('retains the UI transcript writer for the non-daemon voice backend', async () => {

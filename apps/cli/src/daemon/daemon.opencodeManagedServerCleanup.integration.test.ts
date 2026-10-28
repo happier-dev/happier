@@ -24,8 +24,10 @@ let preparedDaemonHome: PreparedDaemonTestHome | null = null;
 async function prepareIsolatedHome(): Promise<void> {
   preparedDaemonHome = await prepareIsolatedDaemonTestHome({
     prefix: 'happier-daemon-opencode-cleanup-',
-    extraEnv: ({ homeDir }) => ({
-      HAPPIER_OPENCODE_SERVER_STATE_PATH: join(homeDir, 'opencode', `managed-server-${process.pid}.json`),
+    // Daemon shutdown reclaims only the client-tracked pool (docs/cli-architecture.md), so the
+    // managed state must live at its canonical pool path inside this isolated home.
+    extraEnv: () => ({
+      HAPPIER_OPENCODE_SERVER_STATE_PATH: undefined,
       HAPPIER_DAEMON_MARKERLESS_REATTACH_ENABLED: '0',
     }),
   });
@@ -206,6 +208,7 @@ describe('daemon OpenCode managed server cleanup', { timeout: 120_000 }, () => {
       const daemonState = await readDaemonState();
       expect(daemonState?.pid).toBe(daemonPid);
       const statePath = resolveSharedManagedOpenCodeServerStatePathForEnv();
+      await mkdir(dirname(statePath), { recursive: true });
       // The fake replaces the external OpenCode process. Keep state production real so shutdown
       // receives this daemon's custody proof, rather than trusting a legacy PID-only fixture.
       await resolveSharedManagedOpenCodeServerBaseUrl({

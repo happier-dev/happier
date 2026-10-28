@@ -91,6 +91,39 @@ afterEach(() => {
 });
 
 describe('preRestartBugReportSnapshot native behavior', () => {
+    it('reports failure to discard a saved browser crash', async () => {
+        const { module } = await loadModule({ platformOs: 'web' });
+        vi.stubGlobal('localStorage', { removeItem: () => { throw new Error('storage unavailable'); } });
+        try {
+            await expect(module.clearPreRestartBugReportSnapshot()).resolves.toBe(false);
+        } finally {
+            vi.unstubAllGlobals();
+        }
+    });
+    it('reports unavailable browser storage instead of pretending the crash was saved', async () => {
+        const { module } = await loadModule({ platformOs: 'web' });
+        vi.stubGlobal('localStorage', { setItem: () => { throw new Error('storage unavailable'); } });
+        try {
+            await expect(module.persistPreRestartBugReportSnapshot({
+                v: 1, createdAtMs: Date.now(), reason: 'crash', platform: 'web', origin: null,
+                isSecureContext: null, errorDetails: 'original stack', appLogs: '', userActions: [],
+            })).rejects.toThrow('storage unavailable');
+        } finally {
+            vi.unstubAllGlobals();
+        }
+    });
+
+    it('keeps a valid saved crash after a day until it is explicitly cleared', async () => {
+        const { module, fileSystem } = await loadModule({ platformOs: 'android' });
+        fileSystem.files.set(SNAPSHOT_PATH, JSON.stringify({
+            v: 1, createdAtMs: Date.now() - 2 * 24 * 60 * 60 * 1000, reason: 'crash', platform: 'android',
+            origin: null, isSecureContext: null, errorDetails: 'original stack', appLogs: '', userActions: [],
+        }));
+        await expect(module.peekPreRestartBugReportSnapshot()).resolves.toMatchObject({ errorDetails: 'original stack' });
+        await expect(module.peekPreRestartBugReportSnapshot()).resolves.toMatchObject({ errorDetails: 'original stack' });
+        await module.clearPreRestartBugReportSnapshot();
+        await expect(module.peekPreRestartBugReportSnapshot()).resolves.toBeNull();
+    });
     it('persists and reads a native pre-restart snapshot even when top-level expo-file-system legacy methods throw', async () => {
         const { module, fileSystem } = await loadModule({ platformOs: 'android' });
         const createdAtMs = Date.now() - 5_000;
@@ -116,10 +149,10 @@ describe('preRestartBugReportSnapshot native behavior', () => {
             appLogs: 'logs',
         });
         expect(fileSystem.fileWrite).toHaveBeenCalledWith(
-            SNAPSHOT_PATH,
+            'file:///documents/pre-restart-bug-report-snapshot.v1.json',
             expect.stringContaining('"errorDetails":"boom"'),
         );
-        expect(fileSystem.fileText).toHaveBeenCalledWith(SNAPSHOT_PATH);
+        expect(fileSystem.fileText).toHaveBeenCalledWith('file:///documents/pre-restart-bug-report-snapshot.v1.json');
     });
 
     it('clears an invalid native snapshot payload', async () => {

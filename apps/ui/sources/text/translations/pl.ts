@@ -1191,6 +1191,13 @@ export const pl: TranslationStructure = {
   },
 
   appCrash: {
+      copyFailed: "Nie udało się skopiować szczegółów awarii. Spróbuj ponownie.",
+      discardFailed: "Nie udało się odrzucić zapisanej awarii. Spróbuj ponownie.",
+      restartWithoutReport: "Uruchom ponownie bez zapisywania",
+      reportSaveFailed: "Nie udało się zapisać szczegółów awarii. Skopiuj je przed ponownym uruchomieniem lub spróbuj zgłosić awarię ponownie.",
+      savedReportNotice: "Zapisana awaria jest pokazana poniżej. Sprawdź i edytuj ją przed wysłaniem. Pozostanie na tym urządzeniu do wysłania lub odrzucenia.",
+      discardSavedReport: "Odrzuć zapisaną awarię",
+      stackTruncated: "Stos skrócony dla tego pola. Pełna awaria pozostaje zapisana na tym urządzeniu.",
     title: "Coś poszło nie tak",
     subtitle:
       "W Happier wystąpił nieoczekiwany błąd. Możesz ponownie uruchomić interfejs aplikacji lub skopiować szczegóły dla pomocy.",
@@ -6786,6 +6793,9 @@ export const pl: TranslationStructure = {
     tmuxFallback: "Fallback tmux",
     copyMetadata: "Kopiuj metadane",
     copyDebugInformation: "Kopiuj informacje",
+    sessionInformation: "Informacje o sesji",
+    happierSessionId: "ID sesji Happier",
+    providerSessionId: ({ provider }: { provider: string }) => `ID sesji ${provider}`,
     debugInformationCopyLabel: "Informacje",
     providerSessionLogs: ({ provider }: { provider: string }) => `Logi sesji ${provider}`,
     agentState: "Stan agenta",
@@ -10302,6 +10312,7 @@ settingsSession: {
     cameraPermissionsRequiredToConnectTerminal:
       "Uprawnienia do kamery są wymagane do połączenia terminala",
     failedToLinkDevice: "Nie udało się połączyć urządzenia",
+    deviceLinkRequestNotFound: "Na tym przekaźniku nie znaleziono oczekującej prośby o połączenie urządzeń. Sprawdź, czy oba urządzenia używają tego samego przekaźnika, a następnie wygeneruj nowy kod QR.",
     cameraPermissionsRequiredToScanQr:
       "Uprawnienia do kamery są wymagane do skanowania kodów QR",
     qrScannerUnavailable:

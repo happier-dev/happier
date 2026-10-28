@@ -2305,6 +2305,11 @@
     find-up "^5.0.0"
     js-yaml "^4.1.0"
 
+"@fastify/accept-negotiator@^2.0.0":
+  version "2.1.2"
+  resolved "https://registry.yarnpkg.com/@fastify/accept-negotiator/-/accept-negotiator-2.1.2.tgz#68aad49195c577c3c598132924fa7da2498be58e"
+  integrity sha512-LV7MZqTwXTEt3GxBT6BU8ACztWnv++hSkMEsP3usIHiI0tA4F5EO4THhDCOr5J/ginM9DCnLCmZ6u3JLA9x8Iw==
+
 "@fastify/ajv-compiler@^4.0.5":
   version "4.0.5"
   resolved "https://registry.npmjs.org/@fastify/ajv-compiler/-/ajv-compiler-4.0.5.tgz"
@@ -2321,6 +2326,15 @@
   dependencies:
     "@fastify/error" "^4.0.0"
     fastify-plugin "^5.0.0"
+
+"@fastify/compress@9.2.2":
+  version "9.2.2"
+  resolved "https://registry.yarnpkg.com/@fastify/compress/-/compress-9.2.2.tgz#6ffcdf4ee09bd2d5b722b6d3797fd593a462e29a"
+  integrity sha512-FF1CSw1ED4f2lZmYDXmpHgDJLj752JBr7Tdv6Z5SYkZmbvwzlagWwKvF3OGWPzbL7pRFgoki6rNyh/yu8tb92w==
+  dependencies:
+    "@fastify/accept-negotiator" "^2.0.0"
+    fastify-plugin "^6.0.0"
+    mime-db "^1.52.0"
 
 "@fastify/cors@^10.0.1":
   version "10.1.0"
@@ -10474,6 +10488,11 @@ fastify-plugin@^5.0.0:
   resolved "https://registry.npmjs.org/fastify-plugin/-/fastify-plugin-5.1.0.tgz"
   integrity sha512-FAIDA8eovSt5qcDgcBvDuX/v0Cjz0ohGhENZ/wpc3y+oZCY2afZ9Baqql3g/lC+OHRnciQol4ww7tuthOb9idw==
 
+fastify-plugin@^6.0.0:
+  version "6.0.1"
+  resolved "https://registry.yarnpkg.com/fastify-plugin/-/fastify-plugin-6.0.1.tgz#c74d5e3b498612d2e2111336ea8099eb962dfb5e"
+  integrity sha512-4wW4RxSmvPXLrh5mgQEiu43qU3bw44N2ss4FTkTkQIbprUhE+/s43QX0j/ttcztdWK7PEkHqVthdc5GdEGDvjA==
+
 fastify-type-provider-zod@6.1.0:
   version "6.1.0"
   resolved "https://registry.npmjs.org/fastify-type-provider-zod/-/fastify-type-provider-zod-6.1.0.tgz"
@@ -13751,7 +13770,7 @@ mime-db@1.52.0:
   resolved "https://registry.npmjs.org/mime-db/-/mime-db-1.52.0.tgz"
   integrity sha512-sPU4uV7dYlvtWJxwwxHD0PuihVNiE7TyAbQ5SWxDCB9mUYvOgroQOwYQQOKPJ8CIbE+1ETVlOoK1UC2nU3gYvg==
 
-"mime-db@>= 1.43.0 < 2", mime-db@^1.54.0:
+"mime-db@>= 1.43.0 < 2", mime-db@^1.52.0, mime-db@^1.54.0:
   version "1.54.0"
   resolved "https://registry.npmjs.org/mime-db/-/mime-db-1.54.0.tgz"
   integrity sha512-aU5EJuIN2WDemCcAp2vFBfp/m4EAhWJnUNSSw0ixs7/kXbd6Pg64EmwJkNdFhB8aWt1sH2CTXrLxo/iAGV3oPQ==

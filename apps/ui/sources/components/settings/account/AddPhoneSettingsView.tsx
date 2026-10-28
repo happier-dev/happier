@@ -4,7 +4,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 import { useAuth } from '@/auth/context/AuthContext';
-import { authAccountApprove } from '@/auth/flows/accountApprove';
+import { authAccountApprove, getAccountApproveErrorMessageKey } from '@/auth/flows/accountApprove';
 import { buildAccountLinkResponse } from '@/auth/flows/buildAccountLinkResponse';
 import { usePairingSession } from '@/hooks/auth/usePairingSession';
 import { pairingConsume } from '@/sync/api/account/apiPairingAuth';
@@ -162,7 +162,8 @@ export const AddPhoneSettingsView = React.memo(function AddPhoneSettingsView() {
             await Modal.alertAsync(t('common.success'), t('common.done'));
             void startPairingWithAlert();
         } catch (e) {
-            await Modal.alertAsync(t('common.error'), t('errors.operationFailed'));
+            const messageKey = getAccountApproveErrorMessageKey(e) ?? 'errors.operationFailed';
+            await Modal.alertAsync(t('common.error'), t(messageKey));
         } finally {
             setApproving(false);
         }

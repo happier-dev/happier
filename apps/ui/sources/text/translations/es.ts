@@ -1171,6 +1171,13 @@ export const es: TranslationStructure = {
   },
 
   appCrash: {
+      copyFailed: "No se pudieron copiar los detalles del fallo. Inténtalo de nuevo.",
+      discardFailed: "No se pudo descartar el fallo guardado. Inténtalo de nuevo.",
+      restartWithoutReport: "Reiniciar sin guardar",
+      reportSaveFailed: "No se pudieron guardar los detalles del fallo. Cópialos antes de reiniciar o vuelve a intentar enviar el informe.",
+      savedReportNotice: "El fallo guardado se muestra abajo. Revísalo y edítalo antes de enviarlo. Permanece en este dispositivo hasta enviarlo o descartarlo.",
+      discardSavedReport: "Descartar fallo guardado",
+      stackTruncated: "Pila abreviada para este campo. El fallo completo sigue guardado en este dispositivo.",
     title: "Algo salió mal",
     subtitle:
       "Happier tuvo un error inesperado. Puedes reiniciar la interfaz de la app o copiar los detalles para soporte.",
@@ -6768,6 +6775,9 @@ export const es: TranslationStructure = {
     tmuxFallback: "Fallback de tmux",
     copyMetadata: "Copiar metadatos",
     copyDebugInformation: "Copiar información",
+    sessionInformation: "Información de la sesión",
+    happierSessionId: "ID de sesión de Happier",
+    providerSessionId: ({ provider }: { provider: string }) => `ID de sesión de ${provider}`,
     debugInformationCopyLabel: "Información",
     providerSessionLogs: ({ provider }: { provider: string }) => `Registros de sesión de ${provider}`,
     agentState: "Estado del agente",
@@ -10308,6 +10318,7 @@ settingsSession: {
     cameraPermissionsRequiredToConnectTerminal:
       "Se requieren permisos de cámara para conectar terminal",
     failedToLinkDevice: "Falló al vincular dispositivo",
+    deviceLinkRequestNotFound: "No se encontró ninguna solicitud de vinculación pendiente en este relay. Comprueba que ambos dispositivos usen el mismo relay y genera un nuevo código QR.",
     cameraPermissionsRequiredToScanQr:
       "Se requieren permisos de cámara para escanear códigos QR",
     qrScannerUnavailable:

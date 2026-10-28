@@ -20,6 +20,15 @@ function buildChange(params: {
 }
 
 describe('planSyncActionsFromChanges', () => {
+    it.each(['share', 'pins', 'attentionStandings', 'invalid-id', 'session'] as const)('owns account-list reconciliation for %s changes', (kind) => {
+        const planned = planSyncActionsFromChanges([
+            buildChange({ cursor: 1, kind: 'session', entityId: 'changed-row' }),
+            buildChange({ cursor: 2, kind: kind === 'share' ? 'share' : kind === 'pins' || kind === 'attentionStandings' ? 'account' : 'session',
+                entityId: kind === 'invalid-id' ? '' : 'changed-row',
+                hint: kind === 'pins' || kind === 'attentionStandings' ? { sessionOrganization: true, scope: kind } : null }),
+        ]);
+        expect(planned).toMatchObject({ reconcileSessionList: kind !== 'session' });
+    });
     it('refreshes appearance organization data without fetching unchanged session records', () => {
         const planned = planSyncActionsFromChanges([buildChange({ cursor: 1, kind: 'session', entityId: 's1', hint: { sessionOrganization: true, scope: 'sessionAppearances', sessionIds: ['s1'] } })]);
         expect(planned.sessionOrganization).toMatchObject({ mode: 'snapshot', assignmentSessionIds: ['s1'] });

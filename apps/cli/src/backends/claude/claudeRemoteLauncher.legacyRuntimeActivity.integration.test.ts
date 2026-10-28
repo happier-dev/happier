@@ -3,6 +3,9 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import * as fs from 'node:fs';
+import { ChildProcess, spawn } from 'node:child_process';
+import { once } from 'node:events';
+import psList from 'ps-list';
 
 import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
 import type { SessionClientPort } from '@/api/session/sessionClientPort';
@@ -21,12 +24,22 @@ import { completedNativeChildTranscript } from './workflows/claudeWorkflowActivi
 import type { SessionWorkflowRunSnapshotV1 } from '@happier-dev/protocol';
 import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import type { SessionHookData } from './utils/startHookServer';
+import { createSessionTurnLifecycle } from '@/agent/runtime/session/turn/lifecycle';
+import type { SessionTurnMutationV1 } from '@/api/session/mutations/sessionMutationTypes';
+import { waitForProcessExit } from '@/testkit/process/spawn';
+import type { ACPMessageData, ACPProvider } from '@/api/session/sessionMessageTypes';
 
 const mockQuery = vi.hoisted(() => vi.fn());
 const mockClaudeRemote = vi.hoisted(() => vi.fn());
 const mockClaudeRemoteAgentSdk = vi.hoisted(() => vi.fn());
 const mockRunClaudeUnifiedTerminalSession = vi.hoisted(() => vi.fn());
 const notifyDaemonSessionStarted = vi.hoisted(() => vi.fn(async () => ({})));
+
+// Process enumeration is an OS boundary. All tests retain the real implementation unless explicitly denied.
+vi.mock('ps-list', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('ps-list')>();
+  return { default: vi.fn(actual.default) };
+});
 
 // Replace only the OS filesystem operation; keep Session identity and launcher recovery real.
 vi.mock('node:fs', async importOriginal => {
@@ -519,6 +532,105 @@ describe.sequential('claudeRemoteLauncher legacy Runtime Activity subscriber', (
     expect(settled).toEqual({ reason: 'exit' });
     expect(providerAbortObserved).toBe(true);
     await expect(session.closeProviderInputAdmissionAndWaitForDispatches()).resolves.toBeUndefined();
+  });
+
+  it.each([false, true])('surfaces idle process cleanup failure and exits without replacement when issue publication fails: %s', async (publicationFails) => {
+    const { session } = createHarness();
+    const transcriptDir = await mkdtemp(join(tmpdir(), 'claude-cleanup-health-'));
+    session.transcriptPath = join(transcriptDir, 'claude-current.jsonl');
+    await writeFile(session.transcriptPath, JSON.stringify({ type: 'user', uuid: 'previous-prompt', sessionId: 'claude-current',
+      message: { role: 'user', content: 'previous prompt' } }) + '\n');
+    const mutations: SessionTurnMutationV1[] = [];
+    const lifecycle = createSessionTurnLifecycle({
+      sessionId: session.client.sessionId,
+      // The durable session mutation transport is the boundary; classification and lifecycle stay real.
+      enqueueSessionTurn: async (mutation) => {
+        mutations.push(mutation);
+        if (publicationFails && mutation.action === 'fail') throw new Error('Session mutation transport unavailable');
+      },
+    });
+    const markerWrites: Promise<void>[] = [];
+    Object.assign(session.client, { sessionTurnLifecycle: lifecycle,
+      // Mirror SessionClient's transport boundary by forwarding markers to the real lifecycle owner.
+      sendAgentMessage: (provider: ACPProvider, body: ACPMessageData) => {
+        const marker = lifecycle.observeAcpLifecycleMarker({ provider, body });
+        if (marker.pendingWrite) markerWrites.push(marker.pendingWrite);
+      },
+      getStoredContentEncryptionContext: () => ({ mode: 'plain' }), upsertSessionSystemRecord: async () => {} });
+    const queryIdle = createDeferred<void>();
+    const finishQuery = createDeferred<void>();
+    const children: ChildProcess[] = [];
+    const infoFile = vi.spyOn(logger, 'infoFile');
+    let queryStarts = 0;
+    const createQuery: NonNullable<Parameters<typeof actualClaudeRemoteAgentSdk.claudeRemoteAgentSdk>[0]['createQuery']> = ({ prompt, options }) => {
+      queryStarts += 1;
+      const spawnProcess = options?.spawnClaudeCodeProcess;
+      if (typeof spawnProcess !== 'function') throw new Error('Expected SDK owned-process boundary');
+      const owned: unknown = spawnProcess({ command: process.execPath, args: [], env: process.env });
+      if (!(owned instanceof ChildProcess) || !owned.stdout) throw new Error('Expected real owned fixture child');
+      children.push(owned);
+      const childReady = once(owned.stdout, 'data');
+      return {
+        async *[Symbol.asyncIterator]() {
+          await childReady;
+          if (typeof prompt === 'string') throw new Error('Expected SDK prompt stream');
+          const first = await prompt[Symbol.asyncIterator]().next();
+          if (first.done) throw new Error('Expected first queued prompt');
+          yield { ...first.value, session_id: 'claude-current' };
+          yield { type: 'result', subtype: 'success', is_error: false, result: 'Turn completed', session_id: 'claude-current' };
+          queryIdle.resolve(undefined);
+          await finishQuery.promise;
+        },
+        // SDK close can finish before its owned child exits. Canonical cleanup must still run.
+        close: () => {},
+        setPermissionMode: async () => {}, setModel: async () => {}, setMaxThinkingTokens: async () => {},
+        supportedCommands: async () => [], supportedModels: async () => [],
+      } as unknown as Query;
+    };
+    mockClaudeRemoteAgentSdk.mockImplementation((opts: Parameters<typeof actualClaudeRemoteAgentSdk.claudeRemoteAgentSdk>[0]) => (
+      actualClaudeRemoteAgentSdk.claudeRemoteAgentSdk({ ...opts, claudeExecutablePath: '/tmp/claude', createQuery,
+        spawnClaudeCodeProcess: () => spawn(process.execPath, ['-e', "console.log('ready'); setInterval(() => {}, 1000)"], { stdio: 'pipe' }),
+      })
+    ));
+    const mode = { permissionMode: 'default', claudeRemoteAgentSdkEnabled: true, claudeUnifiedTerminalEnabled: false } as const;
+    session.queue.push('complete before cleanup', mode, { userMessageLocalId: 'cleanup-health-input' });
+    let restoreEnumeration = () => {};
+    const launcher = claudeRemoteLauncher(session);
+    try {
+      await queryIdle.promise;
+      await Promise.all(markerWrites);
+      expect(lifecycle.hasActiveTurn()).toBe(false);
+      const originalEnumeration = vi.mocked(psList).getMockImplementation();
+      if (!originalEnumeration) throw new Error('Expected real process enumeration default');
+      vi.mocked(psList).mockRejectedValue(new Error('Private process-list failure'));
+      restoreEnumeration = () => { vi.mocked(psList).mockImplementation(originalEnumeration); };
+      finishQuery.resolve(undefined);
+      await expect(launcher).resolves.toBe('exit');
+      expect(infoFile).toHaveBeenCalledWith('[process-tree] Owned process cleanup could not be verified', {
+        code: 'process_tree_termination_incomplete', discoveryFailed: true, probeFailed: false, signallingFailed: false,
+      });
+      expect(mutations.find(mutation => mutation.action === 'fail')).toMatchObject({
+        provider: 'claude', issue: { scope: 'primary_session', status: 'failed', source: 'provider_session_error' },
+      });
+      expect(session.sessionId).toBe('claude-current');
+      expect(queryStarts).toBe(1);
+      expect(session.client.discardPendingMessageQueueV2All).not.toHaveBeenCalled();
+      expect(session.client.blockPendingMessageDelivery).not.toHaveBeenCalled();
+      if (publicationFails) {
+        expect(infoFile).toHaveBeenCalledWith('[remote]: failed to record unverified provider termination runtime issue', expect.any(Object));
+      }
+    } finally {
+      restoreEnumeration();
+      finishQuery.resolve(undefined);
+      for (const owned of children) {
+        owned.kill('SIGKILL');
+        if (owned.pid) await waitForProcessExit(owned.pid);
+      }
+      await session.cleanup();
+      await launcher;
+      infoFile.mockRestore();
+      await rm(transcriptDir, { recursive: true, force: true });
+    }
   });
 
   it('projects authenticated legacy hooks into the real workflow source while the child runs', async () => {

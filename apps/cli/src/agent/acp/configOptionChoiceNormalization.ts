@@ -33,15 +33,27 @@ export function normalizeAcpConfigOptionChoices<TValue>(
   return out;
 }
 
-export function isAcpModelConfigOptionLike(value: {
+/** Resolve one selector; category=model may also describe providers or model controls. */
+export function resolveAcpModelConfigOption<T extends {
   id?: unknown;
   name?: unknown;
   category?: unknown;
-}): boolean {
-  const id = typeof value.id === 'string' ? value.id.trim().toLowerCase() : '';
-  const name = typeof value.name === 'string' ? value.name.trim().toLowerCase() : '';
-  const category = typeof value.category === 'string' ? value.category.trim().toLowerCase() : '';
-  return category === 'model' || id === 'model' || name === 'model';
+  type?: unknown;
+  options?: unknown;
+}>(options: ReadonlyArray<T>, declaredId?: string | null): T | null {
+  const selectors = options.filter((option) => Array.isArray(option.options)
+    && (option.type === undefined || option.type === 'select' || option.type === 'enum'));
+  if (declaredId) {
+    // Wire ids are opaque, including whitespace and case.
+    const declared = selectors.filter((option) => option.id === declaredId);
+    if (declared.length > 0) return declared.length === 1 ? declared[0] : null;
+  }
+  const named = selectors.filter((option) => option.id === 'model'
+    || (typeof option.name === 'string' && option.name.trim().toLowerCase() === 'model'));
+  if (named.length > 0) return named.length === 1 ? named[0] : null;
+  const categorized = selectors.filter((option) => typeof option.category === 'string'
+    && option.category.trim().toLowerCase() === 'model');
+  return categorized.length === 1 ? categorized[0] : null;
 }
 
 export function isAcpModeConfigOptionLike(value: {

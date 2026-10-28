@@ -122,12 +122,8 @@ export async function collectBugReportDiagnosticsArtifacts(input: {
     const preRestart = await peekPreRestartBugReportSnapshot();
     if (preRestart) {
         let pushedAny = false;
-        pushedAny = pushArtifact(artifacts, {
-            filename: 'pre-restart-crash.txt',
-            sourceKind: 'ui-mobile',
-            contentType: 'text/plain',
-            content: preRestart.errorDetails,
-        }, input) || pushedAny;
+        // The composer owns the editable exception text. Reattaching the saved original here
+        // would silently undo the user's edits/redactions in the report fields.
         pushedAny = pushArtifact(artifacts, {
             filename: 'pre-restart-app-console.log',
             sourceKind: 'ui-mobile',

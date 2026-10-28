@@ -37,6 +37,7 @@ import {
   SessionRunnerStatusGetRequestV1Schema,
   SessionSpawnSourceContextV1Schema,
   getActionSpec,
+  resolveSessionWorkspaceRootForMachine,
   type ConnectedServiceBindingsV1,
   type SessionForkRpcResult,
   type SessionHandoffStartRequest,
@@ -403,6 +404,8 @@ function parseEnvBoundedInt(
 
 export function registerMachineRpcHandlers(params: Readonly<{
   rpcHandlerManager: RpcHandlerManager;
+  /** Receiver identity; callers without it retain raw paths but cannot use workspace mappings. */
+  machineId?: string;
   handlers: MachineRpcHandlers;
   deps?: MachineRpcHandlerDeps;
 }>): MachineRpcLifecycleRegistration {
@@ -1549,9 +1552,11 @@ export function registerMachineRpcHandlers(params: Readonly<{
       };
     }
 
-    const directory = typeof parentMetadata.path === 'string' && parentMetadata.path.trim().length > 0
-      ? parentMetadata.path.trim()
-      : '';
+    const directory = resolveSessionWorkspaceRootForMachine({
+      metadata: parentMetadata,
+      machineId: params.machineId ?? '',
+      candidatePath: typeof parentMetadata.path === 'string' ? parentMetadata.path.trim() : '',
+    }).machinePath;
     if (!directory) {
       return {
         ok: false,

@@ -29,6 +29,18 @@ different store retain their pinned root. Existing-state handoff and bundle impo
 use the same native environment-overlay owner for their target environment.
 These rules do not recover the original authentication environment of older links.
 
+In development source, Claude Direct candidates publish the native JSONL `cwd`
+through the same working-directory reader used by takeover, so browse linking can
+persist the workspace path without decoding the lossy project-directory name.
+For existing links with an empty path, machine targeting and fork use the shared
+workspace-root resolver to recover a valid `sessionWorkspaceLocationV1` for the
+same machine. Agent and host paths remain distinct; a nonempty conflicting path,
+malformed mapping, or foreign-machine mapping is not replaced. Target selection
+checks the resolved machine, and fork checks the receiving daemon's identity,
+including when a replacement daemon handles the request. This corrects
+workspace targeting for file transfers and replay/config forks; Claude Direct
+native fork support is unchanged. These corrections have not been released.
+
 In development source, the remote launcher records unexpected launch failures
 in the normal session file log, including failures before the SDK subprocess or
 its debug log exists. The entry includes redacted error text and the existing

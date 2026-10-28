@@ -14,6 +14,7 @@ export function resolveSessionMachineRpcTarget(input: Readonly<{
     sessionActive?: boolean | null;
     sessionMachineId?: string | null;
     sessionPath?: string | null;
+    sessionWorkspaceMetadata?: unknown;
     projectMachineId?: string | null;
     projectPath?: string | null;
     machines: MachineCollection<Machine>;
@@ -22,6 +23,7 @@ export function resolveSessionMachineRpcTarget(input: Readonly<{
         sessionActive: input.sessionActive,
         sessionMachineId: input.sessionMachineId,
         sessionPath: input.sessionPath,
+        sessionWorkspaceMetadata: input.sessionWorkspaceMetadata,
         projectMachineId: input.projectMachineId,
         projectPath: input.projectPath,
         machines: input.machines,
