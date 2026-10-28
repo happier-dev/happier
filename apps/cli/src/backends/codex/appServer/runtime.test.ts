@@ -32,6 +32,7 @@ import { createExecutionRunPermissionHandler } from '@/agent/executionRuns/polic
 import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
 import { createSessionProviderInputConsumer } from '@/agent/runtime/sessionInput/SessionProviderInputConsumer';
 import { ProviderCliNotFoundError } from '@/runtime/managedTools/requireProviderCliCommand';
+import { isCodexTurnFailureSettled } from '@/backends/codex/runtime/sessionTurnLifecycle';
 import { waitForCondition } from '@/testkit/async/waitFor';
 import { createApiSessionClientFixture, createMutableApiSessionClientFixture } from '@/testkit/backends/sessionFixtures';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
@@ -1881,84 +1882,35 @@ describe('createCodexAppServerRuntime', () => {
         );
     });
 
-    it('fails the session with a provider_cli_not_found runtime issue when the codex CLI is missing at startOrLoad', async () => {
+    it('leaves a missing-CLI startOrLoad failure unsettled for the runner to surface once', async () => {
         const { root } = await createRuntimeFixture('happier-codex-app-server-runtime-missing-cli-');
         // The explicit override is exclusive: a bogus HAPPIER_CODEX_PATH defeats the fixture's
         // fake app-server binary and makes requireProviderCliCommand throw ProviderCliNotFoundError.
-        envScope.patch({ HAPPIER_CODEX_APP_SERVER_BIN: undefined });
-        const savedCodexPath = process.env.HAPPIER_CODEX_PATH;
-        process.env.HAPPIER_CODEX_PATH = '/definitely-missing-happier-codex/codex';
-        try {
-            const metadata = createRuntimeMetadata(root);
-            const session = createApiSessionClientFixture({ metadata });
-            const sendAgentMessage = vi.spyOn(session, 'sendAgentMessage');
-            const runtime = createCodexAppServerRuntime({
-                directory: root,
-                session,
-                onThinkingChange: vi.fn(),
-            });
-
-            const error = await runtime.startOrLoad({}).then(() => null, (caught: unknown) => caught);
-
-            expect(error).toBeInstanceOf(ProviderCliNotFoundError);
-            expect(sendAgentMessage).toHaveBeenCalledWith('codex', expect.objectContaining({
-                type: 'turn_failed',
-                issue: expect.objectContaining({
-                    code: 'provider_cli_not_found',
-                    source: 'dependency_failure',
-                    sanitizedPreview: expect.stringContaining('HAPPIER_CODEX_PATH'),
-                }),
-            }));
-        } finally {
-            if (savedCodexPath === undefined) {
-                delete process.env.HAPPIER_CODEX_PATH;
-            } else {
-                process.env.HAPPIER_CODEX_PATH = savedCodexPath;
-            }
-        }
-    });
-
-    it('dedupes the provider_cli_not_found failed turn across resume-fallback startOrLoad retries', async () => {
-        const { root } = await createRuntimeFixture('happier-codex-app-server-runtime-missing-cli-dedupe-');
-        envScope.patch({ HAPPIER_CODEX_APP_SERVER_BIN: undefined });
-        const savedCodexPath = process.env.HAPPIER_CODEX_PATH;
-        process.env.HAPPIER_CODEX_PATH = '/definitely-missing-happier-codex/codex';
-        try {
-            const mutations: SessionTurnMutationV1[] = [];
-            const lifecycle = createSessionTurnLifecycle({
-                sessionId: 'session-missing-cli-dedupe',
+        envScope.patch({
+            HAPPIER_CODEX_APP_SERVER_BIN: undefined,
+            HAPPIER_CODEX_PATH: '/definitely-missing-happier-codex/codex',
+        });
+        const mutations: SessionTurnMutationV1[] = [];
+        const session = {
+            ...createApiSessionClientFixture({ metadata: createRuntimeMetadata(root) }),
+            sessionTurnLifecycle: createSessionTurnLifecycle({
+                sessionId: 'session-missing-cli',
                 enqueueSessionTurn: async (mutation) => { mutations.push(mutation); },
-            });
-            const session = {
-                ...createApiSessionClientFixture({ metadata: createRuntimeMetadata(root) }),
-                sessionTurnLifecycle: lifecycle,
-            } as unknown as Parameters<typeof createCodexAppServerRuntimeProduction>[0]['session'];
-            const runtime = createCodexAppServerRuntime({
-                directory: root,
-                session,
-                onThinkingChange: vi.fn(),
-            });
+            }),
+        } as unknown as Parameters<typeof createCodexAppServerRuntimeProduction>[0]['session'];
+        const runtime = createCodexAppServerRuntime({
+            directory: root,
+            session,
+            onThinkingChange: vi.fn(),
+        });
 
-            // Mirrors runCodex's resume flow with the CLI missing: the resume attempt
-            // fails, then the fresh-session fallback startOrLoad fails the same way.
-            await expect(runtime.startOrLoad({ resumeId: 'thread-resume-missing-cli' })).rejects.toBeInstanceOf(ProviderCliNotFoundError);
-            await expect(runtime.startOrLoad({})).rejects.toBeInstanceOf(ProviderCliNotFoundError);
+        const error = await runtime.startOrLoad({}).then(() => null, (caught: unknown) => caught);
 
-            const failedTurnIssues = mutations
-                .filter((mutation): mutation is Extract<SessionTurnMutationV1, { action: 'fail' }> => mutation.action === 'fail')
-                .map((mutation) => mutation.issue);
-            expect(failedTurnIssues).toHaveLength(1);
-            expect(failedTurnIssues[0]).toEqual(expect.objectContaining({
-                code: 'provider_cli_not_found',
-                source: 'dependency_failure',
-            }));
-        } finally {
-            if (savedCodexPath === undefined) {
-                delete process.env.HAPPIER_CODEX_PATH;
-            } else {
-                process.env.HAPPIER_CODEX_PATH = savedCodexPath;
-            }
-        }
+        expect(error).toBeInstanceOf(ProviderCliNotFoundError);
+        // No provider turn began, so the runner's prompt-loop catch owns the one classified failed
+        // turn; the runtime surfacing it too would double-report resume + fallback attempts.
+        expect(isCodexTurnFailureSettled(error)).toBe(false);
+        expect(mutations).toEqual([]);
     });
 
     it('retries native resume when Codex transiently cannot initialize its shared SQLite state runtime', async () => {
@@ -3073,7 +3025,11 @@ describe('createCodexAppServerRuntime', () => {
         });
 
         await runtime.startOrLoad({});
-        await expect(runtime.sendPrompt('top-level-failed-turn')).rejects.toThrow(/top-level failed turn/);
+        const failure = await runtime.sendPrompt('top-level-failed-turn').then(() => null, (caught: unknown) => caught);
+        expect(failure).toBeInstanceOf(Error);
+        expect((failure as Error).message).toMatch(/top-level failed turn/);
+        // The runtime already failed the session turn; the runner must not surface it again.
+        expect(isCodexTurnFailureSettled(failure)).toBe(true);
 
         expect(sessionTurnLifecycle.completeTurn).not.toHaveBeenCalled();
         expect(sessionTurnLifecycle.failTurn).toHaveBeenCalledWith(expect.objectContaining({

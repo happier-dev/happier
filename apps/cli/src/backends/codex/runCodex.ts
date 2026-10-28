@@ -1,7 +1,6 @@
 import { applyPermissionModeToCodexPermissionHandler } from './utils/applyPermissionModeToHandler';
 import { createCodexPermissionHandler, type CodexRuntimePermissionHandler } from './utils/createCodexPermissionHandler';
 import { DiffProcessor } from './utils/diffProcessor';
-import { surfaceMissingCodexCliIssue } from './utils/surfaceMissingCodexCliIssue';
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { logger } from '@/ui/logger';
@@ -160,6 +159,7 @@ import { cleanupCodexRunResources } from './runtime/cleanupRunResources';
 import {
     emitReadyIfIdle,
     extractCodexToolErrorText,
+    isCodexTurnFailureSettled,
     nextStoredSessionIdForResumeAfterAttempt,
 } from './runtime/sessionTurnLifecycle';
 import { createLocalRemoteModeController } from '@/agent/localControl/createLocalRemoteModeController';
@@ -1462,11 +1462,40 @@ export async function runCodex(opts: {
             cause: 'status_error',
             error: cause,
             allocateTurnWhenIdle: true,
-            // A strict-resume launch failure may already have surfaced from the runtime
-            // layer; reuse that failed turn instead of allocating a duplicate.
-            suppressUntrustedDuplicate: true,
         });
         throw createCodexResumeError(message, cause);
+    };
+    // Mirrors the shared prompt loop's `runtime.failTurn`: a prompt-loop failure that no Codex
+    // runtime owner has settled (startup before any provider turn: missing CLI, client creation,
+    // initialize) becomes one classified failed turn instead of a bare status line on an idle session.
+    // Returns whether a classified failure now represents this error.
+    const failUnsettledCodexTurn = async (error: unknown): Promise<boolean> => {
+        if (useCodexAcp) {
+            try {
+                return (await codexAcpRuntime?.failTurn(error)) === true;
+            } catch (failTurnError) {
+                logger.debug('[CodexACP] Failed to surface prompt-loop failure as a failed turn (non-fatal)', failTurnError);
+                return false;
+            }
+        }
+        if (isCodexTurnFailureSettled(error)) return false;
+        const remoteRuntime = useCodexAppServer ? getCodexRemoteRuntime() : null;
+        // A failed steer leaves the in-flight provider turn running; the runtime still owns that turn.
+        if (remoteRuntime && (remoteRuntime.hasActiveProviderTurn?.() ?? remoteRuntime.isTurnInFlight())) return false;
+        try {
+            await surfacePrimarySessionRuntimeIssue({
+                provider: 'codex',
+                session,
+                sessionSeq: session.getLastObservedMessageSeq(),
+                cause: 'status_error',
+                error,
+                allocateTurnWhenIdle: true,
+            });
+            return true;
+        } catch (surfaceError) {
+            logger.debug('[Codex] Failed to surface prompt-loop failure as a failed turn (non-fatal)', surfaceError);
+            return false;
+        }
     };
 
 	    if (codexAcpFallbackToMcpMessage && codexAcpFallbackToMcpMessage !== initialCodexAcpFallbackToMcpMessage) {
@@ -1764,18 +1793,13 @@ export async function runCodex(opts: {
         });
 
     if (!useCodexAcp && !useCodexAppServer) {
-        try {
-            const codexMcpServer = await resolveCodexMcpServerSpawn();
-            const { CodexMcpClient: CodexMcpClientClass } = await import('./codexMcpClient');
-            client = new CodexMcpClientClass({
-                mode: codexMcpServer.mode,
-                command: codexMcpServer.command,
-                env: codexProviderProcessEnv,
-            });
-        } catch (error) {
-            await surfaceMissingCodexCliIssue({ session, error });
-            throw error;
-        }
+        const codexMcpServer = await resolveCodexMcpServerSpawn();
+        const { CodexMcpClient: CodexMcpClientClass } = await import('./codexMcpClient');
+        client = new CodexMcpClientClass({
+            mode: codexMcpServer.mode,
+            command: codexMcpServer.command,
+            env: codexProviderProcessEnv,
+        });
     }
 
             // NOTE: Codex resume support varies by build; forks may seed `codex-reply` with a stored session id.
@@ -3019,6 +3043,7 @@ export async function runCodex(opts: {
                 } else {
                     let runtimeAuthClassification = readRuntimeAuthClassification(error);
                     let runtimeAuthRecoveryStatusEmitted = false;
+                    let classifiedTurnFailureSurfaced = false;
                     if (runtimeAuthClassification?.kind === 'usage_limit' && !runtimeAuthClassification.profileId && !runtimeAuthClassification.groupId) {
                         // Native quota waits belong to the shared Session recovery owner.
                         // Connected Accounts has no authentication selection to repair.
@@ -3065,12 +3090,16 @@ export async function runCodex(opts: {
                         }
                     } else {
                         logger.warn('Error in codex session:', error);
+                        classifiedTurnFailureSurfaced = await failUnsettledCodexTurn(error);
                     }
                     if (!runtimeAuthRecoveryStatusEmitted) {
                         const details = formatErrorForUi(error);
                         const messageText = `Codex process error: ${details}`;
                         messageBuffer.addMessage(messageText, 'status');
-                        session.sendSessionEvent({ type: 'message', message: messageText });
+                        // The classified failed turn already carries this error for session clients.
+                        if (!classifiedTurnFailureSurfaced) {
+                            session.sendSessionEvent({ type: 'message', message: messageText });
+                        }
                     }
                     // For unexpected errors, keep the ACP session id (best-effort) so a subsequent start can attempt resume.
                     if (useCodexAcp || useCodexAppServer) {

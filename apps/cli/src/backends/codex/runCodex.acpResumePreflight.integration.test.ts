@@ -17,6 +17,8 @@ import { createCodexPermissionHandler } from './utils/createCodexPermissionHandl
 import { applyPermissionModeToCodexPermissionHandler } from './utils/applyPermissionModeToHandler';
 import { createSessionTurnLifecycle } from '@/agent/runtime/session/turn/lifecycle';
 import { createCodexAppServerRpcError } from './appServer/appServerCompatibility';
+import { markCodexTurnFailureSettled } from './runtime/sessionTurnLifecycle';
+import { ProviderCliNotFoundError } from '@/runtime/managedTools/requireProviderCliCommand';
 
 const modelSyncFlushPendingAfterStartSpy = vi.fn(async () => {});
 const sessionModeSyncFlushPendingAfterStartSpy = vi.fn(async () => {});
@@ -1180,6 +1182,201 @@ describe('runCodex CodexACP resume behavior', () => {
         }),
       }),
     ]);
+  });
+
+  describe('Codex startup failures before any provider turn', () => {
+    type FailMutation = Readonly<{ action: 'fail'; turnId: string; issue?: Record<string, unknown> }>;
+
+    function installLifecycleBackedSession(): { mutations: Array<Record<string, unknown>> } {
+      const mutations: Array<Record<string, unknown>> = [];
+      let nextTurnId = 0;
+      initializeBackendRunSessionSpy.mockImplementationOnce(async (opts: any) => {
+        const initialized = await initializeDefaultBackendRunSession(opts);
+        initialized.session.sessionTurnLifecycle = createSessionTurnLifecycle({
+          sessionId: initialized.session.sessionId,
+          createId: () => `startup-failure-${++nextTurnId}`,
+          now: () => 123,
+          enqueueSessionTurn: async (mutation) => {
+            mutations.push(mutation);
+          },
+        });
+        return initialized;
+      });
+      return { mutations };
+    }
+
+    function installAppServerRuntime(overrides: Record<string, unknown>): void {
+      resolveRunnerMcpServersSpy.mockImplementationOnce(async () => ({
+        happierMcpServer: { url: 'http://127.0.0.1:0', stop: vi.fn() },
+        mcpServers: {},
+      }));
+      createCodexAppServerRuntimeSpy.mockImplementationOnce(() => ({
+        ...createDefaultCodexAppServerRuntimeMock(),
+        ...overrides,
+      }));
+    }
+
+    function queueUserMessages(count: number): void {
+      let waitCallCount = 0;
+      sessionInputConsumerWaitForNextInputImpl = async () => {
+        waitCallCount += 1;
+        if (waitCallCount > count) return null;
+        return {
+          message: `prompt ${waitCallCount}`,
+          mode: { permissionMode: 'default', permissionModeUpdatedAt: 1 },
+          isolate: false,
+          hash: `hash-startup-failure-${waitCallCount}`,
+        };
+      };
+    }
+
+    async function runRemoteCodex(extra: Record<string, unknown> = {}): Promise<{ ok: boolean; error?: unknown }> {
+      const { runCodex } = await import('./runCodex');
+      return await runCodex({
+        credentials: { token: 'test' } as Credentials,
+        startedBy: 'terminal',
+        startingMode: 'remote',
+        codexBackendMode: 'appServer',
+        permissionMode: 'default',
+        permissionModeUpdatedAt: 1,
+        ...extra,
+      } as any)
+        .then(() => ({ ok: true }))
+        .catch((error: unknown) => ({ ok: false, error }));
+    }
+
+    function readFailMutations(mutations: ReadonlyArray<Record<string, unknown>>): FailMutation[] {
+      return mutations.filter((mutation): mutation is FailMutation => mutation.action === 'fail');
+    }
+
+    function readEmittedSessionMessages(): string[] {
+      return (lastSessionClient?.sendSessionEvent as ReturnType<typeof vi.fn> | undefined)?.mock.calls
+        .map((call) => call[0]?.message)
+        .filter((message): message is string => typeof message === 'string') ?? [];
+    }
+
+    it('surfaces a non-missing-CLI startup failure as exactly one classified failed turn', async () => {
+      const { mutations } = installLifecycleBackedSession();
+      installAppServerRuntime({
+        startOrLoad: vi.fn(async () => {
+          throw new Error('Codex app-server initialize failed: handshake closed');
+        }),
+      });
+      queueUserMessages(1);
+
+      const outcome = await runRemoteCodex();
+
+      expect(outcome).toMatchObject({ ok: true });
+      const failures = readFailMutations(mutations);
+      expect(failures).toHaveLength(1);
+      expect(failures[0]).toEqual(expect.objectContaining({
+        provider: 'codex',
+        issue: expect.objectContaining({ scope: 'primary_session', status: 'failed' }),
+      }));
+      // The classified failed turn carries the error; the raw status message would only duplicate it.
+      expect(readEmittedSessionMessages().some((message) => message.startsWith('Codex process error:'))).toBe(false);
+    });
+
+    it('surfaces each consecutive startup failure as its own failed turn', async () => {
+      const { mutations } = installLifecycleBackedSession();
+      installAppServerRuntime({
+        startOrLoad: vi.fn(async () => {
+          throw new ProviderCliNotFoundError('codex');
+        }),
+      });
+      queueUserMessages(2);
+
+      const outcome = await runRemoteCodex();
+
+      expect(outcome).toMatchObject({ ok: true });
+      const failures = readFailMutations(mutations);
+      expect(failures).toHaveLength(2);
+      expect(new Set(failures.map((failure) => failure.turnId)).size).toBe(2);
+      for (const failure of failures) {
+        expect(failure.issue).toEqual(expect.objectContaining({
+          code: 'provider_cli_not_found',
+          source: 'dependency_failure',
+        }));
+      }
+    });
+
+    it('surfaces a strict-resume missing-CLI failure as exactly one failed turn', async () => {
+      const { mutations } = installLifecycleBackedSession();
+      installAppServerRuntime({
+        startOrLoad: vi.fn(async () => {
+          throw new ProviderCliNotFoundError('codex');
+        }),
+      });
+      queueUserMessages(1);
+
+      const outcome = await runRemoteCodex({ startedBy: 'daemon', resume: 'resume-missing-cli' });
+
+      expect(outcome).toMatchObject({ ok: false });
+      const failures = readFailMutations(mutations);
+      expect(failures).toHaveLength(1);
+      expect(failures[0]?.issue).toEqual(expect.objectContaining({
+        code: 'provider_cli_not_found',
+        source: 'dependency_failure',
+      }));
+    });
+
+    it('does not surface a second failed turn for a failure the app-server runtime already settled', async () => {
+      const { mutations } = installLifecycleBackedSession();
+      const settledFailure = new Error('Codex turn failed: upstream closed the stream');
+      markCodexTurnFailureSettled(settledFailure);
+      installAppServerRuntime({
+        getSessionId: () => 'thread-settled-failure',
+        startOrLoad: vi.fn(async () => {}),
+        sendPrompt: vi.fn(async () => {
+          throw settledFailure;
+        }),
+      });
+      queueUserMessages(1);
+
+      const outcome = await runRemoteCodex();
+
+      expect(outcome).toMatchObject({ ok: true });
+      expect(readFailMutations(mutations)).toHaveLength(0);
+      expect(readEmittedSessionMessages().some((message) => message.startsWith('Codex process error:'))).toBe(true);
+    });
+
+    it('settles an ACP startup failure through the ACP runtime failTurn owner', async () => {
+      resolveRunnerMcpServersSpy.mockImplementationOnce(async () => ({
+        happierMcpServer: { url: 'http://127.0.0.1:0', stop: vi.fn() },
+        mcpServers: {},
+      }));
+      const startupFailure = new Error('Codex ACP initialize failed');
+      const failTurn = vi.fn(async () => true);
+      createCodexAcpRuntimeSpy.mockImplementationOnce(() => ({
+        getSessionId: () => null,
+        supportsInFlightSteer: () => false,
+        isTurnInFlight: () => false,
+        beginTurn: vi.fn(),
+        cancel: vi.fn(async () => {}),
+        reset: vi.fn(async () => {}),
+        startOrLoad: vi.fn(async () => {
+          throw startupFailure;
+        }),
+        setSessionMode: vi.fn(async () => {}),
+        setSessionModel: vi.fn(async () => {}),
+        setSessionConfigOption: vi.fn(async () => {}),
+        steerPrompt: vi.fn(async () => {}),
+        sendPrompt: vi.fn(async () => {}),
+        sendPromptWithMeta: vi.fn(async () => {}),
+        compactContext: vi.fn(async () => {}),
+        failTurn,
+        flushTurn: vi.fn(async () => {}),
+        rollbackConversation: vi.fn(async () => ({ ok: false, errorCode: 'unsupported_action', errorMessage: 'unsupported' })),
+      }));
+      queueUserMessages(1);
+
+      const outcome = await runRemoteCodex({ codexBackendMode: 'acp' });
+
+      expect(outcome).toMatchObject({ ok: true });
+      expect(failTurn).toHaveBeenCalledTimes(1);
+      expect(failTurn).toHaveBeenCalledWith(startupFailure);
+      expect(readEmittedSessionMessages().some((message) => message.startsWith('Codex process error:'))).toBe(false);
+    });
   });
 
   it('explains an active Codex writer instead of suggesting that app-server cannot run', async () => {

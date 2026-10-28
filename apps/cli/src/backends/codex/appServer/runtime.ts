@@ -38,7 +38,7 @@ import { logger } from '@/ui/logger';
 import { delay } from '@/utils/time';
 import { createSerializedWorkQueueDiagnostics, type SerializedWorkDiagnosticContext } from '@/utils/serializedWorkQueueDiagnostics';
 import { readNonBlankOpaqueIdentifier } from '@/utils/opaqueIdentifiers';
-import { surfaceMissingCodexCliIssue } from '../utils/surfaceMissingCodexCliIssue';
+import { markCodexTurnFailureSettled } from '../runtime/sessionTurnLifecycle';
 import type {
     ActiveTurnPendingPumpOptions,
     DrainPendingOptions,
@@ -3152,6 +3152,9 @@ export function createCodexAppServerRuntime(params: Readonly<{
             emitAllPendingProviderPromptsAsUndeliverable();
         }
         if (options?.error) {
+            // This runtime has terminalized the session turn for this failure (failed or
+            // interrupted above); the runner must not surface it as another failed turn.
+            markCodexTurnFailureSettled(options.error);
             activeTurn.reject(options.error);
             return;
         }
@@ -4396,7 +4399,6 @@ export function createCodexAppServerRuntime(params: Readonly<{
                 break;
             } catch (error) {
                 if (!isRetryableCodexStateRuntimeInitializationFailure(error)) {
-                    await surfaceMissingCodexCliIssue({ session: params.session, error });
                     throw error;
                 }
                 stateRuntimeRetryAttempt += 1;

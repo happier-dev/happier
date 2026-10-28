@@ -54,3 +54,19 @@ export function nextStoredSessionIdForResumeAfterAttempt(
   }
   return attempt.success ? null : storedSessionIdForResume;
 }
+
+const settledCodexTurnFailures = new WeakSet<object>();
+
+/**
+ * Records that a Codex runtime owner has already settled the session turn for this exact
+ * failure (failed it with a classified issue, or interrupted it). The runner's prompt-loop
+ * catch must then not surface the same failure as another failed turn. The marker is scoped
+ * to the error instance, so a later, separate failure still surfaces its own turn.
+ */
+export function markCodexTurnFailureSettled(error: unknown): void {
+  if (error !== null && typeof error === 'object') settledCodexTurnFailures.add(error);
+}
+
+export function isCodexTurnFailureSettled(error: unknown): boolean {
+  return error !== null && typeof error === 'object' && settledCodexTurnFailures.has(error);
+}
