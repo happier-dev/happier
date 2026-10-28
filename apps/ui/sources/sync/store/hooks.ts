@@ -378,6 +378,7 @@ export function useSessionServerId(sessionId: string): string | null {
 
 const emptyArray: unknown[] = [];
 const emptyRecord: Record<string, any> = {};
+const disabledReducerSnapshot: { reducerState: null; reducerVersion: 0 } = { reducerState: null, reducerVersion: 0 };
 const emptyReviewCommentDrafts: ReviewCommentDraft[] = [];
 const emptyActionDrafts: SessionActionDraft[] = [];
 
@@ -875,9 +876,12 @@ export function useSessionInteractionSource(sessionId: string): SessionInteracti
  * Both values come from one subscription so the reducer state never has to be cloned to signal a
  * change: cloning would break the referential stability transcript rows memoize on.
  */
-export function useSessionMessagesReducerSnapshot(sessionId: string) {
+export function useSessionMessagesReducerSnapshot(sessionId: string, enabled: boolean = true) {
   return getStorage()(
     useShallow((state) => {
+      if (!enabled) {
+        return disabledReducerSnapshot;
+      }
       const session = state.sessionMessages[sessionId];
       return {
         reducerState: session?.reducerState ?? null,
@@ -892,9 +896,12 @@ export function useSessionMessagesReducerSnapshot(sessionId: string) {
  * A consumer that memoizes over it must also key on one: {@link useSessionMessagesReducerSnapshot}
  * when the derivation depends on reducer-only state such as sidechains or permissions,
  * {@link useSessionMessagesVersion} when it only follows committed transcript messages.
+ *
+ * `enabled` mirrors the same parameter on `useSessionMessagesById`/`useSessionMessagesVersion`:
+ * an idle consumer keeps the subscription shape but stops tracking message churn entirely.
  */
-export function useSessionMessagesReducerState(sessionId: string) {
-  return useSessionMessagesReducerSnapshot(sessionId).reducerState;
+export function useSessionMessagesReducerState(sessionId: string, enabled: boolean = true) {
+  return useSessionMessagesReducerSnapshot(sessionId, enabled).reducerState;
 }
 
 export function useSessionLatestThinkingMessageId(sessionId: string): string | null {

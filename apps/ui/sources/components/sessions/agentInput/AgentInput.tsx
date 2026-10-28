@@ -432,9 +432,13 @@ interface AgentInputProps {
 function AgentInputAttentionRequestsWithLocations(
     props: Omit<React.ComponentProps<typeof AgentInputAttentionRequests>, 'permissionLocationsById' | 'approvalLocationsByArtifactId'>
 ) {
-    const { ids: committedMessageIdsOldestFirst } = useSessionTranscriptIds(props.sessionId);
-    const committedMessagesById = useSessionMessagesById(props.sessionId);
-    const committedMessagesReducerState = useSessionMessagesReducerState(props.sessionId);
+    // The location maps are derived only while an attention request is actually pending, so the
+    // data subscriptions below gate on that same demand signal — mirroring the two version
+    // subscriptions — instead of tracking every message commit of an idle session.
+    const hasPendingAttentionLocations = props.permissionRequests.length > 0 || (props.approvalRequests?.length ?? 0) > 0;
+    const { ids: committedMessageIdsOldestFirst } = useSessionTranscriptIds(props.sessionId, hasPendingAttentionLocations);
+    const committedMessagesById = useSessionMessagesById(props.sessionId, hasPendingAttentionLocations);
+    const committedMessagesReducerState = useSessionMessagesReducerState(props.sessionId, hasPendingAttentionLocations);
     const permissionLocationVersion = useSessionMessagesVersion(props.sessionId, props.permissionRequests.length > 0);
     const approvalLocationVersion = useSessionMessagesVersion(props.sessionId, (props.approvalRequests?.length ?? 0) > 0);
 
