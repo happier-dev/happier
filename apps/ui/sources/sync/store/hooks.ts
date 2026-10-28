@@ -753,6 +753,20 @@ export function useSessionTranscriptIds(
   );
 }
 
+/**
+ * The committed id list's STRUCTURE version alone (see `SessionMessages.idsStructureVersion`):
+ * it advances only when rows are removed, inserted above the tail, reordered, or replaced
+ * wholesale — never for a pure tail append or an in-place content update.
+ *
+ * A primitive, like `useSessionMessagesVersion`: consumers deciding whether a data change was
+ * structural compare two numbers instead of subscribing to the ids themselves. The value
+ * changes exactly when a non-append-only merge changed the ids, which already re-renders ids
+ * subscribers — so this narrow read adds no renders of its own.
+ */
+export function useSessionTranscriptIdsStructureVersion(sessionId: string): number {
+  return getStorage()((state) => state.sessionMessages[sessionId]?.idsStructureVersion ?? 0);
+}
+
 export function useForkedTranscriptSnapshot(sessionId: string): ForkedTranscriptSnapshot | null {
   return getStorage()(
     useShallow((state) => getForkedTranscriptSnapshotCached(state, sessionId))

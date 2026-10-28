@@ -196,6 +196,17 @@ function readDataVersion(extraData: unknown): React.Key | undefined {
     return typeof extraData === 'string' || typeof extraData === 'number' ? extraData : undefined;
 }
 
+/**
+ * The committed id list's STRUCTURE version, carried by the main transcript's `extraData`
+ * object (`ChatListInternal`'s `transcriptListExtraData`). Absent for hosts that do not
+ * publish it — those keep the unconditional settle behavior below.
+ */
+function readIdsStructureVersion(extraData: unknown): number | undefined {
+    if (!extraData || typeof extraData !== 'object') return undefined;
+    const version = (extraData as { idsStructureVersion?: unknown }).idsStructureVersion;
+    return typeof version === 'number' && Number.isFinite(version) ? version : undefined;
+}
+
 function readWheelDeltaY(event: unknown): number | null {
     if (!event || typeof event !== 'object') return null;
     const direct = (event as { deltaY?: unknown }).deltaY;
@@ -2707,6 +2718,20 @@ function LegendListTranscriptRendererInner<TItem>(
         props.onStartReached?.();
     }, [props.onStartReached]);
 
+    // The settle-reopen exemption baseline for DATASET commits: the ids-structure version,
+    // the extraData identity that carried it, and the data length of the commit it was
+    // recorded on. A data commit whose version, extraData identity and length all prove PURE
+    // TAIL GROWTH (or an in-place content update) keeps every previous row in place, so
+    // held-intent targets keep their geometry meaning and Legend's own maintenance owns the
+    // tail — the settle window need not re-open. Anything else (removals, above-tail inserts,
+    // reorders, wholesale replacement, an extraData-driven row change such as selection or
+    // thinking expansion, or a host that publishes no version at all) settles exactly as
+    // before.
+    const idsStructureSettleBaselineRef = React.useRef<Readonly<{
+        extraData: unknown;
+        idsStructureVersion: number;
+        dataLength: number;
+    }> | null>(null);
     const handleLegendItemSizeChanged = React.useCallback(() => {
         invalidateNativePhysicalViewportCapture();
         advanceMovementEpoch();
@@ -2714,17 +2739,43 @@ function LegendListTranscriptRendererInner<TItem>(
         requestHeldIntentSettle({ deferFirstVerification: true });
     }, [advanceMovementEpoch, emitSynthesizedContentSize, invalidateNativePhysicalViewportCapture, requestHeldIntentSettle]);
     React.useLayoutEffect(() => {
+        const recordIdsStructureBaseline = (idsStructureVersion: number): void => {
+            // An empty dataset is a lifecycle boundary: the next non-empty observation must
+            // settle (a refill is a wholesale replacement, not growth of the observed list).
+            idsStructureSettleBaselineRef.current = dataLength === 0
+                ? null
+                : { extraData: props.extraData, idsStructureVersion, dataLength };
+        };
         if (!hasCommittedHeldTailDataRevisionRef.current) {
             hasCommittedHeldTailDataRevisionRef.current = true;
             // The WebDom observation is mounted above keyed renderer/session shells on some
             // surfaces. A new renderer mount is therefore itself a logical movement epoch even
             // though there is no initial held target to settle.
             advanceMovementEpoch();
+            const initialIdsStructureVersion = readIdsStructureVersion(props.extraData);
+            if (initialIdsStructureVersion !== undefined) {
+                recordIdsStructureBaseline(initialIdsStructureVersion);
+            }
             return;
         }
         advanceMovementEpoch();
+        const idsStructureVersion = readIdsStructureVersion(props.extraData);
+        const baseline = idsStructureSettleBaselineRef.current;
+        if (
+            idsStructureVersion !== undefined
+            && baseline !== null
+            && baseline.idsStructureVersion === idsStructureVersion
+            && baseline.extraData === props.extraData
+            && baseline.dataLength <= dataLength
+        ) {
+            recordIdsStructureBaseline(idsStructureVersion);
+            return;
+        }
+        if (idsStructureVersion !== undefined) {
+            recordIdsStructureBaseline(idsStructureVersion);
+        }
         requestHeldIntentSettle();
-    }, [advanceMovementEpoch, heldTailDataRevision, props.data, props.dataKey, props.extraData, requestHeldIntentSettle]);
+    }, [advanceMovementEpoch, dataLength, heldTailDataRevision, props.data, props.dataKey, props.extraData, requestHeldIntentSettle]);
     const visualBottomSlot = toLegendSlot(projectChronologicalIndex ? props.header : props.footer);
     React.useLayoutEffect(() => {
         if (!hasCommittedVisualBottomSlotRef.current) {

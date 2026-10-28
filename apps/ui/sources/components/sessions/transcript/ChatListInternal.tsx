@@ -7,7 +7,7 @@ import { Dimensions, Platform, View } from 'react-native';
 import { useCallback } from 'react';
 import type { Message } from '@/sync/domains/messages/messageTypes';
 import { sync, type SessionViewportAnchorSnapshot } from '@/sync/sync';
-import { useSessionCatchingUpNewer, useSessionTailContiguousBoundary } from '@/sync/store/hooks';
+import { useSessionCatchingUpNewer, useSessionTailContiguousBoundary, useSessionTranscriptIdsStructureVersion } from '@/sync/store/hooks';
 import { useSessionScreenIsFocused } from '@/components/sessions/shell/useSessionScreenIsFocused';
 import { useSessionActionFieldOptionsForRowHeight } from '@/components/sessions/actions/useSessionActionFieldOptions';
 import { fireAndForget } from '@/utils/system/fireAndForget';
@@ -1159,6 +1159,10 @@ export const ChatListInternal = React.memo((props: ChatListInternalProps) => {
         return observeNativeStreamAppendOffsetEscapeHostRef.current(params);
     }, []);
     const isCatchingUpNewer = useSessionCatchingUpNewer(props.sessionId);
+    // Advances only when the committed id list changes structurally (removals, above-tail
+    // inserts, reorders, wholesale replacement); pure tail appends and streaming content
+    // updates leave it untouched. The renderer keys its scroll-settle re-open on it.
+    const transcriptIdsStructureVersion = useSessionTranscriptIdsStructureVersion(props.sessionId);
     // Tail-reset discontinuity floor: bounds the tail display to content contiguous with
     // the live tail while an older-page walk is filling a catch-up hole.
     const tailContiguousBoundary = useSessionTailContiguousBoundary(props.sessionId);
@@ -1167,10 +1171,12 @@ export const ChatListInternal = React.memo((props: ChatListInternalProps) => {
         rollbackActionsByMessageId: props.rollbackActionsByMessageId,
         selectionVersion: transcriptMessageSelection.selectionVersion,
         thinkingExpandedByMessageId,
+        idsStructureVersion: transcriptIdsStructureVersion,
     }), [
         props.messagePins,
         props.rollbackActionsByMessageId,
         thinkingExpandedByMessageId,
+        transcriptIdsStructureVersion,
         transcriptMessageSelection.selectionVersion,
     ]);
     const listOrientation: TranscriptListOrientation = resolveTranscriptListPresentation({

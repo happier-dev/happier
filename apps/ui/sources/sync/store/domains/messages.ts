@@ -86,6 +86,14 @@ export type SessionMessages = {
     latestThinkingMessageActivityAtMs: number | null;
     latestReadyEventSeq: number | null;
     latestReadyEventAt: number | null;
+    /**
+     * Version counter that advances only when the committed id list changes STRUCTURALLY:
+     * rows removed, inserted anywhere but the tail, reordered, or replaced wholesale. Pure
+     * tail appends (the streaming steady state) and in-place content updates leave it
+     * untouched. The transcript renderer keys its scroll-settle re-open decision on it so
+     * steady streaming does not convert every commit into a settle polling window.
+     */
+    idsStructureVersion?: number;
     messagesVersion: number;
     subagentSourceVersion?: number;
     /**
@@ -375,6 +383,7 @@ export function applyAgentStateUpdateToSessionMessages(params: Readonly<{
         }
     }
 
+    let didChangeIdsStructure = false;
     const nextIds = (() => {
         const existingIds = existing.messageIdsOldestFirst;
         if (idsToInsert.length === 0 && idsToRemove.size === 0) return existingIds;
@@ -386,7 +395,9 @@ export function applyAgentStateUpdateToSessionMessages(params: Readonly<{
         const uniqueInsertIds = Array.from(new Set(idsToInsert));
         uniqueInsertIds.sort((a, b) => compareTranscriptMessagesOldestFirst(messagesById[a]!, messagesById[b]!));
 
-        return mergeTranscriptMessageIdsOldestFirst(filtered, uniqueInsertIds, messagesById).messageIdsOldestFirst;
+        const merged = mergeTranscriptMessageIdsOldestFirst(filtered, uniqueInsertIds, messagesById);
+        didChangeIdsStructure = idsToRemove.size > 0 || !merged.appendOnly;
+        return merged.messageIdsOldestFirst;
     })();
 
     if (shouldRecomputeLatestThinking) {
@@ -437,6 +448,7 @@ export function applyAgentStateUpdateToSessionMessages(params: Readonly<{
             messagesVersion: existing.messagesVersion + (processedMessages.length > 0 ? 1 : 0),
             subagentSourceVersion: (existing.subagentSourceVersion ?? existing.messagesVersion) + (didSubagentSourceChange ? 1 : 0),
             agentEventSourceVersion: (existing.agentEventSourceVersion ?? existing.messagesVersion) + (didAgentEventSourceChange ? 1 : 0),
+            idsStructureVersion: (existing.idsStructureVersion ?? 0) + (didChangeIdsStructure ? 1 : 0),
             lastAppliedAgentStateVersion: existing.lastAppliedAgentStateVersion,
         },
         sessionLatestUsage: latestUsage,
@@ -460,6 +472,7 @@ function createEmptySessionMessages(): SessionMessages {
         messagesVersion: 0,
         subagentSourceVersion: 0,
         agentEventSourceVersion: 0,
+        idsStructureVersion: 0,
         lastAppliedAgentStateVersion: null,
         isLoaded: false,
     };
@@ -701,6 +714,7 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                     insertedOrMoved: idsToInsert.length,
                     removedForReorder: idsToRemove.size,
                 };
+                let didChangeIdsStructure = false;
                 let nextIds = syncPerformanceTelemetry.measure(
                     'sync.store.messages.index',
                     indexTelemetryFields,
@@ -723,6 +737,7 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
 
                     const merged = mergeTranscriptMessageIdsOldestFirst(filtered, uniqueInsertIds, messagesById);
                     indexTelemetryFields.appendOnly = merged.appendOnly ? 1 : 0;
+                    didChangeIdsStructure = idsToRemove.size > 0 || !merged.appendOnly;
                     return merged.messageIdsOldestFirst;
                     },
                 );
@@ -970,6 +985,7 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                             messagesVersion: existingSession.messagesVersion + (processedMessages.length > 0 ? 1 : 0),
                             subagentSourceVersion: (existingSession.subagentSourceVersion ?? existingSession.messagesVersion) + (didSubagentSourceChange ? 1 : 0),
                             agentEventSourceVersion: (existingSession.agentEventSourceVersion ?? existingSession.messagesVersion) + (didAgentEventSourceChange ? 1 : 0),
+                            idsStructureVersion: (existingSession.idsStructureVersion ?? 0) + (didChangeIdsStructure ? 1 : 0),
                             lastAppliedAgentStateVersion: shouldApplyAgentState
                                 ? agentStateVersion
                                 : existingSession.lastAppliedAgentStateVersion,
@@ -1075,6 +1091,7 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                             messagesVersion,
                             subagentSourceVersion,
                             agentEventSourceVersion,
+                            idsStructureVersion: 0,
                             lastAppliedAgentStateVersion:
                                 typeof session?.agentStateVersion === 'number' && Number.isFinite(session.agentStateVersion)
                                     ? Math.trunc(session.agentStateVersion)
@@ -1154,6 +1171,7 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                         messagesVersion: 0,
                         subagentSourceVersion: 0,
                         agentEventSourceVersion: 0,
+                        idsStructureVersion: 0,
                         lastAppliedAgentStateVersion: null,
                         isLoaded: false,
                     } satisfies SessionMessages,

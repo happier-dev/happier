@@ -1474,6 +1474,118 @@ describe('Legend transcript renderer real installed-package lifecycle', () => {
         expect(readDiagnostics().physicalWrites.length).toBeLessThanOrEqual(SETTLED_APPEND_LIBRARY_WRITE_CEILING);
     });
 
+    it('does not re-open a keyed settle window for a pure tail append', async () => {
+        const Renderer = legendListRenderer.Component;
+        const listRef = React.createRef<TranscriptListShellRef<Row>>();
+        const observation = createWebDomScrollObservation();
+        const initialRows = rows(20, 'append-settle');
+        // The production main-transcript shape: an extraData object whose identity is stable
+        // across tail appends and changes only when the ids structure changes.
+        const extraData = { idsStructureVersion: 1 };
+        const render = (data: readonly Row[], nextExtraData: unknown = extraData) => (
+            <div id="real-legend-host" style={{ height: 600 }}>
+            <Renderer
+                data={data}
+                dataKey="append-settle-session"
+                extraData={nextExtraData}
+                frame={resolveMainTranscriptListShellFrame({
+                    legendInitialScrollAtEnd: false,
+                    maintainScrollAtEndThreshold: 0.1,
+                    nativeID: 'real-legend-host',
+                    platformOS: 'web',
+                })}
+                keyExtractor={(item: Row) => item.id}
+                ref={listRef}
+                renderItem={renderRow}
+                webDomObservation={observation}
+            />
+            </div>
+        );
+        // react-native-web reads offsetHeight for its layout events while this file's mocks
+        // only cover clientHeight/getBoundingClientRect; without this, the identity host
+        // alternates between the mocked height and a real 0 and every flush re-opens the
+        // settle window through recordViewportHeight — noise unrelated to the contract here.
+        Object.defineProperty(HTMLElement.prototype, 'offsetHeight', {
+            configurable: true,
+            get() {
+                return measuredRect(this).height;
+            },
+        });
+        try {
+        await act(async () => {
+            root.render(render(initialRows));
+        });
+        await flushLegendWork();
+        // Detach the reader onto a keyed mid-list hold and let that settle transaction close.
+        act(() => {
+            listRef.current?.scrollToIndex?.({ animated: false, index: 6, viewPosition: 0 });
+        });
+        await flushLegendWork();
+        readDiagnostics().heldIntents.length = 0;
+
+        await act(async () => {
+            root.render(render([...initialRows, { height: 180, id: 'append-settle-20' }]));
+        });
+        await flushLegendWork();
+
+        expect(readDiagnostics().heldIntents.filter((entry) => entry.event === 'settle-request')).toHaveLength(0);
+        } finally {
+            delete (HTMLElement.prototype as { offsetHeight?: number }).offsetHeight;
+        }
+    });
+
+    it('re-opens a keyed settle window when the ids structure changes', async () => {
+        const Renderer = legendListRenderer.Component;
+        const listRef = React.createRef<TranscriptListShellRef<Row>>();
+        const observation = createWebDomScrollObservation();
+        const initialRows = rows(20, 'structure-settle');
+        const render = (data: readonly Row[], extraData: unknown) => (
+            <div id="real-legend-host" style={{ height: 600 }}>
+            <Renderer
+                data={data}
+                dataKey="structure-settle-session"
+                extraData={extraData}
+                frame={resolveMainTranscriptListShellFrame({
+                    legendInitialScrollAtEnd: false,
+                    maintainScrollAtEndThreshold: 0.1,
+                    nativeID: 'real-legend-host',
+                    platformOS: 'web',
+                })}
+                keyExtractor={(item: Row) => item.id}
+                ref={listRef}
+                renderItem={renderRow}
+                webDomObservation={observation}
+            />
+            </div>
+        );
+        Object.defineProperty(HTMLElement.prototype, 'offsetHeight', {
+            configurable: true,
+            get() {
+                return measuredRect(this).height;
+            },
+        });
+        try {
+        await act(async () => {
+            root.render(render(initialRows, { idsStructureVersion: 1 }));
+        });
+        await flushLegendWork();
+        act(() => {
+            listRef.current?.scrollToIndex?.({ animated: false, index: 6, viewPosition: 0 });
+        });
+        await flushLegendWork();
+        readDiagnostics().heldIntents.length = 0;
+
+        await act(async () => {
+            root.render(render([...initialRows, { height: 180, id: 'structure-settle-20' }], { idsStructureVersion: 2 }));
+        });
+        await flushLegendWork();
+
+        expect(readDiagnostics().heldIntents.filter((entry) => entry.event === 'settle-request').length).toBeGreaterThan(0);
+        } finally {
+            delete (HTMLElement.prototype as { offsetHeight?: number }).offsetHeight;
+        }
+    });
+
     it('leaves steady append to Legend and does not run the app residual during user takeover', async () => {
         const Renderer = legendListRenderer.Component;
         const observation = createWebDomScrollObservation();
