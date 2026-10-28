@@ -1,5 +1,5 @@
 import React from 'react';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 import { installMarkdownCommonModuleMocks } from '../markdownTestHelpers';
 
@@ -11,6 +11,20 @@ declare global {
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 installMarkdownCommonModuleMocks();
+
+// This file asserts the ANIMATED reveal branch. The resolver now disables that branch on
+// low-capability hosts (few cores / little memory / reduced motion); pin a capable host so
+// the per-word assertions do not depend on the machine running the suite.
+afterEach(() => {
+    vi.unstubAllGlobals();
+});
+
+function stubCapableRevealHost(): void {
+    vi.stubGlobal('window', {
+        matchMedia: () => ({ matches: false }),
+    });
+    vi.stubGlobal('navigator', { deviceMemory: 8, hardwareConcurrency: 8 });
+}
 
 function revealedWords(screen: Awaited<ReturnType<typeof renderScreen>>): string[] {
     return screen
@@ -26,6 +40,7 @@ describe('StreamingTextReveal (mount baseline)', () => {
     // as "appended" replays the opacity keyframe over the whole run — the same defect
     // that was fixed for the enriched surface at its range owner.
     it('reveals only appended words after mounting onto already-streamed text', async () => {
+        stubCapableRevealHost();
         const { StreamingTextReveal } = await import('./StreamingTextReveal');
         const alreadyStreamed = 'Prose that was already visible before this instance mounted.';
         const appendedChunk = ' Newly appended words.';
