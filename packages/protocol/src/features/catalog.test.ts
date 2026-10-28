@@ -134,6 +134,13 @@ describe('feature catalog', () => {
     expect(isFeatureId('machines.transfer.directPeer.transportRns')).toBe(false);
   });
 
+  it('includes machine resources as a dependency-free client feature', () => {
+    expect(isFeatureId('machines.resources')).toBe(true);
+    expect(FEATURE_CATALOG['machines.resources']?.representation).toBe('client');
+    expect(FEATURE_CATALOG['machines.resources']?.dependencies).toEqual([]);
+    expect(FEATURE_CATALOG['machines.resources']?.defaultFailMode).toBe('fail_closed');
+  });
+
   it('includes session folders as a server-represented sessions feature', () => {
     expect(isFeatureId('sessions.folders')).toBe(true);
     expect(FEATURE_CATALOG['sessions.folders']?.representation).toBe('server');

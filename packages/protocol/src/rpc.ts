@@ -125,6 +125,7 @@ export const RPC_METHODS = {
   GET_DIRECTORY_TREE: 'getDirectoryTree',
   DAEMON_FILESYSTEM_LIST_ROOTS: 'daemon.filesystem.listRoots',
   DAEMON_FILESYSTEM_LIST_DIRECTORY: 'daemon.filesystem.listDirectory',
+  DAEMON_RESOURCES_GET: 'daemon.resources.get',
   STAT_FILE: 'statFile',
   RENAME_PATH: 'renamePath',
   DELETE_PATH: 'deletePath',

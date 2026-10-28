@@ -1406,6 +1406,19 @@ export {
   type MachineFileBrowserDirectoryEntry,
   type MachineFileBrowserRoot,
 } from './machineFileBrowser.js';
+export {
+  DaemonResourcesGetResponseSchema,
+  MachineResourcesCpuSchema,
+  MachineResourcesDiskSchema,
+  MachineResourcesMemorySchema,
+  MachineResourcesSnapshotSchema,
+  type DaemonResourcesGetResponse,
+  type MachineResourcesCpu,
+  type MachineResourcesDisk,
+  type MachineResourcesMemory,
+  type MachineResourcesSnapshot,
+} from './machineResources.js';
+
 
 export {
   PendingFirstInputV1Schema,

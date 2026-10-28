@@ -231,6 +231,12 @@ const FEATURE_CATALOG_DEFINITION = {
     dependencies: ['machines.transfer'],
     representation: 'server',
   },
+  'machines.resources': {
+    description: 'Machine resource gauges (CPU/memory/disk) via daemon resource sampling.',
+    defaultFailMode: 'fail_closed',
+    dependencies: [],
+    representation: 'client',
+  },
   'social.friends': {
     description: 'Friends and related social feature availability.',
     defaultFailMode: 'fail_closed',
