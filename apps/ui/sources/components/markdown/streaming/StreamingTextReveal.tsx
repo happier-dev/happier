@@ -4,6 +4,7 @@ import { Platform } from 'react-native';
 import { splitStreamingRevealTextParts } from 'react-native-enriched-markdown/lib/module/web/streamingReveal.js';
 
 import { Text } from '@/components/ui/text/Text';
+import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { resolveAppendedSuffixRevealRanges } from './reveal/resolveAppendedSuffixRevealRanges';
 import { resolveStreamingTextRevealConfig, type StreamingTextRevealPreset } from './streamingTextRevealConfig';
 import { useWebRevealStyleInsertion } from './useWebRevealStyleInsertion';
@@ -38,9 +39,15 @@ export function StreamingTextReveal(props: {
     animated?: boolean;
     preset?: StreamingTextRevealPreset;
 }) {
+    // The OS reduced-motion preference is a host fact owned by the shared process-wide
+    // store; reading it through the established hook keeps this streaming row one of its
+    // many readers instead of allocating a fresh matchMedia probe per render. The call
+    // stays above the web-only branch below so hook order is stable on every platform.
+    const reducedMotion = useReducedMotionPreference();
     const revealConfig = resolveStreamingTextRevealConfig({
         animated: props.animated,
         preset: props.preset,
+        reducedMotion,
     });
     const previousTextRef = React.useRef('');
     const previousText = previousTextRef.current;

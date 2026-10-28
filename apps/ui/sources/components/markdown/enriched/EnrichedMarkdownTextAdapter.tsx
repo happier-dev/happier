@@ -8,6 +8,7 @@ import { useEnrichedMarkdownRuntimeStatus } from './preloadEnrichedMarkdownRunti
 import { resolveEnrichedMarkdownFlavor } from './resolveEnrichedMarkdownFlavor';
 import { useEnrichedMarkdownStyle } from './useEnrichedMarkdownStyle';
 import { useNativeTextSelectable } from '@/components/ui/text/nativeTextSelection';
+import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import type { MarkdownRenderingProfile } from '../rendering/MarkdownRenderingProfile';
 import type { MarkdownSelectionAction } from '../MarkdownView';
 import {
@@ -108,9 +109,14 @@ export const EnrichedMarkdownTextAdapter = React.memo((props: EnrichedMarkdownTe
         if (props.onLinkPress?.(normalizedUrl) === true) return;
         void openMarkdownLinkUrl(normalizedUrl);
     }, [props.onLinkPress]);
+    // The OS reduced-motion preference is a host fact owned by the shared process-wide
+    // store; reading it through the established hook keeps this adapter one of its many
+    // readers instead of allocating a fresh matchMedia probe per render.
+    const reducedMotion = useReducedMotionPreference();
     const revealConfig = resolveStreamingTextRevealConfig({
         animated: props.streamingAnimated,
         preset: props.streamingRevealPreset,
+        reducedMotion,
     });
     const flavor = React.useMemo(() => resolveEnrichedMarkdownFlavor(sanitizedMarkdown), [sanitizedMarkdown]);
 

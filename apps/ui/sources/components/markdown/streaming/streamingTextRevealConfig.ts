@@ -33,33 +33,18 @@ function readNavigatorCapability(): NavigatorCapabilityLike | null {
     return navigator as NavigatorCapabilityLike;
 }
 
-function matchesReducedMotion(): boolean {
-    if (typeof window === 'undefined') return false;
-    const matchMedia = (window as { matchMedia?: unknown }).matchMedia;
-    if (typeof matchMedia !== 'function') return false;
-    try {
-        return Boolean(
-            (matchMedia as (query: string) => { matches?: unknown }).call(
-                window,
-                '(prefers-reduced-motion: reduce)',
-            )?.matches,
-        );
-    } catch {
-        return false;
-    }
-}
-
 /**
  * Every revealed word runs its own short CSS animation while text streams, so a live
  * transcript always has an animation in flight. On hosts that asked for reduced motion the
  * OS accessibility contract wins, and on low-capability hosts (few cores or little memory,
  * where the per-word compositor work lands on a busy main thread) the animation costs more
  * than the polish is worth. Both take the plain non-animated rendering branch; the preset
- * system and capable hosts are unchanged. Reads fail closed to "capable" when the host
- * exposes no capability facts.
+ * system and capable hosts are unchanged. The reduced-motion fact reaches this owner as an
+ * input from the shared `useReducedMotionPreference` store (the process-wide reader of that
+ * preference) instead of a per-render `matchMedia` probe, and capability reads fail closed
+ * to "capable" when the host exposes no capability facts.
  */
-function shouldDisableRevealForHost(): boolean {
-    if (matchesReducedMotion()) return true;
+function shouldDisableRevealForLowCapabilityHost(): boolean {
     const navigatorCapability = readNavigatorCapability();
     if (navigatorCapability == null) return false;
     const { deviceMemory, hardwareConcurrency } = navigatorCapability;
@@ -72,8 +57,10 @@ function shouldDisableRevealForHost(): boolean {
 export function resolveStreamingTextRevealConfig(input: {
     animated?: boolean;
     preset?: unknown;
+    reducedMotion: boolean;
 }): StreamingTextRevealConfig | null {
     if (input.animated !== true) return null;
-    if (shouldDisableRevealForHost()) return null;
+    if (input.reducedMotion) return null;
+    if (shouldDisableRevealForLowCapabilityHost()) return null;
     return STREAMING_TEXT_REVEAL_CONFIGS[normalizeStreamingTextRevealPreset(input.preset)];
 }
