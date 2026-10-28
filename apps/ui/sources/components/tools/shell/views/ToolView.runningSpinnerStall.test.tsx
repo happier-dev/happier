@@ -193,6 +193,44 @@ describe('ToolView (running spinner stall degrade)', () => {
         expect(runningMarkProps(screen).animationEnabled).toBe(false);
     });
 
+    it('steps again with no residual degrade when a settled row returns to running with a fresh startedAt', async () => {
+        const { ToolView } = await import('./ToolView');
+        const screen = await renderRunningToolRow(runningTool({
+            startedAt: Date.now() - STALL_DEGRADE_MS - 1,
+            createdAt: Date.now() - STALL_DEGRADE_MS - 1,
+        }));
+        expect(runningMarkProps(screen).animationEnabled).toBe(false);
+
+        // The tool settles: the degraded mark unmounts, taking its clock subscription with it.
+        await screen.update(
+            React.createElement(ToolView, {
+                tool: runningTool({ state: 'completed', result: { stdout: '' }, completedAt: Date.now() }),
+                metadata: null,
+                messages: [],
+                sessionId: 's1',
+                messageId: 'm1',
+            }),
+        );
+        expect(screen.findAllByType('ActivitySpinnerStub' as never)).toHaveLength(0);
+
+        // The row runs again with startedAt reset: the remounted mark steps immediately, and the
+        // degrade decided by the previous run must not survive the remount or the next ticks.
+        await screen.update(
+            React.createElement(ToolView, {
+                tool: runningTool(),
+                metadata: null,
+                messages: [],
+                sessionId: 's1',
+                messageId: 'm1',
+            }),
+        );
+        expect(runningMarkProps(screen).animationEnabled).not.toBe(false);
+
+        await advanceOneSecond();
+        await advanceOneSecond();
+        expect(runningMarkProps(screen).animationEnabled).not.toBe(false);
+    });
+
     it('settling the tool unmounts the running mark and stops its clock subscription', async () => {
         const timersBefore = vi.getTimerCount();
         const screen = await renderRunningToolRow(runningTool());
