@@ -57,7 +57,8 @@ installToolShellCommonModuleMocks({
 
 vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
 
-vi.mock('@/hooks/ui/useElapsedTime', () => ({
+vi.mock('@/hooks/ui/useElapsedTime', async (importOriginal) => ({
+    ...(await importOriginal<typeof import('@/hooks/ui/useElapsedTime')>()),
     useElapsedTime: () => 123.4,
 }));
 

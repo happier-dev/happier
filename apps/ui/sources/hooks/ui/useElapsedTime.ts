@@ -1,6 +1,10 @@
 import { useNowMs } from '@/hooks/time/useNowMs';
 
-const ELAPSED_TICK_MS = 1_000;
+/**
+ * The elapsed clock's cadence. Every consumer of a running row's one-second tick — the elapsed
+ * readout, the status mark's stall decision — asks for this bucket so the row costs one timer.
+ */
+export const ELAPSED_TICK_MS = 1_000;
 
 /**
  * Whole seconds elapsed since a timestamp, advancing once a second.

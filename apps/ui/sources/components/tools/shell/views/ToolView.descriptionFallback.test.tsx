@@ -51,7 +51,8 @@ vi.mock('@expo/vector-icons', () => ({
     Octicons: 'Octicons',
 }));
 
-vi.mock('@/hooks/ui/useElapsedTime', () => ({
+vi.mock('@/hooks/ui/useElapsedTime', async (importOriginal) => ({
+    ...(await importOriginal<typeof import('@/hooks/ui/useElapsedTime')>()),
     useElapsedTime: () => 0.1,
 }));
 

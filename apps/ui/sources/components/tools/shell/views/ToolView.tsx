@@ -3,7 +3,8 @@ import { View, TouchableOpacity, Platform } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { getToolViewComponent } from '@/components/tools/renderers/core/_registry';
 import { Message, ToolCall } from '@/sync/domains/messages/messageTypes';
-import { useElapsedTime } from '@/hooks/ui/useElapsedTime';
+import { useElapsedTime, ELAPSED_TICK_MS } from '@/hooks/ui/useElapsedTime';
+import { useNowMs } from '@/hooks/time/useNowMs';
 import { Metadata } from '@/sync/domains/state/storageTypes';
 import type { OpenApprovalArtifactForSession } from '@/sync/domains/artifacts/approvalArtifacts';
 import { useRouter } from 'expo-router';
@@ -53,6 +54,20 @@ import {
 } from '@/components/sessions/transcript/attribution/SessionTranscriptAgentAttributionContext';
 
 const TOOL_VIEW_HIGHLIGHT_RADIUS = 12;
+
+/**
+ * How long a row may sit in `state === 'running'` before its status spinner degrades from the
+ * stepped animation to the still pose (issue #769).
+ *
+ * Derived, not guessed: hung-provider incidents left a tool row "running" for 20 and 91 minutes
+ * with no events, and the still-animating row was pure cost for that whole window. Ten minutes
+ * makes the degrade visible well inside both. The threshold also stays far above any silence a
+ * legitimate long tool can produce — quiet ≠ stuck was the #669 lesson, learned at 45 s — and the
+ * degrade changes only the animation's form: the row keeps reporting `running` and keeps counting
+ * elapsed time, so degrading a tool that was merely quiet costs one still mark, never a wrong
+ * status.
+ */
+const RUNNING_SPINNER_STALL_DEGRADE_AFTER_MS = 10 * 60 * 1000;
 
 /**
  * Ink size of the card's status mark. The running spinner derives its diameter from this through
@@ -296,9 +311,10 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
                     // so the mark still reserved 20px and the correction could drift from the
                     // helper the moment either number changed.
                     statusIcon = (
-                        <ActivitySpinner
+                        <RunningToolStatusMark
                             size={iconMatchedSpinnerSize(TOOL_VIEW_STATUS_GLYPH_PX)}
                             color={theme.colors.text.secondary}
+                            startedAtMs={toolForRendering.startedAt ?? toolForRendering.createdAt}
                         />
                     );
                 }
@@ -527,6 +543,34 @@ function ElapsedView(props: { from: number }) {
     const { from } = props;
     const elapsed = useElapsedTime(from);
     return <Text style={styles.elapsedText}>{t('tools.common.elapsedSeconds', { seconds: elapsed.toFixed(1) })}</Text>;
+}
+
+/**
+ * The running row's status mark, owning its own stall-degrade decision.
+ *
+ * A row whose provider hung stops re-rendering on its own — the transcript never changes again,
+ * so no prop of this slot would ever be recomputed no matter how long the row hangs. The mark
+ * therefore subscribes itself to the shared one-second clock bucket the row's `ElapsedView` has
+ * already instantiated (`ELAPSED_TICK_MS`), adding one listener to an already-running timer, and
+ * re-decides its pose on each tick while the rest of the row stays untouched. The mount is the
+ * subscription's stop condition: the mark exists only while the row is `running`, so the tool
+ * settling — or the row unmounting — removes the subscription with it.
+ */
+function RunningToolStatusMark(props: Readonly<{ size: number; color: string; startedAtMs: number }>) {
+    const { size, color, startedAtMs } = props;
+    const nowMs = useNowMs(ELAPSED_TICK_MS);
+    const stalled = nowMs - startedAtMs >= RUNNING_SPINNER_STALL_DEGRADE_AFTER_MS;
+    // A stalled mark pauses instead of handing over to reduced motion: `resolveSpinnerMotion`
+    // resolves `paused` to `still` before `reduceMotion` can choose `breathe`, so a degraded row
+    // ends up quieter than a breathing one — no animation at all, never a gentler one — while the
+    // elapsed clock beside it keeps saying the work is still formally running.
+    return (
+        <ActivitySpinner
+            size={size}
+            color={color}
+            animationEnabled={!stalled}
+        />
+    );
 }
 
 const styles = StyleSheet.create((theme) => ({
