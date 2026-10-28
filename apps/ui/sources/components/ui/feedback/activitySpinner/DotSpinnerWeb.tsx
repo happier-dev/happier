@@ -46,7 +46,15 @@ type DotPose = Readonly<{
     keyframes: Keyframe[] | null;
 }>;
 
-/** Each sampled frame becomes one keyframe; `steps(1, end)` holds it until the next boundary. */
+/**
+ * Each sampled frame becomes one keyframe; `steps(1, end)` holds it until the next boundary.
+ *
+ * The offsets deliberately stop at (N-1)/N and never reach 1: WAAPI fills the missing final
+ * keyframe with the property's underlying value — the inline style — which `buildDotPose` pins to
+ * the series' frame 0. The table holds exactly one loop, so the tail segment [(N-1)/N, 1] eases
+ * back to frame 0's own value and the cycle closes on itself; an inline style holding anything
+ * other than frame 0 would render a wrong pose through that tail and jump at the loop boundary.
+ */
 function steppedKeyframes(series: readonly number[], project: (value: number) => Keyframe): Keyframe[] {
     return series.map((value, frame) => ({ ...project(value), offset: frame / series.length }));
 }
@@ -67,7 +75,9 @@ function dotGeometry(dot: SpinnerDot, size: number): React.CSSProperties {
 /**
  * What one dot renders right now. The style is the pose's static base — the animation's first frame
  * while playing (so nothing flashes before the effect starts, and a host without the Web Animations
- * API still shows the mark), the still pose otherwise.
+ * API still shows the mark), the still pose otherwise. While playing it is also load-bearing as the
+ * animation's *last* frame: the keyframes stop one frame short of offset 1, so the tail segment
+ * falls back to this inline value — see `steppedKeyframes` for why it must stay frame 0.
  */
 function buildDotPose(frames: DotSpinnerFrames, index: number, size: number, ink: DotSpinnerInk, animate: boolean): DotPose {
     const geometry = dotGeometry(frames.dots[index]!, size);

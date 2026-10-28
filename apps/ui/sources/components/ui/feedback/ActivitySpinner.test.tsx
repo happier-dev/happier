@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 import type { LocalSettings } from '@/sync/domains/settings/localSettings';
 
@@ -80,7 +80,7 @@ function flattenStyle(style: unknown): Record<string, unknown> {
     return {};
 }
 
-type CapturedAnimation = { startTime: number | null; cancel: () => void };
+type CapturedAnimation = { startTime: number | null; cancel: Mock };
 type CapturedAnimateCall = Readonly<{ keyframes: unknown[]; options: Record<string, unknown> }>;
 
 /** A stand-in host span: the DOM element the dot renders into, remembering what it was asked to animate. */
@@ -90,7 +90,9 @@ function createCapturedSpan(sink: CapturedAnimation[]): { animateCalls: Captured
         animateCalls: [],
         animate: (keyframes: unknown[], options: Record<string, unknown>) => {
             span.animateCalls.push({ keyframes, options });
-            const animation: CapturedAnimation = { startTime: null, cancel: () => {} };
+            // `cancel` is a spy so tests can hold the renderer to the Web Animations contract the
+            // component relies on: a dot that stops animating must have its animation cancelled.
+            const animation: CapturedAnimation = { startTime: null, cancel: vi.fn() };
             sink.push(animation);
             return animation;
         },
@@ -286,6 +288,31 @@ describe('ActivitySpinner (web)', () => {
         for (const span of spans) expect(span.animateCalls).toHaveLength(0);
         for (const props of dotSpans()) expect(dotStyle(props).opacity).toBe(0.85);
         expect(injectedStyles).toHaveLength(0);
+    });
+
+    it('cancels every per-dot animation when motion leaves animate for the still pose', async () => {
+        const { ActivitySpinner } = await import('./ActivitySpinner');
+        const { screen, spans, animations } = await renderSpinner({ size: 12 });
+        const dotCount = spans.length;
+        expect(animations).toHaveLength(dotCount);
+        for (const animation of animations) expect(animation.cancel).not.toHaveBeenCalled();
+
+        await screen.update(<ActivitySpinner testID="spinner" size={12} animationEnabled={false} />);
+
+        // The still pose must cancel the whole previous run — one cancel per dot — and schedule
+        // nothing in its place: the sink records every animation ever created, so it must not grow.
+        for (const animation of animations) expect(animation.cancel).toHaveBeenCalledTimes(1);
+        expect(animations).toHaveLength(dotCount);
+    });
+
+    it('cancels every per-dot animation when the spinner unmounts', async () => {
+        const { screen, spans, animations } = await renderSpinner({ size: 12 });
+        expect(animations).toHaveLength(spans.length);
+        for (const animation of animations) expect(animation.cancel).not.toHaveBeenCalled();
+
+        await screen.unmount();
+
+        for (const animation of animations) expect(animation.cancel).toHaveBeenCalledTimes(1);
     });
 
     it('drops every animation while the page is hidden, so an unseen tab never keeps a spinner moving', async () => {
