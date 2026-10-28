@@ -7,9 +7,12 @@ import type { NormalizedMessage } from '@/sync/typesRaw';
 import { storage } from '@/sync/domains/state/storage';
 import {
     clearActiveViewingSessionsForServerScopeReset,
+    markSessionHidden,
     markSessionVisible,
     setActiveViewingSessionId,
 } from '@/sync/domains/session/activeViewingSession';
+import { readDirectSessionDeltaArrivedAt } from '@/sync/runtime/directSessions/directSessionDeltaArrival';
+import type { DirectSessionTranscriptUpdatedEphemeralUpdate } from './socketParse';
 import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
 import * as executionRunActivityBus from '@/sync/runtime/executionRuns/executionRunActivityBus';
 import { resetTranscriptStreamSegmentAssemblyForTests } from '@/sync/engine/sessions/transcriptStreamSegmentAssembly';
@@ -1186,6 +1189,169 @@ describe('socket update handling: transcript stream segment ephemerals', () => {
 
         expect(applyMessages).toHaveBeenCalledTimes(2);
         expect(markSessionMaterializedMaxSeq).toHaveBeenCalledWith(sessionId, 2);
+    });
+});
+
+describe('socket direct-session transcript delta apply window', () => {
+    beforeEach(() => {
+        storage.setState(initialStorageState, true);
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
+    function buildDirectSessionTranscriptDeltaUpdate(
+        sessionId: string,
+        opts: {
+            itemId: string;
+            text: string;
+            fromCursor: string | null;
+            nextCursor?: string | null;
+        },
+    ) {
+        return {
+            type: 'direct-session-transcript-delta',
+            sessionId,
+            items: [{
+                id: opts.itemId,
+                createdAtMs: 2_000,
+                raw: { role: 'agent', content: { type: 'text', text: opts.text } },
+            }],
+            fromCursor: opts.fromCursor,
+            ...(opts.nextCursor !== undefined ? { nextCursor: opts.nextCursor } : {}),
+        };
+    }
+
+    function buildDirectDeltaParams(
+        sessionId: string,
+        updateDirectSessionTranscript: (update: DirectSessionTranscriptUpdatedEphemeralUpdate) => Promise<void>,
+        overrides: { shouldContinue?: () => boolean } = {},
+    ) {
+        return {
+            addActivityUpdate: vi.fn(),
+            addMachineActivityUpdate: vi.fn(),
+            getSessionEncryption: vi.fn(() => null),
+            getSession: (id: string) => storage.getState().sessions[id],
+            applyMessages: vi.fn(),
+            updateDirectSessionTranscript,
+            ...(overrides.shouldContinue ? { shouldContinue: overrides.shouldContinue } : {}),
+        };
+    }
+
+    it('batches live-viewed deltas into the ~1s apply window in arrival order with a seamless cursor chain', async () => {
+        vi.useFakeTimers();
+        const sessionId = 'live_direct_delta_window_session';
+        setActiveViewingSessionId(sessionId, 1);
+        markSessionVisible(sessionId);
+        storage.getState().applySessions([buildSession(sessionId, 'plain')]);
+
+        const updateDirectSessionTranscript = vi.fn(async (_update: DirectSessionTranscriptUpdatedEphemeralUpdate) => {});
+        const baseParams = buildDirectDeltaParams(sessionId, updateDirectSessionTranscript);
+
+        const cursorChain: Array<[string, string]> = [
+            ['tail', 'cursor-1'],
+            ['cursor-1', 'cursor-2'],
+            ['cursor-2', 'cursor-3'],
+            ['cursor-3', 'cursor-4'],
+        ];
+        for (const [index, [fromCursor, nextCursor]] of cursorChain.entries()) {
+            await handleEphemeralSocketUpdate({
+                ...baseParams,
+                update: buildDirectSessionTranscriptDeltaUpdate(sessionId, {
+                    itemId: `delta-item-${index + 1}`,
+                    text: `chunk ${index + 1}`,
+                    fromCursor,
+                    nextCursor,
+                }),
+            });
+        }
+
+        await vi.advanceTimersByTimeAsync(999);
+        expect(updateDirectSessionTranscript).not.toHaveBeenCalled();
+        expect(readDirectSessionDeltaArrivedAt(sessionId)).not.toBeNull();
+
+        await vi.advanceTimersByTimeAsync(1);
+        expect(updateDirectSessionTranscript).toHaveBeenCalledTimes(4);
+
+        const appliedCursors = updateDirectSessionTranscript.mock.calls
+            .map((call) => [call[0].fromCursor, call[0].nextCursor] as [string | null, string | null]);
+        expect(appliedCursors).toEqual(cursorChain);
+        // Cursor-chain continuity: every buffered delta continues its predecessor's nextCursor,
+        // so the sync-side tail-cursor reconciliation sees the same seamless chain an
+        // apply-immediately delivery would have produced.
+        for (let index = 1; index < appliedCursors.length; index += 1) {
+            expect(appliedCursors[index][0]).toBe(appliedCursors[index - 1][1]);
+        }
+    });
+
+    it('flushes buffered deltas through the applier when the session stops being live-viewed before the window expires', async () => {
+        vi.useFakeTimers();
+        const sessionId = 'blurred_direct_delta_window_session';
+        setActiveViewingSessionId(sessionId, 1);
+        markSessionVisible(sessionId);
+        storage.getState().applySessions([buildSession(sessionId, 'plain')]);
+
+        const updateDirectSessionTranscript = vi.fn(async () => {});
+        const baseParams = buildDirectDeltaParams(sessionId, updateDirectSessionTranscript);
+
+        await handleEphemeralSocketUpdate({
+            ...baseParams,
+            update: buildDirectSessionTranscriptDeltaUpdate(sessionId, {
+                itemId: 'delta-item-1', text: 'first', fromCursor: 'tail', nextCursor: 'cursor-1',
+            }),
+        });
+        await handleEphemeralSocketUpdate({
+            ...baseParams,
+            update: buildDirectSessionTranscriptDeltaUpdate(sessionId, {
+                itemId: 'delta-item-2', text: 'second', fromCursor: 'cursor-1', nextCursor: 'cursor-2',
+            }),
+        });
+
+        markSessionHidden(sessionId);
+
+        await vi.advanceTimersByTimeAsync(1_000);
+        expect(updateDirectSessionTranscript).toHaveBeenCalledTimes(2);
+    });
+
+    it('keeps applying deltas immediately without a window when the session is not live-viewed', async () => {
+        const sessionId = 'hidden_direct_delta_session';
+        storage.getState().applySessions([buildSession(sessionId, 'plain')]);
+
+        const updateDirectSessionTranscript = vi.fn(async () => {});
+        await handleEphemeralSocketUpdate({
+            ...buildDirectDeltaParams(sessionId, updateDirectSessionTranscript),
+            update: buildDirectSessionTranscriptDeltaUpdate(sessionId, {
+                itemId: 'delta-item-1', text: 'deferred downstream', fromCursor: 'tail', nextCursor: 'cursor-1',
+            }),
+        });
+
+        expect(updateDirectSessionTranscript).toHaveBeenCalledTimes(1);
+        expect(readDirectSessionDeltaArrivedAt(sessionId)).not.toBeNull();
+    });
+
+    it('skips buffered deltas whose captured socket scope guard is stale at flush time', async () => {
+        vi.useFakeTimers();
+        const sessionId = 'stale_scope_direct_delta_session';
+        setActiveViewingSessionId(sessionId, 1);
+        markSessionVisible(sessionId);
+        storage.getState().applySessions([buildSession(sessionId, 'plain')]);
+
+        let socketScopeLive = true;
+        const shouldContinue = () => socketScopeLive;
+        const updateDirectSessionTranscript = vi.fn(async () => {});
+        const baseParams = buildDirectDeltaParams(sessionId, updateDirectSessionTranscript, { shouldContinue });
+
+        await handleEphemeralSocketUpdate({
+            ...baseParams,
+            update: buildDirectSessionTranscriptDeltaUpdate(sessionId, {
+                itemId: 'delta-item-1', text: 'stale', fromCursor: 'tail', nextCursor: 'cursor-1',
+            }),
+        });
+        socketScopeLive = false;
+
+        await vi.advanceTimersByTimeAsync(1_000);
+        expect(updateDirectSessionTranscript).not.toHaveBeenCalled();
     });
 });
 

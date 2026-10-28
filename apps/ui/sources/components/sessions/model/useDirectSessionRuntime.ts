@@ -5,6 +5,7 @@ import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot'
 import { readDirectSessionLink } from '@/sync/domains/session/directSessions/readDirectSessionLink';
 import type { Metadata } from '@/sync/domains/state/storageTypes';
 import { machineDirectSessionStatusGet } from '@/sync/ops/machineDirectSessions';
+import { readDirectSessionDeltaArrivedAt } from '@/sync/runtime/directSessions/directSessionDeltaArrival';
 import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
 import { sync } from '@/sync/sync';
 
@@ -39,9 +40,20 @@ function readIdlePollMsFromEnv(): number {
     return Math.max(100, Math.min(120_000, configured));
 }
 
-function resolvePollDelayMs(status: DirectSessionRuntimeStatus | null): number {
+// While transcript pushes for a session arrived within this window, the push channel owns tail
+// freshness and the poller drops to the idle heartbeat. The heartbeat never stops, so a
+// silently-dead push channel is still caught by polling (polling never fully disables).
+const DIRECT_SESSION_DELTA_PUSH_FRESH_MS = 2_000;
+
+function resolvePollDelayMs(
+    status: DirectSessionRuntimeStatus | null,
+    lastDeltaArrivedAtMs?: number | null,
+): number {
     if (status?.machineOnline === false) return readIdlePollMsFromEnv();
     if (status?.activity === 'running' || status?.activity === 'active_recently') {
+        if (typeof lastDeltaArrivedAtMs === 'number' && Date.now() - lastDeltaArrivedAtMs <= DIRECT_SESSION_DELTA_PUSH_FRESH_MS) {
+            return readIdlePollMsFromEnv();
+        }
         return readActivePollMsFromEnv();
     }
     return readIdlePollMsFromEnv();
@@ -211,7 +223,7 @@ export function useDirectSessionRuntime(params: UseDirectSessionRuntimeParams): 
             if (cancelled) return;
             timeoutId = setTimeout(() => {
                 void runPoll();
-            }, resolvePollDelayMs(nextStatus));
+            }, resolvePollDelayMs(nextStatus, readDirectSessionDeltaArrivedAt(params.sessionId)));
         };
 
         const runPoll = async () => {

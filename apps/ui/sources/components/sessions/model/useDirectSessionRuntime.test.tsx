@@ -1,6 +1,10 @@
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderHook } from '@/dev/testkit';
+import {
+  recordDirectSessionDeltaArrival,
+  resetDirectSessionDeltaArrivalForTests,
+} from '@/sync/runtime/directSessions/directSessionDeltaArrival';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -69,10 +73,12 @@ describe('useDirectSessionRuntime', () => {
     subscribeActiveServerSpy.mockClear();
     resolvePreferredServerIdForSessionIdSpy.mockReset();
     resolvePreferredServerIdForSessionIdSpy.mockReturnValue('server-owned');
+    resetDirectSessionDeltaArrivalForTests();
   });
 
   afterEach(() => {
     vi.clearAllMocks();
+    vi.useRealTimers();
   });
 
   it('does not resolve session server ownership while the runtime hook is disabled', async () => {
@@ -259,5 +265,109 @@ describe('useDirectSessionRuntime', () => {
       { ok: true, machineOnline: true, activity: 'idle', runnerActive: false } as any,
       { ok: true, machineOnline: true, activity: 'running', runnerActive: true } as any,
     )).toBe(false);
+  });
+
+  it('polls at the idle heartbeat while transcript pushes keep arriving for the session', async () => {
+    vi.useFakeTimers();
+    machineDirectSessionStatusGetSpy.mockResolvedValue({ ok: true, machineOnline: true, activity: 'running', runnerActive: true });
+    refreshSessionMessagesSpy.mockResolvedValue(undefined);
+    recordDirectSessionDeltaArrival('session-1');
+
+    const harness = await renderHarness();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(machineDirectSessionStatusGetSpy).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_999);
+    });
+    expect(machineDirectSessionStatusGetSpy).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
+    });
+    expect(machineDirectSessionStatusGetSpy).toHaveBeenCalledTimes(2);
+
+    // A push arriving again at the second poll keeps the poller on the idle heartbeat tier.
+    recordDirectSessionDeltaArrival('session-1');
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_999);
+    });
+    expect(machineDirectSessionStatusGetSpy).toHaveBeenCalledTimes(2);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
+    });
+    expect(machineDirectSessionStatusGetSpy).toHaveBeenCalledTimes(3);
+
+    await harness.unmount();
+  });
+
+  it('returns to the active poll tier once pushes have been silent past the freshness window', async () => {
+    vi.useFakeTimers();
+    machineDirectSessionStatusGetSpy.mockResolvedValue({ ok: true, machineOnline: true, activity: 'running', runnerActive: true });
+    refreshSessionMessagesSpy.mockResolvedValue(undefined);
+    recordDirectSessionDeltaArrival('session-1');
+
+    const harness = await renderHarness();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(machineDirectSessionStatusGetSpy).toHaveBeenCalledTimes(1);
+
+    // Pushes stop after the initial arrival: the freshness window keeps the poller on the
+    // idle heartbeat until the record goes stale, then the active 250ms tier takes over.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2_000);
+    });
+    expect(machineDirectSessionStatusGetSpy).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_999);
+    });
+    expect(machineDirectSessionStatusGetSpy).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
+    });
+    expect(machineDirectSessionStatusGetSpy).toHaveBeenCalledTimes(3);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(249);
+    });
+    expect(machineDirectSessionStatusGetSpy).toHaveBeenCalledTimes(3);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
+    });
+    expect(machineDirectSessionStatusGetSpy).toHaveBeenCalledTimes(4);
+
+    await harness.unmount();
+  });
+
+  it('keeps the active 250ms poll tier for running sessions without any push arrivals', async () => {
+    vi.useFakeTimers();
+    machineDirectSessionStatusGetSpy.mockResolvedValue({ ok: true, machineOnline: true, activity: 'running', runnerActive: true });
+    refreshSessionMessagesSpy.mockResolvedValue(undefined);
+
+    const harness = await renderHarness();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(machineDirectSessionStatusGetSpy).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(249);
+    });
+    expect(machineDirectSessionStatusGetSpy).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
+    });
+    expect(machineDirectSessionStatusGetSpy).toHaveBeenCalledTimes(2);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(250);
+    });
+    expect(machineDirectSessionStatusGetSpy).toHaveBeenCalledTimes(3);
+
+    await harness.unmount();
   });
 });
