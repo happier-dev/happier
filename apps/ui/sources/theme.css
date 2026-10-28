@@ -37,13 +37,6 @@ html {
     }
 }
 
-/* Dot spinner: steps a strip of pre-drawn frames across its clip (see ActivitySpinner). */
-@keyframes happierActivitySpinnerFilmstrip {
-    to {
-        transform: translateX(-100%);
-    }
-}
-
 /* Dot spinner under reduced motion: the still H fades gently instead of moving. */
 @keyframes happierActivitySpinnerBreath {
     from {

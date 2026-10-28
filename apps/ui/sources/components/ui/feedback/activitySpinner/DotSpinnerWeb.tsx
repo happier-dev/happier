@@ -2,17 +2,17 @@ import * as React from 'react';
 import { View, type ViewProps, type ViewStyle } from 'react-native';
 
 import {
-    buildDotSpinnerFilmstripSvg,
-    buildDotSpinnerStillSvg,
+    DOT_SPINNER_STILL_OPACITY,
     getDotSpinnerFrames,
+    readDotSeries,
+    unwrapHueSeries,
+    type DotSpinnerFrames,
     type DotSpinnerInk,
 } from './dotSpinnerFrames';
-import type { DotSpinnerStyleId, DotSpinnerTiming } from './dotSpinnerStyles';
+import { type DotSpinnerStyleId, type DotSpinnerTiming, type SpinnerDot } from './dotSpinnerStyles';
 import type { DotSpinnerMotion } from './dotSpinnerMotion';
 
-const FILMSTRIP_ANIMATION_NAME = 'happierActivitySpinnerFilmstrip';
 const BREATH_ANIMATION_NAME = 'happierActivitySpinnerBreath';
-const FRAME_SHEET_ATTRIBUTE = 'data-happier-activity-spinner';
 
 type WebAnimationStyle = ViewStyle & {
     animationDirection?: 'alternate';
@@ -30,38 +30,87 @@ const BREATH_STYLE: WebAnimationStyle = {
     animationTimingFunction: 'ease-in-out',
 };
 
-const useInsertionEffectSafe: typeof React.useEffect =
-    typeof React.useInsertionEffect === 'function' ? React.useInsertionEffect : React.useLayoutEffect;
+/** One discrete value per sampled frame: the table already holds what shows at each step. */
+const STEP_EASING = 'steps(1, end)';
 
 /**
- * One `<style>` rule per style × ink × pose, shared by every copy on the page. The frame sheet is a
- * ≈20 KB SVG; putting it in each spinner's inline style would copy it into every DOM node. The
- * document owns the cache, so removing a sheet lets the next mount rebuild it.
+ * The looping aurora gradient's width in units of the spinner size. At 12, a dot (a sixth of the
+ * size wide) spans a seventy-secondth of one gradient lap, so it reads as one colour while the dots
+ * between them still sit on clearly different stops.
  */
-function injectFrameSheet(key: string, buildSvg: () => string): void {
-    if (typeof document === 'undefined') return;
-    const id = `happier-activity-spinner-${key}`;
-    if (document.getElementById(id)) return;
-    const style = document.createElement('style');
-    style.id = id;
-    style.textContent =
-        `[${FRAME_SHEET_ATTRIBUTE}="${key}"]{display:block;height:100%;` +
-        `background:url("data:image/svg+xml,${encodeURIComponent(buildSvg())}") 0 0/100% 100% no-repeat}`;
-    document.head.appendChild(style);
+const AURORA_GRADIENT_WIDTH_FACTOR = 12;
+
+type DotPose = Readonly<{
+    style: React.CSSProperties;
+    /** Null in the still and breathing poses, which schedule no animation. */
+    keyframes: Keyframe[] | null;
+}>;
+
+/** Each sampled frame becomes one keyframe; `steps(1, end)` holds it until the next boundary. */
+function steppedKeyframes(series: readonly number[], project: (value: number) => Keyframe): Keyframe[] {
+    return series.map((value, frame) => ({ ...project(value), offset: frame / series.length }));
+}
+
+function dotGeometry(dot: SpinnerDot, size: number): React.CSSProperties {
+    const pitch = size / 3;
+    const diameter = size / 6;
+    return {
+        position: 'absolute',
+        left: (dot.col + 0.5) * pitch - diameter / 2,
+        top: (dot.row + 0.5) * pitch - diameter / 2,
+        width: diameter,
+        height: diameter,
+        borderRadius: diameter / 2,
+    };
 }
 
 /**
- * Pins the strip's animation to the document timeline's origin, so every spinner on the page steps
- * on the same frames however far apart they mounted. Unsynced copies each make the compositor draw
- * on their own step boundaries: measured, the same 1000 strips cost ≈56% CPU synced and ≈82% not.
+ * What one dot renders right now. The style is the pose's static base — the animation's first frame
+ * while playing (so nothing flashes before the effect starts, and a host without the Web Animations
+ * API still shows the mark), the still pose otherwise.
  */
-function alignToDocumentClock(element: HTMLElement | null): void {
-    if (!element || typeof element.getAnimations !== 'function') return;
-    for (const animation of element.getAnimations()) {
-        animation.startTime = 0;
+function buildDotPose(frames: DotSpinnerFrames, index: number, size: number, ink: DotSpinnerInk, animate: boolean): DotPose {
+    const geometry = dotGeometry(frames.dots[index]!, size);
+    const brightness = readDotSeries(frames, frames.opacity, index);
+    const opacity = animate ? brightness[0]! : DOT_SPINNER_STILL_OPACITY;
+
+    if ('color' in ink || frames.hue == null) {
+        const color = 'color' in ink ? ink.color : ink.aurora[0];
+        return {
+            style: { ...geometry, backgroundColor: color, opacity },
+            keyframes: animate ? steppedKeyframes(brightness, (value) => ({ opacity: value })) : null,
+        };
     }
+
+    // Aurora travels by shifting a looping accent gradient under the dots, never by fading them:
+    // their brightness barely changes across the motion, only their position on it does.
+    const gradientWidth = size * AURORA_GRADIENT_WIDTH_FACTOR;
+    const position = (hue: number): string => `${hue * gradientWidth}px 0px`;
+    const hueSeries = unwrapHueSeries(readDotSeries(frames, frames.hue, index));
+    return {
+        style: {
+            ...geometry,
+            opacity,
+            backgroundImage: `linear-gradient(90deg, ${ink.aurora[0]}, ${ink.aurora[1]}, ${ink.aurora[2]}, ${ink.aurora[0]})`,
+            backgroundSize: `${gradientWidth}px 100%`,
+            backgroundPosition: position(hueSeries[0]!),
+        },
+        keyframes: animate
+            ? steppedKeyframes(hueSeries, (value) => ({ backgroundPosition: position(value) }))
+            : null,
+    };
 }
 
+/**
+ * The web dots: one absolutely-positioned `<span>` per dot of the chosen mark, driven by the Web
+ * Animations API. Keyframes come straight from the shared frame table, so no style sheet, SVG, or
+ * image ever enters the document for this spinner (the old frame-sheet cache kept a ≈20 KB SVG data
+ * URI in a `<style>` rule that WebKit re-parsed on every rendering update). Every animation's
+ * `startTime` is pinned to the document timeline's origin, so all copies on the page step on the
+ * same frame boundaries however far apart they mounted. The still and breathing poses schedule no
+ * per-dot animation: the still pose is the static style, and the breath fades the whole mark
+ * through one CSS animation on the host.
+ */
 export function DotSpinnerWeb(props: Readonly<{
     styleId: DotSpinnerStyleId;
     timing: DotSpinnerTiming;
@@ -73,36 +122,40 @@ export function DotSpinnerWeb(props: Readonly<{
     const { styleId, timing, size, ink, motion, viewProps } = props;
     const frames = getDotSpinnerFrames(styleId, timing);
     const animate = motion === 'animate';
-    const inkKey = encodeURIComponent(JSON.stringify('color' in ink ? { color: ink.color } : { aurora: ink.aurora }));
-    // The strip's frames depend on the timing; the still pose does not.
-    const key = `${animate ? frames.key : styleId}-${animate ? 'strip' : 'still'}-${inkKey}`;
-    const stripRef = React.useRef<HTMLSpanElement | null>(null);
+    const spanRefs = React.useRef<Array<HTMLSpanElement | null>>([]);
 
-    useInsertionEffectSafe(() => {
-        injectFrameSheet(key, () => animate ? buildDotSpinnerFilmstripSvg(frames, ink) : buildDotSpinnerStillSvg(frames, ink));
-    }, [animate, frames, ink, key]);
+    const poses = React.useMemo(
+        () => frames.dots.map((_, index) => buildDotPose(frames, index, size, ink, animate)),
+        [animate, frames, ink, size],
+    );
 
     React.useLayoutEffect(() => {
-        if (animate) alignToDocumentClock(stripRef.current);
-    }, [animate, key]);
+        if (!animate) return undefined;
+        const animations: Animation[] = [];
+        spanRefs.current.forEach((span, index) => {
+            const keyframes = poses[index]?.keyframes;
+            if (!span || typeof span.animate !== 'function' || !keyframes) return;
+            const animation = span.animate(
+                keyframes,
+                { duration: frames.cycleMs, iterations: Infinity, easing: STEP_EASING },
+            );
+            animation.startTime = 0;
+            animations.push(animation);
+        });
+        return () => {
+            for (const animation of animations) animation.cancel();
+        };
+    }, [animate, frames.cycleMs, poses]);
 
     const boxStyle: WebAnimationStyle = { width: size, height: size, alignSelf: 'center', overflow: 'hidden' };
 
     return (
         <View {...viewProps} style={[boxStyle, motion === 'breathe' ? BREATH_STYLE : null, viewProps.style]}>
-            {React.createElement('span', {
-                [FRAME_SHEET_ATTRIBUTE]: key,
-                ref: stripRef,
-                style: animate
-                    ? {
-                        width: `${frames.frameCount * 100}%`,
-                        animationName: FILMSTRIP_ANIMATION_NAME,
-                        animationDuration: `${frames.cycleMs}ms`,
-                        animationTimingFunction: `steps(${frames.frameCount}, end)`,
-                        animationIterationCount: 'infinite',
-                    }
-                    : { width: '100%' },
-            })}
+            {poses.map((pose, index) => React.createElement('span', {
+                key: frames.dots[index]!.id,
+                ref: (element: HTMLSpanElement | null) => { spanRefs.current[index] = element; },
+                style: pose.style,
+            }))}
         </View>
     );
 }

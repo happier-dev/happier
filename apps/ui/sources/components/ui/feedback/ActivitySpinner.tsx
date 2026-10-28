@@ -55,7 +55,8 @@ export type ActivitySpinnerProps = Omit<ActivityIndicatorProps, 'size'> & {
      *
      * Used wherever ambient motion must pause without the mark disappearing: a mounted offscreen
      * list row, an entry that has stopped reporting. Honoured on every platform and style — dot
-     * styles hold the full chosen mark still (web drops the CSS animation, native stops its frame clock), and
+     * styles hold the full chosen mark still (web drops its per-dot animations, native stops its
+     * frame clock), and
      * the classic ring stops turning while keeping a still mark on screen. A
      * paused spinner still says "this is the running state"; a missing one says the work ended.
      */

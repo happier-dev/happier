@@ -8,11 +8,8 @@ import {
     isLoadingIndicatorStyleId,
 } from '@/sync/domains/settings/registry/local/loadingIndicatorStyleSetting';
 import {
-    buildDotSpinnerFilmstripSvg,
-    buildDotSpinnerStillSvg,
     DOT_SPINNER_FRAMES_PER_SECOND,
     getDotSpinnerFrames,
-    resolveAuroraBlend,
     unwrapHueSeries,
 } from './dotSpinnerFrames';
 import {
@@ -35,14 +32,13 @@ function dotSeries(styleId: DotSpinnerStyleId, dotId: string, timing: DotSpinner
 
 describe('dot spinner frames', () => {
     it('draws the Happier mark by default and retains the seven-dot H as a selectable style', () => {
-        const ink = { color: 'red' };
         const mark = getDotSpinnerFrames('wave', DEFAULT);
-        expect(buildDotSpinnerStillSvg(mark, ink).match(/<circle /g)).toHaveLength(8);
-        expect(buildDotSpinnerStillSvg(mark, ink)).toContain('cx="1.5" cy="2.5"');
+        expect(mark.dots).toHaveLength(8);
+        expect(mark.dots.some((dot) => dot.id === 'BC')).toBe(true);
         expect(isLoadingIndicatorStyleId('hWave')).toBe(true);
         if (!isLoadingIndicatorStyleId('hWave')) return;
         const h = getDotSpinnerFrames('hWave', DEFAULT);
-        expect(buildDotSpinnerStillSvg(h, ink).match(/<circle /g)).toHaveLength(7);
+        expect(h.dots).toHaveLength(7);
         expect(h.key).not.toBe(mark.key);
         expect(h.cycleMs).toBe(mark.cycleMs);
     });
@@ -153,27 +149,6 @@ describe('dot spinner frames', () => {
         expect(peakFrame('MC')).toBe(peakFrame('BR'));
         expect(peakFrame('BR')).toBeLessThan(peakFrame('MR'));
         expect(peakFrame('MR')).toBeLessThan(peakFrame('TR'));
-    });
-
-    it('draws every frame of a strip in the requested ink', () => {
-        const frames = getDotSpinnerFrames('wave', DEFAULT);
-        const svg = buildDotSpinnerFilmstripSvg(frames, { color: '#123456' });
-
-        expect(svg).toContain(`viewBox="0 0 ${frames.frameCount * 3} 3"`);
-        expect(svg).toContain('fill="#123456"');
-        expect(svg.match(/<circle /g)).toHaveLength(frames.frameCount * frames.dots.length);
-        expect(buildDotSpinnerStillSvg(frames, { color: '#123456' }).match(/<circle /g)).toHaveLength(frames.dots.length);
-    });
-
-    it('blends aurora dots across the three accent colors and keeps color values out of the markup syntax', () => {
-        expect(resolveAuroraBlend(0)).toEqual({ from: 0, to: 1, mix: 0 });
-        expect(resolveAuroraBlend(0.5)).toEqual({ from: 1, to: 2, mix: 0.5 });
-        expect(resolveAuroraBlend(0.9)).toEqual({ from: 2, to: 0, mix: 0.7 });
-
-        const svg = buildDotSpinnerFilmstripSvg(getDotSpinnerFrames('aurora', DEFAULT), { aurora: ['#111111', 'rgb(1, 2, 3)', '"><x'] });
-        expect(svg).toContain('fill="#111111"');
-        expect(svg).toContain('fill="rgb(1, 2, 3)"');
-        expect(svg).not.toContain('"><x');
     });
 });
 

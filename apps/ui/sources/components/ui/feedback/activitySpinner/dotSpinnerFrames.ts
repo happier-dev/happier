@@ -10,11 +10,14 @@ import {
 
 /**
  * Dot styles are rendered as pre-sampled frames stepped at a fixed rate instead of animating each
- * dot continuously. Measured in headless Chromium with 1000 copies on screen: per-dot opacity
- * animation at 60 fps cost ≈113% CPU (the compositor thread ticks one animation per dot); the same
- * wave as a 40-frame strip stepped by one transform cost ≈56%. Cost scales with the frame rate
- * (15 fps ≈29%, 46 fps ≈74%), so 30 fps is a deliberate point: four times the old stepped ring's
- * ≈7 fps, which read as laggy, at half the per-dot cost.
+ * dot continuously. Why sampled at all: measured in headless Chromium with 1000 copies on screen,
+ * per-dot opacity animation at 60 fps cost ≈113% CPU (the compositor thread ticks one animation per
+ * dot), and that cost scales with the frame rate. 30 fps is a deliberate point: four times the old
+ * stepped ring's ≈7 fps, which read as laggy, at a fraction of the 60 fps per-dot cost.
+ *
+ * The renderers consume the table as data: web turns each dot's series into `element.animate()`
+ * keyframes (`DotSpinnerWeb`), native interpolates it against a shared clock
+ * (`DotSpinnerNative`). No platform builds SVG or image assets from it.
  */
 export const DOT_SPINNER_FRAMES_PER_SECOND = 30;
 
@@ -94,8 +97,9 @@ export function readDotSeries(frames: DotSpinnerFrames, table: readonly number[]
 }
 
 /**
- * A hue series with its wraps removed, so interpolating between neighbouring frames never sweeps
- * the long way round the gradient (0.98 → 0.02 would otherwise flash through every accent).
+ * A hue series with its wraps removed, so moving between neighbouring frames never sweeps the long
+ * way round the gradient (0.98 → 0.02 would otherwise travel back through every accent). Renderers
+ * keep the unwrapped position: a gradient or interpolation repeated per lap lands on it exactly.
  */
 export function unwrapHueSeries(series: readonly number[]): number[] {
     const unwrapped: number[] = [];
@@ -111,60 +115,4 @@ export function unwrapHueSeries(series: readonly number[]): number[] {
     return unwrapped;
 }
 
-/**
- * Where a hue position falls on the looping three-stop accent gradient: the two stop indices and how
- * far to blend from the first to the second. Renderers blend by painting stop `from` opaque and stop
- * `to` over it at `mix`, which is an exact linear blend for any CSS color without parsing it.
- */
-export function resolveAuroraBlend(hue: number): Readonly<{ from: 0 | 1 | 2; to: 0 | 1 | 2; mix: number }> {
-    const scaled = (((hue % 1) + 1) % 1) * 3;
-    const from = Math.floor(scaled) % 3 as 0 | 1 | 2;
-    return { from, to: ((from + 1) % 3) as 0 | 1 | 2, mix: Math.round((scaled - Math.floor(scaled)) * 100) / 100 };
-}
-
 export type DotSpinnerInk = Readonly<{ color: string }> | Readonly<{ aurora: readonly [string, string, string] }>;
-
-const DOT_RADIUS = 0.25;
-
-function escapeAttribute(value: string): string {
-    return value.replace(/[&"'<>]/g, (char) => `&#${char.charCodeAt(0)};`);
-}
-
-function dotMarkup(cx: number, cy: number, opacity: number, ink: DotSpinnerInk, hue: number | null): string {
-    if ('color' in ink || hue === null) {
-        return `<circle cx="${cx}" cy="${cy}" r="${DOT_RADIUS}" fill-opacity="${opacity}"/>`;
-    }
-    const { from, to, mix } = resolveAuroraBlend(hue);
-    const base = `<circle cx="${cx}" cy="${cy}" r="${DOT_RADIUS}" fill="${escapeAttribute(ink.aurora[from])}"/>`;
-    const blend = mix > 0
-        ? `<circle cx="${cx}" cy="${cy}" r="${DOT_RADIUS}" fill="${escapeAttribute(ink.aurora[to])}" fill-opacity="${mix}"/>`
-        : '';
-    return `<g opacity="${opacity}">${base}${blend}</g>`;
-}
-
-function svgDocument(width: number, ink: DotSpinnerInk, body: string): string {
-    const fill = 'color' in ink ? ` fill="${escapeAttribute(ink.color)}"` : '';
-    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} 3" width="${width * 8}" height="24"${fill}>${body}</svg>`;
-}
-
-/** Every frame side by side, 3 units wide each; stepping a clip across it plays the animation. */
-export function buildDotSpinnerFilmstripSvg(frames: DotSpinnerFrames, ink: DotSpinnerInk): string {
-    let body = '';
-    for (let frame = 0; frame < frames.frameCount; frame++) {
-        for (let i = 0; i < frames.dots.length; i++) {
-            const dot = frames.dots[i]!;
-            const index = frame * frames.dots.length + i;
-            body += dotMarkup(frame * 3 + dot.col + 0.5, dot.row + 0.5, frames.opacity[index]!, ink, frames.hue?.[index] ?? null);
-        }
-    }
-    return svgDocument(frames.frameCount * 3, ink, body);
-}
-
-export function buildDotSpinnerStillSvg(frames: DotSpinnerFrames, ink: DotSpinnerInk): string {
-    let body = '';
-    for (let i = 0; i < frames.dots.length; i++) {
-        const dot = frames.dots[i]!;
-        body += dotMarkup(dot.col + 0.5, dot.row + 0.5, DOT_SPINNER_STILL_OPACITY, ink, frames.hue?.[i] ?? null);
-    }
-    return svgDocument(3, ink, body);
-}
