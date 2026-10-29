@@ -39,9 +39,13 @@ export function forEachJsonSchemaChild(node: JsonSchemaObject, visit: (child: un
   }
 }
 
-function projectPortableTypeUnions(value: unknown): void {
+function projectPortableSchemaKeywords(value: unknown): void {
   if (!isJsonSchemaObject(value)) return;
   const node = value as Record<string, unknown>;
+  // Native readonly freezes parsed values, not portable inputs. Normalize the
+  // finished document so embedded fragments follow the same rule, while the
+  // schema-only walker preserves literal data and properties named readOnly.
+  delete node.readOnly;
   if (Array.isArray(node.type)) {
     // Zod 4.6 compacts unions after its override callback. Keep the existing
     // single-type Plugin vocabulary without changing the union's semantics.
@@ -50,7 +54,7 @@ function projectPortableTypeUnions(value: unknown): void {
     if (node.anyOf === undefined) node.anyOf = union.anyOf;
     else node.allOf = [...(Array.isArray(node.allOf) ? node.allOf : []), union];
   }
-  forEachJsonSchemaChild(node, projectPortableTypeUnions);
+  forEachJsonSchemaChild(node, projectPortableSchemaKeywords);
 }
 
 // Zod 4.6 emits these check names as formats as well as their complete pattern
@@ -87,7 +91,7 @@ export function zodSchemaToJsonSchemaObject(
       throw new ActionJsonSchemaProjectionError('Zod produced a non-object JSON Schema');
     }
 
-    projectPortableTypeUnions(projectedSchema);
+    projectPortableSchemaKeywords(projectedSchema);
 
     // Zod decorates the root with non-enumerable Standard Schema methods. They
     // are useful on Zod values but are not JSON and cross realm boundaries

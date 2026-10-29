@@ -20,6 +20,44 @@ import {
 } from './actionInputJsonSchema.js';
 
 describe('actionInputJsonSchema', () => {
+  it('normalizes readonly annotations in embedded native schema fragments', () => {
+    const native = z.strictObject({ entries: z.readonly(z.array(z.string().check(z.minLength(1)))) });
+    const { $schema: _dialect, ...fragment } = z.toJSONSchema(native, { target: 'draft-7', io: 'input' });
+    const parent = z.strictObject({ value: z.unknown().check(z.meta(fragment)) });
+    const validate = compilePluginJsonSchema(zodSchemaToJsonSchemaObject(parent, { target: 'draft-7' }));
+    expect(validate({ value: { entries: ['kept'] } })).toBe(true);
+    expect(validate({ value: { entries: [''] } })).toBe(false);
+    expect(validate({ value: { entries: [7] } })).toBe(false);
+  });
+
+  it.each(['draft-7', 'draft-2020-12'] as const)('projects native readonly wrappers as portable parser constraints on %s', target => {
+    const literal = { readOnly: 'literal data', entries: [{ name: 'kept' }] };
+    const schema = z.readonly(z.strictObject({
+      readOnly: z.string(),
+      entries: z.readonly(z.array(z.readonly(z.strictObject({
+        name: z.string().check(z.minLength(1)),
+      }))).check(z.minLength(1))),
+    })).check(z.meta({ default: literal }));
+    const projected = zodSchemaToJsonSchemaObject(schema, { target });
+    expect(projected).not.toHaveProperty('readOnly');
+    expect(projected.default).toEqual(literal);
+    expect(projected.properties).toHaveProperty('readOnly', { type: 'string' });
+    const validate = target === 'draft-7'
+      ? compilePluginJsonSchema(projected)
+      : compileActionInputJsonSchema(projected);
+    expect(validate(literal)).toBe(true);
+    for (const invalid of [
+      { ...literal, entries: [] },
+      { ...literal, entries: [{ name: '' }] },
+      { ...literal, entries: [{ name: 'kept', extra: true }] },
+      { ...literal, readOnly: false },
+    ]) {
+      expect(schema.safeParse(invalid).success, JSON.stringify(invalid)).toBe(false);
+      expect(validate(invalid), JSON.stringify(invalid)).toBe(false);
+    }
+    expect(Object.isFrozen(schema.parse(literal).entries)).toBe(true);
+  });
+
   it.each(['agent', 'ui', 'cli'] as const)('publishes the Session configuration accepted by the start owner on %s', async surface => {
     const executor = createActionExecutor({});
     const input = {
