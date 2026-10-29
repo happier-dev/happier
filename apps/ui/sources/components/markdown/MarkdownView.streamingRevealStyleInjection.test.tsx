@@ -11,6 +11,21 @@ declare global {
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
+// The streaming reveal this contract exercises is host-gated: `resolveStreamingTextRevealConfig`
+// takes the plain branch on reduced-motion hosts and on hosts with `hardwareConcurrency <= 4` or
+// `deviceMemory <= 4`, and the reveal style is only injected while the animated branch is enabled.
+// A bare 4-core CI runner (Node's built-in `navigator`) would therefore deterministically skip the
+// injection under test. The capable-host stub below is installed BEFORE THE FIRST RENDER — the
+// shared `useReducedMotionPreference` store latches the first value it reads and the capability
+// gate reads `navigator` at render time — pinning the test to the animated branch regardless of
+// the machine running the suite.
+function stubCapableRevealHost(): void {
+    vi.stubGlobal('window', {
+        matchMedia: () => ({ matches: false }),
+    });
+    vi.stubGlobal('navigator', { deviceMemory: 8, hardwareConcurrency: 8 });
+}
+
 const styleInjectionState = vi.hoisted(() => ({
     childLayoutSawStyle: [] as boolean[],
 }));
@@ -70,11 +85,13 @@ function installDocumentMock() {
 
 describe('MarkdownView (streaming reveal style injection)', () => {
     beforeEach(() => {
+        stubCapableRevealHost();
         styleInjectionState.childLayoutSawStyle = [];
         installDocumentMock();
     });
 
     afterEach(() => {
+        vi.unstubAllGlobals();
         Object.defineProperty(globalThis, 'document', {
             configurable: true,
             value: previousDocument,
