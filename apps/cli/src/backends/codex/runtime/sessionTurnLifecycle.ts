@@ -55,18 +55,27 @@ export function nextStoredSessionIdForResumeAfterAttempt(
   return attempt.success ? null : storedSessionIdForResume;
 }
 
-const settledCodexTurnFailures = new WeakSet<object>();
+/**
+ * How a Codex runtime owner settled the session turn for one exact failure: `failed` when a
+ * failed turn records this error, `interrupted` when the turn only ended without recording it.
+ */
+export type CodexTurnFailureSettlement = 'failed' | 'interrupted';
+
+const codexTurnFailureSettlements = new WeakMap<object, CodexTurnFailureSettlement>();
 
 /**
  * Records that a Codex runtime owner has already settled the session turn for this exact
- * failure (failed it with a classified issue, or interrupted it). The runner's prompt-loop
- * catch must then not surface the same failure as another failed turn. The marker is scoped
- * to the error instance, so a later, separate failure still surfaces its own turn.
+ * failure. The runner's prompt-loop catch must then not surface the same failure as another
+ * failed turn. The marker is scoped to the error instance, so a later, separate failure still
+ * surfaces its own turn. A recorded failure is never downgraded to an interruption.
  */
-export function markCodexTurnFailureSettled(error: unknown): void {
-  if (error !== null && typeof error === 'object') settledCodexTurnFailures.add(error);
+export function markCodexTurnFailureSettled(error: unknown, settlement: CodexTurnFailureSettlement): void {
+  if (error === null || typeof error !== 'object') return;
+  if (settlement === 'interrupted' && codexTurnFailureSettlements.get(error) === 'failed') return;
+  codexTurnFailureSettlements.set(error, settlement);
 }
 
-export function isCodexTurnFailureSettled(error: unknown): boolean {
-  return error !== null && typeof error === 'object' && settledCodexTurnFailures.has(error);
+export function readCodexTurnFailureSettlement(error: unknown): CodexTurnFailureSettlement | null {
+  if (error === null || typeof error !== 'object') return null;
+  return codexTurnFailureSettlements.get(error) ?? null;
 }

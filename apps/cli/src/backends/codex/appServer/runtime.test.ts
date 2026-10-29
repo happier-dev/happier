@@ -32,7 +32,7 @@ import { createExecutionRunPermissionHandler } from '@/agent/executionRuns/polic
 import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
 import { createSessionProviderInputConsumer } from '@/agent/runtime/sessionInput/SessionProviderInputConsumer';
 import { ProviderCliNotFoundError } from '@/runtime/managedTools/requireProviderCliCommand';
-import { isCodexTurnFailureSettled } from '@/backends/codex/runtime/sessionTurnLifecycle';
+import { readCodexTurnFailureSettlement } from '@/backends/codex/runtime/sessionTurnLifecycle';
 import { waitForCondition } from '@/testkit/async/waitFor';
 import { createApiSessionClientFixture, createMutableApiSessionClientFixture } from '@/testkit/backends/sessionFixtures';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
@@ -1933,7 +1933,7 @@ describe('createCodexAppServerRuntime', () => {
         expect(error).toBeInstanceOf(ProviderCliNotFoundError);
         // No provider turn began, so the runner's prompt-loop catch owns the one classified failed
         // turn; the runtime surfacing it too would double-report resume + fallback attempts.
-        expect(isCodexTurnFailureSettled(error)).toBe(false);
+        expect(readCodexTurnFailureSettlement(error)).toBeNull();
         expect(mutations).toEqual([]);
     });
 
@@ -3096,7 +3096,7 @@ describe('createCodexAppServerRuntime', () => {
         expect(failure).toBeInstanceOf(Error);
         expect((failure as Error).message).toMatch(/top-level failed turn/);
         // The runtime already failed the session turn; the runner must not surface it again.
-        expect(isCodexTurnFailureSettled(failure)).toBe(true);
+        expect(readCodexTurnFailureSettlement(failure)).toBe('failed');
 
         expect(sessionTurnLifecycle.completeTurn).not.toHaveBeenCalled();
         expect(sessionTurnLifecycle.failTurn).toHaveBeenCalledWith(expect.objectContaining({
@@ -10866,7 +10866,7 @@ describe('createCodexAppServerRuntime', () => {
         expect(error).toBeInstanceOf(Error);
         // No retry remains, so the runtime records the provider failure itself and the runner
         // must not report it again.
-        expect(isCodexTurnFailureSettled(error)).toBe(true);
+        expect(readCodexTurnFailureSettlement(error)).toBe('failed');
         expect(mutations.at(-1)).toMatchObject({
             action: 'fail',
             provider: 'codex',

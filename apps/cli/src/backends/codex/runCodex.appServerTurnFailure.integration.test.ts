@@ -314,6 +314,47 @@ describe('runCodex app-server turn failure ownership', () => {
     }));
   }, 240_000);
 
+  it('still reports a rejected turn/start that only interrupted the turn', async () => {
+    const root = await createTempDir('happier-codex-run-turn-start-rejected-');
+    tempRoots.add(root);
+    const fakeAppServer = await writeFakeCodexAppServerScript({
+      dir: root,
+      bodyLines: [
+        'for await (const line of rl) {',
+        '  if (!line.trim()) continue;',
+        '  const msg = JSON.parse(line);',
+        '  if (msg.method === "initialize") {',
+        '    process.stdout.write(JSON.stringify({ id: msg.id, result: { serverInfo: { name: "fake-codex-app-server", version: "0.0.0" } } }) + "\\n");',
+        '    continue;',
+        '  }',
+        '  if (msg.method === "initialized") continue;',
+        '  if (msg.method === "thread/start") {',
+        '    process.stdout.write(JSON.stringify({ id: msg.id, result: { threadId: "thread-started", model: "gpt-5.4", serviceTier: null } }) + "\\n");',
+        '    continue;',
+        '  }',
+        '  if (msg.method === "turn/start") {',
+        '    process.stdout.write(JSON.stringify({ id: msg.id, error: { code: -32000, message: "turn rejected by provider" } }) + "\\n");',
+        '    continue;',
+        '  }',
+        '  if (msg.id !== undefined) {',
+        '    process.stdout.write(JSON.stringify({ id: msg.id, error: { code: -32601, message: "method not found" } }) + "\\n");',
+        '  }',
+        '}',
+      ],
+    });
+    envScope.patch({
+      HAPPIER_CODEX_APP_SERVER_BIN: fakeAppServer,
+      HAPPIER_CODEX_APP_SERVER_RPC_TIMEOUT_MS: '10000',
+    });
+
+    const { runError, failures, sessionMessages } = await runPrompts(root, ['rejected prompt']);
+
+    expect(runError).toBeNull();
+    // The runtime interrupted the turn without recording why, so the runner still reports the error.
+    expect(failures).toHaveLength(0);
+    expect(sessionMessages.some((message) => message.startsWith('Codex process error:'))).toBe(true);
+  }, 240_000);
+
   it('records a provider-failed turn once, without a second runner failure', async () => {
     const root = await createTempDir('happier-codex-run-provider-failure-');
     tempRoots.add(root);

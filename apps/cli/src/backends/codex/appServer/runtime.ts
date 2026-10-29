@@ -3142,7 +3142,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
         if (options?.error) {
             // This runtime has terminalized the session turn for this failure (failed or
             // interrupted above); the runner must not surface it as another failed turn.
-            markCodexTurnFailureSettled(options.error);
+            markCodexTurnFailureSettled(options.error, options.flushReason === 'failure' ? 'failed' : 'interrupted');
             activeTurn.reject(options.error);
             return;
         }
@@ -3259,6 +3259,9 @@ export function createCodexAppServerRuntime(params: Readonly<{
                 logger.debug('[codex-app-server] Failed to surface primary runtime issue (non-fatal)', error);
                 return null;
             });
+        if (recordAfterEndedTurn && issue) {
+            markCodexTurnFailureSettled(failure, 'failed');
+        }
         if (!params.session.sessionTurnLifecycle && !deferPresentationToPromptLoop) {
             publishCodexTurnAbortedMessage();
         }

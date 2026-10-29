@@ -158,8 +158,8 @@ import { cleanupCodexRunResources } from './runtime/cleanupRunResources';
 import {
     emitReadyIfIdle,
     extractCodexToolErrorText,
-    isCodexTurnFailureSettled,
     nextStoredSessionIdForResumeAfterAttempt,
+    readCodexTurnFailureSettlement,
 } from './runtime/sessionTurnLifecycle';
 import { createLocalRemoteModeController } from '@/agent/localControl/createLocalRemoteModeController';
 import { createCodexRemoteTerminalUi } from './runtime/createCodexRemoteTerminalUi';
@@ -1477,8 +1477,10 @@ export async function runCodex(opts: {
                 return false;
             }
         }
-        // The app-server runtime already recorded this error as the failed provider turn.
-        if (isCodexTurnFailureSettled(error)) return true;
+        // The app-server runtime already ended this turn. Only a recorded failure carries the
+        // error; an interrupted turn does not, so the prompt loop still reports it.
+        const settlement = readCodexTurnFailureSettlement(error);
+        if (settlement) return settlement === 'failed';
         const remoteRuntime = useCodexAppServer ? getCodexRemoteRuntime() : null;
         // A failed steer leaves the in-flight provider turn running; the runtime still owns that turn.
         if (remoteRuntime && (remoteRuntime.hasActiveProviderTurn?.() ?? remoteRuntime.isTurnInFlight())) return false;
