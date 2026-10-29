@@ -40,9 +40,11 @@ it('renders provider help without loading authenticated operation dependencies',
     });
     expect(scripts).toContain(new URL('./providers.ts', import.meta.url).href);
     expect(scripts.filter((url) => forbiddenModules.includes(url))).toEqual([]);
+    // The whole captured console/stdout must parse: help prose beside the envelope would break `--json` callers.
     expect(JSON.parse(output.text().trim())).toMatchObject({
-      v: 1, ok: true, kind: 'providers_help', data: { help: expect.any(String) },
+      v: 1, ok: true, kind: 'providers_help', data: { help: expect.stringContaining('happier providers list') },
     });
+    expect(process.exitCode ?? 0).toBe(0);
   } finally {
     output.restore();
   }

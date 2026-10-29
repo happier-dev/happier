@@ -27,29 +27,6 @@ describe('happier providers command boundary', () => {
     expect(process.exitCode ?? 0).toBe(0);
   });
 
-  it('keeps stdout parseable JSON when help is requested in --json mode', async () => {
-    // `--json` is a machine-output contract, not a decoration: a caller piping
-    // stdout into a parser gets a syntax error the moment help is printed as
-    // prose beside (or instead of) the envelope.
-    const load = vi.fn(async () => { throw new Error('must not load'); });
-    // The capture merges `console.log` with `process.stdout.write`, so prose
-    // printed BESIDE the envelope fails this too — a stdout-only spy would
-    // accept help emitted through `console.log` alongside valid JSON.
-    const output = captureConsoleText();
-
-    try {
-      await handleProvidersCliCommand(context(['--help', '--json']), load);
-
-      expect(load).not.toHaveBeenCalled();
-      const parsed = JSON.parse(output.text().trim()) as Record<string, unknown>;
-      expect(parsed).toMatchObject({ v: 1, ok: true, kind: 'providers_help' });
-      expect(String((parsed.data as Record<string, unknown>).help)).toContain('happier providers list');
-      expect(process.exitCode ?? 0).toBe(0);
-    } finally {
-      output.restore();
-    }
-  });
-
   it('returns legacy agent-setup guidance without requiring authentication', async () => {
     const load = vi.fn(async () => { throw new Error('must not load'); });
     const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
