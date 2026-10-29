@@ -4,6 +4,7 @@ type QueueEntry<T> = {
   work: () => Promise<T>;
   resolve: (value: T) => void;
   reject: (error: unknown) => void;
+  removeAbortListener?: () => void;
 };
 
 function normalizeMaxConcurrentWrites(value: number): number {
@@ -38,6 +39,7 @@ export function createDaemonServerWorkBudget(
     while (activeCount < maxConcurrentWrites && queue.length > 0) {
       const entry = queue.shift();
       if (!entry) continue;
+      entry.removeAbortListener?.();
       activeCount += 1;
       void (async () => {
         try {
@@ -55,13 +57,27 @@ export function createDaemonServerWorkBudget(
 
   return {
     run(metadata, work) {
-      void metadata;
       return new Promise((resolve, reject) => {
-        queue.push({
+        const signal = metadata.signal;
+        signal?.throwIfAborted();
+        const entry: QueueEntry<unknown> = {
           work: work as () => Promise<unknown>,
           resolve: resolve as (value: unknown) => void,
           reject,
-        });
+        };
+        if (signal) {
+          const abort = () => {
+            const index = queue.indexOf(entry);
+            if (index < 0) return;
+            queue.splice(index, 1);
+            entry.removeAbortListener?.();
+            reject(signal.reason);
+            notifyIdleIfNeeded();
+          };
+          signal.addEventListener('abort', abort, { once: true });
+          entry.removeAbortListener = () => signal.removeEventListener('abort', abort);
+        }
+        queue.push(entry);
         drain();
       });
     },

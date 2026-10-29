@@ -65,7 +65,7 @@ export type DaemonServerWorkLogger = Readonly<{
 }>;
 
 export type DaemonServerWorkBudget = Readonly<{
-  run: <T>(metadata: Readonly<{ purpose: DaemonServerWorkPurpose | string }>, work: () => Promise<T>) => Promise<T>;
+  run: <T>(metadata: Readonly<{ purpose: DaemonServerWorkPurpose | string; signal?: AbortSignal }>, work: () => Promise<T>) => Promise<T>;
   getSnapshot: () => Readonly<{
     activeCount: number;
     queuedCount: number;
@@ -81,6 +81,7 @@ export type DaemonServerWorkRequest<TPayload> = Readonly<{
   priority?: DaemonServerWorkPriority;
   payload: TPayload;
   payloadBytes: number;
+  signal?: AbortSignal;
   run: (payload: TPayload) => Promise<void | DaemonServerWorkOutcome>;
 }>;
 

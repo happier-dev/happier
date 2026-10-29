@@ -226,7 +226,8 @@ export function createDaemonServerWorkScheduler(params: Readonly<{
 
     addPending(key, payloadBytes);
     try {
-      const workOutcome = await params.budget.run({ purpose }, async () => {
+      const workOutcome = await params.budget.run({ purpose, signal: work.signal }, async () => {
+        work.signal?.throwIfAborted();
         return await work.run(work.payload);
       });
       if (isDaemonServerWorkOutcome(workOutcome)) {
@@ -265,6 +266,10 @@ export function createDaemonServerWorkScheduler(params: Readonly<{
       increment(purpose, 'written');
       return { status: 'written' };
     } catch (error) {
+      if (work.signal?.aborted) {
+        increment(purpose, 'suppressed');
+        return { status: 'suppressed', reason: 'cancelled' };
+      }
       const classification = classifyDaemonServerWorkError(error);
       increment(purpose, 'failed');
       const failedAt = now();
