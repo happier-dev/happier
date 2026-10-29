@@ -1,14 +1,10 @@
+import { USAGE_SOURCE_ACTION_IDS } from './usageSourcesActionIdsV1.js';
+export { USAGE_SOURCE_ACTION_IDS } from './usageSourcesActionIdsV1.js';
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { PluginContributionIdentityV1Schema } from '../plugins/contributionIdentity.js';
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
 import { ExternalSessionsSourceSchema } from '../sessions/external/sourceCatalog.js';
-
-/** V1 source operations are closed at every boundary; package SemVer is independent. */
-export const USAGE_SOURCE_ACTION_IDS = [
-  'usage.sources.discover', 'usage.sources.get', 'usage.sources.dismiss',
-  'usage.sources.consent.set', 'usage.sources.stop', 'usage.sources.root.set', 'usage.sources.history.delete',
-] as const;
 export type UsageSourceActionId = typeof USAGE_SOURCE_ACTION_IDS[number];
 export const UsageSourceActionIdSchema = lazyZodSchema(() => z.enum(USAGE_SOURCE_ACTION_IDS));
 const id = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1)));

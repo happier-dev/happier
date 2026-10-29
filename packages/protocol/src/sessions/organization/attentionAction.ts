@@ -1,3 +1,4 @@
+export { SESSION_ATTENTION_SET_ACTION_ID } from './attentionActionIdsV1.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod/mini';
 
@@ -6,15 +7,6 @@ import {
   SetSessionAttentionStandingResponseSchema,
   type SetSessionAttentionStandingRequest,
 } from './standings.js';
-
-/**
- * `session.attention.set` (ORC R-10): the one Action over the existing attention-standing route.
- *
- * Settle is `{ standing: false }` (paired with `session.read_state.set`), snooze is `{ remindAt }`,
- * and a null clears that field. It adds no storage and no second writer: the server's
- * standing route stays the only persistence owner, and this Action only names it.
- */
-export const SESSION_ATTENTION_SET_ACTION_ID = 'session.attention.set' as const;
 
 /** The existing route (`registerSessionOrganizationRoutes.ts`); `:sessionId` is the path parameter. */
 export const SESSION_ATTENTION_STANDING_HTTP_PATH_V1 = '/v2/session-organization/attention-standings/:sessionId';

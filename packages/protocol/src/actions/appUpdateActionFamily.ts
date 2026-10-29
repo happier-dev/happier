@@ -1,10 +1,9 @@
+import { APP_UPDATE_ACTION_IDS } from './appUpdateActionIdsV1.js';
+export { APP_UPDATE_ACTION_IDS } from './appUpdateActionIdsV1.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod/mini';
 import type { PreNormalizedActionSpec } from './actionSpecs.js';
 import { UpdateItemStateSchema, UpdateItemActionVerbSchema } from './updatesActionFamily.js';
-
-export const APP_UPDATE_ACTION_IDS = ['app.updates.get', 'app.updates.check', 'app.updates.update',
-  'app.updates.retry', 'app.updates.restart', 'app.updates.skip'] as const;
 export type AppUpdateActionId = typeof APP_UPDATE_ACTION_IDS[number];
 export function isAppUpdateActionId(value: string): value is AppUpdateActionId {
   return (APP_UPDATE_ACTION_IDS as readonly string[]).includes(value);

@@ -1,13 +1,11 @@
+import { PLUGIN_EXECUTION_ORIGIN_ACTION_IDS } from './pluginExecutionOriginActionIdsV1.js';
+export { PLUGIN_EXECUTION_ORIGIN_ACTION_IDS } from './pluginExecutionOriginActionIdsV1.js';
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { PluginIdSchema } from '../plugins/pluginId.js';
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
 import { PluginMachineExecutionOriginV1Schema, getPluginMachineExecutionOriginRef } from '../machines/administration/pluginMachineExecutionOriginV1.js';
 import { MachineAdministrationTargetV1Schema } from '../account/settings/machineAdministrationSelectionsV1.js';
-
-export const PLUGIN_EXECUTION_ORIGIN_ACTION_IDS = [
-  'plugins.execution_origin.list', 'plugins.execution_origin.set', 'plugins.execution_origin.clear',
-] as const;
 export type PluginExecutionOriginActionId = typeof PLUGIN_EXECUTION_ORIGIN_ACTION_IDS[number];
 export const PluginExecutionOriginActionIdSchema = lazyZodSchema(() => z.enum(PLUGIN_EXECUTION_ORIGIN_ACTION_IDS));
 const contextualTarget = lazyZodSchema(() => z.strictObject({ commandId: z.string().check(z.minLength(1)) }));

@@ -1,18 +1,11 @@
+import { WORKSPACE_ACTION_IDS } from './workspaceActionIdsV1.js';
+export { WORKSPACE_ACTION_IDS } from './workspaceActionIdsV1.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod/mini';
 import type { ActionInputFieldHint, PreNormalizedActionSpec } from './actionSpecs.js';
 import { FindOptionsSchema } from './findActionSpecs.js';
 import { WorkspaceAnchorV1Schema } from '../workspace/anchors/v1.js';
 import { FileChangesScopeSchema } from '../scm/fileChangesScope.js';
-
-export const WORKSPACE_ACTION_IDS = [
-  'workspace.files.link.get',
-  'workspace.tabs.list', 'workspace.tabs.open', 'workspace.tabs.activate', 'workspace.tabs.close',
-  'workspace.tabs.close_others', 'workspace.tabs.close_left', 'workspace.tabs.close_right', 'workspace.tabs.close_all',
-  'workspace.tabs.closed.list', 'workspace.tabs.reopen',
-  'workspace.tabs.pin', 'workspace.tabs.move', 'workspace.tabs.reorder', 'workspace.groups.focus', 'workspace.groups.maximize',
-  'workspace.groups.restore', 'workspace.split', 'workspace.resize',
-] as const;
 export type WorkspaceActionId = typeof WORKSPACE_ACTION_IDS[number];
 
 const id = z.string().check(z.trim(), z.minLength(1));

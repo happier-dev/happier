@@ -1,3 +1,5 @@
+import { MANAGED_IDENTITY_PROVIDER_ACTION_IDS_V1 } from './providersActionIdsV1.js';
+export { MANAGED_IDENTITY_PROVIDER_ACTION_IDS_V1 } from './providersActionIdsV1.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod/mini';
 
@@ -226,20 +228,6 @@ export const ManagedIdentityProviderErrorV1Schema = lazyZodSchema(() => z.strict
     connectionCount: z.number().check(z.int(), z.minimum(0)),
   })),
 }));
-
-export const MANAGED_IDENTITY_PROVIDER_ACTION_IDS_V1 = [
-  'identity.providers.list',
-  'identity.providers.create',
-  'identity.providers.update',
-  'identity.providers.secret.replace',
-  'identity.providers.validate',
-  'identity.providers.test.start',
-  'identity.providers.test.consume',
-  'identity.providers.enable',
-  'identity.providers.disable',
-  'identity.providers.remove.preview',
-  'identity.providers.remove',
-] as const;
 export type ManagedIdentityProviderActionIdV1 = typeof MANAGED_IDENTITY_PROVIDER_ACTION_IDS_V1[number];
 export const ManagedIdentityProviderActionIdV1Schema = lazyZodSchema(() => z.enum(MANAGED_IDENTITY_PROVIDER_ACTION_IDS_V1));
 

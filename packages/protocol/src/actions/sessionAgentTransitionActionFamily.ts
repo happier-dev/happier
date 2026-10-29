@@ -1,10 +1,10 @@
+import { SESSION_AGENT_TRANSITION_ACTION_IDS } from './sessionAgentTransitionActionIdsV1.js';
+export { SESSION_AGENT_TRANSITION_ACTION_IDS } from './sessionAgentTransitionActionIdsV1.js';
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { SessionAgentTransitionRequestV1Schema, SessionAgentTransitionSelectionV1Schema,
   SessionAgentTransitionResultV1Schema, SessionContinuationInspectionV1Schema } from '../sessions/agentTransition.js';
 import type { PreNormalizedActionSpec } from './actionSpecs.js';
-
-export const SESSION_AGENT_TRANSITION_ACTION_IDS = ['session.continuation.inspect', 'session.agent.transition'] as const;
 export type SessionAgentTransitionActionId = typeof SESSION_AGENT_TRANSITION_ACTION_IDS[number];
 export const SESSION_AGENT_TRANSITION_ACTION_INPUT_SCHEMAS = {
   'session.continuation.inspect': lazyZodSchema(() => z.strictObject({

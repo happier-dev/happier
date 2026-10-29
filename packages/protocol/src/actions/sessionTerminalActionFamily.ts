@@ -1,12 +1,8 @@
+import { SESSION_TERMINAL_ACTION_IDS } from './sessionTerminalActionIdsV1.js';
+export { SESSION_TERMINAL_ACTION_IDS } from './sessionTerminalActionIdsV1.js';
 import { z } from 'zod/mini';
 import { SessionTerminalTargetV1Schema, SessionTerminalWorkspaceV1Schema } from '../terminal/workspace.js';
 import type { ActionInputFieldHint, PreNormalizedActionSpec } from './actionSpecs.js';
-
-export const SESSION_TERMINAL_ACTION_IDS = [
-  'session.terminals.list', 'session.terminals.open', 'session.terminals.split',
-  'session.terminals.focus', 'session.terminals.restart', 'session.terminals.open_in_details', 'session.terminals.close', 'session.terminals.close_tab', 'session.terminals.close_others', 'session.terminals.resize',
-  'session.terminals.rename', 'session.terminals.list_view', 'session.terminals.run_script', 'session.terminals.detach', 'session.terminals.reorder',
-] as const;
 export type SessionTerminalActionId = typeof SESSION_TERMINAL_ACTION_IDS[number];
 const id = z.string().check(z.trim(), z.minLength(1));
 const scope = z.strictObject({ scopeId: id });

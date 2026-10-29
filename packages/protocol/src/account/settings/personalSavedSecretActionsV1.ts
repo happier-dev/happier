@@ -1,8 +1,8 @@
+import { PERSONAL_SAVED_SECRET_ACTION_IDS_V1 } from './personalSavedSecretActionIdsV1.js';
+export { PERSONAL_SAVED_SECRET_ACTION_IDS_V1 } from './personalSavedSecretActionIdsV1.js';
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { ActionExecuteFailureSchema } from '../../actions/actionExecutionResult.js';
-
-export const PERSONAL_SAVED_SECRET_ACTION_IDS_V1 = ['secrets.list', 'secrets.create', 'secrets.update', 'secrets.delete'] as const;
 export type PersonalSavedSecretActionIdV1 = typeof PERSONAL_SAVED_SECRET_ACTION_IDS_V1[number];
 const identity = () => z.string().check(z.minLength(1));
 const name = () => z.string().check(z.trim(), z.minLength(1), z.maxLength(100));

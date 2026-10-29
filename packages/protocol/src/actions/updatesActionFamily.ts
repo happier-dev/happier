@@ -1,9 +1,9 @@
+import { UPDATES_ACTION_IDS } from './updatesActionIdsV1.js';
+export { UPDATES_ACTION_IDS } from './updatesActionIdsV1.js';
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import type { PreNormalizedActionSpec } from './actionSpecs.js';
 import { InstallableCapabilityIdSchema } from '../installables/descriptor.js';
-
-export const UPDATES_ACTION_IDS = ['updates.get', 'machines.cli.update', 'updates.check', 'updates.batch.start', 'updates.batch.stop'] as const;
 export type UpdatesActionId = typeof UPDATES_ACTION_IDS[number];
 export function isUpdatesActionId(value: string): value is UpdatesActionId {
   return (UPDATES_ACTION_IDS as readonly string[]).includes(value);

@@ -1,3 +1,5 @@
+import { PLUGIN_SETTINGS_ADMINISTRATION_ACTION_IDS_V1 } from './settingsAdministrationActionIdsV1.js';
+export { PLUGIN_SETTINGS_ADMINISTRATION_ACTION_IDS_V1 } from './settingsAdministrationActionIdsV1.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod/mini';
 
@@ -11,22 +13,6 @@ import {
 import { PluginIdSchema } from './pluginId.js';
 import { PLUGIN_ACCOUNT_SETTINGS_MAXIMUM_FIELDS_V1 } from './settings/accountSettingsFieldCountV1.js';
 import { asProtocolZod } from "./actions/internalProtocolZodAdapter.js";
-
-/**
- * Canonical user-administration Actions for declared plugin Settings. These
- * Actions select one existing Settings/Secrets owner; they do not introduce a
- * new settings store or accept raw secret material.
- */
-export const PLUGIN_SETTINGS_ADMINISTRATION_ACTION_IDS_V1 = [
-  'plugins.settings.list',
-  'plugins.settings.get',
-  'plugins.settings.set',
-  'plugins.settings.reset',
-  'plugins.settings.secret.status',
-  'plugins.settings.secret.bind',
-  'plugins.settings.secret.unbind',
-  'plugins.settings.secret.delete',
-] as const;
 
 export type PluginSettingsAdministrationActionIdV1 =
   typeof PLUGIN_SETTINGS_ADMINISTRATION_ACTION_IDS_V1[number];

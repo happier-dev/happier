@@ -1,3 +1,5 @@
+import { MANAGED_GITHUB_APP_ACTION_IDS_V1 } from './githubAppsActionIdsV1.js';
+export { MANAGED_GITHUB_APP_ACTION_IDS_V1 } from './githubAppsActionIdsV1.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod/mini';
 
@@ -227,15 +229,6 @@ export const ManagedGitHubAppErrorV1Schema = lazyZodSchema(() => z.strictObject(
     directorySources: z.number().check(z.int(), z.minimum(0)),
   })),
 }));
-
-export const MANAGED_GITHUB_APP_ACTION_IDS_V1 = [
-  'identity.githubApps.list',
-  'identity.githubApps.create',
-  'identity.githubApps.manifestSetup.start',
-  'identity.githubApps.update',
-  'identity.githubApps.verifyInstallation',
-  'identity.githubApps.remove',
-] as const;
 export type ManagedGitHubAppActionIdV1 = typeof MANAGED_GITHUB_APP_ACTION_IDS_V1[number];
 export const ManagedGitHubAppActionIdV1Schema = lazyZodSchema(() => z.enum(MANAGED_GITHUB_APP_ACTION_IDS_V1));
 

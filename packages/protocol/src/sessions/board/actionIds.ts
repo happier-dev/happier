@@ -1,20 +1,7 @@
+import { SESSION_BOARD_ACTION_IDS_V1 } from './idsV1.js';
+export { SESSION_BOARD_ACTION_IDS_V1 } from './idsV1.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod/mini';
-
-/**
- * The four user-invocable Board intents. People (UI/CLI) and supported Agents
- * reach the same durable Board through these ids; there is no Agent-specific
- * Board tool and no second Board vocabulary.
- *
- * This leaf carries identities and their tool bindings without loading document
- * schemas or the complete Action catalog into read-only viewers.
- */
-export const SESSION_BOARD_ACTION_IDS_V1 = [
-  'session.board.get',
-  'session.board.item.upsert',
-  'session.board.item.remove',
-  'session.board.layout.update',
-] as const;
 
 export const SessionBoardActionIdV1Schema = lazyZodSchema(() => z.enum(SESSION_BOARD_ACTION_IDS_V1));
 export type SessionBoardActionIdV1 = z.infer<typeof SessionBoardActionIdV1Schema>;
