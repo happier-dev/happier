@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { describeEffectiveModelMode } from './describeEffectiveModelMode';
+import { describeEffectiveModelMode, readAppliedModelSelection } from './describeEffectiveModelMode';
 import { getAgentCore } from '@/agents/catalog/catalog';
 import type { Metadata } from '@happier-dev/session-core/state';
 
@@ -78,7 +78,7 @@ describe('describeEffectiveModelMode', () => {
         expect(out.appliedModelId).toBe('gpt-5.6-terra');
     });
 
-    it('does not treat provider currentModelId as applied before prompt acceptance', () => {
+    it('shows actual runtime readback before acceptance while keeping the requested model selected', () => {
         const out = describeEffectiveModelMode({
             agentType: 'codex',
             selectedModelId: 'gpt-5.6-sol',
@@ -87,14 +87,38 @@ describe('describeEffectiveModelMode', () => {
                     v: 1,
                     agentId: 'codex',
                     updatedAt: 10,
-                    currentModelId: 'gpt-5.6-sol',
+                    currentModelId: 'actual-provider-model',
                     availableModels: [],
                 },
             }),
         });
 
         expect(out.selectedModelId).toBe('gpt-5.6-sol');
-        expect(out.appliedModelId).toBeNull();
+        expect(out.appliedModelId).toBe('actual-provider-model');
+    });
+
+    it('does not let stale acceptance metadata override current runtime truth or invent a source-bound inherited model', () => {
+        const metadata = buildMetadata({ sessionModelsV1: { v: 1, agentId: 'codex', updatedAt: 20,
+            currentModelId: 'actual-provider-model', availableModels: [] }, sessionAppliedModelV1: {
+            v: 1, provider: 'codex', updatedAt: 10, modelId: 'configured-model',
+        } });
+        expect(describeEffectiveModelMode({ agentType: 'codex', selectedModelId: 'configured-model', metadata }).appliedModelId)
+            .toBe('actual-provider-model');
+        expect(readAppliedModelSelection({ agentId: 'codex', agentTargetKey: 'agent:happier.agent.codex/codex', metadata })).toBeNull();
+    });
+
+    it('inherits only canonical exact runtime evidence, independently of an alias used for launch', () => {
+        const selection = { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: null, modelId: 'actual-provider-model' } as const;
+        const metadata = buildMetadata({ sessionModelsV1: { v: 1, agentId: 'codex', updatedAt: 20,
+            currentModelId: selection.modelId, availableModels: [{ id: selection.modelId, name: 'Actual model' }],
+            activeSelectionV1: { v: 1, source: 'runtime_readback', selection, runner: { pid: 42, processStartTimeMs: 10 } } } });
+        expect(describeEffectiveModelMode({ agentType: 'codex', selectedModelId: 'default', metadata }).appliedModelId).toBe(selection.modelId);
+        expect(readAppliedModelSelection({ agentId: 'codex', agentTargetKey: selection.agentTargetKey, metadata })).toEqual(selection);
+        expect(describeEffectiveModelMode({ agentType: 'codex', selectedModelId: 'default', metadata,
+            sessionActive: true, currentRunnerProcessIdentity: { pid: 99, processStartTimeMs: 20 } }).appliedModelStatus).toBe('last_reported');
+        expect(describeEffectiveModelMode({ agentType: 'codex', selectedModelId: 'default', metadata,
+            sessionActive: true, currentRunnerProcessIdentity: { pid: 42, processStartTimeMs: 10 } }).appliedModelStatus).toBe('running');
+        expect(readAppliedModelSelection({ agentId: 'codex', agentTargetKey: 'agent:happier.agent.codex/codex:definition:other', metadata })).toBeNull();
     });
 
     it('accepts the Remote Dev predecessor applied-model fact', () => {
@@ -112,6 +136,22 @@ describe('describeEffectiveModelMode', () => {
         });
 
         expect(out.appliedModelId).toBe('gpt-5.6-terra');
+    });
+
+    it('retains the provider-shaped 0.2 stored model vector through the legacy applied fact', () => {
+        // Persisted boundary vector from 3482a9101e: api/types.ts and
+        // backends/claude/sessionModels/effectiveModelUpdate.ts.
+        const metadata = {
+            path: '/tmp', host: 'h',
+            sessionModelsV1: { v: 1, provider: 'claude', updatedAt: 10,
+                currentModelId: 'claude-sonnet-4-5', availableModels: [] },
+            sessionAppliedModelV1: { v: 1, provider: 'claude', updatedAt: 10,
+                modelId: 'claude-sonnet-4-5' },
+        } as unknown as Metadata;
+        expect(describeEffectiveModelMode({ agentType: 'claude', selectedModelId: 'default', metadata }).appliedModelId)
+            .toBe('claude-sonnet-4-5');
+        expect(readAppliedModelSelection({ agentId: 'claude', agentTargetKey: 'agent:happier.agent.claude/claude', metadata }))
+            .toEqual({ agentTargetKey: 'agent:happier.agent.claude/claude', providerConnectionId: null, modelId: 'claude-sonnet-4-5' });
     });
 
     it('reads known applied model facts despite retired nested stored fields', () => {

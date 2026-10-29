@@ -1,3 +1,4 @@
+import { createKnownToolTitle } from '../toolTitles';
 import type { Metadata } from '@happier-dev/session-core/state';
 import type { ToolCall } from "@happier-dev/session-core/messages";
 import { ICON_TASK } from '../icons';
@@ -8,7 +9,7 @@ import { resolveSubagentToolPresentation } from './subAgentPresentation';
 
 export const coreSubAgentRunTools = {
     SubAgentRun: {
-        title: (opts: { metadata: Metadata | null; tool: ToolCall }) => resolveSubagentToolPresentation(opts).title,
+        title: createKnownToolTitle("SubAgentRun"),
         icon: (size: number, color: string, opts?: { metadata: Metadata | null; tool: ToolCall }) => {
             const agentId = opts ? resolveSubagentToolPresentation(opts).iconAgentId : null;
             return agentId ? <AgentIcon agentId={agentId} size={size} /> : ICON_TASK(size, color);

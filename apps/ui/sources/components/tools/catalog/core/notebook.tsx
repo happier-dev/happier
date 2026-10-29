@@ -1,3 +1,4 @@
+import { createKnownToolTitle } from '../toolTitles';
 import type { Metadata } from '@happier-dev/session-core/state';
 import type { ToolCall } from "@happier-dev/session-core/messages";
 import { resolvePath } from '@/utils/path/pathUtils';
@@ -8,13 +9,7 @@ import type { KnownToolDefinition } from '../_types';
 
 export const coreNotebookTools = {
     'NotebookRead': {
-        title: (opts: { metadata: Metadata | null, tool: ToolCall }) => {
-            if (typeof opts.tool.input.notebook_path === 'string') {
-                const path = resolvePath(opts.tool.input.notebook_path, opts.metadata);
-                return path;
-            }
-            return t('tools.names.readNotebook');
-        },
+        title: createKnownToolTitle("NotebookRead"),
         icon: ICON_READ,
         minimal: true,
         input: (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.unknown() }) as z.ZodMiniObject<T['shape'], z.core.$loose>)(z.partial(z.object({
@@ -23,13 +18,7 @@ export const coreNotebookTools = {
         })))
     },
     'NotebookEdit': {
-        title: (opts: { metadata: Metadata | null, tool: ToolCall }) => {
-            if (typeof opts.tool.input.notebook_path === 'string') {
-                const path = resolvePath(opts.tool.input.notebook_path, opts.metadata);
-                return path;
-            }
-            return t('tools.names.editNotebook');
-        },
+        title: createKnownToolTitle("NotebookEdit"),
         icon: ICON_EDIT,
         isMutable: true,
         input: (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.unknown() }) as z.ZodMiniObject<T['shape'], z.core.$loose>)(z.partial(z.object({

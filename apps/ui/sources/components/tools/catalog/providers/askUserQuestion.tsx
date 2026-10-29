@@ -1,3 +1,4 @@
+import { createKnownToolTitle } from '../toolTitles';
 import type { Metadata } from '@happier-dev/session-core/state';
 import type { ToolCall } from "@happier-dev/session-core/messages";
 import * as z from 'zod/mini';
@@ -7,9 +8,7 @@ import type { KnownToolDefinition } from '../_types';
 
 export const providerAskUserQuestionTools = {
     'AskUserQuestion': {
-        title: (opts: { metadata: Metadata | null, tool: ToolCall }) => {
-            return t('tools.names.question');
-        },
+        title: createKnownToolTitle("AskUserQuestion"),
         icon: ICON_QUESTION,
         minimal: false,  // Always show expanded to display options
         noStatus: true,

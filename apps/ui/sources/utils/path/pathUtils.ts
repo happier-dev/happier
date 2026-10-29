@@ -1,5 +1,3 @@
-import { Metadata } from '@happier-dev/session-core/state';
-
 /**
  * Resolves a path relative to the root path from metadata.
  * ALL paths are treated as relative to the metadata root, regardless of their format.
@@ -9,27 +7,7 @@ import { Metadata } from '@happier-dev/session-core/state';
  * @param metadata - Optional metadata containing the root path
  * @returns The resolved absolute path
  */
-export function resolvePath(path: string, metadata: Metadata | null): string {
-    if (!metadata) {
-        return path;
-    }
-    if (path.toLowerCase().startsWith(metadata.path.toLowerCase())) {
-        // Check that the path is actually within the metadata path by ensuring
-        // there's either an exact match or a path separator after the metadata path
-        const remainder = path.slice(metadata.path.length);
-        if (remainder === '' || remainder.startsWith('/')) {
-            let out = remainder;
-            if (out.startsWith('/')) {
-                out = out.slice(1);
-            }
-            if (out === '') {
-                return '<root>';
-            }
-            return out;
-        }
-    }
-    return path;
-}
+export { resolveToolPath as resolvePath } from "@happier-dev/session-core/tools";
 
 /**
  * Resolves paths starting with ~ to absolute paths using the provided home directory.

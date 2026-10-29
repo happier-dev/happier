@@ -1,3 +1,4 @@
+import { createKnownToolTitle } from '../toolTitles';
 import type { Metadata } from '@happier-dev/session-core/state';
 import type { ToolCall } from "@happier-dev/session-core/messages";
 import { resolvePath } from '@/utils/path/pathUtils';
@@ -8,7 +9,7 @@ import { CodeSearchInputV2Schema, GlobInputV2Schema, GrepInputV2Schema, LSInputV
 
 export const coreSearchTools = {
     'Glob': {
-        title: () => t('tools.names.searchFiles'),
+        title: createKnownToolTitle("Glob"),
         icon: ICON_SEARCH,
         minimal: true,
         input: GlobInputV2Schema,
@@ -24,7 +25,7 @@ export const coreSearchTools = {
         }
     },
     'Grep': {
-        title: () => t('tools.names.searchContent'),
+        title: createKnownToolTitle("Grep"),
         icon: ICON_READ,
         minimal: true,
         input: GrepInputV2Schema,
@@ -43,7 +44,7 @@ export const coreSearchTools = {
         }
     },
     'LS': {
-        title: () => t('tools.names.listFiles'),
+        title: createKnownToolTitle("LS"),
         icon: ICON_SEARCH,
         minimal: true,
         input: LSInputV2Schema,
@@ -63,7 +64,7 @@ export const coreSearchTools = {
         }
     },
     'CodeSearch': {
-        title: () => t('tools.names.search'),
+        title: createKnownToolTitle("CodeSearch"),
         icon: ICON_SEARCH,
         minimal: true,
         input: CodeSearchInputV2Schema,

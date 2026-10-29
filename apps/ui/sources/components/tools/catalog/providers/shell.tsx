@@ -1,3 +1,4 @@
+import { createKnownToolTitle } from '../toolTitles';
 import { extractShellCommand, stripShellCommandPreludeForDisplay } from '@happier-dev/protocol/activity/shellCommand';
 import type { Metadata } from '@happier-dev/session-core/state';
 import type { ToolCall } from "@happier-dev/session-core/messages";
@@ -11,19 +12,7 @@ import { getHappierToolsShellBridgeDisplay } from "@happier-dev/session-core/too
 
 export const providerShellTools = {
     'CodexBash': {
-        title: (opts: { metadata: Metadata | null, tool: ToolCall }) => {
-            // Check if this is a single read command
-            if (opts.tool.input?.parsed_cmd &&
-                Array.isArray(opts.tool.input.parsed_cmd) &&
-                opts.tool.input.parsed_cmd.length === 1 &&
-                opts.tool.input.parsed_cmd[0].type === 'read' &&
-                opts.tool.input.parsed_cmd[0].name) {
-                // Display the file name being read
-                const path = resolvePath(opts.tool.input.parsed_cmd[0].name, opts.metadata);
-                return path;
-            }
-            return t('tools.names.terminal');
-        },
+        title: createKnownToolTitle("CodexBash"),
         icon: ICON_TERMINAL,
         minimal: true,
         hideDefaultError: true,
@@ -90,7 +79,7 @@ export const providerShellTools = {
         }
     },
     'GeminiBash': {
-        title: t('tools.names.terminal'),
+        title: createKnownToolTitle("GeminiBash"),
         icon: ICON_TERMINAL,
         minimal: true,
         hideDefaultError: true,
@@ -112,44 +101,14 @@ export const providerShellTools = {
         }
     },
     'shell': {
-        title: t('tools.names.terminal'),
+        title: createKnownToolTitle("shell"),
         icon: ICON_TERMINAL,
         minimal: true,
         isMutable: true,
         input: (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.unknown() }) as z.ZodMiniObject<T['shape'], z.core.$loose>)(z.partial(z.object({})))
     },
     'execute': {
-        title: (opts: { metadata: Metadata | null, tool: ToolCall }) => {
-            const shellBridge = extractHappierToolsShellBridgeCommand(opts.tool.input);
-            if (shellBridge) {
-                return t('tools.desc.terminalCmd', { cmd: getHappierToolsShellBridgeDisplay(shellBridge).titleCommand });
-            }
-
-            // Prefer a human-readable title when provided by ACP metadata
-            const acpTitle =
-                typeof opts.tool.input?._acp?.title === 'string'
-                    ? opts.tool.input._acp.title
-                    : typeof opts.tool.input?.toolCall?.title === 'string'
-                        ? opts.tool.input.toolCall.title
-                        : null;
-            if (acpTitle) {
-                // Title is often like "rm file.txt [cwd /path] (description)".
-                // Extract just the command part before [
-                const bracketIdx = acpTitle.indexOf(' [');
-                const rawTitle = bracketIdx > 0 ? acpTitle.substring(0, bracketIdx) : acpTitle;
-                const cmd = stripShellCommandPreludeForDisplay(rawTitle).trim();
-                const firstWord = cmd.split(/\s+/)[0];
-                if (firstWord) return t('tools.desc.terminalCmd', { cmd: firstWord });
-                return t('tools.names.terminal');
-            }
-            const cmd = extractShellCommand(opts.tool.input);
-            if (cmd) {
-                const stripped = stripShellCommandPreludeForDisplay(cmd).trim();
-                const firstWord = stripped.split(/\s+/)[0];
-                if (firstWord) return t('tools.desc.terminalCmd', { cmd: firstWord });
-            }
-            return t('tools.names.terminal');
-        },
+        title: createKnownToolTitle("execute"),
         icon: ICON_TERMINAL,
         isMutable: true,
         input: (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.unknown() }) as z.ZodMiniObject<T['shape'], z.core.$loose>)(z.partial(z.object({}))),

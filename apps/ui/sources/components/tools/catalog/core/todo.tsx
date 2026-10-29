@@ -1,3 +1,4 @@
+import { createKnownToolTitle } from '../toolTitles';
 import type { Metadata } from '@happier-dev/session-core/state';
 import type { ToolCall, Message } from "@happier-dev/session-core/messages";
 import { t } from '@/text';
@@ -7,7 +8,7 @@ import { TodoResultV2Schema, TodoWriteInputV2Schema } from '@happier-dev/protoco
 
 export const coreTodoTools = {
     'TodoWrite': {
-        title: t('tools.names.todoList'),
+        title: createKnownToolTitle("TodoWrite"),
         icon: ICON_TODO,
         noStatus: true,
         minimal: (opts: { metadata: Metadata | null, tool: ToolCall, messages?: Message[] }) => {
@@ -42,7 +43,7 @@ export const coreTodoTools = {
         },
     },
     'TodoRead': {
-        title: t('tools.names.todoList'),
+        title: createKnownToolTitle("TodoRead"),
         icon: ICON_TODO,
         noStatus: true,
         minimal: true,

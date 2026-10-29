@@ -1,3 +1,4 @@
+import { createKnownToolTitle } from '../toolTitles';
 import type { Metadata } from '@happier-dev/session-core/state';
 import type { ToolCall } from "@happier-dev/session-core/messages";
 import { t } from '@/text';
@@ -7,7 +8,7 @@ import { PatchInputV2Schema } from '@happier-dev/protocol/tools/v2/schemas';
 
 export const corePatchTools = {
     Patch: {
-        title: t('tools.names.applyChanges'),
+        title: createKnownToolTitle("Patch"),
         icon: ICON_EDIT,
         minimal: true,
         hideDefaultError: true,

@@ -1,3 +1,4 @@
+import { createKnownToolTitle } from '../toolTitles';
 import type { Metadata } from '@happier-dev/session-core/state';
 import type { ToolCall } from "@happier-dev/session-core/messages";
 import * as z from 'zod/mini';
@@ -8,9 +9,7 @@ import { resolveDiffToolHeaderPresentation } from '../resolveDiffToolHeaderPrese
 
 export const coreDiffTools = {
     Diff: {
-        title: (opts: { metadata: Metadata | null, tool: ToolCall }) => {
-            return resolveDiffToolHeaderPresentation({ tool: opts.tool }).title;
-        },
+        title: createKnownToolTitle("Diff"),
         icon: ICON_EDIT,
         minimal: false,
         hideDefaultError: true,

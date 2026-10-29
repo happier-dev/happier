@@ -1,3 +1,4 @@
+import { createKnownToolTitle } from '../toolTitles';
 import type { Metadata } from '@happier-dev/session-core/state';
 import type { ToolCall } from "@happier-dev/session-core/messages";
 import { t } from '@/text';
@@ -7,7 +8,7 @@ import { WebFetchInputV2Schema, WebSearchInputV2Schema } from '@happier-dev/prot
 
 export const coreWebTools = {
     'WebFetch': {
-        title: () => t('tools.names.fetchUrl'),
+        title: createKnownToolTitle("WebFetch"),
         icon: ICON_WEB,
         minimal: true,
         input: WebFetchInputV2Schema,
@@ -33,7 +34,7 @@ export const coreWebTools = {
         }
     },
     'WebSearch': {
-        title: () => t('tools.names.webSearch'),
+        title: createKnownToolTitle("WebSearch"),
         icon: ICON_WEB,
         minimal: true,
         input: WebSearchInputV2Schema,

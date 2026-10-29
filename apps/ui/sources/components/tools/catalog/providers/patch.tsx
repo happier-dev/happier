@@ -1,3 +1,4 @@
+import { createKnownToolTitle } from '../toolTitles';
 import type { Metadata } from '@happier-dev/session-core/state';
 import type { ToolCall } from "@happier-dev/session-core/messages";
 import { resolvePath } from '@/utils/path/pathUtils';
@@ -8,32 +9,7 @@ import type { KnownToolDefinition } from '../_types';
 
 export const providerPatchTools = {
     'edit': {
-        title: (opts: { metadata: Metadata | null, tool: ToolCall }) => {
-            // Gemini sends data in nested structure, try multiple locations
-            let filePath: string | undefined;
-
-            // 1. Check toolCall.content[0].path
-            if (typeof opts.tool.input?.toolCall?.content?.[0]?.path === 'string') {
-                filePath = opts.tool.input.toolCall.content[0].path;
-            }
-            // 2. Check toolCall.title (has nice "Writing to ..." format)
-            else if (typeof opts.tool.input?.toolCall?.title === 'string') {
-                return opts.tool.input.toolCall.title;
-            }
-            // 3. Check input[0].path (array format)
-            else if (Array.isArray(opts.tool.input?.input) && typeof opts.tool.input.input[0]?.path === 'string') {
-                filePath = opts.tool.input.input[0].path;
-            }
-            // 4. Check direct path field
-            else if (typeof opts.tool.input?.path === 'string') {
-                filePath = opts.tool.input.path;
-            }
-
-            if (typeof filePath === 'string' && filePath.length > 0) {
-                return resolvePath(filePath, opts.metadata);
-            }
-            return t('tools.names.editFile');
-        },
+        title: createKnownToolTitle("edit"),
         icon: ICON_EDIT,
         isMutable: true,
         input: (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.unknown() }) as z.ZodMiniObject<T['shape'], z.core.$loose>)(z.partial(z.object({
@@ -44,7 +20,7 @@ export const providerPatchTools = {
         })))
     },
     'CodexPatch': {
-        title: t('tools.names.applyChanges'),
+        title: createKnownToolTitle("CodexPatch"),
         icon: ICON_EDIT,
         minimal: true,
         hideDefaultError: true,
@@ -98,7 +74,7 @@ export const providerPatchTools = {
         }
     },
     'GeminiPatch': {
-        title: t('tools.names.applyChanges'),
+        title: createKnownToolTitle("GeminiPatch"),
         icon: ICON_EDIT,
         minimal: true,
         hideDefaultError: true,

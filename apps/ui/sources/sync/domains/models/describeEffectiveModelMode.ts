@@ -13,14 +13,17 @@ import {
     type ProviderBoundModelRef,
 } from '@happier-dev/protocol/providers/model-selection';
 
+import { resolveSessionModelSelectionDisposition, type CurrentSessionRunnerProcessIdentity, type SessionModelSelectionDisposition } from './resolveSessionModelSelectionDisposition';
+
 export type ModelApplyScope = 'live' | 'next_prompt' | 'spawn_only';
 const StoredSessionAppliedModelV1Schema = createStoredReadSchema(SessionAppliedModelV1Schema);
 
 export type EffectiveModelModeDescription = Readonly<{
     /** Requested model. This owns picker selection and model-specific controls. */
     selectedModelId: string;
-    /** Last model attached to an exact provider-accepted new turn for this agent. */
+    /** Actual runtime model, or retained legacy applied history. */
     appliedModelId: string | null;
+    appliedModelStatus: SessionModelSelectionDisposition['reportedSelectionStatus'];
     /** @deprecated Use selectedModelId for selection semantics. */
     effectiveModelId: string;
     applyScope: ModelApplyScope;
@@ -36,6 +39,12 @@ export function readAppliedModelSelection(params: Readonly<{
     agentTargetKey: string;
     metadata: Metadata | null | undefined;
 }>): ProviderBoundModelRef | null {
+    const sessionModels = readSessionModelsState(params.metadata);
+    if (sessionModels?.agentId !== undefined) {
+        return resolveSessionModelSelectionDisposition({ ...params,
+            sessionActive: false, currentRunnerProcessIdentity: null }).lastAppliedSelection;
+    }
+    // 0.2 persisted catalogs used `provider`, while current catalogs use `agentId`.
     const parsed = StoredSessionAppliedModelV1Schema.safeParse(params.metadata?.sessionAppliedModelV1);
     if (!parsed.success || parsed.data.provider !== params.agentId) return null;
     const structured = parsed.data.selection;
@@ -56,6 +65,8 @@ export function describeEffectiveModelMode(params: {
     selectedModelId: string | null | undefined;
     metadata: Metadata | null;
     composerOptionsInput?: ComposerOptionsInputV1 | null;
+    sessionActive?: boolean;
+    currentRunnerProcessIdentity?: CurrentSessionRunnerProcessIdentity | null;
 }): EffectiveModelModeDescription {
     const agentId = typeof params.agentType === 'string' ? params.agentType.trim() : '';
     const staticAgentId = resolveAgentIdFromFlavor(agentId);
@@ -71,11 +82,19 @@ export function describeEffectiveModelMode(params: {
     const agentTargetKey = sessionTarget
         ? buildBackendTargetKeyV2(sessionTarget)
         : readAgentUniverseBackendTargetKey(agentId);
-    const appliedModelId = agentTargetKey === null ? null : readAppliedModelSelection({
-        agentId,
-        agentTargetKey,
-        metadata: params.metadata,
-    })?.modelId ?? null;
+    const sessionModels = readSessionModelsState(params.metadata);
+    const disposition = agentTargetKey === null ? null : resolveSessionModelSelectionDisposition({
+        agentId, agentTargetKey, metadata: params.metadata,
+        sessionActive: params.sessionActive === true,
+        currentRunnerProcessIdentity: params.currentRunnerProcessIdentity ?? null,
+    });
+    const appliedModelId = sessionModels?.agentId !== undefined
+        ? sessionModels.agentId === agentId ? normalizeModelId(sessionModels.currentModelId) || null : null
+        : agentTargetKey === null ? null : readAppliedModelSelection({
+            agentId, agentTargetKey, metadata: params.metadata,
+        })?.modelId ?? null;
+    const appliedModelStatus = appliedModelId === null ? null
+        : disposition?.reportedSelectionStatus ?? 'last_reported';
 
     const composerOptionsInput = params.composerOptionsInput === undefined ? params.metadata : params.composerOptionsInput;
     const isAcpSession = Boolean(readSessionModesState(params.metadata) || readSessionModelsState(composerOptionsInput));
@@ -105,6 +124,7 @@ export function describeEffectiveModelMode(params: {
     return {
         selectedModelId: effectiveModelId,
         appliedModelId,
+        appliedModelStatus,
         effectiveModelId,
         applyScope,
         notes,

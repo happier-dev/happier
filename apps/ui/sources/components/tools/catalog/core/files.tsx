@@ -1,3 +1,4 @@
+import { createKnownToolTitle } from '../toolTitles';
 import type { Metadata } from '@happier-dev/session-core/state';
 import type { ToolCall } from "@happier-dev/session-core/messages";
 import { resolvePath } from '@/utils/path/pathUtils';
@@ -15,7 +16,7 @@ import {
 
 export const coreFileTools = {
     'Read': {
-        title: () => t('tools.names.readFile'),
+        title: createKnownToolTitle("Read"),
         minimal: true,
         icon: ICON_READ,
         input: ReadInputV2Schema,
@@ -38,7 +39,7 @@ export const coreFileTools = {
     },
     // Gemini uses lowercase 'read'
     'read': {
-        title: () => t('tools.names.readFile'),
+        title: createKnownToolTitle("read"),
         minimal: true,
         icon: ICON_READ,
         input: ReadInputV2Schema,
@@ -59,29 +60,13 @@ export const coreFileTools = {
         },
     },
     'Edit': {
-        title: (opts: { metadata: Metadata | null, tool: ToolCall }) => {
-            if (typeof opts.tool.input.file_path === 'string') {
-                const path = resolvePath(opts.tool.input.file_path, opts.metadata);
-                return path;
-            }
-            return t('tools.names.editFile');
-        },
+        title: createKnownToolTitle("Edit"),
         icon: ICON_EDIT,
         isMutable: true,
         input: EditInputV2Schema,
     },
     'MultiEdit': {
-        title: (opts: { metadata: Metadata | null, tool: ToolCall }) => {
-            if (typeof opts.tool.input.file_path === 'string') {
-                const path = resolvePath(opts.tool.input.file_path, opts.metadata);
-                const editCount = Array.isArray(opts.tool.input.edits) ? opts.tool.input.edits.length : 0;
-                if (editCount > 1) {
-                    return t('tools.desc.multiEditEdits', { path, count: editCount });
-                }
-                return path;
-            }
-            return t('tools.names.editFile');
-        },
+        title: createKnownToolTitle("MultiEdit"),
         icon: ICON_EDIT,
         isMutable: true,
         input: MultiEditInputV2Schema,
@@ -98,29 +83,13 @@ export const coreFileTools = {
         }
     },
     'Write': {
-        title: (opts: { metadata: Metadata | null, tool: ToolCall }) => {
-            if (typeof opts.tool.input.file_path === 'string') {
-                const path = resolvePath(opts.tool.input.file_path, opts.metadata);
-                return path;
-            }
-            return t('tools.names.writeFile');
-        },
+        title: createKnownToolTitle("Write"),
         icon: ICON_EDIT,
         isMutable: true,
         input: WriteInputV2Schema,
     },
     'Delete': {
-        title: (opts: { metadata: Metadata | null, tool: ToolCall }) => {
-            const input = opts.tool.input as any;
-            const filePaths = Array.isArray(input?.file_paths) ? input.file_paths : null;
-            const first = Array.isArray(filePaths) && typeof filePaths[0] === 'string' ? String(filePaths[0]) : null;
-            const fallback = typeof input?.file_path === 'string' ? String(input.file_path) : null;
-            const path = first || fallback ? resolvePath(first ?? fallback ?? '', opts.metadata) : null;
-            const count = Array.isArray(filePaths) ? filePaths.length : (first || fallback ? 1 : 0);
-            if (path && count > 1) return `${path} (+${count - 1} more)`;
-            if (path) return path;
-            return 'Delete';
-        },
+        title: createKnownToolTitle("Delete"),
         icon: ICON_DELETE,
         isMutable: true,
         input: DeleteInputV2Schema,

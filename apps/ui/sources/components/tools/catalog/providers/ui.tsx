@@ -1,11 +1,12 @@
+import { createKnownToolTitle } from '../toolTitles';
 import * as z from 'zod/mini';
-import { t } from '@/text';
+
 import { ICON_EDIT } from '../icons';
 import type { KnownToolDefinition } from '../_types';
 
 export const providerUiTools = {
     'change_title': {
-        title: t('tools.names.changeTitle'),
+        title: createKnownToolTitle("change_title"),
         icon: ICON_EDIT,
         minimal: true,
         noStatus: true,
@@ -15,7 +16,7 @@ export const providerUiTools = {
         result: (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.unknown() }) as z.ZodMiniObject<T['shape'], z.core.$loose>)(z.partial(z.object({})))
     },
     WorkspaceIndexingPermission: {
-        title: t('tools.workspaceIndexingPermission.defaultTitle'),
+        title: createKnownToolTitle("WorkspaceIndexingPermission"),
         icon: ICON_EDIT,
         minimal: true,
         noStatus: true,

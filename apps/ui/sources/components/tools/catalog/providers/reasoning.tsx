@@ -1,3 +1,4 @@
+import { createKnownToolTitle } from '../toolTitles';
 import type { Metadata } from '@happier-dev/session-core/state';
 import type { ToolCall } from "@happier-dev/session-core/messages";
 import * as z from 'zod/mini';
@@ -7,13 +8,7 @@ import type { KnownToolDefinition } from '../_types';
 
 export const providerReasoningTools = {
     'CodexReasoning': {
-        title: (opts: { metadata: Metadata | null, tool: ToolCall }) => {
-            // Use the title from input if provided
-            if (opts.tool.input?.title && typeof opts.tool.input.title === 'string') {
-                return opts.tool.input.title;
-            }
-            return t('tools.names.reasoning');
-        },
+        title: createKnownToolTitle("CodexReasoning"),
         icon: ICON_REASONING,
         minimal: true,
         input: (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.unknown() }) as z.ZodMiniObject<T['shape'], z.core.$loose>)(z.partial(z.object({
@@ -31,13 +26,7 @@ export const providerReasoningTools = {
         }
     },
     'GeminiReasoning': {
-        title: (opts: { metadata: Metadata | null, tool: ToolCall }) => {
-            // Use the title from input if provided
-            if (opts.tool.input?.title && typeof opts.tool.input.title === 'string') {
-                return opts.tool.input.title;
-            }
-            return t('tools.names.reasoning');
-        },
+        title: createKnownToolTitle("GeminiReasoning"),
         icon: ICON_REASONING,
         minimal: true,
         input: (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.unknown() }) as z.ZodMiniObject<T['shape'], z.core.$loose>)(z.partial(z.object({
@@ -55,13 +44,7 @@ export const providerReasoningTools = {
         }
     },
     'think': {
-        title: (opts: { metadata: Metadata | null, tool: ToolCall }) => {
-            // Use the title from input if provided
-            if (opts.tool.input?.title && typeof opts.tool.input.title === 'string') {
-                return opts.tool.input.title;
-            }
-            return t('tools.names.reasoning');
-        },
+        title: createKnownToolTitle("think"),
         icon: ICON_REASONING,
         minimal: true,
         input: (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.unknown() }) as z.ZodMiniObject<T['shape'], z.core.$loose>)(z.partial(z.object({

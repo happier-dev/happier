@@ -13,7 +13,7 @@ import { readTranscriptProjectCommandCall } from '@/components/sessions/transcri
 import { ProjectCommandToolBody } from './ProjectCommandToolBody';
 import { readTranscriptMachineResourcesCall } from '@/components/sessions/transcript/references/transcriptMachineResourcesReference';
 import { MachineResourcesToolBody } from './MachineResourcesToolBody';
-import { ResolvedMcpToolIdentityV1Schema, type ResolvedMcpToolIdentityV1 } from '@happier-dev/protocol/mcp/servers/tools/mcpToolIdentityV1';
+import { type ResolvedMcpToolIdentityV1 } from '@happier-dev/protocol/mcp/servers/tools/mcpToolIdentityV1';
 import { getActionSpec } from '@happier-dev/protocol/actions';
 import { readHappierActionCallId, readHappierActionCallInput } from '@/components/sessions/transcript/references/happierActionToolResult';
 import { presentActionApproval } from '@/components/approvals/actionApprovalPresentation';
@@ -22,41 +22,11 @@ import { Typography } from '@/constants/Typography';
 import { resolveToolActionFailure, type ToolActionFailurePresentation } from '@/components/tools/shell/presentation/resolveToolActionFailure';
 
 
-/**
- * Converts snake_case string to PascalCase with spaces
- * Example: "create_issue" -> "Create Issue"
- */
-function snakeToPascalWithSpaces(str: string): string {
-    return str
-        .split('_')
-        .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
-        .join(' ');
-}
+import { resolveMcpToolTitle } from '@happier-dev/session-core/tools';
 
-/**
- * Formats MCP tool name to display title
- * Example: "mcp__linear__create_issue" -> "MCP: Linear Create Issue"
- */
 export function formatMCPTitle(toolName: string, mcpTool?: ResolvedMcpToolIdentityV1, input?: unknown): string {
-    // A Happier Action reads as the Action it runs ("Stop workspace sync"), never as its transport tool.
     const actionId = readHappierActionCallId(toolName, input);
-    if (actionId) return resolveActionTitle(actionId, getActionSpec(actionId));
-    const identity = ResolvedMcpToolIdentityV1Schema.safeParse(mcpTool);
-    if (identity.success) return `${identity.data.toolTitle ?? identity.data.tool} · ${identity.data.serverTitle}`;
-    // Remove "mcp__" prefix
-    const withoutPrefix = toolName.replace(/^mcp__/, '');
-    
-    // Split into parts by "__"
-    const parts = withoutPrefix.split('__');
-    
-    if (parts.length >= 2) {
-        const serverName = snakeToPascalWithSpaces(parts[0]);
-        const toolNamePart = snakeToPascalWithSpaces(parts.slice(1).join('_'));
-        return `MCP: ${serverName} ${toolNamePart}`;
-    }
-    
-    // Fallback if format doesn't match expected pattern
-    return `MCP: ${snakeToPascalWithSpaces(withoutPrefix)}`;
+    return resolveMcpToolTitle(toolName, mcpTool, actionId ? resolveActionTitle(actionId, getActionSpec(actionId)) : null);
 }
 
 type UnknownRecord = Record<string, unknown>;

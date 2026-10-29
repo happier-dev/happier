@@ -1,4 +1,4 @@
-import { readTurnChangeToolMetadataFromToolCall } from '@happier-dev/protocol/sessions/messages/canonicalTurnDiffTool';
+import { resolveDiffToolTitlePresentation, type ToolTitleTranslator } from '@happier-dev/session-core/tools';
 
 import type { ToolCall } from "@happier-dev/session-core/messages";
 import { t } from '@/text';
@@ -17,10 +17,11 @@ export function resolveDiffToolHeaderPresentation(opts: {
     subtitle: string | null;
     description: string;
 }> {
-    if (readTurnChangeToolMetadataFromToolCall(opts.tool) != null) {
+    const { title, isTurnDiff } = resolveDiffToolTitlePresentation(opts.tool, t as ToolTitleTranslator);
+    if (isTurnDiff) {
         const recap = t('tools.desc.turnDiffRecap');
         return {
-            title: t('tools.names.turnDiff'),
+            title,
             subtitle: recap,
             description: recap,
         };
@@ -32,7 +33,7 @@ export function resolveDiffToolHeaderPresentation(opts: {
             : null;
     if (filePathFallback) {
         return {
-            title: t('tools.names.viewDiff'),
+            title,
             subtitle: basenameFromPath(filePathFallback),
             description: t('tools.desc.showingDiff'),
         };
@@ -41,7 +42,7 @@ export function resolveDiffToolHeaderPresentation(opts: {
     const diff = opts.tool.input?.unified_diff;
     if (typeof diff !== 'string' || !diff) {
         return {
-            title: t('tools.names.viewDiff'),
+            title,
             subtitle: null,
             description: t('tools.desc.showingDiff'),
         };
@@ -50,7 +51,7 @@ export function resolveDiffToolHeaderPresentation(opts: {
     const paths = parseUnifiedDiffFilePaths(diff);
     const subtitle = paths.length === 1 ? basenameFromPath(paths[0]!) : null;
     return {
-        title: t('tools.names.viewDiff'),
+        title,
         subtitle,
         description: t('tools.desc.showingDiff'),
     };

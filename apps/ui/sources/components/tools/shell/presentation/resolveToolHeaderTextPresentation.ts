@@ -8,6 +8,8 @@ import { formatMCPTitle, formatMCPToolSubtitle } from '@/components/tools/render
 import { t } from '@/text';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { resolveAskUserQuestionAnsweredByLabel } from '@/components/tools/renderers/workflow/askUserQuestionCardState';
+import { resolveToolDisplayTitle } from '@happier-dev/session-core/tools';
+import type { KnownToolDefinition } from '@/components/tools/catalog/_types';
 
 const KNOWN_TOOL_KEYS = Object.keys(knownTools);
 
@@ -101,7 +103,7 @@ export function resolveToolHeaderTextPresentation(params: {
     const normalizedToolName = inferred.normalizedToolName;
     const usedInferenceFallback = inferred.source !== 'original' && inferred.normalizedToolName !== tool.name;
 
-    const knownTool = knownTools[normalizedToolName as keyof typeof knownTools] as any;
+    const knownTool: KnownToolDefinition | undefined = knownTools[normalizedToolName as keyof typeof knownTools];
 
     let statusText: string | null = null;
     if (knownTool && typeof knownTool.extractStatus === 'function') {
@@ -111,14 +113,11 @@ export function resolveToolHeaderTextPresentation(params: {
         }
     }
 
-    let title = normalizedToolName;
-    if (knownTool?.title) {
-        title = typeof knownTool.title === 'function' ? knownTool.title({ tool, metadata }) : knownTool.title;
-    }
-
-    if (usedInferenceFallback && !knownTool && typeof tool.description === 'string' && tool.description.trim().length > 0) {
-        title = tool.description.trim();
-    }
+    const knownTitle = knownTool?.title
+        ? typeof knownTool.title === 'function' ? knownTool.title({ tool, metadata }) : knownTool.title
+        : null;
+    const title = resolveToolDisplayTitle({ tool, normalizedToolName, usedInferenceFallback,
+        knownTitle, unknownTitle: t('tools.common.unknownToolTitle') });
 
     let subtitle: string | null = null;
     if (knownTool && typeof knownTool.extractSubtitle === 'function') {
@@ -143,10 +142,6 @@ export function resolveToolHeaderTextPresentation(params: {
 
     const isExplicitUnknown = normalizedToolName.trim().toLowerCase() === 'unknown';
     if (isExplicitUnknown) {
-        const titleLower = typeof title === 'string' ? title.trim().toLowerCase() : '';
-        if (titleLower === 'unknown') {
-            title = t('tools.common.unknownToolTitle');
-        }
         if (subtitle) {
             const match = subtitle.trim().match(/^tool:\s*(.+)$/i);
             if (match?.[1]) {
@@ -156,16 +151,6 @@ export function resolveToolHeaderTextPresentation(params: {
     }
 
     subtitle = compactSubAgentRunSubtitle(subtitle, normalizedToolName);
-
-    if (!knownTool) {
-        const rawTitle = typeof title === 'string' ? title.trim() : '';
-        // When providers emit simple lowercase or snake_case tool names like "skill" or
-        // "codex_command_execution", prefer a minimally humanized title instead of the raw identifier.
-        if (rawTitle && /^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/.test(rawTitle)) {
-            const words = rawTitle.replace(/_/g, ' ');
-            title = words[0]!.toUpperCase() + words.slice(1);
-        }
-    }
 
     return {
         normalizedToolName,

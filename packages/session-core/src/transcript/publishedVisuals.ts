@@ -1,13 +1,13 @@
-import { createReducer, reducer } from '../reducer/reducer.js';
-import { normalizeRawMessages } from '../raw/normalize.js';
 import { isPublishedTranscriptSessionBoardItemReferenceCorrespondingV1, resolveTranscriptSessionBoardItemReferenceV1 } from '@happier-dev/protocol/sessions/board';
 import { SessionForkVisualOriginV1Schema } from '@happier-dev/protocol/sessions/board/forkVisualCopies';
 import { getSessionTranscriptSurfaceItemReferenceSourceKeyV1, readSessionTranscriptSurfaceItemReferencesV1 } from '@happier-dev/protocol/sessions/messages/transcriptObservationV1';
-import type { SessionMessageRole } from '@happier-dev/protocol/sessions/messages/sessionMessageRole';
+import { readPublishedSessionTranscript } from './publishedTranscript.js';
+import type { PublishedSessionTranscriptMessage } from './publishedTranscript.js';
 
-export type PublishedSessionVisualMessage = Readonly<{
-    id: string; publishedSessionId: string; seq: number; localId: string | null; createdAt: number; raw: unknown;
-    reference: unknown; messageRole?: SessionMessageRole; visualReadable: boolean;
+export type PublishedSessionVisualMessage = PublishedSessionTranscriptMessage & Readonly<{
+    publishedSessionId: string;
+    reference: unknown;
+    visualReadable: boolean;
 }>;
 export type PublishedSessionVisualProjection = { status: 'available'; referenceIndex: number }
     | { status: 'not_copied'; sourceKey: string };
@@ -17,9 +17,7 @@ export function readPublishedSessionVisualMessages(messages: readonly PublishedS
     if (!messages.some(message => (message.reference && message.visualReadable)
         || (typeof message.raw === 'object' && message.raw !== null && 'meta' in message.raw))) return new Map();
     const ordered = [...messages].sort((left, right) => left.seq - right.seq);
-    const normalized = normalizeRawMessages(ordered.map(message => ({ id: message.id, localId: message.localId,
-        seq: message.seq, createdAt: message.createdAt, raw: message.raw, messageRole: message.messageRole })));
-    const completed = reducer(createReducer(), normalized, null).messages;
+    const { normalizedMessages: normalized, messages: completed } = readPublishedSessionTranscript(ordered);
     const publishedById = new Map(ordered.map(message => [message.id, message]));
     const toolsByCallId = new Map(completed.flatMap(message => message.kind === 'tool-call'
         && message.tool.state === 'completed' && message.tool.id ? [[message.tool.id, message.tool] as const] : []));
