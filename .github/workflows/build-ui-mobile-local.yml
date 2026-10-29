@@ -193,6 +193,10 @@ concurrency:
 
 env:
   EXPO_UNSTABLE_WEB_MODAL: "1"
+  RELEASE_ENVIRONMENT: ${{ inputs.environment }}
+  RELEASE_ACTION: ${{ inputs.action }}
+  RELEASE_PROFILE: ${{ inputs.profile == 'auto' && inputs.environment || inputs.profile }}
+  NATIVE_ACTION: ${{ inputs.action == 'build_and_submit' && 'native_submit' || 'native' }}
 
 jobs:
   trusted_ref_guard:
@@ -418,7 +422,7 @@ jobs:
         run: |
           set -euo pipefail
           store_args=()
-          if [ "${{ inputs.environment }}" = production ] && [ "${{ inputs.action }}" = build_and_submit ]; then
+          if [ "$RELEASE_ENVIRONMENT" = production ] && [ "$RELEASE_ACTION" = build_and_submit ]; then
             node .mobile-control/scripts/pipeline/release/release-notes/project-release-notes.mjs \
               --release-id "$RELEASE_NOTES_ID" --source-sha "$(git rev-parse HEAD)" \
               --component-version "ui=$(node -p "require('./apps/ui/package.json').version")" \
@@ -426,10 +430,10 @@ jobs:
             store_args=(--release-notes-json "$RUNNER_TEMP/store-release-notes.json" --release-id "$RELEASE_NOTES_ID" --source-sha "$(git rev-parse HEAD)" --app-version "$(node -p "require('./apps/ui/package.json').version")")
           fi
           node .mobile-control/scripts/pipeline/run.mjs ui-mobile-release \
-            --environment "${{ inputs.environment }}" \
-            --action "${{ inputs.action == 'build_and_submit' && 'native_submit' || 'native' }}" \
+            --environment "$RELEASE_ENVIRONMENT" \
+            --action "$NATIVE_ACTION" \
             --platform "${EAS_PLATFORM}" \
-            --profile "${{ inputs.profile == 'auto' && inputs.environment || inputs.profile }}" \
+            --profile "$RELEASE_PROFILE" \
             --native-build-mode local \
             --build-json "/tmp/eas_build_${EAS_PLATFORM}.json" \
             --out-dir "dist/ui-mobile" \
@@ -536,7 +540,7 @@ jobs:
             exit 1
           fi
           node scripts/pipeline/expo/publish-apk-release.mjs \
-            --environment "${{ inputs.environment }}" \
+            --environment "$RELEASE_ENVIRONMENT" \
             --apk-path "${apks[0]}" \
             --version "$APP_VERSION" \
             --target-sha "$AUTHORIZED_SHA" \
@@ -616,7 +620,7 @@ jobs:
         run: |
           set -euo pipefail
           store_args=()
-          if [ "${{ inputs.environment }}" = production ] && [ "${{ inputs.action }}" = build_and_submit ]; then
+          if [ "$RELEASE_ENVIRONMENT" = production ] && [ "$RELEASE_ACTION" = build_and_submit ]; then
             node .testflight-control/scripts/pipeline/release/release-notes/project-release-notes.mjs \
               --release-id "$RELEASE_NOTES_ID" --source-sha "$(git rev-parse HEAD)" \
               --component-version "ui=$(node -p "require('./apps/ui/package.json').version")" \
@@ -624,10 +628,10 @@ jobs:
             store_args=(--release-notes-json "$RUNNER_TEMP/store-release-notes.json" --release-id "$RELEASE_NOTES_ID" --source-sha "$(git rev-parse HEAD)" --app-version "$(node -p "require('./apps/ui/package.json').version")")
           fi
           node .testflight-control/scripts/pipeline/run.mjs ui-mobile-release \
-            --environment "${{ inputs.environment }}" \
-            --action "${{ inputs.action == 'build_and_submit' && 'native_submit' || 'native' }}" \
+            --environment "$RELEASE_ENVIRONMENT" \
+            --action "$NATIVE_ACTION" \
             --platform "${EAS_PLATFORM}" \
-            --profile "${{ inputs.profile == 'auto' && inputs.environment || inputs.profile }}" \
+            --profile "$RELEASE_PROFILE" \
             --native-build-mode local \
             --build-json "/tmp/eas_build_${EAS_PLATFORM}.json" \
             --out-dir "dist/ui-mobile" \
@@ -978,7 +982,7 @@ jobs:
         run: |
           set -euo pipefail
           node scripts/pipeline/run.mjs ui-mobile-release \
-            --environment "${{ inputs.environment }}" \
+            --environment "$RELEASE_ENVIRONMENT" \
             --action ota \
             --platform all \
             --secrets-source env

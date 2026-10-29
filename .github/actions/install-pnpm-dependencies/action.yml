@@ -58,6 +58,7 @@ runs:
         ONNXRUNTIME_NODE_INSTALL_CUDA: skip
         REDISMS_DISABLE_POSTINSTALL: '1'
         HAPPIER_INSTALL_CROSS_TARGET_OPTIONALS: ${{ inputs.cross-target-optionals }}
+        PNPM_INSTALL_ARGS: ${{ inputs.args }}
       run: |
         set -euo pipefail
         platform_args=()
@@ -66,7 +67,8 @@ runs:
           # install only. Linux release payloads retain both libc variants.
           platform_args=(--os=linux,darwin,win32 --cpu=x64,arm64 --libc=glibc,musl)
         fi
-        pnpm install ${{ inputs.args }} --prod=false --prefer-offline "${platform_args[@]}"
+        read -r -a install_args <<< "$PNPM_INSTALL_ARGS"
+        pnpm install "${install_args[@]}" --prod=false --prefer-offline "${platform_args[@]}"
     - name: Save pnpm store
       if: ${{ inputs.prepared-artifact == '' && inputs.cache-dependencies == 'true' && steps.dependency-cache.outputs.cache-hit != 'true' }}
       uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830

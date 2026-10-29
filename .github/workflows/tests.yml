@@ -3115,6 +3115,11 @@ jobs:
       - name: Run provider contract suite
         env:
           CI: "1"
+          PRESET: ${{ inputs.providers_preset }}
+          TIER: ${{ inputs.providers_tier }}
+          STRICT_KEYS: ${{ fromJSON(inputs.providers_flags).strict_keys }}
+          FLAKE_RETRY: ${{ fromJSON(inputs.providers_flags).flake_retry }}
+          UPDATE_BASELINES: ${{ fromJSON(inputs.providers_flags).update_baselines }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           CODEX_API_KEY: ${{ secrets.CODEX_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -3126,11 +3131,11 @@ jobs:
           set -euo pipefail
 
           flags=()
-          if [ "${{ fromJSON(inputs.providers_flags).strict_keys }}" = "true" ]; then flags+=("--strict-keys"); fi
-          if [ "${{ fromJSON(inputs.providers_flags).flake_retry }}" != "true" ]; then flags+=("--no-flake-retry"); fi
-          if [ "${{ fromJSON(inputs.providers_flags).update_baselines }}" = "true" ]; then flags+=("--update-baselines"); fi
+          if [ "$STRICT_KEYS" = "true" ]; then flags+=("--strict-keys"); fi
+          if [ "$FLAKE_RETRY" != "true" ]; then flags+=("--no-flake-retry"); fi
+          if [ "$UPDATE_BASELINES" = "true" ]; then flags+=("--update-baselines"); fi
 
-          pnpm --filter @happier-dev/tests run providers:run "${{ inputs.providers_preset }}" "${{ inputs.providers_tier }}" "${flags[@]}"
+          pnpm --filter @happier-dev/tests run providers:run "$PRESET" "$TIER" "${flags[@]}"
 
       - name: Upload provider artifacts (on failure)
         if: failure()

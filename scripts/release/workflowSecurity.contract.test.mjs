@@ -210,9 +210,49 @@ test('workflow security W3: the real mobile shell preserves shell-significant re
   }
 });
 
+test('workflow security W4: mobile and provider inputs enter shells as data', () => {
+  for (const file of ['build-ui-mobile-local.yml', 'tests.yml']) {
+    assert.deepEqual(securityViolations(new Map([[file, workflows.get(file)]]), 'shell-inputs'), []);
+  }
+});
 
+test('workflow security W4: install action inputs enter shells as data', async () => {
+  const action = YAML.parse(await readFile(new URL('../../.github/actions/install-pnpm-dependencies/action.yml', import.meta.url), 'utf8'));
+  assert.deepEqual(securityViolations(new Map([['install-action', { jobs: { install: { steps: action.runs.steps } } }]]), 'shell-inputs'), []);
+});
 
+test('workflow security W4: label bootstrap boolean enters JavaScript as data', () => {
+  const job = workflows.get('roadmap-bootstrap-labels.yml').jobs.bootstrap;
+  const scriptSteps = job.steps.filter((step) => actionName(step.uses) === 'actions/github-script')
+    .map((step) => ({ run: step.with.script }));
+  assert.deepEqual(securityViolations(new Map([['label-bootstrap', { jobs: { bootstrap: { steps: scriptSteps } } }]]), 'shell-inputs'), []);
+});
 
+test('workflow security W4: the real install shell forwards flags without executing input commands', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'workflow-install-args-'));
+  try {
+    await mkdir(join(root, 'bin'));
+    await writeFile(join(root, 'bin/pnpm'), '#!/bin/sh\nprintf "%s\\0" "$@" > "$ARGV_PATH"\n', { mode: 0o755 });
+    const action = YAML.parse(await readFile(new URL('../../.github/actions/install-pnpm-dependencies/action.yml', import.meta.url), 'utf8'));
+    const step = action.runs.steps.find((entry) => entry.env?.PNPM_INSTALL_ARGS);
+    const sentinel = join(root, 'executed');
+    for (const args of ['--frozen-lockfile --ignore-scripts', '--frozen-lockfile $(touch "$SIDE_EFFECT")']) {
+      const result = spawnSync('bash', ['-e', '-o', 'pipefail', '-c', step.run], {
+        cwd: root, encoding: 'utf8', env: {
+          ...process.env, PATH: `${join(root, 'bin')}:${process.env.PATH}`,
+          PNPM_INSTALL_ARGS: args, HAPPIER_INSTALL_CROSS_TARGET_OPTIONALS: 'false',
+          ARGV_PATH: join(root, 'argv'), SIDE_EFFECT: sentinel,
+        },
+      });
+      assert.equal(result.status, 0, result.stderr);
+      const actual = (await readFile(join(root, 'argv'), 'utf8')).split('\0').slice(0, -1);
+      assert.deepEqual(actual, ['install', ...args.split(' '), '--prod=false', '--prefer-offline']);
+      await assert.rejects(access(sentinel), { code: 'ENOENT' });
+    }
+  } finally {
+    await rm(root, { recursive: true });
+  }
+});
 
 
 

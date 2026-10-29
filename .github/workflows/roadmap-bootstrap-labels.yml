@@ -30,9 +30,11 @@ jobs:
 
       - name: Create/update roadmap labels
         uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
+        env:
+          FORCE_UPDATE: ${{ inputs.force_update }}
         with:
           script: |
-            const force = Boolean(${{ inputs.force_update }});
+            const force = process.env.FORCE_UPDATE === 'true';
             const { owner, repo } = context.repo;
 
             const stageMigrations = [

@@ -108,7 +108,7 @@ test('release installs materialize foreign optional packages and both Linux libc
     execFileSync('pnpm', ['install', '--lockfile-only', '--ignore-scripts', '--offline', '--store-dir', path.join(root, 'store')], { cwd: directory, env, stdio: 'pipe' });
     const result = runShellStep({ ...install, run: install.run.replaceAll('${{ inputs.args }}', args)
       .replaceAll('${{ inputs.cross-target-optionals }}', crossTarget) }, directory, root, {
-      ...env, ...install.env, HAPPIER_INSTALL_CROSS_TARGET_OPTIONALS: crossTarget,
+      ...env, ...install.env, HAPPIER_INSTALL_CROSS_TARGET_OPTIONALS: crossTarget, PNPM_INSTALL_ARGS: args,
     });
     assert.equal(result.status, 0, result.stderr);
     if (crossTarget === 'true') {
