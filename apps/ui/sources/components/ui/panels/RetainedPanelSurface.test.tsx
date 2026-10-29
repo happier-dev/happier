@@ -7,6 +7,7 @@ import { useStore } from 'zustand';
 
 import { renderScreen } from '@/dev/testkit';
 import { usePluginSurfaceFocusEligibility } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { useMachineTabCompactLayout } from '@/components/machines/page/useMachineTabCompactLayout';
 import { RetainedPanelSurface } from './RetainedPanelSurface';
 
 
@@ -17,6 +18,34 @@ declare global {
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 describe('RetainedPanelSurface', () => {
+    it.each([false, true])('retains responsive measurements through hidden layouts with suspension %s', async suspendWhenHidden => {
+        let initializations = 0;
+        function MeasuredBody() {
+            const layout = useMachineTabCompactLayout();
+            const [draft] = React.useState(() => { initializations += 1; return 'retained draft'; });
+            return React.createElement('MeasuredBody', { ...layout, draft });
+        }
+        const content = <MeasuredBody />;
+        const panel = (active: boolean) => <RetainedPanelSurface isActive={active} suspendWhenHidden={suspendWhenHidden}>{content}</RetainedPanelSurface>;
+        const tree = await renderScreen(panel(true));
+        const body = () => tree.findByType('MeasuredBody');
+        const onLayout = body().props.onLayout;
+        const measure = async (width: number) => act(async () => onLayout({ nativeEvent: { layout: { x: 0, y: 0, width, height: 200 } } }));
+        expect(body().props.measured).toBe(false);
+        await measure(0);
+        expect(body().props.measured).toBe(false);
+        await measure(900);
+        expect(body().props).toMatchObject({ measured: true, compact: false });
+        await tree.update(panel(false));
+        await measure(0);
+        await tree.update(panel(true));
+        expect(body().props).toMatchObject({ measured: true, compact: false, draft: 'retained draft' });
+        await measure(280);
+        expect(body().props).toMatchObject({ measured: true, compact: true });
+        expect(initializations).toBe(1);
+        await tree.unmount();
+    });
+
     it('defers Activity content until first presentation, then withdraws effects and preserves its draft', async () => {
         const store = createStore(() => ({ value: 0 }));
         let initializations = 0;

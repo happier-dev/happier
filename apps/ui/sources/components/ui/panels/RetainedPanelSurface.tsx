@@ -42,20 +42,60 @@ function useRetainedWebScroll(active: boolean, isWeb: boolean) {
         };
         prune();
         if (!presented) return;
-        for (const [node, position] of positions.current) {
-            if (!node.isConnected) continue;
-            node.scrollTop = position.top;
-            node.scrollLeft = position.left;
+        const pending = new Map(positions.current);
+        let observer: ResizeObserver | undefined;
+        const inputEvents = ['wheel', 'touchstart', 'pointerdown', 'keydown'] as const;
+        const cancelPending = (event: Event) => {
+            if (!(event.target instanceof Node)) return;
+            for (const node of pending.keys()) {
+                if (!node.contains(event.target)) continue;
+                positions.current.set(node, { top: node.scrollTop, left: node.scrollLeft });
+                pending.delete(node);
+            }
+            if (pending.size === 0) stopRestoring();
+        };
+        const stopRestoring = () => {
+            observer?.disconnect();
+            for (const type of inputEvents) root.removeEventListener(type, cancelPending, true);
+        };
+        const restore = () => {
+            for (const [node, position] of pending) {
+                if (!node.isConnected || !owns(node)) {
+                    pending.delete(node);
+                    positions.current.delete(node);
+                    continue;
+                }
+                node.scrollTop = position.top;
+                node.scrollLeft = position.left;
+                if (node.scrollTop === position.top && node.scrollLeft === position.left) pending.delete(node);
+            }
+            if (pending.size === 0) stopRestoring();
+        };
+        restore();
+        // Revealing a retained page can precede its final viewport/content measurement. A browser
+        // clamp is not reader movement: retry only on geometry changes, until reachable or new input.
+        if (pending.size > 0 && typeof ResizeObserver !== 'undefined') {
+            observer = new ResizeObserver(restore);
+            for (const node of pending.keys()) {
+                observer.observe(node);
+                for (const child of Array.from(node.children)) observer.observe(child);
+            }
+            for (const type of inputEvents) root.addEventListener(type, cancelPending, { capture: true, passive: true });
+        } else {
+            pending.clear();
         }
         const capture = (event: Event) => {
             const node = event.target;
-            if (!(node instanceof HTMLElement) || !owns(node)) return;
+            if (!(node instanceof HTMLElement) || !owns(node) || pending.has(node)) return;
             // Established scrollers stay O(1); new admission also releases removed descendants.
             if (!positions.current.has(node)) prune();
             positions.current.set(node, { top: node.scrollTop, left: node.scrollLeft });
         };
         root.addEventListener('scroll', capture, true);
-        return () => root.removeEventListener('scroll', capture, true);
+        return () => {
+            root.removeEventListener('scroll', capture, true);
+            stopRestoring();
+        };
     }, [isWeb, presented]);
 
     return attach;
