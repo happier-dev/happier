@@ -38,6 +38,7 @@ import { logger } from '@/ui/logger';
 import { delay } from '@/utils/time';
 import { createSerializedWorkQueueDiagnostics, type SerializedWorkDiagnosticContext } from '@/utils/serializedWorkQueueDiagnostics';
 import { readNonBlankOpaqueIdentifier } from '@/utils/opaqueIdentifiers';
+import { markCodexTurnFailureSettled } from '../runtime/sessionTurnLifecycle';
 import type {
     ActiveTurnPendingPumpOptions,
     DrainPendingOptions,
@@ -3139,6 +3140,9 @@ export function createCodexAppServerRuntime(params: Readonly<{
             emitAllPendingProviderPromptsAsUndeliverable();
         }
         if (options?.error) {
+            // This runtime has terminalized the session turn for this failure (failed or
+            // interrupted above); the runner must not surface it as another failed turn.
+            markCodexTurnFailureSettled(options.error, options.flushReason === 'failure' ? 'failed' : 'interrupted');
             activeTurn.reject(options.error);
             return;
         }
@@ -3219,8 +3223,13 @@ export function createCodexAppServerRuntime(params: Readonly<{
     const surfaceCodexAppServerTurnFailure = async (
         failure: Error,
         providerTurnId: string | null,
-        deferPresentationToPromptLoop = false,
+        options: Readonly<{
+            deferPresentationToPromptLoop?: boolean;
+            /** The provider turn already ended without a failure record (cancelled for a retry that will not run). */
+            providerTurnAlreadyEnded?: boolean;
+        }> = {},
     ): Promise<Awaited<ReturnType<typeof surfacePrimarySessionRuntimeIssue>> | null> => {
+        const deferPresentationToPromptLoop = options.deferPresentationToPromptLoop === true;
         if (!deferPresentationToPromptLoop) {
             try {
                 params.session.sendCodexMessage({
@@ -3237,15 +3246,22 @@ export function createCodexAppServerRuntime(params: Readonly<{
             cause: 'status_error' as const,
             error: failure,
         };
-        const issue = params.session.sessionTurnLifecycle || deferPresentationToPromptLoop
+        // A lifecycle-backed active turn records this issue through finishPendingTurn; an
+        // already-ended turn has no such owner left, so the failure allocates its own failed turn.
+        const recordAfterEndedTurn = options.providerTurnAlreadyEnded === true && Boolean(params.session.sessionTurnLifecycle);
+        const issue = (params.session.sessionTurnLifecycle && !recordAfterEndedTurn) || deferPresentationToPromptLoop
             ? classifyPrimarySessionRuntimeIssue(issueInput)
             : await surfacePrimarySessionRuntimeIssue({
                 ...issueInput,
                 session: params.session,
+                ...(recordAfterEndedTurn ? { allocateTurnWhenIdle: true } : {}),
             }).catch((error) => {
                 logger.debug('[codex-app-server] Failed to surface primary runtime issue (non-fatal)', error);
                 return null;
             });
+        if (recordAfterEndedTurn && issue) {
+            markCodexTurnFailureSettled(failure, 'failed');
+        }
         if (!params.session.sessionTurnLifecycle && !deferPresentationToPromptLoop) {
             publishCodexTurnAbortedMessage();
         }
@@ -3287,7 +3303,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
         // lifecycle slot and permanently hides the exact auth/quota classification.
         let issue: Awaited<ReturnType<typeof surfacePrimarySessionRuntimeIssue>> | null = null;
         try {
-            issue = await surfaceCodexAppServerTurnFailure(failure, providerTurnId, deferPresentationToPromptLoop);
+            issue = await surfaceCodexAppServerTurnFailure(failure, providerTurnId, { deferPresentationToPromptLoop });
         } finally {
             // Diagnostics and lifecycle persistence must never retain native turn
             // ownership after the provider process/turn has already terminated.
@@ -4565,7 +4581,9 @@ export function createCodexAppServerRuntime(params: Readonly<{
         debugDetails: unknown,
     ): Promise<void> => {
         logger.debug(debugMessage, debugDetails);
-        const issue = await surfaceCodexAppServerTurnFailure(originalFailure, null);
+        // Context-window exhaustion cancels the provider turn so compaction can retry it. With no
+        // retry left, this is the only owner that can record the failure.
+        const issue = await surfaceCodexAppServerTurnFailure(originalFailure, null, { providerTurnAlreadyEnded: true });
         await updateUsageLimitRecoveryFromSurfacedIssue(issue);
     };
 
