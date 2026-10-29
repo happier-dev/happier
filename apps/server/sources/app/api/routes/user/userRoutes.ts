@@ -24,9 +24,38 @@ import { deriveAccountRecipientEnvelopeReadinessFromRow } from "@/app/encryption
 import { buildAccountTextPrefixFilter } from "@/app/account/accountTextPrefixFilter";
 import { buildSessionAccessCollaborationAccountWhere } from "@/app/session/access/sessionAccessGrantEligibility";
 import { readRequestHomeEnv } from "@/app/home/settings/requestHomeEnv";
+import { portableQueryChunks } from "@/storage/portableQueryChunks";
 
 export async function userRoutes(app: Fastify) {
     const friendsApp = createServerFeatureGatedRouteApp(app, "social.friends", process.env);
+
+    // Exact People projection under the incumbent authenticated profile-read authority,
+    // not directory discovery. A rendered page makes one read; absent ids are omitted.
+    app.post('/v1/user/profiles', {
+        schema: { body: z.strictObject({ ids: z.array(z.string()) }), response: { 200: UsersSearchResponseSchema } },
+        preHandler: app.authenticate,
+    }, async (request, reply) => {
+        const ids = [...new Set(request.body.ids)];
+        if (ids.length === 0) return reply.send({ users: [] });
+        const [accountPages, relationshipPages] = await Promise.all([
+            Promise.all(portableQueryChunks({ values: ids, bindingsPerValue: 1 }).map(chunk => db.account.findMany({
+                where: { id: { in: [...chunk] } },
+                include: { AccountIdentity: { select: { provider: true, providerLogin: true, profile: true, showOnProfile: true },
+                    orderBy: { provider: 'asc' } } },
+            }))),
+            Promise.all(portableQueryChunks({ values: ids, bindingsPerValue: 1, fixedBindings: 1 })
+                .map(chunk => db.userRelationship.findMany({ where: { fromUserId: request.userId, toUserId: { in: [...chunk] } } }))),
+        ]);
+        const accounts = accountPages.flat();
+        const relationships = new Map(relationshipPages.flat().map(row => [row.toUserId, row.status]));
+        const identities = new Map(accounts.map(account => [account.id, toSocialIdentities(account.AccountIdentity)]));
+        const presentation = await describeIdentityPresentation([...identities.values()].flat());
+        const profiles = new Map(accounts.map(account => [account.id, buildUserProfile({ ...account,
+            // Avatar is the existing ImageRef JSON column at the database boundary.
+            avatar: account.avatar as Parameters<typeof buildUserProfile>[0]['avatar'],
+        }, relationships.get(account.id) ?? RelationshipStatus.none, identities.get(account.id) ?? [], presentation)]));
+        return reply.send({ users: ids.flatMap(id => { const profile = profiles.get(id); return profile ? [profile] : []; }) });
+    });
 
     // Get user profile
     app.get('/v1/user/:id', {

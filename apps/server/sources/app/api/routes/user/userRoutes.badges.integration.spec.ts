@@ -9,13 +9,17 @@ import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lig
 import tweetnacl from "tweetnacl";
 import { signAccountContentKeyBindingV1 } from "@happier-dev/protocol";
 
-function createTestApp() {
+function createTestApp(authenticatedUserId?: string) {
     const app = Fastify();
     app.setValidatorCompiler(validatorCompiler);
     app.setSerializerCompiler(serializerCompiler);
     const typed = app.withTypeProvider<ZodTypeProvider>() as any;
 
     typed.decorate("authenticate", async (request: any, reply: any) => {
+        if (authenticatedUserId) {
+            request.userId = authenticatedUserId;
+            return;
+        }
         const userId = request.headers["x-test-user-id"];
         if (typeof userId !== "string" || !userId) {
             return reply.code(401).send({ error: "Unauthorized" });
@@ -43,6 +47,41 @@ describe("userRoutes (profile badges) (integration)", () => {
     afterEach(() => {
         harness.resetEnv();
         vi.unstubAllGlobals();
+    });
+
+    it("batches exact People profiles without substituting the viewer or exposing unrequested accounts", async () => {
+        const viewer = await db.account.create({ data: { publicKey: 'batch-viewer', name: 'Viewer' } });
+        const editor = await db.account.create({ data: { publicKey: 'batch-editor', name: 'Ada Chen' } });
+        const unrelated = await db.account.create({ data: { publicKey: 'batch-unrelated', name: 'Other' } });
+        await db.userRelationship.create({ data: { fromUserId: viewer.id, toUserId: editor.id, status: 'friend' } });
+        await db.userRelationship.create({ data: { fromUserId: unrelated.id, toUserId: editor.id, status: 'rejected' } });
+        const app = createTestApp(viewer.id);
+        await userRoutes(app);
+        await app.ready();
+        try {
+            const response = await app.inject({ method: 'POST', url: '/v1/user/profiles',
+                payload: { ids: [editor.id, viewer.id, editor.id, 'missing-account'] } });
+            expect(response.statusCode).toBe(200);
+            const users = response.json().users;
+            expect(users).toEqual(expect.arrayContaining([
+                expect.objectContaining({ id: editor.id, name: 'Ada Chen', status: 'friend' }),
+                expect.objectContaining({ id: viewer.id, name: 'Viewer' }),
+            ]));
+            expect(users).toHaveLength(2);
+            expect(users).not.toEqual(expect.arrayContaining([expect.objectContaining({ id: unrelated.id })]));
+        } finally {
+            await app.close();
+        }
+    });
+
+    it('keeps the existing authenticated People read boundary for an empty batch too', async () => {
+        const app = createTestApp();
+        await userRoutes(app);
+        await app.ready();
+        try {
+            const response = await app.inject({ method: 'POST', url: '/v1/user/profiles', payload: { ids: [] } });
+            expect(response.statusCode).toBe(401);
+        } finally { await app.close(); }
     });
 
     it("includes GitHub badge when an identity is linked and showOnProfile=true", async () => {
