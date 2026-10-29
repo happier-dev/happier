@@ -72,6 +72,8 @@ describe.skipIf(process.platform !== 'linux')('native input settlement and recov
       capture = true;
       await act(async () => { await getComputerSessionProjection(scope, executor.execute).refresh(); });
       expect(hook.getCurrent().selection?.sourceId).toBeUndefined();
+      expect(hook.getCurrent().stopFailed).toBe(false);
+      expect(hook.getCurrent().failure).toBe('computer_display_unavailable');
     } finally { await hook.unmount(); await routes.dispose(); }
   });
 

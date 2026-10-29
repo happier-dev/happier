@@ -577,7 +577,7 @@ describe.skipIf(process.platform !== 'linux')('managed native computer driver (X
       releaseInput = () => resolve({ structuredContent: { effect: 'unverifiable' } });
     }));
     const registry = createMachineLiveStreamCaptureRegistry();
-    const routes = createComputerRoutes({ machineId: 'machine', registry, executablePath: '/managed/native-driver' });
+    const routes = createComputerRoutes({ machineId: 'machine', registry, executablePath: '/managed/native-driver', defaultDisplayId: target.displayId });
     const select = (sessionId: string) => routes.dispatch('computer.target.select', { machineId: 'machine', target },
       { authority: 'present_user', defaultSessionId: sessionId });
     try {

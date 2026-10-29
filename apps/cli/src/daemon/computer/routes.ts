@@ -86,7 +86,13 @@ export function createComputerRoutes(input: Readonly<{machineId: string; machine
             await source.close();
             if (selected(sessionId) === source) input.registry.unregister(source.sourceId);
           }
-          return selection(sessionId);
+          // The selection read already knows whether an unshared Machine has a
+          // desktop connection. Viewers need no picker enumeration or thumbnails.
+          const currentSelection = selection(sessionId);
+          if (!currentSelection.sourceId && !resolveComputerDisplayId(undefined, input.defaultDisplayId)) {
+            return failure('computer_display_unavailable');
+          }
+          return currentSelection;
         } catch (error) { return nativeFailure(error); }
       }
       if (list) {

@@ -51,6 +51,9 @@ describe('native computer route authority', () => {
 
   it('lists the machine’s own display for the person, and says plainly when there is no screen to share', async () => {
     const headless = createComputerRoutes({ machineId: 'machine', registry: createMachineLiveStreamCaptureRegistry() });
+    expect(await headless.dispatch('computer.target.get', { machineId: 'machine' },
+      { authority: 'present_user', defaultSessionId: 'session' }))
+      .toEqual({ ok: false, errorCode: 'computer_display_unavailable', error: 'computer_display_unavailable' });
     expect(await headless.dispatch('computer.targets.list', { machineId: 'machine' },
       { authority: 'present_user', defaultSessionId: 'session' }))
       .toEqual({ ok: false, errorCode: 'computer_display_unavailable', error: 'computer_display_unavailable' });
@@ -58,6 +61,9 @@ describe('native computer route authority', () => {
     // An unsupported desktop is a typed refusal the picker can explain, never a thrown RPC.
     const unsupported = createComputerRoutes({ machineId: 'machine', defaultDisplayId: 'not-an-x11-display',
       registry: createMachineLiveStreamCaptureRegistry() });
+    expect(await unsupported.dispatch('computer.target.get', { machineId: 'machine' },
+      { authority: 'present_user', defaultSessionId: 'session' }))
+      .toMatchObject({ consentGranted: false, approvalDisplay: { requiresTargetSelection: true } });
     expect(await unsupported.dispatch('computer.targets.list', { machineId: 'machine' },
       { authority: 'present_user', defaultSessionId: 'session' }))
       .toEqual({ ok: false, errorCode: 'target_unsupported', error: 'target_unsupported' });
