@@ -19,6 +19,7 @@ import { applyDocumentTextEdit } from './documentText';
 import { createDiagnosticsPullScheduler } from './diagnosticsPull';
 import { normalizeLspDiagnostics, readLspObject } from './languageServerResults';
 import { workspacePathToUri, workspaceUriToPath } from './workspaceUris';
+import { readSemanticTokenBaseline, selectSemanticTokenRange, type SemanticTokenBaseline } from './semanticTokens';
 export type LanguageServerDocument = Readonly<{
     path: string;
     languageId: string;
@@ -133,6 +134,8 @@ export function createServerSession(options: CreateServerSessionOptions): Server
     let executeCommands: readonly string[] = [];
     let codeActionResolve = false;
     let semanticLegend: { tokenTypes: string[]; tokenModifiers: string[] } | undefined;
+    // A delta-only server needs one full baseline per held document, owned by this native session.
+    const semanticBaselines = new Map<string, SemanticTokenBaseline>();
     // Native item data is opaque to clients and lives only with its held buffer.
     const completionItems = new Map<string, Map<string, JsonValue>>();
     const hierarchyItems = new Map<string, Map<string, JsonValue>>();
@@ -230,6 +233,8 @@ export function createServerSession(options: CreateServerSessionOptions): Server
             throw new LanguageServerSessionError('session_unavailable');
         state = 'starting';
         generation = randomUUID();
+        // A response can settle during the old child's graceful shutdown; result ids belong to that child.
+        semanticBaselines.clear();
         reason = undefined;
         stderrPreview = undefined;
         changed();
@@ -458,6 +463,7 @@ export function createServerSession(options: CreateServerSessionOptions): Server
     }
     async function stop(): Promise<void> {
         stopping = true;
+        semanticBaselines.clear();
         completionItems.clear(); hierarchyItems.clear();
         for (const path of documents.keys())
             pulls.cancel(path);
@@ -539,7 +545,7 @@ export function createServerSession(options: CreateServerSessionOptions): Server
             return; if (previous.references > 1) {
             documents.set(path, { ...previous, references: previous.references - 1 });
             return;
-        } documents.delete(path); forgetItems(path); pulls.cancel(path); diagnostics.delete(path); if (state === 'ready')
+        } documents.delete(path); semanticBaselines.delete(path); forgetItems(path); pulls.cancel(path); diagnostics.delete(path); if (state === 'ready')
             await protocol!.client.notify('textDocument/didClose', { textDocument: { uri: uri(path) } }); changed([path]); }); if (documents.size === 0)
             await stop(); },
         external: (paths, workspaceRoot) => enqueue(async () => { if (state === 'ready' && capabilities.acceptsExternalChanges)
@@ -558,13 +564,14 @@ export function createServerSession(options: CreateServerSessionOptions): Server
                 throw new LanguageServerSessionError('session_unavailable');
             const requestGeneration = generation, version = document.version, wasLoading = loadingTokens.size > 0;
             const supported = input.kind === 'documentSymbols' ? capabilities.documentSymbol
-                : input.kind === 'semanticTokens' ? input.range ? capabilities.semanticTokensRange : !!input.previousResultId && capabilities.semanticTokensDelta
+                : input.kind === 'semanticTokens' ? input.range ? capabilities.semanticTokensRange || capabilities.semanticTokensDelta : !!input.previousResultId && capabilities.semanticTokensDelta
                 : input.kind === 'diagnostics' ? input.scope === 'project' ? capabilities.workspaceDiagnostics : capabilities.diagnostics !== 'none'
                 : input.kind === 'willRenameFiles' ? capabilities.fileRename : input.kind === 'codeActions' ? capabilities.codeAction : capabilities[input.kind];
             if (!supported)
                 throw new LanguageServerSessionError('unsupported');
             try {
                 let value: unknown;
+                let semanticBaseline: SemanticTokenBaseline | undefined;
                 let diagnosticsLoading = false;
                 const request = (method: string, params: JsonValue) => opened.client.request(method, params, { signal: input.signal });
                 const textDocument = { uri: uri(input.path) };
@@ -638,9 +645,19 @@ export function createServerSession(options: CreateServerSessionOptions): Server
                     }) };
                 }
                 else if (input.kind === 'semanticTokens') {
-                    const raw = await request(input.range ? 'textDocument/semanticTokens/range' : 'textDocument/semanticTokens/full/delta',
-                        { textDocument, ...(input.range ? { range: input.range } : { previousResultId: input.previousResultId! }) });
-                    value = { ...(readLspObject(raw) ?? { data: [] }), legend: semanticLegend };
+                    if (input.range && !capabilities.semanticTokensRange) {
+                        const previous = semanticBaselines.get(input.path);
+                        const previousResultId = previous?.resultId;
+                        const raw = await request(previousResultId === undefined ? 'textDocument/semanticTokens/full' : 'textDocument/semanticTokens/full/delta',
+                            { textDocument, ...(previousResultId === undefined ? {} : { previousResultId }) });
+                        semanticBaseline = readSemanticTokenBaseline(options.definition.id, semanticLegend!, raw, previous);
+                        value = { data: selectSemanticTokenRange(semanticBaseline.data, input.range), legend: semanticLegend,
+                            ...(semanticBaseline.resultId === undefined ? {} : { resultId: semanticBaseline.resultId }) };
+                    } else {
+                        const raw = await request(input.range ? 'textDocument/semanticTokens/range' : 'textDocument/semanticTokens/full/delta',
+                            { textDocument, ...(input.range ? { range: input.range } : { previousResultId: input.previousResultId! }) });
+                        value = { ...(readLspObject(raw) ?? { data: [] }), legend: semanticLegend };
+                    }
                 }
                 else if (input.kind === 'workspaceSymbol') {
                     value = await request('workspace/symbol', { query: input.query ?? '' });
@@ -740,6 +757,7 @@ export function createServerSession(options: CreateServerSessionOptions): Server
                 if (input.signal?.aborted) throw new LanguageServerSessionError('cancelled');
                 if (requestGeneration !== generation || documents.get(input.path)?.version !== version || documents.get(input.path)?.text !== document.text)
                     throw new LanguageServerSessionError('stale_query');
+                if (semanticBaseline) semanticBaselines.set(input.path, semanticBaseline);
                 return { value, loading: diagnosticsLoading || wasLoading || loadingTokens.size > 0, generation: requestGeneration, version };
             }
             catch (error) {

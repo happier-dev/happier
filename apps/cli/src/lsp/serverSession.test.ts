@@ -32,6 +32,62 @@ async function fixture(rootPath: string, options: Record<string, unknown> = {}) 
     return { session, protocols, messages };
 }
 describe('language server session', () => {
+    it('discards a full token response that settles during graceful restart before the replacement server queries', async () => {
+        await withTempDir('happier-lsp-semantic-restart-', async root => {
+            const { session, protocols, messages } = await fixture(root, {
+                editingFeatures: true, semanticRange: false, delayMethod: 'textDocument/semanticTokens/full', delayShutdown: true,
+            });
+            const range = { start: { line: 0, character: 0 }, end: { line: 0, character: 3 } };
+            try {
+                await session.open({ path: 'a.ts', languageId: 'typescript', text: 'abc\ndef', version: 1, unsaved: false });
+                const pending = session.query({ path: 'a.ts', kind: 'semanticTokens', range });
+                await vi.waitFor(async () => expect((await messages()).some(message => message.method === 'textDocument/semanticTokens/full')).toBe(true));
+                const restarting = session.restart();
+                await vi.waitFor(async () => expect((await messages()).some(message => message.method === 'shutdown')).toBe(true));
+                await protocols[0]!.client.notify('fixture/release', { method: 'textDocument/semanticTokens/full' });
+                await pending;
+                await protocols[0]!.client.notify('fixture/release', { method: 'shutdown' });
+                await restarting;
+                const next = session.query({ path: 'a.ts', kind: 'semanticTokens', range });
+                await vi.waitFor(async () => expect((await messages()).filter(message => message.method === 'textDocument/semanticTokens/full')).toHaveLength(2));
+                await protocols[1]!.client.notify('fixture/release', { method: 'textDocument/semanticTokens/full' });
+                await expect(next).resolves.toMatchObject({ value: { data: [0, 0, 1, 0, 0] } });
+            } finally {
+                const disposed = session.dispose();
+                await vi.waitFor(async () => expect((await messages()).filter(message => message.method === 'shutdown')).toHaveLength(protocols.length));
+                await protocols.at(-1)!.client.notify('fixture/release', { method: 'shutdown' });
+                await disposed;
+            }
+        });
+    });
+
+    it.each(['cancel', 'edit'] as const)('does not retain a delta baseline from a late full response after %s', async action => {
+        await withTempDir('happier-lsp-semantic-retirement-', async root => {
+            const { session, protocols, messages } = await fixture(root, {
+                editingFeatures: true, semanticRange: false, delayMethod: 'textDocument/semanticTokens/full',
+            });
+            const range = { start: { line: 0, character: 0 }, end: { line: 0, character: 3 } };
+            try {
+                await session.open({ path: 'a.ts', languageId: 'typescript', text: 'abc\ndef', version: 1, unsaved: false });
+                const abort = new AbortController();
+                const pending = session.query({ path: 'a.ts', kind: 'semanticTokens', range, signal: abort.signal });
+                const rejected = expect(pending).rejects.toMatchObject({ code: action === 'cancel' ? 'cancelled' : 'stale_query' });
+                await vi.waitFor(async () => expect((await messages()).some(message => message.method === 'textDocument/semanticTokens/full')).toBe(true));
+                if (action === 'cancel') abort.abort();
+                else {
+                    await session.change({ path: 'a.ts', baseVersion: 1, version: 2, unsaved: true,
+                        edit: { startLine: 0, startCharacter: 0, endLine: 0, endCharacter: 1, text: 'A' } });
+                    await protocols[0]!.client.notify('fixture/release', { method: 'textDocument/semanticTokens/full' });
+                }
+                await rejected;
+                const next = session.query({ path: 'a.ts', kind: 'semanticTokens', range });
+                await vi.waitFor(async () => expect((await messages()).filter(message => message.method === 'textDocument/semanticTokens/full')).toHaveLength(2));
+                await protocols[0]!.client.notify('fixture/release', { method: 'textDocument/semanticTokens/full' });
+                await expect(next).resolves.toMatchObject({ value: { data: [0, 0, 1, 0, 0] } });
+            } finally { await session.dispose(); }
+        });
+    });
+
     it('bootstraps a delta-only server once, applies deltas across edits and returns only the visible range', async () => {
         await withTempDir('happier-lsp-semantic-delta-', async root => {
             const { session, messages } = await fixture(root, { editingFeatures: true, semanticRange: false });
