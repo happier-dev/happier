@@ -85,6 +85,7 @@ function normalizeTokensMap(raw: unknown): UsageNumberMap | null {
         asFiniteNonNegativeNumber(record.cache_creation_tokens) ??
         asFiniteNonNegativeNumber(record.cached_write_tokens) ??
         asFiniteNonNegativeNumber(record.cachedWriteTokens) ??
+        asFiniteNonNegativeNumber(record.cacheWriteTokens) ??
         asFiniteNonNegativeNumber(record.cache_creation) ??
         asFiniteNonNegativeNumber(record.cacheCreationTokens);
     const cacheRead =
@@ -101,6 +102,7 @@ function normalizeTokensMap(raw: unknown): UsageNumberMap | null {
         asFiniteNonNegativeNumber(record.thought_tokens) ??
         asFiniteNonNegativeNumber(record.reasoning_output_tokens) ??
         asFiniteNonNegativeNumber(record.reasoningOutputTokens) ??
+        asFiniteNonNegativeNumber(record.reasoningTokens) ??
         asFiniteNonNegativeNumber(record.thoughtTokens) ??
         asFiniteNonNegativeNumber(record.thought);
     const totalExplicit =

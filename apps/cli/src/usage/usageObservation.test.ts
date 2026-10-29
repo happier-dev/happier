@@ -139,6 +139,33 @@ describe('usageObservation', () => {
         }));
     });
 
+    it('retains nonzero ACP cache-write and reasoning aliases without adding them to an explicit total', () => {
+        // fx 0.0.14 wire keys: E-fx-live-probe.md §3, captured 2026-10-27.
+        // Nonzero details: pinned fx 1a070af, gateway/responses_protocol.zig:2681.
+        const observation = extractUsageObservationFromTokenCountMessage({
+            provider: 'acp-provider',
+            body: {
+                tokens: {
+                    totalTokens: 24,
+                    inputTokens: 17,
+                    outputTokens: 7,
+                    cacheReadTokens: 5,
+                    cacheWriteTokens: 2,
+                    reasoningTokens: 3,
+                },
+            },
+        });
+
+        expect(observation?.tokens).toEqual({
+            total: 24,
+            input: 17,
+            output: 7,
+            cacheRead: 5,
+            cacheWrite: 2,
+            reasoning: 3,
+        });
+    });
+
     it('distinguishes an explicit provider-reported zero from an estimated direct cost', () => {
         const reported = extractUsageObservationFromTokenCountMessage({
             provider: 'acp-provider',
