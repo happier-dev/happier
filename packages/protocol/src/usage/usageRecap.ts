@@ -43,9 +43,10 @@ export const UsageRecapComposeInputSchema = lazyZodSchema(() => z.union([UsageRe
 export type UsageRecapComposeInput = z.infer<typeof UsageRecapComposeInputSchema>;
 
 /** Device effects accept source intent only, never caller-supplied bytes or paths. */
+export const UsageRecapPrivateDeliveryInputSchema = lazyZodSchema(() => z.extend(UsageRecapPrivateComposeInputSchema, { intent: z.enum(['copy', 'save', 'share']) }));
+export const UsageRecapPublicDeliveryInputSchema = lazyZodSchema(() => z.extend(UsageRecapPublicComposeInputSchema, { intent: z.enum(['copy', 'save', 'share']) }));
 export const UsageRecapDeliveryInputSchema = lazyZodSchema(() => z.union([
-  z.extend(UsageRecapPrivateComposeInputSchema, { intent: z.enum(['copy', 'save', 'share']) }),
-  z.extend(UsageRecapPublicComposeInputSchema, { intent: z.enum(['copy', 'save', 'share']) }),
+  UsageRecapPrivateDeliveryInputSchema, UsageRecapPublicDeliveryInputSchema,
 ]));
 export type UsageRecapDeliveryInput = z.infer<typeof UsageRecapDeliveryInputSchema>;
 
