@@ -73,6 +73,7 @@ concurrency:
 env:
   EAS_CLI_VERSION: "18.0.1"
   EXPO_UNSTABLE_WEB_MODAL: "1"
+  RELEASE_MESSAGE: ${{ inputs.release_message }}
 
 jobs:
   trusted_ref_guard:
@@ -305,7 +306,7 @@ jobs:
             --build-json "/tmp/eas_build.json" \
             --out-dir "dist/ui-mobile" \
             --eas-cli-version "${EAS_CLI_VERSION}" \
-            --release-message "${{ inputs.release_message }}" \
+            --release-message "$RELEASE_MESSAGE" \
             --secrets-source env
 
       - name: Install Dagger (local Android builds)
@@ -336,7 +337,7 @@ jobs:
             --build-json "/tmp/eas_build.json" \
             --out-dir "dist/ui-mobile" \
             --eas-cli-version "${EAS_CLI_VERSION}" \
-            --release-message "${{ inputs.release_message }}" \
+            --release-message "$RELEASE_MESSAGE" \
             --secrets-source env
 
       - name: Note
@@ -438,7 +439,7 @@ jobs:
             --out-dir "dist/ui-mobile" \
             --eas-cli-version "${EAS_CLI_VERSION}" \
             --testflight-distribution-mode deferred \
-            --release-message "${{ inputs.release_message }}" \
+            --release-message "$RELEASE_MESSAGE" \
             --secrets-source env
 
       - name: Dispatch exact TestFlight reconciliation
@@ -554,7 +555,7 @@ jobs:
             --out-dir "dist/ui-mobile" \
             --eas-cli-version "${EAS_CLI_VERSION}" \
             --testflight-distribution-mode deferred \
-            --release-message "${{ inputs.release_message }}" \
+            --release-message "$RELEASE_MESSAGE" \
             --secrets-source env
 
       - name: Dispatch exact TestFlight reconciliation

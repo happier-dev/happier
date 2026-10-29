@@ -177,7 +177,38 @@ test('workflow security W2: daemon E2E uses public test credentials without read
   assert.doesNotMatch(job.env.HANDY_MASTER_SECRET, /\$\{\{/);
 });
 
+test('workflow security W3: mobile release messages enter shells as data', () => {
+  assert.deepEqual(securityViolations(new Map([
+    ['publish-ui-mobile-dev.yml', workflows.get('publish-ui-mobile-dev.yml')],
+  ]), 'shell-inputs'), []);
+});
 
+test('workflow security W3: the real mobile shell preserves shell-significant release notes as one argument', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'workflow-release-message-'));
+  try {
+    await mkdir(join(root, 'bin'));
+    // The child executable is the OS boundary; the workflow shell stays real.
+    await writeFile(join(root, 'bin/node'), '#!/bin/sh\nprintf "%s\\0" "$@" > "$ARGV_PATH"\n', { mode: 0o755 });
+    const workflow = workflows.get('publish-ui-mobile-dev.yml');
+    const step = workflow.jobs.publish.steps.find((entry) => entry.run?.includes('--release-message'));
+    const sentinel = join(root, 'executed');
+    for (const message of ['', 'notes"; $(touch "$SIDE_EFFECT")\nnext=value']) {
+      const result = spawnSync('bash', ['-e', '-o', 'pipefail', '-c', step.run], {
+        cwd: root, encoding: 'utf8', env: {
+          ...process.env, PATH: `${join(root, 'bin')}:${process.env.PATH}`,
+          EAS_CLI_VERSION: workflow.env.EAS_CLI_VERSION, RELEASE_MESSAGE: message,
+          ARGV_PATH: join(root, 'argv'), SIDE_EFFECT: sentinel,
+        },
+      });
+      assert.equal(result.status, 0, result.stderr);
+      const args = (await readFile(join(root, 'argv'), 'utf8')).split('\0').slice(0, -1);
+      assert.equal(args[args.indexOf('--release-message') + 1], message);
+      await assert.rejects(access(sentinel), { code: 'ENOENT' });
+    }
+  } finally {
+    await rm(root, { recursive: true });
+  }
+});
 
 
 
