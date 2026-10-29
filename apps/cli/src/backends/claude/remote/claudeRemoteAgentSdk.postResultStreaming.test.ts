@@ -692,3 +692,147 @@ describe('claudeRemoteAgentSdk post-result streaming', () => {
         }
     });
 });
+
+describe('claudeRemoteAgentSdk withheld foreground custody after a queued-turns result', () => {
+    type WithheldCustodyStream = (gate: Readonly<{ inputFinished: Promise<void> }>) => AsyncGenerator<any, void, unknown>;
+
+    interface WithheldCustodyRunnerHandle {
+        runner: Promise<void>;
+        finishInput: () => void;
+        releaseRequester: () => (() => Promise<void>) | null;
+        onReady: ReturnType<typeof vi.fn>;
+        onMessage: ReturnType<typeof vi.fn>;
+    }
+
+    function startWithheldCustodyRunner(stream: WithheldCustodyStream): WithheldCustodyRunnerHandle {
+        let finishInput!: () => void;
+        const inputFinished = new Promise<void>((resolve) => { finishInput = resolve; });
+        const createQuery = (({ prompt }: Parameters<CreateQuery>[0]) => ({
+            async *[Symbol.asyncIterator]() {
+                const input = await (prompt as AsyncIterable<import('@anthropic-ai/claude-agent-sdk').SDKUserMessage>)[Symbol.asyncIterator]().next();
+                if (input.done) throw new Error('Expected initial prompt');
+                yield { ...input.value, isReplay: true, session_id: 'claude-resumed' };
+                yield* stream({ inputFinished });
+            },
+            close() { finishInput(); },
+        })) as unknown as NonNullable<Parameters<typeof claudeRemoteAgentSdk>[0]['createQuery']>;
+        let releaseRequester: (() => Promise<void>) | null = null;
+        let firstInput = true;
+        const onReady = vi.fn();
+        const onMessage = vi.fn();
+        const runner = claudeRemoteAgentSdk({
+            sessionId: null, transcriptPath: null, path: '/tmp', claudeArgs: [],
+            claudeExecutablePath: '/tmp/claude',
+            canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
+            isAborted: () => false,
+            nextMessage: async () => {
+                if (firstInput) {
+                    firstInput = false;
+                    return { message: 'continue', mode: makeMode({ claudeRemoteAgentSdkEnabled: true }), userMessageLocalIds: ['requested'] };
+                }
+                await inputFinished;
+                return null;
+            },
+            onReady,
+            onMessage,
+            onSessionFound: () => {},
+            setForegroundTurnReleaseRequester: (requester) => { releaseRequester = requester; },
+            createQuery,
+        });
+        void runner.catch(() => {});
+        return { runner, finishInput, releaseRequester: () => releaseRequester, onReady, onMessage };
+    }
+
+    it('synthetically releases foreground custody when the queued continuation never starts and the provider is idle', async () => {
+        let reachedQueuedContinuation = false;
+        const { runner, finishInput, releaseRequester, onReady } = startWithheldCustodyRunner(async function* ({ inputFinished }) {
+            yield { type: 'system', subtype: 'init', session_id: 'claude-resumed' };
+            yield { type: 'result', subtype: 'success', session_id: 'claude-resumed', queued_turn_count: 1, result: 'notification finished' };
+            reachedQueuedContinuation = true;
+            await inputFinished;
+        });
+        try {
+            await vi.waitFor(() => { expect(reachedQueuedContinuation).toBe(true); });
+            expect(onReady).not.toHaveBeenCalled();
+            const requester = releaseRequester();
+            expect(requester).toBeTypeOf('function');
+            await requester!();
+            await vi.waitFor(() => { expect(onReady).toHaveBeenCalledOnce(); });
+        } finally {
+            finishInput();
+            await runner;
+        }
+    });
+
+    it('does not release foreground custody when no queued-turns result withheld it', async () => {
+        let reachedSilence = false;
+        const { runner, finishInput, releaseRequester, onReady } = startWithheldCustodyRunner(async function* ({ inputFinished }) {
+            yield { type: 'system', subtype: 'init', session_id: 'claude-resumed' };
+            reachedSilence = true;
+            await inputFinished;
+        });
+        try {
+            await vi.waitFor(() => { expect(reachedSilence).toBe(true); });
+            const requester = releaseRequester();
+            expect(requester).toBeTypeOf('function');
+            await requester!();
+            await new Promise((resolve) => setTimeout(resolve, 0));
+            expect(onReady).not.toHaveBeenCalled();
+        } finally {
+            finishInput();
+            await runner;
+        }
+    });
+
+    it('keeps custody while the provider activity ledger still holds an active task', async () => {
+        let reachedTaskRow = false;
+        const { runner, finishInput, releaseRequester, onReady } = startWithheldCustodyRunner(async function* ({ inputFinished }) {
+            yield { type: 'system', subtype: 'init', session_id: 'claude-resumed' };
+            yield { type: 'result', subtype: 'success', session_id: 'claude-resumed', queued_turn_count: 1, result: 'notification finished' };
+            yield { type: 'system', subtype: 'task_started', session_id: 'claude-resumed', task_id: 'detached-sidechain', task_type: 'local_bash' };
+            reachedTaskRow = true;
+            await inputFinished;
+        });
+        try {
+            await vi.waitFor(() => { expect(reachedTaskRow).toBe(true); });
+            const requester = releaseRequester();
+            await requester!();
+            await new Promise((resolve) => setTimeout(resolve, 0));
+            expect(onReady).not.toHaveBeenCalled();
+        } finally {
+            finishInput();
+            await runner;
+        }
+    });
+
+    it('stays single-flight when the promised queued-turns result finally arrives after the synthetic release', async () => {
+        let releaseLateResult!: () => void;
+        const lateResultReady = new Promise<void>((resolve) => { releaseLateResult = resolve; });
+        let reachedQueuedContinuation = false;
+        let reachedLateResult = false;
+        const { runner, finishInput, releaseRequester, onReady, onMessage } = startWithheldCustodyRunner(async function* ({ inputFinished }) {
+            yield { type: 'system', subtype: 'init', session_id: 'claude-resumed' };
+            yield { type: 'result', subtype: 'success', session_id: 'claude-resumed', queued_turn_count: 1, result: 'notification finished' };
+            reachedQueuedContinuation = true;
+            await lateResultReady;
+            yield { type: 'result', subtype: 'success', session_id: 'claude-resumed', queued_turn_count: 0, result: 'user turn finished' };
+            reachedLateResult = true;
+            await inputFinished;
+        });
+        try {
+            await vi.waitFor(() => { expect(reachedQueuedContinuation).toBe(true); });
+            const requester = releaseRequester();
+            await requester!();
+            await vi.waitFor(() => { expect(onReady).toHaveBeenCalledOnce(); });
+            releaseLateResult();
+            await vi.waitFor(() => { expect(reachedLateResult).toBe(true); });
+            await new Promise((resolve) => setTimeout(resolve, 0));
+            expect(onReady).toHaveBeenCalledOnce();
+            expect(onMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'result', queued_turn_count: 0 }));
+        } finally {
+            releaseLateResult();
+            finishInput();
+            await runner;
+        }
+    });
+});

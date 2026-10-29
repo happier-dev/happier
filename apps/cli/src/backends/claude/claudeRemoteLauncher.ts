@@ -1258,6 +1258,15 @@ export async function claudeRemoteLauncher(
     let refreshInFlightSteerAvailability: (() => Promise<ClaudeInFlightSteerAvailabilitySnapshot>) | null = null;
     let applyActiveLaunchPermissionMetadata: ReturnType<typeof createClaudeUnifiedTerminalMetadataModeApplier> | null = null;
     let applyAgentSdkPermissionMode: ((permissionMode: PermissionMode) => Promise<void>) | null = null;
+    // Registered by the agent-SDK runner; releases foreground custody withheld after a queued-turns
+    // result once session-client reconciliation confirms the local turn is stale and unbacked.
+    let releaseWithheldForegroundTurnCustody: (() => Promise<void>) | null = null;
+    // Session-client reconciliation proves the stale-active-turn fact; the registered runner
+    // requester owns the release decision, so this bridge stays a plain event forwarder.
+    const handleStaleActiveTurnConfirmed = (): void => {
+        void releaseWithheldForegroundTurnCustody?.();
+    };
+    session.client.on?.('stale-active-turn-confirmed', handleStaleActiveTurnConfirmed);
     const inputConsumer = createClaudePendingAwareInputConsumer(session, {
         resolveActiveTurnSteerability: () => (
             inFlightSteerAvailabilitySnapshot.available ? 'steerable' : 'unsteerable'
@@ -1724,6 +1733,9 @@ export async function claudeRemoteLauncher(
                     claudeSubscriptionAccessTokenRefreshSelection,
                     streamedTranscriptWriter,
                     setTurnInterrupt: unifiedBinding.sessionOptions.setTurnInterrupt,
+                    setForegroundTurnReleaseRequester: (requester: (() => Promise<void>) | null) => {
+                        releaseWithheldForegroundTurnCustody = requester;
+                    },
                     setPermissionModeApplier: async (apply: typeof applyAgentSdkPermissionMode) => {
                         applyAgentSdkPermissionMode = apply;
                         if (!apply) return;
@@ -2443,6 +2455,7 @@ export async function claudeRemoteLauncher(
         }
     } finally {
         terminationSignal?.removeEventListener('abort', onTermination);
+        session.client.off?.('stale-active-turn-confirmed', handleStaleActiveTurnConfirmed);
 
         try {
             await inputConsumer.closeProviderInputAdmissionAndWaitForDispatches();

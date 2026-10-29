@@ -190,6 +190,12 @@ settlement before claiming input.
 Authentication failures and unsupported contracts still fail closed; this
 recovery adds no polling or reconnect side effects.
 
+When the local active turn has stayed silent past the existing reconciliation
+threshold after a queued-turns result and the provider activity ledger holds no
+active task, the runner synthetically releases the foreground custody it was
+holding through the same close-out path as a normal result, so parked or waiting
+rows resume delivery.
+
 In current development source, an admitted prompt does not wait for the daemon's
 `prompt_or_steer` lifecycle response. That notification informs recovery and
 switching; it is not input authorization. A delayed or failed notification does
