@@ -48,6 +48,11 @@ describe('pendingNotificationNav', () => {
             route: '/session/s_1?serverId=server-profile',
         });
 
+        setPendingNotificationNav({ serverUrl: 'https://stack.example.test/', serverId: 'server-profile',
+            route: '/session/s_1?serverId=server-profile', accountId: 'expected-account' });
+        expect(getPendingNotificationNav()).toEqual({ serverUrl: 'https://stack.example.test', serverId: 'server-profile',
+            route: '/session/s_1?serverId=server-profile', accountId: 'expected-account' });
+
         clearPendingNotificationNav();
         expect(getPendingNotificationNav()).toBeNull();
     });
@@ -130,6 +135,7 @@ describe('pendingNotificationNav', () => {
         mod.setPendingNotificationNav({
             serverUrl: 'https://nav-target.example.test',
             route: '/session/s_cross',
+            accountId: 'expected-account',
         });
 
         expect(mod.getPendingNotificationNav()).toBeNull();
@@ -138,6 +144,7 @@ describe('pendingNotificationNav', () => {
         expect(mod.getPendingNotificationNav()).toEqual({
             serverUrl: 'https://nav-target.example.test',
             route: '/session/s_cross',
+            accountId: 'expected-account',
         });
 
         mod.clearPendingNotificationNav();
