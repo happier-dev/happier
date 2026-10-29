@@ -83,6 +83,52 @@ async function flushAsyncCleanup(): Promise<void> {
 }
 
 describe('createManagedConnectionSupervisor', () => {
+  it.each(['initial', 'retry'] as const)('settles a non-retryable %s probe failure without another poll and permits explicit recovery', async (phase) => {
+    vi.useFakeTimers();
+    const harness = createTransportHarness();
+    let refuse = phase === 'initial';
+    const probe = vi.fn(async (): Promise<ReadinessProbeResult> => {
+      if (refuse) throw Object.assign(new Error('Credential request redirect refused'), {
+        code: 'credential_request_redirect_refused', retryable: false, status: 307,
+        request: { body: 'private-body-not-for-state' },
+      });
+      return { status: 'ready' };
+    });
+    const supervisor = createManagedConnectionSupervisor({
+      ...DEFAULT_MANAGED_CONNECTION_POLICY, probeBeforeInitialConnect: true,
+      createTransport: () => harness.transport, probeReadiness: probe,
+      jitterRatio: 0,
+    });
+    try {
+      await supervisor.start();
+      if (phase === 'retry') {
+        refuse = true;
+        harness.emitDisconnect();
+        await flushAsyncCleanup();
+        await vi.runOnlyPendingTimersAsync();
+      }
+      const probesAtRefusal = probe.mock.calls.length;
+      expect(supervisor.getState()).toMatchObject({
+        phase: 'offline', nextRetryAt: null,
+        failure: { code: 'credential_request_redirect_refused', retryable: false, status: 307 },
+      });
+      expect(JSON.stringify(supervisor.getState())).not.toContain('private-body-not-for-state');
+      expect(vi.getTimerCount()).toBe(0);
+      harness.emitDisconnect();
+      await flushAsyncCleanup();
+      expect(vi.getTimerCount()).toBe(0);
+      await vi.runOnlyPendingTimersAsync();
+      expect(probe).toHaveBeenCalledTimes(probesAtRefusal);
+      refuse = false;
+      await supervisor.start();
+      expect(supervisor.getState().phase).toBe('online');
+      expect(supervisor.getState()).not.toHaveProperty('failure');
+    } finally {
+      await supervisor.stop();
+      vi.useRealTimers();
+    }
+  });
+
   it('resets backoff on explicit transport success without cancelling an offline retry', async () => {
     vi.useFakeTimers();
     const harness = createTransportHarness();

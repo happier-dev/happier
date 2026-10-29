@@ -17,6 +17,35 @@ function createDeferred<T = void>() {
 }
 
 describe('createManagedEndpointSupervisor', () => {
+  it('settles an endpoint waiter on a closed refusal without re-polling and recovers on explicit start', async () => {
+    vi.useFakeTimers();
+    let refused = true;
+    const probeReadiness = vi.fn(async (): Promise<ReadinessProbeResult> => {
+      if (refused) throw Object.assign(new Error('Request redirect refused'), {
+        code: 'credential_request_redirect_refused', retryable: false, status: 307,
+      });
+      return { status: 'ready' };
+    });
+    const supervisor = createManagedEndpointSupervisor({ ...DEFAULT_MANAGED_CONNECTION_POLICY, probeReadiness });
+    const waiter = supervisor.waitUntilOnline().catch((error: unknown) => error);
+    try {
+      await supervisor.start();
+      expect(supervisor.getState()).toMatchObject({ phase: 'offline', nextRetryAt: null });
+      await expect(waiter).resolves.toMatchObject({ code: 'credential_request_redirect_refused', retryable: false, status: 307 });
+      await expect(supervisor.waitUntilOnline()).rejects.toMatchObject({ code: 'credential_request_redirect_refused' });
+      expect(vi.getTimerCount()).toBe(0);
+      await vi.runOnlyPendingTimersAsync();
+      expect(probeReadiness).toHaveBeenCalledTimes(1);
+      refused = false;
+      await supervisor.start();
+      expect(supervisor.getState().phase).toBe('online');
+      expect(supervisor.getState()).not.toHaveProperty('failure');
+    } finally {
+      await supervisor.stop();
+      vi.useRealTimers();
+    }
+  });
+
   it('dedupes concurrent start() calls while a probe is in flight', async () => {
     const probeDeferred = createDeferred<ReadinessProbeResult>();
     const probeReadiness = vi.fn(() => probeDeferred.promise);

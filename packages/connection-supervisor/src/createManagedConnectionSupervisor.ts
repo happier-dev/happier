@@ -1,5 +1,6 @@
 import { deriveManagedConnectionReason } from './managedConnectionEvents.js';
 import { computeManagedConnectionBackoffMs } from './reconnectBackoff.js';
+import { readinessProbeFailure } from './readinessProbeFailure.js';
 import type {
   ManagedProbeReportScope,
   ManagedConnectionState,
@@ -19,10 +20,8 @@ function classifyTransportError(
   config: ManagedConnectionSupervisorConfig,
   error: unknown,
 ): Exclude<ReadinessProbeResult, Readonly<{ status: 'ready' }>> {
-  return config.classifyTransportErrorToProbeResult?.(error) ?? {
-    status: 'server_unreachable',
-    errorMessage: error instanceof Error ? error.message : String(error),
-  };
+  const refusal = readinessProbeFailure(error);
+  return refusal.failure ? refusal : config.classifyTransportErrorToProbeResult?.(error) ?? refusal;
 }
 
 function readAnnouncedRetryDelayMs(probe: ReadinessProbeResult | undefined): number | null {
@@ -67,8 +66,9 @@ export function createManagedConnectionSupervisor(
   }
 
   function publishConnecting(attempt: number, initial = false): void {
+    const { failure: _failure, ...current } = state;
     publish({
-      ...state,
+      ...current,
       phase: 'connecting',
       reason: initial ? 'initial_connect' : state.reason,
       attempt,
@@ -108,10 +108,7 @@ export function createManagedConnectionSupervisor(
     if (params.attempt === 0) publishConnecting(params.attempt, params.initial);
 
     if (params.initial && config.probeBeforeInitialConnect) {
-      const probe = await config.probeReadiness().catch((error): ReadinessProbeResult => ({
-        status: 'server_unreachable',
-        errorMessage: error instanceof Error ? error.message : String(error),
-      }));
+      const probe = await config.probeReadiness().catch(readinessProbeFailure);
       if (localGeneration !== generation || isStopped) return;
 
       const initialProbeAttempt = Math.max(1, params.attempt + 1);
@@ -279,10 +276,7 @@ export function createManagedConnectionSupervisor(
     if (isStopped) return;
     const localGeneration = generation;
     publishConnecting(attempt);
-    const probe = await config.probeReadiness().catch((error): ReadinessProbeResult => ({
-      status: 'server_unreachable',
-      errorMessage: error instanceof Error ? error.message : String(error),
-    }));
+    const probe = await config.probeReadiness().catch(readinessProbeFailure);
     if (isStopped || localGeneration !== generation) return;
 
     if (probe.status === 'auth_failed') {
@@ -322,15 +316,21 @@ export function createManagedConnectionSupervisor(
     clearRetryTimer();
     if (readAnnouncedRetryDelayMs(probe) !== null) waitingOnAnnouncedRetry = true;
     const now = Date.now();
+    const failure = probe?.status === 'server_unreachable' ? probe.failure : undefined;
     publish({
       phase: 'offline',
       reason: deriveManagedConnectionReason({ probe }),
       attempt,
-      nextRetryAt: now + delayMs,
+      nextRetryAt: failure ? null : now + delayMs,
       lastConnectedAt: state.lastConnectedAt,
       lastDisconnectedAt: state.lastDisconnectedAt,
       lastErrorMessage: readProbeErrorMessage(probe, state.lastErrorMessage),
+      ...(failure ? { failure } : {}),
     });
+    if (failure) {
+      void cleanupTransport({ intentional: true });
+      return;
+    }
     retryTimer = setTimeout(() => {
       retryTimer = null;
       void runProbeAndReconnect(attempt);
@@ -338,6 +338,7 @@ export function createManagedConnectionSupervisor(
   }
 
   async function handleDisconnect(event: TransportDisconnectEvent): Promise<void> {
+    if (state.failure) return;
     const disconnectGeneration = generation;
     const attempt = reconnectAttempt + 1;
     reconnectAttempt = attempt;

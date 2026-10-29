@@ -14,6 +14,7 @@ export type {
   ManagedConnectionAuthFailureContext,
   ManagedConnectionContext,
   ManagedConnectionDisconnectContext,
+  ManagedConnectionFailure,
   ManagedConnectionPhase,
   ManagedProbeReportScope,
   ManagedConnectionReason,

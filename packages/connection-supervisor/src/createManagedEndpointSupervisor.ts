@@ -1,5 +1,6 @@
 import { deriveManagedConnectionReason } from './managedConnectionEvents.js';
 import { computeManagedConnectionBackoffMs } from './reconnectBackoff.js';
+import { readinessProbeFailure } from './readinessProbeFailure.js';
 import type { ManagedConnectionState, ManagedProbeReportScope, ReadinessProbeResult } from './managedConnectionTypes.js';
 import type {
   ManagedEndpointFailureReport,
@@ -24,11 +25,6 @@ function initialState(): ManagedEndpointSupervisorState {
     lastErrorMessage: null,
     lastProbe: null,
   };
-}
-
-function toProbeResultFromError(error: unknown): ReadinessProbeResult {
-  const errorMessage = error instanceof Error ? error.message : String(error);
-  return { status: 'server_unreachable', errorMessage };
 }
 
 export function createManagedEndpointSupervisor(config: ManagedEndpointSupervisorConfig): ManagedEndpointSupervisor {
@@ -59,16 +55,19 @@ export function createManagedEndpointSupervisor(config: ManagedEndpointSuperviso
     if (isStopped) return;
     clearRetryTimer();
     const now = Date.now();
+    const failure = probe?.status === 'server_unreachable' ? probe.failure : undefined;
     publish({
       phase: 'offline',
       reason: deriveManagedConnectionReason({ probe }),
       attempt,
-      nextRetryAt: now + delayMs,
+      nextRetryAt: failure ? null : now + delayMs,
       lastConnectedAt: state.lastConnectedAt,
       lastDisconnectedAt: now,
       lastErrorMessage: readProbeErrorMessage(probe, state.lastErrorMessage),
       lastProbe: probe ?? state.lastProbe,
+      ...(failure ? { failure } : {}),
     });
+    if (failure) return;
     retryTimer = setTimeout(() => {
       retryTimer = null;
       void runProbe({ attempt, initial: false });
@@ -80,8 +79,9 @@ export function createManagedEndpointSupervisor(config: ManagedEndpointSuperviso
     clearRetryTimer();
     if (isStopped) return;
 
+    const { failure: _failure, ...current } = state;
     publish({
-      ...state,
+      ...current,
       phase: 'connecting',
       reason: params.initial ? 'initial_connect' : state.reason,
       attempt: params.attempt,
@@ -89,7 +89,7 @@ export function createManagedEndpointSupervisor(config: ManagedEndpointSuperviso
       lastErrorMessage: null,
     });
 
-    const probe = await config.probeReadiness().catch(toProbeResultFromError);
+    const probe = await config.probeReadiness().catch(readinessProbeFailure);
     if (isStopped || localGeneration !== generation) return;
 
     if (probe.status === 'auth_failed') {
@@ -217,6 +217,7 @@ export function createManagedEndpointSupervisor(config: ManagedEndpointSuperviso
   }
 
   async function waitUntilOnline(params?: Readonly<{ timeoutMs?: number }>): Promise<void> {
+    if (state.failure) throw Object.assign(new Error(state.lastErrorMessage ?? 'Endpoint request refused'), state.failure);
     if (state.phase === 'online') return;
     if (state.phase === 'auth_failed') {
       throw new Error('Endpoint auth failed');
@@ -234,6 +235,11 @@ export function createManagedEndpointSupervisor(config: ManagedEndpointSuperviso
 
       let unsubscribe = () => {};
       unsubscribe = subscribe((s) => {
+        if (s.failure) {
+          cleanup();
+          reject(Object.assign(new Error(s.lastErrorMessage ?? 'Endpoint request refused'), s.failure));
+          return;
+        }
         if (s.phase === 'online') {
           cleanup();
           resolve();
