@@ -10,7 +10,6 @@ import type {
 
 import {
     createStablePluginMcpHost,
-    MAX_STABLE_PLUGIN_MCP_ITEMS,
     type StablePluginMcpDiscoveryRegistration,
     type StablePluginMcpServerRegistration,
 } from './mcp';
@@ -662,13 +661,13 @@ describe('stable plugin MCP host', () => {
             readDiscoverySource: () => null,
         });
 
-        await expect(host.bind(seed()).list({ limit: MAX_STABLE_PLUGIN_MCP_ITEMS })).resolves.toEqual({
+        await expect(host.bind(seed()).list({ limit: 101 })).resolves.toEqual({
             items: [
                 { ref: { pluginId: 'acme.one', localId: 'dynamic' }, title: 'acme.one dynamic', state: 'available' },
                 { ref: { pluginId: 'acme.one', localId: 'remote' }, title: 'acme.one remote', state: 'unavailable', code: 'plugin_mcp_transport_unavailable' },
             ],
         });
-        await expect(host.bind(seed()).list({ limit: MAX_STABLE_PLUGIN_MCP_ITEMS + 1 }))
+        await expect(host.bind(seed()).list({ limit: 0 }))
             .rejects.toMatchObject({ code: 'plugin_mcp_limit_invalid' });
         const firstPage = await host.bind(seed()).list({ limit: 1 });
         expect(firstPage).toMatchObject({
@@ -738,15 +737,15 @@ describe('stable plugin MCP host', () => {
         await client.dispose();
     });
 
-    it('bounds tool catalogs, call input, and call output as strict plain JSON', async () => {
-        const tooManyTools: readonly PluginMcpTool[] = Array.from(
-            { length: MAX_STABLE_PLUGIN_MCP_ITEMS + 1 },
+    it('accepts large tool catalogs while preserving strict plain JSON validation', async () => {
+        const tools: readonly PluginMcpTool[] = Array.from(
+            { length: 101 },
             (_, index) => ({
-                name: `tool-${index}`, inputSchema: { type: 'object' },
+                name: `tool-${index}-${'x'.repeat(257)}`, inputSchema: { type: 'object' },
             }),
         );
         let registration = runtime('acme.one/tools', {
-            listTools: async (_request) => ({ items: tooManyTools }),
+            listTools: async (_request) => ({ items: tools }),
         });
         const host = createStablePluginMcpHost({
             servers: [server('acme.one', 'tools')], discoverySources: [],
@@ -756,7 +755,9 @@ describe('stable plugin MCP host', () => {
             { pluginId: 'acme.one', localId: 'tools' }, { elicitation: { mode: 'reject' } },
         );
 
-        await expect(client.listTools()).rejects.toMatchObject({ code: 'plugin_mcp_result_limit_exceeded' });
+        await expect(client.listTools({ limit: 101 })).resolves.toEqual({ items: tools });
+        const largeInput = { text: 'x'.repeat(256 * 1024 + 1) };
+        await expect(client.callTool(tools[0]!.name, largeInput)).resolves.toEqual({ name: tools[0]!.name, input: largeInput });
         registration = runtime('acme.one/tools', { callTool: async () => new Date() as never });
         const invalidResultClient = await host.bind(seed()).connect(
             { pluginId: 'acme.one', localId: 'tools' }, { elicitation: { mode: 'reject' } },
@@ -1037,10 +1038,10 @@ describe('stable plugin MCP host', () => {
         await client.dispose();
     });
 
-    it('rejects over-limit peer collections before inspecting any item', async () => {
+    it('rejects accessor-bearing peer collections without invoking accessors', async () => {
         let accessorReads = 0;
-        const overLimitItems = Array.from({ length: MAX_STABLE_PLUGIN_MCP_ITEMS + 1 }, (_, index) => {
-            if (index < MAX_STABLE_PLUGIN_MCP_ITEMS) {
+        const overLimitItems = Array.from({ length: 101 }, (_, index) => {
+            if (index < 100) {
                 return { name: `tool-${index}`, inputSchema: { type: 'object' } };
             }
             return Object.defineProperty({}, 'name', {
@@ -1068,14 +1069,14 @@ describe('stable plugin MCP host', () => {
             { pluginId: 'acme.one', localId: 'tools' }, { elicitation: { mode: 'reject' } },
         );
 
-        await expect(client.listTools()).rejects.toMatchObject({ code: 'plugin_mcp_result_limit_exceeded' });
+        await expect(client.listTools()).rejects.toMatchObject({ code: 'plugin_mcp_result_invalid' });
         await expect(service.discover({ pluginId: 'acme.one', localId: 'detector' }))
-            .rejects.toMatchObject({ code: 'plugin_mcp_result_limit_exceeded' });
+            .rejects.toMatchObject({ code: 'plugin_mcp_result_invalid' });
         expect(accessorReads).toBe(0);
         await client.dispose();
     });
 
-    it('enforces aggregate result bytes at the exact boundary while accepting valid deep JSON', async () => {
+    it('preserves large results and valid deep JSON without a host-local byte cap', async () => {
         const resultByteLimit = 1024 * 1024;
         const resultForPayload = (payloadLength: number): Readonly<{ items: readonly PluginMcpTool[] }> => ({
             items: [{ name: 'echo', inputSchema: { description: 'x'.repeat(payloadLength) } }],
@@ -1098,7 +1099,7 @@ describe('stable plugin MCP host', () => {
 
         await expect(client.listTools()).resolves.toMatchObject({ items: [{ name: 'echo' }] });
         nextResult = resultForPayload(resultByteLimit - emptyBytes + 1);
-        await expect(client.listTools()).rejects.toMatchObject({ code: 'plugin_mcp_result_limit_exceeded' });
+        await expect(client.listTools()).resolves.toEqual(nextResult);
 
         let deepInput: JsonValue = {};
         for (let depth = 0; depth < 512; depth += 1) deepInput = { value: deepInput };
@@ -1171,6 +1172,7 @@ describe('stable plugin MCP host', () => {
         const firstService = host.bind(seed());
         const serverPage = await firstService.list({ limit: 1 });
         expect(serverPage.nextCursor).toBeTypeOf('string');
+        for (let page = 0; page < 101; page += 1) await firstService.list({ limit: 1 });
         await expect(firstService.list({ cursor: serverPage.nextCursor, limit: 1 })).resolves.toMatchObject({
             items: [{ ref: { localId: 'two' } }],
         });
@@ -1184,6 +1186,8 @@ describe('stable plugin MCP host', () => {
             { pluginId: 'acme.one', localId: 'one' }, { elicitation: { mode: 'reject' } },
         );
         const toolPage = await firstClient.listTools();
+        for (let page = 0; page < 101; page += 1) await firstClient.listTools();
+        await expect(firstClient.listTools({ cursor: toolPage.nextCursor })).resolves.toMatchObject({ items: [tool] });
         await expect(secondClient.listTools({ cursor: toolPage.nextCursor }))
             .rejects.toMatchObject({ code: 'plugin_mcp_cursor_invalid' });
 
@@ -1194,6 +1198,25 @@ describe('stable plugin MCP host', () => {
         )).rejects.toMatchObject({ code: 'plugin_mcp_cursor_invalid' });
         await firstClient.dispose();
         await secondClient.dispose();
+    });
+
+    it('preserves large discovery pages and peer cursors for a bound invocation', async () => {
+        const items = Array.from({ length: 101 }, (_, index) => ({ discoveryId: `found-${index}`, title: `Server ${index}` }));
+        const source = { pluginId: 'acme.one', localId: 'detector' };
+        const host = createStablePluginMcpHost({
+            servers: [], discoverySources: [discovery(source.pluginId, source.localId)],
+            activateOnDemand: async () => {}, readServer: () => null,
+            readDiscoverySource: () => ({
+                occurrenceId: 'occurrenceId-7', qualifiedId: 'acme.one/detector', isCurrent: () => true,
+                discover: async () => ({ items, nextCursor: 'x'.repeat(513) }),
+            }),
+        });
+        try {
+            const service = host.bind(seed());
+            const page = await service.discover(source, { limit: 101 });
+            expect(page.items).toEqual(items.map(item => ({ ...item, source })));
+            await expect(service.discover(source, { cursor: page.nextCursor, limit: 101 })).resolves.toMatchObject({ items: page.items });
+        } finally { await host.dispose(); }
     });
 
     it('does not start pre-aborted demand and disposes a transport acquired after caller detachment', async () => {

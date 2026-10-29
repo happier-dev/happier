@@ -13,7 +13,7 @@ import {
     type McpService as PluginMcpService,
     type McpTool as PluginMcpTool,
 } from '@happier-dev/plugin-sdk/mcp';
-import { cloneStrictPluginJsonValue, measureSerializedValidatedStrictPluginJsonUtf8Bytes } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
+import { cloneStrictPluginJsonValue } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 
 import type {
     ResolvedMcpDiscoverySourceContribution,
@@ -24,14 +24,6 @@ import type {
     PluginInvocationServicesSeed,
     PluginMcpAuthorization,
 } from './types';
-
-export const MAX_STABLE_PLUGIN_MCP_ITEMS = 100;
-
-const MAX_STABLE_PLUGIN_MCP_INPUT_BYTES = 256 * 1024;
-const MAX_STABLE_PLUGIN_MCP_RESULT_BYTES = 1024 * 1024;
-const MAX_STABLE_PLUGIN_MCP_CURSOR_LENGTH = 512;
-const MAX_STABLE_PLUGIN_MCP_TOOL_NAME_LENGTH = 256;
-const MAX_STABLE_PLUGIN_MCP_SCOPED_CURSORS = 100;
 
 type McpRegistrationFamily = 'mcp.servers' | 'mcp.discoverySources';
 
@@ -156,16 +148,16 @@ function declarationTitle(declaration: ResolvedMcpServerContribution): string {
         : declaration.definition.title.fallback;
 }
 
-function validateLimit(limit: number | undefined): number {
-    if (limit === undefined) return MAX_STABLE_PLUGIN_MCP_ITEMS;
-    if (!Number.isSafeInteger(limit) || limit < 1 || limit > MAX_STABLE_PLUGIN_MCP_ITEMS) {
-        fail('plugin_mcp_limit_invalid', `MCP limit must be between 1 and ${MAX_STABLE_PLUGIN_MCP_ITEMS}`);
+function validateLimit(limit: number | undefined): number | undefined {
+    if (limit === undefined) return undefined;
+    if (!Number.isSafeInteger(limit) || limit < 1) {
+        fail('plugin_mcp_limit_invalid', 'MCP limit must be a positive safe integer');
     }
     return limit;
 }
 
 function validateCursor(cursor: string | undefined): void {
-    if (cursor !== undefined && (cursor.length === 0 || cursor.length > MAX_STABLE_PLUGIN_MCP_CURSOR_LENGTH)) {
+    if (cursor !== undefined && cursor.length === 0) {
         fail('plugin_mcp_cursor_invalid', 'MCP cursor is invalid');
     }
 }
@@ -182,10 +174,6 @@ function createScopedCursorStore<T>(scope: string): ScopedCursorStore<T> {
         issue(value: T): string {
             nextId += 1;
             const cursor = `mcp:${scope}:${nextId}`;
-            if (entries.size >= MAX_STABLE_PLUGIN_MCP_SCOPED_CURSORS) {
-                const oldest = entries.keys().next().value as string | undefined;
-                if (oldest !== undefined) entries.delete(oldest);
-            }
             entries.set(cursor, value);
             return cursor;
         },
@@ -198,50 +186,16 @@ function createScopedCursorStore<T>(scope: string): ScopedCursorStore<T> {
     });
 }
 
-function clonePlainJson(value: unknown, code: string, maxBytes: number, overflowCode: string = code): JsonValue {
-    let cloned: JsonValue;
+function clonePlainJson(value: unknown, code: string): JsonValue {
     try {
-        cloned = cloneStrictPluginJsonValue(value, 'MCP data') as JsonValue;
+        return cloneStrictPluginJsonValue(value, 'MCP data') as JsonValue;
     } catch (error) {
         fail(code, error instanceof Error ? error.message : 'MCP data must be strict JSON');
-    }
-    if (measureSerializedValidatedStrictPluginJsonUtf8Bytes(cloned, 'MCP data', maxBytes) > maxBytes) {
-        fail(overflowCode, `MCP data exceeds the ${maxBytes} byte limit`);
-    }
-    return cloned;
-}
-
-function assertJsonBytes(value: JsonValue, maxBytes: number, code: string): void {
-    if (measureSerializedValidatedStrictPluginJsonUtf8Bytes(value, 'MCP data', maxBytes) > maxBytes) {
-        fail(code, `MCP data exceeds the ${maxBytes} byte limit`);
-    }
-}
-
-function assertPeerCollectionWithinLimit(result: unknown, label: string): void {
-    if (typeof result !== 'object' || result === null || Array.isArray(result)) {
-        fail('plugin_mcp_result_invalid', `${label} must be an object`);
-    }
-    const prototype = Object.getPrototypeOf(result);
-    if (prototype !== Object.prototype && prototype !== null) {
-        fail('plugin_mcp_result_invalid', `${label} must be a plain object`);
-    }
-    const itemsDescriptor = Object.getOwnPropertyDescriptor(result, 'items');
-    if (itemsDescriptor === undefined || !('value' in itemsDescriptor) || !Array.isArray(itemsDescriptor.value)) {
-        fail('plugin_mcp_result_invalid', `${label} items must be an array without accessors`);
-    }
-    if (itemsDescriptor.value.length > MAX_STABLE_PLUGIN_MCP_ITEMS) {
-        fail('plugin_mcp_result_limit_exceeded', `${label} exceeds the item limit`);
     }
 }
 
 function validateTools(result: unknown): Readonly<{ items: readonly PluginMcpTool[]; nextCursor?: string }> {
-    assertPeerCollectionWithinLimit(result, 'MCP tool catalog');
-    const cloned = clonePlainJson(
-        result,
-        'plugin_mcp_result_invalid',
-        MAX_STABLE_PLUGIN_MCP_RESULT_BYTES,
-        'plugin_mcp_result_limit_exceeded',
-    );
+    const cloned = clonePlainJson(result, 'plugin_mcp_result_invalid');
     if (typeof cloned !== 'object' || cloned === null || Array.isArray(cloned)) {
         fail('plugin_mcp_result_invalid', 'MCP tool catalog must be an object');
     }
@@ -255,15 +209,15 @@ function validateTools(result: unknown): Readonly<{ items: readonly PluginMcpToo
     const items = record.items.map((tool) => {
         if (typeof tool !== 'object' || tool === null || Array.isArray(tool)) fail('plugin_mcp_result_invalid', 'MCP tool must be an object');
         const toolRecord = tool as Readonly<Record<string, JsonValue>>;
-        if (typeof toolRecord.name !== 'string' || toolRecord.name.length === 0 || toolRecord.name.length > MAX_STABLE_PLUGIN_MCP_TOOL_NAME_LENGTH || names.has(toolRecord.name)) {
+        if (typeof toolRecord.name !== 'string' || toolRecord.name.length === 0 || names.has(toolRecord.name)) {
             fail('plugin_mcp_result_invalid', 'MCP tool names must be non-empty and unique');
         }
         names.add(toolRecord.name);
         if (toolRecord.description !== undefined && typeof toolRecord.description !== 'string') fail('plugin_mcp_result_invalid', 'MCP tool description must be a string');
-        const inputSchema = clonePlainJson(toolRecord.inputSchema, 'plugin_mcp_result_invalid', MAX_STABLE_PLUGIN_MCP_RESULT_BYTES) as PluginMcpTool['inputSchema'];
+        const inputSchema = clonePlainJson(toolRecord.inputSchema, 'plugin_mcp_result_invalid') as PluginMcpTool['inputSchema'];
         const outputSchema = toolRecord.outputSchema === undefined
             ? undefined
-            : clonePlainJson(toolRecord.outputSchema, 'plugin_mcp_result_invalid', MAX_STABLE_PLUGIN_MCP_RESULT_BYTES) as PluginMcpTool['outputSchema'];
+            : clonePlainJson(toolRecord.outputSchema, 'plugin_mcp_result_invalid') as PluginMcpTool['outputSchema'];
         return Object.freeze({
             name: toolRecord.name,
             ...(toolRecord.description === undefined ? {} : { description: toolRecord.description }),
@@ -275,7 +229,6 @@ function validateTools(result: unknown): Readonly<{ items: readonly PluginMcpToo
         items: Object.freeze(items),
         ...(record.nextCursor === undefined ? {} : { nextCursor: record.nextCursor }),
     });
-    assertJsonBytes(validated as JsonValue, MAX_STABLE_PLUGIN_MCP_RESULT_BYTES, 'plugin_mcp_result_limit_exceeded');
     return validated;
 }
 
@@ -289,12 +242,7 @@ function validatePublicMcpDto<T>(
     schema: PublicMcpSchema,
     hasCursor = false,
 ): T {
-    const cloned = clonePlainJson(
-        result,
-        'plugin_mcp_result_invalid',
-        MAX_STABLE_PLUGIN_MCP_RESULT_BYTES,
-        'plugin_mcp_result_limit_exceeded',
-    );
+    const cloned = clonePlainJson(result, 'plugin_mcp_result_invalid');
     if (!schema.safeParse(cloned).success) {
         fail('plugin_mcp_result_invalid', `${label} does not match the public MCP contract`);
     }
@@ -330,7 +278,7 @@ function validateResourceUpdatedEvent(event: unknown, schema: PublicMcpSchema): 
 }
 
 function validateNonEmptyText(value: string, label: string): void {
-    if (typeof value !== 'string' || value.length === 0 || value.length > MAX_STABLE_PLUGIN_MCP_CURSOR_LENGTH * 16) {
+    if (typeof value !== 'string' || value.length === 0) {
         fail('plugin_mcp_input_invalid', `${label} is invalid`);
     }
 }
@@ -517,7 +465,7 @@ export function createStablePluginMcpHost(params: StablePluginMcpHostParams): St
                 }
             }
             const items = [];
-            for (const declaration of declarations.slice(offset, offset + limit)) {
+            for (const declaration of declarations.slice(offset, limit === undefined ? undefined : offset + limit)) {
                 const ref = declarationRef(declaration)!;
                 let state: 'available' | 'unavailable' = 'unavailable';
                 let code: string | undefined;
@@ -667,20 +615,20 @@ export function createStablePluginMcpHost(params: StablePluginMcpHostParams): St
                     assertAuthorized(ref, 'callTools');
                     validateActive(seed, disposed);
                     if (registration !== null) assertRegistrationCurrent(registration, seed.occurrenceId, ref);
-                    if (typeof name !== 'string' || name.length === 0 || name.length > MAX_STABLE_PLUGIN_MCP_TOOL_NAME_LENGTH) {
+                    if (typeof name !== 'string' || name.length === 0) {
                         fail('plugin_mcp_tool_name_invalid', 'MCP tool name is invalid');
                     }
-                    const boundedInput = clonePlainJson(input, 'plugin_mcp_input_invalid', MAX_STABLE_PLUGIN_MCP_INPUT_BYTES);
+                    const validatedInput = clonePlainJson(input, 'plugin_mcp_input_invalid');
                     const result = await withCancellation(
                         async () => {
                             await revalidateFinalPolicy(Object.freeze({ seed, operation: 'callTools', ref: frozenRef }));
-                            return invokePeer(() => runtimeClient.callTool(name, boundedInput, callOptions));
+                            return invokePeer(() => runtimeClient.callTool(name, validatedInput, callOptions));
                         },
                         [seed.signal, callOptions.signal],
                     );
                     validateActive(seed, disposed);
                     if (registration !== null) assertRegistrationCurrent(registration, seed.occurrenceId, ref);
-                    return clonePlainJson(result, 'plugin_mcp_result_invalid', MAX_STABLE_PLUGIN_MCP_RESULT_BYTES);
+                    return clonePlainJson(result, 'plugin_mcp_result_invalid');
                 },
                 async listResources(request: Readonly<{ cursor?: string; signal?: AbortSignal }> = {}) {
                     const { publicMcpResourcePageSchema } = await import('./mcpPublicDtoSchemas');
@@ -883,7 +831,7 @@ export function createStablePluginMcpHost(params: StablePluginMcpHostParams): St
                     if (registration !== null) assertRegistrationCurrent(registration, seed.occurrenceId, ref);
                     const boundedArgs = args === undefined
                         ? undefined
-                        : clonePlainJson(args, 'plugin_mcp_input_invalid', MAX_STABLE_PLUGIN_MCP_INPUT_BYTES) as Readonly<Record<string, string>>;
+                        : clonePlainJson(args, 'plugin_mcp_input_invalid') as Readonly<Record<string, string>>;
                     if (boundedArgs !== undefined && (
                         typeof boundedArgs !== 'object'
                         || boundedArgs === null
@@ -953,9 +901,9 @@ export function createStablePluginMcpHost(params: StablePluginMcpHostParams): St
             validateLimit(query.limit);
             const ref = Object.freeze({ ...source });
             if (!discoverySourceDeclarations.has(qualifiedId(ref))) fail('plugin_mcp_discovery_source_undeclared', 'MCP discovery source is not declared');
-            const boundedInput = query.input === undefined
+            const validatedInput = query.input === undefined
                 ? undefined
-                : clonePlainJson(query.input, 'plugin_mcp_input_invalid', MAX_STABLE_PLUGIN_MCP_INPUT_BYTES);
+                : clonePlainJson(query.input, 'plugin_mcp_input_invalid');
             await withCancellation(async () => {
                 await params.activateOnDemand(ref, 'mcp.discoverySources');
                 await revalidateFinalPolicy(Object.freeze({ seed, operation: 'discover', ref }));
@@ -966,19 +914,13 @@ export function createStablePluginMcpHost(params: StablePluginMcpHostParams): St
             const result = await withCancellation(async () => {
                 await revalidateFinalPolicy(Object.freeze({ seed, operation: 'discover', ref }));
                 return invokePeer(() => registration.discover({
-                ...(boundedInput === undefined ? {} : { input: boundedInput }),
+                ...(validatedInput === undefined ? {} : { input: validatedInput }),
                 ...(cursorState === undefined ? {} : { cursor: cursorState.cursor }),
                 ...(query.limit === undefined ? {} : { limit: query.limit }),
                 }, seed, options));
             }, [seed.signal, options.signal]);
             assertRegistrationCurrent(registration, seed.occurrenceId, ref);
-            assertPeerCollectionWithinLimit(result, 'MCP discovery result');
-            const clonedResult = clonePlainJson(
-                result,
-                'plugin_mcp_result_invalid',
-                MAX_STABLE_PLUGIN_MCP_RESULT_BYTES,
-                'plugin_mcp_result_limit_exceeded',
-            );
+            const clonedResult = clonePlainJson(result, 'plugin_mcp_result_invalid');
             if (typeof clonedResult !== 'object' || clonedResult === null || Array.isArray(clonedResult)) {
                 fail('plugin_mcp_result_invalid', 'MCP discovery result must be an object');
             }
@@ -1013,7 +955,6 @@ export function createStablePluginMcpHost(params: StablePluginMcpHostParams): St
                     nextCursor: discoveryCursors.issue(Object.freeze({ source: sourceKey, cursor: resultRecord.nextCursor })),
                 }),
             });
-            assertJsonBytes(response as JsonValue, MAX_STABLE_PLUGIN_MCP_RESULT_BYTES, 'plugin_mcp_result_limit_exceeded');
             validateActive(seed, disposed);
             return response;
         },
