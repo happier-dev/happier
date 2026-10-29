@@ -24,6 +24,8 @@ import { SessionPromptStackV1Schema } from '../context/sessionContextV1.js';
 import { SessionManagedCreationV1Schema } from './sessionCreationCorrespondenceV1.js';
 import { SessionDiscussionParticipantV1Schema } from './sessionDiscussionParticipantV1.js';
 import { SessionAttestedContextV1Schema } from './sessionAttestedContextV1.js';
+import { SessionSectionPlacementV1Schema } from './sessionSpawnNewResultV1.js';
+import { PluginUiNewSessionSeedOriginV1Schema } from '../../plugins/ui/newSessionSeedOrigin.js';
 export { SessionAttestedContextV1Schema, type SessionAttestedContextV1 } from './sessionAttestedContextV1.js';
 
 /**
@@ -52,6 +54,10 @@ export type SessionSpawnNewInitialInputV1 = z.infer<typeof SessionSpawnNewInitia
 export const SessionSpawnNewInputV2BaseSchema = lazyZodSchema(() => z.strictObject({
   ...SessionSpawnNewSelectionV2BaseSchema.shape,
   creationKey: zMini.optional(SessionCreationKeyV1Schema),
+  /** Transport observer preference; send only after negotiating Session-spawn epoch three. */
+  observeSessionCommit: z.optional(z.literal(true)),
+  /** Owner-private original authoring destination, negotiated with the target daemon. */
+  authoringOrigin: z.optional(PluginUiNewSessionSeedOriginV1Schema),
   /** Host-owned identity facts persisted at ordinary Session birth. */
   identity: zMini.optional(SessionIdentityAdditionsV1Schema),
   /** Plugin-only, immutable integrator facts; never authored by an Agent or token. */
@@ -101,8 +107,37 @@ export const SessionSpawnNewInputV2Schema = lazyZodSchema(() => SessionSpawnNewI
 
 export type SessionSpawnNewInputV2 = z.infer<typeof SessionSpawnNewInputV2Schema>;
 
+/** Action admission translates product vocabulary once into the existing creation graph. */
+export const SessionSpawnNewActionInputV2BaseSchema = lazyZodSchema(() => z.strictObject({
+  ...SessionSpawnNewInputV2BaseSchema.shape,
+  organizationPlacement: z.optional(SessionSectionPlacementV1Schema),
+}));
+export const SessionSpawnNewActionInputV2Schema = lazyZodSchema(() => SessionSpawnNewActionInputV2BaseSchema.check(
+  z.superRefine(refineSessionDirectoryIntentCheckoutV1), z.superRefine(refineDiscussionParticipantSpawn),
+));
+export type SessionSpawnNewActionInputV2 = z.infer<typeof SessionSpawnNewActionInputV2Schema>;
+
+export function admitSessionSpawnNewActionInputV2(input: SessionSpawnNewActionInputV2): SessionSpawnNewInputV2 {
+  const { organizationPlacement, ...selection } = input;
+  return { ...selection, ...(organizationPlacement ? { organizationPlacement: {
+    folderId: organizationPlacement.sectionId, tagIds: organizationPlacement.tagIds,
+  } } : {}) };
+}
+
+export function projectSessionSpawnNewActionInputV2(input: SessionSpawnNewInputV2): SessionSpawnNewActionInputV2 {
+  const { organizationPlacement, ...selection } = input;
+  return { ...selection, ...(organizationPlacement ? { organizationPlacement: {
+    sectionId: organizationPlacement.folderId, tagIds: organizationPlacement.tagIds,
+  } } : {}) };
+}
+
+export const SessionSpawnNewActionAgentAuthoringInputV2Schema = lazyZodSchema(() => z.partial(z.omit(SessionSpawnNewActionInputV2BaseSchema, { observeSessionCommit: true }), {
+  executionTarget: true,
+  agentTarget: true,
+}).check(z.superRefine(refineSessionDirectoryIntentCheckoutV1), z.superRefine(refineDiscussionParticipantSpawn)));
+
 /** Session Agents may inherit these choices; the start owner resolves them before creation admission. */
-export const SessionSpawnNewAgentAuthoringInputV2Schema = lazyZodSchema(() => z.partial(SessionSpawnNewInputV2BaseSchema, {
+export const SessionSpawnNewAgentAuthoringInputV2Schema = lazyZodSchema(() => z.partial(z.omit(SessionSpawnNewInputV2BaseSchema, { observeSessionCommit: true }), {
   executionTarget: true,
   agentTarget: true,
 }).check(z.superRefine(refineSessionDirectoryIntentCheckoutV1), z.superRefine(refineDiscussionParticipantSpawn)));
@@ -114,12 +149,14 @@ export const SessionSpawnNewAgentAuthoringInputV2Schema = lazyZodSchema(() => z.
  */
 export const SessionServerStartSpawnDraftV1Schema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.omit(SessionSpawnNewInputV2BaseSchema, {
   creationKey: true,
+  observeSessionCommit: true,
   initialInput: true,
   environmentVariables: true,
   attestedContext: true,
+  authoringOrigin: true,
 })).check(z.superRefine(refineSessionDirectoryIntentCheckoutV1), z.superRefine(refineDiscussionParticipantSpawn)));
 
 export type SessionServerStartSpawnDraftV1 = Omit<
   SessionSpawnNewInputV2,
-  'creationKey' | 'initialInput' | 'environmentVariables' | 'attestedContext'
+  'creationKey' | 'observeSessionCommit' | 'initialInput' | 'environmentVariables' | 'attestedContext' | 'authoringOrigin'
 >;
