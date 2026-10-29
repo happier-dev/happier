@@ -1,4 +1,6 @@
 import * as React from 'react';
+import { Platform } from 'react-native';
+import { EnrichedMarkdownTextAdapter } from '../enriched/EnrichedMarkdownTextAdapter';
 import { MarkdownBlockView } from '../MarkdownBlockView';
 import type { MarkdownBlock, MarkdownSpan } from '../parseMarkdown';
 import { parseMarkdownSyntax } from '../streaming/splitMarkdownIntoBlockSources';
@@ -12,6 +14,8 @@ type SyntaxNode = ReturnType<typeof parseMarkdownSyntax>['topNode'];
 
 type Props = Pick<React.ComponentProps<typeof MarkdownView>, 'onOptionPress' | 'onOptionLongPress' | 'onLinkPress' | 'textStyle' | 'inlineReferences'> & Readonly<{
     markdown: string;
+    renderMarkdown?: string;
+    contextMenuItems?: React.ComponentProps<typeof EnrichedMarkdownTextAdapter>['contextMenuItems'];
     sourceStart: number;
     ranges: readonly FindTextRange[];
     sourceOffsets?: readonly number[];
@@ -70,8 +74,17 @@ export function MarkdownFindFallback(props: Props) {
         };
         const tree = parseMarkdownSyntax(props.markdown);
         for (let node = tree.topNode.firstChild; node; node = node.nextSibling) visit(node);
-        return { blocks, decorations };
+        return { blocks, decorations, marked: [...decorations.values()].some(ranges => ranges.length > 0) };
     }, [props.markdown, props.ranges, props.sourceStart, props.sourceOffsets]);
+    // Find being open does not require character decoration on an unmarked block.
+    // Retain its canonical native selection carrier; marked blocks keep their exact highlights.
+    if (Platform.OS !== 'web' && props.contextMenuItems?.length && !prepared.marked) {
+        return <EnrichedMarkdownTextAdapter markdown={props.renderMarkdown ?? props.markdown}
+            profile={props.profile} selectable={props.selectable} onLinkPress={props.onLinkPress}
+            textStyle={props.textStyle} streamingAnimated={false} agentTexMath={props.agentTexMath}
+            inlineReferences={props.inlineReferences} contextMenuItems={props.contextMenuItems}
+            suppressLeadingTopMargin={props.first} keepTrailingMargin={!props.last} />;
+    }
     return <MarkdownFindDecorationContext.Provider value={prepared.decorations}>
         {prepared.blocks.map((block, index) => <MarkdownBlockView key={index} block={block}
             first={props.first && index === 0} last={props.last && index === prepared.blocks.length - 1}

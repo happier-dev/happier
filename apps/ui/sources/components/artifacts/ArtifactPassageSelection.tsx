@@ -204,9 +204,13 @@ function NativePassageSelection(
         else router.push(client.beginPassageComment(passage) as Href);
         return true;
       };
-      if (selection && selection.renderedText.slice(selection.start, selection.end) === selection.text && publish(selection)) return;
+      if (selection && typeof selection.renderedText === 'string'
+        && selection.renderedText.slice(selection.start, selection.end) === selection.text
+        && publish({ ...selection, renderedText: selection.renderedText })) return;
       props.onRequestNativeSelection?.({ markdown: block.renderMarkdown ?? block.markdown,
-        complete: (input) => input.renderedText.slice(input.start, input.end) === input.text && publish(input) });
+        complete: (input) => typeof input.renderedText === 'string'
+          && input.renderedText.slice(input.start, input.end) === input.text
+          && publish({ ...input, renderedText: input.renderedText }) });
     },
   }], [artifactId, attaching, client, markdown, props.onRequestNativeSelection, revision, router, scope]);
   return (

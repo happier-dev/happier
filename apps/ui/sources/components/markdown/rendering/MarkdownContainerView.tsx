@@ -14,10 +14,14 @@ import { SpecialMarkdownBlockView } from './SpecialMarkdownBlockView';
 import type { MarkdownRenderingProfile } from './MarkdownRenderingProfile';
 import type { StyleProp, TextStyle } from 'react-native';
 import type { StreamingTextRevealPreset } from '../streaming/streamingTextRevealConfig';
+import type { MarkdownSelectionAction, MarkdownSourceRangeAction } from '../MarkdownView';
+import { useMarkdownSelectionMenu } from './useMarkdownSelectionMenu';
 
 type MarkdownContainerViewProps = Readonly<{
     block: MarkdownContainerBlock;
     sourceStart: number;
+    sourceAction: MarkdownSourceRangeAction;
+    selectionActions?: readonly MarkdownSelectionAction[];
     selectable: boolean;
     profile: MarkdownRenderingProfile;
     onLinkPress?: (url: string) => boolean | void;
@@ -34,6 +38,21 @@ export const MarkdownContainerView = React.memo((props: MarkdownContainerViewPro
     const parentKey = useMarkdownCodeBlockWrapKey();
     const { markdownStyle } = useEnrichedMarkdownStyle({ profile: props.profile, textStyle: props.textStyle });
     const { block } = props;
+    const proseSource = React.useMemo<MarkdownSourceRangeAction | null>(() => {
+        if (block.type !== 'prose') return null;
+        const start = block.sourceOffsets[0];
+        const last = block.sourceOffsets.at(-1);
+        if (start === undefined || last === undefined) return null;
+        const parent = props.sourceAction;
+        const relativeStart = start - parent.sourceStart;
+        const markdown = parent.markdown.slice(relativeStart, last + 1 - parent.sourceStart);
+        const startLine = parent.sourceRange.startLine + parent.markdown.slice(0, relativeStart).split('\n').length - 1;
+        return {
+            sourceStart: start, sourceLength: last + 1 - start, markdown, renderMarkdown: block.markdown,
+            sourceRange: { startLine, endLine: startLine + markdown.split('\n').length - 1 },
+        };
+    }, [block, props.sourceAction]);
+    const contextMenuItems = useMarkdownSelectionMenu(props.selectionActions, proseSource);
     const renderChild = (child: MarkdownContainerBlock) => <MarkdownContainerView {...props} key={child.sourceStart} block={child} />;
 
     if (block.type === 'code') {
@@ -60,6 +79,7 @@ export const MarkdownContainerView = React.memo((props: MarkdownContainerViewPro
     if (block.type === 'prose') {
         if (props.findActive || props.findSourceRanges?.length) return <MarkdownFindFallback
             markdown={block.markdown} sourceStart={block.sourceStart} sourceOffsets={block.sourceOffsets}
+            contextMenuItems={contextMenuItems}
             ranges={props.findSourceRanges ?? EMPTY_FIND_RANGES}
             profile={props.profile} selectable={props.selectable} first last
             onLinkPress={props.onLinkPress} textStyle={props.textStyle}
@@ -75,6 +95,7 @@ export const MarkdownContainerView = React.memo((props: MarkdownContainerViewPro
             suppressLeadingTopMargin
             inlineReferences={props.inlineReferences}
             agentTexMath={props.agentTexMath}
+            contextMenuItems={contextMenuItems}
         />;
     }
     if (block.type === 'quote') {

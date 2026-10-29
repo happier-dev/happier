@@ -37,7 +37,7 @@ export type MarkdownSourceRangeAction = Readonly<{
  * (native). Offsets index the actual native text, including renderer spacing.
  */
 export type MarkdownRenderedSelection = Readonly<{
-    renderedText: string;
+    renderedText?: string;
     text: string;
     start: number;
     end: number;

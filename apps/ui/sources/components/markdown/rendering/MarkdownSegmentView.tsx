@@ -1,6 +1,6 @@
 import * as React from 'react';
 import type { StyleProp, TextStyle } from 'react-native';
-import { Platform, Pressable, View } from 'react-native';
+import { Pressable, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
 import { EnrichedMarkdownTextAdapter } from '../enriched/EnrichedMarkdownTextAdapter';
@@ -15,6 +15,7 @@ import type { MarkdownRenderSegment } from './markdownRenderSegmentTypes';
 import { SpecialMarkdownBlockView } from './SpecialMarkdownBlockView';
 import { MarkdownContainerView } from './MarkdownContainerView';
 import { MarkdownFindFallback } from './MarkdownFindFallback';
+import { useMarkdownSelectionMenu } from './useMarkdownSelectionMenu';
 import type { FindTextRange } from '@happier-dev/plugin-ui/presentation';
 
 type MarkdownSegmentViewProps = Readonly<{
@@ -64,16 +65,10 @@ export const MarkdownSegmentView = React.memo((props: MarkdownSegmentViewProps) 
     const marked = props.findSourceRanges?.some((range) => range.start < segmentEnd && range.end > props.segment.sourceStart) === true;
     // The renderer's selection menu (native) offers the caller's actions for this block.
     const selectionActions = props.selectionActions;
-    const contextMenuItems = React.useMemo(() => Platform.OS === 'web' || !selectionActions?.length ? undefined
-        : selectionActions.map((action) => ({ text: action.label, onPress: (event: {
-            text: string; renderedText?: string; selection: { start: number; end: number };
-        }) => action.onPress(sourceAction, typeof event.renderedText === 'string' ? {
-            renderedText: event.renderedText, text: event.text,
-            start: event.selection.start, end: event.selection.end,
-        } : undefined) })),
-    [selectionActions, sourceAction]);
+    const contextMenuItems = useMarkdownSelectionMenu(selectionActions, sourceAction);
     const content = props.segment.type === 'enriched-markdown' && (props.findActive || marked)
         ? <MarkdownFindFallback markdown={props.segment.markdown} sourceStart={props.segment.sourceStart}
+            renderMarkdown={props.segment.renderMarkdown} contextMenuItems={contextMenuItems}
             ranges={props.findSourceRanges ?? EMPTY_FIND_RANGES} profile={props.profile} selectable={props.selectable}
             first={props.segment.first} last={props.segment.last} onLinkPress={props.onLinkPress}
             onOptionPress={props.onOptionPress} onOptionLongPress={props.onOptionLongPress} textStyle={props.textStyle}
@@ -100,6 +95,8 @@ export const MarkdownSegmentView = React.memo((props: MarkdownSegmentViewProps) 
             <MarkdownContainerView
                 block={props.segment.container}
                 sourceStart={props.segment.sourceStart}
+                sourceAction={sourceAction}
+                selectionActions={selectionActions}
                 selectable={props.selectable}
                 profile={props.profile}
                 onLinkPress={props.onLinkPress}
