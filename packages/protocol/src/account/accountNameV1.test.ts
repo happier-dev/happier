@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { resolveAccountDisplayLabelV1, projectAccountNameToLegacyFieldsV1, readAccountNameFromLegacyProfileV1 } from './accountDisplayProfileV1.js';
+import { classifyAccountActorLabelV1, resolveAccountDisplayLabelV1, projectAccountNameToLegacyFieldsV1, readAccountNameFromLegacyProfileV1 } from './accountDisplayProfileV1.js';
 import { AccountNameUpdateRequestV1Schema } from './profile.js';
 
 describe('Account name', () => {
@@ -15,6 +15,15 @@ describe('Account name', () => {
     expect(resolveAccountDisplayLabelV1({ name: '  Captain  ', username: 'leeroybrun' })).toBe('Captain');
     expect(resolveAccountDisplayLabelV1({ name: ' ', username: ' leeroybrun ' })).toBe('leeroybrun');
     expect(resolveAccountDisplayLabelV1({ name: null, username: null })).toBeNull();
+  });
+
+  it('classifies self, current profile, former relationship and unnamed actors before localization', () => {
+    const named = { accessibility: 'current' as const, profile: { name: '  Captain  ', username: 'leeroybrun' } };
+    expect(classifyAccountActorLabelV1(named, false)).toEqual({ kind: 'profile', label: 'Captain', source: 'name' });
+    expect(classifyAccountActorLabelV1(named, true)).toEqual({ kind: 'self' });
+    expect(classifyAccountActorLabelV1({ ...named, accessibility: 'former' }, true)).toEqual({ kind: 'former' });
+    expect(classifyAccountActorLabelV1({ accessibility: undefined, profile: null }, false)).toEqual({ kind: 'former' });
+    expect(classifyAccountActorLabelV1({ accessibility: 'current', profile: null }, false)).toEqual({ kind: 'unnamed' });
   });
 
   it('keeps an unsplit name visible to legacy first/last readers', () => {

@@ -6,6 +6,29 @@ export function resolveAccountDisplayLabelV1(profile: Readonly<{ name?: string |
   return profile.name?.trim() || profile.username?.trim() || null;
 }
 
+export type AccountActorLabelClassificationV1 =
+  | Readonly<{ kind: 'self' }>
+  | Readonly<{ kind: 'former' }>
+  | Readonly<{ kind: 'profile'; label: string; source: 'name' | 'username' }>
+  | Readonly<{ kind: 'unnamed' }>;
+
+/** Pure relationship/profile classification; each host localizes only the resulting label kind. */
+export function classifyAccountActorLabelV1(
+  actor: Readonly<{ accessibility?: 'current' | 'former'; profile: Readonly<{
+    name?: string | null; firstName?: string | null; lastName?: string | null; username?: string | null;
+  }> | null }>,
+  isSelf: boolean,
+): AccountActorLabelClassificationV1 {
+  if (actor.accessibility === 'former' || (actor.accessibility === undefined && actor.profile === null)) return { kind: 'former' };
+  if (isSelf) return { kind: 'self' };
+  const name = actor.profile?.name?.trim()
+    || [actor.profile?.firstName?.trim(), actor.profile?.lastName?.trim()].filter(Boolean).join(' ')
+    || null;
+  if (name) return { kind: 'profile', label: name, source: 'name' };
+  const username = actor.profile?.username?.trim();
+  return username ? { kind: 'profile', label: username, source: 'username' } : { kind: 'unnamed' };
+}
+
 /** Decode released first/last presentation only when the canonical field is absent. */
 export function readAccountNameFromLegacyProfileV1(profile: Readonly<{ name?: string | null; firstName?: string | null; lastName?: string | null }>): string | null {
   if (profile.name !== undefined) return profile.name?.trim() || null;
