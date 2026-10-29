@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
+import { AGENT_IDS } from '@happier-dev/agents/agent-ids';
+import { getAgentCliRuntimeSpec, getAgentCliSetupSupportedIds } from '@happier-dev/agents/cli/runtime';
 
 const stackRoot = fileURLToPath(new URL('..', import.meta.url));
 
@@ -16,6 +18,26 @@ function runProvidersCommand(args, { env = process.env } = {}) {
   if (res.error) throw res.error;
   return res;
 }
+
+test('hstack providers list uses native CLI setup facts and omits catalog-only custom-acp', () => {
+  assert.ok(AGENT_IDS.includes('custom-acp'));
+  assert.equal(getAgentCliRuntimeSpec('custom-acp'), null);
+
+  const res = runProvidersCommand(['list', '--json']);
+  assert.equal(res.status, 0, res.stderr);
+
+  const data = JSON.parse(res.stdout);
+  assert.equal(data.ok, true);
+  assert.deepEqual(data.providers.map((row) => row.id), getAgentCliSetupSupportedIds());
+  assert.ok(!data.providers.some((row) => row.id === 'custom-acp'));
+  assert.equal(data.providers.find((row) => row.id === 'codex')?.autoInstall, true);
+});
+
+test('hstack providers install catalog-only custom-acp reports the canonical missing recipe', () => {
+  const res = runProvidersCommand(['install', 'custom-acp', '--dry-run', '--json']);
+  assert.notEqual(res.status, 0);
+  assert.match(res.stderr, /No auto-install recipe available for custom-acp/);
+});
 
 test('hstack providers install --dry-run --json plans codex + claude installs', () => {
   const res = runProvidersCommand(['install', '--providers=codex,claude', '--dry-run', '--json']);
