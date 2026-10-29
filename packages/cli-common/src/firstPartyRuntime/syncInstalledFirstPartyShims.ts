@@ -1,30 +1,40 @@
 import { copyFileSync, linkSync, mkdirSync, rmSync } from 'node:fs';
-import { mkdir, rm, symlink } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import { mkdir, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { dirname, relative } from 'node:path';
 
-import type { PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
-
-import type { FirstPartyComponentId } from './componentCatalog.js';
 import { resolveDesiredShimTargets } from './resolveDesiredShimTargets.js';
 
 export interface SyncInstalledFirstPartyShimsResult {
   shimPaths: string[];
 }
 
-export async function syncInstalledFirstPartyShims(params: Readonly<{
-  componentId: FirstPartyComponentId;
-  channel?: PublicReleaseRingId;
-  releaseRing?: PublicReleaseRingId;
-  defaultReleaseChannelOverride?: PublicReleaseRingId;
-  processEnv?: NodeJS.ProcessEnv;
-}>): Promise<SyncInstalledFirstPartyShimsResult> {
-  const targets = await resolveDesiredShimTargets({
-    componentId: params.componentId,
-    channel: params.channel,
-    defaultReleaseChannelOverride: params.defaultReleaseChannelOverride,
-    releaseRing: params.releaseRing,
-    processEnv: params.processEnv,
-  });
+export async function syncInstalledFirstPartyShims(
+  params: Parameters<typeof resolveDesiredShimTargets>[0],
+): Promise<SyncInstalledFirstPartyShimsResult> {
+  const targets = await resolveDesiredShimTargets(params);
+
+  if (params.sourceLaunch) {
+    for (const { shimPath, binaryPath, args = [] } of targets) {
+      const quote = process.platform === 'win32'
+        ? (value: string) => `"${value.replaceAll('%', '%%')}"`
+        : (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
+      const invocation = [binaryPath, ...args].map(quote).join(' ');
+      const script = process.platform === 'win32'
+        ? `@echo off\r\nsetlocal DisableDelayedExpansion\r\n${invocation} %*\r\nexit /b %errorlevel%\r\n`
+        : `#!/bin/sh\nexec ${invocation} "$@"\n`;
+      await mkdir(dirname(shimPath), { recursive: true });
+      // A Session can invoke the stable command while its daemon reloads.
+      const temporaryPath = `${shimPath}.${randomUUID()}.tmp`;
+      try {
+        await writeFile(temporaryPath, script, { mode: 0o755, flag: 'wx' });
+        await rename(temporaryPath, shimPath);
+      } finally {
+        await rm(temporaryPath, { force: true });
+      }
+    }
+    return { shimPaths: targets.map(target => target.shimPath) };
+  }
 
   if (process.platform === 'win32') {
     for (const { shimPath, binaryPath } of targets) {

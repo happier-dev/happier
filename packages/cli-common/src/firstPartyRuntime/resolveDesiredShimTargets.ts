@@ -1,12 +1,15 @@
 import type { PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
+import { join } from 'node:path';
 
 import type { FirstPartyComponentId } from './componentCatalog.js';
+import { getFirstPartyComponentCatalogEntry } from './componentCatalog.js';
 import { readDefaultManagedReleaseChannel, shouldPersistDefaultManagedReleaseChannel } from './defaultReleaseChannelState.js';
 import { resolveInstalledFirstPartyComponentPaths } from './resolveInstalledComponentPaths.js';
 
 export interface DesiredFirstPartyShimTarget {
     shimPath: string;
     binaryPath: string;
+    args?: readonly string[];
 }
 
 export async function resolveDesiredShimTargets(params: Readonly<{
@@ -15,7 +18,16 @@ export async function resolveDesiredShimTargets(params: Readonly<{
     releaseRing?: PublicReleaseRingId;
     defaultReleaseChannelOverride?: PublicReleaseRingId;
     processEnv?: NodeJS.ProcessEnv;
+    sourceLaunch?: Readonly<{ shimDir: string; command: string; args: readonly string[] }>;
 }>): Promise<readonly DesiredFirstPartyShimTarget[]> {
+    if (params.sourceLaunch) {
+        const { shimDir, command, args } = params.sourceLaunch;
+        return getFirstPartyComponentCatalogEntry(params.componentId).installShims.map(name => ({
+            shimPath: join(shimDir, process.platform === 'win32' ? `${name}.cmd` : name),
+            binaryPath: command,
+            args,
+        }));
+    }
     const paths = resolveInstalledFirstPartyComponentPaths({
         componentId: params.componentId,
         channel: params.channel,
