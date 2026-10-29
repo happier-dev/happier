@@ -206,7 +206,7 @@ esac
 }
 
 for (const scenario of ['stale', 'current', 'pass']) {
-  test(`failed typecheck declaration hint: ${scenario}`, async t => {
+  test(`failed emitting compiler declaration hint: ${scenario}`, async t => {
     const setup = await fixture(t, {
       exitCode: scenario === 'pass' ? 0 : 7,
       compilerBody: "process.stderr.write('fixture compiler diagnostic\\n');",
@@ -265,9 +265,9 @@ for (const scenario of ['stale', 'current', 'pass']) {
       };
       require('node:module').syncBuiltinESMExports();
     `);
-    const { child, stderr } = setup.start(['--require', readProbe, runner, '--noEmit']);
+    const { child, stderr } = setup.start(['--require', readProbe, runner, '--noEmit', 'false']);
     assert.deepEqual(await once(child, 'exit'), [scenario === 'pass' ? 0 : 7, null], stderr());
-    assert.ok(stderr().startsWith('fixture compiler diagnostic\n'), stderr());
+    assert.match(stderr(), /(?:^|\n)fixture compiler diagnostic\n/);
     const hints = stderr().split('\n').filter(line => line.includes('declarations are older than its source; rebuild:'));
     const reads = await readFile(probePath, 'utf8').catch(error => { if (error.code === 'ENOENT') return ''; throw error; });
     if (scenario === 'stale') {
@@ -422,8 +422,11 @@ test('public CLI compiler checks its selected roots and admits concurrent additi
 });
 
 for (const windows of [false, true]) {
-  for (const failPreparation of [false, true]) {
-    test(`referenced UI declarations prepare cold CLI compilation (${windows ? 'Windows' : 'POSIX'}, ${failPreparation ? 'producer failure' : 'success'})`, async (t) => {
+  for (const outcome of ['success', 'failure', 'diagnostics-fresh', 'diagnostics-stale', 'diagnostics-missing', 'diagnostics-partial', 'diagnostics-transitive-partial', 'diagnostics-stale-inventory', 'crash', 'signal']) {
+    const failPreparation = outcome === 'failure';
+    const producerDiagnostics = outcome.startsWith('diagnostics-');
+    const continues = outcome === 'success' || outcome === 'diagnostics-fresh';
+    test(`referenced UI declarations prepare cold CLI compilation (${windows ? 'Windows' : 'POSIX'}, ${outcome})`, async (t) => {
       const setup = await fixture(t, { windows, exitCode: 0, compilerBody: `
         const fs = require('node:fs');
         const path = require('node:path');
@@ -434,8 +437,35 @@ for (const windows of [false, true]) {
         if (project.startsWith(uiDir + path.sep)) {
           if (process.env.FAIL_DECLARATION_PREPARATION === '1') process.exit(23);
           if (path.basename(project) === 'tsconfig.source.json') {
+            const outcome = process.env.PRODUCER_OUTCOME ?? 'success';
+            if (outcome === 'crash') { process.stdout.write('compiler crashed\\n'); process.exit(1); }
+            if (outcome === 'signal') { process.kill(process.pid, 'SIGTERM'); return; }
             fs.mkdirSync(path.join(uiDir, 'declarations'), { recursive: true });
-            fs.writeFileSync(path.join(uiDir, 'declarations', 'source.d.ts'), fs.readFileSync(path.join(uiDir, 'source.ts')));
+            if (outcome === 'diagnostics-transitive-partial') {
+              // A source change after finite derivation reaches the compiler
+              // but is absent from the configured root membership.
+              fs.writeFileSync(path.join(uiDir, 'late.ts'), 'export interface Late { value: true; }\\n');
+              fs.appendFileSync(path.join(uiDir, 'source.ts'), 'export type { Late } from "./late";\\n');
+              fs.writeFileSync(path.join(uiDir, 'declarations', 'late.d.ts'), 'export interface Late { value: false; }\\n');
+            }
+            if (!['diagnostics-stale', 'diagnostics-missing'].includes(outcome)) {
+              fs.writeFileSync(path.join(uiDir, 'declarations', 'source.d.ts'), fs.readFileSync(path.join(uiDir, 'source.ts')));
+              if (process.argv.includes('--listEmittedFiles')) process.stdout.write('TSFILE: ' + path.join(uiDir, 'declarations', 'source.d.ts') + '\\n');
+              if (outcome !== 'diagnostics-partial') {
+                fs.writeFileSync(path.join(uiDir, 'declarations', 'extra.d.ts'), 'export declare const extra: true;\\n');
+                if (process.argv.includes('--listEmittedFiles')) process.stdout.write('TSFILE: ' + path.join(uiDir, 'declarations', 'extra.d.ts') + '\\n');
+              }
+            }
+            const buildInfo = path.join(uiDir, 'fixture.typecheck.tsbuildinfo');
+            if (outcome !== 'diagnostics-stale-inventory') {
+              fs.writeFileSync(buildInfo, JSON.stringify({ fileNames: ['source.ts', 'extra.ts',
+                ...(outcome === 'diagnostics-transitive-partial' ? ['late.ts'] : [])] }));
+              if (process.argv.includes('--listEmittedFiles')) process.stdout.write('TSFILE: ' + buildInfo + '\\n');
+            }
+            if (outcome.startsWith('diagnostics-')) {
+              process.stdout.write(path.join(uiDir, 'source.ts') + '(1,7): error TS2322: captured producer diagnostic\\n');
+              process.exit(2);
+            }
           }
         } else if (path.basename(project) === 'tsconfig.test.json'
           && !fs.existsSync(path.join(uiDir, 'declarations', 'source.d.ts'))) process.exit(24);
@@ -453,16 +483,18 @@ for (const windows of [false, true]) {
       await writeFile(join(uiDir, 'package.json'), JSON.stringify({ name: 'ui-declaration-fixture' }));
       await writeFile(join(uiDir, 'app.json'), JSON.stringify({ expo: { name: 'UI declaration fixture', slug: 'ui-declaration-fixture', experiments: { typedRoutes: false } } }));
       await writeFile(join(uiDir, 'source.ts'), 'export declare const value: true;\n');
+      await writeFile(join(uiDir, 'extra.ts'), 'export declare const extra: true;\n');
       await writeFile(join(uiDir, 'source.test.ts'), 'export const testValue = true;\n');
       await writeFile(join(uiDir, 'tsconfig.json'), JSON.stringify({
         compilerOptions: { strict: true, module: 'esnext', moduleResolution: 'bundler', target: 'es2020' },
-        files: ['source.ts', 'source.test.ts'],
+        files: ['source.ts', 'extra.ts', 'source.test.ts'],
       }));
       for (const name of ['foundation', 'core', 'source', 'test']) {
         await writeFile(join(uiDir, `tsconfig.${name}.json`), JSON.stringify({
-          extends: './tsconfig.json', files: [name === 'test' ? 'source.test.ts' : 'source.ts'], include: [],
+          extends: './tsconfig.json', files: name === 'test' ? ['source.test.ts'] : ['source.ts', 'extra.ts'], include: [],
           compilerOptions: name === 'test' ? { noEmit: true } : {
-            composite: true, noEmit: false, emitDeclarationOnly: true, outDir: './declarations',
+            composite: true, noEmit: false, emitDeclarationOnly: true, rootDir: '.', outDir: './declarations',
+            tsBuildInfoFile: './fixture.typecheck.tsbuildinfo',
           },
         }));
       }
@@ -471,6 +503,7 @@ for (const windows of [false, true]) {
       }));
       await writeFile(join(cliDir, 'source.ts'), 'export const cliValue = true;\n');
       await writeFile(join(cliDir, 'source.test.ts'), 'export const cliTestValue = true;\n');
+      await writeFile(join(cliDir, 'package.json'), JSON.stringify({ name: 'cli-declaration-fixture' }));
       await writeFile(join(cliDir, 'tsconfig.source.json'), JSON.stringify({ files: ['source.ts'] }));
       await writeFile(join(cliDir, 'tsconfig.test.json'), JSON.stringify({
         compilerOptions: { strict: true, noEmit: true, disableSourceOfProjectReferenceRedirect: true },
@@ -479,17 +512,42 @@ for (const windows of [false, true]) {
         ],
       }));
       await assert.rejects(readFile(join(uiDir, 'declarations', 'source.d.ts')), { code: 'ENOENT' });
+      if (outcome === 'diagnostics-stale' || outcome === 'diagnostics-partial') {
+        await mkdir(join(uiDir, 'declarations'));
+        await writeFile(join(uiDir, 'declarations', 'source.d.ts'), 'export declare const value: false;\n');
+        await writeFile(join(uiDir, 'declarations', 'extra.d.ts'), 'export declare const extra: false;\n');
+      }
+      if (outcome === 'diagnostics-stale-inventory') await writeFile(join(uiDir, 'fixture.typecheck.tsbuildinfo'), JSON.stringify({ fileNames: ['source.ts', 'extra.ts'] }));
+      await writeFile(join(setup.root, '.gitignore'), 'node_modules/\ndeclarations/\n');
+      const git = (...args) => spawnSync('git', args, { cwd: setup.root, encoding: 'utf8' });
+      assert.equal(git('init', '-q').status, 0);
+      assert.equal(git('add', '.').status, 0);
+      assert.equal(git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-qm', 'fixture').status, 0);
+      const snapshot = join(cliDir, 'node_modules/.cache/typecheck/diagnostics.json');
+      await mkdir(dirname(snapshot), { recursive: true });
+      const previous = JSON.stringify({ projects: ['apps/cli/tsconfig.test.json'], diagnosticsByPath: {}, globalDiagnostics: 0 });
+      await writeFile(snapshot, previous);
       const { child, stderr } = setup.start([runner, '--singleThreaded',
         '--project', join(cliDir, 'tsconfig.source.json'), '--project', join(cliDir, 'tsconfig.test.json')], {
-        env: { DECLARATION_FIXTURE_ROOT: setup.root, FAIL_DECLARATION_PREPARATION: failPreparation ? '1' : '' },
+        env: { DECLARATION_FIXTURE_ROOT: setup.root, FAIL_DECLARATION_PREPARATION: failPreparation ? '1' : '', PRODUCER_OUTCOME: outcome },
       });
-      assert.deepEqual(await once(child, 'exit'), [failPreparation ? 23 : 0, null], stderr());
+      assert.deepEqual(await once(child, 'exit'), outcome === 'signal' ? (windows ? [143, null] : [null, 'SIGTERM'])
+        : [failPreparation ? 23 : producerDiagnostics ? 2 : outcome === 'crash' ? 1 : 0, null], stderr());
       const compiled = (await readFile(join(setup.root, 'compiler-projects.jsonl'), 'utf8')).trim().split('\n').map(JSON.parse);
       assert.deepEqual(compiled, failPreparation ? [join(uiDir, 'node_modules/.cache/tsc/tsconfig.foundation.json')] : [
         ...['foundation', 'core', 'source'].map(name => join(uiDir, `node_modules/.cache/tsc/tsconfig.${name}.json`)),
-        join(cliDir, 'tsconfig.source.json'), join(cliDir, 'node_modules/.cache/tsc/tsconfig.test.json'),
+        ...(continues ? [join(cliDir, 'tsconfig.source.json'), join(cliDir, 'node_modules/.cache/tsc/tsconfig.test.json')] : []),
       ]);
-      if (!failPreparation) {
+      if (outcome === 'diagnostics-fresh') {
+        assert.match(stderr(), /complete with producer diagnostics/);
+        assert.match(stderr(), /apps\/cli: 0 new in touched paths/);
+        const saved = JSON.parse(await readFile(snapshot, 'utf8'));
+        assert.deepEqual(saved.diagnosticsByPath['apps/ui/source.ts'], [{ line: 1, column: 7, code: 2322 }]);
+      } else if (!continues) {
+        assert.match(stderr(), /unavailable: no complete diagnostic result/);
+        assert.equal(await readFile(snapshot, 'utf8'), previous);
+      }
+      if (outcome === 'success') {
         assert.equal(await readFile(join(uiDir, 'declarations', 'source.d.ts'), 'utf8'), 'export declare const value: true;\n');
         await writeFile(join(uiDir, 'source.ts'), 'export declare const value: false;\n');
         const changed = setup.start([runner, '--singleThreaded',
@@ -675,7 +733,8 @@ for (const status of [0, 1, 7]) {
   });
 }
 
-test('package diagnostic delta reaches the runner without changing compiler output or failure status', async t => {
+for (const reference of [false, true]) {
+test(`package diagnostic delta reaches the runner without changing compiler output or failure status (reference=${reference})`, async t => {
   const diagnostic = "source.ts(1,7): error TS2322: Type 'string' is not assignable to type 'number'.\n";
   const setup = await fixture(t, { exitCode: 2, compilerBody: `process.stdout.write(${JSON.stringify(diagnostic)});` });
   await writeFile(join(setup.root, '.gitignore'), 'node_modules/\n');
@@ -685,14 +744,40 @@ test('package diagnostic delta reaches the runner without changing compiler outp
   assert.equal(git('init', '-q').status, 0);
   assert.equal(git('add', '.').status, 0);
   assert.equal(git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-qm', 'fixture').status, 0);
+  if (reference) {
+    const directory = join(setup.root, '.project/plans/2026-10-17-coordination/qa/baselines');
+    await mkdir(directory, { recursive: true });
+    await writeFile(join(directory, 'root.json'), JSON.stringify({
+      projects: ['tsconfig.json'], diagnosticsByPath: {}, globalDiagnostics: 0,
+    }));
+  }
   for (const baseline of [false, true]) {
     const { child, stderr, stdout } = setup.start([runner, '--noEmit', '-p', 'tsconfig.json'], { stdio: ['ignore', 'pipe', 'pipe'] });
     assert.deepEqual(await once(child, 'exit'), [2, null], stderr());
     assert.equal(stdout().toString(), diagnostic);
-    assert.match(stderr(), baseline ? /0 new in touched paths/ : /baseline unavailable/);
+    assert.match(stderr(), baseline || reference ? /0 new in touched paths/ : /baseline unavailable/);
+    if (baseline) assert.match(stderr(), /baseline local/);
+    else if (reference) assert.match(stderr(), /baseline reference \.project\/plans\/2026-10-17-coordination\/qa\/baselines\/root\.json/);
   }
   const saved = JSON.parse(await readFile(join(setup.root, 'node_modules/.cache/typecheck/diagnostics.json'), 'utf8'));
   assert.deepEqual(saved.diagnosticsByPath['source.ts'], [{ line: 1, column: 7, code: 2322 }]);
+});
+}
+
+test('snapshot failures report a safe step and code without changing the compiler verdict', async t => {
+  const diagnostic = 'source.ts(1,7): error TS2322: captured diagnostic\n';
+  const setup = await fixture(t, { exitCode: 2, compilerBody: `process.stdout.write(${JSON.stringify(diagnostic)});` });
+  await writeFile(join(setup.root, 'tsconfig.json'), '{"compilerOptions":{"noEmit":true}}');
+  const git = (...args) => spawnSync('git', args, { cwd: setup.root, encoding: 'utf8' });
+  assert.equal(git('init', '-q').status, 0);
+  await mkdir(join(setup.root, 'node_modules/.cache/typecheck/diagnostics.json'), { recursive: true });
+  const { child, stderr, stdout } = setup.start([runner, '--noEmit', '-p', 'tsconfig.json'], { stdio: ['ignore', 'pipe', 'pipe'] });
+  assert.deepEqual(await once(child, 'exit'), [2, null], stderr());
+  assert.equal(stdout().toString(), diagnostic);
+  const fallback = stderr().split('\n').find(line => line.startsWith('[typecheck-delta] unavailable:'));
+  assert.match(fallback, /snapshot-read:EISDIR/);
+  assert.ok(!fallback.includes(setup.root));
+  assert.match(fallback, /compiler verdict unchanged/);
 });
 
 test('compiler cancellation reaches its native worker process group', { skip: process.platform === 'win32' }, async (t) => {

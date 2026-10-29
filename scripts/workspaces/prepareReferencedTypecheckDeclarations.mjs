@@ -89,7 +89,7 @@ async function declarationInputKey(pkg, dependencyKeys, env) {
   return { key, config };
 }
 
-async function declarationOutputKey(pkg) {
+async function declarationOutputFiles(pkg) {
   const files = [];
   const visit = async directory => {
     for (const entry of await readdir(directory, { withFileTypes: true }).catch(error => {
@@ -102,7 +102,53 @@ async function declarationOutputKey(pkg) {
     }
   };
   await visit(pkg.output);
-  return await readBuildInputIdentity({ sourceDir: pkg.output, files });
+  return files;
+}
+
+async function declarationOutputKey(pkg) {
+  return await readBuildInputIdentity({ sourceDir: pkg.output, files: await declarationOutputFiles(pkg) });
+}
+
+function expectedDeclarationOutputs(parsed) {
+  return new Set(parsed.fileNames.flatMap(file => ts.getOutputFileNames(parsed, file, !ts.sys.useCaseSensitiveFileNames))
+    .filter(file => /\.d\.[cm]?ts$/.test(file)).map(file => resolve(file)));
+}
+
+function declarationImplementationInputs(tsBuildInfoFile, inputRoot) {
+  return readTypeScriptBuildInputFileNames(tsBuildInfoFile)
+    .filter(file => typeof file === 'string' && /\.[cm]?tsx?$/.test(file) && !/\.d\.[cm]?ts$/.test(file))
+    .map(file => resolve(dirname(tsBuildInfoFile), file))
+    .filter(file => {
+      const path = relative(inputRoot, file);
+      return !isAbsolute(path) && path !== '..' && !path.startsWith('../') && !path.startsWith('..\\');
+    });
+}
+
+/** The compiler's emitted-file inventory proves writes by this invocation.
+ * Reuse the declaration owner's output calculation; pre-existing files alone
+ * cannot admit a consumer after a failed declaration producer.
+ */
+export function referencedTypecheckDeclarationsFresh(project, emittedFiles, invocation, cwd = process.cwd()) {
+  try {
+    const { parsed } = readTypecheckProject(resolve(cwd, project.project));
+    Object.assign(parsed.options, ts.parseCommandLine(invocation.argsSuffix ?? []).options);
+    if (parsed.options.noEmit || parsed.options.noEmitOnError
+      || !(parsed.options.declaration || parsed.options.composite)) return false;
+    const emitted = new Set(emittedFiles.map(file => resolve(cwd, file)));
+    const buildInfo = ts.getTsBuildInfoEmitOutputFilePath(parsed.options);
+    // Old input inventories can hide a newly imported implementation. The
+    // completed native inventory must itself belong to this emitted pass.
+    if (!buildInfo || !emitted.has(resolve(buildInfo))) return false;
+    const inputs = declarationImplementationInputs(buildInfo,
+      parsed.options.rootDir ?? dirname(resolve(cwd, project.authoredProject ?? project.project)));
+    parsed.fileNames = [...new Set([...parsed.fileNames, ...inputs])];
+    const expected = expectedDeclarationOutputs(parsed);
+    return expected.size > 0 && [...expected].every(file => emitted.has(file) && existsSync(file));
+  } catch {
+    // An unreadable/incomplete declaration inventory never replaces the
+    // compiler's failure result or admits consumers against uncertain output.
+    return false;
+  }
 }
 
 async function declarationCacheCurrent(pkg, key) {
@@ -123,15 +169,8 @@ async function pruneObsoleteDeclarations(pkg, project, config) {
   const parsed = ts.parseJsonConfigFileContent(config, ts.sys, dirname(project), undefined, project);
   // Root membership omits transitively imported implementation files. The
   // native emitter's completed input inventory is the output authority.
-  parsed.fileNames = readTypeScriptBuildInputFileNames(resolve(pkg.cache, 'incremental.tsbuildinfo'))
-    .filter(file => typeof file === 'string' && /\.[cm]?tsx?$/.test(file) && !/\.d\.[cm]?ts$/.test(file))
-    .map(file => resolve(pkg.cache, file))
-    .filter(file => {
-      const path = relative(pkg.dir, file);
-      return !isAbsolute(path) && path !== '..' && !path.startsWith('../') && !path.startsWith('..\\');
-    });
-  const expected = new Set(parsed.fileNames.flatMap(file => ts.getOutputFileNames(parsed, file, !ts.sys.useCaseSensitiveFileNames))
-    .filter(file => /\.d\.[cm]?ts$/.test(file)).map(file => resolve(file)));
+  parsed.fileNames = declarationImplementationInputs(resolve(pkg.cache, 'incremental.tsbuildinfo'), pkg.dir);
+  const expected = expectedDeclarationOutputs(parsed);
   const visit = async directory => {
     const entries = await readdir(directory, { withFileTypes: true }).catch(error => {
       if (error.code === 'ENOENT') return [];

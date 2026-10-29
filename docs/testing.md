@@ -138,13 +138,15 @@ The development push Gate runs each non-UI partition through `pnpm run test:gate
 
 In 0.3 development, runtime worker bootstrap, runtime validation preparation, local `hstack` bundled-workspace preflight and the Stack unit runner prepare emitted workspace prerequisites in `source-dev` mode by default. Their package compilers use the existing `package-dist` envelope, reusing an authenticated parent admission when present. Explicit strict mode and public packing/publication still check semantics. Both UI patch stages request patch-package's `--error-on-fail`, so a mixed previously patched tree reaches the existing dependency owner's pristine re-extraction and retry rather than being admitted as ready.
 
-In 0.3 development, automatic workspace declaration preparation is withdrawn;
-public component typechecks read canonical package outputs. Refresh stale
-producer outputs through the explicit `prepare:typecheck:workspaces` publication
-command. The parked workspace emitter in
-`prepareReferencedTypecheckDeclarations.mjs` is not called by public typecheck
-dispatch. The same module's authored CLI-to-UI source-reference preparation
-remains active and has a separate purpose.
+In 0.3 development, public package typechecks prepare their workspace-package
+prerequisites on the selected worker before compiling. The canonical workspace
+build owner verifies its content records, reuses fresh outputs without starting
+builds, and publishes stale prerequisites in `source-dev` mode. Prerequisite
+publication releases its leases and capacity before consumer compilation; it
+does not change the selected typecheck compiler or certify producer semantics.
+The parked declaration-only emitter remains unused. Authored CLI-to-UI source
+references retain their separate strict declaration preparation and the
+emitted-this-invocation guard for continuing after producer diagnostics.
 
 The development-only `remote_validation_preparation.mjs --typecheck-batch`
 command explicitly prepares and reads on one selected worker. Repeat
@@ -160,14 +162,33 @@ In 0.3 development, `runTypeScriptCli.mjs` records each completed finite
 `noEmit` package invocation in the ignored package-local
 `node_modules/.cache/typecheck/diagnostics.json`. It prints `N new in touched
 paths` against the previous completed invocation with the same authored project
-set. Touched paths include staged and unstaged Git changes plus untracked files
-under the package. Diagnostic identity is the repository-relative path, line,
+set. If that local snapshot is missing, malformed or has a different project set,
+it reads `.project/plans/2026-10-17-coordination/qa/baselines/<pkg>.json` in the
+same snapshot format. `<pkg>` is the package directory name (for example `ui`,
+`cli`, or `plugin-sdk`), or `root` for the repository root. The reference must
+match the authored project set too; a usable local snapshot takes precedence.
+The delta notice names `local` or `reference <path>`. Touched paths include staged
+and unstaged Git changes plus untracked files under the package. Diagnostic identity is the repository-relative path, line,
 column and TypeScript code; shared locations across project partitions count
-once. The first run or a changed project set reports `baseline unavailable`.
+once. If neither snapshot is usable it reports `baseline unavailable`.
 Interrupted, partial or unrecognized compiler results retain the previous
 snapshot; build, watch and introspection commands do not replace it. Snapshot
 failures are reported and preserve the compiler verdict. The same diagnostic
 header parser serves this observation and the root compiler-baseline check.
+
+Referenced declaration producers may finish with ordinary diagnostics without
+stopping the consumer partitions. The declaration preparation owner permits
+this only when the compiler's emitted-file inventory and completed input
+inventory prove that every expected declaration, including transitive inputs,
+was written by that invocation and still exists. Existing files
+alone do not establish freshness: missing, stale or partial output stops the
+batch, as do crashes, signals and cancellation. A warm incremental pass that
+reuses declarations does not meet this rule, even when every output exists;
+producer diagnostics can therefore leave the previous snapshot unchanged.
+A completed consumer snapshot
+includes the producer diagnostics at their original locations and is labeled
+`complete with producer diagnostics`. Any failed partition still makes the
+command exit nonzero; an incomplete batch preserves the previous snapshot.
 
 This delta supports lane attribution; the compiler exit status and the existing
 Systemic integration owner's responsibility for package green remain unchanged.
@@ -175,17 +196,18 @@ It neither grants a diagnostic allowance nor changes the root compiler-baseline
 policy. Snapshots belong to the execution host and describe its moving source
 view; they do not establish freshness of consumed declarations.
 
-Automatic preparation stays off: in the shared checkout, producer inputs change
-while a preparation runs, so it cannot converge within the 228 s cold boundary.
-After a failed public typecheck, the reader checks producer records in dependency
+After a failed compilation, the reader checks producer records in dependency
 order and appends one hint line after the compiler diagnostics for the first
 noncurrent producer, with one explicit rebuild command to run from the repository
 root. This runs on the worker and reaches the caller through `hstack-exec`, and
-preserves the compiler's diagnostics and exit status. The hint does not establish
+preserves the compiler's diagnostics and exit status. It checks the preparation's
+build mode, so fresh unchecked development output is not mistaken for stale
+content. The hint does not establish
 that stale declarations caused the failure; passing checks do not run this
-diagnostic or certify producer freshness. There is no automatic rebuild or retry.
-When a typecheck reports declaration-shaped diagnostics, rebuild the producers
-explicitly and rerun. Typical symptoms are a missing export or property that
+diagnostic or certify producer freshness. The hint itself never rebuilds or
+retries; public typechecks already prepare prerequisites before compiling.
+If declaration-shaped diagnostics remain, the explicit preparation command can
+be used for producer repair. Typical symptoms are a missing export or property that
 exists in the producer's source, and `node_modules/.cache` names in consumed
 declarations. Rebuild in dependency order: Protocol, then plugin-sdk, then
 plugin-ui (`pnpm --dir packages/<name> run build`, or the `--typecheck-batch`

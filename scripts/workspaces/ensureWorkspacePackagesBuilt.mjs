@@ -293,7 +293,7 @@ export async function readWorkspaceComponentDependencyGraph(componentDir, {
 
 /** Failure-only reader diagnostic. This does not certify the reader or rebuild
  * anything; currentness remains the publisher's recorded-output decision. */
-export async function findFirstNoncurrentWorkspaceDependency(componentDir, { env = process.env } = {}) {
+export async function findFirstNoncurrentWorkspaceDependency(componentDir, { env = process.env, buildMode = 'strict' } = {}) {
   const graph = await readWorkspaceComponentDependencyGraph(componentDir);
   if (!graph) return null;
   const { packageDirsByName, packageJsonByDir, packageNames, closure } = graph;
@@ -318,7 +318,7 @@ export async function findFirstNoncurrentWorkspaceDependency(componentDir, { env
     if (collectExpectedPackageOutputTargets(metadata).length === 0) return null;
     const dependencyDirs = collectWorkspacePackageFingerprintDependencyNames(metadata, name,
       workspacePackageNames, { packageDirsByName }).map(dependency => packageDirsByName.get(dependency));
-    return isWorkspacePackageOutputCurrent(packageDir, { dependencyDirs, env, buildMode: 'strict' }) ? null : name;
+    return isWorkspacePackageOutputCurrent(packageDir, { dependencyDirs, env, buildMode }) ? null : name;
   };
   for (const name of packageNames) {
     const first = visit(name);

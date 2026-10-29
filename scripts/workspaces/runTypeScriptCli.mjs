@@ -3,15 +3,19 @@ import { randomUUID } from 'node:crypto';
 import { constants, tmpdir } from 'node:os';
 import { dirname, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createInterface } from 'node:readline';
 import { exitWithCommandResult, runCommand, spawnForegroundCommand } from '../../apps/stack/scripts/utils/proc/proc.mjs';
 
 import { prepareTypeScriptProjectBuildFromArgs, verifyTypeScriptProjectCoverage } from './prepareTypeScriptProjectBuild.mjs';
+import { readReferencedUiTypecheckProjects } from './deriveTypecheckProjects.mjs';
 import { writeJsonAtomic } from '../../apps/stack/scripts/utils/fs/json.mjs';
-import { prepareReferencedTypecheckDeclarations } from './prepareReferencedTypecheckDeclarations.mjs';
-import { createTypecheckDiagnosticRun } from './typecheckDiagnostics.mjs';
+import { prepareReferencedTypecheckDeclarations, referencedTypecheckDeclarationsFresh } from './prepareReferencedTypecheckDeclarations.mjs';
+import { ensureWorkspacePackagesBuiltForComponent } from './ensureWorkspacePackagesBuilt.mjs';
+import { createTypecheckDiagnosticRun, isCompleteTypecheckDiagnosticResult, typecheckDiagnosticFailureIdentifier } from './typecheckDiagnostics.mjs';
 import {
   resolveTypeScriptCliInvocation,
   shouldRouteTypeScriptCliThroughHstack,
+  typecheckCompilerOptions,
 } from './resolveTypeScriptCliInvocation.mjs';
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
@@ -66,23 +70,32 @@ function compilerProjects(args) {
   return projects.map((project) => ({ args: [...sharedArgs, '--project', project], project }));
 }
 
-async function runCompiler(invocation, project, isCancelled, captureDiagnostics = false) {
+async function runCompiler(invocation, project, isCancelled, captureDiagnostics = false, captureDeclarations = false) {
   const options = { ownedProcessGroup: true, cwd: process.cwd(), stdio: 'inherit', env: process.env };
   const diagnosticReportDir = process.env.HAPPIER_TYPECHECK_REPORT_DIR;
-  const capture = Boolean(diagnosticReportDir) || captureDiagnostics;
-  const compilerArgs = [...invocation.argsPrefix, ...project.args, ...(invocation.argsSuffix ?? []), ...(capture ? ['--pretty', 'false'] : [])];
+  const capture = Boolean(diagnosticReportDir) || captureDiagnostics || captureDeclarations;
+  const compilerArgs = [...invocation.argsPrefix, ...project.args, ...(invocation.argsSuffix ?? []), ...(capture ? ['--pretty', 'false'] : []),
+    ...(captureDeclarations ? ['--listEmittedFiles'] : [])];
   const execute = async (command, args) => {
     if (!capture) return await runCommand(command, args, options);
     const child = spawnForegroundCommand(command, args, { ...options, stdio: ['inherit', 'pipe', 'pipe'] });
     const stdout = [];
     const stderr = [];
-    child.stdout.on('data', chunk => { stdout.push(chunk); process.stdout.write(chunk); });
+    const emittedFiles = [];
+    if (captureDeclarations) {
+      // Inventory is compiler evidence for the declaration owner, not user
+      // diagnostics. Keep thousands of emitted paths out of terminal output.
+      createInterface({ input: child.stdout, crlfDelay: Infinity }).on('line', line => {
+        if (line.startsWith('TSFILE: ')) emittedFiles.push(line.slice('TSFILE: '.length));
+        else { stdout.push(Buffer.from(`${line}\n`)); process.stdout.write(`${line}\n`); }
+      });
+    } else child.stdout.on('data', chunk => { stdout.push(chunk); process.stdout.write(chunk); });
     child.stderr.on('data', chunk => { stderr.push(chunk); process.stderr.write(chunk); });
     const result = await new Promise(resolveResult => {
       child.once('error', error => resolveResult({ status: null, signal: null, error }));
       child.once('close', (status, signal) => resolveResult({ status, signal }));
     });
-    return { ...result, stdout: Buffer.concat(stdout).toString(), stderr: Buffer.concat(stderr).toString() };
+    return { ...result, stdout: Buffer.concat(stdout).toString(), stderr: Buffer.concat(stderr).toString(), emittedFiles };
   };
   const publish = async result => {
     if (diagnosticReportDir) await writeJsonAtomic(resolve(diagnosticReportDir, `${randomUUID()}.json`), {
@@ -135,13 +148,46 @@ if (process.platform !== 'win32' && (executorArgs.length > 0 || shouldRouteTypeS
 } else {
   let result = { status: 0, signal: null };
   let cancelled = false;
-  const observeCancellation = () => { cancelled = true; };
+  let cancelledSignal;
+  const preparation = new AbortController();
   const cancellationSignals = ['SIGINT', 'SIGTERM', 'SIGHUP'];
+  const cancellationHandlers = cancellationSignals.map(signal => [signal, () => {
+    cancelled = true;
+    cancelledSignal ??= signal;
+    preparation.abort();
+  }]);
   // Forwarding and reaping stay with runCommand. A graceful native exit must
   // still stop the batch after the user cancels the containing operation.
-  for (const signal of cancellationSignals) process.on(signal, observeCancellation);
+  for (const [signal, handler] of cancellationHandlers) process.on(signal, handler);
   try {
     const projects = compilerProjects(args).map(project => ({ ...project, authoredProject: project.project, authoredArgs: project.args }));
+    // Public dependency outputs must be current before partition derivation
+    // reads them. Publication and content currentness retain their one owner;
+    // each producer releases its resources before consumer compilation.
+    const workspaceBuildMode = 'source-dev';
+    const components = new Set([
+      ...projects.flatMap(project => {
+        const options = typecheckCompilerOptions(project.authoredArgs, process.cwd());
+        return options ? [options.configFilePath ? dirname(options.configFilePath) : process.cwd()] : [];
+      }),
+      ...readReferencedUiTypecheckProjects(projects, process.cwd()).map(project => dirname(project)),
+    ]);
+    const started = performance.now();
+    const built = new Set();
+    try {
+      for (const component of components) {
+        if (cancelled) break;
+        const prepared = await ensureWorkspacePackagesBuiltForComponent(component, {
+          quiet: true, buildMode: workspaceBuildMode, deferBundledWorkspaceSync: true, signal: preparation.signal,
+        });
+        for (const name of prepared.built) built.add(name);
+      }
+    } catch (error) {
+      if (!cancelledSignal) throw error;
+    }
+    if (cancelledSignal) result = { status: null, signal: cancelledSignal };
+    if (components.size && !cancelled) process.stderr.write(`[typecheck-preparation] ${JSON.stringify({ built: [...built],
+      elapsedMs: Math.round(performance.now() - started) })}\n`);
     const { prepareUiTypecheckProjects } = await import('../../apps/ui/scripts/deriveTypecheckProjects.mjs');
     const uiInventory = cancelled ? undefined : await prepareUiTypecheckProjects(projects, process.cwd());
     const { prepareCliTypecheckProjects } = await import('../../apps/cli/scripts/deriveTypecheckProjects.mjs');
@@ -152,8 +198,8 @@ if (process.platform !== 'win32' && (executorArgs.length > 0 || shouldRouteTypeS
     const producers = cancelled ? [] : await prepareReferencedTypecheckDeclarations(projects, process.cwd(), inventory);
     let diagnostics;
     if (!cancelled) {
-      try { diagnostics = await createTypecheckDiagnosticRun({ projects }); }
-      catch { process.stderr.write('[typecheck-delta] unavailable: initialization failed; compiler verdict unchanged\n'); }
+      try { diagnostics = await createTypecheckDiagnosticRun({ projects, producers }); }
+      catch (error) { process.stderr.write(`[typecheck-delta] unavailable: ${typecheckDiagnosticFailureIdentifier(error, 'initialization')}; compiler verdict unchanged\n`); }
     }
     for (const project of [...producers, ...projects]) {
       if (cancelled) break;
@@ -164,7 +210,8 @@ if (process.platform !== 'win32' && (executorArgs.length > 0 || shouldRouteTypeS
       // to the existing classifier instead of charging it to the CLI consumer.
       const invocation = resolveTypeScriptCliInvocation({ args: project.args, admissionArgs: project.authoredArgs, repoRoot,
         workspaceDir: process.cwd(), processExecPath: process.execPath, prepareWorkspaceDeclarations: false });
-      const projectResult = await runCompiler(invocation, project, () => cancelled, diagnostics?.enabled);
+      const producer = producers.includes(project);
+      const projectResult = await runCompiler(invocation, project, () => cancelled, diagnostics?.enabled, producer);
       diagnostics?.record(project, projectResult);
       if (projectResult.error || projectResult.signal || projectResult.status == null) {
         result = projectResult;
@@ -172,16 +219,17 @@ if (process.platform !== 'win32' && (executorArgs.length > 0 || shouldRouteTypeS
       }
       if (projectResult.status !== 0) {
         result = projectResult;
-        if (producers.includes(project)) break;
+        if (producer && (cancelled || !isCompleteTypecheckDiagnosticResult(projectResult)
+          || !referencedTypecheckDeclarationsFresh(project, projectResult.emittedFiles, invocation))) break;
       }
     }
     if (!cancelled && diagnostics?.enabled) {
       try {
         const reports = await diagnostics.publish();
-        for (const report of reports) process.stderr.write(`[typecheck-delta] ${report.package}: ${report.baseline ? `${report.newInTouchedPaths} new in touched paths` : 'baseline unavailable (first run or changed project set)'}; ${report.total} diagnostics, ${report.globalDiagnostics} global; ${report.path}\n`);
+        for (const report of reports) process.stderr.write(`[typecheck-delta] ${report.package}: ${report.baseline ? `${report.newInTouchedPaths} new in touched paths; baseline ${report.baselineSource}` : 'baseline unavailable (first run or changed project set)'}; ${report.total} diagnostics, ${report.globalDiagnostics} global; ${report.path}${report.completion === 'complete with producer diagnostics' ? `; ${report.completion}` : ''}\n`);
         if (!reports.length) process.stderr.write('[typecheck-delta] unavailable: no complete diagnostic result; previous baseline retained\n');
-      } catch {
-        process.stderr.write('[typecheck-delta] unavailable: snapshot failed; compiler verdict unchanged\n');
+      } catch (error) {
+        process.stderr.write(`[typecheck-delta] unavailable: ${typecheckDiagnosticFailureIdentifier(error, 'snapshot')}; compiler verdict unchanged\n`);
       }
     }
     if (!cancelled && !result.error && !result.signal && Number.isInteger(result.status) && result.status > 0) {
@@ -189,14 +237,16 @@ if (process.platform !== 'win32' && (executorArgs.length > 0 || shouldRouteTypeS
       // broken/moving record must not replace the compiler's terminal result.
       try {
         const { findFirstNoncurrentWorkspaceDependency } = await import('./ensureWorkspacePackagesBuilt.mjs');
-        const producer = cancelled ? null : await findFirstNoncurrentWorkspaceDependency(process.cwd());
+        const producer = cancelled ? null : await findFirstNoncurrentWorkspaceDependency(process.cwd(), {
+          buildMode: components.size ? workspaceBuildMode : 'strict',
+        });
         if (producer && !cancelled) process.stderr.write(`${producer} declarations are older than its source; rebuild: ./apps/stack/bin/hstack-exec -- pnpm run build:packages ${producer}\n`);
       } catch {
         // This optional hint cannot turn an inspection failure into a verdict.
       }
     }
   } finally {
-    for (const signal of cancellationSignals) process.off(signal, observeCancellation);
+    for (const [signal, handler] of cancellationHandlers) process.off(signal, handler);
   }
   exitWithCommandResult(result);
 }
