@@ -39,7 +39,9 @@ export function SelectionListMeasureHost(props: SelectionListMeasureHostProps): 
             accessibilityElementsHidden
             importantForAccessibility="no-hide-descendants"
             style={measureStyle}
-            {...({ 'aria-hidden': true } as Record<string, unknown>)}
+            // `aria-hidden` hides the mirror from readers but not from Tab; `inert` also removes its
+            // inputs and buttons from the focus order (react-native-web forwards it to the DOM).
+            {...({ 'aria-hidden': true, inert: true } as Record<string, unknown>)}
         >
             {measureSubtree}
         </View>

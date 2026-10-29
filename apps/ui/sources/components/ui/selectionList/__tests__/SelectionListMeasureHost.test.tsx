@@ -33,4 +33,18 @@ describe('SelectionListMeasureHost', () => {
             : (style as Record<string, unknown> | undefined) ?? {};
         expect((flat as { maxHeight?: unknown }).maxHeight).toBe(480);
     });
+
+    it('is inert, so its hidden mirror of interactive content never takes a keyboard stop or a reader announcement', async () => {
+        const { SelectionListMeasureHost } = await import('../SelectionListMeasureHost');
+        const screen = await renderScreen(
+            <SelectionListMeasureHost rootTestID="anim" onMeasureLayout={vi.fn()}>
+                <View />
+            </SelectionListMeasureHost>,
+        );
+
+        // `aria-hidden` alone hides the mirror from readers but leaves its inputs and buttons focusable, so Tab
+        // walked through invisible copies of the real controls (a second search field, a second Refresh).
+        const measure = screen.findByTestId('anim:measure') as unknown as { props: Record<string, unknown> };
+        expect(measure.props.inert).toBe(true);
+    });
 });
