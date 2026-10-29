@@ -22,6 +22,32 @@ test('start, dev and source reload share server flavor and component normalizati
   assert.throws(() => getServerComponentName({ kv: new Map([['--server-flavor', 'unknown']]), env: {} }));
 });
 
+test('HTTP readiness does not probe after its startup owner has cancelled', async t => {
+  const controller = new AbortController();
+  controller.abort(new DOMException('Startup cancelled', 'AbortError'));
+  const fetch = t.mock.method(globalThis, 'fetch', async () => new Response(null, { status: 204 }));
+  await assert.rejects(waitForHttpOk('http://127.0.0.1:3340/healthz', { signal: controller.signal }), { name: 'AbortError' });
+  assert.equal(fetch.mock.callCount(), 0);
+});
+
+test('HTTP readiness cancels an active request and releases child listeners', async t => {
+  const controller = new AbortController();
+  const child = new EventEmitter();
+  let started;
+  const request = new Promise(resolve => { started = resolve; });
+  t.mock.method(globalThis, 'fetch', async (url, { signal }) => {
+    started();
+    return await new Promise((resolve, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true }));
+  });
+  const pending = waitForHttpOk('http://127.0.0.1:3340/healthz', { signal: controller.signal, childProcess: child });
+  const rejected = assert.rejects(pending, { name: 'AbortError' });
+  await request;
+  controller.abort();
+  await rejected;
+  assert.equal(child.listenerCount('exit'), 0);
+  assert.equal(child.listenerCount('error'), 0);
+});
+
 async function listenServer(handler) {
   const server = createServer(handler);
   await new Promise((resolve, reject) => {
