@@ -172,6 +172,8 @@ export type {
     AgentExternalSessionsContribution,
     AgentExternalSessionsFailureCode,
     AgentExternalSessionsInvocation,
+    AgentExternalSessionsHydrateCandidatesRequest,
+    AgentExternalSessionsHydrateCandidatesResult,
     AgentExternalSessionsListCandidatesRequest,
     AgentExternalSessionsListCandidatesResult,
     AgentExternalSessionsPageTranscriptRequest,

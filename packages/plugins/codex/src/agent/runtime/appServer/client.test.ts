@@ -1,10 +1,8 @@
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { WebSocketServer } from 'ws';
 
 import { PluginError, type JsonValue } from '@happier-dev/plugin-sdk';
 import type {
@@ -17,6 +15,7 @@ import type {
 } from '@happier-dev/plugin-sdk/exec/protocol-clients';
 
 import { createCodexNativeAppServerClient } from './client';
+import { createCodexControlSocketFixture } from './client.test-support';
 import { buildCodexAppServerConfigOverrides } from './config/overrides';
 import { createCodexAppServerRealtimeConversation } from './realtime';
 import { PLUGIN_MANIFEST } from '../../../manifest.js';
@@ -293,76 +292,75 @@ describe('createCodexAppServerClient', () => {
         }
     });
 
-    it('uses the supported Codex daemon proxy transport without probing or starting another app-server', async () => {
+    it('attaches to the native daemon through managed WebSocket framing without probing or starting an app-server', async () => {
         const capture = createCapturingExec();
-
-        const client = await createCodexNativeAppServerClient({
-            exec: capture.exec,
-            processEnv: {},
-            transport: { kind: 'daemonProxy' },
-        });
+        const client = await createCodexNativeAppServerClient({ exec: capture.exec, processEnv: {}, transport: { kind: 'daemonProxy' } });
         try {
             expect(capture.specs).toHaveLength(1);
-            expect(capture.specs[0]).toMatchObject({
-                launch: { args: ['app-server', 'proxy'] },
-            });
+            expect(capture.specs[0]).toMatchObject({ kind: 'jsonRpc', framing: 'webSocket', launch: { args: ['app-server', 'proxy'] } });
             expect(capture.exec.run).not.toHaveBeenCalled();
             expect(capture.requests[0]).toMatchObject({ method: 'initialize' });
-        } finally {
-            await client.dispose();
-        }
+        } finally { await client.dispose(); }
     });
 
-    it('speaks JSON-RPC directly over the shared app-server Unix WebSocket', async () => {
-        // AF_UNIX has an OS path capacity; worker TMPDIR can be substantially longer.
+    it('speaks native JSON-RPC over an explicit Unix WebSocket without spawning a proxy', async () => {
+        const transport = 'unixWebSocket' as const;
         const root = await mkdtemp(join(process.platform === 'win32' ? tmpdir() : '/tmp', 'codex-ws-'));
         const socketPath = process.platform === 'win32'
             ? `\\\\.\\pipe\\happier-codex-test-${process.pid}-${Date.now()}`
             : join(root, 'app-server.sock');
-        const httpServer = createServer();
-        const webSocketServer = new WebSocketServer({
-            server: httpServer,
-            verifyClient: (info, done) => done(info.req.headers['sec-websocket-extensions'] === undefined),
+        const server = await createCodexControlSocketFixture(socketPath, request => {
+            if (request.method === 'initialize') return {};
+            if (request.method === 'thread/read') return { thread: { id: 'native-thread', name: 'Native title' } };
+            return undefined;
         });
-        webSocketServer.on('connection', (socket) => {
-            socket.on('message', (payload) => {
-                const message = JSON.parse(payload.toString()) as { id?: number; method?: string };
-                if (message.method === 'initialize') {
-                    socket.send(JSON.stringify({ id: message.id, result: {} }));
-                } else if (message.method === 'test/ping') {
-                    socket.send(JSON.stringify({ id: message.id, result: { pong: true } }));
-                }
-            });
-        });
-        await new Promise<void>((resolve, reject) => {
-            httpServer.once('error', reject);
-            httpServer.listen(socketPath, resolve);
-        });
-
         const capture = createCapturingExec();
-        const spawn = vi.spyOn(capture.exec.clients, 'spawn');
         try {
-            const client = await createCodexNativeAppServerClient({
-                exec: capture.exec,
-                processEnv: {},
-                nativeLaunch: Object.freeze({}) as AgentNativeLaunchQualifier,
-                transport: {
-                    kind: 'unixWebSocket',
-                    socketPath,
-                    realtimeConversationAdvertised: true,
-                },
+            const client = await createCodexNativeAppServerClient({ exec: capture.exec,
+                processEnv: { CODEX_HOME: root }, nativeLaunch: Object.freeze({}) as AgentNativeLaunchQualifier,
+                transport: { kind: transport, socketPath, realtimeConversationAdvertised: true },
             });
             try {
-                await expect(client.request('test/ping')).resolves.toEqual({ pong: true });
-                expect(spawn).not.toHaveBeenCalled();
+                await expect(client.request('thread/read', { threadId: 'native-thread', includeTurns: false }))
+                    .resolves.toEqual({ thread: { id: 'native-thread', name: 'Native title' } });
+                expect(capture.specs).toEqual([]);
                 expect(capture.exec.run).not.toHaveBeenCalled();
-                expect(client.launchFeatures).toEqual({ realtimeConversationAdvertised: true });
-            } finally {
-                await client.dispose();
-            }
+                expect(server.connectionCount).toBe(1);
+                expect(server.requests.map(request => request.method)).toEqual(['initialize', 'initialized', 'thread/read']);
+                expect(client.launchFeatures).toEqual({ realtimeConversationAdvertised: transport === 'unixWebSocket' });
+            } finally { await client.dispose(); }
+            await vi.waitFor(() => expect(server.activeConnections).toBe(0));
         } finally {
-            await new Promise<void>((resolve) => webSocketServer.close(resolve));
-            await new Promise<void>((resolve) => httpServer.close(() => resolve()));
+            await server.close();
+            await rm(root, { recursive: true, force: true });
+        }
+    });
+
+    it.skipIf(process.platform === 'win32').each(['cancelled', 'deadline'] as const)('settles explicit Unix socket initialization when %s and releases the connection', async outcome => {
+        const root = await mkdtemp(join('/tmp', 'codex-ws-stop-'));
+        let entered!: () => void;
+        const started = new Promise<void>(resolve => { entered = resolve; });
+        const server = await createCodexControlSocketFixture(join(root, 'app-server-control', 'app-server-control.sock'), request => {
+            if (request.method === 'initialize') entered();
+            return undefined;
+        });
+        const controller = new AbortController();
+        const capture = createCapturingExec();
+        const opening = createCodexNativeAppServerClient({ exec: capture.exec, processEnv: { CODEX_HOME: root },
+            signal: controller.signal, initializeRequestOptions: {
+                signal: controller.signal, timeoutMs: outcome === 'deadline' ? 25 : null,
+            }, transport: { kind: 'unixWebSocket', socketPath: join(root, 'app-server-control', 'app-server-control.sock'), realtimeConversationAdvertised: false },
+        });
+        const settled = expect(opening).rejects.toThrow(outcome === 'deadline' ? /timed out/ : /abort|closed/i);
+        try {
+            if (outcome === 'cancelled') { await started; controller.abort(); }
+            await settled;
+            expect(server.connectionCount).toBe(1);
+            await vi.waitFor(() => expect(server.activeConnections).toBe(0));
+            expect(capture.specs).toEqual([]);
+        } finally {
+            controller.abort();
+            await server.close();
             await rm(root, { recursive: true, force: true });
         }
     });

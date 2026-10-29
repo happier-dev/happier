@@ -2475,6 +2475,8 @@
 | `./sessions/external` | `AgentExternalSessionsCandidatePreparation` | type | daemon |
 | `./sessions/external` | `AgentExternalSessionsContribution` | type | daemon |
 | `./sessions/external` | `AgentExternalSessionsFailureCode` | type | daemon |
+| `./sessions/external` | `AgentExternalSessionsHydrateCandidatesRequest` | type | daemon |
+| `./sessions/external` | `AgentExternalSessionsHydrateCandidatesResult` | type | daemon |
 | `./sessions/external` | `AgentExternalSessionsInvocation` | type | daemon |
 | `./sessions/external` | `AgentExternalSessionsInvocationBounds` | type | daemon |
 | `./sessions/external` | `AgentExternalSessionsListCandidatesRequest` | type | daemon |

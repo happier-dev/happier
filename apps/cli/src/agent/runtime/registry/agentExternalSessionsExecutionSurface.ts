@@ -194,6 +194,20 @@ export function createAgentExternalSessionsExecutionSurface(
                     : { preparation: result.preparation }),
             };
         },
+        ...(contribution.supportsCandidateHydration ? {
+            async hydrateCandidates(request: Parameters<NonNullable<ExternalSessionExecutionSurface['hydrateCandidates']>>[0]) {
+                const result = unwrap('hydrateCandidates', await contribution.hydrateCandidates({
+                    source: toAgentSource(request.source, 'hydrateCandidates'),
+                    candidates: request.candidates,
+                    ...invocation(
+                        request.maxBytes ?? EXTERNAL_SESSIONS_INVOCATION_POLICY.listCandidates.maxSerializedBytes,
+                        request.signal,
+                        request.deadlineAtMs,
+                    ),
+                }));
+                return result.candidates;
+            },
+        } : {}),
         async resolveLinkIdentity(request) {
             const linkData = readLinkData(request.metadata, 'resolveLinkIdentity');
             const result = unwrap('resolveLinkIdentity', await contribution.resolveLinkIdentity({

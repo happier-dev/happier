@@ -1,6 +1,5 @@
 import {
   deriveExternalSessionActivity,
-  readSessionInputPromptUserTextV1,
 } from '@happier-dev/plugin-sdk/sessions/external';
 import type { ExecService } from '@happier-dev/plugin-sdk/exec';
 import type { AgentExternalSessionsInvocation } from '@happier-dev/plugin-sdk/sessions/external';
@@ -11,6 +10,7 @@ import { createExternalSessionContentSearchControl, ExternalSessionContentSearch
 import { expandHomePath, resolveHomeDirFromEnvironment } from '@happier-dev/plugin-sdk/fs';
 import { resolveCodexRuntimeHomeEnvironment } from '../../../auth/services/state/sharing/files.js';
 import { assertCodexNativeProxyAvailable } from './nativeProxy.js';
+import { readCodexNativeCandidateTitle } from './candidateMetadata.js';
 
 import {
   createCodexNativeAppServerClient,
@@ -169,11 +169,7 @@ function toCodexAppServerCandidate(
   const updatedAtMs = Number.isFinite(thread.updatedAt)
     ? Math.trunc((thread.updatedAt as number) * 1000)
     : createdAtMs;
-  const title = typeof thread.name === 'string' && thread.name.trim()
-    ? thread.name.trim()
-    : typeof thread.preview === 'string' && thread.preview.trim()
-      ? readSessionInputPromptUserTextV1(thread.preview).replace(/\s+/g, ' ').trim()
-      : undefined;
+  const title = readCodexNativeCandidateTitle(thread);
   const runtimeDescriptorV1 = buildCodexAgentRuntimeDescriptorV1({
     backendMode: 'appServer',
     providerSessionId: thread.id,

@@ -91,6 +91,13 @@ export async function executeExternalSessionCandidatesListAction(
                 ...(options.deadlineAtMs === undefined ? {} : { deadlineAtMs: options.deadlineAtMs }),
                 ...(scanDeadlineAtMs === undefined ? {} : { scanDeadlineAtMs }),
             }),
+            ...(providerOps.hydrateCandidates ? {
+                hydrateCandidates: async (candidates) => await providerOps.hydrateCandidates!({
+                    source, candidates,
+                    ...(options.signal ? { signal: options.signal } : {}),
+                    ...(options.deadlineAtMs === undefined ? {} : { deadlineAtMs: options.deadlineAtMs }),
+                }),
+            } : {}),
             hydrateCandidate: async (candidate) => (
                 await hydrateExternalSessionCandidateThroughAgentSource({
                     source,

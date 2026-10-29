@@ -16,6 +16,7 @@ import { canonicalizePath } from '@happier-dev/plugin-sdk/fs';
 import { getAgentExternalSessionsInvocationFailure } from '@happier-dev/plugin-sdk/sessions/external';
 import { CODEX_NATIVE_ACCOUNTING_SOURCE, readCodexNativeAccounting } from '../../../usage/nativeAccounting.js';
 import { CodexNativeProxyUnavailableError } from './nativeProxy.js';
+import { hydrateCodexCandidateMetadata } from './candidateMetadata.js';
 
 import {
   canonicalizeCodexHomePath,
@@ -367,6 +368,25 @@ export function createCodexExternalSessionsContribution(params: Readonly<{
         request.maxSerializedBytes,
         'external_sessions_result_byte_budget',
       );
+    },
+
+    async hydrateCandidates(request) {
+      const stopped = getAgentExternalSessionsInvocationFailure(request);
+      if (stopped) return stopped;
+      const env = readEnv();
+      const validation = validateSource({ source: request.source, env });
+      if (!validation.ok) return validation;
+      try {
+        const candidates = await hydrateCodexCandidateMetadata({
+          source: validation.value.codexSource, env, candidates: request.candidates, invocation: request,
+        });
+        const after = getAgentExternalSessionsInvocationFailure(request);
+        return after ?? bounded({ candidates }, request.maxSerializedBytes, 'external_sessions_result_byte_budget');
+      } catch (error) {
+        const after = getAgentExternalSessionsInvocationFailure(request);
+        if (after) return after;
+        throw error;
+      }
     },
 
     async listCandidates(request) {

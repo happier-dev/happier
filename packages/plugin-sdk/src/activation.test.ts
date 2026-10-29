@@ -10,6 +10,9 @@ import type {
 import type {
     AgentExternalSessionObservationContribution,
     AgentExternalSessionSource,
+    AgentExternalSessionCandidate,
+    AgentExternalSessionsHydrateCandidatesRequest,
+    AgentExternalSessionsHydrateCandidatesResult,
     AgentExternalSessionTakeoverContribution,
     AgentExternalSessionTakeoverResolveLaunchRequest,
     AgentExternalSessionsContribution,
@@ -112,6 +115,7 @@ describe('plugin activation contract', () => {
         expectTypeOf<keyof AgentExternalSessionsContribution>().toEqualTypeOf<
             | 'resolveSource'
             | 'listCandidates'
+            | 'hydrateCandidates'
             | 'resolveLinkIdentity'
             | 'resolveLinkedIdentity'
             | 'pageTranscript'
@@ -129,6 +133,15 @@ describe('plugin activation contract', () => {
         expectTypeOf<ResolveSourceRequest['deadlineAtMs']>().toEqualTypeOf<number | undefined>();
         expectTypeOf<ResolveSourceRequest['maxSerializedBytes']>().toEqualTypeOf<number | undefined>();
         expectTypeOf<AgentExternalSessionsInvocation['exec']>().toEqualTypeOf<ExecService>();
+
+        type HydrateRequest = Parameters<NonNullable<AgentExternalSessionsContribution['hydrateCandidates']>>[0];
+        expectTypeOf<HydrateRequest>().toEqualTypeOf<AgentExternalSessionsHydrateCandidatesRequest>();
+        expectTypeOf<HydrateRequest>().toMatchTypeOf<AgentExternalSessionsInvocation>();
+        expectTypeOf<HydrateRequest['maxSerializedBytes']>().toEqualTypeOf<number>();
+        expectTypeOf<HydrateRequest['source']>().toEqualTypeOf<AgentExternalSessionSource>();
+        expectTypeOf<HydrateRequest['candidates']>().toEqualTypeOf<readonly AgentExternalSessionCandidate[]>();
+        expectTypeOf<Awaited<ReturnType<NonNullable<AgentExternalSessionsContribution['hydrateCandidates']>>>>()
+            .toEqualTypeOf<AgentExternalSessionsResult<AgentExternalSessionsHydrateCandidatesResult>>();
 
         type ListRequest = Parameters<AgentExternalSessionsContribution['listCandidates']>[0];
         type PageRequest = Parameters<AgentExternalSessionsContribution['pageTranscript']>[0];

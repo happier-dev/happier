@@ -978,6 +978,11 @@ export async function createConfiguredPluginExternalSessionsAdapter(params: Read
             maxBytes,
             signal,
           }),
+          ...(ops.hydrateCandidates ? {
+            hydrateCandidates: async (candidates) => await ops.hydrateCandidates!({
+              source, candidates, maxBytes, signal,
+            }),
+          } : {}),
           hydrateCandidate: async (candidate) => (
             await hydrateExternalSessionCandidateThroughAgentSource({
               source,

@@ -1515,6 +1515,107 @@ describe('External Sessions candidate query owner', () => {
         ]);
     });
 
+    it('refreshes only the selected titled index rows without persisting native metadata', async () => {
+        const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-candidate-page-hydration-'));
+        roots.push(activeServerDir);
+        const corpus = Array.from({ length: 12 }, (_, index): MutableCandidate => ({
+            remoteSessionId: `session-${String(index).padStart(2, '0')}`,
+            updatedAtMs: index,
+            title: `Rollout ${index}`,
+            linkData: { projectId: 'project-a' },
+        }));
+        const base = {
+            activeServerDir,
+            agentIdentity: { pluginId: 'fixture', localId: 'fixture-agent' },
+            source: { kind: 'fixture' },
+            limit: 3,
+            listCandidates: createBoundedCandidateSource(corpus),
+        };
+        // This is a retained index written before the source offered page hydration.
+        const previous = await readUntilPublished(() => executeExternalSessionCandidateQuery(base));
+        let nativePrefix = 'Native';
+        const selectedPages: string[][] = [];
+        const hydrateCandidates = async (candidates: readonly ExternalSessionCandidatesPage['candidates'][number][]) => {
+            selectedPages.push(candidates.map((candidate) => candidate.remoteSessionId));
+            return candidates.map((candidate) => ({ ...candidate, title: `${nativePrefix} ${candidate.remoteSessionId}` }));
+        };
+        const current = { ...base, hydrateCandidates };
+        const refreshed = await executeExternalSessionCandidateQuery(current);
+        expect(refreshed.candidates.map((candidate) => candidate.title)).toEqual([
+            'Native session-11', 'Native session-10', 'Native session-09',
+        ]);
+        expect(selectedPages).toEqual([['session-11', 'session-10', 'session-09']]);
+        nativePrefix = 'Renamed';
+        const renamed = await executeExternalSessionCandidateQuery(current);
+        expect(renamed.candidates[0]?.title).toBe('Renamed session-11');
+        const continued = await executeExternalSessionCandidateQuery({ ...current, cursor: previous.result.nextCursor ?? undefined });
+        expect(continued.candidates.map((candidate) => candidate.title)).toEqual([
+            'Renamed session-08', 'Renamed session-07', 'Renamed session-06',
+        ]);
+        const raw = await readFile(await findCandidateIndexPath(activeServerDir), 'utf8');
+        expect(raw).toContain('Rollout 11');
+        expect(raw).not.toContain('Native session-');
+        expect(raw).not.toContain('Renamed session-');
+    });
+
+    it('keeps selected rollout fallback and cwd when native page metadata is unavailable', async () => {
+        const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-candidate-incomplete-hydration-'));
+        roots.push(activeServerDir);
+        const corpus = Array.from({ length: 12 }, (_, index): MutableCandidate => ({
+            remoteSessionId: `session-${index}`, updatedAtMs: index, linkData: { projectId: 'project-a' },
+        }));
+        const request = {
+            activeServerDir, agentIdentity: { pluginId: 'fixture', localId: 'fixture-agent' },
+            source: { kind: 'fixture' }, limit: 2, listCandidates: createBoundedCandidateSource(corpus),
+            hydrateCandidate: async (candidate: MutableCandidate) => ({ ...candidate,
+                title: `Rollout ${candidate.remoteSessionId}`, cwd: `/repo/${candidate.remoteSessionId}` }),
+            hydrateCandidates: async (candidates: readonly ExternalSessionCandidatesPage['candidates'][number][]) => candidates,
+        };
+        const published = await readUntilPublished(() => executeExternalSessionCandidateQuery(request));
+        expect(published.result.candidates).toMatchObject([
+            { remoteSessionId: 'session-11', title: 'Rollout session-11', cwd: '/repo/session-11' },
+            { remoteSessionId: 'session-10', title: 'Rollout session-10', cwd: '/repo/session-10' },
+        ]);
+    });
+
+    it('keeps preparation titles while enriching only the selected partial page', async () => {
+        const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-candidate-preparation-hydration-'));
+        roots.push(activeServerDir);
+        const corpus = Array.from({ length: 120 }, (_, index): MutableCandidate => ({
+            remoteSessionId: `session-${String(index).padStart(3, '0')}`,
+            updatedAtMs: index,
+            title: `Fallback ${index}`,
+            linkData: { projectId: 'project-a' },
+        }));
+        let nativeAvailable = true;
+        const selectedPages: string[][] = [];
+        const request = {
+            activeServerDir,
+            agentIdentity: { pluginId: 'fixture', localId: 'fixture-agent' },
+            source: { kind: 'fixture' },
+            limit: 2,
+            listCandidates: createBoundedCandidateSource(corpus),
+            hydrateCandidates: async (candidates: readonly ExternalSessionCandidatesPage['candidates'][number][]) => {
+                selectedPages.push(candidates.map((candidate) => candidate.remoteSessionId));
+                return nativeAvailable ? candidates.map((candidate) => ({ ...candidate, title: `Native ${candidate.remoteSessionId}` })) : candidates;
+            },
+        };
+        let preparing = await executeExternalSessionCandidateQuery(request);
+        for (let attempt = 0; attempt < 20 && preparing.candidates.length === 0; attempt += 1) {
+            preparing = await executeExternalSessionCandidateQuery(request);
+        }
+        expect(preparing.candidates).toHaveLength(2);
+        expect(preparing.preparation?.kind).toBe('building_candidate_index');
+        expect(preparing.candidates.map((candidate) => candidate.title)).toEqual(
+            preparing.candidates.map((candidate) => `Native ${candidate.remoteSessionId}`),
+        );
+        nativeAvailable = false;
+        const refreshed = await executeExternalSessionCandidateQuery(request);
+        expect(refreshed.candidates.every((candidate) => candidate.title?.startsWith('Fallback '))).toBe(true);
+        expect(selectedPages.every((page) => page.length <= 2)).toBe(true);
+        expect(selectedPages.at(-1)).toEqual(refreshed.candidates.map((candidate) => candidate.remoteSessionId));
+    });
+
     it('serves a source-complete stored page without one Agent call per row', async () => {
         const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-candidate-source-complete-'));
         roots.push(activeServerDir);
@@ -1829,7 +1930,7 @@ describe('External Sessions candidate query owner', () => {
         });
     });
 
-    it('rejects a hydrated cursor page when a newer generation replaces its index before publication', async () => {
+    it.each(['row', 'page'] as const)('rejects a hydrated %s cursor page when a newer generation replaces its index before publication', async (hydration) => {
         const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-candidate-hydration-generation-'));
         roots.push(activeServerDir);
         const createCorpus = (generation: string): MutableCandidate[] => Array.from(
@@ -1858,8 +1959,15 @@ describe('External Sessions candidate query owner', () => {
             ...(cursor ? { cursor } : {}),
             limit: 2,
             listCandidates,
+            hydrateCandidates: hydration === 'page' ? async (candidates) => {
+                if (shouldBlockG1Cursor && candidates.some(candidate => candidate.remoteSessionId === 'g1-1')) {
+                    reportBlockedHydration?.();
+                    await blockedHydrationReleased;
+                }
+                return candidates.map(candidate => ({ ...candidate, title: candidate.remoteSessionId }));
+            } : undefined,
             hydrateCandidate: async (candidate) => {
-                if (shouldBlockG1Cursor && candidate.remoteSessionId === 'g1-1') {
+                if (hydration === 'row' && shouldBlockG1Cursor && candidate.remoteSessionId === 'g1-1') {
                     reportBlockedHydration?.();
                     await blockedHydrationReleased;
                 }

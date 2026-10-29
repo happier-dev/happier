@@ -29,6 +29,8 @@ import type {
     AgentExternalSessionCandidate,
     AgentExternalSessionSource,
     AgentExternalSessionsListCandidatesResult,
+    AgentExternalSessionsHydrateCandidatesRequest,
+    AgentExternalSessionsHydrateCandidatesResult,
     AgentExternalSessionsReadAfterTranscriptResult,
     AgentExternalSessionsReadAccountingRequest,
     AgentExternalSessionsReadAccountingResult,
@@ -197,6 +199,8 @@ export type BoundedAgentExternalSessionsContribution = Readonly<{
             ? (request: WithoutHostStampedInvocationServices<Request>) => Result
             : never;
 }> & Readonly<{
+    supportsCandidateHydration: boolean;
+    hydrateCandidates(request: WithoutHostStampedInvocationServices<AgentExternalSessionsHydrateCandidatesRequest>): Promise<AgentExternalSessionsResult<AgentExternalSessionsHydrateCandidatesResult>>;
     supportsAccounting: boolean;
     readAccounting(request: WithoutHostStampedInvocationServices<AgentExternalSessionsReadAccountingRequest>): Promise<AgentExternalSessionsResult<AgentExternalSessionsReadAccountingResult>>;
 }>;
@@ -723,6 +727,29 @@ function parseListCandidatesValue(
     });
 }
 
+/** Snapshot before invoking the producer so mutation of a nested bag cannot
+ * rewrite the original identity, checkpoint or search evidence under validation.
+ */
+function candidateImmutableFacts(candidate: AgentExternalSessionCandidate): string {
+    const { title: _title, cwd: _cwd, messageCount: _messageCount, ...facts } = candidate;
+    return createCanonicalJsonSigningInput(facts);
+}
+
+function parseHydratedCandidatesValue(
+    value: unknown,
+    originalFacts: readonly string[],
+): AgentExternalSessionsHydrateCandidatesResult | null {
+    const record = readStrictRecord(value, ['candidates']);
+    if (!record || !Array.isArray(record.candidates) || record.candidates.length !== originalFacts.length) return null;
+    const candidates: AgentExternalSessionCandidate[] = [];
+    for (let index = 0; index < record.candidates.length; index += 1) {
+        const candidate = parseCandidate(record.candidates[index]);
+        if (!candidate || candidateImmutableFacts(candidate) !== originalFacts[index]) return null;
+        candidates.push(candidate);
+    }
+    return Object.freeze({ candidates: Object.freeze(candidates) });
+}
+
 function parseResolvedIdentityValue(value: unknown): AgentExternalSessionsResolvedIdentity | null {
     const record = readStrictRecord(
         value,
@@ -1193,6 +1220,8 @@ export function createBoundedAgentExternalSessionsContribution(params: Readonly<
         });
         return Object.freeze({ managedEndpointRead, exec, ripgrep, logger: invocationLogger });
     };
+    const hydrateCandidates = params.contribution.hydrateCandidates;
+    const supportsCandidateHydration = typeof hydrateCandidates === 'function';
     const wrap = Object.freeze({
         supportsAccounting: typeof params.contribution.readAccounting === 'function',
         async readAccounting(request) {
@@ -1336,6 +1365,43 @@ export function createBoundedAgentExternalSessionsContribution(params: Readonly<
                     (candidate) => parseListCandidatesValue(candidate, maxItems, params.identity, scope),
                     maxSerializedBytes,
                 ),
+            });
+        },
+        supportsCandidateHydration,
+        async hydrateCandidates(request) {
+            const terminal = terminalBeforeAdmission(request.signal);
+            if (terminal) return terminal;
+            if (!supportsCandidateHydration || !hydrateCandidates) {
+                return Object.freeze({ ok: false as const, code: 'unsupported' as const });
+            }
+            const source = parseSource(request.source);
+            const requestedBytes = readMaxSerializedBytes(request.maxSerializedBytes);
+            const policy = EXTERNAL_SESSIONS_INVOCATION_POLICY.listCandidates;
+            if (!source || requestedBytes === null || !Array.isArray(request.candidates)
+                || request.candidates.length > policy.maxItems) return invalidRequest();
+            const candidates: AgentExternalSessionCandidate[] = [];
+            for (const value of request.candidates) {
+                const candidate = parseCandidate(value);
+                if (!candidate) return invalidRequest();
+                candidates.push(candidate);
+            }
+            if (serializedResultBytes({ candidates }, policy.maxSerializedBytes) > policy.maxSerializedBytes) return invalidRequest();
+            const originalFacts = candidates.map(candidateImmutableFacts);
+            const maxSerializedBytes = Math.min(requestedBytes, policy.maxSerializedBytes);
+            return await invokeBounded({
+                signal: request.signal,
+                retirementSignal: params.retirementSignal,
+                isCurrent: params.isCurrent,
+                deadlineAtMs: request.deadlineAtMs,
+                operation: async (signal, deadlineAtMs) => {
+                    const invocation = await bindInvocationContext(source, signal, maxSerializedBytes);
+                    return await hydrateCandidates.call(params.contribution, {
+                        source, candidates: Object.freeze(candidates), signal, deadlineAtMs,
+                        maxSerializedBytes, ...invocation,
+                    });
+                },
+                parse: value => parseAndBoundResult(value,
+                    candidate => parseHydratedCandidatesValue(candidate, originalFacts), maxSerializedBytes),
             });
         },
         async resolveLinkIdentity(request) {

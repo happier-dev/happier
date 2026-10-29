@@ -22,6 +22,7 @@ import {
 import { createPluginProtocolCallbackQueue } from './callbackQueue';
 import type { HostRuntimeLimitMeasurementRecorder } from '@/agent/runtime/state/runtimeLimitMeasurement';
 import { attachContentLengthFrameReader, encodeContentLengthFrame } from './contentLengthFraming';
+import { attachWebSocketFrameReader } from './webSocketFraming';
 
 type JsonRpcObject = Record<string, unknown>;
 type JsonRpcApplicationError = Error & Readonly<{
@@ -36,7 +37,7 @@ export type CreateJsonRpcProcessClientParams = Readonly<{
     process: ExecProcessHandleV1;
     stdout: NodeJS.ReadableStream;
     write: (input: string | Uint8Array) => Promise<void>;
-    framing?: 'jsonLines' | 'contentLength';
+    framing?: 'jsonLines' | 'contentLength' | 'webSocket';
     encoding?: BufferEncoding;
     maxFrameBytes?: number;
     requestTimeoutMs?: number;
@@ -195,6 +196,7 @@ export function createJsonRpcProcessClient(params: CreateJsonRpcProcessClientPar
     let nextId = 1;
     let disposedError: Error | null = null;
     let detachLineReader: () => void = () => undefined;
+    let writeWebSocketFrame: ((frame: string) => Promise<void>) | undefined;
 
     for (const [method, handler] of Object.entries(params.handlers?.requests ?? {})) {
         requestHandlers.set(method, handler);
@@ -219,6 +221,10 @@ export function createJsonRpcProcessClient(params: CreateJsonRpcProcessClientPar
         const encoded = JSON.stringify(nextMessage);
         if (maxFrameBytes !== undefined && Buffer.byteLength(encoded, 'utf8') > maxFrameBytes) {
             throw createFrameSizeError(maxFrameBytes, readStderrPreview());
+        }
+        if (writeWebSocketFrame) {
+            await writeWebSocketFrame(encoded);
+            return true;
         }
         await params.write(params.framing === 'contentLength'
             ? encodeContentLengthFrame(new Uint8Array(Buffer.from(encoded, 'utf8')))
@@ -425,7 +431,17 @@ export function createJsonRpcProcessClient(params: CreateJsonRpcProcessClientPar
         }
     }
 
-    detachLineReader = params.framing === 'contentLength'
+    if (params.framing === 'webSocket') {
+        const transport = attachWebSocketFrameReader({
+            stdout: params.stdout,
+            write: params.write,
+            maxFrameBytes,
+            onFrame: handleLine,
+            onError: error => failClient(createPluginExecClientProtocolError('JSON-RPC WebSocket transport failed', error, readStderrPreview())),
+        });
+        writeWebSocketFrame = transport.write;
+        detachLineReader = transport.dispose;
+    } else detachLineReader = params.framing === 'contentLength'
         ? attachContentLengthFrameReader(params.stdout, (frame) => {
             handleLine(Buffer.from(frame).toString(params.encoding ?? 'utf8'));
         }, {

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { mkdir, readFile, realpath, symlink, writeFile } from 'node:fs/promises';
 import { delimiter, dirname, join } from 'node:path';
+import { WebSocketServer } from 'ws';
 
 import { PluginError } from '@happier-dev/plugin-sdk';
 import { sealSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
@@ -61,6 +62,52 @@ function createService(options?: Readonly<{ current?: () => boolean; controller?
 }
 
 describe('createStablePluginExecService', () => {
+    it('round-trips WebSocket JSON-RPC through private process bytes while a secret redaction lease is active', async () => {
+        const server = new WebSocketServer({ host: '127.0.0.1', port: 0, perMessageDeflate: false });
+        await new Promise<void>(resolve => server.once('listening', resolve));
+        const address = server.address();
+        if (typeof address === 'string' || !address) throw new Error('Expected a TCP fixture address');
+        const requests: Array<{ method: string; params?: unknown }> = [];
+        server.on('connection', socket => socket.on('message', payload => {
+            const request = JSON.parse(payload.toString()) as { id?: number; method: string; params?: unknown };
+            requests.push(request);
+            if (request.id !== undefined && request.method !== 'never') socket.send(JSON.stringify({ id: request.id, result: request.params ?? null }));
+        }));
+        const service = createService();
+        const source = { environmentId: 'ws-env', environmentInstanceId: 'ws-instance', deploymentId: 'ws-deploy',
+            machineId: 'machine', installationId: 'installation', rootPath: process.cwd(), manifestFingerprint: 'manifest',
+            async assertCurrent() {}, async commit() {}, async abort() {} };
+        const port = createDeploymentExecEnvPortForHost({ exec: service, source, phase: 'runtime',
+            signal: new AbortController().signal, isCurrent: () => true,
+            async prepare() { return { env: { SECRET: 'private-ws-sentinel' }, secretValues: ['private-ws-sentinel'], refs: [],
+                async recheck() {}, dispose() {} }; } });
+        const handle = await service.clients.spawn({ kind: 'jsonRpc', framing: 'webSocket',
+            cancellationMethod: '$/cancelRequest', launch: { executable,
+                deploymentEnv: await port.prepare({ source, phase: 'runtime' }),
+                args: ['-e', `const s=require('node:net').connect(${address.port},'127.0.0.1');process.stdin.pipe(s);s.pipe(process.stdout);s.on('end',()=>process.exit(0));`] } });
+        try {
+            const payload = { text: 'λ😀\u0000private-ws-sentinel'.repeat(2000) };
+            await expect(handle.client.request('initialize', payload, { timeoutMs: 1500 })).resolves.toEqual(payload);
+            await handle.client.notify('initialized');
+            const controller = new AbortController();
+            const pending = handle.client.request('never', null, { signal: controller.signal });
+            const rejected = expect(pending).rejects.toMatchObject({ code: 'PLUGIN_EXEC_CLIENT_ABORTED' });
+            await vi.waitFor(() => expect(requests.some(request => request.method === 'never')).toBe(true));
+            controller.abort();
+            await rejected;
+            await expect(handle.client.request('never', null, { timeoutMs: 10 })).rejects.toMatchObject({ code: 'PLUGIN_EXEC_CLIENT_REQUEST_TIMEOUT' });
+            await expect(handle.client.request('thread/read', { threadId: 'thread-1', includeTurns: false })).resolves.toEqual({ threadId: 'thread-1', includeTurns: false });
+            await vi.waitFor(() => expect(requests.some(request => request.method === '$/cancelRequest')).toBe(true));
+        } finally {
+            await handle.dispose();
+            for (const socket of server.clients) socket.terminate();
+            await new Promise<void>(resolve => server.close(() => resolve()));
+        }
+        expect((await handle.wait()).termination.requestedBy).toEqual({ kind: 'dispose', reason: 'caller' });
+        expect(server.clients.size).toBe(0);
+    });
+
+
     it.skipIf(process.platform !== 'linux')('keeps an ordinary Exec launch in its own process group by default', async () => {
         const handle = await createService().spawn({ executable, args: ['-e', 'process.stdin.resume()'] });
         try {

@@ -407,6 +407,18 @@ export type AgentExternalSessionsListCandidatesResult = Readonly<{
     preparation?: AgentExternalSessionsCandidatePreparation;
 }>;
 
+/** Optional display enrichment for an already selected, source-admitted page.
+ * Preserve count, order, identity and every fact except title/cwd/messageCount.
+ */
+export type AgentExternalSessionsHydrateCandidatesRequest = AgentExternalSessionsInvocation & Readonly<{
+    maxSerializedBytes: number;
+    source: AgentExternalSessionSource;
+    candidates: readonly AgentExternalSessionCandidate[];
+}>;
+export type AgentExternalSessionsHydrateCandidatesResult = Readonly<{
+    candidates: readonly AgentExternalSessionCandidate[];
+}>;
+
 export type AgentExternalSessionsResolveLinkIdentityRequest = AgentExternalSessionsInvocation & Readonly<{
     source: AgentExternalSessionSource;
     remoteSessionId: string;
@@ -512,6 +524,10 @@ export type AgentExternalSessionsContribution = Readonly<{
         request: AgentExternalSessionsListCandidatesRequest,
     ): AgentExternalSessionsResult<AgentExternalSessionsListCandidatesResult>
         | Promise<AgentExternalSessionsResult<AgentExternalSessionsListCandidatesResult>>;
+    hydrateCandidates?(
+        request: AgentExternalSessionsHydrateCandidatesRequest,
+    ): AgentExternalSessionsResult<AgentExternalSessionsHydrateCandidatesResult>
+        | Promise<AgentExternalSessionsResult<AgentExternalSessionsHydrateCandidatesResult>>;
     resolveLinkIdentity(
         request: AgentExternalSessionsResolveLinkIdentityRequest,
     ): AgentExternalSessionsResult<AgentExternalSessionsResolvedIdentity>

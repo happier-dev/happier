@@ -2034,6 +2034,7 @@ async function hydrateAndPublishStoredCandidatePage(params: Readonly<{
     limit: number,
     maxBytes: number,
     hydrateCandidate: ((candidate: StoredCandidate) => Promise<ExternalSessionCandidatesPage['candidates'][number]>) | undefined,
+    hydrateCandidates?: ExternalSessionCandidateQueryRequest['hydrateCandidates'];
     invalidate: () => Promise<void>,
     publish: (
         page: ExternalSessionCandidatesPage,
@@ -2077,8 +2078,31 @@ async function hydrateAndPublishStoredCandidatePage(params: Readonly<{
                 : { linkData: storedCandidate.linkData }),
         }));
     }
+    let selected: readonly ExternalSessionCandidatesPage['candidates'][number][] = Object.freeze(candidates);
+    if (params.hydrateCandidates && selected.length > 0) {
+        const enriched = await params.hydrateCandidates(selected);
+        if (enriched.length !== selected.length || enriched.some((candidate, index) =>
+            candidateIdentity(candidate) !== candidateIdentity(selected[index]!)
+        )) {
+            throw new ExternalSessionProviderFailureError({
+                code: 'agent_error', operation: 'hydrateCandidates', retryable: false,
+                message: 'External-session candidate hydration changed the selected page',
+            });
+        }
+        selected = selected.map((candidate, index) => {
+            const metadata = enriched[index]!;
+            return Object.freeze({
+                ...candidate,
+                ...(metadata.title === undefined ? {} : { title: metadata.title }),
+                ...(metadata.cwd === undefined ? {} : { cwd: metadata.cwd }),
+                ...(metadata.messageCount === undefined ? {} : { messageCount: metadata.messageCount }),
+            });
+        });
+    }
+    // The existing publication callback rechecks generation/currentness after
+    // every asynchronous enrichment, for row and page hydration alike.
     return await params.publish(Object.freeze({
-        candidates: Object.freeze(candidates),
+        candidates: selected,
         nextCursor: params.nextCursor,
     }));
 }
@@ -2089,6 +2113,7 @@ async function serveIndexPage(
     limit: number,
     maxBytes: number,
     hydrateCandidate: ((candidate: StoredCandidate) => Promise<ExternalSessionCandidatesPage['candidates'][number]>) | undefined,
+    hydrateCandidates: ExternalSessionCandidateQueryRequest['hydrateCandidates'],
     invalidate: () => Promise<void>,
     publish: (
         page: ExternalSessionCandidatesPage,
@@ -2131,6 +2156,7 @@ async function serveIndexPage(
         limit,
         maxBytes,
         hydrateCandidate,
+        hydrateCandidates,
         invalidate,
         publish,
     });
@@ -2162,7 +2188,7 @@ function invalidCursor(): never {
     throw new ExternalSessionCandidateIndexCursorResetError();
 }
 
-export async function executeExternalSessionCandidateQuery(params: Readonly<{
+type ExternalSessionCandidateQueryRequest = Readonly<{
     activeServerDir: string;
     agentIdentity: PluginContributionIdentityV1;
     source: unknown;
@@ -2206,7 +2232,13 @@ export async function executeExternalSessionCandidateQuery(params: Readonly<{
             linkData?: StrictJsonObject;
         }>,
     ): Promise<ExternalSessionCandidatesPage['candidates'][number]>;
-}>): Promise<ExternalSessionCandidatesPage> {
+    /** Fresh display metadata for this selected page; never stored in the index. */
+    hydrateCandidates?(
+        candidates: readonly ExternalSessionCandidatesPage['candidates'][number][],
+    ): Promise<readonly ExternalSessionCandidatesPage['candidates'][number][]>;
+}>;
+
+export async function executeExternalSessionCandidateQuery(params: ExternalSessionCandidateQueryRequest): Promise<ExternalSessionCandidatesPage> {
     const candidatePolicy = EXTERNAL_SESSIONS_INVOCATION_POLICY.listCandidates;
     const limit = Math.min(
         candidatePolicy.maxItems,
@@ -2398,6 +2430,7 @@ export async function executeExternalSessionCandidateQuery(params: Readonly<{
             limit,
             maxBytes,
             hydrateCandidate: params.hydrateCandidate,
+            hydrateCandidates: params.hydrateCandidates,
             invalidate: async () => {
                 await withCandidateIndexLock(paths.lockPath, params.signal, async () => {
                     if (!isCurrentGeneration(await readCompleteIndexHeader(paths.indexPath, keys))) return;
@@ -2476,6 +2509,7 @@ export async function executeExternalSessionCandidateQuery(params: Readonly<{
                 limit,
                 maxBytes,
                 hydrateCandidate: undefined,
+                hydrateCandidates: params.hydrateCandidates,
                 invalidate: async () => undefined,
                 publish: async (built) => publishCandidatePage(
                     Object.freeze({ ...built, preparation }),
@@ -2642,6 +2676,7 @@ export async function executeExternalSessionCandidateQuery(params: Readonly<{
                 limit,
                 maxBytes,
                 params.hydrateCandidate,
+                params.hydrateCandidates,
                 async () => {
                     await unlink(paths.indexPath).catch(() => undefined);
                 },
@@ -2798,6 +2833,7 @@ export async function executeExternalSessionCandidateQuery(params: Readonly<{
                     limit,
                     maxBytes,
                     params.hydrateCandidate,
+                    params.hydrateCandidates,
                     async () => {
                         await unlink(paths.indexPath).catch(() => undefined);
                     },

@@ -189,7 +189,7 @@ export type PluginProtocolClientSpec =
     | Readonly<{
         kind: 'jsonRpc';
         launch: PluginExecSpawnRequest;
-        framing: 'jsonLines' | 'contentLength';
+        framing: 'jsonLines' | 'contentLength' | 'webSocket';
         /** An explicit caller-owned frame budget; omitted means no payload-size cap. */
         maxFrameBytes?: number;
         requestTimeoutMs?: number;

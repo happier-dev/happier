@@ -462,6 +462,7 @@ function readProviderOps(runtime: CurrentAgentRuntime | null) {
   return Object.freeze({
     validateSource: surface.validateSource,
     listCandidates: surface.listCandidates,
+    ...(surface.hydrateCandidates ? { hydrateCandidates: surface.hydrateCandidates } : {}),
     pageTranscript: surface.pageTranscript,
     readAfterTranscript: surface.readAfterTranscript,
     ...(surface.resolveLinkIdentity

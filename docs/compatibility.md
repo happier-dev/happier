@@ -3929,6 +3929,18 @@ Run-on writer or store is added.
 
 ## SDK protocol evolution
 
+The 0.3 development External Sessions author contract adds optional
+`hydrateCandidates`, an in-process selected-page display operation under the
+existing runtime ABI. Its source, candidate request/result envelopes and nested
+identity/link fields remain closed. Only title, cwd and message count can change;
+count, order and all other candidate facts are checked against the admitted input.
+The host derives one positive support facet from the current registration and
+returns typed unsupported when absent. Matching development host and SDK source
+are required; no method-presence version fallback, new wire epoch, persisted index
+format, migration or reverse-development adapter is introduced. Existing v2
+indexes remain readable because enrichment happens after selection and is never
+persisted. The 0.2 predecessor has no plugin SDK External Sessions author operation.
+
 ### Attached bounded Run recovery (0.3 development)
 
 Explicit recovery uses the existing `session.message.send` Run recipient with

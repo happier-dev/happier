@@ -113,6 +113,14 @@ export type ExternalSessionProviderOps = Readonly<{
     scanDeadlineAtMs?: number;
     readCandidateIndexState?: AgentExternalSessionCandidateIndexLookup;
   }>) => Promise<ExternalSessionCandidatesPage>;
+  /** Optional display enrichment of the selected page, never discovery or identity. */
+  hydrateCandidates?: (params: Readonly<{
+    source: ExternalSessionsSource;
+    candidates: readonly IndexedExternalSessionCandidate[];
+    maxBytes?: number;
+    signal?: AbortSignal;
+    deadlineAtMs?: number;
+  }>) => Promise<readonly IndexedExternalSessionCandidate[]>;
   pageTranscript: (params: Readonly<{
     projection?: 'terminal';
     source: ExternalSessionsSource;

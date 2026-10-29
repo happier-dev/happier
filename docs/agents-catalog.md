@@ -1484,6 +1484,19 @@ for connected-service profile/group enumeration. Custody stops at the home:
 intentional shared-state symlinks inside it remain supported. This does not add a
 second native-home catalog or require a daemon merely to discover local pets.
 
+Codex Browse in 0.3 development source selects rows through the existing host
+candidate index, then refreshes their native names through the optional selected-page
+hydration operation. One managed native proxy process carries a WebSocket connection
+to the already-running server's control socket and reads lean `thread/read` metadata
+for that page. The host protocol client owns binary framing before public output
+redaction. It does not start a server, list the whole native corpus or retain a
+second title cache. Native name
+precedence is shared with app-server discovery. Renames are read on the next page
+request even when rollout files and the index are unchanged. Missing native names
+preserve the current rollout presentation. Failed reads also preserve it and emit
+a content-free diagnostic; caller cancellation and deadlines still stop the operation. Preparation
+pages retain their supplied rollout titles and receive the same selected-page overlay.
+
 Claude External Sessions in 0.3 development source resolve the admitted config
 home's `projects` entry to its physical storage root, including connected-account
 shared-state links. Candidate discovery, exact identity, transcript paging and

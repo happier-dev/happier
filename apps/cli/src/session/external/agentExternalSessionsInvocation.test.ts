@@ -8,6 +8,7 @@ import type {
 } from '@happier-dev/plugin-sdk/sessions/external';
 import type {
     AgentExternalSessionSource,
+    AgentExternalSessionCandidate,
     AgentExternalSessionsListCandidatesRequest,
     AgentExternalSessionsPageTranscriptRequest,
     AgentExternalSessionsReadAfterTranscriptRequest,
@@ -2372,5 +2373,123 @@ describe('bounded Agent External Sessions invocation', () => {
                 nextCursor: expect.stringMatching(/^happier_external_cursor_v1:/),
             },
         });
+    });
+});
+
+
+describe('bounded selected-page candidate hydration', () => {
+    const candidates: readonly AgentExternalSessionCandidate[] = Object.freeze([
+        Object.freeze({ remoteSessionId: 'remote-1', updatedAtMs: 7, createdAtMs: 2,
+            archived: false, thread: { kind: 'subagent' as const, parentRemoteSessionId: 'parent' },
+            linkData: { path: '/native/session' }, candidateIndexState: { cursor: 'checkpoint' },
+            match: { snippet: 'hit', sourceItemId: 'item', messageIndex: 1 } }),
+        Object.freeze({ remoteSessionId: 'remote-2', updatedAtMs: 8 }),
+    ]);
+    const request = () => ({ source, candidates, signal: new AbortController().signal,
+        maxSerializedBytes: EXTERNAL_SESSIONS_INVOCATION_POLICY.listCandidates.maxSerializedBytes });
+    const withHydration = (hydrateCandidates: NonNullable<AgentExternalSessionsContribution['hydrateCandidates']>) =>
+        Object.freeze({ ...contributionWith(method => successFor(method)), hydrateCandidates });
+
+    it('keeps old contributions unsupported without invoking their listing operation', async () => {
+        const calls: MethodName[] = [];
+        const wrapped = createWrapper({ contribution: contributionWith(method => {
+            calls.push(method);
+            return successFor(method);
+        }) });
+        expect(wrapped.supportsCandidateHydration).toBe(false);
+        await expect(wrapped.hydrateCandidates(request())).resolves.toMatchObject({ ok: false, code: 'unsupported' });
+        expect(calls).toEqual([]);
+    });
+
+    it('admits display enrichment while preserving all original identity and index facts', async () => {
+        const wrapped = createWrapper({ contribution: withHydration(input => ({ ok: true, value: {
+            candidates: input.candidates.map(candidate => ({ ...candidate, title: 'Hydrated', cwd: '/project', messageCount: 4 })),
+        } })) });
+        expect(wrapped.supportsCandidateHydration).toBe(true);
+        await expect(wrapped.hydrateCandidates(request())).resolves.toEqual({ ok: true, value: {
+            candidates: candidates.map(candidate => ({ ...candidate, title: 'Hydrated', cwd: '/project', messageCount: 4 })),
+        } });
+    });
+
+    it.each([
+        ['count', (rows: readonly AgentExternalSessionCandidate[]) => rows.slice(1)],
+        ['order', (rows: readonly AgentExternalSessionCandidate[]) => [...rows].reverse()],
+        ['identity', (rows: readonly AgentExternalSessionCandidate[]) => rows.map(row => ({ ...row, remoteSessionId: 'other' }))],
+        ['updated timestamp', (rows: readonly AgentExternalSessionCandidate[]) => rows.map(row => ({ ...row, updatedAtMs: 99 }))],
+        ['creation timestamp', (rows: readonly AgentExternalSessionCandidate[]) => rows.map(row => ({ ...row, createdAtMs: 99 }))],
+        ['archive state', (rows: readonly AgentExternalSessionCandidate[]) => rows.map(row => ({ ...row, archived: true }))],
+        ['thread', (rows: readonly AgentExternalSessionCandidate[]) => rows.map(row => ({ ...row, thread: undefined }))],
+        ['link data', (rows: readonly AgentExternalSessionCandidate[]) => rows.map(row => ({ ...row, linkData: {} }))],
+        ['checkpoint', (rows: readonly AgentExternalSessionCandidate[]) => rows.map(row => ({ ...row, candidateIndexState: {} }))],
+        ['match', (rows: readonly AgentExternalSessionCandidate[]) => rows.map(row => ({ ...row, match: undefined }))],
+    ])('rejects producer changes to %s', async (_label, change) => {
+        const wrapped = createWrapper({ contribution: withHydration(input => ({ ok: true,
+            value: { candidates: change(input.candidates) } })) });
+        await expect(wrapped.hydrateCandidates(request())).resolves.toMatchObject({ ok: false, code: 'agent_error', retryable: false });
+    });
+
+    it('rejects malformed and oversized candidate requests before invoking the producer', async () => {
+        let calls = 0;
+        const wrapped = createWrapper({ contribution: withHydration(input => {
+            calls += 1;
+            return { ok: true, value: { candidates: input.candidates } };
+        }) });
+        await expect(wrapped.hydrateCandidates({ ...request(), candidates: [{ ...candidates[0]!, updatedAtMs: -1 }] }))
+            .resolves.toMatchObject({ ok: false, code: 'invalid_request' });
+        await expect(wrapped.hydrateCandidates({ ...request(), candidates: Array.from({ length:
+            EXTERNAL_SESSIONS_INVOCATION_POLICY.listCandidates.maxItems + 1 }, () => candidates[0]!) }))
+            .resolves.toMatchObject({ ok: false, code: 'invalid_request' });
+        await expect(wrapped.hydrateCandidates({ ...request(), maxSerializedBytes: 0 }))
+            .resolves.toMatchObject({ ok: false, code: 'invalid_request' });
+        await expect(wrapped.hydrateCandidates({ ...request(), candidates: [{ ...candidates[0]!,
+            cwd: '/'.repeat(EXTERNAL_SESSIONS_INVOCATION_POLICY.listCandidates.maxSerializedBytes) }] }))
+            .resolves.toMatchObject({ ok: false, code: 'invalid_request' });
+        expect(calls).toBe(0);
+    });
+
+    it('inherits the caller deadline, byte budget and host execution services', async () => {
+        const deadlineAtMs = Date.now() + 10_000;
+        const wrapped = createWrapper({ contribution: withHydration(input => {
+            expect(input.deadlineAtMs).toBe(deadlineAtMs);
+            expect(input.maxSerializedBytes).toBe(2_048);
+            expect(input.exec).toBe(unavailableInvocationExec);
+            expect(typeof input.ripgrep.run).toBe('function');
+            expect(typeof input.managedEndpointRead).toBe('function');
+            return { ok: true, value: { candidates: input.candidates.map(row => ({ ...row, title: 'x'.repeat(3_000) })) } };
+        }) });
+        await expect(wrapped.hydrateCandidates({ ...request(), deadlineAtMs, maxSerializedBytes: 2_048 }))
+            .resolves.toMatchObject({ ok: false, code: 'agent_error' });
+    });
+
+    it.each(['cancelled', 'unavailable'] as const)('settles pending hydration when %s', async code => {
+        const entered = deferred<void>();
+        const controller = new AbortController();
+        const retirement = new AbortController();
+        const wrapped = createWrapper({ retirementSignal: retirement.signal, contribution: withHydration(() => {
+            entered.resolve();
+            return new Promise(() => undefined);
+        }) });
+        const result = wrapped.hydrateCandidates({ ...request(), signal: controller.signal });
+        await entered.promise;
+        if (code === 'cancelled') controller.abort();
+        else retirement.abort();
+        await expect(result).resolves.toMatchObject({ ok: false, code });
+    });
+
+    it('settles pending hydration at the inherited deadline', async () => {
+        vi.useFakeTimers();
+        try {
+            const entered = deferred<void>();
+            const wrapped = createWrapper({ contribution: withHydration(() => {
+                entered.resolve();
+                return new Promise(() => undefined);
+            }) });
+            const result = wrapped.hydrateCandidates({ ...request(), deadlineAtMs: Date.now() + 25 });
+            await entered.promise;
+            await vi.advanceTimersByTimeAsync(25);
+            await expect(result).resolves.toMatchObject({ ok: false, code: 'timeout' });
+        } finally {
+            vi.useRealTimers();
+        }
     });
 });

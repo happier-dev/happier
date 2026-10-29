@@ -374,7 +374,7 @@ function buildNativeCodexAppServerClientSpec(params: Readonly<{
             cwd: { root: 'workspace' as const, relativePath: '' },
             env: buildCodexAppServerEnv(params.env),
         },
-        framing: 'jsonLines' as const,
+        framing: params.transport?.kind === 'daemonProxy' ? 'webSocket' as const : 'jsonLines' as const,
         maxFrameBytes: readJsonLineMaxChars(params.env),
         requestTimeoutMs: readCodexAppServerRpcTimeoutMs(params.env),
     };

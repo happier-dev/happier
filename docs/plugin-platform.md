@@ -4420,6 +4420,15 @@ delivery; exact-file observation remains for paths outside those admitted trees.
 [Search](search.md#memory-index-and-native-ingestion-03-development) owns the
 index, settings, privacy and cross-machine coordination contracts.
 
+The optional `hydrateCandidates` operation enriches only an already-selected
+Browse page, including a partial preparation page. The host supplies the admitted
+source, selected candidates and the existing invocation controls. Count, order,
+identity, timestamps, thread classification and link/index data remain unchanged;
+only `title`, `cwd` and `messageCount` may change. The bounded owner validates both
+sides and advertises the facet positively. Providers without it retain existing
+listing and selected-row hydration. Enrichment is a response projection, never an
+index writer; existing titled indexes still pass through it on each selected page.
+
 The External Sessions surface inherits caller cancellation and any caller deadline;
 the host does not add a shorter auxiliary-operation cutoff. Serialized-result
 budgets are optional for source and identity resolution, and required for paged
@@ -6427,7 +6436,11 @@ time alone does not make a plugin persistently unavailable.
 Executable RPC request/handler/write queues, callback queues and plugin
 WebSocket backlogs have no implicit count or aggregate-byte ceilings. Explicit
 authored budgets remain enforceable; this is not a bounded aggregate-memory
-guarantee. Shared JSON-RPC process clients also have no default payload-size
+guarantee. In 0.3 development source, managed JSON-RPC process clients accept
+`jsonLines`, `contentLength` or `webSocket` framing. WebSocket framing negotiates
+over the launched process's private byte streams before public process-output
+redaction; the native Codex raw proxy uses this path without a second transport
+owner. Shared JSON-RPC process clients also have no default payload-size
 cap; a caller can supply an explicit `maxFrameBytes` budget. Content-Length
 framing still requires exactly one valid non-negative safe-integer length and
 fails malformed or truncated frames closed. Local LSP uses this same uncapped
