@@ -126,6 +126,14 @@ export const ApprovalRequesterConfirmationV1Schema = lazyZodSchema(() => z.stric
 }));
 export type ApprovalRequesterConfirmationV1 = z.infer<typeof ApprovalRequesterConfirmationV1Schema>;
 
+/** A decision on an ordinary approval does not carry requester-specific replay custody. */
+export function readApprovalRequesterDecisionV1(
+  request: Readonly<{ v: number; requesterConfirmation?: ApprovalRequesterConfirmationV1 }>,
+  decision: 'approve' | 'reject' | 'cancel' | undefined,
+): Readonly<{ subject: ApprovalRequesterConfirmationV1; decision: 'approve' | 'reject' | 'cancel' }> | null {
+  return decision && request.requesterConfirmation ? { subject: request.requesterConfirmation, decision } : null;
+}
+
 export const ApprovalExecutionV1Schema = lazyZodSchema(() => z.looseObject({
   executedAtMs: z.number().check(z.int(), z.minimum(0)),
   ok: z.boolean(),
@@ -741,7 +749,7 @@ const SURFACE_REQUIRES_EXACT_DAEMON_REPLAY_RECORD = {
   api: true,
 } as const satisfies Record<ApprovalExecutionOriginV1['surface'], boolean>;
 
-function resolveApprovalRequestAppExecutionPlacement(approval: ApprovalRequest): 'account' | 'client' | null {
+export function resolveApprovalRequestAppExecutionPlacement(approval: ApprovalRequest): 'account' | 'client' | null {
   const actionId = ActionIdSchema.safeParse(approval.actionId);
   const spec = actionId.success ? getActionSpec(actionId.data) : null;
   const input = spec?.inputSchema.safeParse(approval.actionArgs);
