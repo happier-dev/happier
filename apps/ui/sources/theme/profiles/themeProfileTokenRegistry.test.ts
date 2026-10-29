@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { EDITABLE_THEME_COLOR_TOKEN_DEFINITIONS } from '../tokens/themeColorTokenDefinitions';
-import { THEME_PROFILE_TOKEN_DEFINITIONS } from './themeProfileTokenRegistry';
+import { getThemeProfileTokenDefinition, THEME_PROFILE_TOKEN_DEFINITIONS } from './themeProfileTokenRegistry';
 
 describe('theme profile token registry', () => {
     it('stays in parity with the canonical public editable color token definitions', () => {
@@ -24,4 +24,9 @@ describe('theme profile token registry', () => {
 
         expect(profileDefinitions).toEqual(publicDefinitions);
     });
+});
+
+it('leaves opaque unknown tokens inert even when they name Object prototype properties', () => {
+    expect(getThemeProfileTokenDefinition('constructor')).toBeUndefined();
+    expect(getThemeProfileTokenDefinition('toString')).toBeUndefined();
 });
