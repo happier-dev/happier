@@ -1,7 +1,7 @@
 import type { Message } from "../messages/messageTypes.js";
 import type { AgentState } from "../state/agentState.js";
 import { isRequestInterruptedPlaceholder } from "./requestInterruptedPlaceholder.js";
-import { isAgentStateRequestCoveredByCompletedRequests, resolveAgentStateRequestCoverageOptions } from '@happier-dev/agents';
+import { isAgentStateRequestCoveredByCompletedRequests, resolveAgentStateRequestCoverageOptions } from '@happier-dev/agents/runtime/agent-state-request-coverage';
 import { SessionPublicCompletedRequestV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { isSessionActionConfirmationRequest } from '@happier-dev/protocol/sessions/metadata/sessionActionConfirmationsV1';
 import { resolvePendingRequestAttentionReasonV1 } from '@happier-dev/protocol/sessions/personal/attention';

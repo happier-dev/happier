@@ -1,7 +1,7 @@
 import {
     isAgentStateRequestCoveredByCompletedRequests,
     resolveAgentStateRequestCoverageOptions,
-} from '@happier-dev/agents';
+} from '@happier-dev/agents/runtime/agent-state-request-coverage';
 import { compareToolCalls } from "../../tools/toolComparison.js";
 import type { AgentState } from '../../state/index.js';
 import type { ToolCall } from "../../messages/messageTypes.js";

@@ -1,4 +1,4 @@
-import { readReleasedOutputNonTranscriptRecordTypes } from '@happier-dev/agents';
+import { readReleasedOutputNonTranscriptRecordTypes } from '@happier-dev/agents/definitions/released-output-transcript-record-reader';
 import { createEmptyCanonicalTurnDiffSuppressionState, rememberSuppressedEmptyCanonicalTurnDiffCallId, shouldSuppressEmptyCanonicalTurnDiffToolResult } from '@happier-dev/protocol/sessions/messages/emptyCanonicalTurnDiffSuppression';
 import { resolveTranscriptBodySessionMessageRole } from '@happier-dev/protocol/sessions/messages/sessionMessageRole';
 import type { EmptyCanonicalTurnDiffSuppressionState, MessageStructuredPresentationV1, SessionMessageRole } from '@happier-dev/protocol';

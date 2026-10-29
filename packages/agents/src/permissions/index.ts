@@ -6,6 +6,7 @@ import { parseAgentPermissionIntentV1Alias } from '@happier-dev/protocol/runtime
 import { parseSessionPermissionModeAlias } from '@happier-dev/protocol/sessions/metadata/permission-modes';
 
 export { PERMISSION_MODES };
+export { getAgentSessionModesKind } from '../sessionModes.js';
 export type { PermissionIntent, PermissionMode };
 
 export function isPermissionMode(value: unknown): value is PermissionMode {

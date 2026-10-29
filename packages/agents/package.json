@@ -56,6 +56,11 @@
       "types": "./dist/definitions/agentCapabilityProjection.d.ts",
       "default": "./dist/definitions/agentCapabilityProjection.js"
     },
+    "./definitions/released-output-transcript-record-reader": {
+      "happier-source": "./src/definitions/releasedOutputTranscriptRecordReader.ts",
+      "types": "./dist/definitions/releasedOutputTranscriptRecordReader.d.ts",
+      "default": "./dist/definitions/releasedOutputTranscriptRecordReader.js"
+    },
     "./definitions": {
       "happier-source": "./src/definitions/index.ts",
       "types": "./dist/definitions/index.d.ts",
@@ -95,6 +100,11 @@
       "happier-source": "./src/runtime/session/scopedServices.ts",
       "types": "./dist/runtime/session/scopedServices.d.ts",
       "default": "./dist/runtime/session/scopedServices.js"
+    },
+    "./runtime/agent-state-request-coverage": {
+      "happier-source": "./src/runtime/agentStateRequestCoverage.ts",
+      "types": "./dist/runtime/agentStateRequestCoverage.d.ts",
+      "default": "./dist/runtime/agentStateRequestCoverage.js"
     },
     "./runtime/surfaces": {
       "happier-source": "./src/runtime/surfaces/index.ts",
