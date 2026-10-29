@@ -310,6 +310,29 @@ function findZipRecordOffsets(archive, signature) {
   return offsets;
 }
 
+test('extractArchivePayloadToDirectory restores validated ZIP modes under a restrictive umask', {
+  skip: process.platform === 'win32',
+}, async () => {
+  const rootDir = await mkdtemp(join(tmpdir(), 'release-runtime-zip-modes-'));
+  const originalUmask = process.umask();
+  try {
+    const archivePath = join(rootDir, 'payload.zip');
+    const extractDir = join(rootDir, 'extract');
+    await writeFile(archivePath, createStoredZip([
+      { name: 'runner/', contents: '', unixMode: 0o040755 },
+      { name: 'runner/tool', contents: '#!/bin/sh\nexit 0\n', unixMode: 0o100755 },
+    ]));
+    process.umask(0o077);
+    await extractArchivePayloadToDirectory({ archiveName: 'payload.zip', archivePath, extractDir });
+    assert.equal((await stat(join(extractDir, 'runner'))).mode & 0o777, 0o755);
+    assert.equal((await stat(join(extractDir, 'runner/tool'))).mode & 0o777, 0o755);
+    assert.match(await readFile(join(extractDir, 'runner/tool'), 'utf8'), /exit 0/u);
+  } finally {
+    process.umask(originalUmask);
+    await rm(rootDir, { recursive: true, force: true });
+  }
+});
+
 test('extractArchivePayloadToDirectory extracts tar.gz without a system PATH', async () => {
   const rootDir = await mkdtemp(join(tmpdir(), 'release-runtime-extract-'));
   const payloadDir = join(rootDir, 'payload');

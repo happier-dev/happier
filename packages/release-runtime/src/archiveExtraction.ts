@@ -1,6 +1,6 @@
 import { constants, createWriteStream } from 'node:fs';
 import type { EventEmitter } from 'node:events';
-import { lstat, mkdir, mkdtemp, open, readdir, rename, rm, rmdir, symlink } from 'node:fs/promises';
+import { chmod, lstat, mkdir, mkdtemp, open, readdir, rename, rm, rmdir, symlink } from 'node:fs/promises';
 import type { FileHandle } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
 import { Readable, Transform, Writable } from 'node:stream';
@@ -1649,6 +1649,7 @@ async function extractValidatedZipEntry(params: Readonly<{
       recursive: true,
       mode: params.entry.mode || 0o755,
     });
+    await chmod(outputPath, params.entry.mode || 0o755);
     return;
   }
 
@@ -1674,6 +1675,9 @@ async function extractValidatedZipEntry(params: Readonly<{
   });
   await pipeValidatedZipEntryPayload({ ...params, sink: output });
   params.abortContext.throwIfAborted();
+  // Creation modes are filtered by umask; restore the validated archive mode
+  // before the protected staging directory is published.
+  await chmod(outputPath, params.entry.mode || 0o644);
 }
 
 async function extractZipArchiveToDirectory(params: Readonly<{
