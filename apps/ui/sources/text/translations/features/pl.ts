@@ -9335,7 +9335,7 @@ type SecretsSettingsCopy = Shared_secretsSettingsTranslations.SecretsSettingsCop
 const en = Shared_secretsSettingsTranslations.en;
 
 const pl: SecretsSettingsCopy = {
-    purpose: "Klucze API i tokeny dla agentów i serwerów MCP. Zapisane wartości nie są ponownie wyświetlane.",
+    purpose: "Klucze API i tokeny dla agentów i serwerów MCP. Wartości pozostają ukryte, chyba że osoba zarządzająca sekretem je odsłoni.",
     yoursTitle: 'Twoje sekrety',
     yoursDescription: 'Sekrety zapisane przez ciebie lub należące do ciebie. Wybieraj je wszędzie, gdzie Happier prosi o klucz.',
     sharedWithYouTitle: 'Udostępnione tobie',
@@ -9364,6 +9364,27 @@ const pl: SecretsSettingsCopy = {
     storagePlain: 'Zarządzany przez Home',
     storagePlainDescription: 'Ten Home go przechowuje i może go odczytać, aby go dostarczyć.',
     save: 'Zapisz sekret',
+    revealValue: "Pokaż wartość",
+    hideValue: "Ukryj wartość",
+    revealConfirmTitle: ({ name }: { name: string }) => `Pokazać „${name}”?`,
+    revealConfirmBody: "Wartość będzie widoczna na tym urządzeniu, dopóki jej nie ukryjesz lub nie wyjdziesz. Odsłonięcia i kopiowania są zapisywane w historii.",
+    revealConfirm: "Pokaż",
+    valueUnavailable: "Zapisano. Obecnie nie można jej pokazać na tym urządzeniu.",
+    valueRefused: "Nie udało się pokazać wartości, więc nic nie zostało wyświetlone.",
+    copyRefused: "Nie udało się skopiować wartości. Pokaż ją ponownie, aby spróbować.",
+    copyUnrecorded: "Wartość może być w schowku, ale tego kopiowania nie udało się zapisać.",
+    historyTitle: "Historia odsłonięć",
+    historyEmpty: "Nikt nie odsłonił tej wartości.",
+    historyUnavailable: "Nie udało się wczytać historii.",
+    historyRevealed: "Odsłonięto",
+    historyRevealedCopied: "Odsłonięto i skopiowano",
+    historyCopyNotConfirmed: "Odsłonięto · kopiowanie niepotwierdzone",
+    historyNotShown: "Nie pokazano",
+    historyUnconfirmed: "Odsłonięcie niepotwierdzone",
+    historyThisDevice: "To urządzenie",
+    historyOtherDevice: "Inne urządzenie",
+    historyUnknownActor: "Ktoś",
+    historyOlder: "Pokaż starsze",
 };
 
 const secretsSettingsTranslations = { pl } as const;

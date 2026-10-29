@@ -9322,7 +9322,7 @@ type SecretsSettingsCopy = Shared_secretsSettingsTranslations.SecretsSettingsCop
 const en = Shared_secretsSettingsTranslations.en;
 
 const fr: SecretsSettingsCopy = {
-    purpose: "Clés API et jetons pour les agents et serveurs MCP. Les valeurs enregistrées ne sont plus affichées.",
+    purpose: "Clés d'API et jetons pour les agents et les serveurs MCP. Les valeurs restent masquées, sauf si une personne qui gère le secret l'affiche.",
     yoursTitle: 'Tes secrets',
     yoursDescription: 'Les secrets que tu as enregistrés ou possèdes. Choisis-les partout où Happier demande une clé.',
     sharedWithYouTitle: 'Partagés avec toi',
@@ -9351,6 +9351,27 @@ const fr: SecretsSettingsCopy = {
     storagePlain: 'Géré par le Home',
     storagePlainDescription: 'Ce Home le stocke et peut le lire pour le transmettre.',
     save: 'Enregistrer le secret',
+    revealValue: "Afficher la valeur",
+    hideValue: "Masquer la valeur",
+    revealConfirmTitle: ({ name }: { name: string }) => `Afficher « ${name} » ?`,
+    revealConfirmBody: "La valeur reste affichée sur cet appareil jusqu'à ce que vous la masquiez ou quittiez la page. Les affichages et copies sont enregistrés dans son historique.",
+    revealConfirm: "Afficher",
+    valueUnavailable: "Enregistré. Impossible de l'afficher sur cet appareil pour le moment.",
+    valueRefused: "Impossible d'afficher la valeur ; rien n'a été montré.",
+    copyRefused: "Impossible de copier la valeur. Affichez-la à nouveau pour réessayer.",
+    copyUnrecorded: "La valeur est peut-être dans le presse-papiers, mais cette copie n'a pas pu être enregistrée.",
+    historyTitle: "Historique d'affichage",
+    historyEmpty: "Personne n'a affiché cette valeur.",
+    historyUnavailable: "Impossible de charger l'historique.",
+    historyRevealed: "Affiché",
+    historyRevealedCopied: "Affiché et copié",
+    historyCopyNotConfirmed: "Affiché · copie non confirmée",
+    historyNotShown: "Non affiché",
+    historyUnconfirmed: "Affichage non confirmé",
+    historyThisDevice: "Cet appareil",
+    historyOtherDevice: "Un autre appareil",
+    historyUnknownActor: "Quelqu'un",
+    historyOlder: "Afficher les plus anciens",
 };
 
 const secretsSettingsTranslations = { fr } as const;

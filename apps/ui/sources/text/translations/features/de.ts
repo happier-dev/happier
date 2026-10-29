@@ -9308,7 +9308,7 @@ type SecretsSettingsCopy = Shared_secretsSettingsTranslations.SecretsSettingsCop
 const en = Shared_secretsSettingsTranslations.en;
 
 const de: SecretsSettingsCopy = {
-    purpose: "API-Schlüssel und Tokens für Agenten und MCP-Server. Gespeicherte Werte werden nicht erneut angezeigt.",
+    purpose: "API-Schlüssel und Tokens für Agenten und MCP-Server. Werte bleiben verborgen, außer jemand, der das Secret verwaltet, zeigt sie an.",
     yoursTitle: 'Deine Secrets',
     yoursDescription: 'Secrets, die du gespeichert hast oder besitzt. Wähle sie überall dort aus, wo Happier nach einem Schlüssel fragt.',
     sharedWithYouTitle: 'Mit dir geteilt',
@@ -9337,6 +9337,27 @@ const de: SecretsSettingsCopy = {
     storagePlain: 'Vom Home verwaltet',
     storagePlainDescription: 'Dieses Home speichert es und kann es lesen, um es bereitzustellen.',
     save: 'Secret speichern',
+    revealValue: "Wert anzeigen",
+    hideValue: "Wert ausblenden",
+    revealConfirmTitle: ({ name }: { name: string }) => `„${name}“ anzeigen?`,
+    revealConfirmBody: "Der Wert bleibt auf diesem Gerät sichtbar, bis du ihn ausblendest oder die Seite verlässt. Anzeigen und Kopieren werden im Verlauf festgehalten.",
+    revealConfirm: "Anzeigen",
+    valueUnavailable: "Gespeichert. Kann auf diesem Gerät gerade nicht angezeigt werden.",
+    valueRefused: "Der Wert konnte nicht angezeigt werden, es wurde nichts gezeigt.",
+    copyRefused: "Der Wert konnte nicht kopiert werden. Zeige ihn erneut an, um es noch einmal zu versuchen.",
+    copyUnrecorded: "Der Wert ist eventuell in der Zwischenablage, aber dieses Kopieren konnte nicht festgehalten werden.",
+    historyTitle: "Anzeigeverlauf",
+    historyEmpty: "Niemand hat diesen Wert angezeigt.",
+    historyUnavailable: "Der Verlauf konnte nicht geladen werden.",
+    historyRevealed: "Angezeigt",
+    historyRevealedCopied: "Angezeigt und kopiert",
+    historyCopyNotConfirmed: "Angezeigt · Kopieren nicht bestätigt",
+    historyNotShown: "Nicht angezeigt",
+    historyUnconfirmed: "Anzeige nicht bestätigt",
+    historyThisDevice: "Dieses Gerät",
+    historyOtherDevice: "Anderes Gerät",
+    historyUnknownActor: "Jemand",
+    historyOlder: "Ältere anzeigen",
 };
 
 const secretsSettingsTranslations = { de } as const;

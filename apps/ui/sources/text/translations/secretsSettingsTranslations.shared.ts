@@ -5,7 +5,7 @@ export type SecretsSettingsCopy = { [K in keyof typeof en]: (typeof en)[K] };
 
 
 export const en = {
-    purpose: "API keys and tokens for agents and MCP servers. Saved values are never shown again.",
+    purpose: "API keys and tokens for agents and MCP servers. Values stay hidden unless someone who manages a secret reveals it.",
     yoursTitle: 'Your secrets',
     yoursDescription: 'Secrets you saved or own. Pick them wherever Happier asks for a key.',
     sharedWithYouTitle: 'Shared with you',
@@ -34,6 +34,27 @@ export const en = {
     storagePlain: 'Home-managed',
     storagePlainDescription: 'This Home stores it and can read it to deliver it.',
     save: 'Save secret',
+    revealValue: "Reveal value",
+    hideValue: "Hide value",
+    revealConfirmTitle: ({ name }: { name: string }) => `Reveal “${name}”?`,
+    revealConfirmBody: "The value shows on this device until you hide it or leave. Reveals and copies are recorded in its history.",
+    revealConfirm: "Reveal",
+    valueUnavailable: "Saved. It can't be revealed on this device right now.",
+    valueRefused: "Couldn't reveal the value, so nothing was shown.",
+    copyRefused: "Couldn't copy the value. Reveal it again to try.",
+    copyUnrecorded: "The value may be on your clipboard, but this copy couldn't be recorded.",
+    historyTitle: "Reveal history",
+    historyEmpty: "No one has revealed this value.",
+    historyUnavailable: "History couldn't load.",
+    historyRevealed: "Revealed",
+    historyRevealedCopied: "Revealed and copied",
+    historyCopyNotConfirmed: "Revealed · copy not confirmed",
+    historyNotShown: "Not shown",
+    historyUnconfirmed: "Reveal not confirmed",
+    historyThisDevice: "This device",
+    historyOtherDevice: "Another device",
+    historyUnknownActor: "Someone",
+    historyOlder: "Show older",
 };
 
 

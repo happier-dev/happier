@@ -9321,7 +9321,7 @@ type SecretsSettingsCopy = Shared_secretsSettingsTranslations.SecretsSettingsCop
 const en = Shared_secretsSettingsTranslations.en;
 
 const it: SecretsSettingsCopy = {
-    purpose: "Chiavi API e token per agenti e server MCP. I valori salvati non vengono più mostrati.",
+    purpose: "Chiavi API e token per agenti e server MCP. I valori restano nascosti a meno che chi gestisce il segreto non li mostri.",
     yoursTitle: 'I tuoi segreti',
     yoursDescription: 'Segreti che hai salvato o che possiedi. Sceglili ovunque Happier chieda una chiave.',
     sharedWithYouTitle: 'Condivisi con te',
@@ -9350,6 +9350,27 @@ const it: SecretsSettingsCopy = {
     storagePlain: 'Gestito dall’Home',
     storagePlainDescription: 'Questo Home lo conserva e può leggerlo per consegnarlo.',
     save: 'Salva segreto',
+    revealValue: "Mostra valore",
+    hideValue: "Nascondi valore",
+    revealConfirmTitle: ({ name }: { name: string }) => `Mostrare «${name}»?`,
+    revealConfirmBody: "Il valore resta visibile su questo dispositivo finché non lo nascondi o esci. Visualizzazioni e copie vengono registrate nella cronologia.",
+    revealConfirm: "Mostra",
+    valueUnavailable: "Salvato. Al momento non può essere mostrato su questo dispositivo.",
+    valueRefused: "Impossibile mostrare il valore, quindi non è stato mostrato nulla.",
+    copyRefused: "Impossibile copiare il valore. Mostralo di nuovo per riprovare.",
+    copyUnrecorded: "Il valore potrebbe essere negli appunti, ma questa copia non è stata registrata.",
+    historyTitle: "Cronologia visualizzazioni",
+    historyEmpty: "Nessuno ha mostrato questo valore.",
+    historyUnavailable: "Impossibile caricare la cronologia.",
+    historyRevealed: "Mostrato",
+    historyRevealedCopied: "Mostrato e copiato",
+    historyCopyNotConfirmed: "Mostrato · copia non confermata",
+    historyNotShown: "Non mostrato",
+    historyUnconfirmed: "Visualizzazione non confermata",
+    historyThisDevice: "Questo dispositivo",
+    historyOtherDevice: "Un altro dispositivo",
+    historyUnknownActor: "Qualcuno",
+    historyOlder: "Mostra precedenti",
 };
 
 const secretsSettingsTranslations = { it } as const;

@@ -9346,7 +9346,7 @@ type SecretsSettingsCopy = Shared_secretsSettingsTranslations.SecretsSettingsCop
 const en = Shared_secretsSettingsTranslations.en;
 
 const ru: SecretsSettingsCopy = {
-    purpose: "API-ключи и токены для агентов и серверов MCP. Сохранённые значения больше не отображаются.",
+    purpose: "Ключи API и токены для агентов и серверов MCP. Значения скрыты, пока их не покажет тот, кто управляет секретом.",
     yoursTitle: 'Ваши секреты',
     yoursDescription: 'Секреты, которые вы сохранили или которыми владеете. Выбирайте их везде, где Happier просит ключ.',
     sharedWithYouTitle: 'Доступные вам',
@@ -9375,6 +9375,27 @@ const ru: SecretsSettingsCopy = {
     storagePlain: 'Управляется Home',
     storagePlainDescription: 'Этот Home хранит его и может прочитать, чтобы доставить.',
     save: 'Сохранить секрет',
+    revealValue: "Показать значение",
+    hideValue: "Скрыть значение",
+    revealConfirmTitle: ({ name }: { name: string }) => `Показать «${name}»?`,
+    revealConfirmBody: "Значение видно на этом устройстве, пока вы его не скроете или не уйдёте со страницы. Показы и копирования записываются в историю.",
+    revealConfirm: "Показать",
+    valueUnavailable: "Сохранено. Сейчас его нельзя показать на этом устройстве.",
+    valueRefused: "Не удалось показать значение, ничего не отображено.",
+    copyRefused: "Не удалось скопировать значение. Покажите его снова, чтобы повторить.",
+    copyUnrecorded: "Значение, возможно, в буфере обмена, но это копирование не удалось записать.",
+    historyTitle: "История показов",
+    historyEmpty: "Никто не показывал это значение.",
+    historyUnavailable: "Не удалось загрузить историю.",
+    historyRevealed: "Показано",
+    historyRevealedCopied: "Показано и скопировано",
+    historyCopyNotConfirmed: "Показано · копирование не подтверждено",
+    historyNotShown: "Не показано",
+    historyUnconfirmed: "Показ не подтверждён",
+    historyThisDevice: "Это устройство",
+    historyOtherDevice: "Другое устройство",
+    historyUnknownActor: "Кто-то",
+    historyOlder: "Показать более ранние",
 };
 
 const secretsSettingsTranslations = { ru } as const;

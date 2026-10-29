@@ -9310,7 +9310,7 @@ type SecretsSettingsCopy = Shared_secretsSettingsTranslations.SecretsSettingsCop
 const en = Shared_secretsSettingsTranslations.en;
 
 const ja: SecretsSettingsCopy = {
-    purpose: "エージェントとMCPサーバー用のAPIキーとトークン。保存した値は再表示されません。",
+    purpose: "エージェントと MCP サーバー用の API キーとトークン。シークレットを管理する人が表示しない限り、値は非表示のままです。",
     yoursTitle: '自分のシークレット',
     yoursDescription: '保存した、または所有しているシークレットです。Happier がキーを求める場所で選べます。',
     sharedWithYouTitle: '共有されたシークレット',
@@ -9339,6 +9339,27 @@ const ja: SecretsSettingsCopy = {
     storagePlain: 'Home で管理',
     storagePlainDescription: 'この Home が保存し、配信のために読み取れます。',
     save: 'シークレットを保存',
+    revealValue: "値を表示",
+    hideValue: "値を隠す",
+    revealConfirmTitle: ({ name }: { name: string }) => `「${name}」を表示しますか？`,
+    revealConfirmBody: "値は、隠すかページを離れるまでこのデバイスに表示されます。表示とコピーは履歴に記録されます。",
+    revealConfirm: "表示",
+    valueUnavailable: "保存済み。現在このデバイスでは表示できません。",
+    valueRefused: "値を表示できなかったため、何も表示されていません。",
+    copyRefused: "値をコピーできませんでした。もう一度表示してからお試しください。",
+    copyUnrecorded: "値はクリップボードにある可能性がありますが、このコピーは記録できませんでした。",
+    historyTitle: "表示履歴",
+    historyEmpty: "この値を表示した人はいません。",
+    historyUnavailable: "履歴を読み込めませんでした。",
+    historyRevealed: "表示",
+    historyRevealedCopied: "表示してコピー",
+    historyCopyNotConfirmed: "表示 · コピー未確認",
+    historyNotShown: "表示されず",
+    historyUnconfirmed: "表示未確認",
+    historyThisDevice: "このデバイス",
+    historyOtherDevice: "別のデバイス",
+    historyUnknownActor: "誰か",
+    historyOlder: "以前の履歴を表示",
 };
 
 const secretsSettingsTranslations = { ja } as const;

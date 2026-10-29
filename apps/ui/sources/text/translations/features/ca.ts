@@ -9321,7 +9321,7 @@ type SecretsSettingsCopy = Shared_secretsSettingsTranslations.SecretsSettingsCop
 const en = Shared_secretsSettingsTranslations.en;
 
 const ca: SecretsSettingsCopy = {
-    purpose: "Claus API i tokens per als agents i servidors MCP. Els valors desats no es tornen a mostrar.",
+    purpose: "Claus d'API i tokens per a agents i servidors MCP. Els valors queden ocults tret que algú que gestiona el secret el reveli.",
     yoursTitle: 'Els teus secrets',
     yoursDescription: 'Secrets que has desat o que són teus. Tria’ls allà on Happier demani una clau.',
     sharedWithYouTitle: 'Compartits amb tu',
@@ -9350,6 +9350,27 @@ const ca: SecretsSettingsCopy = {
     storagePlain: 'Gestionat pel Home',
     storagePlainDescription: 'Aquest Home el desa i el pot llegir per lliurar-lo.',
     save: 'Desa el secret',
+    revealValue: "Mostra el valor",
+    hideValue: "Amaga el valor",
+    revealConfirmTitle: ({ name }: { name: string }) => `Vols mostrar «${name}»?`,
+    revealConfirmBody: "El valor es mostra en aquest dispositiu fins que l'amaguis o surtis. Les revelacions i còpies queden registrades a l'historial.",
+    revealConfirm: "Mostra",
+    valueUnavailable: "Desat. Ara mateix no es pot mostrar en aquest dispositiu.",
+    valueRefused: "No s'ha pogut mostrar el valor; no s'ha mostrat res.",
+    copyRefused: "No s'ha pogut copiar el valor. Torna'l a mostrar per provar-ho.",
+    copyUnrecorded: "Potser el valor és al porta-retalls, però aquesta còpia no s'ha pogut registrar.",
+    historyTitle: "Historial de revelacions",
+    historyEmpty: "Ningú ha mostrat aquest valor.",
+    historyUnavailable: "No s'ha pogut carregar l'historial.",
+    historyRevealed: "Mostrat",
+    historyRevealedCopied: "Mostrat i copiat",
+    historyCopyNotConfirmed: "Mostrat · còpia no confirmada",
+    historyNotShown: "No mostrat",
+    historyUnconfirmed: "Revelació no confirmada",
+    historyThisDevice: "Aquest dispositiu",
+    historyOtherDevice: "Un altre dispositiu",
+    historyUnknownActor: "Algú",
+    historyOlder: "Mostra més antics",
 };
 
 const secretsSettingsTranslations = { ca } as const;

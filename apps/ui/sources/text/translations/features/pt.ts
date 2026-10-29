@@ -9321,7 +9321,7 @@ type SecretsSettingsCopy = Shared_secretsSettingsTranslations.SecretsSettingsCop
 const en = Shared_secretsSettingsTranslations.en;
 
 const pt: SecretsSettingsCopy = {
-    purpose: "Chaves API e tokens para agentes e servidores MCP. Os valores salvos não são exibidos novamente.",
+    purpose: "Chaves de API e tokens para agentes e servidores MCP. Os valores ficam ocultos, a menos que alguém que gere o segredo o revele.",
     yoursTitle: 'Seus segredos',
     yoursDescription: 'Segredos que você salvou ou possui. Escolha-os onde o Happier pedir uma chave.',
     sharedWithYouTitle: 'Compartilhados com você',
@@ -9350,6 +9350,27 @@ const pt: SecretsSettingsCopy = {
     storagePlain: 'Gerenciado pelo Home',
     storagePlainDescription: 'Este Home o guarda e pode lê-lo para entregá-lo.',
     save: 'Salvar segredo',
+    revealValue: "Mostrar valor",
+    hideValue: "Ocultar valor",
+    revealConfirmTitle: ({ name }: { name: string }) => `Mostrar “${name}”?`,
+    revealConfirmBody: "O valor fica visível neste dispositivo até você ocultá-lo ou sair. Revelações e cópias ficam registradas no histórico.",
+    revealConfirm: "Mostrar",
+    valueUnavailable: "Salvo. Não pode ser mostrado neste dispositivo agora.",
+    valueRefused: "Não foi possível mostrar o valor, então nada foi exibido.",
+    copyRefused: "Não foi possível copiar o valor. Mostre-o novamente para tentar.",
+    copyUnrecorded: "O valor pode estar na área de transferência, mas esta cópia não pôde ser registrada.",
+    historyTitle: "Histórico de revelações",
+    historyEmpty: "Ninguém revelou este valor.",
+    historyUnavailable: "Não foi possível carregar o histórico.",
+    historyRevealed: "Revelado",
+    historyRevealedCopied: "Revelado e copiado",
+    historyCopyNotConfirmed: "Revelado · cópia não confirmada",
+    historyNotShown: "Não exibido",
+    historyUnconfirmed: "Revelação não confirmada",
+    historyThisDevice: "Este dispositivo",
+    historyOtherDevice: "Outro dispositivo",
+    historyUnknownActor: "Alguém",
+    historyOlder: "Mostrar anteriores",
 };
 
 const secretsSettingsTranslations = { pt } as const;

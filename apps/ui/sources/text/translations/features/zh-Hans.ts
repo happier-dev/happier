@@ -9305,7 +9305,7 @@ type SecretsSettingsCopy = Shared_secretsSettingsTranslations.SecretsSettingsCop
 const en = Shared_secretsSettingsTranslations.en;
 
 const zhHans: SecretsSettingsCopy = {
-    purpose: "供智能体和 MCP 服务器使用的 API 密钥与令牌。保存后不再显示其值。",
+    purpose: "供智能体和 MCP 服务器使用的 API 密钥与令牌。除非管理该密钥的人选择显示，否则值保持隐藏。",
     yoursTitle: '你的密钥',
     yoursDescription: '你保存或拥有的密钥。在 Happier 需要密钥的地方选择它们。',
     sharedWithYouTitle: '与你共享',
@@ -9334,6 +9334,27 @@ const zhHans: SecretsSettingsCopy = {
     storagePlain: '由 Home 管理',
     storagePlainDescription: '此 Home 存储它，并可以读取以便传递。',
     save: '保存密钥',
+    revealValue: "显示值",
+    hideValue: "隐藏值",
+    revealConfirmTitle: ({ name }: { name: string }) => `显示“${name}”？`,
+    revealConfirmBody: "该值会在此设备上显示，直到你隐藏它或离开页面。显示和复制都会记录在其历史中。",
+    revealConfirm: "显示",
+    valueUnavailable: "已保存。当前无法在此设备上显示。",
+    valueRefused: "无法显示该值，因此未显示任何内容。",
+    copyRefused: "无法复制该值。请重新显示后再试。",
+    copyUnrecorded: "该值可能已在剪贴板中，但这次复制未能记录。",
+    historyTitle: "显示历史",
+    historyEmpty: "还没有人显示过此值。",
+    historyUnavailable: "无法加载历史。",
+    historyRevealed: "已显示",
+    historyRevealedCopied: "已显示并复制",
+    historyCopyNotConfirmed: "已显示 · 复制未确认",
+    historyNotShown: "未显示",
+    historyUnconfirmed: "显示未确认",
+    historyThisDevice: "此设备",
+    historyOtherDevice: "其他设备",
+    historyUnknownActor: "某人",
+    historyOlder: "显示更早的记录",
 };
 
 const secretsSettingsTranslations = { zhHans } as const;
