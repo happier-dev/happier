@@ -1,9 +1,9 @@
 import { useSessionTranscriptSource } from '@/components/sessions/transcript/source/SessionTranscriptSourceContext';
 import * as React from 'react';
-import { Platform, Pressable, View } from 'react-native';
+import { View } from 'react-native';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 import { StyleSheet } from 'react-native-unistyles';
 
-import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import { Text } from '@/components/ui/text/Text';
 import { useWorkflowsAvailability } from '@/components/workflows/gating/workflowsAvailability';
 import { WorkflowRunStateStatus } from '@/components/workflows/presentation/WorkflowLifecycleStatus';
@@ -41,15 +41,12 @@ import {
  * lifetime retired is discarded by that owner, never merged.
  */
 
-const MINIMUM_TARGET_SIZE = resolveMinimumInteractiveTargetSize(Platform.OS);
-
 const stylesheet = StyleSheet.create((theme) => ({
     root: { paddingTop: theme.space.s8 },
     row: {
         flexDirection: 'row',
         alignItems: 'center',
         gap: theme.space.s8,
-        minHeight: MINIMUM_TARGET_SIZE,
         paddingVertical: theme.space.s4,
     },
     body: {
@@ -152,7 +149,7 @@ function MountedWorkflowRunReference(props: Readonly<{
 
     return (
         <View style={styles.root} testID={`transcript-workflow-run-${runId}`}>
-            <Pressable
+            <HappierPressable
                 testID={`transcript-workflow-run-${runId}-open`}
                 accessibilityRole="button"
                 accessibilityLabel={[title, originLabel, stateLabel].filter((part) => part !== null).join(', ')}
@@ -173,7 +170,7 @@ function MountedWorkflowRunReference(props: Readonly<{
                     ) : null}
                 </View>
                 {transcriptSource.navigate !== null ? <Text style={styles.action}>{t('workflows.run.open')}</Text> : null}
-            </Pressable>
+            </HappierPressable>
         </View>
     );
 }

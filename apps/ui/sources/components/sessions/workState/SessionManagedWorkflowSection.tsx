@@ -1,8 +1,8 @@
 import * as React from 'react';
-import { Platform, Pressable, View } from 'react-native';
+import { View } from 'react-native';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 import { StyleSheet } from 'react-native-unistyles';
 
-import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
@@ -29,8 +29,6 @@ import type { SessionManagedWorkflowRunsState } from '@/components/workflows/run
  * approvals, results and recovery.
  */
 
-const MINIMUM_TARGET_SIZE = resolveMinimumInteractiveTargetSize(Platform.OS);
-
 const styles = StyleSheet.create((theme) => ({
     section: {
         gap: theme.space.s8,
@@ -44,7 +42,6 @@ const styles = StyleSheet.create((theme) => ({
         flexDirection: 'row',
         alignItems: 'center',
         gap: theme.space.s8,
-        minHeight: MINIMUM_TARGET_SIZE,
         paddingVertical: theme.space.s4,
     },
     rowBody: {
@@ -95,7 +92,7 @@ export function SessionManagedWorkflowSection(props: Readonly<{
                     resolveWorkflowRunDisplayName(props.state.metadataByRunId?.[run.id]),
                 );
                 return (
-                    <Pressable
+                    <HappierPressable
                         key={run.id}
                         testID={`${testIDPrefix}-run-${run.id}`}
                         accessibilityRole="button"
@@ -127,7 +124,7 @@ export function SessionManagedWorkflowSection(props: Readonly<{
                         >
                             {needsAttention ? t('workflows.run.review') : t('workflows.run.open')}
                         </Text>
-                    </Pressable>
+                    </HappierPressable>
                 );
             })}
         </View>

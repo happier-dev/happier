@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { Platform, Pressable } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { PinIcon, PinSlashIcon } from '@/components/sessions/shell/sessionPinIcons';
@@ -14,6 +13,7 @@ import {
     resolveMessagePinAvailability,
     type MessagePinAvailability,
 } from '../messageActions/resolveMessagePinAvailability';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 type PressEventWithPropagation = Readonly<{
     stopPropagation?: () => void;
@@ -37,7 +37,6 @@ export function ToolCallPinAction(props: Readonly<{
     if (props.availability.status !== 'available' || !props.onTogglePin) return null;
 
     const { pinTarget, pinned } = props.availability;
-    const hitSlop = Platform.OS === 'web' ? undefined : 15;
     const iconColor = pinned ? theme.colors.state.active.foreground : theme.colors.text.secondary;
     const label = pinned
         ? t('session.transcriptNavigation.unpinToolCallA11y')
@@ -49,10 +48,11 @@ export function ToolCallPinAction(props: Readonly<{
     };
 
     return (
-        <Pressable
+        <HappierPressable
             testID={props.testID}
             onPress={handlePress}
-            hitSlop={hitSlop}
+            // Inside the tool row, whose own press is the row: the pin keeps its drawn box.
+            hitReach={0}
             accessibilityRole="button"
             accessibilityLabel={label}
             style={({ pressed }) => [
@@ -66,7 +66,7 @@ export function ToolCallPinAction(props: Readonly<{
             ) : (
                 <PinIcon size={ICON_SIZE.xs} color={iconColor} />
             )}
-        </Pressable>
+        </HappierPressable>
     );
 }
 

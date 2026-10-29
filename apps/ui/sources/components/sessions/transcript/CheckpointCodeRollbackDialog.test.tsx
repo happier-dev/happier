@@ -2,7 +2,11 @@ import * as React from 'react';
 import { Platform } from 'react-native';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { act } from 'react-test-renderer';
+
 import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { createLayoutChangeEvent } from '@/dev/testkit/fixtures/nativeEventFixtures';
+import { readHitArea } from '@/dev/testkit/harness/hitFrameReach';
 
 vi.mock('@/text', () => ({
     t: (key: string) => key,
@@ -90,23 +94,28 @@ describe('CheckpointCodeRollbackDialog', () => {
         await screen.unmount();
     });
 
-    it('keeps every rollback action semantically named and at least 48dp tall on Android', async () => {
+    it('keeps every rollback action semantically named, drawn at its content and reaching 48dp on Android by hit area', async () => {
         const previousPlatform = Platform.OS;
         (Platform as { OS: string }).OS = 'android';
         try {
             const { CheckpointCodeRollbackDialog } = await import('./CheckpointCodeRollbackDialog');
+            const { HappierUiPlatformProvider } = await import('@happier-dev/plugin-ui/environment');
             const screen = await renderScreen(
-                <CheckpointCodeRollbackDialog
-                    visible
-                    conversationRollbackSupported={false}
-                    onCancel={() => undefined}
-                    onConfirm={() => undefined}
-                />,
+                <HappierUiPlatformProvider platform={{ platform: 'android', colorScheme: 'light' }}>
+                    <CheckpointCodeRollbackDialog
+                        visible
+                        conversationRollbackSupported={false}
+                        onCancel={() => undefined}
+                        onConfirm={() => undefined}
+                    />
+                </HappierUiPlatformProvider>,
             );
 
             const advancedAction = screen.findByTestId('checkpoint-rollback-show-advanced');
             expect(advancedAction?.props.accessibilityRole).toBe('button');
-            expect(flattenStyle(advancedAction?.props.style).minHeight).toBeGreaterThanOrEqual(48);
+            expect(flattenStyle(advancedAction?.props.style).minHeight).toBeUndefined();
+            await act(async () => { advancedAction!.props.onLayout(createLayoutChangeEvent({ x: 0, y: 0, width: 140, height: 34 })); });
+            expect(readHitArea(screen.findHostByTestId('checkpoint-rollback-show-advanced')!, { width: 140, height: 34 }).height).toBe(48);
 
             await screen.pressByTestIdAsync('checkpoint-rollback-show-advanced');
             await screen.pressByTestIdAsync('checkpoint-rollback-choice:code_only_without_stash');
@@ -119,7 +128,7 @@ describe('CheckpointCodeRollbackDialog', () => {
             ]) {
                 const action = screen.findByTestId(testID);
                 expect(action?.props.accessibilityRole).toBeTruthy();
-                expect(flattenStyle(action?.props.style).minHeight).toBeGreaterThanOrEqual(48);
+                expect(flattenStyle(action?.props.style).minHeight).toBeUndefined();
             }
             await screen.unmount();
         } finally {

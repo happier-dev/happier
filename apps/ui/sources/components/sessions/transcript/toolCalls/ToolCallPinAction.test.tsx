@@ -92,7 +92,7 @@ describe('ToolCallPinAction', () => {
         );
 
         const button = screen.findByTestId('tool-pin');
-        expect(button?.props.accessibilityRole).toBe('button');
+        expect(button?.props.role ?? button?.props.accessibilityRole).toBe('button');
         expect(button?.props.accessibilityLabel).toBe('session.transcriptNavigation.pinToolCallA11y');
         expect(button?.props.hitSlop).toBeUndefined();
         expect(iconCalls).toEqual([expect.objectContaining({ name: 'push-pin', color: '#555555', size: 14 })]);
@@ -162,19 +162,24 @@ describe('ToolCallPinAction', () => {
         expect(noCallbackScreen.findAllByType('Pressable')).toHaveLength(0);
     });
 
-    it('uses native hit slop outside web', async () => {
+    it('keeps its drawn box as the target inside the tool row, which owns the surrounding press', async () => {
         platformState.os = 'ios';
         const { ToolCallPinAction } = await import('./ToolCallPinAction');
+        const { HappierUiPlatformProvider } = await import('@happier-dev/plugin-ui/environment');
+        const { layoutHitArea } = await import('@/dev/testkit/harness/hitFrameReach');
 
         const screen = await renderScreen(
-            <ToolCallPinAction
-                availability={available()}
-                onTogglePin={() => {}}
-                testID="tool-pin"
-            />,
+            <HappierUiPlatformProvider platform={{ platform: 'ios', colorScheme: 'light' }}>
+                <ToolCallPinAction
+                    availability={available()}
+                    onTogglePin={() => {}}
+                    testID="tool-pin"
+                />
+            </HappierUiPlatformProvider>,
         );
 
-        expect(screen.findByTestId('tool-pin')?.props.hitSlop).toBe(15);
+        const area = await layoutHitArea(() => screen.findByTestId('tool-pin'), { width: 24, height: 24 });
+        expect(area.insets).toEqual({ top: 0, bottom: 0, left: 0, right: 0 });
     });
 });
 

@@ -1,10 +1,12 @@
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
+import { layoutHitArea } from '@/dev/testkit/harness/hitFrameReach';
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createTestSessionTranscriptSource, renderScreen as renderBaseScreen, wrapWithSessionTranscriptSource, standardCleanup } from '@/dev/testkit';
 import { installMessageViewCommonModuleMocks } from './messageViewTestHelpers';
+import { HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE } from '@happier-dev/plugin-ui/environment';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -141,7 +143,6 @@ installMessageViewCommonModuleMocks({
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock({
       Dimensions: { get: () => ({ width: 1200, height: 800, scale: 1, fontScale: 1 }) },
-      useWindowDimensions: () => ({ width: 1200, height: 800, scale: 1, fontScale: 1 }),
       Platform: {
         OS: 'web',
         select: <T,>(options: { web?: T; default?: T; native?: T; ios?: T; android?: T }) =>
@@ -657,10 +658,12 @@ describe('MessageView (fork button)', () => {
     const forkStyle = typeof forkButton?.props.style === 'function'
       ? forkButton.props.style({ pressed: false })
       : forkButton?.props.style;
-    const { resolveMinimumInteractiveTargetSize } = await import('@/components/ui/interactiveTargetSize');
-    const minimumSize = resolveMinimumInteractiveTargetSize('web');
-    expect(flattenStyleProp(forkStyle).width).toBeGreaterThanOrEqual(minimumSize);
-    expect(flattenStyleProp(forkStyle).height).toBeGreaterThanOrEqual(minimumSize);
+    const minimumSize = HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE;
+    // A precise pointer: the control is at least the WCAG pointer floor, drawn or by hit area.
+    const forkDrawn = { width: Number(flattenStyleProp(forkStyle).width), height: Number(flattenStyleProp(forkStyle).height) };
+    const forkArea = await layoutHitArea(() => screen.findByTestId('transcript-message-fork:m1'), forkDrawn);
+    expect(forkArea.width).toBeGreaterThanOrEqual(minimumSize);
+    expect(forkArea.height).toBeGreaterThanOrEqual(minimumSize);
   });
 
   it('uses a physical 48dp Android target without overlapping hit slop', async () => {
@@ -676,15 +679,22 @@ describe('MessageView (fork button)', () => {
 
       const { MessageView } = await import('./MessageView');
       const message: any = { kind: 'agent-text', id: 'm1', createdAt: 1, text: 'hi', isThinking: false, seq: 5 };
-      const screen = await renderScreen(<MessageView message={message} metadata={null} sessionId="s1" />);
+      const { HappierUiPlatformProvider } = await import('@happier-dev/plugin-ui/environment');
+      const screen = await renderScreen(<HappierUiPlatformProvider platform={{ platform: 'android', colorScheme: 'light' }}>
+        <MessageView message={message} metadata={null} sessionId="s1" />
+      </HappierUiPlatformProvider>);
 
       const forkButton = screen.findByTestId('transcript-message-fork:m1');
       const forkStyle = typeof forkButton?.props.style === 'function'
         ? forkButton.props.style({ pressed: false })
         : forkButton?.props.style;
-      expect(flattenStyleProp(forkStyle).width).toBeGreaterThanOrEqual(48);
-      expect(flattenStyleProp(forkStyle).height).toBeGreaterThanOrEqual(48);
-      expect(forkButton?.props.hitSlop ?? 0).toBe(0);
+      // Drawn at its design square; the hit area reaches half the gap to each neighbour (never below the
+      // WCAG 24 floor) rather than growing the row to a 48dp number.
+      const drawn = { width: Number(flattenStyleProp(forkStyle).width), height: Number(flattenStyleProp(forkStyle).height) };
+      const area = await layoutHitArea(() => screen.findByTestId('transcript-message-fork:m1'), drawn);
+      expect(drawn.width).toBeLessThan(48);
+      expect(area.width).toBeGreaterThanOrEqual(drawn.width);
+      expect(Math.min(area.width, area.height)).toBeGreaterThanOrEqual(HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE);
       await screen.unmount();
     } finally {
       (Platform as { OS: string }).OS = previousPlatform;

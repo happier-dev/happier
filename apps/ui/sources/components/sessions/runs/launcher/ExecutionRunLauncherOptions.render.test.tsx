@@ -1,9 +1,7 @@
 import * as React from 'react';
-import { Platform } from 'react-native';
 import { describe, expect, it, vi } from 'vitest';
 
 import { flattenTestStyle, renderScreen, standardCleanup } from '@/dev/testkit';
-import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -64,37 +62,14 @@ async function renderOptions(choices: readonly unknown[] = backendChoices) {
 }
 
 describe('ExecutionRunLauncherOptions', () => {
-    /**
-     * The launcher used to pin its own `minHeight: 44` next to the shared platform
-     * policy, which silently under-sized every Android touch target. There is one
-     * owner for this number now, so Android must observe 48 here.
-     */
-    it('sizes backend and permission-mode choices from the shared platform policy', async () => {
-        const originalPlatform = Platform.OS;
+    // The agent tile is drawn at its own padded size under every pointer; a finger's target is the
+    // shared pressable's hit area, never a drawn minimum.
+    it('draws backend tiles without a minimum target size', async () => {
+        const screen = await renderOptions();
 
-        try {
-            for (const platform of ['android', 'ios', 'web'] as const) {
-                Object.defineProperty(Platform, 'OS', { configurable: true, value: platform });
-                const screen = await renderOptions();
-                const targetSize = resolveMinimumInteractiveTargetSize(platform);
-
-                // Agent tiles size themselves; the permission modes are the segmented owner's
-                // (`SegmentedTabBar targetSize="platform"`), whose policy it tests itself.
-                for (const testID of [
-                    'execution-run-launcher-target:agent:codex',
-                ]) {
-                    const target = screen.findByTestId(testID);
-                    expect(target, testID).not.toBeNull();
-                    const style = flattenTestStyle(target?.props.style);
-                    expect(style.minWidth, testID).toBe(targetSize);
-                    expect(style.minHeight, testID).toBe(targetSize);
-                }
-
-                await screen.unmount();
-            }
-        } finally {
-            Object.defineProperty(Platform, 'OS', { configurable: true, value: originalPlatform });
-        }
+        const style = flattenTestStyle(screen.findByTestId('execution-run-launcher-target:agent:codex')?.props.style);
+        expect(style.minWidth).toBeUndefined();
+        expect(style.minHeight).toBeUndefined();
         standardCleanup();
     });
 
@@ -102,7 +77,7 @@ describe('ExecutionRunLauncherOptions', () => {
         const screen = await renderOptions();
 
         expect(screen.findByTestId('execution-run-launcher-target:agent:codex')?.props.accessibilityState)
-            .toMatchObject({ selected: true });
+            .toMatchObject({ checked: true });
         expect(screen.findByTestId('execution-run-launcher-permission-mode:read-only')?.props.accessibilityState)
             .toMatchObject({ checked: true });
         expect(screen.findByTestId('execution-run-launcher-permission-mode:default')?.props.accessibilityState)

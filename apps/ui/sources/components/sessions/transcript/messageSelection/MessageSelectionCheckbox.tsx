@@ -1,11 +1,11 @@
 import * as React from 'react';
-import { Pressable } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import type { TranscriptSelectableMessageRole } from './_types';
 import { formatMessageSelectionRowAccessibilityLabel } from './messageSelectionAccessibility';
 import { useOptionalTranscriptSelectionRow } from './TranscriptMessageSelectionContext';
 import { Icon } from '@/components/ui/icons/Icon';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 export function MessageSelectionCheckbox(props: Readonly<{
     messageId: string;
@@ -23,13 +23,12 @@ export function MessageSelectionCheckbox(props: Readonly<{
     });
 
     return (
-        <Pressable
+        <HappierPressable
             testID={props.testID}
             onPress={row.toggle}
             accessibilityRole="checkbox"
-            accessibilityState={{ checked: row.isSelected }}
+            checked={row.isSelected}
             accessibilityLabel={accessibilityLabel}
-            hitSlop={10}
             style={({ pressed }) => [
                 styles.checkbox,
                 row.isSelected ? styles.checkboxSelected : null,
@@ -41,7 +40,7 @@ export function MessageSelectionCheckbox(props: Readonly<{
                 size={16}
                 color={row.isSelected ? theme.colors.state.active.foreground : theme.colors.text.secondary}
             />
-        </Pressable>
+        </HappierPressable>
     );
 }
 

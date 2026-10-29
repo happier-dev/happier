@@ -1,7 +1,6 @@
 import { Typography } from '@/constants/Typography';
 import { useSessionTranscriptSource } from '@/components/sessions/transcript/source/SessionTranscriptSourceContext';
 import * as React from 'react';
-import { Pressable } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
@@ -10,6 +9,7 @@ import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerS
 import { useSession } from '@/sync/domains/state/storage';
 import { getSessionName } from '@/utils/sessions/sessionUtils';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 export function ForkDividerRow(props: Readonly<{
   parentSessionId: string;
@@ -45,16 +45,15 @@ export function ForkDividerRow(props: Readonly<{
       title={title}
       subtitle={t('session.forking.dividerSubtitle')}
       rightAccessory={transcriptSource.navigate !== null ? (
-        <Pressable
+        <HappierPressable
           testID={`transcript-fork-divider-open-parent:${dividerId}`}
           onPress={handleOpenParent}
           accessibilityRole="button"
           accessibilityLabel={t('session.forking.openParentA11y')}
-          hitSlop={12}
           style={({ pressed }) => [styles.openButton, pressed ? { opacity: motionTokens.press.opacity } : null]}
         >
           <Text style={[styles.openButtonText, { color: theme.colors.text.link }]}>{t('session.forking.openParent')}</Text>
-        </Pressable>
+        </HappierPressable>
       ) : null}
     />
   );

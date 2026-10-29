@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { standardCleanup } from '@/dev/testkit';
 import { renderWithSessionTranscriptSource as renderScreen } from '@/dev/testkit/sessionTranscriptSource';
 import { installMessageViewCommonModuleMocks } from './messageViewTestHelpers';
+import { HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE } from '@happier-dev/plugin-ui/environment';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -124,8 +125,7 @@ describe('MessageView (copy button target, web)', () => {
         const copyStyle = typeof copyPressables[0].props.style === 'function'
             ? copyPressables[0].props.style({ pressed: false })
             : copyPressables[0].props.style;
-        const { resolveMinimumInteractiveTargetSize } = await import('@/components/ui/interactiveTargetSize');
-        const minimumSize = resolveMinimumInteractiveTargetSize('web');
+        const minimumSize = HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE;
         expect(flattenStyle(copyStyle).width).toBeGreaterThanOrEqual(minimumSize);
         expect(flattenStyle(copyStyle).height).toBeGreaterThanOrEqual(minimumSize);
         expect(copyPressables[0].props.hitSlop ?? 0).toBe(0);

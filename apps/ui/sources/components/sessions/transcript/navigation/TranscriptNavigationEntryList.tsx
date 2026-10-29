@@ -35,6 +35,7 @@ import type {
     TranscriptNavigationEntryPressResult,
     TranscriptNavigationTurnApproval,
 } from './transcriptNavigationTypes';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 type KeyboardEventLike = Readonly<{
     key?: string;
@@ -633,17 +634,16 @@ const TimelineEntryRow = React.memo((props: TimelineEntryRowProps) => {
                                 <Text numberOfLines={1} style={styles.errorText}>
                                     {t('session.transcriptNavigation.jumpFailed')}
                                 </Text>
-                                <Pressable
+                                <HappierPressable
                                     testID={`${props.testIDPrefix}-entry-retry:${entry.id}`}
                                     onPress={() => props.onPress(entry)}
                                     accessibilityRole="button"
                                     accessibilityLabel={t('common.retry')}
-                                    hitSlop={6}
                                 >
                                     <Text numberOfLines={1} style={styles.retryText}>
                                         {t('common.retry')}
                                     </Text>
-                                </Pressable>
+                                </HappierPressable>
                             </View>
                         ) : null}
                     </View>

@@ -1,12 +1,12 @@
 import * as React from 'react';
-import { Platform, Pressable, View } from 'react-native';
+import { View } from 'react-native';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import type { SessionAgentTransitionBriefPreviewV1 } from '@happier-dev/protocol';
 
 import { announceAccessibilityMessage } from '@/components/ui/accessibility/announceAccessibilityMessage';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
-import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
 import { resolveCodeMonoFontFamily } from '@/components/ui/code/codeTypography';
@@ -230,9 +230,10 @@ export function AgentTransitionHandedOverContextModal(
 
             <View style={styles.actions}>
                 {props.onJumpToCutoff ? (
-                    <Pressable
+                    <HappierPressable
                         testID="agent-transition-handed-over-jump"
                         accessibilityRole="button"
+                        hitReach={ACTION_HIT_REACH}
                         onPress={() => {
                             props.onJumpToCutoff?.();
                             props.onClose();
@@ -246,12 +247,13 @@ export function AgentTransitionHandedOverContextModal(
                         <Text style={[styles.actionText, { color: theme.colors.text.link }]}>
                             {t('session.agentContinuation.handedOver.jumpAction')}
                         </Text>
-                    </Pressable>
+                    </HappierPressable>
                 ) : null}
                 {retryable ? (
-                    <Pressable
+                    <HappierPressable
                         testID="agent-transition-handed-over-retry"
                         accessibilityRole="button"
+                        hitReach={ACTION_HIT_REACH}
                         onPress={retry}
                         style={({ pressed }) => [
                             styles.action,
@@ -262,12 +264,15 @@ export function AgentTransitionHandedOverContextModal(
                         <Text style={[styles.actionText, { color: theme.colors.text.link }]}>
                             {t('session.agentContinuation.handedOver.retryAction')}
                         </Text>
-                    </Pressable>
+                    </HappierPressable>
                 ) : null}
             </View>
         </View>
     );
 }
+
+/** The actions wrap one `gap` (8) apart: each hit area takes half of it, so neighbours never overlap. */
+const ACTION_HIT_REACH = { top: 4, bottom: 4, left: 4, right: 4 } as const;
 
 const styles = StyleSheet.create((_theme) => ({
     body: {
@@ -344,9 +349,6 @@ const styles = StyleSheet.create((_theme) => ({
         flexDirection: 'row',
         alignItems: 'center',
         gap: 6,
-        // The canonical per-platform floor, not a nearby number: these are the
-        // card's only two controls and they sat below it at 40.
-        minHeight: resolveMinimumInteractiveTargetSize(Platform.OS),
         paddingHorizontal: 12,
         paddingVertical: 8,
         borderRadius: 10,

@@ -1,11 +1,12 @@
 import { Typography } from '@/constants/Typography';
 import * as React from 'react';
-import { Pressable, View, type ViewStyle } from 'react-native';
+import { View, type ViewStyle } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Text } from '@/components/ui/text/Text';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 export function TranscriptSeparatorRow(props: Readonly<{
   testID?: string;
@@ -66,7 +67,7 @@ export function TranscriptSeparatorRow(props: Readonly<{
       <View style={styles.row}>
         <View style={[styles.line, { backgroundColor: theme.colors.border.default }]} />
         {props.onPress ? (
-          <Pressable
+          <HappierPressable
             testID={props.chipTestID}
             onPress={props.onPress}
             accessibilityRole="button"
@@ -74,7 +75,6 @@ export function TranscriptSeparatorRow(props: Readonly<{
             // The chip is ~30pt tall at its own padding, below a comfortable
             // touch target, and it is the whole control when it is pressable.
             // The minimal chrome has no padding of its own and needs more.
-            hitSlop={chipChrome === 'minimal' ? 10 : 6}
             style={({ pressed }) => [
               styles.chip,
               chipChrome === 'minimal' ? styles.chipMinimal : null,
@@ -82,7 +82,7 @@ export function TranscriptSeparatorRow(props: Readonly<{
             ]}
           >
             {chipContent}
-          </Pressable>
+          </HappierPressable>
         ) : (
           <View
             testID={props.chipTestID}

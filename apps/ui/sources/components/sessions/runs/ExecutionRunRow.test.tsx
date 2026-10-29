@@ -3,7 +3,6 @@ import { Platform } from 'react-native';
 import { describe, expect, it, vi } from 'vitest';
 
 import { flattenTestStyle, renderScreen, standardCleanup } from '@/dev/testkit';
-import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import { ExecutionRunRow } from './ExecutionRunRow';
 
 vi.mock('react-native', async () => {
@@ -62,26 +61,25 @@ describe('ExecutionRunRow', () => {
     it('announces an actionable row as a button with its own title and an open hint', async () => {
         const screen = await renderRow(vi.fn());
 
-        const row = screen.tree.root.findAll((node) => String(node.type) === 'Pressable')[0]!;
-        expect(row.props.accessibilityRole).toBe('button');
-        expect(row.props.accessibilityLabel).toBe('Reviewer A');
+        const row = screen.tree.root.findAll((node) => typeof node.type === 'string' && node.props.accessibilityLabel === 'Reviewer A')[0]!;
+        expect(row.props.role ?? row.props.accessibilityRole).toBe('button');
         expect(row.props.accessibilityHint).toBe('runs.openRun');
         standardCleanup();
     });
 
-    it('meets the shared platform interactive target on every platform when it is actionable', async () => {
+    // The row is a full-width list row: it keeps its own padded height on every platform and reaches
+    // a finger by hit area, never by a drawn minimum.
+    it('draws no minimum target size on any platform', async () => {
         const originalPlatform = Platform.OS;
         try {
             for (const platform of ['android', 'ios', 'web'] as const) {
                 Object.defineProperty(Platform, 'OS', { configurable: true, value: platform });
                 const screen = await renderRow(vi.fn());
-                const targetSize = resolveMinimumInteractiveTargetSize(platform);
 
-                const style = flattenTestStyle(
-                    screen.tree.root.findAll((node) => String(node.type) === 'Pressable')[0]?.props.style,
-                );
-                expect(style.minWidth).toBe(targetSize);
-                expect(style.minHeight).toBe(targetSize);
+                const row = screen.tree.root.findAll((node) => typeof node.type === 'string' && node.props.accessibilityLabel === 'Reviewer A')[0]!;
+                const style = flattenTestStyle(row.props.style);
+                expect(style.minWidth).toBeUndefined();
+                expect(style.minHeight).toBeUndefined();
 
                 await screen.unmount();
             }
@@ -92,19 +90,16 @@ describe('ExecutionRunRow', () => {
     });
 
     /**
-     * A row a host did not wire is a read-only summary. Promising a button role or
-     * padding it to a touch target would announce an interaction that does not exist.
+     * A row a host did not wire is a read-only summary. Promising a button role would announce an
+     * interaction that does not exist.
      */
-    it('stays a plain summary without a button role or enlarged target when it is not actionable', async () => {
+    it('stays a plain summary without a button role or press target when it is not actionable', async () => {
         const screen = await renderRow(undefined);
 
-        const row = screen.tree.root.findAll((node) => String(node.type) === 'Pressable')[0]!;
-        expect(row.props.accessibilityRole).toBeUndefined();
-        expect(row.props.accessibilityHint).toBeUndefined();
-        expect(row.props.accessibilityState).toMatchObject({ disabled: true });
-        const style = flattenTestStyle(row.props.style);
-        expect(style.minWidth).toBeUndefined();
-        expect(style.minHeight).toBeUndefined();
+        const buttons = screen.tree.root.findAll((node) => typeof node.type === 'string'
+            && (node.props.role === 'button' || node.props.accessibilityRole === 'button'));
+        expect(buttons).toHaveLength(0);
+        expect(screen.getTextContent()).toContain('Reviewer A');
         standardCleanup();
     });
 

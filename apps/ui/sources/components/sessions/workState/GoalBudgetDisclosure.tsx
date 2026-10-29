@@ -1,10 +1,11 @@
 import { Typography } from '@/constants/Typography';
 import * as React from 'react';
-import { Pressable, View } from 'react-native';
+import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { t } from '@/text';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 /**
  * Optional token-budget editor shown inside the goal set/edit form. Budget is a disclosed advanced
@@ -29,18 +30,17 @@ export function GoalBudgetDisclosure(props: Readonly<{
 
     if (!props.budgetEnabled) {
         return (
-            <Pressable
+            <HappierPressable
                 testID="session-goal-budget-disclosure"
                 accessibilityRole="button"
                 onPress={() => props.onBudgetEnabledChange(true)}
                 disabled={props.busy}
-                hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}
                 style={styles.disclosureRow}
             >
                 <Text style={[styles.disclosureText, { color: theme.colors.button.primary.background }]}>
                     {t('session.workState.goal.addBudget')}
                 </Text>
-            </Pressable>
+            </HappierPressable>
         );
     }
 
@@ -50,18 +50,17 @@ export function GoalBudgetDisclosure(props: Readonly<{
                 <Text style={[styles.label, { color: theme.colors.text.secondary }]}>
                     {t('session.workState.goal.tokenBudget')}
                 </Text>
-                <Pressable
+                <HappierPressable
                     testID="session-goal-budget-remove-button"
                     accessibilityRole="button"
                     onPress={() => props.onBudgetEnabledChange(false)}
                     disabled={props.busy}
-                    hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}
                     style={styles.removeButton}
                 >
                     <Text style={[styles.removeText, { color: theme.colors.text.secondary }]}>
                         {t('session.workState.goal.removeBudget')}
                     </Text>
-                </Pressable>
+                </HappierPressable>
             </View>
             <TextInput
                 testID="session-goal-budget-input"

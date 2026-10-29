@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Platform, Pressable, View } from 'react-native';
+import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { HAPPIER_PAGE_METRICS, happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
 import { useWidgetPresentation } from '@happier-dev/plugin-ui';
@@ -10,8 +10,7 @@ import { useServicesOpenInBrowser } from '@/components/sessions/localServices/us
 import { useMachinePresenceSummary } from '@/components/sessions/model/useMachinePresenceSummary';
 import { useSessionMachineTarget } from '@/components/sessions/model/useSessionMachineTarget';
 import { createSessionPaneScopeId } from '@/components/sessions/panes/sessionPaneScopeId';
-import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
-import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
+import { IconButton } from '@/components/ui/buttons/IconButton';
 import { SurfaceAsOfLabel } from '@/components/ui/surfaces/SurfaceAsOfLabel';
 import { Text } from '@/components/ui/text/Text';
 import { WidgetFrame, type WidgetFrameBody, type WidgetFrameStyle } from '@/components/widgets/frame/WidgetFrame';
@@ -23,10 +22,12 @@ import { t } from '@/text';
 
 import { resolveLocalServicesGlanceRows, type LocalServicesGlanceRow } from './glanceModels';
 
-const OPEN_TARGET_PX = Math.max(HAPPIER_PAGE_METRICS.controlHeightPx, resolveMinimumInteractiveTargetSize(Platform.OS));
+const ROW_MIN_HEIGHT_PX = 40;
+/** The free space above and below the Open button inside its row: its hit area reaches at most that far. */
+const OPEN_VERTICAL_REACH_PX = (ROW_MIN_HEIGHT_PX - HAPPIER_PAGE_METRICS.controlHeightPx) / 2;
 
 const stylesheet = StyleSheet.create((theme) => ({
-    row: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s10, minHeight: 40, minWidth: 0 },
+    row: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s10, minHeight: ROW_MIN_HEIGHT_PX, minWidth: 0 },
     dotCell: { width: 16, alignItems: 'center', justifyContent: 'center' },
     dot: { width: 7, height: 7, borderRadius: 4, backgroundColor: theme.colors.state.success.foreground },
     dotOff: { backgroundColor: theme.colors.border.strong },
@@ -36,7 +37,6 @@ const stylesheet = StyleSheet.create((theme) => ({
     status: { ...Typography.default(), ...happierPageTextMetrics('meta'), color: theme.colors.text.secondary },
     quiet: { ...Typography.default(), ...happierPageTextMetrics('meta'), color: theme.colors.text.secondary },
     meta: { ...Typography.default(), ...Typography.tabular(), ...happierPageTextMetrics('meta'), color: theme.colors.text.tertiary },
-    open: { width: OPEN_TARGET_PX, height: OPEN_TARGET_PX, alignItems: 'center', justifyContent: 'center', marginRight: -8 },
 }));
 
 export type LocalServicesGlanceState =
@@ -100,15 +100,20 @@ export const LocalServicesGlanceView = React.memo(function LocalServicesGlanceVi
                             {compact ? null : <Text testID={`${props.testID}.row.${row.id}.status`} style={styles.status} numberOfLines={1}>{status}</Text>}
                         </View>
                         {openTarget && onOpen ? (
-                            <Pressable
+                            <IconButton
                                 testID={`${props.testID}.row.${row.id}.open`}
-                                accessibilityRole="button"
+                                iconName="arrow-square-out"
+                                size={HAPPIER_PAGE_METRICS.controlHeightPx}
+                                variant="plain"
                                 accessibilityLabel={t('widgetGlances.openInBrowser', { name: row.title })}
+                                interactiveTargetEdgesPx={{
+                                    leading: theme.space.s10 / 2,
+                                    trailing: theme.space.s10 / 2,
+                                    top: OPEN_VERTICAL_REACH_PX,
+                                    bottom: OPEN_VERTICAL_REACH_PX,
+                                }}
                                 onPress={() => onOpen(openTarget)}
-                                style={styles.open}
-                            >
-                                <Icon name="arrow-square-out" size={ICON_SIZE.sm} color={theme.colors.text.secondary} />
-                            </Pressable>
+                            />
                         ) : null}
                     </View>
                 );

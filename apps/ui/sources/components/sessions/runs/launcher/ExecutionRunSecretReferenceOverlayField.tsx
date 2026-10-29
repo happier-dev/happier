@@ -1,12 +1,12 @@
 import type { AIBackendProfile, AiLaunchProfile, AiLaunchProfileSourceV1, SecretReferenceOverlayV1 } from '@happier-dev/protocol';
 import * as React from 'react';
-import { Platform, Pressable, View } from 'react-native';
+import { View } from 'react-native';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { SecretRequirementModal, type SecretRequirementModalResult } from '@/components/secrets/requirements';
 import { useSavedSecretCatalog } from '@/components/secrets/useSavedSecretCatalog';
 import { Text } from '@/components/ui/text/Text';
-import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import { useMachineEnvPresence } from '@/hooks/machine/useMachineEnvPresence';
 import { Modal } from '@/modal';
 import type { SavedSecret } from '@/sync/domains/settings/savedSecretTypes';
@@ -66,7 +66,6 @@ export const ExecutionRunSecretReferenceOverlayField = React.memo((props: Readon
     onChange: (state: ExecutionRunSecretReferenceOverlayState) => void;
 }>) => {
     const { theme } = useUnistyles();
-    const interactiveTargetSize = resolveMinimumInteractiveTargetSize(Platform.OS);
     const catalog = useSavedSecretCatalog({
         sharedEnabled: props.sharedEnabled,
         scope: props.accountScope,
@@ -172,16 +171,15 @@ export const ExecutionRunSecretReferenceOverlayField = React.memo((props: Readon
 
     return (
         <View style={{ gap: theme.space.s8 }}>
-            <Pressable
+            <HappierPressable
                 testID="execution-run-secret-overlay-edit"
                 accessibilityRole="button"
                 accessibilityLabel={t('profiles.requirements.modalTitle')}
                 disabled={!props.editable}
                 onPress={openRequirement}
                 style={({ pressed }) => ({
-                    minWidth: interactiveTargetSize,
-                    minHeight: interactiveTargetSize,
-                    justifyContent: 'center',
+                    alignSelf: 'flex-start',
+                    paddingVertical: theme.space.s8,
                     paddingHorizontal: theme.space.s12,
                     borderRadius: 10,
                     borderWidth: 1,
@@ -193,7 +191,7 @@ export const ExecutionRunSecretReferenceOverlayField = React.memo((props: Readon
                 <Text style={{ color: theme.colors.text.primary, fontWeight: '600' }}>
                     {t('profiles.requirements.modalTitle')}
                 </Text>
-            </Pressable>
+            </HappierPressable>
             <View testID="execution-run-secret-overlay-review" style={{ gap: theme.space.s4 }}>
                 {requirementPresentations.map((presentation) => (
                     <View key={presentation.name}>

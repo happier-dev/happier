@@ -3,6 +3,8 @@ import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { standardCleanup } from '@/dev/testkit';
+import { layoutHitArea } from '@/dev/testkit/harness/hitFrameReach';
+import { HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE } from '@happier-dev/plugin-ui/environment';
 import { findGestureByKind, type TestGestureChain } from '@/dev/testkit/mocks/gestureHandler';
 import { installMessageViewCommonModuleMocks } from './messageViewTestHelpers';
 
@@ -131,10 +133,13 @@ describe('MessageView (native inline action targets)', () => {
                 text: 'hello',
             };
 
+            const { HappierUiPlatformProvider } = await import('@happier-dev/plugin-ui/environment');
             const screen = await renderScreen(
-                <TranscriptMessageSelectionProvider sessionId="s1" eligibleMessageIdsInOrder={['m1']}>
-                    <MessageView message={message} metadata={null} sessionId="s1" />
-                </TranscriptMessageSelectionProvider>,
+                <HappierUiPlatformProvider platform={{ platform: platformOS, colorScheme: 'light' }}>
+                    <TranscriptMessageSelectionProvider sessionId="s1" eligibleMessageIdsInOrder={['m1']}>
+                        <MessageView message={message} metadata={null} sessionId="s1" />
+                    </TranscriptMessageSelectionProvider>
+                </HappierUiPlatformProvider>,
             );
 
             const copyButtons = screen.findAll(
@@ -142,12 +147,15 @@ describe('MessageView (native inline action targets)', () => {
             );
             expect(copyButtons.length).toBe(1);
             const minimumSize = platformOS === 'android' ? 48 : 44;
+            // Each action keeps its drawn square; its hit area reaches half the gap to each neighbour and
+            // never falls below the WCAG 24 floor (on the web frame: react-native-web ignores `hitSlop`).
             const copyStyle = typeof copyButtons[0].props.style === 'function'
                 ? copyButtons[0].props.style({ pressed: false })
                 : copyButtons[0].props.style;
-            expect(flattenStyle(copyStyle).width).toBeGreaterThanOrEqual(minimumSize);
-            expect(flattenStyle(copyStyle).height).toBeGreaterThanOrEqual(minimumSize);
-            expect(copyButtons[0].props.hitSlop ?? 0).toBe(0);
+            const copyDrawn = { width: Number(flattenStyle(copyStyle).width), height: Number(flattenStyle(copyStyle).height) };
+            const copyArea = await layoutHitArea(() => screen.findByTestId('transcript-message-copy:m1'), copyDrawn);
+            expect(copyDrawn.width).toBeLessThan(minimumSize);
+            expect(Math.min(copyArea.width, copyArea.height)).toBeGreaterThanOrEqual(HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE);
 
             const selectButtons = screen.findAll(
                 (node: any) => node.type === 'Pressable' && node.props?.testID === 'transcript-message-select:m1',
@@ -156,9 +164,10 @@ describe('MessageView (native inline action targets)', () => {
             const selectStyle = typeof selectButtons[0].props.style === 'function'
                 ? selectButtons[0].props.style({ pressed: false })
                 : selectButtons[0].props.style;
-            expect(flattenStyle(selectStyle).minWidth).toBeGreaterThanOrEqual(minimumSize);
-            expect(flattenStyle(selectStyle).minHeight).toBeGreaterThanOrEqual(minimumSize);
-            expect(selectButtons[0].props.hitSlop).toBeUndefined();
+            // Its drawn box is the 16 px icon plus 6 px padding on each side, which the layout engine reports; the renderer cannot measure it.
+            const selectDrawn = { width: 28, height: 28 };
+            const selectArea = await layoutHitArea(() => screen.findByTestId('transcript-message-select:m1'), selectDrawn);
+            expect(Math.min(selectArea.width, selectArea.height)).toBeGreaterThanOrEqual(HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE);
 
             await act(async () => {
                 selectButtons[0].props.onPress?.({} as never);

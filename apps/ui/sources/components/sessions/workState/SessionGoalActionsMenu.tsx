@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Platform, Pressable, View } from 'react-native';
+import { Platform, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { ActionListSection, type ActionListItem } from '@/components/ui/lists/ActionListSection';
@@ -7,6 +7,7 @@ import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
 import { Popover } from '@/components/ui/popover';
 import { t } from '@/text';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 /**
  * Goal lifecycle actions (Pause/Resume, Complete, Clear) folded into a single `⋯` overflow menu so
@@ -60,18 +61,17 @@ export function SessionGoalActionsMenu(props: Readonly<{
 
     return (
         <View ref={anchorRef}>
-            <Pressable
+            <HappierPressable
                 testID="session-goal-actions-overflow"
                 accessibilityRole="button"
                 accessibilityLabel={t('common.moreActions')}
                 accessibilityHint={t('common.moreActionsHint')}
                 disabled={props.disabled}
-                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                 onPress={() => setOpen((current) => !current)}
                 style={[styles.trigger, props.disabled ? { opacity: BUSY_DIM_OPACITY } : null]}
             >
                 <Icon name="dots-three" size={20} color={theme.colors.text.secondary} />
-            </Pressable>
+            </HappierPressable>
             <Popover
                 open={open}
                 anchorRef={anchorRef}

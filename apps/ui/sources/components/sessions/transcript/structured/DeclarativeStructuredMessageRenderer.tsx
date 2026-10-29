@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Platform, View } from 'react-native';
+import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import { usePluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemeProjection';
 
@@ -14,7 +14,6 @@ import {
     renderDeclarativeNode,
     type DeclarativeActionAffordance,
 } from '@/components/plugins/shared/declarativeNodes';
-import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import { MarkdownView } from '@/components/markdown/MarkdownView';
 import { StructuredFindText, useStructuredFindState } from './structuredFindText';
 
@@ -65,7 +64,6 @@ export function DeclarativeStructuredMessageRenderer(props: Readonly<{
         actionPending = false,
         showUnavailableActions = false,
     } = props;
-    const minimumTouchTarget = resolveMinimumInteractiveTargetSize(Platform.OS);
 
     const resolveAction = React.useCallback((node: Readonly<Record<string, unknown>>): DeclarativeActionAffordance | null => {
         const selection = readDeclarativeActionSelection(node.action);
@@ -102,7 +100,7 @@ export function DeclarativeStructuredMessageRenderer(props: Readonly<{
             {renderDeclarativeNode(props.root, {
                 colors: theme.colors,
                 presentationTheme,
-                minimumTouchTarget,
+                minimumTouchTarget: 0,
                 // A persisted transcript replays the author's frozen words. It
                 // is deliberately independent of whatever plugin translation
                 // bundle is installed now — the message is history, not live UI.

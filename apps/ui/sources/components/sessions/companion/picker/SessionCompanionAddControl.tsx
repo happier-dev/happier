@@ -1,11 +1,11 @@
 import * as React from 'react';
-import { Platform, Pressable, View } from 'react-native';
+import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { CompanionWidgetAddPopover, type CompanionWidgetAddSource } from '@/components/widgets/add/CompanionWidgetAddPopover';
 import { Icon } from '@/components/ui/icons/Icon';
-import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation';
-import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
+import { HAPPIER_PAGE_METRICS, HappierPressable } from '@happier-dev/plugin-ui/presentation';
+import { IconButton } from '@/components/ui/buttons/IconButton';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
@@ -19,11 +19,12 @@ import { t } from '@/text';
  */
 
 const stylesheet = StyleSheet.create((theme) => ({
+    rowAnchor: { marginTop: theme.space.s8 },
     row: {
         flexDirection: 'row',
         alignItems: 'center',
         gap: theme.space.s6,
-        marginTop: theme.space.s8,
+        minHeight: 34,
         paddingHorizontal: theme.space.s8,
         borderRadius: 10,
     },
@@ -32,12 +33,6 @@ const stylesheet = StyleSheet.create((theme) => ({
     rowLabel: {  color: theme.colors.text.secondary, ...Typography.variant('body') },
     rowLabelActive: { ...Typography.default('semiBold'), color: theme.colors.text.primary },
     anchor: { height: 1, alignSelf: 'center', width: 1 },
-    icon: {
-        alignItems: 'center',
-        justifyContent: 'center',
-        width: Math.max(HAPPIER_PAGE_METRICS.controlHeightPx, resolveMinimumInteractiveTargetSize(Platform.OS)),
-        height: Math.max(HAPPIER_PAGE_METRICS.controlHeightPx, resolveMinimumInteractiveTargetSize(Platform.OS)),
-    },
 }));
 
 export type SessionCompanionAddBinding = CompanionWidgetAddSource & Readonly<{
@@ -69,35 +64,36 @@ export function SessionCompanionAddControl(props: Readonly<{
     return (
         <>
             {props.variant === 'row' ? (
-                <Pressable
-                    ref={anchorRef}
-                    testID={props.testID}
-                    accessibilityRole="button"
-                    accessibilityLabel={label}
-                    accessibilityState={{ expanded: open }}
-                    onPress={() => setOpen((value) => !value)}
-                    style={({ pressed }) => [
-                        stylesheet.row,
-                        { minHeight: Math.max(34, resolveMinimumInteractiveTargetSize(Platform.OS)) },
-                        open ? stylesheet.rowActive : pressed ? stylesheet.rowPressed : null,
-                    ]}
-                >
-                    <Icon name="plus" size={15} color={open ? theme.colors.text.primary : theme.colors.text.secondary} />
-                    <Text style={[stylesheet.rowLabel, open ? stylesheet.rowLabelActive : null]}>{label}</Text>
-                </Pressable>
+                <View ref={anchorRef} style={stylesheet.rowAnchor}>
+                    <HappierPressable
+                        testID={props.testID}
+                        accessibilityRole="button"
+                        accessibilityLabel={label}
+                        expanded={open}
+                        onPress={() => setOpen((value) => !value)}
+                        style={({ pressed }) => [
+                            stylesheet.row,
+                            open ? stylesheet.rowActive : pressed ? stylesheet.rowPressed : null,
+                        ]}
+                    >
+                        <Icon name="plus" size={15} color={open ? theme.colors.text.primary : theme.colors.text.secondary} />
+                        <Text style={[stylesheet.rowLabel, open ? stylesheet.rowLabelActive : null]}>{label}</Text>
+                    </HappierPressable>
+                </View>
             ) : props.variant === 'icon' ? (
-                <Pressable
-                    ref={anchorRef}
-                    testID={props.testID}
-                    accessibilityRole="button"
-                    accessibilityLabel={label}
-                    accessibilityState={{ expanded: open }}
-                    onPress={() => setOpen((value) => !value)}
-                    style={stylesheet.icon}
-                    hitSlop={4}
-                >
-                    <Icon name="plus" size={20} color={theme.colors.text.primary} />
-                </Pressable>
+                <View ref={anchorRef}>
+                    <IconButton
+                        testID={props.testID}
+                        iconName="plus"
+                        iconSize={20}
+                        size={HAPPIER_PAGE_METRICS.controlHeightPx}
+                        variant="plain"
+                        accessibilityLabel={label}
+                        expanded={open}
+                        interactiveTargetGapPx={2}
+                        onPress={() => setOpen((value) => !value)}
+                    />
+                </View>
             ) : (
                 <View ref={anchorRef} testID={props.testID} style={stylesheet.anchor} />
             )}

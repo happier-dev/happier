@@ -1,6 +1,7 @@
 import { Typography } from '@/constants/Typography';
 import * as React from 'react';
-import { Platform, Pressable, View } from 'react-native';
+import { View } from 'react-native';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { isExecutionRunActive, type ExecutionRunPublicState } from '@happier-dev/protocol/execution/runs/responseSchemas';
@@ -11,7 +12,6 @@ import {
 import { resolveWorkStatusTone, WORK_STATUS_PILL_VARIANT } from '@/components/work/status/resolveWorkStatusTone';
 import { StatusPill } from '@/components/ui/status/StatusPill';
 import { Text } from '@/components/ui/text/Text';
-import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import { resolveExecutionRunBackendLabel } from '@/components/sessions/runs/resolveExecutionRunBackendLabel';
 import { t } from '@/text';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
@@ -53,8 +53,6 @@ export const ExecutionRunRow = React.memo((props: Readonly<{
 }>) => {
     const { theme } = useUnistyles();
     const { run, onPress } = props;
-    const actionable = typeof onPress === 'function';
-    const interactiveTargetSize = resolveMinimumInteractiveTargetSize(Platform.OS);
     const subtitle = typeof props.subtitle === 'string' ? props.subtitle : run.runId;
     const selectionLabel = resolveExecutionRunSelectionLabel(run.resolvedSelection, () => null, null,
         resolveRunNativeModelLabel(run.backendTarget, props.nativeModelCatalog, run.resolvedSelection));
@@ -72,34 +70,16 @@ export const ExecutionRunRow = React.memo((props: Readonly<{
                 ? String((run.display as any).participantLabel).trim()
                 : backendLabel ? `${run.intent} · ${backendLabel}` : run.intent;
 
-    return (
-        <Pressable
-            // A row without `onPress` is a read-only summary. Announcing it as a
-            // button — or padding it out to a touch target — would promise an
-            // interaction this host did not wire.
-            {...(actionable
-                ? {
-                    accessibilityRole: 'button' as const,
-                    accessibilityLabel: title,
-                    accessibilityHint: t('runs.openRun'),
-                }
-                : {})}
-            accessibilityState={{ selected: props.selected === true, disabled: !onPress }}
-            onPress={onPress}
-            disabled={!onPress}
-            style={({ pressed }) => ({
-                padding: theme.space.s12,
-                borderRadius: 12,
-                backgroundColor: theme.colors.surface.inset,
-                borderWidth: 1,
-                borderColor: props.selected ? theme.colors.text.link : theme.colors.border.default,
-                gap: theme.space.s8,
-                opacity: pressed ? motionTokens.press.opacitySubtle : 1,
-                ...(actionable
-                    ? { minWidth: interactiveTargetSize, minHeight: interactiveTargetSize, justifyContent: 'center' as const }
-                    : {}),
-            })}
-        >
+    const rowStyle = {
+        padding: theme.space.s12,
+        borderRadius: 12,
+        backgroundColor: theme.colors.surface.inset,
+        borderWidth: 1,
+        borderColor: props.selected ? theme.colors.text.link : theme.colors.border.default,
+        gap: theme.space.s8,
+    };
+    const body = (
+        <>
             <View style={styles.row}>
                 <Text style={[styles.title, { color: theme.colors.text.primary }]} numberOfLines={1}>
                     {title}
@@ -122,7 +102,23 @@ export const ExecutionRunRow = React.memo((props: Readonly<{
                     {[selectionLabel, subtitle].filter(Boolean).join(' · ')}
                 </Text>
             )}
-        </Pressable>
+        </>
+    );
+
+    // A row without `onPress` is a read-only summary: announcing it as a button would promise an
+    // interaction this host did not wire.
+    if (!onPress) return <View style={rowStyle}>{body}</View>;
+    return (
+        <HappierPressable
+            accessibilityRole="button"
+            accessibilityLabel={title}
+            accessibilityHint={t('runs.openRun')}
+            selected={props.selected === true}
+            onPress={onPress}
+            style={({ pressed }) => ({ ...rowStyle, opacity: pressed ? motionTokens.press.opacitySubtle : 1 })}
+        >
+            {body}
+        </HappierPressable>
     );
 });
 

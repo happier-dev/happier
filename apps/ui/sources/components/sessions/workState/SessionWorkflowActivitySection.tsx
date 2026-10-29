@@ -1,6 +1,6 @@
 import { Typography } from '@/constants/Typography';
 import * as React from 'react';
-import { Pressable, View } from 'react-native';
+import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
 import { Text } from '@/components/ui/text/Text';
@@ -21,6 +21,7 @@ import {
 import type { SessionWorkflowActivityState } from './useSessionWorkflowActivity';
 import type { SessionWorkflowRunHeadlineV1, SessionWorkflowRunSnapshotV1 } from '@happier-dev/protocol';
 import type { WorkflowActivityRowViewModel } from './sessionWorkflowActivityTypes';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 /**
  * UIW3 — Active Workflows popover section.
@@ -124,12 +125,11 @@ const SessionWorkflowRunPanel = React.memo<SessionWorkflowRunPanelProps>((props)
 
     return (
         <View style={styles.panel} testID={`workflow-run-panel-${props.runHeadline.runId}`}>
-            <Pressable
+            <HappierPressable
                 onPress={() => setExpanded((prev) => !prev)}
                 accessibilityRole="button"
-                accessibilityState={{ expanded }}
+                expanded={expanded}
                 testID={`workflow-run-panel-toggle-${props.runHeadline.runId}`}
-                hitSlop={6}
             >
                 <WorkflowRunHeader
                     title={props.snapshot?.title ?? props.runHeadline.title}
@@ -141,7 +141,7 @@ const SessionWorkflowRunPanel = React.memo<SessionWorkflowRunPanelProps>((props)
                     expanded={expanded}
                     {...(summaryLine ? { summaryLine } : {})}
                 />
-            </Pressable>
+            </HappierPressable>
             {expanded ? (
                 props.detailState === 'loaded' && props.snapshot ? (
                     <View style={styles.observedContent}>
@@ -193,18 +193,17 @@ const SessionWorkflowRunPanel = React.memo<SessionWorkflowRunPanelProps>((props)
                                             ),
                                         )}
                                         {hiddenCount > 0 ? (
-                                            <Pressable
+                                            <HappierPressable
                                                 onPress={() => setVisibleRowCount((current) => Math.min(allRows.length, current + INLINE_ROW_PAGE_SIZE))}
                                                 accessibilityRole="button"
                                                 accessibilityLabel={t('tools.workflowActivityView.showMore', { count: hiddenCount })}
                                                 style={styles.showMore}
                                                 testID={`workflow-run-${props.runHeadline.runId}-show-more`}
-                                                hitSlop={8}
                                             >
                                                 <Text style={styles.showMoreText}>
                                                     {t('tools.workflowActivityView.showMore', { count: hiddenCount })}
                                                 </Text>
-                                            </Pressable>
+                                            </HappierPressable>
                                         ) : null}
                                     </>
                                 )}

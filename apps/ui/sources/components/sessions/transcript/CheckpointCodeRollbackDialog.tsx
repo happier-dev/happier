@@ -1,9 +1,9 @@
 import * as React from 'react';
-import { Platform, Pressable, View } from 'react-native';
+import { View } from 'react-native';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 import { StyleSheet } from 'react-native-unistyles';
 
 import { Text } from '@/components/ui/text/Text';
-import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import { Typography } from '@/constants/Typography';
 import { Modal, type CustomModalInjectedProps } from '@/modal';
 import { useModalCardChrome } from '@/modal/components/card/useModalCardChrome';
@@ -71,6 +71,10 @@ const stylesheet = StyleSheet.create((theme) => ({
     confirmDisabled: {
         opacity: 0.45,
     },
+    // A bare checkbox line: drawn at its text, reached by its hit area.
+    confirmation: {
+        paddingVertical: theme.space.s4,
+    },
     footerText: {
         color: theme.colors.text.link,
         ...Typography.variant('body', 'semiBold'),
@@ -108,7 +112,6 @@ function choiceDescription(mode: SessionRollbackCodeMode): string {
 
 export function CheckpointCodeRollbackDialog(props: CheckpointCodeRollbackDialogProps) {
     const styles = stylesheet;
-    const minimumInteractiveTargetSize = resolveMinimumInteractiveTargetSize(Platform.OS);
     const choices = React.useMemo(
         () => resolveCheckpointCodeRollbackChoices({
             conversationRollbackSupported: props.conversationRollbackSupported,
@@ -144,22 +147,18 @@ export function CheckpointCodeRollbackDialog(props: CheckpointCodeRollbackDialog
     return (
         <View testID="checkpoint-code-rollback-dialog" style={styles.body}>
             {visibleChoices.map((rollbackChoice) => (
-                <Pressable
+                <HappierPressable
                     key={rollbackChoice.mode}
                     testID={`checkpoint-rollback-choice:${rollbackChoice.mode}`}
                     disabled={!rollbackChoice.enabled}
                     accessibilityRole="button"
-                    accessibilityState={{
-                        disabled: !rollbackChoice.enabled,
-                        selected: selectedMode === rollbackChoice.mode,
-                    }}
+                    selected={selectedMode === rollbackChoice.mode}
                     onPress={() => {
                         setSelectedMode(rollbackChoice.mode);
                         setCodeOnlyConfirmed(false);
                     }}
                     style={[
                         styles.choice,
-                        { minHeight: minimumInteractiveTargetSize },
                         selectedMode === rollbackChoice.mode ? styles.choiceSelected : null,
                         !rollbackChoice.enabled ? styles.choiceDisabled : null,
                     ]}
@@ -170,11 +169,11 @@ export function CheckpointCodeRollbackDialog(props: CheckpointCodeRollbackDialog
                             ? choiceDescription(rollbackChoice.mode)
                             : t('session.rollback.checkpointCode.conversationUnavailable')}
                     </Text>
-                </Pressable>
+                </HappierPressable>
             ))}
 
             {hasHiddenAdvancedChoices ? (
-                <Pressable
+                <HappierPressable
                     testID="checkpoint-rollback-show-advanced"
                     accessibilityRole="button"
                     onPress={() => {
@@ -183,38 +182,37 @@ export function CheckpointCodeRollbackDialog(props: CheckpointCodeRollbackDialog
                             setSelectedMode(null);
                         }
                     }}
-                    style={[styles.advancedButton, { minHeight: minimumInteractiveTargetSize }]}
+                    style={styles.advancedButton}
                 >
                     <Text style={styles.footerText}>{t('session.rollback.checkpointCode.showAdvanced')}</Text>
-                </Pressable>
+                </HappierPressable>
             ) : null}
 
             {requiresAdvancedConfirmation ? (
-                <Pressable
+                <HappierPressable
                     testID="checkpoint-rollback-code-only-confirmation"
                     accessibilityRole="checkbox"
-                    accessibilityState={{ checked: codeOnlyConfirmed }}
+                    checked={codeOnlyConfirmed}
                     onPress={() => setCodeOnlyConfirmed((value) => !value)}
-                    style={{ minHeight: minimumInteractiveTargetSize, justifyContent: 'center' }}
+                    style={styles.confirmation}
                 >
                     <Text style={styles.hint}>{t('session.rollback.checkpointCode.codeOnlyConfirmation')}</Text>
-                </Pressable>
+                </HappierPressable>
             ) : null}
 
             <View style={styles.footer}>
-                <Pressable
+                <HappierPressable
                     testID="checkpoint-rollback-cancel"
                     accessibilityRole="button"
                     onPress={handleCancel}
-                    style={[styles.footerButton, { minHeight: minimumInteractiveTargetSize }]}
+                    style={styles.footerButton}
                 >
                     <Text style={styles.footerText}>{t('common.cancel')}</Text>
-                </Pressable>
-                <Pressable
+                </HappierPressable>
+                <HappierPressable
                     testID="checkpoint-rollback-confirm"
                     disabled={confirmDisabled}
                     accessibilityRole="button"
-                    accessibilityState={{ disabled: confirmDisabled }}
                     onPress={() => {
                         if (!selectedChoice || confirmDisabled) return;
                         props.onConfirm({
@@ -225,13 +223,12 @@ export function CheckpointCodeRollbackDialog(props: CheckpointCodeRollbackDialog
                     }}
                     style={[
                         styles.footerButton,
-                        { minHeight: minimumInteractiveTargetSize },
                         styles.confirmButton,
                         confirmDisabled ? styles.confirmDisabled : null,
                     ]}
                 >
                     <Text style={styles.footerText}>{t('common.continue')}</Text>
-                </Pressable>
+                </HappierPressable>
             </View>
         </View>
     );
