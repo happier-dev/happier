@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import * as React from 'react';
+import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 
 import { flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
 
@@ -96,5 +98,46 @@ describe('useAccountDirectoryActivePolling', () => {
         expect(first).toHaveBeenCalledTimes(2);
         expect(second).toHaveBeenCalledTimes(2);
         expect(runtimeState.listeners.size).toBe(1);
+    });
+
+    it('parks without a timer while hidden and resumes overdue displayed approval demand once', async () => {
+        const { useAccountDirectoryActivePolling } = await import('./useAccountDirectoryActivePolling');
+        const poll = vi.fn(async () => 'completed' as const);
+        const hook = await renderHook(() => useAccountDirectoryActivePolling(poll, true), { flushOptions: { cycles: 0 } });
+        runtimeState.active = false;
+        for (const listener of runtimeState.listeners) listener();
+        expect(vi.getTimerCount()).toBe(0);
+        await flushHookEffects({ cycles: 1, advanceTimersMs: 300_000 });
+        expect(poll).not.toHaveBeenCalled();
+        runtimeState.active = true;
+        for (const listener of runtimeState.listeners) listener();
+        await flushHookEffects({ cycles: 1 });
+        expect(poll).toHaveBeenCalledTimes(1);
+        await hook.unmount();
+        expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it('installs no cadence without displayed pending demand and withdraws it when the retained pane is hidden', async () => {
+        const { useAccountDirectoryActivePolling } = await import('./useAccountDirectoryActivePolling');
+        let presented = true;
+        function Presentation({ children }: React.PropsWithChildren) {
+            return React.createElement(PluginSurfaceFocusEligibilityProvider, { active: presented, presentationActive: presented, children });
+        }
+        const poll = vi.fn(async () => 'completed' as const);
+        const hook = await renderHook((enabled: boolean) => useAccountDirectoryActivePolling(poll, enabled), {
+            initialProps: false, wrapper: Presentation, flushOptions: { cycles: 0 },
+        });
+        await flushHookEffects({ cycles: 1, advanceTimersMs: 300_000 });
+        expect(poll).not.toHaveBeenCalled();
+        expect(vi.getTimerCount()).toBe(0);
+        await hook.rerender(true);
+        await flushHookEffects({ cycles: 1, advanceTimersMs: 1_000 });
+        expect(poll).toHaveBeenCalledTimes(1);
+        presented = false;
+        await hook.rerender(true);
+        await flushHookEffects({ cycles: 1, advanceTimersMs: 300_000 });
+        expect(poll).toHaveBeenCalledTimes(1);
+        expect(vi.getTimerCount()).toBe(0);
+        await hook.unmount();
     });
 });
