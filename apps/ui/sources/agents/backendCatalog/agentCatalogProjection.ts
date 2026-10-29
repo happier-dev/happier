@@ -224,7 +224,8 @@ function resolveProviderSubtitle(
     }
 
     if (isBundledAgentId(agentId)) {
-        return agentId;
+        const core = getAgentCore(agentId);
+        return core ? t(core.subtitleKey) : null;
     }
 
     return null;
@@ -374,7 +375,10 @@ export function getResolvedAgentCatalogEntries(params: Readonly<{
         entries.push(...params.acpCatalogSnapshot.record.definitions.map(definition =>
             resolveConfiguredAcpAgentCatalogProjection(definition, params)));
     }
-    return entries;
+    // Daemon declarations can arrive in different object insertion orders.
+    // Every catalog consumer gets the same title order, with exact identity breaking ties.
+    return entries.sort((left, right) => left.title.localeCompare(right.title)
+        || (left.backendTargetKey ?? left.qualifiedId).localeCompare(right.backendTargetKey ?? right.qualifiedId));
 }
 
 /** Configured targets stay distinct from a bundled Agent with the same display id. */
