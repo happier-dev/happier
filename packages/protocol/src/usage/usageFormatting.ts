@@ -53,6 +53,12 @@ export function formatUsageUtcOffset(offsetMinutes: number): string {
     return `UTC${sign}${String(Math.floor(absolute / 60)).padStart(2, '0')}:${String(absolute % 60).padStart(2, '0')}`;
 }
 
+/** Usage bridge ids that explicitly mean the producing Agent was not attributed. */
+export function isUnattributedUsageAgentId(agentId: string | null | undefined): boolean {
+    const normalized = String(agentId ?? '').trim().toLowerCase();
+    return normalized === '' || normalized === 'unknown' || normalized === 'legacy';
+}
+
 /** Keep a short trailing model/Agent-id segment together with a non-breaking hyphen. */
 export function formatIdentifierLabel(value: string): string {
     return value.replace(/-(?=[^-]{1,3}$)/, '‑');

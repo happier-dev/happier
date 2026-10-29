@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { formatUsageCalendarDate, formatUsageCalendarRange, formatUsageChartClock, formatUsageDuration,
-    formatUsageDurationCompact, formatUsageSharePercent, formatUsageUtcOffset } from './usageFormatting.js';
+    formatUsageDurationCompact, formatUsageSharePercent, formatUsageUtcOffset, isUnattributedUsageAgentId } from './usageFormatting.js';
 
 describe('shared Usage formatting', () => {
     it('keeps measured duration rounding and host-owned long/narrow unit labels', () => {
@@ -43,5 +43,10 @@ describe('shared Usage formatting', () => {
         expect(formatUsageSharePercent(0.245)).toBe('25%');
         expect(formatUsageUtcOffset(120)).toBe('UTC+02:00');
         expect(formatUsageUtcOffset(-330)).toBe('UTC−05:30');
+    });
+
+    it('identifies Usage bridge ids that mean the Agent was not attributed', () => {
+        expect(['', 'unknown', 'legacy'].map(isUnattributedUsageAgentId)).toEqual([true, true, true]);
+        expect(isUnattributedUsageAgentId('custom-acp')).toBe(false);
     });
 });
