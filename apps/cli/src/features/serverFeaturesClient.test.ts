@@ -11,6 +11,31 @@ import {
 } from './serverFeaturesClient';
 
 describe('fetchServerFeaturesSnapshot', () => {
+  it.each([302, 307])('refuses HTTP %s before a credential-bearing second hop and preserves recovery', async (status) => {
+    let redirect = true;
+    let secondHopRequests = 0;
+    const server = createServer((request, response) => {
+      if (request.headers.host?.startsWith('127.0.0.2:')) secondHopRequests++;
+      if (redirect) response.writeHead(status, { location: `http://127.0.0.2:${(server.address() as { port: number }).port}/capture?secret=hidden` }).end();
+      else response.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ features: {}, capabilities: {} }));
+    });
+    await new Promise<void>((resolve) => server.listen(0, '0.0.0.0', resolve));
+    try {
+      const address = server.address();
+      if (!address || typeof address === 'string') throw new Error('Expected TCP listener');
+      const input = { serverUrl: `http://127.0.0.1:${address.port}`, token: 'fixture-bearer', fetchImpl: globalThis.fetch };
+      await expect(observeServerFeaturesSnapshot(input)).rejects.toMatchObject({
+        code: 'credential_request_redirect_refused', retryable: false, status,
+      });
+      expect(secondHopRequests).toBe(0);
+      redirect = false;
+      await expect(observeServerFeaturesSnapshot(input)).resolves.toMatchObject({ status: 'ready' });
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+    }
+  });
+
   it.each(['public', 'authenticated', 'fallback'] as const)('bounds a stalled %s response body by the caller deadline and recovers', async (projection) => {
     let shouldStall = true;
     const server = createServer((request, response) => {

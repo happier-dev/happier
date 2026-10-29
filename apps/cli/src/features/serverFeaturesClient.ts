@@ -1,4 +1,5 @@
 import { readRetryLaterHints, type RetryLaterHints } from '@happier-dev/connection-supervisor';
+import { CredentialRequestRedirectError, fetchWithCredentialRedirectRefusal } from '@happier-dev/cli-common/homeTarget';
 import type { FeaturesResponse as ServerFeatures } from '@happier-dev/protocol';
 import { AsyncTtlCache } from '@happier-dev/protocol/common/asyncTtlCache';
 import { armDeadlineTimer } from '@happier-dev/protocol/common/deadlineTimer';
@@ -111,22 +112,22 @@ async function requestServerFeaturesSnapshot(
       if (params.resolveAuthorizationHeaders && !authorizationHeaders) {
         return { status: 'error', reason: 'response_status' };
       }
-      let response = await fetchImpl(`${normalizeBaseUrl(params.serverUrl)}${requestPath}`, {
+      let response = await fetchWithCredentialRedirectRefusal(`${normalizeBaseUrl(params.serverUrl)}${requestPath}`, {
         method: 'GET',
         redirect: 'manual',
         ...(authorizationHeaders
           ? { headers: authorizationHeaders }
           : token ? { headers: { Authorization: `Bearer ${token}` } } : {}),
         signal,
-      });
+      }, fetchImpl);
 
       if (projection === 'authenticated' && token && !params.resolveAuthorizationHeaders && isEndpointMissing(response.status)) {
         provenance = 'public';
-        response = await fetchImpl(`${normalizeBaseUrl(params.serverUrl)}${publicPath}`, {
+        response = await fetchWithCredentialRedirectRefusal(`${normalizeBaseUrl(params.serverUrl)}${publicPath}`, {
           method: 'GET',
           redirect: 'manual',
           signal,
-        });
+        }, fetchImpl);
       }
 
       if (!response.ok) {
@@ -151,6 +152,7 @@ async function requestServerFeaturesSnapshot(
     }, params.signal);
   } catch (error) {
     if (params.signal?.aborted) params.signal.throwIfAborted();
+    if (error instanceof CredentialRequestRedirectError) throw error;
     const isTimeout = error instanceof Error && error.name === 'AbortError';
     return { status: 'error', reason: isTimeout ? 'timeout' : 'network' };
   }

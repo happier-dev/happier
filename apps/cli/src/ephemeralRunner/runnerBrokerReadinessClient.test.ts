@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { once } from 'node:events';
+import { createServer } from 'node:http';
 
 import { RunnerBrokerReadinessRequestV1Schema } from '@happier-dev/protocol/teams';
 
@@ -45,11 +47,11 @@ const credentialSelectionBinding = {
   sourceRevision: 'source-revision-7',
 };
 
-function harness(fetchImpl: typeof fetch) {
+function harness(fetchImpl: typeof fetch, localPort = 48123) {
   const close = vi.fn(async () => undefined);
   const shutdown = vi.fn(async () => undefined);
   const openHttpTunnel = vi.fn(async () => ({
-    localPort: 48123,
+    localPort,
     localCapability: 'f'.repeat(64),
     remoteEndpointId: request.target.endpointId,
     observedPath: 'direct' as const,
@@ -72,6 +74,48 @@ function harness(fetchImpl: typeof fetch) {
 describe('Runner broker readiness client', () => {
   beforeEach(() => vi.stubEnv('HAPPIER_HOME_CARRIER_POLICY', 'automatic'));
   afterEach(() => vi.unstubAllEnvs());
+
+  it.each([302, 307, 200])('preserves HTTP %s semantics through the injected real fetch channel', async status => {
+    let redirectedRequests = 0;
+    let requests = 0;
+    const server = createServer((incoming, response) => {
+      incoming.resume();
+      if (incoming.url === '/redirected') {
+        redirectedRequests += 1;
+        response.end('{}');
+      } else {
+        requests += 1;
+        if (status === 200) {
+          response.setHeader('content-type', 'application/json');
+          response.end(JSON.stringify({ v: 1, binding, credentialSelectionBinding, readiness: { kind: 'available' } }));
+        } else {
+          const address = server.address();
+          if (!address || typeof address === 'string') throw new Error('Missing server address');
+          response.writeHead(status, { location: `http://localhost:${address.port}/redirected` });
+          response.end();
+        }
+      }
+    });
+    server.listen(0);
+    await once(server, 'listening');
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('Missing server address');
+    const h = harness(vi.fn<typeof fetch>((...args) => fetch(...args)), address.port);
+    try {
+      const result = checkRunnerBrokerNonInferenceReadiness({ createRequest: () => request,
+        target: { endpointId: request.target.endpointId }, happyHomeDir: '/runner-home',
+        signal: new AbortController().signal, createRuntime: h.createRuntime, fetchImpl: h.fetchImpl });
+      if (status === 200) await expect(result).resolves.toEqual({ kind: 'available' });
+      else await expect(result).rejects.toMatchObject({ code: 'credential_request_redirect_refused', retryable: false, status });
+      expect(requests).toBe(1);
+      expect(redirectedRequests).toBe(0);
+      expect(h.close).toHaveBeenCalledOnce();
+      expect(h.shutdown).toHaveBeenCalledOnce();
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>(resolve => server.close(() => resolve()));
+    }
+  });
 
   it('reports broker unavailable without creating a native endpoint under Standard-only policy', async () => {
     vi.stubEnv('HAPPIER_HOME_CARRIER_POLICY', 'standard_only');

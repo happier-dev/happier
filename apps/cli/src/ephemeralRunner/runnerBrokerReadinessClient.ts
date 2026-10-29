@@ -1,5 +1,6 @@
 import { MACHINE_HTTP_LOCAL_CAPABILITY_HEADER } from '@happier-dev/iroh-native/node';
 import { readHomeApplicationCarrierEligibilityFromEnv } from '@happier-dev/cli-common/homeEnrollment';
+import { fetchWithCredentialRedirectRefusal } from '@happier-dev/cli-common/homeTarget';
 import { doesRunnerBrokerReadinessResponseMatchRequestV1, RunnerBrokerReadinessResponseV1Schema } from '@happier-dev/protocol/teams/credentials/readinessV1';
 import type { RunnerBrokerReadinessRequestV1, TeamCredentialResourceReadinessV1 } from '@happier-dev/protocol/teams';
 import type { IrohEndpointDescriptorV1 } from '@happier-dev/protocol';
@@ -51,7 +52,7 @@ export async function checkRunnerBrokerNonInferenceReadiness(input: Readonly<{
       flow: 'provider_broker_readiness',
       handshake: request,
     }, input.target);
-    const response = await (input.fetchImpl ?? fetch)(`http://127.0.0.1:${tunnel.localPort}/readiness`, {
+    const response = await fetchWithCredentialRedirectRefusal(`http://127.0.0.1:${tunnel.localPort}/readiness`, {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
@@ -60,8 +61,7 @@ export async function checkRunnerBrokerNonInferenceReadiness(input: Readonly<{
       },
       body: JSON.stringify(request),
       signal: input.signal,
-      redirect: 'error',
-    });
+    }, input.fetchImpl);
     if (!response.ok) {
       return response.status === 403 ? { kind: 'policy_denied' } : { kind: 'broker_unavailable' };
     }

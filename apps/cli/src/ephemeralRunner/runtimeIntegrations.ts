@@ -35,6 +35,7 @@ import { createProviderBrokerMachineCarrierTunnelOpen } from '@/daemon/peer/iroh
 import { createSessionBrokerApplicationEvidence } from '@/providers/broker/sessionBrokerApplicationEvidence';
 import { resolvePeerMediationTrustRoots } from '@/daemon/peer/mediation/resolvePeerMediationTrustRoots';
 import { fetchServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
+import { fetchWithCredentialRedirectRefusal } from '@happier-dev/cli-common/homeTarget';
 import { openExactSessionTeamCredentialProviderBinding } from '@/providers/broker/sessionTeamCredentialProviderBinding';
 import { isSameTeamCredentialBrokerApplication } from '@/providers/broker/teamCredentialModelCatalog';
 import { materializeRunnerMcpMaterial } from '@/mcp/servers/materializeRunnerMcpMaterial';
@@ -124,7 +125,7 @@ function throwIfCancelled(signal: AbortSignal): void {
 }
 
 async function requestJson(origin: string, path: string, init: RequestInit, signal: AbortSignal): Promise<unknown> {
-  const response = await fetch(new URL(path, origin), { ...init, signal, redirect: 'error' });
+  const response = await fetchWithCredentialRedirectRefusal(new URL(path, origin), { ...init, signal });
   if (!response.ok) throw new EphemeralRunnerControlHttpError(response.status);
   return await response.json();
 }
