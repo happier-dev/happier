@@ -140,6 +140,19 @@ export type ActionExecuteResult = Readonly<{
   | Readonly<{ ok: true; result: unknown }>
   | ActionExecuteFailure);
 
+/** The complete public Action settlement, including original operation custody. */
+export const ActionExecuteResultSchema = lazyZodSchema(() => z.union([
+  z.strictObject({
+    ok: z.literal(true),
+    result: z.unknown(),
+    operationCredentialUses: z.optional(z.array(ActionOperationCredentialUseV1Schema)),
+  }),
+  z.strictObject({
+    ...ActionExecuteFailureSchema.shape,
+    operationCredentialUses: z.optional(z.array(ActionOperationCredentialUseV1Schema)),
+  }),
+]));
+
 /** Failure of confirmation is not proof that an admitted effect did not happen. */
 export const UNEXPECTED_ACTION_FAILURE_CODES_V1 = ['action_not_admitted', 'action_outcome_unknown'] as const;
 
