@@ -188,7 +188,7 @@ describe('Codex candidate index head', () => {
     });
 
     it.skipIf(process.platform === 'win32')('refreshes native names through the admitted page operation while retaining the rollout index', async () => {
-        const root = await mkdtemp(join(tmpdir(), 'hcn-'));
+        const root = await mkdtemp(join('/tmp', 'hcn-'));
         roots.push(root);
         const codexHome = join(root, 'codex');
         const source = { kind: 'codexHome', home: 'user', homePath: codexHome } as const;
