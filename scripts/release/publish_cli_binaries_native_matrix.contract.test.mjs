@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdir, mkdtemp, readdir, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { join } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import YAML from 'yaml';
+import { collectPublisherExternalActionUses } from './workflowSecurityTestkit.mjs';
 
 const repoRootPath = fileURLToPath(new URL('../../', import.meta.url));
 const workflowPath = new URL('../../.github/workflows/publish-cli-binaries.yml', import.meta.url);
@@ -177,53 +178,6 @@ function usesAction(step, actionName) {
 
 function usesPinnedPublishAction(step, actionName) {
   return step?.uses === `${actionName}@${PINNED_PUBLISH_ACTIONS[actionName]}`;
-}
-
-function assertPathWithinRepository(repositoryRoot, candidatePath, use) {
-  const relativePath = relative(repositoryRoot, candidatePath);
-  if (
-    relativePath === '..'
-    || relativePath.startsWith(`..${sep}`)
-    || isAbsolute(relativePath)
-  ) {
-    throw new Error(`local action path is outside the repository: ${use}`);
-  }
-}
-
-async function collectPublisherExternalActionUses(workflow, {
-  repositoryRoot = repoRootPath,
-} = {}) {
-  const pendingUses = Object.values(workflow.jobs ?? {}).flatMap((job) => [
-    job?.uses,
-    ...(job?.steps ?? []).map((step) => step?.uses),
-  ]);
-  const inspectedLocalActions = new Set();
-  const externalUses = [];
-
-  while (pendingUses.length > 0) {
-    const use = pendingUses.pop();
-    if (typeof use !== 'string') continue;
-    if (!use.startsWith('./')) {
-      externalUses.push(use);
-      continue;
-    }
-    const repositoryLocalUse = use.startsWith('./.release-control/')
-      ? `./${use.slice('./.release-control/'.length)}`
-      : use;
-    const localActionPath = resolve(repositoryRoot, repositoryLocalUse, 'action.yml');
-    assertPathWithinRepository(repositoryRoot, localActionPath, use);
-    const [canonicalRepositoryRoot, canonicalLocalActionPath] = await Promise.all([
-      realpath(repositoryRoot),
-      realpath(localActionPath),
-    ]);
-    assertPathWithinRepository(canonicalRepositoryRoot, canonicalLocalActionPath, use);
-    if (inspectedLocalActions.has(canonicalLocalActionPath)) continue;
-    inspectedLocalActions.add(canonicalLocalActionPath);
-    const localAction = YAML.parse(await readFile(canonicalLocalActionPath, 'utf8'));
-    pendingUses.push(...(localAction.runs?.steps ?? []).map((step) => step?.uses));
-  }
-
-  return externalUses;
 }
 
 function assertPublisherExternalActionsPinned(externalUses) {

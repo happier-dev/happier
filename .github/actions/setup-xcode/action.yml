@@ -11,7 +11,7 @@ runs:
   using: composite
   steps:
     - name: Select Xcode ${{ inputs.xcode_version }}
-      uses: maxim-lobanov/setup-xcode@v1
+      uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
       with:
         xcode-version: ${{ inputs.xcode_version }}
 
