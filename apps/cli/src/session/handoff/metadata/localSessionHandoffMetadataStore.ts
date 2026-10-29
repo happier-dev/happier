@@ -48,7 +48,7 @@ function buildAgentNativeResumeRecordFingerprint(
  * AgentState, PID, permission, cursor, request, or transcript content is
  * retained.
  */
-const StoredLocalAgentResumeRecordV1Schema = z.strictObject({
+const StoredLocalAgentResumeRecordV1Schema = lazyZodSchema(() => z.strictObject({
     v: z.literal(1),
 
     // Scoping. The filename is a hash, so these two are the only proof the file
@@ -75,7 +75,7 @@ const StoredLocalAgentResumeRecordV1Schema = z.strictObject({
      * this record is already read on return.
      */
     departureSeqInclusive: z.number().check(z.int(), z.nonnegative()),
-});
+}));
 
 type StoredLocalAgentResumeRecordV1 = z.infer<typeof StoredLocalAgentResumeRecordV1Schema>;
 

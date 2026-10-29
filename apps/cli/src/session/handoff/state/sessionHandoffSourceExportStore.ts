@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '@happier-dev/protocol/lazyZodSchema';
 import { copyFile, lstat, mkdir, readdir, rm, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { join, posix, relative, resolve, sep, win32 } from 'node:path';
@@ -21,15 +22,15 @@ import { readSessionHandoffStorageStates } from '../prepare/sessionHandoffPrepar
 
 const SOURCE_EXPORT_SCHEMA_VERSION = 1 as const;
 
-const AgentBundleFileSchema = z.strictObject({
+const AgentBundleFileSchema = lazyZodSchema(() => z.strictObject({
   transferId: z.string().check(z.minLength(1)),
   filePath: z.string().check(z.minLength(1)),
   sizeBytes: z.number().check(z.int(), z.nonnegative()),
   manifestHash: z.string().check(z.regex(/^sha256:[a-f0-9]{64}$/u)),
   endpointCandidates: z.optional(z.readonly(z.array(TransferEndpointCandidateSchema))),
-});
+}));
 
-const SourceExportRecordSchemaV1 = z.strictObject({
+const SourceExportRecordSchemaV1 = lazyZodSchema(() => z.strictObject({
   t: z.literal('session_handoff_source_export_v1'),
   schemaVersion: z.literal(SOURCE_EXPORT_SCHEMA_VERSION),
   handoffId: z.string().check(z.minLength(1)),
@@ -47,7 +48,7 @@ const SourceExportRecordSchemaV1 = z.strictObject({
     files: z.record(z.string(), AgentBundleFileSchema),
     endpointCandidates: z.optional(z.readonly(z.array(TransferEndpointCandidateSchema))),
   })),
-});
+}));
 const SourceExportStoredReadSchemaV1 = createStoredReadSchema(SourceExportRecordSchemaV1);
 
 export type SessionHandoffSourceExportRecord = z.infer<typeof SourceExportRecordSchemaV1>;

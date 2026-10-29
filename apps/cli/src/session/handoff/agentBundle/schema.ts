@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '@happier-dev/protocol/lazyZodSchema';
 import { z } from 'zod/mini';
 
 // Internal (CLI-only) contract for the agent bundle file transferred during session handoff.
@@ -23,9 +24,9 @@ function normalizeLegacyAgentBundleIdentity(value: unknown): unknown {
   return { ...rest, agentId: agentId ?? providerId };
 }
 
-export const SessionHandoffAgentBundleSchema = (<I extends z.core.$ZodType, O extends z.core.$ZodType>(input: I, output: O) => new z.ZodMiniPipe({ type: 'pipe', in: input, out: output }) as z.ZodMiniPipe<I, O>)(z.transform(normalizeLegacyAgentBundleIdentity), z.looseObject({
+export const SessionHandoffAgentBundleSchema = lazyZodSchema(() => (<I extends z.core.$ZodType, O extends z.core.$ZodType>(input: I, output: O) => new z.ZodMiniPipe({ type: 'pipe', in: input, out: output }) as z.ZodMiniPipe<I, O>)(z.transform(normalizeLegacyAgentBundleIdentity), z.looseObject({
       agentId: z.string().check(z.minLength(1)),
-    }));
+    })));
 
 /**
  * Project the canonical Agent-owned bundle onto the strict predecessor archive wire shape.

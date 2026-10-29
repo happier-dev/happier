@@ -1,3 +1,4 @@
+import { lazyDefinition, lazyZodSchema } from '@happier-dev/protocol/lazyZodSchema';
 import { randomUUID } from 'node:crypto';
 import { lstat, mkdir, readdir, readFile, rename } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -20,7 +21,7 @@ import { logger } from '@/ui/logger';
 const SESSION_HANDOFF_PREPARE_TARGET_JOB_SCHEMA_VERSION_V1 = 1 as const;
 const SESSION_HANDOFF_PREPARE_TARGET_JOB_SCHEMA_VERSION_V2 = 2 as const;
 
-const SessionHandoffPrepareTargetJobRecordV1Schema = z
+const SessionHandoffPrepareTargetJobRecordV1Schema = lazyZodSchema(() => z
   .object({
     schemaVersion: z.literal(SESSION_HANDOFF_PREPARE_TARGET_JOB_SCHEMA_VERSION_V1),
     jobId: z.string().check(z.minLength(1)),
@@ -73,15 +74,15 @@ const SessionHandoffPrepareTargetJobRecordV1Schema = z
         message: 'Prepare-target job result status must use the same handoffId as the record',
       });
     }
-  }));
+  })));
 
-const SessionHandoffPrepareRecoveryAttemptFenceV2Schema = z.strictObject({
+const SessionHandoffPrepareRecoveryAttemptFenceV2Schema = lazyZodSchema(() => z.strictObject({
   attemptId: z.string().check(z.minLength(1), z.maxLength(256)),
   acceptedAtMs: z.number().check(z.int(), z.minimum(0)),
   acceptedRevision: z.number().check(z.int(), z.minimum(0)),
-});
+}));
 
-const SessionHandoffPrepareRecoveryStateV2Schema = z.discriminatedUnion('status', [
+const SessionHandoffPrepareRecoveryStateV2Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
   z.strictObject({ status: z.literal('not_attempted') }),
   z.strictObject({
     status: z.literal('awaiting_user_resume'),
@@ -93,9 +94,9 @@ const SessionHandoffPrepareRecoveryStateV2Schema = z.discriminatedUnion('status'
     status: z.literal('attempted'),
     ...SessionHandoffPrepareRecoveryAttemptFenceV2Schema.shape,
   }),
-]);
+]));
 
-const SessionHandoffRuntimeResumeStateV2Schema = z.discriminatedUnion('status', [
+const SessionHandoffRuntimeResumeStateV2Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
   z.strictObject({ status: z.literal('not_attempted') }),
   z.strictObject({ status: z.literal('preexisting_unowned') }),
   z.strictObject({
@@ -109,9 +110,9 @@ const SessionHandoffRuntimeResumeStateV2Schema = z.discriminatedUnion('status', 
     acceptedAtMs: z.number().check(z.int(), z.minimum(0)),
     confirmedAtMs: z.number().check(z.int(), z.minimum(0)),
   }),
-]);
+]));
 
-const SessionHandoffTerminalStateV2Schema = z.discriminatedUnion('status', [
+const SessionHandoffTerminalStateV2Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
   z.strictObject({ status: z.literal('open') }),
   z.strictObject({
     status: z.literal('aborting'),
@@ -128,9 +129,9 @@ const SessionHandoffTerminalStateV2Schema = z.discriminatedUnion('status', [
     operationId: z.string().check(z.minLength(1)),
     completedRevision: z.number().check(z.int(), z.minimum(0)),
   }),
-]);
+]));
 
-const SessionHandoffTargetCleanupV2Schema = z.discriminatedUnion('status', [
+const SessionHandoffTargetCleanupV2Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
   z.strictObject({ status: z.literal('legacy_cleanup_unavailable') }),
   z.strictObject({ status: z.literal('not_applicable'), reason: z.literal('source_only') }),
   z.strictObject({ status: z.literal('not_required') }),
@@ -149,9 +150,9 @@ const SessionHandoffTargetCleanupV2Schema = z.discriminatedUnion('status', [
     reason: z.enum(['failed', 'unreachable', 'ambiguous']),
     attemptedAtMs: z.number().check(z.int(), z.minimum(0)),
   }),
-]);
+]));
 
-const sessionHandoffPrepareTargetJobV2CommonShape = {
+const sessionHandoffPrepareTargetJobV2CommonShape = lazyDefinition(() => ({
   jobId: z.string().check(z.minLength(1)),
   handoffId: z.string().check(z.minLength(1)),
   createdAtMs: z.number().check(z.int(), z.minimum(0)),
@@ -168,44 +169,44 @@ const sessionHandoffPrepareTargetJobV2CommonShape = {
   transitionRevision: z.number().check(z.int(), z.minimum(0)),
   prepareRecovery: z._default(SessionHandoffPrepareRecoveryStateV2Schema, { status: 'not_attempted' }),
   terminal: SessionHandoffTerminalStateV2Schema,
-} as const;
+} as const));
 
-const SessionHandoffPreparedTargetJobRecordV2Schema = z.object({
+const SessionHandoffPreparedTargetJobRecordV2Schema = lazyZodSchema(() => z.object({
   schemaVersion: z.literal(SESSION_HANDOFF_PREPARE_TARGET_JOB_SCHEMA_VERSION_V2),
   recordKind: z.literal('prepared_target'),
   ...sessionHandoffPrepareTargetJobV2CommonShape,
   sessionId: z.string().check(z.minLength(1)),
   resume: SessionHandoffRuntimeResumeStateV2Schema,
   targetCleanup: SessionHandoffTargetCleanupV2Schema,
-});
+}));
 
-const SessionHandoffLegacyTargetJobRecordV2Schema = z.object({
+const SessionHandoffLegacyTargetJobRecordV2Schema = lazyZodSchema(() => z.object({
   schemaVersion: z.literal(SESSION_HANDOFF_PREPARE_TARGET_JOB_SCHEMA_VERSION_V2),
   recordKind: z.literal('legacy_target'),
   ...sessionHandoffPrepareTargetJobV2CommonShape,
   resume: z.strictObject({ status: z.literal('legacy_unknown') }),
   targetCleanup: z.strictObject({ status: z.literal('legacy_cleanup_unavailable') }),
-});
+}));
 
-const SessionHandoffSourceOnlyJobRecordV2Schema = z.object({
+const SessionHandoffSourceOnlyJobRecordV2Schema = lazyZodSchema(() => z.object({
   schemaVersion: z.literal(SESSION_HANDOFF_PREPARE_TARGET_JOB_SCHEMA_VERSION_V2),
   recordKind: z.literal('source_only'),
   ...sessionHandoffPrepareTargetJobV2CommonShape,
   sessionId: z.optional(z.string().check(z.minLength(1))),
   resume: z.strictObject({ status: z.literal('not_applicable') }),
   targetCleanup: z.strictObject({ status: z.literal('not_applicable'), reason: z.literal('source_only') }),
-});
+}));
 
-const SessionHandoffPrepareTargetJobRecordV2Schema = z.discriminatedUnion('recordKind', [
+const SessionHandoffPrepareTargetJobRecordV2Schema = lazyZodSchema(() => z.discriminatedUnion('recordKind', [
   SessionHandoffPreparedTargetJobRecordV2Schema,
   SessionHandoffLegacyTargetJobRecordV2Schema,
   SessionHandoffSourceOnlyJobRecordV2Schema,
-]);
+]));
 
-const SessionHandoffPrepareTargetJobRecordSchema = z.union([
+const SessionHandoffPrepareTargetJobRecordSchema = lazyZodSchema(() => z.union([
   SessionHandoffPrepareTargetJobRecordV1Schema,
   SessionHandoffPrepareTargetJobRecordV2Schema,
-]);
+]));
 
 export type SessionHandoffPrepareTargetJobRecord = z.output<typeof SessionHandoffPrepareTargetJobRecordSchema>;
 export type SessionHandoffPrepareTargetJobRecordV2 = z.output<typeof SessionHandoffPrepareTargetJobRecordV2Schema>;
