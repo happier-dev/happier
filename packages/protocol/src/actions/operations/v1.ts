@@ -129,6 +129,20 @@ export const ManagedControllerRequestFailureDetailsV1Schema = lazyZodSchema(() =
   code: z.optional(z.string().check(z.regex(/^[a-z][a-z0-9_-]*$/i), z.maxLength(ACTION_OPERATION_ERROR_CODE_MAX_LENGTH_V1))),
 }));
 export type ManagedControllerRequestFailureDetailsV1 = Readonly<z.infer<typeof ManagedControllerRequestFailureDetailsV1Schema>>;
+/** Interpreter process facts only; native output and submitted plans never cross this seam. */
+export const ManagedBootstrapFailureDetailsV1Schema = lazyZodSchema(() => z.strictObject({
+  kind: z.literal('managedBootstrap'),
+  phase: z.enum(['check', 'apply']),
+  response: z.enum(['missing_result', 'invalid_response', 'result']),
+  exitStatus: z.number().check(z.int()),
+  stdoutPresent: z.boolean(),
+  stderrPresent: z.boolean(),
+  resultStatus: z.optional(z.enum(['checked', 'applied', 'plan_changed', 'unsupported', 'unavailable', 'failed', 'cancelled', 'outcome_unknown'])),
+  reason: z.optional(z.string().check(z.regex(/^[a-z][a-z0-9_]*$/i), z.maxLength(ACTION_OPERATION_ERROR_CODE_MAX_LENGTH_V1))),
+}).check(z.refine(value => value.response === 'result'
+  ? value.resultStatus !== undefined
+  : value.resultStatus === undefined && value.reason === undefined)));
+export type ManagedBootstrapFailureDetailsV1 = Readonly<z.infer<typeof ManagedBootstrapFailureDetailsV1Schema>>;
 export const ActionOperationFailureV1Schema = lazyZodSchema(() => z.strictObject({
   errorCode: ActionOperationErrorCodeV1Schema,
   error: z.string().check(z.trim(), z.minLength(1), z.maxLength(ACTION_OPERATION_ERROR_MAX_LENGTH_V1)),
