@@ -17,12 +17,17 @@ function exactCapability(value: unknown): DaemonHostedWebFrameCapabilityV1 | nul
  * remains the authority: this only names the platform-specific transport it
  * has already proved available.
  */
+let hostCapability: DaemonHostedWebFrameCapabilityV1 | null | undefined;
+
 export function resolveHostedWebFrameCapability(): DaemonHostedWebFrameCapabilityV1 | null {
     const platform = Platform.OS;
     if (platform !== 'ios' && platform !== 'android') return null;
-    if (!isHostedArtifactFrameNativeAdapterAvailable()) return null;
+    if (hostCapability !== undefined) return hostCapability;
+    // Native module/view availability is fixed for this loaded host. Machine
+    // projection reads carry the admitted fact rather than probing it again.
+    if (!isHostedArtifactFrameNativeAdapterAvailable()) return hostCapability = null;
 
-    return platform === 'ios'
+    return hostCapability = platform === 'ios'
         ? exactCapability({ platform: 'ios', adapter: 'WKWebView' })
         : exactCapability({ platform: 'android', adapter: 'WebViewAssetLoader' });
 }

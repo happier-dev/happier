@@ -33,8 +33,23 @@ function readNativeHostedArtifactFrameCapability(value: unknown): DaemonHostedWe
  * actually construct. This publishes a host fact only; Artifact admission,
  * source selection, and renderer fallback remain daemon/registry-owned.
  */
-export async function resolveHostedWebFrameCapability(): Promise<DaemonHostedWebFrameCapabilityV1 | null> {
-    if (Platform.OS !== 'web') return null;
+let hostCapability: Promise<DaemonHostedWebFrameCapabilityV1 | null> | undefined;
+
+export function resolveHostedWebFrameCapability(): Promise<DaemonHostedWebFrameCapabilityV1 | null> {
+    if (Platform.OS !== 'web') return Promise.resolve(null);
+    if (hostCapability) return hostCapability;
+    // A pre-DOM read has no physical host to probe yet. Once mounted, the
+    // adapter is a fact of this shell, independent of Machine, plugin or Account.
+    if (!isDesktopHost() && !globalThis.document?.body) return Promise.resolve(null);
+    return hostCapability = detectHostedWebFrameCapability().then(capability => {
+        // Share the active probe and retain a proven adapter. A failed probe
+        // is not a permanent host fact: the next real demand can try again.
+        if (capability === null) hostCapability = undefined;
+        return capability;
+    });
+}
+
+async function detectHostedWebFrameCapability(): Promise<DaemonHostedWebFrameCapabilityV1 | null> {
 
     // The packaged Tauri host owns a direct Wry child view rather than a DOM
     // iframe. Its restricted Artifact-native owner, rather than the general
