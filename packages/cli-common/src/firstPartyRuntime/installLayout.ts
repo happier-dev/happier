@@ -12,6 +12,7 @@ export interface FirstPartyInstallLayout {
   channel: PublicReleaseRingId;
   installRootName: string;
   installShims: readonly string[];
+  /** Managed installation home; may differ from the private HAPPIER_HOME_DIR. */
   happyHomeDir: string;
   installRoot: string;
   versionsDir: string;
@@ -22,6 +23,16 @@ export interface FirstPartyInstallLayout {
 
 const FIRST_PARTY_VERSION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._+-]*$/u;
 const FIRST_PARTY_VERSION_ID_MAX_LENGTH = 200;
+
+export const FIRST_PARTY_INSTALL_HOME_ENV_KEY = 'HAPPIER_FIRST_PARTY_INSTALL_HOME';
+
+/** Reuse the canonical home expansion rules without changing daemon-private state. */
+export function resolveFirstPartyInstallHomeDir(processEnv: NodeJS.ProcessEnv = process.env): string {
+  const override = processEnv[FIRST_PARTY_INSTALL_HOME_ENV_KEY]?.trim();
+  return resolveHappyHomeDirFromEnvironment(override
+    ? { ...processEnv, HAPPIER_HOME_DIR: override }
+    : processEnv);
+}
 
 export class InvalidFirstPartyVersionIdError extends Error {
   readonly code = 'FIRST_PARTY_VERSION_ID_INVALID';
@@ -56,7 +67,7 @@ export function resolveFirstPartyInstallLayout(params: Readonly<{
     componentId: params.componentId,
     channel,
   });
-  const happyHomeDir = resolveHappyHomeDirFromEnvironment(processEnv);
+  const happyHomeDir = resolveFirstPartyInstallHomeDir(processEnv);
   const installRoot = joinPathForPathShape(happyHomeDir, component.installRootName);
 
   return {

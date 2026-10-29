@@ -74,6 +74,31 @@ describe('runManagedCliUpdate — the one CLI update transaction', () => {
     };
   }
 
+  it('updates the shared installation without placing payloads or activation state in the private home', async () => {
+    const installHome = join(homeDir, 'installation');
+    const privateHome = join(homeDir, 'private');
+    env = { ...env, HAPPIER_HOME_DIR: privateHome, HAPPIER_FIRST_PARTY_INSTALL_HOME: installHome };
+    await installInitial('1.0.0');
+
+    expect(await readFile(join(installHome, 'bin', binaryName()), 'utf8')).toBe('binary-1.0.0');
+    const result = await runManagedCliUpdate({
+      channel: 'stable',
+      processEnv: env,
+      preparePayload: prepareFrom('2.0.0'),
+      readVersion: readFixtureVersion,
+      restartServiceDaemon: async () => {
+        expect(existsSync(join(installHome, 'first-party-activation.lock'))).toBe(true);
+        expect(await readFile(join(installHome, 'bin', binaryName()), 'utf8')).toBe('binary-2.0.0');
+      },
+    });
+
+    expect(result.outcome).toBe('succeeded');
+    const layout = resolveFirstPartyInstallLayout({ componentId: 'happier-cli', processEnv: env });
+    expect(await readInstalledVersionMarkers(layout)).toEqual({ currentVersionId: '2.0.0', previousVersionId: '1.0.0' });
+    expect(resolveDefaultManagedReleaseChannelStatePath({ processEnv: env })).toBe(join(installHome, 'default-cli-release-channel.json'));
+    expect(existsSync(privateHome)).toBe(false);
+  });
+
   it('activates nothing when the staged executable does not report the target version', async () => {
     await installInitial('1.0.0');
     const layout = resolveFirstPartyInstallLayout({ componentId: 'happier-cli', processEnv: env });

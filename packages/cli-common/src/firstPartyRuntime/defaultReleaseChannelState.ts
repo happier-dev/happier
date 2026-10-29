@@ -5,9 +5,8 @@ import { dirname } from 'node:path';
 import { normalizePublicReleaseRingId, type PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
 
 import { joinPathForPathShape } from '../path/pathShape.js';
-import { resolveHappyHomeDirFromEnvironment } from '../agents/resolveHappyHomeDir.js';
 import type { FirstPartyComponentId } from './componentCatalog.js';
-import { resolveFirstPartyInstallLayout } from './installLayout.js';
+import { resolveFirstPartyInstallHomeDir, resolveFirstPartyInstallLayout } from './installLayout.js';
 import { readInstalledVersionMarkersSync } from './versionMarkers.js';
 
 const DEFAULT_MANAGED_RELEASE_CHANNEL: PublicReleaseRingId = 'stable';
@@ -20,7 +19,7 @@ export function shouldPersistDefaultManagedReleaseChannel(componentId: FirstPart
 export function resolveDefaultManagedReleaseChannelStatePath(params: Readonly<{
     processEnv?: NodeJS.ProcessEnv;
 }> = {}): string {
-    const happyHomeDir = resolveHappyHomeDirFromEnvironment(params.processEnv ?? process.env);
+    const happyHomeDir = resolveFirstPartyInstallHomeDir(params.processEnv ?? process.env);
     return joinPathForPathShape(happyHomeDir, 'default-cli-release-channel.json');
 }
 

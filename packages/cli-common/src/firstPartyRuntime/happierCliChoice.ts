@@ -3,7 +3,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
 import { joinPathForPathShape } from '../path/pathShape.js';
-import { resolveHappyHomeDirFromEnvironment } from '../agents/resolveHappyHomeDir.js';
+import { resolveFirstPartyInstallHomeDir } from './installLayout.js';
 
 /**
  * Which Happier CLI this computer runs (plan R12): the one this app installs and keeps first on
@@ -21,7 +21,7 @@ export type HappierCliChoice =
 export function resolveHappierCliChoiceStatePath(params: Readonly<{
   processEnv?: NodeJS.ProcessEnv;
 }> = {}): string {
-  return joinPathForPathShape(resolveHappyHomeDirFromEnvironment(params.processEnv ?? process.env), 'cli-choice.json');
+  return joinPathForPathShape(resolveFirstPartyInstallHomeDir(params.processEnv ?? process.env), 'cli-choice.json');
 }
 
 function parseHappierCliChoice(raw: string): HappierCliChoice | null {
