@@ -72,6 +72,7 @@ describe('Project Services source feed plus actual native binding', () => {
       state: 'available', unavailableReason: undefined, readiness: 'ready', actions: ['manage'] });
     const watchSignals: AbortSignal[] = [];
     let running = false;
+    let failNativeRead = false;
     remote.mockImplementation(async ({ method, machineId, payload, signal }: {
       method: string; machineId: string; payload: { projection?: 'managed_bindings' }; signal: AbortSignal;
     }) => {
@@ -79,9 +80,11 @@ describe('Project Services source feed plus actual native binding', () => {
         watchSignals.push(signal);
         return new Promise(() => {});
       }
-      if (method === RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_SNAPSHOT) return { protocolVersion: 1,
-        snapshot: { v: 1, machineId, updatedAt: running ? 2 : 1,
+      if (method === RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_SNAPSHOT) {
+        if (failNativeRead && payload.projection) throw new Error('Native read unavailable');
+        return { protocolVersion: 1, snapshot: { v: 1, machineId, updatedAt: running ? 2 : 1,
           targets: payload.projection ? running ? [actual] : [] : [declaration] } };
+      }
       return { protocolVersion: 1, snapshot: { v: 1, machineId, generatedAt: 1, refreshState: 'idle', entries: [], diagnostics: [] } };
     });
     const hook = await renderHook(() => useLocalServiceLiveFeeds({ machineId: source.machineId, serverId,
@@ -102,6 +105,17 @@ describe('Project Services source feed plus actual native binding', () => {
       await vi.waitFor(() => expect(readRows()[0]).toMatchObject({ id: declaration.id, status: 'running', target: actual }));
       expect(watchSignals).toHaveLength(1);
       expect(storage.getState().projectAccountRows?.workspaceRefs[0]?.serverId).toBe(serverId);
+      const lastKnownRow = readRows()[0];
+      const bindingKey = { ...await readCatalogBinding(serverId), machineId: source.machineId,
+        scope: 'workspace' as const, workspaceRoot: source.rootPath, projection: 'managed_bindings' as const };
+      failNativeRead = true;
+      await act(async () => {
+        invalidateLocalServiceLauncherStore(bindingKey);
+        await readLocalServiceLauncherStore(bindingKey);
+      });
+      await vi.waitFor(() => expect(getLocalServiceLauncherState(bindingKey).refreshStatus).toBe('error'));
+      await flushHookEffects();
+      expect(readRows()[0]).toEqual(lastKnownRow);
     } finally { await hook.unmount(); account.dispose(); }
     expect(watchSignals.every(signal => signal.aborted)).toBe(true);
   });
@@ -200,8 +214,9 @@ describe('Project Services source feed plus actual native binding', () => {
           invalidateLocalServiceLauncherStore(bindingKey);
           await readLocalServiceLauncherStore(bindingKey);
         });
-        await vi.waitFor(() => expect(readRows()[0]?.status).toBe('unavailable'));
+        await vi.waitFor(() => expect(getLocalServiceLauncherState(bindingKey).refreshStatus).toBe('error'));
         await flushHookEffects();
+        expect(readRows()[0]).toMatchObject({ status: 'stopped', primaryAction: { kind: 'start' } });
         const failedCensuses = censusReads;
         const failedCommits = feedCommits;
         const failedBindingReads = countReads(true);
@@ -244,7 +259,7 @@ describe('Project Services source feed plus actual native binding', () => {
           ? new RpcError('Transport unavailable', RPC_ERROR_CODES.METHOD_NOT_AVAILABLE) : { invalid: true }); });
         await flushHookEffects();
         expect.soft(hook.getCurrent().inventoryState.refreshState).toBe('error');
-        expect.soft(readRows()[0]).toMatchObject({ id: declaration.id, status: 'unavailable', primaryAction: null });
+        expect.soft(readRows()[0]).toMatchObject({ id: declaration.id, status: 'stopped', primaryAction: { kind: 'start' } });
         expect(watches).toHaveLength(1);
         await act(async () => { publishHomeAccountChange('another-home', undefined, { source: 'connected' }); });
         await act(async () => {
@@ -646,8 +661,10 @@ describe('Project Services source feed plus actual native binding', () => {
       rowIdsByTargetId: hook.getCurrent().launcherState?.rowIdsByTargetId, sessionId: null, scope: 'workspace' });
     expect(readRows()[0]).toMatchObject({ id: declarations[0]!.id, target: actuals[0] });
     await vi.waitFor(() => expect(watchReplies.has('worker')).toBe(true));
+    const retainedWorkerRows = readRows();
     await act(async () => { watchReplies.get('worker')!(new RpcError('Daemon disconnected', RPC_ERROR_CODES.METHOD_NOT_AVAILABLE)); });
-    await vi.waitFor(() => expect(readRows()[0]).toMatchObject({ id: declarations[0]!.id, status: 'unavailable', primaryAction: null }));
+    await flushHookEffects();
+    expect(readRows()).toEqual(retainedWorkerRows);
     await act(async () => { clearMachineRequestReachabilityForMachine(scope, 'worker'); });
     await vi.waitFor(() => expect(readRows()[0]).toMatchObject({ id: declarations[0]!.id, status: 'running', target: actuals[0] }));
     const readsBeforeRefresh = managedReads;

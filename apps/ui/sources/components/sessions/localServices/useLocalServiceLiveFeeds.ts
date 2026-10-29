@@ -193,7 +193,9 @@ function useProjectServiceBindings(input: LocalServiceLiveFeedsInput, sourceStat
                     await readLocalServiceLauncherStore(key);
                     const state = getLocalServiceLauncherState(key);
                     const snapshot = snapshotFromLocalServiceLauncherState(state);
-                    if (!snapshot || state.refreshStatus === 'error') throw new Error('Service binding is unavailable');
+                    // A failed refresh carries no new binding fact. Re-project the
+                    // admitted snapshot so last-known rows keep their state and group.
+                    if (!snapshot) throw new Error('Service binding is unavailable');
                     return { protocolVersion: 1, snapshot };
                 },
             });
