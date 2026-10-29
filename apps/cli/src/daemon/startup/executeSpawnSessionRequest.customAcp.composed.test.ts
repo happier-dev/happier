@@ -1845,6 +1845,19 @@ describe('Custom ACP fresh daemon launch composition', () => {
     expect(result, JSON.stringify(result)).toMatchObject({ type: 'error', errorCode: 'agent_cli_missing', agentId: 'custom-acp' });
   });
 
+  it('refuses a launch for a backend disabled in Account Settings before runner launch', async () => {
+    const snapshot = getActiveAccountSettingsSnapshot();
+    if (!snapshot) throw new Error('Expected the fixture Account Settings snapshot');
+    setActiveAccountSettingsSnapshot({ ...snapshot, settingsVersion: snapshot.settingsVersion + 1, settings: accountSettingsParse({
+      backendEnabledByTargetKey: { [buildBackendTargetKeyV2({
+        kind: 'agent', identity: CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1, definitionId: 'alpha' })]: false },
+    }) });
+    const result = await executeSpawnSessionRequest(params('alpha', async () => {
+      throw new Error('A disabled backend must never reach runner admission');
+    }));
+    expect(result, JSON.stringify(result)).toMatchObject({ type: 'error', errorCode: 'backend_disabled' });
+  });
+
   it('supplies a cause code for an unexpected uncoded launch failure', async () => {
     const result = await executeSpawnSessionRequest(params('alpha', async () => { throw new Error('Unexpected launch failure'); }));
     expect(result).toMatchObject({ type: 'error', errorCode: 'SPAWN_FAILED',

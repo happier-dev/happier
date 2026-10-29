@@ -63,6 +63,7 @@ import {
 } from '../spawn/prepareDaemonConnectedServices';
 import { prepareDaemonSpawnChildEnvironment } from '../spawn/prepareDaemonSpawnChildEnvironment';
 import { validateSpawnAgentCliLaunch } from '../spawn/resolveSpawnChildEnvironment';
+import { resolveBackendDisabledSpawnRefusal } from '@/settings/backendEnabled';
 import { prepareDaemonSpawnLifecycle } from '../spawn/prepareDaemonSpawnLifecycle';
 import {
     commitDaemonLaunchSession,
@@ -344,6 +345,14 @@ export async function executeSpawnSessionRequest(
             });
             if (admission.shortCircuitResult) return admission.shortCircuitResult;
         }
+
+        // A disabled backend never gets a new runner: fresh, forked/replayed, or resumed.
+        // Live runners were already adopted above and are not relaunched.
+        const backendDisabledRefusal = resolveBackendDisabledSpawnRefusal({
+            backendTarget: prepared.effectiveBackendTargetV2,
+            settings: activeAccountSettingsSnapshot?.settings,
+        });
+        if (backendDisabledRefusal) return backendDisabledRefusal;
 
         const profileResolution = resolveSpawnLaunchProfileDefaults({
             options,

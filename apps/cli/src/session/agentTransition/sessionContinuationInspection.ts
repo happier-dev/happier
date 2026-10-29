@@ -1,4 +1,4 @@
-import { readAccountSettingValueForBackendTarget } from '@happier-dev/protocol/account/settings/accountSettings';
+import { isBackendTargetDisabledByAccountSettings } from '@happier-dev/protocol/account/settings/accountSettings';
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { readLegacyConfiguredAcpBackendId } from '@happier-dev/protocol/backends/targets/compat/customAcp';
 import { isCustomAcpAgentContributionIdentityV1 } from '@happier-dev/protocol/agents/executionTargetV1';
@@ -93,7 +93,7 @@ export async function resolveSessionContinuationTargetAgent(params: Readonly<{
     const backendTarget = {
       kind: 'backend' as const, backendId: configuredBackendId, configuredBackendId, sourceKind: 'configured' as const,
     };
-    if (readAccountSettingValueForBackendTarget(settings, 'backendEnabledByTargetKey', backendTarget) === false) return null;
+    if (isBackendTargetDisabledByAccountSettings(settings, backendTarget)) return null;
     // Eligibility reads the same contribution-bound row admission as launch;
     // it never constructs a competing runtime for this selector-only legacy ID.
     const launch = await resolveAccountConfiguredAcpLaunchForAgent({ identity: contribution.identity,
@@ -107,7 +107,7 @@ export async function resolveSessionContinuationTargetAgent(params: Readonly<{
       || currentSnapshot.scopeKey !== accountSnapshot.scopeKey
       || getActiveAccountSettingsSnapshotLifetimeToken() !== lifetimeToken
       || currentSnapshot.acpCatalog !== catalog
-      || readAccountSettingValueForBackendTarget(currentSnapshot.settings, 'backendEnabledByTargetKey', backendTarget) === false) return null;
+      || isBackendTargetDisabledByAccountSettings(currentSnapshot.settings, backendTarget)) return null;
     return {
       agentId: params.agentId,
       backendTargetKey: buildBackendTargetKeyV2(backendTarget),
