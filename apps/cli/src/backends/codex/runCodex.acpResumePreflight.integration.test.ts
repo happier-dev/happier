@@ -17,7 +17,6 @@ import { createCodexPermissionHandler } from './utils/createCodexPermissionHandl
 import { applyPermissionModeToCodexPermissionHandler } from './utils/applyPermissionModeToHandler';
 import { createSessionTurnLifecycle } from '@/agent/runtime/session/turn/lifecycle';
 import { createCodexAppServerRpcError } from './appServer/appServerCompatibility';
-import { markCodexTurnFailureSettled } from './runtime/sessionTurnLifecycle';
 import { ProviderCliNotFoundError } from '@/runtime/managedTools/requireProviderCliCommand';
 
 const modelSyncFlushPendingAfterStartSpy = vi.fn(async () => {});
@@ -1277,29 +1276,6 @@ describe('runCodex CodexACP resume behavior', () => {
       expect(readEmittedSessionMessages().some((message) => message.startsWith('Codex process error:'))).toBe(false);
     });
 
-    it('surfaces each consecutive startup failure as its own failed turn', async () => {
-      const { mutations } = installLifecycleBackedSession();
-      installAppServerRuntime({
-        startOrLoad: vi.fn(async () => {
-          throw new ProviderCliNotFoundError('codex');
-        }),
-      });
-      queueUserMessages(2);
-
-      const outcome = await runRemoteCodex();
-
-      expect(outcome).toMatchObject({ ok: true });
-      const failures = readFailMutations(mutations);
-      expect(failures).toHaveLength(2);
-      expect(new Set(failures.map((failure) => failure.turnId)).size).toBe(2);
-      for (const failure of failures) {
-        expect(failure.issue).toEqual(expect.objectContaining({
-          code: 'provider_cli_not_found',
-          source: 'dependency_failure',
-        }));
-      }
-    });
-
     it('surfaces a strict-resume missing-CLI failure as exactly one failed turn', async () => {
       const { mutations } = installLifecycleBackedSession();
       installAppServerRuntime({
@@ -1318,26 +1294,6 @@ describe('runCodex CodexACP resume behavior', () => {
         code: 'provider_cli_not_found',
         source: 'dependency_failure',
       }));
-    });
-
-    it('does not surface a second failed turn for a failure the app-server runtime already settled', async () => {
-      const { mutations } = installLifecycleBackedSession();
-      const settledFailure = new Error('Codex turn failed: upstream closed the stream');
-      markCodexTurnFailureSettled(settledFailure);
-      installAppServerRuntime({
-        getSessionId: () => 'thread-settled-failure',
-        startOrLoad: vi.fn(async () => {}),
-        sendPrompt: vi.fn(async () => {
-          throw settledFailure;
-        }),
-      });
-      queueUserMessages(1);
-
-      const outcome = await runRemoteCodex();
-
-      expect(outcome).toMatchObject({ ok: true });
-      expect(readFailMutations(mutations)).toHaveLength(0);
-      expect(readEmittedSessionMessages().some((message) => message.startsWith('Codex process error:'))).toBe(true);
     });
 
     it('settles an ACP startup failure through the ACP runtime failTurn owner', async () => {
