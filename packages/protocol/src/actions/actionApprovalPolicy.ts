@@ -28,6 +28,16 @@ export type ActionEnvironmentApprovalScopeAdmissionV1 = Readonly<{
   mandatoryApprovalRequired?: true;
 }>;
 
+/** Only confirmation preferences inherit; scope authority remains with the child. */
+export function resolveActionApprovalPreferenceScopeV1(
+  scope: ActionApprovalScopeV1 | undefined,
+  previewTemplateEnvironmentId?: string,
+): ActionApprovalScopeV1 | undefined {
+  return scope?.kind === 'environment' && previewTemplateEnvironmentId
+    ? { kind: 'environment', environmentId: previewTemplateEnvironmentId }
+    : scope;
+}
+
 export type ResolveActionApprovalRoutingArgs = Readonly<{
   actionId: ActionId;
   spec: ActionSpec;
