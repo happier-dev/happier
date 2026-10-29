@@ -34,7 +34,7 @@ const redirectDist = (target) =>
     /(^|\/)(packages\/[^/]+)\/dist\/(.*?)(?:\.d\.ts)?$/u,
     '$1$2/src/$3',
   );
-const keyOf = (row) => `${row.file}\0${row.code}\0${row.text}`;
+const keyOf = (row) => `${row.file}\0${row.line}\0${row.code}`;
 
 function repository(repo) {
   const git = (args, options = {}) =>
@@ -325,10 +325,10 @@ export function checkCommitTypeCoherence({ repo, base, tree }) {
 
     // The base is the same snapshot with only the slice reverted, so unchanged files are reused.
     const baseIndex = git.treeEntries(base);
-    const baseRoots = [...new Set(headRows.map((row) => row.file))].filter(
-      (file) => baseIndex.has(file),
-    );
-    const seen = new Map();
+    // Query the same roots in the same order: type display depends on the diagnostic query.
+    // Newly added files have no baseline diagnostics.
+    const baseRoots = roots.filter((file) => baseIndex.has(file));
+    const seen = new Set();
     if (baseRoots.length) {
       const prior = git.virtualConfigs(
         api,
@@ -361,14 +361,9 @@ export function checkCommitTypeCoherence({ repo, base, tree }) {
         },
       });
       for (const row of git.collect(baseSnapshot, prior.configs))
-        seen.set(keyOf(row), (seen.get(keyOf(row)) ?? 0) + 1);
+        seen.add(keyOf(row));
     }
-    result.fresh = headRows.filter((row) => {
-      const count = seen.get(keyOf(row)) ?? 0;
-      if (count === 0) return true;
-      seen.set(keyOf(row), count - 1);
-      return false;
-    });
+    result.fresh = headRows.filter((row) => !seen.has(keyOf(row)));
     return { ...result, ms: Date.now() - started };
   } finally {
     api.close();

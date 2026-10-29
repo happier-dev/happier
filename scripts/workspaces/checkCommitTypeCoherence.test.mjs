@@ -135,3 +135,38 @@ test('diagnostics already present at the base are not attributed to the slice', 
     [2322],
   );
 });
+
+test('a new diagnostic location is not hidden by an identical message elsewhere in the base', async (t) => {
+  const { repo, write, commitOnly } = await checkout(t);
+  await write(
+    'consumer.ts',
+    "import { original } from './producer';\nexport const value: string = original;\n",
+  );
+  const base = commitOnly('consumer.ts');
+  await write(
+    'consumer.ts',
+    "import { original } from './producer';\n\nexport const value: string = original;\n",
+  );
+  const tree = commitOnly('consumer.ts');
+
+  assert.deepEqual(
+    checkCommitTypeCoherence({ repo, base, tree }).fresh.map(
+      ({ file, line, code }) => ({ file, line, code }),
+    ),
+    [{ file: 'consumer.ts', line: 3, code: 2322 }],
+  );
+});
+
+test('a pre-existing error in an unchanged file stays attributed to the base when its printed types change', async (t) => {
+  const { repo, write, commitOnly } = await checkout(t);
+  await write('producer.ts', "export const original = { a: '' };\n");
+  const broken = commitOnly('producer.ts');
+  // The slice reshapes the producer; the untouched consumer's existing TS2322 now prints `{ b: string; }`.
+  await write('producer.ts', "export const original = { b: '' };\n");
+  const commit = commitOnly('producer.ts');
+
+  assert.equal(
+    checkCommitTypeCoherence({ repo, base: broken, tree: commit }).fresh.length,
+    0,
+  );
+});
