@@ -419,6 +419,7 @@ async function requestProviderAccountUsageProjection(credentials: AuthCredential
     const head = await acquireProviderUsageHttp(credentials, headPath, {
         method: 'HEAD', signal: options.signal, cache: 'no-store', headers: {
             Authorization: `Bearer ${credentials.token}`, 'Content-Type': 'application/json',
+            'X-Happier-Request-Purpose': 'connected-accounts:quota-qualification',
             ...(held?.etag ? { 'If-None-Match': held.etag } : {}),
         },
     }, options);
@@ -556,7 +557,8 @@ async function requestProviderAccountUsageRead(credentials: AuthCredentials, pat
     options: UsageReadTransportOptions, fresh = false): Promise<Readonly<{ json: unknown; etag: string | null }> | null> {
     options.assertCurrent?.();
     const response = await acquireProviderUsageHttp(credentials, path, { method: 'GET', signal: options.signal,
-        headers: { Authorization: `Bearer ${credentials.token}`, 'Content-Type': 'application/json' } }, options, fresh);
+        headers: { Authorization: `Bearer ${credentials.token}`, 'Content-Type': 'application/json',
+            'X-Happier-Request-Purpose': 'connected-accounts:quota-qualification' } }, options, fresh);
     options.assertCurrent?.();
     if (response.status === 404) return null;
     if (response.status === 401 || response.status === 403) {
@@ -683,7 +685,8 @@ async function readProviderSnapshotWithOwner<T>(credentials: AuthCredentials, re
     const bindingKey = transport.key;
     const scope = transport.scope ?? bindingKey;
     const path = `/v4/connect/qualified/provider-account-usage/record?recordId=${encodeURIComponent(recordId)}`;
-    const init = { method: 'GET', headers: { Authorization: `Bearer ${credentials.token}`, 'Content-Type': 'application/json' } };
+    const init = { method: 'GET', headers: { Authorization: `Bearer ${credentials.token}`, 'Content-Type': 'application/json',
+        'X-Happier-Request-Purpose': 'connected-accounts:quota-qualification' } };
     const options = { includeAuth: false, ...(opts?.expectedActiveServer ? { expectedActiveServer: opts.expectedActiveServer } : {}) };
     // Observer-owned demand shares raw record acquisition with quota. Standalone
     // demand keeps its incumbent finite validation/retry lifecycle inside one flight.

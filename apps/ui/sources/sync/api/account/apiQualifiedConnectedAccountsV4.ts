@@ -28,6 +28,7 @@ async function readQualifiedSnapshot<T>(params: Readonly<{
   credentials: AuthCredentials;
   path: string;
   parse(value: unknown): T;
+  requestPurpose?: 'connected-accounts:qualification' | 'connected-accounts:quota-qualification';
   expectedActiveServer?: ExpectedActiveServerFetchBasis;
   request?: ServerFetch;
 }>): Promise<T> {
@@ -37,7 +38,8 @@ async function readQualifiedSnapshot<T>(params: Readonly<{
       params.path,
       {
         method: 'GET',
-        headers: headers(params.credentials),
+        headers: { ...headers(params.credentials),
+          ...(params.requestPurpose ? { 'X-Happier-Request-Purpose': params.requestPurpose } : {}) },
       },
       {
         includeAuth: false,
@@ -126,6 +128,7 @@ export async function getQualifiedConnectedAccountCredentialV4(
   return await readQualifiedSnapshot({
     credentials,
     path: `/v4/connect/qualified/credential?ref=${encoded}`,
+    requestPurpose: 'connected-accounts:qualification',
     parse: (value) =>
       QualifiedConnectedAccountCredentialSnapshotV4Schema.parse(value),
     ...(opts?.request ? { request: opts.request } : {}),
@@ -299,6 +302,7 @@ export async function getQualifiedConnectedAccountQuotaV4(
         QualifiedConnectedAccountRefSchema,
         ref,
       )}`,
+      requestPurpose: 'connected-accounts:quota-qualification',
       parse: (value) =>
         QualifiedConnectedAccountQuotaResponseV4Schema.parse(value),
       ...(opts?.expectedActiveServer
@@ -332,6 +336,7 @@ export async function getQualifiedConnectedAccountConfigurationV4(
   return await readQualifiedSnapshot({
     credentials,
     path: `/v4/connect/qualified/configuration?target=${encoded}`,
+    requestPurpose: 'connected-accounts:qualification',
     parse: (value) =>
       QualifiedConnectedAccountConfigurationSnapshotV4Schema.parse(
         value,

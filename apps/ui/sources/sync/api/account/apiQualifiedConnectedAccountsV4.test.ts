@@ -81,6 +81,33 @@ afterEach(async () => {
 });
 
 describe('apiQualifiedConnectedAccountsV4', () => {
+    it('attributes credential, configuration and quota reads with existing diagnostic purposes', async () => {
+        const ref = { service, accountId: 'work' };
+        const credential = { ref, authenticationModeId: 'token', revisionSemantics: 'revisioned',
+            credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS', configurationRevision: 'configuration',
+            content: { t: 'plain', v: { token: 'fixture' } }, metadata: { scopes: [] } };
+        const purposes: Array<string | null> = [];
+        vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+            const path = new URL(String(input)).pathname;
+            if (isServerReadinessProbe(path)) return Response.json({ ok: true });
+            purposes.push(new Headers(init?.headers).get('X-Happier-Request-Purpose'));
+            expect(new Headers(init?.headers).get('authorization')).toBe('Bearer token');
+            return path.endsWith('/credential') ? Response.json(credential)
+                : path.endsWith('/configuration') ? Response.json({ target: { kind: 'account', ref },
+                    authenticationModeId: 'token', revisionSemantics: 'revisioned',
+                    credentialRevision: credential.credentialRevision, configurationRevision: 'configuration',
+                    configurationContent: { t: 'plain', v: { region: 'eu' } } })
+                : Response.json({ error: 'connect_quotas_not_found' }, { status: 404 });
+        }));
+        const { getQualifiedConnectedAccountCredentialV4, getQualifiedConnectedAccountConfigurationV4,
+            getQualifiedConnectedAccountQuotaV4 } = await import('./apiQualifiedConnectedAccountsV4');
+        await getQualifiedConnectedAccountCredentialV4(credentials, ref);
+        await getQualifiedConnectedAccountConfigurationV4(credentials, ref);
+        await expect(getQualifiedConnectedAccountQuotaV4(credentials, ref)).resolves.toBeNull();
+        expect(purposes).toEqual(['connected-accounts:qualification', 'connected-accounts:qualification',
+            'connected-accounts:quota-qualification']);
+    });
+
     it('deletes a pool and removes its member without declaring an empty JSON body', async () => {
         // Fastify's JSON parser rejects a bodyless DELETE with JSON content-type
         // before the qualified mutation handler can inspect its query parameters.

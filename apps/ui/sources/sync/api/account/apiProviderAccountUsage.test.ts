@@ -75,8 +75,10 @@ describe('apiProviderAccountUsage', () => {
             ref: { service: { pluginId: 'example.usage', localId: 'usage' }, accountId: 'account' } };
         let records = 0;
         let sources = 0;
-        vi.stubGlobal('fetch', vi.fn(async (input: unknown) => {
+        const purposes: Array<string | null> = [];
+        vi.stubGlobal('fetch', vi.fn(async (input: unknown, init?: RequestInit) => {
             if (isServerFetchConnectivityProbeRequest(input)) return Response.json({ ok: true });
+            purposes.push(new Headers(init?.headers).get('X-Happier-Request-Purpose'));
             if (String(input).includes('/sources/resolve')) {
                 sources += 1;
                 return Response.json({ source, recordId: snapshot.recordId,
@@ -104,6 +106,7 @@ describe('apiProviderAccountUsage', () => {
             held.resolve();
             await expect(row).rejects.toMatchObject({ name: 'AbortError' });
             expect((await quota).current).toEqual(snapshot);
+            expect(purposes).toEqual(['connected-accounts:quota-qualification', 'connected-accounts:quota-qualification']);
         } finally { held.resolve(); await Promise.allSettled([quota, row]); }
     });
 
