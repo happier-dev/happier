@@ -5,3 +5,8 @@ import { buildSnapshotSignature } from '@/scm/statusSync/projectState';
 export function buildScmDiffSnapshotSignature(snapshot: ScmWorkingSnapshot, shapeSignature = buildSnapshotSignature(snapshot)): string {
     return JSON.stringify([shapeSignature, snapshot.fetchedAt]);
 }
+
+/** A file read retains repository/refresh invalidation, not the contents of unrelated status rows. */
+export function buildScmFileDiffSnapshotSignature(snapshot: ScmWorkingSnapshot, entry: ScmWorkingSnapshot['entries'][number] | null): string {
+    return buildScmDiffSnapshotSignature({ ...snapshot, entries: entry ? [entry] : [] });
+}

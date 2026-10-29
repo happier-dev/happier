@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { buildScmDiffSnapshotSignature } from '../diffCache/scmDiffCacheKey';
+import { buildScmDiffSnapshotSignature, buildScmFileDiffSnapshotSignature } from '../diffCache/scmDiffCacheKey';
 
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
@@ -57,6 +57,33 @@ function makeSnapshot(
 }
 
 describe('buildSnapshotSignature', () => {
+  it('projects a file revision without visiting unrelated changes, retaining repository and refresh invalidation', () => {
+    const entry: ScmWorkingSnapshot['entries'][number] = {
+      path: 'asset.png', previousPath: null, kind: 'modified', includeStatus: ' ', pendingStatus: 'M',
+      hasIncludedDelta: false, hasPendingDelta: true,
+      stats: { includedAdded: 0, includedRemoved: 0, pendingAdded: 1, pendingRemoved: 0, isBinary: true },
+    };
+    let unrelatedPathReads = 0;
+    const unrelated = Array.from({ length: 54_849 }, (_, index) => ({ ...entry,
+      get path() { unrelatedPathReads++; return `unrelated/${index}.txt`; },
+    }));
+    const base = makeSnapshot({ repo: { isRepo: true, rootPath: '/repo' }, entries: [entry, ...unrelated] });
+    const signature = buildScmFileDiffSnapshotSignature(base, entry);
+    expect(unrelatedPathReads).toBe(0);
+    expect(signature).toBe(buildScmDiffSnapshotSignature({ ...base, entries: [entry] }));
+    for (const changed of [
+      { ...base, fetchedAt: 2 },
+      { ...base, repo: { ...base.repo, defaultBranch: 'release' } },
+      { ...base, branch: { ...base.branch, headOid: 'new-head' } },
+      { ...base, operationState: { kind: 'merge' as const, sourceRef: 'main', canContinue: true, canAbort: true } },
+    ]) expect(buildScmFileDiffSnapshotSignature(changed, entry)).not.toBe(signature);
+    expect(buildScmFileDiffSnapshotSignature(base, { ...entry, stats: { ...entry.stats, pendingAdded: 2 } })).not.toBe(signature);
+    expect(buildScmFileDiffSnapshotSignature(base, null)).not.toBe(signature);
+    expect(unrelatedPathReads).toBe(0);
+    // Whole-review invalidation still covers every changed file.
+    expect(buildScmDiffSnapshotSignature(base)).not.toBe(buildScmDiffSnapshotSignature({ ...base, entries: [entry] }));
+  });
+
   it('keeps diff acquisition fresh when status shape is unchanged', () => {
     const base = makeSnapshot({ repo: { isRepo: true, rootPath: '/repo', backendId: 'git', mode: '.git', worktrees: [], remotes: [] } });
     expect(buildScmDiffSnapshotSignature({ ...base, fetchedAt: 1 })).not.toBe(
