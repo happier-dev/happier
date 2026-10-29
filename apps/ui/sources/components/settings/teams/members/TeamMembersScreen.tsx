@@ -31,7 +31,8 @@ import { TeamLeaveAction } from './TeamLeaveAction';
 import { teamMemberRowSubtitle } from './teamMemberPresentation';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { usePageListBottomPadding } from '@/components/ui/lists/pageListBottomPadding';
-import { teamReadFailureLabel, useTeamReadFailureAction } from '../teamMutationPresentation';
+import { teamReadFailureLabel } from '../teamMutationPresentation';
+import { useTeamReadFailureAction } from '../useTeamReadFailureAction';
 
 const MEMBER_AVATAR_SIZE = 36;
 const MEMBER_CHUNK_SIZE = 12;

@@ -1,7 +1,5 @@
-import * as React from 'react';
 import { isActionTurnedOffErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
 
-import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import type { AttentionBannerAction } from '@/components/ui/lists/AttentionBanner';
 import type { HomeDomainFailure } from '@/sync/api/home/homeServerActionTransport';
 import type { ScopedSnapshotError } from '@/sync/domains/scope/scopedSnapshotFacts';
@@ -30,7 +28,7 @@ export function teamReadFailureLabel(failure: HomeDomainFailure<string> | Scoped
     return teamMutationFailureLabel({ ...failure, code: failure.code ?? null });
 }
 
-type TeamReadFailureRetry = Readonly<{ onPress: () => void; testIDPrefix?: string }>;
+export type TeamReadFailureRetry = Readonly<{ onPress: () => void; testIDPrefix?: string }>;
 
 /**
  * The one way forward a failed Team read offers: the repair route for an Action turned off in
@@ -55,18 +53,6 @@ export function teamReadFailureAction(
         onPress: retry.onPress,
         testID: retry.testIDPrefix ? `${retry.testIDPrefix}-retry` : undefined,
     };
-}
-
-/** `teamReadFailureAction` bound to the page's own router, which a Team page already navigates with. */
-export function useTeamReadFailureAction(): (
-    failure: HomeDomainFailure<string> | ScopedSnapshotError,
-    retry: TeamReadFailureRetry,
-) => AttentionBannerAction | undefined {
-    const router = useRouter();
-    return React.useCallback(
-        (failure, retry) => teamReadFailureAction(failure, retry, () => router.push('/settings/actions')),
-        [router],
-    );
 }
 
 export function teamMutationFailureLabel(failure: HomeDomainFailure<string>, context?: 'authentication_policy'): string {

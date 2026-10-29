@@ -48,7 +48,8 @@ import { useUnsavedDraftNavigationGuard } from '@/utils/navigation/useUnsavedDra
 import { TeamSection } from '../TeamSection';
 import { useEditedMetadataDraft } from '../useEditedMetadataDraft';
 import type { TeamSectionContext } from '../teamSectionContext';
-import { teamMutationFailureLabel, teamReadFailureLabel, useTeamReadFailureAction } from '../teamMutationPresentation';
+import { teamMutationFailureLabel, teamReadFailureLabel } from '../teamMutationPresentation';
+import { useTeamReadFailureAction } from '../useTeamReadFailureAction';
 import { groupManagementLabel } from '../teamLabels';
 import {
     teamDirectorySourcePath,

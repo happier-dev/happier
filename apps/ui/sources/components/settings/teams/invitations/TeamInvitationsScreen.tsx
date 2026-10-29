@@ -32,7 +32,8 @@ import { formatCalendarDate } from '@/utils/datetime/cachedIntlFormatters';
 
 import { TeamSection } from '../TeamSection';
 import { teamPageHeaderMeta, type TeamSectionContext } from '../teamSectionContext';
-import { teamMutationFailureLabel, teamReadFailureLabel, useTeamReadFailureAction } from '../teamMutationPresentation';
+import { teamMutationFailureLabel, teamReadFailureLabel } from '../teamMutationPresentation';
+import { useTeamReadFailureAction } from '../useTeamReadFailureAction';
 import { presentHomeInvitePeople } from '@/components/settings/home/governance/HomeInvitePeopleDialog';
 import { TeamLinkDelivery } from '../TeamLinkDelivery';
 import { partitionTeamInvitations, resolveTeamInvitationPresentation } from './teamInvitationPresentation';

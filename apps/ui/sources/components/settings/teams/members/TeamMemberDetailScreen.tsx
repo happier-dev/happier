@@ -17,7 +17,8 @@ import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
 import { SectionButtonRow } from '@/components/ui/lists/SectionButtonRow';
 import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
-import { teamReadFailureLabel, useTeamReadFailureAction } from '@/components/settings/teams/teamMutationPresentation';
+import { teamReadFailureLabel } from '@/components/settings/teams/teamMutationPresentation';
+import { useTeamReadFailureAction } from '@/components/settings/teams/useTeamReadFailureAction';
 import { useTeamMemberGroups, type TeamMemberGroups } from '@/hooks/teams/useTeamMemberGroups';
 import { resolveAccountDisplayName } from '@/sync/domains/account/formatAccountDisplayName';
 import {

@@ -18,7 +18,8 @@ import { t } from '@/text';
 
 import { teamPageHeaderMeta, type TeamSectionContext } from './teamSectionContext';
 import { teamSettingsPath } from './teamsRoutes';
-import { teamReadFailureLabel, useTeamReadFailureAction } from './teamMutationPresentation';
+import { teamReadFailureLabel } from './teamMutationPresentation';
+import { useTeamReadFailureAction } from './useTeamReadFailureAction';
 
 /**
  * The page head of a Team destination: a sub-page names itself (`title`, `description`); an entity

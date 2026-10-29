@@ -20,7 +20,8 @@ import { t } from '@/text';
 import { TeamSection } from '../TeamSection';
 import type { TeamSectionContext } from '../teamSectionContext';
 import { groupManagementLabel } from '../teamLabels';
-import { teamReadFailureLabel, useTeamReadFailureAction } from '../teamMutationPresentation';
+import { teamReadFailureLabel } from '../teamMutationPresentation';
+import { useTeamReadFailureAction } from '../useTeamReadFailureAction';
 import { teamGroupCreatePath, teamGroupDetailPath } from '../teamsRoutes';
 
 const GROUP_CHUNK_SIZE = 12;
