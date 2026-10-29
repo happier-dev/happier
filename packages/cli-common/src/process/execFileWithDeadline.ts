@@ -12,6 +12,8 @@ export type ExecFileWithDeadlineOptions =
     terminateOnAbort?: (child: ChildProcess) => Promise<void>;
     /** Caller-owned resource ceiling for each UTF-8 output suffix; omitted preserves execFile capture. */
     outputTailMaxBytes?: number;
+    /** Transient bytes delivered only through the child's stdin, followed by EOF. Caller owns clearing. */
+    inputBytes?: Uint8Array;
   }>;
 
 export class ExecFileTerminationError extends Error {
@@ -66,7 +68,7 @@ export function execFileWithDeadline(
   args: readonly string[],
   options: ExecFileWithDeadlineOptions,
 ): Promise<ExecFileWithDeadlineResult> {
-  const { timeout, terminateOnAbort, outputTailMaxBytes, ...commandOptions } = options;
+  const { timeout, terminateOnAbort, outputTailMaxBytes, inputBytes, ...commandOptions } = options;
   if (outputTailMaxBytes !== undefined && (!Number.isSafeInteger(outputTailMaxBytes) || outputTailMaxBytes < 0)) {
     throw new TypeError('outputTailMaxBytes must be a nonnegative safe integer');
   }
@@ -85,6 +87,7 @@ export function execFileWithDeadline(
     let deadlineTermination = false;
     let terminationError: ExecFileTerminationError | undefined;
     let complete: (() => void) | undefined;
+    let stdinError: Error | undefined;
     const finish = () => { if (closed && !terminating) complete?.(); };
     const captureEvidence: { stdoutTruncated?: boolean; stderrTruncated?: boolean } = {};
     const onCommandResult = (error: Error | null, stdout: string | Buffer, stderr: string | Buffer) => {
@@ -93,8 +96,8 @@ export function execFileWithDeadline(
       complete = () => {
         if (terminationError) { reject(terminationError); return; }
         if (terminateOnAbort && signal?.aborted) { reject(signal.reason); return; }
-        if (error) {
-          reject(Object.assign(error, { stdout, stderr }, captureEvidence, deadlineTermination ? { killed: true } : {}));
+        if (error || stdinError) {
+          reject(Object.assign(error ?? stdinError!, { stdout, stderr }, captureEvidence, deadlineTermination ? { killed: true } : {}));
           return;
         }
         if (deadlineTermination) {
@@ -166,6 +169,13 @@ export function execFileWithDeadline(
       finish();
     });
     closeStdioWhenCommandExits(child);
+    if (inputBytes !== undefined) {
+      // Early native exit can close the pipe before delivery. Observe that
+      // failure without an unhandled EPIPE, and still settle only after close.
+      child.stdin?.on('error', (error: Error) => { stdinError = error; });
+      if (child.stdin) child.stdin.end(inputBytes);
+      else stdinError = new Error('Native stdin unavailable');
+    }
     if (terminateOnAbort && signal) {
       signal.addEventListener('abort', abort, { once: true });
       if (signal.aborted) abort();
