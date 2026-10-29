@@ -1,6 +1,4 @@
-import { createHash } from 'node:crypto';
-
-import { createSensitiveDiagnosticTextRedactor, redactBugReportSensitiveText, trimBugReportTextHeadToMaxBytes } from '@happier-dev/protocol/bugs/reports/redaction';
+import { createSensitiveDiagnosticTextRedactor, redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports/redaction';
 import type { SensitiveDiagnosticTextRedactor, SensitiveDiagnosticValuesLease } from '@happier-dev/protocol/bugs/reports';
 import { isBaseCredentialDiagnosticKey, splitSensitiveDiagnosticKeySegments } from '@happier-dev/protocol/diagnostics/sensitive-keys';
 import type { JsonValue, PluginDiagnosticData } from '@happier-dev/plugin-sdk';
@@ -9,20 +7,8 @@ import type { LoggerService as PluginLoggerService } from '@happier-dev/plugin-s
 import type { PluginInvocationServicesSeed } from './types';
 import { projectTargetActionDiagnosticIssue } from '../diagnostics';
 
-export const PLUGIN_LOG_MAX_RECORD_BYTES = 32 * 1024;
-export const PLUGIN_LOG_MAX_MESSAGE_BYTES = 4 * 1024;
-export const PLUGIN_LOG_MAX_VALUE_BYTES = 4 * 1024;
-export const PLUGIN_LOG_MAX_CONTEXT_VALUE_BYTES = 2 * 1024;
-export const PLUGIN_LOG_MAX_DEPTH = 8;
-export const PLUGIN_LOG_MAX_COLLECTION_ENTRIES = 64;
-export const PLUGIN_LOG_MAX_NODES = 256;
-export const PLUGIN_LOG_MAX_SECRET_COMPONENT_BYTES = 16 * 1024;
-export const PLUGIN_LOG_MAX_SECRET_COMPONENTS_PER_SCOPE = 128;
-export const PLUGIN_LOG_MAX_SECRET_COMPONENT_TOTAL_BYTES = 256 * 1024;
-
 const REDACTED = '[REDACTED]';
 const CIRCULAR = '[Circular]';
-const TRUNCATED = '[TRUNCATED]';
 const PLUGIN_LOG_CREDENTIAL_SEGMENTS = new Set([
     'auth',
     'authentication',
@@ -87,7 +73,6 @@ type PluginInvocationSecretRedactionState = {
     readonly confidentialPaths: Set<string>;
     readonly nonStringPaths: Set<string>;
     disposeSignal?: () => void;
-    totalBytes: number;
     saturated: boolean;
 };
 
@@ -115,7 +100,6 @@ export function createPluginInvocationSecretRedactor(): PluginInvocationSecretRe
                 leases: [],
                 confidentialPaths: new Set(),
                 nonStringPaths: new Set(),
-                totalBytes: 0,
                 saturated: false,
             };
             statesByScope.set(key, state);
@@ -129,19 +113,9 @@ export function createPluginInvocationSecretRedactor(): PluginInvocationSecretRe
         if (value.length === 0) return;
         const state = statesByScope.get(secretRedactionScopeKey(scope));
         if (!state || state.saturated || state.values.has(value)) return;
-        const valueBytes = Buffer.byteLength(value, 'utf8');
-        if (
-            valueBytes > PLUGIN_LOG_MAX_SECRET_COMPONENT_BYTES
-            || state.values.size >= PLUGIN_LOG_MAX_SECRET_COMPONENTS_PER_SCOPE
-            || state.totalBytes + valueBytes > PLUGIN_LOG_MAX_SECRET_COMPONENT_TOTAL_BYTES
-        ) {
-            state.saturated = true;
-            return;
-        }
         try {
             state.leases.push(state.redactor.register([value]));
             state.values.add(value);
-            state.totalBytes += valueBytes;
         } catch {
             state.saturated = true;
         }
@@ -158,9 +132,6 @@ export function createPluginInvocationSecretRedactor(): PluginInvocationSecretRe
         registerRaw(scope, value): void {
             if (value.length === 0) return;
             registerExact(scope, value);
-            if (Buffer.byteLength(value, 'utf8') > PLUGIN_LOG_MAX_SECRET_COMPONENT_BYTES) {
-                return;
-            }
             const bytes = Buffer.from(value, 'utf8');
             registerExact(scope, bytes.toString('base64'));
             registerExact(scope, bytes.toString('base64url'));
@@ -202,11 +173,6 @@ export function createPluginInvocationSecretRedactor(): PluginInvocationSecretRe
     });
 }
 
-type SanitizeState = {
-    readonly visited: WeakSet<object>;
-    nodes: number;
-};
-
 type DiagnosticProjection = Readonly<{
     isConfidentialPath(path: readonly string[]): boolean;
     projectIssue(value: unknown): ReturnType<typeof projectTargetActionDiagnosticIssue>;
@@ -222,38 +188,13 @@ function isSensitivePluginLogKey(key: string): boolean {
         ));
 }
 
-function truncateRedactedText(value: string, maxBytes: number, redact?: (value: string) => string): string {
-    // Individual structured records identify their failure in the opening text.
-    // Redact the complete value before retaining that head: clipping an open
-    // quoted credential first can remove its closing quote and expose the rest
-    // of the credential as ordinary text.
-    const redacted = redact?.(value) ?? redactBugReportSensitiveText(value);
-    if (Buffer.byteLength(redacted, 'utf8') <= maxBytes) return redacted;
-    const markerBytes = Buffer.byteLength(TRUNCATED, 'utf8');
-    return `${trimBugReportTextHeadToMaxBytes(redacted, Math.max(0, maxBytes - markerBytes))}${TRUNCATED}`;
-}
-
-function truncateRedactedHeadWithMarker(
-    value: string,
-    maxBytes: number,
-    redact?: (value: string) => string,
-): string {
-    const redacted = redact?.(value) ?? redactBugReportSensitiveText(value);
-    const markerBytes = Buffer.byteLength(TRUNCATED, 'utf8');
-    return `${trimBugReportTextHeadToMaxBytes(redacted, Math.max(0, maxBytes - markerBytes))}${TRUNCATED}`;
-}
-
-function boundHostIdentity(value: string): string {
-    if (Buffer.byteLength(value, 'utf8') <= PLUGIN_LOG_MAX_CONTEXT_VALUE_BYTES) {
-        return truncateRedactedText(value, PLUGIN_LOG_MAX_CONTEXT_VALUE_BYTES);
-    }
-    return `sha256:${createHash('sha256').update(value).digest('hex')}`;
+function redactText(value: string, redact?: (value: string) => string): string {
+    return redact?.(value) ?? redactBugReportSensitiveText(value);
 }
 
 function sanitizeValue(
     value: unknown,
-    state: SanitizeState,
-    depth: number,
+    visited: WeakSet<object>,
     key?: string,
     redact?: (value: string) => string,
     projection?: DiagnosticProjection,
@@ -264,19 +205,14 @@ function sanitizeValue(
     if (value === null || typeof value === 'boolean' || typeof value === 'number') {
         return typeof value === 'number' && !Number.isFinite(value) ? null : value;
     }
-    if (typeof value === 'string') return truncateRedactedText(value, PLUGIN_LOG_MAX_VALUE_BYTES, redact);
-    if (typeof value === 'bigint') return truncateRedactedText(value.toString(), PLUGIN_LOG_MAX_VALUE_BYTES);
+    if (typeof value === 'string') return redactText(value, redact);
+    if (typeof value === 'bigint') return redactText(value.toString());
     if (typeof value !== 'object') return `[Unsupported:${typeof value}]`;
-    if (depth >= PLUGIN_LOG_MAX_DEPTH || state.nodes >= PLUGIN_LOG_MAX_NODES) return TRUNCATED;
-    if (state.visited.has(value)) return CIRCULAR;
-    state.visited.add(value);
-    state.nodes += 1;
+    if (visited.has(value)) return CIRCULAR;
+    visited.add(value);
     const source = projection?.projectIssue(value) ?? value;
     if (Array.isArray(source)) {
-        const items = source.slice(0, PLUGIN_LOG_MAX_COLLECTION_ENTRIES)
-        .map((item, index) => sanitizeValue(item, state, depth + 1, undefined, redact, projection, [...path, String(index)]));
-        if (source.length > PLUGIN_LOG_MAX_COLLECTION_ENTRIES) items.push(TRUNCATED);
-        return items;
+        return source.map((item, index) => sanitizeValue(item, visited, undefined, redact, projection, [...path, String(index)]));
     }
     const output: Record<string, JsonValue> = {};
     let entries: [string, unknown][];
@@ -285,10 +221,9 @@ function sanitizeValue(
     } catch {
         return '[Unsupported:object]';
     }
-    for (const [entryKey, entryValue] of entries.slice(0, PLUGIN_LOG_MAX_COLLECTION_ENTRIES)) {
-        output[truncateRedactedText(entryKey, 256, redact)] = sanitizeValue(entryValue, state, depth + 1, entryKey, redact, projection, [...path, entryKey]);
+    for (const [entryKey, entryValue] of entries) {
+        output[redactText(entryKey, redact)] = sanitizeValue(entryValue, visited, entryKey, redact, projection, [...path, entryKey]);
     }
-    if (entries.length > PLUGIN_LOG_MAX_COLLECTION_ENTRIES) output._truncated = TRUNCATED;
     return output;
 }
 
@@ -297,7 +232,7 @@ function sanitizeRecord(
     redact?: (value: string) => string,
     projection?: DiagnosticProjection,
 ): Readonly<Record<string, JsonValue>> {
-    const sanitized = sanitizeValue(value, { visited: new WeakSet(), nodes: 0 }, 0, undefined, redact, projection);
+    const sanitized = sanitizeValue(value, new WeakSet(), undefined, redact, projection);
     if (!sanitized || typeof sanitized !== 'object' || Array.isArray(sanitized)) {
         return Object.freeze({ _value: sanitized });
     }
@@ -324,10 +259,6 @@ function sanitizeDiagnostic(
     } : undefined);
 }
 
-function byteLength(value: unknown): number {
-    return Buffer.byteLength(JSON.stringify(value), 'utf8');
-}
-
 function freezeRecord(record: PluginInvocationLogRecord): PluginInvocationLogRecord {
     if (record.fields) Object.freeze(record.fields);
     if (record.diagnostic) Object.freeze(record.diagnostic);
@@ -335,34 +266,6 @@ function freezeRecord(record: PluginInvocationLogRecord): PluginInvocationLogRec
     Object.freeze(record.context.contribution);
     Object.freeze(record.context);
     return Object.freeze(record);
-}
-
-function boundRecord(
-    record: PluginInvocationLogRecord,
-    redact?: (value: string) => string,
-): PluginInvocationLogRecord {
-    if (byteLength(record) <= PLUGIN_LOG_MAX_RECORD_BYTES) return freezeRecord(record);
-    const bounded: PluginInvocationLogRecord = {
-        ...record,
-        ...(record.message === undefined ? {} : { message: truncateRedactedText(record.message, 1024) }),
-        ...(record.fields === undefined ? {} : { fields: Object.freeze({ _truncated: TRUNCATED }) }),
-        ...(record.diagnostic === undefined
-            ? {}
-            : {
-                diagnostic: Object.freeze({
-                    code: record.diagnostic.code ?? 'plugin_diagnostic_truncated',
-                    severity: record.diagnostic.severity ?? 'error',
-                    message: typeof record.diagnostic.message === 'string'
-                        ? truncateRedactedHeadWithMarker(
-                            record.diagnostic.message,
-                            1024,
-                            redact,
-                        )
-                        : TRUNCATED,
-                }),
-            }),
-    };
-    return freezeRecord(bounded);
 }
 
 export function createPluginInvocationLogger(params: Readonly<{
@@ -374,15 +277,15 @@ export function createPluginInvocationLogger(params: Readonly<{
     let sequence = 0;
     const context = Object.freeze({
         plugin: Object.freeze({
-            id: boundHostIdentity(params.seed.plugin.id),
-            version: boundHostIdentity(params.seed.plugin.version),
+            id: redactText(params.seed.plugin.id),
+            version: redactText(params.seed.plugin.version),
         }),
         contribution: Object.freeze({
-            id: boundHostIdentity(params.seed.contribution.id),
-            qualifiedId: boundHostIdentity(params.seed.contribution.qualifiedId),
+            id: redactText(params.seed.contribution.id),
+            qualifiedId: redactText(params.seed.contribution.qualifiedId),
         }),
-        occurrenceId: boundHostIdentity(params.seed.occurrenceId),
-        correlationId: boundHostIdentity(params.seed.correlationId),
+        occurrenceId: redactText(params.seed.occurrenceId),
+        correlationId: redactText(params.seed.correlationId),
         surface: params.seed.surface,
     });
     const redactionScope = Object.freeze({
@@ -407,14 +310,13 @@ export function createPluginInvocationLogger(params: Readonly<{
             if (params.seed.signal.aborted || !params.seed.isOccurrenceCurrent()) return;
             const message = input.message === undefined
                 ? undefined
-                : truncateRedactedText(input.message, PLUGIN_LOG_MAX_MESSAGE_BYTES, redact);
-            // Consume declaration-owned paths inside the bounded sanitizer,
-            // before keys/text are redacted or clipped. Opaque prose has no path.
+                : redactText(input.message, redact);
+            // Consume declaration-owned paths before redacting keys/text. Opaque prose has no path.
             const fields = input.fields === undefined ? undefined : sanitizeRecord(input.fields, redact, projection);
             const diagnostic = input.diagnostic === undefined ? undefined : sanitizeDiagnostic(input.diagnostic, redact, projection);
             if (params.seed.signal.aborted || !params.seed.isOccurrenceCurrent()) return;
             const nextSequence = sequence + 1;
-            const record = boundRecord({
+            const record = freezeRecord({
                 version: 1,
                 kind: 'plugin_invocation_log',
                 level,
@@ -424,7 +326,7 @@ export function createPluginInvocationLogger(params: Readonly<{
                 context,
                 occurredAtMs: params.now?.() ?? Date.now(),
                 sequence: nextSequence,
-            }, redact);
+            });
             if (params.seed.signal.aborted || !params.seed.isOccurrenceCurrent()) return;
             sequence = nextSequence;
             params.sink.write(record);

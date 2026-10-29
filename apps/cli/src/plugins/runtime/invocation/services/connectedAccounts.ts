@@ -28,7 +28,6 @@ import type {
     PluginConnectedAccountBindingScope,
     PluginInvocationServicesSeed,
 } from './types';
-import { PLUGIN_LOG_MAX_SECRET_COMPONENT_BYTES } from './logger';
 import { readCredentialRedactionValues } from './credentialRedactionValues';
 import type { HostCurrentSessionUiServices } from '@/agent/runtime/state/currentSessionUiTypes';
 import type { PermissionRequestOwner } from '@/agent/permissions/permissionRequestOwner';
@@ -268,8 +267,6 @@ function registerMaterializationForRedaction(
         options.registerRawForRedaction(seed, value);
         for (const redactionValue of readCredentialRedactionValues({
             authorizationValue: value,
-            maximumAuthorizationTokenBytes:
-                PLUGIN_LOG_MAX_SECRET_COMPONENT_BYTES,
         })) {
             if (redactionValue === value) continue;
             options.registerRawForRedaction(seed, redactionValue);

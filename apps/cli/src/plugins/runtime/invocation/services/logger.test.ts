@@ -5,8 +5,6 @@ import type { PluginInvocationServicesSeed } from './types';
 import {
     createPluginInvocationLogger,
     createPluginInvocationSecretRedactor,
-    PLUGIN_LOG_MAX_RECORD_BYTES,
-    PLUGIN_LOG_MAX_SECRET_COMPONENT_BYTES,
     type PluginInvocationLogRecord,
 } from './logger';
 
@@ -94,7 +92,7 @@ describe('stable invocation logger service', () => {
             .toBe('revoked ordinary value');
     });
 
-    it('prefers the longest overlapping registered credential and fails closed at the registration ceiling', () => {
+    it('prefers the longest overlapping credential and preserves diagnostics with many large registered secrets', () => {
         const secretRedactor = createPluginInvocationSecretRedactor();
         const invocationSeed = seed();
         const firstCapture = capture();
@@ -121,9 +119,14 @@ describe('stable invocation logger service', () => {
         logger.info('Bearer overlapping-credential');
         expect(firstCapture.records[0]?.message).toBe('[REDACTED]');
 
-        secretRedactor.registerRaw(scope, 'x'.repeat(PLUGIN_LOG_MAX_SECRET_COMPONENT_BYTES + 1));
-        logger.info('ordinary status after an unsafe registration volume');
-        expect(firstCapture.records[1]?.message).toBe('[REDACTED]');
+        const largeSecret = 'x'.repeat(16 * 1024 + 1);
+        secretRedactor.registerRaw(scope, largeSecret);
+        const secrets = Array.from({ length: 130 }, (_, index) => `opaque-value-${index}-${'y'.repeat(2048)}`);
+        for (const value of secrets) secretRedactor.registerExact(scope, value);
+        logger.info('ordinary status after registration');
+        expect(firstCapture.records[1]?.message).toBe('ordinary status after registration');
+        expect(secretRedactor.redact(scope, `prefix ${largeSecret} suffix`)).toBe('prefix [REDACTED] suffix');
+        expect(secretRedactor.redact(scope, `prefix ${secrets.at(-1)!} suffix`)).toBe('prefix [REDACTED] suffix');
         expect(secretRedactor.redact(siblingScope, 'ordinary status after sibling saturation'))
             .toBe('ordinary status after sibling saturation');
         secretRedactor.completeInvocation(scope);
@@ -175,14 +178,19 @@ describe('stable invocation logger service', () => {
         expect(Object.isFrozen(records[0]!.context)).toBe(true);
     });
 
-    it('redacts sensitive fields and deterministically bounds cyclic and oversized input', () => {
+    it('preserves large structured diagnostics while redacting secrets and marking cycles', () => {
         const { records, sink } = capture();
         const logger = createPluginInvocationLogger({ seed: seed(), sink, now: () => 123 });
         const cyclic: Record<string, unknown> = {
             password: 'raw-secret',
             authorization: 'Bearer secret-token',
-            huge: 'x'.repeat(PLUGIN_LOG_MAX_RECORD_BYTES * 2),
+            huge: 'x'.repeat(64 * 1024),
+            entries: Object.fromEntries(Array.from({ length: 100 }, (_, index) => [`entry-${index}`, { nested: { value: index } }])),
+            ['long-key-' + 'z'.repeat(256)]: 'kept',
         };
+        let deep: unknown = { value: 'deep leaf' };
+        for (let depth = 0; depth < 10; depth += 1) deep = { child: deep };
+        cyclic.deep = deep;
         cyclic.self = cyclic;
 
         // Runtime JavaScript can violate the SDK's JSON-only field type; the host boundary must remain safe.
@@ -192,11 +200,12 @@ describe('stable invocation logger service', () => {
         expect(() => runtimeLogger.info('token=raw-secret', cyclic)).not.toThrow();
 
         const serialized = JSON.stringify(records[0]);
-        expect(Buffer.byteLength(serialized, 'utf8')).toBeLessThanOrEqual(PLUGIN_LOG_MAX_RECORD_BYTES);
+        expect(records[0]?.fields).toMatchObject({ huge: cyclic.huge, entries: cyclic.entries, deep,
+            ['long-key-' + 'z'.repeat(256)]: 'kept' });
         expect(serialized).not.toContain('raw-secret');
         expect(serialized).not.toContain('secret-token');
         expect(serialized).toMatch(/REDACTED/);
-        expect(serialized).toMatch(/TRUNCATED|Circular/);
+        expect(serialized).toContain('[Circular]');
     });
 
     it('redacts URL credentials and sensitive query parameters in messages and nested values', () => {
@@ -234,7 +243,7 @@ describe('stable invocation logger service', () => {
         expect(serialized.match(/\[REDACTED\]/g)).toHaveLength(4);
     });
 
-    it('keeps the head of an individual structured failure record while dropping its tail', () => {
+    it('preserves the complete redacted failure message', () => {
         const { records, sink } = capture();
         const logger = createPluginInvocationLogger({ seed: seed(), sink, now: () => 123 });
 
@@ -247,11 +256,11 @@ describe('stable invocation logger service', () => {
         const message = records[0]?.message ?? '';
         expect(message).toMatch(/^BEGIN_FAILURE/u);
         expect(message).not.toContain('log-secret');
-        expect(message).not.toContain('END_STACK');
-        expect(message).toMatch(/\[TRUNCATED\]$/u);
+        expect(message).toContain('END_STACK');
+        expect(message).toContain('🙂'.repeat(3_000));
     });
 
-    it('keeps the sanitized head of an oversized diagnostic record while dropping its details tail', () => {
+    it('preserves complete diagnostic messages and details after redaction', () => {
         const { records, sink } = capture();
         const invocationSeed = seed();
         const secretRedactor = createPluginInvocationSecretRedactor();
@@ -290,14 +299,13 @@ describe('stable invocation logger service', () => {
         expect(message).toMatch(/^BEGIN_FAILURE/u);
         expect(message).not.toContain('diagnostic-secret');
         expect(message).not.toContain('opaque-diagnostic-secret');
-        expect(message).not.toContain('END_STACK');
-        expect(message).toMatch(/\[TRUNCATED\]$/u);
-        expect(message.match(/\[TRUNCATED\]/gu)).toHaveLength(1);
-        expect(Buffer.byteLength(JSON.stringify(records[0]), 'utf8'))
-            .toBeLessThanOrEqual(PLUGIN_LOG_MAX_RECORD_BYTES);
+        expect(message).toContain('END_STACK');
+        expect(records[0]?.diagnostic?.details).toEqual(Object.fromEntries(Array.from({ length: 64 }, (_, index) => [
+            `detail_${index}`, 'x'.repeat(4 * 1024),
+        ])));
     });
 
-    it('redacts a quoted credential before applying the individual-record head bound', () => {
+    it('redacts the whole quoted credential while preserving surrounding diagnostic text', () => {
         const { records, sink } = capture();
         const logger = createPluginInvocationLogger({ seed: seed(), sink, now: () => 123 });
         const leakedTail = 'credential-tail-must-not-survive';
@@ -310,7 +318,7 @@ describe('stable invocation logger service', () => {
         expect(message).toMatch(/^BEGIN_FAILURE/u);
         expect(message).not.toContain('first-word');
         expect(message).not.toContain(leakedTail);
-        expect(Buffer.byteLength(message, 'utf8')).toBeLessThanOrEqual(4 * 1024);
+        expect(message).toContain('END_STACK');
     });
 
     it('redacts segment-aware credential keys without treating counts and prose as credentials', () => {
@@ -421,7 +429,7 @@ describe('stable invocation logger service', () => {
         expect(new Set(records.map((record) => record.context.correlationId))).toEqual(new Set(['correlation-host-owned']));
     });
 
-    it('bounds host-supplied context without allowing it to exceed the record ceiling', () => {
+    it('preserves host-supplied diagnostic context without hashing it', () => {
         const { records, sink } = capture();
         const logger = createPluginInvocationLogger({
             seed: seed({
@@ -434,7 +442,6 @@ describe('stable invocation logger service', () => {
         logger.info('bounded context');
 
         expect(records).toHaveLength(1);
-        expect(Buffer.byteLength(JSON.stringify(records[0]), 'utf8')).toBeLessThanOrEqual(PLUGIN_LOG_MAX_RECORD_BYTES);
-        expect(records[0]!.context.plugin.id).toMatch(/^sha256:[a-f0-9]{64}$/);
+        expect(records[0]!.context.plugin.id).toBe(`acme.${'x'.repeat(40_000)}`);
     });
 });

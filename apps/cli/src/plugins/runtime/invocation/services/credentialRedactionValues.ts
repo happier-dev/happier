@@ -9,7 +9,6 @@ import { Buffer } from 'node:buffer';
 export function readCredentialRedactionValues(input: Readonly<{
     rawCredential?: string;
     authorizationValue?: string;
-    maximumAuthorizationTokenBytes?: number;
 }>): readonly string[] {
     const values: string[] = [];
     if (input.rawCredential) values.push(input.rawCredential);
@@ -22,22 +21,16 @@ export function readCredentialRedactionValues(input: Readonly<{
         const token = authorization?.[2];
         if (token && authorization?.[1]?.toLowerCase() === 'basic') {
             try {
-                if (
-                    input.maximumAuthorizationTokenBytes === undefined
-                    || Buffer.byteLength(token, 'utf8')
-                        <= input.maximumAuthorizationTokenBytes
-                ) {
-                    const decodedBytes = Buffer.from(token, 'base64');
-                    if (decodedBytes.toString('base64') === token) {
-                        const decoded = new TextDecoder('utf-8', {
-                            fatal: true,
-                        }).decode(decodedBytes);
-                        const separator = decoded.indexOf(':');
-                        if (separator >= 0) {
-                            values.push(decoded);
-                            const password = decoded.slice(separator + 1);
-                            if (password.length > 0) values.push(password);
-                        }
+                const decodedBytes = Buffer.from(token, 'base64');
+                if (decodedBytes.toString('base64') === token) {
+                    const decoded = new TextDecoder('utf-8', {
+                        fatal: true,
+                    }).decode(decodedBytes);
+                    const separator = decoded.indexOf(':');
+                    if (separator >= 0) {
+                        values.push(decoded);
+                        const password = decoded.slice(separator + 1);
+                        if (password.length > 0) values.push(password);
                     }
                 }
             } catch {
