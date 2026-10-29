@@ -28,8 +28,8 @@ describe('a refused session-role write', () => {
             .toBe('roles.session.refusal.roleUnavailableTitle');
     });
 
-    it('gives the start-session recovery for an unavailable Role runtime', () => {
-        expect(describeSessionRoleRefusal({ ok: false, errorCode: 'session_role_runtime_unavailable', error: 'RPC method not available' }))
+    it.each(['session_role_runtime_unavailable', 'target_unavailable'])('gives the start-session recovery for an unavailable Role runtime (%s)', errorCode => {
+        expect(describeSessionRoleRefusal({ ok: false, errorCode }))
             .toEqual({ title: 'roles.session.refusal.runtimeUnavailableTitle', message: 'roles.session.refusal.runtimeUnavailableBody' });
     });
 

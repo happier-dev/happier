@@ -86,6 +86,7 @@ type SessionRoleWriteResult = Readonly<{ ok: boolean; errorCode?: string; error?
 export function describeSessionRoleRefusal(result: SessionRoleWriteResult): Readonly<{ title: string; message: string }> {
     switch (result.errorCode) {
         case 'session_role_runtime_unavailable':
+        case 'target_unavailable':
             return { title: t('roles.session.refusal.runtimeUnavailableTitle'), message: t('roles.session.refusal.runtimeUnavailableBody') };
         case 'role_policy_unenforceable':
             return { title: t('roles.session.refusal.unenforceableTitle'), message: t('roles.session.refusal.unenforceableBody') };
