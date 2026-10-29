@@ -175,6 +175,15 @@ export const PluginUiHostApiSurfaceThemeV1Schema = lazyZodSchema(() => z.strictO
     info: PluginUiHostApiSurfaceNonBlankStringV1Schema,
     neutral: PluginUiHostApiSurfaceNonBlankStringV1Schema,
   })),
+  /** Faint tints behind status words (a composer status item's capsule). Older snapshots omit it. */
+  statusTint: z.optional(z.strictObject({
+    success: PluginUiHostApiSurfaceNonBlankStringV1Schema,
+    warning: PluginUiHostApiSurfaceNonBlankStringV1Schema,
+    attention: PluginUiHostApiSurfaceNonBlankStringV1Schema,
+    danger: PluginUiHostApiSurfaceNonBlankStringV1Schema,
+    info: PluginUiHostApiSurfaceNonBlankStringV1Schema,
+    neutral: PluginUiHostApiSurfaceNonBlankStringV1Schema,
+  })),
   spacing: z.strictObject({
     xsmall: PluginUiHostApiSurfaceMetricV1Schema,
     small: PluginUiHostApiSurfaceMetricV1Schema,

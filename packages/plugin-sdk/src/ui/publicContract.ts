@@ -251,6 +251,15 @@ export type PluginUiHostApiSurfaceThemeV1 = {
         info: string;
         neutral: string;
     };
+    /** Faint tints behind status words (a composer status item's capsule). Older snapshots omit it. */
+    statusTint?: {
+        success: string;
+        warning: string;
+        attention: string;
+        danger: string;
+        info: string;
+        neutral: string;
+    };
     spacing: {
         xsmall: number;
         small: number;
