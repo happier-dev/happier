@@ -1834,6 +1834,23 @@ function AnchoredPopover(props: PopoverProps) {
         };
     }, [getContentDomElement, open, shouldPortalWeb]);
 
+    // A web portal first renders its content under the window-sized bound, then under its placement's own bound.
+    // Read the content box again as soon as that bound changes, before paint: a frame placed from the earlier,
+    // taller height would show the panel over its trigger for a frame and hover whichever row then lies under a
+    // resting pointer (a long menu's highlight jumping away from the current choice).
+    React.useLayoutEffect(() => {
+        if (Platform.OS !== 'web' || !open || !shouldPortalWeb) return;
+        const contentEl = getContentDomElement();
+        if (!contentEl || typeof contentEl.getBoundingClientRect !== 'function') return;
+        const rect = contentEl.getBoundingClientRect();
+        if (!(rect.width > 0) || !(rect.height > 0)) return;
+        setContentRectState((prev) => (
+            prev && Math.abs(prev.width - rect.width) <= 1 && Math.abs(prev.height - rect.height) <= 1
+                ? prev
+                : { x: 0, y: 0, width: rect.width, height: rect.height }
+        ));
+    }, [computed.maxHeight, computed.maxWidth, computed.placement, getContentDomElement, open, shouldPortalWeb]);
+
     const stopScrollEventPropagationOnWeb = React.useCallback((event: any) => {
         // Expo Router (Vaul/Radix) modals on web often install document-level scroll-lock listeners
         // that `preventDefault()` wheel/touch scroll, which breaks scrolling inside portaled popovers.
