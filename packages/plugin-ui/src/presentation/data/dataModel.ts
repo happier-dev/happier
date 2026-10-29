@@ -20,14 +20,16 @@ export type HappierDataColumn = Readonly<{
 }>;
 
 /**
- * A number in the reader's locale with grouping ("1,284"); strings and booleans as they are. Fifteen
- * significant digits is what a double holds exactly, so binary noise ("0.30000000000000004") reads as the
- * value it stands for ("0.3") while every meaningful digit the source sent stays.
+ * A number in the reader's locale with grouping ("1,284"); strings and booleans as they are. Integers
+ * retain every digit. Fractional readings keep the existing fifteen-significant-digit suppression of
+ * binary accumulation noise ("0.30000000000000004" reads as "0.3").
  */
 export function formatHappierDataValue(value: HappierDataValue, locale?: string): string {
   if (typeof value !== 'number') return String(value);
   try {
-    return new Intl.NumberFormat(locale === undefined ? undefined : [locale], { maximumSignificantDigits: 15 }).format(value);
+    return new Intl.NumberFormat(locale === undefined ? undefined : [locale], Number.isInteger(value)
+      ? { maximumFractionDigits: 0 }
+      : { maximumSignificantDigits: 15 }).format(value);
   } catch {
     return String(value);
   }

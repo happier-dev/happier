@@ -33,6 +33,23 @@ describe('shared data presentation rules', () => {
     expect(formatHappierDataShare(812 / 1284, 'en-US')).toBe('63%');
   });
 
+  it.each([
+    [1_234_567_890_123_456, 'en-US', '1,234,567,890,123,456'],
+    [Number.MAX_SAFE_INTEGER, 'en-US', '9,007,199,254,740,991'],
+    [-Number.MAX_SAFE_INTEGER, 'de-DE', '-9.007.199.254.740.991'],
+  ] as const)('retains every integer digit for %s in %s', (value, locale, expected) => {
+    expect(formatHappierDataValue(value, locale)).toBe(expected);
+    expect(describeHappierDataChart('Count', [{ x: 'Total', y: value }], locale)).toBe(`Count: Total ${expected}`);
+  });
+
+  it('retains decimal detail and locale while suppressing floating-point accumulation noise', () => {
+    expect(formatHappierDataValue(2.3456789, 'en-US')).toBe('2.3456789');
+    expect(formatHappierDataValue(123456789.123, 'de-DE')).toBe('123.456.789,123');
+    expect(formatHappierDataValue(0.000000123456789, 'en-US')).toBe('0.000000123456789');
+    expect(formatHappierDataValue(0.1 + 0.2, 'en-US')).toBe('0.3');
+    expect(formatHappierDataValue(0.1 + 0.2, 'de-DE')).toBe('0,3');
+  });
+
   it('drops secondary columns first on a narrow table, never the name, and keeps every column before measuring', () => {
     const columns = [{ label: 'Person' }, { label: 'Plan', priority: 'secondary' as const }, { label: 'Got to' }, { label: 'Joined' }];
     const rows = [['Mira Kovač', 'Team', 'Paired 2 machines', '10:38']];
