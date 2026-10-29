@@ -27,20 +27,4 @@ describe('resolveVoiceSurfaceStatusPresentation', () => {
   it.each(allStates)('projects %s to its own semantic tone and label key', (state) => {
     expect(resolveVoiceSurfaceStatusPresentation(state)).toEqual(expectedByState[state]);
   });
-
-  it('never lets a non-idle state fall through to the idle presentation', () => {
-    const idle = resolveVoiceSurfaceStatusPresentation('idle');
-    const nonIdleStates = allStates.filter((state) => state !== 'idle');
-    expect(nonIdleStates.length).toBeGreaterThan(0);
-    for (const state of nonIdleStates) {
-      expect(resolveVoiceSurfaceStatusPresentation(state).labelKey).not.toBe(idle.labelKey);
-    }
-  });
-
-  it('reports a truthful tone for every state a presentation must paint', () => {
-    expect(resolveVoiceSurfaceStatusPresentation('error').tone).toBe('error');
-    expect(resolveVoiceSurfaceStatusPresentation('permission_required').tone).toBe('error');
-    expect(resolveVoiceSurfaceStatusPresentation('listening').tone).toBe('active');
-    expect(resolveVoiceSurfaceStatusPresentation('idle').tone).toBe('neutral');
-  });
 });

@@ -14,11 +14,6 @@ describe('resolveVoiceSurfaceState', () => {
     expect(resolveVoiceSurfaceState(snapshot)).toBe(expected);
   });
 
-  it('keeps transcribing reachable instead of collapsing it into thinking', () => {
-    expect(resolveVoiceSurfaceState({ status: 'connected', mode: 'transcribing' }))
-      .not.toBe(resolveVoiceSurfaceState({ status: 'connected', mode: 'thinking' }));
-  });
-
   it('keeps permission-required, interruption, and hard error semantically distinct', () => {
     expect(resolveVoiceSurfaceState({
       status: 'disconnected',

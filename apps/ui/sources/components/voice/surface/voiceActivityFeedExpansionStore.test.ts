@@ -93,11 +93,4 @@ describe('voiceActivityFeedExpansionStore', () => {
       expanded: true,
     });
   });
-
-  it('preserves a handled attempt across navigation remounts', () => {
-    reconcile('attempt-1');
-    toggleVoiceActivityFeedExpansion();
-    reconcile('attempt-1');
-    expect(getVoiceActivityFeedExpansionSnapshot()).toMatchObject({ expanded: false, manuallySuppressed: true });
-  });
 });

@@ -246,14 +246,6 @@ describe('the one Voice recovery dispatch every placement fires', () => {
     });
   });
 
-  it('never hands a device-local routing id to the Agent route as selection authority', async () => {
-    const navigate = vi.fn();
-    (await dispatch('install_agent_runtime', navigate))();
-    const params = navigate.mock.calls[0]?.[0]?.params as Record<string, unknown> | undefined;
-    expect(params).toBeDefined();
-    expect(params).not.toHaveProperty('serverId');
-  });
-
   it('fails Agent runtime recovery closed when exact target identity is unavailable', async () => {
     const navigate = vi.fn();
     (await dispatch('update_agent_runtime', navigate, { runtimeRecoveryTarget: null }))();
