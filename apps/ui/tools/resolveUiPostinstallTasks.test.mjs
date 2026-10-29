@@ -3,6 +3,16 @@ import assert from 'node:assert/strict';
 
 import { resolveUiPostinstallTasks } from './resolveUiPostinstallTasks.mjs';
 
+test('UI postinstall selects only requested active tasks', () => {
+    const env = { HAPPIER_UI_POSTINSTALL_DEPENDENCIES_ONLY: '1',
+        HAPPIER_UI_POSTINSTALL_TASKS: JSON.stringify(['vendor-codemirror-webview-bundle']) };
+    assert.deepEqual(resolveUiPostinstallTasks({ env }), ['vendor-codemirror-webview-bundle']);
+    assert.deepEqual(resolveUiPostinstallTasks({ env: { ...env,
+        HAPPIER_UI_POSTINSTALL_TASKS: JSON.stringify(['vendor-password-kdf-worker']) } }), [],
+    'task selection cannot activate source compilation excluded by dependency-only mode');
+    assert.throws(() => resolveUiPostinstallTasks({ env: { ...env, HAPPIER_UI_POSTINSTALL_TASKS: 'invalid' } }));
+});
+
 test('PDF assets are version-vendored and its source bundle is excluded from dependency-only refresh', () => {
     assert.ok(resolveUiPostinstallTasks({ env: {} }).includes('vendor-pdfjs'));
     assert.ok(resolveUiPostinstallTasks({ env: {} }).includes('vendor-pdfjs-webview-bundle'));
