@@ -97,7 +97,8 @@ export function useMachineShareController(input: Readonly<{ machineId: string; m
         const message = grant?.success
             ? [`${names.current.get(sessionAccessSubjectKey(grant.data.principal)) ?? t('shareSheet.person')} · ${
                 t(grant.data.level === 'admin' ? 'machines.sharing.manage' : 'machines.sharing.use')}`,
-                t('machines.sharing.trustedOsLead', { machine: machineName })].join('\n\n')
+                t('machines.sharing.trustedOsLead', { machine: machineName }),
+                t('machines.sharing.trustedOsDetail', { machine: machineName })].join('\n\n')
             : presentation.summary ?? '';
         return Modal.confirm(presentation.title ?? t('approvals.untitled'), message,
             { ...(presentation.confirmLabel ? { confirmText: presentation.confirmLabel } : {}),
