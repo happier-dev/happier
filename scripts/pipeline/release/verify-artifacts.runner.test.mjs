@@ -98,7 +98,7 @@ test('Runner admission derives exact closed-ZIP bounds while generic extraction 
         archiveName: artifact.name,
         signal: cancellation.signal,
       }),
-      /archive extraction was aborted/u,
+      error => error === cancellation.signal.reason,
     );
   } finally {
     await rm(root, { recursive: true, force: true });
