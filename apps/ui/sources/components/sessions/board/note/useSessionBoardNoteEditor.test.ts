@@ -169,28 +169,6 @@ describe('useSessionBoardNoteEditor', () => {
         await hook.unmount();
     });
 
-    it('preserves every non-content item field while editing a note', () => {
-        const current = SessionSurfaceItemV1Schema.parse({
-            v: 1,
-            title: 'Old title',
-            frame: 'frameless',
-            height: { mode: 'fixed', size: 'tall' },
-            input: { context: 'release' },
-            source: { kind: 'declarative', document: createSessionSurfaceNoteDocumentV1('old body') },
-        });
-
-        const next = requireSessionBoardNoteItem({ title: 'New title', body: 'new body', baseItem: current });
-
-        expect(next).toMatchObject({
-            v: 1,
-            title: 'New title',
-            frame: 'frameless',
-            height: { mode: 'fixed', size: 'tall' },
-            input: { context: 'release' },
-        });
-        expect(noteBodyOf(next)).toBe('new body');
-    });
-
     it('updates an existing note without changing its frame, height, input, or Board placement', async () => {
         const actions = recordingActions();
         const current = SessionSurfaceItemV1Schema.parse({
@@ -247,35 +225,6 @@ describe('useSessionBoardNoteEditor', () => {
         expect(hook.getCurrent().status).toEqual({ kind: 'invalid', error: 'session_board_note_too_large' });
         expect(hook.getCurrent().canSave).toBe(true);
         expect(hook.getCurrent().body).toBe(oversizedBody);
-    });
-
-    it('saves the flushed editor value, not the draft captured before the flush', async () => {
-        const actions = recordingActions();
-        // The markdown surface still holds the final keystroke when Save is pressed.
-        const flushBody = vi.fn(async () => 'shipping notes!');
-
-        const hook = await renderHook(() => useSessionBoardNoteEditor({
-            sessionId: 'session-1',
-            itemId: 'item-1',
-            expectedItemRevision: null,
-            placement: { tabId: 'overview', tabTitle: 'Overview', width: 'medium' },
-            initialTitle: '',
-            initialBody: '',
-            reachable: true,
-            actions: actions.port,
-            flushBody,
-        }));
-
-        // Everything the editor published before the debounce boundary.
-        await hook.rerender();
-        hook.getCurrent().setTitle('Shipping');
-        hook.getCurrent().setBody('shipping notes');
-        await hook.rerender();
-
-        expect(await hook.getCurrent().save()).toBe(true);
-
-        expect(actions.upserts).toHaveLength(1);
-        expect(noteBodyOf(actions.upserts[0]!.item)).toBe('shipping notes!');
     });
 
     it('keeps the flushed value as the clean baseline so a saved note is not left dirty', async () => {
@@ -349,35 +298,6 @@ describe('useSessionBoardNoteEditor', () => {
         expect(hook.getCurrent().expectedRevision).toBe('rev-2');
         expect(hook.getCurrent().canSave).toBe(true);
         expect(upserts).toHaveLength(1);
-    });
-
-    it('keeps text typed while a save was outstanding instead of settling over it', async () => {
-        let settle: ((outcome: SessionBoardActionOutcome<SessionBoardMutationResult>) => void) | null = null;
-        const upsertItem: SessionBoardActionsPort['upsertItem'] = vi.fn(async () =>
-            new Promise<SessionBoardActionOutcome<SessionBoardMutationResult>>((resolve) => { settle = resolve; }));
-        const onSaved = vi.fn();
-        const hook = await renderHook(() => useSessionBoardNoteEditor({
-            sessionId: 'session-1', itemId: 'item-1', expectedItemRevision: null,
-            placement: { tabId: 'overview', tabTitle: 'Overview', width: 'medium' },
-            initialTitle: 'Plan', initialBody: 'A', reachable: true,
-            actions: { ...recordingActions().port, upsertItem },
-            onSaved,
-        }));
-        const saving = hook.getCurrent().save();
-        await hook.rerender();
-        // The person keeps typing while the request is outstanding.
-        hook.getCurrent().setBody('A then B');
-        await hook.rerender();
-        settle!({ status: 'ok', value: upsertResult('rev-committed') });
-        // The commit landed, but the draft the person is looking at did not: Save-and-leave
-        // consumes this answer and must keep the editor open.
-        expect(await saving).toBe(false);
-        await hook.rerender();
-
-        expect(hook.getCurrent().body).toBe('A then B');
-        expect(hook.getCurrent().dirty).toBe(true);
-        expect(hook.getCurrent().expectedRevision).toBe('rev-committed');
-        expect(onSaved).toHaveBeenCalledWith(expect.any(Object), 'rev-committed', false);
     });
 
     it('keeps text typed while a deferred approval was outstanding', async () => {

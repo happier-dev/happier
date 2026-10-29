@@ -998,41 +998,6 @@ describe('useSessionBoardController', () => {
         expect(actions.calls).toEqual([]);
     });
 
-    it('reports an unknown outcome rather than claiming success', async () => {
-        const intent = { sessionId: 'session-1', expectedLayoutRevision: 'rev-layout', operation: { op: 'item.resize' as const, tabId: 'overview', itemId: 'note-1', width: 'full' as const } };
-        const mutationRequest: SessionBoardMutationV1 = {
-            operation: 'update_layout',
-            expectedLayoutRevision: 'rev-layout',
-            layoutContent: { t: 'plain', v: mutableLayout(LAYOUT_TWO_VIEWS) },
-        };
-        const actions = recordingActions({
-            status: 'outcome_unknown',
-            recovery: {
-                v: 1,
-                actionId: 'session.board.layout.update',
-                serverId: 'home-1',
-                sessionId: 'session-1',
-                requestBody: JSON.stringify(mutationRequest),
-                mutationRequest,
-                intent,
-            },
-        });
-        const refresh = vi.fn();
-        const hook = await mountController({
-            snapshot: readySnapshot({
-                layout: LAYOUT_TWO_VIEWS,
-                items: [{ itemId: 'note-1', item: note('Plan', 'body') }],
-            }),
-            actions: actions.port,
-            refresh,
-        });
-
-        await hook.getCurrent().run({ kind: 'item.resize', itemId: 'note-1', width: 'full' });
-        await hook.rerender();
-        expect(hook.getCurrent().lastOutcome).toMatchObject({ kind: 'outcomeUnknown' });
-        expect(refresh).toHaveBeenCalledTimes(1);
-    });
-
     it('blocks generic mutations after a lost response and settles only when refreshed Board state proves the resize', async () => {
         const mutationRequest: SessionBoardMutationV1 = {
             operation: 'update_layout',
@@ -1079,6 +1044,8 @@ describe('useSessionBoardController', () => {
         expect(actions.calls).toHaveLength(1);
         await hook.rerender();
 
+        expect(hook.getCurrent().lastOutcome).toMatchObject({ kind: 'outcomeUnknown' });
+        expect(refresh).toHaveBeenCalledTimes(1);
         expect(hook.getCurrent().supports('item.rename')).toBe(false);
         await hook.getCurrent().run({ kind: 'item.rename', itemId: 'note-1', title: 'Must not dispatch' });
         expect(actions.calls).toHaveLength(1);
@@ -1321,20 +1288,6 @@ describe('useSessionBoardController', () => {
 
         expect(hook.getCurrent().lastOutcome).toEqual({ kind: 'applied' });
         expect(hook.getCurrent().mutationRecovery).toBeNull();
-    });
-
-    it('delegates removal confirmation to the Action instead of consulting a caller floor', async () => {
-        const actions = recordingActions();
-        const hook = await mountController({
-            snapshot: readySnapshot({
-                layout: LAYOUT_TWO_VIEWS,
-                items: [{ itemId: 'note-1', item: note('Plan', 'body') }],
-            }),
-            actions: actions.port,
-        });
-
-        await hook.getCurrent().run({ kind: 'item.remove', itemId: 'note-1' });
-        expect(actions.calls).toEqual([expect.objectContaining({ kind: 'remove' })]);
     });
 
     it('guards the active note draft before removing the note being edited', async () => {
@@ -1830,7 +1783,7 @@ describe('useSessionBoardController', () => {
         expect(hook.getCurrent().controller.lastOutcome).toEqual({ kind: 'applied' });
     });
 
-    it('removes the item and every placement once the person confirms', async () => {
+    it('submits the exact item and layout revisions through the removal Action', async () => {
         const actions = recordingActions();
         const hook = await mountController({
             snapshot: readySnapshot({
@@ -1841,29 +1794,6 @@ describe('useSessionBoardController', () => {
         });
 
         await hook.getCurrent().run({ kind: 'item.remove', itemId: 'note-1' });
-        expect(actions.calls).toEqual([{
-            kind: 'remove',
-            input: {
-                sessionId: 'session-1',
-                itemId: 'note-1',
-                expectedItemRevision: 'rev-note-1',
-                expectedLayoutRevision: 'rev-layout',
-            },
-        }]);
-    });
-
-    it('keeps Action approval routing fail-closed when no UI confirmation host is mounted', async () => {
-        const actions = recordingActions();
-        const hook = await mountController({
-            snapshot: readySnapshot({
-                layout: LAYOUT_TWO_VIEWS,
-                items: [{ itemId: 'note-1', item: note('Plan', 'body') }],
-            }),
-            actions: actions.port,
-        });
-
-        await hook.getCurrent().run({ kind: 'item.remove', itemId: 'note-1' });
-
         expect(actions.calls).toEqual([{
             kind: 'remove',
             input: {
@@ -2276,30 +2206,6 @@ describe('useSessionBoardController', () => {
             itemId: 'orphan-1',
             tabId: 'overview',
         });
-    });
-
-    // Removing the last Board view with the unpin disposition leaves a layout
-    // with no views and every readable item in Recovered items. The layout
-    // Pin supplies the synthetic view title explicitly, without editing the item.
-    it('recreates the Overview view atomically when pinning onto a layout with no views', async () => {
-        const actions = recordingActions();
-        const hook = await mountController({
-            snapshot: readySnapshot({
-                layout: { v: 1, tabs: [] } as SessionBoardLayoutV1,
-                items: [{ itemId: 'orphan-1', item: note('Orphan', 'body') }],
-            }),
-            actions: actions.port,
-        });
-
-        expect(hook.getCurrent().recoveredItemIds).toEqual(['orphan-1']);
-        await hook.getCurrent().run({ kind: 'item.pin', itemId: 'orphan-1' });
-
-        expect(actions.calls).toHaveLength(1);
-        const call = actions.calls[0]!;
-        expect(call.kind).toBe('layout');
-        if (call.kind !== 'layout') throw new Error('expected a layout-only mutation');
-        expect(call.input.operation).toMatchObject({ op: 'item.place', itemId: 'orphan-1', tabId: 'overview', width: 'medium' });
-        expect('tabTitle' in call.input.operation && call.input.operation.tabTitle).toEqual(expect.any(String));
     });
 
     it('explains rather than silently dropping a pin of an unreadable recovered item', async () => {

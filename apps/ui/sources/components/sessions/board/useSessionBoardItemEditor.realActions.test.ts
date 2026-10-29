@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { SessionSurfaceItemV1Schema } from '@happier-dev/protocol/sessions/board';
 
 import { renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
@@ -308,13 +308,14 @@ describe('shared Board item editor through the real Board Actions', () => {
 
     it('does not complete Save-and-leave while text typed during the pending save remains unsaved', async () => {
         let settle: ((response: Response) => void) | undefined;
+        const onSaved = vi.fn();
         const actions = realBoardActions(async (_path, init) => init?.method === 'PUT'
             ? await new Promise<Response>((resolve) => { settle = resolve; })
             : new Response(JSON.stringify({ record: null })));
         const hook = await renderHook(() => useSessionBoardNoteEditor({
             sessionId: session.sessionId, itemId: 'new-note', expectedItemRevision: null,
             placement: { tabId: 'overview', tabTitle: 'Overview' },
-            initialTitle: 'Draft', initialBody: '', reachable: true, actions,
+            initialTitle: 'Draft', initialBody: '', reachable: true, actions, onSaved,
         }));
         hook.getCurrent().setBody('Save A');
         await hook.rerender();
@@ -339,6 +340,7 @@ describe('shared Board item editor through the real Board Actions', () => {
         expect(hook.getCurrent().dirty).toBe(true);
         expect(hook.getCurrent().dirtyRef.current).toBe(true);
         expect(hook.getCurrent().expectedRevision).toBe(revision);
+        expect(onSaved).toHaveBeenCalledWith(expect.any(Object), revision, false);
     });
 
     it('leaves after Save-and-leave when the committed draft is the current draft', async () => {

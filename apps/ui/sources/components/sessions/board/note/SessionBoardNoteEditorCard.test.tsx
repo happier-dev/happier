@@ -369,6 +369,7 @@ describe('SessionBoardNoteEditorCard', () => {
         });
 
         expect(editorHarness.flushPendingChange).toHaveBeenCalledOnce();
+        expect(alertRequested).toHaveBeenCalledOnce();
         expect(onCancel).toHaveBeenCalledOnce();
         expect(navigationHarness.dispatch).toHaveBeenCalledWith(action);
     });
