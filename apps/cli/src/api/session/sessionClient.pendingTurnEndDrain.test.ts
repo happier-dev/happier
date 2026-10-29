@@ -5009,49 +5009,4 @@ describe('ApiSessionClient pending-queue turn-end drain', () => {
     }
   });
 
-  it('emits stale-active-turn-confirmed when a stale local active turn survives a mirror refresh that still reports activity', async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(10_000);
-    const client = await createClient({
-      latestTurnStatus: 'in_progress',
-      pendingCount: 1,
-      pendingBlockedCount: 0,
-      pendingVersion: 1,
-    });
-    await client.sessionTurnLifecycle.beginTurn({ provider: 'claude', observedAt: Date.now() });
-    materializeNextMock.mockResolvedValueOnce({ didMaterialize: false, localId: null, didWrite: false });
-    fetchSnapshotMock.mockResolvedValue({
-      latestTurnStatus: 'in_progress',
-      latestTurnStatusObservedAt: Date.now(),
-    });
-    const staleActiveTurnConfirmed = vi.fn();
-    client.on('stale-active-turn-confirmed', staleActiveTurnConfirmed);
-
-    vi.setSystemTime(10_000 + 5 * 60 * 1000 + 1_000);
-    await expect(client.materializeNextPendingMessageSafely({ reconcileWhenEmpty: 'force' }))
-      .resolves.toEqual({ type: 'no_pending' });
-
-    expect(fetchSnapshotMock).toHaveBeenCalled();
-    expect(staleActiveTurnConfirmed).toHaveBeenCalledTimes(1);
-  });
-
-  it('does not emit stale-active-turn-confirmed while the local active turn is still fresh', async () => {
-    const client = await createClient({
-      latestTurnStatus: 'in_progress',
-      pendingCount: 1,
-      pendingBlockedCount: 0,
-      pendingVersion: 1,
-    });
-    await client.sessionTurnLifecycle.beginTurn({ provider: 'claude', observedAt: Date.now() });
-    materializeNextMock.mockResolvedValueOnce({ didMaterialize: false, localId: null, didWrite: false });
-    const staleActiveTurnConfirmed = vi.fn();
-    client.on('stale-active-turn-confirmed', staleActiveTurnConfirmed);
-
-    await expect(client.materializeNextPendingMessageSafely({ reconcileWhenEmpty: 'force' }))
-      .resolves.toEqual({ type: 'no_pending' });
-
-    expect(fetchSnapshotMock).not.toHaveBeenCalled();
-    expect(staleActiveTurnConfirmed).not.toHaveBeenCalled();
-  });
-
 });

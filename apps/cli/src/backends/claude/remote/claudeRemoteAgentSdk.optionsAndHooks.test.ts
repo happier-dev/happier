@@ -521,6 +521,68 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
         expect(capturedOptions.effort).toBe('low');
     });
 
+    it('suppresses the requested interrupt error while the replacement prompt awaits its own result', async () => {
+        type CreateQuery = NonNullable<Parameters<typeof claudeRemoteAgentSdk>[0]['createQuery']>;
+        let finishInput!: () => void;
+        const inputFinished = new Promise<void>((resolve) => { finishInput = resolve; });
+        let releaseReplacementResult!: () => void;
+        const replacementResultReady = new Promise<void>((resolve) => { releaseReplacementResult = resolve; });
+        let reachedInterruptedResult = false;
+        const interrupt = vi.fn(async () => {});
+        // The SDK control response can acknowledge interrupt before its separate result frame.
+        // Keep the real runner, prompt settlement and input iterable beneath that SDK boundary.
+        const createQuery = (({ prompt }: Parameters<CreateQuery>[0]) => ({
+            async *[Symbol.asyncIterator]() {
+                const input = (prompt as AsyncIterable<import('@anthropic-ai/claude-agent-sdk').SDKUserMessage>)[Symbol.asyncIterator]();
+                const first = await input.next();
+                if (first.done) throw new Error('Expected initial prompt');
+                yield { type: 'system', subtype: 'init', session_id: 'interrupted-session' };
+                const replacement = await input.next();
+                if (replacement.done) throw new Error('Expected replacement prompt');
+                // This older result's queue snapshot predates the replacement's submission.
+                yield { type: 'result', subtype: 'error_during_execution', session_id: 'interrupted-session',
+                    errors: ['Interrupted by user'], user_message_uuid: first.value.uuid, queued_turn_count: 0 };
+                reachedInterruptedResult = true;
+                await replacementResultReady;
+                yield { type: 'result', subtype: 'success', session_id: 'interrupted-session',
+                    result: 'Replacement answered', user_message_uuid: replacement.value.uuid, queued_turn_count: 0 };
+                await inputFinished;
+            },
+            interrupt,
+            close() { finishInput(); },
+        })) as unknown as CreateQuery;
+        const onReady = vi.fn();
+        const onCompletionEvent = vi.fn();
+        const prompts = [
+            { message: 'first', mode: makeMode(), userMessageLocalIds: ['first'] },
+            { message: 'replacement', mode: makeMode(), userMessageLocalIds: ['replacement'], pendingProviderAction: 'interrupt_and_send' as const },
+        ];
+        const runner = claudeRemoteAgentSdk({
+            sessionId: null, transcriptPath: null, path: '/tmp', claudeArgs: [], claudeExecutablePath: '/tmp/claude',
+            canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }), isAborted: () => false,
+            nextMessage: async () => {
+                const prompt = prompts.shift();
+                if (prompt) return prompt;
+                await inputFinished;
+                return null;
+            },
+            onReady, onCompletionEvent, onSessionFound: () => {}, onMessage: () => {}, createQuery,
+        });
+        void runner.catch(() => {});
+        try {
+            await vi.waitFor(() => { expect(reachedInterruptedResult).toBe(true); });
+            expect(interrupt).toHaveBeenCalledOnce();
+            expect(onReady).not.toHaveBeenCalled();
+            expect(onCompletionEvent.mock.calls.flat()).not.toContainEqual(expect.stringContaining('error_during_execution'));
+            releaseReplacementResult();
+            await vi.waitFor(() => { expect(onReady).toHaveBeenCalledOnce(); });
+        } finally {
+            releaseReplacementResult();
+            finishInput();
+            await runner;
+        }
+    });
+
     it('exposes a turn interrupt handler that stops the active task via query.stopTask()', async () => {
         const stopTask = vi.fn(async (_taskId: string) => {});
         let capturedTurnInterrupt: null | (() => Promise<void>) = null;

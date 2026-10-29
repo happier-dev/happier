@@ -2225,12 +2225,6 @@ export class ApiSessionClient extends EventEmitter {
             });
         }
         await this.syncSessionSnapshotFromServer({ reason: 'explicit-drain' });
-        if (localActiveTurnIsStale && isActiveLatestTurnStatus(this.latestTurnStatus)) {
-            // The refreshed mirror still reports an active turn while the local turn is stale.
-            // The runner is the mirror's only writer, so this is circular evidence: publish the
-            // fact and let the runtime's registered release requester decide.
-            this.emit('stale-active-turn-confirmed');
-        }
     }
 
     private async reconcileTurnStatusBeforePendingMaterializationIfNeeded(opts: {

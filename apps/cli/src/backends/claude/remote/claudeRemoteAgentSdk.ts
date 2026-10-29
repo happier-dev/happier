@@ -59,7 +59,6 @@ import {
     readClaudeSessionHookProviderTaskActivity,
 } from '@/backends/claude/providerActivity/createClaudeProviderActivityLedger';
 import type { createClaudeProviderRuntimeActivityAdapter } from '@/backends/claude/providerActivity/createClaudeProviderRuntimeActivityAdapter';
-import { hasClaudeQueuedUserTurns } from './resultTurnBoundary';
 import {
     handleClaudeRuntimeActivityLoss,
     createClaudeRuntimeActivityEvidence,
@@ -204,12 +203,6 @@ export async function claudeRemoteAgentSdk(opts: {
      * Used by the remote launcher to implement UI "Abort" without losing context.
      */
     setTurnInterrupt?: ((handler: (() => Promise<void>) | null) => void) | null;
-    /**
-     * Registers a best-effort requester that releases foreground-turn custody withheld after a
-     * queued-turns result. The runtime calls it once reconciliation proves the promised resumed
-     * turn never started and the provider activity ledger holds no active task.
-     */
-    setForegroundTurnReleaseRequester?: ((requester: (() => Promise<void>) | null) => void) | null;
     /** Shares the launcher's canonical metadata updates with the current streaming query. */
     setPermissionModeApplier?: ((apply: ((permissionMode: EnhancedMode['permissionMode']) => Promise<void>) | null) => void | Promise<void>) | null;
     onCheckpointCaptured?: (checkpointId: string) => void;
@@ -941,9 +934,6 @@ Current model: ${lastAppliedRuntimeSettings.model ?? 'provider default'}.${messa
     };
     let nextMessagePump: Promise<void> | null = null;
     let deferredUntilForegroundTurnEnds: ClaudeRemoteProviderAcceptedPrompt<EnhancedMode> | null = null;
-    // True while a queued-turns result keeps foreground custody held for a promised continuation
-    // turn. Cleared whenever that continuation genuinely starts or custody is otherwise released.
-    let custodyWithheldAfterQueuedTurnsResult = false;
     const swallowOptionalPromise = async (promise: Promise<void> | null): Promise<void> => {
         if (!promise) return;
         await promise.catch(() => {});
@@ -1653,7 +1643,6 @@ Current model: ${lastAppliedRuntimeSettings.model ?? 'provider default'}.${messa
                             resetForegroundTurn();
                         }
                         foregroundTurnInterruptActive = true;
-                        custodyWithheldAfterQueuedTurnsResult = false;
                         messages.push({
                             type: 'user',
                             uuid: promptSettlements.submit(next),
@@ -1677,7 +1666,6 @@ Current model: ${lastAppliedRuntimeSettings.model ?? 'provider default'}.${messa
         const finalizeCurrentTurn = async (params?: { completionEvent?: ClaudeCompletionEvent }) => {
             if (didFinalizeTurn) return;
             didFinalizeTurn = true;
-            custodyWithheldAfterQueuedTurnsResult = false;
             awaitingNextTurnStart = true;
             foregroundTurnInterruptActive = false;
             opts.onInFlightSteerAvailabilityChange?.(false);
@@ -1736,33 +1724,10 @@ Current model: ${lastAppliedRuntimeSettings.model ?? 'provider default'}.${messa
         const releaseCurrentTurnForResult = async () => {
             if (didFinalizeTurn || didReleaseTurnForResult) return;
             didReleaseTurnForResult = true;
-            custodyWithheldAfterQueuedTurnsResult = false;
             await reconcileRuntimeActivityForResult();
             await opts.onReady();
             scheduleNextMessagePump();
         };
-
-        // Synthetic close-out for custody withheld after a queued-turns result: the promised
-        // resumed turn never arrived, the local turn is stale, and the provider ledger is idle.
-        // Reuses the normal result close-out line (reconcile + onReady + pump wake) so parked or
-        // queued Pending rows become deliverable again. Evaluated only when the runtime's
-        // reconciliation asks for it; no timer of its own.
-        const releaseWithheldForegroundTurnCustody = async (): Promise<void> => {
-            if (!custodyWithheldAfterQueuedTurnsResult) return;
-            if (didFinalizeTurn || didReleaseTurnForResult) {
-                custodyWithheldAfterQueuedTurnsResult = false;
-                return;
-            }
-            if (hasActiveProviderTasks()) return;
-            custodyWithheldAfterQueuedTurnsResult = false;
-            logger.infoFile('[claudeRemoteAgentSdk] releasing foreground custody withheld after a queued-turns result (stale silence, provider idle)');
-            try {
-                await releaseCurrentTurnForResult();
-            } catch (error) {
-                logger.debug('[claudeRemoteAgentSdk] withheld-custody release failed', { error });
-            }
-        };
-        opts.setForegroundTurnReleaseRequester?.(releaseWithheldForegroundTurnCustody);
 
         const finalizeSubagentTurn = async () => {
             lastTurnFlushSummary = await flushStreamedTranscriptWriter('turn-end');
@@ -1902,7 +1867,6 @@ Current model: ${lastAppliedRuntimeSettings.model ?? 'provider default'}.${messa
                     didFinalizeTurn = false;
                     resetForegroundTurn();
                     foregroundTurnInterruptActive = true;
-                    custodyWithheldAfterQueuedTurnsResult = false;
                     await opts.onProviderPromptStarted?.();
                     updateThinking(true);
                     opts.onInFlightSteerAvailabilityChange?.(true);
@@ -2347,9 +2311,10 @@ Current model: ${lastAppliedRuntimeSettings.model ?? 'provider default'}.${messa
                 const didRequestThisResult = awaitingRequestedTurnInterruptResult;
                 awaitingRequestedTurnInterruptResult = false;
                 const failure = readAgentSdkResultFailure(message);
-                const hasQueuedUserTurns = hasClaudeQueuedUserTurns(message);
-                if (failure && !hasQueuedUserTurns) {
-                    if (didRequestThisResult && message.subtype === 'error_during_execution') {
+                const retainForeground = promptSettlements.shouldRetainForegroundForResult(message);
+                const isRequestedExecutionInterrupt = didRequestThisResult && message.subtype === 'error_during_execution';
+                if (failure && !retainForeground) {
+                    if (isRequestedExecutionInterrupt) {
                         if (!didFinalizeTurn) {
                             await releaseCurrentTurnForResult();
                         }
@@ -2358,7 +2323,7 @@ Current model: ${lastAppliedRuntimeSettings.model ?? 'provider default'}.${messa
                     await reconcileRuntimeActivityForResult();
                     throw new Error(failure);
                 }
-                if (failure) opts.onCompletionEvent?.(failure);
+                if (failure && !isRequestedExecutionInterrupt) opts.onCompletionEvent?.(failure);
 
                 const resultText = extractResultText(message);
                 if (!streamedTranscriptWriter && !didPublishAssistantTextThisTurn && resultText) {
@@ -2373,13 +2338,12 @@ Current model: ${lastAppliedRuntimeSettings.model ?? 'provider default'}.${messa
                     flushBufferedStreamEventAssistantMessage(message);
                 }
 
-                if (hasQueuedUserTurns) {
-                    // A resumed notification or failed earlier command can finish before the
-                    // submitted user send. Preserve its output without releasing foreground custody.
+                if (retainForeground) {
+                    // Preserve output from earlier or partially answered work until the submitted
+                    // prompts have outcomes. Session backlog alone does not identify those prompts.
                     lastTurnFlushSummary = await flushStreamedTranscriptWriter('turn-end');
                     maybeEmitResultAssistantFallback(message, resultText);
-                    resetForegroundTurn();
-                    custodyWithheldAfterQueuedTurnsResult = true;
+                    if (!didReleaseTurnForResult && !didFinalizeTurn) resetForegroundTurn();
                     if (isCompactCommand) {
                         emitCompactionCompleted();
                         isCompactCommand = false;
@@ -2453,7 +2417,6 @@ Current model: ${lastAppliedRuntimeSettings.model ?? 'provider default'}.${messa
         opts.onInFlightSteerAvailabilityChange?.(false);
         opts.setUserMessageSender?.(null);
         opts.setTurnInterrupt?.(null);
-        opts.setForegroundTurnReleaseRequester?.(null);
         if (!didSettleRuntimeActivityForCurrentTurn || providerActivityLedger.hasActiveProviderTasks()) {
             handleClaudeRuntimeActivityLoss({
                 ...runtimeActivityEffectParams,

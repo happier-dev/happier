@@ -1,4 +1,5 @@
 import type { EnhancedMode } from '../loop';
+import { hasClaudeQueuedUserTurns, readClaudeResultUserMessageUuids } from './resultTurnBoundary';
 import { randomUUID } from 'node:crypto';
 import { readPendingLocalId } from '@happier-dev/protocol';
 import type { PendingProviderAction } from '@/agent/runtime/modeMessageQueue';
@@ -93,8 +94,9 @@ export function reportClaudeRemoteProviderPromptTransportFailure(
  *
  * Both remote runtimes request Claude's supported --replay-user-messages acknowledgment.
  * Enqueuing input locally, reading the iterable and writing stdin cannot prove that
- * Claude accepted it. Only the exact main-chain user UUID echoed by Claude settles
- * Pending and permits replay-seed retirement. Unified TUI injection has its own
+ * Claude accepted it. An exact main-chain user echo or an attributed result answering
+ * that UUID settles Pending and permits replay-seed retirement. Result custody remains
+ * separate: a delivery echo does not complete a turn. Unified TUI injection has its own
  * provider-evidence owner and deliberately does not use this tracker.
  */
 export function createClaudeRemotePromptSettlementTracker(options: Readonly<{
@@ -102,6 +104,8 @@ export function createClaudeRemotePromptSettlementTracker(options: Readonly<{
     onTransportFailure?: ClaudeRemoteProviderPromptTransportFailureHandler | null;
 }>) {
     const unresolved = new Map<ClaudeRemoteProviderAcceptedPrompt, string | null>();
+    const awaitingResultUuids = new Set<string>();
+    let latestSubmittedUuid: string | null = null;
 
     const remove = (prompt: ClaudeRemoteProviderAcceptedPrompt): boolean => unresolved.delete(prompt);
     const rejectBeforeEffect = (prompt: ClaudeRemoteProviderAcceptedPrompt): void => {
@@ -121,20 +125,48 @@ export function createClaudeRemotePromptSettlementTracker(options: Readonly<{
             if (!unresolved.has(prompt)) throw new Error('Cannot submit an untracked Claude prompt');
             const uuid = randomUUID();
             unresolved.set(prompt, uuid);
+            awaitingResultUuids.add(uuid);
+            latestSubmittedUuid = uuid;
             return uuid;
         },
         observeProviderMessage(message: unknown): boolean {
             if (!message || typeof message !== 'object') return false;
             const record = message as Record<string, unknown>;
-            if (record.type !== 'user' || record.isSynthetic === true || record.parent_tool_use_id != null) return false;
-            if (typeof record.uuid !== 'string') return false;
+            if ((record.type !== 'user' && record.type !== 'result') || record.isSynthetic === true || record.parent_tool_use_id != null) return false;
+            const acknowledgedUuids = record.type === 'user' && typeof record.uuid === 'string'
+                ? [record.uuid]
+                : readClaudeResultUserMessageUuids(message);
+            if (acknowledgedUuids.length === 0) return false;
+            let accepted = false;
             for (const [prompt, uuid] of unresolved) {
-                if (uuid !== record.uuid) continue;
+                if (uuid === null || !acknowledgedUuids.includes(uuid)) continue;
                 unresolved.delete(prompt);
                 confirmClaudeRemoteProviderPromptAccepted(options.onAccepted, prompt);
-                return true;
+                accepted = true;
             }
-            return false;
+            // Callers suppress acknowledged user echoes, but still publish result output.
+            return accepted && record.type === 'user';
+        },
+        /** Called once by the ordered result consumer, separately from raw delivery observation. */
+        shouldRetainForegroundForResult(message: unknown): boolean {
+            const hasQueuedUserTurns = hasClaudeQueuedUserTurns(message);
+            const answeredUuids = readClaudeResultUserMessageUuids(message);
+            if (answeredUuids.length === 0) {
+                // Older native producers lack attribution. Preserve their existing queue boundary.
+                if (!hasQueuedUserTurns) {
+                    awaitingResultUuids.clear();
+                    latestSubmittedUuid = null;
+                }
+                return hasQueuedUserTurns;
+            }
+            if (awaitingResultUuids.size === 0) return hasQueuedUserTurns;
+            for (const uuid of answeredUuids) awaitingResultUuids.delete(uuid);
+            if (!hasQueuedUserTurns && latestSubmittedUuid !== null && !awaitingResultUuids.has(latestSubmittedUuid)) {
+                // The latest send has its own result. Keep the existing empty-queue closeout for
+                // older IDs omitted by native attribution's 64-entry limit; this is not delivery proof.
+                awaitingResultUuids.clear();
+            }
+            return awaitingResultUuids.size > 0;
         },
         /** Commands handled locally have no provider transport to acknowledge. */
         accept(prompt: ClaudeRemoteProviderAcceptedPrompt): void {
