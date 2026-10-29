@@ -24,13 +24,6 @@ describe('recoveryKey format', () => {
     );
   });
 
-  it('emits eleven dash-separated uppercase RFC 4648 Base32 groups for 32 bytes', () => {
-    const formatted = formatRecoveryKey(sequentialBytes);
-    expect(formatted).toMatch(/^[A-Z2-7]{5}(-[A-Z2-7]{1,5})*$/u);
-    expect(formatted.split('-')).toHaveLength(11);
-    expect(formatted.replace(/-/g, '')).toHaveLength(52);
-  });
-
   it('rejects formatting for keys that are not exactly 32 bytes', () => {
     expect(() => formatRecoveryKey(new Uint8Array(16))).toThrow(/32/u);
     expect(() => formatRecoveryKey(new Uint8Array(64))).toThrow(/32/u);

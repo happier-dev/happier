@@ -550,6 +550,11 @@ describe('Automation Run template composer references', () => {
 
   it('rejects identity-bearing references for targets without structured-input delivery', () => {
     const prompt = 'Continue @Nightly%20review now.';
+    const expectedSupport = {
+      existingSession: true,
+      newSession: false,
+      executionRun: false,
+    } as const;
     const targets = [
       { kind: 'existingSession', sessionId: 'sess-target' },
       {
@@ -595,7 +600,8 @@ describe('Automation Run template composer references', () => {
         accountCurrentness: { mode: 'plain', version: 3, contentKeyFingerprint: null },
         runId: 'run-1',
       });
-      const supported = automationRunExecutionTargetDeliversComposerReferencesV1(target.kind);
+      const supported = expectedSupport[target.kind];
+      expect(automationRunExecutionTargetDeliversComposerReferencesV1(target.kind)).toBe(supported);
       expect(admitted.kind).toBe(supported ? 'available' : 'contentInvalid');
       expect(AutomationRunExecutionRecipeV1Schema.safeParse(recipe).success).toBe(supported);
       expect(materialized.kind).toBe(supported ? 'available' : 'contentInvalid');

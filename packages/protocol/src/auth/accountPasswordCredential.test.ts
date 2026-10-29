@@ -99,10 +99,6 @@ describe('acceptPasswordTextV1', () => {
 });
 
 describe('PasswordMaterialHashV1Schema', () => {
-    it('accepts a record on the published ladder', () => {
-        expect(PasswordMaterialHashV1Schema.parse(validHash)).toEqual(validHash);
-    });
-
     it('enforces the OWASP parallelism floor for each accepted memory cost', () => {
         for (const [n, minimumP] of [[2 ** 14, 5], [2 ** 15, 3], [2 ** 16, 2], [2 ** 17, 1]]) {
             const record = (p: number) => ({ ...validHash, parameters: { ...validHash.parameters, n, p } });

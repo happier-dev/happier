@@ -66,16 +66,13 @@ describe('auth token provenance contract', () => {
         }
     });
 
-    it('rejects expanded provenance contracts', () => {
+    it('rejects unknown, future, malformed, and expanded markers', () => {
         expect(AuthTokenProvenanceSchema.safeParse({
             v: 1,
             kind: 'account',
             authority: 'present_user',
             mintOrigin: 'unexpected',
         }).success).toBe(false);
-    });
-
-    it('rejects unknown, future, malformed, and expanded markers', () => {
         expect(AuthTokenProvenanceSchema.safeParse({ v: 2, kind: 'account', authority: 'present_user' }).success).toBe(false);
         expect(AuthTokenProvenanceSchema.safeParse({ kind: 'account', authority: 'present_user' }).success).toBe(false);
         expect(AuthTokenProvenanceSchema.safeParse({ v: 1, kind: 'account', authority: 'present_user', extra: true }).success).toBe(false);

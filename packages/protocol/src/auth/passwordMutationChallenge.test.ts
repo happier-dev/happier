@@ -30,7 +30,14 @@ const challenge = {
 describe('password mutation challenge proof', () => {
   it('binds the complete normalized mutation, independently of object insertion order', () => {
     const digest = createPasswordCredentialMutationDigestV1(mutation);
-    expect(createPasswordCredentialMutationDigestV1({ ...mutation })).toBe(digest);
+    expect(createPasswordCredentialMutationDigestV1({
+      newCredentialDigest: mutation.newCredentialDigest,
+      normalizedNativeEmail: mutation.normalizedNativeEmail,
+      expectedCredentialRevision: mutation.expectedCredentialRevision,
+      accountId: mutation.accountId,
+      action: mutation.action,
+      v: mutation.v,
+    })).toBe(digest);
     for (const change of [
       { action: 'recover' as const }, { accountId: 'account-2' },
       { expectedCredentialRevision: 2 }, { normalizedNativeEmail: 'bob@example.test' },

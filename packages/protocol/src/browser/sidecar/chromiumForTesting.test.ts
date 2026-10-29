@@ -66,12 +66,11 @@ describe('chromium-for-testing pinned product source descriptor', () => {
     expect(mod?.ChromiumForTestingProductSourceV1Schema).toBeDefined();
     if (!mod?.ChromiumForTestingProductSourceV1Schema) return;
 
+    const source = mod.CHROMIUM_FOR_TESTING_PRODUCT_SOURCE;
+    expect(mod.ChromiumForTestingProductSourceV1Schema.safeParse(source).success).toBe(true);
     expect(mod.ChromiumForTestingProductSourceV1Schema.safeParse({
-      key: 'browser-chromium',
+      ...source,
       pinnedVersion: 'latest',
-      channel: 'stable',
-      license: 'BSD-3-Clause',
-      assetsByPlatform: {},
     }).success).toBe(false);
   });
 

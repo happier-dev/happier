@@ -68,10 +68,17 @@ describe('browser events protocol v1', () => {
     expect(mod).not.toBeNull();
     if (!mod) return;
 
-    expect(mod.BrowserEventV1Schema.safeParse({
-      kind: 'Runtime.consoleAPICalled',
+    const event = {
+      kind: 'viewFocused',
       eventId: 'event_1',
+      browserSessionId: 'browser_session_1',
       viewId: 'view_1',
+      occurredAt: 1_000,
+    };
+    expect(mod.BrowserEventV1Schema.safeParse(event).success).toBe(true);
+    expect(mod.BrowserEventV1Schema.safeParse({
+      ...event,
+      kind: 'Runtime.consoleAPICalled',
     }).success).toBe(false);
   });
 });

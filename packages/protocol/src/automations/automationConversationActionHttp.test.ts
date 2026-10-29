@@ -302,8 +302,10 @@ describe('Automation conversation admission HTTP contract', () => {
         },
       },
       input,
+      replyHandoff: finalReplyHandoff,
     } as const;
 
+    expect(AutomationConversationActionHttpRequestSchemasV1[actionId].parse(request)).toEqual(request);
     const noDeliveryRequest = {
       v: 1,
       caller: request.caller,
@@ -351,6 +353,10 @@ describe('Automation conversation admission HTTP contract', () => {
           ...input.resultDelivery,
           actionRef: { pluginId: 'com.acme.other', localId: 'automation/result-deliver-v1' },
         },
+      },
+      replyHandoff: {
+        ...finalReplyHandoff,
+        actionRef: { pluginId: 'com.acme.other', localId: 'automation/result-deliver-v1' },
       },
     }).success).toBe(false);
   });
@@ -418,12 +424,26 @@ describe('Automation conversation admission HTTP contract', () => {
       },
     } as const;
 
-    expect(AutomationConversationActionHttpRequestSchemasV1[actionId].safeParse({
+    const ownActionRef = {
+      pluginId: thirdPartyCaller.pluginId,
+      localId: 'automation/reply-deliver-v1',
+    } as const;
+    const request = {
       v: 1,
       caller: thirdPartyCaller,
+      input: {
+        ...input,
+        resultDelivery: { ...input.resultDelivery, actionRef: ownActionRef },
+      },
+      replyHandoff: { ...finalReplyHandoff, actionRef: ownActionRef },
+    } as const;
+    expect(AutomationConversationActionHttpRequestSchemasV1[actionId].parse(request)).toEqual(request);
+    expect(AutomationConversationActionHttpRequestSchemasV1[actionId].safeParse({
+      ...request,
       // The bundled Channels target is not special: it is simply not this
       // caller's own contribution.
       input,
+      replyHandoff: finalReplyHandoff,
     }).success).toBe(false);
     expect(AutomationConversationActionHttpRequestSchemasV1[actionId].parse({
       v: 1,

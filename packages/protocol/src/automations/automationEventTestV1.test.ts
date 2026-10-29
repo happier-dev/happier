@@ -53,14 +53,27 @@ describe('supplied Automation Event diagnostics', () => {
 
   it('rejects custody claims and malformed version facts at the diagnostic boundary', async () => {
     const executor = createActionExecutor({} as ActionExecutorDeps);
-    for (const input of [
-      { trigger, observation: { ...observation, occurrenceId: 'claimed-retained' } },
-      { trigger, observation: { ...observation, sourceContractVersion: '3' } },
-      { trigger: { ...trigger, sourceContractVersion: 3.5 }, observation },
+    for (const { input, issue } of [
+      {
+        input: { trigger, observation: { ...observation, occurrenceId: 'claimed-retained' } },
+        issue: { code: 'unrecognized_keys', path: ['observation'] },
+      },
+      {
+        input: { trigger, observation: { ...observation, sourceContractVersion: '3' } },
+        issue: { code: 'invalid_type', path: ['observation', 'sourceContractVersion'] },
+      },
+      {
+        input: { trigger: { ...trigger, sourceContractVersion: 3.5 }, observation },
+        issue: { code: 'invalid_type', path: ['trigger', 'sourceContractVersion'] },
+      },
     ]) {
-      expect(await executor.execute(actionId, input, { surface: 'ui' })).toEqual({
+      const result = await executor.execute(actionId, input, { surface: 'ui' });
+      expect(result).toMatchObject({
         ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters',
+        details: { issues: expect.arrayContaining([expect.objectContaining(issue)]) },
       });
+      expect(JSON.stringify(result)).not.toContain('claimed-retained');
+      expect(JSON.stringify(result)).not.toContain('occurrenceId');
     }
   });
 });

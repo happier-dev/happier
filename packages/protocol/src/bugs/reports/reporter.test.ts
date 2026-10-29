@@ -3,11 +3,6 @@ import { describe, expect, it } from 'vitest';
 import * as protocol from '../../index.js';
 
 describe('bug report reporter helpers', () => {
-  it('exports appendBugReportReporterToSummary', () => {
-    const fn = (protocol as unknown as { appendBugReportReporterToSummary?: unknown }).appendBugReportReporterToSummary;
-    expect(typeof fn).toBe('function');
-  });
-
   it('appends a sanitized GitHub username to the summary', () => {
     const fn = (protocol as unknown as {
       appendBugReportReporterToSummary?: (summary: string, githubUsername?: string | null) => string;

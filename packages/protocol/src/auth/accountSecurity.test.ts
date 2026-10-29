@@ -9,8 +9,12 @@ import {
   PasswordMutationPreparationRequestV1Schema,
 } from './accountSecurity.js';
 import { buildE2eeAccountPasswordChangeRequestV1, buildE2eeAccountPasswordEnrollRequestV1 } from './accountSecurityCrypto.js';
-import { createPasswordCredentialMutationDigestV1, createPasswordCredentialTargetDigestV1 } from './passwordMutationChallenge.js';
-import { encodePasswordCredentialFieldV1 } from './accountPasswordCredential.js';
+import {
+  createPasswordCredentialMutationDigestV1,
+  createPasswordCredentialTargetDigestV1,
+  createPasswordMutationChallengeSigningInputV1,
+} from './passwordMutationChallenge.js';
+import { decodePasswordCredentialFieldV1, encodePasswordCredentialFieldV1 } from './accountPasswordCredential.js';
 
 describe('Account Security request schemas', () => {
   it('binds Plain enrollment to one prepared credential without a caller-selected digest', () => {
@@ -172,6 +176,11 @@ describe('Account Security request schemas', () => {
     });
     expect(built).toMatchObject({ v: 1, kind: 'e2ee', action: 'recover', expectedCredentialRevision: 4, targetCredential });
     expect(built.proof.publicKey).toBe(envelope.accountSigningPublicKey);
+    expect(tweetnacl.sign.detached.verify(
+      createPasswordMutationChallengeSigningInputV1(challenge),
+      decodePasswordCredentialFieldV1(built.proof.signature),
+      decodePasswordCredentialFieldV1(built.proof.publicKey),
+    )).toBe(true);
 
     const enrollmentMutation = {
       v: 1 as const, action: 'connect' as const, accountId: 'account-1',

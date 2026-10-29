@@ -1078,7 +1078,7 @@ describe('browser diagnostics protocol contracts', () => {
     expect(mod).not.toBeNull();
     if (!mod) return;
 
-    const vitals = mod.BrowserDiagnosticEventV1Schema.safeParse({
+    const event = {
       v: 1,
       eventId: 'evt_perf_1',
       browserSessionId: 'bs_1',
@@ -1102,25 +1102,17 @@ describe('browser diagnostics protocol contracts', () => {
         navLoadEventEndMs: 1500,
       },
       redaction: { level: 'metadataOnly', truncated: false },
-    });
-    expect(vitals.success).toBe(true);
+    };
+    expect(mod.BrowserDiagnosticEventV1Schema.safeParse(event).success).toBe(true);
 
-    const tampered = mod.BrowserDiagnosticEventV1Schema.safeParse({
-      v: 1,
-      eventId: 'evt_perf_2',
-      browserSessionId: 'bs_1',
-      viewId: 'view_1',
-      navigationGeneration: 1,
-      capturedAtMs: 1,
-      family: 'performance',
-      kind: 'performance.vitals',
-      fidelity: 'injectedPage',
-      trusted: false,
-      collector: { collectorId: 'collector_1', nonce: 'nonce_1', version: '1.0.0' },
-      data: { lcpMs: 'secret', userEmail: 'a@b.test' },
-      redaction: { level: 'metadataOnly', truncated: false },
-    });
-    expect(tampered.success).toBe(false);
+    expect(mod.BrowserDiagnosticEventV1Schema.safeParse({
+      ...event,
+      data: { ...event.data, lcpMs: 'secret' },
+    }).success).toBe(false);
+    expect(mod.BrowserDiagnosticEventV1Schema.safeParse({
+      ...event,
+      data: { ...event.data, userEmail: 'a@b.test' },
+    }).success).toBe(false);
   });
 
   it('parses injected page capability probes as boolean-only metadata', async () => {
@@ -1129,7 +1121,7 @@ describe('browser diagnostics protocol contracts', () => {
     expect(mod).not.toBeNull();
     if (!mod) return;
 
-    const capabilities = mod.BrowserDiagnosticEventV1Schema.safeParse({
+    const event = {
       v: 1,
       eventId: 'evt_caps_1',
       browserSessionId: 'bs_1',
@@ -1152,25 +1144,17 @@ describe('browser diagnostics protocol contracts', () => {
         geolocation: true,
       },
       redaction: { level: 'metadataOnly', truncated: false },
-    });
-    expect(capabilities.success).toBe(true);
+    };
+    expect(mod.BrowserDiagnosticEventV1Schema.safeParse(event).success).toBe(true);
 
-    const tampered = mod.BrowserDiagnosticEventV1Schema.safeParse({
-      v: 1,
-      eventId: 'evt_caps_2',
-      browserSessionId: 'bs_1',
-      viewId: 'view_1',
-      navigationGeneration: 1,
-      capturedAtMs: 1,
-      family: 'pageInfo',
-      kind: 'pageInfo.capabilities',
-      fidelity: 'injectedPage',
-      trusted: false,
-      collector: { collectorId: 'collector_1', nonce: 'nonce_1', version: '1.0.0' },
-      data: { serviceWorker: 'enabled', userAgent: 'secret' },
-      redaction: { level: 'metadataOnly', truncated: false },
-    });
-    expect(tampered.success).toBe(false);
+    expect(mod.BrowserDiagnosticEventV1Schema.safeParse({
+      ...event,
+      data: { ...event.data, serviceWorker: 'enabled' },
+    }).success).toBe(false);
+    expect(mod.BrowserDiagnosticEventV1Schema.safeParse({
+      ...event,
+      data: { ...event.data, userAgent: 'secret' },
+    }).success).toBe(false);
   });
 });
 
