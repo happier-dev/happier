@@ -15,9 +15,12 @@ export function WorkspaceAppShellProvider(props: Readonly<{ children: React.Reac
     // Once admitted, a current Account keeps its workspace and editors through source refreshes.
     // A mounted unscoped catalog has no previous Account content to withdraw. Keep its navigator
     // through the first Account publication: unmounting it resets an authenticated cold deep link
-    // to Expo's initial route. A retired or replaced scoped Account still requires readmission.
-    if ((accountLifetime && !accountLifetime.isCurrent())
-        || (!ready && admittedLifetime.current !== null && admittedLifetime.current !== accountLifetime)) return null;
+    // to Expo's initial route. Public entry owns an in-flight authentication or
+    // exact-Home arrival, so it also keeps that navigator while the Account
+    // runtime is readmitted. Private workspace surfaces still withdraw with
+    // their retired Account; public entry hosts no retained private destination.
+    if (presentation !== 'entry' && ((accountLifetime && !accountLifetime.isCurrent())
+        || (!ready && admittedLifetime.current !== null && admittedLifetime.current !== accountLifetime))) return null;
     return <WorkspaceProvider enabled={presentation === 'shell'} phone={presentation === 'phone'}
         entry={presentation === 'entry'} deferred={presentation === 'deferred'} catalog={catalog}>
         {props.children}
