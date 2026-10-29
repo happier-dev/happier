@@ -45,9 +45,9 @@ module.exports = function (api) {
     : workletsPlugin;
 
   return {
-    // Metro emits web scripts, not ES modules. Complete development graphs
-    // include optional packages (such as zip.js) that use import.meta.
-    presets: [['babel-preset-expo', { web: { unstable_transformImportMeta: true } }]],
+    // Metro emits scripts on every platform. Dependencies such as zip.js use
+    // import.meta even when their worker URL is not needed on native/Hermes.
+    presets: [['babel-preset-expo', { unstable_transformImportMeta: true }]],
     env: {
       production: {
         plugins: ["transform-remove-console"],
