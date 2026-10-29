@@ -2,6 +2,7 @@ import { logger } from '@/ui/logger';
 import { warn } from '@happier-dev/cli-common/output';
 export {
   applyDaemonAutostartEnvForInvocation,
+  shouldAutoStartDaemonAfterAuth,
   shouldEnsureDaemonForInvocation,
 } from '@/daemon/daemonAutostartPolicy';
 
@@ -19,21 +20,6 @@ import {
   readDaemonStartWaitTimeoutMs,
 } from '@/daemon/startupWaitDefaults';
 import { hasObservableDaemonStartProcessExited } from '@/daemon/waitForDaemonRunningWithinBudget';
-
-export function shouldAutoStartDaemonAfterAuth(
-  params: Readonly<{
-    env: NodeJS.ProcessEnv;
-    isDaemonProcess: boolean;
-    startedBy: 'daemon' | 'terminal';
-    callerIntent?: 'standalone' | 'setup-managed';
-  }>,
-): boolean {
-  if (params.callerIntent === 'setup-managed') return false;
-  if (params.isDaemonProcess) return false;
-  if (params.startedBy === 'daemon') return false;
-  const raw = (params.env.HAPPIER_SESSION_AUTOSTART_DAEMON ?? '').toString().trim().toLowerCase();
-  return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'y';
-}
 
 export async function ensureDaemonRunningForSessionCommand(): Promise<void> {
   const ownership = await evaluateCurrentDaemonOwner();
