@@ -8,7 +8,7 @@ import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback
 import { StatusPill } from '@/components/ui/status/StatusPill';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { SESSION_HEADER_ICON_SIZE_PX } from '@/components/sessions/actions/sessionHeaderIconMetrics';
-import { ChatHeaderTitleAccessoryCompactContext } from '@/components/sessions/transcript/chatHeaderCompact';
+import { SessionHeaderTitleAccessoryCompactContext } from '@/components/sessions/shell/view/sessionHeaderTitleCompact';
 import { t } from '@/text';
 
 import { SessionRolePopover, useSessionRoleSelection } from './sessionRole';
@@ -27,7 +27,7 @@ export const SessionHeaderRoleChip = React.memo(function SessionHeaderRoleChip(p
     const toggle = React.useCallback(() => setOpen((current) => !current), []);
     // Where the title and the whole chip no longer fit, the chip is its role's mark (never "O…");
     // the role name stays in its accessible label and in the popover it opens.
-    const compact = React.useContext(ChatHeaderTitleAccessoryCompactContext) && selection != null;
+    const compact = React.useContext(SessionHeaderTitleAccessoryCompactContext) && selection != null;
     const close = React.useCallback(() => setOpen(false), []);
 
     return (<>
