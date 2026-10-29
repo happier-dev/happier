@@ -7,49 +7,49 @@ const LONG_TEXT_MAX = 1024 * 1024;
 const TODO_LIMIT = 2_000;
 const QUESTION_LIMIT = 256;
 
-export const cursorOpaqueIdSchema = z.string().check(z.minLength(1), z.maxLength(OPAQUE_ID_MAX), z.refine((value) => value.trim().length > 0, 'Opaque id must not be blank'));
+export const cursorOpaqueIdSchema = z.lazy(() => z.string().check(z.minLength(1), z.maxLength(OPAQUE_ID_MAX), z.refine((value) => value.trim().length > 0, 'Opaque id must not be blank')));
 
-const shortTextSchema = z.string().check(z.trim(), z.minLength(1), z.maxLength(SHORT_TEXT_MAX));
-const optionalShortTextSchema = z.optional(z.string().check(z.trim(), z.maxLength(SHORT_TEXT_MAX)));
-const optionalExactShortTextSchema = z.optional(z.string().check(z.maxLength(SHORT_TEXT_MAX), z.refine((value) => value.trim().length > 0, 'Text must not be blank')));
+const shortTextSchema = z.lazy(() => z.string().check(z.trim(), z.minLength(1), z.maxLength(SHORT_TEXT_MAX)));
+const optionalShortTextSchema = z.lazy(() => z.optional(z.string().check(z.trim(), z.maxLength(SHORT_TEXT_MAX))));
+const optionalExactShortTextSchema = z.lazy(() => z.optional(z.string().check(z.maxLength(SHORT_TEXT_MAX), z.refine((value) => value.trim().length > 0, 'Text must not be blank'))));
 
-export const cursorTodoSchema = z.object({
+export const cursorTodoSchema = z.lazy(() => z.object({
   id: z.optional(cursorOpaqueIdSchema),
   content: z.optional(shortTextSchema),
   title: z.optional(shortTextSchema),
   status: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(64))),
-}).check(z.refine((value) => value.content !== undefined || value.title !== undefined, 'Todo must include content or title'));
+}).check(z.refine((value) => value.content !== undefined || value.title !== undefined, 'Todo must include content or title')));
 
-export const cursorUpdateTodosRequestSchema = z.object({
+export const cursorUpdateTodosRequestSchema = z.lazy(() => z.object({
   toolCallId: z.optional(cursorOpaqueIdSchema),
   merge: z.optional(z.boolean()),
   todos: z.array(cursorTodoSchema).check(z.maxLength(TODO_LIMIT)),
-});
+}));
 
-const cursorQuestionOptionSchema = z.object({
+const cursorQuestionOptionSchema = z.lazy(() => z.object({
   id: cursorOpaqueIdSchema,
   label: shortTextSchema,
-});
+}));
 
-const cursorQuestionSchema = z.object({
+const cursorQuestionSchema = z.lazy(() => z.object({
   id: cursorOpaqueIdSchema,
   prompt: shortTextSchema,
   options: z.optional(z.array(cursorQuestionOptionSchema).check(z.maxLength(QUESTION_LIMIT))),
   allowMultiple: z.optional(z.boolean()),
-});
+}));
 
-export const cursorAskQuestionRequestSchema = z.object({
+export const cursorAskQuestionRequestSchema = z.lazy(() => z.object({
   toolCallId: z.optional(cursorOpaqueIdSchema),
   title: optionalShortTextSchema,
   questions: z.array(cursorQuestionSchema).check(z.minLength(1), z.maxLength(QUESTION_LIMIT)),
-});
+}));
 
-const cursorQuestionAnswerSchema = z.object({
+const cursorQuestionAnswerSchema = z.lazy(() => z.object({
   questionId: cursorOpaqueIdSchema,
   selectedOptionIds: z.array(z.string().check(z.minLength(1), z.maxLength(SHORT_TEXT_MAX), z.refine((value) => value.trim().length > 0, 'Answer value must not be blank'))).check(z.maxLength(QUESTION_LIMIT)),
-});
+}));
 
-export const cursorAskQuestionResponseSchema = z.object({
+export const cursorAskQuestionResponseSchema = z.lazy(() => z.object({
   outcome: z.discriminatedUnion('outcome', [
     z.object({
       outcome: z.literal('answered'),
@@ -61,14 +61,14 @@ export const cursorAskQuestionResponseSchema = z.object({
     }),
     z.object({ outcome: z.literal('cancelled') }),
   ]),
-});
+}));
 
-const cursorPlanPhaseSchema = z.object({
+const cursorPlanPhaseSchema = z.lazy(() => z.object({
   name: optionalShortTextSchema,
   todos: z.optional(z.array(cursorTodoSchema).check(z.maxLength(TODO_LIMIT))),
-});
+}));
 
-export const cursorCreatePlanRequestSchema = z.object({
+export const cursorCreatePlanRequestSchema = z.lazy(() => z.object({
   toolCallId: z.optional(cursorOpaqueIdSchema),
   name: optionalShortTextSchema,
   overview: z.optional(z.string().check(z.trim(), z.maxLength(LONG_TEXT_MAX))),
@@ -89,9 +89,9 @@ export const cursorCreatePlanRequestSchema = z.object({
       message: `Plan may contain at most ${TODO_LIMIT} todos`,
     });
   }
-}));
+})));
 
-export const cursorCreatePlanResponseSchema = z.object({
+export const cursorCreatePlanResponseSchema = z.lazy(() => z.object({
   outcome: z.discriminatedUnion('outcome', [
     z.object({
       outcome: z.literal('accepted'),
@@ -103,9 +103,9 @@ export const cursorCreatePlanResponseSchema = z.object({
     }),
     z.object({ outcome: z.literal('cancelled') }),
   ]),
-});
+}));
 
-export const cursorTaskNotificationSchema = z.object({
+export const cursorTaskNotificationSchema = z.lazy(() => z.object({
   toolCallId: z.optional(cursorOpaqueIdSchema),
   description: optionalShortTextSchema,
   prompt: z.optional(z.string().check(z.maxLength(TASK_PROMPT_MAX))),
@@ -116,14 +116,14 @@ export const cursorTaskNotificationSchema = z.object({
   model: optionalExactShortTextSchema,
   agentId: z.optional(cursorOpaqueIdSchema),
   durationMs: z.optional(z.number().check(z.nonnegative(), z.maximum(2_592_000_000))),
-});
+}));
 
-export const cursorGenerateImageNotificationSchema = z.object({
+export const cursorGenerateImageNotificationSchema = z.lazy(() => z.object({
   toolCallId: z.optional(cursorOpaqueIdSchema),
   filePath: z.optional(z.string().check(z.maxLength(SHORT_TEXT_MAX))),
   description: z.optional(z.string().check(z.maxLength(LONG_TEXT_MAX))),
   referenceImagePaths: z.optional(z.array(z.string().check(z.maxLength(SHORT_TEXT_MAX))).check(z.maxLength(64))),
-});
+}));
 
 export type CursorAskQuestionRequest = z.infer<typeof cursorAskQuestionRequestSchema>;
 export type CursorCreatePlanRequest = z.infer<typeof cursorCreatePlanRequestSchema>;
