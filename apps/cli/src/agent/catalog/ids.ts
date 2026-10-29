@@ -1,8 +1,6 @@
-import {
-  AGENT_IDS,
-  DEFAULT_AGENT_ID,
-  type VendorResumeSupportLevel,
-} from '@happier-dev/agents';
+import { AGENT_IDS } from '@happier-dev/agents/agent-ids';
+import type { VendorResumeSupportLevel } from '@happier-dev/agents';
+import { DEFAULT_AGENT_ID } from '@happier-dev/protocol/agents/defaultAgent';
 import type { ExternalSessionAgentId } from '@happier-dev/protocol';
 
 import { LEGACY_CUSTOM_ACP_COMPAT_AGENT_ID } from '@/agent/acp/catalog/compat/customAcp';
