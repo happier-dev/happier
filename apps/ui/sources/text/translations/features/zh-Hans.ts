@@ -1223,6 +1223,8 @@ const zhHans: BoardsTranslations = {
     meta: {
         needYou: ({ count }) => `${count} 项需要你`,
         items: ({ count }) => `${count} 项`,
+        itemsAtLeast: ({ count }) => `${count}+ 项`,
+        needYouAtLeast: ({ count }) => `${count}+ 项需要你`,
         handPicked: '手动挑选',
         empty: '空',
         moreSources: ({ count }) => `+ ${count}`,
@@ -1307,10 +1309,22 @@ const zhHans: BoardsTranslations = {
         empty: '没有匹配项。',
         noMatch: ({ query }) => `没有与“${query}”匹配的内容`,
     },
+    /** Candidates an answered filter could not classify: said once under the header, qualifying every count. */
+    undetermined: {
+        sessions: ({ count }) => `${count} 个会话无法检查`,
+        runs: ({ count }) => `${count} 个运行无法检查`,
+        items: ({ count }) => `${count} 项无法检查`,
+        projectAssociation: '它们所属的项目尚未发布，或你看不到。',
+        filterFacts: '此筛选所需的信息不可用。',
+    },
     empty: {
         title: '选择此面板显示什么',
         body: '手动添加会话、工作流、运行或设备，或显示“需要你”这样的分区。排布由你决定，面板让它们保持实时。',
         action: '添加到面板',
+        sourcedTitle: '暂时没有内容',
+        sourcedBody: '符合此面板来源的项目一到就会显示在这里。你也可以手动添加。',
+        uncheckedTitle: '尚未确认任何匹配项',
+        pendingTitle: '正在检查哪些内容符合…',
     },
     widgets: {
         group: '小组件',

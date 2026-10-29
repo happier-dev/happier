@@ -1223,6 +1223,8 @@ const zhHant: BoardsTranslations = {
     meta: {
         needYou: ({ count }) => `${count} 項需要你`,
         items: ({ count }) => `${count} 項`,
+        itemsAtLeast: ({ count }) => `${count}+ 項`,
+        needYouAtLeast: ({ count }) => `${count}+ 項需要你`,
         handPicked: '手動挑選',
         empty: '空',
         moreSources: ({ count }) => `+ ${count}`,
@@ -1307,10 +1309,22 @@ const zhHant: BoardsTranslations = {
         empty: '沒有符合的項目。',
         noMatch: ({ query }) => `沒有符合「${query}」的內容`,
     },
+    /** Candidates an answered filter could not classify: said once under the header, qualifying every count. */
+    undetermined: {
+        sessions: ({ count }) => `${count} 個工作階段無法檢查`,
+        runs: ({ count }) => `${count} 個執行無法檢查`,
+        items: ({ count }) => `${count} 項無法檢查`,
+        projectAssociation: '它們所屬的專案尚未發布，或你看不到。',
+        filterFacts: '此篩選所需的資訊無法使用。',
+    },
     empty: {
         title: '選擇此面板顯示什麼',
         body: '手動加入工作階段、工作流程、執行或裝置，或顯示「需要你」這樣的區段。排列由你決定，面板讓它們保持即時。',
         action: '加入面板',
+        sourcedTitle: '暫時沒有內容',
+        sourcedBody: '符合此面板來源的項目一到就會顯示在這裡。你也可以手動加入。',
+        uncheckedTitle: '尚未確認任何相符項目',
+        pendingTitle: '正在檢查哪些內容相符…',
     },
     widgets: {
         group: '小工具',

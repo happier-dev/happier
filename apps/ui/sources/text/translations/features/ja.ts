@@ -1228,6 +1228,8 @@ const ja: BoardsTranslations = {
     meta: {
         needYou: ({ count }) => `${count} 件が対応待ち`,
         items: ({ count }) => `${count} 件`,
+        itemsAtLeast: ({ count }) => `${count}+ 件`,
+        needYouAtLeast: ({ count }) => `${count}+ 件が対応待ち`,
         handPicked: '手動で選択',
         empty: '空',
         moreSources: ({ count }) => `+ ${count}`,
@@ -1312,10 +1314,22 @@ const ja: BoardsTranslations = {
         empty: '一致するものはありません。',
         noMatch: ({ query }) => `「${query}」に一致するものはありません`,
     },
+    /** Candidates an answered filter could not classify: said once under the header, qualifying every count. */
+    undetermined: {
+        sessions: ({ count }) => `${count} 件のセッションを確認できませんでした`,
+        runs: ({ count }) => `${count} 件の実行を確認できませんでした`,
+        items: ({ count }) => `${count} 件の項目を確認できませんでした`,
+        projectAssociation: 'プロジェクトとの関連付けが公開されていないか、あなたには表示されません。',
+        filterFacts: 'このフィルターに必要な情報を取得できません。',
+    },
     empty: {
         title: 'このボードに表示するものを選びましょう',
         body: 'セッション、ワークフロー、実行、マシンを手動で追加するか、「対応待ち」のようなセクションを表示します。配置はあなた次第。ボードがライブに保ちます。',
         action: 'ボードに追加',
+        sourcedTitle: 'いまは何もありません',
+        sourcedBody: 'このボードのソースに一致する項目は、届き次第ここに表示されます。手動で追加することもできます。',
+        uncheckedTitle: '一致はまだ確認されていません',
+        pendingTitle: '一致する項目を確認しています…',
     },
     widgets: {
         group: 'ウィジェット',

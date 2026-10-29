@@ -1238,6 +1238,8 @@ const pl: BoardsTranslations = {
     meta: {
         needYou: ({ count }) => `${count} czeka na Ciebie`,
         items: ({ count }) => `${count} ${slavicPlural(count, 'element', 'elementy', 'elementów')}`,
+        itemsAtLeast: ({ count }) => `${count}+ elementów`,
+        needYouAtLeast: ({ count }) => `${count}+ czeka na Ciebie`,
         handPicked: 'Wybrane ręcznie',
         empty: 'Pusta',
         moreSources: ({ count }) => `+ ${count}`,
@@ -1323,10 +1325,22 @@ const pl: BoardsTranslations = {
         empty: 'Nic nie pasuje.',
         noMatch: ({ query }) => `Nic nie pasuje do „${query}”`,
     },
+    /** Candidates an answered filter could not classify: said once under the header, qualifying every count. */
+    undetermined: {
+        sessions: ({ count }) => `Nie udało się sprawdzić sesji: ${count}`,
+        runs: ({ count }) => `Nie udało się sprawdzić uruchomień: ${count}`,
+        items: ({ count }) => `Nie udało się sprawdzić elementów: ${count}`,
+        projectAssociation: 'Powiązanie z projektem nie zostało opublikowane lub nie jest dla Ciebie widoczne.',
+        filterFacts: 'Informacje potrzebne dla tego filtra są niedostępne.',
+    },
     empty: {
         title: 'Wybierz, co pokazuje ta tablica',
         body: 'Dodaj ręcznie sesje, przepływy pracy, uruchomienia lub maszyny albo pokaż sekcję, np. Czeka na Ciebie. Ty je układasz; tablica trzyma je na żywo.',
         action: 'Dodaj do tablicy',
+        sourcedTitle: 'Na razie nic tu nie ma',
+        sourcedBody: 'Elementy pasujące do źródła tej tablicy pojawią się tutaj, gdy nadejdą. Możesz też dodać je ręcznie.',
+        uncheckedTitle: 'Brak jeszcze potwierdzonych dopasowań',
+        pendingTitle: 'Sprawdzanie, co tu pasuje…',
     },
     widgets: {
         group: 'Widżety',

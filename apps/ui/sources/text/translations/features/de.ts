@@ -1222,6 +1222,8 @@ const de: BoardsTranslations = {
     meta: {
         needYou: ({ count }) => (count === 1 ? '1 braucht dich' : `${count} brauchen dich`),
         items: ({ count }) => (count === 1 ? '1 Element' : `${count} Elemente`),
+        itemsAtLeast: ({ count }) => `${count}+ Elemente`,
+        needYouAtLeast: ({ count }) => `${count}+ brauchen dich`,
         handPicked: 'Von Hand gewählt',
         empty: 'Leer',
         moreSources: ({ count }) => `+ ${count}`,
@@ -1306,10 +1308,22 @@ const de: BoardsTranslations = {
         empty: 'Nichts passt.',
         noMatch: ({ query }) => `Nichts passt zu „${query}“`,
     },
+    /** Candidates an answered filter could not classify: said once under the header, qualifying every count. */
+    undetermined: {
+        sessions: ({ count }) => (count === 1 ? `1 Sitzung konnte nicht geprüft werden` : `${count} Sitzungen konnten nicht geprüft werden`),
+        runs: ({ count }) => (count === 1 ? `1 Lauf konnte nicht geprüft werden` : `${count} Läufe konnten nicht geprüft werden`),
+        items: ({ count }) => (count === 1 ? `1 Element konnte nicht geprüft werden` : `${count} Elemente konnten nicht geprüft werden`),
+        projectAssociation: 'Die Projektzuordnung wurde nicht veröffentlicht oder ist für dich nicht sichtbar.',
+        filterFacts: 'Die für diesen Filter nötigen Informationen sind nicht verfügbar.',
+    },
     empty: {
         title: 'Wähle, was dieses Board zeigt',
         body: 'Füge Sitzungen, Workflows, Läufe oder Rechner von Hand hinzu oder zeige einen Bereich wie „Braucht dich“. Du ordnest sie an; das Board hält sie live.',
         action: 'Zum Board hinzufügen',
+        sourcedTitle: 'Gerade nichts hier',
+        sourcedBody: 'Passende Einträge erscheinen hier, sobald sie eintreffen. Du kannst auch welche von Hand hinzufügen.',
+        uncheckedTitle: 'Noch keine Treffer bestätigt',
+        pendingTitle: 'Prüfe, was hierher gehört …',
     },
     widgets: {
         group: 'Widgets',

@@ -1228,6 +1228,8 @@ const fr: BoardsTranslations = {
     meta: {
         needYou: ({ count }) => `${count} a${count === 1 ? '' : 'ont'} besoin de toi`,
         items: ({ count }) => (count === 1 ? '1 élément' : `${count} éléments`),
+        itemsAtLeast: ({ count }) => `${count}+ éléments`,
+        needYouAtLeast: ({ count }) => `${count}+ ont besoin de toi`,
         handPicked: 'Choisis à la main',
         empty: 'Vide',
         moreSources: ({ count }) => `+ ${count}`,
@@ -1312,10 +1314,22 @@ const fr: BoardsTranslations = {
         empty: 'Aucun résultat.',
         noMatch: ({ query }) => `Rien ne correspond à « ${query} »`,
     },
+    /** Candidates an answered filter could not classify: said once under the header, qualifying every count. */
+    undetermined: {
+        sessions: ({ count }) => (count === 1 ? `1 session n'a pas pu être vérifiée` : `${count} sessions n'ont pas pu être vérifiées`),
+        runs: ({ count }) => (count === 1 ? `1 exécution n'a pas pu être vérifiée` : `${count} exécutions n'ont pas pu être vérifiées`),
+        items: ({ count }) => (count === 1 ? `1 élément n'a pas pu être vérifié` : `${count} éléments n'ont pas pu être vérifiés`),
+        projectAssociation: 'Leur association à un projet n\'a pas été publiée ou n\'est pas visible pour toi.',
+        filterFacts: 'Les informations nécessaires à ce filtre ne sont pas disponibles.',
+    },
     empty: {
         title: 'Choisis ce que montre ce tableau',
         body: 'Ajoute à la main des sessions, workflows, exécutions ou machines, ou affiche une section comme « A besoin de toi ». Tu les arranges ; le tableau les garde en direct.',
         action: 'Ajouter au tableau',
+        sourcedTitle: 'Rien pour le moment',
+        sourcedBody: 'Les éléments qui correspondent à la source de ce tableau apparaissent ici à leur arrivée. Tu peux aussi en ajouter à la main.',
+        uncheckedTitle: 'Aucune correspondance confirmée pour l\'instant',
+        pendingTitle: 'Recherche de ce qui correspond…',
     },
     widgets: {
         group: 'Widgets',

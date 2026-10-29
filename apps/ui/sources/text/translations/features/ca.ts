@@ -1228,6 +1228,8 @@ const ca: BoardsTranslations = {
     meta: {
         needYou: ({ count }) => `${count} et necessita${count === 1 ? '' : 'n'}`,
         items: ({ count }) => (count === 1 ? '1 element' : `${count} elements`),
+        itemsAtLeast: ({ count }) => `${count}+ elements`,
+        needYouAtLeast: ({ count }) => `${count}+ et necessiten`,
         handPicked: 'Triats a mà',
         empty: 'Buit',
         moreSources: ({ count }) => `+ ${count}`,
@@ -1312,10 +1314,22 @@ const ca: BoardsTranslations = {
         empty: 'No hi ha coincidències.',
         noMatch: ({ query }) => `Cap element coincideix amb “${query}”`,
     },
+    /** Candidates an answered filter could not classify: said once under the header, qualifying every count. */
+    undetermined: {
+        sessions: ({ count }) => (count === 1 ? `1 sessió no s'ha pogut comprovar` : `${count} sessions no s'han pogut comprovar`),
+        runs: ({ count }) => (count === 1 ? `1 execució no s'ha pogut comprovar` : `${count} execucions no s'han pogut comprovar`),
+        items: ({ count }) => (count === 1 ? `1 element no s'ha pogut comprovar` : `${count} elements no s'han pogut comprovar`),
+        projectAssociation: 'L\'associació amb el projecte no s\'ha publicat o no la pots veure.',
+        filterFacts: 'No hi ha la informació necessària per a aquest filtre.',
+    },
     empty: {
         title: 'Tria què mostra aquest tauler',
         body: 'Afegeix sessions, fluxos de treball, execucions o màquines a mà, o mostra una secció com Et necessita. Tu els organitzes; el tauler els manté en viu.',
         action: 'Afegeix al tauler',
+        sourcedTitle: 'Ara no hi ha res',
+        sourcedBody: 'Els elements que coincideixin amb l\'origen d\'aquest tauler apareixeran aquí quan arribin. També en pots afegir a mà.',
+        uncheckedTitle: 'Encara no s\'ha confirmat cap coincidència',
+        pendingTitle: 'S\'està comprovant què hi encaixa…',
     },
     widgets: {
         group: 'Ginys',

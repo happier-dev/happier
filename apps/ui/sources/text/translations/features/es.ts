@@ -1228,6 +1228,8 @@ const es: BoardsTranslations = {
     meta: {
         needYou: ({ count }) => `${count} te necesita${count === 1 ? '' : 'n'}`,
         items: ({ count }) => (count === 1 ? '1 elemento' : `${count} elementos`),
+        itemsAtLeast: ({ count }) => `${count}+ elementos`,
+        needYouAtLeast: ({ count }) => `${count}+ te necesitan`,
         handPicked: 'Elegidos a mano',
         empty: 'Vacío',
         moreSources: ({ count }) => `+ ${count}`,
@@ -1312,10 +1314,22 @@ const es: BoardsTranslations = {
         empty: 'No hay coincidencias.',
         noMatch: ({ query }) => `Nada coincide con “${query}”`,
     },
+    /** Candidates an answered filter could not classify: said once under the header, qualifying every count. */
+    undetermined: {
+        sessions: ({ count }) => (count === 1 ? `1 sesión no se pudo comprobar` : `${count} sesiones no se pudieron comprobar`),
+        runs: ({ count }) => (count === 1 ? `1 ejecución no se pudo comprobar` : `${count} ejecuciones no se pudieron comprobar`),
+        items: ({ count }) => (count === 1 ? `1 elemento no se pudo comprobar` : `${count} elementos no se pudieron comprobar`),
+        projectAssociation: 'Su asociación con el proyecto no se ha publicado o no es visible para ti.',
+        filterFacts: 'La información necesaria para este filtro no está disponible.',
+    },
     empty: {
         title: 'Elige qué muestra este tablero',
         body: 'Añade sesiones, flujos de trabajo, ejecuciones o máquinas a mano, o muestra una sección como Te necesita. Tú los organizas; el tablero los mantiene en vivo.',
         action: 'Añadir al tablero',
+        sourcedTitle: 'Nada por ahora',
+        sourcedBody: 'Los elementos que coincidan con el origen de este tablero aparecerán aquí al llegar. También puedes añadir algunos a mano.',
+        uncheckedTitle: 'Aún no se ha confirmado ninguna coincidencia',
+        pendingTitle: 'Comprobando qué encaja aquí…',
     },
     widgets: {
         group: 'Widgets',

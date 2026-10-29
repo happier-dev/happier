@@ -16,6 +16,8 @@ export type BoardsTranslations = Readonly<{
         handPicked: string;
         empty: string;
         moreSources: Count;
+        itemsAtLeast: Count;
+        needYouAtLeast: Count;
     }>;
     sections: Readonly<{
         needs_you: Readonly<{ title: string; description: string }>;
@@ -100,7 +102,10 @@ export type BoardsTranslations = Readonly<{
         /** The no-match line while a search is typed; it names the search. */
         noMatch: (params: Readonly<{ query: string }>) => string;
     }>;
-    empty: Readonly<{ title: string; body: string; action: string }>;
+    /** `sourced*`: the board has a source (a section or filter) that currently matches nothing. */
+    empty: Readonly<{ title: string; body: string; action: string; sourcedTitle: string; sourcedBody: string; uncheckedTitle: string; pendingTitle: string }>;
+    /** Candidates an answered filter could not classify, said once under the header; counts are then floors. */
+    undetermined: Readonly<{ sessions: Count; runs: Count; items: Count; projectAssociation: string; filterFacts: string }>;
     /** Configured widgets on a board (lab `dashboards` L1, G1): the Add group, the card menu and arrivals. */
     widgets: Readonly<{
         /** The group in Add to board and By status. */
@@ -151,6 +156,8 @@ export const en: BoardsTranslations = {
     meta: {
         needYou: ({ count }) => (count === 1 ? '1 needs you' : `${count} need you`),
         items: ({ count }) => (count === 1 ? '1 item' : `${count} items`),
+        itemsAtLeast: ({ count }) => `${count}+ items`,
+        needYouAtLeast: ({ count }) => `${count}+ need you`,
         handPicked: 'Hand-picked',
         empty: 'empty',
         moreSources: ({ count }) => `+ ${count}`,
@@ -239,6 +246,19 @@ export const en: BoardsTranslations = {
         title: 'Pick what this board shows',
         body: 'Add sessions, workflows, runs or machines by hand, or show a section such as Needs you. You arrange them; the board keeps them live.',
         action: 'Add to board',
+        sourcedTitle: 'Nothing here right now',
+        sourcedBody: "Items that match this board's source appear here as they arrive. You can also add some by hand.",
+        uncheckedTitle: 'No matches confirmed yet',
+        /** The board's source has not answered yet: said quietly inside the canvas, never as an empty board. */
+        pendingTitle: 'Checking what belongs here…',
+    },
+    /** Candidates an answered filter could not classify: said once under the header, qualifying every count. */
+    undetermined: {
+        sessions: ({ count }) => (count === 1 ? `1 session couldn't be checked` : `${count} sessions couldn't be checked`),
+        runs: ({ count }) => (count === 1 ? `1 run couldn't be checked` : `${count} runs couldn't be checked`),
+        items: ({ count }) => (count === 1 ? `1 item couldn't be checked` : `${count} items couldn't be checked`),
+        projectAssociation: 'Their Project association hasn\'t been published or isn\'t visible to you.',
+        filterFacts: 'The information needed for this filter isn\'t available.',
     },
     widgets: {
         group: 'Widgets',

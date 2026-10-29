@@ -1228,6 +1228,8 @@ const pt: BoardsTranslations = {
     meta: {
         needYou: ({ count }) => `${count} precisa${count === 1 ? '' : 'm'} de você`,
         items: ({ count }) => (count === 1 ? '1 item' : `${count} itens`),
+        itemsAtLeast: ({ count }) => `${count}+ itens`,
+        needYouAtLeast: ({ count }) => `${count}+ precisam de você`,
         handPicked: 'Escolhidos à mão',
         empty: 'Vazio',
         moreSources: ({ count }) => `+ ${count}`,
@@ -1312,10 +1314,22 @@ const pt: BoardsTranslations = {
         empty: 'Nada encontrado.',
         noMatch: ({ query }) => `Nada corresponde a “${query}”`,
     },
+    /** Candidates an answered filter could not classify: said once under the header, qualifying every count. */
+    undetermined: {
+        sessions: ({ count }) => (count === 1 ? `1 sessão não pôde ser verificada` : `${count} sessões não puderam ser verificadas`),
+        runs: ({ count }) => (count === 1 ? `1 execução não pôde ser verificada` : `${count} execuções não puderam ser verificadas`),
+        items: ({ count }) => (count === 1 ? `1 item não pôde ser verificado` : `${count} itens não puderam ser verificados`),
+        projectAssociation: 'A associação com o projeto não foi publicada ou não está visível para você.',
+        filterFacts: 'As informações necessárias para este filtro não estão disponíveis.',
+    },
     empty: {
         title: 'Escolha o que este quadro mostra',
         body: 'Adicione sessões, fluxos de trabalho, execuções ou máquinas à mão, ou mostre uma seção como Precisa de você. Você organiza; o quadro os mantém ao vivo.',
         action: 'Adicionar ao quadro',
+        sourcedTitle: 'Nada por enquanto',
+        sourcedBody: 'Os itens que correspondem à origem deste quadro aparecem aqui assim que chegam. Você também pode adicionar alguns à mão.',
+        uncheckedTitle: 'Nenhuma correspondência confirmada ainda',
+        pendingTitle: 'Verificando o que corresponde…',
     },
     widgets: {
         group: 'Widgets',

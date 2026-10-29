@@ -1250,6 +1250,8 @@ const ru: BoardsTranslations = {
     meta: {
         needYou: ({ count }) => `Ждут вас: ${count}`,
         items: ({ count }) => `${count} ${slavicPlural(count, 'элемент', 'элемента', 'элементов')}`,
+        itemsAtLeast: ({ count }) => `${count}+ элементов`,
+        needYouAtLeast: ({ count }) => `Ждут вас: ${count}+`,
         handPicked: 'Выбрано вручную',
         empty: 'Пусто',
         moreSources: ({ count }) => `+ ${count}`,
@@ -1334,10 +1336,22 @@ const ru: BoardsTranslations = {
         empty: 'Ничего не найдено.',
         noMatch: ({ query }) => `Ничего не найдено по запросу «${query}»`,
     },
+    /** Candidates an answered filter could not classify: said once under the header, qualifying every count. */
+    undetermined: {
+        sessions: ({ count }) => `Не удалось проверить сессии: ${count}`,
+        runs: ({ count }) => `Не удалось проверить запуски: ${count}`,
+        items: ({ count }) => `Не удалось проверить элементы: ${count}`,
+        projectAssociation: 'Связь с проектом не опубликована или недоступна вам.',
+        filterFacts: 'Нет информации, необходимой для этого фильтра.',
+    },
     empty: {
         title: 'Выберите, что покажет эта доска',
         body: 'Добавьте сессии, воркфлоу, запуски или машины вручную либо покажите раздел, например «Ждут вас». Вы их расставляете, а доска держит их в живом виде.',
         action: 'Добавить на доску',
+        sourcedTitle: 'Пока здесь пусто',
+        sourcedBody: 'Элементы, подходящие под источник этой доски, появятся здесь по мере поступления. Можно также добавить их вручную.',
+        uncheckedTitle: 'Совпадения пока не подтверждены',
+        pendingTitle: 'Проверяем, что сюда подходит…',
     },
     widgets: {
         group: 'Виджеты',

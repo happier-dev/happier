@@ -1228,6 +1228,8 @@ const it: BoardsTranslations = {
     meta: {
         needYou: ({ count }) => `${count} ha${count === 1 ? '' : 'nno'} bisogno di te`,
         items: ({ count }) => (count === 1 ? '1 elemento' : `${count} elementi`),
+        itemsAtLeast: ({ count }) => `${count}+ elementi`,
+        needYouAtLeast: ({ count }) => `${count}+ hanno bisogno di te`,
         handPicked: 'Scelti a mano',
         empty: 'Vuota',
         moreSources: ({ count }) => `+ ${count}`,
@@ -1312,10 +1314,22 @@ const it: BoardsTranslations = {
         empty: 'Nessun risultato.',
         noMatch: ({ query }) => `Niente corrisponde a “${query}”`,
     },
+    /** Candidates an answered filter could not classify: said once under the header, qualifying every count. */
+    undetermined: {
+        sessions: ({ count }) => (count === 1 ? `1 sessione non è stata verificata` : `${count} sessioni non sono state verificate`),
+        runs: ({ count }) => (count === 1 ? `1 esecuzione non è stata verificata` : `${count} esecuzioni non sono state verificate`),
+        items: ({ count }) => (count === 1 ? `1 elemento non è stato verificato` : `${count} elementi non sono stati verificati`),
+        projectAssociation: 'La loro associazione al progetto non è stata pubblicata o non è visibile a te.',
+        filterFacts: 'Le informazioni necessarie per questo filtro non sono disponibili.',
+    },
     empty: {
         title: 'Scegli cosa mostra questa bacheca',
         body: 'Aggiungi a mano sessioni, workflow, esecuzioni o macchine, oppure mostra una sezione come Ha bisogno di te. Le disponi tu; la bacheca le tiene in diretta.',
         action: 'Aggiungi alla bacheca',
+        sourcedTitle: 'Per ora niente',
+        sourcedBody: 'Gli elementi che corrispondono all\'origine di questa bacheca compaiono qui appena arrivano. Puoi anche aggiungerne a mano.',
+        uncheckedTitle: 'Nessuna corrispondenza confermata finora',
+        pendingTitle: 'Controllo di cosa corrisponde…',
     },
     widgets: {
         group: 'Widget',
