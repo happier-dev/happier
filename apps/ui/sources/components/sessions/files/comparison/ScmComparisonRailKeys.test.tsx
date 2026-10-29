@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 import {
   KeyboardShortcutLabelsContext,
@@ -35,7 +35,14 @@ const entries: readonly {
   },
 ];
 
-async function mount(labels: KeyboardShortcutLabels) {
+// The pointer is the browser boundary that says whether a hardware keyboard is likely present.
+function setPointer(pointer: 'fine' | 'coarse') {
+  vi.stubGlobal('window', { matchMedia: (query: string) => ({ matches: query === '(pointer: fine)' && pointer === 'fine' }) });
+  vi.stubGlobal('navigator', { ...globalThis.navigator, maxTouchPoints: pointer === 'fine' ? 0 : 5 });
+}
+
+async function mount(labels: KeyboardShortcutLabels, pointer: 'fine' | 'coarse' = 'fine') {
+  setPointer(pointer);
   const { ScmComparisonRailKeys } = await import('./ScmComparisonBar');
   return renderScreen(
     <KeyboardShortcutLabelsContext.Provider value={labels}>
@@ -45,6 +52,8 @@ async function mount(labels: KeyboardShortcutLabels) {
 }
 
 describe('comparison rail key hints', () => {
+    afterEach(() => { vi.unstubAllGlobals(); });
+
     it('shows the keys the commands are bound to here', async () => {
         const screen = await mount({
             'review.file.next': 'Shift+J', 'review.file.previous': 'Shift+K',
@@ -56,6 +65,12 @@ describe('comparison rail key hints', () => {
 
     it('draws no hint for keys that nothing runs (single-key shortcuts off)', async () => {
         const screen = await mount({});
+        expect(screen.findHostByTestId('keys')).toBeNull();
+        await screen.unmount();
+    });
+
+    it('draws no hint on a touch screen, where the keys are not at hand', async () => {
+        const screen = await mount({ 'review.change.next': 'J', 'review.change.previous': 'K' }, 'coarse');
         expect(screen.findHostByTestId('keys')).toBeNull();
         await screen.unmount();
     });

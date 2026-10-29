@@ -10,6 +10,7 @@ import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { Switch } from '@/components/ui/forms/Switch';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { KeyHint } from '@/components/ui/keyboard/KeyHint';
+import { useHardwareKeyboard } from '@/components/ui/selectionList/useHardwareKeyboard';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
@@ -65,19 +66,44 @@ export function ScmComparisonViewSwitch(props: Readonly<{
         label: view === 'files' ? t('scmComparison.view.files') : view === 'walkthrough' ? t('scmComparison.view.walkthrough')
             : props.commitsCount ? `${t('scmComparison.view.commits')} ${props.commitsCount}` : t('scmComparison.view.commits'),
     })), [props.commitsCount, props.views]);
+    // Each view draws its own bar, so choosing a view by keyboard remounts the switch and the tab the
+    // segmented bar just focused leaves the document. The switch carries "the person was here" across
+    // that remount and puts focus on the newly active tab, so Arrow keys keep working without re-tabbing.
+    const rowRef = React.useRef<View>(null);
+    const { onSelect } = props;
+    const onSelectTab = React.useCallback((view: SessionScmReviewView) => {
+        const row = webElementOf(rowRef.current);
+        carriedSwitchFocus = row && typeof document !== 'undefined' && row.contains(document.activeElement) ? view : null;
+        onSelect(view);
+    }, [onSelect]);
+    React.useEffect(() => {
+        if (carriedSwitchFocus !== props.view) return;
+        carriedSwitchFocus = null;
+        const row = webElementOf(rowRef.current);
+        if (!row || row.contains(document.activeElement)) return;
+        row.querySelector<HTMLElement>(`[data-testid="scm-comparison-view:${props.view}"]`)?.focus();
+    }, [props.view]);
     return (
-        <View style={styles.switchRow}>
+        <View ref={rowRef} style={styles.switchRow}>
             <SegmentedTabBar
                 testIDPrefix="scm-comparison-view"
                 tabs={tabs}
                 activeTabId={props.view}
-                onSelectTab={props.onSelect}
+                onSelectTab={onSelectTab}
                 segmentSizing="content"
                 accessibilityLabel={t('scmComparison.viewA11y')}
             />
             <View style={styles.divider} />
         </View>
     );
+}
+
+/** The view a keyboard choice moved to while focus sat in a switch; read once by the switch that mounts for it. */
+let carriedSwitchFocus: SessionScmReviewView | null = null;
+
+function webElementOf(node: View | null): HTMLElement | null {
+    if (Platform.OS !== 'web' || typeof HTMLElement === 'undefined') return null;
+    return node instanceof HTMLElement ? node : null;
 }
 
 /** Files' Explain: the walkthrough's own notes beside the hunks they explain (lab WT8-F2; key E). */
@@ -140,7 +166,9 @@ export function ScmComparisonRailCaption(props: Readonly<{
  */
 export function ScmComparisonRailKeys(props: Readonly<{ testID?: string; keys: readonly Readonly<{ commands: readonly KeyboardCommandId[]; label: string }>[] }>) {
     const labels = React.useContext(KeyboardShortcutLabelsContext);
-    const entries = props.keys.flatMap((entry) => {
+    // Keycaps name keys: on a touch screen they are not at hand, as for every other key hint.
+    const hasKeyboard = useHardwareKeyboard();
+    const entries = !hasKeyboard ? [] : props.keys.flatMap((entry) => {
         const keycaps = railKeycaps(entry.commands.map((command) => labels[command]));
         return keycaps ? [{ label: entry.label, keycaps }] : [];
     });
