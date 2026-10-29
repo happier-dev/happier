@@ -132,6 +132,7 @@ describe('buildResumeSelectionModel', () => {
         canUseInkSelectorFn: () => true,
       }));
 
+      expect(output.text()).toContain('No sessions available to continue from here.');
       expect(output.text()).toMatch(/incomplete.*owner.*upgrade/i);
     } finally {
       get.mockRestore();

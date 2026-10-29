@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createServer, type Server } from 'node:http';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readdir, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -19,6 +19,7 @@ describe('happier resume command (integration)', () => {
   let server: Server | null = null;
   let serverUrl = '';
   let happyHomeDir = '';
+  let sessionDirectory = '';
   let requestCount = 0;
   let lastAuthHeader: string | null = null;
 
@@ -26,6 +27,7 @@ describe('happier resume command (integration)', () => {
     requestCount = 0;
     lastAuthHeader = null;
     happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-cli-resume-'));
+    sessionDirectory = await mkdtemp(join(tmpdir(), 'happier-cli-resume-session-dir-'));
     process.env.HAPPIER_ACCOUNT_SETTINGS_MODE = 'never';
 
     const sessionId = 'sess_integration_123';
@@ -42,7 +44,7 @@ describe('happier resume command (integration)', () => {
     const metadataCiphertext = encodeBase64(
       encryptWithDataKey(
         {
-          path: '/tmp/happier-resume-integration',
+          path: sessionDirectory,
           flavor: 'claude',
           claudeSessionId: 'claude_vendor_session_1',
         },
@@ -116,6 +118,9 @@ describe('happier resume command (integration)', () => {
     if (happyHomeDir) {
       await rm(happyHomeDir, { recursive: true, force: true });
     }
+    if (sessionDirectory) {
+      await rm(sessionDirectory, { recursive: true, force: true });
+    }
 
     if (originalServerUrl === undefined) delete process.env.HAPPIER_SERVER_URL;
     else process.env.HAPPIER_SERVER_URL = originalServerUrl;
@@ -143,33 +148,46 @@ describe('happier resume command (integration)', () => {
     let observedArgs: string[] | null = null;
     let observedAttach: SessionAttachSecret | null = null;
     let observedChdir: string | null = null;
+    let observedCwdRealpath: string | null = null;
+    let observedAttachEnv: string | undefined;
+    const previousCwd = process.cwd();
 
-    await handleResumeCommand(['sess_integration_123'], {
-      readCredentialsFn: async () => ({
-        token,
-        encryption: {
-          type: 'dataKey',
-          publicKey: deriveBoxPublicKeyFromSeed(machineKeySeed),
-          machineKey: machineKeySeed,
+    try {
+      await handleResumeCommand(['sess_integration_123'], {
+        readCredentialsFn: async () => ({
+          token,
+          encryption: {
+            type: 'dataKey',
+            publicKey: deriveBoxPublicKeyFromSeed(machineKeySeed),
+            machineKey: machineKeySeed,
+          },
+        }),
+        resolveAgentHandlerFn: async (agentId) => {
+          observedAgentId = agentId;
+          return async (context) => {
+            observedArgs = context.args;
+            observedCwdRealpath = await realpath(process.cwd());
+            observedAttachEnv = process.env.HAPPIER_SESSION_ATTACH_FILE;
+            const attach = await readSessionAttachFromFile(context.directSessionLaunch!.sessionAttachFilePath!);
+            expect(attach).not.toBeNull();
+            observedAttach = attach;
+          };
         },
-      }),
-      resolveAgentHandlerFn: async (agentId) => {
-        observedAgentId = agentId;
-        return async (context) => {
-          observedArgs = context.args;
-          const attach = await readSessionAttachFromFile(context.directSessionLaunch!.sessionAttachFilePath!);
-          expect(attach).not.toBeNull();
-          observedAttach = attach;
-        };
-      },
-      chdirFn: (nextDir) => {
-        observedChdir = nextDir;
-      },
-    });
+        chdirFn: (nextDir) => {
+          observedChdir = nextDir;
+          process.chdir(nextDir);
+        },
+      });
+    } finally {
+      process.chdir(previousCwd);
+    }
 
     expect(requestCount).toBe(1);
     expect(lastAuthHeader).toBe(`Bearer ${token}`);
-    expect(observedChdir).toBe('/tmp/happier-resume-integration');
+    expect(observedChdir).toBe(sessionDirectory);
+    // The agent handler runs inside the session directory, and the attach secret travels as a file, never via env.
+    expect(observedCwdRealpath).toBe(await realpath(sessionDirectory));
+    expect(observedAttachEnv).toBe(originalAttachFile);
     expect(observedAgentId).toBe('claude');
     expect(observedArgs).toEqual([
       'claude',
@@ -185,5 +203,7 @@ describe('happier resume command (integration)', () => {
     }
     expect(observedAttach).toEqual({ encryptionMode: 'e2ee', encryptionVariant: 'dataKey', encryptionKey: new Uint8Array(32).fill(3) });
     expect(process.env.HAPPIER_SESSION_ATTACH_FILE).toBeUndefined();
+    // The attach file is removed once the agent handler returns.
+    expect(await readdir(join(happyHomeDir, 'tmp', 'session-attach')).catch(() => [])).toEqual([]);
   });
 });
