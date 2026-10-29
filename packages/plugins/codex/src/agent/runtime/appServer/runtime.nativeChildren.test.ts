@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { AgentSessionRuntimeEvent, AgentSessionSubagentObservation, AgentSessionSubagentObservationPublisher } from '@happier-dev/plugin-sdk/agents/runtime';
 import { AgentSessionRuntimeEventSchema } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { DisposableCodexAppServerClient } from './client.js';
+import { createCodexNativeEventFixture } from './client.test-support.js';
 import type { CodexAppServerEvent } from './core.js';
 import { createCodexNativeAppServerSessionRuntime } from './native.js';
 import { createCodexAppServerRuntime, startCodexAppServerRuntime, waitForCodexAppServerRuntimeTurnCompletion } from './runtime.js';
@@ -13,7 +14,9 @@ function fixture() {
   const observations: AgentSessionSubagentObservation[] = [];
   const events: CodexAppServerEvent[] = [];
   const nativeEvents: AgentSessionRuntimeEvent[] = [];
+  const nativeReceipts = createCodexNativeEventFixture();
   const client: DisposableCodexAppServerClient = {
+    onNativeEvent: nativeReceipts.onNativeEvent,
     launchFeatures: { realtimeConversationAdvertised: false },
     async request(method) {
       if (method === 'thread/start') return { thread: { id: 'parent' } };
@@ -35,7 +38,7 @@ function fixture() {
   });
   runtime.events.subscribe((event) => events.push(event));
   createCodexNativeAppServerSessionRuntime(runtime, 'session').watch((event) => nativeEvents.push(AgentSessionRuntimeEventSchema.parse(event)));
-  return { runtime, events, nativeEvents, observations, async notify(method: string, params: unknown) { await handlers.get(method)?.(params); } };
+  return { runtime, events, nativeEvents, observations, async notify(method: string, params: unknown) { nativeReceipts.publish(method, params); await handlers.get(method)?.(params); } };
 }
 
 describe('managed Codex native children', () => {

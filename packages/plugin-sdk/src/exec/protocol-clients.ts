@@ -4,6 +4,8 @@ export type { ProtocolClientsService } from '../services/io.js';
 export type {
     PluginFramedBytesClient,
     PluginJsonRpcClient,
+    PluginJsonRpcConnection,
+    PluginJsonRpcConnectionSpec,
     PluginJsonStreamClient,
     PluginLoopbackWebSocketClientSpec,
     PluginLoopbackWebSocketEndpoint,

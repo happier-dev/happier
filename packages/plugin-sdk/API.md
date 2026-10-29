@@ -1408,6 +1408,8 @@
 | `./exec` | `SystemToolsService` | type | daemon |
 | `./exec/protocol-clients` | `PluginFramedBytesClient` | type | daemon |
 | `./exec/protocol-clients` | `PluginJsonRpcClient` | type | daemon |
+| `./exec/protocol-clients` | `PluginJsonRpcConnection` | type | daemon |
+| `./exec/protocol-clients` | `PluginJsonRpcConnectionSpec` | type | daemon |
 | `./exec/protocol-clients` | `PluginJsonStreamClient` | type | daemon |
 | `./exec/protocol-clients` | `PluginLoopbackWebSocketClientSpec` | type | daemon |
 | `./exec/protocol-clients` | `PluginLoopbackWebSocketEndpoint` | type | daemon |

@@ -33,7 +33,6 @@ function createInMemoryJsonRpcProcess(params?: Readonly<{
         dispose: async () => undefined,
     };
     const protocol = createJsonRpcProcessClient({
-        process,
         stdout,
         write: process.writeStdin,
         requestTimeoutMs: 25,
@@ -80,6 +79,9 @@ describe('A.13p spawned protocol client runtime', () => {
     it('serializes notifications in transport order without blocking server-request responses', async () => {
         const { stdout, writes, protocol } = createInMemoryJsonRpcProcess();
         const received: number[] = [];
+        const receipts: unknown[] = [];
+        const clock = vi.spyOn(Date, 'now').mockReturnValue(1000);
+        protocol.subscribeNotificationReceived(message => { receipts.push(message); });
         let releaseFirst!: () => void;
         const firstBlocked = new Promise<void>((resolve) => {
             releaseFirst = resolve;
@@ -91,19 +93,26 @@ describe('A.13p spawned protocol client runtime', () => {
         });
         protocol.client.registerRequestHandler('host/question', () => ({ accepted: true }));
 
-        stdout.write([
-            '{"jsonrpc":"2.0","method":"host/status","params":{"sequence":1}}',
-            '{"jsonrpc":"2.0","method":"host/status","params":{"sequence":2}}',
-            '{"jsonrpc":"2.0","id":"request-1","method":"host/question","params":{}}',
-            '',
-        ].join('\n'));
+        try {
+            stdout.write([
+                '{"jsonrpc":"2.0","method":"host/status","params":{"sequence":1}}',
+                '{"jsonrpc":"2.0","method":"host/status","params":{"sequence":2}}',
+                '{"jsonrpc":"2.0","id":"request-1","method":"host/question","params":{}}',
+                '',
+            ].join('\n'));
 
-        await expect.poll(() => writes.length).toBe(1);
-        expect(JSON.parse(writes[0] ?? '')).toMatchObject({ id: 'request-1', result: { accepted: true } });
-        expect(received).toEqual([]);
-        releaseFirst();
-        await expect.poll(() => received).toEqual([1, 2]);
-        protocol.dispose();
+            await expect.poll(() => writes.length).toBe(1);
+            expect(JSON.parse(writes[0] ?? '')).toMatchObject({ id: 'request-1', result: { accepted: true } });
+            expect(received).toEqual([]);
+            expect(receipts).toEqual([
+                { method: 'host/status', params: { sequence: 1 }, receivedAtMs: 1000 },
+                { method: 'host/status', params: { sequence: 2 }, receivedAtMs: 1000 },
+            ]);
+            clock.mockReturnValue(2000);
+            releaseFirst();
+            await expect.poll(() => received).toEqual([1, 2]);
+            expect(receipts).toHaveLength(2);
+        } finally { releaseFirst(); protocol.dispose(); clock.mockRestore(); }
     });
 
     it('isolates throwing JSON-RPC notification subscribers from later subscribers', async () => {
@@ -199,7 +208,6 @@ describe('A.13p spawned protocol client runtime', () => {
             dispose: async () => undefined,
         };
         const protocol = createJsonRpcProcessClient({
-            process: processHandle,
             stdout,
             framing: 'contentLength',
             maxFrameBytes: 256,
@@ -239,7 +247,6 @@ describe('A.13p spawned protocol client runtime', () => {
             dispose: async () => undefined,
         };
         const createPeer = (stdout: PassThrough, destination: PassThrough) => createJsonRpcProcessClient({
-            process: processHandle,
             stdout,
             framing,
             write: async (value) => {
@@ -460,13 +467,6 @@ describe('A.13p spawned protocol client runtime', () => {
     it('lets request timeout settle while the stdin write remains blocked', async () => {
         const stdout = new PassThrough();
         const protocol = createJsonRpcProcessClient({
-            process: {
-                pid: 1,
-                exit: new Promise(() => undefined),
-                writeStdin: async () => await new Promise<void>(() => undefined),
-                kill: () => undefined,
-                dispose: async () => undefined,
-            },
             stdout,
             write: async () => await new Promise<void>(() => undefined),
             requestTimeoutMs: 1,
@@ -586,7 +586,7 @@ describe('A.13p spawned protocol client runtime', () => {
             kill: () => undefined,
             dispose: async () => undefined,
         };
-        const protocol = createJsonRpcProcessClient({ process, stdout, write: process.writeStdin });
+        const protocol = createJsonRpcProcessClient({ stdout, write: process.writeStdin });
         const pending = Array.from({ length: 300 }, (_, index) => (
             protocol.client.notify('child/status', { index }).catch((error: unknown) => error)
         ));

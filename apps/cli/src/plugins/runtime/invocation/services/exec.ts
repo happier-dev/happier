@@ -1,11 +1,12 @@
 import type { PluginAgentCliReadinessServiceForHost } from '../../context/agents';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import { realpath } from 'node:fs/promises';
+import { createConnection } from 'node:net';
 import { isAbsolute } from 'node:path';
 import { configuration } from '@/configuration';
 import type { ManagedExecutableRef } from '@happier-dev/plugin-sdk/managed-services';
 import type { AgentCliReadinessService as PluginAgentCliReadinessService, ExecService, PluginProcessHandle, SystemToolsService as PluginSystemToolsService } from '@happier-dev/plugin-sdk/exec';
-import type { PluginFramedBytesClient, PluginJsonRpcClient, PluginJsonStreamClient, PluginLoopbackWebSocketJsonClient, PluginProtocolClientHandle, PluginProtocolClientSpec, PluginProtocolClientSpecByKind, ProtocolClientsService } from '@happier-dev/plugin-sdk/exec/protocol-clients';
+import type { PluginFramedBytesClient, PluginJsonRpcClient, PluginJsonRpcConnection, PluginJsonRpcConnectionSpec, PluginJsonStreamClient, PluginLoopbackWebSocketJsonClient, PluginProtocolClientHandle, PluginProtocolClientSpec, PluginProtocolClientSpecByKind, ProtocolClientsService } from '@happier-dev/plugin-sdk/exec/protocol-clients';
 import type { PluginPath } from '@happier-dev/plugin-sdk';
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
 import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process';
@@ -31,6 +32,7 @@ import type { ProcessCustodySpawnSpec } from '@/subprocess/supervision/processCu
 import {
     PluginExecClientError,
     createPluginExecClientExitError,
+    createPluginExecClientAbortError,
     sanitizeExecDiagnosticText,
 } from '../../exec/errors';
 import {
@@ -845,7 +847,10 @@ export type ProjectNativeEnvironmentIoForHost = ProjectNativeEnvironmentIo & Rea
 
 /** One invocation's physical resources, shared by SDK Exec and built-in effects. */
 function createNativeProcessCustodyForHost() {
-    const resources = new Set<SupervisedPluginProcess>();
+    type OwnedResource = Pick<SupervisedPluginProcess, 'dispose'>
+        & Readonly<{ waitForSettlement(): Promise<unknown> }>
+        & Partial<Pick<SupervisedPluginProcess, 'onOutcomeUncertain'>>;
+    const resources = new Set<OwnedResource>();
     const observers = new Set<(error: unknown) => void>();
     let uncertain: unknown;
     let stopRequested = false;
@@ -867,9 +872,9 @@ function createNativeProcessCustodyForHost() {
     return {
         custody,
         assertOpen() { if (stopRequested) fail('plugin_exec_aborted', 'Process operation was aborted'); },
-        retain(supervised: SupervisedPluginProcess) {
+        retain(supervised: OwnedResource) {
             resources.add(supervised);
-            const unsubscribe = supervised.onOutcomeUncertain(error => {
+            const unsubscribe = supervised.onOutcomeUncertain?.(error => {
                 uncertain = error;
                 for (const listener of [...observers]) {
                     try { listener(error); } catch { /* Observers do not own process custody. */ }
@@ -877,7 +882,7 @@ function createNativeProcessCustodyForHost() {
             });
             void supervised.waitForSettlement().then(() => {
                 resources.delete(supervised);
-                unsubscribe();
+                unsubscribe?.();
                 if (resources.size === 0) uncertain = undefined;
             });
         },
@@ -1428,14 +1433,86 @@ export function createStablePluginExecService(params: Readonly<{
     ): Promise<PluginProcessHandle> {
         return (await launchProcess(request, options, true)).handle;
     }
+    function guardJsonRpcClient(
+        protocol: ReturnType<typeof createJsonRpcProcessClient>,
+        assertCurrent: (signal?: AbortSignal) => void,
+    ): PluginJsonRpcClient {
+        const requestMethods = new Set<string>();
+        const assertCallbackCurrent = () => {
+            try {
+                assertCurrent();
+            } catch (error) {
+                protocol.dispose(error instanceof Error ? error : undefined);
+                throw error;
+            }
+        };
+        return Object.freeze({
+            async request(method: string, requestParams?: JsonValue, requestOptions?: { signal?: AbortSignal; timeoutMs?: number | null }) {
+                assertCurrent(requestOptions?.signal);
+                const result = await protocol.client.request<JsonValue | undefined, JsonValue>(method, requestParams, requestOptions);
+                assertCurrent(requestOptions?.signal);
+                return result;
+            },
+            notify: async (method: string, notificationParams?: JsonValue) => { assertCurrent(); await protocol.client.notify(method, notificationParams); },
+            onNotificationReceived(listener: Parameters<PluginJsonRpcClient['onNotificationReceived']>[0]) {
+                assertCurrent();
+                const unsubscribe = protocol.subscribeNotificationReceived((message) => {
+                    assertCallbackCurrent();
+                    listener({
+                        method: message.method,
+                        ...(message.params === undefined ? {} : { params: message.params as JsonValue }),
+                        receivedAtMs: message.receivedAtMs,
+                    });
+                });
+                return Object.freeze({ dispose: unsubscribe });
+            },
+            onNotification(listener: Parameters<PluginJsonRpcClient['onNotification']>[0]) {
+                assertCurrent();
+                const unsubscribe = protocol.subscribeNotification((message) => {
+                    assertCallbackCurrent();
+                    return listener({
+                        method: message.method,
+                        ...(message.params === undefined ? {} : { params: message.params as JsonValue }),
+                    });
+                });
+                return Object.freeze({ dispose: unsubscribe });
+            },
+            onRequest(method: string, listener: Parameters<PluginJsonRpcClient['onRequest']>[1]) {
+                assertCurrent();
+                if (requestMethods.has(method)) {
+                    fail('plugin_exec_protocol_duplicate_handler', `JSON-RPC method '${method}' already has a responder`);
+                }
+                requestMethods.add(method);
+                const unregister = protocol.client.registerRequestHandler(method, async (requestParams, context) => {
+                    assertCallbackCurrent();
+                    try {
+                        return await listener({
+                            id: context.requestId
+                                ?? fail('plugin_exec_protocol_invalid_request', 'JSON-RPC server request is missing its correlation id'),
+                            method,
+                            ...(requestParams === undefined ? {} : { params: requestParams as JsonValue }),
+                        });
+                    } finally {
+                        assertCallbackCurrent();
+                    }
+                });
+                return Object.freeze({
+                    dispose() {
+                        requestMethods.delete(method);
+                        unregister();
+                    },
+                });
+            },
+            dispose: () => protocol.dispose(),
+        });
+    }
+
     async function spawnJsonRpcClient(
         spec: Extract<Parameters<ExecService['clients']['spawn']>[0], { kind: 'jsonRpc' }>,
         options?: { signal?: AbortSignal },
     ): Promise<PluginProtocolClientHandle<'jsonRpc'>> {
         const supervised = await launchProcess(spec.launch, options, true);
-        const legacyProcess = adaptStablePluginExecLegacyProcessHandle(supervised);
         const protocol = createJsonRpcProcessClient({
-            process: legacyProcess,
             stdout: supervised.child.stdout,
             write: async (data) => supervised.handle.write(typeof data === 'string'
                 ? new Uint8Array(Buffer.from(data, 'utf8'))
@@ -1452,44 +1529,7 @@ export function createStablePluginExecService(params: Readonly<{
                 ? { recordRuntimeLimitMeasurement: params.recordRuntimeLimitMeasurement }
                 : {}),
         });
-        const requestMethods = new Set<string>();
-        const client: PluginJsonRpcClient = Object.freeze({
-            async request(method: string, requestParams?: JsonValue, requestOptions?: { signal?: AbortSignal; timeoutMs?: number | null }) {
-                guard(requestOptions?.signal);
-                const result = await protocol.client.request<JsonValue | undefined, JsonValue>(method, requestParams, requestOptions);
-                guard(requestOptions?.signal);
-                return result;
-            },
-            notify: async (method: string, notificationParams?: JsonValue) => { guard(); await protocol.client.notify(method, notificationParams); },
-            onNotification(listener: Parameters<PluginJsonRpcClient['onNotification']>[0]) {
-                const unsubscribe = protocol.subscribeNotification((message) => listener({
-                    method: message.method,
-                    ...(message.params === undefined ? {} : { params: message.params as JsonValue }),
-                }));
-                return Object.freeze({ dispose: unsubscribe });
-            },
-            onRequest(method: string, listener: Parameters<PluginJsonRpcClient['onRequest']>[1]) {
-                if (requestMethods.has(method)) {
-                    fail('plugin_exec_protocol_duplicate_handler', `JSON-RPC method '${method}' already has a responder`);
-                }
-                requestMethods.add(method);
-                const unregister = protocol.client.registerRequestHandler(method, async (requestParams, context) => {
-                    return await listener({
-                        id: context.requestId
-                            ?? fail('plugin_exec_protocol_invalid_request', 'JSON-RPC server request is missing its correlation id'),
-                        method,
-                        ...(requestParams === undefined ? {} : { params: requestParams as JsonValue }),
-                    });
-                });
-                return Object.freeze({
-                    dispose() {
-                        requestMethods.delete(method);
-                        unregister();
-                    },
-                });
-            },
-            dispose: () => protocol.dispose(),
-        });
+        const client = guardJsonRpcClient(protocol, signal => guard(signal));
         const dispose = async (): Promise<void> => {
             protocol.dispose();
             // The supervisor owns joining and re-observing explicit cleanup.
@@ -1688,20 +1728,75 @@ export function createStablePluginExecService(params: Readonly<{
         return Object.freeze({ client, process: supervised.handle, wait: () => supervised.handle.wait(), dispose });
     }
 
+    function assertJsonRpcLimits(spec: Pick<PluginJsonRpcConnectionSpec, 'maxFrameBytes' | 'requestTimeoutMs'>): void {
+        if (spec.maxFrameBytes !== undefined && (!Number.isSafeInteger(spec.maxFrameBytes) || spec.maxFrameBytes <= 0)) {
+            fail('plugin_exec_invalid_limit', 'maxFrameBytes must be a positive safe integer');
+        }
+        if (spec.requestTimeoutMs !== undefined && (!Number.isSafeInteger(spec.requestTimeoutMs) || spec.requestTimeoutMs < 0)) {
+            fail('plugin_exec_invalid_limit', 'requestTimeoutMs must be a non-negative safe integer');
+        }
+    }
+
+    async function connectJsonRpc(
+        spec: PluginJsonRpcConnectionSpec,
+        options?: { signal?: AbortSignal },
+    ): Promise<PluginJsonRpcConnection> {
+        const signal = options?.signal ? AbortSignal.any([params.signal, options.signal]) : params.signal;
+        guard(signal);
+        assertJsonRpcLimits(spec);
+        if (spec.endpoint.kind !== 'unixWebSocket' || typeof spec.endpoint.socketPath !== 'string'
+            || !isAbsolute(spec.endpoint.socketPath)) {
+            fail('plugin_exec_invalid_endpoint', 'A native Unix connection requires an absolute socket path');
+        }
+        const socket = createConnection({ path: spec.endpoint.socketPath });
+        const closed = new Promise<void>(resolve => { socket.once('close', () => resolve()); });
+        let protocol: ReturnType<typeof createJsonRpcProcessClient> | undefined;
+        const dispose = async (error?: Error): Promise<void> => {
+            protocol?.dispose(error);
+            socket.destroy(error);
+            await closed;
+        };
+        const abort = () => { void dispose(createPluginExecClientAbortError()); };
+        signal.addEventListener('abort', abort, { once: true });
+        if (signal.aborted) abort();
+        void closed.then(() => { signal.removeEventListener('abort', abort); });
+        retain({ dispose: async () => await dispose(createPluginExecClientAbortError()), waitForSettlement: async () => await closed });
+        try {
+            // Keep the native OS error intact: the server's readiness owner decides retries.
+            await new Promise<void>((resolve, reject) => {
+                socket.once('connect', resolve);
+                socket.once('error', reject);
+            });
+            guard(signal);
+            protocol = createJsonRpcProcessClient({
+                stdout: socket,
+                write: async data => await new Promise<void>((resolve, reject) => {
+                    socket.write(data, error => error ? reject(error) : resolve());
+                }),
+                framing: 'webSocket', maxFrameBytes: spec.maxFrameBytes,
+                requestTimeoutMs: spec.requestTimeoutMs, cancellationMethod: spec.cancellationMethod,
+                onFailure: error => { void dispose(error); },
+                ...(params.recordRuntimeLimitMeasurement ? { recordRuntimeLimitMeasurement: params.recordRuntimeLimitMeasurement } : {}),
+            });
+            const client = guardJsonRpcClient(protocol, requestSignal => {
+                guard(signal);
+                guard(requestSignal);
+            });
+            return Object.freeze({ client, closed, dispose: async () => await dispose() });
+        } catch (error) {
+            await dispose();
+            throw error;
+        }
+    }
+
     async function spawnProtocolClient(
         spec: PluginProtocolClientSpec,
         options?: { signal?: AbortSignal },
     ): Promise<PluginProtocolClientHandle> {
         try {
-            if (spec.maxFrameBytes === undefined
-                ? spec.kind !== 'jsonRpc'
-                : !Number.isSafeInteger(spec.maxFrameBytes) || spec.maxFrameBytes <= 0) {
+            if (spec.kind === 'jsonRpc') assertJsonRpcLimits(spec);
+            else if (!Number.isSafeInteger(spec.maxFrameBytes) || spec.maxFrameBytes <= 0) {
                 return fail('plugin_exec_invalid_limit', 'maxFrameBytes must be a positive safe integer');
-            }
-            if (spec.kind === 'jsonRpc' && spec.requestTimeoutMs !== undefined && (
-                !Number.isSafeInteger(spec.requestTimeoutMs) || spec.requestTimeoutMs < 0
-            )) {
-                return fail('plugin_exec_invalid_limit', 'requestTimeoutMs must be a non-negative safe integer');
             }
             if (spec.kind === 'loopbackWebSocketJson' && spec.endpoint && (
                 !Number.isSafeInteger(spec.endpoint.port)
@@ -1726,6 +1821,7 @@ export function createStablePluginExecService(params: Readonly<{
     }
 
     const clients: ProtocolClientsService = Object.freeze({
+        connectJsonRpc,
         async spawn<K extends ProtocolClientKind>(
             spec: PluginProtocolClientSpecByKind<K>,
             options?: { signal?: AbortSignal },

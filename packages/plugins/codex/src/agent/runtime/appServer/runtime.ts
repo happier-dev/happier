@@ -2135,6 +2135,13 @@ export function createCodexAppServerRuntime(
   };
 
   const attachClientHandlers = (nextClient: DisposableCodexAppServerClient): void => {
+    nextClient.onNativeEvent((method, notificationParams) => {
+      // Admit an owned native start before later receipts arrive, while projection remains ordered.
+      if (!disposed && method === 'turn/started' && pendingTurn && !pendingTurn.agentTurnId
+        && readThreadId(notificationParams) === pendingTurn.threadId) {
+        adoptProviderTurnFromActivity(notificationParams, { allowUnownedAdoption: false });
+      }
+    });
     nextClient.onExit((result) => {
       if (disposed || unexpectedExitPublished) return;
       unexpectedExitPublished = true;

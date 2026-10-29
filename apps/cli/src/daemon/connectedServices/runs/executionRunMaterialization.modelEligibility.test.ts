@@ -115,6 +115,13 @@ function createCodexProcessBoundary(rejectStart: boolean) {
         },
         notify: async () => undefined,
         onRequest: () => ({ dispose() {} }),
+        onNotificationReceived(listener) {
+            const observe: Parameters<PluginJsonRpcClient['onNotification']>[0] = message => {
+                listener({ ...message, receivedAtMs: Date.now() });
+            };
+            listeners.add(observe);
+            return { dispose() { listeners.delete(observe); } };
+        },
         onNotification(listener) { listeners.add(listener); return { dispose() { listeners.delete(listener); } }; },
         dispose: async () => undefined,
     };

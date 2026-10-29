@@ -1,5 +1,6 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import { createServer } from 'node:net';
 import { join } from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -14,6 +15,7 @@ import { CODEX_RAW_PROXY_FIXTURE_SCRIPT, createCodexControlSocketFixture } from 
 import { createStablePluginExecService } from '@/plugins/runtime/invocation/services/exec';
 import { waitForProcessExit } from '@/testkit/process/spawn';
 import { createCodexNativeAppServerClient } from '../../../../../../packages/plugins/codex/src/agent/runtime/appServer/client';
+import { readCodexNativeTransportStartupFailure } from '../../../../../../packages/plugins/codex/src/agent/runtime/appServer/sharedServer';
 
 import {
     executeExternalSessionCandidateQuery,
@@ -64,7 +66,38 @@ async function writeRollout(params: Readonly<{
 }
 
 describe('Codex candidate index head', () => {
-    it.skipIf(process.platform === 'win32').each(['cancelled', 'deadline'] as const)('releases the managed daemon proxy when native initialization is %s', async outcome => {
+    it.skipIf(process.platform === 'win32')('preserves real native initialization write failures for readiness retry', async () => {
+        const root = await mkdtemp(join('/tmp', 'hce-'));
+        roots.push(root);
+        const socketPath = join(root, 'native.sock');
+        const server = createServer(socket => socket.destroy());
+        await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(socketPath, resolve); });
+        const exec = createStablePluginExecService({
+            allowedExecutables: [], signal: new AbortController().signal, isOccurrenceCurrent: () => true,
+            resolvePath: async () => root,
+            resolveExecutable: async () => { throw new Error('Socket connection must not launch a process'); },
+            systemTools: { async resolve(request) {
+                return { grantId: 'native-write-fixture', toolId: request.toolId, displayName: 'Native fixture', source: 'system',
+                    executablePath: process.execPath, launch: { kind: 'binary', executablePath: process.execPath, args: [] } };
+            } },
+        });
+        try {
+            const error = await createCodexNativeAppServerClient({ exec, processEnv: {},
+                transport: { kind: 'unixWebSocket', socketPath, realtimeConversationAdvertised: false },
+                initializeRequestOptions: { timeoutMs: 500 },
+            }).then(() => { throw new Error('Expected a real rejected socket upgrade'); }, error => error);
+            expect(error).toMatchObject({ code: 'PLUGIN_EXEC_CLIENT_PROTOCOL_ERROR', cause: { code: 'EPIPE', syscall: 'write' } });
+            expect(readCodexNativeTransportStartupFailure(error)).toEqual({ phase: 'native_system_error', reason: 'system_error',
+                errnoCode: 'EPIPE', syscall: 'write', transport: 'unixWebSocket', socketPathLengthClass: 'within_limit' });
+        } finally {
+            await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+        }
+    });
+
+    it.skipIf(process.platform === 'win32').each([
+        ['daemonProxy', 'cancelled'], ['daemonProxy', 'deadline'],
+        ['unixWebSocket', 'cancelled'], ['unixWebSocket', 'deadline'],
+    ] as const)('releases the managed %s proxy when native initialization is %s', async (transport, outcome) => {
         const root = await mkdtemp(join('/tmp', 'hci-'));
         roots.push(root);
         const socketPath = join(root, 'native.sock');
@@ -88,7 +121,8 @@ describe('Codex candidate index head', () => {
                         args: ['-e', script, socketPath] } };
             } },
         });
-        const opening = createCodexNativeAppServerClient({ exec, processEnv: {}, transport: { kind: 'daemonProxy' },
+        const opening = createCodexNativeAppServerClient({ exec, processEnv: {}, transport: transport === 'daemonProxy'
+            ? { kind: transport } : { kind: transport, socketPath, realtimeConversationAdvertised: false },
             signal: controller.signal, initializeRequestOptions: { signal: controller.signal, timeoutMs: outcome === 'deadline' ? 500 : null } });
         const rejected = expect(opening).rejects.toMatchObject({ code: outcome === 'deadline'
             ? 'PLUGIN_EXEC_CLIENT_REQUEST_TIMEOUT' : 'PLUGIN_EXEC_CLIENT_ABORTED' });
@@ -97,14 +131,60 @@ describe('Codex candidate index head', () => {
             if (outcome === 'cancelled') controller.abort();
             await rejected;
             await vi.waitFor(() => expect(server.activeConnections).toBe(0));
-            const pid = Number(await readFile(pidPath, 'utf8'));
-            expect(Number.isSafeInteger(pid)).toBe(true);
-            await expect(waitForProcessExit(pid)).resolves.toBe(true);
+            if (transport === 'daemonProxy') {
+                const pid = Number(await readFile(pidPath, 'utf8'));
+                expect(Number.isSafeInteger(pid)).toBe(true);
+                await expect(waitForProcessExit(pid)).resolves.toBe(true);
+            }
             expect(server.connectionCount).toBe(1);
         } finally {
             controller.abort();
             await opening.catch(() => undefined);
         }
+    });
+
+    it.skipIf(process.platform === 'win32')('recovers an oversized explicit-socket response on the same managed native client', async () => {
+        const root = await mkdtemp(join('/tmp', 'hce-'));
+        roots.push(root);
+        const socketPath = join(root, 'exact-native.sock');
+        const maxFrameBytes = 1024;
+        const server = await createCodexControlSocketFixture(socketPath, request => {
+            if (request.method === 'initialize') return {};
+            if (request.method === 'thread/resume') return { thread: { id: 'native-thread', oversized: 'λ😀'.repeat(maxFrameBytes) } };
+            if (request.method === 'thread/read') return { thread: { id: 'native-thread', name: 'λ😀 Native title' } };
+            return undefined;
+        });
+        nativeServers.push(server);
+        const exec = createStablePluginExecService({
+            allowedExecutables: [], allowedEnvKeys: ['CODEX_HOME'], environment: { CODEX_HOME: root },
+            signal: new AbortController().signal, isOccurrenceCurrent: () => true, resolvePath: async () => root,
+            resolveExecutable: async () => { throw new Error('Expected retained native CLI grant'); },
+            systemTools: { async resolve(request) {
+                return { grantId: 'explicit-socket-fixture', toolId: request.toolId, displayName: 'Native fixture', source: 'system',
+                    executablePath: process.execPath, launch: { kind: 'binary', executablePath: process.execPath,
+                        args: [] } };
+            } },
+        });
+        const client = await createCodexNativeAppServerClient({ exec,
+            processEnv: { CODEX_HOME: root, HAPPIER_CODEX_APP_SERVER_MAX_JSON_LINE_CHARS: String(maxFrameBytes) },
+            transport: { kind: 'unixWebSocket', socketPath, realtimeConversationAdvertised: true } });
+        try {
+            await expect(client.request('thread/resume', { threadId: 'native-thread' })).rejects.toMatchObject({
+                code: 'PLUGIN_EXEC_CLIENT_PROTOCOL_ERROR',
+                message: expect.stringContaining('JSON-RPC frame exceeded the configured size limit'),
+            });
+            await expect(client.request('thread/read', { threadId: 'native-thread', includeTurns: false }))
+                .resolves.toEqual({ thread: { id: 'native-thread', name: 'λ😀 Native title' } });
+            expect(client.launchFeatures.realtimeConversationAdvertised).toBe(true);
+            expect(server.connectionCount).toBe(1);
+            expect(server.requests.map(request => request.method)).toEqual(['initialize', 'initialized', 'thread/resume', 'thread/read']);
+        } finally { await client.dispose(); }
+        await vi.waitFor(() => expect(server.activeConnections).toBe(0));
+        const again = await createCodexNativeAppServerClient({ exec, processEnv: { CODEX_HOME: root },
+            transport: { kind: 'unixWebSocket', socketPath, realtimeConversationAdvertised: true } });
+        try { await expect(again.request('thread/read')).resolves.toMatchObject({ thread: { id: 'native-thread' } }); }
+        finally { await again.dispose(); }
+        expect(server.connectionCount).toBe(2);
     });
 
     it.skipIf(process.platform === 'win32')('refreshes native names through the admitted page operation while retaining the rollout index', async () => {

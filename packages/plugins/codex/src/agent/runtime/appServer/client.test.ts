@@ -10,12 +10,12 @@ import type {
     PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
 import type {
     PluginJsonRpcClient,
+    PluginJsonRpcConnectionSpec,
     PluginProtocolClientHandle,
     PluginProtocolClientSpec,
 } from '@happier-dev/plugin-sdk/exec/protocol-clients';
 
 import { createCodexNativeAppServerClient } from './client';
-import { createCodexControlSocketFixture } from './client.test-support';
 import { buildCodexAppServerConfigOverrides } from './config/overrides';
 import { createCodexAppServerRealtimeConversation } from './realtime';
 import { PLUGIN_MANIFEST } from '../../../manifest.js';
@@ -56,11 +56,13 @@ function createCapturingExec(
 ): Readonly<{
     exec: ExecService;
     specs: PluginProtocolClientSpec[];
+    connections: PluginJsonRpcConnectionSpec[];
     requests: Array<Readonly<{ method: string; params: unknown; timeoutMs?: number | null }>>;
     notifications: Array<Readonly<{ method: string; params: unknown }>>;
     emitExit(result: PluginProcessResult): void;
 }> {
     const specs: PluginProtocolClientSpec[] = [];
+    const connections: PluginJsonRpcConnectionSpec[] = [];
     const requests: Array<Readonly<{ method: string; params: unknown; timeoutMs?: number | null }>> = [];
     const notifications: Array<Readonly<{ method: string; params: unknown }>> = [];
     let settleExit: ((result: PluginProcessResult) => void) | null = null;
@@ -81,6 +83,7 @@ function createCapturingExec(
         onNotification() {
             return { dispose: () => undefined };
         },
+        onNotificationReceived: () => ({ dispose: () => undefined }),
         dispose: async () => undefined,
         ...clientOverrides,
     };
@@ -99,6 +102,7 @@ function createCapturingExec(
     };
     return {
         specs,
+        connections,
         requests,
         notifications,
         emitExit(result) {
@@ -116,6 +120,12 @@ function createCapturingExec(
                 })),
             },
             clients: {
+                async connectJsonRpc(spec: PluginJsonRpcConnectionSpec) {
+                    connections.push(spec);
+                    let close!: () => void;
+                    const closed = new Promise<void>(resolve => { close = resolve; });
+                    return { client, closed, async dispose() { close(); } };
+                },
                 spawn: async (spec: PluginProtocolClientSpec) => {
                     specs.push(spec);
                     return handle;
@@ -303,66 +313,29 @@ describe('createCodexAppServerClient', () => {
         } finally { await client.dispose(); }
     });
 
-    it('speaks native JSON-RPC over an explicit Unix WebSocket without spawning a proxy', async () => {
-        const transport = 'unixWebSocket' as const;
-        const root = await mkdtemp(join(process.platform === 'win32' ? tmpdir() : '/tmp', 'codex-ws-'));
-        const socketPath = process.platform === 'win32'
-            ? `\\\\.\\pipe\\happier-codex-test-${process.pid}-${Date.now()}`
-            : join(root, 'app-server.sock');
-        const server = await createCodexControlSocketFixture(socketPath, request => {
-            if (request.method === 'initialize') return {};
-            if (request.method === 'thread/read') return { thread: { id: 'native-thread', name: 'Native title' } };
-            return undefined;
-        });
-        const capture = createCapturingExec();
-        try {
-            const client = await createCodexNativeAppServerClient({ exec: capture.exec,
-                processEnv: { CODEX_HOME: root }, nativeLaunch: Object.freeze({}) as AgentNativeLaunchQualifier,
-                transport: { kind: transport, socketPath, realtimeConversationAdvertised: true },
-            });
-            try {
-                await expect(client.request('thread/read', { threadId: 'native-thread', includeTurns: false }))
-                    .resolves.toEqual({ thread: { id: 'native-thread', name: 'Native title' } });
-                expect(capture.specs).toEqual([]);
-                expect(capture.exec.run).not.toHaveBeenCalled();
-                expect(server.connectionCount).toBe(1);
-                expect(server.requests.map(request => request.method)).toEqual(['initialize', 'initialized', 'thread/read']);
-                expect(client.launchFeatures).toEqual({ realtimeConversationAdvertised: transport === 'unixWebSocket' });
-            } finally { await client.dispose(); }
-            await vi.waitFor(() => expect(server.activeConnections).toBe(0));
-        } finally {
-            await server.close();
-            await rm(root, { recursive: true, force: true });
-        }
-    });
-
-    it.skipIf(process.platform === 'win32').each(['cancelled', 'deadline'] as const)('settles explicit Unix socket initialization when %s and releases the connection', async outcome => {
-        const root = await mkdtemp(join('/tmp', 'codex-ws-stop-'));
-        let entered!: () => void;
-        const started = new Promise<void>(resolve => { entered = resolve; });
-        const server = await createCodexControlSocketFixture(join(root, 'app-server-control', 'app-server-control.sock'), request => {
-            if (request.method === 'initialize') entered();
-            return undefined;
-        });
+    it('connects an explicit native socket through the managed host without another native server launch', async () => {
+        const capture = createCapturingExec({ async request(method) {
+            return method === 'thread/read' ? { thread: { id: 'native-thread', name: 'λ😀 Native title' } } : {};
+        } });
         const controller = new AbortController();
-        const capture = createCapturingExec();
-        const opening = createCodexNativeAppServerClient({ exec: capture.exec, processEnv: { CODEX_HOME: root },
-            signal: controller.signal, initializeRequestOptions: {
-                signal: controller.signal, timeoutMs: outcome === 'deadline' ? 25 : null,
-            }, transport: { kind: 'unixWebSocket', socketPath: join(root, 'app-server-control', 'app-server-control.sock'), realtimeConversationAdvertised: false },
+        const connectJsonRpc = vi.fn(capture.exec.clients.connectJsonRpc);
+        const client = await createCodexNativeAppServerClient({ exec: { ...capture.exec, clients: { ...capture.exec.clients, connectJsonRpc } },
+            processEnv: { CODEX_HOME: '/fixture/native-home' }, signal: controller.signal,
+            nativeLaunch: Object.freeze({}) as AgentNativeLaunchQualifier,
+            configOverrides: ['server.setting="retained-by-server"'], disableUserMcpServers: true,
+            transport: { kind: 'unixWebSocket', socketPath: '/fixture/exact-native.sock', realtimeConversationAdvertised: true },
         });
-        const settled = expect(opening).rejects.toThrow(outcome === 'deadline' ? /timed out/ : /abort|closed/i);
         try {
-            if (outcome === 'cancelled') { await started; controller.abort(); }
-            await settled;
-            expect(server.connectionCount).toBe(1);
-            await vi.waitFor(() => expect(server.activeConnections).toBe(0));
+            await expect(client.request('thread/read', { threadId: 'native-thread', includeTurns: false }))
+                .resolves.toEqual({ thread: { id: 'native-thread', name: 'λ😀 Native title' } });
+            expect(capture.connections.map(connection => connection.endpoint)).toEqual([
+                { kind: 'unixWebSocket', socketPath: '/fixture/exact-native.sock' },
+            ]);
             expect(capture.specs).toEqual([]);
-        } finally {
-            controller.abort();
-            await server.close();
-            await rm(root, { recursive: true, force: true });
-        }
+            expect(connectJsonRpc).toHaveBeenCalledWith(expect.anything(), { signal: controller.signal });
+            expect(capture.exec.run).not.toHaveBeenCalled();
+            expect(client.launchFeatures.realtimeConversationAdvertised).toBe(true);
+        } finally { await client.dispose(); }
     });
 
     it('resolves the declared Codex system tool before every native app-server launch path', async () => {
@@ -421,6 +394,7 @@ describe('createCodexAppServerClient', () => {
             },
             onRequest: () => ({ dispose: () => undefined }),
             onNotification: () => ({ dispose: () => undefined }),
+            onNotificationReceived: () => ({ dispose: () => undefined }),
             dispose: async () => undefined,
         };
         const never = new Promise<Awaited<ReturnType<PluginProtocolClientHandle<'jsonRpc'>['wait']>>>(() => undefined);
@@ -918,6 +892,36 @@ describe('createCodexAppServerClient', () => {
         expect(notificationCalls).toEqual([{ suffix: 'two' }]);
         expect(registeredRequest).toBeNull();
         expect(registeredNotification).toBeNull();
+    });
+
+    it('forwards native receipt time independently of ordered notification processing', async () => {
+        const transport: {
+            receive?: Parameters<PluginJsonRpcClient['onNotification']>[0];
+            received?: Parameters<PluginJsonRpcClient['onNotificationReceived']>[0];
+        } = {};
+        const capture = createCapturingExec({
+            onNotification(handler) { transport.receive = handler; return { dispose() {} }; },
+            onNotificationReceived(handler) { transport.received = handler; return { dispose() { delete transport.received; } }; },
+        });
+        const client = await createCodexNativeAppServerClient({ exec: capture.exec, processEnv: {} });
+        const receipts: Array<{ method: string; receivedAtMs: number }> = [];
+        expect(transport.received).toBeUndefined();
+        const unsubscribe = client.onNativeEvent((method, _params, receivedAtMs) => receipts.push({ method, receivedAtMs }));
+        let release!: () => void;
+        client.registerNotificationHandler('item/completed', () => new Promise<void>(resolve => { release = resolve; }));
+        try {
+            if (!transport.receive) throw new Error('Missing ordered notification callback');
+            const processing = transport.receive({ method: 'item/completed' });
+            transport.received?.({ method: 'error', params: { threadId: 'native-thread' }, receivedAtMs: 1234 });
+            expect(receipts).toContainEqual({ method: 'error', receivedAtMs: 1234 });
+            release();
+            await processing;
+        } finally {
+            release?.();
+            unsubscribe();
+            expect(transport.received).toBeUndefined();
+            await client.dispose();
+        }
     });
 
     it('publishes all synchronous notification handlers before the following notification', async () => {

@@ -95,22 +95,32 @@ const clientState = vi.hoisted(() => {
   };
 });
 
-vi.mock('./client.js', () => ({
-  createCodexAppServerClient: vi.fn(async () => ({
+vi.mock('./client.js', async () => {
+  const { createCodexNativeEventFixture } = await import('./client.test-support.js');
+  return {
+  createCodexAppServerClient: vi.fn(async () => {
+    const nativeReceipts = createCodexNativeEventFixture();
+    return {
+    onNativeEvent: nativeReceipts.onNativeEvent,
     launchFeatures: {
       realtimeConversationAdvertised: false,
     },
     request: clientState.request,
     notify: clientState.notify,
     registerRequestHandler: clientState.registerRequestHandler,
-    registerNotificationHandler: clientState.registerNotificationHandler,
+    registerNotificationHandler(method: string, handler: (params: unknown) => void | Promise<void>) {
+      return clientState.registerNotificationHandler(method, (params) => {
+        nativeReceipts.publish(method, params);
+        return handler(params);
+      });
+    },
     onExit: clientState.onExit,
     dispose: vi.fn(async () => undefined),
-  })),
+  }; }),
   isCodexAppServerOversizedJsonFrameError: vi.fn(() => false),
   resolveCodexHome: (env: Readonly<Record<string, string | undefined>>) =>
     env.CODEX_HOME ?? '/home/test/.codex',
-}));
+}; });
 
 import { createCodexAppServerClient } from './client.js';
 import { createCodexNativeAppServerSessionRuntime } from './native.js';

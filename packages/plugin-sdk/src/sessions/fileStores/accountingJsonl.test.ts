@@ -23,7 +23,7 @@ async function setup() {
         systemTools: { resolve: unavailableService },
         run: unavailableService,
         spawn: unavailableService,
-        clients: { spawn: unavailableService },
+        clients: { spawn: unavailableService, connectJsonRpc: unavailableService },
       },
       ripgrep: { run: unavailableService },
     }, ...(cursor ? { cursor } : {}),

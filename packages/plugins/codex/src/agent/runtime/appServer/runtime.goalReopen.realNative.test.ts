@@ -8,7 +8,7 @@ import type { ExecService, PluginProcessHandle, PluginProcessResult } from '@hap
 import type { AgentSessionGoalControlContext, AgentSessionRuntimeContext, AgentSessionRuntimeEvent } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { createCodexAgentRuntime } from '../engine.js';
-import { connectCodexUnixWebSocketJsonRpc } from './client/unixWebSocket.js';
+import { connectManagedJsonRpcTestClient, createManagedJsonRpcTestClient } from '../../../../../../../apps/cli/src/testkit/process/managedJsonRpc';
 
 // These opt-in probes own every native process/Home and use a local model stub.
 // Only the SDK Exec/OS and host-publication boundaries are substituted.
@@ -79,14 +79,15 @@ describe.skipIf(!nativeBinary || process.platform === 'win32')('real native Code
       systemTools: { resolve: async () => ({ executable: { kind: 'systemTool', id: 'codex-cli' }, executablePath: nativeBinary }) },
       run: async (request: { args: readonly string[] }) => await launch(request.args).wait(),
       spawn: async (request: { args: readonly string[]; env: Record<string, string> }) => launch(request.args, request.env),
-      clients: { spawn: async (request: { maxFrameBytes: number; requestTimeoutMs: number }) => {
+      clients: { connectJsonRpc: (request: { endpoint: { socketPath: string }; maxFrameBytes?: number; requestTimeoutMs?: number }, options?: { signal?: AbortSignal }) => connectManagedJsonRpcTestClient({ cwd: root, socketPath: request.endpoint.socketPath, maxFrameBytes: request.maxFrameBytes, requestTimeoutMs: request.requestTimeoutMs, signal: options?.signal }), spawn: async (request: { maxFrameBytes: number; requestTimeoutMs: number }) => {
         // Use a separate, owned native process for each ordinary control client.
         // Unix IPC replaces stdio only at the OS boundary in this probe.
         const socketPath = join(root, `control-${++controlOccurrence}.sock`);
         const processHandle = launch(['app-server', '--listen', `unix://${socketPath}`,
           ...(disableControlGoals ? ['--disable', 'goals'] : [])]);
         await expect.poll(async () => await stat(socketPath).then(() => true, () => false)).toBe(true);
-        const connection = await connectCodexUnixWebSocketJsonRpc({ socketPath,
+        const connection = await createManagedJsonRpcTestClient({ cwd: root, command: nativeBinary!, environment: env,
+          args: ['app-server', 'proxy', '--sock', socketPath],
           maxFrameBytes: request.maxFrameBytes, requestTimeoutMs: request.requestTimeoutMs });
         return { client: connection.client, wait: () => connection.wait(),
           dispose: async () => { await connection.dispose(); await processHandle.dispose(); } };

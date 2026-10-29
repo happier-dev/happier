@@ -11,7 +11,8 @@ import { createCodexAppServerRuntime, startCodexAppServerRuntime, type CodexAppS
 import { openCodexNativeAppServerExecutionRunConversation, openCodexNativeAppServerSession } from './native.js';
 import type { CodexProviderBindingEngineConfigV1 } from '../../providerBinding/runtimeConfig.js';
 import { resolveCodexTerminalPermissionPolicy } from '../terminal/permissionPolicy.js';
-import { connectCodexUnixWebSocketJsonRpc } from './client/unixWebSocket.js';
+import { connectManagedJsonRpcTestClient, createManagedJsonRpcTestClient } from '../../../../../../../apps/cli/src/testkit/process/managedJsonRpc';
+import { CODEX_RAW_PROXY_FIXTURE_SCRIPT } from './client.test-support';
 
 // The network fixture models pinned Codex 0.159.2's empty paginated rollout:
 // name/set supplies metadata; a full read persists it; native resume then works.
@@ -240,8 +241,13 @@ export async function withCodexNativeAttachFixture(run: (fixture: {
     server.once('error', reject);
     server.listen(socketPath, resolve);
   });
-  // Only tool resolution crosses the Exec boundary; the real client uses Unix transport.
+  const connectClient = (request?: { maxFrameBytes?: number; requestTimeoutMs?: number }) => createManagedJsonRpcTestClient({
+    cwd: root, command: process.execPath, args: ['-e', CODEX_RAW_PROXY_FIXTURE_SCRIPT, socketPath],
+    maxFrameBytes: request?.maxFrameBytes, requestTimeoutMs: request?.requestTimeoutMs,
+  });
+  // Substitute the native executable with a byte relay; host framing and RPC remain real.
   const exec = {
+    clients: { spawn: connectClient, connectJsonRpc: (request: { endpoint: { socketPath: string }; maxFrameBytes?: number; requestTimeoutMs?: number }, options?: { signal?: AbortSignal }) => connectManagedJsonRpcTestClient({ cwd: root, socketPath: request.endpoint.socketPath, maxFrameBytes: request.maxFrameBytes, requestTimeoutMs: request.requestTimeoutMs, signal: options?.signal }) },
     systemTools: { resolve: async () => ({ executable: { kind: 'systemTool', id: 'codex-cli' }, executablePath: '/fixture/codex' }) },
     run: async () => ({ stdout: new TextEncoder().encode(JSON.stringify({ models: [{ slug: 'fixture-model', tool_mode: options.nativeToolMode === 'direct' ? undefined : 'code_mode_only' }, { slug: 'direct-model' }] })), stderr: new Uint8Array(), stdoutTruncated: false, stderrTruncated: false, termination: { requestedBy: { kind: 'none' }, observed: { kind: 'exit', exitCode: 0 } } }),
   } as unknown as ExecService;
@@ -275,12 +281,10 @@ export async function withCodexNativeAttachFixture(run: (fixture: {
   const nativeExec = {
     ...exec,
     // Substitute the process boundary with the same real JSON-RPC socket transport.
-    clients: { spawn: async (request: { maxFrameBytes: number; requestTimeoutMs: number;
+    clients: { ...exec.clients, spawn: async (request: { maxFrameBytes: number; requestTimeoutMs: number;
       launch: { args?: readonly string[]; env?: Readonly<Record<string, string>> } }) => {
       options.observer?.recordLaunch({ argv: request.launch.args ?? [], env: request.launch.env });
-      return await connectCodexUnixWebSocketJsonRpc({
-        socketPath, maxFrameBytes: request.maxFrameBytes, requestTimeoutMs: request.requestTimeoutMs,
-      });
+      return await connectClient(request);
     } },
     run: async (request: { args: readonly string[] }) => ({
       stdout: new TextEncoder().encode(request.args.includes('--version') ? 'codex-cli 0.159.2' : request.args.includes('models') ? JSON.stringify({ models: [{ slug: 'fixture-model', tool_mode: options.nativeToolMode === 'direct' ? undefined : 'code_mode_only' }, { slug: 'direct-model' }] }) : ''),

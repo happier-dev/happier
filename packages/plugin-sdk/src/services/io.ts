@@ -147,6 +147,9 @@ export interface PluginProcessHandle extends Disposable {
 export interface PluginJsonRpcClient extends Disposable {
     request(method: string, params?: JsonValue, options?: { signal?: AbortSignal; timeoutMs?: number | null }): Promise<JsonValue>;
     notify(method: string, params?: JsonValue): Promise<void>;
+    /** Observes a parsed native notification synchronously before ordered callback dispatch.
+     * Observation only: callbacks must not transform the frame or perform asynchronous work. */
+    onNotificationReceived(listener: (message: Readonly<{ method: string; params?: JsonValue; receivedAtMs: number }>) => void): Disposable;
     onNotification(listener: (message: { method: string; params?: JsonValue }) => void | Promise<void>): Disposable;
     onRequest(method: string, listener: (request: { id: string | number; method: string; params?: JsonValue }) => JsonValue | Promise<JsonValue>): Disposable;
 }
@@ -213,6 +216,19 @@ export interface PluginProtocolClientHandle<K extends PluginProtocolClientKind =
     wait(): Promise<PluginProcessResult>;
     dispose(): Promise<void>;
 }
+/** A connection to an already-owned native Unix endpoint; it never starts its server. */
+export type PluginJsonRpcConnectionSpec = Readonly<{
+    endpoint: Readonly<{ kind: 'unixWebSocket'; socketPath: string }>;
+    maxFrameBytes?: number;
+    requestTimeoutMs?: number;
+    cancellationMethod?: string;
+}>;
+export interface PluginJsonRpcConnection extends Disposable {
+    readonly client: PluginJsonRpcClient;
+    readonly closed: Promise<void>;
+    dispose(): Promise<void>;
+}
 export interface ProtocolClientsService {
+    connectJsonRpc(spec: PluginJsonRpcConnectionSpec, options?: { signal?: AbortSignal }): Promise<PluginJsonRpcConnection>;
     spawn<K extends PluginProtocolClientKind>(spec: PluginProtocolClientSpecByKind<K>, options?: { signal?: AbortSignal; nativeLaunch?: AgentNativeLaunchQualifier }): Promise<PluginProtocolClientHandle<K>>;
 }

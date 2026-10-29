@@ -348,7 +348,10 @@ describe('createClaudeNativeRuntime', () => {
         stdout: new TextEncoder().encode('--effort <level>'), stderr: new Uint8Array(), stdoutTruncated: false, stderrTruncated: false,
       }),
       spawn: async () => { throw new Error('This preparation case must not spawn a native process'); },
-      clients: { spawn: async () => { throw new Error('This preparation case must not submit an SDK query'); } },
+      clients: {
+        spawn: async () => { throw new Error('This preparation case must not submit an SDK query'); },
+        connectJsonRpc: async () => { throw new Error('This preparation case must not open a protocol connection'); },
+      },
       agentCli: { checkReadiness: async () => { throw new Error('Unexpected CLI readiness query'); } },
     } satisfies ExecService;
     // Reuse the canonical plugin host-port fixtures; no internal Claude opener,

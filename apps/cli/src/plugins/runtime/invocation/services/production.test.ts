@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { chmod, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createServer } from 'node:http';
+import { WebSocketServer } from 'ws';
 import { safeBashSingleQuote } from '@happier-dev/cli-common/ssh';
 
 import type {
@@ -163,6 +165,52 @@ async function unavailableTestWebSocket(): Promise<never> {
 }
 
 describe('production invocation service owners', () => {
+    it.skipIf(process.platform === 'win32')('vends a real JSON-RPC connection through invocation services with currentness and unavailable failures', async () => {
+        const root = await mkdtemp('/tmp/invocation-rpc-');
+        const socketPath = join(root, 'native.sock');
+        const server = createServer();
+        const peers = new WebSocketServer({ server, perMessageDeflate: false });
+        peers.on('connection', socket => socket.on('message', payload => {
+            const request = JSON.parse(String(payload)) as { id?: number; params?: unknown };
+            if (request.id !== undefined) socket.send(JSON.stringify({ id: request.id, result: request.params ?? null }));
+        }));
+        await new Promise<void>(resolve => server.listen(socketPath, resolve));
+        let current = true;
+        const controller = new AbortController();
+        const seed = { plugin: { id: 'acme.alpha', version: '1' }, contribution: { id: 'run', qualifiedId: action.qualifiedId },
+            occurrenceId: '7', correlationId: 'endpoint-connection', surface: 'cli' as const,
+            signal: controller.signal, isOccurrenceCurrent: () => current };
+        const owners = createProductionPluginInvocationServiceOwners({ loggerSink: { write() {} }, exec: {
+            resolveExecutable: async () => { throw new Error('An endpoint connection must not resolve an executable'); },
+            resolvePath: async () => root,
+        } });
+        const unavailableOwners = createProductionPluginInvocationServiceOwners({ loggerSink: { write() {} } });
+        const hostBinding = await owners.resolveHostBinding(action, { hostAccessRequests: [], surface: 'cli' });
+        if (!hostBinding) throw new Error('Expected invocation host binding');
+        const services = owners.createServices(seed, hostBinding.serviceBinding);
+        const unavailable = unavailableOwners.createServices(seed, unavailableOwners.createOrdinaryServiceBinding('7', 'endpoint-unavailable'));
+        const spec = { endpoint: { kind: 'unixWebSocket' as const, socketPath }, maxFrameBytes: 4096 };
+        let connection: Awaited<ReturnType<typeof services.exec.clients.connectJsonRpc>> | undefined;
+        try {
+            await expect(Promise.resolve().then(() => unavailable.exec.clients.connectJsonRpc(spec)))
+                .rejects.toMatchObject({ code: 'plugin_service_unavailable' });
+            connection = await services.exec.clients.connectJsonRpc(spec);
+            await expect(connection.client.request('echo', { selected: true })).resolves.toEqual({ selected: true });
+            current = false;
+            await expect(services.exec.clients.connectJsonRpc(spec)).rejects.toMatchObject({ code: 'plugin_generation_stale' });
+            await expect(connection.client.request('echo', null)).rejects.toMatchObject({ code: 'plugin_generation_stale' });
+        } finally {
+            await connection?.dispose();
+            controller.abort();
+            await owners.dispose();
+            await unavailableOwners.dispose();
+            for (const peer of peers.clients) peer.terminate();
+            await new Promise<void>(resolve => peers.close(() => resolve()));
+            await new Promise<void>(resolve => server.close(() => resolve()));
+            await rm(root, { recursive: true, force: true });
+        }
+    });
+
     it('shares ephemeral storage only within one plugin occurrenceId and clears it on retirement', async () => {
         const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-production-ephemeral-storage-'));
         const owners = createProductionPluginInvocationServiceOwners({

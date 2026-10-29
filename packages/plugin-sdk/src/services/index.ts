@@ -192,6 +192,8 @@ export type {
     FileSystemService,
     PluginFramedBytesClient,
     PluginJsonRpcClient,
+    PluginJsonRpcConnection,
+    PluginJsonRpcConnectionSpec,
     PluginJsonStreamClient,
     PluginLoopbackWebSocketClientSpec,
     PluginLoopbackWebSocketEndpoint,

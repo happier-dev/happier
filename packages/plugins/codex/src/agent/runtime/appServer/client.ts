@@ -6,6 +6,7 @@ import type {
     PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
 import type {
     PluginProtocolClientHandle,
+    PluginJsonRpcConnection,
 } from '@happier-dev/plugin-sdk/exec/protocol-clients';
 import {
     expandHomePath,
@@ -18,7 +19,6 @@ import {
     CODEX_REALTIME_CONVERSATION_FEATURE,
     initializeCodexAppServerClient,
 } from './connection.js';
-import { connectCodexUnixWebSocketJsonRpc } from './client/unixWebSocket.js';
 import { withCodexNativeStartupLock } from './nativeStartupLock.js';
 import { readCodexMcpServerKeysFromConfigToml } from '../../mcp/configServers.js';
 import {
@@ -39,6 +39,10 @@ export type CodexAppServerTransport =
         realtimeConversationAdvertised: boolean;
     }>;
 
+function isCodexProxyTransport(transport: CodexAppServerTransport | undefined): transport is Exclude<CodexAppServerTransport, { kind: 'stdio' }> {
+    return transport !== undefined && transport.kind !== 'stdio';
+}
+
 type JsonRpcRequestHandler = (params: unknown, message: Readonly<{ id?: unknown }>) => Promise<unknown> | unknown;
 type JsonRpcNotificationHandler = (params: unknown) => Promise<void> | void;
 
@@ -55,6 +59,7 @@ export type CodexAppServerClient = Readonly<{
 }>;
 
 export type DisposableCodexAppServerClient = CodexAppServerClient & Readonly<{
+    onNativeEvent: (observer: (method: string, params: unknown, receivedAtMs: number) => void) => () => void;
     launchFeatures: Readonly<{
         realtimeConversationAdvertised: boolean;
         toolRestrictionSupportedModelIds?: readonly string[];
@@ -268,12 +273,13 @@ function toNativeExit(result: PluginProcessResult): Readonly<{
 }
 
 function wrapNativeCodexAppServerClient(
-    handle: Pick<PluginProtocolClientHandle<'jsonRpc'>, 'client' | 'wait' | 'dispose'>,
+    handle: Pick<PluginProtocolClientHandle<'jsonRpc'>, 'client' | 'wait' | 'dispose'> | PluginJsonRpcConnection,
     env: CodexAppServerEnv,
     launchFeatures: DisposableCodexAppServerClient['launchFeatures'],
 ): DisposableCodexAppServerClient {
     const requestHandlerDisposables = new Map<string, { dispose(): void }>();
     const notificationHandlers = new Map<string, Set<JsonRpcNotificationHandler>>();
+    const nativeEventObservers = new Map<(method: string, params: unknown, receivedAtMs: number) => void, () => void>();
     const exitListeners = new Set<(result: Readonly<{ exitCode: number | null; signal: string | null }>) => void>();
     let settledExit: Readonly<{ exitCode: number | null; signal: string | null }> | null = null;
 
@@ -286,8 +292,11 @@ function wrapNativeCodexAppServerClient(
             if (completion !== undefined) await completion;
         }
     });
-    void handle.wait().then((result) => {
-        settledExit = toNativeExit(result);
+    const closed = 'closed' in handle
+        ? handle.closed.then(() => ({ exitCode: null, signal: null }))
+        : handle.wait().then(toNativeExit);
+    void closed.then((result) => {
+        settledExit = result;
         for (const listener of [...exitListeners]) listener(settledExit);
     }).catch(() => {
         settledExit = { exitCode: null, signal: null };
@@ -296,6 +305,19 @@ function wrapNativeCodexAppServerClient(
 
     return {
         launchFeatures,
+        onNativeEvent(observer) {
+            nativeEventObservers.get(observer)?.();
+            const subscription = handle.client.onNotificationReceived(message => {
+                observer(message.method, message.params, message.receivedAtMs);
+            });
+            const unsubscribe = () => subscription.dispose();
+            nativeEventObservers.set(observer, unsubscribe);
+            return () => {
+                if (nativeEventObservers.get(observer) !== unsubscribe) return;
+                nativeEventObservers.delete(observer);
+                unsubscribe();
+            };
+        },
         async request(method, requestParams, options) {
             const timeoutMs = options?.timeoutMs === null
                 ? null
@@ -352,6 +374,8 @@ function wrapNativeCodexAppServerClient(
             requestHandlerDisposables.clear();
             notificationHandlers.clear();
             notificationSubscription.dispose();
+            for (const unsubscribe of nativeEventObservers.values()) unsubscribe();
+            nativeEventObservers.clear();
             exitListeners.clear();
             await handle.dispose();
         },
@@ -374,7 +398,7 @@ function buildNativeCodexAppServerClientSpec(params: Readonly<{
             cwd: { root: 'workspace' as const, relativePath: '' },
             env: buildCodexAppServerEnv(params.env),
         },
-        framing: params.transport?.kind === 'daemonProxy' ? 'webSocket' as const : 'jsonLines' as const,
+        framing: isCodexProxyTransport(params.transport) ? 'webSocket' as const : 'jsonLines' as const,
         maxFrameBytes: readJsonLineMaxChars(params.env),
         requestTimeoutMs: readCodexAppServerRpcTimeoutMs(params.env),
     };
@@ -422,6 +446,14 @@ export async function createCodexNativeAppServerClient(params: CodexNativeAppSer
     );
 }
 
+function annotateUnixSocketStartupFailure(error: unknown, transport: CodexNativeAppServerClientParams['transport']): void {
+    if (transport?.kind !== 'unixWebSocket' || !(error instanceof Error)) return;
+    const maximumPathBytes = process.platform === 'darwin' ? 103 : process.platform === 'linux' ? 107 : undefined;
+    Object.assign(error, { transport: 'unixWebSocket', ...(maximumPathBytes === undefined ? {} : {
+        socketPathLengthClass: Buffer.byteLength(transport.socketPath) <= maximumPathBytes ? 'within_limit' : 'exceeds_limit',
+    }) });
+}
+
 async function createUnlockedCodexNativeAppServerClient(params: CodexNativeAppServerClientParams, executable?: ManagedExecutableRef): Promise<DisposableCodexAppServerClient> {
     const env = params.processEnv ?? process.env;
     const resolvedExecutable = executable ?? (await params.exec.systemTools.resolve({
@@ -438,18 +470,15 @@ async function createUnlockedCodexNativeAppServerClient(params: CodexNativeAppSe
             env,
             ...(params.signal ? { signal: params.signal } : {}),
         });
-    const enableRealtimeConversation = params.transport?.kind !== 'unixWebSocket'
-        && params.transport?.kind !== 'daemonProxy'
-        && realtimeConversationAdvertised;
-    let handle: Pick<PluginProtocolClientHandle<'jsonRpc'>, 'client' | 'wait' | 'dispose'>;
+    const proxyTransport = isCodexProxyTransport(params.transport);
+    const enableRealtimeConversation = !proxyTransport && realtimeConversationAdvertised;
+    let handle: Pick<PluginProtocolClientHandle<'jsonRpc'>, 'client' | 'wait' | 'dispose'> | PluginJsonRpcConnection;
     try {
         handle = params.transport?.kind === 'unixWebSocket'
-            ? await connectCodexUnixWebSocketJsonRpc({
-                socketPath: params.transport.socketPath,
-                maxFrameBytes: readJsonLineMaxChars(env),
-                requestTimeoutMs: readCodexAppServerRpcTimeoutMs(env),
-                ...(params.signal ? { signal: params.signal } : {}),
-            })
+            ? await params.exec.clients.connectJsonRpc({
+                endpoint: { kind: 'unixWebSocket', socketPath: params.transport.socketPath },
+                maxFrameBytes: readJsonLineMaxChars(env), requestTimeoutMs: readCodexAppServerRpcTimeoutMs(env),
+            }, params.signal ? { signal: params.signal } : undefined)
             : await params.exec.clients.spawn(buildNativeCodexAppServerClientSpec({
                 executable: resolvedExecutable,
                 env,
@@ -457,12 +486,12 @@ async function createUnlockedCodexNativeAppServerClient(params: CodexNativeAppSe
                 disableUserMcpServers: params.disableUserMcpServers,
                 enableRealtimeConversation,
                 transport: params.transport,
-            }), params.signal || (params.nativeLaunch && params.transport?.kind !== 'daemonProxy') ? {
+            }), params.signal || (params.nativeLaunch && !proxyTransport) ? {
                 ...(params.signal ? { signal: params.signal } : {}),
-                ...(params.nativeLaunch && params.transport?.kind !== 'daemonProxy'
-                    ? { nativeLaunch: params.nativeLaunch } : {}),
+                ...(params.nativeLaunch && !proxyTransport ? { nativeLaunch: params.nativeLaunch } : {}),
             } : undefined) as PluginProtocolClientHandle<'jsonRpc'>;
     } catch (error) {
+        annotateUnixSocketStartupFailure(error, params.transport);
         if (error instanceof PluginError) throw error;
         if (params.signal?.aborted || !enableRealtimeConversation) throw error;
         throw createCodexRealtimeEnabledAppServerLaunchUnavailableError();
@@ -531,6 +560,7 @@ async function createUnlockedCodexNativeAppServerClient(params: CodexNativeAppSe
         }
         return client;
     } catch (error) {
+        annotateUnixSocketStartupFailure(error, params.transport);
         await client.dispose().catch(() => undefined);
         if (error instanceof PluginError) throw error;
         if (params.signal?.aborted || !enableRealtimeConversation) throw error;

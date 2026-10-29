@@ -44,7 +44,10 @@ function createExecRunFixture(params: Readonly<{
         spawn: async () => {
             throw new Error('spawn should not be used for Claude model preflight');
         },
-        clients: { spawn: async () => { throw new Error('protocol clients should not be used'); } },
+        clients: {
+            spawn: async () => { throw new Error('protocol clients should not be used'); },
+            connectJsonRpc: async () => { throw new Error('protocol connections should not be used'); },
+        },
         agentCli: { checkReadiness: async () => { throw new Error('agent CLI readiness should not be used'); } },
     } satisfies ExecService;
     return { exec, runs };

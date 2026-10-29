@@ -1,9 +1,10 @@
 import { resolve } from 'node:path';
 import { configDefaults, defineConfig } from 'vitest/config';
 import { resolveVitestWorkers } from '../../../scripts/testing/vitestWorkers';
-import { createWorkspacePackageSourcesPlugin } from '../../../scripts/testing/vitestWorkspacePackageResolution';
+import { createWorkspaceHostSourceAlias, createWorkspacePackageSourcesPlugin } from '../../../scripts/testing/vitestWorkspacePackageResolution';
 
 export default defineConfig({
+  resolve: { alias: [createWorkspaceHostSourceAlias(resolve(__dirname, '../../..'), resolve(__dirname, '../../../apps/cli/src'))] },
   server: { fs: { allow: [resolve(__dirname, '../../..')] } },
   plugins: [createWorkspacePackageSourcesPlugin([
     { packageName: '@happier-dev/plugin-sdk', packageSourceRoot: resolve(__dirname, '../../plugin-sdk/src') },

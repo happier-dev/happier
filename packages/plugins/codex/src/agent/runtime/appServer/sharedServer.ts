@@ -73,8 +73,11 @@ function readUnixSocketStartupContext(
 
 /** Extracts only closed Node system-error identity; paths, addresses and prose never cross the boundary. */
 export function readCodexNativeTransportStartupFailure(error: unknown): CodexSharedAppServerTransportStartupFailure | null {
-  const cause = error instanceof AggregateError ? error.errors[0] : error;
-  if (!(cause instanceof Error)) return null;
+  const outer = error instanceof AggregateError ? error.errors[0] : error;
+  if (!(outer instanceof Error)) return null;
+  const protocolCause = readOwnValue(outer, 'cause');
+  const cause = readOwnValue(outer, 'code') === 'PLUGIN_EXEC_CLIENT_PROTOCOL_ERROR' && protocolCause instanceof Error
+    ? protocolCause : outer;
   const code = readOwnValue(cause, 'code');
   if (typeof code !== 'string' || !NATIVE_TRANSPORT_ERROR_CODES.includes(code as NativeTransportErrorCode)) return null;
   const errnoCode = code as NativeTransportErrorCode;
@@ -89,7 +92,7 @@ export function readCodexNativeTransportStartupFailure(error: unknown): CodexSha
   return Object.freeze({
     phase: 'native_system_error', reason: 'system_error', errnoCode,
     ...(syscall ? { syscall } : {}),
-    ...readUnixSocketStartupContext(cause),
+    ...readUnixSocketStartupContext(outer),
   });
 }
 

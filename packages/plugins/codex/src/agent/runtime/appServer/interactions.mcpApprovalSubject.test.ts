@@ -24,6 +24,7 @@ import { prepareActiveMcpServerCatalog, refreshActiveMcpServerCatalog,
 import { createDeferred } from '@/testkit/async/deferred';
 
 import type { DisposableCodexAppServerClient } from './client.js';
+import { createCodexNativeEventFixture } from './client.test-support.js';
 import { registerCodexAppServerInteractionHandlers } from './interactions.js';
 import { assignInjectedServerKeys } from './config/overrides.js';
 import { withCodexNativeAttachFixture } from './runtime.nativeAttach.test-support.js';
@@ -87,7 +88,9 @@ function createFixture(options: Readonly<{
   });
   const requests = new Map<string, Parameters<DisposableCodexAppServerClient['registerRequestHandler']>[1]>();
   const notifications = new Map<string, Set<(params: unknown) => void>>();
+  const nativeReceipts = createCodexNativeEventFixture();
   const client: DisposableCodexAppServerClient = {
+    onNativeEvent: nativeReceipts.onNativeEvent,
     request: vi.fn(async () => ({})),
     notify: vi.fn(async () => {}),
     registerRequestHandler(method, handler) {
@@ -106,6 +109,7 @@ function createFixture(options: Readonly<{
   registerCodexAppServerInteractionHandlers({ client, ui: services.interactions, getThreadId: () => 'thread-1',
     mcpServerKeys: options.mcpServerKeys });
   const publish = (method: string, raw: unknown) => {
+    nativeReceipts.publish(method, raw);
     for (const handler of notifications.get(method) ?? []) handler(raw);
   };
   return {

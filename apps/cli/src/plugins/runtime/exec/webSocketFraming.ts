@@ -6,7 +6,6 @@ import WebSocket from 'ws';
 export function attachWebSocketFrameReader(params: Readonly<{
     stdout: NodeJS.ReadableStream;
     write: (input: Uint8Array) => Promise<void>;
-    maxFrameBytes?: number;
     onFrame: (frame: string) => void;
     onError: (error: Error) => void;
 }>) {
@@ -26,7 +25,8 @@ export function attachWebSocketFrameReader(params: Readonly<{
         // ws and Node's HTTP agent accept a Duplex; @types/ws narrows this external boundary to Socket.
         createConnection: () => stream as Socket,
         perMessageDeflate: false,
-        maxPayload: params.maxFrameBytes ?? 0,
+        // Keep ws's existing transport allocation ceiling. Below that boundary,
+        // the JSON-RPC owner rejects oversized responses by correlation.
     });
     let disposed = false;
     let rejectReady!: (error: Error) => void;

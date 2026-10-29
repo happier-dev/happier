@@ -46,12 +46,17 @@ describe('Codex session-private skill delivery', () => {
       const session = createCodexNativeAppServerSessionRuntime(runtime, 'session-1');
       const abort = new AbortController();
       const cancelled = new Error('cancel reload');
-      const refresh = session.refreshSkills!({ skills }, { signal: abort.signal });
+      const cancelledSkills = { ...skills, skillsRoot: `${skills.skillsRoot}/cancelled` };
+      const refresh = session.refreshSkills!({ skills: cancelledSkills }, { signal: abort.signal });
       const outcome = refresh.then(value => ({ kind: 'resolved', value }), error => ({ kind: 'rejected', error }));
       try {
         await vi.waitFor(() => expect(requests.filter(({ method }) => method === 'skills/extraRoots/set')).toHaveLength(2));
         abort.abort(cancelled);
-        expect(await outcome).toMatchObject({ kind: 'rejected', error: { name: 'AbortError' } });
+        expect(await outcome).toMatchObject({ kind: 'rejected', error: { code: 'PLUGIN_EXEC_CLIENT_ABORTED' } });
+        acknowledge();
+        await expect(session.refreshSkills!({ skills })).resolves.toEqual({ kind: 'applied' });
+        expect(requests.filter(({ method }) => method === 'skills/extraRoots/set').at(-1)?.params)
+          .toEqual({ extraRoots: [skills.skillsRoot] });
       } finally { acknowledge(); await session.dispose(); }
     }, { skills, beforeExtraRootsSetResponse: async ({ occurrence }) => {
       if (occurrence > 1) await acknowledgement;

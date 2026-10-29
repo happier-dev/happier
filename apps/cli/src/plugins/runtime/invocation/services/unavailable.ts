@@ -526,7 +526,7 @@ export const PLUGIN_SERVICE_DESCRIPTORS = Object.freeze({
                 systemTools: Object.freeze({ resolve: fail }),
                 run: fail,
                 spawn: fail,
-                clients: Object.freeze({ spawn: fail }),
+                clients: Object.freeze({ spawn: fail, connectJsonRpc: fail }),
             });
         },
         createAvailable({ binding, exec, execAvailable }): ExecService | null {

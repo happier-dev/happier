@@ -134,6 +134,7 @@ function createThreadListingExec(
     },
     async notify() {},
     onNotification: () => ({ dispose: () => undefined }),
+    onNotificationReceived: () => ({ dispose: () => undefined }),
     onRequest: () => ({ dispose: () => undefined }),
     dispose: async () => undefined,
   };

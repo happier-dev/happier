@@ -7,6 +7,7 @@ import { AgentSessionRealtimeStartRequestV1Schema } from '@happier-dev/protocol'
 import { describe, expect, it, vi } from 'vitest';
 
 import type { DisposableCodexAppServerClient } from './client.js';
+import { createCodexNativeEventFixture } from './client.test-support.js';
 import { createCodexAppServerRealtimeConversation } from './realtime.js';
 
 type RequestImplementation = (
@@ -96,7 +97,9 @@ function createClientFixture(options?: Readonly<{
     }
     return {};
   }));
+  const nativeReceipts = createCodexNativeEventFixture();
   const client: DisposableCodexAppServerClient = {
+    onNativeEvent: nativeReceipts.onNativeEvent,
     launchFeatures: {
       realtimeConversationAdvertised: options?.advertised ?? true,
     },
@@ -127,6 +130,7 @@ function createClientFixture(options?: Readonly<{
     client,
     request,
     publish(method: string, params: unknown) {
+      nativeReceipts.publish(method, params);
       for (const handler of [...(handlers.get(method) ?? [])]) handler(params);
     },
     exit(result = { exitCode: 17, signal: null }) {

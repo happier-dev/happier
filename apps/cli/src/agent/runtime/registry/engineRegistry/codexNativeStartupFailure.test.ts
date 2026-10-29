@@ -2,7 +2,9 @@ import { describe, expect, it, vi } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { withCodexNativeAttachFixture } from '../../../../../../../packages/plugins/codex/src/agent/runtime/appServer/runtime.nativeAttach.test-support';
-import { connectCodexUnixWebSocketJsonRpc } from '../../../../../../../packages/plugins/codex/src/agent/runtime/appServer/client/unixWebSocket';
+import { createCodexNativeAppServerClient } from '../../../../../../../packages/plugins/codex/src/agent/runtime/appServer/client';
+import { connectManagedJsonRpcTestClient } from '@/testkit/process/managedJsonRpc';
+import type { ExecService } from '@happier-dev/plugin-sdk/exec';
 
 // Isolate the native OS-user startup lock while retaining its real file-lock behavior.
 vi.mock('node:os', async importOriginal => {
@@ -14,9 +16,12 @@ describe('Codex native startup failure publication', () => {
     it.skipIf(process.platform !== 'linux')('publishes the real Linux overlong Unix path refusal through native startup', async () => {
         const directory = await mkdtemp('/tmp/codex-path-refusal-');
         try {
-            const osError = await connectCodexUnixWebSocketJsonRpc({
-                socketPath: join(directory, `${'é'.repeat(80)}.sock`), maxFrameBytes: 4096, requestTimeoutMs: 2000,
-            }).then(() => { throw new Error('Expected an OS path refusal'); }, (error: unknown) => {
+            const exec = { systemTools: { resolve: async () => ({ executable: { kind: 'systemTool', id: 'codex-cli' } }) },
+                clients: { connectJsonRpc: (request: { endpoint: { socketPath: string } }) => connectManagedJsonRpcTestClient({ cwd: directory, socketPath: request.endpoint.socketPath }) },
+            } as unknown as ExecService;
+            const osError = await createCodexNativeAppServerClient({ exec, processEnv: {},
+                transport: { kind: 'unixWebSocket', socketPath: join(directory, `${'é'.repeat(80)}.sock`), realtimeConversationAdvertised: false },
+            }).then(() => { throw new Error('Expected native endpoint refusal'); }, (error: unknown) => {
                 if (!(error instanceof Error)) throw error;
                 return error;
             });

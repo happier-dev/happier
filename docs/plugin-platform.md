@@ -6440,7 +6440,24 @@ guarantee. In 0.3 development source, managed JSON-RPC process clients accept
 `jsonLines`, `contentLength` or `webSocket` framing. WebSocket framing negotiates
 over the launched process's private byte streams before public process-output
 redaction; the native Codex raw proxy uses this path without a second transport
-owner. Shared JSON-RPC process clients also have no default payload-size
+owner. `exec.clients.connectJsonRpc` uses that same engine for an existing Unix
+WebSocket endpoint and returns `client`, `closed` and `dispose`, without a child
+process or server-start authority. It preserves trusted native code's existing
+local socket access and OS permissions, with invocation cancellation and
+occurrence guards. It does not add TCP endpoint access.
+The public client's `onNotificationReceived` subscription admits synchronous
+native notification facts before ordered notification callbacks. Request
+responders and response correlation keep their independent dispatch; a blocked
+domain notification handler does not block an approval response. Codex uses
+this receipt to populate its existing item-identity approval subject projection
+before an immediately following MCP approval request. Occurrence retirement
+prevents further callback effects and response publication from either managed
+connection form.
+Below the WebSocket driver's existing transport allocation ceiling, the JSON-RPC
+byte budget rejects only a correlated oversized response so a caller can recover
+with a lean request. Exceeding the driver ceiling instead fails the connection
+from the frame header without waiting for its body. Application byte checks run
+on completed messages. Shared JSON-RPC process clients also have no default payload-size
 cap; a caller can supply an explicit `maxFrameBytes` budget. Content-Length
 framing still requires exactly one valid non-negative safe-integer length and
 fails malformed or truncated frames closed. Local LSP uses this same uncapped

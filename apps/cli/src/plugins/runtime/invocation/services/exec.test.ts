@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { mkdir, readFile, realpath, symlink, writeFile } from 'node:fs/promises';
 import { delimiter, dirname, join } from 'node:path';
 import { WebSocketServer } from 'ws';
+import { CODEX_RAW_PROXY_FIXTURE_SCRIPT, createCodexControlSocketFixture } from '../../../../../../../packages/plugins/codex/src/agent/runtime/appServer/client.test-support';
 
 import { PluginError } from '@happier-dev/plugin-sdk';
 import { sealSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
@@ -13,6 +14,7 @@ import {
     authorizeResolvedProjectExecLaunchForHost,
     createStableRunnerPluginExecService,
     createStablePluginExecService,
+    readPluginExecProcessCustodyForHost,
     disposePluginProtocolClientGracefullyForHost,
     bindPluginExecProcessOwnerForHost,
     installManagedProcessCustodyForHost,
@@ -62,7 +64,47 @@ function createService(options?: Readonly<{ current?: () => boolean; controller?
 }
 
 describe('createStablePluginExecService', () => {
+    it('observes native notification receipts through the public client while ordered dispatch is blocked', async () => {
+        const handle = await createService().clients.spawn({
+            kind: 'jsonRpc', framing: 'jsonLines', maxFrameBytes: 1024 * 1024,
+            launch: { executable, args: ['-e', `
+                const send = value => process.stdout.write(JSON.stringify(value) + '\\n');
+                require('node:readline').createInterface({input:process.stdin}).on('line',line=>{
+                    const request=JSON.parse(line);
+                    if(request.method==='emit') {
+                        send({jsonrpc:'2.0',method:'native/event',params:{sequence:1}});
+                        send({jsonrpc:'2.0',method:'native/event',params:{sequence:2}});
+                        send({jsonrpc:'2.0',id:request.id,result:null});
+                    }
+                });
+            `] },
+        });
+        let release!: () => void;
+        const blocked = new Promise<void>(resolve => { release = resolve; });
+        const ordered: unknown[] = [];
+        const receipts: unknown[] = [];
+        const subscription = handle.client.onNotificationReceived?.(message => { receipts.push(message); });
+        handle.client.onNotification(async message => {
+            await blocked;
+            ordered.push(message);
+        });
+        try {
+            await handle.client.request('emit');
+            expect(ordered).toEqual([]);
+            expect(receipts).toEqual([
+                { method: 'native/event', params: { sequence: 1 }, receivedAtMs: expect.any(Number) },
+                { method: 'native/event', params: { sequence: 2 }, receivedAtMs: expect.any(Number) },
+            ]);
+            subscription?.dispose();
+            await handle.client.request('emit');
+            expect(receipts).toHaveLength(2);
+            release();
+            await expect.poll(() => ordered.length).toBe(4);
+        } finally { release(); subscription?.dispose(); await handle.dispose(); }
+    });
+
     it('round-trips WebSocket JSON-RPC through private process bytes while a secret redaction lease is active', async () => {
+        const maxFrameBytes = 128 * 1024;
         const server = new WebSocketServer({ host: '127.0.0.1', port: 0, perMessageDeflate: false });
         await new Promise<void>(resolve => server.once('listening', resolve));
         const address = server.address();
@@ -71,7 +113,8 @@ describe('createStablePluginExecService', () => {
         server.on('connection', socket => socket.on('message', payload => {
             const request = JSON.parse(payload.toString()) as { id?: number; method: string; params?: unknown };
             requests.push(request);
-            if (request.id !== undefined && request.method !== 'never') socket.send(JSON.stringify({ id: request.id, result: request.params ?? null }));
+            if (request.id !== undefined && request.method !== 'never') socket.send(JSON.stringify({ id: request.id,
+                result: request.method === 'thread/resume' ? { oversized: 'x'.repeat(maxFrameBytes * 4) } : request.params ?? null }));
         }));
         const service = createService();
         const source = { environmentId: 'ws-env', environmentInstanceId: 'ws-instance', deploymentId: 'ws-deploy',
@@ -81,7 +124,7 @@ describe('createStablePluginExecService', () => {
             signal: new AbortController().signal, isCurrent: () => true,
             async prepare() { return { env: { SECRET: 'private-ws-sentinel' }, secretValues: ['private-ws-sentinel'], refs: [],
                 async recheck() {}, dispose() {} }; } });
-        const handle = await service.clients.spawn({ kind: 'jsonRpc', framing: 'webSocket',
+        const handle = await service.clients.spawn({ kind: 'jsonRpc', framing: 'webSocket', maxFrameBytes,
             cancellationMethod: '$/cancelRequest', launch: { executable,
                 deploymentEnv: await port.prepare({ source, phase: 'runtime' }),
                 args: ['-e', `const s=require('node:net').connect(${address.port},'127.0.0.1');process.stdin.pipe(s);s.pipe(process.stdout);s.on('end',()=>process.exit(0));`] } });
@@ -96,6 +139,10 @@ describe('createStablePluginExecService', () => {
             controller.abort();
             await rejected;
             await expect(handle.client.request('never', null, { timeoutMs: 10 })).rejects.toMatchObject({ code: 'PLUGIN_EXEC_CLIENT_REQUEST_TIMEOUT' });
+            await expect(handle.client.request('thread/resume', { threadId: 'thread-1' })).rejects.toMatchObject({
+                code: 'PLUGIN_EXEC_CLIENT_PROTOCOL_ERROR',
+                message: expect.stringContaining('JSON-RPC frame exceeded the configured size limit'),
+            });
             await expect(handle.client.request('thread/read', { threadId: 'thread-1', includeTurns: false })).resolves.toEqual({ threadId: 'thread-1', includeTurns: false });
             await vi.waitFor(() => expect(requests.some(request => request.method === '$/cancelRequest')).toBe(true));
         } finally {
@@ -107,6 +154,120 @@ describe('createStablePluginExecService', () => {
         expect(server.clients.size).toBe(0);
     });
 
+    it.skipIf(process.platform === 'win32')('connects native Unix JSON-RPC with real startup errors and correlated oversized-response recovery', async () => {
+        await withTempDir('hcu-', async directory => {
+            const socketPath = join(directory, 'native.sock');
+            let current = true;
+            const service = createService({ current: () => current });
+            const spec = { endpoint: { kind: 'unixWebSocket' as const, socketPath }, maxFrameBytes: 1024 };
+            await expect(service.clients.connectJsonRpc(spec)).rejects.toMatchObject({ code: 'ENOENT', syscall: 'connect' });
+            const server = await createCodexControlSocketFixture(socketPath, request => {
+                if (request.method === 'thread/resume') return { oversized: 'λ😀'.repeat(1024) };
+                return { thread: { id: 'native-thread', name: 'λ😀 Native title' } };
+            });
+            try {
+                const connection = await service.clients.connectJsonRpc(spec);
+                try {
+                    await expect(connection.client.request('thread/resume', { threadId: 'native-thread' })).rejects.toMatchObject({
+                        code: 'PLUGIN_EXEC_CLIENT_PROTOCOL_ERROR',
+                        message: expect.stringContaining('JSON-RPC frame exceeded the configured size limit'),
+                    });
+                    await expect(connection.client.request('thread/read', { threadId: 'native-thread', includeTurns: false }))
+                        .resolves.toEqual({ thread: { id: 'native-thread', name: 'λ😀 Native title' } });
+                    current = false;
+                    await expect(connection.client.request('thread/read')).rejects.toMatchObject({ code: 'plugin_generation_stale' });
+                } finally { current = true; await connection.dispose(); }
+                await connection.closed;
+                await vi.waitFor(() => expect(server.activeConnections).toBe(0));
+                const controller = new AbortController();
+                const next = await service.clients.connectJsonRpc(spec, { signal: controller.signal });
+                await expect(next.client.request('thread/read')).resolves.toMatchObject({ thread: { id: 'native-thread' } });
+                controller.abort();
+                await next.closed;
+                await vi.waitFor(() => expect(server.activeConnections).toBe(0));
+                expect(server.connectionCount).toBe(2);
+                const opening = service.clients.connectJsonRpc(spec);
+                const rejected = expect(opening).rejects.toBeInstanceOf(PluginError);
+                const custody = readPluginExecProcessCustodyForHost(service);
+                try { expect(custody.hasUnsettledProcesses()).toBe(true); }
+                finally {
+                    await custody.requestStop();
+                    await rejected;
+                    await custody.waitForSettlement();
+                }
+                expect(custody.hasUnsettledProcesses()).toBe(false);
+            } finally { await server.close(); }
+        }, '/tmp');
+    });
+
+    it.skipIf(process.platform === 'win32')('rejects a WebSocket header above the existing driver ceiling without awaiting its body', async () => {
+        await withTempDir('hch-', async directory => {
+            const header = Buffer.alloc(10);
+            header[0] = 0x81;
+            header[1] = 0x7f;
+            header.writeBigUInt64BE(100n * 1024n * 1024n + 1n, 2);
+            const socketPath = join(directory, 'native.sock');
+            const server = await createCodexControlSocketFixture(socketPath, () => undefined,
+                { onConnection: socket => { socket.write(header); } });
+            try {
+                const connection = await createService().clients.connectJsonRpc({ endpoint: { kind: 'unixWebSocket', socketPath } });
+                try {
+                    await expect(connection.client.request('initialize', {}, { timeoutMs: 500 })).rejects.toMatchObject({
+                        code: 'PLUGIN_EXEC_CLIENT_PROTOCOL_ERROR', cause: { code: 'WS_ERR_UNSUPPORTED_MESSAGE_LENGTH' },
+                    });
+                    await connection.closed;
+                } finally { await connection.dispose(); }
+            } finally { await server.close(); }
+        }, '/tmp');
+    });
+
+    it.skipIf(process.platform === 'win32').each([
+        ['spawn', 'notification'], ['connect', 'notification'],
+        ['spawn', 'request'], ['connect', 'request'],
+        ['spawn', 'inFlightRequest'], ['connect', 'inFlightRequest'],
+    ] as const)('retires %s JSON-RPC before stale %s callback effects', async (transport, operation) => {
+        await withTempDir('hcg-', async directory => {
+            const socketPath = join(directory, 'native.sock');
+            const server = await createCodexControlSocketFixture(socketPath, () => undefined);
+            let current = true;
+            const service = createService({ current: () => current });
+            const handle = transport === 'spawn'
+                ? await service.clients.spawn({ kind: 'jsonRpc', framing: 'webSocket', launch: { executable,
+                    args: ['-e', CODEX_RAW_PROXY_FIXTURE_SCRIPT, socketPath] } })
+                : await service.clients.connectJsonRpc({ endpoint: { kind: 'unixWebSocket', socketPath } });
+            let closed = false;
+            void ('closed' in handle ? handle.closed : handle.wait()).then(() => { closed = true; });
+            let callbackEffects = 0;
+            let entered!: () => void;
+            const started = new Promise<void>(resolve => { entered = resolve; });
+            let complete!: () => void;
+            const completion = new Promise<void>(resolve => { complete = resolve; });
+            handle.client.onNotification(() => { callbackEffects += 1; });
+            handle.client.onRequest('approval', async () => {
+                callbackEffects += 1;
+                entered();
+                if (operation === 'inFlightRequest') await completion;
+                return { approved: true };
+            });
+            try {
+                await vi.waitFor(() => expect(server.connectionCount).toBe(1));
+                if (operation === 'inFlightRequest') {
+                    server.send({ id: 123, method: 'approval' });
+                    await started;
+                    current = false;
+                    complete();
+                } else {
+                    current = false;
+                    server.send(operation === 'notification' ? { method: 'native/change' } : { id: 123, method: 'approval' });
+                }
+                await vi.waitFor(() => expect(closed || callbackEffects > (operation === 'inFlightRequest' ? 1 : 0)
+                    || server.requests.some(request => request.id === 123 && !request.method)).toBe(true));
+                expect(callbackEffects).toBe(operation === 'inFlightRequest' ? 1 : 0);
+                expect(server.requests.some(request => request.id === 123 && !request.method)).toBe(false);
+                expect(closed).toBe(true);
+            } finally { complete(); await handle.dispose(); await server.close(); }
+        }, '/tmp');
+    });
 
     it.skipIf(process.platform !== 'linux')('keeps an ordinary Exec launch in its own process group by default', async () => {
         const handle = await createService().spawn({ executable, args: ['-e', 'process.stdin.resume()'] });

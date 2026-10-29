@@ -1497,6 +1497,14 @@ preserve the current rollout presentation. Failed reads also preserve it and emi
 a content-free diagnostic; caller cancellation and deadlines still stop the operation. Preparation
 pages retain their supplied rollout titles and receive the same selected-page overlay.
 
+Shared Codex server endpoints retain their `unixWebSocket` descriptor and exact
+socket identity. The native client uses `exec.clients.connectJsonRpc` and the same
+host WebSocket JSON-RPC engine as daemon-proxy reads, without a parallel parser or
+another child process. Real connection error codes and syscalls remain available
+to the shared server's existing readiness retry owner. That server still owns
+startup, realtime facts and shutdown; closing a client closes only its connection.
+Shared-server platform admission remains unchanged.
+
 Claude External Sessions in 0.3 development source resolve the admitted config
 home's `projects` entry to its physical storage root, including connected-account
 shared-state links. Candidate discovery, exact identity, transcript paging and

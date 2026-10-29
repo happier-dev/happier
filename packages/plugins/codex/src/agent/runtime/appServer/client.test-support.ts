@@ -10,6 +10,7 @@ export type CodexSocketFixtureRequest = Readonly<{ id?: number; method: string; 
 export async function createCodexControlSocketFixture(
     socketPath: string,
     onRequest: (request: CodexSocketFixtureRequest) => JsonValue | undefined | Promise<JsonValue | undefined>,
+    options?: Readonly<{ onConnection?: (socket: import('node:net').Socket) => void }>,
 ) {
     await mkdir(dirname(socketPath), { recursive: true });
     const httpServer = createServer();
@@ -18,8 +19,9 @@ export async function createCodexControlSocketFixture(
     });
     let connections = 0;
     const requests: CodexSocketFixtureRequest[] = [];
-    webSocketServer.on('connection', socket => {
+    webSocketServer.on('connection', (socket, request) => {
         connections += 1;
+        options?.onConnection?.(request.socket);
         socket.on('message', async payload => {
             const request = JSON.parse(payload.toString()) as CodexSocketFixtureRequest;
             requests.push(request);
@@ -40,6 +42,9 @@ export async function createCodexControlSocketFixture(
         httpServer.listen(socketPath, resolve);
     });
     return { requests,
+        send(message: JsonValue) {
+            for (const socket of webSocketServer.clients) socket.send(JSON.stringify(message));
+        },
         get connectionCount() { return connections; },
         get activeConnections() { return webSocketServer.clients.size; },
         async close() {
@@ -58,3 +63,17 @@ socket.pipe(process.stdout);
 socket.on('end', () => process.exit(0));
 socket.on('error', () => process.exit(1));
 `;
+
+/** Client boundary fixture: receipts precede ordered notification delivery. */
+export function createCodexNativeEventFixture() {
+    const listeners = new Set<Parameters<import('./client.js').DisposableCodexAppServerClient['onNativeEvent']>[0]>();
+    return {
+        onNativeEvent(listener: Parameters<import('./client.js').DisposableCodexAppServerClient['onNativeEvent']>[0]) {
+            listeners.add(listener);
+            return () => { listeners.delete(listener); };
+        },
+        publish(method: string, params: unknown, receivedAtMs = Date.now()) {
+            for (const listener of [...listeners]) listener(method, params, receivedAtMs);
+        },
+    };
+}

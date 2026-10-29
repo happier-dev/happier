@@ -2,6 +2,7 @@ import type { AgentSessionRuntimeContext } from '@happier-dev/plugin-sdk/agents/
 import { describe, expect, it, vi } from 'vitest';
 
 import type { DisposableCodexAppServerClient } from './client.js';
+import { createCodexNativeEventFixture } from './client.test-support.js';
 import { registerCodexAppServerInteractionHandlers } from './interactions.js';
 import { createCodexAppServerRealtimeConversation } from './realtime.js';
 
@@ -46,7 +47,9 @@ function createFixture() {
     }
     return {};
   });
+  const nativeReceipts = createCodexNativeEventFixture();
   const client: DisposableCodexAppServerClient = {
+    onNativeEvent: nativeReceipts.onNativeEvent,
     launchFeatures: {
       realtimeConversationAdvertised: true,
     },
@@ -71,9 +74,11 @@ function createFixture() {
     invoke(method: string, params: unknown, id: string | number = 'rpc-1') {
       const handler = requestHandlers.get(method);
       if (!handler) throw new Error(`Missing request handler: ${method}`);
+      nativeReceipts.publish(method, params);
       return Promise.resolve(handler(params, { id }));
     },
     publish(method: string, params: unknown) {
+      nativeReceipts.publish(method, params);
       for (const handler of notificationHandlers.get(method) ?? []) handler(params);
     },
     registeredMethods() {

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { tmpdir, userInfo } from 'node:os';
@@ -12,9 +12,16 @@ import {
   readCodexNativeTransportStartupFailure,
   readCodexSharedAppServerStartupFailure,
 } from './sharedServer.js';
-import { connectCodexUnixWebSocketJsonRpc } from './client/unixWebSocket.js';
+import { createCodexNativeAppServerClient } from './client';
+import { connectManagedJsonRpcTestClient } from '../../../../../../../apps/cli/src/testkit/process/managedJsonRpc';
+import { createCodexControlSocketFixture } from './client.test-support';
 
 type AgentNativeLaunchQualifier = NonNullable<NonNullable<Parameters<ExecService['spawn']>[1]>['nativeLaunch']>;
+
+function connectFixtureClient(request: { endpoint: { socketPath: string }; maxFrameBytes?: number; requestTimeoutMs?: number }, options?: { signal?: AbortSignal }) {
+  return connectManagedJsonRpcTestClient({ cwd: tmpdir(), socketPath: request.endpoint.socketPath,
+    maxFrameBytes: request.maxFrameBytes, requestTimeoutMs: request.requestTimeoutMs, signal: options?.signal });
+}
 
 const osBoundary = vi.hoisted(() => ({ home: '' }));
 vi.mock('node:os', async importOriginal => {
@@ -26,14 +33,16 @@ describe('createCodexSharedAppServer', () => {
   beforeEach(async () => { osBoundary.home = await mkdtemp(join(tmpdir(), 'codex-startup-home-')); });
   afterEach(async () => { await rm(osBoundary.home, { recursive: true, force: true }); });
   it.skipIf(!['darwin', 'linux'].includes(process.platform)).each(['within_limit', 'exceeds_limit'] as const)(
-    'retains safe endpoint context and native syscall through startup sanitization: %s', async lengthClass => {
+    'retains the actual OS errno and syscall through startup sanitization: %s', async lengthClass => {
       const directory = await mkdtemp('/tmp/codex-connect-failure-');
       try {
-        const error: unknown = await connectCodexUnixWebSocketJsonRpc({
-          // Multibyte names distinguish the OS's UTF-8 byte capacity from JS length.
-          socketPath: join(directory, lengthClass === 'exceeds_limit' ? `${'é'.repeat(60)}.sock` : 'missing.sock'),
-          maxFrameBytes: 4096, requestTimeoutMs: 2000,
-        }).catch((cause: unknown) => cause);
+        // Multibyte names distinguish the OS's UTF-8 byte capacity from JS length.
+        const socketPath = join(directory, lengthClass === 'exceeds_limit' ? `${'é'.repeat(60)}.sock` : 'missing.sock');
+        const exec = { systemTools: { resolve: async () => ({ executable: { kind: 'systemTool', id: 'codex-cli' } }) },
+          clients: { connectJsonRpc: connectFixtureClient } } as unknown as ExecService;
+        const error: unknown = await createCodexNativeAppServerClient({ exec, processEnv: {},
+          transport: { kind: 'unixWebSocket', socketPath, realtimeConversationAdvertised: false },
+        }).then(() => { throw new Error('Expected native endpoint refusal'); }, error => error);
         const failure = readCodexNativeTransportStartupFailure(error);
         expect(failure).toEqual({
           phase: 'native_system_error', reason: 'system_error',
@@ -42,7 +51,7 @@ describe('createCodexSharedAppServer', () => {
         });
         expect(readCodexSharedAppServerStartupFailure(failure)).toEqual(failure);
         expect(readCodexSharedAppServerStartupFailure({
-          ...failure, syscall: 'unavailable', socketPathLengthClass: 'PRIVATE_LENGTH_SENTINEL', path: directory,
+          ...failure, transport: 'unixWebSocket', syscall: 'unavailable', socketPathLengthClass: 'PRIVATE_LENGTH_SENTINEL', path: directory,
         })).toEqual({
           phase: 'native_system_error', reason: 'system_error', errnoCode: failure?.errnoCode,
           syscall: 'unavailable', transport: 'unixWebSocket',
@@ -50,6 +59,52 @@ describe('createCodexSharedAppServer', () => {
       } finally {
         await rm(directory, { recursive: true, force: true });
       }
+  });
+
+  it.skipIf(process.platform === 'win32')('retries a real refused managed connection while the native server remains alive', async () => {
+    let nativePeer: Awaited<ReturnType<typeof createCodexControlSocketFixture>> | undefined;
+    let nativeSpawns = 0;
+    let connected = 0;
+    const failures: unknown[] = [];
+    let finish!: (result: PluginProcessResult) => void;
+    const exited = new Promise<PluginProcessResult>(resolve => { finish = resolve; });
+    const result: PluginProcessResult = { termination: { observed: { kind: 'exit', exitCode: 0 }, requestedBy: { kind: 'none' } },
+      stdout: new Uint8Array(), stderr: new Uint8Array(), stdoutTruncated: false, stderrTruncated: false };
+    const exec = {
+      systemTools: { resolve: async () => ({ executable: { kind: 'systemTool', id: 'codex-cli' } }) },
+      run: async () => ({ ...result, stdout: new TextEncoder().encode('codex-cli 0.162.1') }),
+      spawn: async (request: Parameters<ExecService['spawn']>[0]) => {
+        nativeSpawns += 1;
+        const endpoint = request.args![request.args!.indexOf('--listen') + 1]!.slice('unix://'.length);
+        await mkdir(dirname(endpoint), { recursive: true });
+        // Publish an OS path before accepting connections, as a native bind/listen race can do.
+        await writeFile(endpoint, '');
+        return { wait: () => exited, dispose: async () => { await nativePeer?.close(); nativePeer = undefined; finish(result); } };
+      },
+      clients: { connectJsonRpc: async (request: Parameters<typeof connectFixtureClient>[0], options?: { signal?: AbortSignal }) => {
+        connected += 1;
+        try { return await connectFixtureClient(request, options); }
+        catch (error) {
+          failures.push(readCodexNativeTransportStartupFailure(error));
+          if (failures.length === 1) {
+            await rm(request.endpoint.socketPath);
+            nativePeer = await createCodexControlSocketFixture(request.endpoint.socketPath, message =>
+              message.method === 'initialize' ? {} : message.id === undefined ? undefined : { pong: true });
+          }
+          throw error;
+        }
+      } },
+    } as unknown as ExecService;
+    const server = await createCodexSharedAppServer({ exec, processEnv: {}, platform: 'linux' });
+    if (!server) throw new Error('Expected shared native server');
+    let client: Awaited<ReturnType<typeof server.createClient>> | undefined;
+    try {
+      client = await server.createClient({ cwd: osBoundary.home, processEnv: {}, configOverrides: [], disableUserMcpServers: false });
+      await expect(client.request('test/ping')).resolves.toEqual({ pong: true });
+      expect(failures).toEqual([expect.objectContaining({ errnoCode: 'ECONNREFUSED', syscall: 'connect' })]);
+      expect(connected).toBe(2);
+      expect(nativeSpawns).toBe(1);
+    } finally { await client?.dispose(); await server.dispose(); }
   });
 
   it.skipIf(process.platform === 'win32')('publishes distinct bindable Unix paths even with a long native home and TMPDIR', async () => {
@@ -68,6 +123,7 @@ describe('createCodexSharedAppServer', () => {
     // Only the executable/version OS boundary is replaced; directory ownership,
     // endpoint construction, actual OS bind and cleanup use production logic.
     const exec = {
+      clients: { connectJsonRpc: connectFixtureClient },
       systemTools: { resolve: async () => ({ executable: { kind: 'systemTool', id: 'codex-cli' } }) },
       run: async () => result,
     } as unknown as ExecService;
@@ -120,6 +176,7 @@ describe('createCodexSharedAppServer', () => {
       settleExit?.(nativeResult);
     });
     const exec = {
+      clients: { connectJsonRpc: connectFixtureClient },
       systemTools: { resolve: async () => ({ executable: { kind: 'systemTool', id: 'codex-cli' } }) },
       run: async (request: Parameters<ExecService['run']>[0]) => ({
         ...nativeResult,
@@ -196,6 +253,7 @@ describe('createCodexSharedAppServer', () => {
     // Exec is the OS/host process boundary. The actual socket and real plugin
     // client perform the handshake; no provider orchestration is replaced.
     const exec = {
+      clients: { connectJsonRpc: connectFixtureClient },
       systemTools: { resolve: async () => ({ executable: { kind: 'systemTool', id: 'codex-cli' } }) },
       run: async (request: Parameters<ExecService['run']>[0], options: Parameters<ExecService['run']>[1]) => {
         probeOptions.push(options);

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { DisposableCodexAppServerClient } from './client.js';
+import { createCodexNativeEventFixture } from './client.test-support.js';
 import { inspectCodexRealtimeFeature } from './realtimeFeatureInspection.js';
 
 type RecordedRequest = Readonly<{
@@ -23,7 +24,9 @@ function createFeatureInspectionClient(
   request: (method: string, params: unknown, options: unknown) => Promise<unknown>,
 ) {
   const requests: RecordedRequest[] = [];
+  const nativeReceipts = createCodexNativeEventFixture();
   const client = {
+    onNativeEvent: nativeReceipts.onNativeEvent,
     launchFeatures: {
       realtimeConversationAdvertised: true,
     },

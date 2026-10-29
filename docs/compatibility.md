@@ -3929,6 +3929,18 @@ Run-on writer or store is added.
 
 ## SDK protocol evolution
 
+The 0.3 development SDK adds `exec.clients.connectJsonRpc` for existing Unix
+WebSocket endpoints. Existing process-client `spawn` operations keep their
+contracts. The new connection handle has no process identity or manufactured
+process-exit result; connection errors preserve real OS codes and syscalls for
+the caller's existing readiness policy. Available and unavailable invocation
+facades expose the same method. This is an additive development API with no
+persisted-format or candidate-index change.
+`PluginJsonRpcClient.onNotificationReceived` is also a required synchronous
+receipt subscription on matching development host/SDK builds. Codex consumes
+those notification facts for its existing approval metadata projection;
+request/response dispatch still bypasses ordered domain callbacks.
+
 The 0.3 development External Sessions author contract adds optional
 `hydrateCandidates`, an in-process selected-page display operation under the
 existing runtime ABI. Its source, candidate request/result envelopes and nested

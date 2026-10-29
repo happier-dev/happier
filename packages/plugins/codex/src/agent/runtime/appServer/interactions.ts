@@ -346,33 +346,28 @@ export function registerCodexAppServerInteractionHandlers(params: Readonly<{
       approvalSubjectsByItem.set(key, { name: event.name, input: event.input });
     }
   };
-  // Approval requests carry only the item identity for MCP and file-change
-  // tools. Their preceding lifecycle notification supplies the canonical tool
-  // subject through the existing app-server projection.
-  for (const method of ['item/started', 'item/completed'] as const) {
-    params.client.registerNotificationHandler(method, (raw) => {
-      if (!matchesCurrentThread(raw, params.getThreadId)) return;
-      rememberApprovalSubject(method, readRecord(raw) ?? {}, raw);
-    });
-  }
-  params.client.registerNotificationHandler('item/fileChange/patchUpdated', (raw) => {
+  // Approval requests carry only item identity. Admit their preceding native
+  // lifecycle facts before queued domain callbacks, using the same projector.
+  const stopTrackingApprovalSubjects = params.client.onNativeEvent((method, raw) => {
     if (!matchesCurrentThread(raw, params.getThreadId)) return;
     const record = readRecord(raw);
-    const itemId = readString(record?.itemId);
-    if (!record || !itemId) return;
-    rememberApprovalSubject('item/started', record, {
-      ...record,
-      item: {
-        id: itemId,
-        type: 'fileChange',
-        changes: record.changes,
-      },
-    });
+    if (method === 'item/started' || method === 'item/completed') {
+      rememberApprovalSubject(method, record ?? {}, raw);
+    } else if (method === 'item/fileChange/patchUpdated') {
+      const itemId = readString(record?.itemId);
+      if (!record || !itemId) return;
+      rememberApprovalSubject('item/started', record, {
+        ...record,
+        item: { id: itemId, type: 'fileChange', changes: record.changes },
+      });
+    } else if (method === 'turn/completed') {
+      approvalSubjectsByItem.clear();
+    }
   });
-  params.client.registerNotificationHandler('turn/completed', (raw) => {
-    if (matchesCurrentThread(raw, params.getThreadId)) approvalSubjectsByItem.clear();
+  params.client.onExit(() => {
+    stopTrackingApprovalSubjects();
+    approvalSubjectsByItem.clear();
   });
-  params.client.onExit(() => approvalSubjectsByItem.clear());
   const requestKey = (value: unknown): string | null => (
     typeof value === 'string' || typeof value === 'number'
       ? `${typeof value}:${String(value)}`
