@@ -170,6 +170,23 @@ describe('CompactSearchField placement above a page list', () => {
         expect(style.paddingHorizontal).toBe(resolveItemGroupContentHorizontalInsetPx());
     });
 
+    it('puts its accessory beside the field, or under it at full width where a phone has no room beside', async () => {
+        const { CompactSearchField } = await import('./CompactSearchField');
+        const { flattenTestStyle } = await import('@/dev/testkit');
+        const accessory = React.createElement('View', { testID: 'select' });
+        const place = async (accessoryPlacement?: 'beside' | 'below') => {
+            const screen = await renderScreen(
+                <CompactSearchField testID="search" value="" onChangeText={() => {}} placeholder="Search" accessory={accessory}
+                    {...(accessoryPlacement ? { accessoryPlacement } : {})} />,
+            );
+            const select = screen.findByTestId('select')!;
+            return flattenTestStyle(select.parent!.props.style);
+        };
+        expect(await place()).toMatchObject({ flexDirection: 'row' });
+        expect(await place('below')).toMatchObject({ alignItems: 'stretch' });
+        expect(await place('below')).not.toHaveProperty('flexDirection', 'row');
+    });
+
     it('adds no column of its own where it is placed inline (a rail or a section row)', async () => {
         const { CompactSearchField } = await import('./CompactSearchField');
         const screen = await renderScreen(

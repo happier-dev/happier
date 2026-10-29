@@ -53,9 +53,16 @@ export const CompactSearchField = React.memo(function CompactSearchField(props: 
      * remaining width, so the pair spans exactly the content column.
      */
     accessory?: React.ReactNode;
+    /** `below` stacks the accessory under the field at the column's full width (a phone, where beside it would squeeze the field). */
+    accessoryPlacement?: 'beside' | 'below';
 } & CompactSearchFieldInputOptions>) {
     const frame = <CompactSearchFieldFrame {...props} />;
-    const field = props.accessory ? (
+    const field = props.accessory && props.accessoryPlacement === 'below' ? (
+        <View style={compactSearchFieldStyles.accessoryStack}>
+            {frame}
+            {props.accessory}
+        </View>
+    ) : props.accessory ? (
         <View style={compactSearchFieldStyles.accessoryRow}>
             <View style={compactSearchFieldStyles.accessoryField}>{frame}</View>
             {props.accessory}
@@ -194,6 +201,10 @@ const compactSearchFieldStyles = StyleSheet.create((theme) => ({
         flexDirection: 'row',
         alignItems: 'center',
         gap: theme.space.s8,
+    },
+    accessoryStack: {
+        gap: theme.space.s8,
+        alignItems: 'stretch',
     },
     accessoryField: {
         flex: 1,
