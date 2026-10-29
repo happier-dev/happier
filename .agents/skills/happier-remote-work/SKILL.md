@@ -20,6 +20,8 @@ Remote compute is an execution transport over the repository's canonical Mutagen
 
 Edits to typecheck, executor, dependency-refresh, stack or generator scripts are live for the whole fleet once saved. Develop them in a worktree outside the checkout (`/home/…/workspace/<name>` or `/tmp`), carrying the current relevant uncommitted inputs rather than assuming bare HEAD is the live basis. Land once by atomic rename, smoke immediately, and reverse only the landed tooling delta on the first fleet failure, preserving concurrent edits under root Git safety. Apply the same deletion test to tooling machinery as to product code: count the failure modes each guard added against the incidents it prevented. This is the narrow exception to `.claude/CLAUDE.md` "Delegation shape"; ordinary product lanes still share the primary checkout.
 
+Basis worktrees must not link `node_modules` into the primary checkout for local runs; run heavy validation on workers through `hstack-exec --repo=<basis>`. Create the basis with `git worktree add --detach /home/…/workspace/<name> <sha>` and run either launcher from any cwd: a linked worktree's own `apps/stack/bin/hstack-exec --repo=<basis>` hands off to its primary checkout's executor, and a cwd outside the basis runs from the basis root. Sibling preparation creates the basis `.project` (avoiding the replica conflict) and runs its `packages/protocol` embedded feature-policy generator; the worker installs the basis lockfile frozen through the dependency refresh owner on first use.
+
 ## Ordinary automatic execution
 
 Ordinary workspace scripts route automatically through the checkout-local launcher:
@@ -138,12 +140,20 @@ only when the user asks with `dev-targets sync-service stop`.
 ### Worker disk headroom and lane scratch (0.3 development)
 
 Linux admission observes free bytes on the command's known write filesystems and refuses an
-already exhausted filesystem. There is no resident-closure proxy or peer disk reservation;
-no operation-specific additional-write peak has been established. Exhaustion triggers ordered
-reclamation: old staging across stacks, unneeded Yarn entries, then scratch older than 24 hours.
+already exhausted filesystem. Before a cold or failed sibling command-replica transition, the
+source owner refreshes the executor through its existing causal synchronization barrier and
+measures source bytes using the synchronization owner's ignore rules. Admission also requires
+room for the positive difference from resident source bytes; replicas ready for the current
+synchronization endpoint avoid this inventory.
+This is a demonstrated additional-write minimum, not a staging, allocation, install or build peak.
+There is no resident-dependency-closure proxy or peer disk reservation. A shortage triggers
+custody-safe reclamation of old runtime-build staging, then scratch older than 24 hours.
+Command replicas are retained: markers, age and worker process absence do not prove that the
+controller-owned synchronization session is inactive. Retirement needs separately established ownership and inactivity.
 Unknown UID or same-UID process visibility retains data; processes whose status identifies
 only foreign UIDs do not block this user's reclamation. Explicit maintenance applies the same retention policy
-independently. AUTO excludes a still-exhausted worker; pins fail with the disk diagnostic.
+independently. Cold replicas lacking measured headroom are excluded before their source transition;
+ordinary AUTO excludes a still-exhausted worker, and pins fail with the disk diagnostic.
 Status exposes free bytes. Future install/build writes and quotas are not guaranteed by admission.
 
 Lane scripts use a unique `happier-*`, `hstack-*` or `docs-check-*` scratch directory beneath the
@@ -185,6 +195,21 @@ Independent commands may run concurrently, but preserve the repository's existin
 ## Provisioning and recovery
 
 ### Dedicated QA host (0.3 development)
+
+On nl3 (Ubuntu 24.04), Codex's bundled `codex-resources/bwrap` needs an AppArmor
+user-namespace exception. The owner-approved host setup in
+`/etc/apparmor.d/happier-codex-bwrap` attaches separate `flags=(unconfined)`
+profiles, granting `userns`, to the exact standalone and existing managed QA
+helper paths. Keep `kernel.apparmor_restrict_unprivileged_userns=1`; do not attach
+the exception to the Codex CLI or broaden other profiles. A different helper path
+needs its own narrowly scoped attachment and sandbox verification.
+
+Verify on the executing host with a disposable, empty `CODEX_HOME` and
+`codex sandbox -c 'permissions={}' -P :read-only -C <scratch-directory> -- /usr/bin/true`
+(observed with Codex 0.162.1). `bwrap: loopback: Failed RTM_NEWADDR` indicates the
+reproduced policy failure. A missing bundled helper is a separate install issue;
+its QA owner repairs the managed install through the normal Agent install Action.
+Host profile loading needs no QA stack restart. Yolo remains owner-approved on nl3.
 
 The canonical QA browser launcher uses `--no-sandbox` under the approved QA-host policy for Happier's own QA app. Attach controller automation to that browser; do not introduce a separate per-lane launch policy. Retain a TTY-backed foreground tool handle and verify cleanup after SIGINT: cancelling a non-TTY checkout launcher can leave the actual command and forward running.
 

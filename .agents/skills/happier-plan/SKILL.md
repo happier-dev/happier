@@ -63,6 +63,8 @@ Before selecting the target shape, inspect enough current code and evidence to n
 - overlapping active plans/programs and their `Supersedes:`, `Extends:`, or `Consumes:` relationships;
 - the two or three highest-risk or quietest failure points.
 
+Before a ruling, redesign or new mechanism, inventory what already exists for that concept with `file:line`: owners, records, fields, Actions, UI flows and the shipped features of any surface being redesigned. A fact relayed to the user or written into a ruling is read at the code path or vendor documentation that decides it; a field's presence is not proof that the behavior is implemented. Reference projects supply proposals to evaluate, never requirements, and their names never appear in Happier code, copy or identifiers.
+
 Search broadly enough to establish these facts, then stop. Do not turn optional confirmation into an unbounded research phase. Use current primary evidence for changing external contracts and released artifacts/tags for compatibility obligations.
 
 ## 4. Select the smallest coherent target design
@@ -103,9 +105,9 @@ Plans may be large when the domain requires it. Do not impose arbitrary line, ph
 Create new plans under the repository's existing `.project/plans/` convention, using a descriptive stable filename or the existing program folder; refine an existing plan in place unless the user requested a successor. The plan must contain:
 
 1. **Identity and state:** title, path, `DRAFT` status, contract revision, approval/amendment record, owner/user decision points, relevant plan relationships, and dated evidence basis where applicable. Status-only execution updates do not change the contract revision.
-2. **Intent:** problem, target outcome, users/flows, non-goals and plan-specific forbidden mechanisms, material outcome truths, outermost success evidence, and stable IDs for material requirements and invariants in substantive plans.
+2. **Intent:** problem, target outcome, users/flows (each user flow and design-lab scene mapped to the code owner that produces it), non-goals and plan-specific forbidden mechanisms, material outcome truths, outermost success evidence, and stable IDs for material requirements and invariants in substantive plans.
 3. **Current-state evidence:** canonical owner, affected corridor, existing split-brains, contracts, compatibility provenance, and relevant tests/harnesses with exact paths/symbols.
-4. **Target state:** final ownership, data/control flow, interfaces, invariants, file/module placement, migrations/removals, and retained compatibility seams with removal conditions.
+4. **Target state:** an Action-parity table for user-facing capabilities (capability → Action id → read/write → placement → agent approval default from `safety`/`approvalPolicy.agentDefault` → person confirmation), with read Actions for anything an agent must choose from; where each new persisted value lives (owning record, Session metadata, server-visible non-content metadata, device-local store, or a deliberate setting, per root `AGENTS.md`); a `happier-performance` count contract for each new producer, timer or poll; final ownership, data/control flow, interfaces, invariants, file/module placement, migrations/removals, and retained compatibility seams with removal conditions.
 5. **Decisions:** selected design; choices that are approved, intentionally delegated within constraints, or deferred/excluded; concrete one-way decisions and undo consequences; unresolved material user decisions; rejected alternatives when useful; and why the selected design removes more total complexity or risk. Reference decision evidence by path instead of creating item-level ratification bureaucracy.
 6. **Execution units:** ordered consumed verticals or independently verifiable gates, exact scope/ownership, dependencies, external/runtime preconditions not guaranteed by ordering, concrete implementation outcomes, named required deletions, deciding checks, and traceability to the material requirement/invariant IDs they satisfy. The first execution unit delivers the program's composed journey thin, through real wiring end to end. Later units widen it. Name the live recipe and the loaded-runtime identity in that first unit. Do not manufacture a precondition for ordinary code dependencies.
 7. **QA and validation:** risk-weighted automated and live scenarios covering every materially affected flow, relevant edge/failure/recovery states, accessibility/performance/platform dimensions, and reachable compatibility directions without irrelevant Cartesian expansion. Plan feature QA against the current moving source and existing development stack; never introduce a frozen release representation, archive-production step, local package-installation gate, or publication proof as feature-completion evidence.
@@ -119,6 +121,15 @@ Use exact paths, symbols, contract shapes, and target filenames when established
 Use `.agents/skills/decompose-gates` to define meaningful lanes when parallel execution is actually possible. Each lane owns a complete responsibility and an independently deciding check; do not create microtasks, overlapping seam authorities, or horizontal layers that cannot be validated before later activation.
 
 Every meaningful implementation, review, and QA lane must read the complete approved plan unless it is already present in active context. Its lane brief then stays concise and self-contained: goal, ownership, exact paths/symbols, dependencies, acceptance checks, validation, expected output, permissions, and stop/fallback conditions. Reference the on-disk plan rather than pasting it or inheriting the full parent transcript; use minimal inherited conversation context.
+
+### Programs of several plans
+
+- State each cross-plan contract (shared names, error codes, approval rule, placement, performance rules) once in the program document; plans cite it and never restate it. Copies drift.
+- A ruling names exactly one owner and one shape. Offer alternatives to the user as a question, never inside a ruling.
+- The wave that applies a ruling updates every plan that consumes the changed contract, including plans in other programs, not only its owner, then runs a mechanical sweep for superseded terms before any reviewer starts.
+- Every amendment or fix wave lists the mechanisms it adds, with where each runs and what carries its authority; the target-design deletion test applies to each.
+- Batch the user's scope decisions before a review round where possible; a late scope addition reopens every dependent plan.
+- Give every execution unit the same template and an "Also read" line naming the exact neighbouring sections it depends on, so a lane reads its own plan and those sections, not whole neighbouring plans.
 
 ## 7. Review the draft before approval
 
@@ -173,7 +184,7 @@ If primary evidence shows an approved requirement is unsafe, contradictory, impo
 
 Continue unaffected independent work only when it cannot prejudge the user's amendment decision. Material ambiguity follows the same stop-and-clarify path; unrelated discoveries are reported without expanding the plan.
 
-When corrections accumulate until the document no longer reads as one coherent contract, propose a user-authorized `REPLACE` that regenerates it while explicitly preserving, changing, or retiring still-applicable material decisions rather than layering more amendments onto a contaminated document.
+When corrections accumulate until the document no longer reads as one coherent contract, propose a user-authorized `REPLACE` that regenerates it while explicitly preserving, changing, or retiring still-applicable material decisions rather than layering more amendments onto a contaminated document. Replace only a document that actually carries contradictions or stacked amendment layers; leave coherent ones to targeted edits. Before replacing, freeze the originals as the baseline. Only superseded wording, restatements of a contract now stated once elsewhere, and amendment narration may disappear: decisions and reasons, edge, failure and recovery behavior, limits, evidence pointers, execution units, tests and QA scenarios carry over. Each writer traces every old heading to its new home or removal reason, and an independent check compares old against new before approval. A shorter plan is a side effect, never the goal.
 
 ## 10. Define completion from evidence
 

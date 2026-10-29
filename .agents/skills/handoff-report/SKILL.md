@@ -11,7 +11,7 @@ Structure any substantive report so the reader can act on the first paragraph an
 
 1. **Outcome first.** The first sentence answers what the reader would ask for if they said "just the TLDR": what happened, what was found, or what is blocked. Not the journey, not the setup.
 2. **Failures and scope changes in the first block.** A failed check, a skipped step, a scope change, an error worked around — these go up front even when embarrassing, never mid-report. The most informative event is the one you are tempted to smooth over.
-3. **Reasoning, auditable.** Evidence pointers with every load-bearing statement: `file.ts:line`, the log excerpt, the measurement, the command that produced the number. Trust should rest on checkable references, not on tone.
+3. **Reasoning, auditable.** Evidence pointers with every load-bearing statement: `file.ts:line`, the log excerpt, the measurement, the command that produced the number. Trust should rest on checkable references, not on tone. Keep deciding logs somewhere durable (the report's folder or `.project/tmp/<lane>/`), not only `/tmp`, which is cleared, and quote the deciding terminal lines. Say exactly which defect each result closes, and keep source results separate from loaded-runtime results.
 4. **Residual risk last, explicitly.** What remains unverified, what to check next, what would invalidate the conclusion. If there is genuinely no residual risk, say that — the reader cannot distinguish "no risk" from "risk section omitted".
 
 ## Labeling
@@ -20,6 +20,7 @@ Structure any substantive report so the reader can act on the first paragraph an
 - Use cheap explicit markers: "verified:", "inferred from X:", "assumption:". Never let sentence confidence do the labeling; fluent prose reads as fact regardless of bin.
 - For derived claims, state the derivation ("X because A + B") so the reader can audit the step and see which assumptions it inherits.
 - Hedging is not labeling. "Probably" makes every sentence equally gray; a label says exactly what is known and what is guessed.
+- Label test evidence by kind: **constructed** (a fixture builds the condition), **reproduced** (the real path produces it) or **loaded** (observed in the running product). A constructed RED shows the fix handles the condition, not that the condition caused the reported failure.
 - Distinguish "I didn't find X" (an observation about your search — say which search) from "X doesn't exist".
 
 ## Style

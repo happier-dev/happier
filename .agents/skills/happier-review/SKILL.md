@@ -88,6 +88,8 @@ Activate conditional scopes only when reachable:
 - performance, scalability, rendering, resource, or process lifecycle. For these, apply `.agents/skills/happier-performance` (§2 patterns, §5 verdicts). A guard, cache, memo, yield, timer, retry or slower interval is a finding until the producer is shown to emit only real changes; include same-pattern leads;
 - UI/UX/accessibility and browser/device behavior;
 - provider/catalog ownership;
+- plugin extension points: each new or grown plugin SDK / `@happier-dev/plugin-ui` seam has an owner, a plugin-author example and a published-docs update; a component a plugin page would also need lives in plugin-ui and the host consumes it from there;
+- plans: contracts stated once and cited, rulings swept into every consuming plan, an Action-parity row for each user capability;
 - binary runtime, installers, packaging, services, and cross-platform behavior.
 
 Review categories are prompts to investigate, not automatic findings. Severity follows demonstrated impact, not category. Read [review-standard.md](references/review-standard.md) for the integrated correctness, security, architecture, test, and maintainability standard.
@@ -122,6 +124,7 @@ Use subagents when independent, lane-sized work improves depth or throughput—n
 - Point to exact shared skill/reference paths instead of pasting the full review doctrine into every prompt.
 - Coordinate actual same-hunk edits, conceptual seam decisions, generated outputs, and exclusive runtime resources in fix mode. A dirty or previously touched file is not reserved; inspect its current content and layer compatible in-scope changes without overwriting concurrent work.
 - Lane agents own only their assigned reports/evidence when a durable workspace exists. The orchestrator alone updates the main tracking document and adjudicates findings.
+- Split live QA by independently observable surface or journey on a shared READY stack. Each lane gets its own managed browser session and target fixture, and the stack keeps one lifecycle owner. Serialize only conflicting fixture effects (same-target writes, Account policy, membership, lifecycle) and measurements that need a quiet workload. Reuse the program's existing QA rows and route failures to their canonical owners. When the UI producer is down, park only rendered-UI rows; API and CLI rows continue.
 - Do not create a cartography pass when the orchestrator can map the scope cheaply.
 - Do not launch another reviewer merely to turn a hunch into consensus; require an independent evidence path.
 
@@ -135,13 +138,15 @@ Review may begin against moving, dirty, partial, or completed work. Record a con
 
 Authors perform compact in-place self-review during implementation without creating a formal review program. Formal independent review is normally batched at substantial integrated boundaries, explicit user-requested review points, and high-risk triggers that cannot safely wait—not after every lane, commit, gate, or microchange.
 
+For ongoing multi-lane programs, run a boundary review roughly every 40 lanes or daily, whichever comes first, using the existing review workspace and reviewing the integrated delta since the previous boundary. This cadence does not postpone a high-risk review that is already due.
+
 Scale review depth with reachability, user impact, reversibility, and silence of failure—not with the number of mechanisms or files. Dormant code receives one architecture/activation assessment; do not exhaustively harden it as if it were shipping. Live behavior, schema/data, security, compatibility, release, and user-visible gates retain independent risk-appropriate review.
 
 For every candidate finding:
 
 1. reproduce or re-derive it from primary evidence;
 2. trace the real runtime/ownership path;
-   - **2b.** re-derive the author's writer/reader sweep for the changed fact under [happier-implement §4](../happier-implement/SKILL.md#4-select-the-smallest-coherent-systemic-change) and name any missed sibling. For a shared-contract change, re-derive the author's consumer inventory (tests and testkits included) and check each consumer has a covering test;
+   - **2b.** re-derive the writer/reader inventory under [happier-implement §4](../happier-implement/SKILL.md#4-select-the-smallest-coherent-systemic-change), including tests/testkits, coverage and missed siblings;
 3. distinguish root cause from symptom and classify where the failure entered: intent/approved contract, plan design/integration, canonical implementation, test/harness, runtime/environment/external contract, or unrelated system;
 4. identify concrete impact and provenance;
 5. reject style preference, theoretical edge cases, and unsupported rewrites;
@@ -149,11 +154,13 @@ For every candidate finding:
 
 Only high-confidence, objective, actionable issues become findings. Material uncertainty stays an investigation question with its falsifying check; immaterial uncertainty is discarded. Use [review-standard.md](references/review-standard.md) for the finding and comment contracts.
 
-Any decision-material finding, refutation, or "already fixed" claim inherited from a prior report, round, or external review is re-verified against the current relevant implementation before entering a verdict. Carried claims not re-verified remain labeled assumptions; use numeric verified-N-of-M accounting only when that census itself changes the decision. A green test asserting the defective behavior is wrong-contract evidence, not acceptance; rewrite it with an authorized fix rather than citing it as protection.
+Any decision-material finding, refutation, or "already fixed" claim inherited from a prior report, round, or external review is re-verified against the current relevant implementation before entering a verdict. Carried claims not re-verified remain labeled assumptions; use numeric verified-N-of-M accounting only when that census itself changes the decision. A green test asserting defective behavior is wrong-contract evidence, not acceptance; with an authorized fix, apply [happier-testing's old-behavior test update rule](../happier-testing/SKILL.md#workflow).
 
 Reviewers may investigate and propose any evidence-backed correction, simplification, addition, removal, mechanism, process change, or plan amendment relevant to the target. Findings are candidate claims, not implementation orders or plan authority. The orchestrator adjudicates four dimensions separately: claim (`CONFIRMED`, `REFUTED`, `INVESTIGATE`), impact (`MATERIAL`, `IMMATERIAL`, `UNRELATED`), proposed response (`ACCEPT`, `REPLACE_WITH_SIMPLER_FIX`, `DEFER`, `REJECT`), and authority (`WITHIN_PLAN`, `AMENDMENT_REQUIRED`, `OUT_OF_SCOPE`). A mechanism-sized response still requires a reproduced failure, reachable risk, or named live consumer.
 
 After accepted fixes, review the changed finding delta and affected corridor. Restart a full round only when the approved contract, architecture, scope, review boundary, or risk materially changed. If repeated rounds keep finding hazards created by the proposed mechanism, stop hardening it and run a deletion/simplification or redesign test.
+
+When a fix introduces or extends an owner (an operation, status, admission or lifecycle owner), the delta review lists every pre-existing entry point and consumer of that concept and states, for each, whether it now goes through the owner. One entry point that still decides on its own is a finding. On 2026-10-28 three successive fix reviews each found the same shape: a new owner beside an unretired entry point (a second approval tracker, five consumers still mapping unknown to unavailable, one cold-mount read missing).
 
 ## 8. Fix coherently when authorized
 
@@ -164,7 +171,9 @@ In `fix` mode, or after approval in `staged` mode:
 - use `.agents/skills/happier-compatibility` for released/predecessor seams;
 - use `.agents/skills/happier-diagnose` only when a runtime/session/provider/auth incident requires its support evidence workflow;
 - rerun the affected QA rows and risk-appropriate broader lanes;
-- re-review the changed corridor for regressions, split-brains, and complexity added by the fix.
+- re-review the changed corridor for regressions, split-brains, and complexity added by the fix;
+- check file shape: new code sits in a focused module in the owner's domain folder with a context-short name. Growing an already-large file, or adding a file whose name restates its folder, is a finding.
+- ask explicitly whether the fix is the cleanest appropriately bounded root-cause change: green tests, a small diff, and a plausible local repair do not answer that. A guard, special case, cache, fallback or narrowly passing test that leaves the defective owner in place is a finding.
 
 For approved plan-backed work, a finding does not authorize deviation from the plan. If the root-cause fix would materially change an approved requirement, mark it `AMENDMENT_REQUIRED`, document the evidence and smallest proposed amendment, and wait for user approval before implementing that deviation.
 

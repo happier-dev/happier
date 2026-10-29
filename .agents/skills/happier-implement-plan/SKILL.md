@@ -86,6 +86,8 @@ As lanes finish, inspect their diffs and deciding evidence sufficiently for inte
 
 QA design, environment checks, fixtures, and advisory inspection may run alongside implementation. Record PASS/FAIL only after the relevant consumed vertical is runnable. Formal independent review is normally batched at the plan's substantial integrated boundaries, explicit user-requested points, high-risk triggers that cannot safely wait, user-visible ship gates, and final plan completeness—not every unit or microchange. A QA-driven fix wave is a substantial boundary once it has landed about 10–15 fixes or run two days of active waves without an independent finding-delta review.
 
+When the same user-visible symptom returns after a fix by a different owner, stop routing it owner by owner. Start one joint diagnosis lane that traces the whole path, from its entry point through every owner to the output, before the next fix.
+
 ## 8. Triage findings without surrendering plan authority
 
 Review findings are candidate claims. Reproduce or re-derive each claim, then separately adjudicate defect, impact, proposed response, and authority through `.agents/skills/happier-review`. A confirmed defect may still have an overengineered proposed fix.
@@ -110,6 +112,7 @@ Evidence and review findings can challenge the plan but cannot supersede it. Con
 Before declaring plan completion:
 
 - map every material requirement/invariant to `VERIFIED_COMPLETE`, approved supersession, or defensible `NOT_APPLICABLE`;
+- for each UI/feature lane, include a checklist of every plan row and lab element for its surface, marked built, ruled out (with authority), or owed; owed items keep the lane short of `DONE`;
 - verify canonical ownership, reachable wiring, required removals, RED/GREEN proof, broader validation, and material live QA;
 - preserve `IMPLEMENTED_NOT_VERIFIED` only where an executor-runnable check exists and has not been run; evidence that only release automation or human QA can produce (devices, tenants, mail, signing, packaging, production-like infrastructure) is recorded once as a named release check, not as `IMPLEMENTED_NOT_VERIFIED`, and a plan whose only open items are release checks is implementation-complete;
 - do not add gates, ledgers, evidence matrices, certification sections, or review rounds in order to reach completion; if the remaining work is release checks, declare implementation-complete and list them;

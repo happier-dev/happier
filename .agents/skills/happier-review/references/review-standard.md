@@ -94,6 +94,8 @@ Check:
 - producer/consumer and reader/writer agreement;
 - schema/migration ordering, rollback/coexistence reachability, and historical data;
 - read-modify-write races, duplicate processing, dedupe keys, watermarks, and transaction/after-transaction behavior;
+- delivery/queue skip and `continue` paths record either a settled decision or an explicit hold with its release trigger;
+- requests and intents are acknowledged as consumed only after their effect is applied;
 - HTTP/socket/IPC/CLI error and success contracts;
 - released cross-component and persisted contracts, not every internal module signature;
 - services, daemons, sockets, retries, takeover, cancellation, and process cleanup.
@@ -168,4 +170,4 @@ The orchestrator reopens cited code/evidence and records four independent dispos
 - **Proposed response:** `ACCEPT`, `REPLACE_WITH_SIMPLER_FIX`, `DEFER`, or `REJECT` with reason.
 - **Authority:** `WITHIN_PLAN`, `AMENDMENT_REQUIRED`, or `OUT_OF_SCOPE`.
 
-Deduplicate symptoms under their root cause. Do not accept a finding merely because several reviewers repeated it.
+Deduplicate symptoms under their root cause. Do not accept a finding merely because several reviewers repeated it. Count and route broken invariants, not symptom reports: several failures from different programs that trace to one stale process, producer or contract are one finding with one owner.

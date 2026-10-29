@@ -120,13 +120,6 @@
       "WebSearch",
       "WebFetch"
     ],
-    "ask": [
-      "Bash(git add *)",
-      "Bash(git commit *)",
-      "Bash(git push:*)",
-      "Bash(git tag:*)",
-      "Bash(docker push:*)"
-    ],
     "deny": [
       "Read(/**/.env*)",
       "Edit(/**/.env*)",

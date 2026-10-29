@@ -13,6 +13,27 @@ Before choosing an SDK import, read `node_modules/@happier-dev/plugin-sdk/API.md
 Before adopting a contribution or service family, read `node_modules/@happier-dev/plugin-sdk/capability-matrix.json`. It is the sole product-availability authority: a `deferred` row is conformance-only reference material, not a supported product lifecycle. Its source API and consumer fields do not by themselves establish loaded-platform or release availability.
 Use only the package entrypoints documented there. Do not reach into host source, private aliases, or another installed plugin artifact.
 
+## Named tools and CLI commands
+
+In 0.3 development source, declare an operation once under `actions`. Add
+`tool: { name, title?, description?, examples?, promptSnippet?, promptGuidelines? }`
+for named Agent/MCP presentation and `cli: { path, aliases?, visibility?, tmux? }`
+for a friendly CLI path. Include the corresponding `agent`, `mcp`, or `cli`
+surface on that Action. Keep input/result schemas, input hints, danger level,
+availability and approval on the Action; do not declare separate `tools` or
+`commands` families. Check the installed API inventory and target toolchain
+before using these development-source fields. See the
+[Action author guide](https://docs.happier.dev/plugins/api/actions-tools-commands).
+
+Actions participate in generic Agent/MCP discovery by default under the
+canonical per-Action exposure policy. Optional named-tool or CLI metadata is
+not a prerequisite for that discovery; use the existing per-Action override
+`toolExposure: { agent: 'direct', mcp: 'direct' }` when a direct tool is wanted.
+Each `agent`, `mcp`, or `cli` override accepts `direct` or `discoverable_only`;
+keep it on the Action, outside `tool`. Generic discovery uses
+`action.spec.search`/`action.spec.get` and invocation uses `action_execute`,
+subject to declared surfaces, availability, settings and approval.
+
 ## Settings and configuration pages
 
 A plugin settings or detail page uses the same anatomy as Happier's own settings (`DESIGN.md` → "Configuration surfaces"): a page header, sentence-case sections with their explanation above the rows, one control per row, visual tiles for choices that change what you see, and list + detail for collections of named things. Compose it from the public plugin UI components that render through Happier's own page owners — `PageHeader`, `ItemGroup` with a `title`/`description`/`action` (a page section), `Item` rows with one control in `accessory`, `Toggle`, `Select` (`presentation="segmented"` for 2–4 short options, `"field"` for longer sets), `TextField presentation="field"` for a value typed in place (`onCommit` saves on leaving), `SelectionTiles` (`variant="visual"` with real previews) and `EmptyState` (`layout="page"`/`"line"`) — checking exact names in the API inventory; do not rebuild headers, row dividers, dropdown triggers, switches or selection rings locally, and do not draw a back control or duplicate the page title (the host places both). See [Settings and detail pages](https://docs.happier.dev/plugins/ui/configuration-pages).

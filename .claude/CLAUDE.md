@@ -20,10 +20,13 @@ If a tool call is not already allowed by `.claude/settings.json`, it will be aut
 and **retry loops will never succeed**.
 
 Hard rules:
+
 - **Do not retry** permission-denied tool calls in a loop. Fail fast and report the exact tool + command + missing permission.
 - For background work, run shell commands via `edison exec -- <command> ...` so they match the allowed `Bash(edison:*)` rule.
 - If you must run direct `Bash(...)` commands that would require interactive approval, run them **in the foreground** (not background).
+
 <!-- EDISON:END -->
+
 The generated entry-point instruction means to ensure the root constitution is active; do not reread `AGENTS.md` when it is already present in active context.
 
 ## Agent routing and Happier-managed runs
@@ -59,6 +62,10 @@ Monitor runs through the discovered action contract: use start-and-wait or `exec
   the lane's deciding checks ran green under root **Validation**. Otherwise write
   `IMPLEMENTED_NOT_VERIFIED` plus the owed check, or `BLOCKED` plus the prerequisite. Only the
   final handoff writes DONE or BLOCKED; interim lines say `IN PROGRESS`.
+- **Lane reports stay short:** follow root board/report hygiene.
+  - **Format:** the verdict block comes first, then a row table (check → verdict → evidence pointer), then residual risk.
+  - **Raw evidence:** observations, counts and logs go to JSON or log files under the lane's evidence folder, pointed to rather than pasted.
+  - **Reruns:** a resumed or relaunched lane replaces sections in place instead of appending history. Reports of several hundred lines burned orchestrator and digest context in Fork A, 2026-10-27.
 - **Subagent final messages ≤ 20 lines.** The final message is for the orchestrator, not the user;
   everything else belongs in the lane report file. Long final messages are pure orchestrator-context
   burn.
@@ -66,15 +73,7 @@ Monitor runs through the discovered action contract: use start-and-wait or `exec
   root constitution and repository skills rather than copying a private operating manual. Plan-local
   documents contain only product decisions, seam ownership, acceptance criteria, and evidence specific
   to that program.
-- Any lane touching user-facing surfaces, components, or animations must load
-  `.agents/skills/happier-ui-craft` (Happier's own method, which ranks first) and the installed craft
-  skills (`make-interfaces-feel-better`, `interface-details`, `design-taste-frontend`, `gpt-taste`,
-  `high-end-visual-design`, `minimalist-ui`, `redesign-existing-projects`, `apple-design`,
-  `emil-design-eng`, `review-animations`) before writing surface code; they raise the bar but never
-  override DESIGN.md tokens, materials, primitives or the no-fork rule — translate web/landing-page
-  recipes (fonts, palettes, GSAP, bento layouts) into Happier's owners, never import them. Reuse
-  existing components, themed tokens, and text primitives, and treat duplicate animation/UI primitives
-  as a review finding.
+- Any lane touching user-facing surfaces, components or animations follows "Taste digest" below before writing surface code.
 - **Briefs carry the UI rule; agents on other providers never read this file.** Every brief for a lane
   whose change renders anything (new state, control, copy, error or repair view), including Codex/Sol
   "behavior", fix, parity and QA lanes, names `.agents/skills/happier-ui-craft`, the reference (lab
@@ -114,16 +113,24 @@ Monitor runs through the discovered action contract: use start-and-wait or `exec
   (ORC, 2026-10-11: repeated lane restarts kept the daemon down for hours). A UI lane that needs its edits loaded asks
   in its report; the orchestrator batches reloads at quiet points and tells the lanes when the new build is live.
 
+- **Current override (owner ruling 2026-10-29, Claude/Opus quota low):** delegate everything that
+  does not judge or change visual design to Codex `gpt-6.1-sol` at high effort, including UI logic,
+  stores, data seams, virtualization data, tests, measurement, QA capture, audits and digests. Opus 5.5
+  at high effort is reserved for taste reviews and real UI/design work (composition, styling, motion,
+  copy hierarchy, recomposition, whole-page acceptance); Sol is poor at visual design, so never route
+  that to Sol. Sonnet UI lanes are not used meanwhile. The orchestrator stays Claude. This overrides
+  the table below until the owner lifts it.
+
 - **Models and effort for UI work (user ruling 2026-10-11, split confirmed 2026-10-12 after the
   Sonnet trial).** Lanes without an effort setting inherit the session's effort, which drained Opus
   usage fast.
 
-  | Work | Model and effort | Agent definition |
-  |---|---|---|
-  | Orchestration, program-boundary and ship reviews, final whole-page acceptance, new design-lab rounds | Opus, high | `design-review-opus` |
-  | Shared primitives and tokens, the settings shell, pages being recomposed or newly designed, motion | Opus, medium | `ui-build-opus` |
-  | About half of UI lanes: well-specified surfaces, fix lists, state and after-pair verification, copy and locale sweeps | Sonnet 5.5, high (never max) | `ui-build-sonnet` |
-  | Logic, data, tests, tooling, functional QA | Codex Sol, unchanged | — |
+  | Work                                                                                                                  | Model and effort             | Agent definition     |
+  | --------------------------------------------------------------------------------------------------------------------- | ---------------------------- | -------------------- |
+  | Orchestration, program-boundary and ship reviews, final whole-page acceptance, new design-lab rounds                  | Opus, high                   | `design-review-opus` |
+  | Shared primitives and tokens, the settings shell, pages being recomposed or newly designed, motion                    | Opus, medium                 | `ui-build-opus`      |
+  | About half of UI lanes: well-specified surfaces, fix lists, state and after-pair verification, copy and locale sweeps | Sonnet 5.5, high (never max) | `ui-build-sonnet`    |
+  | Logic, data, tests, tooling, functional QA                                                                            | Codex Sol, unchanged         | —                    |
 
   Trial result (2026-10-12): both models reached acceptance in 2–4 review rounds. Sonnet's
   specified fixes held live and found real root causes with almost no usage limits; Opus medium
@@ -133,9 +140,9 @@ Monitor runs through the discovered action contract: use start-and-wait or `exec
 
 - **Sol verifies; Opus doesn't re-review Sol by default.** Boundary/challenge reviews run as two Sol reviewers with an
   adversarial brief (re-derive each claim from current bytes, deletion test, look for the simpler design, check owner
-  stances). The orchestrator spot-checks only load-bearing claims. Opus review is reserved for ship-boundary or taste calls.
-- **Sol digests, the orchestrator reads digests.** After a wave, one Sol run reads all lane reports, reruns their focused
-  checks and writes one short digest with evidence pointers; the orchestrator reads that plus targeted lines, never whole
+  stances). The orchestrator spot-checks only load-bearing claims. Opus review is reserved for ship-boundary or taste calls. Exception: reviews of authorization, credential or encryption seams run on Claude Opus by default, because OpenAI's cybersecurity filter refuses or kills Codex security reviews (N2, 2026-10-27/28).
+- **Sol digests, the orchestrator reads digests.** After a wave, one Sol run reads all lane reports and applies root
+  **Validation**'s evidence-reuse rule, then writes one short digest with evidence pointers; the orchestrator reads that plus targeted lines, never whole
   reports or long board threads.
 - **UI routing:** Sonnet high for specified fix lists and after-pair checks first; Opus medium (`ui-build-opus`) for
   composition/recomposition; Opus high only for final whole-page acceptance. Pin effort in every agent definition (agents
@@ -143,13 +150,11 @@ Monitor runs through the discovered action contract: use start-and-wait or `exec
   rotates connected Claude accounts on usage limits. Keep the Claude/Codex routing and lean briefs above; parallelism
   is limited only by real prerequisites (a live render path, one composition owner per surface, one lifecycle owner per
   QA stack).
-- **Fewer wakes:** watchers cap at 45–60 min and fire on finished/blocked lines; batch decisions per wake. Orchestrator
-  sessions run at medium effort while monitoring and raise effort only for synthesis or rulings.
-  Match addressed posts only, exclude your own and your lanes' posts, diff before rebaseline, never detach, and check `execution_run_get` on each wake.
+- **Fewer wakes:** follow the watcher lifecycle below and batch decisions per wake.
 - **Board replies ≤ 15 lines** with pointers to lane reports; cause claims follow the evidence-basis rules in `docs/agent-craft.md` §4–§5.
-- **Capture vs judgement (design quality is not traded away).** Sol may *capture* (seed data, sign in, take
+- **Capture vs judgement (design quality is not traded away).** Sol may _capture_ (seed data, sign in, take
   same-state whole-page lab|live pairs at the required widths/themes, record motion frames, measure computed styles)
-  into a contact sheet. Only Claude UI lanes *judge and change* how a surface looks; Sol never edits render
+  into a contact sheet. Only Claude UI lanes _judge and change_ how a surface looks; Sol never edits render
   composition, styling or copy hierarchy, and "Opus writes a spec, Sol builds the visuals" is not allowed. The
   orchestrator still views the decisive whole-page pairs itself.
 - **Fresh, short Claude UI lanes per round.** Close a UI lane after its round (report holds the state) and start the next
@@ -157,21 +162,26 @@ Monitor runs through the discovered action contract: use start-and-wait or `exec
 - **Never run a Claude lane on a broken prerequisite.** Launch or resume a UI lane only after the render path and the
   fixes its pages need are confirmed (stack READY + page loads with data). Blocked Claude lanes park: write what they
   owe, stop all background jobs, end the turn — the orchestrator records the resume trigger in its ledger and its
-  watcher wakes on that trigger.
-- **Waiting is done by watchers, never by model turns.** Any lane or orchestrator waiting on a run, a test, a reload or a
-  stack uses a background until-loop/Monitor keyed on a concrete terminal marker (report `STATUS: DONE|BLOCKED`, a
-  `READY` line, a failure string) plus a capped heartbeat (45–120 min); on every wake it checks
-  `execution_run_list status=failed` (dead Sol runs write nothing). A Claude lane waiting on its own background job
-  blocks on that job instead of ending its turn with "waiting…"; it ends its turn only at a material transition or when
-  parked. Every parked/queued item has an owner-visible resume trigger so nothing silently stops.
-- **Finish clean; references first.** Lanes stop their background jobs before their final message (no "finished but
-  still waiting" wakes). When the owner names a reference app/look, a Sol run reads its exact recipe from source first,
+  watcher, when needed under the rule below, wakes on that trigger.
+- **Waiting:** follow root **Efficient execution and uncertainty resolution** and the discovered Happier run contract above
+  for notification/interruptible-wait priority; Claude uses `execution_run_wait` or a background job's own notification when available, and one bounded watcher only for facts with no event path.
+  Re-arm it every turn while that wait remains active, keep a persistent seen set, match addressed posts anywhere in the heading (excluding your own and your lanes' board posts), and diff before rebaselining; never detach it.
+  Batch FYI posts with a minimum interval of about 10 minutes, waking at once only for lane terminal states or urgent, decision, READY or QUIET WINDOW headings, with a capped heartbeat (45–120 min); every wake runs `execution_run_list status=failed` because dead runs may write nothing.
+  A Claude lane waiting on its own background job blocks on that job instead of ending its turn with "waiting…"; it ends its turn only at a material transition or when parked, and every parked/queued item has an owner-visible resume trigger.
+  All lanes stop their background jobs before their final message, so finished lanes leave no waiting wakes.
+- **References first.** When the owner names a reference app/look, a Sol run reads its exact recipe from source first,
   and acceptance is measured in the owner's exact setup before a Claude reviewer judges it.
 - **Images:** capture broadly, view narrowly — lanes save all pairs to disk; reviewers open the 2–4 decisive ones.
-- **Taste digest:** UI lanes load `happier-ui-craft` + DESIGN.md and a one-page digest of the taste skills; open a full
-  taste skill only for a specific question (the digest never overrides DESIGN.md/happier-ui-craft).
+- **Taste digest:** before writing surface code, lanes touching user-facing surfaces, components or animations load
+  `.agents/skills/happier-ui-craft` (Happier's method, which ranks first), DESIGN.md and a one-page digest of the taste
+  skills; open an installed specialist (`make-interfaces-feel-better`, `interface-details`, `design-taste-frontend`,
+  `gpt-taste`, `high-end-visual-design`, `minimalist-ui`, `redesign-existing-projects`, `apple-design`,
+  `emil-design-eng`, `review-animations`) only for a concrete question. Neither digest nor specialist overrides
+  DESIGN.md tokens, materials, primitives or the no-fork rule: translate web/landing-page recipes (fonts, palettes,
+  GSAP, bento layouts) into Happier's owners, reuse existing components, themed tokens and text primitives, and treat
+  duplicate animation/UI primitives as a review finding.
 - **Orchestrator sessions:** medium effort by default; keep the same session (it holds program context that ledgers
-  don't) — keep turns lean instead of starting over.
+  don't) — keep turns lean instead of starting over, and raise effort only for synthesis or rulings.
 
 ## Delegation shape (what worked)
 
@@ -206,19 +216,23 @@ Monitor runs through the discovered action contract: use start-and-wait or `exec
   blocker materially changes. A closed gate, landed fix, or completed validation is always a
   material transition: record it before starting the next unit, so a crashed lane loses at most
   one gate. Do not create per-microchange packets or ledger churn.
+- **Live verification closes the lane's own line.** When a later live replay verifies a lane that
+  ended `IMPLEMENTED_NOT_VERIFIED` or `PARTIAL`, the orchestrator updates that lane report's line 1
+  (citing the replay) in the same ledger update, so status lines don't go stale.
+- **Check the board for an existing claim right before launching a lane on a routed spec.** On 2026-10-26 two orchestrators launched the same Claude UI fix a minute apart. After every QA stack restart, refresh fixture daemons (ports move) before granting any fixture slot.
 - **Stalled/killed agent ≠ lost work.** Before re-running, check its artifacts (report, evidence
   files, ledger rows, run sidechain). Resume with context (SendMessage / `execution.run.send` with
   `resume: true`) instead of restarting; only fresh-start when the transcript/session is genuinely gone.
 - **Verify lane claims.** Reports referencing files that don't exist, "green" suites that are red
-  at the lane's own commit, and inflated LOC deltas all happened. Reviewers rerun the tests
-  themselves against the current bytes of a dirty shared tree — that is the normal basis. Never
+  at the lane's own commit, and inflated LOC deltas all happened. Apply root **Validation**'s evidence-reuse rule and
+  **Adversarial review and handoff** to current dirty bytes, including required independent re-execution. Never
   freeze, stash, or otherwise manufacture a clean basis to separate your failures from concurrent
   churn; a failure you cannot attribute is reported as unattributed, not resolved by mutating the tree.
 - **Adversarial review at composed boundaries.** Authors run `.agents/skills/attack-conclusion` while
   building. Independent review and `.agents/skills/verify-claims` target load-bearing delegated claims and
   the consumed vertical, corridor gate, or ship gate—not every microchange. After
   accepted fixes, review the finding delta unless the validated source, contract, scope, or risk changed
-  materially. Author ≠ reviewer remains mandatory for corridor and ship gates.
+  materially. Author ≠ reviewer remains mandatory for corridor and ship gates; ongoing programs also follow the boundary-review cadence in `.agents/skills/happier-review/SKILL.md` §7.
 
 ## Validation doctrine
 

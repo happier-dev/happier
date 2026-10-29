@@ -26,6 +26,12 @@ Each one runs on a loaded runtime whose identity you've verified: stack name, PI
 - **Warm vs cold confound.** Navigating from an already-busy Home inflates "warm" open. Split J1 into native document start, bundle delivery and Home-ready.
 - **Fixture authority.** A Machine view grant isn't a credential grant, so a fixture Account needs its own connected service, or the approved Team share, before it can start Sessions.
 - **Lane-held browsers.** Interrupting a lane retires the browser it owns, along with any fixture Account that exists only in that profile. Run fixture browsers detached from the lane's turn.
+- **Inspectors on shared QA processes.** A QA server segfaulted under a CPU profiler (2026-10-23). A shared QA daemon vanished 13 s after an inspector detach (2026-10-26), which cost a measured process mid-recount. Use Doctor `/doctor/vitals` (heapUsed, heapTotal, RSS) and log-based counts. No inspector on QA servers or daemons until an owner-managed release path is validated.
+- **Heap snapshots perturb.** One snapshot paused the daemon for 18.5 s and left RSS at 2.4 GB. Never compare RSS taken after a snapshot; restart before the next RSS measurement.
+- **Async DB cost.** V8 CPU profiles left 92% of Prisma engine time without a domain caller. Attribute database cost with the existing query spans (`webLatencyTrace.ts`, `HAPPIER_WEB_LATENCY_TRACE=1` with JSON trace logging), in a bounded window, extracting only span fields: phase, elapsed, status, request/span ids, route. Never copy raw trace lines.
+- **Source maps.** A UI CPU profile is attributable only when its matching source maps are captured with it. A failed map left 53 s of a 92 s busy window unmapped.
+- **Restarts move ports.** Every QA stack restart moves internal ports. Refresh fixture daemons and re-read `stack info` before using either.
+- **Version skew across stacks.** A newer peer daemon (for example a Team broker on another stack) can expose capability shapes an older QA server cannot read. Before blaming product code, compare the loaded identities of both sides.
 
 ## CI tiers (PERFCI)
 

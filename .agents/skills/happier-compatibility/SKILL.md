@@ -67,11 +67,13 @@ compatibility obligation.
 
 Do not proceed from a vague claim such as “the old client probably sends this.” Inspect the released/predecessor producer, reader, serializer, artifact, or pinned golden vector.
 
+Before tightening schema strictness, census supported released shapes, current predecessor shapes, and existing stored shapes at the affected read boundary, using authorized non-sensitive evidence. Prove each reachable shape remains readable or has an approved migration or rejection decision; unavailable stored-shape evidence is a named gap, never evidence that only the current shape exists.
+
 ## 3. Map the corridor and close split-brains
 
 Inventory the canonical owner and all affected producers, consumers, readers, writers, parsers, serializers, registries, decisions, persistence shapes, tests, and adapters.
 
-Search the touched corridor for same-concept split-brains and similar-but-different logic. Reuse, extend, refine, extract, consolidate, migrate, or remove at the canonical owner. A compatibility adapter may translate a historical shape, but it must delegate domain decisions to that owner rather than becoming another active implementation.
+Search the touched corridor for same-concept split-brains and similar-but-different logic. Reuse, extend, refine, extract, consolidate, migrate, or remove at the canonical owner. A compatibility adapter may translate a historical shape, but it must delegate domain decisions to that owner rather than becoming another active implementation. Keep one only for a named producer and version (a released contract, or a dev-skew shape actually observed in a loaded runtime). A RED that constructs the old shape proves the adapter works, not that anything still emits that shape.
 
 Do not unify coincidental similarity across distinct bounded contexts. Name and verify the distinction when similar logic remains separate.
 
@@ -104,6 +106,8 @@ Prefer additive compatible evolution. When that is insufficient, use prepare/exp
 5. remove old support only after its explicit support/removal condition is proven.
 
 Keep feature/capability decisions fail-closed and canonical. Prefer operation-scoped admission so unaffected behavior remains available. Do not add dual writers, fallback domain logic, or multiple registries to simulate compatibility.
+
+Stored or received capability records are read **leaf by leaf**. An unknown or newer value in one leaf (for example `protocolVersions:[1,2,3]` for one operation) withdraws only that leaf. It must never invalidate sibling capabilities or the whole record. On 2026-10-26 a whole-object reader on an older server rejected a newer broker's record, so every Team-bound Session create failed with 400 `update_required`. Strict validation stays where the record is published.
 
 ### Migration authoring
 
