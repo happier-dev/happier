@@ -57,6 +57,9 @@ describe('native accounting Account Project resolution', () => {
             const result = await resolve({ rootPath: '/work/native', label: 'Native repository' }, new AbortController().signal);
             expect(result).toEqual({ projectKey: expect.any(String) });
             expect(result.projectKey).not.toContain('/work/native');
+            expect(transport.mock.calls.filter(([url]) => url.endsWith('/list') || url.endsWith('/read')).map(([, body]) => body))
+                .toEqual([{ kinds: ['workspace-ref'], serverId: 'home' },
+                    { key: { kind: 'project-organization', serverId: 'home', projectKey: result.projectKey } }]);
             expect(rows).toEqual([expect.objectContaining({ key: { kind: 'project-organization', serverId: 'home', projectKey: result.projectKey },
                 content: { t: 'plain', v: { key: { kind: 'project-organization', serverId: 'home', projectKey: result.projectKey }, value: { label: 'Native repository' } } } })]);
             const acceptedRows = structuredClone(rows);
@@ -70,11 +73,22 @@ describe('native accounting Account Project resolution', () => {
             rootPath: '/work/native', label: 'User label', createdAtMs: 1 };
         const key = { kind: 'workspace-ref' as const, serverId: 'home', id: ref.id };
         const rows: ProjectAccountRowV1[] = [{ key, revision: 0, content: { t: 'plain', v: { key, value: ref } } }];
-        accountBoundary(rows);
+        for (let index = 0; index < 1024; index++) {
+            const unrelated = { kind: 'project-organization' as const, serverId: 'home', projectKey: `unrelated-${index}` };
+            rows.push({ key: unrelated, revision: 0, content: { t: 'plain', v: { key: unrelated, value: { label: 'Other' } } } });
+        }
+        const transport = accountBoundary(rows);
         await fixture(async resolve => {
             expect(await resolve({ rootPath: '/work/native', label: 'Vendor label' }, new AbortController().signal))
                 .toEqual({ projectKey: 'project-accepted', workspaceId: 'workspace-accepted' });
-            expect(rows).toEqual([{ key, revision: 0, content: { t: 'plain', v: { key, value: ref } } }]);
+            expect(rows[0]).toEqual({ key, revision: 0, content: { t: 'plain', v: { key, value: ref } } });
+            expect(transport.mock.calls.map(([, body]) => body)).toEqual([{ kinds: ['workspace-ref'], serverId: 'home' }]);
+            rows[0] = { key, revision: 1, content: { t: 'plain', v: { key, value: { ...ref, projectKey: 'changed-project' } } } };
+            expect(await resolve({ rootPath: '/work/native' }, new AbortController().signal))
+                .toEqual({ projectKey: 'changed-project', workspaceId: 'workspace-accepted' });
+            expect(transport.mock.calls.map(([, body]) => body)).toEqual([
+                { kinds: ['workspace-ref'], serverId: 'home' }, { kinds: ['workspace-ref'], serverId: 'home' },
+            ]);
         });
     });
     it('does not invent another Project anchor when an accepted exact checkout is ambiguous', async () => {

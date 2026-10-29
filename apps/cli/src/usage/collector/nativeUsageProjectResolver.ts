@@ -32,7 +32,8 @@ export function createNativeUsageProjectResolver(input: NativeUsageProjectResolv
         return await runWithServerHttpBaseUrl(input.serverHttpBaseUrl, async () => {
             const rowInput = { credentials, serverId: input.authority.serverId, signal,
                 ...(input.sessionCustody ? { sessionCustody: input.sessionCustody } : {}) };
-            const snapshot = await readProjectAccountRows(rowInput);
+            const snapshot = await readProjectAccountRows({ ...rowInput,
+                selection: { kinds: ['workspace-ref'], serverId: input.authority.serverId } });
             signal.throwIfAborted();
             const workspace = resolveWorkspaceRefV1(snapshot.workspaceRefs, {
                 serverId: input.authority.serverId, machineId: input.authority.machineId, rootPath: project.rootPath,
@@ -45,8 +46,6 @@ export function createNativeUsageProjectResolver(input: NativeUsageProjectResolv
                 value: JSON.stringify(['native-project', input.authority.serverId, input.authority.accountId,
                     input.authority.machineId, normalizeWorkspaceRootPathV1(project.rootPath)]) });
             const label = project.label?.trim() || resolveWorkspacePathBasenameV1(project.rootPath)?.trim() || undefined;
-            const known = snapshot.organizations.find(row => row.key.serverId === input.authority.serverId && row.key.projectKey === projectKey);
-            if (known && (known.value.label !== undefined || label === undefined)) return { projectKey };
             const accepted = await mutateProjectAccountOrganization({ ...rowInput, projectKey,
                 mutate: value => value.label !== undefined || label === undefined ? value : { ...value, label } });
             signal.throwIfAborted();
