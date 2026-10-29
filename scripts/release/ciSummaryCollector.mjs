@@ -10,7 +10,7 @@ export const SELECTOR_JOBS = Object.freeze({
   run_server: ['server'],
   run_home_iroh_real: ['home-iroh-real'],
   run_server_db_contract: ['server-db-contract'],
-  run_cli: ['cli'],
+  run_cli: ['cli', 'cliproxyapi-managed-runtime'],
   run_stack: ['stack'],
   run_typecheck: ['typecheck', 'action-map-drift'],
   run_cli_daemon_e2e: ['cli-daemon-e2e'],
@@ -60,7 +60,7 @@ const PATH_FILTERED_JOBS = new Set(['ui-e2e', 'workspace-sync-real', 'action-map
 
 export function jobsForSelectedInputs({ inputs }) {
   const explicitlySelected = inputs.select_jobs_explicitly === true;
-  const jobs = new Set(['cliproxyapi-managed-runtime', 'trusted_ref_guard']);
+  const jobs = new Set(['trusted_ref_guard']);
   for (const [selector, selectedJobs] of Object.entries(SELECTOR_JOBS)) {
     const selected = inputs[selector] === true || (!explicitlySelected && DEFAULT_REQUIRED.has(selector));
     if (!selected) continue;

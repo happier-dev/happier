@@ -9,6 +9,29 @@ import {
   SELECTOR_JOBS,
 } from './ciSummaryCollector.mjs';
 
+test('provider-only reusable calls do not inherit unrelated default lanes', () => {
+  const workflow = YAML.parse(readFileSync(new URL('../../.github/workflows/tests.yml', import.meta.url), 'utf8'));
+  const defaults = Object.fromEntries(Object.entries(workflow.on.workflow_call.inputs)
+    .map(([key, definition]) => [key, definition.default]));
+  const required = jobsForSelectedInputs({
+    inputs: { ...defaults, select_jobs_explicitly: true, run_providers: true },
+  });
+  assert.deepEqual([...required].sort(), ['providers', 'release_actor_guard', 'trusted_ref_guard']);
+});
+
+test('explicit CLI selection owns the managed runtime without spilling into other callers', () => {
+  for (const [selector, jobs] of [
+    ['run_cli', ['cli', 'cliproxyapi-managed-runtime']],
+    ['run_server', ['server']],
+    ['run_stress', ['stress']],
+    ['run_mobile_e2e_android', ['mobile-e2e-android']],
+  ]) {
+    assert.deepEqual([...jobsForSelectedInputs({ inputs: { select_jobs_explicitly: true, [selector]: true } })].sort(),
+      [...jobs, 'trusted_ref_guard'].sort());
+  }
+  assert.deepEqual([...jobsForSelectedInputs({ inputs: { select_jobs_explicitly: true } })], ['trusted_ref_guard']);
+});
+
 test('every run selector resolves to its complete job set', () => {
   assert.deepEqual(SELECTOR_JOBS.run_ui, ['ui-unit', 'ui-integration', 'ui', 'action-map-drift']);
   assert.deepEqual(SELECTOR_JOBS.run_shared_packages, ['shared-packages-unit']);
@@ -48,7 +71,6 @@ test('explicit selection requires every selected job while leaving unrelated ski
   });
   assert.deepEqual([...required].sort(), [
     'action-map-drift',
-    'cliproxyapi-managed-runtime',
     'trusted_ref_guard',
     'ui',
     'ui-integration',

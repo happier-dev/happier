@@ -49,7 +49,7 @@ on:
         type: boolean
       run_ui:
         required: false
-        default: true
+        default: false
         type: boolean
       run_shared_packages:
         required: false
@@ -57,11 +57,11 @@ on:
         type: boolean
       run_plugin_workspaces:
         required: false
-        default: true
+        default: false
         type: boolean
       run_server:
         required: false
-        default: true
+        default: false
         type: boolean
       run_home_iroh_real:
         description: "Run native and real Chromium Iroh Home and Machine transport completion gates"
@@ -70,27 +70,27 @@ on:
         type: boolean
       run_server_db_contract:
         required: false
-        default: true
+        default: false
         type: boolean
       run_cli:
         required: false
-        default: true
+        default: false
         type: boolean
       run_stack:
         required: false
-        default: true
+        default: false
         type: boolean
       run_typecheck:
         required: false
-        default: true
+        default: false
         type: boolean
       run_cli_daemon_e2e:
         required: false
-        default: true
+        default: false
         type: boolean
       run_e2e_core:
         required: false
-        default: true
+        default: false
         type: boolean
       run_e2e_core_slow:
         required: false
@@ -130,7 +130,7 @@ on:
         type: boolean
       run_installers_smoke:
         required: false
-        default: true
+        default: false
         type: boolean
       run_artifact_verify:
         required: false
@@ -150,7 +150,7 @@ on:
         type: string
       run_binary_smoke:
         required: false
-        default: true
+        default: false
         type: boolean
       run_build_smoke:
         required: false
@@ -688,7 +688,7 @@ jobs:
           NODE
 
   cliproxyapi-managed-runtime:
-    if: ${{ !(!inputs.select_jobs_explicitly && ((github.event_name == 'push' && github.ref_name == 'v0.3') || (github.event_name == 'pull_request' && github.base_ref == 'v0.3'))) }}
+    if: ${{ !(!inputs.select_jobs_explicitly && ((github.event_name == 'push' && github.ref_name == 'v0.3') || (github.event_name == 'pull_request' && github.base_ref == 'v0.3'))) && (!inputs.select_jobs_explicitly || inputs.run_cli) }}
     needs: [trusted_ref_guard]
     name: CLIProxyAPI managed runtime (${{ matrix.platform_key }})
     runs-on: ${{ matrix.runner }}
