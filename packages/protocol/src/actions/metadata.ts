@@ -18,6 +18,9 @@ export const ActionSurfaceSchema = lazyZodSchema(() => z.strictObject({
 }));
 export type ActionSurfaces = z.infer<typeof ActionSurfaceSchema>;
 
+/** Disclosure only; never an authority requirement or a nonwaivable approval floor. */
+export const ActionPermissionChangingSchema = lazyZodSchema(() => z.literal(true));
+
 /**
  * Host-stamped authority required to admit a host Action. This is deliberately
  * independent from the transport/surface: a PAT and a trusted Plugin carry
