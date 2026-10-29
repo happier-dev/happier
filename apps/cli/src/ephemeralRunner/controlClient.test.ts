@@ -36,6 +36,42 @@ const endpointFactsContent = { v: 1 as const, directory: '/work', machine: {
 } };
 
 describe('ephemeral Runner HTTP control client', () => {
+  it('publishes connectivity only when the transport state changes across repeated control responses', async () => {
+    let online = true;
+    const connection = createEphemeralRunnerHttpControlConnection({
+      activationId: '00000000-0000-4000-8000-000000000013',
+      request: async () => {
+        if (!online) throw new TypeError('offline');
+        return { status: 'stored', progressPhase: 'checking_ai_access' };
+      },
+      createProjectionProof: () => ({ projection: true }),
+      createProgressProof: (phase) => ({ signedPhase: phase }),
+    });
+    const states = vi.fn();
+    const unsubscribe = connection.onConnectionState(states);
+    const signal = new AbortController().signal;
+    try {
+      for (let response = 0; response < 100; response += 1) {
+        await connection.reportProgress({ phase: 'checking_ai_access', signal });
+      }
+      expect(states.mock.calls).toEqual([['connected']]);
+
+      online = false;
+      for (let failure = 0; failure < 20; failure += 1) {
+        await expect(connection.decline({ claim: {} as never, signal }))
+          .rejects.toMatchObject({ cause: expect.any(TypeError) });
+      }
+      expect(states.mock.calls).toEqual([['connected'], ['reconnecting']]);
+
+      online = true;
+      await connection.reportProgress({ phase: 'checking_ai_access', signal });
+      expect(states.mock.calls).toEqual([['connected'], ['reconnecting'], ['connected']]);
+    } finally {
+      unsubscribe();
+      await connection.close();
+    }
+  });
+
   it('returns the materialized winner of endpoint decline instead of claiming cancellation', async () => {
     const connection = createEphemeralRunnerHttpControlConnection({
       activationId: '00000000-0000-4000-8000-000000000013',

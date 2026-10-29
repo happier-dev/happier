@@ -100,6 +100,12 @@ export function createEphemeralRunnerHttpControlConnection<Manifest = RunnerLaun
     ?? ((value) => computeRunnerLaunchManifestCommitmentV1(value));
   const deriveManifestAgentTargetKey = input.deriveManifestAgentTargetKey ?? deriveRunnerLaunchManifestAgentTargetKeyV1;
   const listeners = new Set<(state: EphemeralRunnerConnectionState) => void>();
+  let connectionState: EphemeralRunnerConnectionState | null = null;
+  const publishConnectionState = (state: EphemeralRunnerConnectionState) => {
+    if (state === connectionState) return;
+    connectionState = state;
+    for (const listener of listeners) listener(state);
+  };
   let closed = false;
   let reviewedLaunchManifestCommitment: string | null = null;
   let readinessProjection: RunnerBrokerReadinessProjectionV1 | null = null;
@@ -117,15 +123,15 @@ export function createEphemeralRunnerHttpControlConnection<Manifest = RunnerLaun
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(body),
       }, signal);
-      for (const listener of listeners) listener('connected');
+      publishConnectionState('connected');
       return value;
     } catch (error) {
       if (signal.aborted) throw error;
       if (error instanceof EphemeralRunnerControlHttpError) {
-        for (const listener of listeners) listener('connected');
+        publishConnectionState('connected');
         throw error;
       }
-      for (const listener of listeners) listener('reconnecting');
+      publishConnectionState('reconnecting');
       throw new EphemeralRunnerControlTransportError(error);
     }
   };
