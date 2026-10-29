@@ -4,6 +4,7 @@ import {
   mapClaudeRateLimitEventToUsageDetails,
   mapClaudeRuntimeRateLimitsToUsageObservation,
 } from './usage.js';
+import { classifyClaudeConnectedServiceRuntimeAuthFailure } from './failure.js';
 
 describe('mapClaudeRuntimeRateLimitsToUsageObservation', () => {
   it.each(['allowed', 'allowed_warning', 'rejected'])('reads every unified SDK window for %s events without mixing fraction and percent units', (status) => {
@@ -99,6 +100,19 @@ describe('mapClaudeRuntimeRateLimitsToUsageObservation', () => {
 });
 
 describe('mapClaudeRateLimitEventToUsageDetails', () => {
+  it.each([
+    { apiErrorParams: { rate_limit_info: { resetsAt: 1_793_444_400, rateLimitType: 'seven_day', utilization: 0.95 } } },
+    { quotaLimits: { resetsAt: 1_793_444_400, rateLimitType: 'seven_day', utilization: 0.95 } },
+  ])('preserves structured usage rejection timing and allowance through classification: %j', (structured) => {
+    const error = { type: 'assistant', isApiErrorMessage: true, apiError: 'usage_limit_reached',
+      message: { content: [{ type: 'text', text: "You've hit your limit" }] }, ...structured };
+    expect(mapClaudeRateLimitEventToUsageDetails(error)).toMatchObject({
+      resetAtMs: 1_793_444_400_000, providerLimitId: 'seven_day', limitCategory: 'usage_limit',
+    });
+    expect(classifyClaudeConnectedServiceRuntimeAuthFailure({
+      serviceId: 'claude-subscription', profileId: 'account-a', groupId: 'pool-a', error,
+    })).toMatchObject({ kind: 'usage_limit', resetsAtMs: 1_793_444_400_000, providerLimitId: 'seven_day' });
+  });
   it('does not fabricate allowance IDs from generic errors, but preserves an explicit allowance', () => {
     const event = { type: 'assistant', isApiErrorMessage: true, error: {
       error_status: 429, type: 'rate_limit_error', message: 'Usage limit reached',

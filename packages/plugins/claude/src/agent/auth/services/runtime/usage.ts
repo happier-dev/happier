@@ -196,6 +196,11 @@ function collectSyntheticApiErrorRecords(record: Record<string, unknown>): Recor
     records.push(result);
     if (isRecord(result.error)) records.push(result.error);
   }
+  for (const source of [...records]) {
+    const apiErrorParams = isRecord(source.apiErrorParams) ? source.apiErrorParams : null;
+    if (isRecord(apiErrorParams?.rate_limit_info)) records.push(apiErrorParams.rate_limit_info);
+    if (isRecord(source.quotaLimits)) records.push(source.quotaLimits);
+  }
   return records;
 }
 
@@ -230,7 +235,7 @@ function readSyntheticProviderLimitId(records: readonly Record<string, unknown>[
   if (records.some(containsProviderCapacityEvidence)) return 'server_overloaded';
   if (records.some(containsTransientThrottleEvidence)) return 'transient';
   for (const record of records) {
-    for (const name of ['providerLimitId', 'provider_limit_id', 'limit', 'limitType', 'limit_type']) {
+    for (const name of ['providerLimitId', 'provider_limit_id', 'rateLimitType', 'rate_limit_type', 'limit', 'limitType', 'limit_type']) {
       const text = readString(record[name]);
       if (text) return text;
     }
@@ -275,7 +280,8 @@ function mapSyntheticClaudeApiErrorToUsageDetails(
     'status_code',
   ]));
   const hasRateLimitEvidence = records.some(containsRateLimitEvidence);
-  const hasUsageLimitEvidence = records.some(containsUsageLimitEvidence);
+  const hasDeclaredUsageLimit = records.some((source) => source.apiError === 'usage_limit_reached');
+  const hasUsageLimitEvidence = hasDeclaredUsageLimit || records.some(containsUsageLimitEvidence);
   const hasTransientThrottleEvidence = records.some(containsTransientThrottleEvidence);
   const hasProviderCapacityEvidence = status === 529 || records.some(containsProviderCapacityEvidence);
   const hasCompatibleStatus = status === null || status === 429 || status === 529;
