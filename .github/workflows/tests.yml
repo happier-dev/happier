@@ -430,19 +430,6 @@ jobs:
           if-no-files-found: ignore
           include-hidden-files: true
 
-      - name: Report Gate job memory after termination
-        if: ${{ always() }}
-        run: |
-          echo "Gate job memory (whole runner service; not process-only RSS):"
-          free -h
-          cat /proc/self/cgroup
-          gate_cgroup_path="$(awk -F: '$1 == "0" && $2 == "" { print $3; exit }' /proc/self/cgroup)"
-          for observation in memory.events memory.max memory.peak memory.current; do
-            gate_observation_path="/sys/fs/cgroup$gate_cgroup_path/$observation"
-            echo "$gate_observation_path:"
-            if [ -r "$gate_observation_path" ]; then cat "$gate_observation_path"; else echo "Unavailable; no memory conclusion from missing telemetry."; fi
-          done
-
   gate-compiler:
     name: Gate — UI compiler diagnostics
     needs: [gate-prepare]
@@ -482,7 +469,6 @@ jobs:
           sudo chmod 600 "$swapfile"
           sudo mkswap "$swapfile" >/dev/null
           sudo swapon "$swapfile"
-          free -h
       - name: Check compiler diagnostics without governance or test phases
         id: gate-compiler
         env:
@@ -490,24 +476,8 @@ jobs:
           HAPPIER_TYPESCRIPT_CLI_MEASURE_RSS: "1"
           HAPPIER_TYPECHECK_REPORT_DIR: ${{ runner.temp }}/gate-compiler-ui-reports
         run: |
-          echo "GATE_COMPILER_STARTED_AT=$(date --utc --iso-8601=seconds)" >> "$GITHUB_ENV"
-          compiler_cgroup_path="$(awk -F: '$1 == "0" && $2 == "" { print $3; exit }' /proc/self/cgroup)"
-          compiler_cgroup_directory="/sys/fs/cgroup$compiler_cgroup_path"
-          echo "GATE_COMPILER_CGROUP=$compiler_cgroup_directory" >> "$GITHUB_ENV"
-          echo "Compiler host memory before execution:"
-          free -h
-          echo "Compiler host cgroup identity:"
-          cat /proc/self/cgroup
-          echo "Compiler host cgroup memory events before execution:"
-          if [ -r "$compiler_cgroup_directory/memory.events" ]; then
-            cat "$compiler_cgroup_directory/memory.events"
-          else
-            echo "Current cgroup memory.events unavailable; kernel evidence remains necessary."
-          fi
           mkdir -p "$HAPPIER_TYPECHECK_REPORT_DIR"
-          if pnpm run typecheck:compiler --prepared-workspaces --compiler-partition=ui; then package_status=0; else package_status=$?; fi
-          node scripts/ci/reportGateRegressions.mjs --kind=compiler --input="$HAPPIER_TYPECHECK_REPORT_DIR" \
-            --baseline=scripts/ci/gate-triage-baseline.json --package-status="$package_status"
+          pnpm run typecheck:compiler --prepared-workspaces --compiler-partition=ui
       - name: Run release and workflow contract tests
         # The same commands as the ordinary release-contracts lane, which v0.3 skips;
         # they read workflows, release scripts and the prepared workspace packages.
@@ -516,37 +486,6 @@ jobs:
           set -euo pipefail
           pnpm run test:release:contracts
           node scripts/pipeline/run.mjs release-sync-installers --check
-      - name: Report test wiring findings
-        # Report-only until the known wiring debt is cleared; findings stay in the log.
-        if: ${{ !cancelled() && steps.gate-compiler-install.outcome == 'success' }}
-        continue-on-error: true
-        run: pnpm run test:wiring
-      - name: Report test policy findings
-        # Report-only until the known policy debt is cleared; findings stay in the log.
-        if: ${{ !cancelled() && steps.gate-compiler-install.outcome == 'success' }}
-        continue-on-error: true
-        run: pnpm run test:policy
-      - name: Report host evidence after compiler termination
-        if: ${{ always() }}
-        run: |
-          echo "Compiler host memory after termination:"
-          free -h
-          echo "Compiler host cgroup identity:"
-          cat /proc/self/cgroup
-          for observation in memory.events memory.max memory.peak memory.current; do
-            compiler_observation_path="$GATE_COMPILER_CGROUP/$observation"
-            echo "$compiler_observation_path:"
-            if [ -r "$compiler_observation_path" ]; then
-              cat "$compiler_observation_path"
-            else
-              echo "Unavailable at current cgroup; no conclusion from the missing observation."
-            fi
-          done
-          echo "Kernel journal since compiler execution began:"
-          if ! sudo -n journalctl --dmesg --since "$GATE_COMPILER_STARTED_AT" --no-pager; then
-            echo "Kernel journal unavailable; compiler termination sender remains unknown."
-          fi
-
   gate-unit:
     name: Gate — ${{ matrix.package }} unit (${{ matrix.part }}/${{ matrix.parts }})
     needs: [gate-prepare]
@@ -565,8 +504,6 @@ jobs:
       HAPPIER_UI_VITEST_PART: ${{ matrix.part }}
       HAPPIER_UI_VITEST_PARTS: ${{ matrix.parts }}
       # Four workers previously reached 14.6 GiB on the hosted 16 GiB machines.
-      HAPPIER_GATE_TRIAGE_ROOT: ${{ github.workspace }}
-      HAPPIER_GATE_TRIAGE_BASELINE: ${{ github.workspace }}/scripts/ci/gate-triage-baseline.json
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -580,9 +517,6 @@ jobs:
           if [ '${{ matrix.package }}' = ui ]; then gate_workers=2; else gate_workers="$(node -p 'require("node:os").availableParallelism()')"; fi
           echo "workers=$gate_workers" >> "$GITHUB_OUTPUT"
           echo "Gate worker budget: $gate_workers; UI uses two workers for the measured hosted memory boundary."
-          echo "Gate unit host memory before preparation:"
-          free -h
-          cat /proc/self/cgroup
       - uses: ./.github/actions/install-pnpm-dependencies
         id: gate-unit-install
         with:
@@ -607,8 +541,7 @@ jobs:
           gate_status=0
           if [ "$GATE_PACKAGES" = 'ui' ]; then
             # Preserve the UI wrapper's existing file-partition selection.
-            HAPPIER_VITEST_MAX_WORKERS="$GATE_VITEST_MAX_WORKERS" pnpm --filter @happier-dev/app run test:unit \
-              --reporter=default --reporter="$GITHUB_WORKSPACE/scripts/ci/reportGateRegressions.mjs" || gate_status=1
+            HAPPIER_VITEST_MAX_WORKERS="$GATE_VITEST_MAX_WORKERS" pnpm --filter @happier-dev/app run test:unit || gate_status=1
           else
             gate_projects=()
             for gate_package in $GATE_PACKAGES; do
@@ -620,28 +553,10 @@ jobs:
               fi
             done
             if [ "${#gate_projects[@]}" -gt 0 ]; then
-              if HAPPIER_VITEST_MAX_WORKERS="$GATE_VITEST_MAX_WORKERS" pnpm run test:gate-unit "${gate_projects[@]}"; then package_status=0; else package_status=$?; fi
-              node scripts/ci/reportGateRegressions.mjs --kind=unit --input="$HAPPIER_UNIT_JSON_OUTPUT" \
-                --baseline="$HAPPIER_GATE_TRIAGE_BASELINE" --package-status="$package_status" || gate_status=1
+              HAPPIER_VITEST_MAX_WORKERS="$GATE_VITEST_MAX_WORKERS" pnpm run test:gate-unit "${gate_projects[@]}" || gate_status=1
             fi
           fi
           exit "$gate_status"
-      - name: Report Gate unit runner memory after termination
-        if: ${{ always() }}
-        run: |
-          echo "Gate unit host memory after termination (whole runner service, not Vitest-only RSS):"
-          free -h
-          cat /proc/self/cgroup
-          unit_cgroup_path="$(awk -F: '$1 == "0" && $2 == "" { print $3; exit }' /proc/self/cgroup)"
-          for observation in memory.events memory.max memory.peak memory.current; do
-            unit_observation_path="/sys/fs/cgroup$unit_cgroup_path/$observation"
-            echo "$unit_observation_path:"
-            if [ -r "$unit_observation_path" ]; then
-              cat "$unit_observation_path"
-            else
-              echo "Unavailable at current cgroup; no conclusion from the missing observation."
-            fi
-          done
       - name: Upload CLI unit bundled-plugin preparation diagnostics
         if: ${{ always() && contains(matrix.packages, 'cli') }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -698,7 +613,6 @@ jobs:
           sudo chmod 600 "$swapfile"
           sudo mkswap "$swapfile" >/dev/null
           sudo swapon "$swapfile"
-          free -h
       - name: Check non-UI compiler projects from the shared preparation
         env:
           HAPPIER_TYPESCRIPT_COMPILER: microsoft
@@ -708,9 +622,7 @@ jobs:
         # Each native project is a separate process; neither job replays the suite.
         run: |
           mkdir -p "$HAPPIER_TYPECHECK_REPORT_DIR"
-          if pnpm run typecheck:compiler --prepared-workspaces --compiler-partition=host; then package_status=0; else package_status=$?; fi
-          node scripts/ci/reportGateRegressions.mjs --kind=compiler --input="$HAPPIER_TYPECHECK_REPORT_DIR" \
-            --baseline=scripts/ci/gate-triage-baseline.json --package-status="$package_status"
+          pnpm run typecheck:compiler --prepared-workspaces --compiler-partition=host
       - name: Build the CLI distribution
         # This job has just checked and emitted the current CLI source graph.
         # Consume those declarations without loading that graph a second time.
@@ -749,19 +661,6 @@ jobs:
             dist/release-assets/stack
             dist/release-assets/ui-web
           if-no-files-found: error
-
-      - name: Report Gate job memory after termination
-        if: ${{ always() }}
-        run: |
-          echo "Gate job memory (whole runner service; not process-only RSS):"
-          free -h
-          cat /proc/self/cgroup
-          gate_cgroup_path="$(awk -F: '$1 == "0" && $2 == "" { print $3; exit }' /proc/self/cgroup)"
-          for observation in memory.events memory.max memory.peak memory.current; do
-            gate_observation_path="/sys/fs/cgroup$gate_cgroup_path/$observation"
-            echo "$gate_observation_path:"
-            if [ -r "$gate_observation_path" ]; then cat "$gate_observation_path"; else echo "Unavailable; no memory conclusion from missing telemetry."; fi
-          done
 
   gate:
     name: Gate
