@@ -11,7 +11,7 @@ test('issue handoff workflow delegates opened, reopened, and comment events to t
   assert.match(workflow, /issues:\s*\n\s+types:\s*\[opened, reopened\]/);
   assert.match(workflow, /issue_comment:\s*\n\s+types:\s*\[created\]/);
   assert.match(workflow, /permissions:\s*\n\s+contents:\s*read\s*\n\s+issues:\s*write/);
-  assert.match(workflow, /actions\/checkout@[^\n]+\n\s+with:\s*\n\s+persist-credentials:\s*false/);
+  assert.match(workflow, /actions\/checkout@[^\n]+\n\s+with:\s*\n\s+ref: \$\{\{ github\.event\.repository\.default_branch \}\}\s*\n\s+persist-credentials:\s*false/);
   assert.match(workflow, /actions\/setup-node@[^\n]+\n\s+with:\s*\n\s+node-version-file:\s*\.node-version\s*\n/);
   assert.match(workflow, /node scripts\/pipeline\/github\/reconcile-issue-needs\.mjs/);
   assert.match(workflow, /--event-name "\$GITHUB_EVENT_NAME"/);
@@ -23,4 +23,15 @@ test('label bootstrap owns both mutually exclusive issue handoff labels', async 
 
   assert.match(workflow, /name: 'needs:maintainer'.*Project review or action is required\./);
   assert.match(workflow, /name: 'needs:reporter'.*Waiting for new information or confirmation from an external participant\./);
+  assert.match(workflow, /name: 'needs:author'.*Waiting for requested changes or an answer from the pull request author\./);
+});
+
+test('PR lifecycle handoff runs trusted default-branch policy without executing contributor code', async () => {
+  const workflow = await readFile(resolve(repoRoot, '.github/workflows/issue-needs-handoff.yml'), 'utf8');
+  assert.match(workflow, /pull_request_target:\s*\n\s+types: \[opened, reopened, ready_for_review, synchronize, closed\]/);
+  assert.match(workflow, /ref: \$\{\{ github\.event\.repository\.default_branch \}\}/);
+  assert.match(workflow, /pull-requests: read/);
+  assert.match(workflow, /group: .*github\.event\.issue\.number \|\| github\.event\.pull_request\.number/);
+  assert.doesNotMatch(workflow, /pull_request\.head|pull_request\.merge|checkout.*--/);
+  assert.doesNotMatch(workflow, /pull_request_review:|pull_request_review_comment:/);
 });

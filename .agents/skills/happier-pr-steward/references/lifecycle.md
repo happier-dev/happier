@@ -28,6 +28,8 @@ Lead with the merge verdict. Support it with:
 - proposed validation;
 - the exact human decision needed next.
 
+Distinguish requested repairs from an approach-level rejection. Follow `docs/issue-triage.md#pull-request-handoff-and-disposition` for the next actor and handoff labels; do not duplicate that policy here. A declined proposal is not a request to repair every listed defect. Once the rejection is justified, recommend closure or close through existing explicit authority, preserve any unresolved linked issue, and stop patch/CI work on the rejected code.
+
 Do not edit during this phase.
 
 ## 3. Approved implementation batch
@@ -80,3 +82,5 @@ Re-fetch the live PR. Verify:
 - commits contain only related changes, use the current local Git identity except for an expressly authorized foreign-PR rebase, and include co-authorship only for material contributions embodied in each commit;
 - rejected suggestions have concise factual reasons;
 - merge has not occurred without exact authorization or a condition-bound standing grant that included it.
+
+For a declined approach, replace merge-readiness gates with verification of the posted disposition, current discussion/head, explicit closure authority, resulting closed state when authorized, cleared handoff labels, and any linked issue intentionally left open. If closure remains unauthorized, name that maintainer decision; do not label the author as blocking without an actual outstanding request.
