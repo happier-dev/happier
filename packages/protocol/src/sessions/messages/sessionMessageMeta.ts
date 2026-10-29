@@ -21,6 +21,7 @@ import { SkillMentionV1Schema } from '../../runtime/input/skillMentionV1.js';
 import { ExecutionRunInputTurnV1Schema } from '../../execution/runs/responseSchemas.js';
 import { SessionFollowRuleSourceEvidenceV1Schema } from '../follow/sessionFollowRuleOccurrenceV1.js';
 import { SessionForkVisualOriginV1Schema } from '../board/forkVisualCopies.js';
+import { SessionRuntimeIssueSourceV1Schema, SessionRuntimeIssueV1Schema } from '../control/runtimeIssueV1.js';
 import { SESSION_MESSAGE_MODEL_SELECTION_V1_META_KEY } from '../../providers/selection/v1.js';
 import {
   SESSION_INPUT_AUTHORITY_META_KEY,
@@ -43,6 +44,19 @@ const SESSION_USER_MESSAGE_DELIVERY_INTENTS = new Set<SessionUserMessageDelivery
   'explicit_immediate',
   'interrupt',
 ]);
+
+/**
+ * The saved walkthrough revision and stops a question to its generating Run was asked about. Host-stamped by the
+ * walkthrough discussion owner beside the question's display text, so the walkthrough can project the exchange
+ * under its stop from the transcript itself.
+ */
+export const SCM_WALKTHROUGH_QUESTION_META_KEY_V1 = 'scmWalkthroughQuestionV1' as const;
+export const ScmWalkthroughQuestionMetaV1Schema = lazyZodSchema(() => z.strictObject({
+  resultId: z.string().check(z.minLength(1)),
+  revision: z.number().check(z.int(), z.nonnegative()),
+  stopIds: z.array(z.string().check(z.minLength(1))).check(z.minLength(1)),
+}));
+export type ScmWalkthroughQuestionMetaV1 = z.infer<typeof ScmWalkthroughQuestionMetaV1Schema>;
 
 /** Optional segment details are best-effort; only the version and kind identify a segment. */
 export const SessionMessageStreamSegmentV1Schema = lazyZodSchema(() => z.strictObject({
@@ -149,6 +163,7 @@ export function createSessionMessageMetaSchema(zod: typeof z) {
       happierExecutionRunInputTurnV1: z.catch(z.optional(ExecutionRunInputTurnV1Schema), undefined),
       // A saved SCM result's publication or refusal beside its `scm_diff_summary.v1` envelope; the receipt reader validates it.
       scmResultUpdate: zod.optional(zod.unknown()),
+      [SCM_WALKTHROUGH_QUESTION_META_KEY_V1]: z.catch(z.optional(ScmWalkthroughQuestionMetaV1Schema), undefined),
       // Legacy attachment/native identity carriers are decoded by their existing source owners.
       happierAttachments: zod.optional(zod.unknown()),
       opencodeMessageId: zod.optional(zod.unknown()),
@@ -162,6 +177,10 @@ export function createSessionMessageMetaSchema(zod: typeof z) {
       isThinking: zod.optional(zod.unknown()),
       runtimeEventKind: zod.optional(zod.unknown()),
       runtimeIssueCode: zod.optional(zod.unknown()),
+      // Display-only host failure evidence travels with the readable transcript,
+      // including for collaborators without the owner's Session metadata.
+      runtimeIssueSource: zod.catch(zod.optional(SessionRuntimeIssueSourceV1Schema), undefined),
+      runtimeIssueV1: zod.catch(zod.optional(SessionRuntimeIssueV1Schema), undefined),
     }).check(zod.superRefine((value, ctx) => {
       if (
         value[SESSION_INPUT_REQUEST_META_KEY] !== undefined
@@ -176,5 +195,5 @@ export function createSessionMessageMetaSchema(zod: typeof z) {
     }));
 }
 
-export const SessionMessageMetaSchema = createSessionMessageMetaSchema(z);
+export const SessionMessageMetaSchema = lazyZodSchema(() => createSessionMessageMetaSchema(z));
 export type SessionMessageMeta = z.infer<typeof SessionMessageMetaSchema>;
