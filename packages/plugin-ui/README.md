@@ -94,6 +94,30 @@ Subpath exports are available for narrower imports:
 import { usePluginHostApi, usePluginResource } from '@happier-dev/plugin-ui';
 ```
 
+### Composer status popovers (0.3 development source)
+
+For a status item that opens details from the composer, `Popover` can draw the
+existing `ComposerStatusBadge` inside its owned trigger (0.3 development source):
+
+```tsx
+<Popover
+  open={open}
+  onOpenChange={setOpen}
+  trigger="PR #42 · Checks running"
+  triggerAppearance="composerStatus"
+  triggerComposerStatus={{ tone: 'active', emphasis: 'prominent' }}
+  triggerIcon="branch"
+  triggerAccessibilityLabel="acme/widgets PR #42 · Checks running"
+  sheet={{ title: 'Pull request' }}
+>
+  {open ? <Text value="Pull request details" /> : null}
+</Popover>
+```
+
+The overlay still owns the single interactive trigger, expanded state, focus
+return and dismissal. The host presents the same content in its phone sheet;
+the badge adds no second press handler or detail subscription.
+
 ### Memory facts (0.3 development source)
 
 Import `HappierMemoryFactRow` and its props from `@happier-dev/plugin-ui/components`

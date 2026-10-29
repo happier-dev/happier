@@ -114,6 +114,70 @@ function hasProjectedSurfaceChrome(element: HTMLElement | null): boolean {
 }
 
 describe('controlled overlay presentation', () => {
+  it('opens a composer status badge through the same overlay owner with one trigger and focus return', async () => {
+    let returnTarget: unknown;
+    function Status() {
+      const [open, setOpen] = useState(false);
+      return <Popover open={open} onOpenChange={setOpen} trigger="PR #42 · Stale"
+        triggerAppearance="composerStatus" triggerComposerStatus={{ tone: 'paused', emphasis: 'prominent' }}
+        triggerAccessibilityLabel="acme/widgets PR #42 · Stale" testID="pr-status"
+        sheet={{ title: 'Pull request' }}><Text value="Retained pull request facts" /></Popover>;
+    }
+    const mount = mountWithPresentationHost(<Status />, input => {
+      returnTarget = input.focusReturnRef?.current;
+      return <><>{input.content}</><button onClick={input.onRequestClose}>Close status</button></>;
+    });
+    try {
+      const trigger = mount.container.querySelector<HTMLElement>('[data-testid="pr-status"]')!;
+      expect(trigger.querySelector('[data-testid="pr-status:badge:label"]')?.textContent).toBe('PR #42 · Stale');
+      expect(mount.container.querySelectorAll('[role="button"]')).toHaveLength(1);
+      expect(trigger.getAttribute('aria-label')).toBe('acme/widgets PR #42 · Stale');
+      expect(trigger.getAttribute('aria-haspopup')).toBe('dialog');
+      expect(trigger.getAttribute('aria-expanded')).toBe('false');
+      await act(async () => { trigger.click(); });
+      expect(trigger.getAttribute('aria-expanded')).toBe('true');
+      expect(mount.container.querySelector('[role="dialog"]')?.textContent).toContain('Retained pull request facts');
+      expect(returnTarget).toBe(trigger);
+      await act(async () => { mount.container.querySelector<HTMLButtonElement>('button')!.click(); });
+      expect(trigger.getAttribute('aria-expanded')).toBe('false');
+      expect(mount.container.querySelector('[role="dialog"]')).toBeNull();
+    } finally { mount.unmount(); }
+  });
+  it('keeps a composer status trigger disabled and lets the host compose its phone sheet', async () => {
+    const onOpenChange = vi.fn();
+    const context = createSurfaceContext();
+    const sheet = { title: 'Pull request' };
+    const host: PluginUiPresentationHost = {
+      ...createPresentationHost(() => null),
+      renderPopover: input => {
+        expect(input.sheet).toBe(sheet);
+        return input.content({ requestClose: input.onRequestClose, maxHeight: 240, presentation: 'sheet' });
+      },
+    };
+    const mount = mountThroughReactNativeWeb(
+      <PluginUiProvider hostApi={createHostApiStub(context)} context={context}>
+        <PluginUiPresentationHostProviderInternal host={host}>
+          <Popover open={false} onOpenChange={onOpenChange} trigger="PR #42"
+            triggerAppearance="composerStatus" triggerAccessibilityLabel="Pull request" disabled
+            triggerTabIndex={-1} testID="disabled-status" />
+          <Popover open onOpenChange={onOpenChange} trigger="PR #43"
+            triggerAppearance="composerStatus" triggerAccessibilityLabel="Pull request" sheet={sheet}>
+            <Text value="Phone pull request facts" />
+          </Popover>
+        </PluginUiPresentationHostProviderInternal>
+      </PluginUiProvider>,
+    );
+    try {
+      const trigger = mount.container.querySelector<HTMLElement>('[data-testid="disabled-status"]')!;
+      expect(trigger.getAttribute('role')).toBe('button');
+      expect(trigger.getAttribute('aria-disabled')).toBe('true');
+      expect(trigger.getAttribute('tabindex')).toBe('-1');
+      await act(async () => { trigger.click(); });
+      expect(onOpenChange).not.toHaveBeenCalled();
+      expect(mount.container.textContent).toContain('Phone pull request facts');
+      expect(mount.container.querySelector('[role="dialog"]')).toBeNull();
+    } finally { mount.unmount(); }
+  });
   it('keeps hosted anchored choices in the canonical menu focus, chrome and dismissal owner', async () => {
     const methods = ['showModal', 'close'] as const;
     const previous = methods.map(key => Object.getOwnPropertyDescriptor(HTMLDialogElement.prototype, key));

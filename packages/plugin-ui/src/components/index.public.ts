@@ -66,6 +66,7 @@ export {
   type PluginUiFocusTarget,
   usePluginUiFocusTarget,
 } from './Focus.js';
+export { ComposerStatusBadge, type ComposerStatusBadgeEmphasis, type ComposerStatusBadgeProps, type ComposerStatusBadgeTone } from './ComposerStatusBadge.js';
 export * from './Foundation.js';
 export * from './Form.js';
 export {

@@ -33,6 +33,7 @@ import { resolveHappierUiPalette, useOptionalHappierUiPalette, useOptionalHappie
 import { resolveHappierTextStepStyle } from '../presentation/layout/pageText.js';
 import { resolveHappierIconSize } from '../presentation/content/Icon.js';
 import { useButtonFace } from './Button.js';
+import { ComposerStatusBadge, type ComposerStatusBadgeProps } from './ComposerStatusBadge.js';
 import { Icon, PluginUiIconGlyph, type IconName } from './Icon.js';
 import { TaskStatusGlyph, type TaskStatusCategory } from './TaskStatusGlyph.js';
 import { OverlayFieldTriggerContext } from './overlayFieldTrigger.js';
@@ -66,9 +67,12 @@ export type PopoverProps = Readonly<{
    * (needs `triggerIcon`): the phone toolbar's Filters and ⋯ beside the search, where the buttons are the
    * object on their row. `status` is a quiet status line that opens its own explanation (a pull request's
    * merge readiness beside Merge): optional `triggerMarks`, the words, a quieter `triggerDetail` clause and a
-   * caret, on the plain button's hover fill.
+   * caret, on the plain button's hover fill. `composerStatus` reuses the composer's status badge
+   * inside this same owned trigger.
    */
-  triggerAppearance?: 'text' | 'control' | 'primary' | 'well' | 'status';
+  triggerAppearance?: 'text' | 'control' | 'primary' | 'well' | 'status' | 'composerStatus';
+  /** `composerStatus` only: the badge's existing semantic tone and emphasis. */
+  triggerComposerStatus?: Pick<ComposerStatusBadgeProps, 'tone' | 'emphasis'>;
   /**
    * Draws a caret after a plain `text` trigger, so a title that opens a menu reads as one ("Entry ⌄" in
    * a table's column header). Labelled appearances (`control`, `primary`) are buttons and never take it.
@@ -173,6 +177,7 @@ function PopoverPresentation({
   triggerTextVariant = 'meta',
   triggerTextTone = 'neutral',
   triggerAppearance = 'text',
+  triggerComposerStatus,
   triggerDisclosure = false,
   triggerIcon,
   triggerTaskStatus,
@@ -324,7 +329,17 @@ function PopoverPresentation({
               <HappierText accessible={false} numberOfLines={1} style={label.style}>{label.text}</HappierText>
             </HappierFieldBoxTrigger>
           );
-        } : iconOnly ? (state) => (
+        } : triggerAppearance === 'composerStatus' ? (
+          <ComposerStatusBadge
+            label={trigger}
+            tone={triggerComposerStatus?.tone}
+            emphasis={triggerComposerStatus?.emphasis}
+            icon={triggerIcon}
+            opensPopover
+            expanded={open}
+            testID={testID === undefined ? undefined : `${testID}:badge`}
+          />
+        ) : iconOnly ? (state) => (
           <View style={iconChrome(state).surface}>
             {triggerTaskStatus !== undefined
               ? <TaskStatusGlyph category={triggerTaskStatus} />
