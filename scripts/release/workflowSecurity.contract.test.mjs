@@ -254,6 +254,17 @@ test('workflow security W4: the real install shell forwards flags without execut
   }
 });
 
+test('workflow security W5: maintainer installs cannot inherit an App token', () => {
+  for (const file of ['issue-triage.yml', 'issue-triage-manual.yml']) {
+    const workflow = workflows.get(file);
+    assert.deepEqual(securityViolations(new Map([[file, workflow]]), 'app-token-scope'), []);
+    for (const job of Object.values(workflow.jobs)) {
+      const checkout = job.steps.find((step) => actionName(step.uses) === 'actions/checkout'
+        && step.with?.repository === 'happier-dev/maintainers-tools');
+      assert.equal(checkout?.with?.['persist-credentials'], false);
+    }
+  }
+});
 
 
 
