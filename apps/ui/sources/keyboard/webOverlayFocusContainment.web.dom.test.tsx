@@ -66,6 +66,18 @@ describe('useWebOverlayFocusContainment', () => {
         expect(document.activeElement).toBe(lastAction);
     });
 
+    it('leaves Tab to a code editor inside the overlay that uses it for indentation', async () => {
+        await mountHarness(() => <EditorOverlayHarness />, undefined);
+        const editor = getElement<HTMLDivElement>('overlay-editor');
+        editor.focus();
+        const tab = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true });
+        editor.dispatchEvent(tab);
+        // The editor consumed Tab (it indents); the overlay must not also move focus away from it.
+        expect(tab.defaultPrevented).toBe(true);
+        expect(document.activeElement).toBe(editor);
+        expect(getElement('overlay-editor').dataset.indents).toBe('1');
+    });
+
     it('returns focus to the exact connected trigger when the overlay closes', async () => {
         const harness = await mountHarness((props: OverlayHarnessProps) => <OverlayHarness {...props} />, {
             active: false,
@@ -196,6 +208,27 @@ function OverlayHarness(props: OverlayHarnessProps): React.ReactElement {
                     <button data-testid="overlay-last-action">Last</button>
                 </div>
             ) : null}
+        </>
+    );
+}
+
+/** The last focusable is an editor that, like Monaco and CodeMirror, handles Tab on its own element. */
+function EditorOverlayHarness(): React.ReactElement {
+    const shellRef = React.useRef<HTMLDivElement | null>(null);
+    const fallbackRef = React.useRef<HTMLButtonElement | null>(null);
+    useWebOverlayFocusContainment({ active: true, containerRef: shellRef, fallbackRef, focusReturn: { kind: 'activation-time' } });
+    return (
+        <>
+            <button ref={fallbackRef} data-testid="overlay-pane-fallback">Pane fallback</button>
+            <div ref={shellRef} data-testid="overlay-shell" tabIndex={-1}>
+                <button data-testid="overlay-first-action">First</button>
+                <div data-testid="overlay-editor" role="textbox" aria-multiline tabIndex={0} data-indents="0"
+                    onKeyDown={(event) => {
+                        if (event.key !== 'Tab') return;
+                        event.preventDefault();
+                        event.currentTarget.dataset.indents = String(Number(event.currentTarget.dataset.indents) + 1);
+                    }} />
+            </div>
         </>
     );
 }

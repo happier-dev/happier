@@ -177,9 +177,11 @@ export function useWebOverlayFocusContainment(options: WebOverlayFocusContainmen
             focusElement(shouldWrapBackward ? lastFocusableElement : firstFocusableElement);
         };
 
-        document.addEventListener('keydown', handleKeyDown, true);
+        // Bubble phase: a control that uses Tab itself (a code editor indenting) handles it on its own element
+        // first and prevents it; only a Tab nothing claimed moves focus, and only that one is contained.
+        document.addEventListener('keydown', handleKeyDown);
         return () => {
-            document.removeEventListener('keydown', handleKeyDown, true);
+            document.removeEventListener('keydown', handleKeyDown);
         };
     }, [options.active, options.containerRef]);
 }
