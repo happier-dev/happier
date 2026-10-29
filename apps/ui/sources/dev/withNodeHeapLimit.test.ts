@@ -26,17 +26,12 @@ describe('apps/ui withNodeHeapLimit', () => {
         );
     });
 
-    it('caps the default heap on high-memory machines when the UI env override is missing or invalid', () => {
-        const highMemoryMachineBytes = 128 * 1024 * 1024 * 1024;
-
-        expect(resolveMaxOldSpaceSizeMb({}, highMemoryMachineBytes)).toBe(24_576);
-        expect(resolveMaxOldSpaceSizeMb({ HAPPIER_UI_TEST_MAX_OLD_SPACE_SIZE_MB: 'nope' }, highMemoryMachineBytes)).toBe(24_576);
-        expect(resolveMaxOldSpaceSizeMb({ HAPPIER_UI_TEST_MAX_OLD_SPACE_SIZE_MB: '0' }, highMemoryMachineBytes)).toBe(24_576);
-    });
-
-    it('keeps the baseline heap on smaller machines when the UI env override is missing', () => {
-        const smallerMachineBytes = 16 * 1024 * 1024 * 1024;
-        expect(resolveMaxOldSpaceSizeMb({}, smallerMachineBytes)).toBe(8192);
+    it('leaves heap allocation to Node when no valid explicit UI allocation is supplied', () => {
+        for (const env of [{}, { HAPPIER_UI_TEST_MAX_OLD_SPACE_SIZE_MB: 'nope' }, { HAPPIER_UI_TEST_MAX_OLD_SPACE_SIZE_MB: '0' }]) {
+            const allocation = resolveMaxOldSpaceSizeMb(env);
+            expect(allocation).toBeUndefined();
+            expect(upsertMaxOldSpaceSize('--trace-warnings', allocation)).toBe('--trace-warnings');
+        }
     });
 
     it('respects HAPPIER_UI_TEST_MAX_OLD_SPACE_SIZE_MB when valid', () => {

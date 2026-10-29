@@ -15,7 +15,7 @@ export function resolveVitestWorkers(options: {
 } = {}): { minWorkers: number; maxWorkers: number } {
     const env = options.env ?? process.env;
     const override = positiveInteger(env.HAPPIER_VITEST_MAX_WORKERS);
-    // Preserve the existing UI-only override and its six-worker ceiling.
+    // Preserve an explicit UI-only allocation without imposing another ceiling.
     const legacy = options.legacyUiOverride
         ? positiveInteger(env.VITEST_UI_MAX_FORKS)
         : undefined;
@@ -26,7 +26,7 @@ export function resolveVitestWorkers(options: {
     return {
         minWorkers: 1,
         maxWorkers: override
-            ?? (legacy === undefined ? undefined : Math.min(legacy, 6))
+            ?? legacy
             ?? Math.min(defaultWorkers, governor ?? defaultWorkers),
     };
 }

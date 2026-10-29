@@ -273,6 +273,19 @@ test('ordinary UI collection loads current Settings metadata from source with po
     symlinkSync(resolve(repoRoot, 'scripts'), resolve(fixtureRoot, 'scripts'), 'junction');
     symlinkSync(packageRoot, resolve(fixtureRoot, 'node_modules/@happier-dev/protocol'), 'junction');
     copyFileSync(resolve(repoRoot, 'apps/ui/vitest.config.ts'), resolve(uiRoot, 'vitest.config.ts'));
+    const uiManifest = JSON.parse(readFileSync(resolve(repoRoot, 'apps/ui/package.json'), 'utf8'));
+    uiManifest.dependencies['@happier-dev/new-ui-fixture'] = 'workspace:*';
+    writeFileSync(resolve(uiRoot, 'package.json'), JSON.stringify(uiManifest));
+    const newSourceRoot = resolve(fixtureRoot, 'packages/new-ui-fixture/src');
+    mkdirSync(newSourceRoot, { recursive: true });
+    writeFileSync(resolve(newSourceRoot, '../package.json'), JSON.stringify({
+        name: '@happier-dev/new-ui-fixture', exports: { '.': './dist/index.js' },
+    }));
+    writeFileSync(resolve(newSourceRoot, 'index.ts'), 'export const currentSource = true;\n');
+    for (const entry of readdirSync(resolve(repoRoot, 'packages'), { withFileTypes: true })) {
+        if (entry.name === 'protocol') continue;
+        symlinkSync(resolve(repoRoot, 'packages', entry.name), resolve(fixtureRoot, 'packages', entry.name), entry.isDirectory() ? 'junction' : 'file');
+    }
     copyFileSync(resolve(repoRoot, 'packages/protocol/package.json'), resolve(packageRoot, 'package.json'));
     writeFileSync(sourcePath, [
         'import { appendFileSync } from "node:fs";',
@@ -308,6 +321,9 @@ test('ordinary UI collection loads current Settings metadata from source with po
     });
     t.after(async () => { await server.close(); });
 
+    const addedDependency = await server.pluginContainer.resolveId('@happier-dev/new-ui-fixture', collectorPath);
+    assert.equal(addedDependency?.id, resolve(newSourceRoot, 'index.ts'),
+        'a newly declared UI dependency must resolve current source without a second package inventory');
     const resolved = await server.pluginContainer.resolveId(importId, collectorPath);
     assert.equal(resolved?.id, sourcePath);
     const collected = await server.ssrLoadModule(collectorPath);
@@ -322,10 +338,6 @@ test('ordinary UI collection loads current Settings metadata from source with po
     // the replica, retaining the copied metadata leaf and poisoned publication.
     for (const entry of readdirSync(resolve(repoRoot, 'apps/ui/sources'), { withFileTypes: true })) {
         symlinkSync(resolve(repoRoot, 'apps/ui/sources', entry.name), resolve(uiRoot, 'sources', entry.name), entry.isDirectory() ? 'junction' : 'file');
-    }
-    for (const entry of readdirSync(resolve(repoRoot, 'packages'), { withFileTypes: true })) {
-        if (entry.name === 'protocol') continue;
-        symlinkSync(resolve(repoRoot, 'packages', entry.name), resolve(fixtureRoot, 'packages', entry.name), entry.isDirectory() ? 'junction' : 'file');
     }
     for (const [parent, retained] of [['', 'actions'], ['actions', 'settings'], ['actions/settings', 'builtInSettingsMetadata.ts']] as const) {
         for (const entry of readdirSync(resolve(repoRoot, 'packages/protocol/src', parent), { withFileTypes: true })) {

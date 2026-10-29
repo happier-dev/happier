@@ -222,40 +222,6 @@ function dumpActiveHandlesAlways(tag: string, verbose: boolean): void {
     originalConsoleError(`[vitest] active handles details (${tag}): ${details}${suspicious.length > 5 ? ` (+${suspicious.length - 5} more)` : ''}`);
 }
 
-function pauseStdinForTests(): void {
-    try {
-        const stdin = process.stdin as any;
-        if (stdin && typeof stdin.pause === 'function') {
-            stdin.pause();
-        }
-        if (stdin && typeof stdin.removeAllListeners === 'function') {
-            stdin.removeAllListeners('data');
-            stdin.removeAllListeners('readable');
-        }
-        if (stdin && typeof stdin.unref === 'function') {
-            stdin.unref();
-        }
-    } catch {
-        // ignore
-    }
-}
-
-async function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
-    let timeoutId: ReturnType<typeof setTimeout> | null = null;
-    try {
-        const timeoutPromise = new Promise<never>((_, reject) => {
-            timeoutId = setTimeout(() => {
-                reject(new Error(`[vitest] timed out after ${ms}ms: ${label}`));
-            }, ms);
-        });
-        return await Promise.race([promise, timeoutPromise]);
-    } finally {
-        if (timeoutId != null) {
-            clearTimeout(timeoutId);
-        }
-    }
-}
-
 async function dumpWhyIsNodeRunning(tag: string): Promise<void> {
     if (process.env.HAPPIER_VITEST_DEBUG_WHY_NODE_RUNNING !== '1') return;
     try {
@@ -269,36 +235,13 @@ async function dumpWhyIsNodeRunning(tag: string): Promise<void> {
     }
 }
 
-async function closeUndiciGlobalDispatcherForTests(): Promise<void> {
-    try {
-        const undici = await import('undici');
-        const getGlobalDispatcher = (undici as unknown as { getGlobalDispatcher?: () => unknown }).getGlobalDispatcher;
-        if (typeof getGlobalDispatcher !== 'function') return;
-        const dispatcher = getGlobalDispatcher() as unknown as {
-            close?: () => Promise<void> | void;
-            destroy?: () => Promise<void> | void;
-        } | null;
-        if (!dispatcher) return;
-        if (typeof dispatcher.close === 'function') {
-            await dispatcher.close();
-            return;
-        }
-        if (typeof dispatcher.destroy === 'function') {
-            await dispatcher.destroy();
-        }
-    } catch {
-        // ignore (undici may not be available in some runtimes)
-    }
-}
-
 async function runRegisteredRuntimeCleanupsForTests(
-    cleanupTimeoutMs: number,
     debugCleanup: boolean,
 ): Promise<void> {
     for (const [id, cleanup] of getRuntimeCleanupRegistryForTests()) {
         if (debugCleanup) originalConsoleError(`[vitest] afterAll cleanup: ${id} (start)`);
         try {
-            await withTimeout(Promise.resolve(cleanup()), cleanupTimeoutMs, id);
+            await cleanup();
         } finally {
             if (debugCleanup) originalConsoleError(`[vitest] afterAll cleanup: ${id} (end)`);
         }
@@ -409,37 +352,20 @@ afterEach(() => {
     // test files (Vitest workers may reuse the same global between sequential test files).
     vi.unstubAllGlobals();
 
-    pauseStdinForTests();
-
     restoreDomGlobalsToOriginal();
 });
 
 afterAll(async () => {
     maybeLogActiveHandles('before afterAll cleanup');
 
-    const cleanupTimeoutMsRaw = Number.parseInt(process.env.HAPPIER_VITEST_AFTERALL_CLEANUP_TIMEOUT_MS ?? '', 10);
-    const cleanupTimeoutMs = Number.isFinite(cleanupTimeoutMsRaw) && cleanupTimeoutMsRaw > 0 ? cleanupTimeoutMsRaw : 30_000;
     const debugCleanup = process.env.HAPPIER_VITEST_DEBUG_AFTERALL_CLEANUP === '1';
 
     // Runtime modules with background timers register their own test cleanup callbacks when they
     // are imported. Do not import those modules here: pure structural/domain tests should not pay
     // or hang on unrelated connectivity module graphs during global teardown.
-    await runRegisteredRuntimeCleanupsForTests(cleanupTimeoutMs, debugCleanup);
+    await runRegisteredRuntimeCleanupsForTests(debugCleanup);
 
     maybeLogActiveHandles('after registered runtime cleanups');
-
-    if (debugCleanup) originalConsoleError('[vitest] afterAll cleanup: closeUndiciGlobalDispatcherForTests (start)');
-    try {
-        await withTimeout(closeUndiciGlobalDispatcherForTests(), cleanupTimeoutMs, 'closeUndiciGlobalDispatcherForTests');
-    } finally {
-        if (debugCleanup) originalConsoleError('[vitest] afterAll cleanup: closeUndiciGlobalDispatcherForTests (end)');
-    }
-
-    maybeLogActiveHandles('after closeUndiciGlobalDispatcherForTests');
-
-    pauseStdinForTests();
-
-    maybeLogActiveHandles('after pauseStdinForTests');
 
     await dumpWhyIsNodeRunning('afterAll');
 });

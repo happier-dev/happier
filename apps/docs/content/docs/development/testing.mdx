@@ -233,6 +233,7 @@ Notes:
 - `test:policy` enforces only the low-noise rules that are safe today. Use `pnpm run test:policy -- --report-only` to include advisory findings during an audit.
 - `test:inventory` and `test:migration:inventory` are optional developer reports. They print lane/package-local coverage and write governance inventory artifacts under `.project/testing/reports/governance/`.
 - In the 0.3 development workflow, inventory reports and `test:migration:governance` run only when requested by a developer. Routine CI keeps the wiring and policy checks; historical migration closure and advisory reports do not gate typechecking.
+- UI tests use Node's default heap allocation unless the job supplies `NODE_OPTIONS` or `HAPPIER_UI_TEST_MAX_OLD_SPACE_SIZE_MB`. An existing `--max-old-space-size` in `NODE_OPTIONS` takes precedence over the UI override. Large diagnostic runs can request an explicit allocation without deriving one from the host's total RAM.
 - The current rollout is:
   - `enforce`: `.only`, forbidden runtime imports from `@happier-dev/tests` internals, root-script/workflow/docs parity
   - `report-only`: direct test `console.*`, direct `.skip/.todo`, hidden skip aliases, deprecated helper imports, duplicate-pattern inventory

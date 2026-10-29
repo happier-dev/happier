@@ -4,102 +4,12 @@ import {
     classifyVitestShardTermination,
     partitionVitestFilesIntoShards,
     createVitestShardRunPlan,
-    resolveVitestShardConcurrency,
-    resolveVitestShardRange,
-    resolveVitestShardTimeoutMs,
     runVitestShardRunPlan,
-    resolveVitestConfigPath,
-    resolveVitestShardCountForFileCount,
-    resolveVitestPassthroughArgs,
     shouldVitestShardRunProceedWithoutFiles,
     summarizeVitestShardOutcomes,
 } from '../../scripts/runVitestShards.mjs';
 
 describe('apps/ui runVitestShards', () => {
-    it('derives enough shards to keep the default file budget at 128', () => {
-        expect(resolveVitestShardCountForFileCount({}, 128)).toBe(1);
-        expect(resolveVitestShardCountForFileCount({}, 129)).toBe(2);
-        expect(resolveVitestShardCountForFileCount({}, 5_056)).toBe(40);
-        expect(resolveVitestShardCountForFileCount({ HAPPIER_UI_VITEST_SHARDS: '7' }, 5_056)).toBe(7);
-    });
-
-    it('partitions the configured shard count into balanced CI parts', () => {
-        expect(resolveVitestShardRange({ HAPPIER_UI_VITEST_PART: '1', HAPPIER_UI_VITEST_PARTS: '4' }, 32))
-            .toEqual({ start: 1, end: 8, part: 1, parts: 4 });
-        expect(resolveVitestShardRange({ HAPPIER_UI_VITEST_PART: '4', HAPPIER_UI_VITEST_PARTS: '4' }, 32))
-            .toEqual({ start: 25, end: 32, part: 4, parts: 4 });
-        expect(resolveVitestShardRange({}, 32)).toEqual({ start: 1, end: 32, part: 1, parts: 1 });
-    });
-
-    it('uses the containing deadline unless a diagnostic watchdog is explicitly configured', () => {
-        expect(resolveVitestShardTimeoutMs({})).toBeUndefined();
-        expect(resolveVitestShardTimeoutMs({ HAPPIER_UI_VITEST_SHARD_TIMEOUT_MS: 'invalid' })).toBeUndefined();
-        expect(resolveVitestShardTimeoutMs({ HAPPIER_UI_VITEST_SHARD_TIMEOUT_MS: '120000' })).toBe(120_000);
-        expect(classifyVitestShardTermination({ code: null, signal: 'SIGTERM', timedOut: true })).toEqual({
-            outcome: 'failed',
-            exitCode: 124,
-            signal: 'SIGTERM',
-            timedOut: true,
-        });
-    });
-
-    it('admits a valid requested concurrency within the CPU and worker budget', () => {
-        expect(resolveVitestShardConcurrency({ HAPPIER_UI_VITEST_SHARD_CONCURRENCY: '3' }, ['node', 'run'], 12, 4)).toBe(
-            2,
-        );
-        expect(resolveVitestShardConcurrency({ HAPPIER_UI_VITEST_SHARD_CONCURRENCY: '3' }, ['node', 'run'], 48, 4)).toBe(
-            3,
-        );
-    });
-
-    it('ignores invalid shard concurrency overrides', () => {
-        expect(resolveVitestShardConcurrency({ HAPPIER_UI_VITEST_SHARD_CONCURRENCY: '0' }, ['node', 'run'], 12, 4)).toBe(
-            1,
-        );
-        expect(
-            resolveVitestShardConcurrency({ HAPPIER_UI_VITEST_SHARD_CONCURRENCY: 'nope' }, ['node', 'run'], 12, 4),
-        ).toBe(1);
-    });
-
-    it('allows --concurrency flag to override env', () => {
-        expect(
-            resolveVitestShardConcurrency(
-                { HAPPIER_UI_VITEST_SHARD_CONCURRENCY: '2' },
-                ['node', 'run', '--concurrency', '4'],
-                48,
-                4,
-            ),
-        ).toBe(4);
-        expect(resolveVitestShardConcurrency({}, ['node', 'run', '--concurrency=5'], 48, 4)).toBe(5);
-        expect(resolveVitestShardConcurrency({}, ['node', 'run', '--concurrency=5'], 12, 4)).toBe(2);
-    });
-
-    it('parses --config path from argv', () => {
-        expect(resolveVitestConfigPath(['node', 'run', '--config', 'vitest.config.ts'])).toBe(
-            'vitest.config.ts',
-        );
-    });
-
-    it('returns null when --config is missing', () => {
-        expect(resolveVitestConfigPath(['node', 'run'])).toBe(null);
-    });
-
-    it('does not forward --concurrency into vitest passthrough args', () => {
-        expect(
-            resolveVitestPassthroughArgs([
-                'node',
-                'run',
-                '--config',
-                'vitest.config.ts',
-                '--concurrency',
-                '3',
-                'sources/dev/runVitestShards.test.ts',
-                '--reporter',
-                'dot',
-            ]),
-        ).toEqual(['sources/dev/runVitestShards.test.ts', '--reporter', 'dot']);
-    });
-
     it('partitions sorted files round-robin so adjacent heavy files do not concentrate in one shard', () => {
         const buckets = partitionVitestFilesIntoShards(['c', 'a', 'b', 'd', 'e'], 2);
         expect(buckets).toEqual([

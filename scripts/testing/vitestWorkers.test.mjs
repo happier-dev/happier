@@ -101,7 +101,7 @@ test('ordinary source test pools share the bounded default and honor an explicit
   }
 });
 
-test('worker overrides are explicit and the legacy UI ceiling remains UI-only', () => {
+test('worker overrides are explicit and the legacy UI allocation is not clamped', () => {
   const expected = Math.max(1, Math.min(4, Math.floor(availableParallelism() / 2)));
   for (const invalid of ['', '0', '-1', '1.5', '2oops']) {
     assert.equal(resolveVitestWorkers({ env: { HAPPIER_VITEST_MAX_WORKERS: invalid } }).maxWorkers, expected);
@@ -109,9 +109,9 @@ test('worker overrides are explicit and the legacy UI ceiling remains UI-only', 
   assert.equal(resolveVitestWorkers({ env: { CI: 'true' } }).maxWorkers, expected);
   const env = { VITEST_UI_MAX_FORKS: '20' };
   assert.equal(resolveVitestWorkers({ env }).maxWorkers, expected);
-  assert.equal(resolveVitestWorkers({ env, legacyUiOverride: true }).maxWorkers, 6);
+  assert.equal(resolveVitestWorkers({ env, legacyUiOverride: true }).maxWorkers, 20);
   assert.equal(resolveVitestWorkers({ env: { ...env, HAPPIER_VITEST_MAX_WORKERS: '2' }, legacyUiOverride: true }).maxWorkers, 2);
-  assert.equal(resolveVitestWorkers({ env: { ...env, HAPPIER_VITEST_GOVERNOR_MAX_WORKERS: '1' }, legacyUiOverride: true }).maxWorkers, 6);
+  assert.equal(resolveVitestWorkers({ env: { ...env, HAPPIER_VITEST_GOVERNOR_MAX_WORKERS: '1' }, legacyUiOverride: true }).maxWorkers, 20);
   assert.equal(resolveVitestWorkers({ env: { HAPPIER_VITEST_GOVERNOR_MAX_WORKERS: 'invalid' } }).maxWorkers, expected);
 });
 

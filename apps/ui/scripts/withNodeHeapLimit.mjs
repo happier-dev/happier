@@ -1,15 +1,9 @@
 #!/usr/bin/env node
-import os from 'node:os';
 import { pathToFileURL } from 'node:url';
 
 import { resolveSignalExitCode, runManagedChildCommand } from '../../../scripts/testing/process/managedChildLifecycle.mjs';
 
 const HEAP_LIMIT_REGEX = /(^|\s)--max-old-space-size(=|\s)\d+(\s|$)/;
-const BASELINE_MAX_OLD_SPACE_SIZE_MB = 8192;
-// UI unit tests can legitimately use a lot of memory (large React trees + module graphs).
-// Keep the default heuristic proportional to total memory, but cap it low enough to avoid
-// the UI test worker ballooning into multi-tens-of-gigabytes heaps on very large machines.
-const HIGH_MEMORY_MAX_OLD_SPACE_SIZE_MB = 24_576;
 
 export function hasMaxOldSpaceSize(nodeOptions) {
   return HEAP_LIMIT_REGEX.test(String(nodeOptions ?? ''));
@@ -17,30 +11,21 @@ export function hasMaxOldSpaceSize(nodeOptions) {
 
 export function upsertMaxOldSpaceSize(nodeOptions, sizeMb) {
   const base = String(nodeOptions ?? '').trim();
+  if (sizeMb === undefined) return base;
   const desired = `--max-old-space-size=${sizeMb}`;
   if (!base) return desired;
   if (hasMaxOldSpaceSize(base)) return base;
   return `${base} ${desired}`.trim();
 }
 
-function resolveRecommendedMaxOldSpaceSizeMb(totalMemoryBytes) {
-  const totalMemoryMb = Math.floor(Number(totalMemoryBytes ?? 0) / (1024 * 1024));
-  if (!Number.isFinite(totalMemoryMb) || totalMemoryMb <= 0) {
-    return BASELINE_MAX_OLD_SPACE_SIZE_MB;
-  }
-
-  return Math.min(
-    HIGH_MEMORY_MAX_OLD_SPACE_SIZE_MB,
-    Math.max(BASELINE_MAX_OLD_SPACE_SIZE_MB, Math.floor(totalMemoryMb / 3)),
-  );
-}
-
-export function resolveMaxOldSpaceSizeMb(env, totalMemoryBytes = os.totalmem()) {
+// Node owns the default heap allocation. Only an explicit UI override adds a flag;
+// inherited NODE_OPTIONS already carries an execution/job allocation when supplied.
+export function resolveMaxOldSpaceSizeMb(env) {
   const raw = String(env?.HAPPIER_UI_TEST_MAX_OLD_SPACE_SIZE_MB ?? '').trim();
   const parsed = Number.parseInt(raw, 10);
   return Number.isFinite(parsed) && parsed > 0
     ? parsed
-    : resolveRecommendedMaxOldSpaceSizeMb(totalMemoryBytes);
+    : undefined;
 }
 
 async function main(argv) {

@@ -35,7 +35,7 @@ export function resolveTestPolicyExitCode(report: PolicyReport, extensionImportB
 
 function printPolicyReport(report: PolicyReport, includeAdvisory: boolean): void {
   if (report.enforcedFindings.length === 0 && (!includeAdvisory || report.reportOnlyFindings.length === 0)) {
-    console.log('test:policy passed: no policy findings detected.');
+    console.log('test:policy passed: no enforced policy findings detected.');
     return;
   }
 

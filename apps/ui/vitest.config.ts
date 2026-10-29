@@ -9,8 +9,7 @@ import { resolveVitestWorkers } from '../../scripts/testing/vitestWorkers'
 import {
     createWorkspacePackageSourcesPlugin,
     createWorkspaceHostSourceAlias,
-    readBundledPluginWorkspacePackageSpecs,
-    type WorkspacePackageSpec,
+    readHostWorkspacePackageSpecs,
 } from '../../scripts/testing/vitestWorkspacePackageResolution'
 
 const repoRoot = fileURLToPath(new URL('../..', import.meta.url));
@@ -67,88 +66,13 @@ function resolveExpoNodeModuleStub(id: string, importer?: string): string | null
     return null;
 }
 
-const workspacePackages: readonly WorkspacePackageSpec[] = [
-    {
-        packageName: '@happier-dev/brand',
-        packageSourceRoot: resolve('../../packages/brand/src'),
-    },
-    {
-        packageName: '@happier-dev/protocol',
-        packageSourceRoot: resolve('../../packages/protocol/src'),
-    },
-    {
-        packageName: '@happier-dev/channels-protocol',
-        packageSourceRoot: resolve('../../packages/channels-protocol/src'),
-    },
-    {
-        packageName: '@happier-dev/triage-protocol',
-        packageSourceRoot: resolve('../../packages/triage-protocol/src'),
-    },
-    {
-        packageName: '@happier-dev/triage-sources',
-        packageSourceRoot: resolve('../../packages/triage-sources/src'),
-    },
-    {
-        packageName: '@happier-dev/agents',
-        packageSourceRoot: resolve('../../packages/agents/src'),
-    },
-    {
-        packageName: '@happier-dev/cli-common',
-        packageSourceRoot: resolve('../../packages/cli-common/src'),
-    },
-    {
-        packageName: '@happier-dev/connection-supervisor',
-        packageSourceRoot: resolve('../../packages/connection-supervisor/src'),
-    },
-    {
-        packageName: '@happier-dev/sync-client',
-        packageSourceRoot: resolve('../../packages/sync-client/src'),
-    },
-    {
-        packageName: '@happier-dev/session-core',
-        packageSourceRoot: resolve('../../packages/session-core/src'),
-    },
-    {
-        packageName: '@happier-dev/iroh-native',
-        packageSourceRoot: resolve('../../packages/iroh-native/src'),
-    },
-    {
-        packageName: '@happier-dev/release-runtime',
-        packageSourceRoot: resolve('../../packages/release-runtime/src'),
-    },
-    {
-        // The shared presentation layer (§3.10). Core adapters consume it from
-        // source so a component change is caught here rather than only after a
-        // package rebuild.
-        packageName: '@happier-dev/plugin-ui',
-        packageSourceRoot: resolve('../../packages/plugin-ui/src'),
-    },
-    {
-        packageName: '@happier-dev/plugin-sdk',
-        packageSourceRoot: resolve('../../packages/plugin-sdk/src'),
-    },
+const workspacePackages = readHostWorkspacePackageSpecs(repoRoot, packageRoot, [
+    // Composed tests exercise SDK callers that are not shipped UI dependencies.
     {
         packageName: '@happier-dev/sdk',
         packageSourceRoot: resolve('../../packages/sdk/src'),
     },
-    {
-        packageName: '@happier-dev/peer-mediation',
-        packageSourceRoot: resolve('../../packages/peer-mediation/src'),
-    },
-    {
-        packageName: '@happier-dev/peer-transport',
-        packageSourceRoot: resolve('../../packages/peer-transport/src'),
-    },
-    {
-        packageName: '@happier-dev/transfers',
-        packageSourceRoot: resolve('../../packages/transfers/src'),
-    },
-    {
-        packageName: '@happier-dev/voice-modelpacks',
-        packageSourceRoot: resolve('../../packages/voice-modelpacks/src'),
-    },
-    ...readBundledPluginWorkspacePackageSpecs(repoRoot),
-] as const;
+]);
 
 const workspaceSourcesPlugin = createWorkspacePackageSourcesPlugin(
     workspacePackages,
