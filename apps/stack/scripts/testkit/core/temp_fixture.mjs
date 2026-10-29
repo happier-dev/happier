@@ -19,9 +19,11 @@ export async function createTempFixture(t, {
   prefix = 'hstack-test-fixture-',
   parentDir = tmpdir(),
   registerCleanup = true,
+  beforeCleanup,
 } = {}) {
   const root = await mkdtemp(join(parentDir, prefix));
   const cleanup = async () => {
+    await beforeCleanup?.(root);
     await removeDirForce(root);
   };
   if (registerCleanup) registerTestCleanup(t, cleanup);

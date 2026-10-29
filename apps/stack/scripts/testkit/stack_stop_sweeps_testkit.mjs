@@ -6,6 +6,7 @@ import { runNodeCapture } from './core/run_node_capture.mjs';
 import { resolveStackRootFromMeta, resolveStackScriptPath } from './core/stack_root.mjs';
 import { spawnDetachedInlineNodeTestProcess } from './core/spawn_test_process.mjs';
 import { createTempFixture } from './core/temp_fixture.mjs';
+import { isPidAlive, observePidLiveness } from '../utils/proc/pids.mjs';
 
 function toSpawnEnv(env) {
   return filterEnvForSpawn(env, {
@@ -39,12 +40,7 @@ export function spawnOwnedSleep({ env }) {
 }
 
 export function isAlive(pid) {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
+  return isPidAlive(pid);
 }
 
 export async function waitForProcessAlive({
@@ -69,25 +65,28 @@ export async function waitForProcessExit({
 } = {}) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (!isAlive(pid)) return;
+    if (observePidLiveness(pid).status === 'dead') return;
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
   }
   throw new Error(`[test] timeout waiting for ${label} pid=${pid} to exit (${timeoutMs}ms)`);
 }
 
-function terminateTrackedProcess(pid) {
-  if (!pid) return;
+async function terminateTrackedProcess(child) {
+  if (!child?.pid || child.exitCode !== null || child.signalCode !== null) return;
+  const exited = new Promise(resolve => child.once('exit', resolve));
   // Prefer killing the full process group when available; fall back to direct pid kill.
   // This keeps cleanup portable across platforms where negative pid group targeting may fail.
   try {
-    process.kill(-pid, 'SIGKILL');
+    process.kill(-child.pid, 'SIGKILL');
   } catch {
     try {
-      process.kill(pid, 'SIGKILL');
+      process.kill(child.pid, 'SIGKILL');
     } catch {
-      // ignore
+      if (!isPidAlive(child.pid)) return;
+      throw new Error(`Could not retire tracked test process ${child.pid}`);
     }
   }
+  await exited;
 }
 
 export async function setupStackStopSweepFixture({
@@ -97,7 +96,11 @@ export async function setupStackStopSweepFixture({
   stackName = 'exp1',
 } = {}) {
   const rootDir = resolveStackRootFromMeta(importMetaUrl);
-  const fixture = await createTempFixture(t, { prefix: tmpPrefix });
+  const trackedChildren = [];
+  const fixture = await createTempFixture(t, {
+    prefix: tmpPrefix,
+    beforeCleanup: () => Promise.all(trackedChildren.map(terminateTrackedProcess)),
+  });
   const tmp = fixture.root;
   const homeDir = join(tmp, 'home');
   const storageDir = join(tmp, 'storage');
@@ -124,17 +127,12 @@ export async function setupStackStopSweepFixture({
     'utf-8'
   );
 
-  const trackedChildren = [];
   const trackChild = (child) => {
     trackedChildren.push(child);
     return child;
   };
 
   const cleanup = async () => {
-    for (const child of trackedChildren) {
-      if (!child?.pid) continue;
-      terminateTrackedProcess(child.pid);
-    }
     await fixture.cleanup();
   };
 

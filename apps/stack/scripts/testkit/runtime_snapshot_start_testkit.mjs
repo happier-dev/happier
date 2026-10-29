@@ -9,11 +9,16 @@ import { runNodeCapture } from './core/run_node_capture.mjs';
 import { writeRuntimeSnapshotLayout } from './core/runtime_snapshot_layout.mjs';
 import { writeStubHappierCliFiles } from './core/stub_happier_cli_files.mjs';
 import { createTempFixture } from './core/temp_fixture.mjs';
+import { stopRuntimeSnapshotFixture } from './core/runtime_snapshot_cleanup.mjs';
+import { prepareRuntimeSnapshotFixtureLifetime } from './core/runtime_snapshot_lifetime.mjs';
 
 export const runNode = runNodeCapture;
 
 const DAEMON_LIKE_PROCESS_HELPER_PATH = fileURLToPath(
   new URL('./core/spawn_daemon_like_process.mjs', import.meta.url),
+);
+const FIXTURE_LIFETIME_HELPER_PATH = fileURLToPath(
+  new URL('./core/runtime_snapshot_lifetime.mjs', import.meta.url),
 );
 const DAEMON_STATE_PATHS_HELPER_PATH = fileURLToPath(
   new URL('../utils/auth/credentials_paths.mjs', import.meta.url),
@@ -134,6 +139,7 @@ export async function createStartableRuntimeSnapshotFixture(t, {
   const fixture = await createTempFixture(t, {
     prefix: 'hstack-runtime-start-fixture-',
     registerCleanup: !preserveFixture,
+    beforeCleanup: root => stopRuntimeSnapshotFixture({ root, stackName }),
   });
   const resolvedServerPort =
     Number.isFinite(serverPort) && Number(serverPort) > 0
@@ -142,13 +148,13 @@ export async function createStartableRuntimeSnapshotFixture(t, {
   const root = fixture.root;
   const storageDir = join(root, 'storage');
   const stackDir = join(storageDir, stackName);
+  await prepareRuntimeSnapshotFixtureLifetime(stackDir);
   const cliHomeDir = join(stackDir, 'cli');
   const runtimeDir = join(stackDir, 'runtime');
   const serverEnvCapturePath = join(stackDir, 'server.runtime-env.json');
   const serverPidCapturePath = join(stackDir, 'server.pid.capture');
   const listenerDiscoveryLogPath = join(stackDir, 'listener-discovery.log');
   const runtimeServerEventLogPath = join(stackDir, 'runtime-server-events.log');
-  const daemonDistClosureFingerprint = '0123456789abcdef';
 
   await mkdir(cliHomeDir, { recursive: true });
   await mkdir(runtimeDir, { recursive: true });
@@ -157,6 +163,9 @@ export async function createStartableRuntimeSnapshotFixture(t, {
 import { createServer } from 'node:http';
 import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { recordRuntimeSnapshotFixtureStart } from ${JSON.stringify(FIXTURE_LIFETIME_HELPER_PATH)};
+
+recordRuntimeSnapshotFixtureStart(${JSON.stringify(stackDir)});
 
 const port = Number(process.env.PORT || process.env.HAPPIER_SERVER_PORT || 0);
 if (!Number.isFinite(port) || port <= 0) {
@@ -236,7 +245,7 @@ process.on('SIGINT', shutdown);
     distIndexScript: cliScript.trimStart(),
   });
 
-  const { snapshotDir } = await writeRuntimeSnapshotLayout({
+  const { snapshotDir, daemonDistClosureFingerprint } = await writeRuntimeSnapshotLayout({
     stackDir,
     snapshotId: 'snap-startable',
     sourceFingerprint: 'src-startable',
@@ -265,7 +274,6 @@ process.on('SIGINT', shutdown);
       artifactFingerprint: 'daemon-startable',
       nodeEntrypoint: 'cli/package-dist/index.mjs',
       nodeContent: cliPackageDistScript.trimStart(),
-      distClosureFingerprint: daemonDistClosureFingerprint,
     },
   });
   if (serverComponent === 'happier-server' && runtimeMigration !== 'missing') {

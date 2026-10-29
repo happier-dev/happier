@@ -4,6 +4,8 @@ import { join } from 'node:path';
 import { runNodeCapture } from './core/run_node_capture.mjs';
 import { writeRuntimeSnapshotLayout } from './core/runtime_snapshot_layout.mjs';
 import { createTempFixture } from './core/temp_fixture.mjs';
+import { stopRuntimeSnapshotFixture } from './core/runtime_snapshot_cleanup.mjs';
+import { prepareRuntimeSnapshotFixtureLifetime } from './core/runtime_snapshot_lifetime.mjs';
 import { buildStubHappierServerSetSource } from './core/stub_happier_cli_server_set.mjs';
 
 export const runNode = runNodeCapture;
@@ -17,10 +19,14 @@ export async function createRuntimeSnapshotFixture(
     cliSource = '',
   } = {},
 ) {
-  const fixture = await createTempFixture(t, { prefix: 'hstack-runtime-fixture-' });
+  const fixture = await createTempFixture(t, {
+    prefix: 'hstack-runtime-fixture-',
+    beforeCleanup: root => stopRuntimeSnapshotFixture({ root, stackName }),
+  });
   const root = fixture.root;
   const storageDir = join(root, 'storage');
   const stackDir = join(storageDir, stackName);
+  await prepareRuntimeSnapshotFixtureLifetime(stackDir);
   const cliRuntimeSource = cliEntrypoint.endsWith('.mjs') || cliEntrypoint.endsWith('.js') || cliEntrypoint.endsWith('.cjs')
     ? `{
 const args = process.argv.slice(2);

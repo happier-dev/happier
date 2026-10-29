@@ -4,6 +4,7 @@ import { dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { spawnDetachedTestProcess } from './spawn_test_process.mjs';
+import { recordRuntimeSnapshotFixtureStart } from './runtime_snapshot_lifetime.mjs';
 
 const DEFAULT_CONTROL_TOKEN = 'happier-test-daemon-control';
 const STATE_PATHS_ENV = 'HAPPIER_TEST_DAEMON_STATE_PATHS_JSON';
@@ -56,7 +57,7 @@ export async function startDaemonLikeProcess({
     }
     if (req.method === 'POST' && req.url === '/stop' && authenticated) {
       res.writeHead(200, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({ ok: true }));
+      res.end(JSON.stringify({ status: 'stopping' }));
       res.once('finish', () => server.close());
       return;
     }
@@ -124,6 +125,7 @@ export function spawnDaemonLikeProcess({
   }
   const paths = normalizeStatePaths(statePaths);
 
+  recordRuntimeSnapshotFixtureStart(dirname(cliHomeDir));
   return spawnDetachedTestProcess(
     process.execPath,
     [fileURLToPath(import.meta.url), 'daemon', 'start-sync'],

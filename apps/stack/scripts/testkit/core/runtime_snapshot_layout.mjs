@@ -1,6 +1,6 @@
 import { chmod, mkdir, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-
+import { writeCliDistBuildManifest } from '../../utils/cli/cliDistIntegrity.mjs';
 
 function defaultArtifactFingerprint(prefix, snapshotId) {
   return `${prefix}-${snapshotId}`;
@@ -101,13 +101,12 @@ export async function writeRuntimeSnapshotLayout({
   await writeRuntimeArtifact(paths.snapshotDir, daemonEntrypoint, daemon.content ?? '#!/bin/sh\nexit 0\n', {
     executable: daemon.executable ?? true,
   });
+  let daemonDistClosureFingerprint = null;
   if (daemonNodeEntrypoint && typeof daemon.nodeContent !== 'undefined') {
     await writeRuntimeArtifact(paths.snapshotDir, daemonNodeEntrypoint, daemon.nodeContent);
-    await writeFile(
-      join(paths.snapshotDir, 'cli', 'package-dist', '.build-manifest.json'),
-      JSON.stringify({ fingerprint: daemon.distClosureFingerprint ?? '0123456789abcdef', fileCount: 1 }) + '\n',
-      'utf8',
-    );
+    daemonDistClosureFingerprint = writeCliDistBuildManifest(
+      join(paths.snapshotDir, daemonNodeEntrypoint),
+    ).manifest.fingerprint;
   }
   await writeFile(join(paths.snapshotDir, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n', 'utf-8');
 
@@ -122,11 +121,7 @@ export async function writeRuntimeSnapshotLayout({
     });
     if (daemonNodeEntrypoint && typeof daemon.nodeContent !== 'undefined') {
       await writeRuntimeArtifact(paths.currentDir, daemonNodeEntrypoint, daemon.nodeContent);
-      await writeFile(
-        join(paths.currentDir, 'cli', 'package-dist', '.build-manifest.json'),
-        JSON.stringify({ fingerprint: daemon.distClosureFingerprint ?? '0123456789abcdef', fileCount: 1 }) + '\n',
-        'utf8',
-      );
+      writeCliDistBuildManifest(join(paths.currentDir, daemonNodeEntrypoint));
     }
     await writeFile(join(paths.currentDir, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n', 'utf-8');
   }
@@ -142,12 +137,13 @@ export async function writeRuntimeSnapshotLayout({
   }
   await writeFile(paths.currentPath, JSON.stringify(currentPayload, null, 2) + '\n', 'utf-8');
 
-  return paths;
+  return { ...paths, daemonDistClosureFingerprint };
 }
 
 export async function writeManagedRuntimeSnapshotLayout({ stackDir, snapshotId = 'managed-qa', target = { platform: process.platform, arch: process.arch } }) {
   const paths = resolveRuntimeSnapshotLayoutPaths({ stackDir, snapshotId });
   const components = {};
+  let daemonDistClosureFingerprint = null;
   await mkdir(paths.snapshotDir, { recursive: true });
   for (const [component, directory, entrypoint] of [['web', 'ui', 'index.html'], ['server', 'server', 'happier-server'], ['daemon', 'cli', 'happier']]) {
     const artifactFingerprint = `${component}-${snapshotId}`;
@@ -156,7 +152,9 @@ export async function writeManagedRuntimeSnapshotLayout({ stackDir, snapshotId =
     await writeRuntimeArtifact(join(artifactDir, 'payload'), entrypoint, component + '\n');
     if (component === 'daemon') {
       await writeRuntimeArtifact(join(artifactDir, 'payload'), 'package-dist/index.mjs', 'export {};\n');
-      await writeRuntimeArtifact(join(artifactDir, 'payload'), 'package-dist/.build-manifest.json', JSON.stringify({ fingerprint: '0123456789abcdef', fileCount: 1 }));
+      daemonDistClosureFingerprint = writeCliDistBuildManifest(
+        join(artifactDir, 'payload', 'package-dist', 'index.mjs'),
+      ).manifest.fingerprint;
     }
     await writeFile(join(artifactDir, 'manifest.json'), JSON.stringify({ version: 1, component, artifactFingerprint,
       sourceFingerprint: 'managed-source', payloadDir: 'payload', entrypoint, target }));
@@ -166,5 +164,5 @@ export async function writeManagedRuntimeSnapshotLayout({ stackDir, snapshotId =
   const manifest = { version: 1, snapshotId, sourceFingerprint: 'managed-source', components, target };
   await writeFile(join(paths.snapshotDir, 'manifest.json'), JSON.stringify(manifest));
   return { ...paths, snapshotId, snapshotPath: paths.snapshotDir, producerStackBaseDir: stackDir,
-    sourceFingerprint: 'managed-source', daemonDistClosureFingerprint: '0123456789abcdef', manifest };
+    sourceFingerprint: 'managed-source', daemonDistClosureFingerprint, manifest };
 }
