@@ -1490,6 +1490,10 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
         session: params.session,
         runtime: runtimeOverrideTarget,
         isStarted,
+        configOptionRejectionTranscript: {
+          session: params.session,
+          provider: normalizeAcpProvider(params.config.agentMessageType, params.policyAgentId),
+        },
         ...(params.capabilitySelection ? { capabilitySelection: {
           ...params.capabilitySelection,
           session: params.session,

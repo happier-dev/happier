@@ -12,6 +12,7 @@ import type { SessionModelMutationExpectedV1, SessionModelMutationReversalV1, Se
 
 import type { SessionStateFieldWriteValue } from './_types.js';
 import {
+  clearMatchingAcpConfigOptionIntentFromMetadata,
   writeAcpConfigOptionIntentToMetadata,
   writeAcpSessionModeIntentToMetadata,
   writeModelIntentToMetadata,
@@ -347,6 +348,8 @@ export function applyAcpConfigOptionIntentSessionMetadata<TMetadata extends Sess
 
 export function clearAcpConfigOptionIntentSessionMetadata<TMetadata extends SessionMetadata>(
   metadata: TMetadata,
+  expected?: Readonly<{ configId: string; value: string | number | boolean | null; updatedAt: number }>,
 ): TMetadata {
+  if (expected) return clearMatchingAcpConfigOptionIntentFromMetadata(metadata, expected) as TMetadata;
   return clearSessionStateFieldFromMetadata(metadata, 'intent.acpConfigOption') as TMetadata;
 }

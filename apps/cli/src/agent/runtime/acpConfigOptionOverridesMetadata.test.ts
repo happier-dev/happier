@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { applyAcpConfigOptionIntentSessionMetadata } from '@happier-dev/agents/session/state/metadataWriters';
+import { applyAcpConfigOptionIntentSessionMetadata, clearAcpConfigOptionIntentSessionMetadata } from '@happier-dev/agents/session/state/metadataWriters';
 
 function writeAcpConfigOptionOverride(params: Readonly<{
   metadata: Record<string, unknown>;
@@ -17,6 +17,30 @@ function writeAcpConfigOptionOverride(params: Readonly<{
 }
 
 describe('session-state ACP config option metadata binding', () => {
+  it('clears only the rejected candidate across aliases without reviving an older value', () => {
+    const metadata = {
+      unrelated: 'retained',
+      sessionConfigOptionOverridesV1: { v: 1, updatedAt: 30, overrides: {
+        provider: { updatedAt: 30, value: 'gateway' }, effort: { updatedAt: 20, value: 'high' },
+      } },
+      acpConfigOptionOverridesV1: { v: 1, updatedAt: 29, overrides: { provider: { updatedAt: 29, value: 'grok' } } },
+    };
+    const candidate = { configId: 'provider', value: 'gateway', updatedAt: 30 };
+    const cleared = clearAcpConfigOptionIntentSessionMetadata(metadata, candidate);
+    expect(cleared.unrelated).toBe('retained');
+    expect(cleared.sessionConfigOptionOverridesV1.overrides).toEqual({ effort: { updatedAt: 20, value: 'high' } });
+    expect(cleared.acpConfigOptionOverridesV1).toEqual(cleared.sessionConfigOptionOverridesV1);
+    const newer = applyAcpConfigOptionIntentSessionMetadata(metadata, { v: 1, ...candidate, value: 'codex', updatedAt: 31 });
+    expect(clearAcpConfigOptionIntentSessionMetadata(newer, candidate)).toBe(newer);
+    const equalTime = { ...metadata, sessionConfigOptionOverridesV1: { v: 1, updatedAt: 30,
+      overrides: { provider: { updatedAt: 30, value: 'codex' } } } };
+    expect(clearAcpConfigOptionIntentSessionMetadata(equalTime, candidate)).toBe(equalTime);
+  });
+
+  it.each([' selected ', '', ' '])('preserves opaque config ids and string value %j in metadata writes', value => {
+    const next = applyAcpConfigOptionIntentSessionMetadata({}, { v: 1, configId: ' custom ', value, updatedAt: 1 });
+    expect(next).toMatchObject({ sessionConfigOptionOverridesV1: { overrides: { ' custom ': { value } } } });
+  });
   it('stores a config option override when updatedAt is newer', () => {
     const next = writeAcpConfigOptionOverride({
       metadata: {},

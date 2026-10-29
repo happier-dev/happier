@@ -10,6 +10,7 @@ import type {
 } from '@happier-dev/protocol';
 import { projectSessionModelSelectionIntentToLegacyModelOverrideV1, readSessionModelSelectionIntentSourceV1, SessionModelSelectionIntentV1Schema } from '@happier-dev/protocol/providers/model-selection';
 import { AcpConfigOptionOverridesV1Schema, AcpSessionModeOverrideV1Schema, ModelOverrideV1Schema } from '@happier-dev/protocol/sessions/metadata/overrides';
+import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
 
 import { parsePermissionIntentAlias } from '../../../permissions/index.js';
 import { resolveTimestampedFieldUpdate } from '../../timestamps/resolveTimestampedFieldUpdate.js';
@@ -269,7 +270,7 @@ function readAcpConfigOptionRoot(metadata: SessionMetadata): {
   for (const parsed of parsedRoots) {
     rootUpdatedAt = Math.max(rootUpdatedAt, asFiniteNumber(parsed.data.updatedAt));
     for (const [configId, entry] of Object.entries(parsed.data.overrides)) {
-      const normalizedConfigId = asTrimmedString(configId);
+      const normalizedConfigId = readNonBlankOpaqueIdentifier(configId);
       if (!normalizedConfigId) continue;
       const current = overrides[normalizedConfigId];
       const updatedAt = asFiniteNumber(entry.updatedAt);
@@ -292,7 +293,7 @@ export function readAcpConfigOptionIntentFromMetadata(
   metadata: SessionMetadata,
   configId: string,
 ): AcpConfigOptionIntentV1 | null {
-  const normalizedConfigId = asTrimmedString(configId);
+  const normalizedConfigId = readNonBlankOpaqueIdentifier(configId);
   if (!normalizedConfigId) return null;
   const root = readAcpConfigOptionRoot(metadata);
   const entry = root?.overrides[normalizedConfigId];
@@ -314,7 +315,7 @@ export function readLatestAcpConfigOptionIntentFromMetadata(
 
   let latest: AcpConfigOptionIntentV1 | null = null;
   for (const [configId, entry] of Object.entries(root.overrides)) {
-    const normalizedConfigId = asTrimmedString(configId);
+    const normalizedConfigId = readNonBlankOpaqueIdentifier(configId);
     if (!normalizedConfigId) continue;
     const updatedAt = asFiniteNumber(entry.updatedAt);
     if (latest && updatedAt < latest.updatedAt) continue;
@@ -333,14 +334,9 @@ export function writeAcpConfigOptionIntentToMetadata(
   metadata: SessionMetadata,
   update: Readonly<{ configId: string; value: string | number | boolean | null; updatedAt: number }>,
 ): SessionMetadata {
-  const configId = asTrimmedString(update.configId);
+  const configId = readNonBlankOpaqueIdentifier(update.configId);
   if (!configId) return metadata;
-  const value = update.value === null
-    ? null
-    : typeof update.value === 'string'
-      ? update.value.trim()
-      : update.value;
-  if (value === '') return metadata;
+  const value = update.value;
 
   const root = readAcpConfigOptionRoot(metadata);
   const currentEntry = root?.overrides[configId];
@@ -372,6 +368,22 @@ export function writeAcpConfigOptionIntentToMetadata(
   for (const key of getIntentMetadataKeysForAlias(SESSION_CONFIG_OPTION_OVERRIDES_KEY)) {
     nextMetadata[key] = nextRoot;
   }
+  return nextMetadata as SessionMetadata;
+}
+
+/** Retire one settled intent without deleting a newer edit or reviving an older alias. */
+export function clearMatchingAcpConfigOptionIntentFromMetadata(
+  metadata: SessionMetadata,
+  expected: Readonly<{ configId: string; value: string | number | boolean | null; updatedAt: number }>,
+): SessionMetadata {
+  const root = readAcpConfigOptionRoot(metadata);
+  const current = root?.overrides[expected.configId];
+  if (!root || !current || current.updatedAt !== expected.updatedAt || !Object.is(current.value, expected.value)) return metadata;
+  const overrides = { ...root.overrides };
+  delete overrides[expected.configId];
+  const nextRoot = { v: 1, updatedAt: root.updatedAt, overrides };
+  const nextMetadata: MetadataRecord = { ...(metadata as MetadataRecord) };
+  for (const key of getIntentMetadataKeysForAlias(SESSION_CONFIG_OPTION_OVERRIDES_KEY)) nextMetadata[key] = nextRoot;
   return nextMetadata as SessionMetadata;
 }
 

@@ -1,4 +1,7 @@
 import type { Metadata, PermissionMode } from '@/api/types';
+import { randomUUID } from 'node:crypto';
+import type { ACPProvider } from '@/api/session/sessionMessageTypes';
+import { commitRequiredRuntimeTranscriptMessage, type RuntimeTranscriptProjectionSession } from './session/transcripts/projectRuntimeTranscriptEvent';
 import type { ProviderBoundModelRef, SessionModelTransitionResultV1 } from '@happier-dev/protocol';
 import {
   isRuntimeConfigUpdateOutcomeApplied,
@@ -121,10 +124,14 @@ function createPermissionModeOverrideSynchronizer(params: Readonly<{
 
 export function createRuntimeOverrideSynchronizers(params: Readonly<{
   agentTargetKey: string;
-  session: { getMetadataSnapshot: () => import('@/api/types').Metadata | null };
+  session: {
+    getMetadataSnapshot: () => Metadata | null;
+    updateMetadataAsCurrentPublisher?: (update: (metadata: Metadata) => Metadata) => Promise<unknown>;
+  };
   runtime: RuntimeOverrideTarget;
   isStarted: () => boolean;
   capabilitySelection?: CapabilitySelectionSynchronizerInput;
+  configOptionRejectionTranscript?: Readonly<{ session: RuntimeTranscriptProjectionSession; provider: ACPProvider }>;
 }>): RuntimeOverrideSynchronizers {
   const capabilitySync = params.capabilitySelection ? createCapabilitySelectionSynchronizer(params.capabilitySelection) : null;
   const modeSync = createSessionModeOverrideSynchronizer({
@@ -137,10 +144,20 @@ export function createRuntimeOverrideSynchronizers(params: Readonly<{
     runtime: params.runtime,
     isStarted: params.isStarted,
   });
+  const rejectionTranscript = params.configOptionRejectionTranscript;
   const configOptionSync = createSessionConfigOptionOverrideSynchronizer({
     session: params.session,
     runtime: params.runtime,
     isStarted: params.isStarted,
+    onConfigOptionRejected: rejectionTranscript ? async ({ outcome }) => {
+      await commitRequiredRuntimeTranscriptMessage({
+        ...rejectionTranscript,
+        body: { type: 'message', message: outcome.reason || 'The Agent could not apply this configuration change.' },
+        localId: randomUUID(),
+        provenance: { kind: 'non_dependent', source: 'background' },
+        eventKind: 'session-configuration-rejected',
+      });
+    } : undefined,
   });
   const modelSync = createModelTransitionMetadataObserver({
     agentTargetKey: params.agentTargetKey,

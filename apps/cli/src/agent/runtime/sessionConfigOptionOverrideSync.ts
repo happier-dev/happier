@@ -8,16 +8,19 @@ import {
   SESSION_CONFIG_OPTION_OVERRIDES_KEY,
 } from '@happier-dev/agents/session/state/bindings/metadataKeys';
 import { readAcpConfigOptionIntentFromMetadata } from '@happier-dev/agents/session/state/metadataReaders';
+import { clearAcpConfigOptionIntentSessionMetadata } from '@happier-dev/agents/session/state/metadataWriters';
+import { logger } from '@/ui/logger';
 
 type ConfigOptionValueId = string | number | boolean | null;
 type ConfigOptionOverrideCandidate = { configId: string; valueId: ConfigOptionValueId; updatedAt: number };
+export type SessionConfigOptionRejection = Readonly<{
+  candidate: ConfigOptionOverrideCandidate;
+  outcome: RuntimeConfigUpdateOutcomeV1;
+}>;
 
 function normalizeValueId(raw: unknown): ConfigOptionValueId | undefined {
   if (raw === null) return null;
-  if (typeof raw === 'string') {
-    const trimmed = raw.trim();
-    return trimmed.length > 0 ? trimmed : undefined;
-  }
+  if (typeof raw === 'string') return raw;
   if (typeof raw === 'boolean') return raw;
   if (typeof raw === 'number' && Number.isFinite(raw)) return raw;
   return undefined;
@@ -30,8 +33,7 @@ function collectConfigOptionIdsFromAliasRoot(metadata: Readonly<Record<string, u
   if (!overridesRaw || typeof overridesRaw !== 'object' || Array.isArray(overridesRaw)) return;
 
   for (const configIdRaw of Object.keys(overridesRaw as Record<string, unknown>)) {
-    const configId = configIdRaw.trim();
-    if (configId) out.add(configId);
+    if (configIdRaw.trim()) out.add(configIdRaw);
   }
 }
 
@@ -90,7 +92,10 @@ function shouldReplacePendingConfigOptionOverrideCandidate(
 }
 
 export function createSessionConfigOptionOverrideSynchronizer(params: Readonly<{
-  session: { getMetadataSnapshot: () => Metadata | null };
+  session: {
+    getMetadataSnapshot: () => Metadata | null;
+    updateMetadataAsCurrentPublisher?: (update: (metadata: Metadata) => Metadata) => Promise<unknown>;
+  };
   runtime: {
     setSessionConfigOption: (
       configId: string,
@@ -98,11 +103,12 @@ export function createSessionConfigOptionOverrideSynchronizer(params: Readonly<{
     ) => Promise<RuntimeConfigUpdateOutcomeV1 | void>;
   };
   isStarted: () => boolean;
+  onConfigOptionRejected?: (rejection: SessionConfigOptionRejection) => void | Promise<void>;
 }>): {
   syncFromMetadata: () => void;
   flushPendingAfterStart: () => Promise<void>;
 } {
-  const lastAppliedByConfigId = new Map<string, ConfigOptionOverrideCandidate>();
+  const lastSettledByConfigId = new Map<string, ConfigOptionOverrideCandidate>();
   const pendingByConfigId = new Map<string, ConfigOptionOverrideCandidate>();
   const inFlightByConfigId = new Map<string, Promise<void>>();
 
@@ -114,7 +120,7 @@ export function createSessionConfigOptionOverrideSynchronizer(params: Readonly<{
     if (!candidate) return Promise.resolve();
     if (!params.isStarted()) return Promise.resolve();
 
-    const lastApplied = lastAppliedByConfigId.get(configId);
+    const lastApplied = lastSettledByConfigId.get(configId);
     if (shouldSuppressConfigOptionOverrideCandidate(candidate, lastApplied)) {
       pendingByConfigId.delete(configId);
       return Promise.resolve();
@@ -122,19 +128,31 @@ export function createSessionConfigOptionOverrideSynchronizer(params: Readonly<{
 
     const promise = params.runtime
       .setSessionConfigOption(candidate.configId, candidate.valueId)
-      .then((outcome) => {
-        // gap 27: only mark the override applied when the runtime confirms it took effect. A
-        // swallowed/deferred/unsupported outcome leaves the candidate pending so a later sync or
-        // flush re-attempts it at the next safe boundary, instead of being marked applied forever.
-        if (!isRuntimeConfigUpdateOutcomeApplied(outcome)) return;
-        lastAppliedByConfigId.set(candidate.configId, candidate);
+      .then(async (outcome) => {
+        const applied = isRuntimeConfigUpdateOutcomeApplied(outcome);
+        const rejected = !applied && (outcome?.status === 'failed' || outcome?.status === 'unsupported');
+        if (!rejected && !applied) return;
+        // A definitive refusal settles this request without claiming its value became effective.
+        lastSettledByConfigId.set(candidate.configId, candidate);
         const currentPending = pendingByConfigId.get(candidate.configId);
         if (currentPending && isSameConfigOptionOverrideCandidate(currentPending, candidate)) {
           pendingByConfigId.delete(candidate.configId);
         }
+        if (rejected && outcome) {
+          try {
+            await params.session.updateMetadataAsCurrentPublisher?.(metadata => clearAcpConfigOptionIntentSessionMetadata(metadata, {
+              configId: candidate.configId, value: candidate.valueId, updatedAt: candidate.updatedAt,
+            }));
+          } finally {
+            await params.onConfigOptionRejected?.({ candidate, outcome });
+          }
+        }
       })
       .catch(() => {
-        // Best-effort only. Keep the candidate pending so a later sync or flush can retry it.
+        // Thrown transport failures remain pending. Publication failures cannot retry a settled setter.
+        if (lastSettledByConfigId.get(configId) === candidate) {
+          logger.infoFile('[SessionConfigOptionOverrideSync] Could not publish configuration rejection');
+        }
       })
       .finally(() => {
         inFlightByConfigId.delete(configId);
@@ -160,7 +178,7 @@ export function createSessionConfigOptionOverrideSynchronizer(params: Readonly<{
     if (candidates.length === 0) return;
 
     for (const candidate of candidates) {
-      const lastApplied = lastAppliedByConfigId.get(candidate.configId);
+      const lastApplied = lastSettledByConfigId.get(candidate.configId);
       if (shouldSuppressConfigOptionOverrideCandidate(candidate, lastApplied)) continue;
 
       const prevPending = pendingByConfigId.get(candidate.configId);
@@ -181,8 +199,11 @@ export function createSessionConfigOptionOverrideSynchronizer(params: Readonly<{
   };
 
   const flushPendingAfterStart = async (): Promise<void> => {
-    if (pendingByConfigId.size === 0) return;
     if (!params.isStarted()) return;
+    if (pendingByConfigId.size === 0) {
+      await Promise.all(inFlightByConfigId.values());
+      return;
+    }
 
     const pending = Array.from(pendingByConfigId.values()).sort(
       (a, b) => (a.updatedAt - b.updatedAt) || a.configId.localeCompare(b.configId),

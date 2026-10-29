@@ -15,6 +15,7 @@ import { withHostSessionRuntimeIdentityPublication } from '@/agent/runtime/ident
 import { HOST_SESSION_RUNTIME_PLAN_KIND, type HostSessionRuntimePlan } from '@/agent/runtime/session/loop/lifecycle';
 import { createRoleActionExecutor } from '@/session/actions/roleActions';
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
+import { createFxConfigOptionsFixture } from '@/agent/acp/testkit/fxConfigOptionsFixture';
 import { applyRegisteredSessionStateFieldMutationToMetadata } from '@/api/session/client/transport/mutations/applyRegisteredSessionStateFieldMutation';
 import { resolveAgentSessionMcpLaunchConfigs, toAgentSessionMcpLaunchConfigs } from './nativeAgentSession';
 import { buildCodexAppServerConfigOverrides } from '@happier-dev/plugins-codex/agent/runtime/appServer/config/overrides';
@@ -11349,6 +11350,54 @@ describe('native Agent session host adapter', () => {
             kind: 'provider-session-id',
             providerSessionId: 'provider-session-buffered',
         })]);
+    });
+
+    it('settles a native config rejection through the real override target and visible transcript owner', async () => {
+        const configOptions = createFxConfigOptionsFixture();
+        const enqueueAgentMessageCommitted = vi.fn(async () => ({ persisted: true, delivered: true }));
+        const metadataSession = createMutableApiSessionClientFixture({ sessionId: 'config-rejected',
+            metadata: createTestMetadata({
+                sessionConfigOptionsV1: { v: 1, agentId: 'acme-agent', updatedAt: 10, configOptions },
+                sessionConfigOptionOverridesV1: { v: 1, updatedAt: 20, overrides: {
+                    provider: { value: 'gateway', updatedAt: 20 },
+                } },
+            }), overrides: { enqueueAgentMessageCommitted },
+        });
+        const updateConfiguration = vi.fn<NonNullable<AgentSessionRuntime['updateConfiguration']>>(async () => ({
+            status: 'rejected', diagnostic: { code: 'acp_configuration_update_failed', severity: 'error',
+                message: 'fx needs access to Vercel AI Gateway. Run fx login to sign in, fx setup to use an API key, or set AI_GATEWAY_API_KEY.' },
+        }));
+        const session: AgentSessionRuntime = {
+            send: async () => ({ status: 'admitted' }), updateConfiguration,
+            watch: () => ({ dispose() {} }), dispose: async () => undefined,
+        };
+        const runtime = createNativeAgentSessionOperations(session, 'config-rejected', undefined, undefined, undefined, {
+            mode: { value: null, updatedAtMs: 0 }, model: { value: null, updatedAtMs: 0 },
+            permissionIntent: { value: null, updatedAtMs: 0 }, options: {},
+        });
+        const synchronizers = createRuntimeOverrideSynchronizers({
+            agentTargetKey: 'backend:acme-agent', session: metadataSession,
+            runtime: createRuntimeOverrideTarget({ runtime, transitionModelSelection: async () => { throw new Error('This config-option test must not transition a model'); } }),
+            isStarted: () => true,
+            configOptionRejectionTranscript: { provider: 'acme-agent', session: metadataSession },
+        });
+        try {
+            synchronizers.syncFromMetadata();
+            await synchronizers.flushPendingAfterStart();
+            expect(metadataSession.getMetadataSnapshot()?.sessionConfigOptionOverridesV1?.overrides.provider).toBeUndefined();
+            expect(metadataSession.getMetadataSnapshot()?.sessionConfigOptionsV1?.configOptions).toEqual(configOptions);
+            expect(enqueueAgentMessageCommitted).toHaveBeenCalledWith('acme-agent', expect.objectContaining({
+                type: 'message', message: expect.stringContaining('Vercel AI Gateway'),
+            }), expect.any(Object));
+            synchronizers.syncFromMetadata();
+            await synchronizers.flushPendingAfterStart();
+            expect(updateConfiguration).toHaveBeenCalledTimes(1);
+            expect(enqueueAgentMessageCommitted).toHaveBeenCalledTimes(1);
+        } finally {
+            await synchronizers.dispose?.();
+            await runtime.resetOrDisposeRuntime();
+            await metadataSession.close();
+        }
     });
 
     it('projects the native command catalog through the existing slash-command metadata owner', () => {

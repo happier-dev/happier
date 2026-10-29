@@ -3,9 +3,96 @@ import { describe, expect, it, vi } from 'vitest';
 import type { RuntimeConfigUpdateOutcomeV1 } from '@happier-dev/agents';
 
 import type { Metadata } from '@/api/types';
+import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 import { createSessionConfigOptionOverrideSynchronizer } from './sessionConfigOptionOverrideSync';
 
 describe('createSessionConfigOptionOverrideSynchronizer', () => {
+  it('settles a definitive rejection once, clears its intent and keeps newer edits runnable', async () => {
+    // fx 0.0.14 wire capture: E-fx-live-probe.md §3, 2026-10-27, provider=gateway / -32600.
+    const reason = 'fx needs access to Vercel AI Gateway. Run fx login to sign in, fx setup to use an API key, or set AI_GATEWAY_API_KEY.';
+    let metadata = createTestMetadata({ sessionConfigOptionOverridesV1: { v: 1, updatedAt: 30,
+      overrides: { provider: { updatedAt: 30, value: 'gateway' }, effort: { updatedAt: 20, value: 'high' } } } });
+    const rejected: string[] = [];
+    const applied: Array<readonly [string, string | number | boolean | null]> = [];
+    const sync = createSessionConfigOptionOverrideSynchronizer({
+      session: { getMetadataSnapshot: () => metadata,
+        updateMetadataAsCurrentPublisher: async update => { metadata = update(metadata); } },
+      runtime: { setSessionConfigOption: async (id, value) => {
+        applied.push([id, value]);
+        return id === 'provider' && value === 'gateway' ? { status: 'failed', reason } : { status: 'applied' };
+      } },
+      isStarted: () => true,
+      onConfigOptionRejected: async ({ outcome }) => { rejected.push(outcome.reason ?? ''); },
+    });
+    sync.syncFromMetadata();
+    await sync.flushPendingAfterStart();
+    expect(metadata.sessionConfigOptionOverridesV1?.overrides).toEqual({ effort: { updatedAt: 20, value: 'high' } });
+    for (let i = 0; i < 3; i += 1) { sync.syncFromMetadata(); await sync.flushPendingAfterStart(); }
+    expect(applied.filter(([id]) => id === 'provider')).toEqual([['provider', 'gateway']]);
+    expect(rejected).toEqual([reason]);
+    metadata = { ...metadata, sessionConfigOptionOverridesV1: { v: 1, updatedAt: 31,
+      overrides: { provider: { updatedAt: 31, value: 'codex' } } } };
+    sync.syncFromMetadata();
+    await sync.flushPendingAfterStart();
+    expect(applied.at(-1)).toEqual(['provider', 'codex']);
+  });
+
+  it.each([' selected ', '', ' '])('keeps exact opaque config ids and value %j through metadata reconciliation', async value => {
+    const setSessionConfigOption = vi.fn(async (_id: string, _value: string | number | boolean | null) => {});
+    const sync = createSessionConfigOptionOverrideSynchronizer({
+      session: { getMetadataSnapshot: () => createTestMetadata({ sessionConfigOptionOverridesV1: { v: 1, updatedAt: 1,
+        overrides: { ' custom ': { updatedAt: 1, value } } } }) },
+      runtime: { setSessionConfigOption }, isStarted: () => true,
+    });
+    sync.syncFromMetadata();
+    await sync.flushPendingAfterStart();
+    expect(setSessionConfigOption).toHaveBeenCalledWith(' custom ', value);
+  });
+
+  it('preserves an edit arriving during a rejected setter and applies the newer value', async () => {
+    let metadata = createTestMetadata({ sessionConfigOptionOverridesV1: { v: 1, updatedAt: 1,
+      overrides: { provider: { updatedAt: 1, value: 'gateway' } } } });
+    let rejectCandidate!: (outcome: RuntimeConfigUpdateOutcomeV1) => void;
+    const first = new Promise<RuntimeConfigUpdateOutcomeV1>(resolve => { rejectCandidate = resolve; });
+    const values: Array<string | number | boolean | null> = [];
+    const sync = createSessionConfigOptionOverrideSynchronizer({
+      session: { getMetadataSnapshot: () => metadata,
+        updateMetadataAsCurrentPublisher: async update => { metadata = update(metadata); } },
+      runtime: { setSessionConfigOption: async (_id, value) => {
+        values.push(value);
+        return value === 'gateway' ? first : { status: 'applied' };
+      } }, isStarted: () => true,
+    });
+    sync.syncFromMetadata();
+    metadata = { ...metadata, sessionConfigOptionOverridesV1: { v: 1, updatedAt: 2,
+      overrides: { provider: { updatedAt: 2, value: 'codex' } } } };
+    sync.syncFromMetadata();
+    rejectCandidate({ status: 'failed', reason: 'Sign in required' });
+    await sync.flushPendingAfterStart();
+    await sync.flushPendingAfterStart();
+    expect(metadata.sessionConfigOptionOverridesV1?.overrides.provider).toEqual({ updatedAt: 2, value: 'codex' });
+    expect(values).toEqual(['gateway', 'codex']);
+  });
+
+  it.each(['failed', 'unsupported'] as const)('does not retry a %s candidate even when its metadata publication fails', async status => {
+    const metadata = createTestMetadata({ sessionConfigOptionOverridesV1: { v: 1, updatedAt: 1,
+      overrides: { provider: { updatedAt: 1, value: 'gateway' } } } });
+    const attempted: string[] = [];
+    const reported: string[] = [];
+    const sync = createSessionConfigOptionOverrideSynchronizer({
+      session: { getMetadataSnapshot: () => metadata,
+        updateMetadataAsCurrentPublisher: async () => { throw new Error('offline'); } },
+      runtime: { setSessionConfigOption: async id => {
+        attempted.push(id);
+        return { status, reason: 'Native configuration refused' };
+      } }, isStarted: () => true,
+      onConfigOptionRejected: ({ outcome }) => { reported.push(outcome.reason ?? ''); },
+    });
+    for (let i = 0; i < 3; i += 1) { sync.syncFromMetadata(); await sync.flushPendingAfterStart(); }
+    expect(attempted).toEqual(['provider']);
+    expect(reported).toEqual(['Native configuration refused']);
+  });
+
   it('queues pending overrides before runtime start and applies after start', async () => {
     let started = false;
     const setSessionConfigOption = vi.fn(async (_configId: string, _value: any) => {});
@@ -154,10 +241,14 @@ describe('createSessionConfigOptionOverrideSynchronizer', () => {
     expect(setSessionConfigOption).toHaveBeenLastCalledWith('reasoning_effort', 'high');
   });
 
-  it('marks an override applied (no re-attempt) when the runtime reports an applied outcome', async () => {
+  it.each<RuntimeConfigUpdateOutcomeV1>([
+    { status: 'applied' },
+    { status: 'unsupported', timing: 'skipped_already_effective' },
+  ])('settles an effective outcome %j without reporting rejection', async outcome => {
+    const rejected: string[] = [];
     const setSessionConfigOption = vi
       .fn<(_configId: string, _value: any) => Promise<RuntimeConfigUpdateOutcomeV1 | void>>()
-      .mockResolvedValue({ status: 'applied' });
+      .mockResolvedValue(outcome);
 
     const sync = createSessionConfigOptionOverrideSynchronizer({
       session: {
@@ -174,6 +265,7 @@ describe('createSessionConfigOptionOverrideSynchronizer', () => {
       },
       runtime: { setSessionConfigOption },
       isStarted: () => true,
+      onConfigOptionRejected: ({ outcome }) => { rejected.push(outcome.status); },
     });
 
     sync.syncFromMetadata();
@@ -183,6 +275,7 @@ describe('createSessionConfigOptionOverrideSynchronizer', () => {
     sync.syncFromMetadata();
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(setSessionConfigOption).toHaveBeenCalledTimes(1);
+    expect(rejected).toEqual([]);
   });
 
   it('applies the newest config option value across canonical and legacy aliases', async () => {
