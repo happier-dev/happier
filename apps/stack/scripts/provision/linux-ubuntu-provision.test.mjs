@@ -10,6 +10,51 @@ import { writeFakeBin } from '../testkit/core/fake_bin_harness.mjs';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 
+test('Bun-only provisioning repairs missing or stale compilers without unrelated host setup and is idempotent', async t => {
+  const { root } = await createTempFixture(t, { prefix: 'hstack-bun-only-' });
+  const pin = (await readFile(join(__dirname, '.bun-version'), 'utf8')).trim();
+  const shellBoundary = join(root, 'os-boundary.sh');
+  const writes = join(root, 'writes');
+  // OS/download/install boundaries only; execute the actual provisioner and
+  // its version/architecture decisions without writing system directories.
+  await writeFile(shellBoundary, `
+id() { printf '1000\\n'; }
+sudo() { "$@"; }
+uname() { printf '%s\\n' "$TEST_ARCH"; }
+bun() { test -f "$TEST_HOST/bun.version" && /bin/cat "$TEST_HOST/bun.version"; }
+curl() {
+  printf '%s\\n' "$*" >> "$TEST_HOST/writes";
+  while [ "$#" -gt 0 ]; do
+    if [ "$1" = -o ]; then shift; : > "$1"; return; fi
+    shift
+  done
+  return 79
+}
+unzip() { :; }
+install() {
+  [ "$4" = /usr/local/bin/bun ] || return 79
+  printf '%s\\n' "$TEST_PIN" > "$TEST_HOST/bun.version"
+}
+apt-get() { return 79; }
+npm() { return 79; }
+`);
+  for (const [arch, oldVersion, asset] of [['x86_64', '', 'x64'], ['aarch64', '1.3.5', 'aarch64']]) {
+    await writeFile(join(root, 'bun.version'), oldVersion);
+    await writeFile(writes, '');
+    const env = { ...process.env, BASH_ENV: shellBoundary, TEST_HOST: root, TEST_PIN: pin,
+      TEST_ARCH: arch, TMPDIR: root, HAPPIER_PROVISION_BUN_VERSION: '' };
+    const run = () => spawnSync('bash', [join(__dirname, 'linux-ubuntu-provision.sh'), '--profile=bun'], { env, encoding: 'utf8' });
+    const first = run();
+    assert.equal(first.status, 0, first.stderr || first.stdout);
+    assert.equal((await readFile(join(root, 'bun.version'), 'utf8')).trim(), pin);
+    const downloads = await readFile(writes, 'utf8');
+    assert.ok(downloads.includes(`bun-v${pin}/bun-linux-${asset}.zip`));
+    assert.equal(run().status, 0);
+    assert.equal(await readFile(writes, 'utf8'), downloads, 'a pinned compiler needs no second download');
+    await assert.rejects(readFile(join(root, '.codex/config.toml')), { code: 'ENOENT' });
+  }
+});
+
 test('fresh Lima provisioning forwards its CRLF companion or explicit Bun override without executing a live guest', async t => {
   const { root } = await createTempFixture(t, { prefix: 'hstack-lima-bun-owner-' });
   const fixtureProvisionDir = join(root, 'apps', 'stack', 'scripts', 'provision');
@@ -470,13 +515,6 @@ test('linux provision consumes its companion Bun pin and installs browser tools 
     1,
     'expected an already-pinned Bun installation to avoid a second download',
   );
-});
-
-test('linux provision maps both managed Linux architectures to Bun release assets', async () => {
-  const script = await readFile(join(__dirname, 'linux-ubuntu-provision.sh'), 'utf8');
-
-  assert.match(script, /aarch64\|arm64\) BUN_ARCH="aarch64"/);
-  assert.match(script, /x86_64\|amd64\) BUN_ARCH="x64"/);
 });
 
 test('linux provision (installer profile) does not touch node/npm', async () => {

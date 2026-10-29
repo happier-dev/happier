@@ -16,6 +16,7 @@ set -euo pipefail
 # - bare      : do nothing (useful if you explicitly want an unprovisioned VM)
 # - qa        : browser runtime only; no user Codex configuration or build-tool setup
 # - toolchain : Node + npm + Go + ripgrep + native build tools; pinned pnpm follows source sync
+# - bun      : reconcile only the pinned standalone compiler on an existing worker
 #
 # Env overrides:
 # - HAPPIER_PROVISION_NODE_MAJOR (default: 24)
@@ -27,13 +28,14 @@ set -euo pipefail
 usage() {
   cat <<'EOF'
 Usage:
-  ./linux-ubuntu-provision.sh [--profile=happier|installer|bare|qa|toolchain]
+  ./linux-ubuntu-provision.sh [--profile=happier|installer|bare|qa|toolchain|bun]
 
 Examples:
   ./linux-ubuntu-provision.sh --profile=happier
   ./linux-ubuntu-provision.sh --profile=installer
   ./linux-ubuntu-provision.sh --profile=bare
   ./linux-ubuntu-provision.sh --profile=toolchain
+  ./linux-ubuntu-provision.sh --profile=bun
 EOF
 }
 
@@ -102,7 +104,7 @@ PLAYWRIGHT_VERSION="${HAPPIER_PROVISION_PLAYWRIGHT_VERSION:-1.58.2}"
 BUN_VERSION="${HAPPIER_PROVISION_BUN_VERSION:-}"
 
 case "${PROFILE}" in
-  happier|installer|bare|qa|toolchain) ;;
+  happier|installer|bare|qa|toolchain|bun) ;;
   *)
     echo "[provision] invalid --profile: ${PROFILE}" >&2
     usage >&2
@@ -171,7 +173,7 @@ if [[ "${PROFILE}" == "toolchain" ]]; then
   exit 0
 fi
 
-if [[ "${PROFILE}" == "happier" ]]; then
+if [[ "${PROFILE}" == "happier" || "${PROFILE}" == "bun" ]]; then
   if [[ -z "${BUN_VERSION}" ]]; then
     BUN_VERSION_FILE="$(dirname "${BASH_SOURCE[0]}")/.bun-version"
     if [[ ! -r "${BUN_VERSION_FILE}" ]]; then
@@ -185,6 +187,37 @@ if [[ "${PROFILE}" == "happier" ]]; then
     echo "[provision] invalid Bun version: ${BUN_VERSION}" >&2
     exit 2
   fi
+fi
+
+provision_bun_toolchain() {
+  local BUN_ARCH CURRENT_BUN_VERSION BUN_TMP_DIR BUN_ARCHIVE
+  case "$(uname -m)" in
+    aarch64|arm64) BUN_ARCH="aarch64" ;;
+    x86_64|amd64) BUN_ARCH="x64" ;;
+    *)
+      echo "[provision] unsupported Bun architecture: $(uname -m)" >&2
+      exit 1
+      ;;
+  esac
+  export PATH="/usr/local/bin:${PATH}"
+  CURRENT_BUN_VERSION="$(bun --version 2>/dev/null || true)"
+  if [[ "${CURRENT_BUN_VERSION}" != "${BUN_VERSION}" ]]; then
+    say "installing Bun ${BUN_VERSION} (${BUN_ARCH})"
+    BUN_TMP_DIR="$(mktemp -d)"
+    BUN_ARCHIVE="${BUN_TMP_DIR}/bun.zip"
+    curl -fsSL \
+      "https://github.com/oven-sh/bun/releases/download/bun-v${BUN_VERSION}/bun-linux-${BUN_ARCH}.zip" \
+      -o "${BUN_ARCHIVE}"
+    unzip -q "${BUN_ARCHIVE}" -d "${BUN_TMP_DIR}"
+    as_root install -m 0755 "${BUN_TMP_DIR}/bun-linux-${BUN_ARCH}/bun" /usr/local/bin/bun
+    rm -rf -- "${BUN_TMP_DIR}"
+  fi
+  say "bun: $(bun --version)"
+}
+
+if [[ "${PROFILE}" == "bun" ]]; then
+  provision_bun_toolchain
+  exit 0
 fi
 
 if [[ "${PROFILE}" != "qa" ]]; then
@@ -319,31 +352,7 @@ fi
 
 say "mutagen: $(mutagen version)"
 
-BUN_ARCH=""
-case "$(uname -m)" in
-  aarch64|arm64) BUN_ARCH="aarch64" ;;
-  x86_64|amd64) BUN_ARCH="x64" ;;
-  *)
-    echo "[provision] unsupported Bun architecture: $(uname -m)" >&2
-    exit 1
-    ;;
-esac
-
-export PATH="/usr/local/bin:${PATH}"
-CURRENT_BUN_VERSION="$(bun --version 2>/dev/null || true)"
-if [[ "${CURRENT_BUN_VERSION}" != "${BUN_VERSION}" ]]; then
-  say "installing Bun ${BUN_VERSION} (${BUN_ARCH})"
-  BUN_TMP_DIR="$(mktemp -d)"
-  BUN_ARCHIVE="${BUN_TMP_DIR}/bun.zip"
-  curl -fsSL \
-    "https://github.com/oven-sh/bun/releases/download/bun-v${BUN_VERSION}/bun-linux-${BUN_ARCH}.zip" \
-    -o "${BUN_ARCHIVE}"
-  unzip -q "${BUN_ARCHIVE}" -d "${BUN_TMP_DIR}"
-  as_root install -m 0755 "${BUN_TMP_DIR}/bun-linux-${BUN_ARCH}/bun" /usr/local/bin/bun
-  rm -rf -- "${BUN_TMP_DIR}"
-fi
-
-say "bun: $(bun --version)"
+provision_bun_toolchain
 
 provision_node_toolchain
 fi
