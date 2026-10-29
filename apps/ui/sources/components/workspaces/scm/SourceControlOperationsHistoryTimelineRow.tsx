@@ -29,7 +29,10 @@ type SourceControlOperationsHistoryTimelineRowProps = Readonly<{
     showTrailingLine: boolean;
     /** The rail below this commit is still incoming (dashed). */
     dashedTrailingLine?: boolean;
-    /** Inside day groups the gutter shows the time of day only. */
+    /**
+     * Inside day groups the gutter shows the time of day only. `elapsed` is the finished summary's live
+     * "how long ago" label (it ticks; the gutter variants are static).
+     */
     whenFormat?: 'relative' | 'time' | 'elapsed';
     /** The same commit presentation inside a finished summary, without a timeline's time/rail gutter. */
     layout?: 'timeline' | 'summary';
@@ -41,9 +44,17 @@ type SourceControlOperationsHistoryTimelineRowProps = Readonly<{
     onCommitLayout?: (sha: string, y: number, height: number) => void;
 }>;
 
+/**
+ * The summary's "how long ago" text. The clock lives here, in the only place that shows it, so each
+ * tick re-renders this leaf and never the row (subject, author, tags, press handlers) around it.
+ * Normal timeline rows never subscribe to a clock.
+ */
+function ScmHistoryWhenLabel(props: Readonly<{ timestamp: number; ticking: boolean }>) {
+    useElapsedTime(props.ticking ? props.timestamp : null);
+    return formatScmHistoryTimestamp(props.timestamp);
+}
+
 export const SourceControlOperationsHistoryTimelineRow = React.memo((props: SourceControlOperationsHistoryTimelineRowProps) => {
-    // Only the finished summary row ticks; normal timeline rows never subscribe to a clock.
-    useElapsedTime(props.whenFormat === 'elapsed' ? props.entry.timestamp : null);
     const indicatorColor = props.isHead
         ? props.theme.colors.text.link
         : props.theme.colors.text.secondary;
@@ -117,7 +128,7 @@ export const SourceControlOperationsHistoryTimelineRow = React.memo((props: Sour
                     <Text style={{ color: props.theme.colors.text.tertiary ?? props.theme.colors.text.secondary, fontSize: 11, ...Typography.mono() }}>
                         {props.entry.shortSha}
                     </Text>
-                    {props.layout === 'summary' ? <Text testID={`scm-commit-entry-${props.entry.sha}-when`} style={{ color: props.theme.colors.text.tertiary ?? props.theme.colors.text.secondary, ...Typography.variant('micro'),  }}>· {formatScmHistoryTimestamp(props.entry.timestamp)}</Text> : null}
+                    {props.layout === 'summary' ? <Text testID={`scm-commit-entry-${props.entry.sha}-when`} style={{ color: props.theme.colors.text.tertiary ?? props.theme.colors.text.secondary, ...Typography.variant('micro'),  }}>· <ScmHistoryWhenLabel timestamp={props.entry.timestamp} ticking={props.whenFormat === 'elapsed'} /></Text> : null}
                     {props.tag ? (
                         <View
                             testID={`scm-commit-entry-${props.entry.sha}-tag-${props.tag}`}
