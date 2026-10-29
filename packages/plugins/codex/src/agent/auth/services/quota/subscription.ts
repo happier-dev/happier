@@ -10,10 +10,10 @@ export const OPENAI_CODEX_DEFAULT_SUBSCRIPTION_URL =
 const SUBSCRIPTION_USER_AGENT =
   'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 
-const subscriptionResponseSchema = z.object({
+const subscriptionResponseSchema = z.lazy(() => z.object({
   active_until: z.pipe(z.string().check(z.iso.datetime({ offset: true })), z.transform((value) => Date.parse(value))),
   will_renew: z.optional(z.unknown()),
-});
+}));
 
 type SubscriptionErrorCode = NonNullable<AgentAccountUsageSubscription['lastRefreshError']>['code'];
 

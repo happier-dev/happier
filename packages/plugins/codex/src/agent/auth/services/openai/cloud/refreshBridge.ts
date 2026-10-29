@@ -5,8 +5,8 @@ import type { CodexConnectedServiceRuntimeFailureClassification } from '../../ru
 import { CODEX_OPENAI_CONNECTED_ACCOUNT_SERVICE_KEY } from '../../../../../constants.js';
 import { readCodexConnectedServiceRefreshSelection } from '../../runtime/auth/generationRequest.js';
 
-const connectedServiceProfileIdSchema = z.string().check(z.minLength(1), z.maxLength(64), z.regex(/^[a-zA-Z0-9][a-zA-Z0-9_:-]{0,63}$/u, 'Invalid profile id'));
-const connectedServiceAuthGroupIdSchema = z.string().check(z.trim(), z.minLength(1), z.maxLength(64), z.regex(/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/u, 'Invalid connected service account group id'));
+const connectedServiceProfileIdSchema = z.lazy(() => z.string().check(z.minLength(1), z.maxLength(64), z.regex(/^[a-zA-Z0-9][a-zA-Z0-9_:-]{0,63}$/u, 'Invalid profile id')));
+const connectedServiceAuthGroupIdSchema = z.lazy(() => z.string().check(z.trim(), z.minLength(1), z.maxLength(64), z.regex(/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/u, 'Invalid connected service account group id')));
 
 /**
  * Provider-local service id of the Codex Connected Account service on the
@@ -17,7 +17,7 @@ const connectedServiceAuthGroupIdSchema = z.string().check(z.trim(), z.minLength
  */
 const OPENAI_CODEX_SERVICE_LOCAL_ID = 'openai-codex';
 
-export const CodexChatGptAuthTokensRefreshSelectionSchema = z.discriminatedUnion('kind', [
+export const CodexChatGptAuthTokensRefreshSelectionSchema = z.lazy(() => z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('profile'),
     serviceId: z.literal(OPENAI_CODEX_SERVICE_LOCAL_ID),
@@ -31,16 +31,16 @@ export const CodexChatGptAuthTokensRefreshSelectionSchema = z.discriminatedUnion
     fallbackProfileId: connectedServiceProfileIdSchema,
     generation: z.number().check(z.int(), z.nonnegative()),
   }),
-]);
+]));
 
 export type CodexChatGptAuthTokensRefreshSelection =
   z.infer<typeof CodexChatGptAuthTokensRefreshSelectionSchema>;
 
-export const CodexChatGptAuthTokensRefreshResponseSchema = z.object({
+export const CodexChatGptAuthTokensRefreshResponseSchema = z.lazy(() => z.object({
   accessToken: z.string().check(z.minLength(1)),
   chatgptAccountId: z.nullable(z.string()),
   chatgptPlanType: z.nullable(z.string()),
-});
+}));
 
 export type CodexChatGptAuthTokensRefreshResponse =
   z.infer<typeof CodexChatGptAuthTokensRefreshResponseSchema>;
