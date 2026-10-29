@@ -40,6 +40,8 @@ const stylesheet = StyleSheet.create((theme) => ({
     withAction: {
         flexDirection: 'row',
         alignItems: 'center',
+        // The list's one action sits at the trailing edge, also when a narrow footer drops the hints.
+        justifyContent: 'flex-end',
         gap: theme.space.s12,
     },
     animatorBesideAction: { flex: 1, minWidth: 0 },
