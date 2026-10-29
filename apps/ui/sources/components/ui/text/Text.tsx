@@ -139,8 +139,8 @@ export type AppTextInputProps = RNTextInputProps & Readonly<{
     disableUiFontScaling?: boolean;
 }>;
 
-export const TextInput = React.memo(
-    React.forwardRef<any, AppTextInputProps>(function AppTextInput(
+const AppTextInput = React.forwardRef<any, AppTextInputProps>(
+    function AppTextInput(
         { style, variant, emphasis, useDefaultTypography = true, disableUiFontScaling = false, ...props },
         ref
     ) {
@@ -188,5 +188,7 @@ export const TextInput = React.memo(
                 {...webAccessibilityProps}
             />
         );
-    })
+    }
 );
+
+export const TextInput: React.NamedExoticComponent<React.ComponentProps<typeof AppTextInput>> = React.memo(AppTextInput);
