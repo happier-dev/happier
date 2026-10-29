@@ -160,6 +160,9 @@ export async function changeUsernameInTx(
         change.kind === "manual_set" ? change.username : change.suggestion, env);
     if (change.kind === "identity_fill" && admission.availability !== "available") return { username: account.username };
     assertUsernameAvailable(admission);
+    if (change.kind === "manual_set" && account.username === admission.username && !account.usernameAutoFillEnabled) {
+        return { username: admission.username };
+    }
     try {
         await tx.account.update({ where: { id: accountId }, data: {
             username: admission.username,

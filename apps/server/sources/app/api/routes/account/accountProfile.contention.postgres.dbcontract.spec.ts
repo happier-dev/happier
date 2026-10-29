@@ -14,14 +14,109 @@ function latch() {
 }
 
 describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("Account name terminal assignment", () => {
+    let connected = false;
     beforeAll(async () => {
         if (!process.env.DATABASE_URL || process.env.DATABASE_URL !== process.env.HAPPIER_TEST_POSTGRES_DATABASE_URL) {
             throw new Error("Use the disposable PostgreSQL DB-contract harness");
         }
         initDbPostgres();
         await db.$connect();
+        connected = true;
+        await db.$executeRawUnsafe('CREATE TABLE "AccountProfileWriteObservation" ("accountId" text NOT NULL)');
+        await db.$executeRawUnsafe(`CREATE FUNCTION "observeAccountProfileWrite"() RETURNS trigger
+            LANGUAGE plpgsql AS $$ BEGIN
+                INSERT INTO "AccountProfileWriteObservation" ("accountId") VALUES (NEW."id");
+                RETURN NEW;
+            END $$`);
+        await db.$executeRawUnsafe(`CREATE TRIGGER "observeAccountProfileWrite"
+            AFTER UPDATE ON "Account" FOR EACH ROW EXECUTE FUNCTION "observeAccountProfileWrite"()`);
     });
-    afterAll(async () => { await db.$disconnect(); });
+    afterAll(async () => {
+        eventRouter.clearIo();
+        if (!connected) return;
+        await db.$executeRawUnsafe('DROP TRIGGER IF EXISTS "observeAccountProfileWrite" ON "Account"');
+        await db.$executeRawUnsafe('DROP FUNCTION IF EXISTS "observeAccountProfileWrite"()');
+        await db.$executeRawUnsafe('DROP TABLE IF EXISTS "AccountProfileWriteObservation"');
+        await db.$disconnect();
+    });
+
+    async function writeCount(accountId: string): Promise<number> {
+        const [row] = await db.$queryRaw<Array<{ count: number }>>`
+            SELECT count(*)::int AS count FROM "AccountProfileWriteObservation" WHERE "accountId" = ${accountId}
+        `;
+        return row.count;
+    }
+
+    it("equal normalized names have no physical writes, cursors or socket updates while real changes retain their response", async () => {
+        const account = await db.account.create({ data: { encryptionMode: "plain", name: "Captain Nemo" } });
+        const emissions: unknown[] = [];
+        // Socket.IO delivery is the network boundary; the route, transaction,
+        // native row updates, cursor allocation and event routing stay real.
+        eventRouter.setIo({ to: () => ({ emit: (_event: string, payload: unknown) => { emissions.push(payload); },
+            disconnectSockets: () => {} }) });
+        try {
+            await withAuthenticatedTestApp(registerAccountProfileRoute, async app => {
+                for (let index = 0; index < 20; index++) {
+                    const response = await app.inject({ method: "POST", url: "/v1/account/profile",
+                        headers: { "x-test-user-id": account.id }, payload: { name: "  Captain Nemo  " } });
+                    expect(response.statusCode).toBe(200);
+                    expect(AccountNameUpdateResponseV1Schema.parse(response.json()))
+                        .toMatchObject({ name: "Captain Nemo", firstName: "Captain Nemo", lastName: null });
+                }
+                expect(await writeCount(account.id)).toBe(0);
+                expect(await db.account.findUniqueOrThrow({ where: { id: account.id } })).toEqual(account);
+                expect(await db.accountChange.count({ where: { accountId: account.id } })).toBe(0);
+                expect(emissions).toHaveLength(0);
+
+                const changed = await app.inject({ method: "POST", url: "/v1/account/profile",
+                    headers: { "x-test-user-id": account.id }, payload: { name: null } });
+                expect(changed.statusCode).toBe(200);
+                expect(AccountNameUpdateResponseV1Schema.parse(changed.json()))
+                    .toMatchObject({ name: null, firstName: null, lastName: null });
+                expect(await writeCount(account.id)).toBe(2);
+                const committed = await db.account.findUniqueOrThrow({ where: { id: account.id } });
+                expect(committed).toMatchObject({ name: null, seq: account.seq + 1 });
+                const change = await db.accountChange.findUniqueOrThrow({ where: { accountId_kind_entityId: {
+                    accountId: account.id, kind: "account", entityId: "self",
+                } } });
+                expect(change).toMatchObject({ cursor: committed.seq, hint: { name: true } });
+                expect(emissions).toEqual(expect.arrayContaining([
+                    expect.objectContaining({ seq: change.cursor, body: expect.objectContaining({ name: null }) }),
+                ]));
+                const publishedCount = emissions.length;
+                const equalNull = await app.inject({ method: "POST", url: "/v1/account/profile",
+                    headers: { "x-test-user-id": account.id }, payload: { name: "   " } });
+                expect(equalNull.statusCode).toBe(200);
+                expect(AccountNameUpdateResponseV1Schema.parse(equalNull.json()))
+                    .toMatchObject({ name: null, firstName: null, lastName: null });
+                expect(await writeCount(account.id)).toBe(2);
+                expect(await db.account.findUniqueOrThrow({ where: { id: account.id } })).toEqual(committed);
+                expect(emissions).toHaveLength(publishedCount);
+            });
+        } finally {
+            eventRouter.clearIo();
+            await db.account.delete({ where: { id: account.id } });
+        }
+    });
+
+    it("concurrent equal replacements publish exactly one committed name change", async () => {
+        const account = await db.account.create({ data: { encryptionMode: "plain" } });
+        try {
+            await withAuthenticatedTestApp(registerAccountProfileRoute, async app => {
+                const responses = await Promise.all(Array.from({ length: 8 }, () => app.inject({
+                    method: "POST", url: "/v1/account/profile", headers: { "x-test-user-id": account.id },
+                    payload: { name: "Captain Nemo" },
+                })));
+                expect(responses.map(response => response.statusCode)).toEqual(Array.from({ length: 8 }, () => 200));
+                expect(await writeCount(account.id)).toBe(2);
+                expect(await db.account.findUniqueOrThrow({ where: { id: account.id } }))
+                    .toMatchObject({ name: "Captain Nemo", seq: account.seq + 1 });
+                expect(await db.accountChange.count({ where: { accountId: account.id } })).toBe(1);
+            });
+        } finally {
+            await db.account.delete({ where: { id: account.id } });
+        }
+    });
 
     it("allows ordinary Session domain work while the public name assignment holds its Account row", async () => {
         const account = await db.account.create({ data: { encryptionMode: "plain" } });

@@ -26,21 +26,28 @@ export function registerAccountProfileRoute(app: Fastify): void {
             await acquireAccountChangePublicationLocksInTx(tx, [request.userId], { includeSingleAccount: true });
             let updatedName = request.body.name;
             enqueueAccountChangePublication(tx, [request.userId], async publicationTx => {
+                // Compare only under the terminal Account writer fence so
+                // concurrent equal replacements publish a single real change.
+                const current = await publicationTx.account.findUniqueOrThrow({
+                    where: { id: request.userId },
+                    select: { name: true },
+                });
+                if (current.name === request.body.name) return;
                 const account = await publicationTx.account.update({
                     where: { id: request.userId },
                     data: { name: request.body.name },
                     select: { name: true },
                 });
                 updatedName = account.name;
+                const cursor = await markAccountChanged(publicationTx, {
+                    accountId: request.userId, kind: 'account', entityId: 'self', hint: { name: true },
+                });
+                afterTx(publicationTx, () => eventRouter.emitUpdate({
+                    userId: request.userId,
+                    payload: buildUpdateAccountUpdate(request.userId, { name: updatedName }, cursor.resolveCursor(), randomKeyNaked(12)),
+                    recipientFilter: { type: 'user-scoped-only' },
+                }));
             });
-            const cursor = await markAccountChanged(tx, {
-                accountId: request.userId, kind: 'account', entityId: 'self', hint: { name: true },
-            });
-            afterTx(tx, () => eventRouter.emitUpdate({
-                userId: request.userId,
-                payload: buildUpdateAccountUpdate(request.userId, { name: updatedName }, cursor.resolveCursor(), randomKeyNaked(12)),
-                recipientFilter: { type: 'user-scoped-only' },
-            }));
             return transactionResult(() => updatedName);
         });
         return reply.send({ name, ...projectAccountNameToLegacyFieldsV1(name), timestamp: Date.now() });
