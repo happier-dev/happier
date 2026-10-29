@@ -139,7 +139,7 @@ describe('sessions domain: batched project SCM snapshot publish', () => {
     domain.updateWorkspaceScmSnapshot({ serverId: 'pub-empty', machineId: 'm1', rootPath: '/empty' }, null);
     expect(get()).toBe(previous);
     expect(getSetCount()).toBe(notifications);
-    expect(projectManager.getProjects()).toEqual([]);
+    expect(projectManager.getProjectForWorkspace({ serverId: 'pub-empty', machineId: 'm1', rootPath: '/empty' })).toBeNull();
   });
 
   it.each([false, true])('suppresses an equal SCM batch in the real store (exact Home: %s), while retaining real changes', (exactHome) => {

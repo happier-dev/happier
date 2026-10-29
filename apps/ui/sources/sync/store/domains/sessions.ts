@@ -451,7 +451,6 @@ export type SessionsDomain = {
     deleteSessionActionDraft: (scope: ServerAccountScope, address: SessionAddress, draftId: string) => void;
     clearSessionActionDrafts: (scope: ServerAccountScope, address: SessionAddress) => void;
 
-    getProjects: () => import('../../runtime/orchestration/projectManager').Project[];
     getProject: (projectId: string) => import('../../runtime/orchestration/projectManager').Project | null;
     getProjectForSession: (sessionId: string, serverId?: string | null) => import('../../runtime/orchestration/projectManager').Project | null;
 
@@ -2998,7 +2997,6 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
             };
         }),
         // Project management methods
-        getProjects: () => projectManager.getProjects(),
         getProject: (projectId: string) => projectManager.getProject(projectId),
         getProjectForSession: (sessionId: string, serverId?: string | null) => {
             if (serverId != null) {

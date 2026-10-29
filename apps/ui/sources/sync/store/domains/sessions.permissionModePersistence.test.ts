@@ -87,7 +87,6 @@ vi.mock('@/sync/sync', () => ({
 // This test only exercises local permission-mode merge logic, so stub those deps.
 vi.mock('../../runtime/orchestration/projectManager', () => ({
     projectManager: {
-        getProjects: () => [],
         getProject: () => null,
         getProjectForSession: () => null,
         getProjectScmStatus: () => null,

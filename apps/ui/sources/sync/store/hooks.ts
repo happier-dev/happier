@@ -2895,10 +2895,6 @@ export function useLocalSettingMutable<K extends keyof LocalSettings>(
 }
 
 // Project management hooks
-export function useProjects() {
-  return getStorage()(useShallow((state) => state.getProjects()));
-}
-
 export function useProject(projectId: string | null) {
   return getStorage()(useShallow((state) => (projectId ? state.getProject(projectId) : null)));
 }

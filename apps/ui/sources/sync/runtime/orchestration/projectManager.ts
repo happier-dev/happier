@@ -352,14 +352,6 @@ class ProjectManager {
     }
 
     /**
-     * Get all projects
-     */
-    getProjects(): Project[] {
-        return Array.from(this.projects.values())
-            .sort((a, b) => b.updatedAt - a.updatedAt); // Most recently updated first
-    }
-
-    /**
      * Get project by ID
      */
     getProject(projectId: string): Project | null {

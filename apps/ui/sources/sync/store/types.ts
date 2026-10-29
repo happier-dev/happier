@@ -286,7 +286,6 @@ export interface PetsDomainSlice {
 }
 
 export interface ProjectDomainSlice {
-    getProjects: () => import('../runtime/orchestration/projectManager').Project[];
     getProject: (projectId: string) => import('../runtime/orchestration/projectManager').Project | null;
     getProjectForSession: (sessionId: string, serverId?: string | null) => import('../runtime/orchestration/projectManager').Project | null;
     getProjectScmStatus: (projectId: string) => ScmStatus | null;
