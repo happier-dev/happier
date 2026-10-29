@@ -43,7 +43,7 @@ function resolveAccountingWorkMembership(query: UsageQuery, contributions: reado
     const selected = query.session === null ? null : new Set(typeof query.session === 'string' ? [query.session] : query.session);
     // Session metadata cannot prove public-population or historical model/source/project membership.
     // Only the canonical scoped accounting contribution can admit those turns.
-    const needsAccountingMembership = query.population === 'public_eligible_personal'
+    const needsAccountingMembership = query.population === 'public_eligible_personal' || query.execution !== undefined
         || query.projects.length > 0 || query.sources.length > 0 || query.modelIds.length > 0
         || query.workspaceIds.length > 0 || query.backendModes.length > 0;
     const matching = contributions.filter(row => row.sessionId !== null
@@ -52,6 +52,7 @@ function resolveAccountingWorkMembership(query: UsageQuery, contributions: reado
         && (!query.machines.length || row.machineId !== null && query.machines.includes(row.machineId))
         && (!query.projects.length || row.projectKey !== null && query.projects.includes(row.projectKey))
         && (!query.sources.length || row.source !== null && query.sources.includes(row.source))
+        && (query.execution === undefined || (row.sourceContext?.execution ?? 'unknown') === query.execution)
         && (!query.modelIds.length || query.modelIds.some(id =>
             (canonicalUsageModelPriceId(id) ?? 'unknown') === (canonicalUsageModelPriceId(row.modelId) ?? 'unknown')))
         && (!query.workspaceIds.length || row.workspaceId !== null && query.workspaceIds.includes(row.workspaceId))

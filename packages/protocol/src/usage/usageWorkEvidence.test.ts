@@ -21,6 +21,17 @@ const contribution = (sessionId: string, turnId: string) => UsageAnalyticsContri
 });
 
 describe('Usage shared work evidence', () => {
+    it('admits only execution-witnessed turns and never acquires the whole Session population for that selection', () => {
+        const query = normalizeUsageQuery({ execution: 'happier' });
+        const contributions = [{ ...contribution('parent', 'old'), sourceContext: { path: 'native' as const, execution: 'happier' as const } },
+            contribution('parent', 'new')];
+        expect(usageQueryNeedsSessionCandidates(query)).toBe(false);
+        expect(selectUsageQueryWorkEvidenceSessionIds({ query, sessions: [session], contributions })).toEqual(['parent']);
+        const detail = projectUsageQueryWorkEvidence({ query, sessions: [session], contributions });
+        expect(detail.closedTurns?.map(row => row.workId)).toEqual(['["parent","old"]']);
+        expect(projectUsageQueryWorkEvidence({ query, sessions: [session], contributions: [contribution('parent', 'new')] }))
+            .toEqual({ status: 'unknown' });
+    });
     it('intersects public detail with exact admitted turns rather than the whole mixed Session', () => {
         const query = normalizeUsageQuery({ population: 'public_eligible_personal' });
         const contributions = [contribution('parent', 'old')];
