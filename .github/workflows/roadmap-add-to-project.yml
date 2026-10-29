@@ -27,6 +27,10 @@ jobs:
         with:
           app-id: ${{ vars.ROADMAP_BOT_APP_ID || secrets.ROADMAP_BOT_APP_ID }}
           private-key: ${{ secrets.ROADMAP_BOT_PRIVATE_KEY }}
+          owner: happier-dev
+          repositories: ${{ github.event.repository.name }}
+          permission-issues: read
+          permission-organization-projects: write
 
       - name: Sync roadmap labels to project fields
         uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b

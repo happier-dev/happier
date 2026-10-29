@@ -266,6 +266,15 @@ test('workflow security W5: maintainer installs cannot inherit an App token', ()
   }
 });
 
+test('workflow security W6: roadmap App token has exact organization and project permissions', () => {
+  const job = workflows.get('roadmap-add-to-project.yml').jobs['add-to-project'];
+  const scope = job.steps.find((step) => actionName(step.uses) === 'actions/create-github-app-token').with;
+  assert.equal(scope.owner, 'happier-dev');
+  assert.equal(scope.repositories, '${{ github.event.repository.name }}');
+  assert.deepEqual(Object.fromEntries(Object.entries(scope).filter(([key]) => key.startsWith('permission-'))), {
+    'permission-issues': 'read', 'permission-organization-projects': 'write',
+  });
+});
 
 
 
