@@ -101,7 +101,7 @@ export function readInputPath(input: unknown, path: string): unknown {
   const segments = path.split('.').map((segment) => segment.trim()).filter(Boolean);
   let cursor: unknown = input;
   for (const segment of segments) {
-    if (!cursor || typeof cursor !== 'object') return undefined;
+    if (!cursor || typeof cursor !== 'object' || !Object.hasOwn(cursor, segment)) return undefined;
     cursor = (cursor as Record<string, unknown>)[segment];
   }
   return cursor;

@@ -1,5 +1,6 @@
 import type { InputFieldHint, InputHints } from './inputFields.js';
 import { evaluateInputPredicate, readInputPath } from './inputPredicates.js';
+import { readRecord } from './inputRecords.js';
 export {
   inputOptionValueKey,
   inputOptionValueSearchText,
@@ -61,10 +62,20 @@ export function writeInputPath(
       return { ...source, [segment]: value };
     }
     const current = source[segment];
-    const child = current && typeof current === 'object' && !Array.isArray(current)
-      ? current as Record<string, unknown>
-      : {};
-    return { ...source, [segment]: write(child, index + 1) };
+    return { ...source, [segment]: writeChild(current, index + 1) };
+  };
+
+  const writeChild = (source: unknown, index: number): unknown => {
+    if (Array.isArray(source)) {
+      const segment = segments[index]!;
+      const position = Number(segment);
+      // Indexed paths update prepared slots, not wildcard or property-shaped entries.
+      if (!/^(0|[1-9]\d*)$/.test(segment) || position >= source.length || !Object.hasOwn(source, segment)) return source;
+      const next: unknown[] = source.slice();
+      next[position] = index === segments.length - 1 ? value : writeChild(source[position], index + 1);
+      return next;
+    }
+    return write(readRecord(source), index);
   };
 
   return write(input, 0);
