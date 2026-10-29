@@ -21,4 +21,15 @@ test('label bootstrap owns both mutually exclusive issue handoff labels', async 
 
   assert.match(workflow, /name: 'needs:maintainer'.*Project review or action is required\./);
   assert.match(workflow, /name: 'needs:reporter'.*Waiting for new information or confirmation from an external participant\./);
+  assert.match(workflow, /name: 'needs:author'.*Waiting for requested changes or an answer from the pull request author\./);
+});
+
+test('PR lifecycle handoff runs trusted default-branch policy without executing contributor code', async () => {
+  const workflow = await readFile(resolve(repoRoot, '.github/workflows/issue-needs-handoff.yml'), 'utf8');
+  assert.match(workflow, /pull_request_target:\s*\n\s+types: \[opened, reopened, ready_for_review, synchronize, closed\]/);
+  assert.match(workflow, /ref: \$\{\{ github\.event\.repository\.default_branch \}\}/);
+  assert.match(workflow, /pull-requests: read/);
+  assert.match(workflow, /group: .*github\.event\.issue\.number \|\| github\.event\.pull_request\.number/);
+  assert.doesNotMatch(workflow, /pull_request\.head|pull_request\.merge|checkout.*--/);
+  assert.doesNotMatch(workflow, /pull_request_review:|pull_request_review_comment:/);
 });

@@ -11,8 +11,15 @@ export const ISSUE_NEEDS_LABELS = Object.freeze([
   'needs:reporter',
 ]);
 
+export const PULL_REQUEST_NEEDS_LABELS = Object.freeze([
+  'needs:maintainer',
+  'needs:author',
+]);
+
+const HANDOFF_LABELS = [...new Set([...ISSUE_NEEDS_LABELS, ...PULL_REQUEST_NEEDS_LABELS])];
+
 export const SAVED_REPLY_LABELS = Object.freeze([
-  ...ISSUE_NEEDS_LABELS,
+  ...HANDOFF_LABELS,
   'type: bug',
   'type: feature',
   'type: task',
@@ -58,8 +65,8 @@ function normalizePlan({ currentLabels, addLabels, removeLabels }) {
   const resultingLabels = new Set(currentLabels);
   for (const label of removals) resultingLabels.delete(label);
   for (const label of additions) resultingLabels.add(label);
-  if (ISSUE_NEEDS_LABELS.every((label) => resultingLabels.has(label))) {
-    throw new Error("An issue cannot have both needs labels; remove the current needs label in the same saved reply.");
+  if (HANDOFF_LABELS.filter((label) => resultingLabels.has(label)).length > 1) {
+    throw new Error("An issue or pull request cannot have both needs labels; remove the current needs label in the same saved reply.");
   }
 
   const deltaAdditions = additions.filter((label) => !currentLabels.has(label));
@@ -102,14 +109,35 @@ export function planIssueNeedsHandoff({
   eventName,
   action,
   issue,
+  pullRequest,
+  eventHeadSha,
   comment,
   commenterPermission = 'none',
 }) {
-  if (issue?.pull_request) return emptyPlan('ignored_pull_request');
-  if (issue?.state !== 'open') return emptyPlan('ignored_closed');
+  const isPullRequest = Boolean(issue?.pull_request);
+  if (isPullRequest && (!pullRequest || pullRequest.number !== issue.number)) {
+    throw new Error('A matching live pull request is required for PR handoff.');
+  }
   const currentLabels = issueLabelNames(issue);
+  if (isPullRequest && pullRequest.state === 'closed') {
+    return normalizePlan({ currentLabels, addLabels: [], removeLabels: HANDOFF_LABELS });
+  }
+  if ((isPullRequest ? pullRequest.state : issue?.state) !== 'open') return emptyPlan('ignored_closed');
 
-  if (eventName === 'issues' && (action === 'opened' || action === 'reopened')) {
+  if (isPullRequest && eventName === 'pull_request_target'
+      && ['opened', 'reopened', 'ready_for_review', 'synchronize'].includes(action)) {
+    if (pullRequest.draft) return emptyPlan('ignored_draft');
+    if (action === 'synchronize' && eventHeadSha !== pullRequest.head?.sha) {
+      return emptyPlan('ignored_stale_head');
+    }
+    return normalizePlan({
+      currentLabels,
+      addLabels: ['needs:maintainer'],
+      removeLabels: HANDOFF_LABELS.filter((label) => label !== 'needs:maintainer'),
+    });
+  }
+
+  if (!isPullRequest && eventName === 'issues' && (action === 'opened' || action === 'reopened')) {
     return normalizePlan({
       currentLabels,
       addLabels: ['needs:maintainer'],
@@ -124,14 +152,26 @@ export function planIssueNeedsHandoff({
 
   if (PROJECT_PERMISSIONS.has(commenterPermission)) {
     const directives = parseIssueLabelDirectives(comment?.body);
-    return normalizePlan({ currentLabels, ...directives });
+    const wrongParticipant = isPullRequest ? 'needs:reporter' : 'needs:author';
+    if (directives.addLabels.includes(wrongParticipant)) {
+      throw new Error(`${wrongParticipant} is only valid on ${isPullRequest ? 'issues' : 'pull requests'}.`);
+    }
+    if (directives.addLabels.length > 0 || directives.removeLabels.length > 0) {
+      return normalizePlan({ currentLabels, ...directives });
+    }
+    if (!isPullRequest) return emptyPlan('no_change');
   }
 
-  if (!currentLabels.has('needs:reporter')) return emptyPlan('no_change');
+  const participantLabel = isPullRequest ? 'needs:author' : 'needs:reporter';
+  if (!currentLabels.has(participantLabel)) return emptyPlan('no_change');
+  if (isPullRequest && comment?.user?.login !== pullRequest.user?.login) {
+    return emptyPlan('no_change');
+  }
+
   return normalizePlan({
     currentLabels,
     addLabels: ['needs:maintainer'],
-    removeLabels: ['needs:reporter'],
+    removeLabels: [participantLabel],
   });
 }
 
@@ -218,13 +258,16 @@ export async function reconcileIssueNeeds({
   apiBaseUrl = DEFAULT_API_BASE_URL,
 }) {
   assertRepository(repository);
-  const issueNumber = event?.issue?.number;
+  const issueNumber = event?.issue?.number ?? event?.pull_request?.number;
   if (!Number.isSafeInteger(issueNumber) || issueNumber <= 0) {
     throw new Error('The GitHub event does not contain a valid issue number.');
   }
 
   const issueUrl = `${apiBaseUrl}/repos/${repository}/issues/${issueNumber}`;
   const { value: liveIssue } = await requestJson({ fetchImpl, url: issueUrl, token });
+  const livePullRequest = liveIssue?.pull_request
+    ? (await requestJson({ fetchImpl, url: `${apiBaseUrl}/repos/${repository}/pulls/${issueNumber}`, token })).value
+    : null;
   let commenterPermission = 'none';
   if (eventName === 'issue_comment' && event?.comment?.user?.type === 'User') {
     const login = event.comment.user.login;
@@ -244,6 +287,8 @@ export async function reconcileIssueNeeds({
     eventName,
     action: event?.action,
     issue: liveIssue,
+    pullRequest: livePullRequest,
+    eventHeadSha: event?.pull_request?.head?.sha,
     comment: event?.comment,
     commenterPermission,
   });

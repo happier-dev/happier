@@ -78,6 +78,7 @@ jobs:
 
               { name: 'needs:maintainer', color: '1d76db', description: 'Project review or action is required.' },
               { name: 'needs:reporter', color: 'd876e3', description: 'Waiting for new information or confirmation from an external participant.' },
+              { name: 'needs:author', color: 'd876e3', description: 'Waiting for requested changes or an answer from the pull request author.' },
 
               { name: 'stage:source', color: 'bfdadc', description: 'Correction is integrated and verified on the canonical dev branch.' },
               { name: 'stage:dev', color: '1d76db', description: 'Correction is available on the automated dev channel.' },

@@ -16,6 +16,21 @@ function issue(labels = [], overrides = {}) {
   };
 }
 
+function pullRequest(overrides = {}) {
+  return { number: 267, state: 'open', draft: false, user: { login: 'author' }, head: { sha: 'current-head' }, ...overrides };
+}
+
+function planPullRequest(overrides = {}) {
+  return planIssueNeedsHandoff({
+    eventName: 'pull_request_target',
+    action: 'opened',
+    issue: issue(['type: bug'], { pull_request: {} }),
+    pullRequest: pullRequest(),
+    eventHeadSha: 'current-head',
+    ...overrides,
+  });
+}
+
 function jsonResponse(body, init = {}) {
   return new Response(JSON.stringify(body), {
     status: init.status ?? 200,
@@ -282,4 +297,94 @@ test('reconciliation rejects a requested label that does not exist in the reposi
     }),
     /missing required issue label.*needs:maintainer/,
   );
+});
+
+test('ready pull requests and current-head updates enter maintainer review while drafts do not', () => {
+  for (const action of ['opened', 'reopened', 'ready_for_review', 'synchronize']) {
+    assert.deepEqual(planPullRequest({ action, issue: issue(['needs:author', 'type: bug'], { pull_request: {} }) }), {
+      status: 'planned', addLabels: ['needs:maintainer'], removeLabels: ['needs:author'],
+    });
+    assert.deepEqual(planPullRequest({ action, pullRequest: pullRequest({ draft: true }) }), {
+      status: 'ignored_draft', addLabels: [], removeLabels: [],
+    });
+  }
+  assert.deepEqual(planPullRequest({ action: 'synchronize', eventHeadSha: 'old-head' }), {
+    status: 'ignored_stale_head', addLabels: [], removeLabels: [],
+  });
+});
+
+test('only an author reply wakes a pull request waiting for its author, including repository members', () => {
+  const waiting = { eventName: 'issue_comment', action: 'created',
+    issue: issue(['needs:author', 'priority:p1'], { pull_request: {} }) };
+  for (const commenterPermission of ['none', 'write']) {
+    assert.deepEqual(planPullRequest({ ...waiting, commenterPermission,
+      comment: { body: 'Here is the requested explanation.', user: { login: 'author', type: 'User' } } }), {
+      status: 'planned', addLabels: ['needs:maintainer'], removeLabels: ['needs:author'],
+    });
+  }
+  for (const user of [{ login: 'other', type: 'User' }, { login: 'author', type: 'Bot' }]) {
+    const result = planPullRequest({ ...waiting, comment: { body: 'Unrelated update', user } });
+    assert.deepEqual(result.addLabels, []);
+    assert.deepEqual(result.removeLabels, []);
+  }
+  assert.deepEqual(planPullRequest({ ...waiting, issue: issue([], { pull_request: {} }),
+    comment: { body: 'An unsolicited reply.', user: { login: 'author', type: 'User' } } }), {
+    status: 'no_change', addLabels: [], removeLabels: [],
+  });
+});
+
+test('explicit PR handoffs share directive authority and reject the wrong participant label', () => {
+  const handoff = { eventName: 'issue_comment', action: 'created', commenterPermission: 'maintain',
+    issue: issue(['needs:maintainer', 'roadmap'], { pull_request: {} }),
+    comment: { body: '<!-- happier-label:add=needs:author -->\n<!-- happier-label:remove=needs:maintainer -->',
+      user: { login: 'maintainer', type: 'User' } } };
+  assert.deepEqual(planPullRequest(handoff), {
+    status: 'planned', addLabels: ['needs:author'], removeLabels: ['needs:maintainer'],
+  });
+  const foreignDirective = planPullRequest({ ...handoff, commenterPermission: 'none' });
+  assert.deepEqual(foreignDirective.addLabels, []);
+  assert.deepEqual(foreignDirective.removeLabels, []);
+  assert.throws(() => planPullRequest({ ...handoff,
+    comment: { ...handoff.comment, body: '<!-- happier-label:add=needs:reporter -->' } }), /needs:reporter.*issues/);
+  assert.throws(() => planIssueNeedsHandoff({ ...handoff, issue: issue([]) }), /needs:author.*pull requests/);
+  assert.throws(() => planPullRequest({ ...handoff,
+    comment: { ...handoff.comment, body: '<!-- happier-label:add=needs:author -->' } }), /needs labels/);
+});
+
+test('closed and merged pull requests release handoffs even when an old open event arrives late', () => {
+  for (const labels of [['needs:author', 'type: bug'], ['needs:maintainer'], ['needs:reporter']]) {
+    assert.deepEqual(planPullRequest({ action: 'closed', issue: issue(labels, { state: 'closed', pull_request: {} }),
+      pullRequest: pullRequest({ state: 'closed' }) }), {
+      status: 'planned', addLabels: [], removeLabels: labels.filter(label => label.startsWith('needs:')),
+    });
+  }
+  assert.deepEqual(planPullRequest({ action: 'closed' }), {
+    status: 'ignored_event', addLabels: [], removeLabels: [],
+  });
+});
+
+test('PR lifecycle reconciliation reads live PR authority and changes only handoff labels', async () => {
+  const mutations = [];
+  const result = await reconcileIssueNeeds({
+    repository: 'happier-dev/happier', eventName: 'pull_request_target', token: 'test-token',
+    event: { action: 'synchronize', pull_request: pullRequest() }, apiBaseUrl: 'https://api.github.test',
+    fetchImpl: async (url, init = {}) => {
+      const path = new URL(url).pathname;
+      if (!init.method || init.method === 'GET') {
+        if (path.endsWith('/issues/267')) return jsonResponse(issue(['needs:author', 'roadmap'], { pull_request: {} }));
+        if (path.endsWith('/pulls/267')) return jsonResponse(pullRequest());
+        if (path.endsWith('/labels')) return jsonResponse([{ name: 'needs:maintainer' }, { name: 'needs:author' }]);
+      }
+      mutations.push({ path, method: init.method, body: init.body && JSON.parse(init.body) });
+      if (init.method === 'POST') return jsonResponse([]);
+      if (init.method === 'DELETE') return new Response(null, { status: 204 });
+      throw new Error(`Unexpected request ${url}`);
+    },
+  });
+  assert.deepEqual(result, { status: 'applied', issueNumber: 267,
+    addedLabels: ['needs:maintainer'], removedLabels: ['needs:author'] });
+  assert.deepEqual(mutations, [
+    { path: '/repos/happier-dev/happier/issues/267/labels', method: 'POST', body: { labels: ['needs:maintainer'] } },
+    { path: '/repos/happier-dev/happier/issues/267/labels/needs%3Aauthor', method: 'DELETE', body: undefined },
+  ]);
 });
