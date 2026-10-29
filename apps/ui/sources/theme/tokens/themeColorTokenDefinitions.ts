@@ -310,6 +310,7 @@ export const THEME_COLOR_TOKEN_CLASSIFICATIONS = [
         status: 'derived',
         reason: 'The open tab\'s fill in a focused or unfocused pane: the profile\'s own text ink at a fixed strength (theme/selectionInk.ts).',
     } as const)),
+    { path: ['surface', 'hover'], status: 'derived', reason: 'The hover fill of rows and quiet controls: the profile\'s own text ink, a lighter touch than the page selection and the plane\'s chip (theme/selectionInk.ts).' },
     { path: ['feed', 'card', 'background'], status: 'derived', reason: 'Tool feed card surface derived from surface.elevated so private transcript chrome follows active theme profiles.' },
     { path: ['shadow', 'color'], status: 'internal', reason: 'Legacy tint helper for computed shadows, not a standalone editable color token.' },
     { path: ['shadowCard', 'boxShadow'], status: 'internal', reason: 'In-flow card grounding recipe string, not a standalone editable color token.' },

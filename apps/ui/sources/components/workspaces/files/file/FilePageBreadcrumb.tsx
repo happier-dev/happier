@@ -63,7 +63,7 @@ export const FilePageBreadcrumb = React.memo(function FilePageBreadcrumb(props: 
             items={items}
             style={styles.row}
             linkStyle={styles.link}
-            colors={{ focus: theme.colors.border.focus, hover: theme.colors.surface.pressed }}
+            colors={{ focus: theme.colors.border.focus, hover: theme.colors.surface.hover }}
             separator={<Text style={[textStyle, styles.separator]} accessibilityElementsHidden importantForAccessibility="no">›</Text>}
             renderLabel={(item) => <Text numberOfLines={1} style={[textStyle, styles.label]}>{item.label}</Text>}
         />

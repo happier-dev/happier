@@ -14,3 +14,13 @@ export function deriveSelectionFocusInk(textPrimary: string, dark: boolean): Rea
         unfocused: ink.alpha(alpha / 2).rgb().string(),
     };
 }
+
+/**
+ * The hover fill: the theme's own text ink at a lighter touch than every selection it sits beside — the
+ * page's `surface.selected` and the navigation plane's elevated chip — so a row under a resting pointer
+ * never reads as the open one (DESIGN.md → Materials). Ink, so it sits right on the page, the plane and
+ * any custom material alike.
+ */
+export function deriveHoverInk(textPrimary: string, dark: boolean): string {
+    return Color(textPrimary).alpha(dark ? 0.032 : 0.014).rgb().string();
+}

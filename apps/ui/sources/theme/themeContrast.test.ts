@@ -443,3 +443,52 @@ describe('selected radio dot contrast', () => {
         expect(failures).toEqual([]);
     });
 });
+
+/**
+ * Hover is a lighter touch than selection (DESIGN.md → Materials: hover and selection are ink). A row
+ * under a resting pointer must never read as more selected than the open row beside it, on the page
+ * (`surface.selected` on `surface.base`) or on the navigation plane (the elevated chip on the canvas).
+ */
+const FLAT_PLANE_CHIP_PROFILES = new Set(['githubLight/light']);
+
+function hoverRankFailures(colors: unknown, label: string): string[] {
+    const hover = readTokenPath(colors, 'surface.hover');
+    const pairs = [
+        { place: 'page', surface: readTokenPath(colors, 'surface.base'), selected: readTokenPath(colors, 'surface.selected') },
+        { place: 'plane', surface: readTokenPath(colors, 'background.canvas'), selected: readTokenPath(colors, 'surface.elevated') },
+    ] as const;
+    return pairs.flatMap(({ place, surface, selected }) => {
+        const surfaceColor = parseColor(surface);
+        const lift = (fill: string) => {
+            const painted = compositeOver(parseColor(fill), surfaceColor);
+            const a = relativeLuminance(painted);
+            const b = relativeLuminance(surfaceColor);
+            return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+        };
+        const hoverLift = lift(hover);
+        const selectedLift = lift(selected);
+        // A profile whose plane chip paints no lift at all (its elevated surface is its canvas) carries the
+        // selection on the title's weight alone; hover cannot rank below nothing, so only its presence is checked.
+        if (place === 'plane' && FLAT_PLANE_CHIP_PROFILES.has(label)) return hoverLift > 1 && selectedLift === 1 ? [] : [`${label} plane: no longer flat (${selectedLift.toFixed(3)}); drop it from FLAT_PLANE_CHIP_PROFILES`];
+        return hoverLift > 1 && hoverLift < selectedLift
+            ? []
+            : [`${label} ${place}: hover ${hover} lifts ${hoverLift.toFixed(3)} vs selected ${selected} ${selectedLift.toFixed(3)}`];
+    });
+}
+
+describe('hover ranks below selection', () => {
+    it('keeps hover visible but quieter than the selected fill on the page and the plane, in both base themes and every built-in profile', () => {
+        const failures = [
+            ...hoverRankFailures(lightTheme.colors, 'light'),
+            ...hoverRankFailures(darkTheme.colors, 'dark'),
+            ...BUILT_IN_THEME_PROFILES.flatMap((definition) => (
+                (['light', 'dark'] as const).flatMap((mode) => hoverRankFailures(
+                    resolveThemeProfile({ mode, profile: definition.profile }).colors,
+                    `${definition.presetId}/${mode}`,
+                ))
+            )),
+        ];
+
+        expect(failures).toEqual([]);
+    });
+});

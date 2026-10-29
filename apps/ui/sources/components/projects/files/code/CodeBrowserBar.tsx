@@ -53,7 +53,7 @@ export const CodeBrowserBar = React.memo(function CodeBrowserBar(props: Readonly
             {(props.compact && props.path === '') || props.crumbs === false ? null : <HappierBreadcrumb accessibilityRole="header" style={styles.crumbs}
                 separator={<Text style={styles.separator}>/</Text>}
                 linkStyle={styles.crumb}
-                colors={{ focus: theme.colors.border.focus, hover: theme.colors.surface.pressed }}
+                colors={{ focus: theme.colors.border.focus, hover: theme.colors.surface.hover }}
                 items={segments.map((segment, index) => {
                     const current = index === segments.length - 1;
                     return { key: segment.path || '/', label: segment.label, testID: current ? `${testID}-current` : `${testID}-crumb-${index}`, onPress: current ? undefined : () => props.onNavigateFolder(segment.path) };
