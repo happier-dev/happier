@@ -74,6 +74,7 @@ __pycache__/
 # apps/ui prebuild projection of exact packaged Plugin UI artifact bytes.
 # Platform-specific siblings are retired and intentionally not ignored.
 /apps/ui/sources/sync/domains/plugins/availability/generatedBundledPluginUiArtifacts.js
+/apps/ui/sources/sync/domains/plugins/availability/declarations/
 
 # Interrupted package copies, probes, and runner snapshots
 **/.tmp.*/
@@ -334,3 +335,6 @@ _.env.pipeline.production.local
 # Real patches live under patches/; no source image lives at the root.
 /*.png
 /*.patch
+
+/packages/cli-common/native/windows/bin/
+/service-launcher.obj
