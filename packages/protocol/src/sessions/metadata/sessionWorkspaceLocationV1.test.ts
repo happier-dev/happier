@@ -77,6 +77,18 @@ describe('sessionWorkspaceLocationV1', () => {
     })).toEqual({ machinePath: '/home/coder/project-other' });
   });
 
+  it('recovers an empty root only from a valid same-machine workspace mapping', () => {
+    const metadata = { sessionWorkspaceLocationV1: location };
+    expect(resolveSessionWorkspaceRootForMachine({ metadata, machineId: 'machine-1', candidatePath: '' }))
+      .toEqual({ machinePath: location.machinePath, agentPath: location.agentPath });
+    expect(resolveSessionWorkspaceRootForMachine({ metadata, machineId: 'other-machine', candidatePath: '' }))
+      .toEqual({ machinePath: '' });
+    expect(resolveSessionWorkspaceRootForMachine({
+      metadata: { sessionWorkspaceLocationV1: { ...location, machinePath: '' } },
+      machineId: 'machine-1', candidatePath: '',
+    })).toEqual({ machinePath: '' });
+  });
+
   it('round-trips the predecessor field through Dev owner metadata', () => {
     const created = createSessionOwnerMetadataV1({
       metadata: {

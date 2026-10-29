@@ -44,8 +44,8 @@ export function readSessionWorkspaceLocationFromMetadata(params: Readonly<{
 }
 
 /**
- * Resolves only a workspace root proven to be the published agent root for the
- * same machine. Missing, malformed, stale, or replacement-machine mappings
+ * Resolves a published agent root, or recovers a missing root, for the same
+ * machine. Missing, malformed, stale, or replacement-machine mappings
  * preserve the caller's existing path.
  */
 export function resolveSessionWorkspaceRootForMachine(params: Readonly<{
@@ -57,7 +57,7 @@ export function resolveSessionWorkspaceRootForMachine(params: Readonly<{
   if (
     !location
     || location.machineId !== params.machineId.trim()
-    || location.agentPath !== params.candidatePath
+    || (params.candidatePath.trim().length > 0 && location.agentPath !== params.candidatePath)
   ) {
     return { machinePath: params.candidatePath };
   }
