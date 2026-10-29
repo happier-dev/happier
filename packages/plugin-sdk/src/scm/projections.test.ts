@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { build } from 'vite';
 import { describe, expect, expectTypeOf, it } from 'vitest';
 import ts from 'typescript';
+import { createSdkSourceProgram } from '../test-support/sourceProgram.js';
 import type { ScmHostingProviderContribution as ProtocolScmHostingProviderContribution } from '@happier-dev/protocol';
 
 import {
@@ -107,6 +108,7 @@ const ROOT_RUNTIME_EXPORTS = [
     'ScmOperationOutcomeSchema',
     'ScmRefreshPolicySchema',
     'ScmRepositoryProvisioningFailureResponseSchema',
+    'ScmRevisionRangeV1Schema',
     'ScmSelectedMutationPathSchema',
     'ScmWorkingSnapshotSchema',
     'buildWorktreeRelativePath',
@@ -206,6 +208,7 @@ const ROOT_TYPE_EXPORTS = [
     'ScmLogEntry',
     'ScmLogListRequest',
     'ScmLogListResponse',
+    'ScmRevisionRangeV1',
     'ScmOperationErrorCode',
     'ScmOperationEffect',
     'ScmOperationNextAction',
@@ -374,19 +377,7 @@ async function bundlePortableValues(input: (typeof PORTABLE_VALUE_PROJECTIONS)[n
 }
 
 function createSdkProgram(): ts.Program {
-    const configPath = fileURLToPath(new URL('../../tsconfig.json', import.meta.url));
-    const parsed = ts.getParsedCommandLineOfConfigFile(configPath, {}, {
-        ...ts.sys,
-        onUnRecoverableConfigFileDiagnostic(diagnostic) {
-            throw new Error(ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n'));
-        },
-    });
-    if (!parsed) throw new Error(`Unable to parse ${configPath}`);
-    return ts.createProgram({
-        rootNames: parsed.fileNames,
-        options: parsed.options,
-        projectReferences: parsed.projectReferences,
-    });
+    return createSdkSourceProgram();
 }
 
 function moduleExportNames(program: ts.Program, relativePath: string): readonly string[] {
@@ -609,6 +600,11 @@ describe('SCM package-local projections', () => {
         expect(request.safeParse({ source: { ...source, locator: { ...source.locator, extraAuthority: true } } }).success).toBe(false);
         expect(rootScm.ScmComparisonSourceSchema).toBe(protocolScm.ScmComparisonSourceProtocolSchema);
         expect(request.jsonSchema).toMatchObject({ additionalProperties: false });
+        const range = { kind: 'revisionRange', baseOid: 'a'.repeat(40), headOid: 'b'.repeat(64) } as const;
+        expect(request.parse({ source: range })).toEqual({ source: range });
+        expect(rootScm.ScmRevisionRangeV1Schema.parse(range)).toEqual(range);
+        expect(request.safeParse({ source: { ...range, baseOid: 'HEAD' } }).success).toBe(false);
+        expect(request.safeParse({ source: { ...range, repository: '/other' } }).success).toBe(false);
     });
     it.each(PORTABLE_VALUE_PROJECTIONS)(
         'keeps the $source publication values free of Node runtime reach',

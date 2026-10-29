@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { applyScmReviewedMarkIntent, type ScmComparison } from '@happier-dev/protocol/scm';
+import { applyScmReviewedMarkIntent, buildScmChangeKeys, type ScmComparison } from '@happier-dev/protocol/scm';
 import { createAccountScopedCryptoMaterialSnapshotV1, convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1, deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol';
 import { encrypt, encodeBase64, decodeBase64, decryptResult } from '@/api/encryption';
 import tweetnacl from 'tweetnacl';
@@ -20,6 +20,26 @@ const marked = () => applyScmReviewedMarkIntent(comparison, null, ['exact'], tru
 
 describe('explicit CLI personal reviewed Action', () => {
   beforeEach(() => { network.get.mockReset(); network.post.mockReset(); });
+  it('keeps captured keys exact and clears obsolete keys only on an explicit unmark reset', async () => {
+    let value = { ...marked(), reviewedChangeKeys: [...marked().reviewedChangeKeys, 'obsolete-key'] };
+    let version = 1;
+    network.get.mockImplementation(async (url: string) => url.endsWith('/currentness') ? { status: 200, data: currentness }
+      : { status: 200, data: { key: decodeURIComponent(url.slice(url.indexOf('/v1/kv/') + '/v1/kv/'.length)),
+        value: Buffer.from(JSON.stringify({ t: 'plain', v: value })).toString('base64'), version } });
+    network.post.mockImplementation(async (_url: string, body: { mutations: { key: string; value: string }[] }) => {
+      value = JSON.parse(Buffer.from(body.mutations[0].value, 'base64').toString()).v;
+      return { status: 200, data: { success: true, results: [{ key: body.mutations[0].key, version: ++version }] } };
+    });
+    const params = { credentials: { token: 'token', encryption: null }, serverBaseUrl: 'https://home', resolveAuthorizationHeaders, comparison };
+    const keys = [...buildScmChangeKeys(comparison).values()].flat();
+    expect(await createCliScmReviewedMarkAction({ ...params, changeKeys: keys, reviewed: false }))
+      .toMatchObject({ success: true, record: { reviewedChangeKeys: ['obsolete-key'] } });
+    expect(await createCliScmReviewedMarkAction({ ...params, reset: true, reviewed: true }))
+      .toMatchObject({ success: false, errorCode: 'reviewed_marks_invalid_selection' });
+    expect(value.reviewedChangeKeys).toEqual(['obsolete-key']);
+    expect(await createCliScmReviewedMarkAction({ ...params, reset: true, reviewed: false }))
+      .toMatchObject({ success: true, record: { reviewedChangeKeys: [] } });
+  });
   it('writes marks in keyless plain Account context and never uses machine result storage', async () => {
     network.get.mockImplementation(async (url: string) => url.endsWith('/currentness') ? { status: 200, data: currentness }
       : { status: 404 });

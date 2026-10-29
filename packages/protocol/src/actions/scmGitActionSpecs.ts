@@ -52,7 +52,7 @@ import {
   ScmDiffSummaryResultListInputSchema, ScmDiffSummaryResultListResponseSchema,
   ScmDiffSummaryResultClearInputSchema, ScmDiffSummaryResultClearResponseSchema,
 } from '../scm/diffSummaryResult.js';
-import { ScmReviewedMarkInputSchema, ScmReviewedMarkResponseSchema } from '../scm/reviewedMarks.js';
+import { ScmReviewedMarkInputSchema, ScmReviewedUnmarkInputSchema, ScmReviewedMarkResponseSchema } from '../scm/reviewedMarks.js';
 import { ScmCommitPlanAcceptInputSchema, ScmCommitPlanControlInputSchema, ScmCommitPlanIncludeHookChangesInputSchema } from '../scm/diffSummaryCommitPlan.js';
 import { RPC_METHODS } from '../rpc/methods.js';
 import * as scm from '../scm/index.js';
@@ -60,6 +60,8 @@ import * as branches from '../scm/branches.js';
 import * as stash from '../scm/stash.js';
 import * as worktrees from '../scm/worktrees.js';
 import { z } from 'zod/mini';
+import { lazyZodSchema } from '../lazyZodSchema.js';
+import { SessionTargetV1Schema } from './sessionTargetV1.js';
 import { ScmHistoryEntriesInputV1Schema, ScmHistoryEntriesResponseSchema } from '../scm/entriesHistoryV1.js';
 import type { ActionId } from './actionIds.js';
 import type { PreNormalizedActionSpec } from './actionSpecs.js';
@@ -122,6 +124,21 @@ function defineScmActionSpec<
   return spec;
 }
 
+const SessionScmStatusInputSchema = lazyZodSchema(() => z.extend(scm.ScmStatusSnapshotRequestSchema, {
+  sessionId: z.optional(SessionTargetV1Schema),
+}));
+const SessionScmPullInputSchema = lazyZodSchema(() => z.extend(scm.ScmRemoteRequestSchema, {
+  sessionId: z.optional(SessionTargetV1Schema),
+}));
+const SessionScmPullRequestGetInputSchema = lazyZodSchema(() => z.extend(ScmPullRequestGetRequestSchema, {
+  sessionId: z.optional(SessionTargetV1Schema),
+}));
+/** Explicit Session operands use the incumbent Session placement; omitted operands keep Machine callers. */
+function sessionScmExecutionPlacement(input: unknown): 'session' | 'machine' {
+  return input !== null && typeof input === 'object' && 'sessionId' in input && input.sessionId !== undefined
+    ? 'session' : 'machine';
+}
+
 /** Core repository Actions reuse the backend's canonical request and result schemas. */
 const SCM_GIT_ACTION_SPECS_PREFIX = [
   defineScmActionSpec({
@@ -144,6 +161,8 @@ const SCM_GIT_ACTION_SPECS_PREFIX = [
   }),
   defineScmActionSpec({
     id: 'scm.status.snapshot', approval: {result: 'required'},
+    sessionTarget: { field: 'sessionId', cardinality: 'one' },
+    executionPlacementForInput: sessionScmExecutionPlacement,
     title: 'Status snapshot',
     description: 'Status snapshot in the explicitly selected source-control repository.',
     safety: 'safe',
@@ -151,11 +170,12 @@ const SCM_GIT_ACTION_SPECS_PREFIX = [
     bindings: { rpcMethod: 'scm.status.snapshot' },
     surfaces: { ui: false, voice: false, agent: true, mcp: true, cli: true, rpc: true },
     sideEffectClass: 'read',
-    inputSchema: scm.ScmStatusSnapshotRequestSchema,
+    inputSchema: SessionScmStatusInputSchema,
     outputSchema: scm.ScmStatusSnapshotResponseSchema,
     inputHints: {
       title: 'Status snapshot',
       fields: [
+        { path: 'sessionId', title: 'Session', widget: 'text' },
         { path: 'cwd', title: 'cwd', widget: 'text' },
         { path: 'includeWorktreeStatus', title: 'include Worktree Status', widget: 'boolean' },
       ],
@@ -183,7 +203,7 @@ const SCM_GIT_ACTION_SPECS_PREFIX = [
   defineScmActionSpec({
     id: 'scm.diff.file', approval: {result: 'required'},
     title: 'Diff file',
-    description: 'Diff file in the explicitly selected source-control repository.',
+    description: "Diff a file in the explicitly selected source-control repository. Set area:'both' to discover reviewUnits for selected working-tree discard; copy selected reviewUnits[].key values unchanged into scm.change.discard entries[].changeKeys. Keys are opaque; do not reconstruct them from diff text.",
     safety: 'safe',
     placements: [],
     bindings: { rpcMethod: 'scm.diff.file' },
@@ -313,7 +333,7 @@ const SCM_GIT_ACTION_SPECS_PREFIX = [
     examples: { voice: { argsExample: '{"cwd":"/repo","entries":[{"path":"src/app.ts","kind":"modified"}]}' } },
     workspaceWrite: true,
     title: 'Discard changes',
-    description: 'Change discard in the explicitly selected source-control repository.',
+    description: "Discard changes in the explicitly selected source-control repository. For selected working-tree changes, read scm.diff.file with the same path and area:'both', then copy selected reviewUnits[].key values unchanged into entries[].changeKeys with kind:'comparison' and against.source:{kind:'workingTree'}. Captured occurrence ids belong in changeRefs with against.comparisonId, not changeKeys. Omitting both selectors on a comparison entry restores the whole file. Agent/MCP calls requiring approval wait for the decision before executing.",
     safety: 'danger',
     placements: [],
     bindings: { rpcMethod: 'scm.change.discard' },
@@ -706,6 +726,7 @@ const SCM_GIT_ACTION_SPECS_PREFIX = [
   }),
   defineScmActionSpec({
     id: 'scm.worktree.remove', approval: {result: 'required'},
+    irreversible: true,
     approvalPresentation: { summary: describeScmWorktreeRemoveApprovalSummary },
     workspaceWrite: true,
     title: 'Remove worktree',
@@ -839,6 +860,8 @@ const SCM_GIT_ACTION_SPECS_PREFIX = [
   }),
   defineScmActionSpec({
     id: 'scm.remote.pull', approval: {result: 'required'},
+    sessionTarget: { field: 'sessionId', cardinality: 'one' },
+    executionPlacementForInput: sessionScmExecutionPlacement,
     examples: { voice: { argsExample: '{"cwd":"/repo","remote":"origin"}' } },
     workspaceWrite: true,
     title: 'Pull changes',
@@ -850,11 +873,12 @@ const SCM_GIT_ACTION_SPECS_PREFIX = [
     bindings: { rpcMethod: 'scm.remote.pull' },
     surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: true },
     sideEffectClass: 'external',
-    inputSchema: scm.ScmRemoteRequestSchema,
+    inputSchema: SessionScmPullInputSchema,
     outputSchema: scm.ScmRemoteResponseSchema,
     inputHints: {
       title: 'Remote pull',
       fields: [
+        { path: 'sessionId', title: 'Session', widget: 'text' },
         { path: 'cwd', title: 'cwd', widget: 'text' },
         { path: 'remote', title: 'remote', widget: 'text' },
         { path: 'branch', title: 'branch', widget: 'text' },
@@ -1081,6 +1105,8 @@ const SCM_GIT_ACTION_SPECS_REMOTE_AND_REVIEW = [
   }),
   defineScmActionSpec({
     id: 'scm.pullRequest.get', approval: {result: 'required'},
+    sessionTarget: { field: 'sessionId', cardinality: 'one' },
+    executionPlacementForInput: sessionScmExecutionPlacement,
     examples: { voice: { argsExample: '{"cwd":"/repo","prReference":{"number":42}}' } },
     title: 'Get pull request',
     description: 'Read one pull request by number, URL, or head branch.',
@@ -1100,7 +1126,7 @@ const SCM_GIT_ACTION_SPECS_REMOTE_AND_REVIEW = [
     },
     sideEffectClass: 'read',
     outputSchema: ScmPullRequestGetResponseSchema,
-    inputSchema: ScmPullRequestGetRequestSchema,
+    inputSchema: SessionScmPullRequestGetInputSchema,
     inputHints: {
       title: 'Get pull request',
       fields: [
@@ -1707,7 +1733,7 @@ const SCM_DIFF_SUMMARY_RESULT_ACTION_SPECS: readonly [
   ScmActionSpecDefinition<'scm.diffSummary.commitPlan.cancel', typeof ScmCommitPlanControlInputSchema, typeof ScmDiffSummaryResultResponseSchema>,
   ScmActionSpecDefinition<'scm.diffSummary.commitPlan.recover', typeof ScmCommitPlanControlInputSchema, typeof ScmDiffSummaryResultResponseSchema>,
   ScmActionSpecDefinition<'scm.diffSummary.reviewed.mark', typeof ScmReviewedMarkInputSchema, typeof ScmReviewedMarkResponseSchema>,
-  ScmActionSpecDefinition<'scm.diffSummary.reviewed.unmark', typeof ScmReviewedMarkInputSchema, typeof ScmReviewedMarkResponseSchema>,
+  ScmActionSpecDefinition<'scm.diffSummary.reviewed.unmark', typeof ScmReviewedUnmarkInputSchema, typeof ScmReviewedMarkResponseSchema>,
   ScmActionSpecDefinition<'scm.diffSummary.result.read', typeof ScmDiffSummaryResultReadInputSchema, typeof ScmDiffSummaryResultResponseSchema>,
   ScmActionSpecDefinition<'scm.diffSummary.result.edit', typeof ScmDiffSummaryResultEditInputSchema, typeof ScmDiffSummaryResultResponseSchema>,
   ScmActionSpecDefinition<'scm.diffSummary.result.undo', typeof ScmDiffSummaryResultRevisionInputSchema, typeof ScmDiffSummaryResultResponseSchema>,
@@ -1728,7 +1754,8 @@ const SCM_DIFF_SUMMARY_RESULT_ACTION_SPECS: readonly [
   }),
   defineScmActionSpec({
     id: 'scm.diffSummary.result.clear', approval: {result: 'required'}, title: 'Clear selected saved change explanations',
-    description: 'Delete only explicitly listed saved revisions and their manual edits on the selected machine.',
+    irreversible: true,
+    description: 'Delete only explicitly listed saved revisions and their manual edits on the selected machine, then reset personal reviewed marks only for comparison scopes with no surviving saved result on that machine. Cleanup failures retain deletion receipts and provide a marks-only Reset retry.',
     safety: 'danger', placements: [], sideEffectClass: 'write',
     bindings: { rpcMethod: 'scm.diffSummary.result.clear', sdkMethod: 'scm.diffSummary.result.clear', mcpToolName: 'scm_diff_summary_result_clear', voiceClientToolName: 'clearScmDiffSummaryResults' },
     surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: true },
@@ -1834,7 +1861,7 @@ const SCM_DIFF_SUMMARY_RESULT_ACTION_SPECS: readonly [
       { path: 'source', title: 'Comparison source', widget: 'json' },
       { path: 'sessionId', title: 'Session namespace', widget: 'text' },
       { path: 'changeRefs', title: 'Exact change references', widget: 'text_list', listSeparator: 'newline' },
-      { path: 'changeKeys', title: 'Live content keys', widget: 'text_list', listSeparator: 'newline' },
+      { path: 'changeKeys', title: 'Exact content keys', widget: 'text_list', listSeparator: 'newline' },
     ] },
   }),
   defineScmActionSpec({
@@ -1845,7 +1872,7 @@ const SCM_DIFF_SUMMARY_RESULT_ACTION_SPECS: readonly [
     bindings: { rpcMethod: RPC_METHODS.SCM_DIFF_SUMMARY_REVIEWED_UNMARK, sdkMethod: 'scm.diffSummary.reviewed.unmark', mcpToolName: 'scm_diff_summary_reviewed_unmark', voiceClientToolName: 'unmarkScmChangesReviewed' },
     cli: { commands: [{ path: ['scm', 'diff-summary', 'reviewed', 'unmark'], visibility: 'canonical' }] },
     surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: true },
-    inputSchema: ScmReviewedMarkInputSchema, outputSchema: ScmReviewedMarkResponseSchema,
+    inputSchema: ScmReviewedUnmarkInputSchema, outputSchema: ScmReviewedMarkResponseSchema,
     inputHints: { title: 'Unmark reviewed changes', fields: [
       { path: 'cwd', title: 'Repository directory', widget: 'text', required: true },
       { path: 'v', title: 'Selector version', widget: 'integer' },
@@ -1854,7 +1881,8 @@ const SCM_DIFF_SUMMARY_RESULT_ACTION_SPECS: readonly [
       { path: 'source', title: 'Comparison source', widget: 'json' },
       { path: 'sessionId', title: 'Session namespace', widget: 'text' },
       { path: 'changeRefs', title: 'Exact change references', widget: 'text_list', listSeparator: 'newline' },
-      { path: 'changeKeys', title: 'Live content keys', widget: 'text_list', listSeparator: 'newline' },
+      { path: 'changeKeys', title: 'Exact content keys', widget: 'text_list', listSeparator: 'newline' },
+      { path: 'reset', title: 'Reset the review scope', widget: 'boolean' },
     ] },
   }),
   defineScmActionSpec({
@@ -1904,6 +1932,7 @@ const SCM_DIFF_SUMMARY_RESULT_ACTION_SPECS: readonly [
   }),
   defineScmActionSpec({
     id: 'scm.diffSummary.result.delete', approval: {result: 'required'}, title: 'Delete saved change explanation',
+    irreversible: true,
     examples: { voice: { argsExample: '{"cwd":"/repo","resultId":"result-main","expectedRevision":1}' } },
     description: 'Delete a saved result and its manual edits at the expected revision.',
     safety: 'danger', placements: [], sideEffectClass: 'write',

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { classifyAccountJsonKvKey } from '../account/accountJsonKv.js';
+import { getActionSpec } from '../actions/actionSpecs.js';
 import { buildScmComparisonSourceKey, type ScmComparison } from './comparison.js';
 import { buildReviewUnits, buildScmChangeKeys, buildScmReviewScopeId } from './comparisonOccurrences.js';
 import { applyScmReviewedMarkIntent, buildScmReviewedMarksKey, createScmReviewedMarksRecordPort, isScmSelectionReviewed,
@@ -98,12 +99,13 @@ describe('scope personal marks owner', () => {
     expect(await port.setReviewedKeys(live.changeKeys, true)).toMatchObject({ success: true, record: { scopeId, reviewedChangeKeys: live.changeKeys } });
     expect(() => port.setReviewedKeys(['unknown'], true)).toThrow();
   });
-  it('admits a closed live-key selector without accepting mixed or fabricated comparison authority', () => {
+  it('admits closed live and captured key selectors without accepting mixed or fabricated comparison authority', () => {
     const live = { v: 2, cwd: '/repo', source: { kind: 'workingTree' }, changeKeys: ['key'] };
     expect(ScmReviewedMarkInputSchema.safeParse(live).success).toBe(true);
     expect(ScmReviewedMarkInputSchema.safeParse({ ...live, changeKeys: ['key', 'key'] }).success).toBe(false);
     expect(ScmReviewedMarkInputSchema.safeParse({ ...live, changeRefs: ['captured'] }).success).toBe(false);
-    expect(ScmReviewedMarkInputSchema.safeParse({ ...live, comparisonId: 'a'.repeat(64) }).success).toBe(false);
+    expect(ScmReviewedMarkInputSchema.safeParse({ ...live, comparisonId: 'a'.repeat(64) }).success).toBe(true);
+    expect(ScmReviewedMarkInputSchema.safeParse({ ...live, comparisonId: 'a'.repeat(64), changeRefs: ['captured'] }).success).toBe(false);
     expect(ScmReviewedMarkInputSchema.safeParse({ ...live, comparison: {} }).success).toBe(false);
   });
   it('validates each intent against the latest displayed evidence without replacing the scope observer', async () => {
@@ -118,6 +120,16 @@ describe('scope personal marks owner', () => {
     expect(() => port.setReviewedKeys(['before-edit'], false)).toThrow();
     displayed = { ...displayed, repositoryRootPath: '/other' };
     expect(() => port.setReviewedKeys(['after-edit'], false)).toThrow();
+  });
+  it('admits an explicit scope reset only through unmark and never mixed with a selection', () => {
+    const reset = { v: 2, cwd: '/repo', source: { kind: 'workingTree' }, reset: true };
+    const unmark = getActionSpec('scm.diffSummary.reviewed.unmark').inputSchema;
+    expect(unmark.safeParse(reset).success).toBe(true);
+    expect(unmark.safeParse({ ...reset, source: { kind: 'session', sessionId: 'session-a' } }).success).toBe(false);
+    expect(unmark.safeParse({ ...reset, comparisonId: 'a'.repeat(64), source: { kind: 'session', sessionId: 'session-a' } }).success).toBe(true);
+    expect(unmark.safeParse({ ...reset, changeKeys: ['key'] }).success).toBe(false);
+    expect(unmark.safeParse({ ...reset, changeRefs: ['ref'] }).success).toBe(false);
+    expect(getActionSpec('scm.diffSummary.reviewed.mark').inputSchema.safeParse(reset).success).toBe(false);
   });
   it('drops stored extras and retains absent keys without pruning while keeping wire writes strict', async () => {
     const record = marked(); const stored = { ...record, reviewedChangeKeys: [...record.reviewedChangeKeys, 'absent-key'], future: { nested: true } };

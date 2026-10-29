@@ -7,10 +7,10 @@ import { promisify } from 'node:util';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/plugin-sdk/scm';
-import type { ScmLogEntry } from '@happier-dev/plugin-sdk/scm';
+import type { ScmLogEntry, ScmLogListRequest } from '@happier-dev/plugin-sdk/scm';
 import type { BackendRuntimeContext as ScmBackendContext } from '@happier-dev/plugin-sdk/scm/backend';
 
-import { runWithRealGitScmRuntime } from '../testkit/scmRuntime.test-support.js';
+import { createRealGitScmBackendRuntimeServices, runWithGitScmCommandRunner, runWithRealGitScmRuntime } from '../testkit/scmRuntime.test-support.js';
 import { gitLogList } from './readOperations.js';
 
 const execFile = promisify(execFileCallback);
@@ -67,7 +67,7 @@ function shas(entries: readonly ScmLogEntry[]): string[] {
  */
 async function logQuery(input: {
     context: ReturnType<typeof buildContext>;
-    request: { cwd: string; query?: string; limit?: number; skip?: number; range?: 'incoming' };
+    request: ScmLogListRequest;
 }) {
     return runWithRealGitScmRuntime(() => gitLogList(input as Parameters<typeof gitLogList>[0]));
 }
@@ -105,6 +105,56 @@ describe('gitLogList bounded commit query', () => {
 
     afterEach(async () => {
         await Promise.all(cleanups.splice(0).map((cleanup) => cleanup().catch(() => undefined)));
+    });
+
+    it('pages the exact pinned range with positive endpoint and exhaustion evidence, excluding later HEAD', async () => {
+        const before = await runGit(repoRoot, ['rev-parse', 'HEAD~2']);
+        const middle = await runGit(repoRoot, ['rev-parse', 'HEAD~1']);
+        const after = headSha;
+        await commitFile({ fileName: 'later', message: 'later HEAD [skip ci]', authorName: 'Later',
+            authorEmail: 'later@example.com', dateIso: '2026-01-04T00:00:00Z' });
+        const revisionRange = { kind: 'revisionRange' as const, baseOid: before, headOid: after };
+        const first = await logQuery({ context: buildContext(), request: { cwd: repoRoot, revisionRange, limit: 1 } });
+        expect(first.success, first.error).toBe(true);
+        expect(shas(first.entries ?? [])).toEqual([after]);
+        expect(first.revisionRange).toEqual({ ...revisionRange, historyComplete: true, graphRelation: 'forward', totalCount: 2, nextSkip: 1 });
+        const last = await logQuery({ context: buildContext(), request: { cwd: repoRoot, revisionRange, limit: 1, skip: 1 } });
+        expect(shas(last.entries ?? [])).toEqual([middle]);
+        expect(last.revisionRange).toEqual({ ...revisionRange, historyComplete: true, graphRelation: 'forward', totalCount: 2 });
+        const empty = await logQuery({ context: buildContext(), request: { cwd: repoRoot, revisionRange: { ...revisionRange, baseOid: after } } });
+        expect(empty.entries).toEqual([]);
+        expect(empty.revisionRange).toEqual({ ...revisionRange, baseOid: after, historyComplete: true, graphRelation: 'equal', totalCount: 0 });
+    });
+
+    it('never attests complete history for missing endpoints or a shallow range', async () => {
+        const before = await runGit(repoRoot, ['rev-parse', 'HEAD~2']);
+        const missing = await logQuery({ context: buildContext(), request: { cwd: repoRoot,
+            revisionRange: { kind: 'revisionRange', baseOid: 'f'.repeat(40), headOid: headSha } } });
+        expect(missing.success).toBe(false);
+        expect(missing.revisionRange).toBeUndefined();
+        await writeFile(join(repoRoot, '.git', 'shallow'), `${headSha}\n`);
+        const shallow = await logQuery({ context: buildContext(), request: { cwd: repoRoot, revisionRange: { kind: 'revisionRange', baseOid: before, headOid: headSha } } });
+        expect(shallow.success, shallow.error).toBe(true);
+        expect(shallow.revisionRange).toEqual({ kind: 'revisionRange', baseOid: before, headOid: headSha, historyComplete: false });
+    });
+
+    it('withholds completeness when the Git boundary truncates or cannot finish a range page', async () => {
+        const before = await runGit(repoRoot, ['rev-parse', 'HEAD~2']);
+        const services = createRealGitScmBackendRuntimeServices();
+        for (const mode of ['truncated', 'outputLimit', 'cancelled'] as const) {
+            const controller = new AbortController();
+            const response = await runWithGitScmCommandRunner(async input => {
+                if (input.args[0] !== 'log') return services.runCommand(input);
+                if (mode === 'cancelled') controller.abort();
+                return { success: mode === 'truncated', stdout: `${headSha}\0incomplete`, stderr: '', exitCode: mode === 'truncated' ? 0 : -1,
+                    ...(mode === 'outputLimit' ? { outputLimitExceeded: true } : {}) };
+            }, () => gitLogList({ context: buildContext(), signal: controller.signal,
+                request: { cwd: repoRoot, revisionRange: { kind: 'revisionRange', baseOid: before, headOid: headSha } } }));
+            expect(response.success).toBe(false);
+            expect(response.revisionRange).toBeUndefined();
+            expect(response.errorCode).toBe(mode === 'cancelled' ? SCM_OPERATION_ERROR_CODES.COMMAND_CANCELLED
+                : mode === 'outputLimit' ? SCM_OPERATION_ERROR_CODES.COMMAND_OUTPUT_LIMIT_EXCEEDED : SCM_OPERATION_ERROR_CODES.COMMAND_FAILED);
+        }
     });
 
     it('reads only upstream commits not reachable from the current branch', async () => {

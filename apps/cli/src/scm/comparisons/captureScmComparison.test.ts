@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdir, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { configuration } from '@/configuration';
 import { createScmDiffSummaryResultStore } from '@/agent/executionRuns/tasks/scmDiffSummary/results/resultStore';
@@ -15,6 +16,88 @@ import { captureScmComparison, deleteCapturedScmComparison, prepareCapturedScmCo
 describe('captured SCM comparison storage', () => {
   const directories: string[] = [];
   afterEach(async () => { await Promise.all(directories.splice(0).map(path => rm(path, { recursive: true, force: true }))); });
+
+  it('captures exact immutable endpoints and their net diff without substituting a merge base or HEAD', async () => {
+    const fixture = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'scm-exact-range-' });
+    directories.push(fixture.rootPath);
+    const git = (...args: string[]) => execFileSync('git', args, { cwd: fixture.rootPath, encoding: 'utf8' }).trim();
+    await writeFile(join(fixture.rootPath, 'before-only.txt'), 'before side\n');
+    git('add', '.'); git('commit', '-m', 'before branch');
+    const before = git('rev-parse', 'HEAD');
+    git('checkout', '--detach', fixture.headCommit);
+    await writeFile(join(fixture.rootPath, 'net-zero.txt'), 'intermediate\n');
+    git('add', '.'); git('commit', '-m', 'intermediate');
+    await rm(join(fixture.rootPath, 'net-zero.txt'));
+    await writeFile(join(fixture.rootPath, 'after-only.txt'), 'after side\n');
+    git('add', '-A'); git('commit', '-m', 'after branch');
+    const after = git('rev-parse', 'HEAD');
+    await writeFile(join(fixture.rootPath, 'head-only.txt'), 'later HEAD\n');
+    git('add', '.'); git('commit', '-m', 'later HEAD');
+    const captured = await captureScmComparison({ cwd: fixture.rootPath, source: { kind: 'revisionRange', baseOid: before, headOid: after } });
+    try {
+      expect(captured.comparison.endpoints).toEqual({ before, after });
+      expect(captured.comparison.inventory.state).toBe('complete');
+      expect(captured.comparison.inventory.files.map(file => file.path).sort()).toEqual(['after-only.txt', 'before-only.txt']);
+      expect(captured.comparison.inventory.files.find(file => file.path === 'before-only.txt')?.changeKind).toBe('deleted');
+    } finally { await deleteCapturedScmComparison({ cwd: fixture.rootPath, comparisonId: captured.comparison.id }); }
+  });
+
+  it('does not claim complete range coverage when an immutable endpoint is missing', async () => {
+    const fixture = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'scm-missing-range-' });
+    directories.push(fixture.rootPath);
+    const captured = await captureScmComparison({ cwd: fixture.rootPath,
+      source: { kind: 'revisionRange', baseOid: 'f'.repeat(40), headOid: fixture.headCommit } });
+    try {
+      expect(captured.comparison.inventory.state).toBe('unavailable');
+      expect(captured.comparison.inventory.files).toEqual([]);
+      expect(captured.comparison.inventory.reasons.length).toBeGreaterThan(0);
+    } finally { await deleteCapturedScmComparison({ cwd: fixture.rootPath, comparisonId: captured.comparison.id }); }
+  });
+
+  it('does not demand-fetch missing promisor blobs while capturing an exact revision range', async () => {
+    const fixture = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'scm-range-no-fetch-' });
+    directories.push(fixture.rootPath);
+    const git = (...args: string[]) => execFileSync('git', args, { cwd: fixture.rootPath, encoding: 'utf8' }).trim();
+    const before = fixture.headCommit;
+    await writeFile(join(fixture.rootPath, fixture.trackedPath), 'Only the promisor has these endpoint bytes\n');
+    git('add', '.'); git('commit', '-m', 'promised endpoint');
+    const after = git('rev-parse', 'HEAD');
+    const missingBlob = git('rev-parse', `${after}:${fixture.trackedPath}`);
+    const origin = join(fixture.rootPath, 'origin.git');
+    const checkout = join(fixture.rootPath, 'partial-checkout');
+    git('clone', '--bare', '--no-local', fixture.rootPath, origin);
+    git('-C', origin, 'config', 'uploadpack.allowFilter', 'true');
+    git('clone', '--filter=blob:none', '--no-checkout', pathToFileURL(origin).href, checkout);
+    const hasBlob = () => spawnSync('git', ['cat-file', '-e', missingBlob], { cwd: checkout,
+      env: { ...process.env, GIT_NO_LAZY_FETCH: '1' }, stdio: 'pipe' }).status === 0;
+    expect(hasBlob(), 'The real filtered clone must not already contain the endpoint blob').toBe(false);
+    const captured = await captureScmComparison({ cwd: checkout, source: { kind: 'revisionRange', baseOid: before, headOid: after } });
+    try {
+      expect(captured.comparison.endpoints).toEqual({ before, after });
+      expect({ complete: captured.comparison.inventory.state === 'complete', blobAcquired: hasBlob() })
+        .toEqual({ complete: false, blobAcquired: false });
+      expect(captured.comparison.inventory.reasons.length).toBeGreaterThan(0);
+    } finally { await deleteCapturedScmComparison({ cwd: checkout, comparisonId: captured.comparison.id }); }
+  });
+
+  it('returns typed unavailable for a missing Session baseline instead of capturing the current worktree', async () => {
+    const fixture = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'scm-session-no-baseline-' });
+    directories.push(fixture.rootPath);
+    const sessionId = randomUUID();
+    await writeFile(join(fixture.rootPath, fixture.trackedPath), 'current worktree is not the historical baseline\n');
+    await writeFile(join(fixture.rootPath, 'late-only.txt'), 'uncaptured file\n');
+    const captured = await captureScmComparison({ cwd: fixture.rootPath, sessionId, source: { kind: 'session', sessionId },
+      readTranscriptPage: async () => ({ messages: [], hasMore: false, nextAfterSeq: null }) });
+    try {
+      expect(captured.comparison.endpoints).toEqual({});
+      expect(captured.comparison.inventory).toMatchObject({ state: 'unavailable', files: [] });
+      expect(captured.comparison.inventory.reasons).not.toHaveLength(0);
+      expect(captured.metadata.contentConfidence).toBe('unavailable');
+      expect(captured.files).toEqual([]);
+      await writeFile(join(fixture.rootPath, fixture.trackedPath), 'another current edit\n');
+      expect(await readCapturedScmComparison({ cwd: fixture.rootPath, sessionId, comparisonId: captured.comparison.id })).toEqual(captured);
+    } finally { await deleteCapturedScmComparison({ cwd: fixture.rootPath, sessionId, comparisonId: captured.comparison.id }); }
+  });
 
   it('lets a Session investigate a Machine capture without exposing another Session capture', async () => {
     const fixture = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'scm-machine-review-' });

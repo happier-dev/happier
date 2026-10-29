@@ -20,7 +20,7 @@ import { ScmRequestBaseSchema } from './requestBase.js';
 import { RepositoryCheckpointCommitEvidenceSchema } from '../sessions/changes/schemas.js';
 import { ScmBranchWorkIdentitySchema } from './branches.js';
 import { defineProtocolLiteral, defineProtocolUnion } from '../plugins/actions/protocolComposableSchema.js';
-import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
+import { asProtocolZod, projectZodProtocolSchema } from '../plugins/actions/internalProtocolZodAdapter.js';
 
 export {
   ScmDefaultBranchPushPolicySchema,
@@ -143,7 +143,7 @@ function normalizeLegacyScmHostingProviderRef(value: unknown): unknown {
   }
 }
 
-export const ScmHostingProviderRefSchema = lazyZodSchema(() => (<I extends z.core.$ZodType, O extends z.core.$ZodType>(input: I, output: O) => new z.ZodMiniPipe({ type: 'pipe', in: input, out: output }) as z.ZodMiniPipe<I, O>)(z.transform(normalizeLegacyScmHostingProviderRef), z.looseObject({
+const ScmHostingProviderRefValueSchema = lazyZodSchema(() => z.looseObject({
     id: z.string().check(z.minLength(1)),
     kind: ScmHostingProviderKindSchema,
     displayName: z.string().check(z.minLength(1)),
@@ -152,7 +152,8 @@ export const ScmHostingProviderRefSchema = lazyZodSchema(() => (<I extends z.cor
     repositoryWebUrl: z.optional(z.string().check(z.url())),
     remoteName: z.optional(z.string().check(z.minLength(1))),
     urlSafety: z._default(ScmHostingProviderUrlSafetySchema, { allowedSchemes: ['https:'] }),
-  })));
+  }));
+export const ScmHostingProviderRefSchema = lazyZodSchema(() => (<I extends z.core.$ZodType, O extends z.core.$ZodType>(input: I, output: O) => new z.ZodMiniPipe({ type: 'pipe', in: input, out: output }) as z.ZodMiniPipe<I, O>)(z.transform(normalizeLegacyScmHostingProviderRef), ScmHostingProviderRefValueSchema));
 export type ScmHostingProviderRef = z.infer<typeof ScmHostingProviderRefSchema>;
 
 function stripTrailingSlashes(value: string): string {
@@ -277,6 +278,13 @@ export const ScmPullRequestSummarySchema = lazyZodSchema(() => z.looseObject({
     checks: z.optional(ScmPullRequestChecksSummarySchema),
   }));
 export type ScmPullRequestSummary = z.infer<typeof ScmPullRequestSummarySchema>;
+/**
+ * Current admitted discovery values use the same field grammar without the
+ * legacy-provider input preprocessor, which has no portable JSON shape.
+ */
+export const ScmPullRequestSummaryProtocolSchema = projectZodProtocolSchema(lazyZodSchema(() => z.extend(
+  ScmPullRequestSummarySchema, { provider: ScmHostingProviderRefValueSchema },
+)));
 
 /** Private authorized SCM read projection, never accounting event metadata. */
 export const ScmPullRequestWorkEvidenceSchema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(RepositoryCheckpointCommitEvidenceSchema, {

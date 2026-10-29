@@ -20,9 +20,25 @@ export const ScmReviewedMarkInputSchema = lazyZodSchema(() => z.union([
   z.strictObject({ v: z.literal(2), cwd: z.string().check(z.minLength(1)), comparisonId: z.string().check(z.regex(/^[a-f0-9]{64}$/)),
     source: ScmComparisonSourceSchema, sessionId: z.optional(z.string().check(z.minLength(1))), changeRefs: selectedChangeRefs }),
   z.strictObject({ v: z.literal(2), cwd: z.string().check(z.minLength(1)), source: ScmComparisonSourceSchema,
+    comparisonId: z.optional(z.string().check(z.regex(/^[a-f0-9]{64}$/))),
     sessionId: z.optional(z.string().check(z.minLength(1))), changeKeys: selectedChangeRefs }),
 ]));
 export type ScmReviewedMarkInput = z.infer<typeof ScmReviewedMarkInputSchema>;
+// Reset accepts the same opaque identity as the saved-result/capture owner.
+// The host validates it against retained evidence before any Account mutation.
+export const ScmReviewedMarksResetInputSchema = lazyZodSchema(() => z.strictObject({
+  v: z.literal(2), cwd: z.string().check(z.minLength(1)), source: ScmComparisonSourceSchema,
+  comparisonId: z.optional(z.string().check(z.minLength(1))),
+  sessionId: z.optional(z.string().check(z.minLength(1))), reset: z.literal(true),
+}).check(z.refine(input => input.comparisonId !== undefined || input.source.kind === 'workingTree', 'A captured source requires its comparison identity')));
+export type ScmReviewedMarksResetInput = z.infer<typeof ScmReviewedMarksResetInputSchema>;
+export const ScmReviewedUnmarkInputSchema = lazyZodSchema(() => z.union([
+  ScmReviewedMarkInputSchema,
+  // Reset clears the stable scope, including retained keys absent from this capture.
+  // Only unmark accepts it; an older strict reader refuses before Account writes.
+  ScmReviewedMarksResetInputSchema,
+]));
+export type ScmReviewedUnmarkInput = z.infer<typeof ScmReviewedUnmarkInputSchema>;
 export const ScmReviewedMarkResponseSchema = lazyZodSchema(() => z.discriminatedUnion('success', [
   z.strictObject({ success: z.literal(true), record: ScmReviewedMarksRecordSchema, version: z.number().check(z.int(), z.minimum(-1)) }),
   z.strictObject({ success: z.literal(false), errorCode: z.string().check(z.minLength(1)), error: z.string().check(z.minLength(1)),

@@ -18,12 +18,13 @@ function lineageKey(lineage: GitFileLineage): string {
 }
 
 /** The one tree comparison reader serves turn, session, pending and immutable history. */
-export async function readGitComparisonFiles(input: Readonly<{ cwd: string; before: string; after: string }>): Promise<Readonly<{
+export async function readGitComparisonFiles(input: Readonly<{ cwd: string; before: string; after: string;
+    env?: Parameters<typeof readGitCheckpointDiffOutput>[0]['env'] }>): Promise<Readonly<{
     files: readonly GitComparisonFile[];
     reasons: readonly string[];
     enumerationComplete: boolean;
 }>> {
-    const raw = await readGitCheckpointDiffOutput({ cwd: input.cwd,
+    const raw = await readGitCheckpointDiffOutput({ cwd: input.cwd, env: input.env,
         args: ['--raw', '--no-abbrev', '-z', '--find-renames', '--find-copies', input.before, input.after, '--'] });
     if (!raw.success) return { files: [], reasons: [raw.stderr || 'Comparison inventory could not be read'], enumerationComplete: false };
     const inventory = parseGitComparisonOutput(raw.stdout);
@@ -32,7 +33,7 @@ export async function readGitComparisonFiles(input: Readonly<{ cwd: string; befo
     // Keep inventory independent of patch availability, but acquire all patches
     // in one Git operation over the same immutable endpoints. Pair raw lineage
     // and exact-text sections within that response before projecting the inventory.
-    const diff = await readGitCheckpointDiffOutput({ cwd: input.cwd,
+    const diff = await readGitCheckpointDiffOutput({ cwd: input.cwd, env: input.env,
         args: ['--raw', '--no-abbrev', '-z', '--find-renames', '--find-copies', '--patch', '--binary', '--full-index',
             input.before, input.after, '--'] });
     const patches = new Map<string, string>();

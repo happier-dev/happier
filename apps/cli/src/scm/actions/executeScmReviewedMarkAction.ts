@@ -1,4 +1,4 @@
-import { buildScmReviewedMarksKey, createScmReviewedMarksRecordPort } from '@happier-dev/protocol/scm/reviewedMarks';
+import { buildScmReviewedMarksKey, createScmReviewedMarksRecordPort, ScmReviewedMarksError } from '@happier-dev/protocol/scm/reviewedMarks';
 import { buildScmReviewScopeId } from '@happier-dev/protocol/scm/comparisonOccurrences';
 import type { ScmComparison, ScmReviewedMarkResponse, ScmReviewedMarksSource } from '@happier-dev/protocol/scm';
 import { createCliAccountKvJsonTransport, type CliAccountKvJsonTransportParams } from '@/api/client/accountKvJsonTransport';
@@ -27,6 +27,16 @@ async function execute(operation: () => Promise<ScmReviewedMarkResponse>): Promi
   }
 }
 /** Called only after Action admission has checked captured or live change membership. */
-export function createCliScmReviewedMarkAction(params: AccountMarkParams & Readonly<({ changeRefs: readonly string[]; changeKeys?: never } | { changeRefs?: never; changeKeys: readonly string[] }) & { reviewed: boolean }>): Promise<ScmReviewedMarkResponse> {
-  return execute(() => params.changeKeys ? port(params).setReviewedKeys(params.changeKeys, params.reviewed) : port(params).setReviewed(params.changeRefs, params.reviewed));
+export function createCliScmReviewedMarkAction(params: AccountMarkParams & Readonly<(
+  { changeRefs: readonly string[]; changeKeys?: never; reset?: never }
+  | { changeRefs?: never; changeKeys: readonly string[]; reset?: never }
+  | { changeRefs?: never; changeKeys?: never; reset: true }
+) & { reviewed: boolean }>): Promise<ScmReviewedMarkResponse> {
+  return execute(() => {
+    if (params.reset) {
+      if (params.reviewed) throw new ScmReviewedMarksError('reviewed_marks_invalid_selection', 'Reset is only available through unmark');
+      return port(params).clear();
+    }
+    return params.changeKeys ? port(params).setReviewedKeys(params.changeKeys, params.reviewed) : port(params).setReviewed(params.changeRefs, params.reviewed);
+  });
 }

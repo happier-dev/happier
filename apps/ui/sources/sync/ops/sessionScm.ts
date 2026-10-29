@@ -80,6 +80,23 @@ import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestrati
 import { readMachineControlTargetForSession } from './sessionMachineTarget';
 import { invokeUiScmAction, normalizeUiScmFacadeResult } from './scm/scmActionInvocation';
 
+/** Resolve the admitted Session workspace once, before choosing its Action or RPC carrier. */
+export function resolveSessionScmRequestTarget(sessionId: string, method: string, request: Readonly<{ cwd?: string }>,
+    serverId?: string | null, accountId?: string | null):
+    | Readonly<{ ok: true; machineId: string; cwd: string; serverId: string | null | undefined }>
+    | Readonly<{ ok: false; failure: ScmRpcFailure }> {
+    const machineTarget = readMachineControlTargetForSession(
+        serverId === undefined ? sessionId : { sessionId, serverId: serverId ?? '', ...(accountId ? { accountId } : {}) },
+    );
+    if (!machineTarget) return { ok: false, failure: scmFallbackError(createRpcCallError({
+        error: RPC_ERROR_MESSAGES.SESSION_MACHINE_CONTROL_UNAVAILABLE,
+        errorCode: RPC_ERROR_CODES.SESSION_MACHINE_CONTROL_UNAVAILABLE,
+    }), { method, request }) };
+    return { ok: true, machineId: machineTarget.machineId, cwd: resolveMachineAbsolutePath({
+        rootPath: machineTarget.basePath, agentRootPath: machineTarget.agentBasePath, requestPath: request.cwd,
+    }), serverId: serverId === undefined ? resolvePreferredServerIdForSessionId(sessionId) : serverId };
+}
+
 async function callScmPreferMachineTransport<
     T extends { success: boolean; error?: string; errorCode?: string },
     R extends { cwd?: string; backendPreference?: unknown }
@@ -98,34 +115,21 @@ async function callScmPreferMachineTransport<
         || !('sessionId' in workEvidence) || workEvidence.sessionId !== sessionId)) {
         return { success: false, errorCode: SCM_OPERATION_ERROR_CODES.INVALID_REQUEST, error: 'Invalid Work Session scope' };
     }
-    const machineTarget = readMachineControlTargetForSession(
-        serverId === undefined ? sessionId : { sessionId, serverId: serverId ?? '', ...(accountId ? { accountId } : {}) },
-    );
-
-    if (!machineTarget) {
-        const failure = scmFallbackError(createRpcCallError({
-            error: RPC_ERROR_MESSAGES.SESSION_MACHINE_CONTROL_UNAVAILABLE,
-            errorCode: RPC_ERROR_CODES.SESSION_MACHINE_CONTROL_UNAVAILABLE,
-        }), { method, request });
+    const target = resolveSessionScmRequestTarget(sessionId, method, request, serverId, accountId);
+    if (!target.ok) {
+        const { failure } = target;
         return method.startsWith('scm.diffSummary.')
             ? { ok: false, errorCode: failure.errorCode, error: failure.error }
             : failure;
     }
 
-    const cwd = resolveMachineAbsolutePath({
-        rootPath: machineTarget.basePath,
-        agentRootPath: machineTarget.agentBasePath,
-        requestPath: request.cwd,
-    });
-    const resolvedServerId = serverId === undefined
-        ? resolvePreferredServerIdForSessionId(sessionId)
-        : serverId;
+    const { cwd } = target;
     const payload = bindResolvedRequest ? bindResolvedRequest({ ...request, cwd }) : { ...request, cwd };
     return await runMachineScmRpcWithFallback<T, R>(
-        machineTarget.machineId,
+        target.machineId,
         method,
         payload,
-        { serverId: resolvedServerId, ...(signal ? { signal } : {}), ...(accountId ? { accountId } : {}),
+        { serverId: target.serverId, ...(signal ? { signal } : {}), ...(accountId ? { accountId } : {}),
             ...(resolveSocketRpcSessionAuthorization(method)?.optionalSessionScope || workEvidence !== undefined
                 ? { authorization: { kind: 'session.write' as const, sessionId } } : {}) },
     );

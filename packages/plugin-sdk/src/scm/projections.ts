@@ -11,7 +11,7 @@ import { ProviderRefreshPolicySchema as canonicalScmRefreshPolicySchema } from '
 import { ScmCapabilitiesSchema as canonicalScmCapabilitiesSchema, ScmWorkingSnapshotSchema as canonicalScmWorkingSnapshotSchema } from '@happier-dev/protocol/scm/workingSnapshot';
 import { ScmSelectedMutationPathSchema as canonicalScmSelectedMutationPathSchema } from '@happier-dev/protocol/scm/selectedMutationPath';
 import { SourceControlCloneProtocolSchema as canonicalScmCloneProtocolSchema } from '@happier-dev/protocol/scm/cloneProtocol';
-import { ScmComparisonSourceProtocolSchema as canonicalScmComparisonSourceProtocolSchema, ScmComparisonSchema as canonicalScmComparisonSchema } from '@happier-dev/protocol/scm/comparison';
+import { ScmComparisonSourceProtocolSchema as canonicalScmComparisonSourceProtocolSchema, ScmComparisonSchema as canonicalScmComparisonSchema, ScmRevisionRangeV1ProtocolSchema as canonicalRevisionRange } from '@happier-dev/protocol/scm/comparison';
 import { ScmHostingProviderKindProtocolSchema as canonicalScmHostingProviderKindProtocolSchema } from '@happier-dev/protocol/scm/pullRequests';
 import type { ScmComparison, ScmComparisonSource as CanonicalScmComparisonSource } from '@happier-dev/protocol/scm';
 import type { JsonValue, PluginContributionRef } from '../identity.js';
@@ -26,8 +26,8 @@ export const ScmFileAtRevisionResponseSchema: {
     parse(value: unknown): ScmFileAtRevisionResponse;
     safeParse(value: unknown): { success: true; data: ScmFileAtRevisionResponse } | { success: false; error: unknown };
 } = canonicalFileAtRevisionResponse;
-import type { ScmComparisonSource } from './comparisonSource.js';
-export type { ScmComparisonSource } from './comparisonSource.js';
+import type { ScmComparisonSource, ScmRevisionRangeV1 } from './comparisonSource.js';
+export type { ScmComparisonSource, ScmRevisionRangeV1 } from './comparisonSource.js';
 import type { ProtocolComposableSchema } from '../protocol/protocolFacade.js';
 import { ScmHistoryEntriesInputV1Schema as canonicalHistoryInput, ScmHistoryEntriesResponseSchema as canonicalHistoryResponse } from '@happier-dev/protocol/scm/entriesHistoryV1';
 export type { ScmEntryHistoryV1, ScmHistoryEntriesInputV1, ScmHistoryEntriesOutputV1, ScmHistoryEntriesRequest, ScmHistoryEntriesResponse } from '@happier-dev/protocol/scm/entriesHistoryV1';
@@ -60,6 +60,7 @@ type _ScmSourceProjectionMustMatchCanonical = AssertScmSourceProjection<
 /** The source parser and portable grammar remain the Protocol-owned value. */
 export const ScmComparisonSourceProtocolSchema: ProtocolComposableSchema<ScmComparisonSource> = canonicalScmComparisonSourceProtocolSchema;
 export const ScmComparisonSourceSchema: ProtocolComposableSchema<ScmComparisonSource> = ScmComparisonSourceProtocolSchema;
+export const ScmRevisionRangeV1Schema: ProtocolComposableSchema<ScmRevisionRangeV1> = canonicalRevisionRange;
 /** The SCM owner supplies the complete hosting vocabulary, including custom forges. */
 export const ScmHostingProviderKindProtocolSchema: ProtocolComposableSchema<ProtocolScmHostingProviderKind> = canonicalScmHostingProviderKindProtocolSchema;
 export const ScmComparisonSchema: {
@@ -81,13 +82,8 @@ import type {
  * and template-literal aliases retain the hosting-only symbol during emission.
  * The equality assertion prevents this projection from drifting from its owner.
  */
-export type ProtocolScmHostingProviderKind =
-    | 'github'
-    | 'gitlab'
-    | 'bitbucket'
-    | 'azure-devops'
-    | 'custom'
-    | 'unknown';
+import type { ProtocolScmHostingProviderKind, ScmHostingRepositoryIdentityV1 } from '../protocol/hostingRepositoryIdentity.js';
+export type { ProtocolScmHostingProviderKind, ScmHostingRepositoryIdentityV1 } from '../protocol/hostingRepositoryIdentity.js';
 type _ScmHostingKindProjectionMustMatchCanonical = AssertScmSourceProjection<
     [ProtocolScmHostingProviderKind] extends [ScmHostingProviderKind]
         ? [ScmHostingProviderKind] extends [ProtocolScmHostingProviderKind] ? true : false
@@ -134,16 +130,9 @@ export type ScmRemoteUrlNormalizationResult =
 
 export type ScmRepoMode = '.git' | '.sl';
 
-export type ScmHostingRepositoryIdentityV1<
-    TKind extends ScmHostingProviderKind = ScmHostingProviderKind,
-> = Readonly<{
-    kind: TKind;
-    deployment: string;
-    repository: string;
-}>;
 
 export const normalizeScmHostingRepositoryIdentity: {
-    <TKind extends ScmHostingProviderKind>(
+    <TKind extends ProtocolScmHostingProviderKind>(
         value: Readonly<{
             kind: TKind;
             deployment?: unknown;
@@ -396,40 +385,9 @@ export type ScmOperationOutcome = ScmShape<{
     | { kind: 'outcome_unknown'; errorCode: ScmOperationErrorCode; reconciliation: ScmOperationReconciliation; repositoryState?: ScmOperationRepositoryState }
 )>;
 
-export type ScmPullRequestState = 'open' | 'closed' | 'merged' | 'draft' | 'unknown';
-export type ScmPullRequestChecksState = 'pending' | 'success' | 'failure' | 'unknown';
+import type { ScmPullRequestState, ScmPullRequestChecksState, ScmPullRequestSummary } from '../protocol/scmPullRequest.js';
+export type { ScmPullRequestState, ScmPullRequestChecksState, ScmPullRequestSummary } from '../protocol/scmPullRequest.js';
 export type ScmPullRequestAuthState = 'authenticated' | 'authentication_required' | 'unsupported' | 'unknown';
-
-export type ScmPullRequestSummary = {
-    [key: string]: unknown;
-    provider: ScmHostingProviderRef;
-    number?: number | null;
-    providerNativeId?: string;
-    title: string;
-    url: string;
-    baseBranch: string;
-    headBranch: string;
-    headRepositoryNameWithOwner?: string;
-    isCrossRepository?: boolean;
-    headSha?: string | null;
-    baseSha?: string | null;
-    state: ScmPullRequestState;
-    createdAtMs?: number;
-    closedAtMs?: number;
-    mergedAtMs?: number;
-    isDraft?: boolean;
-    author?: {
-        [key: string]: unknown;
-        login?: string;
-        displayName?: string;
-        url?: string;
-    };
-    checks?: {
-        [key: string]: unknown;
-        state: ScmPullRequestChecksState;
-        description?: string;
-    };
-};
 
 export type ScmPullRequestReference =
     | ({ [key: string]: unknown; number: number })
@@ -734,7 +692,7 @@ export type ScmLogEntry = {
     body: string;
 };
 
-export type ScmLogListRequest = Pick<ScmStatusSnapshotRequest, 'cwd' | 'backendPreference' | 'outcomeVersion'> & { limit?: number; skip?: number; query?: string; range?: 'incoming' };
+export type ScmLogListRequest = Pick<ScmStatusSnapshotRequest, 'cwd' | 'backendPreference' | 'outcomeVersion'> & { limit?: number; skip?: number; query?: string; range?: 'incoming'; revisionRange?: ScmRevisionRangeV1 };
 export type ScmLogListResponse = {
     success: boolean;
     entries?: ScmLogEntry[];
@@ -744,6 +702,7 @@ export type ScmLogListResponse = {
      */
     queryApplied?: boolean;
     rangeApplied?: boolean;
+    revisionRange?: ScmRevisionRangeV1 & { historyComplete: boolean; graphRelation?: 'equal' | 'forward' | 'diverged'; totalCount?: number; nextSkip?: number };
     error?: string;
     errorCode?: ScmOperationErrorCode;
 };

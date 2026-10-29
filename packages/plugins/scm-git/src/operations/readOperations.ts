@@ -14,7 +14,7 @@ import type {
   ScmHistoryEntriesRequest,
   ScmHistoryEntriesResponse,
 } from '@happier-dev/plugin-sdk/scm';
-import { SCM_OPERATION_ERROR_CODES, ScmHistoryEntriesInputV1Schema, ScmHistoryEntriesResponseSchema } from '@happier-dev/plugin-sdk/scm';
+import { SCM_OPERATION_ERROR_CODES, ScmHistoryEntriesInputV1Schema, ScmHistoryEntriesResponseSchema, ScmRevisionRangeV1Schema } from '@happier-dev/plugin-sdk/scm';
 import { lstat, readFile, realpath } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { relative, resolve, sep } from 'node:path';
@@ -600,6 +600,60 @@ export async function gitLogList(input: {
     const limit = request.limit ?? 50;
     const skip = request.skip ?? 0;
     const query = typeof request.query === 'string' ? request.query.trim() : '';
+
+    if (request.revisionRange !== undefined) {
+        const parsed = ScmRevisionRangeV1Schema.safeParse(request.revisionRange);
+        if (!parsed.success || request.range !== undefined || request.query !== undefined) {
+            return { success: false, errorCode: SCM_OPERATION_ERROR_CODES.INVALID_REQUEST, error: 'Exact revision ranges require immutable endpoints and no other log selector' };
+        }
+        const range = parsed.data;
+        const command = (args: string[]) => runScmCommand({ bin: 'git', cwd: context.detection.rootPath ?? context.cwd,
+            args, signal: input.signal, env: { GIT_NO_REPLACE_OBJECTS: '1', GIT_NO_LAZY_FETCH: '1' } });
+        const failure = (result: Awaited<ReturnType<typeof command>>): ScmLogListResponse => ({ success: false,
+            errorCode: input.signal?.aborted ? SCM_OPERATION_ERROR_CODES.COMMAND_CANCELLED
+                : result.outputLimitExceeded ? SCM_OPERATION_ERROR_CODES.COMMAND_OUTPUT_LIMIT_EXCEEDED
+                : result.timedOut ? SCM_OPERATION_ERROR_CODES.COMMAND_TIMEOUT : SCM_OPERATION_ERROR_CODES.COMMAND_FAILED,
+            error: result.stderr || 'Exact revision range history is unavailable' });
+        const endpoints = await Promise.all([range.baseOid, range.headOid].map(oid =>
+            command(['rev-parse', '--verify', '--end-of-options', `${oid}^{commit}`])));
+        for (const [index, endpoint] of endpoints.entries()) {
+            if (!endpoint.success || endpoint.stdout.trim() !== [range.baseOid, range.headOid][index]) return failure(endpoint);
+        }
+        const shallow = await command(['rev-parse', '--is-shallow-repository']);
+        if (!shallow.success || !['true', 'false'].includes(shallow.stdout.trim())) return failure(shallow);
+        const historyComplete = shallow.stdout.trim() === 'false';
+        let graphRelation: 'equal' | 'forward' | 'diverged' | undefined;
+        let totalCount: number | undefined;
+        if (historyComplete) {
+            const count = await command(['rev-list', '--count', `${range.baseOid}..${range.headOid}`, '--']);
+            if (!count.success) return failure(count);
+            totalCount = Number(count.stdout.trim());
+            if (!/^\d+$/u.test(count.stdout.trim()) || !Number.isSafeInteger(totalCount) || totalCount < 0) {
+                return { success: false, errorCode: SCM_OPERATION_ERROR_CODES.COMMAND_FAILED, error: 'Invalid exact revision range count' };
+            }
+            if (range.baseOid === range.headOid) graphRelation = 'equal';
+            else {
+                const ancestry = await command(['merge-base', '--is-ancestor', range.baseOid, range.headOid]);
+                if (ancestry.success) graphRelation = 'forward';
+                else if (ancestry.exitCode === 1 && !ancestry.timedOut && !ancestry.outputLimitExceeded && !input.signal?.aborted) graphRelation = 'diverged';
+                else return failure(ancestry);
+            }
+        }
+        // One lookahead uses the existing page size and distinguishes an exhausted
+        // exact range from a full page; HEAD and mutable branch refs never participate.
+        const log = await command(['log', `--max-count=${limit + 1}`, `--skip=${skip}`,
+            '--pretty=format:%H%x00%h%x00%an%x00%ae%x00%at%x00%s%x00%b%x00', `${range.baseOid}..${range.headOid}`, '--']);
+        if (!log.success) return failure(log);
+        const entries = parseGitLogEntries(log.stdout);
+        // A truncated or malformed frame cannot establish full-range coverage.
+        if ((log.stdout && !log.stdout.endsWith('\0')) || (log.stdout.match(/\0/g)?.length ?? 0) !== entries.length * GIT_LOG_FIELDS_PER_ENTRY
+            || entries.some(entry => !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(entry.sha))) {
+            return { success: false, errorCode: SCM_OPERATION_ERROR_CODES.COMMAND_FAILED, error: 'Invalid exact revision range history' };
+        }
+        return { success: true, entries: entries.slice(0, limit), revisionRange: { ...range,
+            historyComplete, ...(graphRelation !== undefined && totalCount !== undefined ? { graphRelation, totalCount } : {}),
+            ...(entries.length > limit ? { nextSkip: skip + limit } : {}) } };
+    }
 
     if (request.range === 'incoming') {
         if (query) {

@@ -67,6 +67,8 @@ export type { ScmHostingRepositoryVisibility } from './projections.js';
 export type { ScmLogEntry } from './projections.js';
 export type { ScmLogListRequest } from './projections.js';
 export type { ScmLogListResponse } from './projections.js';
+export type { ScmRevisionRangeV1 } from './projections.js';
+export { ScmRevisionRangeV1Schema } from './projections.js';
 export type { ScmOperationErrorCode } from './projections.js';
 export type { ScmOperationEffect } from './projections.js';
 export type { ScmOperationNextAction } from './projections.js';

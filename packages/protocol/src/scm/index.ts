@@ -20,7 +20,7 @@ import {
 } from './operationError.js';
 import { ScmRequestBaseSchema } from './requestBase.js';
 import { ScmOperationOutcomeSchema } from './operationOutcome.js';
-import { ScmComparisonSourceSchema } from './comparison.js';
+import { ScmComparisonSourceSchema, ScmRevisionRangeV1Schema } from './comparison.js';
 import { FilesystemPreparedExportSchema } from '../actions/filesystemActionFamily.js';
 import { ScmCommitOidSchema, ScmCommitExpectedRefSchema, ScmCommitPublicationSchema, ScmCommitHookContentChangesSchema } from './commitPublication.js';
 import { ScmRepositoryOperationKindSchema } from './operationState.js';
@@ -37,6 +37,7 @@ export * from './diffSummary.js';
 export * from './comparisonOccurrences.js';
 export * from './comparisonDiscard.js';
 export * from './diffSummaryResult.js';
+export { executeScmDiffSummaryClear } from './clearSavedResults.js';
 export * from './diffSummaryCommitPlan.js';
 export * from './repositoryProvisioning.js';
 export * from './repositoryClone.js';
@@ -254,6 +255,15 @@ export type ScmDiffFileRequest = z.infer<typeof ScmDiffFileRequestSchema>;
 export const ScmDiffFileResponseSchema = lazyZodSchema(() => z.object({
   success: z.boolean(),
   diff: z.optional(z.string()),
+  reviewUnits: z.optional(z.array(z.strictObject({
+    key: z.string().check(z.regex(/^[a-f0-9]{64}$/)),
+    hunkIndex: z.number().check(z.int(), z.nonnegative()),
+    runIndex: z.number().check(z.int(), z.nonnegative()),
+    oldStart: z.number().check(z.int(), z.nonnegative()),
+    oldLines: z.number().check(z.int(), z.nonnegative()),
+    newStart: z.number().check(z.int(), z.nonnegative()),
+    newLines: z.number().check(z.int(), z.nonnegative()),
+  }))),
   error: z.optional(z.string()),
   errorCode: z.optional(ScmOperationErrorCodeSchema),
 }));
@@ -650,7 +660,10 @@ export const ScmLogListRequestSchema = lazyZodSchema(() => (<T extends z.ZodMini
    */
   query: z.optional(z.string().check(z.maxLength(SCM_LOG_QUERY_MAX_LENGTH))),
   range: z.optional(z.literal('incoming')),
-})));
+  /** Exact pinned range, never HEAD; absent producer evidence means unsupported. */
+  revisionRange: z.optional(ScmRevisionRangeV1Schema),
+})).check(z.refine(request => !request.revisionRange || (request.range === undefined && request.query === undefined),
+  'Exact revision ranges cannot be combined with another log selector')));
 export type ScmLogListRequest = z.infer<typeof ScmLogListRequestSchema>;
 
 export const ScmLogListResponseSchema = lazyZodSchema(() => z.strictObject({
@@ -663,6 +676,13 @@ export const ScmLogListResponseSchema = lazyZodSchema(() => z.strictObject({
    */
   queryApplied: z.optional(z.boolean()),
   rangeApplied: z.optional(z.boolean()),
+  /** Endpoint attestation and full-history proof are distinct from page exhaustion. */
+  revisionRange: z.optional(z.strictObject({
+    kind: z.literal('revisionRange'), baseOid: ScmCommitOidSchema, headOid: ScmCommitOidSchema, historyComplete: z.boolean(),
+    graphRelation: z.optional(z.enum(['equal', 'forward', 'diverged'])),
+    totalCount: z.optional(z.number().check(z.int(), z.nonnegative())),
+    nextSkip: z.optional(z.number().check(z.int(), z.minimum(0))),
+  })),
   error: z.optional(z.string()),
   errorCode: z.optional(ScmOperationErrorCodeSchema),
 }));

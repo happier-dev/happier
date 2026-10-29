@@ -3,7 +3,8 @@ import { z } from 'zod/mini';
 import { sha256 } from '@noble/hashes/sha256';
 import { bytesToHex } from '@noble/hashes/utils';
 import { ActionInvokeInputProtocolSchema } from '../actions/actionInvokeInput.js';
-import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
+import { asProtocolZod, projectZodProtocolSchema } from '../plugins/actions/internalProtocolZodAdapter.js';
+import { ScmCommitOidSchema } from './commitPublication.js';
 import { defineProtocolLiteral, defineProtocolNumber, defineProtocolObject, defineProtocolString, defineProtocolUnion, type ProtocolJsonValue, type ProtocolSchemaInput, type ProtocolSchemaOutput } from '../plugins/actions/protocolComposableSchema.js';
 
 /** Views of one comparison; Commits is available only for pending working-tree changes. */
@@ -18,6 +19,13 @@ const textEvidence = z.discriminatedUnion('state', [
 
 /** Selectors are inputs, never authority for captured endpoint bytes. */
 const sourceIdentity = defineProtocolString({ minLength: 1 });
+/** Exact immutable endpoints; unlike branch comparisons, this never selects a merge base. */
+const revisionOid = projectZodProtocolSchema(ScmCommitOidSchema);
+export const ScmRevisionRangeV1ProtocolSchema = defineProtocolObject({
+  kind: defineProtocolLiteral('revisionRange'), baseOid: revisionOid, headOid: revisionOid,
+}, { policy: 'closed' });
+export type ScmRevisionRangeV1 = ProtocolSchemaOutput<typeof ScmRevisionRangeV1ProtocolSchema>;
+export const ScmRevisionRangeV1Schema = asProtocolZod(ScmRevisionRangeV1ProtocolSchema);
 export const ScmComparisonSourceProtocolSchema = defineProtocolUnion([
   defineProtocolObject({
     kind: defineProtocolLiteral('turnCheckpoint'), sessionId: sourceIdentity.optional(), turnId: sourceIdentity.optional(),
@@ -29,6 +37,7 @@ export const ScmComparisonSourceProtocolSchema = defineProtocolUnion([
   defineProtocolObject({ kind: defineProtocolLiteral('workingTree') }, { policy: 'closed' }),
   defineProtocolObject({ kind: defineProtocolLiteral('branch'), head: sourceIdentity, base: sourceIdentity }, { policy: 'closed' }),
   defineProtocolObject({ kind: defineProtocolLiteral('commit'), commit: sourceIdentity, parent: sourceIdentity.optional() }, { policy: 'closed' }),
+  ScmRevisionRangeV1ProtocolSchema,
   defineProtocolObject({ kind: defineProtocolLiteral('pullRequest'), locator: defineProtocolObject({
     providerId: sourceIdentity, repository: sourceIdentity, number: defineProtocolNumber({ integer: true, minimum: 1 }),
     /** Base branch tip selector, distinct from the captured diff-before merge base. */
@@ -54,6 +63,7 @@ export function scmComparisonSourceMatches(selector: ScmComparisonSource, source
       && (!selector.evidenceMode || selector.evidenceMode === (source.evidenceMode ?? 'reconciled'));
     case 'branch': return source.kind === 'branch' && source.head === selector.head && source.base === selector.base;
     case 'commit': return source.kind === 'commit' && source.commit === selector.commit && (source.parent ?? null) === (selector.parent ?? null);
+    case 'revisionRange': return source.kind === 'revisionRange' && source.baseOid === selector.baseOid && source.headOid === selector.headOid;
     case 'pullRequest': return source.kind === 'pullRequest' && source.locator.providerId === selector.locator.providerId
       && source.locator.repository === selector.locator.repository && source.locator.number === selector.locator.number
       && (!selector.locator.baseOid || selector.locator.baseOid === (basis ? basis.baseOid : source.locator.baseOid))
@@ -165,6 +175,7 @@ export function buildScmComparisonSourceKey(input: Readonly<{
     case 'workingTree': return JSON.stringify([source.kind, input.cwd]);
     case 'branch': return JSON.stringify([source.kind, input.cwd, source.head, source.base]);
     case 'commit': return JSON.stringify([source.kind, input.cwd, source.commit, source.parent ?? null]);
+    case 'revisionRange': return JSON.stringify([source.kind, input.cwd, source.baseOid, source.headOid]);
     case 'pullRequest': return JSON.stringify([source.kind, source.locator.providerId, source.locator.repository, source.locator.number, source.locator.baseOid ?? null, source.locator.headOid ?? null, source.locator.sourceAction ?? null]);
   }
 }

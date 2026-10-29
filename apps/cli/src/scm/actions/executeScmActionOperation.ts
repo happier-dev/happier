@@ -1,19 +1,22 @@
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { FileReviewNoteV1, FileReviewNoteOperationV1 } from '@happier-dev/protocol/messages/structured/fileReviewNoteV1';
 import { scmPathMatchesScopePath } from '@happier-dev/protocol/scm/pathScope';
 import { logger } from '@/ui/logger';
 import type { ScmHistoryEntriesRequest, ScmHistoryEntriesResponse } from '@happier-dev/protocol/scm/entriesHistoryV1';
 import { SCM_OPERATION_ERROR_CODES, ScmOperationErrorCodeSchema } from '@happier-dev/protocol/scm/operationError';
 import { ScmDiffSummaryErrorCodeSchema, ScmDiffSummaryGenerateInputSchema } from '@happier-dev/protocol/scm/diffSummary';
-import { ScmDiffSummaryResultClearInputSchema } from '@happier-dev/protocol/scm/diffSummaryResult';
+import { ScmDiffSummaryResultClearInputSchema, ScmDiffSummaryResultListInputSchema, ScmDiffSummaryResultReadInputSchema } from '@happier-dev/protocol/scm/diffSummaryResult';
+import { executeScmDiffSummaryClear } from '@happier-dev/protocol/scm';
 import { buildReviewUnits } from '@happier-dev/protocol/scm/comparisonOccurrences';
-import type { ScmReviewedMarksSource } from '@happier-dev/protocol/scm/reviewedMarks';
-import type { ScmDiffSummaryResultClearResponse, ScmComparisonCaptureInput, ScmActionExecute, ActionExecutorContext, ScmComparison, ScmReviewedMarkInput, ScmReviewedMarkResponse, ScmActionId, ScmHostingRepositoryDescribePublishTargetsRequest, ScmHostingRepositoryDescribePublishTargetsResponse, ScmHostingRepositoryPublishRequest, ScmHostingRepositoryPublishResponse, ScmPullRequestCheckoutRequest, ScmPullRequestCheckoutResponse, ScmPullRequestGetRequest, ScmPullRequestGetResponse, ScmPullRequestListRequest, ScmPullRequestListResponse, ScmPullRequestOpenComposeRequest, ScmPullRequestOpenComposeResponse, ScmPullRequestOpenOrReuseRequest, ScmPullRequestOpenOrReuseResponse, ScmPullRequestPrepareWorktreeRequest, ScmPullRequestPrepareWorktreeResponse, ScmPullRequestRunStackedRequest, ScmPullRequestRunStackedResponse, ScmReviewWorkspaceMaterializePreparedRequest, ScmReviewWorkspaceMaterializePreparedResponse, ScmRepositoryCloneInput, ScmRepositoryCloneOutput, ScmRepositoryInitRequest, ScmRepositoryInitResponse, ScmRepositoryRemoveIndexLockRequest, ScmRepositoryRemoveIndexLockResponse } from '@happier-dev/protocol';
+import type { ScmReviewedMarksSource, ScmReviewedUnmarkInput } from '@happier-dev/protocol/scm/reviewedMarks';
+import type { ScmComparisonCaptureInput, ScmActionExecute, ActionExecutorContext, ScmComparison, ScmReviewedMarkInput, ScmReviewedMarkResponse, ScmActionId, ScmHostingRepositoryDescribePublishTargetsRequest, ScmHostingRepositoryDescribePublishTargetsResponse, ScmHostingRepositoryPublishRequest, ScmHostingRepositoryPublishResponse, ScmPullRequestCheckoutRequest, ScmPullRequestCheckoutResponse, ScmPullRequestGetRequest, ScmPullRequestGetResponse, ScmPullRequestListRequest, ScmPullRequestListResponse, ScmPullRequestOpenComposeRequest, ScmPullRequestOpenComposeResponse, ScmPullRequestOpenOrReuseRequest, ScmPullRequestOpenOrReuseResponse, ScmPullRequestPrepareWorktreeRequest, ScmPullRequestPrepareWorktreeResponse, ScmPullRequestRunStackedRequest, ScmPullRequestRunStackedResponse, ScmReviewWorkspaceMaterializePreparedRequest, ScmReviewWorkspaceMaterializePreparedResponse, ScmRepositoryCloneInput, ScmRepositoryCloneOutput, ScmRepositoryInitRequest, ScmRepositoryInitResponse, ScmRepositoryRemoveIndexLockRequest, ScmRepositoryRemoveIndexLockResponse } from '@happier-dev/protocol';
 import { admitScmRemotePolicy } from '@happier-dev/protocol/scm/remotePolicy';
 import { admitScmCommitPolicy, admitScmCommitUndoLast } from '@happier-dev/protocol/scm/capabilities';
 import { normalizeScmOperationOutcome, ScmOperationOutcomeSchema } from '@happier-dev/protocol/scm/operationOutcome';
 import type * as scm from '@happier-dev/protocol/scm';
 import { parseScmRepositoryCloneRpcRequest, projectScmLegacyRpcResponse } from './scmRpcCompatibility';
+import { isStoredScmReviewEvidenceAction } from './placement';
 import { prepareDiscardAgainstComparison, type PreparedComparisonDiscard } from './discard/discardAgainstComparison';
 import { DEFAULT_MACHINE_TUNNEL_SERVER_ROUTED_MAX_RAW_PAYLOAD_BYTES } from '@happier-dev/protocol/features/payload/capabilities/machineTunnelCapabilities';
 
@@ -67,12 +70,12 @@ export type ExecuteScmActionOperationParams = Readonly<{
     readComparisonTranscriptPage?: ReadRepositoryCheckpointTranscriptPage;
     readPullRequestComparisonPage?: ReadPullRequestComparisonPage;
     sessionId?: string;
-    /** Existing authenticated Session authority, supplied only by the host ingress. */
-    authorizeSession?: (sessionId: string) => Promise<boolean>;
+    /** Host admission for stored provenance; undefined explicitly asks for unscoped access. */
+    authorizeSession?: (sessionId: string | undefined) => Promise<boolean>;
     executeCanonicalAction?: Parameters<ScmActionExecute>[0]['executeCanonicalAction'];
     /** Exact host-stamped caller context, never parsed from SCM Action input. */
     actionContext?: ActionExecutorContext;
-    executeReviewedMarks?: (evidence: ScmComparison | ScmReviewedMarksSource, request: ScmReviewedMarkInput, reviewed: boolean) => Promise<ScmReviewedMarkResponse>;
+    executeReviewedMarks?: (evidence: ScmComparison | ScmReviewedMarksSource, request: ScmReviewedUnmarkInput, reviewed: boolean) => Promise<ScmReviewedMarkResponse>;
     /** Released RPC readers have a closed outer error-code vocabulary. */
     rpcCompatibility?: true;
     deliverFileAtRevision?: (request: scm.ScmFileAtRevisionRequest, response: scm.ScmFileAtRevisionResponse, signal?: AbortSignal) => Promise<scm.ScmFileReadResponse>;
@@ -83,7 +86,14 @@ async function admitReviewScope(params: ExecuteScmActionOperationParams,
     scope: Readonly<{ cwd: string; sessionId?: string; sourceSessionId?: string }>): Promise<boolean> {
     if (params.actionContext?.serverId && params.actionContext.serverId !== configuration.activeServerId) return false;
     if (!resolveCwd(scope.cwd, params.workingDirectory, params.accessPolicy ?? resolveFilesystemAccessPolicy()).ok) return false;
-    for (const sessionId of new Set([scope.sessionId, scope.sourceSessionId].filter((id): id is string => Boolean(id)))) {
+    const sessionIds = new Set([scope.sessionId, scope.sourceSessionId].filter((id): id is string => Boolean(id)));
+    // Empty provenance is still protected scope: a Session/shared caller must
+    // not skip the same host decision consumed by every retained-result effect.
+    if (sessionIds.size === 0 && params.authorizeSession
+        && isStoredScmReviewEvidenceAction(params.actionId, params.input as Readonly<Record<string, unknown>>)) {
+        return params.authorizeSession(undefined).catch(() => false);
+    }
+    for (const sessionId of sessionIds) {
         if (!params.authorizeSession || !await params.authorizeSession(sessionId).catch(() => false)) return false;
     }
     return true;
@@ -103,6 +113,16 @@ async function runLocalScmAction(params: ExecuteScmActionOperationParams & Reado
         ...(params.registry ? { registry: params.registry } : {}),
     } as const;
     const runMutation: RunMutation = params.runMutation ?? (async (operation) => await operation());
+
+    if (params.actionId === 'scm.diffSummary.result.read') {
+        try {
+            const request = ScmDiffSummaryResultReadInputSchema.parse(params.input);
+            const authorized = resolveCwd(request.cwd, params.workingDirectory, params.accessPolicy ?? resolveFilesystemAccessPolicy());
+            if (!authorized.ok) return reviewUnavailable;
+            return await scmDiffSummaryResultStore.read({ ...request, cwd: authorized.cwd,
+                ...(params.sessionId ? { sessionId: params.sessionId } : {}) }, { admitScope: scope => admitReviewScope(params, scope) });
+        } catch { return reviewUnavailable; }
+    }
 
     // Scope comes from protected retained state. Input selectors never grant Session access.
     const capturedMarks = (params.actionId === 'scm.diffSummary.reviewed.mark' || params.actionId === 'scm.diffSummary.reviewed.unmark')
@@ -128,7 +148,14 @@ async function runLocalScmAction(params: ExecuteScmActionOperationParams & Reado
             });
         case 'scm.diffSummary.result.list': {
             try {
-                const inventory = await scmDiffSummaryResultStore.list({ admitScope: scope => admitReviewScope(params, scope) });
+                const input = ScmDiffSummaryResultListInputSchema.parse(params.input);
+                const query = input.query;
+                const authorized = query ? resolveCwd(query.cwd, params.workingDirectory, params.accessPolicy ?? resolveFilesystemAccessPolicy()) : null;
+                if (authorized && !authorized.ok) return reviewUnavailable;
+                const inventory = await scmDiffSummaryResultStore.list({ admitScope: scope => admitReviewScope(params, scope),
+                    ...(query && authorized?.ok ? { query: { ...query, cwd: authorized.cwd } } : {}),
+                    ...(params.signal ? { signal: params.signal } : {}) });
+                if (!input.includeUsage) return { success: true, ...inventory };
                 const results = inventory.results;
                 const untilMs = Date.now();
                 const { readRetainedExecutionRunRecords } = await import('@/daemon/executionRunRegistry');
@@ -147,37 +174,30 @@ async function runLocalScmAction(params: ExecuteScmActionOperationParams & Reado
             }
         }
         case 'scm.diffSummary.result.clear': {
-            const input = ScmDiffSummaryResultClearInputSchema.parse(params.input);
-            const deleted: Extract<ScmDiffSummaryResultClearResponse, { success: true }>['deleted'] = [];
-            const failures: Extract<ScmDiffSummaryResultClearResponse, { success: true }>['failures'] = [];
-            for (const item of input.results) {
-                if (params.signal?.aborted) {
-                    failures.push({ resultId: item.resultId, success: false, errorCode: 'result_unavailable', error: 'Clear was cancelled before deleting this saved result.' });
-                    continue;
-                }
-                const authorized = resolveCwd(item.cwd, params.workingDirectory, params.accessPolicy ?? resolveFilesystemAccessPolicy());
-                if (!authorized.ok) { failures.push({ resultId: item.resultId, success: false, errorCode: 'result_unavailable', error: authorized.error }); continue; }
-                try {
-                    const scope = await scmDiffSummaryResultStore.readStoredScope({ cwd: authorized.cwd, resultId: item.resultId,
-                        ...(item.sessionId ? { sessionId: item.sessionId } : {}) });
-                    if (!scope || !await admitReviewScope(params, scope)) {
-                        failures.push({ ...reviewUnavailable, resultId: item.resultId }); continue;
-                    }
-                    const saved = await scmDiffSummaryResultStore.read({ cwd: authorized.cwd, resultId: item.resultId,
-                        ...(item.sessionId ? { sessionId: item.sessionId } : {}) });
-                    if (!saved.success) { failures.push({ ...saved, resultId: item.resultId }); continue; }
-                    if (saved.result.output.comparison?.id !== item.comparisonId) {
-                        failures.push({ resultId: item.resultId, success: false, errorCode: 'invalid_edit', error: 'The listed comparison does not identify this saved result.' }); continue;
-                    }
-                    const response = await executeScmDiffSummaryResultAction({ actionId: 'scm.diffSummary.result.delete',
+            return executeScmDiffSummaryClear({ input: ScmDiffSummaryResultClearInputSchema.parse(params.input),
+                assertCurrent: () => { if (params.signal?.aborted) throw new Error('Clear was cancelled.'); },
+                list: async () => ({ success: true, ...await scmDiffSummaryResultStore.list({
+                    admitScope: scope => admitReviewScope(params, scope),
+                    ...(params.signal ? { signal: params.signal } : {}),
+                }) }),
+                read: async item => {
+                    const authorized = resolveCwd(item.cwd, params.workingDirectory, params.accessPolicy ?? resolveFilesystemAccessPolicy());
+                    if (!authorized.ok) return { ...reviewUnavailable, error: authorized.error };
+                    return scmDiffSummaryResultStore.read({ cwd: authorized.cwd, resultId: item.resultId,
+                        ...(item.sessionId ? { sessionId: item.sessionId } : {}) }, { admitScope: scope => admitReviewScope(params, scope) });
+                },
+                delete: async item => {
+                    const authorized = resolveCwd(item.cwd, params.workingDirectory, params.accessPolicy ?? resolveFilesystemAccessPolicy());
+                    if (!authorized.ok) return { ...reviewUnavailable, error: authorized.error };
+                    return executeScmDiffSummaryResultAction({ actionId: 'scm.diffSummary.result.delete',
                         input: { cwd: authorized.cwd, resultId: item.resultId, expectedRevision: item.expectedRevision }, cwd: authorized.cwd,
                         ...(item.sessionId ? { sessionId: item.sessionId } : {}), ...(params.signal ? { signal: params.signal } : {}),
                     });
-                    if (!response.success) failures.push({ ...response, resultId: item.resultId });
-                    else if ('resultId' in response) deleted.push(response);
-                } catch { failures.push({ ...reviewUnavailable, resultId: item.resultId }); }
-            }
-            return { success: true, deleted, failures };
+                },
+                clearReviewedMarks: (comparison, reset) => params.executeReviewedMarks
+                    ? params.executeReviewedMarks(comparison, reset, false)
+                    : Promise.resolve({ success: false, errorCode: 'reviewed_marks_unavailable', error: 'Captured Account credentials are required for personal reviewed marks.' }),
+            });
         }
         case 'scm.diffSummary.commitPlan.accept':
         case 'scm.diffSummary.commitPlan.stop':
@@ -212,7 +232,7 @@ async function runLocalScmAction(params: ExecuteScmActionOperationParams & Reado
         }
         case 'scm.diffSummary.reviewed.mark':
         case 'scm.diffSummary.reviewed.unmark': {
-            const request = params.input as ScmReviewedMarkInput;
+            const request = params.input as ScmReviewedUnmarkInput;
             const authorized = resolveCwd(request.cwd, params.workingDirectory, params.accessPolicy ?? resolveFilesystemAccessPolicy());
             if (!authorized.ok) return { success: false, errorCode: 'result_unavailable', error: authorized.error };
             if ('v' in request) {
@@ -221,13 +241,15 @@ async function runLocalScmAction(params: ExecuteScmActionOperationParams & Reado
                 const scope = { cwd: authorized.cwd, ...(sessionId ? { sessionId } : {}) };
                 if (!await admitReviewScope(params, scope)) return reviewUnavailable;
                 try {
-                    if ('changeKeys' in request) {
+                    if (!request.comparisonId) {
                         if (request.source.kind !== 'workingTree' || !params.executeReviewedMarks) return reviewUnavailable;
                         return runScmRoute({ request: { cwd: authorized.cwd }, ...routeBase,
                             onNonRepository: () => reviewUnavailable,
                             runWithBackend: async ({ context, selection }) => {
                                 const status = await selection.backend.statusSnapshot({ context, request: { cwd: authorized.cwd } });
                                 if (!status.success || !status.snapshot?.repo.rootPath || status.snapshot.repo.rootPath !== authorized.cwd) return reviewUnavailable;
+                                if ('reset' in request) return params.executeReviewedMarks!({ repositoryRootPath: status.snapshot.repo.rootPath,
+                                    source: request.source, changeKeys: [] }, request, false);
                                 const groups = await Promise.all(status.snapshot.entries.map(async entry => {
                                     const areas = status.snapshot!.capabilities.supportedDiffAreas;
                                     return (await Promise.all(areas.map(async area => {
@@ -239,7 +261,7 @@ async function runLocalScmAction(params: ExecuteScmActionOperationParams & Reado
                                 }));
                                 const source: ScmReviewedMarksSource = { repositoryRootPath: status.snapshot.repo.rootPath,
                                     source: request.source, changeKeys: groups.flat() };
-                                if (request.changeKeys.some(key => !source.changeKeys.includes(key))) return { success: false, errorCode: 'reviewed_marks_invalid_selection', error: 'Content keys no longer belong to the live diff.' };
+                                if ('changeKeys' in request && request.changeKeys.some(key => !source.changeKeys.includes(key))) return { success: false, errorCode: 'reviewed_marks_invalid_selection', error: 'Content keys no longer belong to the live diff.' };
                                 return params.executeReviewedMarks!(source, request, params.actionId === 'scm.diffSummary.reviewed.mark');
                             },
                         });
@@ -259,7 +281,6 @@ async function runLocalScmAction(params: ExecuteScmActionOperationParams & Reado
             if (!saved.result.output.comparison || !params.executeReviewedMarks) return { success: false, errorCode: 'reviewed_marks_unavailable', error: 'Authenticated personal reviewed marks are unavailable' };
             return params.executeReviewedMarks(saved.result.output.comparison, request, params.actionId === 'scm.diffSummary.reviewed.mark');
         }
-        case 'scm.diffSummary.result.read':
         case 'scm.diffSummary.result.edit':
         case 'scm.diffSummary.result.undo':
         case 'scm.diffSummary.result.delete':
@@ -351,7 +372,7 @@ async function runLocalScmAction(params: ExecuteScmActionOperationParams & Reado
         }
         case 'scm.diff.file': {
             const request = params.input as scm.ScmDiffFileRequest;
-            return runScmRoute<scm.ScmDiffFileRequest, scm.ScmDiffFileResponse>({
+            const response = await runScmRoute<scm.ScmDiffFileRequest, scm.ScmDiffFileResponse>({
                 request,
                 ...routeBase,
                 onNonRepository: async () => notRepositoryResponse<scm.ScmDiffFileResponse>(),
@@ -359,6 +380,15 @@ async function runLocalScmAction(params: ExecuteScmActionOperationParams & Reado
                     ? await selection.backend.diffFile({ context, request })
                     : { success: false, errorCode: SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED, error: 'SCM backend operation is unavailable' },
             });
+            if (!response.success || response.diff === undefined || request.area !== 'both') return response;
+            return {
+                ...response,
+                reviewUnits: buildReviewUnits(request.path, 'combined', response.diff).map(({ key, hunkIndex, runIndex, hunk }) => ({
+                    key, hunkIndex, runIndex,
+                    oldStart: hunk.oldStart, oldLines: hunk.oldLines,
+                    newStart: hunk.newStart, newLines: hunk.newLines,
+                })),
+            };
         }
         case 'scm.blame.get': {
             const request = params.input as scm.ScmBlameFileRequest;
@@ -1143,6 +1173,11 @@ export async function executeScmActionOperation(
         });
     if (result === undefined) {
         throw new Error(`SCM action operation is unavailable: ${params.actionId}`);
+    }
+    // A delegated Action can refuse before this SCM operation begins. Its
+    // existing failure envelope is distinct from the operation's result schema.
+    if (result && typeof result === 'object' && 'ok' in result && result.ok === false) {
+        return ActionExecuteFailureSchema.parse(result);
     }
     if (!spec.outputSchema) {
         throw new Error(`SCM action operation has no output schema: ${params.actionId}`);

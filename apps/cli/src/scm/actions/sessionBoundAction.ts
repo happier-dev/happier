@@ -17,7 +17,7 @@ import type { RpcHandlerContext } from '@/api/rpc/types';
 import type { resolveFilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 import type { resolveCwd } from '@/scm/runtime';
 import type { tryAcquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
-import { isSavedScmReviewResultAction, type bindScmActionToSessionWorkspace, type isRetainedScmReviewAction } from '@/scm/actions/placement';
+import { isStoredScmReviewEvidenceAction, type bindScmActionToSessionWorkspace, type isRetainedScmReviewAction } from '@/scm/actions/placement';
 import { requiresExplicitScmMachineTarget } from '@happier-dev/protocol/actions/actionSpecs';
 import { resolveSocketRpcSessionAuthorization } from '@happier-dev/protocol/socketRpc';
 import type { ActionExecutorDeps, ActionExecutorContext, ScmDiffSummaryGenerateInput } from '@happier-dev/protocol';
@@ -92,9 +92,9 @@ export function createSessionBoundScmAction(
     const requesterAccountId = context.externalActionCredential?.accountId ?? context.runtimeAccountId;
     const [{ createCliScmReviewedMarkAction }, { resolveBackendTargetFromSessionMetadata }, { readAgentRoutingIdForContributionIdentity, indexAgentRoutingIdsByContributionIdentity }, { createRepositoryCheckpointTranscriptPageReader }, { isRetainedScmReviewAction, bindScmActionToSessionWorkspace }, { resolveSessionMachineWorkspacePath }, { executeScmActionOperation }] = await Promise.all([import("@/scm/actions/executeScmReviewedMarkAction"), import("@/session/backendTargets/resolveBackendTargetFromSessionMetadata"), import("@/plugins/projection/registry/agentRoutingIdentity"), import("@/scm/checkpoints/readRepositoryCheckpointTranscriptPage"), import("@/scm/actions/placement"), import("@/session/machineControlLocality"), import("@/scm/actions/executeScmActionOperation")]);
     const accountMarksDeps = params.credentials ? {
-      executeReviewedMarks: (evidence: import('@happier-dev/protocol').ScmComparison | import('@happier-dev/protocol').ScmReviewedMarksSource, request: import('@happier-dev/protocol').ScmReviewedMarkInput, reviewed: boolean) => createCliScmReviewedMarkAction({
+      executeReviewedMarks: (evidence: import('@happier-dev/protocol').ScmComparison | import('@happier-dev/protocol').ScmReviewedMarksSource, request: import('@happier-dev/protocol').ScmReviewedUnmarkInput, reviewed: boolean) => createCliScmReviewedMarkAction({
         credentials: params.credentials!, ...('id' in evidence ? { comparison: evidence } : { source: evidence }),
-        ...('changeKeys' in request ? { changeKeys: request.changeKeys } : { changeRefs: request.changeRefs }), reviewed,
+        ...('reset' in request ? { reset: true as const } : 'changeKeys' in request ? { changeKeys: request.changeKeys } : { changeRefs: request.changeRefs }), reviewed,
         ...(requesterAccountId ? { requesterAccountId } : {}),
         ...(params.serverHttpBaseUrl ? { serverBaseUrl: params.serverHttpBaseUrl } : {}),
         resolveAuthorizationHeaders: request => resolveServerRequestHeaders(context, actionId, request),
@@ -155,11 +155,11 @@ export function createSessionBoundScmAction(
       // runtime owner's credentials. Ordinary CLI callers prove access at Home.
       if (context.actionCaller?.kind === 'session' && context.actionCaller.sessionId !== sessionId) return false;
       if (context.rpcSessionAuthorization) return context.rpcSessionAuthorization.sessionId === sessionId;
-      // Saved results belong to the Machine until explicit deletion. Its
-      // authenticated custodian can still read/edit/delete them after their
-      // generator Session is gone. Shared Machine and Session callers retain
+      // Retained results/captures belong to the Machine. Its authenticated
+      // custodian can still read exact evidence and retry personal mark Reset
+      // after the generator Session is gone. Shared Machine and Session callers retain
       // the Session ceiling; a target selector alone never grants access.
-      if (machineCustodianResultAccess) return true;
+      if (machineCustodianReviewAccess) return true;
       // Absent saved provenance needs custodian authority; a shared caller
       // cannot prove standalone access through a Session lookup.
       if (!sessionId) return false;
@@ -192,7 +192,7 @@ export function createSessionBoundScmAction(
     const signedAuthorization = context.externalActionExecutionAuthorization;
     const signedRequester = signedAuthorization?.requesterHttpProjection;
     const targetMachineId = context.externalActionTarget?.kind === 'machine' ? context.externalActionTarget.machineId : null;
-    const machineCustodianResultAccess = isSavedScmReviewResultAction(actionId, inputRecord)
+    const machineCustodianReviewAccess = isStoredScmReviewEvidenceAction(actionId, inputRecord)
       && !context.rpcSessionAuthorization
       && context.actionCaller?.kind !== 'session' && context.externalActionTarget?.kind === 'machine'
       && (admission

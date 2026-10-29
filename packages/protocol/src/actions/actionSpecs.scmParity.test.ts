@@ -13,6 +13,7 @@ import { resolveActionApprovalRouting } from './actionApprovalPolicy.js';
 import { zodSchemaToJsonSchemaObject } from './actionInputJsonSchema.js';
 import { validateWorkflowDefinition } from '../workflows/workflowValidationV1.js';
 import { resolveBuiltinWorkflowDefinitionV1 } from '../workflows/builtins/catalog.js';
+import { markSessionListQueryResultV1 } from '../sessions/awareness/action.js';
 
 const reads = [
   'scm.backend.describe', 'scm.status.snapshot', 'scm.worktrees.enrichment',
@@ -37,6 +38,62 @@ const mutations = [
 ] as const;
 
 describe('SCM Action parity', () => {
+  it.each(['scm.status.snapshot', 'scm.remote.pull', 'scm.pullRequest.get'] as const)('routes %s to its admitted Session without borrowing another Machine or default Session', async actionId => {
+    type Deps = import('./executor/types.js').ActionExecutorDeps;
+    const calls: unknown[] = [];
+    const settings = ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { 'scm.remote.pull': ['cli'] } });
+    const executor = createActionExecutor({
+      // Session resolution and SCM dispatch are authenticated transport boundaries.
+      resolveSessionReference: async () => ({ kind: 'unique', address: { serverId: 'target-home', sessionId: 'bound-session' } }),
+      isActionApprovalRequired: (...[id, context, input]: Parameters<NonNullable<Deps['isActionApprovalRequired']>>) =>
+        isApprovalRequiredByActionsSettings(id, settings, context, undefined, undefined, input),
+      scmActionExecute: async ({ input, context }: Parameters<NonNullable<Deps['scmActionExecute']>>[0]) => {
+        calls.push({ input, serverId: context.serverId, sessionId: context.defaultSessionId,
+          machineId: context.defaultSessionMachineId, machine: context.externalActionTarget,
+          runMachine: context.executionRunTargetMachineId });
+        return { ok: false, errorCode: 'fixture_transport', error: 'fixture_transport' };
+      },
+    } as unknown as Deps);
+    const input = { sessionId: { selector: 'self' as const, of: 'bound-reference' }, cwd: '/authored/path',
+      ...(actionId === 'scm.remote.pull' ? { remote: 'origin', branch: 'topic' }
+        : actionId === 'scm.pullRequest.get' ? { prReference: { url: 'https://github.com/acme/widgets/pull/12' } } : {}) };
+    const spec = getActionSpec(actionId);
+    expect(await executor.execute(actionId, input, {
+      surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' }, serverId: 'original-home',
+      defaultSessionId: 'unrelated-session', defaultSessionMachineId: 'unrelated-machine',
+      externalActionTarget: { kind: 'machine', machineId: 'unrelated-machine' }, executionRunTargetMachineId: 'unrelated-run-machine',
+    })).toMatchObject({ ok: false, errorCode: 'fixture_transport' });
+    expect(calls).toEqual([{ input: { ...input, sessionId: 'bound-session' }, serverId: 'target-home',
+      sessionId: 'bound-session', machineId: undefined, machine: undefined, runMachine: undefined }]);
+    expect(spec.sessionTarget).toEqual({ field: 'sessionId', cardinality: 'one' });
+    expect(spec.inputSchema.safeParse(input).success).toBe(true);
+  });
+
+  it('rejects a multi-Session pull before SCM effects and preserves an omitted Session operand', async () => {
+    type Deps = import('./executor/types.js').ActionExecutorDeps;
+    const calls: unknown[] = [];
+    const settings = ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { 'scm.remote.pull': ['cli'] } });
+    const executor = createActionExecutor({
+      resolveSessionReference: async () => ({ kind: 'unique', address: { serverId: 'home', sessionId: 'manager' } }),
+      sessionList: async () => markSessionListQueryResultV1({ sessions: ['child-a', 'child-b'].map(id => ({
+        id, manager: { sessionId: 'manager' }, active: false, presence: 'offline', updatedAt: 1,
+      })), nextCursor: null, hasNext: false, attentionNextCursor: null, attentionHasNext: false }),
+      isActionApprovalRequired: (...[id, context, input]: Parameters<NonNullable<Deps['isActionApprovalRequired']>>) =>
+        isApprovalRequiredByActionsSettings(id, settings, context, undefined, undefined, input),
+      scmActionExecute: async ({ input, context }: Parameters<NonNullable<Deps['scmActionExecute']>>[0]) => {
+        calls.push({ input, sessionId: context.defaultSessionId, machine: context.externalActionTarget });
+        return { ok: false, errorCode: 'fixture_transport', error: 'fixture_transport' };
+      },
+    } as unknown as Deps);
+    const context = { surface: 'cli' as const, authority: 'present_user' as const, actionCaller: { kind: 'host' as const },
+      serverId: 'home', defaultSessionId: 'original', externalActionTarget: { kind: 'machine' as const, machineId: 'selected-machine' } };
+    expect(await executor.execute('scm.remote.pull', { sessionId: { selector: 'workers', of: 'manager' }, remote: 'origin' }, context))
+      .toMatchObject({ ok: false, errorCode: 'session_target_cardinality_mismatch', details: { expected: 'one', actualCount: 2 } });
+    expect(calls).toEqual([]);
+    expect(await executor.execute('scm.remote.pull', { remote: 'origin' }, context)).toMatchObject({ ok: false, errorCode: 'fixture_transport' });
+    expect(calls).toEqual([{ input: { remote: 'origin' }, sessionId: 'original', machine: context.externalActionTarget }]);
+  });
+
   it('dispatches blame as a safe machine read through the canonical SCM Action owner', async () => {
     const id = ActionIdSchema.parse('scm.blame.get');
     const spec = getActionSpec(id);

@@ -7,7 +7,7 @@ import {
   type ScmDiffSummaryResultResponse,
   ScmCommitPlanAcceptInputSchema, ScmCommitPlanControlInputSchema, ScmCommitPlanIncludeHookChangesInputSchema,
   type ScmCommitPlanAcceptInput, type ScmCommitPlanControlInput, type ScmCommitPlanIncludeHookChangesInput,
-  ScmReviewedMarkInputSchema, ScmReviewedMarkResponseSchema, type ScmReviewedMarkInput,
+  ScmReviewedMarkInputSchema, ScmReviewedUnmarkInputSchema, ScmReviewedMarkResponseSchema, type ScmReviewedUnmarkInput,
 } from '@happier-dev/protocol/scm';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { SessionDraftRecipientValueV1Schema } from '@happier-dev/protocol/drafts/sessionDrafts';
@@ -15,8 +15,21 @@ import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValu
 import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { getSessionDraftSnapshot, writeExistingSessionDraft } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
-import { invokeUiScmAction, type UiScmActionExecutor } from '@/sync/ops/scm/scmActionInvocation';
+import { invokeUiScmAction, type UiScmActionExecutor, type UiScmActionFailure } from '@/sync/ops/scm/scmActionInvocation';
+import { ScmOperationErrorCodeSchema } from '@happier-dev/protocol/scm';
+import { getScmUserFacingError } from '@/scm/operations/userFacingErrors';
 import type { core } from 'zod/mini';
+
+/** Source-control failure codes are presented by their one copy owner; saved-result codes keep the Machine's copy. */
+function presentScmFailure<R>(actionId: ActionId, response: R): R {
+  const failure = response as Readonly<{ success?: unknown; errorCode?: unknown; error?: unknown }> | null;
+  if (!failure || failure.success !== false) return response;
+  const scmCode = ScmOperationErrorCodeSchema.safeParse(failure.errorCode);
+  if (!scmCode.success) return response;
+  const error = typeof failure.error === 'string' ? failure.error : undefined;
+  return { ...failure, error: getScmUserFacingError({ errorCode: scmCode.data, error, fallback: error ?? '',
+    ...(actionId === 'scm.diffSummary.discuss' ? { subject: 'message' as const } : {}) }) } as R;
+}
 
 export type ScmDiffSummaryResultRpc = (method: string, input: Readonly<{ cwd: string }>, options: Readonly<{ signal?: AbortSignal }>) => Promise<unknown>;
 /** Transport authority is an actual Session or Machine, never a Project's presentation scope. */
@@ -24,6 +37,11 @@ export type ScmDiffSummaryHost = Readonly<{ sessionId: string; machineId?: never
 export type ScmCommitPlanOperationResult = ScmDiffSummaryResultResponse | Readonly<{
   success: false; errorCode: string; error: string; approvalArtifactId?: string;
 }>;
+
+type ResultReadResponse = ScmDiffSummaryResultResponse | UiScmActionFailure;
+const defaultReadExecutor = {};
+// Only concurrent reads share work. Settled results live exclusively in the saved-result store.
+const pendingResultReads = new WeakMap<object, Map<string, Promise<ResultReadResponse>>>();
 
 /** A consumer captures its Account/Session lifetime; saved results have no device-global authority. */
 export function createScmDiffSummaryResultOperations(params: ScmDiffSummaryHost & Readonly<{
@@ -35,15 +53,15 @@ export function createScmDiffSummaryResultOperations(params: ScmDiffSummaryHost 
   actionExecutor?: UiScmActionExecutor;
 }>) {
   const current = () => !params.signal?.aborted && params.shouldContinue();
-  function invoke<T>(actionId: ActionId, input: Readonly<{ cwd: string }>, schema: core.$ZodType<T>) {
-    return invokeUiScmAction({ actionId, input, schema, executor: params.actionExecutor, shouldContinue: current,
+  async function invoke<T>(actionId: ActionId, input: Readonly<{ cwd: string }>, schema: core.$ZodType<T>, sharedRead = false) {
+    return presentScmFailure(actionId, await invokeUiScmAction({ actionId, input, schema, executor: params.actionExecutor, shouldContinue: sharedRead ? () => true : current,
       context: {
         ...(params.sessionId ? { defaultSessionId: params.sessionId, externalActionTarget: { kind: 'session' as const, sessionId: params.sessionId } }
           : { externalActionTarget: { kind: 'machine' as const, machineId: params.machineId! } }),
         ...(params.serverId ? { serverId: params.serverId } : {}),
         ...(params.accountId ? { expectedAccountId: params.accountId } : {}),
-        ...(params.signal ? { signal: params.signal } : {}),
-      } });
+        ...(params.signal && !sharedRead ? { signal: params.signal } : {}),
+      } }));
   }
   const operation = async (actionId: ActionId, input: Readonly<{ cwd: string }>) => {
     const response = await invoke(actionId, input, ScmDiffSummaryResultResponseSchema);
@@ -52,6 +70,27 @@ export function createScmDiffSummaryResultOperations(params: ScmDiffSummaryHost 
     }
     return response;
   };
+  async function read(input: ScmDiffSummaryResultReadInput): Promise<ResultReadResponse> {
+    const validated = ScmDiffSummaryResultReadInputSchema.parse(input);
+    const retired = (): UiScmActionFailure => ({ success: false, errorCode: 'result_unavailable', error: 'The captured Account or SCM host retired.' });
+    if (!current()) return retired();
+    // Sharing requires exact Account and transport custody. Unqualified callers retain their own read.
+    if (!params.serverId || !params.accountId) return operation('scm.diffSummary.result.read', validated);
+    const executor = params.actionExecutor ?? defaultReadExecutor;
+    const reads = pendingResultReads.get(executor) ?? new Map<string, Promise<ResultReadResponse>>();
+    pendingResultReads.set(executor, reads);
+    const key = JSON.stringify([params.serverId, params.accountId, params.sessionId ?? null, params.machineId ?? null, validated.cwd, validated.resultId]);
+    let pending = reads.get(key);
+    if (!pending) {
+      // The authenticated Action captures its own authority. One retiring reader cannot cancel siblings;
+      // every reader checks its own lifetime again before consuming the shared response.
+      pending = invoke('scm.diffSummary.result.read', validated, ScmDiffSummaryResultResponseSchema, true)
+        .finally(() => { reads.delete(key); });
+      reads.set(key, pending);
+    }
+    const response = await pending;
+    return current() ? response : retired();
+  }
   async function discuss(input: ScmDiffSummaryDiscussInput): Promise<ScmCommitPlanOperationResult> {
     const validated = ScmDiffSummaryDiscussInputSchema.parse(input);
     const draft = params.sessionId ? params.composerDraft : undefined;
@@ -82,7 +121,7 @@ export function createScmDiffSummaryResultOperations(params: ScmDiffSummaryHost 
     return response;
   }
   return {
-    read: (input: ScmDiffSummaryResultReadInput) => operation('scm.diffSummary.result.read', ScmDiffSummaryResultReadInputSchema.parse(input)),
+    read,
     edit: (input: ScmDiffSummaryResultEditInput) => operation('scm.diffSummary.result.edit', ScmDiffSummaryResultEditInputSchema.parse(input)),
     undo: (input: ScmDiffSummaryResultRevisionInput) => operation('scm.diffSummary.result.undo', ScmDiffSummaryResultRevisionInputSchema.parse(input)),
     refine: (input: ScmDiffSummaryRefineInput) => operation('scm.diffSummary.refine', ScmDiffSummaryRefineInputSchema.parse(input)),
@@ -93,8 +132,8 @@ export function createScmDiffSummaryResultOperations(params: ScmDiffSummaryHost 
     stopCommitPlan: (input: ScmCommitPlanControlInput) => operation('scm.diffSummary.commitPlan.stop', ScmCommitPlanControlInputSchema.parse(input)),
     cancelCommitPlan: (input: ScmCommitPlanControlInput) => operation('scm.diffSummary.commitPlan.cancel', ScmCommitPlanControlInputSchema.parse(input)),
     recoverCommitPlan: (input: ScmCommitPlanControlInput) => operation('scm.diffSummary.commitPlan.recover', ScmCommitPlanControlInputSchema.parse(input)),
-    setReviewed: (input: ScmReviewedMarkInput, reviewed: boolean) => invoke(reviewed ? 'scm.diffSummary.reviewed.mark' : 'scm.diffSummary.reviewed.unmark',
-      ScmReviewedMarkInputSchema.parse(input), ScmReviewedMarkResponseSchema),
+    setReviewed: (input: ScmReviewedUnmarkInput, reviewed: boolean) => invoke(reviewed ? 'scm.diffSummary.reviewed.mark' : 'scm.diffSummary.reviewed.unmark',
+      (reviewed ? ScmReviewedMarkInputSchema : ScmReviewedUnmarkInputSchema).parse(input), ScmReviewedMarkResponseSchema),
     delete: (input: ScmDiffSummaryResultRevisionInput) => invoke('scm.diffSummary.result.delete',
       ScmDiffSummaryResultRevisionInputSchema.parse(input), ScmDiffSummaryResultDeleteResponseSchema),
   };

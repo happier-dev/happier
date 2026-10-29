@@ -297,8 +297,8 @@ function inventoryFiles(id: string, files: readonly ComparisonFileEvidence[]): S
   return [...byPath.values()];
 }
 
-async function revision(cwd: string, selector: string): Promise<string> {
-  const result = await runGitCheckpointCommand({ cwd, args: ['rev-parse', '--verify', '--end-of-options', `${selector}^{commit}`] });
+async function revision(cwd: string, selector: string, env?: Parameters<typeof runGitCheckpointCommand>[0]['env']): Promise<string> {
+  const result = await runGitCheckpointCommand({ cwd, env, args: ['rev-parse', '--verify', '--end-of-options', `${selector}^{commit}`] });
   if (!result.success || !result.stdout.trim()) throw new Error(result.stderr || 'Comparison endpoint is unavailable');
   return result.stdout.trim();
 }
@@ -323,6 +323,8 @@ export async function captureScmPendingTree(cwd: string): Promise<string> {
 
 export async function captureScmComparison(input: CaptureScmComparisonInput): Promise<CapturedScmComparison> {
   const source = ScmComparisonSourceSchema.parse(input.source);
+  // Exact ranges attest existing objects; promisor fallback is not fetch authority.
+  const rangeEnvironment = source.kind === 'revisionRange' ? { GIT_NO_LAZY_FETCH: '1' } : undefined;
   if ((source.kind === 'session' || source.kind === 'turnCheckpoint') && input.sessionId && source.sessionId && source.sessionId !== input.sessionId) {
     throw Object.assign(new Error('Comparison session does not match the authenticated session'), { code: 'CHECKPOINT_NOT_FOUND' });
   }
@@ -402,6 +404,7 @@ export async function captureScmComparison(input: CaptureScmComparisonInput): Pr
         state = 'incomplete';
       } else {
       if (!checkpoint || checkpoint.scopeId !== scopeId) throw new Error('Canonical turn checkpoint receipt is unavailable');
+      if (checkpoint.unavailableReason) throw new Error(`Canonical turn checkpoint is unavailable (${checkpoint.unavailableReason})`);
       if (!checkpoint.startRef || !checkpoint.finalRef
         || !parseRepositoryCheckpointRef({ scopeId, ref: checkpoint.startRef })
         || !parseRepositoryCheckpointRef({ scopeId, ref: checkpoint.finalRef })) throw new Error('Canonical turn checkpoint endpoints are unavailable');
@@ -411,6 +414,10 @@ export async function captureScmComparison(input: CaptureScmComparisonInput): Pr
         if (!receipt || receipt.commitSha !== oid) throw new Error('Turn checkpoint object does not match its canonical receipt');
       }
       }
+    } else if (source.kind === 'revisionRange') {
+      before = await revision(rootPath, source.baseOid, rangeEnvironment);
+      after = await revision(rootPath, source.headOid, rangeEnvironment);
+      if (before !== source.baseOid || after !== source.headOid) throw new Error('Immutable comparison endpoints did not match the requested range');
     } else if (source.kind === 'branch') {
       after = await revision(rootPath, source.head);
       const base = await revision(rootPath, source.base);
@@ -452,7 +459,7 @@ export async function captureScmComparison(input: CaptureScmComparisonInput): Pr
       if (!staged.enumerationComplete || !unstaged.enumerationComplete) state = files.length ? 'incomplete' : 'unavailable';
     }
     if (source.kind !== 'workingTree' && source.kind !== 'pullRequest' && before && after) {
-      const read = await readGitComparisonFiles({ cwd: rootPath, before, after });
+      const read = await readGitComparisonFiles({ cwd: rootPath, before, after, env: rangeEnvironment });
       files = [...read.files]; reasons.push(...read.reasons);
       if (!read.enumerationComplete) state = files.length ? 'incomplete' : 'unavailable';
     }
@@ -478,12 +485,12 @@ export async function captureScmComparison(input: CaptureScmComparisonInput): Pr
   for (const [role, oid] of [['before', before], ['after', after], ['index', indexOid]] as const) {
     if (!oid || source.kind === 'pullRequest') continue;
     const ref = `refs/happier/comparisons/${comparisonNamespace(sessionId)}/${id}/${role}`;
-    const previous = await runGitCheckpointCommand({ cwd: rootPath, args: ['rev-parse', '--verify', ref] });
+    const previous = await runGitCheckpointCommand({ cwd: rootPath, env: rangeEnvironment, args: ['rev-parse', '--verify', ref] });
     if (previous.success && previous.stdout.trim() !== oid) throw new Error('Retained comparison endpoint conflicts with its exact identity');
     if (!previous.success) {
-      const pinned = await runGitCheckpointCommand({ cwd: rootPath, args: ['update-ref', ref, oid, ''] });
+      const pinned = await runGitCheckpointCommand({ cwd: rootPath, env: rangeEnvironment, args: ['update-ref', ref, oid, ''] });
       if (!pinned.success) {
-        const existing = await runGitCheckpointCommand({ cwd: rootPath, args: ['rev-parse', '--verify', ref] });
+        const existing = await runGitCheckpointCommand({ cwd: rootPath, env: rangeEnvironment, args: ['rev-parse', '--verify', ref] });
         if (!existing.success || existing.stdout.trim() !== oid) throw new Error(pinned.stderr || 'Comparison endpoint could not be retained');
       }
     }

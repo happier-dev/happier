@@ -4,12 +4,15 @@ import {
 } from './pullRequests.js';
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../lazyZodSchema.js';
+import { projectZodProtocolSchema } from '../plugins/actions/internalProtocolZodAdapter.js';
 
 export const ScmHostingRepositoryIdentityV1Schema = lazyZodSchema(() => z.strictObject({
   kind: ScmHostingProviderKindSchema,
   deployment: z.string().check(z.minLength(1)),
   repository: z.string().check(z.minLength(1)),
 }).check(z.refine(value => normalizeScmHostingRepositoryIdentity(value) !== null)));
+
+export const ScmHostingRepositoryIdentityV1ProtocolSchema = projectZodProtocolSchema(ScmHostingRepositoryIdentityV1Schema);
 
 /**
  * The joinable identity of one repository on one forge deployment.
