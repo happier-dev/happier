@@ -45,7 +45,7 @@ describe('plugin invocation log machine read', () => {
         machineRpcWithServerScopeMock.mockReset();
     });
 
-    it('routes the exact current machine through the shared RPC transport with host-stamped filtering', async () => {
+    it.each([undefined, true] as const)('routes the exact current machine and parked=%s through the shared RPC transport with host-stamped filtering', async (waitForChanges) => {
         const controller = new AbortController();
         machineRpcWithServerScopeMock.mockResolvedValueOnce(availableResponse());
         const { readPluginInvocationLogsOnMachine } = await import('./pluginInvocationLogs');
@@ -59,6 +59,7 @@ describe('plugin invocation log machine read', () => {
                 limit: 100,
             },
             signal: controller.signal,
+            ...(waitForChanges ? { waitForChanges } : {}),
         })).resolves.toEqual(availableResponse());
 
         expect(machineRpcWithServerScopeMock).toHaveBeenCalledExactlyOnceWith({
@@ -78,6 +79,7 @@ describe('plugin invocation log machine read', () => {
                     cursor: 300,
                     limit: 100,
                 },
+                ...(waitForChanges ? { waitForChanges } : {}),
             },
         });
     });

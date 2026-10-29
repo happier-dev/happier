@@ -47,6 +47,7 @@ export async function readPluginInvocationLogsOnMachine(params: Readonly<{
     target: PluginInvocationLogMachineReadTarget;
     query: PluginInvocationLogReadQueryV1;
     signal?: AbortSignal;
+    waitForChanges?: true;
 }>): Promise<DaemonPluginInvocationLogReadResponseV1> {
     throwIfAborted(params.signal);
     const payload = DaemonPluginInvocationLogReadRequestV1Schema.parse({
@@ -56,6 +57,7 @@ export async function readPluginInvocationLogsOnMachine(params: Readonly<{
             machineId: params.target.machineId,
         },
         query: params.query,
+        ...(params.waitForChanges ? { waitForChanges: true } : {}),
     });
     let raw: unknown;
     try {
