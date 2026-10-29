@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
-import { selectScmChangedFiles, selectScmConflictFiles, snapshotToScmStatusFiles } from './scmStatusFiles';
+import { selectScmChangedFileByPath, selectScmChangedFiles, selectScmChangedFilesForPaths, selectScmConflictFiles, selectScmDeletedPaths, snapshotToScmStatusFiles } from './scmStatusFiles';
 import { snapshotToScmStatus } from './scmRepositoryService';
 import { gitScmUiPlugin } from './backends/git/plugin';
 
@@ -228,11 +228,42 @@ describe('one changed-file truth', () => {
         ]);
     });
 
+    it('reads Recent/session path facts from the admitted 54,935-change projection and observes a changed snapshot', () => {
+        const entries = Array.from({ length: 54_935 }, (_, index) => entry(`src/file-${index}.ts`, 'modified', { included: false, pending: true }));
+        entries[19] = entry('src/deleted.ts', 'deleted', { included: false, pending: true });
+        const full: ScmWorkingSnapshot = { ...snapshot, entries };
+        selectScmChangedFiles(full);
+        let entryReads = 0;
+        for (const item of entries) {
+            const kind = item.kind;
+            Object.defineProperty(item, 'kind', { get: () => { entryReads += 1; return kind; } });
+        }
+        for (let open = 0; open < 3; open += 1) {
+            expect(selectScmDeletedPaths(full).has('src/deleted.ts')).toBe(true);
+            expect(selectScmChangedFileByPath(full, 'src/file-54934.ts')?.linesAdded).toBe(1);
+            expect(selectScmChangedFilesForPaths(full, ['src/file-54934.ts', 'src/file-2.ts', 'missing.ts', 'src/file-2.ts'])
+                .map(file => file.fullPath)).toEqual(['src/file-2.ts', 'src/file-54934.ts']);
+        }
+        expect(entryReads).toBe(0);
+        const freshEntry = entry('src/fresh.ts', 'modified', { included: false, pending: true });
+        const fresh: ScmWorkingSnapshot = { ...full, entries: [{ ...freshEntry, stats: { ...freshEntry.stats, pendingAdded: 7 } }] };
+        expect(selectScmChangedFileByPath(fresh, 'src/file-54934.ts')).toBeUndefined();
+        expect(selectScmChangedFileByPath(fresh, 'src/fresh.ts')?.linesAdded).toBe(7);
+        expect(selectScmDeletedPaths(fresh).size).toBe(0);
+    });
+
     it('gives the aggregate status (badge, tooltip, headers) the same count as the list', () => {
         expect(snapshotToScmStatus(snapshot).changedFileCount).toBe(selectScmChangedFiles(snapshot).length);
         expect(snapshotToScmStatus(snapshot).changedFileCount).toBe(3);
         // The composer's source-control instrument reads the backend's status summary.
         expect(gitScmUiPlugin.statusSummaryMapper(snapshot)?.changedFiles).toBe(3);
+    });
+
+    it('keeps canonical ordering for collator-equivalent paths when narrowing to Session paths', () => {
+        const tied: ScmWorkingSnapshot = { ...snapshot, entries: ['file-02.ts', 'file-2.ts']
+            .map(path => entry(path, 'modified', { included: false, pending: true })) };
+        expect(selectScmChangedFilesForPaths(tied, ['file-2.ts', 'file-02.ts']).map(file => file.fullPath))
+            .toEqual(selectScmChangedFiles(tied).map(file => file.fullPath));
     });
 
     it('lists openable conflict files from the same changed-file membership', () => {

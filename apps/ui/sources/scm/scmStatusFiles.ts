@@ -46,7 +46,11 @@ export function scmFileStatusFromChange(change: Readonly<{ path: string; changeK
 }
 
 const snapshotStatusFilesCache = new WeakMap<ScmWorkingSnapshot, ScmStatusFiles>();
-const snapshotChangedFilesCache = new WeakMap<ScmWorkingSnapshot, readonly ScmFileStatus[]>();
+const snapshotChangedFilesCache = new WeakMap<ScmWorkingSnapshot, Readonly<{
+    files: readonly ScmFileStatus[];
+    byPath: ReadonlyMap<string, Readonly<{ file: ScmFileStatus; index: number }>>;
+    deletedPaths: ReadonlySet<string>;
+}>>();
 
 function toFileStatus(entry: ScmWorkingEntry, isIncluded: boolean): ScmFileStatus {
     const segments = entry.path.split('/');
@@ -119,7 +123,7 @@ export function compareScmPaths(left: string, right: string): number {
  */
 export function selectScmChangedFiles(snapshot: ScmWorkingSnapshot): readonly ScmFileStatus[] {
     const cached = snapshotChangedFilesCache.get(snapshot);
-    if (cached) return cached;
+    if (cached) return cached.files;
 
     const statusFiles = snapshotToScmStatusFiles(snapshot);
     const mergedByPath = new Map<string, ScmFileStatus>();
@@ -129,8 +133,30 @@ export function selectScmChangedFiles(snapshot: ScmWorkingSnapshot): readonly Sc
         mergedByPath.set(file.fullPath, file);
     }
     const result = Array.from(mergedByPath.values()).sort((a, b) => compareScmPaths(a.fullPath, b.fullPath));
-    snapshotChangedFilesCache.set(snapshot, result);
+    snapshotChangedFilesCache.set(snapshot, { files: result,
+        byPath: new Map(result.map((file, index) => [file.fullPath, { file, index }])),
+        deletedPaths: new Set(snapshot.entries.filter(entry => entry.kind === 'deleted').map(entry => entry.path)) });
     return result;
+}
+
+/** Path facts share the canonical changed-file projection and its snapshot lifetime. */
+export function selectScmChangedFileByPath(snapshot: ScmWorkingSnapshot, path: string): ScmFileStatus | undefined {
+    selectScmChangedFiles(snapshot);
+    return snapshotChangedFilesCache.get(snapshot)?.byPath.get(path)?.file;
+}
+
+export function selectScmDeletedPaths(snapshot: ScmWorkingSnapshot): ReadonlySet<string> {
+    selectScmChangedFiles(snapshot);
+    return snapshotChangedFilesCache.get(snapshot)!.deletedPaths;
+}
+
+export function selectScmChangedFilesForPaths(snapshot: ScmWorkingSnapshot, paths: readonly string[]): readonly ScmFileStatus[] {
+    selectScmChangedFiles(snapshot);
+    const byPath = snapshotChangedFilesCache.get(snapshot)!.byPath;
+    return [...new Set(paths)].flatMap(path => {
+        const indexed = byPath.get(path);
+        return indexed ? [indexed] : [];
+    }).sort((a, b) => a.index - b.index).map(indexed => indexed.file);
 }
 
 /**
