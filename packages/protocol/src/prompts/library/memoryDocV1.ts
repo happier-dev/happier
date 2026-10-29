@@ -23,6 +23,14 @@ const line = () => identity().check(z.regex(/^[^\r\n]+$/));
 export const MemoryTopicSummaryV1Schema = z.strictObject({ title: line(), summary: line() });
 export const MemoryTopicV1Schema = z.strictObject({ title: line(), summary: line(), facts: z.array(MemoryFactV1Schema) });
 export type MemoryTopicV1 = z.infer<typeof MemoryTopicV1Schema>;
+/** Read-only projection; stored facts and mutation inputs never carry archive membership. */
+export const MemoryFactReadV1Schema = z.object({
+  ...MemoryFactV1Schema.shape,
+  archivedByMutation: z.optional(z.boolean()),
+});
+export type MemoryFactReadV1 = z.infer<typeof MemoryFactReadV1Schema>;
+export const MemoryTopicReadV1Schema = z.object({ ...MemoryTopicV1Schema.shape, facts: z.array(MemoryFactReadV1Schema) });
+export type MemoryTopicReadV1 = z.infer<typeof MemoryTopicReadV1Schema>;
 export const MemoryDocBodyV1Schema = z.strictObject({
   v: z.literal(1), index: z.array(MemoryFactV1Schema), topics: z.array(MemoryTopicV1Schema),
 }).check(z.refine(body => {
@@ -80,6 +88,11 @@ function isExpired(fact: MemoryFactV1, nowMs: number): boolean {
   return fact.expiresAtMs !== undefined && fact.expiresAtMs <= nowMs;
 }
 
+/** Expiry alone may be renewed; mutation-archived history must use the explicit restore path. */
+export function isMemoryFactRenewableV1(fact: MemoryFactReadV1, nowMs: number): boolean {
+  return fact.archivedByMutation !== true && isExpired(fact, nowMs);
+}
+
 /** One index projection for on-demand reads and always-loaded prompt rendering. */
 export function projectMemoryDocIndexV1(body: MemoryDocBodyV1, nowMs: number): MemoryDocIndexV1 {
   // Named topics first, the archive last: it is one more topic, searchable and never loaded.
@@ -95,12 +108,14 @@ export function projectMemoryDocIndexV1(body: MemoryDocBodyV1, nowMs: number): M
 }
 
 /** Expiry is projected into archive without rewriting or duplicating stored facts. */
-export function readMemoryDocTopicV1(body: MemoryDocBodyV1, title: string, nowMs: number): MemoryTopicV1 | null {
+export function readMemoryDocTopicV1(body: MemoryDocBodyV1, title: string, nowMs: number): MemoryTopicReadV1 | null {
   const topic = body.topics.find(candidate => candidate.title === title);
   if (title !== MEMORY_ARCHIVE_TOPIC_TITLE_V1) return topic ?? null;
   return { title, summary: topic?.summary ?? MEMORY_ARCHIVE_TOPIC_SUMMARY_V1, facts: [
-    ...(topic?.facts ?? []), ...body.index.filter(fact => isExpired(fact, nowMs)),
-    ...body.topics.filter(candidate => candidate.title !== title).flatMap(candidate => candidate.facts.filter(fact => isExpired(fact, nowMs))),
+    ...(topic?.facts ?? []).map(fact => ({ ...fact, archivedByMutation: true })),
+    ...body.index.filter(fact => isExpired(fact, nowMs)).map(fact => ({ ...fact, archivedByMutation: false })),
+    ...body.topics.filter(candidate => candidate.title !== title).flatMap(candidate => candidate.facts
+      .filter(fact => isExpired(fact, nowMs)).map(fact => ({ ...fact, archivedByMutation: false }))),
   ] };
 }
 
