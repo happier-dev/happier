@@ -35,11 +35,8 @@ export const summaryTextBinding: SessionStateBinding<'display.title'> = {
     const structuredValue = typeof rawValue === 'object' && rawValue !== null && !Array.isArray(rawValue)
       ? rawValue as Extract<SessionStateFieldWriteValue<'display.title'>, object>
       : null;
-    const title = structuredValue
-      ? structuredValue.preserveExistingValue === true && current.value !== null
-        ? current.value
-        : structuredValue.title
-      : rawValue;
+    if (structuredValue?.preserveExistingValue === true && current.value !== null) return metadata;
+    const title = structuredValue ? structuredValue.title : rawValue;
     const candidate = {
       value: title,
       updatedAt: update.updatedAt ?? structuredValue?.updatedAt ?? Date.now(),
