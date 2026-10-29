@@ -1,7 +1,6 @@
-import { isAbsolute, resolve } from 'node:path';
 import {
+  absolutePathFromWorkingDirectory,
   expandHomeDirPath,
-  resolveHomeDirFromEnvironment,
 } from '@happier-dev/cli-common/path';
 
 export {
@@ -29,5 +28,5 @@ export type { CanonicalAbsolutePath } from '@happier-dev/cli-common/path';
 export function resolveAbsolutePathFromWorkingDirectory(value: string): string | null {
   const expanded = expandHomeDirPath(String(value ?? '').trim());
   if (!expanded) return null;
-  return isAbsolute(expanded) ? expanded : resolve(expanded);
+  return absolutePathFromWorkingDirectory(expanded);
 }
