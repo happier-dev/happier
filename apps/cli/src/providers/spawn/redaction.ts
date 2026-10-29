@@ -29,7 +29,7 @@ function buildProviderStreamingSanitizer(
   readValues: () => readonly string[],
 ): ProviderStreamingSanitizer {
   const knownValues = new Set<string>();
-  const decoder = new TextDecoder('utf-8', { fatal: false });
+  const decoder = new TextDecoder('utf-8', { fatal: false, ignoreBOM: true });
   let pending = '';
   let flushed = false;
 

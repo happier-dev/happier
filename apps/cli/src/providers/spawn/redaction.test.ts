@@ -89,4 +89,18 @@ describe('provider redaction lease', () => {
 
     expect(rendered).toBe('pré [REDACTED] fin');
   });
+
+  it('redacts exact secrets with a leading UTF-8 BOM across byte chunks', () => {
+    const secret = '\uFEFFsecret-sentinel';
+    const bytes = Buffer.from(`${secret} PORT=3000 COMMIT=abc123`, 'utf8');
+
+    for (const splitAt of [1, 2, 3, bytes.length]) {
+      const lease = createProviderRedactionLease({ values: [secret] });
+      const stream = lease.createStreamingSanitizer();
+      const rendered = `${stream.push(bytes.subarray(0, splitAt))}${stream.push(bytes.subarray(splitAt))}${stream.flush()}`;
+
+      expect(rendered).toBe('[REDACTED] PORT=3000 COMMIT=abc123');
+      lease.close();
+    }
+  });
 });
