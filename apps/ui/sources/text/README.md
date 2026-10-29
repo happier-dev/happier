@@ -123,6 +123,11 @@ Language settings await `preloadTranslationsForSettings(value)` before committin
 individual text consumers. An explicit `preloadTranslations(language)` loads an alternate
 language, such as a Voice greeting language, without changing the active UI language.
 
+Web and Node readers share `localeBundlesSync.ts`: English fallback is synchronous and other
+host/plugin locale payloads load on demand at those readiness owners. Metro native selects
+`localeBundlesSync.native.ts`, whose literal requires evaluate only the requested locale and
+keep native lookup synchronous. Neither path imports the all-locale plugin payload at runtime.
+
 ## Key Benefits
 
 ### 1. **Familiar API**
