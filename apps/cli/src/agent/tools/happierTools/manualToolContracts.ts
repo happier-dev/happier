@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '@happier-dev/protocol/lazyZodSchema';
 import { z } from 'zod/mini';
 import { AcpConfigOptionOverridesV1Schema } from '@happier-dev/protocol/sessions/metadata/overrides';
 import { BackendTargetRefV2InputSchema } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
@@ -12,16 +13,16 @@ import {
   defaultRunClassForExecutionRunIntent,
 } from '@/session/services/executionRunStartDefaults';
 
-export const changeTitleToolInputSchema = z.looseObject({
+export const changeTitleToolInputSchema = lazyZodSchema(() => z.looseObject({
   title: z.string().check(z.minLength(1)),
-});
+}));
 
-export const actionExecuteToolInputSchema = z.looseObject({
+export const actionExecuteToolInputSchema = lazyZodSchema(() => z.looseObject({
   actionId: z.string().check(z.minLength(1)),
   input: z.optional(z.unknown()),
-});
+}));
 
-export const executionRunStartToolInputSchema = z.looseObject({
+export const executionRunStartToolInputSchema = lazyZodSchema(() => z.looseObject({
   sessionId: z.optional(z.string().check(z.minLength(1))),
   intent: ExecutionRunIntentSchema,
   backendTarget: z.optional(BackendTargetRefV2InputSchema),
@@ -50,7 +51,7 @@ export const executionRunStartToolInputSchema = z.looseObject({
       message: 'backendTarget is required (or provide legacy backendId)',
     });
   }
-}));
+})));
 
 export function normalizeExecutionRunStartToolInput(params: Readonly<{
   sessionId: string;

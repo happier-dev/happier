@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '@happier-dev/protocol/lazyZodSchema';
 import * as z from 'zod/mini';
 import { SessionTeamCredentialBindingIntentV1Schema, type SessionTeamCredentialBindingIntentV1 } from '@happier-dev/protocol/teams/credentials/sessionBindingIntentV1';
 import { ExecutionRunIdSchema } from '@happier-dev/protocol/sessions/idsV1';
@@ -52,7 +53,7 @@ export type SessionAttachPayload =
   | SessionAttachFilePayload
   | LegacyAttachPayload;
 
-const AttachSnapshotSchema = z.object({
+const AttachSnapshotSchema = lazyZodSchema(() => z.object({
   acceptedTeamCredentialBinding: z.optional(z.nullable(SessionTeamCredentialBindingIntentV1Schema)),
   manager: z.optional(SessionManagerV1Schema),
   origin: z.optional(SessionAwarenessOriginV1Schema),
@@ -64,24 +65,24 @@ const AttachSnapshotSchema = z.object({
   metadataLayoutVersion: z.optional(z.literal(SESSION_METADATA_LAYOUT_VERSION_V1)),
   ownerMetadata: z.optional(SessionOwnerMetadataV1Schema),
   ownerMetadataEnvelope: z.optional(SessionOwnerMetadataEnvelopeV1Schema),
-});
+}));
 
-const LegacyAttachPayloadSchema = z.object({
+const LegacyAttachPayloadSchema = lazyZodSchema(() => z.object({
   encryptionKeyBase64: z.string().check(z.minLength(1)),
   encryptionVariant: z.union([z.literal('legacy'), z.literal('dataKey')]),
   v: z.optional(z.undefined()),
   encryptionMode: z.optional(z.undefined()),
-});
+}));
 
-const AttachPayloadV2PlainSchema = z.object({
+const AttachPayloadV2PlainSchema = lazyZodSchema(() => z.object({
   v: z.literal(2),
   encryptionMode: z.literal('plain'),
   lastObservedMessageSeq: z.optional(z.number().check(z.int(), z.nonnegative())),
   initialTranscriptAfterSeq: z.optional(z.number().check(z.int(), z.nonnegative())),
   snapshot: z.optional(AttachSnapshotSchema),
-});
+}));
 
-const AttachPayloadV2E2eeSchema = z.object({
+const AttachPayloadV2E2eeSchema = lazyZodSchema(() => z.object({
   v: z.literal(2),
   encryptionMode: z.literal('e2ee'),
   encryptionKeyBase64: z.string().check(z.minLength(1)),
@@ -89,14 +90,14 @@ const AttachPayloadV2E2eeSchema = z.object({
   lastObservedMessageSeq: z.optional(z.number().check(z.int(), z.nonnegative())),
   initialTranscriptAfterSeq: z.optional(z.number().check(z.int(), z.nonnegative())),
   snapshot: z.optional(AttachSnapshotSchema),
-});
+}));
 
 export const SessionAttachPayloadV2Schema: z.ZodMiniType<SessionAttachFilePayload> =
-  z.union([AttachPayloadV2PlainSchema, AttachPayloadV2E2eeSchema]);
+  lazyZodSchema(() => z.union([AttachPayloadV2PlainSchema, AttachPayloadV2E2eeSchema]));
 
-export const SessionAttachPayloadSchema: z.ZodMiniType<SessionAttachPayload> = z.union([
+export const SessionAttachPayloadSchema: z.ZodMiniType<SessionAttachPayload> = lazyZodSchema(() => z.union([
   // v2: explicit encryption mode. Parse before legacy because v2 e2ee carries legacy key fields too.
   SessionAttachPayloadV2Schema,
   // v1 (legacy): treat as e2ee.
   LegacyAttachPayloadSchema,
-]);
+]));
