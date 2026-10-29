@@ -83,6 +83,13 @@ export function requiresExplicitScmMachineTarget(actionId: string): boolean {
     || actionId === 'scm.hostingRepository.resolveAddress' || actionId === 'scm.hostingRepository.get';
 }
 
+/** These SCM operations admit or continue an Agent Run using the original requester's custody. */
+export function isScmDiffSummaryRunAction(actionId: string): boolean {
+  return actionId === 'scm.diffSummary.generate' || actionId === 'scm.diffSummary.draftPullRequest'
+    || actionId === 'scm.diffSummary.refine' || actionId === 'scm.diffSummary.addOutputs'
+    || actionId === 'scm.diffSummary.discuss';
+}
+
 /** Named metadata keeps declaration emission bounded without widening the wire schemas. */
 export type ScmActionSpecDefinition<
   TId extends ActionId,
