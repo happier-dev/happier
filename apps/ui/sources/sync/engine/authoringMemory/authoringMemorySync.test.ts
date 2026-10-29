@@ -4,13 +4,14 @@ import type { AuthoringMemoryContentV1 } from '@happier-dev/protocol';
 import { createAuthoringMemoryCipher } from '@/sync/encryption/authoringMemoryEncryption';
 import { buildProjectLastOpenedMemoryKeyV1 } from '@happier-dev/protocol/account/authoringMemory';
 
-function harness(options: { rejectMutation?: boolean } = {}) {
+function harness(options: { rejectMutation?: boolean; mode?: 'plain' | 'e2ee' } = {}) {
     const rows = new Map<string, { revision: number; content: AuthoringMemoryContentV1 | null }>();
     const fetched: string[] = [];
     const applied: unknown[] = [];
     const projectChanges: unknown[] = [];
     let projection: Record<string, unknown> = {};
     let current = true;
+    let opens = 0;
     const transport: AuthoringMemoryTransport = {
         list: async () => ({ rows: [...rows].map(([key, row]) => ({ key, ...row })) }),
         read: async (key: string) => {
@@ -32,18 +33,46 @@ function harness(options: { rejectMutation?: boolean } = {}) {
             return { status: 'updated' as const, revision, cursor: revision + 1 };
         },
     };
+    const cipher = createAuthoringMemoryCipher({ mode: options.mode ?? 'plain',
+        material: options.mode === 'e2ee' ? { type: 'dataKey', machineKey: new Uint8Array(32).fill(3) } : null,
+        randomBytes: length => new Uint8Array(length).fill(4) });
     const owner = createAuthoringMemorySync({
         transport,
-        cipher: createAuthoringMemoryCipher({ mode: 'plain', material: null,
-            randomBytes: () => { throw new Error('Plain memory must not request a key or randomness'); } }),
+        cipher: { ...cipher, open: (key, content) => { opens += 1; return cipher.open(key, content); } },
         isCurrent: () => current,
         apply: (delta) => { applied.push(delta); projection = { ...projection, ...delta }; },
         onProjectLastOpenedChanged: (anchor, timestamp) => { projectChanges.push({ anchor, timestamp }); },
     });
-    return { owner, rows, fetched, applied, projectChanges, projection: () => projection, retire: () => { current = false; } };
+    return { owner, rows, fetched, applied, projectChanges, cipher, opens: () => opens,
+        projection: () => projection, retire: () => { current = false; } };
 }
 
 describe('Account authoring memory owner', () => {
+    it.each(['plain', 'e2ee'] as const)('opens and publishes only advanced revisions, including deletion, in %s', async mode => {
+        const h = harness({ mode });
+        h.rows.set('lastUsedProfile', { revision: 0, content: h.cipher.seal('lastUsedProfile', 'p1') });
+        await h.owner.bootstrap();
+        const baseline = { opens: h.opens(), publications: h.applied.length };
+        for (let i = 0; i < 8; i += 1) await h.owner.refresh('lastUsedProfile');
+        expect({ opens: h.opens() - baseline.opens, publications: h.applied.length - baseline.publications })
+            .toEqual({ opens: 0, publications: 0 });
+        h.rows.set('lastUsedProfile', { revision: 1, content: h.cipher.seal('lastUsedProfile', 'p2') });
+        await h.owner.refresh('lastUsedProfile');
+        expect(h.opens() - baseline.opens).toBe(1);
+        expect(h.applied.length - baseline.publications).toBe(1);
+        expect(h.projection().lastUsedProfile).toBe('p2');
+        h.rows.set('lastUsedProfile', { revision: 2, content: null });
+        await h.owner.refresh('lastUsedProfile');
+        await h.owner.refresh('lastUsedProfile');
+        expect(h.opens() - baseline.opens).toBe(1);
+        expect(h.applied.length - baseline.publications).toBe(2);
+        expect(h.projection().lastUsedProfile).toBeNull();
+        h.rows.set('lastUsedProfile', { revision: 1, content: h.cipher.seal('lastUsedProfile', 'p2') });
+        await h.owner.refresh('lastUsedProfile');
+        expect(h.applied.length - baseline.publications).toBe(2);
+        expect(h.projection().lastUsedProfile).toBeNull();
+    });
+
     it('persists and reloads saved Workflow projects independently of unrelated recent Machine paths', async () => {
         const h = harness();
         const definitionId = '00000000-0000-4000-8000-000000000005';

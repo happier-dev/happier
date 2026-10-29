@@ -90,7 +90,7 @@ export function createAuthoringMemorySync(options: Readonly<{
     }
     function observe(row: AuthoringMemoryRow) {
         assertCurrent();
-        if ((revisions.get(row.key) ?? -1) > row.revision) return;
+        if ((revisions.get(row.key) ?? -1) >= row.revision) return;
         const value = row.content === null ? undefined : options.cipher.open(row.key, row.content);
         revisions.set(row.key, row.revision);
         if (value === undefined) values.delete(row.key); else values.set(row.key, value);
