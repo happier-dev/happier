@@ -210,12 +210,19 @@ async function resolveSelectedStackSourceRestart(
     isBunRuntime: false, processEnv: env, currentExecPath: process.execPath,
   });
   if (!runtimeExecutable) throw new Error('Daemon launch requires a JavaScript runtime, but none could be resolved');
+  const commandEnv: Record<string, string> = {};
+  if ('env' in launch && launch.env !== null && typeof launch.env === 'object') {
+    for (const [name, value] of Object.entries(launch.env)) {
+      if (/^(PATH|PATHEXT)$/i.test(name) && typeof value === 'string') commandEnv[name] = value;
+    }
+  }
   return {
     filePath: runtimeExecutable,
     args: ['--no-warnings', '--no-deprecation', launch.entrypoint, ...cliArgs],
-    // The source builder's daemon env contains these four launch fields only.
-    // Derive them from the validated selection so no incumbent support root survives.
+    // Stack publishes shell-command exposure. Root/entry fields still derive
+    // from the validated selection so no incumbent support root survives.
     env: {
+      ...commandEnv,
       HAPPIER_STACK_CLI_ROOT_DIR: launch.cliDir,
       HAPPIER_CLI_ROOT_DIR: launch.cliDir,
       HAPPIER_CLI_SUBPROCESS_ENTRYPOINT: launch.entrypoint,

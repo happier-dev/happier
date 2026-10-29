@@ -118,7 +118,7 @@ describe('resolveDaemonLaunchSpec', () => {
     delete process.env.HAPPIER_VARIANT;
   });
 
-  it('self-restart consumes the selected Stack source launch instead of the inherited incumbent entrypoint', async () => {
+  it.each([false, true])('self-restart consumes the selected Stack source launch instead of the inherited incumbent entrypoint (command environment=%s)', async exposesCommand => {
     await withTempDir('daemon-selected-source-', async (root) => {
       const selected = join(root, 'next', 'src', 'index.mjs');
       mkdirSync(dirname(selected), { recursive: true });
@@ -127,6 +127,8 @@ describe('resolveDaemonLaunchSpec', () => {
       writeFileSync(statePath, JSON.stringify({
         sourceRuntimeLaunch: { entrypoint: selected, cliDir: join(root, 'next'), env: {
           HAPPIER_STACK_CLI_ROOT_DIR: join(root, 'next'),
+          ...(exposesCommand ? { PATH: join(root, 'stack', 'cli', 'source-runtime', 'bin'), PATHEXT: '.EXE;.CMD' } : {}),
+          UNRELATED_SOURCE_VALUE: 'do-not-forward',
         } },
       }));
       const mod = await import('./resolveDaemonLaunchSpec');
@@ -143,6 +145,9 @@ describe('resolveDaemonLaunchSpec', () => {
       expect(result.env?.HAPPIER_STACK_CLI_ROOT_DIR).toBe(join(root, 'next'));
       expect(result.env?.HAPPIER_CLI_SUBPROCESS_PREFER_TSX).toBe('0');
       expect(result.env?.HAPPIER_CLI_SUBPROCESS_ALLOW_TSX_FALLBACK).toBe('0');
+      expect(result.env?.PATH).toBe(exposesCommand ? join(root, 'stack', 'cli', 'source-runtime', 'bin') : undefined);
+      expect(result.env?.PATHEXT).toBe(exposesCommand ? '.EXE;.CMD' : undefined);
+      expect(result.env?.UNRELATED_SOURCE_VALUE).toBeUndefined();
       rmSync(selected);
       await expect(mod.resolveDaemonLaunchSpec(['daemon', 'start-sync'], {
         NODE_ENV: 'test',
