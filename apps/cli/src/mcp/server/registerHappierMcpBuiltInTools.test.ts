@@ -318,8 +318,9 @@ describe('registerHappierMcpBuiltInTools', () => {
     const fixture = await createAuthoredAdmittedPluginRuntimeFixture({ plugins: [{
       manifest: createPluginManifestV2Fixture({ id: pluginId, contributes: {
         actions: [{ id: 'read', title: 'Read label', scopes: ['global'], surfaces: ['mcp'],
-          execution: { target: 'daemon' }, dangerLevel: 'safe', inputSchema, resultSchema: inputSchema,
-          tool: { name: 'qa_inventory_read' }, toolExposure: { mcp: 'direct' } }],
+          execution: { target: 'daemon' }, dangerLevel: 'safe', inputSchema }],
+        tools: [{ id: 'read-tool', name: 'qa_inventory_read', title: 'Read label',
+          action: 'read', surfaces: ['mcp'], inputSchema, outputSchema: inputSchema }],
       } }),
       files: { 'daemon.mjs': 'export function activate(api) { api.actions.register("read", async input => input); }' },
     }] });
