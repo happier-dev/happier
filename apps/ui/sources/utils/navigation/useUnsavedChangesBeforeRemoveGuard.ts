@@ -6,6 +6,7 @@ import { useActiveUnsavedChangesGuard } from './useActiveUnsavedChangesGuard';
 import {
     type ActiveUnsavedChangesGuard,
     runUnsavedChangesGuard,
+    isBackwardRouteRemovalAction,
 } from '@/utils/navigation/runGuardedNavigation';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import type { UnsavedChangesDecision } from '@/utils/ui/promptUnsavedChangesAlert';
@@ -22,6 +23,7 @@ export function useUnsavedChangesBeforeRemoveGuard(params: Readonly<{
     onSave?: () => boolean | Promise<boolean>;
     continueOnSave?: boolean;
     onHistoryLeave?: () => void | Promise<void>;
+    canLeaveHistoryWithoutDiscard?: () => boolean;
     /** Flush an editor-owned pending value before the dirty decision is read. */
     prepareGuard?: () => void | Promise<void>;
     /** Install the remove interceptor even before React draft state is dirty. */
@@ -39,6 +41,7 @@ export function useUnsavedChangesBeforeRemoveGuard(params: Readonly<{
         onSave,
         continueOnSave,
         onHistoryLeave,
+        canLeaveHistoryWithoutDiscard,
         prepareGuard,
         interceptWhenClean,
         onContinue,
@@ -62,10 +65,12 @@ export function useUnsavedChangesBeforeRemoveGuard(params: Readonly<{
         onSave,
         continueOnSave,
         onHistoryLeave,
+        canLeaveHistoryWithoutDiscard,
         tag,
     }), [
         continueOnSave,
         onHistoryLeave,
+        canLeaveHistoryWithoutDiscard,
         ignoreRef,
         isDirtyRef,
         onDiscard,
@@ -84,6 +89,7 @@ export function useUnsavedChangesBeforeRemoveGuard(params: Readonly<{
             () => new Promise<void>((resolve, reject) => {
                 setPendingContinuation({ action, resolve, reject });
             }),
+            guard.canLeaveHistoryWithoutDiscard && isBackwardRouteRemovalAction(action) ? 'history' : undefined,
         )), { tag });
     }, [
         guard,

@@ -2,6 +2,7 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderHook, standardCleanup } from '@/dev/testkit';
+import { useUnsavedDraftNavigationGuard } from './useUnsavedDraftNavigationGuard';
 import type { AlertButton } from '@/modal/types';
 
 const boundary = vi.hoisted(() => ({
@@ -32,8 +33,39 @@ beforeEach(() => { boundary.buttons = []; boundary.preventRemove = false; bounda
 afterEach(standardCleanup);
 
 describe('useUnsavedDraftNavigationGuard', () => {
+    it('reads a mounted producer dirty fact before a React notification commits', async () => {
+        const dirty = { current: false };
+        const leave = vi.fn();
+        const hook = await renderHook(() => useUnsavedDraftNavigationGuard({ navigation: null,
+            isDirty: false, isDirtyRef: dirty, onLeave: leave, tag: 'synchronous-dirty-fact' }));
+        dirty.current = true;
+        let pending!: Promise<boolean>;
+        await act(async () => { pending = hook.getCurrent().requestLeaveAndWait(); });
+        expect(leave).not.toHaveBeenCalled();
+        await act(async () => { boundary.buttons.find(button => button.style === 'cancel')?.onPress?.(); expect(await pending).toBe(false); });
+        expect(dirty.current).toBe(true);
+    });
+
+    it('keeps the dirty fact when a requested departure retires while confirmation is open', async () => {
+        const dirty = { current: true };
+        let current = true;
+        const leave = vi.fn();
+        const hook = await renderHook(() => useUnsavedDraftNavigationGuard({ navigation: null,
+            isDirty: true, isDirtyRef: dirty, onLeave: leave, tag: 'retired-departure' }));
+        let pending!: Promise<boolean>;
+        await act(async () => { pending = hook.getCurrent().requestLeaveAndWait(() => current); });
+        current = false;
+        await act(async () => { boundary.buttons.find(button => button.style === 'destructive')?.onPress?.(); expect(await pending).toBe(false); });
+        expect(dirty.current).toBe(true);
+        expect(leave).not.toHaveBeenCalled();
+        current = true;
+        await act(async () => { pending = hook.getCurrent().requestLeaveAndWait(() => current); });
+        await act(async () => { boundary.buttons.find(button => button.style === 'destructive')?.onPress?.(); expect(await pending).toBe(true); });
+        expect(dirty.current).toBe(false);
+        expect(leave).toHaveBeenCalledOnce();
+    });
+
     it('keeps Back distinct from an explicit discard destination through the same decision', async () => {
-        const { useUnsavedDraftNavigationGuard } = await import('./useUnsavedDraftNavigationGuard');
         const navigation = { isFocused: () => true, addListener: () => () => {}, dispatch: vi.fn() };
         const back = vi.fn();
         const leave = vi.fn();
@@ -53,7 +85,6 @@ describe('useUnsavedDraftNavigationGuard', () => {
         expect(leave).toHaveBeenCalledOnce();
     });
     it('uses the authoring destination after discarding a native Back, without redispatching unrelated history', async () => {
-        const { useUnsavedDraftNavigationGuard } = await import('./useUnsavedDraftNavigationGuard');
         const navigation = { isFocused: () => true, addListener: () => () => {}, dispatch: vi.fn() };
         const leave = vi.fn();
         await renderHook(() => useUnsavedDraftNavigationGuard({ navigation, isDirty: true, onLeave: leave, tag: 'draft-back' }));
@@ -62,8 +93,19 @@ describe('useUnsavedDraftNavigationGuard', () => {
         expect(leave).toHaveBeenCalledOnce();
         expect(navigation.dispatch).not.toHaveBeenCalled();
     });
+    it('redispatches a whole-stack removal instead of spending the page internal Back step', async () => {
+        const navigation = { dispatch: vi.fn() };
+        const back = vi.fn();
+        await renderHook(() => useUnsavedDraftNavigationGuard({ navigation, isDirty: true,
+            onBack: back, canLeaveHistoryWithoutDiscard: () => true, tag: 'whole-stack-departure' }));
+        const action = { type: 'POP_TO_TOP' };
+        await act(async () => boundary.remove?.({ data: { action } }));
+        expect(boundary.buttons).toHaveLength(2);
+        await act(async () => boundary.buttons.find(button => button.style === 'destructive')?.onPress?.());
+        expect(back).not.toHaveBeenCalled();
+        expect(navigation.dispatch).toHaveBeenCalledWith(action);
+    });
     it('offers only discard and keep-editing when the editor has no save continuation', async () => {
-        const { useUnsavedDraftNavigationGuard } = await import('./useUnsavedDraftNavigationGuard');
         const { runGuardedNavigation } = await import('./runGuardedNavigation');
         const navigation = { isFocused: () => true, addListener: () => () => {}, dispatch: vi.fn() };
         const discard = vi.fn();
@@ -91,7 +133,6 @@ describe('useUnsavedDraftNavigationGuard', () => {
     });
 
     it('redispatches native back only after discard and releases successful-save navigation', async () => {
-        const { useUnsavedDraftNavigationGuard } = await import('./useUnsavedDraftNavigationGuard');
         const navigation = { isFocused: () => true, addListener: () => () => {}, dispatch: vi.fn() };
         const hook = await renderHook(({ dirty }) => useUnsavedDraftNavigationGuard({
             navigation, isDirty: dirty, tag: 'native-draft-test',

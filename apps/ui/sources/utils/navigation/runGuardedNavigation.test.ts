@@ -7,6 +7,41 @@ async function loadRunGuardedNavigationModule() {
 }
 
 describe('runGuardedNavigation', () => {
+    it('preserves a dirty editor across its internal Back and still guards the next departure', async () => {
+        const { setActiveUnsavedChangesGuard, runGuardedNavigation } = await loadRunGuardedNavigationModule();
+        const isDirtyRef = { current: true };
+        let hasStep = true;
+        const requestDecision = vi.fn(async (): Promise<UnsavedChangesDecision> => 'keepEditing');
+        const navigate = vi.fn();
+        setActiveUnsavedChangesGuard({ isDirtyRef, requestDecision, tag: 'preserving-page-back',
+            canLeaveHistoryWithoutDiscard: () => hasStep,
+            onHistoryLeave: async () => { hasStep = false; expect(await runGuardedNavigation(navigate)).toBe(true); } });
+        expect(await runGuardedNavigation(navigate, 'history')).toBe(true);
+        expect(navigate).toHaveBeenCalledOnce();
+        expect(requestDecision).not.toHaveBeenCalled();
+        expect(isDirtyRef.current).toBe(true);
+        expect(await runGuardedNavigation(navigate, 'history')).toBe(false);
+        expect(isDirtyRef.current).toBe(true);
+        expect(requestDecision).toHaveBeenCalledOnce();
+        expect(navigate).toHaveBeenCalledOnce();
+    });
+
+    it('keeps an editor mounted when preparation rejects and permits a later confirmed retry', async () => {
+        const { setActiveUnsavedChangesGuard, runGuardedNavigation } = await loadRunGuardedNavigationModule();
+        let confirmed = false;
+        const isDirtyRef = { current: false };
+        const requestDecision = vi.fn(async (): Promise<UnsavedChangesDecision> => 'discard');
+        setActiveUnsavedChangesGuard({ isDirtyRef, requestDecision, tag: 'unconfirmed-flush',
+            prepareGuard: async () => { if (!confirmed) throw new Error('snapshot_unconfirmed'); } });
+        const navigate = vi.fn();
+        expect(await runGuardedNavigation(navigate)).toBe(false);
+        expect(navigate).not.toHaveBeenCalled();
+        expect(requestDecision).not.toHaveBeenCalled();
+        confirmed = true;
+        expect(await runGuardedNavigation(navigate)).toBe(true);
+        expect(navigate).toHaveBeenCalledOnce();
+    });
+
     it('blocks another departure during preparation and prepares the next independent intent again', async () => {
         const { setActiveUnsavedChangesGuard, runGuardedNavigation } = await loadRunGuardedNavigationModule();
         let finish!: () => void;

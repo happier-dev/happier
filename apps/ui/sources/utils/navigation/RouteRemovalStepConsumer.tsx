@@ -2,6 +2,7 @@ import * as React from 'react';
 import { NavigationContext, usePreventRemove } from '@react-navigation/native';
 import { useDestinationInstanceKey } from '@/components/appShell/workspace/DestinationInstanceHost';
 import { useOptionalWorkspaceNavigation } from '@/components/appShell/workspace/WorkspaceNavigationContext';
+import { isBackwardRouteRemovalAction } from './runGuardedNavigation';
 
 /**
  * The one owner of "this screen has an internal step; spend it before leaving".
@@ -83,13 +84,6 @@ type RouteNavigationDispatch = Readonly<{
  * resets, and foreign navigation must continue without spending a page-local
  * Back step.
  */
-function isBackwardRouteRemovalAction(action: unknown): boolean {
-    if (typeof action !== 'object' || action === null) return false;
-    const type = (action as Readonly<{ type?: unknown }>).type;
-    return type === 'GO_BACK'
-        || type === 'POP';
-}
-
 function ActiveRouteRemovalStepConsumer(props: Readonly<{
     navigation: RouteNavigationDispatch;
     consume: () => boolean;

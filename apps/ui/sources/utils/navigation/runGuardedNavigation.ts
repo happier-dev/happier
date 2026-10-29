@@ -13,6 +13,8 @@ export type ActiveUnsavedChangesGuard = Readonly<{
     continueOnSave?: boolean;
     /** An authoring host's continuation for an app-initiated Back/history step. */
     onHistoryLeave?: () => void | Promise<void>;
+    /** A host-owned internal Back step retains the same edited content. */
+    canLeaveHistoryWithoutDiscard?: () => boolean;
     tag: string;
 }>;
 
@@ -22,6 +24,13 @@ let activeBrowserEntry: Readonly<{ href: string; state: unknown }> | null = null
 let authorizedBrowserTraversal = false;
 const guardsInFlight = new WeakSet<RefLike<boolean>>();
 const guardsContinuing = new WeakSet<RefLike<boolean>>();
+
+/** Only a backwards stack step may spend page-local history. */
+export function isBackwardRouteRemovalAction(action: unknown): boolean {
+    if (typeof action !== 'object' || action === null) return false;
+    const type = (action as Readonly<{ type?: unknown }>).type;
+    return type === 'GO_BACK' || type === 'POP';
+}
 
 export function getActiveUnsavedChangesGuard(): ActiveUnsavedChangesGuard | null {
     return activeUnsavedChangesGuard;
@@ -78,14 +87,31 @@ export function runUnsavedChangesGuard(
     navigate: () => void | Promise<void>,
     intent?: 'history',
 ): true | Promise<boolean> {
-    if (guard.ignoreRef?.current) {
+    const continueNavigation = (continuation = navigate) => {
+        guardsContinuing.add(guard.isDirtyRef);
+        try {
+            return continuation();
+        } finally {
+            guardsContinuing.delete(guard.isDirtyRef);
+        }
+    };
+    if (guard.ignoreRef?.current || guardsContinuing.has(guard.isDirtyRef)) {
         const continuation = navigate();
         return continuation
             ? continuation.then(() => true)
             : true;
     }
 
-    if (!guard.isDirtyRef.current && (!guard.prepareGuard || guardsContinuing.has(guard.isDirtyRef))) {
+    if (intent === 'history' && guard.canLeaveHistoryWithoutDiscard?.()) {
+        try {
+            const continuation = continueNavigation(guard.onHistoryLeave ?? navigate);
+            return continuation ? continuation.then(() => true, () => false) : true;
+        } catch {
+            return Promise.resolve(false);
+        }
+    }
+
+    if (!guard.isDirtyRef.current && !guard.prepareGuard) {
         const continuation = navigate();
         return continuation
             ? continuation.then(() => true)
@@ -99,17 +125,6 @@ export function runUnsavedChangesGuard(
     }
 
     guardsInFlight.add(guard.isDirtyRef);
-
-    // Router dispatch can synchronously re-enter workspace admission. Only
-    // that admitted call stack skips preparation; a later intent still flushes.
-    const continueNavigation = (continuation = navigate) => {
-        guardsContinuing.add(guard.isDirtyRef);
-        try {
-            return continuation();
-        } finally {
-            guardsContinuing.delete(guard.isDirtyRef);
-        }
-    };
 
     const run = async (): Promise<boolean> => {
         try {
