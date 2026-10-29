@@ -22,6 +22,35 @@ function EscapeLayerProbe(props: Readonly<{ onEscape: (event: unknown) => boolea
 }
 
 describe('useEscapeLayer', () => {
+    it('yields a claimed native-widget Escape to its target without dismissing or restoring the pane', async () => {
+        const container = document.createElement('div');
+        document.body.append(container);
+        const root = createRoot(container);
+        const closePane = vi.fn();
+        const nativeDismiss = vi.fn();
+        const focus = vi.fn();
+        function Layers() {
+            useEscapeLayer({ priority: ESCAPE_LAYER_PRIORITIES.overlay, allowEditableTarget: true, onEscape: closePane });
+            useEscapeLayer({ priority: ESCAPE_LAYER_PRIORITIES.composerSuggestions, allowEditableTarget: true,
+                focusReturnRef: { current: { focus } }, onEscape: () => 'defer-to-target' });
+            return <input />;
+        }
+        try {
+            await act(async () => root.render(<Layers />));
+            const input = container.querySelector('input')!;
+            input.addEventListener('keydown', nativeDismiss);
+            const event = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+            input.dispatchEvent(event);
+            expect(nativeDismiss).toHaveBeenCalledOnce();
+            expect(closePane).not.toHaveBeenCalled();
+            expect(focus).not.toHaveBeenCalled();
+            expect(event.defaultPrevented).toBe(false);
+        } finally {
+            await act(async () => root.unmount());
+            container.remove();
+        }
+    });
+
     it('orders nested layers inside their root, preserving a later unrelated modal above them', async () => {
         const container = document.createElement('div');
         document.body.append(container);
