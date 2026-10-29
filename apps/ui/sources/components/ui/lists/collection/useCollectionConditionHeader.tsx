@@ -101,6 +101,8 @@ export function useCollectionConditionHeader<Filter, Facts>(
     anchorRef?: React.RefObject<View | null>;
     /** Saved-space lists offer Save as space in the tokens and editor. */
     onSaveAsSpace?: () => void;
+    /** Fields a control on the page already states (a kind segment): one indicator, so no token or count for them. */
+    statedFields?: readonly string[];
   }>,
 ) {
   const { registry, bindings, testIDPrefix, filters, baseFilter, setFilters } =
@@ -165,14 +167,15 @@ export function useCollectionConditionHeader<Filter, Facts>(
       ),
     [model.rows, tokenRows],
   );
+  const statedFields = input.statedFields;
   const tokens = React.useMemo<readonly CollectionConditionToken[]>(
     () =>
-      tokenRows.map((row) => ({
+      tokenRows.filter((row) => !statedFields?.includes(row.fieldId)).map((row) => ({
         id: row.fieldId,
         label: row.field.label,
         valueLabel: collectionConditionValueWords(row.field, row.values),
       })),
-    [tokenRows],
+    [statedFields, tokenRows],
   );
 
   const applyEdit = React.useCallback(
