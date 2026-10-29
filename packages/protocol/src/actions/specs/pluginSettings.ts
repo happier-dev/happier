@@ -44,7 +44,7 @@ export function createPluginSettingsAdministrationActionSpec(
     || actionId === 'plugins.settings.secret.unbind';
 
   return {
-    id: actionId, approvalPolicy: { uiConfirmation: isReversibleUiMutation ? 'direct' : 'policy', retainUiFieldIntent: true }, approval: isRead ? { result: 'required' } : { result: 'none' },
+    id: actionId, executionPlacement: 'machine', approvalPolicy: { uiConfirmation: isReversibleUiMutation ? 'direct' : 'policy', retainUiFieldIntent: true }, approval: isRead ? { result: 'required' } : { result: 'none' },
     title: PLUGIN_SETTINGS_ADMINISTRATION_ACTION_TITLES[actionId],
     ...(actionId === 'plugins.settings.secret.delete'
       ? { confirmVerb: { key: 'common.delete', fallback: 'Delete' }, irreversible: true as const } : {}),

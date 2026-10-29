@@ -104,7 +104,7 @@ export const PROFILE_ACTION_SPECS_V1 = [
 
 export const PROFILE_PUBLICATION_ACTION_SPECS = Object.freeze([
   {
-    id: 'launch_profiles.publish', approval: {result: 'required'}, title: 'Publish launch profile', safety: 'danger',
+    id: 'launch_profiles.publish', executionPlacement: 'account', approval: {result: 'required'}, title: 'Publish launch profile', safety: 'danger',
     placements: [], bindings: { rpcMethod: 'launch_profiles.publish', mcpToolName: 'launch_profiles_publish' },
     requiredAuthority: 'account_automation', sideEffectClass: 'write',
     surfaces: { ui: true, cli: true, agent: true, mcp: true, voice: false, rpc: true },

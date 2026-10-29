@@ -5,7 +5,7 @@ import type { PreNormalizedActionSpec } from './definition.js';
 
 export const WORKSPACE_SYNC_ACTION_SPECS = Object.freeze([
   {
-    id: 'workspace.sync.conflict.resolve', approval: {result: 'required',flow: 'deferred'},
+    id: 'workspace.sync.conflict.resolve', executionPlacement: 'session', approval: {result: 'required',flow: 'deferred'},
     workspaceWrite: true,
     operation: {
       version: 1,
@@ -43,7 +43,7 @@ export const WORKSPACE_SYNC_ACTION_SPECS = Object.freeze([
     inputSchema: WorkspaceSyncConflictResolveActionInputV1Schema,
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'workspace.sync.relationship.create', approval: {result: 'required',flow: 'deferred'},
+    id: 'workspace.sync.relationship.create', executionPlacement: 'session', approval: {result: 'required',flow: 'deferred'},
     workspaceWrite: true,
     operation: {
       version: 1,
@@ -113,7 +113,7 @@ export const WORKSPACE_SYNC_ACTION_SPECS = Object.freeze([
     inputSchema: WorkspaceSyncRelationshipCreateActionInputV1Schema,
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'workspace.sync.relationship.disable', approval: { result: 'required', flow: 'deferred' },
+    id: 'workspace.sync.relationship.disable', executionPlacement: 'session', approval: { result: 'required', flow: 'deferred' },
     approvalPolicy: { uiConfirmation: 'direct' }, workspaceWrite: true,
     title: 'Pause workspace sync', description: 'Pause automatic syncing between two linked folders.',
     safety: 'danger', placements: [], bindings: { mcpToolName: 'workspace_sync_relationship_disable' },
@@ -126,7 +126,7 @@ export const WORKSPACE_SYNC_ACTION_SPECS = Object.freeze([
     inputSchema: WorkspaceSyncRelationshipDisableActionInputV1Schema,
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'workspace.sync.relationship.enable', approval: { result: 'required', flow: 'deferred' },
+    id: 'workspace.sync.relationship.enable', executionPlacement: 'session', approval: { result: 'required', flow: 'deferred' },
     approvalPolicy: { uiConfirmation: 'direct' }, workspaceWrite: true,
     title: 'Resume workspace sync', description: 'Resume automatic syncing between two linked folders.',
     safety: 'danger', placements: [], bindings: { mcpToolName: 'workspace_sync_relationship_enable' },
@@ -139,7 +139,7 @@ export const WORKSPACE_SYNC_ACTION_SPECS = Object.freeze([
     inputSchema: WorkspaceSyncRelationshipEnableActionInputV1Schema,
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'workspace.sync.relationship.flush', approval: { result: 'required', flow: 'deferred' },
+    id: 'workspace.sync.relationship.flush', executionPlacement: 'session', approval: { result: 'required', flow: 'deferred' },
     approvalPolicy: { uiConfirmation: 'direct' }, workspaceWrite: true,
     title: 'Sync workspace now', description: 'Run one synchronization cycle between two linked folders.',
     safety: 'danger', placements: [], bindings: { mcpToolName: 'workspace_sync_relationship_flush' },
@@ -152,7 +152,7 @@ export const WORKSPACE_SYNC_ACTION_SPECS = Object.freeze([
     inputSchema: WorkspaceSyncRelationshipFlushActionInputV1Schema,
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'workspace.sync.relationship.terminate', approval: { result: 'required', flow: 'deferred' },
+    id: 'workspace.sync.relationship.terminate', executionPlacement: 'session', approval: { result: 'required', flow: 'deferred' },
     approvalPolicy: { uiConfirmation: 'policy' },
     workspaceWrite: true,
     title: 'Stop workspace sync',
@@ -180,7 +180,7 @@ export const WORKSPACE_SYNC_ACTION_SPECS = Object.freeze([
     inputSchema: WorkspaceSyncRelationshipTerminateActionInputV1Schema,
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'workspace.sync.relationships.list', sideEffectClass: 'read', approval: {result: 'required'},
+    id: 'workspace.sync.relationships.list', executionPlacement: 'session', sideEffectClass: 'read', approval: {result: 'required'},
     title: 'List linked workspace relationships',
     description: 'List linked workspace relationships and their current sync status on the exact controller. Missing status stays unknown, never zero.',
     safety: 'safe',
@@ -209,7 +209,7 @@ export const WORKSPACE_SYNC_ACTION_SPECS = Object.freeze([
     inputSchema: WorkspaceSyncRelationshipsListActionInputV1Schema,
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'workspace.sync.conflicts.list', sideEffectClass: 'read', approval: {result: 'required'},
+    id: 'workspace.sync.conflicts.list', executionPlacement: 'session', sideEffectClass: 'read', approval: {result: 'required'},
     title: 'List workspace sync conflicts',
     description: 'Read one bounded conflict page for a linked workspace relationship. Pages keep their cursor; coverage can be partial.',
     safety: 'safe',
@@ -239,7 +239,7 @@ export const WORKSPACE_SYNC_ACTION_SPECS = Object.freeze([
     inputSchema: WorkspaceSyncConflictsListActionInputV1Schema,
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'workspace.sync.conflict.inspect', sideEffectClass: 'read', approval: {result: 'required'},
+    id: 'workspace.sync.conflict.inspect', executionPlacement: 'session', sideEffectClass: 'read', approval: {result: 'required'},
     title: 'Inspect workspace sync conflict',
     description: 'Inspect the current endpoint versions of a linked workspace path. Reads current bytes, not history; coverage can be partial.',
     safety: 'safe',

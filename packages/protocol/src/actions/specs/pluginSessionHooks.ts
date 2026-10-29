@@ -77,7 +77,7 @@ export const PluginSessionHookRpcSurfaceBinding = {
 
 export const PLUGIN_SESSION_HOOK_MANAGEMENT_ACTION_SPECS_V1 = [
   {
-    id: 'plugins.sessionHooks.status.get', cli: { commands: [] }, approval: {result: 'required'},
+    id: 'plugins.sessionHooks.status.get', executionPlacement: 'machine', cli: { commands: [] }, approval: {result: 'required'},
     title: 'Get Agent session-hook status inventory',
     description:
       'Read a bounded, paginated inventory of portable External Session hook installation status rows.',
@@ -106,7 +106,7 @@ export const PLUGIN_SESSION_HOOK_MANAGEMENT_ACTION_SPECS_V1 = [
     inputHints: { fields: PLUGIN_SESSION_HOOK_STATUS_INPUT_FIELDS },
   },
   {
-    id: 'plugins.sessionHooks.install', approval: {result: 'optional',flow: 'deferred'},
+    id: 'plugins.sessionHooks.install', executionPlacement: 'machine', approval: {result: 'optional',flow: 'deferred'},
     cli: { commands: [{ path: ['plugins', 'session-hooks', 'install'], visibility: 'canonical' }] },
     confirmVerb: { key: 'common.install', fallback: 'Install' },
     approvalPolicy: { uiConfirmation: 'policy' },
@@ -141,7 +141,7 @@ export const PLUGIN_SESSION_HOOK_MANAGEMENT_ACTION_SPECS_V1 = [
     inputHints: { fields: PLUGIN_SESSION_HOOK_INSTALL_INPUT_FIELDS },
   },
   {
-    id: 'plugins.sessionHooks.disable', approval: {result: 'optional',flow: 'deferred'},
+    id: 'plugins.sessionHooks.disable', executionPlacement: 'machine', approval: {result: 'optional',flow: 'deferred'},
     cli: { commands: [{ path: ['plugins', 'session-hooks', 'disable'], visibility: 'canonical' }] },
     approvalPolicy: { uiConfirmation: 'direct' },
     title: 'Disable Agent session hooks',
@@ -175,7 +175,7 @@ export const PLUGIN_SESSION_HOOK_MANAGEMENT_ACTION_SPECS_V1 = [
     inputHints: { fields: PLUGIN_SESSION_HOOK_MUTATION_INPUT_FIELDS },
   },
   {
-    id: 'plugins.sessionHooks.enable', approval: {result: 'optional',flow: 'deferred'},
+    id: 'plugins.sessionHooks.enable', executionPlacement: 'machine', approval: {result: 'optional',flow: 'deferred'},
     cli: { commands: [{ path: ['plugins', 'session-hooks', 'enable'], visibility: 'canonical' }] },
     approvalPolicy: { uiConfirmation: 'direct' },
     title: 'Enable Agent session hooks',
@@ -209,7 +209,7 @@ export const PLUGIN_SESSION_HOOK_MANAGEMENT_ACTION_SPECS_V1 = [
     inputHints: { fields: PLUGIN_SESSION_HOOK_MUTATION_INPUT_FIELDS },
   },
   {
-    id: 'plugins.sessionHooks.uninstall', approval: {result: 'optional',flow: 'deferred'},
+    id: 'plugins.sessionHooks.uninstall', executionPlacement: 'machine', approval: {result: 'optional',flow: 'deferred'},
     cli: { commands: [{ path: ['plugins', 'session-hooks', 'uninstall'], visibility: 'canonical' }] },
     confirmVerb: { key: 'settingsPlugins.uninstall', fallback: 'Uninstall' },
     approvalPolicy: { uiConfirmation: 'policy' },

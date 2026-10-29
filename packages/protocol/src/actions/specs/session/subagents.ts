@@ -48,7 +48,7 @@ export const SubagentWatchSnapshotOutputSchema = lazyZodSchema(() => z.looseObje
 
 export const SUBAGENT_ACTION_SPECS = Object.freeze([
   {
-    id: 'subagents.plan.start', approval: {result: 'optional',flow: 'deferred'},
+    id: 'subagents.plan.start', executionPlacement: 'session', approval: {result: 'optional',flow: 'deferred'},
     title: 'Start plan run',
     sideEffectClass: 'external',
     safety: 'safe',
@@ -135,7 +135,7 @@ export const SUBAGENT_ACTION_SPECS = Object.freeze([
 	    completion: planStartCompletion,
 	  } satisfies PreNormalizedActionSpec,
   {
-    id: 'subagents.delegate.start', approval: {result: 'optional',flow: 'deferred'},
+    id: 'subagents.delegate.start', executionPlacement: 'session', approval: {result: 'optional',flow: 'deferred'},
     title: 'Start delegate run',
     sideEffectClass: 'external',
     safety: 'safe',
@@ -228,7 +228,7 @@ export const SUBAGENT_ACTION_SPECS = Object.freeze([
 	    inputSchema: DelegateStartInputSchema,
 	  } satisfies PreNormalizedActionSpec,
   {
-    id: 'voice_agent.start', approval: {result: 'optional',flow: 'deferred'},
+    id: 'voice_agent.start', executionPlacement: 'session', approval: {result: 'optional',flow: 'deferred'},
     title: 'Start voice agent run',
     sideEffectClass: 'external',
     safety: 'safe',
@@ -286,7 +286,7 @@ export const SUBAGENT_ACTION_SPECS = Object.freeze([
     inputSchema: VoiceAgentStartInputSchema,
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'sessions.subagents.list', approval: {result: 'required'},
+    id: 'sessions.subagents.list', executionPlacement: 'session', approval: {result: 'required'},
     title: 'List session subagents',
     description: 'Return bounded provider-neutral subagent projections for a session.',
     safety: 'safe',
@@ -314,7 +314,7 @@ export const SUBAGENT_ACTION_SPECS = Object.freeze([
     },
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'sessions.subagents.get', approval: {result: 'required'},
+    id: 'sessions.subagents.get', executionPlacement: 'session', approval: {result: 'required'},
     title: 'Get session subagent',
     description: 'Return one provider-neutral subagent projection by id.',
     safety: 'safe',
@@ -340,7 +340,7 @@ export const SUBAGENT_ACTION_SPECS = Object.freeze([
     },
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'sessions.subagents.watch', approval: {result: 'required'},
+    id: 'sessions.subagents.watch', executionPlacement: 'session', approval: {result: 'required'},
     title: 'Watch session subagents',
     description: 'Register the bounded host subagent watcher path and return its initial typed projection snapshot.',
     safety: 'safe',
@@ -367,7 +367,7 @@ export const SUBAGENT_ACTION_SPECS = Object.freeze([
     },
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'sessions.subagents.upsert', approval: {result: 'optional',flow: 'deferred'},
+    id: 'sessions.subagents.upsert', executionPlacement: 'session', approval: {result: 'optional',flow: 'deferred'},
     title: 'Record session subagent',
     description: 'Create or replace a provider-neutral subagent projection with owner-authority enforcement.',
     safety: 'danger',
@@ -396,7 +396,7 @@ export const SUBAGENT_ACTION_SPECS = Object.freeze([
     },
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'sessions.subagents.updateStatus', approval: {result: 'optional',flow: 'deferred'},
+    id: 'sessions.subagents.updateStatus', executionPlacement: 'session', approval: {result: 'optional',flow: 'deferred'},
     title: 'Update session subagent status',
     description: 'Update subagent lifecycle status with owner-authority enforcement.',
     safety: 'danger',
@@ -424,7 +424,7 @@ export const SUBAGENT_ACTION_SPECS = Object.freeze([
     },
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'sessions.subagents.complete', approval: {result: 'optional',flow: 'deferred'},
+    id: 'sessions.subagents.complete', executionPlacement: 'session', approval: {result: 'optional',flow: 'deferred'},
     title: 'Complete session subagent',
     description: 'Mark a subagent terminal with owner-authority enforcement.',
     safety: 'danger',

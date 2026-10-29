@@ -29,7 +29,7 @@ export const SessionTurnCancelInputSchema = lazyZodSchema(() => z.strictObject({
 
 export const SESSION_LIFETIME_CONTROL_ACTION_SPECS = Object.freeze([
   {
-    id: 'session.turn.cancel', approval: {result: 'none'},
+    id: 'session.turn.cancel', executionPlacement: 'session', approval: {result: 'none'},
     sessionTarget: { field: 'sessionId', cardinality: 'many' },
     title: 'Stop current turn',
     description: 'Request cancellation of the current turn while keeping the session process available.',
@@ -47,7 +47,7 @@ export const SESSION_LIFETIME_CONTROL_ACTION_SPECS = Object.freeze([
     cli: { commands: [{ path: ['session', 'turn', 'cancel'], positionals: ['sessionId'], visibility: 'canonical' }] },
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'session.runtime.refresh', approval: { result: 'none' },
+    id: 'session.runtime.refresh', executionPlacement: 'session', approval: { result: 'none' },
     title: 'Refresh Session runtime',
     description: 'Refresh a stale Session runner on its hosting machine through the same planned restart used by the Session banner. Active child work defers replacement.',
     safety: 'safe',
@@ -69,7 +69,7 @@ export const SESSION_LIFETIME_CONTROL_ACTION_SPECS = Object.freeze([
     examples: { mcp: { argsExample: '{"sessionId":"{{sessionId}}","machineId":"{{machineId}}"}' } },
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'session.stop', approval: {result: 'none'},
+    id: 'session.stop', executionPlacement: 'session', approval: {result: 'none'},
     sessionTarget: { field: 'sessionId', cardinality: 'many' },
     title: 'Stop session',
     description: 'Stop the specified session. Explicit Stop holds automatic wake until Resume; lifecycle control only frees the runner.',
@@ -105,7 +105,7 @@ export const SESSION_LIFETIME_CONTROL_ACTION_SPECS = Object.freeze([
     cli: SESSION_STOP_CLI_PROJECTION,
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'session.terminalComposer.clear', approval: {result: 'required'},
+    id: 'session.terminalComposer.clear', executionPlacement: 'session', approval: {result: 'required'},
     title: 'Clear terminal composer',
     description: 'Clear the pending terminal composer draft for a session runtime.',
     safety: 'danger',
@@ -145,7 +145,7 @@ export const SESSION_LIFETIME_CONTROL_ACTION_SPECS = Object.freeze([
     },
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'session.pendingInput.interruptAndRun', approval: {result: 'required'},
+    id: 'session.pendingInput.interruptAndRun', executionPlacement: 'session', approval: {result: 'required'},
     title: 'Interrupt and run now',
     description: 'Interrupt the live provider turn so its exact native queued prompt can run now.',
     safety: 'danger',
@@ -208,7 +208,7 @@ export const SESSION_RECOVERY_ACTION_SPECS = Object.freeze([
     serverTransport: { method: 'POST', path: SESSION_READ_STATE_HTTP_PATHS_V1.set },
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'session.usageLimit.waitResume.enable', approval: {result: 'none',flow: 'deferred'},
+    id: 'session.usageLimit.waitResume.enable', executionPlacement: 'session', approval: {result: 'none',flow: 'deferred'},
     title: 'Enable usage-limit wait resume',
     description: 'Arm a durable intent to continue a session when a provider usage limit is lifted.',
     safety: 'safe',
@@ -248,7 +248,7 @@ export const SESSION_RECOVERY_ACTION_SPECS = Object.freeze([
     inputSchema: SessionUsageLimitWaitResumeEnableRequestV1Schema,
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'session.usageLimit.waitResume.cancel', approval: {result: 'none',flow: 'deferred'},
+    id: 'session.usageLimit.waitResume.cancel', executionPlacement: 'session', approval: {result: 'none',flow: 'deferred'},
     title: 'Cancel usage-limit wait resume',
     description: 'Cancel the active usage-limit wait/resume intent for a session.',
     safety: 'safe',
@@ -281,7 +281,7 @@ export const SESSION_RECOVERY_ACTION_SPECS = Object.freeze([
     inputSchema: SessionUsageLimitWaitResumeCancelRequestV1Schema,
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'session.usageLimit.checkNow', approval: {result: 'required'},
+    id: 'session.usageLimit.checkNow', executionPlacement: 'session', approval: {result: 'required'},
     title: 'Check usage-limit recovery now',
     description: 'Ask the session runtime to perform a safe provider-owned usage-limit recovery check.',
     safety: 'safe',
@@ -334,7 +334,7 @@ export const SESSION_RECOVERY_ACTION_SPECS = Object.freeze([
     inputSchema: SessionUsageLimitCheckNowRequestV1Schema,
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'session.usageLimit.consumeResetCredit', approval: {result: 'required'},
+    id: 'session.usageLimit.consumeResetCredit', executionPlacement: 'session', approval: {result: 'required'},
     title: 'Apply usage-limit reset credit',
     description: 'Ask the session runtime to spend a connected-service reset credit for usage-limit recovery.',
     safety: 'danger',

@@ -74,7 +74,7 @@ export const MemoryEnsureUpToDateOutputSchema = lazyZodSchema(() => z.looseObjec
 
 export const MEMORY_ACTION_SPECS = Object.freeze([
   {
-    id: 'memory.search', approval: {result: 'required'},
+    id: 'memory.search', executionPlacement: 'machine', approval: {result: 'required'},
     title: 'Search memory',
     sideEffectClass: 'read',
     description: 'Search the selected daemon memory index by global, Session, or qualified Project scope. Project search requires explicit support from that daemon and never falls back to global search.',
@@ -186,7 +186,7 @@ export const MEMORY_ACTION_SPECS = Object.freeze([
     ] },
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'memory.get_window', approval: {result: 'required'},
+    id: 'memory.get_window', executionPlacement: 'machine', approval: {result: 'required'},
     title: 'Get memory window',
     sideEffectClass: 'read',
     description: 'Fetch and decrypt a transcript window (used to verify/quote a memory hit).',
@@ -222,7 +222,7 @@ export const MEMORY_ACTION_SPECS = Object.freeze([
     inputSchema: MemoryGetWindowInputSchema,
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'memory.ensure_up_to_date', approval: {result: 'required'},
+    id: 'memory.ensure_up_to_date', executionPlacement: 'machine', approval: {result: 'required'},
     title: 'Ensure memory up to date',
     sideEffectClass: 'write',
     description: 'Trigger the daemon to sync memory hints for a session (or all active sessions).',

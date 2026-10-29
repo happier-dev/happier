@@ -104,7 +104,7 @@ export const BUG_REPORT_ACTION_SPECS = Object.freeze([
     ] },
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'bugreport.collectDiagnostics', approval: {result: 'required'},
+    id: 'bugreport.collectDiagnostics', executionPlacement: 'machine', approval: {result: 'required'},
     title: 'Collect bug report diagnostics',
     description: 'Collect bounded, redacted daemon diagnostics for a bug report.',
     safety: 'safe',
@@ -117,7 +117,7 @@ export const BUG_REPORT_ACTION_SPECS = Object.freeze([
     inputHints: DAEMON_ADMIN_INPUT_HINTS,
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'bugreport.getLogTail', approval: {result: 'required'},
+    id: 'bugreport.getLogTail', executionPlacement: 'machine', approval: {result: 'required'},
     title: 'Read bug report log tail',
     description: 'Read a bounded daemon log tail from diagnostics-approved candidate paths.',
     safety: 'safe',
@@ -130,7 +130,7 @@ export const BUG_REPORT_ACTION_SPECS = Object.freeze([
     inputHints: DAEMON_ADMIN_INPUT_HINTS,
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'bugreport.uploadArtifact', approval: {result: 'optional',flow: 'deferred'},
+    id: 'bugreport.uploadArtifact', executionPlacement: 'machine', approval: {result: 'optional',flow: 'deferred'},
     title: 'Upload bug report artifact',
     description: 'Return daemon-side bug report artifact upload availability without exposing secret material.',
     safety: 'safe',

@@ -201,7 +201,7 @@ export const SessionExchangeControlPublicInputSchema = lazyZodSchema(() => sessi
 
 export const SESSION_MESSAGE_ACTION_SPECS = Object.freeze([
   {
-    id: 'session.message.send', approval: {result: 'optional',flow: 'deferred'},
+    id: 'session.message.send', executionPlacement: 'session', approval: {result: 'optional',flow: 'deferred'},
     sessionTarget: { field: 'sessionId', cardinality: 'many' },
     title: 'Send a message to a session',
     sideEffectClass: 'external',

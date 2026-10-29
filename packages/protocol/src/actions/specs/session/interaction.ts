@@ -192,7 +192,7 @@ export function projectPluginSessionInteractionResponse(value: unknown): unknown
 
 export const SESSION_INTERACTION_ACTION_SPECS = Object.freeze([
   {
-    id: 'session.permission.respond', approvalPolicy: { agentDefault: 'authority', requiredSurfaces: ['mcp'] }, approval: {result: 'optional',flow: 'deferred'},
+    id: 'session.permission.respond', executionPlacement: 'session', approvalPolicy: { agentDefault: 'authority', requiredSurfaces: ['mcp'] }, approval: {result: 'optional',flow: 'deferred'},
     prompting: { voiceHotPath: true },
     title: 'Respond to permission request',
     sideEffectClass: 'write',
@@ -231,7 +231,7 @@ export const SESSION_INTERACTION_ACTION_SPECS = Object.freeze([
     inputSchema: SessionPermissionRespondInputSchema,
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'session.approval_reviewer.set', approval: {result: 'none'},
+    id: 'session.approval_reviewer.set', executionPlacement: 'session', approval: {result: 'none'},
     title: 'Set session approval reviewer',
     description: 'Enable or disable request-only background approval review for this session, or use null to follow the Account default.',
     safety: 'safe',
@@ -273,7 +273,7 @@ export const SESSION_INTERACTION_ACTION_SPECS = Object.freeze([
     serverTransport: { method: 'PUT', path: SESSION_ATTENTION_STANDING_HTTP_PATH_V1 },
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'session.permission.remote.pending.list', approval: {result: 'none'},
+    id: 'session.permission.remote.pending.list', executionPlacement: 'session', approval: {result: 'none'},
     title: 'List remotely mediated permission requests',
     sideEffectClass: 'read',
     description: 'List the caller mediator’s current permission requests for one exact source authority.',
@@ -303,7 +303,7 @@ export const SESSION_INTERACTION_ACTION_SPECS = Object.freeze([
     inputSchema: SessionPermissionRemotePendingListInputV1Schema,
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'session.permission.remote.respond', approval: {result: 'none'},
+    id: 'session.permission.remote.respond', executionPlacement: 'session', approval: {result: 'none'},
     title: 'Respond to a remotely mediated permission request',
     sideEffectClass: 'write',
     description: 'Submit an attributed external-human decision for one current permission request.',
@@ -357,7 +357,7 @@ export const SESSION_INTERACTION_ACTION_SPECS = Object.freeze([
     inputSchema: SessionPermissionRemoteRespondInputV1Schema,
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'session.user_action.remote.answer', approval: {result: 'none'},
+    id: 'session.user_action.remote.answer', executionPlacement: 'session', approval: {result: 'none'},
     title: 'Answer a remotely mediated user-action request',
     sideEffectClass: 'write',
     description: 'Submit bounded indexed answers for one current source-bound AskUserQuestion request.',
@@ -389,7 +389,7 @@ export const SESSION_INTERACTION_ACTION_SPECS = Object.freeze([
     inputSchema: SessionUserActionRemoteAnswerInputV1Schema,
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'session.permission.remote.grants.list', approval: {result: 'none'},
+    id: 'session.permission.remote.grants.list', executionPlacement: 'session', approval: {result: 'none'},
     title: 'List remotely mediated permission grants',
     sideEffectClass: 'read',
     description: 'List source-scoped remote permission grants visible to the authenticated caller.',
@@ -417,7 +417,7 @@ export const SESSION_INTERACTION_ACTION_SPECS = Object.freeze([
     inputSchema: SessionPermissionRemoteGrantsListInputV1Schema,
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'session.permission.remote.grants.revoke', approval: {result: 'none'},
+    id: 'session.permission.remote.grants.revoke', executionPlacement: 'session', approval: {result: 'none'},
     title: 'Revoke a remotely mediated permission grant',
     sideEffectClass: 'write',
     description: 'Revoke one source-scoped remote permission grant.',
@@ -474,7 +474,7 @@ export const SESSION_INTERACTION_ACTION_SPECS = Object.freeze([
     outputSchema: SessionNeedsYouRaiseOutputV1Schema,
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'session.user_action.answer', approval: {result: 'optional',flow: 'deferred'},
+    id: 'session.user_action.answer', executionPlacement: 'session', approval: {result: 'optional',flow: 'deferred'},
     title: 'Respond to user-action request',
     sideEffectClass: 'write',
     description: 'Approve, reject, request changes, or provide structured answers for an active user-action request. Target the Session that owns the request; a forwarded or passed-up question stays on its original asking Session, not the current handler Session.',
@@ -557,7 +557,7 @@ export const SESSION_INTERACTION_ACTION_SPECS = Object.freeze([
     outputSchema: SessionControlSwitchOutputSchema,
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'session.mode.set', approval: {result: 'optional',flow: 'deferred'},
+    id: 'session.mode.set', executionPlacement: 'session', approval: {result: 'optional',flow: 'deferred'},
     title: 'Set session mode',
     sideEffectClass: 'write',
     description: 'Request a new ACP session mode for the current session when the active provider supports session modes.',
@@ -638,7 +638,7 @@ export const SESSION_INTERACTION_ACTION_SPECS = Object.freeze([
     inputSchema: SessionConnectedServicesAuthSetInputSchema,
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'session.target.primary.set', approval: {result: 'optional',flow: 'deferred'},
+    id: 'session.target.primary.set', executionPlacement: 'client', approval: {result: 'optional',flow: 'deferred'},
     title: 'Set primary action session',
     sideEffectClass: 'write',
     description: 'Set which session the voice assistant should target by default.',
@@ -669,7 +669,7 @@ export const SESSION_INTERACTION_ACTION_SPECS = Object.freeze([
     inputSchema: SessionPrimaryTargetInputSchema,
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'session.target.tracked.set', approval: {result: 'optional',flow: 'deferred'},
+    id: 'session.target.tracked.set', executionPlacement: 'client', approval: {result: 'optional',flow: 'deferred'},
     title: 'Set Include in Voice sessions',
     sideEffectClass: 'write',
     description: 'Set which sessions are included in Voice through Account Follow.',

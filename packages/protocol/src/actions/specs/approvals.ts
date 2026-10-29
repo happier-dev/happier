@@ -54,7 +54,7 @@ export const ApprovalRequestDecideInputSchema = lazyZodSchema(() => z.strictObje
 
 export const APPROVAL_REQUEST_ACTION_SPECS = Object.freeze([
   {
-    id: 'approval.request.list', approvalPolicy: { control: true }, approval: {result: 'required'},
+    id: 'approval.request.list', executionPlacement: 'account', approvalPolicy: { control: true }, approval: {result: 'required'},
     title: 'List approval requests',
     description: 'List approval queue entries from targeted approval artifact headers.',
     safety: 'safe',
@@ -96,7 +96,7 @@ export const APPROVAL_REQUEST_ACTION_SPECS = Object.freeze([
     },
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'approval.request.get', approvalPolicy: { control: true }, approval: {result: 'required'},
+    id: 'approval.request.get', executionPlacement: 'account', approvalPolicy: { control: true }, approval: {result: 'required'},
     prompting: { voiceHotPath: true },
     title: 'Get approval request',
     description: 'Fetch one approval request by approval artifact id.',
@@ -122,7 +122,7 @@ export const APPROVAL_REQUEST_ACTION_SPECS = Object.freeze([
     },
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'approval.request.create', approvalPolicy: { control: true }, approval: {result: 'none'},
+    id: 'approval.request.create', executionPlacement: 'account', approvalPolicy: { control: true }, approval: {result: 'none'},
     title: 'Create approval request',
     description: 'Create an approval request for another action to run.',
     safety: 'danger',
@@ -153,7 +153,7 @@ export const APPROVAL_REQUEST_ACTION_SPECS = Object.freeze([
     },
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'approval.request.decide', originalExecution: { accountRoot: 'allowed' }, approvalPolicy: { control: true }, approval: {result: 'none'},
+    id: 'approval.request.decide', executionPlacement: 'account', originalExecution: { accountRoot: 'allowed' }, approvalPolicy: { control: true }, approval: {result: 'none'},
     prompting: { voiceHotPath: true },
     projectObservationOutput: (value) => {
       if (!value || typeof value !== 'object' || Array.isArray(value)) return value;

@@ -11,7 +11,7 @@ export const AUTOMATION_EVENT_ACTION_TITLES: Readonly<Record<AutomationEventActi
 export function createAutomationEventActionSpec(actionId: AutomationEventActionIdV1): PreNormalizedActionSpec {
   const readOnly = actionId === 'automation.event.sources.list';
   return {
-    id: actionId, approval: { result: 'none' },
+    id: actionId, executionPlacement: 'account', approval: { result: 'none' },
     title: AUTOMATION_EVENT_ACTION_TITLES[actionId],
     description: 'Read or update Event Automation state through the canonical Automation owner.',
     // Source telemetry records the admitted runtime's health, not a user
@@ -52,7 +52,7 @@ export function createAutomationConversationActionSpec(
       ? 'Verify an Automation conversation target through the canonical Automation owner.'
       : 'Admit a conversation occurrence through the canonical Automation owner.';
   return {
-    id: actionId, approval: { result: 'none' },
+    id: actionId, executionPlacement: 'account', approval: { result: 'none' },
     title: AUTOMATION_CONVERSATION_ACTION_TITLES[actionId],
     description,
     safety: readOnly ? 'safe' : 'danger',

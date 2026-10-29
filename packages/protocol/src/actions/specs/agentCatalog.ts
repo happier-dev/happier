@@ -188,7 +188,7 @@ export const SpawnMcpServersPreviewInputSchema = lazyZodSchema(() => z.looseObje
 
 export const AGENT_CATALOG_ACTION_SPECS = Object.freeze([
   {
-    id: 'machines.agents.signIn.start', approval: {result: 'none'}, approvalPolicy: { uiConfirmation: 'direct' },
+    id: 'machines.agents.signIn.start', executionPlacement: 'machine', approval: {result: 'none'}, approvalPolicy: { uiConfirmation: 'direct' },
     title: 'Sign in to an agent',
     description: 'Connect an accepted account, or open the agent native login on the selected machine.',
     sideEffectClass: 'write', safety: 'danger', placements: [],
@@ -204,7 +204,7 @@ export const AGENT_CATALOG_ACTION_SPECS = Object.freeze([
     ] },
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'machines.agents.signIn.status', approval: {result: 'none'},
+    id: 'machines.agents.signIn.status', executionPlacement: 'machine', approval: {result: 'none'},
     title: 'Check agent sign-in', sideEffectClass: 'read', safety: 'safe', placements: [],
     bindings: { mcpToolName: 'machines_agents_sign_in_status', voiceClientToolName: 'machines_agents_sign_in_status' },
     surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: false },
@@ -215,7 +215,7 @@ export const AGENT_CATALOG_ACTION_SPECS = Object.freeze([
     ] },
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'machines.agents.signIn.cancel', approval: {result: 'none'}, approvalPolicy: { uiConfirmation: 'direct' },
+    id: 'machines.agents.signIn.cancel', executionPlacement: 'machine', approval: {result: 'none'}, approvalPolicy: { uiConfirmation: 'direct' },
     title: 'Cancel agent sign-in', sideEffectClass: 'write', safety: 'danger', placements: [],
     bindings: { mcpToolName: 'machines_agents_sign_in_cancel', voiceClientToolName: 'machines_agents_sign_in_cancel' },
     surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: false },
@@ -227,7 +227,7 @@ export const AGENT_CATALOG_ACTION_SPECS = Object.freeze([
     ] },
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'machines.agents.signIn.restart', approval: {result: 'none'}, approvalPolicy: { uiConfirmation: 'direct' },
+    id: 'machines.agents.signIn.restart', executionPlacement: 'machine', approval: {result: 'none'}, approvalPolicy: { uiConfirmation: 'direct' },
     title: 'Restart agent sign-in', sideEffectClass: 'write', safety: 'danger', placements: [],
     bindings: { mcpToolName: 'machines_agents_sign_in_restart', voiceClientToolName: 'machines_agents_sign_in_restart' },
     surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: false },
@@ -239,7 +239,7 @@ export const AGENT_CATALOG_ACTION_SPECS = Object.freeze([
     ] },
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'machines.agents.install', approval: {result: 'required'}, approvalPolicy: { uiConfirmation: 'policy' },
+    id: 'machines.agents.install', executionPlacement: 'machine', approval: {result: 'required'}, approvalPolicy: { uiConfirmation: 'policy' },
     confirmVerb: { key: 'common.install', fallback: 'Install' },
     title: 'Install or update an agent',
     sideEffectClass: 'danger',
@@ -300,7 +300,7 @@ export const AGENT_CATALOG_ACTION_SPECS = Object.freeze([
     ] },
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'machines.agents.install.status', approval: {result: 'required'},
+    id: 'machines.agents.install.status', executionPlacement: 'machine', approval: {result: 'required'},
     title: 'Read an agent install job',
     description: 'Read the daemon-owned current steps, byte progress, and outcome alongside events after the cursor. Omitting the cursor reads events from the start.',
     sideEffectClass: 'read',
@@ -323,7 +323,7 @@ export const AGENT_CATALOG_ACTION_SPECS = Object.freeze([
     ] },
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'machines.agents.install.cancel', approval: {result: 'required'}, approvalPolicy: { uiConfirmation: 'direct' },
+    id: 'machines.agents.install.cancel', executionPlacement: 'machine', approval: {result: 'required'}, approvalPolicy: { uiConfirmation: 'direct' },
     title: 'Cancel agent install',
     sideEffectClass: 'danger',
     safety: 'danger',
@@ -341,7 +341,7 @@ export const AGENT_CATALOG_ACTION_SPECS = Object.freeze([
     ] },
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'agents.models.list', approval: {result: 'required'},
+    id: 'agents.models.list', executionPlacement: 'machine', approval: {result: 'required'},
     title: 'List agent models',
     sideEffectClass: 'read',
     description: 'List available models for an agent backend. Omit serverId; the authenticated host binds the Home.',
@@ -376,7 +376,7 @@ export const AGENT_CATALOG_ACTION_SPECS = Object.freeze([
     }))),
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'agents.config_options.list', approval: {result: 'required'},
+    id: 'agents.config_options.list', executionPlacement: 'machine', approval: {result: 'required'},
     title: 'List agent config options',
     sideEffectClass: 'read',
     description: 'List configurable option definitions for an agent backend without exposing current values. Supply modelId to include that model’s declared options and allowed values alongside session-wide options. Omit serverId; the authenticated host binds the Home.',
@@ -408,7 +408,7 @@ export const AGENT_CATALOG_ACTION_SPECS = Object.freeze([
     outputSchema: lazyZodSchema(() => inventoryOutputWithProbeObservation(AgentConfigOptionsProbeObservationSchema)),
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'agents.session_modes.list', approval: {result: 'required'},
+    id: 'agents.session_modes.list', executionPlacement: 'machine', approval: {result: 'required'},
     title: 'List agent session modes',
     sideEffectClass: 'read',
     description: 'List session modes available for an agent backend. Omit serverId; the authenticated host binds the Home.',
@@ -439,7 +439,7 @@ export const AGENT_CATALOG_ACTION_SPECS = Object.freeze([
     outputSchema: lazyZodSchema(() => inventoryOutputWithProbeObservation(AgentSessionModesProbeObservationSchema)),
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'sessions.spawn.profiles.list', approval: {result: 'required'},
+    id: 'sessions.spawn.profiles.list', executionPlacement: 'machine', approval: {result: 'required'},
     title: 'List spawn profiles',
     sideEffectClass: 'read',
     description: 'List Agent launch profile references available for new sessions without exposing secret bindings.',
@@ -470,7 +470,7 @@ export const AGENT_CATALOG_ACTION_SPECS = Object.freeze([
     inputSchema: SpawnProfilesListInputSchema,
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'sessions.spawn.connected_services.list', approval: {result: 'required'},
+    id: 'sessions.spawn.connected_services.list', executionPlacement: 'machine', approval: {result: 'required'},
     title: 'List spawn connected services',
     sideEffectClass: 'read',
     description: 'List connected-service references available for new sessions without exposing credentials. Omit serverId; the authenticated host binds the Home.',
@@ -502,7 +502,7 @@ export const AGENT_CATALOG_ACTION_SPECS = Object.freeze([
     inputSchema: SpawnConnectedServicesListInputSchema,
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'sessions.spawn.mcp_servers.preview', approval: {result: 'required'},
+    id: 'sessions.spawn.mcp_servers.preview', executionPlacement: 'machine', approval: {result: 'required'},
     title: 'Preview spawn MCP servers',
     sideEffectClass: 'read',
     description: 'Preview MCP servers that would be available to a new session.',
@@ -541,7 +541,7 @@ export const AGENT_CATALOG_ACTION_SPECS = Object.freeze([
 
 export const AGENT_INVENTORY_ACTION_SPECS = Object.freeze([
   {
-    id: 'agents.backends.list', approval: {result: 'required'},
+    id: 'agents.backends.list', executionPlacement: 'machine', approval: {result: 'required'},
     title: 'List agent backends',
     sideEffectClass: 'read',
     description: 'List available Agent backends for spawning sessions.',
@@ -573,7 +573,7 @@ export const AGENT_INVENTORY_ACTION_SPECS = Object.freeze([
     cli: { acceptsServerId: true, commands: [{ path: ['agents', 'backends', 'list'], visibility: 'canonical' }] },
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'machines.agents.list', approval: {result: 'required'},
+    id: 'machines.agents.list', executionPlacement: 'machine', approval: {result: 'required'},
     title: 'List agents on a machine',
     sideEffectClass: 'read',
     description: 'Read daemon-owned Agent installation, sign-in, platform and update facts for a machine.',
@@ -640,7 +640,7 @@ export const ACP_BACKEND_ACTION_SPECS = Object.freeze([
     },
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'agents.acp.backends.get', approval: {result: 'required'},
+    id: 'agents.acp.backends.get', executionPlacement: 'account', approval: {result: 'required'},
     title: 'Read custom ACP agent',
     description: 'Read one full Account-private configured ACP agent definition and its catalog revision.',
     safety: 'safe',
@@ -660,7 +660,7 @@ export const ACP_BACKEND_ACTION_SPECS = Object.freeze([
     ] },
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'agents.acp.backends.upsert', approval: {result: 'required'}, approvalPolicy: { uiConfirmation: 'direct' },
+    id: 'agents.acp.backends.upsert', executionPlacement: 'account', approval: {result: 'required'}, approvalPolicy: { uiConfirmation: 'direct' },
     title: 'Save custom ACP agent',
     description: 'Add or replace one custom ACP agent (a command that speaks the Agent Client Protocol) in the Account agent catalog. Names must be unique; an existing id is replaced.',
     safety: 'danger',
@@ -704,7 +704,7 @@ export const ACP_BACKEND_ACTION_SPECS = Object.freeze([
     },
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'agents.acp.backends.delete', approval: {result: 'required'}, approvalPolicy: { uiConfirmation: 'policy' },
+    id: 'agents.acp.backends.delete', executionPlacement: 'account', approval: {result: 'required'}, approvalPolicy: { uiConfirmation: 'policy' },
     title: 'Delete custom ACP agent',
     description: 'Remove one custom ACP agent from the Account agent catalog.',
     safety: 'danger',

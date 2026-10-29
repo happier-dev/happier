@@ -152,7 +152,7 @@ export const SessionLogTailOutputSchema = lazyZodSchema(() => z.looseObject({
 
 export const PERSISTED_TRANSCRIPT_ACTION_SPECS = Object.freeze([
   {
-    id: 'session.log.tail', approval: {result: 'required'},
+    id: 'session.log.tail', executionPlacement: 'session', approval: {result: 'required'},
     title: 'Tail session log',
     description: 'Read a bounded byte tail from an allowed session log file.',
     safety: 'safe',
@@ -180,7 +180,7 @@ export const PERSISTED_TRANSCRIPT_ACTION_SPECS = Object.freeze([
     },
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'transcript.page', approval: {result: 'required'},
+    id: 'transcript.page', executionPlacement: 'machine', approval: {result: 'required'},
     title: 'Page session transcript',
     description: 'Read a bounded older transcript page using cursor-backed storage.',
     safety: 'safe',
@@ -209,7 +209,7 @@ export const PERSISTED_TRANSCRIPT_ACTION_SPECS = Object.freeze([
     },
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'transcript.readAfter', approval: {result: 'required'},
+    id: 'transcript.readAfter', executionPlacement: 'machine', approval: {result: 'required'},
     title: 'Read session transcript after cursor',
     description: 'Read bounded transcript deltas after a cursor.',
     safety: 'safe',
@@ -238,7 +238,7 @@ export const PERSISTED_TRANSCRIPT_ACTION_SPECS = Object.freeze([
     },
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'transcript.follow', approval: {result: 'required'},
+    id: 'transcript.follow', executionPlacement: 'session', approval: {result: 'required'},
     title: 'Follow session transcript',
     description: 'Create or refresh a retained bounded transcript follow lease.',
     safety: 'safe',
@@ -269,7 +269,7 @@ export const PERSISTED_TRANSCRIPT_ACTION_SPECS = Object.freeze([
     },
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'transcript.unfollow', approval: {result: 'none'},
+    id: 'transcript.unfollow', executionPlacement: 'session', approval: {result: 'none'},
     title: 'Unfollow session transcript',
     description: 'Release a retained transcript follow lease.',
     safety: 'safe',
@@ -296,7 +296,7 @@ export const PERSISTED_TRANSCRIPT_ACTION_SPECS = Object.freeze([
     },
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'transcript.import', approval: {result: 'optional',flow: 'deferred'},
+    id: 'transcript.import', executionPlacement: 'session', approval: {result: 'optional',flow: 'deferred'},
     title: 'Import session transcript rows',
     description: 'Import a bounded batch of transcript rows through the session transcript writer owner.',
     safety: 'danger',
@@ -325,7 +325,7 @@ export const PERSISTED_TRANSCRIPT_ACTION_SPECS = Object.freeze([
     },
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'transcript.search', approval: {result: 'required'},
+    id: 'transcript.search', executionPlacement: 'machine', approval: {result: 'required'},
     title: 'Search session transcript',
     description: 'Search transcript rows through bounded forward cursor reads.',
     safety: 'safe',

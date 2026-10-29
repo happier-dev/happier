@@ -29,7 +29,7 @@ export const WorkspaceFilesSearchActionInputSchema = lazyZodSchema(() => (<T ext
 
 export const WORKSPACE_FILE_ACTION_SPECS = Object.freeze([
   {
-    id: 'workspace.files.search', approval: {result: 'required'},
+    id: 'workspace.files.search', executionPlacement: 'machine', approval: {result: 'required'},
     title: 'Search text in workspace files',
     description: 'Search the addressed machine workspace and return one bounded page of grouped text matches with explicit coverage. Refine the query when hasMore is true. Machine and root default to the calling session; supply both for another Machine or outside a session.',
     sideEffectClass: 'read',
@@ -50,7 +50,7 @@ export const WORKSPACE_FILE_ACTION_SPECS = Object.freeze([
     outputSchema: DaemonWorkspaceFileSearchResponseSchema,
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'workspace.files.replace.preview', approval: { result: 'required' },
+    id: 'workspace.files.replace.preview', executionPlacement: 'machine', approval: { result: 'required' },
     title: 'Preview replacement in workspace files',
     description: 'Review matching text and raw file hashes before applying a single-line replacement. Continue with the returned cursor when hasMore is true. Machine and root default to the calling session; supply both for another Machine or outside a session.',
     contextualDefaults: { machineId: 'current_session_machine', rootPath: 'current_session_root' },
@@ -67,7 +67,7 @@ export const WORKSPACE_FILE_ACTION_SPECS = Object.freeze([
     ] },
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'workspace.files.replace', approval: { result: 'required' }, approvalPolicy: { uiConfirmation: 'direct' },
+    id: 'workspace.files.replace', executionPlacement: 'machine', approval: { result: 'required' }, approvalPolicy: { uiConfirmation: 'direct' },
     operation: { version: 1, visibility: 'activity', progress: 'indeterminate', presentation: { onStart: 'current' } },
     title: 'Replace text in workspace files',
     description: 'Apply a reviewed replacement or restore its inverse edits only when the raw file hashes still match. Machine and root default to the calling session; supply both for another Machine or outside a session.',

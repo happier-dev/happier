@@ -10,7 +10,7 @@ export const ServersListInputSchema = lazyZodSchema(() => z.looseObject({
 
 export const SERVER_DISCOVERY_ACTION_SPECS = Object.freeze([
   {
-    id: 'servers.list', approval: {result: 'required'},
+    id: 'servers.list', executionPlacement: 'client', approval: {result: 'required'},
     title: 'List servers',
     sideEffectClass: 'read',
     description: 'List servers configured in the client.',

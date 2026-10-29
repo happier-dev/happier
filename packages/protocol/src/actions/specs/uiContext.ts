@@ -75,7 +75,7 @@ export const UI_CONTEXT_ACTION_SPECS = Object.freeze([
     ) },
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'ui.voice_agent.teleport', approval: {result: 'optional',flow: 'deferred'},
+    id: 'ui.voice_agent.teleport', executionPlacement: 'client', approval: {result: 'optional',flow: 'deferred'},
     title: 'Teleport voice agent to session root',
     sideEffectClass: 'write',
     description: 'Move the daemon-backed voice agent into the current or specified session root.',
@@ -103,7 +103,7 @@ export const UI_CONTEXT_ACTION_SPECS = Object.freeze([
     inputSchema: OptionalSessionIdInputSchema,
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'ui.current_context.read', approval: {result: 'required'},
+    id: 'ui.current_context.read', executionPlacement: 'client', approval: {result: 'required'},
     title: 'Read current UI context',
     description: 'Read the current local UI navigation context and its complete opaque command inventory.',
     sideEffectClass: 'read',
@@ -132,7 +132,7 @@ export const UI_CONTEXT_ACTION_SPECS = Object.freeze([
     inputSchema: EmptyObjectSchema,
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'account.home_continuation.invoke', approval: {result: 'required'},
+    id: 'account.home_continuation.invoke', executionPlacement: 'client', approval: {result: 'required'},
     title: 'Continue Home connection',
     description: 'Request an exact mounted authenticated Account continuation: choose a Home, retry, refresh, stop waiting, relink or open the enrolled Home. A human in that Account decides; key, credential and QR acquisition remain human-only.',
     requiredAuthority: 'present_user', safety: 'safe', sideEffectClass: 'write', placements: [],
@@ -147,7 +147,7 @@ export const UI_CONTEXT_ACTION_SPECS = Object.freeze([
     outputSchema: AccountHomeContinuationResultV1Schema,
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'ui.current_context.command.invoke', approval: {result: 'required'},
+    id: 'ui.current_context.command.invoke', executionPlacement: 'client', approval: {result: 'required'},
     title: 'Invoke current UI command',
     description: 'Invoke one currently available opaque command from the local current UI context. If the result is `denied`, the person declined the confirmation: report that and do not invoke it again unless they ask.',
     sideEffectClass: 'external',

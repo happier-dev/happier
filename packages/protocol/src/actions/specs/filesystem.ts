@@ -9,7 +9,7 @@ import type { PreNormalizedActionSpec } from './definition.js';
 
 export const FILESYSTEM_ACTION_SPECS = Object.freeze([
   {
-    id: 'daemon.filesystem.readFile', approvalPolicy: { rpcConfirmation: true }, approval: {result: 'required'},
+    id: 'daemon.filesystem.readFile', executionPlacement: 'machine', approvalPolicy: { rpcConfirmation: true }, approval: {result: 'required'},
     title: 'Read file',
     description: 'Read a bounded file or byte range under the explicitly admitted workspace root. A range length uses the daemon inline-read ceiling; its offset defaults to zero.',
     safety: 'safe',
@@ -27,7 +27,7 @@ export const FILESYSTEM_ACTION_SPECS = Object.freeze([
     ] },
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'daemon.filesystem.writeFile', approvalPolicy: { rpcConfirmation: true, uiConfirmation: 'direct' }, approval: {result: 'optional',flow: 'deferred'},
+    id: 'daemon.filesystem.writeFile', executionPlacement: 'machine', approvalPolicy: { rpcConfirmation: true, uiConfirmation: 'direct' }, approval: {result: 'optional',flow: 'deferred'},
     workspaceWrite: true,
     title: 'Write file',
     description: 'Write a bounded file under the explicitly admitted workspace root.',
@@ -47,7 +47,7 @@ export const FILESYSTEM_ACTION_SPECS = Object.freeze([
     ] },
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'daemon.filesystem.createDirectory', approvalPolicy: { rpcConfirmation: true, uiConfirmation: 'direct' }, approval: {result: 'optional',flow: 'deferred'},
+    id: 'daemon.filesystem.createDirectory', executionPlacement: 'machine', approvalPolicy: { rpcConfirmation: true, uiConfirmation: 'direct' }, approval: {result: 'optional',flow: 'deferred'},
     title: 'Create directory',
     description: 'Create a directory under the explicitly admitted workspace root.',
     safety: 'danger',
@@ -65,7 +65,7 @@ export const FILESYSTEM_ACTION_SPECS = Object.freeze([
     ] },
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'daemon.filesystem.rename', approvalPolicy: { rpcConfirmation: true, uiConfirmation: 'direct' }, approval: {result: 'optional',flow: 'deferred'},
+    id: 'daemon.filesystem.rename', executionPlacement: 'machine', approvalPolicy: { rpcConfirmation: true, uiConfirmation: 'direct' }, approval: {result: 'optional',flow: 'deferred'},
     title: 'Rename path',
     description: 'Rename a path under the explicitly admitted workspace root.',
     safety: 'danger',
@@ -85,7 +85,7 @@ export const FILESYSTEM_ACTION_SPECS = Object.freeze([
     ] },
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'daemon.filesystem.delete', approvalPolicy: { rpcConfirmation: true }, approval: {result: 'optional',flow: 'deferred'},
+    id: 'daemon.filesystem.delete', executionPlacement: 'machine', approvalPolicy: { rpcConfirmation: true }, approval: {result: 'optional',flow: 'deferred'},
     confirmVerb: { key: 'common.delete', fallback: 'Delete' }, irreversible: true,
     title: 'Delete path',
     description: 'Delete a path under the explicitly admitted workspace root.',
@@ -105,7 +105,7 @@ export const FILESYSTEM_ACTION_SPECS = Object.freeze([
     ] },
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'daemon.filesystem.copy', approvalPolicy: { rpcConfirmation: true }, approval: {result: 'required'},
+    id: 'daemon.filesystem.copy', executionPlacement: 'machine', approvalPolicy: { rpcConfirmation: true }, approval: {result: 'required'},
     title: 'Copy path',
     description: 'Copy within an admitted root, or copy admitted entries between qualified filesystem targets.',
     approvalResultCustody: 'live_only',
@@ -130,7 +130,7 @@ export const FILESYSTEM_ACTION_SPECS = Object.freeze([
     ] },
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'daemon.filesystem.upload', approvalPolicy: { rpcConfirmation: true, uiConfirmation: 'direct' }, approval: {result: 'required'},
+    id: 'daemon.filesystem.upload', executionPlacement: 'machine', approvalPolicy: { rpcConfirmation: true, uiConfirmation: 'direct' }, approval: {result: 'required'},
     title: 'Upload file',
     approvalPresentation: { summary: describeUploadApprovalSummary },
     description: 'Upload actual bytes from the prepared source into the admitted workspace root.',
@@ -149,7 +149,7 @@ export const FILESYSTEM_ACTION_SPECS = Object.freeze([
     ] },
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'daemon.filesystem.download', approvalPolicy: { rpcConfirmation: true, uiConfirmation: 'direct' }, approval: {result: 'required'},
+    id: 'daemon.filesystem.download', executionPlacement: 'machine', approvalPolicy: { rpcConfirmation: true, uiConfirmation: 'direct' }, approval: {result: 'required'},
     title: 'Download file',
     description: 'Download actual bytes into the admitted destination and acknowledge successful destination close.',
     approvalResultCustody: 'live_only',
@@ -167,7 +167,7 @@ export const FILESYSTEM_ACTION_SPECS = Object.freeze([
     ] },
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'daemon.filesystem.transfer.cancel', approvalPolicy: { rpcConfirmation: true }, approval: {result: 'optional',flow: 'deferred'},
+    id: 'daemon.filesystem.transfer.cancel', executionPlacement: 'machine', approvalPolicy: { rpcConfirmation: true }, approval: {result: 'optional',flow: 'deferred'},
     title: 'Cancel file transfer',
     description: 'Cancel only the transfer owned by the admitted requester and workspace root.',
     safety: 'danger', sideEffectClass: 'danger', placements: [],
@@ -181,7 +181,7 @@ export const FILESYSTEM_ACTION_SPECS = Object.freeze([
     ] },
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'daemon.filesystem.listDirectory', approvalPolicy: { rpcConfirmation: true }, approval: {result: 'required'},
+    id: 'daemon.filesystem.listDirectory', executionPlacement: 'machine', approvalPolicy: { rpcConfirmation: true }, approval: {result: 'required'},
     title: 'List directory',
     description: 'List a directory under the explicitly admitted workspace root.',
     safety: 'safe',
@@ -198,7 +198,7 @@ export const FILESYSTEM_ACTION_SPECS = Object.freeze([
     ] },
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'daemon.filesystem.getDirectoryTree', approvalPolicy: { rpcConfirmation: true }, approval: {result: 'required'},
+    id: 'daemon.filesystem.getDirectoryTree', executionPlacement: 'machine', approvalPolicy: { rpcConfirmation: true }, approval: {result: 'required'},
     title: 'Get directory tree',
     description: 'Read a bounded directory tree under the explicitly admitted workspace root.',
     safety: 'safe',
@@ -215,7 +215,7 @@ export const FILESYSTEM_ACTION_SPECS = Object.freeze([
     ] },
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'daemon.filesystem.listRoots', approval: {result: 'required'},
+    id: 'daemon.filesystem.listRoots', executionPlacement: 'machine', approval: {result: 'required'},
     title: 'List filesystem roots',
     description: 'List bounded machine file-browser roots resolved from daemon filesystem access policy.',
     safety: 'safe',
@@ -228,7 +228,7 @@ export const FILESYSTEM_ACTION_SPECS = Object.freeze([
     inputHints: DAEMON_ADMIN_INPUT_HINTS,
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'daemon.filesystem.browseDirectory', approval: {result: 'required'},
+    id: 'daemon.filesystem.browseDirectory', executionPlacement: 'machine', approval: {result: 'required'},
     title: 'Browse filesystem directory',
     description: 'List a machine file-browser directory constrained to a configured browse root.',
     safety: 'safe',

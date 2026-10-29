@@ -23,7 +23,7 @@ export const MachinesListCliInputSchema = lazyZodSchema(() => z.strictObject({
 
 export const MACHINE_DISCOVERY_ACTION_SPECS = Object.freeze([
   {
-    id: 'machines.list', approval: {result: 'required'},
+    id: 'machines.list', executionPlacement: 'account', approval: {result: 'required'},
     title: 'List machines',
     sideEffectClass: 'read',
     description: 'List accessible machines on the qualified Home, including shared role, resource mode and current readiness. Offline and pending machines remain visible.',

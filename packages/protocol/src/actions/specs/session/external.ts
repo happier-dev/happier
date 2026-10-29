@@ -102,7 +102,7 @@ export function projectExternalSessionBackgroundFollowResult(value: unknown): un
 
 export const EXTERNAL_SESSION_OPERATION_ACTION_SPECS_V1 = [
   {
-    id: 'sessions.external.materialize.start', approval: {result: 'optional',flow: 'deferred'},
+    id: 'sessions.external.materialize.start', executionPlacement: 'machine', approval: {result: 'optional',flow: 'deferred'},
     title: 'Materialize external session',
     description: 'Start or converge on the canonical external-session materialization operation.',
     safety: 'danger',
@@ -138,7 +138,7 @@ export const EXTERNAL_SESSION_OPERATION_ACTION_SPECS_V1 = [
     },
   },
   {
-    id: 'sessions.external.takeover.start', approval: {result: 'optional',flow: 'deferred'},
+    id: 'sessions.external.takeover.start', executionPlacement: 'machine', approval: {result: 'optional',flow: 'deferred'},
     title: 'Start external session takeover',
     description: 'Start or converge on the canonical external-session takeover operation.',
     safety: 'danger',
@@ -170,7 +170,7 @@ export const EXTERNAL_SESSION_OPERATION_ACTION_SPECS_V1 = [
     },
   },
   {
-    id: 'sessions.external.operation.status.get', approval: {result: 'required'},
+    id: 'sessions.external.operation.status.get', executionPlacement: 'machine', approval: {result: 'required'},
     title: 'Get external session operation status',
     description: 'Passively read the current canonical external-session operation projection.',
     safety: 'safe',
@@ -206,7 +206,7 @@ export const EXTERNAL_SESSION_OPERATION_ACTION_SPECS_V1 = [
     },
   },
   {
-    id: 'sessions.external.operation.cancel', approval: {result: 'optional',flow: 'deferred'},
+    id: 'sessions.external.operation.cancel', executionPlacement: 'machine', approval: {result: 'optional',flow: 'deferred'},
     title: 'Cancel external session operation',
     description: 'Record an explicit cancellation intent for the current operation revision.',
     safety: 'danger',
@@ -242,7 +242,7 @@ export const EXTERNAL_SESSION_OPERATION_ACTION_SPECS_V1 = [
     },
   },
   {
-    id: 'sessions.external.operation.resume', approval: {result: 'optional',flow: 'deferred'},
+    id: 'sessions.external.operation.resume', executionPlacement: 'machine', approval: {result: 'optional',flow: 'deferred'},
     title: 'Resume external session operation',
     description: 'Explicitly resume a passively hydrated operation from its durable checkpoint.',
     safety: 'danger',
@@ -278,7 +278,7 @@ export const EXTERNAL_SESSION_OPERATION_ACTION_SPECS_V1 = [
     },
   },
   {
-    id: 'sessions.external.operation.retry', approval: {result: 'optional',flow: 'deferred'},
+    id: 'sessions.external.operation.retry', executionPlacement: 'machine', approval: {result: 'optional',flow: 'deferred'},
     title: 'Retry external session operation',
     description: 'Explicitly retry the canonical recovery phase at the current revision.',
     safety: 'danger',
@@ -314,7 +314,7 @@ export const EXTERNAL_SESSION_OPERATION_ACTION_SPECS_V1 = [
     },
   },
   {
-    id: 'sessions.external.operation.discard', approval: {result: 'optional',flow: 'deferred'},
+    id: 'sessions.external.operation.discard', executionPlacement: 'machine', approval: {result: 'optional',flow: 'deferred'},
     title: 'Discard external session operation',
     description: 'Destructively discard an eligible initial partial operation and its private staging.',
     safety: 'danger',
@@ -356,7 +356,7 @@ export const ExternalSessionTakeoverActionInputSchema = ExternalSessionTakeoverI
 
 export const EXTERNAL_SESSION_ACTION_SPECS = Object.freeze([
   {
-    id: 'sessions.external.candidates.list', approval: {result: 'required'},
+    id: 'sessions.external.candidates.list', executionPlacement: 'machine', approval: {result: 'required'},
     title: 'List external session candidates',
     description: 'List attachable external session candidates through the external-session machine RPC.',
     safety: 'safe',
@@ -395,7 +395,7 @@ export const EXTERNAL_SESSION_ACTION_SPECS = Object.freeze([
     },
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'sessions.external.candidate.delete', approval: {result: 'optional',flow: 'deferred'},
+    id: 'sessions.external.candidate.delete', executionPlacement: 'machine', approval: {result: 'optional',flow: 'deferred'},
     confirmVerb: { key: 'common.delete', fallback: 'Delete' }, irreversible: true,
     title: 'Delete external session candidate',
     description: "Delete one Agent-owned session a resume-only external-session listing surfaced. The Agent's own record is removed; no Happier Session is deleted.",
@@ -437,7 +437,7 @@ export const EXTERNAL_SESSION_ACTION_SPECS = Object.freeze([
     },
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'sessions.external.link.ensure', approval: {result: 'optional',flow: 'deferred'},
+    id: 'sessions.external.link.ensure', executionPlacement: 'machine', approval: {result: 'optional',flow: 'deferred'},
     title: 'Ensure external session link',
     description: 'Create or reuse the Happier link for an external provider session.',
     safety: 'danger',
@@ -472,7 +472,7 @@ export const EXTERNAL_SESSION_ACTION_SPECS = Object.freeze([
     },
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'sessions.external.follow', approval: {result: 'optional',flow: 'deferred'},
+    id: 'sessions.external.follow', executionPlacement: 'session', approval: {result: 'optional',flow: 'deferred'},
     title: 'Follow external session lease',
     description: 'Attach an ephemeral follow lease to an external session link.',
     safety: 'danger',
@@ -510,7 +510,7 @@ export const EXTERNAL_SESSION_ACTION_SPECS = Object.freeze([
     },
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'sessions.external.unfollow', approval: {result: 'optional',flow: 'deferred'},
+    id: 'sessions.external.unfollow', executionPlacement: 'session', approval: {result: 'optional',flow: 'deferred'},
     title: 'Unfollow external session lease',
     description: 'Detach an external-session follow lease.',
     safety: 'danger',
@@ -547,7 +547,7 @@ export const EXTERNAL_SESSION_ACTION_SPECS = Object.freeze([
     },
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'sessions.external.backgroundFollow.set', approval: {result: 'optional',flow: 'deferred'},
+    id: 'sessions.external.backgroundFollow.set', executionPlacement: 'session', approval: {result: 'optional',flow: 'deferred'},
     title: 'Set external session follow policy',
     description: 'Enable or disable background following for an external session.',
     safety: 'danger',
@@ -590,7 +590,7 @@ export const EXTERNAL_SESSION_ACTION_SPECS = Object.freeze([
     },
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'sessions.external.status.get', approval: {result: 'required'},
+    id: 'sessions.external.status.get', executionPlacement: 'session', approval: {result: 'required'},
     title: 'Get external session status',
     description: 'Read bounded status and takeover readiness for a linked external session.',
     safety: 'safe',
@@ -631,7 +631,7 @@ export const EXTERNAL_SESSION_ACTION_SPECS = Object.freeze([
     },
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'sessions.external.transcript.page', approval: {result: 'required'},
+    id: 'sessions.external.transcript.page', executionPlacement: 'machine', approval: {result: 'required'},
     title: 'Page external session transcript',
     description: 'Read a bounded transcript page for an external provider session.',
     safety: 'safe',
@@ -672,7 +672,7 @@ export const EXTERNAL_SESSION_ACTION_SPECS = Object.freeze([
     },
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'sessions.external.transcript.readAfter', approval: {result: 'required'},
+    id: 'sessions.external.transcript.readAfter', executionPlacement: 'session', approval: {result: 'required'},
     title: 'Read external session transcript after cursor',
     description: 'Read bounded transcript deltas after a cursor for an external provider session.',
     safety: 'safe',
@@ -714,7 +714,7 @@ export const EXTERNAL_SESSION_ACTION_SPECS = Object.freeze([
     },
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'sessions.external.takeover', approval: {result: 'optional',flow: 'deferred'},
+    id: 'sessions.external.takeover', executionPlacement: 'machine', approval: {result: 'optional',flow: 'deferred'},
     title: 'Take over external session',
     description: 'Move a linked external session into a Happier-managed terminal runtime.',
     safety: 'danger',

@@ -10,7 +10,7 @@ import type { PreNormalizedActionSpec } from './definition.js';
 
 export const REVIEW_ACTION_SPECS = Object.freeze([
   {
-    id: 'review.start', approval: {result: 'optional',flow: 'deferred'},
+    id: 'review.start', executionPlacement: 'session', approval: {result: 'optional',flow: 'deferred'},
     title: 'Start review',
     sideEffectClass: 'external',
     safety: 'safe',
@@ -123,7 +123,7 @@ export const REVIEW_ACTION_SPECS = Object.freeze([
     completion: reviewStartCompletion,
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'review.apply', approval: { result: 'optional', flow: 'deferred' },
+    id: 'review.apply', executionPlacement: 'session', approval: { result: 'optional', flow: 'deferred' },
     title: 'Apply accepted review findings',
     sideEffectClass: 'external',
     safety: 'safe',
@@ -140,7 +140,7 @@ export const REVIEW_ACTION_SPECS = Object.freeze([
     outputSchema: ReviewFindingsApplyResultV1Schema,
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'review.walkthrough', approval: {result: 'optional',flow: 'deferred'},
+    id: 'review.walkthrough', executionPlacement: 'session', approval: {result: 'optional',flow: 'deferred'},
     title: 'Walk through review',
     sideEffectClass: 'external',
     safety: 'safe',
@@ -162,7 +162,7 @@ export const REVIEW_ACTION_SPECS = Object.freeze([
     completion: reviewWalkthroughCompletion,
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'review.explain_findings', approval: {result: 'optional',flow: 'deferred'},
+    id: 'review.explain_findings', executionPlacement: 'session', approval: {result: 'optional',flow: 'deferred'},
     title: 'Explain review findings',
     sideEffectClass: 'external',
     safety: 'safe',
@@ -197,7 +197,7 @@ export const ReviewEnginesListInputSchema = lazyZodSchema(() => z.looseObject({
 
 export const REVIEW_ENGINE_DISCOVERY_ACTION_SPECS = Object.freeze([
   {
-    id: 'review.engines.list', approval: {result: 'required'},
+    id: 'review.engines.list', executionPlacement: 'session', approval: {result: 'required'},
     title: 'List review engines',
     sideEffectClass: 'read',
     description: 'List review engines available for an authorized Session or detached Machine.',

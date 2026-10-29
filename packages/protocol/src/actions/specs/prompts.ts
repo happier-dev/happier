@@ -65,7 +65,7 @@ export const PromptRegistryInstallInputSchema = lazyZodSchema(() => (<I extends 
 
 export const PROMPT_DOCUMENT_ACTION_SPECS = Object.freeze([
   {
-    id: 'prompt_doc.get', approval: {result: 'required'},
+    id: 'prompt_doc.get', executionPlacement: 'account', approval: {result: 'required'},
     title: 'Read prompt document',
     description: 'Read the current prompt document and its observed Artifact revision.',
     safety: 'safe',
@@ -81,7 +81,7 @@ export const PROMPT_DOCUMENT_ACTION_SPECS = Object.freeze([
     ] },
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'prompt_doc.create', approval: {result: 'none'},
+    id: 'prompt_doc.create', executionPlacement: 'account', approval: {result: 'none'},
     approvalPolicy: { uiConfirmation: 'direct' },
     title: 'Create prompt document',
     description: 'Create an Account-private prompt document in the Happier prompt library.',
@@ -110,7 +110,7 @@ export const PROMPT_DOCUMENT_ACTION_SPECS = Object.freeze([
 
 export const PROMPT_INVOCATION_ACTION_SPECS = Object.freeze([
   {
-    id: 'prompts.invocations.list', approval: {result: 'required'},
+    id: 'prompts.invocations.list', executionPlacement: 'account', approval: {result: 'required'},
     title: 'List prompt invocations',
     sideEffectClass: 'read',
     description:
@@ -136,7 +136,7 @@ export const PROMPT_INVOCATION_ACTION_SPECS = Object.freeze([
     inputSchema: PromptInvocationsListInputSchema,
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'prompts.invocation.resolve', approval: {result: 'required'},
+    id: 'prompts.invocation.resolve', executionPlacement: 'account', approval: {result: 'required'},
     title: 'Resolve a prompt invocation',
     sideEffectClass: 'read',
     description:
@@ -167,7 +167,7 @@ export const PROMPT_INVOCATION_ACTION_SPECS = Object.freeze([
 
 export const PROMPT_LIBRARY_ACTION_SPECS = Object.freeze([
   {
-    id: 'prompt_doc.favorite.set', approval: {result: 'none'},
+    id: 'prompt_doc.favorite.set', executionPlacement: 'account', approval: {result: 'none'},
     title: 'Set prompt favourite',
     description: 'Set a prompt document favourite without changing its content.',
     safety: 'safe',
@@ -183,7 +183,7 @@ export const PROMPT_LIBRARY_ACTION_SPECS = Object.freeze([
     ] },
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'prompts.library.list', approval: {result: 'required'},
+    id: 'prompts.library.list', executionPlacement: 'account', approval: {result: 'required'},
     title: 'List prompt library',
     description: 'List prompt document headers without fetching their bodies.',
     safety: 'safe',
@@ -214,7 +214,7 @@ export const PROMPT_LIBRARY_ACTION_SPECS = Object.freeze([
     cli: { acceptsServerId: true, commands: [{ path: ['prompts', 'stack', 'update'], visibility: 'canonical' }] },
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'prompt_doc.update', approval: {result: 'none'},
+    id: 'prompt_doc.update', executionPlacement: 'account', approval: {result: 'none'},
     title: 'Update prompt document',
     description: 'Update a prompt document. Supply the reviewed Artifact revision to refuse changed content without rebasing the edit.',
     safety: 'danger',
@@ -246,7 +246,7 @@ export const PROMPT_LIBRARY_ACTION_SPECS = Object.freeze([
     },
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'prompt_bundle.update', approval: {result: 'none'},
+    id: 'prompt_bundle.update', executionPlacement: 'account', approval: {result: 'none'},
     title: 'Update prompt bundle',
     description: 'Update a skill bundle stored in the Happier prompt library.',
     safety: 'danger', sideEffectClass: 'write',
@@ -278,7 +278,7 @@ export const PROMPT_LIBRARY_ACTION_SPECS = Object.freeze([
     },
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'prompt_registry.install', approval: {result: 'optional',flow: 'deferred'},
+    id: 'prompt_registry.install', executionPlacement: 'machine', approval: {result: 'optional',flow: 'deferred'},
     approvalPolicy: { uiConfirmation: 'direct' },
     sideEffectClass: 'external',
     title: 'Install prompt registry skill',

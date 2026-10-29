@@ -120,7 +120,7 @@ export function createPluginPermissionGrantActionSpec(actionId: PluginPermission
           }
         : undefined;
   return {
-    id: actionId, approval: isRead ? { result: 'required' }
+    id: actionId, executionPlacement: 'account', approval: isRead ? { result: 'required' }
       : isRevoke ? { result: 'optional', flow: 'deferred' } : { result: 'none' },
     title: PLUGIN_PERMISSION_GRANT_ACTION_TITLES[actionId],
     description: 'Manage durable user-approved optional plugin permission grants.',
