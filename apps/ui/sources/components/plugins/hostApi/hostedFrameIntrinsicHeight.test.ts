@@ -29,17 +29,21 @@ describe('hosted frame intrinsic-height reports', () => {
             cancelFrame,
         });
 
+        expect(reporter.readPublishedHeight()).toBeNull();
         expect(reporter.report(120)).toBe(true);
         expect(reporter.report(240)).toBe(true);
         expect(reporter.report(Number.NaN)).toBe(false);
         expect(reporter.report(0)).toBe(false);
         expect(scheduled).toHaveLength(1);
+        expect(reporter.readPublishedHeight()).toBeNull();
         scheduled.values().next().value?.();
         expect(publish).toHaveBeenCalledOnce();
         expect(publish).toHaveBeenCalledWith(240);
+        expect(reporter.readPublishedHeight()).toBe(240);
 
         expect(reporter.report(360)).toBe(true);
         reporter.dispose();
+        expect(reporter.readPublishedHeight()).toBeNull();
         expect(cancelFrame).toHaveBeenCalledOnce();
         expect(reporter.report(480)).toBe(false);
         expect(publish).toHaveBeenCalledOnce();

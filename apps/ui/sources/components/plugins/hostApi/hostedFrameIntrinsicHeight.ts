@@ -2,6 +2,8 @@ import type { PluginUiJsonValueV1 } from '@happier-dev/protocol/plugins/ui';
 
 export type HostedFrameIntrinsicHeightReporter = Readonly<{
     report: (height: number) => boolean;
+    /** The current physical document's last published layout fact, not queued work. */
+    readPublishedHeight: () => number | null;
     dispose: () => void;
 }>;
 
@@ -23,6 +25,7 @@ export function createHostedFrameIntrinsicHeightReporter(input: Readonly<{
     cancelFrame: (handle: number) => void;
 }>): HostedFrameIntrinsicHeightReporter {
     let pendingHeight: number | null = null;
+    let publishedHeight: number | null = null;
     let scheduledHandle: number | null = null;
     let disposed = false;
 
@@ -31,10 +34,12 @@ export function createHostedFrameIntrinsicHeightReporter(input: Readonly<{
         if (disposed || pendingHeight === null) return;
         const height = pendingHeight;
         pendingHeight = null;
+        publishedHeight = height;
         input.publish(height);
     };
 
     return Object.freeze({
+        readPublishedHeight: () => disposed ? null : publishedHeight,
         report: (height: number): boolean => {
             if (disposed || !Number.isFinite(height) || height <= 0) return false;
             pendingHeight = height;
