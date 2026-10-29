@@ -279,10 +279,25 @@ describe('consented native accounting collector', () => {
             });
             let readCount = 0;
             let demandCount = 0;
+            let subscriptions = 0;
+            let disposals = 0;
+            let custodyWrites = 0;
+            let wakes = 0;
+            let rootKind: 'default' | 'configured' = 'default';
+            let discoveredFileCount = 1;
+            let additionalSource = false;
+            let accountingSources: string[] | undefined = ['native'];
             let onChange = () => {};
-            const deps = { store, authority, storage, publisher,
+            const deps = { store: { load: store.load, save: async (state: Parameters<typeof store.save>[0]) => {
+                custodyWrites++;
+                await store.save(state);
+            } }, authority, storage, publisher,
+                onSourceSettled: () => { wakes++; },
                 budgetRegistry: new ExecutionBudgetRegistry({ maxConcurrentExecutionRuns: null, maxConcurrentOneShotTasks: null }),
-                discoverSources: async () => [{ agent: { pluginId: 'happier.agent.pi', localId: 'pi' }, source: { kind: 'piAgentDir', agentDir }, sourceKey: agentDir, root: agentDir, supported: true }],
+                discoverSources: async () => [{ agent: { pluginId: 'happier.agent.pi', localId: 'pi' }, source: { kind: 'piAgentDir', agentDir }, sourceKey: agentDir, root: agentDir, supported: true, rootKind, discoveredFileCount,
+                    ...(accountingSources ? { accountingSources: [...accountingSources] } : {}) },
+                    ...(additionalSource ? [{ agent: { pluginId: 'happier.agent.pi', localId: 'pi' },
+                        source: { kind: 'piAgentDir', agentDir: `${agentDir}-other` }, sourceKey: `${agentDir}-other`, root: `${agentDir}-other`, supported: false }] : [])],
                 resolveRoot: async () => { throw new Error('Not used'); },
                 readAccounting: async (source: NativeUsageCaptureSource, signal: AbortSignal) => {
                     readCount++;
@@ -290,7 +305,10 @@ describe('consented native accounting collector', () => {
                     return contribution.readAccounting({ source: source.source, cursor: source.cursor, ...createExternalSessionsInvocationFixture(signal) });
                 },
                 // Real OS watcher boundary; no internal collector/codec/publisher behavior is mocked.
-                subscribeSource: async (_source: unknown, callback: () => void) => { demandCount++; onChange = callback; return { dispose() { demandCount--; } }; },
+                subscribeSource: async (_source: unknown, callback: () => void) => {
+                    demandCount++; subscriptions++; onChange = callback;
+                    return { dispose() { demandCount--; disposals++; } };
+                },
                 deleteHistory: async () => ({ success: true as const, deletedEventCount: 0 }),
             };
             const collector = createNativeUsageCollector(deps);
@@ -302,6 +320,28 @@ describe('consented native accounting collector', () => {
             await collector.flushPending();
             expect((await collector.get(discovered.sourceId))[0].asOfMs).toBeNull();
             expect((await store.load()).sources[0].pending).toEqual([]);
+            const settledCosts = { reads: readCount, writes: custodyWrites, subscriptions, disposals, wakes };
+            for (let refresh = 0; refresh < 3; refresh++) {
+                discoveredFileCount++;
+                expect((await collector.discover())[0].discoveredFileCount).toBe(discoveredFileCount);
+            }
+            expect({ reads: readCount, writes: custodyWrites, subscriptions, disposals, wakes }).toEqual(settledCosts);
+            additionalSource = true;
+            expect(await collector.discover()).toHaveLength(2);
+            expect({ reads: readCount, writes: custodyWrites, subscriptions, disposals, wakes }).toEqual({
+                ...settledCosts, writes: settledCosts.writes + 1,
+            });
+            rootKind = 'configured';
+            accountingSources = undefined;
+            expect((await collector.discover())[0].root.kind).toBe('configured');
+            expect((await collector.get(discovered.sourceId))[0]).not.toHaveProperty('accountingSources');
+            await collector.flushPending();
+            expect({ reads: readCount, writes: custodyWrites, subscriptions, disposals }).toEqual({
+                reads: settledCosts.reads + 1, writes: settledCosts.writes + 2,
+                subscriptions: settledCosts.subscriptions + 1, disposals: settledCosts.disposals + 1,
+            });
+            expect(wakes).toBeGreaterThan(settledCosts.wakes);
+            expect((await store.load()).sources[0].rootKind).toBe('configured');
             await appendFile(file, paid('inference-one', 0));
             onChange();
             await collector.flushPending();

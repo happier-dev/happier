@@ -7,6 +7,7 @@ import type { NativeUsageCaptureAuthority, NativeUsageCaptureSource, NativeUsage
 import { AsyncLock } from '@/utils/lock';
 import { deriveNativeUsageAccountingIdentity } from './nativeUsageAccountingIdentity';
 import type { NativeUsageSourceDescriptor } from './nativeUsageSourceDiscovery';
+import { isDeepStrictEqual } from 'node:util';
 
 export type { NativeUsageSourceDescriptor } from './nativeUsageSourceDiscovery';
 
@@ -16,6 +17,14 @@ function projectCaptureSourceDescriptor(descriptor: NativeUsageSourceDescriptor)
     return { agent, source, sourceKey, root, supported,
         ...(rootKind === undefined ? {} : { rootKind }), ...(error === undefined ? {} : { error }),
         ...(accountingSources === undefined ? {} : { accountingSources }) };
+}
+function applyCaptureSourceDescriptor(current: NativeUsageCaptureSource, descriptor: NativeUsageSourceDescriptor) {
+    const rootKind = current.rootKind;
+    Object.assign(current, descriptor);
+    if (descriptor.accountingSources === undefined) delete current.accountingSources;
+    if (!descriptor.error && (current.error === 'source_unavailable' || current.error === 'agent_unavailable')) delete current.error;
+    if (rootKind === 'override') current.rootKind = rootKind;
+    else if (descriptor.rootKind === undefined) delete current.rootKind;
 }
 export type NativeUsageCollectorDependencies = Readonly<{
     store: NativeUsageCaptureStore;
@@ -302,23 +311,31 @@ export function createNativeUsageCollector(input: NativeUsageCollectorDependenci
                 checkSignal(signal);
                 // A projection of this discovery only, never persisted or cached with capture custody.
                 const fileCounts = new Map(descriptors.map(descriptor => [identity(descriptor).sourceRootKey, descriptor.discoveredFileCount]));
-                const consented = sources.filter(source => source.consented).map(source => source.sourceId);
-                await Promise.all(consented.map(retire));
-                await commit(next => {
-                    for (const discovered of descriptors) {
-                        const descriptor = projectCaptureSourceDescriptor(discovered);
-                        const sourceId = identity(descriptor).sourceRootKey;
-                        const current = next.find(source => source.sourceId === sourceId);
-                        if (current) {
-                            const rootKind = current.rootKind;
-                            Object.assign(current, descriptor);
-                            if (!descriptor.error && (current.error === 'source_unavailable' || current.error === 'agent_unavailable')) delete current.error;
-                            if (rootKind === 'override') current.rootKind = rootKind;
-                        } else next.push({ ...descriptor, sourceId, consented: false, pending: [] });
+                const currentById = new Map(sources.map(source => [source.sourceId, source]));
+                const updates = new Map<string, NativeUsageSourceDescriptor>();
+                for (const discovered of descriptors) {
+                    const descriptor = projectCaptureSourceDescriptor(discovered);
+                    const sourceId = identity(descriptor).sourceRootKey;
+                    const current = currentById.get(sourceId);
+                    if (!current) updates.set(sourceId, descriptor);
+                    else {
+                        const proposed = { ...current };
+                        applyCaptureSourceDescriptor(proposed, descriptor);
+                        if (!isDeepStrictEqual(current, proposed)) updates.set(sourceId, descriptor);
+                    }
+                }
+                const changedConsented = [...updates.keys()].filter(sourceId => currentById.get(sourceId)?.consented);
+                await Promise.all(changedConsented.map(retire));
+                if (updates.size) await commit(next => {
+                    const nextById = new Map(next.map(source => [source.sourceId, source]));
+                    for (const [sourceId, descriptor] of updates) {
+                        const current = nextById.get(sourceId);
+                        if (current) applyCaptureSourceDescriptor(current, descriptor);
+                        else next.push({ ...descriptor, sourceId, consented: false, pending: [] });
                     }
                 });
                 // Inventory disappearance is not permission to drop custody or an override.
-                await Promise.all(consented.map(activate));
+                await Promise.all(changedConsented.map(activate));
                 return sources.map(source => {
                     const discoveredFileCount = fileCounts.get(source.sourceId);
                     return { ...view(source), ...(discoveredFileCount === undefined ? {} : { discoveredFileCount }) };
