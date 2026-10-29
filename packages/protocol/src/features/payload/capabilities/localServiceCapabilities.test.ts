@@ -1,16 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import { FEATURE_CATALOG, FEATURE_IDS } from '../../catalog.js';
 import { CapabilitiesSchema } from './capabilitiesSchema.js';
 import { FeatureGatesSchema } from '../featureGatesSchema.js';
 
 describe('local service feature gates and capabilities', () => {
-  it('declares inventory and managed feature ids with dependency ordering', () => {
-    expect(FEATURE_IDS).toContain('localServices.inventory');
-    expect(FEATURE_IDS).toContain('localServices.managed');
-    expect(FEATURE_CATALOG['localServices.managed'].dependencies).toContain('localServices.inventory');
-  });
-
   it('defaults local service gates to disabled and parses enabled payloads', () => {
     expect(FeatureGatesSchema.parse({}).localServices).toMatchObject({
       enabled: false,

@@ -23,7 +23,9 @@ describe('Runner activation progress', () => {
 
   it('rejects unknown phases and unknown proof fields', () => {
     expect(RunnerActivationProgressPhaseV1Schema.safeParse('preparing_session').success).toBe(false);
-    expect(RunnerActivationProgressUpdateV1Schema.safeParse({
+    const activationKey = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(13));
+    const installationKey = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(14));
+    const update = signRunnerActivationProgressUpdateV1({
       payload: {
         v: 1,
         purpose: 'happier.ephemeral-session-runner.activation-progress',
@@ -32,10 +34,14 @@ describe('Runner activation progress', () => {
         machineId: 'machine-13',
         creatorTokenEpoch: 1,
         phase: 'checking_ai_access',
-        extra: true,
       },
-      activationSignature: 'a'.repeat(86),
-      installationSignature: 'b'.repeat(86),
+      activationSecretKey: activationKey.secretKey,
+      installationSecretKey: installationKey.secretKey,
+    });
+    expect(RunnerActivationProgressUpdateV1Schema.safeParse(update).success).toBe(true);
+    expect(RunnerActivationProgressUpdateV1Schema.safeParse({
+      ...update,
+      payload: { ...update.payload, extra: true },
     }).success).toBe(false);
   });
 
@@ -56,14 +62,30 @@ describe('Runner activation progress', () => {
       activationSecretKey: activationKey.secretKey,
       installationSecretKey: installationKey.secretKey,
     });
-    const verify = (expectedPayload: unknown) => verifyRunnerActivationProgressUpdateV1({
+    const verification = {
       update,
-      expectedPayload,
+      expectedPayload: payload,
       activationSigningPublicKey: encodeBase64(activationKey.publicKey, 'base64url'),
       installationPublicKey: encodeBase64(installationKey.publicKey, 'base64url'),
+    };
+    const verify = (expectedPayload: unknown) => verifyRunnerActivationProgressUpdateV1({
+      ...verification,
+      expectedPayload,
     });
 
     expect(verify(payload)).toEqual(update);
     expect(verify({ ...payload, phase: 'preparing_session' })).toBeNull();
+    const changedIdentity = { ...payload, machineId: 'machine-other' };
+    expect(RunnerActivationProgressUpdateV1Schema.safeParse({ ...update, payload: changedIdentity }).success).toBe(true);
+    expect(verify(changedIdentity)).toBeNull();
+    const otherKey = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(15));
+    expect(verifyRunnerActivationProgressUpdateV1({
+      ...verification,
+      activationSigningPublicKey: encodeBase64(otherKey.publicKey, 'base64url'),
+    })).toBeNull();
+    expect(verifyRunnerActivationProgressUpdateV1({
+      ...verification,
+      installationPublicKey: encodeBase64(otherKey.publicKey, 'base64url'),
+    })).toBeNull();
   }, 15_000);
 });

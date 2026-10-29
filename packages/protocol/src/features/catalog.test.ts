@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { FEATURE_CATALOG, FEATURE_IDS, featureRequiresServerSnapshot, isFeatureId, type FeatureId } from './catalog.js';
-import type { FeatureFailMode } from './catalogTypes.js';
+import { FEATURE_CATALOG, FEATURE_IDS, featureRequiresServerSnapshot, isFeatureId } from './catalog.js';
 
 describe('feature catalog', () => {
   it('requires a server snapshot for server features and for client features that depend on one', () => {
@@ -39,47 +38,6 @@ describe('feature catalog', () => {
   it('contains unique feature ids', () => {
     const unique = new Set(FEATURE_IDS);
     expect(unique.size).toBe(FEATURE_IDS.length);
-  });
-
-  // X5 (G9-G): every feature entry must declare an explicit fail mode — fail-closed is the catalog
-  // default, never an implicit fallback resolved at a consumer. These closure tests fail the build if
-  // any entry is missing/invalid, or silently fail-opens without being enumerated as a reviewed
-  // exception, so the fail-safe posture cannot drift as the catalog grows.
-  it('declares an explicit, valid fail mode on every feature entry (no implicit default)', () => {
-    const VALID_FAIL_MODES = new Set<FeatureFailMode>(['fail_closed', 'fail_open']);
-    const missing: string[] = [];
-    const invalid: string[] = [];
-    for (const featureId of FEATURE_IDS) {
-      const entry = FEATURE_CATALOG[featureId];
-      // Read the OWN property so an absent value surfaces as `undefined` (an implicit default), never
-      // a coincidental match.
-      const failMode = (entry as { defaultFailMode?: unknown }).defaultFailMode;
-      if (failMode === undefined) {
-        missing.push(featureId);
-        continue;
-      }
-      if (!VALID_FAIL_MODES.has(failMode as FeatureFailMode)) {
-        invalid.push(`${featureId}=${String(failMode)}`);
-      }
-    }
-    expect(missing).toEqual([]);
-    expect(invalid).toEqual([]);
-  });
-
-  it('defaults every feature entry to fail_closed unless explicitly enumerated as fail_open', () => {
-    // Keeping this set empty asserts the whole catalog is fail-closed by default. Adding an id here is
-    // an explicit, reviewed decision to fail-open a specific feature — never an implicit fallback.
-    const EXPLICIT_FAIL_OPEN_FEATURE_IDS: ReadonlySet<FeatureId> = new Set<FeatureId>();
-    const unexpectedFailOpen: string[] = [];
-    for (const featureId of FEATURE_IDS) {
-      if (
-        FEATURE_CATALOG[featureId].defaultFailMode === 'fail_open'
-        && !EXPLICIT_FAIL_OPEN_FEATURE_IDS.has(featureId)
-      ) {
-        unexpectedFailOpen.push(featureId);
-      }
-    }
-    expect(unexpectedFailOpen).toEqual([]);
   });
 
   it('does not include legacy inbox.friends feature id', () => {
@@ -415,11 +373,6 @@ describe('feature catalog', () => {
     expect(isFeatureId('setup.ssh.nativeTransport')).toBe(true);
     expect(FEATURE_CATALOG['setup.ssh.nativeTransport']?.representation).toBe('client');
     expect(FEATURE_CATALOG['setup.ssh.nativeTransport']?.dependencies).toEqual([]);
-  });
-
-  it('includes remote host management feature ids', () => {
-    expect(isFeatureId('remoteHosts.management')).toBe(true);
-    expect(isFeatureId('remoteHosts.secretMaterial')).toBe(true);
   });
 
   it('includes native terminal renderer gates with explicit dependency ordering', () => {

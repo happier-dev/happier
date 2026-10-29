@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { McpServersSettingsV1Schema } from './settingsV1.js';
 import { McpServerCatalogEntryV1Schema } from './settingsV1.js';
-import { applyMcpServerCatalogMutationV1, emptyMcpServerCatalogV1, loadMcpServerCatalogV1 } from './serverCatalogV1.js';
+import { applyMcpServerCatalogMutationV1, emptyMcpServerCatalogV1, loadMcpServerCatalogV1,
+  readRetainedMcpServerCatalogSourceV1, readMcpServersFromCatalogSnapshotV1 } from './serverCatalogV1.js';
 import { McpServerCatalogRowMutationV1Schema, McpServerCatalogRowReadResponseV1Schema,
   McpServerCatalogSnapshotV1Schema } from './catalogSchemasV1.js';
 import { sealMcpServerCatalogContentV1, listMcpServerCatalogSavedSecretRefsV1, remapMcpServerCatalogSavedSecretReferencesV1 } from './serverRowsV1.js';
@@ -56,7 +57,7 @@ describe('MCP catalog complete inventory admission', () => {
     expect(rewritten.servers[0]?.remote?.url).toBe('https://example.test/mcp');
   });
 
-  it('rejects a retained binding whose definition is missing instead of activating a partial catalog', () => {
+  it('rejects a retained binding whose definition is missing instead of activating a partial catalog', async () => {
     // Actual 0.2 shape, HEAD 37a6541578749067b49d4579be8c752c9591b8c8,
     // packages/protocol/src/mcpServers/settingsV1.ts (clean scoped worktree).
     const retained = { v: 1, strictMode: true, servers: [], bindings: [{
@@ -65,5 +66,27 @@ describe('MCP catalog complete inventory admission', () => {
       overrides: { envPatch: { TOKEN: null } }, createdAt: 1, updatedAt: 2,
     }] };
     expect(McpServersSettingsV1Schema.safeParse(retained).success).toBe(false);
+    const definition = McpServerCatalogEntryV1Schema.parse({
+      id: 'missing', name: 'example', transport: 'stdio', stdio: { command: 'node', args: [] },
+      env: { TOKEN: { t: 'literal', v: 'token' } }, createdAt: 1, updatedAt: 2,
+    });
+    expect(readRetainedMcpServerCatalogSourceV1({
+      mcpServersSettingsV1: { ...retained, servers: [definition] },
+    })).toMatchObject({
+      status: 'opened', strictMode: true,
+      catalog: { servers: [{ id: 'missing' }], bindings: [{ id: 'binding', serverId: 'missing' }] },
+    });
+    const loaded = await loadMcpServerCatalogV1({ mode: 'plain', material: null,
+      readRow: async () => ({ status: 'absent' }), transfer: {
+        readSourceSnapshot: async () => ({ raw: { mcpServersSettingsV1: retained }, version: 1 }),
+        initializeCatalog: async () => { throw new Error('A missing definition must not activate retained bindings'); },
+      } });
+    expect(loaded).toMatchObject({
+      status: 'partial', revision: 'absent', authority: 'inactive',
+      catalog: { v: 1, servers: [], bindings: [] },
+      diagnostics: [{ path: 'bindings[0]', reason: 'invalid-stored-content' }],
+    });
+    expect(readMcpServersFromCatalogSnapshotV1({ snapshot: loaded, strictMode: true }))
+      .toEqual({ status: 'unavailable', reason: 'invalid-stored-content' });
   });
 });

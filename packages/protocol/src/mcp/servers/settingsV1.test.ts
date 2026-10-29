@@ -197,7 +197,7 @@ describe('McpServersSettingsV1Schema', () => {
   });
 
   it('enforces unique binding ids', () => {
-    const res = McpServersSettingsV1Schema.safeParse({
+    const valid = McpServersSettingsV1Schema.parse({
       v: 1,
       strictMode: false,
       servers: [
@@ -213,9 +213,18 @@ describe('McpServersSettingsV1Schema', () => {
       ],
       bindings: [
         { id: 'b1', serverId: 's1', enabled: true, target: { t: 'allMachines' }, createdAt: 0, updatedAt: 0 },
-        { id: 'b1', serverId: 's1', enabled: true, target: { t: 'allMachines' }, createdAt: 0, updatedAt: 0 },
+        { id: 'b2', serverId: 's1', enabled: true, target: { t: 'machine', machineId: 'machine' }, createdAt: 0, updatedAt: 0 },
       ],
     });
+    const res = McpServersSettingsV1Schema.safeParse({
+      ...valid,
+      bindings: valid.bindings.map(binding => ({ ...binding, id: 'b1' })),
+    });
     expect(res.success).toBe(false);
+    if (!res.success) {
+      expect(res.error.issues).toEqual([
+        expect.objectContaining({ code: 'custom', path: ['bindings', 1, 'id'] }),
+      ]);
+    }
   });
 });

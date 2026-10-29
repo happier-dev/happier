@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { LocalServicePreviewResourceV1Schema } from './v1.js';
+import {
+  LocalServicePreviewAccessUrlV1Schema,
+  LocalServicePreviewResourceV1Schema,
+  LocalServicePreviewSnapshotRowV1Schema,
+  LocalServicePreviewSnapshotV1Schema,
+} from './v1.js';
 import { LocalServicePreviewNativeRegistrationRequestV1Schema } from './nativeDirect.js';
 
 type PreviewModule = typeof import('./v1.js');
@@ -221,12 +226,7 @@ describe('local service preview v1 protocol', () => {
   });
 
   it('carries minted private-preview access urls through snapshot rows', async () => {
-    const mod = await loadPreviewModule();
-
-    expect(mod?.LocalServicePreviewSnapshotRowV1Schema).toBeTruthy();
-    if (!mod?.LocalServicePreviewSnapshotRowV1Schema || !mod?.LocalServicePreviewSnapshotV1Schema) return;
-
-    const row = mod.LocalServicePreviewSnapshotRowV1Schema.safeParse({
+    const row = LocalServicePreviewSnapshotRowV1Schema.safeParse({
       previewId: 'preview_123',
       resource: {
         previewId: 'preview_123',
@@ -256,7 +256,7 @@ describe('local service preview v1 protocol', () => {
     }
 
     // accessUrl is nullable so a row may report "no served dev server" without crashing.
-    const nullAccessRow = mod.LocalServicePreviewSnapshotRowV1Schema.safeParse({
+    const nullAccessRow = LocalServicePreviewSnapshotRowV1Schema.safeParse({
       previewId: 'preview_123',
       resource: {
         previewId: 'preview_123',
@@ -283,13 +283,10 @@ describe('local service preview v1 protocol', () => {
     }
 
     // Non-http access urls are rejected (no javascript:/data: smuggling).
-    expect(mod.LocalServicePreviewAccessUrlV1Schema.safeParse('javascript:alert(1)').success).toBe(false);
+    expect(LocalServicePreviewAccessUrlV1Schema.safeParse('javascript:alert(1)').success).toBe(false);
   });
 
   it('accepts a snapshot with minted preview rows while staying backward compatible with rows-absent payloads', async () => {
-    const mod = await loadPreviewModule();
-    if (!mod?.LocalServicePreviewSnapshotV1Schema) return;
-
     const resource = {
       previewId: 'preview_123',
       sessionId: 'session_123',
@@ -308,7 +305,7 @@ describe('local service preview v1 protocol', () => {
     };
 
     // §12.13 old-daemon shape: no `previews` key at all must still parse (fail safe).
-    const legacy = mod.LocalServicePreviewSnapshotV1Schema.safeParse({
+    const legacy = LocalServicePreviewSnapshotV1Schema.safeParse({
       v: 1,
       machineId: 'machine_123',
       generatedAt: 2_000,
@@ -321,7 +318,7 @@ describe('local service preview v1 protocol', () => {
       expect(legacy.data.previews).toBeUndefined();
     }
 
-    const minted = mod.LocalServicePreviewSnapshotV1Schema.safeParse({
+    const minted = LocalServicePreviewSnapshotV1Schema.safeParse({
       v: 1,
       machineId: 'machine_123',
       generatedAt: 2_000,

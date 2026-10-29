@@ -298,7 +298,9 @@ describe('MemorySearchQueryV1Schema', () => {
   });
   it('validates paging and date filters rather than treating malformed filters as annotations', () => {
     const query = { v: 1, query: 'handoff', scope: { type: 'global' }, mode: 'deep' };
-    expect(MemorySearchQueryV1Schema.safeParse({ ...query, cursor: '', createdAfterMs: -1 }).success).toBe(false);
+    expect(MemorySearchQueryV1Schema.safeParse(query).success).toBe(true);
+    expect(MemorySearchQueryV1Schema.safeParse({ ...query, cursor: '' }).success).toBe(false);
+    expect(MemorySearchQueryV1Schema.safeParse({ ...query, createdAfterMs: -1 }).success).toBe(false);
     expect(MemorySearchQueryV1Schema.safeParse({ ...query, createdAfterMs: 20, createdBeforeMs: 10 }).success).toBe(false);
     expect(MemorySearchQueryV1Schema.safeParse({ ...query, cursor: 'opaque', createdAfterMs: 10, createdBeforeMs: 20 }).success).toBe(true);
     const sourceQuery = { ...query, externalSource: { agentId: 'pi', sourceKey: 'local' } };
