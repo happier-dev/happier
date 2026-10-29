@@ -167,6 +167,7 @@ describe('claudeRemote provider transport boundary', () => {
       };
     });
     const runtimeActivityAdapter = {
+      readCurrentState: () => 'idle' as const,
       publishBeforeRuntimeStart: vi.fn(async () => {}),
       activateObservation: vi.fn(async () => { throw new Error('observer activation failed'); }),
       observeActivity: vi.fn(async () => {}),

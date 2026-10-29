@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   createMockSession as createMockSessionBase,
   createPlainSessionFixture as createPlainSessionFixtureBase,
+  createSessionRecordFixture,
 } from '@/testkit/backends/sessionFixtures';
 import {
   createApiSessionSocketStub as createApiSessionSocketStubBase,
@@ -810,6 +811,10 @@ describe('ApiSessionClient session.userMessage.send delivery', () => {
       token: 'tok', encryption: { type: 'legacy', secret: new Uint8Array(32) },
     });
     const daemonCheck = vi.spyOn(machineRpc, 'callMachineRpc').mockResolvedValue({ ok: true, status: 'waiting' });
+    const sessionRead = vi.spyOn(axios, 'get').mockImplementation(async () => ({ status: 200, data: {
+      session: createSessionRecordFixture({ id: 's1', active: true, encryptionMode: 'plain',
+        metadata: JSON.stringify(client.getMetadataSnapshot()) }),
+    } }));
     try {
       await waitForCurrentPendingInputContract(client);
       // Use the real registered control through its RPC boundary; no recovery owner is mocked.
@@ -851,6 +856,7 @@ describe('ApiSessionClient session.userMessage.send delivery', () => {
     } finally {
       credentialRead.mockRestore();
       daemonCheck.mockRestore();
+      sessionRead.mockRestore();
       await client.close();
     }
   });

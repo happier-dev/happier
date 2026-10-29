@@ -95,7 +95,6 @@ import {
     removeCodexSharedControlEndpoint,
     writeCodexSharedControlEndpoint,
 } from './localControl/codexSharedControlEndpoint';
-import { isCodexAppServerTerminalOwnedGroupRecoveryClassification } from './appServer/recovery/terminalGroupRecovery';
 import {
     readCodexRuntimeAuthClassification as readRuntimeAuthClassification,
     createCodexRuntimeAuthFailureTurnHook,
@@ -1799,6 +1798,7 @@ export async function runCodex(opts: {
             mode: codexMcpServer.mode,
             command: codexMcpServer.command,
             env: codexProviderProcessEnv,
+            onProviderTurnEvent: () => session.sessionTurnLifecycle?.observeProviderTurnEvent(),
         });
     }
 
@@ -3049,10 +3049,8 @@ export async function runCodex(opts: {
                         // Connected Accounts has no authentication selection to repair.
                         runtimeAuthRecoveryStatusEmitted = true;
                     } else if (runtimeAuthClassification) {
-                        const appServerTerminalOwnsRecovery = useCodexAppServer
-                            && isCodexAppServerTerminalOwnedGroupRecoveryClassification(runtimeAuthClassification);
-                        if (appServerTerminalOwnsRecovery) {
-                            // The app-server terminal notification owns this exact group-bound
+                        if (useCodexAppServer) {
+                            // The accepted app-server failure owns every classified
                             // runtime-failure report. It settles the provider turn before delegating to
                             // the shared reporter, including when the outer prompt await has already
                             // failed through a different error path. Do not report or flush it twice.

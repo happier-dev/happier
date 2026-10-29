@@ -12,7 +12,7 @@ import type {
   WriteTextFileRequest,
   WriteTextFileResponse,
 } from '@agentclientprotocol/sdk';
-import { RequestError } from '@agentclientprotocol/sdk';
+import { isAcpRequestError, requireLoadedAcpSdk } from './acpSdk';
 import type { AcpPlanProjection, NormalizedAcpPlanSnapshot } from '../plans';
 import type { AcpToolCallTracker } from '../updates/toolCalls/AcpToolCallTracker';
 
@@ -48,7 +48,15 @@ export type AcpExtensionHandlerContext = Readonly<{
 export type AcpExtensionContextFactory = (
   method: string,
   sdkSignal: AbortSignal,
+  sessionId?: string | null,
 ) => AcpExtensionHandlerContext;
+
+function readExtensionSessionId(params: unknown): string | null | undefined {
+  if (typeof params !== 'object' || params === null || Array.isArray(params)) return undefined;
+  if (!Object.prototype.hasOwnProperty.call(params, 'sessionId')) return undefined;
+  const sessionId: unknown = Reflect.get(params, 'sessionId');
+  return typeof sessionId === 'string' ? sessionId : null;
+}
 
 export type AcpExtensionRegistration = Readonly<{
   kind: 'request' | 'notification';
@@ -60,17 +68,25 @@ function parseExtensionParams<Params>(parser: ParamsParser<Params>, value: unkno
   try {
     return typeof parser === 'function' ? parser(value) : parser.parse(value);
   } catch (error) {
-    if (error instanceof RequestError) {
+    if (isAcpRequestError(error)) {
       throw error;
     }
-    throw RequestError.invalidParams(
+    throw requireLoadedAcpSdk().RequestError.invalidParams(
       { details: 'Extension parameters failed validation' },
     );
   }
 }
 
-function wrapExtensionParamsParser<Params>(parser: ParamsParser<Params>): ParamsParser<Params> {
-  return { parse: (value) => parseExtensionParams(parser, value) };
+function wrapExtensionParamsParser<Params>(parser: ParamsParser<Params>): ParamsParser<{
+  params: Params;
+  sessionId: string | null | undefined;
+}> {
+  // Provider schemas can strip sessionId. Preserve only that ingress identity,
+  // separately from the schema-normalized payload delivered to the handler.
+  return { parse: (value) => ({
+    params: parseExtensionParams(parser, value),
+    sessionId: readExtensionSessionId(value),
+  }) };
 }
 
 export function defineAcpExtensionRequest<Params, Response extends Record<string, unknown>>(definition: Readonly<{
@@ -87,8 +103,8 @@ export function defineAcpExtensionRequest<Params, Response extends Record<string
     register: (app, createContext) => {
       app.onRequest(definition.method, wrapExtensionParamsParser(definition.params), (context) => (
         definition.handler(
-          context.params,
-          createContext(definition.method, context.signal),
+          context.params.params,
+          createContext(definition.method, context.signal, context.params.sessionId),
         )
       ));
     },
@@ -109,8 +125,8 @@ export function defineAcpExtensionNotification<Params>(definition: Readonly<{
     register: (app, createContext) => {
       app.onNotification(definition.method, wrapExtensionParamsParser(definition.params), (context) => (
         definition.handler(
-          context.params,
-          createContext(definition.method, context.signal),
+          context.params.params,
+          createContext(definition.method, context.signal, context.params.sessionId),
         )
       ));
     },

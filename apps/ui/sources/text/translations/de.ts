@@ -1015,6 +1015,8 @@ export const de: TranslationStructure = {
     },
 
     appCrash: {
+        saveDiagnostics: "Diagnosedaten speichern",
+        diagnosticsSaveFailed: "Die Diagnosedaten konnten nicht gespeichert werden. Die Fehlerdetails sind weiterhin verfügbar. Versuche es erneut oder kopiere sie.",
         copyFailed: "Die Absturzdetails konnten nicht kopiert werden. Versuche es erneut.",
         discardFailed: "Der gespeicherte Absturz konnte nicht verworfen werden. Versuche es erneut.",
         restartWithoutReport: "Ohne Speichern neu starten",
@@ -3267,6 +3269,10 @@ export const de: TranslationStructure = {
     },
 
     settingsDesktop: {
+        nativeTitleBarTitle: 'Windows-Titelleiste verwenden',
+        nativeTitleBarSubtitle: 'Den standardmäßigen Windows-Rahmen und die Fenstersteuerung anzeigen.',
+        nativeTitleBarChangeFailed: 'Die Titelleiste konnte nicht geändert werden. Versuche es erneut.',
+        nativeTitleBarPersistenceFailed: 'Die Einstellung für die Titelleiste konnte nicht geladen oder gespeichert werden. Ändere sie erneut, um es noch einmal zu versuchen.',
         title: 'Desktop',
         footer: 'Steuert, wie sich Happier auf diesem Computer verhält.',
         backgroundServiceTitle: 'Im Hintergrund erreichbar bleiben',
@@ -3830,6 +3836,10 @@ export const de: TranslationStructure = {
                         title: "Claude-Code-Experimente",
                         footer: "Diese Einstellungen gelten für lokale Claude-Sessions (Terminal) und Remote-Claude-Sessions (Agent SDK), die Happier startet."
                     },
+                    claudeIdleReclaim: {
+                        title: "Inaktive Sitzungen",
+                        footer: "Dein nächster Prompt setzt dieselbe Claude-Sitzung fort und kann etwas länger dauern. Der Zustand im Arbeitsspeicher wird freigegeben. Hintergrundaufgaben, geplante Arbeit und Datei-Checkpoints halten sie aktiv. Sitzungen im einheitlichen Terminal bleiben aktiv."
+                    },
                     claudeRemoteSdk: {
                         title: "Klassische Runtime (Agent-SDK-Fallback)",
                         footer: "Den Agent-SDK-Weg nutzen, wenn die einheitliche Terminal-Runtime aus oder nicht verfügbar ist."
@@ -3913,6 +3923,14 @@ export const de: TranslationStructure = {
                     claudeCodeExperimentalAgentTeamsEnabled: {
                         title: "Agent Teams erzwingen",
                         subtitle: "Die experimentellen Agent Teams von Claude Code (Agent-Schwarm) in allen von Happier gestarteten Claude-Sessions aktivieren."
+                    },
+                    claudeRemoteIdleReclaimEnabled: {
+                        title: "Inaktive Claude-Prozesse freigeben",
+                        subtitle: "Gib nach einer Ruhephase Speicher frei. Standardmäßig ausgeschaltet."
+                    },
+                    claudeRemoteIdleReclaimTimeoutMinutes: {
+                        title: "Inaktivitätsdauer (Minuten)",
+                        subtitle: "Wähle, wie lange eine aktivierte entfernte Claude-Sitzung bereit bleibt."
                     },
                     claudeRemoteAgentSdkEnabled: {
                         title: "Agent-SDK-Fallback nutzen",
@@ -6422,6 +6440,8 @@ export const de: TranslationStructure = {
         deleteSessionSubtitle: 'Diese Session dauerhaft entfernen',
         deleteSessionConfirm: 'Session dauerhaft löschen?',
         deleteSessionWarning: 'Das lässt sich nicht rückgängig machen. Alle Nachrichten und Daten dieser Session werden dauerhaft gelöscht.',
+        stopAndDeleteSession: "Stoppen und löschen",
+        stopAndDeleteSessionWarning: "Dadurch wird die Session gestoppt und alle ihre Nachrichten und Daten werden dauerhaft gelöscht. Diese Aktion kann nicht rückgängig gemacht werden.",
         failedToDeleteSession: 'Die Session ließ sich nicht löschen',
         sessionDeleted: 'Session erfolgreich gelöscht',
         renameSession: 'Session umbenennen',

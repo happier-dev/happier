@@ -6,17 +6,18 @@ import { z } from 'zod';
 
 import { ReplicationManifestEntrySchema, ReplicationManifestFingerprintSchema } from '../replicationManifestSchema';
 import type { WorkspaceReplicationSourceOffer } from './createWorkspaceReplicationSourceOffer';
+import { lazySchema } from '@happier-dev/protocol';
 
 export const WORKSPACE_REPLICATION_SOURCE_OFFER_STREAM_MAGIC = 'HAPPIER_WORKSPACE_REPLICATION_SOURCE_OFFER_V1';
 
-const WorkspaceReplicationSourceOfferHeaderSchema = z.object({
+const WorkspaceReplicationSourceOfferHeaderSchema = lazySchema(() => z.object({
   offerId: z.string().min(1),
   relationshipId: z.string().min(1),
   directionId: z.string().min(1),
   sourceFingerprint: ReplicationManifestFingerprintSchema,
   manifestFingerprint: ReplicationManifestFingerprintSchema.optional(),
   sourceControllerMetadata: z.record(z.string(), z.unknown()).optional(),
-}).strict();
+}).strict());
 
 async function readFilePrefixUtf8(filePath: string, maxBytes: number): Promise<string> {
   const handle = await open(filePath, 'r');

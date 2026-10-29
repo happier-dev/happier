@@ -17,6 +17,7 @@ import { waitForInitialAppUi } from '../../src/testkit/uiE2e/waitForInitialAppUi
 import { ensureAccountReadyForConnect } from '../../src/testkit/uiE2e/ensureAccountReadyForConnect';
 import { authenticateAndStartDaemon } from '../../src/testkit/uiE2e/authenticateAndStartDaemon';
 import { appendBrowserDiagnostics, collectBrowserDiagnostics } from '../../src/testkit/uiE2e/browserDiagnostics';
+import { attachRelayMachineRpcTap, RELAY_FORWARD_TIMEOUT_ACK } from '../../src/testkit/uiE2e/desktopSetup/relayMachineRpcTap';
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
 
@@ -66,6 +67,7 @@ test.describe('ui e2e: session action rail', () => {
       env: {
         ...process.env,
         EXPO_PUBLIC_DEBUG: '1',
+        EXPO_PUBLIC_HAPPIER_SOCKET_FORCE_WEBSOCKET: '1',
         EXPO_PUBLIC_HAPPY_SERVER_URL: server.baseUrl,
         EXPO_PUBLIC_HAPPY_STORAGE_SCOPE: `e2e-${run.runId}`,
         // On cold caches, the initial Metro web bundle can take >2 minutes; avoid aborting the request
@@ -82,6 +84,138 @@ test.describe('ui e2e: session action rail', () => {
     await daemon?.stop().catch(() => {});
     await ui?.stop().catch(() => {});
     await server?.stop().catch(() => {});
+  });
+
+  test('confirms running session deletion, preserves failures, and keeps Archive independent', async ({ page }, testInfo) => {
+    test.setTimeout(240_000);
+    if (!server || !uiBaseUrl) throw new Error('missing server/ui fixtures');
+
+    const browserDiagnostics = collectBrowserDiagnostics({ page });
+    const rpcTap = await attachRelayMachineRpcTap(page);
+    const mutations: string[] = [];
+    page.on('request', (request) => {
+      const path = new URL(request.url()).pathname;
+      if (request.method() === 'DELETE' || /^\/v2\/sessions\/[^/]+\/archive$/.test(path)) {
+        mutations.push(`${request.method()} ${path}`);
+      }
+    });
+    let runDaemon: StartedDaemon | null = null;
+    try {
+      await page.setViewportSize({ width: 1440, height: 900 });
+      const testDir = resolve(join(suiteDir, 'running-session-delete'));
+      const actionCliHome = resolve(join(testDir, 'cli-home'));
+      await mkdir(actionCliHome, { recursive: true });
+      await writeFile(resolve(join(actionCliHome, 'AGENTS.md')), '# UI e2e fixture\n', 'utf8');
+      runDaemon = await authenticateAndStartDaemon({
+        page,
+        testDir,
+        cliHomeDir: actionCliHome,
+        serverUrl: server.baseUrl,
+        uiBaseUrl,
+        extraEnv: {
+          HOME: actionCliHome,
+          HAPPIER_MACHINE_RPC_WORKING_DIRECTORY: testDir,
+          HAPPIER_CLAUDE_PATH: fakeClaudeFixturePath(),
+          HAPPIER_E2E_FAKE_CLAUDE_LOG: resolve(join(testDir, 'fake-claude.jsonl')),
+          HAPPIER_E2E_FAKE_CLAUDE_SESSION_ID: `fake-delete-session-${run.runId}`,
+          HAPPIER_E2E_FAKE_CLAUDE_INVOCATION_ID: `fake-delete-invocation-${run.runId}`,
+        },
+      });
+      daemon = runDaemon;
+      const repoDir = resolve(join(testDir, 'repo'));
+      await createGitRepoWithChanges({ repoDir, fileCount: 1 });
+      const sessionId = await spawnSessionFromDaemon({ daemon: runDaemon, directory: repoDir });
+      const sessionUrl = `${uiBaseUrl}/session/${sessionId}?happier_hmr=0`;
+      await page.goto(sessionUrl, { waitUntil: 'domcontentloaded' });
+      const menu = page.getByTestId('session-header-action-menu-trigger');
+      await expect(menu).toBeVisible({ timeout: 120_000 });
+      await page.getByTestId('session-composer-input').fill(`running delete ${run.runId}`);
+      await expect(page.getByTestId('session-composer-send')).toBeEnabled();
+      await page.getByTestId('session-composer-send').click();
+      await expect(page.getByText('FAKE_CLAUDE_OK_1').first()).toBeVisible({ timeout: 120_000 });
+      await menu.click();
+      for (const action of ['stop', 'archive', 'delete']) {
+        await expect(page.getByTestId(`dropdown-option-ui_session_${action}`)).toBeVisible();
+      }
+      await expect(page.getByTestId('session-header-info-button')).toBeVisible();
+      await testInfo.attach('loaded-running-session-source', {
+        body: JSON.stringify({
+          uiUrl: page.url(),
+          serverUrl: server.baseUrl,
+          scripts: await page.locator('script[src]').evaluateAll((scripts) => scripts.map((script) => script.getAttribute('src'))),
+          sourceEntrypoints: ['apps/ui', 'apps/server/sources/main.light.ts', 'apps/cli/src/index.ts'],
+        }),
+        contentType: 'application/json',
+      });
+      await page.screenshot({ path: testInfo.outputPath('running-session-delete-menu.png') });
+
+      const stopCalls = () => rpcTap.calls().filter((call) => call.method.endsWith(':stop-session') || call.method.endsWith(':killSession'));
+      const stopsBeforeCancel = stopCalls().length;
+      await page.getByTestId('dropdown-option-ui_session_delete').click();
+      await expect(page.getByTestId('web-modal-confirm')).toBeVisible();
+      await page.getByTestId('web-modal-cancel').click();
+      await expect(page.getByTestId('web-modal-confirm')).toHaveCount(0);
+      await expect(page.getByTestId(`session-list-item-${sessionId}`)).toBeVisible();
+      expect(stopCalls()).toHaveLength(stopsBeforeCancel);
+      expect(mutations).toEqual([]);
+      await expect.poll(() => new URL(page.url()).pathname).toBe(`/session/${sessionId}`);
+
+      // Fail only real relay routes; the runner and the internal lifecycle remain real.
+      rpcTap.setUnresponsiveMethod('stop-session');
+      rpcTap.setMethodResponse({ method: `${sessionId}:killSession`, ack: RELAY_FORWARD_TIMEOUT_ACK });
+      await menu.click();
+      await page.getByTestId('dropdown-option-ui_session_delete').click();
+      await page.getByTestId('web-modal-confirm').click();
+      await expect(page.getByTestId('web-modal-button-0')).toBeVisible({ timeout: 60_000 });
+      expect(stopCalls().some((call) => call.injected)).toBe(true);
+      expect(mutations).toEqual([]);
+      await expect(page.getByTestId(`session-list-item-${sessionId}`)).toBeVisible();
+      await expect.poll(() => new URL(page.url()).pathname).toBe(`/session/${sessionId}`);
+      await page.screenshot({ path: testInfo.outputPath('stop-failure-preserves-running-session.png') });
+      await page.getByTestId('web-modal-button-0').click();
+      rpcTap.setUnresponsiveMethod(null);
+      rpcTap.setMethodResponse(null);
+
+      await menu.click();
+      await expect(page.getByTestId('dropdown-option-ui_session_stop')).toBeVisible();
+      await page.getByTestId('dropdown-option-ui_session_delete').click();
+      const deleted = page.waitForResponse((response) => response.request().method() === 'DELETE'
+        && new URL(response.url()).pathname === `/v1/sessions/${sessionId}`);
+      await page.getByTestId('web-modal-confirm').click();
+      expect((await deleted).ok()).toBe(true);
+      await expect.poll(() => new URL(page.url()).pathname).toBe('/');
+      await expect(page.getByTestId(`session-list-item-${sessionId}`)).toHaveCount(0);
+      expect(stopCalls().some((call) => !call.injected && call.ack?.ok === true)).toBe(true);
+      expect(mutations).toEqual([`DELETE /v1/sessions/${sessionId}`]);
+      await page.screenshot({ path: testInfo.outputPath('stop-delete-returns-home.png') });
+
+      const archiveSessionId = await spawnSessionFromDaemon({ daemon: runDaemon, directory: repoDir });
+      await page.goto(`${uiBaseUrl}/session/${archiveSessionId}?happier_hmr=0`, { waitUntil: 'domcontentloaded' });
+      await expect(menu).toBeVisible({ timeout: 120_000 });
+      await menu.click();
+      await expect(page.getByTestId('dropdown-option-ui_session_stop')).toBeVisible();
+      await expect(page.getByTestId('dropdown-option-ui_session_delete')).toBeVisible();
+      const archived = page.waitForResponse((response) => response.request().method() === 'POST'
+        && new URL(response.url()).pathname === `/v2/sessions/${archiveSessionId}/archive`
+        && response.ok());
+      await page.getByTestId('dropdown-option-ui_session_archive').click();
+      await page.getByTestId('web-modal-confirm').click();
+      expect((await archived).ok()).toBe(true);
+      await expect(page.getByTestId(`session-list-item-${archiveSessionId}`)).toHaveCount(0);
+      expect(mutations).toEqual([
+        `DELETE /v1/sessions/${sessionId}`,
+        `POST /v2/sessions/${archiveSessionId}/archive`,
+      ]);
+      await testInfo.attach('browser-diagnostics', {
+        body: JSON.stringify(browserDiagnostics()),
+        contentType: 'application/json',
+      });
+    } catch (error) {
+      throw appendBrowserDiagnostics(error, browserDiagnostics());
+    } finally {
+      await runDaemon?.stop().catch(() => {});
+      if (daemon === runDaemon) daemon = null;
+    }
   });
 
   test('opens independent panes and preserves access across responsive layouts', async ({ page }, testInfo) => {

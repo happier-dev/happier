@@ -23,16 +23,24 @@ import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 import { waitForCondition } from '@/testkit/async/waitFor';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { registerSessionHandlers } from '@/rpc/handlers/registerSessionHandlers';
-import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { hasSameUsageLimitRecoveryIdentity } from './mergeUsageLimitRecoveryIntent';
 import { DEFAULT_USAGE_LIMIT_RECOVERY_BACKOFF_MS } from './createBackoffSessionUsageLimitRecoveryControlAdapter';
+import { createDaemonControlApp } from '@/daemon/controlServer';
+import { authorizeConnectedServiceRuntimeAuthFailureSource, handleConnectedServiceRuntimeAuthFailureForSession } from '@/daemon/connectedServices/runtimeAuth/handleConnectedServiceRuntimeAuthFailureForSession';
+import { RuntimeAuthRecoveryScheduler } from '@/daemon/connectedServices/runtimeAuth/RuntimeAuthRecoveryScheduler';
+import { buildRuntimeAuthRecoveryKey } from '@/daemon/connectedServices/runtimeAuth/recoveryKey/runtimeAuthRecoveryKey';
+import { reportConnectedServiceRuntimeAuthFailureToDaemon } from '@/daemon/connectedServices/runtimeAuth/reportConnectedServiceRuntimeAuthFailureToDaemon';
+import { readRuntimeAuthFailureReportOutboxItems } from '@/daemon/connectedServices/runtimeAuth/reportOutbox/runtimeAuthFailureReportOutbox';
+import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol';
 
-const network = vi.hoisted(() => ({ fetchSessionById: vi.fn(), enqueue: vi.fn(), rpc: vi.fn(), socket: vi.fn() }));
+const network = vi.hoisted(() => ({ fetchSessionById: vi.fn(), enqueue: vi.fn(), rpc: vi.fn(), socket: vi.fn(), machineRpc: vi.fn() }));
 // Only the relay network is replaced; routing, metadata convergence, timing, and Pending admission are real.
 vi.mock('@/session/transport/http/sessionsHttp', () => ({ fetchSessionById: network.fetchSessionById }));
 vi.mock('@/api/session/sockets', () => ({ createSessionScopedSocket: network.socket }));
 vi.mock('@/api/session/pendingQueueV2Transport', () => ({ enqueuePendingQueueV2MessageViaHttp: network.enqueue }));
 vi.mock('@/session/transport/rpc/sessionRpc', () => ({ callSessionRpc: network.rpc }));
+vi.mock('@/session/transport/rpc/machineRpc', () => ({ callMachineRpc: network.machineRpc }));
 
 const credentials: Credentials = { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array(32) } };
 const sessionId = 'c123456789012345678901234';
@@ -122,6 +130,74 @@ describe('generic usage-limit continuation through the session control boundary'
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(features), { status: 200 })));
   });
   afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); vi.unstubAllGlobals(); resetServerFeaturesClientForTests(); });
+
+  it('keeps native-login Codex quota recovery Session-owned after daemon intake', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(300);
+    const provider = 'codex';
+    const serviceId = 'openai-codex';
+    const nativeIssue: SessionRuntimeIssueV1 = { ...issue, provider, usageLimit: { ...issue.usageLimit!, resetAtMs: 10_000,
+      connectedService: { serviceId, profileId: null, groupId: null } } };
+    const fixture = createLiveFixture({ issue: nativeIssue, metadata: { flavor: provider },
+      settings: accountSettingsParse({ usageLimitRecoverySettingsV1: { v: 1, mode: 'auto_wait' } }) });
+    const tracked = { startedBy: 'daemon' as const, happySessionId: fixture.sessionId, pid: 123,
+      spawnOptions: { directory: '/project' } };
+    const source = { getChildren: () => [tracked], resolveRegisteredRuntimeAuthFailureSource: () => null };
+    const scheduler = new RuntimeAuthRecoveryScheduler({ nowMs: Date.now,
+      recover: async () => { throw new Error('Native login must not enter daemon recovery'); } });
+    const app = createDaemonControlApp({
+      getChildren: source.getChildren, machineId: 'machine-local', controlToken: 'token',
+      stopSession: async () => ({ status: 'not_found' as const }),
+      spawnSession: async () => ({ type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED, errorMessage: 'unused' }),
+      requestShutdown: () => {}, onHappySessionWebhook: () => {},
+      runtimeAuthRecoveryScheduler: scheduler,
+      authorizeConnectedServiceRuntimeAuthFailure: (input) => authorizeConnectedServiceRuntimeAuthFailureSource({ ...source, ...input }),
+      handleConnectedServiceRuntimeAuthFailure: (input) => handleConnectedServiceRuntimeAuthFailureForSession({ ...source, ...input, switchCoordinator: null }),
+    });
+    const root = await createTempDir('native-quota-intake-');
+    try {
+      await fixture.runtime.observeFailure(nativeIssue);
+      expect(fixture.readRecovery()).toMatchObject({ status: 'waiting', selectedAuth: { kind: 'native' } });
+      const report = await reportConnectedServiceRuntimeAuthFailureToDaemon({ sessionId: fixture.sessionId,
+        reportOutboxDir: root, classification: { kind: 'usage_limit', serviceId, profileId: null, groupId: null,
+          resetsAtMs: 10_000, planType: null, rateLimits: null, source: 'structured_provider_error' },
+        notify: async (payload) => {
+          const response = await app.inject({ method: 'POST', url: '/connected-service-runtime-auth/failure',
+            headers: { 'x-happier-daemon-token': 'token' }, payload });
+          expect(response.statusCode).toBe(200);
+          return response.json();
+        },
+      });
+      expect(report.report).toMatchObject({ ok: true, result: { status: 'not_applicable' } });
+      expect(scheduler.readByKey(buildRuntimeAuthRecoveryKey({ sessionId: fixture.sessionId,
+        serviceId, profileId: null, groupId: null }))).toBeNull();
+      expect(await readRuntimeAuthFailureReportOutboxItems({ outboxDir: root })).toHaveLength(0);
+      expect(fixture.readRecovery().runtimeAuthRecoveryAttemptId).toBeUndefined();
+      vi.setSystemTime(10_001);
+      expect(await fixture.runtime.controls.checkUsageLimitRecoveryNow({ sessionId: fixture.sessionId }))
+        .toMatchObject({ ok: true, status: 'resumed' });
+      expect(fixture.readRecovery().status).toBe('cancelled');
+      expect(network.enqueue).toHaveBeenCalledOnce();
+      expect(network.machineRpc).not.toHaveBeenCalled();
+    } finally { fixture.runtime.dispose(); scheduler.dispose(); await app.close(); await removeTempDir(root); }
+  });
+
+  it('continues a native-login Grok usage limit through the Session owner without a Connected Account', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(300);
+    const nativeIssue: SessionRuntimeIssueV1 = { ...issue, provider: 'grok' };
+    const fixture = createLiveFixture({ issue: nativeIssue, metadata: { flavor: 'grok' },
+      settings: accountSettingsParse({ usageLimitRecoverySettingsV1: { v: 1, mode: 'auto_wait' } }) });
+    try {
+      await fixture.runtime.observeFailure(nativeIssue);
+      expect(fixture.readRecovery()).toMatchObject({ status: 'waiting', selectedAuth: { kind: 'native' } });
+      expect(fixture.readRecovery().runtimeAuthRecoveryAttemptId).toBeUndefined();
+      expect(await fixture.runtime.controls.checkUsageLimitRecoveryNow({ sessionId: fixture.sessionId }))
+        .toMatchObject({ ok: true, status: 'resumed' });
+      expect(network.enqueue).toHaveBeenCalledOnce();
+      expect(network.machineRpc).not.toHaveBeenCalled();
+    } finally { fixture.runtime.dispose(); }
+  });
 
   it('continues a due native failed turn through Pending when its provider has no quota probe', async () => {
     const recovery: SessionUsageLimitRecoveryV1 = { v: 1, status: 'waiting',
@@ -226,6 +302,39 @@ describe('generic usage-limit continuation through the session control boundary'
     } finally { registration.dispose(); rpc.clearHandlers(); fixture.runtime.dispose(); }
   });
 
+  it('routes check-now to the daemon owner when its pooled attempt arrives after RPC registration', async () => {
+    const fixture = createLiveFixture();
+    const rpc = new RpcHandlerManager({ scopePrefix: fixture.sessionId, encryptionKey: null,
+      encryptionVariant: 'plain', encryptionMode: 'plain', logger: () => {} });
+    const registration = registerSessionHandlers(rpc, '/project', { getSessionMetadata: fixture.getMetadata,
+      updateSessionMetadata: fixture.updateMetadata, sessionRuntimeControls: fixture.runtime.controls });
+    const recovery: SessionUsageLimitRecoveryV1 = { v: 1, status: 'waiting',
+      issueFingerprint: buildUsageLimitIssueFingerprint(issue), runtimeAuthRecoveryAttemptId: 'daemon-attempt',
+      armedAtMs: 100, resetAtMs: 200, nextCheckAtMs: 200, attemptCount: 0, maxAttempts: 3,
+      lastProbeError: null, resumePromptMode: 'standard', selectedAuth: {
+        kind: 'group', serviceId: 'openai-codex', groupId: 'pool', profileId: 'profile-a',
+      } };
+    await fixture.updateMetadata((metadata) => ({ ...metadata, sessionUsageLimitRecoveryV1: recovery }));
+    try {
+      network.machineRpc.mockResolvedValue({ ok: true, status: 'waiting' });
+      const check = () => rpc.invokeLocal(SESSION_RPC_METHODS.SESSION_USAGE_LIMIT_CHECK_NOW,
+        { sessionId: fixture.sessionId, resumePromptMode: 'off' });
+      expect(await check()).toMatchObject({ ok: true, status: 'waiting' });
+      expect(network.machineRpc).toHaveBeenCalledWith(expect.objectContaining({
+        credentials, machineId: 'machine-local', method: RPC_METHODS.DAEMON_SESSION_USAGE_LIMIT_CHECK_NOW,
+        request: { sessionId: fixture.sessionId, resumePromptMode: 'off' },
+        authorization: { kind: 'session.write', sessionId: fixture.sessionId },
+      }));
+      expect(fixture.readRecovery()).toEqual(recovery);
+      network.machineRpc.mockRejectedValue(new Error('daemon unavailable'));
+      expect(await check()).toMatchObject({ ok: false, errorCode: 'session_usage_limit_recovery_control_remote_unavailable' });
+      network.fetchSessionById.mockRejectedValueOnce(new Error('session lookup unavailable'));
+      expect(await check()).toMatchObject({ ok: false, errorCode: 'session_usage_limit_recovery_control_remote_unavailable' });
+      expect(fixture.readRecovery()).toEqual(recovery);
+      expect(network.enqueue).not.toHaveBeenCalled();
+    } finally { registration.dispose(); rpc.clearHandlers(); fixture.runtime.dispose(); }
+  });
+
   it.each([true, false])('refreshes registered recovery RPC admission after the canonical feature decision changes from %s', async (initiallyEnabled) => {
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(300);
@@ -301,7 +410,7 @@ describe('generic usage-limit continuation through the session control boundary'
     } finally { fixture.runtime.dispose(); }
   });
 
-  it('arms only the current failure and replaces an older scheduled issue with a genuinely new one', async () => {
+  it.each([false, true])('replaces an older scheduled issue with a new failure when daemon-owned is %s', async (daemonOwned) => {
     vi.useFakeTimers();
     vi.setSystemTime(300);
     const firstIssue: SessionRuntimeIssueV1 = { ...issue, usageLimit: { ...issue.usageLimit!, resetAtMs: 10_000 } };
@@ -310,6 +419,9 @@ describe('generic usage-limit continuation through the session control boundary'
     }) });
     try {
       await fixture.runtime.observeFailure(firstIssue);
+      if (daemonOwned) await fixture.updateMetadata((metadata) => ({ ...metadata,
+        sessionUsageLimitRecoveryV1: { ...fixture.readRecovery(), runtimeAuthRecoveryAttemptId: 'old-daemon-attempt' },
+      }));
       const first = fixture.readRecovery();
       await fixture.runtime.observeFailure(firstIssue);
       expect(fixture.readRecovery()).toEqual(first);
@@ -320,6 +432,7 @@ describe('generic usage-limit continuation through the session control boundary'
       await fixture.runtime.observeFailure(nextIssue);
       expect(fixture.readRecovery()).toMatchObject({ issueFingerprint: buildUsageLimitIssueFingerprint(nextIssue),
         armedAtMs: 500, nextCheckAtMs: 20_000 });
+      expect(fixture.readRecovery().runtimeAuthRecoveryAttemptId).toBeUndefined();
       await vi.advanceTimersByTimeAsync(9_500);
       expect(network.enqueue).not.toHaveBeenCalled();
       await vi.advanceTimersByTimeAsync(10_000);

@@ -511,6 +511,7 @@ function NewSessionSimplePanelComposer({
                         onSend={attachmentsController.handleSend}
                         isSendDisabled={!props.canCreate}
                         isSending={props.isCreating}
+                        disabled={props.isCreating}
                         placeholder={t('session.inputPlaceholder')}
                         autocompleteKinds={props.emptyAutocompleteKinds}
                         autocompleteSuggestions={props.emptyAutocompleteSuggestions}

@@ -1,14 +1,23 @@
 import { appendFile, mkdir, mkdtemp, rename, truncate, writeFile, type FileHandle } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const openMock = vi.hoisted(() => vi.fn<typeof import('node:fs/promises').open>());
+const readFileMock = vi.hoisted(() => vi.fn<typeof import('node:fs/promises').readFile>());
+const writeFileMock = vi.hoisted(() => vi.fn<typeof import('node:fs/promises').writeFile>());
+const renameMock = vi.hoisted(() => vi.fn<typeof import('node:fs/promises').rename>());
 
 vi.mock('node:fs/promises', async () => {
   const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
-  return { ...actual, open: (...args: Parameters<typeof actual.open>) => openMock(...args) };
+  return {
+    ...actual,
+    open: (...args: Parameters<typeof actual.open>) => openMock(...args),
+    readFile: (...args: Parameters<typeof actual.readFile>) => readFileMock(...args),
+    writeFile: (...args: Parameters<typeof actual.writeFile>) => writeFileMock(...args),
+    rename: (...args: Parameters<typeof actual.rename>) => renameMock(...args),
+  };
 });
 
 import { readClaudeSessionTitle } from './readClaudeSessionTitle';
@@ -17,11 +26,66 @@ function jsonlLine(value: unknown): string {
   return `${JSON.stringify(value)}\n`;
 }
 
+async function instrumentTranscriptReads(filePath: string): Promise<() => Promise<number>> {
+  const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+  const handles: FileHandle[] = [];
+  openMock.mockImplementation(async (...args) => {
+    const handle = await actual.open(...args);
+    if (String(args[0]) === filePath) {
+      // Instrument the OS boundary while retaining real reads and both JSONL readers.
+      vi.spyOn(handle, 'read');
+      handles.push(handle);
+    }
+    return handle;
+  });
+  return async () => {
+    let total = 0;
+    for (const handle of handles) {
+      for (const result of vi.mocked(handle.read).mock.results) {
+        if (result.type === 'return') total += (await result.value).bytesRead;
+      }
+    }
+    return total;
+  };
+}
+
+async function createTitleCacheFixture(options: Readonly<{ happierHome?: string; lifecycleScope?: string }> = {}) {
+  const root = await mkdtemp(join(tmpdir(), 'happier-claude-title-cache-failure-'));
+  vi.stubEnv('HAPPIER_HOME_DIR', options.happierHome ?? join(root, 'happier'));
+  if (options.lifecycleScope) vi.stubEnv('HAPPIER_DAEMON_LIFECYCLE_SCOPE_ID', options.lifecycleScope);
+  vi.resetModules();
+  const [reader, { configuration }, { logger }] = await Promise.all([
+    import('./readClaudeSessionTitle'),
+    import('@/configuration'),
+    import('@/utils/logger'),
+  ]);
+  const filePath = join(root, 'session-one.jsonl');
+  await writeFile(filePath, jsonlLine({ type: 'custom-title', customTitle: 'Cached title' }), 'utf8');
+  return {
+    ...reader,
+    filePath,
+    cachePath: join(dirname(configuration.daemonStateFile), 'claude-direct-session-titles.json'),
+    // Observe the file logging boundary without replacing its implementation.
+    warning: vi.spyOn(logger, 'warnFile'),
+  };
+}
+
 describe('readClaudeSessionTitle', () => {
   beforeEach(async () => {
     const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
     openMock.mockReset();
     openMock.mockImplementation(actual.open);
+    readFileMock.mockReset();
+    readFileMock.mockImplementation(actual.readFile);
+    writeFileMock.mockReset();
+    writeFileMock.mockImplementation(actual.writeFile);
+    renameMock.mockReset();
+    renameMock.mockImplementation(actual.rename);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
   });
 
   it('prefers the latest custom title over newer AI snapshots across tail pages', async () => {
@@ -185,26 +249,7 @@ describe('readClaudeSessionTitle', () => {
     ].join('');
     await writeFile(filePath, transcript, 'utf8');
     const transcriptBytes = Buffer.byteLength(transcript);
-    const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
-    const handles: FileHandle[] = [];
-    openMock.mockImplementation(async (...args) => {
-      const handle = await actual.open(...args);
-      if (String(args[0]) === filePath) {
-        // Instrument the OS boundary while retaining real reads and both JSONL readers.
-        vi.spyOn(handle, 'read');
-        handles.push(handle);
-      }
-      return handle;
-    });
-    const bytesRead = async () => {
-      let total = 0;
-      for (const handle of handles) {
-        for (const result of vi.mocked(handle.read).mock.results) {
-          if (result.type === 'return') total += (await result.value).bytesRead;
-        }
-      }
-      return total;
-    };
+    const bytesRead = await instrumentTranscriptReads(filePath);
 
     await expect(readClaudeSessionTitle(filePath)).resolves.toBe('AI title');
     const coldBytes = await bytesRead();
@@ -267,6 +312,46 @@ describe('readClaudeSessionTitle', () => {
     await expect(readClaudeSessionTitle(filePath)).resolves.toBe('Renamed after a huge record');
   });
 
+  it('parses only title-bearing records while scanning a transcript tail', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-claude-title-prefilter-'));
+    const filePath = join(root, 'session-one.jsonl');
+    await writeFile(filePath, [
+      jsonlLine({ type: 'user', message: { content: 'Initial user prompt' } }),
+      jsonlLine({ type: 'ai-title', aiTitle: 'AI title' }),
+      jsonlLine({ type: 'user', message: { content: 'What does an "ai-title" record look like?' } }),
+      ...Array.from({ length: 520 }, () => jsonlLine({ type: 'progress', data: 'x'.repeat(4_096) })),
+    ].join(''), 'utf8');
+    const parse = vi.spyOn(JSON, 'parse');
+    try {
+      await expect(readClaudeSessionTitle(filePath)).resolves.toBe('AI title');
+      expect(parse.mock.calls.length).toBeLessThan(10);
+    } finally {
+      parse.mockRestore();
+    }
+  });
+
+  it('reuses titles resolved by a previous daemon process', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-claude-title-persisted-'));
+    const filePath = join(root, 'session-one.jsonl');
+    const transcript = [
+      jsonlLine({ type: 'user', message: { content: 'Initial user prompt' } }),
+      jsonlLine({ type: 'ai-title', aiTitle: 'AI title' }),
+      ...Array.from({ length: 520 }, () => jsonlLine({ type: 'progress', data: 'x'.repeat(4_096) })),
+    ].join('');
+    await writeFile(filePath, transcript, 'utf8');
+    await expect(readClaudeSessionTitle(filePath)).resolves.toBe('AI title');
+    const { flushClaudeTitleCache } = await import('./readClaudeSessionTitle');
+    await flushClaudeTitleCache();
+
+    vi.resetModules();
+    const restarted = await import('./readClaudeSessionTitle');
+    const bytesRead = await instrumentTranscriptReads(filePath);
+    await expect(restarted.readClaudeSessionTitle(filePath)).resolves.toBe('AI title');
+    await appendFile(filePath, jsonlLine({ type: 'custom-title', customTitle: 'Renamed after restart' }), 'utf8');
+    await expect(restarted.readClaudeSessionTitle(filePath)).resolves.toBe('Renamed after restart');
+    expect(await bytesRead()).toBeLessThan(Buffer.byteLength(transcript) / 10);
+  });
+
   it('rereads a transcript that was rewritten or replaced', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-claude-title-rewrite-'));
     const filePath = join(root, 'session-one.jsonl');
@@ -284,5 +369,101 @@ describe('readClaudeSessionTitle', () => {
     await writeFile(replacement, jsonlLine({ type: 'custom-title', customTitle: 'Replaced title' }), 'utf8');
     await rename(replacement, filePath);
     await expect(readClaudeSessionTitle(filePath)).resolves.toBe('Replaced title');
+  });
+
+  it('reports an unexpected cache read failure and rebuilds the cache from the transcript', async () => {
+    const fixture = await createTitleCacheFixture();
+    const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+    const failure = Object.assign(new Error('Cache read denied'), { code: 'EACCES' });
+    readFileMock.mockImplementation(async (...args) => {
+      if (String(args[0]) === fixture.cachePath) throw failure;
+      return actual.readFile(...args);
+    });
+
+    await expect(fixture.readClaudeSessionTitle(fixture.filePath)).resolves.toBe('Cached title');
+    expect(fixture.warning).toHaveBeenCalledWith(expect.stringContaining('cache'), { code: 'EACCES' });
+
+    readFileMock.mockImplementation(actual.readFile);
+    await fixture.flushClaudeTitleCache();
+    expect(JSON.parse(await actual.readFile(fixture.cachePath, 'utf8'))).toEqual(expect.objectContaining({
+      entries: expect.arrayContaining([[fixture.filePath, expect.objectContaining({ customTitle: 'Cached title' })]]),
+    }));
+  });
+
+  it('preserves each daemon lifecycle scope cache across interleaved flushes and restart', async () => {
+    const happierHome = await mkdtemp(join(tmpdir(), 'happier-claude-shared-home-'));
+    const scopeA = await createTitleCacheFixture({ happierHome, lifecycleScope: 'relay-a' });
+    const transcript = jsonlLine({ type: 'custom-title', customTitle: 'Scope A title' })
+      + Array.from({ length: 520 }, () => jsonlLine({ type: 'progress', data: 'x'.repeat(4096) })).join('');
+    await writeFile(scopeA.filePath, transcript, 'utf8');
+    await expect(scopeA.readClaudeSessionTitle(scopeA.filePath)).resolves.toBe('Scope A title');
+    expect(scopeA.warning).not.toHaveBeenCalled();
+
+    // Both daemon maps load before either publishes, then each writes its own map.
+    const scopeB = await createTitleCacheFixture({ happierHome, lifecycleScope: 'relay-b' });
+    await expect(scopeB.readClaudeSessionTitle(scopeB.filePath)).resolves.toBe('Cached title');
+    expect(scopeB.warning).not.toHaveBeenCalled();
+    await scopeA.flushClaudeTitleCache();
+    await scopeB.flushClaudeTitleCache();
+
+    const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+    for (const scope of [scopeA, scopeB]) {
+      expect(JSON.parse(await actual.readFile(scope.cachePath, 'utf8'))).toMatchObject({
+        entries: [[scope.filePath, expect.any(Object)]],
+      });
+    }
+
+    const restarted = await createTitleCacheFixture({ happierHome, lifecycleScope: 'relay-a' });
+    const bytesRead = await instrumentTranscriptReads(scopeA.filePath);
+    await expect(restarted.readClaudeSessionTitle(scopeA.filePath)).resolves.toBe('Scope A title');
+    expect(await bytesRead()).toBeLessThan(Buffer.byteLength(transcript) / 10);
+  });
+
+  it('rebuilds a missing cache without warning', async () => {
+    const fixture = await createTitleCacheFixture();
+    await expect(fixture.readClaudeSessionTitle(fixture.filePath)).resolves.toBe('Cached title');
+    expect(fixture.warning).not.toHaveBeenCalled();
+    await fixture.flushClaudeTitleCache();
+  });
+
+  it('reports malformed cache data without logging cached title content', async () => {
+    const fixture = await createTitleCacheFixture();
+    await mkdir(dirname(fixture.cachePath), { recursive: true });
+    await writeFile(fixture.cachePath, '{"private-title":"sensitive cached text",invalid}', 'utf8');
+
+    await expect(fixture.readClaudeSessionTitle(fixture.filePath)).resolves.toBe('Cached title');
+    expect(fixture.warning).toHaveBeenCalledWith(expect.stringContaining('cache'), { code: null });
+    expect(JSON.stringify(fixture.warning.mock.calls)).not.toContain('sensitive cached text');
+    await fixture.flushClaudeTitleCache();
+  });
+
+  it.each(['write', 'rename'] as const)('reports a failed cache %s and retries publication without another transcript change', async (operation) => {
+    const fixture = await createTitleCacheFixture();
+    const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+    await expect(fixture.readClaudeSessionTitle(fixture.filePath)).resolves.toBe('Cached title');
+    const failure = Object.assign(new Error(`Cache ${operation} failed`), { code: 'EIO' });
+    if (operation === 'write') {
+      writeFileMock.mockImplementation(async (...args) => {
+        if (String(args[0]).startsWith(`${fixture.cachePath}.`)) throw failure;
+        return actual.writeFile(...args);
+      });
+    } else {
+      renameMock.mockImplementation(async (...args) => {
+        if (String(args[1]) === fixture.cachePath) throw failure;
+        return actual.rename(...args);
+      });
+    }
+
+    await expect(fixture.flushClaudeTitleCache()).resolves.toBeUndefined();
+    expect.soft(fixture.warning).toHaveBeenCalledWith(expect.stringContaining('cache'), { code: 'EIO' });
+    expect.soft((await actual.readdir(dirname(fixture.cachePath))).filter((name) => name.startsWith(`${basename(fixture.cachePath)}.`)))
+      .toEqual([]);
+
+    writeFileMock.mockImplementation(actual.writeFile);
+    renameMock.mockImplementation(actual.rename);
+    await fixture.flushClaudeTitleCache();
+    expect(JSON.parse(await actual.readFile(fixture.cachePath, 'utf8'))).toEqual(expect.objectContaining({
+      entries: expect.arrayContaining([[fixture.filePath, expect.objectContaining({ customTitle: 'Cached title' })]]),
+    }));
   });
 });

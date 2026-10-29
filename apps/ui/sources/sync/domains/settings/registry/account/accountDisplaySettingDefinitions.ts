@@ -5,6 +5,7 @@ import {
     HappierReplayWritableMaxSeedCharsSchema,
 } from '@happier-dev/protocol';
 import { z } from 'zod';
+import { ThemeProfileLibrarySchema } from '@/theme/profiles/themeProfilePersistence';
 
 function bucketCount(value: number, smallMax: number, mediumMax: number): 'small' | 'medium' | 'large' {
     if (value <= smallMax) return 'small';
@@ -19,6 +20,12 @@ function bucketBytes(value: number, smallMax: number, mediumMax: number): 'small
 }
 
 export const ACCOUNT_DISPLAY_SETTING_DEFINITIONS = defineSettingDefinitions({
+    themeProfiles: {
+        schema: ThemeProfileLibrarySchema,
+        default: [],
+        description: 'Custom theme library shared by account clients; activation remains local',
+        storageScope: 'account',
+    },
     sessionThinkingDisplayMode: {
         schema: z.enum(['inline', 'tool', 'hidden']),
         default: 'inline',

@@ -26,15 +26,17 @@ const classifiedFailure = {
 } as const;
 
 describe('reportConnectedServiceRuntimeAuthFailureToDaemon', () => {
-  it.each(['usage_limit', 'auth_expired', 'refresh_failed', 'account_changed', 'account_disabled', 'permission_denied'] as const)('keeps native %s failures with their session without creating a Connected Account report', async (kind) => {
+  it.each(['usage_limit', 'auth_expired', 'refresh_failed', 'account_changed', 'account_disabled', 'permission_denied'] as const)('delivers unattributed %s failures for daemon-owned session binding authorization', async (kind) => {
     const outboxDir = await createTempDir('happier-native-quota-report-');
-    const notify = vi.fn(async () => ({ ok: true, result: { status: 'recovery_action_required', action: { kind: 'connected_service_required' } } }));
+    const notify = vi.fn(async () => ({ ok: true, result: { status: 'not_applicable', reason: 'no_connected_service_binding' } }));
     try {
       const result = await reportConnectedServiceRuntimeAuthFailureToDaemon({ sessionId: 'native-quota-session',
         classification: { ...classifiedFailure, kind, profileId: null, groupId: null },
         notify, reportOutboxDir: outboxDir });
-      expect(result).toMatchObject({ handled: false, report: null, statusMessage: null });
-      expect(notify).not.toHaveBeenCalled();
+      expect(result.report).not.toBeNull();
+      expect(notify).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+        classification: expect.objectContaining({ profileId: null, groupId: null }),
+      }), expect.anything());
       expect(await readRuntimeAuthFailureReportOutboxItems({ outboxDir })).toEqual([]);
     } finally { await removeTempDir(outboxDir); }
   });

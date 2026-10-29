@@ -1219,6 +1219,8 @@ export const pt: TranslationStructure = {
   },
 
   appCrash: {
+      saveDiagnostics: "Salvar diagnósticos",
+      diagnosticsSaveFailed: "Não foi possível salvar os diagnósticos. Os detalhes do erro continuam disponíveis. Tente novamente ou copie-os.",
       copyFailed: "Não foi possível copiar os detalhes da falha. Tente novamente.",
       discardFailed: "Não foi possível descartar a falha guardada. Tente novamente.",
       restartWithoutReport: "Reiniciar sem guardar",
@@ -3668,6 +3670,10 @@ export const pt: TranslationStructure = {
   },
 
   settingsDesktop: {
+    nativeTitleBarTitle: 'Usar a barra de título do Windows',
+    nativeTitleBarSubtitle: 'Mostrar a moldura e os controles de janela padrão do Windows.',
+    nativeTitleBarChangeFailed: 'Não foi possível alterar a barra de título. Tente novamente.',
+    nativeTitleBarPersistenceFailed: 'Não foi possível carregar ou salvar a preferência da barra de título. Altere-a novamente para tentar outra vez.',
     title: 'Área de trabalho',
     footer: 'Controla como o Happier se comporta neste computador.',
     backgroundServiceTitle: 'Continuar acessível em segundo plano',
@@ -4246,6 +4252,10 @@ export const pt: TranslationStructure = {
                         title: "Experimentos do Claude Code",
                         footer: "Estas configuracoes se aplicam tanto as sessoes locais do Claude (terminal) quanto as remotas (Agent SDK) iniciadas pelo Happier."
                     },
+                    claudeIdleReclaim: {
+                        title: "Sessões inativas",
+                        footer: "O próximo prompt retoma a mesma sessão do Claude e pode demorar um pouco mais. O estado em memória é liberado. Tarefas em segundo plano, trabalho agendado e checkpoints de arquivos a mantêm ativa. As sessões de terminal unificado continuam ativas."
+                    },
                     claudeRemoteSdk: {
                         title: "Runtime classico (fallback Agent SDK)",
                         footer: "Use o caminho Agent SDK quando o runtime de terminal unificado estiver desativado ou indisponivel."
@@ -4329,6 +4339,14 @@ export const pt: TranslationStructure = {
                     claudeCodeExperimentalAgentTeamsEnabled: {
                         title: "Forcar ativacao do Agent Teams",
                         subtitle: "Ativa o Agent Teams experimental do Claude Code (enxame de agentes) em todas as sessoes do Claude iniciadas pelo Happier."
+                    },
+                    claudeRemoteIdleReclaimEnabled: {
+                        title: "Liberar processos inativos do Claude",
+                        subtitle: "Libera memória após um período sem atividade. Desativado por padrão."
+                    },
+                    claudeRemoteIdleReclaimTimeoutMinutes: {
+                        title: "Tempo de inatividade (minutos)",
+                        subtitle: "Escolha por quanto tempo uma sessão remota do Claude com esta opção ativada permanece pronta."
                     },
                     claudeRemoteAgentSdkEnabled: {
                         title: "Usar fallback Agent SDK",
@@ -6940,6 +6958,8 @@ export const pt: TranslationStructure = {
     deleteSessionConfirm: "Excluir sessão permanentemente?",
     deleteSessionWarning:
       "Esta ação não pode ser desfeita. Todas as mensagens e dados associados a esta sessão serão excluídos permanentemente.",
+    stopAndDeleteSession: "Parar e excluir",
+    stopAndDeleteSessionWarning: "Isso interromperá a sessão e excluirá permanentemente todas as suas mensagens e dados. Esta ação não pode ser desfeita.",
     failedToDeleteSession: "Falha ao excluir sessão",
     sessionDeleted: "Sessão excluída com sucesso",
     manageSharing: "Gerenciar compartilhamento",

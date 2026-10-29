@@ -14,7 +14,20 @@ describe('ensureManagedJavaScriptRuntimeCommand bootstrap', () => {
   const tempDirs: string[] = [];
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+  });
+
+  it('preserves caller cancellation before starting a runtime bootstrap', async () => {
+    const homeDir = join(tmpdir(), `happier-managed-runtime-cancel-${randomUUID()}`);
+    tempDirs.push(homeDir);
+    const controller = new AbortController();
+    const reason = new Error('caller stopped bootstrap');
+    controller.abort(reason);
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('metadata should not start after cancellation'));
+    await expect(ensureManagedJavaScriptRuntimeCommand(
+      { ...process.env, HAPPIER_HOME_DIR: homeDir, PATH: '' }, {}, { signal: controller.signal },
+    )).rejects.toBe(reason);
   });
 
   it('selects the existing skip-links policy for the verified managed Node archive', async () => {

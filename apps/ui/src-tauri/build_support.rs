@@ -35,6 +35,7 @@ pub const APP_TAURI_COMMANDS: &[&str] = &[
     "system_tasks_open_log_path",
     "respond_system_task_prompt",
     "desktop_get_window_chrome_policy",
+    "desktop_set_native_title_bar",
     "desktop_get_window_state",
     "desktop_minimize_window",
     "desktop_toggle_window_maximize",

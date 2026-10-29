@@ -6,6 +6,7 @@ import { useUnistyles } from 'react-native-unistyles';
 import { useRouter } from 'expo-router';
 
 import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
+import { useSessionActionNavigation } from '@/hooks/session/useSessionActionNavigation';
 
 import { storage, useSessionOrganizationProjection, useSetting, useSettings } from '@/sync/domains/state/storage';
 import { useSessionAttentionStandingInputs } from '@/hooks/session/useSessionAttentionStandingInputs';
@@ -62,6 +63,7 @@ import {
   resolveAttentionStandingFromSessionActionId,
   resolveManualReadStateFromSessionActionId,
   SESSION_ACTION_ARCHIVE_ID,
+  SESSION_ACTION_DELETE_ID,
   SESSION_ACTION_CLEAR_ATTENTION_STANDING_ID,
   SESSION_ACTION_MARK_READ_ID,
   SESSION_ACTION_MARK_UNREAD_ID,
@@ -75,7 +77,9 @@ import {
   SESSION_ACTION_UNPIN_ID,
 } from '@/components/sessions/actions/sessionActionIds';
 import { buildSessionMetadataStabilitySignature } from '@/sync/domains/session/metadata/sessionMetadataStability';
-import { getSessionName } from '@/utils/sessions/sessionUtils';
+import { getSessionName, getSessionStatus } from '@/utils/sessions/sessionUtils';
+import { nowServerMs } from '@/sync/runtime/time';
+import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { resolveSessionHeaderActionTargetPx, SESSION_HEADER_ICON_SIZE_PX } from '@/components/sessions/actions/sessionHeaderIconMetrics';
 import { Icon } from '@/components/ui/icons/Icon';
 import { emitSessionResumeRequest } from '@/components/sessions/model/sessionResumeRequests';
@@ -198,6 +202,11 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
   const sessionHandoffEnabled = useFeatureEnabled('sessions.handoff');
   const executionRunsEnabled = useFeatureEnabled('execution.runs');
   const sessionServerId = usePreferredServerIdForSession(props.sessionId);
+  const navigateAfterDelete = useSessionActionNavigation({
+    sessionId: props.sessionId,
+    serverId: sessionServerId ?? null,
+    onNavigate: React.useCallback(() => safeRouterBack({ router, fallbackHref: '/' }), [router]),
+  });
   const archivePending = useSessionArchivePending(props.sessionId, sessionServerId);
   // Scoped to THIS Session's server, like the in-Session picker: the child is
   // created on that server, so an unrelated selected server must not decide
@@ -247,7 +256,7 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
       session,
       serverId: sessionServerId ?? null,
       currentUserId: !session.accessLevel && typeof session.owner === 'string' ? session.owner : null,
-      isConnected: session.active === true,
+      isConnected: getSessionStatus(session, nowServerMs()).isConnected,
       isPinned: isPinnedSession,
       attentionStandingEnabled,
       attentionStanding: isAttentionStandingSession,
@@ -530,6 +539,16 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
             onError: () => {
               Modal.alert(t('common.error'), t('session.resumeFailed'));
             },
+          });
+          return;
+        }
+        if (actionId === SESSION_ACTION_DELETE_ID) {
+          fireAndForget((async () => {
+            const result = await executeSessionAction({ actionId, target: sessionActionTarget });
+            if (result !== false) navigateAfterDelete();
+          })(), {
+            tag: 'SessionHeaderActionMenu.execute.sessionDelete',
+            onError: (error) => Modal.alert(t('common.error'), error instanceof Error ? error.message : t('sessionInfo.failedToDeleteSession')),
           });
           return;
         }

@@ -1,7 +1,7 @@
 import type { ACPMessageData } from '@/api/session/sessionMessageTypes';
 
 import type { OpenCodeGlobalEvent } from './types';
-import { asRecord, normalizeString } from './openCodeParsing';
+import { asRecord, normalizeString, readOpenCodeEventIdentity } from './openCodeParsing';
 
 type ContextCompactionTrigger = 'manual' | 'auto' | 'threshold' | 'overflow' | 'unknown';
 type ContextCompactionPhase = 'started' | 'progress' | 'completed' | 'failed' | 'cancelled';
@@ -26,16 +26,6 @@ function normalizeTrigger(value: unknown): ContextCompactionTrigger {
   const raw = normalizeString(value).trim().toLowerCase();
   if (raw === 'manual' || raw === 'auto' || raw === 'threshold' || raw === 'overflow') return raw;
   return 'unknown';
-}
-
-function readSessionId(props: Record<string, unknown>): string {
-  const nestedSession = asRecord(props.session);
-  return (
-    normalizeString(props.sessionID)
-    || normalizeString(props.sessionId)
-    || normalizeString(props.session_id)
-    || normalizeString(nestedSession?.id)
-  ).trim();
 }
 
 function readCompactionId(props: Record<string, unknown>): string {
@@ -73,7 +63,7 @@ export function mapOpenCodeCompactionEventToAgentMessage(
   const props = asRecord(evt.payload.properties);
   if (!props) return null;
 
-  const providerSessionId = readSessionId(props);
+  const providerSessionId = readOpenCodeEventIdentity(type, props)?.sessionId ?? '';
   if (!providerSessionId || providerSessionId !== expectedSessionId) return null;
 
   const providerEventId = readCompactionId(props);

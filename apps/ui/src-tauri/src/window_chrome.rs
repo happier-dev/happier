@@ -2,6 +2,13 @@
 use serde::Serialize;
 
 #[cfg(desktop)]
+#[path = "window_chrome_preferences.rs"]
+mod preferences;
+
+#[cfg(desktop)]
+struct DesktopWindowChromeState(std::sync::Mutex<preferences::WindowChromePreferences>);
+
+#[cfg(desktop)]
 use tauri::{App, Emitter, Manager, Runtime, TitleBarStyle, WebviewWindow, Window, WindowEvent};
 
 #[cfg(target_os = "macos")]
@@ -20,6 +27,7 @@ const DESKTOP_WINDOW_STATE_EVENT: &str = "desktopWindow://state";
 pub enum DesktopWindowChromeStrategy {
     None,
     NativeMacosTrafficLights,
+    NativeWindowsFrame,
     CustomControls,
 }
 
@@ -46,6 +54,10 @@ struct DesktopWindowChromeRuntimePolicy {
 #[serde(rename_all = "camelCase")]
 pub struct DesktopWindowChromePolicyPayload {
     pub strategy: DesktopWindowChromeStrategy,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub can_set_native_title_bar: bool,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub native_title_bar_persistence_error: bool,
 }
 
 #[cfg(desktop)]
@@ -101,6 +113,7 @@ fn resolve_current_desktop_window_platform() -> DesktopWindowPlatform {
 fn resolve_desktop_window_chrome_runtime_policy(
     window_label: &str,
     platform: DesktopWindowPlatform,
+    use_native_title_bar: bool,
 ) -> DesktopWindowChromeRuntimePolicy {
     if window_label != MAIN_WINDOW_LABEL {
         return DesktopWindowChromeRuntimePolicy {
@@ -112,6 +125,14 @@ fn resolve_desktop_window_chrome_runtime_policy(
     }
 
     match platform {
+        DesktopWindowPlatform::Windows if use_native_title_bar => {
+            DesktopWindowChromeRuntimePolicy {
+                strategy: DesktopWindowChromeStrategy::NativeWindowsFrame,
+                use_window_decorations: true,
+                title_bar_style: None,
+                hide_native_title: false,
+            }
+        }
         DesktopWindowPlatform::MacOs => DesktopWindowChromeRuntimePolicy {
             strategy: DesktopWindowChromeStrategy::NativeMacosTrafficLights,
             use_window_decorations: true,
@@ -173,7 +194,45 @@ fn build_desktop_window_chrome_policy_payload(
 ) -> DesktopWindowChromePolicyPayload {
     DesktopWindowChromePolicyPayload {
         strategy: policy.strategy,
+        can_set_native_title_bar: false,
+        native_title_bar_persistence_error: false,
     }
+}
+
+#[cfg(desktop)]
+fn resolve_window_chrome_policy<R: Runtime>(
+    app: &tauri::AppHandle<R>,
+    label: &str,
+) -> DesktopWindowChromeRuntimePolicy {
+    let state = app.state::<DesktopWindowChromeState>();
+    let preferences = state
+        .0
+        .lock()
+        .expect("window chrome preference lock poisoned");
+    resolve_desktop_window_chrome_runtime_policy(
+        label,
+        resolve_current_desktop_window_platform(),
+        preferences.use_native_title_bar,
+    )
+}
+
+#[cfg(desktop)]
+fn window_chrome_policy_payload(
+    label: &str,
+    preferences: &preferences::WindowChromePreferences,
+) -> DesktopWindowChromePolicyPayload {
+    let platform = resolve_current_desktop_window_platform();
+    let mut payload =
+        build_desktop_window_chrome_policy_payload(resolve_desktop_window_chrome_runtime_policy(
+            label,
+            platform,
+            preferences.use_native_title_bar,
+        ));
+    payload.can_set_native_title_bar =
+        label == MAIN_WINDOW_LABEL && platform == DesktopWindowPlatform::Windows;
+    payload.native_title_bar_persistence_error =
+        payload.can_set_native_title_bar && preferences.persistence_error;
+    payload
 }
 
 #[cfg(desktop)]
@@ -199,10 +258,7 @@ fn resolve_desktop_window_state_payload_for_policy(
 fn resolve_desktop_window_state_payload_for_window<R: Runtime>(
     window: &Window<R>,
 ) -> DesktopWindowStatePayload {
-    let policy = resolve_desktop_window_chrome_runtime_policy(
-        window.label(),
-        resolve_current_desktop_window_platform(),
-    );
+    let policy = resolve_window_chrome_policy(window.app_handle(), window.label());
     if !desktop_window_chrome_policy_tracks_maximized_state(policy) {
         return resolve_desktop_window_state_payload_for_policy(policy, false);
     }
@@ -235,10 +291,7 @@ fn apply_desktop_window_chrome_runtime_policy<R: Runtime>(
 
 #[cfg(desktop)]
 fn emit_desktop_window_state<R: Runtime>(window: &WebviewWindow<R>) {
-    let policy = resolve_desktop_window_chrome_runtime_policy(
-        window.label(),
-        resolve_current_desktop_window_platform(),
-    );
+    let policy = resolve_window_chrome_policy(window.app_handle(), window.label());
     if !desktop_window_chrome_policy_tracks_maximized_state(policy) {
         return;
     }
@@ -322,7 +375,10 @@ pub(crate) fn create_main_window(app: &tauri::AppHandle) -> tauri::Result<Webvie
         .find(|window| window.label == MAIN_WINDOW_LABEL)
         .cloned()
         .ok_or_else(|| tauri::Error::WindowNotFound)?;
-    let window = tauri::WebviewWindowBuilder::from_config(app, &config)?.build()?;
+    let policy = resolve_window_chrome_policy(app, MAIN_WINDOW_LABEL);
+    let window = tauri::WebviewWindowBuilder::from_config(app, &config)?
+        .decorations(policy.use_window_decorations)
+        .build()?;
     configure_main_window(app, &window);
     Ok(window)
 }
@@ -332,12 +388,36 @@ pub(crate) fn create_main_window(app: &tauri::AppHandle) -> tauri::Result<Webvie
 pub async fn desktop_get_window_chrome_policy(
     window: Window,
 ) -> Result<DesktopWindowChromePolicyPayload, String> {
-    Ok(build_desktop_window_chrome_policy_payload(
-        resolve_desktop_window_chrome_runtime_policy(
-            window.label(),
-            resolve_current_desktop_window_platform(),
-        ),
-    ))
+    let state = window.state::<DesktopWindowChromeState>();
+    let preferences = state.0.lock().map_err(|error| error.to_string())?;
+    Ok(window_chrome_policy_payload(window.label(), &preferences))
+}
+
+#[cfg(desktop)]
+#[tauri::command]
+pub async fn desktop_set_native_title_bar(
+    window: WebviewWindow,
+    use_native_title_bar: bool,
+) -> Result<DesktopWindowChromePolicyPayload, String> {
+    if window.label() != MAIN_WINDOW_LABEL
+        || resolve_current_desktop_window_platform() != DesktopWindowPlatform::Windows
+    {
+        return Err(
+            "native title bar preference is only available for the Windows main window".into(),
+        );
+    }
+    let state = window.state::<DesktopWindowChromeState>();
+    let policy = resolve_desktop_window_chrome_runtime_policy(
+        window.label(),
+        DesktopWindowPlatform::Windows,
+        use_native_title_bar,
+    );
+    // Applying decorations may synchronously deliver resize events, whose state
+    // projection reads the preferences too. Never hold that lock across the OS call.
+    apply_desktop_window_chrome_runtime_policy(&window, policy)?;
+    let mut preferences = state.0.lock().map_err(|error| error.to_string())?;
+    preferences.save_applied(use_native_title_bar);
+    Ok(window_chrome_policy_payload(window.label(), &preferences))
 }
 
 #[cfg(desktop)]
@@ -349,10 +429,7 @@ pub async fn desktop_get_window_state(window: Window) -> Result<DesktopWindowSta
 #[cfg(desktop)]
 #[tauri::command]
 pub async fn desktop_minimize_window(window: Window) -> Result<bool, String> {
-    let policy = resolve_desktop_window_chrome_runtime_policy(
-        window.label(),
-        resolve_current_desktop_window_platform(),
-    );
+    let policy = resolve_window_chrome_policy(window.app_handle(), window.label());
     if !desktop_window_chrome_policy_supports_controls(policy) {
         return Ok(false);
     }
@@ -368,10 +445,7 @@ pub async fn desktop_minimize_window(window: Window) -> Result<bool, String> {
 #[cfg(desktop)]
 #[tauri::command]
 pub async fn desktop_toggle_window_maximize(window: Window) -> Result<bool, String> {
-    let policy = resolve_desktop_window_chrome_runtime_policy(
-        window.label(),
-        resolve_current_desktop_window_platform(),
-    );
+    let policy = resolve_window_chrome_policy(window.app_handle(), window.label());
     if !desktop_window_chrome_policy_supports_controls(policy) {
         return Ok(false);
     }
@@ -391,10 +465,7 @@ pub async fn desktop_toggle_window_maximize(window: Window) -> Result<bool, Stri
 #[cfg(desktop)]
 #[tauri::command]
 pub async fn desktop_close_window(window: Window) -> Result<bool, String> {
-    let policy = resolve_desktop_window_chrome_runtime_policy(
-        window.label(),
-        resolve_current_desktop_window_platform(),
-    );
+    let policy = resolve_window_chrome_policy(window.app_handle(), window.label());
     if !desktop_window_chrome_policy_supports_controls(policy) {
         return Ok(false);
     }
@@ -421,10 +492,7 @@ pub async fn desktop_show_main_window(app: tauri::AppHandle) -> Result<bool, Str
 #[cfg(desktop)]
 #[tauri::command]
 pub async fn desktop_start_window_dragging(window: Window) -> Result<bool, String> {
-    let policy = resolve_desktop_window_chrome_runtime_policy(
-        window.label(),
-        resolve_current_desktop_window_platform(),
-    );
+    let policy = resolve_window_chrome_policy(window.app_handle(), window.label());
     if !desktop_window_chrome_policy_supports_controls(policy) {
         return Ok(false);
     }
@@ -437,6 +505,17 @@ pub async fn desktop_start_window_dragging(window: Window) -> Result<bool, Strin
 /// which has no window until the tray's Open asks for one.
 #[cfg(desktop)]
 pub fn register(app: &mut App) -> tauri::Result<()> {
+    let preferences = if resolve_current_desktop_window_platform() == DesktopWindowPlatform::Windows
+    {
+        preferences::WindowChromePreferences::load(
+            app.path()
+                .app_config_dir()?
+                .join("window-state/main-window-chrome.json"),
+        )
+    } else {
+        preferences::WindowChromePreferences::default()
+    };
+    app.manage(DesktopWindowChromeState(std::sync::Mutex::new(preferences)));
     if crate::menu_bar::launched_in_menu_bar_mode(app.handle()) {
         return Ok(());
     }
@@ -446,10 +525,7 @@ pub fn register(app: &mut App) -> tauri::Result<()> {
 
 #[cfg(desktop)]
 fn configure_main_window(app: &tauri::AppHandle, window: &WebviewWindow) {
-    let policy = resolve_desktop_window_chrome_runtime_policy(
-        window.label(),
-        resolve_current_desktop_window_platform(),
-    );
+    let policy = resolve_window_chrome_policy(window.app_handle(), window.label());
 
     if let Err(error) = apply_desktop_window_chrome_runtime_policy(window, policy) {
         log::warn!("failed to apply main-window chrome policy: {error}");
@@ -466,7 +542,12 @@ fn configure_main_window(app: &tauri::AppHandle, window: &WebviewWindow) {
         eprintln!("failed to configure main-window frame autosave: {error}");
     }
 
-    if desktop_window_chrome_policy_tracks_maximized_state(policy) {
+    // Windows can switch back to custom controls without recreating the window.
+    if matches!(
+        policy.strategy,
+        DesktopWindowChromeStrategy::CustomControls
+            | DesktopWindowChromeStrategy::NativeWindowsFrame
+    ) {
         emit_desktop_window_state(window);
 
         let window_for_events = window.clone();
@@ -508,6 +589,7 @@ mod tests {
         let policy = resolve_desktop_window_chrome_runtime_policy(
             MAIN_WINDOW_LABEL,
             DesktopWindowPlatform::MacOs,
+            false,
         );
 
         assert_eq!(
@@ -524,6 +606,7 @@ mod tests {
         let policy = resolve_desktop_window_chrome_runtime_policy(
             MAIN_WINDOW_LABEL,
             DesktopWindowPlatform::Windows,
+            false,
         );
 
         assert_eq!(policy.strategy, DesktopWindowChromeStrategy::CustomControls);
@@ -533,10 +616,29 @@ mod tests {
     }
 
     #[test]
+    fn windows_native_title_bar_restores_decorations_without_disabling_actions() {
+        let policy = resolve_desktop_window_chrome_runtime_policy(
+            MAIN_WINDOW_LABEL,
+            DesktopWindowPlatform::Windows,
+            true,
+        );
+        assert!(policy.use_window_decorations);
+        assert!(desktop_window_chrome_policy_supports_controls(policy));
+        assert!(!desktop_window_chrome_policy_tracks_maximized_state(policy));
+        for platform in [DesktopWindowPlatform::MacOs, DesktopWindowPlatform::Linux] {
+            assert_eq!(
+                resolve_desktop_window_chrome_runtime_policy(MAIN_WINDOW_LABEL, platform, true),
+                resolve_desktop_window_chrome_runtime_policy(MAIN_WINDOW_LABEL, platform, false),
+            );
+        }
+    }
+
+    #[test]
     fn non_main_windows_do_not_receive_main_window_chrome_policy() {
         let policy = resolve_desktop_window_chrome_runtime_policy(
             "pet_overlay",
             DesktopWindowPlatform::MacOs,
+            false,
         );
 
         assert_eq!(policy.strategy, DesktopWindowChromeStrategy::None);
@@ -608,6 +710,7 @@ mod tests {
             resolve_desktop_window_chrome_runtime_policy(
                 MAIN_WINDOW_LABEL,
                 DesktopWindowPlatform::Windows,
+                false,
             ),
         );
 
@@ -635,6 +738,7 @@ mod tests {
         let policy = resolve_desktop_window_chrome_runtime_policy(
             "pet_overlay",
             DesktopWindowPlatform::Windows,
+            false,
         );
 
         assert!(!desktop_window_chrome_policy_supports_controls(policy));
@@ -646,6 +750,7 @@ mod tests {
             resolve_desktop_window_chrome_runtime_policy(
                 MAIN_WINDOW_LABEL,
                 DesktopWindowPlatform::MacOs,
+                false,
             ),
             true,
         );
@@ -659,6 +764,7 @@ mod tests {
             resolve_desktop_window_chrome_runtime_policy(
                 MAIN_WINDOW_LABEL,
                 DesktopWindowPlatform::Windows,
+                false,
             ),
             true,
         );
@@ -671,6 +777,7 @@ mod tests {
         let policy = resolve_desktop_window_chrome_runtime_policy(
             MAIN_WINDOW_LABEL,
             DesktopWindowPlatform::MacOs,
+            false,
         );
 
         assert!(!desktop_window_chrome_policy_tracks_maximized_state(policy));
@@ -681,6 +788,7 @@ mod tests {
         let policy = resolve_desktop_window_chrome_runtime_policy(
             MAIN_WINDOW_LABEL,
             DesktopWindowPlatform::Windows,
+            false,
         );
 
         assert!(desktop_window_chrome_policy_tracks_maximized_state(policy));

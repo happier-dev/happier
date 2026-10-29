@@ -1,6 +1,6 @@
 import type { PromptResponse, StopReason } from '@agentclientprotocol/sdk';
-import { RequestError } from '@agentclientprotocol/sdk';
 
+import { requireLoadedAcpSdk } from '@/agent/acp/connection/acpSdk';
 import type { AcpExtensionHandlers } from '@/agent/acp/AcpBackend';
 import { defineAcpExtensionNotification } from '@/agent/acp/connection/types';
 import { readNonBlankOpaqueIdentifier } from '@/utils/opaqueIdentifiers';
@@ -35,7 +35,7 @@ const grokPromptCompleteParamsParser = {
     const sessionId = readNonBlankOpaqueIdentifier(record?.sessionId);
     const promptId = readNonBlankOpaqueIdentifier(record?.promptId);
     if (!sessionId || !promptId) {
-      throw RequestError.invalidParams({
+      throw requireLoadedAcpSdk().RequestError.invalidParams({
         details: 'Grok prompt completion requires exact sessionId and promptId values',
       });
     }

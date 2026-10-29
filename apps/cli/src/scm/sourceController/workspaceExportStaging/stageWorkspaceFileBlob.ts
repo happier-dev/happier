@@ -4,8 +4,9 @@ import { dirname, join } from 'node:path';
 import { z } from 'zod';
 
 import { resolveWorkspaceStagingMarkerFilePath, type WorkspaceStagingRoot } from './createWorkspaceStagingRoot';
+import { lazySchema } from '@happier-dev/protocol';
 
-const workspaceStagingBlobDigestSchema = z.string().regex(/^(sha256):([a-f0-9]{64})$/);
+const workspaceStagingBlobDigestSchema = lazySchema(() => z.string().regex(/^(sha256):([a-f0-9]{64})$/));
 
 export type StagedWorkspaceFileBlob = Readonly<{
     digest: string;

@@ -73,6 +73,8 @@ export interface EnhancedMode {
 
     // Claude remote-mode (provider-scoped) settings forwarded via message meta.
     claudeRemoteAgentSdkEnabled?: boolean;
+    claudeRemoteIdleReclaimEnabled?: boolean;
+    claudeRemoteIdleReclaimTimeoutMinutes?: number;
     claudeUnifiedTerminalEnabled?: boolean;
     claudeUnifiedTerminalHost?: ClaudeUnifiedTerminalHost;
     claudeUnifiedTerminalResumeChoice?: ClaudeUnifiedTerminalResumeChoice;

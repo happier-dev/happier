@@ -6,6 +6,7 @@ import { request as httpsRequest } from 'node:https';
 import { dirname } from 'node:path';
 import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
+import { setTimeout as sleep } from 'node:timers/promises';
 
 const MAX_REDIRECTS = 5;
 const DOWNLOAD_RETRY_DELAYS_MS = [250, 1_000] as const;
@@ -25,7 +26,9 @@ async function openGitHubReleaseAssetResponse(
   url: string,
   headers: Readonly<Record<string, string>>,
   redirectCount = 0,
+  signal?: AbortSignal,
 ): Promise<IncomingMessage> {
+  signal?.throwIfAborted();
   if (redirectCount > MAX_REDIRECTS) {
     throw new Error('[github-release] too many redirects while downloading asset');
   }
@@ -34,17 +37,17 @@ async function openGitHubReleaseAssetResponse(
   const requestImpl = target.protocol === 'https:' ? httpsRequest : httpRequest;
 
   return await new Promise<IncomingMessage>((resolve, reject) => {
-    const req = requestImpl(target, { headers }, (response) => {
+    const req = requestImpl(target, { headers, signal }, (response) => {
       const statusCode = Number(response.statusCode ?? 0);
       const location = typeof response.headers.location === 'string' ? response.headers.location.trim() : '';
       if (isRedirect(statusCode) && location) {
-        response.resume();
+        response.destroy();
         const nextUrl = new URL(location, target).toString();
-        void openGitHubReleaseAssetResponse(nextUrl, headers, redirectCount + 1).then(resolve, reject);
+        void openGitHubReleaseAssetResponse(nextUrl, headers, redirectCount + 1, signal).then(resolve, reject);
         return;
       }
       if (statusCode < 200 || statusCode >= 300) {
-        response.resume();
+        response.destroy();
         reject(new Error(`[github-release] failed to download asset (${statusCode || 'unknown'})`));
         return;
       }
@@ -60,7 +63,10 @@ export async function downloadGitHubReleaseAsset(params: Readonly<{
   destinationPath: string;
   digest?: string | null;
   userAgent?: string;
+  signal?: AbortSignal;
+  onProgress?: (event: Readonly<{ bytesDone: number; bytesTotal?: number }>) => void;
 }>): Promise<void> {
+  params.signal?.throwIfAborted();
   const url = String(params.url ?? '').trim();
   const destinationPath = String(params.destinationPath ?? '').trim();
   const userAgent = String(params.userAgent ?? '').trim() || 'happier-cli';
@@ -80,15 +86,22 @@ export async function downloadGitHubReleaseAsset(params: Readonly<{
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
-      const response = await openGitHubReleaseAssetResponse(url, headers);
+      params.signal?.throwIfAborted();
+      const response = await openGitHubReleaseAssetResponse(url, headers, 0, params.signal);
       const hash = createHash('sha256');
+      let bytesDone = 0;
+      const contentLength = Number(response.headers['content-length']);
+      const total = Number.isSafeInteger(contentLength) && contentLength > 0 ? { bytesTotal: contentLength } : {};
       const hashTap = new Transform({
         transform(chunk, _encoding, callback) {
           hash.update(chunk);
+          bytesDone += chunk.length;
+          params.onProgress?.({ bytesDone, ...total });
           callback(null, chunk);
         },
       });
-      await pipeline(response, hashTap, createWriteStream(tempPath));
+      await pipeline(response, hashTap, createWriteStream(tempPath), { signal: params.signal });
+      params.signal?.throwIfAborted();
       if (expectedSha256) {
         const actualSha256 = hash.digest('hex');
         if (actualSha256 !== expectedSha256) {
@@ -99,12 +112,18 @@ export async function downloadGitHubReleaseAsset(params: Readonly<{
       return;
     } catch (error) {
       await rm(tempPath, { force: true }).catch(() => undefined);
+      params.signal?.throwIfAborted();
       const retryDelayMs = DOWNLOAD_RETRY_DELAYS_MS[attempt - 1] ?? null;
       if (!isRetryableDownloadError(error) || retryDelayMs === null) {
         if (error instanceof Error) throw error;
         throw new Error(String(error));
       }
-      await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+      try {
+        await sleep(retryDelayMs, undefined, { signal: params.signal });
+      } catch (waitError) {
+        params.signal?.throwIfAborted();
+        throw waitError;
+      }
     }
   }
 }

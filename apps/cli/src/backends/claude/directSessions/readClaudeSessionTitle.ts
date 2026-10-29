@@ -1,10 +1,14 @@
 import { createHash } from 'node:crypto';
-import { open, stat } from 'node:fs/promises';
+import { mkdir, open, readFile, stat, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 
+import { configuration } from '@/configuration';
 import { readJsonlFileBackwardPage } from '@/api/directSessions/filePaging/jsonlBackwardPager';
 import { readJsonlFileForward } from '@/api/directSessions/filePaging/jsonlForwardReader';
 import { readDirectSessionTitlePage } from '@/api/directSessions/title/readDirectSessionTitlePage';
 import { readDirectSessionTitleCandidate } from '@/api/directSessions/title/readDirectSessionTitleCandidate';
+import { atomicFileWrite } from '@/utils/fileAtomic';
+import { logger } from '@/utils/logger';
 
 const TITLE_SCAN_CHUNK_MAX_BYTES = 128 * 1024;
 const TITLE_SCAN_CHUNK_MAX_ITEMS = 64;
@@ -34,6 +38,17 @@ function coerceTextContent(content: unknown): string | null {
 const TAIL_TITLE_CACHE_MAX_ENTRIES = 2_048;
 const TAIL_TITLE_APPEND_CHUNK_MAX_BYTES = 1024 * 1024;
 const TAIL_TITLE_FINGERPRINT_SAMPLE_BYTES = 4 * 1024;
+const TAIL_TITLE_CACHE_FILE_VERSION = 1;
+const TAIL_TITLE_CACHE_PERSIST_DELAY_MS = 2_000;
+
+// JSON.stringify writes the type values "custom-title" and "ai-title" verbatim, so a line without
+// their shared suffix cannot be a title record. Checking raw bytes first skips JSON.parse for
+// nearly every transcript line; the record type is still checked after parsing.
+const TITLE_RECORD_MARKER = Buffer.from('-title"');
+
+function mayBeTitleRecord(lineBytes: Buffer): boolean {
+  return lineBytes.includes(TITLE_RECORD_MARKER);
+}
 
 /** Newest title records found in a transcript prefix [0, scannedEndOffsetBytes). */
 type ClaudeTailTitleState = Readonly<{
@@ -64,6 +79,106 @@ function rememberTailTitleState(filePath: string, state: CachedClaudeTailTitleSt
     const oldest = tailTitleStateByFilePath.keys().next().value;
     if (oldest !== undefined) tailTitleStateByFilePath.delete(oldest);
   }
+  scheduleTailTitleStatePersist();
+}
+
+function forgetTailTitleState(filePath: string): void {
+  if (tailTitleStateByFilePath.delete(filePath)) scheduleTailTitleStatePersist();
+}
+
+// The cache is also kept on disk so the first listing after a daemon restart only has to
+// verify each entry and read appended bytes. Entries are revalidated exactly like in-memory
+// ones (dev/ino, size, prefix fingerprint), so a stale or foreign file only costs a rescan.
+function resolveTailTitleCachePath(): string {
+  return join(dirname(configuration.daemonStateFile), 'claude-direct-session-titles.json');
+}
+
+function normalizePersistedTailTitleState(value: unknown): CachedClaudeTailTitleState | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  const isCount = (field: unknown): field is number => typeof field === 'number' && Number.isSafeInteger(field) && field >= 0;
+  const isTitle = (field: unknown): field is string | null => field === null || typeof field === 'string';
+  if (!isCount(record.scannedEndOffsetBytes) || !isCount(record.dev) || !isCount(record.ino)) return null;
+  if (typeof record.customTitleSeen !== 'boolean' || typeof record.aiTitleResolved !== 'boolean') return null;
+  if (!isTitle(record.customTitle) || !isTitle(record.aiTitle) || typeof record.prefixFingerprint !== 'string') return null;
+  return {
+    scannedEndOffsetBytes: record.scannedEndOffsetBytes,
+    customTitleSeen: record.customTitleSeen,
+    customTitle: record.customTitle,
+    aiTitle: record.aiTitle,
+    aiTitleResolved: record.aiTitleResolved,
+    dev: record.dev,
+    ino: record.ino,
+    prefixFingerprint: record.prefixFingerprint,
+  };
+}
+
+let persistedTailTitleStatesLoad: Promise<void> | null = null;
+
+function readCacheErrorCode(error: unknown): string | null {
+  if (!error || typeof error !== 'object' || !('code' in error)) return null;
+  return typeof error.code === 'string' ? error.code : null;
+}
+
+function loadPersistedTailTitleStates(): Promise<void> {
+  persistedTailTitleStatesLoad ??= (async () => {
+    try {
+      const parsed = JSON.parse(await readFile(resolveTailTitleCachePath(), 'utf8')) as Record<string, unknown> | null;
+      if (parsed?.version !== TAIL_TITLE_CACHE_FILE_VERSION || !Array.isArray(parsed.entries)) return;
+      for (const entry of parsed.entries.slice(-TAIL_TITLE_CACHE_MAX_ENTRIES)) {
+        if (!Array.isArray(entry) || typeof entry[0] !== 'string') continue;
+        const state = normalizePersistedTailTitleState(entry[1]);
+        if (state && !tailTitleStateByFilePath.has(entry[0])) tailTitleStateByFilePath.set(entry[0], state);
+      }
+    } catch (error) {
+      const code = readCacheErrorCode(error);
+      if (code !== 'ENOENT') {
+        // Parse errors can contain cached title text, so report only the error code.
+        logger.warnFile('[directSessions.claude] Failed to read title cache; rebuilding from transcripts', { code });
+      }
+    }
+  })();
+  return persistedTailTitleStatesLoad;
+}
+
+let tailTitleStatePersistTimer: ReturnType<typeof setTimeout> | null = null;
+let tailTitleStatePersistInFlight: Promise<void> | null = null;
+let tailTitleStatesDirty = false;
+
+function scheduleTailTitleStatePersist(): void {
+  tailTitleStatesDirty = true;
+  if (tailTitleStatePersistTimer) return;
+  tailTitleStatePersistTimer = setTimeout(() => {
+    tailTitleStatePersistTimer = null;
+    void flushClaudeTitleCache();
+  }, TAIL_TITLE_CACHE_PERSIST_DELAY_MS);
+  tailTitleStatePersistTimer.unref?.();
+}
+
+/** Writes pending title cache changes now (normally debounced). Best effort. */
+export async function flushClaudeTitleCache(): Promise<void> {
+  if (tailTitleStatePersistTimer) {
+    clearTimeout(tailTitleStatePersistTimer);
+    tailTitleStatePersistTimer = null;
+  }
+  while (tailTitleStatePersistInFlight) await tailTitleStatePersistInFlight;
+  if (!tailTitleStatesDirty) return;
+  tailTitleStatesDirty = false;
+
+  const body = JSON.stringify({ version: TAIL_TITLE_CACHE_FILE_VERSION, entries: [...tailTitleStateByFilePath.entries()] });
+  tailTitleStatePersistInFlight = (async () => {
+    const filePath = resolveTailTitleCachePath();
+    try {
+      await mkdir(dirname(filePath), { recursive: true });
+      await atomicFileWrite(filePath, (temporaryPath) => writeFile(temporaryPath, body, { encoding: 'utf8', mode: 0o600 }));
+    } catch (error) {
+      tailTitleStatesDirty = true;
+      logger.warnFile('[directSessions.claude] Failed to write title cache; pending changes retained', { code: readCacheErrorCode(error) });
+    }
+  })().finally(() => {
+    tailTitleStatePersistInFlight = null;
+  });
+  await tailTitleStatePersistInFlight;
 }
 
 /** Detects an in-place rewrite of the already-scanned prefix on the same inode. */
@@ -117,6 +232,7 @@ async function scanTailTitleState(filePath: string, fileSize: number): Promise<C
       // The byte page already bounds memory. Every JSONL record consumes at
       // least one byte, so do not stop at 64 items and reread the same chunk.
       maxItems: TITLE_SCAN_CHUNK_MAX_BYTES,
+      lineFilter: mayBeTitleRecord,
     }));
     if (!page) break;
     // The first page's tail offset excludes an incomplete trailing record.
@@ -216,9 +332,10 @@ async function readClaudeTitleFromTail(filePath: string): Promise<string | null>
   const fileStat = await stat(filePath).catch(() => null);
   if (!fileStat) return null;
 
+  await loadPersistedTailTitleStates();
   const cached = await readCachedTailTitle(filePath, fileStat).catch(() => ({ resolved: false, title: null }));
   if (cached.resolved) return cached.title;
-  tailTitleStateByFilePath.delete(filePath);
+  forgetTailTitleState(filePath);
 
   const state = await scanTailTitleState(filePath, fileStat.size);
   const prefixFingerprint = await readPrefixFingerprint(filePath, state.scannedEndOffsetBytes).catch(() => null);

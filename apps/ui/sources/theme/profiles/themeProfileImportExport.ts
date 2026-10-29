@@ -61,7 +61,9 @@ const DEPRECATED_TOKEN_ID_MIGRATIONS: Readonly<Record<string, string>> = {
     gitRemovedText: 'versionControl.removed.foreground',
 };
 
-const migrateThemeProfileOverrideTokenId = (tokenId: string): string | undefined => DEPRECATED_TOKEN_ID_MIGRATIONS[tokenId];
+const migrateThemeProfileOverrideTokenId = (tokenId: string): string | undefined => (
+    Object.prototype.hasOwnProperty.call(DEPRECATED_TOKEN_ID_MIGRATIONS, tokenId) ? DEPRECATED_TOKEN_ID_MIGRATIONS[tokenId] : undefined
+);
 
 const MODES = ['light', 'dark'] as const satisfies readonly ThemeProfileMode[];
 const ROUTE_SAFE_THEME_PROFILE_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
@@ -90,7 +92,7 @@ export const migrateThemeProfileOverrideTokenIds = (overrides: ThemeProfileColor
     overrides: ThemeProfileColorOverrides;
     migratedTokenIds: readonly string[];
 }> => {
-    const nextOverrides: Record<string, string> = {};
+    const nextOverrides: Record<string, string> = Object.create(null);
     const migratedTokenIds: string[] = [];
 
     for (const [tokenId, value] of Object.entries(overrides)) {
@@ -115,6 +117,7 @@ type SanitizeOverridesOptions = Readonly<{
     defaultBlankName?: boolean;
     rejectInvalidColors?: boolean;
     rejectTooManyOverrides?: boolean;
+    preserveUnknownTokens?: boolean;
 }>;
 
 type SanitizeOverridesResult = Readonly<{
@@ -144,7 +147,7 @@ export const isReservedThemeProfileId = (id: string | null | undefined): boolean
     && (RESERVED_BASE_THEME_PROFILE_IDS.has(id) || isBuiltInThemeProfilePresetId(id))
 );
 
-const fallbackGenerateId = (): string => {
+export const createThemeProfileId = (): string => {
     if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
         return `${THEME_PROFILE_ID_PREFIX}${crypto.randomUUID()}`;
     }
@@ -153,7 +156,7 @@ const fallbackGenerateId = (): string => {
 };
 
 const sanitizeId = (id: unknown, options: ImportOptions): string => {
-    const sourceId = typeof id === 'string' && id.trim().length > 0 ? id.trim() : fallbackGenerateId();
+    const sourceId = typeof id === 'string' && id.trim().length > 0 ? id.trim() : createThemeProfileId();
     if (
         isRouteSafeThemeProfileId(sourceId)
         && !isReservedThemeProfileId(sourceId)
@@ -163,7 +166,7 @@ const sanitizeId = (id: unknown, options: ImportOptions): string => {
     }
 
     for (let attempt = 0; attempt < 10; attempt += 1) {
-        const candidate = (options.generateId ?? fallbackGenerateId)();
+        const candidate = (options.generateId ?? createThemeProfileId)();
         if (
             isRouteSafeThemeProfileId(candidate)
             && !isReservedThemeProfileId(candidate)
@@ -173,7 +176,7 @@ const sanitizeId = (id: unknown, options: ImportOptions): string => {
         }
     }
 
-    return fallbackGenerateId();
+    return createThemeProfileId();
 };
 
 const sanitizeOverrides = (
@@ -192,7 +195,7 @@ const sanitizeOverrides = (
         Object.fromEntries(Object.entries(sourceOverrides).filter((entry): entry is [string, string] => typeof entry[1] === 'string')),
     );
     const migratedTokenIds = new Set(migrated.migratedTokenIds);
-    const nextOverrides: Record<string, string> = {};
+    const nextOverrides: Record<string, string> = Object.create(null);
     let invalid = false;
 
     for (const [sourceTokenId, value] of Object.entries(sourceOverrides).sort(([left], [right]) => left.localeCompare(right))) {
@@ -204,7 +207,7 @@ const sanitizeOverrides = (
         const definition = getThemeProfileTokenDefinition(tokenId);
         if (!definition) {
             warnings.push({ code: 'unknownToken', tokenId, mode });
-            continue;
+            if (!options.preserveUnknownTokens) continue;
         }
 
         if (typeof value !== 'string' || !isValidThemeProfileColorValue(value)) {
@@ -428,6 +431,7 @@ export const sanitizeThemeProfileOverridesForV1TrustBoundary = (
         const result = sanitizeOverrides(overrides[mode], mode, warnings, {
             rejectInvalidColors: true,
             rejectTooManyOverrides: true,
+            preserveUnknownTokens: true,
         });
         return [mode, result];
     })) as Record<ThemeProfileMode, SanitizeOverridesResult>;

@@ -8,6 +8,7 @@ import {
   SpawnSessionTerminalSchema,
 } from '@/rpc/handlers/spawnSessionOptionsContract';
 import { decodeBase64, decryptLegacy } from '@/api/encryption';
+import { lazySchema } from '@happier-dev/protocol';
 
 const ENCRYPTED_TEMPLATE_ENVELOPE_KIND = 'happier_automation_template_encrypted_v1';
 const PLAINTEXT_TEMPLATE_ENVELOPE_KIND = 'happier_automation_template_plain_v1';
@@ -15,7 +16,7 @@ const MAX_TEMPLATE_CIPHERTEXT_CHARS = 220_000;
 const MAX_TEMPLATE_PAYLOAD_CIPHERTEXT_CHARS = 200_000;
 const MAX_TEMPLATE_PAYLOAD_PLAINTEXT_CHARS = 200_000;
 
-const CheckoutCreationDraftSchema = z.object({
+const CheckoutCreationDraftSchema = lazySchema(() => z.object({
   kind: z.literal('git_worktree'),
   displayName: z.string().trim().min(1),
   baseRef: z.string().trim().min(1).nullable().optional(),
@@ -23,9 +24,9 @@ const CheckoutCreationDraftSchema = z.object({
   kind: value.kind,
   displayName: value.displayName.trim(),
   baseRef: typeof value.baseRef === 'string' ? value.baseRef.trim() : null,
-}));
+})));
 
-const TemplateSchema = z.object({
+const TemplateSchema = lazySchema(() => z.object({
   directory: z.string().trim().min(1),
   checkoutCreationDraft: CheckoutCreationDraftSchema.optional(),
   agent: z.string().trim().min(1).optional(),
@@ -53,24 +54,24 @@ const TemplateSchema = z.object({
   sessionEncryptionVariant: z.literal('dataKey').optional(),
   prompt: z.string().optional(),
   displayText: z.string().optional(),
-}).strict();
+}).strict());
 
-const TemplateEnvelopeSchema = z.object({
+const TemplateEnvelopeSchema = lazySchema(() => z.object({
   kind: z.literal(ENCRYPTED_TEMPLATE_ENVELOPE_KIND),
   payloadCiphertext: z.string().trim().min(1),
   existingSessionId: z.string().trim().min(1).optional(),
-}).strict();
+}).strict());
 
-const PlainTemplateEnvelopeSchema = z.object({
+const PlainTemplateEnvelopeSchema = lazySchema(() => z.object({
   kind: z.literal(PLAINTEXT_TEMPLATE_ENVELOPE_KIND),
   payload: z.unknown(),
   existingSessionId: z.string().trim().min(1).optional(),
-}).strict();
+}).strict());
 
-const AnyTemplateEnvelopeSchema = z.discriminatedUnion('kind', [
+const AnyTemplateEnvelopeSchema = lazySchema(() => z.discriminatedUnion('kind', [
   TemplateEnvelopeSchema,
   PlainTemplateEnvelopeSchema,
-]);
+]));
 
 export type AutomationTemplateEncryption =
   | Readonly<{ type: 'legacy'; secret: Uint8Array }>

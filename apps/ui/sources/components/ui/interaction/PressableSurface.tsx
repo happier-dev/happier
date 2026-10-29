@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Platform, Pressable, type View } from 'react-native';
+import { Platform, Pressable, View } from 'react-native';
 import type {
     AccessibilityRole,
     AccessibilityState,
@@ -40,6 +40,8 @@ export type PressableSurfaceProps = Readonly<{
     /** Corner radius the focus ring traces. Keep it equal to the box's own radius. */
     focusRingRadius?: number;
     focusRingPlacement?: FocusRingPlacement;
+    /** Inset the feedback paint and focus ring inside the interactive frame. */
+    feedbackInset?: number;
     /** The control's own box styling. The feedback fill is applied ON TOP of it. */
     style?: StyleProp<ViewStyle>;
     /**
@@ -64,7 +66,7 @@ export const PressableSurface = React.memo((props: PressableSurfaceProps) => {
 
     const keyboardModality = useIsKeyboardModality();
     const [focused, setFocused] = React.useState(false);
-    const [hovered, setHovered] = React.useState(false);
+    const [hoveredForTooltip, setHovered] = React.useState(false);
     const anchorRef = React.useRef<View | null>(null);
     const ringVisible = focused && keyboardModality && !disabled;
     // `FocusRing` runs a Reanimated animated style, so an always-mounted one would cost a shared
@@ -72,6 +74,7 @@ export const PressableSurface = React.memo((props: PressableSurfaceProps) => {
     // reports no keypress, so the modality never leaves `pointer` there). `focused` keeps it
     // mounted while it fades out after the user drops back to the pointer.
     const ringMounted = keyboardModality || focused;
+    const feedbackInset = props.feedbackInset ?? 0;
 
     const handleFocus = React.useCallback(() => setFocused(true), []);
     const handleBlur = React.useCallback(() => setFocused(false), []);
@@ -79,14 +82,55 @@ export const PressableSurface = React.memo((props: PressableSurfaceProps) => {
     const handleHoverOut = React.useCallback(() => setHovered(false), []);
 
     const resolveStyle = React.useCallback(({ pressed, hovered }: { pressed?: boolean; hovered?: boolean }) => {
-        const backgroundColor = feedback.resolveBackgroundColor({ pressed, hovered });
+        const backgroundColor = feedbackInset > 0 ? undefined : feedback.resolveBackgroundColor({ pressed, hovered });
         return [
             props.style,
             Platform.OS === 'web' ? WEB_FOCUS_OUTLINE_RESET : null,
             backgroundColor === undefined ? null : { backgroundColor },
             props.styleOverride,
         ];
-    }, [feedback, props.style, props.styleOverride]);
+    }, [feedback, feedbackInset, props.style, props.styleOverride]);
+
+    const renderContent = ({ pressed, hovered }: { pressed?: boolean; hovered?: boolean }) => (
+        <>
+            {feedbackInset > 0 ? (
+                <View
+                    testID={props.testID ? `${props.testID}-feedback-surface` : undefined}
+                    pointerEvents="none"
+                    style={{
+                        position: 'absolute',
+                        top: feedbackInset,
+                        right: feedbackInset,
+                        bottom: feedbackInset,
+                        left: feedbackInset,
+                        borderRadius: props.focusRingRadius,
+                        backgroundColor: feedback.resolveBackgroundColor({ pressed, hovered }),
+                    }}
+                >
+                    {ringMounted ? (
+                        <FocusRing
+                            testID={props.testID === undefined ? undefined : `${props.testID}-focus-ring`}
+                            visible={ringVisible}
+                            radius={props.focusRingRadius}
+                            placement={props.focusRingPlacement}
+                        />
+                    ) : null}
+                </View>
+            ) : null}
+            {props.children}
+            {Platform.OS === 'web' && props.webTooltip && (hoveredForTooltip || ringVisible) ? (
+                <DeferredAnchoredTooltip activationKey={`${hoveredForTooltip}:${focused}`} anchorRef={anchorRef} label={props.webTooltip} content={props.tooltipContent} placement={props.tooltipPlacement} testID={props.testID ? `${props.testID}-tooltip` : undefined} />
+            ) : null}
+            {feedbackInset === 0 && ringMounted ? (
+                <FocusRing
+                    testID={props.testID === undefined ? undefined : `${props.testID}-focus-ring`}
+                    visible={ringVisible}
+                    radius={props.focusRingRadius}
+                    placement={props.focusRingPlacement}
+                />
+            ) : null}
+        </>
+    );
 
     return (
         <Pressable
@@ -124,18 +168,7 @@ export const PressableSurface = React.memo((props: PressableSurfaceProps) => {
             } : null)}
             style={resolveStyle}
         >
-            {props.children}
-            {Platform.OS === 'web' && props.webTooltip && (hovered || ringVisible) ? (
-                <DeferredAnchoredTooltip activationKey={`${hovered}:${focused}`} anchorRef={anchorRef} label={props.webTooltip} content={props.tooltipContent} placement={props.tooltipPlacement} testID={props.testID ? `${props.testID}-tooltip` : undefined} />
-            ) : null}
-            {ringMounted ? (
-                <FocusRing
-                    testID={props.testID === undefined ? undefined : `${props.testID}-focus-ring`}
-                    visible={ringVisible}
-                    radius={props.focusRingRadius}
-                    placement={props.focusRingPlacement}
-                />
-            ) : null}
+            {feedbackInset > 0 ? renderContent : renderContent({})}
         </Pressable>
     );
 });

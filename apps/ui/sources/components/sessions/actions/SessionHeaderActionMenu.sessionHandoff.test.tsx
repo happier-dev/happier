@@ -3,7 +3,8 @@ import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDeferred, createSessionFixture, flushHookEffects, renderScreen } from '@/dev/testkit';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
-import { upsertServerProfile } from '@/sync/domains/server/serverProfiles';
+import * as runtimeFetch from '@/utils/system/runtimeFetch';
+import { setActiveServerId, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
 import {
   installSessionActionsCommonModuleMocks,
   resetSessionActionsCommonModuleMockState,
@@ -12,6 +13,7 @@ import {
 import {
   SESSION_ACTION_ARCHIVE_ID,
   SESSION_ACTION_CLEAR_ATTENTION_STANDING_ID,
+  SESSION_ACTION_DELETE_ID,
   SESSION_ACTION_MARK_READ_ID,
   SESSION_ACTION_MARK_UNREAD_ID,
   SESSION_ACTION_PIN_ID,
@@ -33,6 +35,9 @@ const resolveServerIdForSessionIdFromLocalCacheMock = vi.hoisted(() => vi.fn());
 const resolvePreferredServerIdForSessionIdMock = vi.hoisted(() => vi.fn());
 const usePreferredServerIdForSessionMock = vi.hoisted(() => vi.fn());
 const fireAndForgetMock = vi.hoisted(() => vi.fn());
+const navigationFocused = vi.hoisted(() => ({ current: true }));
+const routerBackMock = vi.hoisted(() => vi.fn());
+const routerReplaceMock = vi.hoisted(() => vi.fn());
 const realStorageRef = vi.hoisted(() => ({ current: null as typeof import('@/sync/domains/state/storageStore')['storage'] | null }));
 
 /**
@@ -181,6 +186,18 @@ const storageState = vi.hoisted(() => ({
 }));
 
 installSessionActionsCommonModuleMocks({
+  router: async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    return createExpoRouterMock({
+      navigation: { isFocused: () => navigationFocused.current },
+      router: {
+        push: sessionActionsModuleState.routerPushSpy,
+        navigate: sessionActionsModuleState.routerNavigateSpy,
+        back: routerBackMock,
+        replace: routerReplaceMock,
+      },
+    }).module;
+  },
   reactNative: async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock({
@@ -357,7 +374,8 @@ vi.mock('@/sync/ops/sessionMachineTarget', async (importOriginal) => {
   };
 });
 
-vi.mock('@/sync/ops', () => ({
+vi.mock('@/sync/ops', async () => ({
+  sessionDeleteWithServerScope: (await import('@/sync/ops/sessions')).sessionDeleteWithServerScope,
   sessionArchiveWithServerScope: (
     sessionId: string,
     opts?: Readonly<{ serverId?: string | null }>,
@@ -448,6 +466,9 @@ describe('SessionHeaderActionMenu handoff', () => {
     resolvePreferredServerIdForSessionIdMock.mockReset();
     usePreferredServerIdForSessionMock.mockReset();
     fireAndForgetMock.mockReset();
+    navigationFocused.current = true;
+    routerBackMock.mockReset();
+    routerReplaceMock.mockReset();
     createSessionActionDraftMock.mockReset();
     buildActionDraftInputMock.mockReset();
     teleportVoiceAgentToSessionRootMock.mockReset();
@@ -520,6 +541,50 @@ describe('SessionHeaderActionMenu handoff', () => {
     const { voiceSessionBindingStore } = await import('@/voice/sessionBinding/voiceSessionBindingStore');
     for (const binding of voiceSessionBindingStore.getState().list()) {
       voiceSessionBindingStore.getState().unbind(binding.conversationSessionId);
+    }
+  });
+
+  it.each(['same-session', 'blurred', 'different-session', 'unmounted-content'] as const)('leaves a deleted session only while its route remains current (%s)', async (destination) => {
+    const profile = upsertServerProfile({ serverUrl: 'https://header-delete-navigation.example' });
+    setActiveServerId(profile.id);
+    resolveServerIdForSessionIdFromLocalCacheMock.mockReturnValue(profile.id);
+    const session = createSessionFixture({ id: 'header-delete-navigation', serverId: profile.id, active: false, presence: 0 });
+    realStorage.setState({ sessions: { [session.id]: session }, sessionListRenderables: {} });
+    storageState.current.sessions = { [session.id]: session };
+    modalConfirmMock.mockResolvedValue(true);
+    const response = createDeferred<Response>();
+    const credentialsSpy = vi.spyOn(TokenStorage, 'getCredentialsForServerUrl')
+      .mockResolvedValue({ token: 'header.eyJzdWIiOiJtZSJ9.signature' });
+    // HTTP and router are system boundaries; action eligibility, confirmation and deletion stay real.
+    const request = vi.spyOn(runtimeFetch, 'runtimeFetch').mockImplementation(async (_url, init) =>
+      init?.method === 'DELETE' ? response.promise : Response.json({ success: true }));
+    let pending: Promise<void> | undefined;
+    try {
+      const screen = await renderScreen(<SessionHeaderActionMenu sessionId={session.id} session={session} />);
+      const dropdown = screen.findByType('DropdownMenu' as React.ElementType);
+      expect(dropdown.props.items).toEqual(expect.arrayContaining([expect.objectContaining({ id: SESSION_ACTION_DELETE_ID })]));
+      await act(async () => { dropdown.props.onSelect(SESSION_ACTION_DELETE_ID); });
+      pending = findFireAndForgetByTag('SessionHeaderActionMenu.execute.sessionDelete');
+      await vi.waitFor(() => expect(request.mock.calls.some(([, init]) => init?.method === 'DELETE')).toBe(true));
+      if (destination === 'blurred') navigationFocused.current = false;
+      if (destination === 'different-session') {
+        const nextSession = createSessionFixture({ id: 'header-next-session', serverId: profile.id });
+        await screen.update(<SessionHeaderActionMenu sessionId={nextSession.id} session={nextSession} />);
+      }
+      // SessionView removes its header content on deletion while the originating route stays focused.
+      if (destination === 'unmounted-content') await screen.unmount();
+      await act(async () => {
+        response.resolve(Response.json({ success: true }));
+        await pending;
+      });
+      expect(realStorage.getState().sessions[session.id]).toBeUndefined();
+      expect(routerBackMock).toHaveBeenCalledTimes(destination === 'same-session' || destination === 'unmounted-content' ? 1 : 0);
+      expect(routerReplaceMock).not.toHaveBeenCalled();
+    } finally {
+      response.resolve(Response.json({ success: true }));
+      await pending;
+      credentialsSpy.mockRestore();
+      request.mockRestore();
     }
   });
 
@@ -801,9 +866,8 @@ describe('SessionHeaderActionMenu handoff', () => {
     helperParams.navigate('sess_next');
     // The canonical opener now carries the resolved server scope in the href; asserting the bare
     // path would pin the pre-migration shape.
-    expect(String(sessionActionsModuleState.routerNavigateSpy.mock.calls[0]?.[0])).toContain('/session/sess_next');
-    expect(String(sessionActionsModuleState.routerNavigateSpy.mock.calls[0]?.[0])).toContain('serverId=');
-    expect(sessionActionsModuleState.routerNavigateSpy.mock.calls[0]?.[1]?.dangerouslySingular?.()).toBe('session');
+    expect(String(sessionActionsModuleState.routerPushSpy.mock.calls[0]?.[0])).toContain('/session/sess_next');
+    expect(String(sessionActionsModuleState.routerPushSpy.mock.calls[0]?.[0])).toContain('serverId=');
   });
 
   it('keeps the closed trigger stable when only the session sequence changes', async () => {

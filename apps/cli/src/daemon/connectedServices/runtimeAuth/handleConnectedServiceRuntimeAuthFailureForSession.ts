@@ -30,6 +30,7 @@ import {
 } from './resolveConnectedServiceRuntimeAuthRecoverySelection';
 import type { ConnectedServiceRuntimeAuthApplyCapability } from '../credentials/lifecycleTypes';
 import { resolveSwitchAttemptEventOutcomeForFailure } from '../sessionAuthSwitch/events/resolveSwitchAttemptEventOutcome';
+import { isTemporaryRetryOwnedConnectedServiceRuntimeFailure } from './ConnectedServiceRecoveryPolicy';
 
 type SwitchCoordinatorLike = Parameters<typeof handleConnectedServiceRuntimeAuthFailure>[0]['switchCoordinator'];
 type SwitchAfterClassifiedFailureInput = Parameters<SwitchCoordinatorLike['switchAfterClassifiedFailure']>[0];
@@ -152,11 +153,14 @@ type RuntimeAuthRecoveryActionRequired = Readonly<{
 type RuntimeAuthRecoveryInvocationSource = 'daemon_report' | 'scheduler_retry';
 
 export type RuntimeAuthFailureSourceAuthorization =
+  | Readonly<{ status: 'not_applicable'; reason: 'no_connected_service_binding' }>
   | Readonly<{
       status: 'authorized';
       tracked: TrackedSession | null;
       /** Exact live binding, when source authorization had to re-read the runtime. */
       sourceBinding?: RuntimeAuthFailureSourceBinding;
+      /** The binding authorizes recovery routing, not which member failed the provider turn. */
+      sourceAttribution?: 'unattributed';
     }>
   | Readonly<{
       status: 'current_credential_revision';
@@ -182,6 +186,10 @@ export function applyAuthorizedRuntimeAuthFailureSourceBinding(
 ): ConnectedServiceRuntimeFailureClassification {
   if (authorization?.status !== 'authorized' || !authorization.sourceBinding) return classification;
   const binding = authorization.sourceBinding;
+  if (authorization.sourceAttribution === 'unattributed') {
+    return { ...classification, serviceId: binding.serviceId, groupId: binding.groupId,
+      profileId: null, groupGeneration: null, credentialRevision: null };
+  }
   return {
     ...classification,
     serviceId: binding.serviceId,
@@ -321,18 +329,54 @@ export async function authorizeConnectedServiceRuntimeAuthFailureSource(input: R
         && (classification.groupGeneration === null || classification.groupGeneration === undefined)
       )
     );
+  const inputHasNoMemberAttribution = classification !== null
+    && !isTemporaryRetryOwnedConnectedServiceRuntimeFailure(classification)
+    && !classification.profileId?.trim();
+  if (inputHasNoMemberAttribution && classification && !tracked) {
+    return { status: 'recovery_superseded', reason: 'source_tuple_unavailable',
+      serviceId: classification.serviceId, groupId: classification.groupId, profileId: null };
+  }
   if (
-    brokerOwnedSourceResolverApplicable
+    (brokerOwnedSourceResolverApplicable || inputHasNoMemberAttribution)
     && tracked
     && classification
     && !inputHasExactSourceIdentity
-    && input.resolveCurrentRuntimeAuthFailureSource
   ) {
-    const resolvedBinding = await input.resolveCurrentRuntimeAuthFailureSource({
+    const resolverInput = {
       sessionId: input.sessionId,
       tracked,
       classification,
-    });
+    };
+    const resolvedBinding = inputHasNoMemberAttribution && !brokerOwnedSourceResolverApplicable
+      ? input.resolveRegisteredRuntimeAuthFailureSource?.(resolverInput) ?? null
+      : await input.resolveCurrentRuntimeAuthFailureSource?.(resolverInput) ?? null;
+    if (inputHasNoMemberAttribution && !brokerOwnedSourceResolverApplicable) {
+      // The settled session binding is sufficient to select a recovery pool, but
+      // cannot prove which credential launched provider-originated work. Retain
+      // the missing member attribution through persistence and scheduler replay.
+      if (resolvedBinding?.serviceId === classification.serviceId && resolvedBinding.groupId) {
+        return { status: 'authorized', tracked, sourceBinding: resolvedBinding, sourceAttribution: 'unattributed' };
+      }
+      const selection = resolveConnectedServiceRuntimeAuthRecoverySelection({
+        classification,
+        environmentVariables: tracked.spawnOptions?.environmentVariables ?? {},
+        trackedConnectedServices: tracked.spawnOptions?.connectedServices,
+        sessionMetadataConnectedServices: tracked.happySessionMetadataFromLocalWebhook?.connectedServices,
+      }).selection;
+      if (!resolvedBinding && selection?.kind === 'group') {
+        const profileId = selection.activeProfileId ?? selection.fallbackProfileId;
+        if (profileId) return {
+          status: 'authorized', tracked, sourceAttribution: 'unattributed',
+          sourceBinding: { serviceId: classification.serviceId as ConnectedServiceId,
+            groupId: selection.groupId, profileId, generation: null, credentialRevision: null },
+        };
+      }
+      if (!resolvedBinding && !selection && !classification.groupId) {
+        return { status: 'not_applicable', reason: 'no_connected_service_binding' };
+      }
+      return { status: 'recovery_superseded', reason: 'source_tuple_unavailable',
+        serviceId: classification.serviceId, groupId: classification.groupId, profileId: null };
+    }
     if (resolvedBinding?.serviceId === classification.serviceId) {
       brokerOwnedSourceBinding = resolvedBinding;
       classification = applyAuthorizedRuntimeAuthFailureSourceBinding(classification, {
@@ -800,7 +844,7 @@ async function runRuntimeGroupSwitchRecovery(input: Readonly<{
     classification: {
       ...input.classification,
       groupId: input.classification.groupId ?? input.selection.groupId,
-      profileId: normalizeNullableProfileId(resolveAuthoritativeRecoveryProfileId({
+      profileId: input.classification.profileId === null ? null : normalizeNullableProfileId(resolveAuthoritativeRecoveryProfileId({
         selection: input.selection,
         classifiedProfileId: input.classification.profileId,
         providerQualified: Boolean(input.classification.sourceProviderAccountId),
@@ -812,7 +856,7 @@ async function runRuntimeGroupSwitchRecovery(input: Readonly<{
       ? createCommitOnlySwitchCoordinator(input.switchCoordinator)
       : input.switchCoordinator,
     temporaryThrottleRecovery: input.temporaryThrottleRecovery ?? null,
-    ...(input.recoveryInvocationSource === 'scheduler_retry'
+    ...((input.recoveryInvocationSource === 'scheduler_retry' || input.classification.profileId === null)
       && (input.classification.kind === 'usage_limit' || input.classification.kind === 'rate_limit')
       ? { allowCurrentProfileRetry: true }
       : {}),
@@ -1128,7 +1172,8 @@ async function maybeRefreshCredentialBeforeRuntimeRecovery(input: Readonly<{
   | RuntimeAuthRecoveryActionRequired
   | RuntimeAuthCredentialRefreshProviderOutcomeWaiting
 > {
-  if (!input.credentialRefreshService || !isRuntimeCredentialFailure(input.classification)) return null;
+  if (!input.credentialRefreshService || !isRuntimeCredentialFailure(input.classification)
+    || input.classification.profileId === null) return null;
   const profileId = resolveAuthoritativeRecoveryProfileId({
     selection: input.selection,
     classifiedProfileId: input.classification.profileId,
@@ -1271,6 +1316,7 @@ export async function handleConnectedServiceRuntimeAuthFailureForSession(input: 
     }>
   | RuntimeAuthCredentialRefreshProviderOutcomeWaiting
   | RuntimeAuthRecoverySuperseded
+  | Readonly<{ status: 'not_applicable'; reason: 'no_connected_service_binding' }>
   | Readonly<{ status: 'session_not_found' }>
   | Readonly<{
       status: 'switch_coordinator_unavailable';

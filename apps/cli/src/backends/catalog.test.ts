@@ -310,6 +310,7 @@ describe('AGENTS', () => {
       serviceIds: expect.arrayContaining(['claude-subscription']),
       generationApplicationScope: 'shared_group_auth_surface',
       sharedGenerationApplicationServiceIds: ['claude-subscription'],
+      runtimeAuthApply: { directLiveHotAuth: { supportsInTurnApply: true, requiresExactRuntimeIdentity: false } },
       spawnPreflightOauthRefresh: { mode: 'expiry_window' },
       refreshedCredentialApplication: {
         mode: 'restart_required',

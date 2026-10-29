@@ -124,6 +124,8 @@ const stylesheet = StyleSheet.create((theme) => ({
 export const AgentInputAttachmentsRow = React.memo(function AgentInputAttachmentsRow(props: Readonly<{
     attachments: readonly AgentInputAttachment[];
     composerBadges?: readonly AgentInputComposerAttachmentBadge[];
+    /** A disabled composer keeps its row as submitted: no badge, edit or remove action runs. */
+    disabled?: boolean;
 }>) {
     const styles = stylesheet;
     const { theme } = useUnistyles();
@@ -165,8 +167,10 @@ export const AgentInputAttachmentsRow = React.memo(function AgentInputAttachment
                             accessibilityLabel={badge.removeAccessibilityLabel ?? t('common.remove')}
                             accessibilityRole="button"
                             hitSlop={8}
+                            disabled={props.disabled === true}
                             onPress={(event) => {
                                 event?.stopPropagation?.();
+                                if (props.disabled === true) return;
                                 hapticsLight();
                                 badge.onRemove?.();
                             }}
@@ -182,7 +186,9 @@ export const AgentInputAttachmentsRow = React.memo(function AgentInputAttachment
                                 key={badge.key}
                                 accessibilityLabel={badge.accessibilityLabel ?? badge.label}
                                 accessibilityRole="button"
+                                disabled={props.disabled === true}
                                 onPress={() => {
+                                    if (props.disabled === true) return;
                                     hapticsLight();
                                     badge.onPress?.();
                                 }}
@@ -203,7 +209,7 @@ export const AgentInputAttachmentsRow = React.memo(function AgentInputAttachment
                     );
                 })}
                 {props.attachments.map((att) => {
-                    const removingDisabled = att.status === 'uploading';
+                    const removingDisabled = props.disabled === true || att.status === 'uploading';
                     const percent = att.status === 'uploading' ? resolveUploadProgressPercent(att.uploadProgress) : null;
                     const imagePreviewUri =
                         att.preview?.kind === 'image' && typeof att.preview.uri === 'string' && att.preview.uri.trim().length > 0

@@ -1,6 +1,7 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { z } from 'zod';
+import { lazySchema } from '@happier-dev/protocol';
 
 export const WORKSPACE_TRANSFER_STAGING_ROOT_PREFIX = 'workspace-transfer-staging-';
 const stagingMarkerFileName = 'workspace-staging-root.json';
@@ -14,11 +15,11 @@ export type WorkspaceStagingRoot = Readonly<{
     markerFilePath: string;
 }>;
 
-export const WorkspaceStagingRootMarkerSchema = z.object({
+export const WorkspaceStagingRootMarkerSchema = lazySchema(() => z.object({
     schemaVersion: z.literal(1),
     stagingId: z.string().min(1),
     rootDirectory: z.string().min(1),
-}).strict();
+}).strict());
 export type WorkspaceStagingRootMarker = z.infer<typeof WorkspaceStagingRootMarkerSchema>;
 
 export function resolveWorkspaceStagingRootDirectory(params: Readonly<{

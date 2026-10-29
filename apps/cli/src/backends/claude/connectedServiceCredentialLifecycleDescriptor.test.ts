@@ -27,7 +27,7 @@ describe('Claude connected-service credential lifecycle descriptor', () => {
       },
       runtimeAuthApply: {
         directLiveHotAuth: {
-          supportsInTurnApply: false,
+          supportsInTurnApply: true,
           requiresExactRuntimeIdentity: false,
           refreshSelectionResync: 'not_applicable',
           authMode: {

@@ -1,6 +1,6 @@
 import type { ACPMessageData, ACPProvider, SessionEventMessage } from '@/api/session/sessionMessageTypes';
 import type { Metadata } from '@/api/types';
-import type { SessionTurnLifecycle } from '@/agent/runtime/session/turn/types';
+import type { SessionTurnLifecycle, SessionTurnLifecycleController } from '@/agent/runtime/session/turn/types';
 import type { SessionTranscriptObservationProvenanceV1 } from '@happier-dev/protocol';
 
 /**
@@ -38,5 +38,5 @@ export type AcpRuntimeSessionClient = AcpReplayHistorySessionClient & Readonly<{
     opts?: { localId?: string; meta?: Record<string, unknown> },
   ) => void;
   getMetadataSnapshot?: () => Metadata | null;
-  sessionTurnLifecycle?: SessionTurnLifecycle;
+  sessionTurnLifecycle?: SessionTurnLifecycle & Pick<SessionTurnLifecycleController, 'observeProviderTurnEvent'>;
 }>;

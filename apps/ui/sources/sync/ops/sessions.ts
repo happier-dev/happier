@@ -957,21 +957,13 @@ export async function sessionDelete(sessionId: string): Promise<{ success: boole
 
 export async function sessionDeleteWithServerScope(
     sessionId: string,
-    opts?: Readonly<{ serverId?: string | null }>,
+    opts?: Readonly<{ serverId?: string | null }> & SessionArchiveRequestOptions,
 ): Promise<{ success: boolean; message?: string }> {
     const serverId = resolveSessionArchiveServerId(opts?.serverId);
-    const context = await resolveServerScopedSessionContext({ serverId });
+    const context = await resolveServerScopedSessionContext({ serverId, preferScoped: true });
     try {
-        if (context.scope === 'active') {
-            const response = await apiSocket.request(`/v1/sessions/${sessionId}`, { method: 'DELETE' });
-            if (response.ok) {
-                await response.json().catch(() => null);
-                storage.getState().deleteSession(sessionId, serverId);
-                return { success: true };
-            }
-            const error = await response.text().catch(() => '');
-            return { success: false, message: error || 'Failed to delete session' };
-        }
+        if (context.scope !== 'scoped') throw new Error('Deletion requires an authenticated server scope');
+        if (opts?.signal) throwIfSessionArchiveAborted(opts.signal);
 
         const response = await runtimeFetchWithServerReachability({
             serverUrl: context.targetServerUrl,
@@ -979,13 +971,17 @@ export async function sessionDeleteWithServerScope(
             url: `${context.targetServerUrl}/v1/sessions/${sessionId}`,
             init: {
                 method: 'DELETE',
+                ...(opts?.signal ? { signal: opts.signal } : {}),
                 headers: {
                     Authorization: `Bearer ${context.token}`,
                 },
             },
+            signal: opts?.signal,
         });
+        if (opts?.signal) throwIfSessionArchiveAborted(opts.signal);
         if (response.ok) {
             await response.json().catch(() => null);
+            if (opts?.signal) throwIfSessionArchiveAborted(opts.signal);
             storage.getState().deleteSession(sessionId, serverId);
             return { success: true };
         }

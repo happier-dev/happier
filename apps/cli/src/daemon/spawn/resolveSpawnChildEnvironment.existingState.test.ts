@@ -4,6 +4,7 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
+import { writeExecutableShim } from '@/testkit/fs/executableShim';
 import { openSqliteDatabaseSync } from '@/utils/sqlite/sqliteSync';
 import { resolveSpawnChildEnvironment } from './resolveSpawnChildEnvironment';
 
@@ -13,6 +14,10 @@ describe('existing-state handoff spawn environment', () => {
     const codexHome = join(testRoot, 'codex');
     const vendorResumeId = '00000000-0000-4000-8000-000000000043';
     const rolloutPath = join(codexHome, 'sessions', `rollout-2026-10-10T12-00-00-${vendorResumeId}.jsonl`);
+    const codexPath = await writeExecutableShim({
+      dir: join(testRoot, 'bin'), fileName: process.platform === 'win32' ? 'codex.cmd' : 'codex',
+      contents: process.platform === 'win32' ? '@echo off\r\n' : '#!/bin/sh\n',
+    });
     const verify = (resume = vendorResumeId) => resolveSpawnChildEnvironment({
       options: {
         directory: testRoot, backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
@@ -20,7 +25,7 @@ describe('existing-state handoff spawn environment', () => {
       },
       existingSessionMetadata: { machineId: 'source', flavor: 'codex', codexSessionId: vendorResumeId, codexBackendMode: 'appServer' },
       profileEnvironmentVariables: { CODEX_HOME: codexHome, CODEX_SQLITE_HOME: codexHome },
-      daemonSpawnHooks: null, processEnv: {}, logDebug: () => {}, logInfo: () => {}, logWarn: () => {},
+      daemonSpawnHooks: null, processEnv: { HAPPIER_CODEX_PATH: codexPath }, logDebug: () => {}, logInfo: () => {}, logWarn: () => {},
     });
     try {
       expect(await verify()).toMatchObject({ ok: false, errorCode: 'existing_session_state_unavailable' });

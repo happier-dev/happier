@@ -12,17 +12,18 @@ import { ReplicationManifestFingerprintSchema, ReplicationManifestSchema } from 
 import { createWorkspaceReplicationRelationshipStore } from '../relationships/workspaceReplicationRelationshipStore';
 import { workspaceReplicationModes } from '../relationships/relationshipScope';
 import { WORKSPACE_REPLICATION_SCHEMA_VERSION } from '../state/workspaceReplicationSchemaVersion';
+import { lazySchema } from '@happier-dev/protocol';
 
-export const WorkspaceReplicationBaselineRecordSchema = z
+export const WorkspaceReplicationBaselineRecordSchema = lazySchema(() => z
   .object({
     manifestFingerprint: ReplicationManifestFingerprintSchema,
     manifest: ReplicationManifestSchema,
     savedAtMs: z.number().int().min(0),
   })
-  .strict();
+  .strict());
 export type WorkspaceReplicationBaselineRecord = z.infer<typeof WorkspaceReplicationBaselineRecordSchema>;
 
-const PersistedWorkspaceReplicationBaselineSchema = z
+const PersistedWorkspaceReplicationBaselineSchema = lazySchema(() => z
   .object({
     schemaVersion: z.literal(WORKSPACE_REPLICATION_SCHEMA_VERSION),
     cacheKey: z.string().regex(/^workspace-replication-baseline-v1-[a-f0-9]{64}$/u),
@@ -36,7 +37,7 @@ const PersistedWorkspaceReplicationBaselineSchema = z
     }).strict(),
     baseline: WorkspaceReplicationBaselineRecordSchema,
   })
-  .strict();
+  .strict());
 
 export type WorkspaceReplicationBaselineStore = Readonly<{
   load: (scope: WorkspaceReplicationBaselineScope) => Promise<WorkspaceReplicationBaselineRecord | null>;

@@ -8,6 +8,7 @@ import type { DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMe
 import { confirmSessionStop, executeSessionAction } from '@/components/sessions/actions/sessionActionExecution';
 import {
     SESSION_ACTION_ARCHIVE_ID,
+    SESSION_ACTION_DELETE_ID,
     SESSION_ACTION_CLEAR_ATTENTION_STANDING_ID,
     SESSION_ACTION_EDIT_TAGS_ID,
     SESSION_ACTION_MARK_READ_ID,
@@ -381,6 +382,13 @@ export function useSessionRowActionMenu(params: Readonly<{
                 break;
             case SESSION_ACTION_ARCHIVE_ID:
                 await confirmArchiveSession();
+                break;
+            case SESSION_ACTION_DELETE_ID:
+                try {
+                    await executeSessionAction({ actionId: SESSION_ACTION_DELETE_ID, target });
+                } catch (error) {
+                    showActionError(error);
+                }
                 break;
         }
     }, [

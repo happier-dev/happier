@@ -62,11 +62,11 @@ describe('sessionDeleteWithServerScope', () => {
   it('deletes the active session and its list projection after server success', async () => {
     await expect(sessionDeleteWithServerScope(sessionId, { serverId: serverA.id })).resolves.toEqual({ success: true });
 
-    expect(activeRequest).toHaveBeenCalledWith(`/v1/sessions/${sessionId}`, { method: 'DELETE' });
+    expect(activeRequest).not.toHaveBeenCalled();
+    expect(remoteRequest.mock.calls.some(([url, init]) => String(url).includes(`/v1/sessions/${sessionId}`) && init?.method === 'DELETE')).toBe(true);
     expect(storage.getState().sessions[sessionId]).toBeUndefined();
     expect(storage.getState().sessionListRenderables[sessionId]).toBeUndefined();
     expect(storage.getState().sessionListViewDataByServerId[serverA.id]?.some((item) => item.type === 'session' && item.session.id === sessionId)).toBe(false);
-    expect(remoteRequest).not.toHaveBeenCalled();
   });
 
   it('removes a remote Home row through an identity alias while retaining a same-id active session', async () => {
@@ -90,7 +90,6 @@ describe('sessionDeleteWithServerScope', () => {
     seedRemoteSession(serverB.id);
     const targetServerId = scope === 'active' ? serverA.id : serverB.id;
     const response = () => new Response('denied', { status: 403 });
-    activeResponse.mockImplementation(async () => response());
     remoteRequest.mockImplementation(async () => response());
     const before = storage.getState();
 
@@ -102,9 +101,9 @@ describe('sessionDeleteWithServerScope', () => {
 
   it('settles against the original Home when the active Home changes during the request', async () => {
     const response = createDeferred<Response>();
-    activeResponse.mockReturnValueOnce(response.promise);
+    remoteRequest.mockImplementation(async () => response.promise);
     const run = sessionDeleteWithServerScope(sessionId);
-    await vi.waitFor(() => expect(activeRequest).toHaveBeenCalled());
+    await vi.waitFor(() => expect(remoteRequest).toHaveBeenCalled());
     setActiveServerId(serverB.id);
     const replacement = createSessionFixture({ id: sessionId, serverId: serverB.id });
     storage.setState({ sessions: { [sessionId]: replacement } });

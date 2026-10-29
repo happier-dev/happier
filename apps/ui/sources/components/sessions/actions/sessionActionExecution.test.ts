@@ -5,6 +5,9 @@ import { storage } from '@/sync/domains/state/storage';
 import { apiSocket } from '@/sync/api/session/apiSocket';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { TokenStorage } from '@/auth/storage/tokenStorage';
+import { setActiveServerId, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
+import * as runtimeFetch from '@/utils/system/runtimeFetch';
 import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
 
 vi.mock('@/modal', async () => {
@@ -74,6 +77,55 @@ describe('delete eligibility at execution', () => {
         vi.restoreAllMocks();
     });
 
+    it('stops a running session once and waits for inactivity before deleting it', async () => {
+        const serverId = upsertServerProfile({ serverUrl: 'https://stop-delete.example' }).id;
+        setActiveServerId(serverId);
+        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token: 'header.eyJzdWIiOiJtZSJ9.signature' });
+        const session = createSessionFixture({ id: 'stop-then-delete', serverId, active: true, presence: 'online', metadata: { path: '/tmp/project', host: 'local' } });
+        storage.setState({ sessions: { [session.id]: session }, sessionListRenderables: {} });
+        // Session RPC and HTTP are transport boundaries; the strategy, flow and store stay real.
+        const stop = vi.spyOn(apiSocket, 'sessionRPC').mockResolvedValue({ status: 'requested' });
+        const request = vi.spyOn(runtimeFetch, 'runtimeFetch').mockImplementation(async () => Response.json({ success: true }));
+        const result = executeSessionAction({ actionId: SESSION_ACTION_DELETE_ID,
+            target: createSessionActionTarget({ session, serverId, isConnected: true }) });
+        const outcome = result.then(() => null, (error: unknown) => error);
+        await vi.waitFor(() => expect(stop).toHaveBeenCalled());
+        expect(request.mock.calls.filter(([, init]) => init?.method === 'DELETE')).toHaveLength(0);
+        storage.setState({ sessions: { [session.id]: { ...session, active: false, presence: 0 } } });
+        expect(await outcome).toBeNull();
+        expect(stop).toHaveBeenCalledTimes(1);
+        expect(request.mock.calls.some(([, init]) => init?.method === 'DELETE')).toBe(true);
+        expect(storage.getState().sessions[session.id]).toBeUndefined();
+    });
+
+    it('cancels deletion before sending a stop request', async () => {
+        const serverId = getActiveServerSnapshot().serverId;
+        const session = createSessionFixture({ id: 'cancel-stop-delete', serverId, active: true });
+        storage.setState({ sessions: { [session.id]: session }, sessionListRenderables: {} });
+        vi.mocked(Modal.confirm).mockResolvedValueOnce(false);
+        const stop = vi.spyOn(apiSocket, 'sessionRPC').mockResolvedValue({ status: 'requested' });
+        const request = vi.spyOn(runtimeFetch, 'runtimeFetch').mockImplementation(async () => Response.json({ success: true }));
+        await expect(executeSessionAction({ actionId: SESSION_ACTION_DELETE_ID,
+            target: createSessionActionTarget({ session, serverId, isConnected: true }) })).resolves.toBe(false);
+        expect(stop).not.toHaveBeenCalled();
+        expect(request.mock.calls.filter(([, init]) => init?.method === 'DELETE')).toHaveLength(0);
+        expect(storage.getState().sessions[session.id]).toBe(session);
+    });
+
+    it('preserves the session when stopping fails', async () => {
+        const serverId = upsertServerProfile({ serverUrl: 'https://stop-delete-failure.example' }).id;
+        setActiveServerId(serverId);
+        const session = createSessionFixture({ id: 'failed-stop-delete', serverId, active: true, metadata: { path: '/tmp/project', host: 'local' } });
+        storage.setState({ sessions: { [session.id]: session }, sessionListRenderables: {} });
+        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token: 'header.eyJzdWIiOiJtZSJ9.signature' });
+        vi.spyOn(apiSocket, 'sessionRPC').mockResolvedValue({ success: false, message: 'Stop rejected' });
+        const request = vi.spyOn(runtimeFetch, 'runtimeFetch').mockImplementation(async () => Response.json({ success: true }));
+        await expect(executeSessionAction({ actionId: SESSION_ACTION_DELETE_ID,
+            target: createSessionActionTarget({ session, serverId, isConnected: true }) })).rejects.toMatchObject({ message: 'Stop rejected' });
+        expect(request.mock.calls.filter(([, init]) => init?.method === 'DELETE')).toHaveLength(0);
+        expect(storage.getState().sessions[session.id]).toBe(session);
+    });
+
     it.each(['active', 'preserved-terminal'] as const)('rejects a stale target after the session becomes %s', async (state) => {
         const serverId = getActiveServerSnapshot().serverId;
         const session = createSessionFixture({ id: 'delete-after-confirmation', archivedAt: 123, presence: 0, serverId });
@@ -93,11 +145,11 @@ describe('delete eligibility at execution', () => {
                 },
             });
         storage.setState({ sessions: { [session.id]: latestSession }, sessionListRenderables: {} });
-        // apiSocket is the HTTP transport boundary; eligibility and deletion remain real.
-        const request = vi.spyOn(apiSocket, 'request').mockResolvedValue(new Response('{"success":true}'));
+        // runtimeFetch is the HTTP transport boundary; eligibility and deletion remain real.
+        const request = vi.spyOn(runtimeFetch, 'runtimeFetch').mockImplementation(async () => Response.json({ success: true }));
 
         await expect(executeSessionAction({ actionId: SESSION_ACTION_DELETE_ID, target })).rejects.toBeInstanceOf(HappyError);
-        expect(request).not.toHaveBeenCalled();
+        expect(request.mock.calls.filter(([, init]) => init?.method === 'DELETE')).toHaveLength(0);
     });
 
     it('uses the current list projection when terminal metadata hydration is deferred', async () => {
@@ -119,21 +171,22 @@ describe('delete eligibility at execution', () => {
             sessions: { [session.id]: session },
             sessionListRenderables: { [session.id]: buildSessionListRenderableFromSession(latest) },
         });
-        const request = vi.spyOn(apiSocket, 'request').mockResolvedValue(new Response('{"success":true}'));
+        const request = vi.spyOn(runtimeFetch, 'runtimeFetch').mockImplementation(async () => Response.json({ success: true }));
 
         await expect(executeSessionAction({ actionId: SESSION_ACTION_DELETE_ID, target })).rejects.toBeInstanceOf(HappyError);
-        expect(request).not.toHaveBeenCalled();
+        expect(request.mock.calls.filter(([, init]) => init?.method === 'DELETE')).toHaveLength(0);
     });
 
     it('still deletes an eligible inactive session that is not archived', async () => {
         const serverId = getActiveServerSnapshot().serverId;
         const session = createSessionFixture({ id: 'delete-inactive', archivedAt: null, presence: 0, serverId });
         storage.setState({ sessions: { [session.id]: session }, sessionListRenderables: {} });
-        const request = vi.spyOn(apiSocket, 'request').mockResolvedValue(new Response('{"success":true}'));
+        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token: 'header.eyJzdWIiOiJtZSJ9.signature' });
+        const request = vi.spyOn(runtimeFetch, 'runtimeFetch').mockImplementation(async () => Response.json({ success: true }));
 
         await executeSessionAction({ actionId: SESSION_ACTION_DELETE_ID, target: createSessionActionTarget({ session, serverId }) });
 
-        expect(request).toHaveBeenCalledWith(`/v1/sessions/${session.id}`, { method: 'DELETE' });
+        expect(request.mock.calls.some(([, init]) => init?.method === 'DELETE')).toBe(true);
     });
 });
 

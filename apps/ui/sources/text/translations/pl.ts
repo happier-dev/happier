@@ -1191,6 +1191,8 @@ export const pl: TranslationStructure = {
   },
 
   appCrash: {
+      saveDiagnostics: "Zapisz diagnostykę",
+      diagnosticsSaveFailed: "Nie udało się zapisać diagnostyki. Szczegóły awarii są nadal dostępne. Spróbuj ponownie lub je skopiuj.",
       copyFailed: "Nie udało się skopiować szczegółów awarii. Spróbuj ponownie.",
       discardFailed: "Nie udało się odrzucić zapisanej awarii. Spróbuj ponownie.",
       restartWithoutReport: "Uruchom ponownie bez zapisywania",
@@ -3576,6 +3578,10 @@ export const pl: TranslationStructure = {
   },
 
   settingsDesktop: {
+    nativeTitleBarTitle: 'Używaj paska tytułu systemu Windows',
+    nativeTitleBarSubtitle: 'Pokaż standardową ramkę i przyciski sterowania oknem systemu Windows.',
+    nativeTitleBarChangeFailed: 'Nie udało się zmienić paska tytułu. Spróbuj ponownie.',
+    nativeTitleBarPersistenceFailed: 'Nie udało się wczytać lub zapisać ustawienia paska tytułu. Zmień je ponownie, aby spróbować jeszcze raz.',
     title: 'Pulpit',
     footer: 'Określa, jak Happier działa na tym komputerze.',
     backgroundServiceTitle: 'Pozostań dostępny w tle',
@@ -4156,6 +4162,10 @@ export const pl: TranslationStructure = {
                         title: "Eksperymenty Claude Code",
                         footer: "Te ustawienia dotyczą zarówno lokalnych sesji Claude (terminal), jak i zdalnych sesji Claude (Agent SDK) uruchamianych przez Happier."
                     },
+                    claudeIdleReclaim: {
+                        title: "Bezczynne sesje",
+                        footer: "Następny prompt wznowi tę samą sesję Claude i może potrwać nieco dłużej. Stan w pamięci zostanie zwolniony. Zadania w tle, zaplanowana praca i punkty kontrolne plików utrzymują ją aktywną. Sesje ujednoliconego terminala pozostają aktywne."
+                    },
                     claudeRemoteSdk: {
                         title: "Klasyczny runtime (fallback Agent SDK)",
                         footer: "Użyj ścieżki Agent SDK, gdy ujednolicony runtime terminala jest wyłączony albo niedostępny."
@@ -4239,6 +4249,14 @@ export const pl: TranslationStructure = {
                     claudeCodeExperimentalAgentTeamsEnabled: {
                         title: "Wymuś włączenie Agent Teams",
                         subtitle: "Włącza eksperymentalne Agent Teams w Claude Code (rój agentów) we wszystkich sesjach Claude uruchamianych przez Happier."
+                    },
+                    claudeRemoteIdleReclaimEnabled: {
+                        title: "Zwalniaj bezczynne procesy Claude",
+                        subtitle: "Zwalniaj pamięć po okresie bezczynności. Domyślnie wyłączone."
+                    },
+                    claudeRemoteIdleReclaimTimeoutMinutes: {
+                        title: "Czas bezczynności (minuty)",
+                        subtitle: "Wybierz, jak długo zdalna sesja Claude z włączoną opcją pozostaje gotowa."
                     },
                     claudeRemoteAgentSdkEnabled: {
                         title: "Użyj fallbacku Agent SDK",
@@ -6828,6 +6846,8 @@ export const pl: TranslationStructure = {
     deleteSessionConfirm: "Usunąć sesję na stałe?",
     deleteSessionWarning:
       "Ta operacja jest nieodwracalna. Wszystkie wiadomości i dane powiązane z tą sesją zostaną trwale usunięte.",
+    stopAndDeleteSession: "Zatrzymaj i usuń",
+    stopAndDeleteSessionWarning: "Spowoduje to zatrzymanie sesji i trwałe usunięcie wszystkich jej wiadomości i danych. Tej operacji nie można cofnąć.",
     failedToDeleteSession: "Nie udało się usunąć sesji",
     sessionDeleted: "Sesja została pomyślnie usunięta",
     manageSharing: "Zarządzanie udostępnianiem",

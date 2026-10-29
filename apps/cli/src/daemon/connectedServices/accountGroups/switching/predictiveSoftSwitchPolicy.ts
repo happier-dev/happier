@@ -95,20 +95,23 @@ function supportsInTurnDirectLiveHotAuth(
   const directLiveHotAuth = capability?.directLiveHotAuth;
   if (typeof directLiveHotAuth !== 'object') return false;
   if (directLiveHotAuth.supportsInTurnApply !== true) return false;
-  if (directLiveHotAuth.requiresExactRuntimeIdentity !== true) return false;
 
   const { authMode } = directLiveHotAuth;
   if (authMode.kind === 'external_token_injection') {
-    return directLiveHotAuth.refreshSelectionResync === 'required'
+    return directLiveHotAuth.requiresExactRuntimeIdentity === true
+      && directLiveHotAuth.refreshSelectionResync === 'required'
       && authMode.surface.trim().length > 0;
   }
 
   if (authMode.kind === 'provider_owned') {
+    // The provider owns adoption proof (for a shared group surface, generation/revision
+    // verification). Runtime account readback is not that surface's authority.
     return directLiveHotAuth.refreshSelectionResync === 'not_applicable'
       && authMode.name.trim().length > 0;
   }
 
-  return directLiveHotAuth.refreshSelectionResync === 'not_applicable';
+  return directLiveHotAuth.requiresExactRuntimeIdentity === true
+    && directLiveHotAuth.refreshSelectionResync === 'not_applicable';
 }
 
 function supportsDirectLiveHotAuth(

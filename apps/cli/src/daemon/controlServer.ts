@@ -125,21 +125,22 @@ import {
 } from './connectedServices/runtimeAuth/projection/connectedServiceRuntimeAuthRecoveryProjection';
 import { buildRuntimeAuthRecoveryKey } from './connectedServices/runtimeAuth/recoveryKey/runtimeAuthRecoveryKey';
 import { buildRuntimeAuthRecoveryAttemptTransitionLocalId } from './connectedServices/runtimeAuth/commitConnectedServiceRuntimeAuthRecoverySessionEvent';
+import { lazySchema } from '@happier-dev/protocol';
 
 const DEFAULT_DAEMON_CONTROL_BODY_LIMIT_BYTES = 8 * 1024 * 1024;
 const DAEMON_CONTROL_BODY_LIMIT_BYTES_ENV_KEY = 'HAPPIER_DAEMON_CONTROL_BODY_LIMIT_BYTES';
 const DAEMON_DIST_CLOSURE_FINGERPRINT_PATTERN = /^[a-f0-9]{16}$/;
-const DaemonDistClosureFingerprintSchema = z.string().regex(DAEMON_DIST_CLOSURE_FINGERPRINT_PATTERN);
+const DaemonDistClosureFingerprintSchema = lazySchema(() => z.string().regex(DAEMON_DIST_CLOSURE_FINGERPRINT_PATTERN));
 
 type DaemonSelfRestartRequest = Readonly<{
   successorDistClosureFingerprint?: string;
 }>;
 const DAEMON_CONTROL_ERROR_MESSAGE_MAX_LENGTH = 500;
 
-const brokerBridgeAuthzDeniedSchema = z.object({
+const brokerBridgeAuthzDeniedSchema = lazySchema(() => z.object({
   ok: z.literal(false),
   errorCode: z.literal(CONNECTED_SERVICE_BRIDGE_SELECTION_NOT_AUTHORIZED),
-});
+}));
 
 function readSafeDaemonControlErrorDiagnostic(error: unknown): Readonly<{
   name: string;

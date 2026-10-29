@@ -1,8 +1,11 @@
-import { createNativeCacheFileSink, shareNativeCacheFile } from '@/sync/runtime/files/nativeCacheFileSink';
+import { saveFileBytes } from '@/sync/runtime/files/saveFileBytes';
+import { formatPreRestartBugReportSnapshotDetails, type PreRestartBugReportSnapshotV1 } from '@/utils/system/preRestartBugReportSnapshot';
 import { t } from '@/text';
 import {
   buildBugReportExportBundle,
   serializeBugReportExportBundle,
+  redactBugReportSensitiveText,
+  inferBugReportDeploymentTypeFromServerUrl,
   type BugReportArtifactPayload,
   type BugReportEnvironmentPayload,
   type BugReportFormPayload,
@@ -19,26 +22,31 @@ export async function exportBugReportDiagnosticsBundle(input: {
     exportedAt: input.exportedAt,
     form: input.form,
     environment: input.environment,
-    artifacts: input.artifacts,
+    artifacts: input.artifacts.map((artifact) => ({ ...artifact, content: redactBugReportSensitiveText(artifact.content) })),
   });
   const contents = serializeBugReportExportBundle(bundle);
 
-  const created = await createNativeCacheFileSink({ directoryName: 'happier-downloads', name });
-  if (!created.ok) throw new Error(created.error);
-  let retainCacheFile = false;
-  try {
-    await created.sink.writeBytes(new TextEncoder().encode(contents));
-    await created.sink.close();
-    const result = await shareNativeCacheFile({
-      fileUri: created.sink.fileUri,
-      name,
-      mimeType: 'application/json',
-      dialogTitle: t('common.saveAs'),
-      UTI: 'public.json',
-    });
-    if (result.status === 'unavailable') throw new Error(t('files.fileSharingUnavailable'));
-    if (result.status === 'shared') retainCacheFile = result.retainCacheFile;
-  } finally {
-    if (!retainCacheFile) await created.sink.cleanup();
-  }
+  await saveFileBytes({
+    name,
+    bytes: new TextEncoder().encode(contents),
+    mimeType: 'application/json',
+    dialogTitle: t('common.saveAs'),
+    UTI: 'public.json',
+  });
+}
+
+export async function exportPreRestartBugReportSnapshot(snapshot: PreRestartBugReportSnapshotV1): Promise<void> {
+  await exportBugReportDiagnosticsBundle({
+    environment: {
+      appVersion: snapshot.runtime?.appVersion || 'unknown',
+      platform: snapshot.platform,
+      osVersion: snapshot.runtime?.osVersion || undefined,
+      deploymentType: inferBugReportDeploymentTypeFromServerUrl(snapshot.runtime?.serverUrl ?? ''),
+    },
+    artifacts: [
+      { filename: 'crash.txt', sourceKind: 'ui-mobile', contentType: 'text/plain', content: formatPreRestartBugReportSnapshotDetails(snapshot) },
+      { filename: 'app-console.log', sourceKind: 'ui-mobile', contentType: 'text/plain', content: snapshot.appLogs },
+      { filename: 'user-actions.json', sourceKind: 'ui-mobile', contentType: 'application/json', content: JSON.stringify(snapshot.userActions, null, 2) },
+    ],
+  });
 }

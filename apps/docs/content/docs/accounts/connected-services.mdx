@@ -486,7 +486,14 @@ reacts to:
 
 It can also move *before* a hard limit: when the active account drops below
 **15%** remaining and a better member is available. That threshold is
-configurable.
+configurable, and it is measured as the percentage **remaining** on the
+account's most constrained tracked allowance. If the five-hour window has 40%
+left but the weekly allowance has 8% left, the account counts as 8% remaining.
+To switch when about a tenth of the allowance is left, set it to 10, not 90.
+
+Codex and Claude pool sessions apply a switch in the middle of a turn: the
+request already in flight finishes on the previous account and the next request
+uses the new one, so a long turn moves on instead of failing at the limit.
 
 ### Bounds that stop it thrashing
 

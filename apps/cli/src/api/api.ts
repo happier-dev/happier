@@ -100,6 +100,7 @@ import { createScmConnectedAccountCredentialResolver } from './connectedServices
 import { resolveMachineRegistrationIdentity } from '@/daemon/machineIdentity/resolveMachineRegistrationIdentity';
 import { consumeMachineReplacementCandidateAfterRegistration } from '@/daemon/machineIdentity/machineReplacementCandidates';
 import { readSessionRuntimeActivityProjectionBoundary } from './session/runtimeActivityProjection';
+import { lazySchema } from '@happier-dev/protocol';
 
 export {
   ConnectedServiceAuthGroupGenerationConflictError,
@@ -109,24 +110,24 @@ export {
 
 const CONNECTED_SERVICE_PROFILE_LIST_CACHE_TTL_MS = 10_000;
 const ACCOUNT_ENCRYPTION_MODE_CACHE_TTL_MS = 10_000;
-const ProviderAccountUsageResponseSourcesSchema = z.array(ConnectedServiceUsageSourceV1Schema).optional();
-const ExactProviderAccountUsageSourceResolutionSchema = z.object({
+const ProviderAccountUsageResponseSourcesSchema = lazySchema(() => z.array(ConnectedServiceUsageSourceV1Schema).optional());
+const ExactProviderAccountUsageSourceResolutionSchema = lazySchema(() => z.object({
   source: ConnectedServiceUsageSourceV1Schema,
   recordId: ProviderAccountUsageRecordIdSchema,
   providerAccountId: z.string().trim().min(1).max(512),
   fetchedAt: z.number().int().nonnegative().nullable(),
   staleAfterMs: z.number().int().nonnegative().nullable(),
-}).strict();
-const ExactProviderAccountUsageSourceNotFoundSchema = z.object({
+}).strict());
+const ExactProviderAccountUsageSourceNotFoundSchema = lazySchema(() => z.object({
   error: z.literal('provider_account_usage_source_not_found'),
-}).strict();
-const ProviderAccountUsageWriteSourceOutcomeSchema = z.union([
+}).strict());
+const ProviderAccountUsageWriteSourceOutcomeSchema = lazySchema(() => z.union([
   z.object({ status: z.literal('linked') }).strict(),
   z.object({
     status: z.literal('skipped'),
     reason: z.literal('binding_unavailable'),
   }).strict(),
-]).optional();
+]).optional());
 
 function parseProviderAccountUsageResponseSources(raw: Readonly<Record<string, unknown>>): ConnectedServiceUsageSourceV1[] | undefined {
   const parsed = ProviderAccountUsageResponseSourcesSchema.safeParse(raw.sources);

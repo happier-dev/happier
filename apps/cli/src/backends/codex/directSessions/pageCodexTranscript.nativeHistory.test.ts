@@ -115,6 +115,30 @@ describe('Codex native paginated direct history (0.162.1 contract)', () => {
     expect(items[1]?.raw).toMatchObject({ content: { data: { output: { stdout: '/project', exitCode: 0 } } } });
   });
 
+  it('imports native web searches, image views, and sleeps as tool rows', async () => {
+    const results = [{ type: 'text_result', ref_id: 'turn0search0', title: 'Fusion benchmark', url: 'https://example.invalid/bench',
+      domain: 'example.invalid', snippet: 'Fused kernels compared.' }];
+    const tool = (item: Record<string, unknown>) => ({ turnId: 'turn-a1', startedAtMs: 1_000, completedAtMs: 2_000, item });
+    const f = await fixture([message('u1', 'compare fused kernels', 'user'),
+      tool({ id: 'search-1', type: 'webSearch', query: 'fused kernels', action: { type: 'search', query: 'fused kernels', queries: null }, results }),
+      tool({ id: 'view-1', type: 'imageView', path: '/project/plot.png' }),
+      tool({ id: 'sleep-1', type: 'sleep', durationMs: 30_000 }),
+      message('a1', 'answer', 'agent')]);
+    const items = await loadDirectSessionTranscriptItems({ readPage: cursor => pageCodexTranscript({
+      ...f.params, direction: 'older', cursor,
+    }) });
+    expect(items.map(item => item.raw.content)).toMatchObject([
+      { type: 'text', text: 'compare fused kernels' },
+      { data: { type: 'tool-call', name: 'WebSearch', input: { query: 'fused kernels' } } },
+      { data: { type: 'tool-call-result', output: { results } } },
+      { data: { type: 'tool-call', name: 'view_image', input: { path: '/project/plot.png' } } },
+      { data: { type: 'tool-call-result' } },
+      { data: { type: 'tool-call', name: 'sleep', input: { durationMs: 30_000 } } },
+      { data: { type: 'tool-call-result' } },
+      { data: { type: 'message', message: 'answer' } },
+    ]);
+  });
+
   it('rejects native mixed media instead of importing only its text as complete history', async () => {
     const f = await fixture([{ ...message('mixed', 'question with image', 'user'), item: { id: 'mixed', type: 'userMessage',
       content: [{ type: 'text', text: 'question with image' }, { type: 'image', url: 'https://example.invalid/image.png' }] } }]);

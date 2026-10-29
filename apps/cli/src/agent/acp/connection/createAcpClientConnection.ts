@@ -1,6 +1,5 @@
-import { AgentApp, client } from '@agentclientprotocol/sdk';
-
 import { AcpAgentPeer } from './AcpAgentPeer';
+import { loadAcpSdk } from './acpSdk';
 import { registerAcpClientHandlers } from './registerAcpClientHandlers';
 import type { AcpClientConnectionOptions } from './types';
 
@@ -23,12 +22,14 @@ function defaultExtensionContext(
   };
 }
 
-export function createAcpClientConnection(
+export async function createAcpClientConnection(
   options: AcpClientConnectionOptions,
-): AcpClientConnection {
+): Promise<AcpClientConnection> {
+  const { AgentApp, client, methods } = await loadAcpSdk();
   const app = client({ name: options.name });
   registerAcpClientHandlers({
     app,
+    methods,
     handlers: options.handlers,
     extensions: options.extensions ?? [],
     createExtensionContext: options.createExtensionContext ?? defaultExtensionContext,
@@ -38,7 +39,7 @@ export function createAcpClientConnection(
     ? app.connect(options.transport)
     : app.connect(options.transport);
   return {
-    peer: new AcpAgentPeer(connection.agent, connection.signal, options.isAuthenticationSetupFailure),
+    peer: new AcpAgentPeer(methods, connection.agent, connection.signal, options.isAuthenticationSetupFailure),
     signal: connection.signal,
     closed: connection.closed,
     close: (error?: unknown) => connection.close(error),

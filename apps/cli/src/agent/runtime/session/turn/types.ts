@@ -113,10 +113,18 @@ export type ObserveAcpLifecycleMarkerResult = Readonly<{
 }>;
 
 export type SessionTurnLifecycleController = SessionTurnLifecycle & Readonly<{
+    /** Release local observation resources without settling the active turn. */
+    dispose(): void;
     observeAcpLifecycleMarker(input: Readonly<{
         provider: ACPProvider;
         body: ACPMessageData;
     }>): ObserveAcpLifecycleMarkerResult;
+    /**
+     * Notify the turn stall watch that a provider message event arrived. Must be
+     * driven by provider message backflow only — never the keepalive/touch path
+     * (presence stays fresh through provider stalls and would blind the watch).
+     */
+    observeProviderTurnEvent(): void;
 }>;
 
 export type SessionTurnLifecycleControllerWithActiveTurnWitness =

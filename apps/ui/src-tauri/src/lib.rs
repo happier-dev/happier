@@ -108,6 +108,7 @@ pub fn run() {
                 system_tasks::system_tasks_open_log_path,
                 system_tasks::respond_system_task_prompt,
                 window_chrome::desktop_get_window_chrome_policy,
+                window_chrome::desktop_set_native_title_bar,
                 window_chrome::desktop_get_window_state,
                 window_chrome::desktop_minimize_window,
                 window_chrome::desktop_toggle_window_maximize,

@@ -71,6 +71,7 @@ async function publishDeclaredArchiveEntries(params: Readonly<{
   archiveEntries: ReadonlyArray<DeclaredArchiveEntry>;
   extractDir: string;
   outputDir: string;
+  signal?: AbortSignal;
 }>): Promise<void> {
   const resolvedEntries = await Promise.all(params.archiveEntries.map(async (entry) => {
     const sourcePath = resolveDeclaredPath(params.extractDir, entry.archivePath);
@@ -88,6 +89,7 @@ async function publishDeclaredArchiveEntries(params: Readonly<{
   }));
 
   for (const entry of resolvedEntries) {
+    params.signal?.throwIfAborted();
     await mkdir(dirname(entry.destinationPath), { recursive: true });
     await copyFile(entry.sourcePath, entry.destinationPath);
     if (process.platform !== 'win32') {
@@ -108,36 +110,47 @@ export async function extractGitHubReleaseAsset(params: Readonly<{
     maxExpandedBytes: number;
   }>;
   skipTarLinks?: boolean;
+  signal?: AbortSignal;
 }>): Promise<void> {
+  params.signal?.throwIfAborted();
   const archiveName = params.archiveName.toLowerCase();
   await mkdir(params.extractDir, { recursive: true });
 
-  if (archiveName.endsWith('.tar.gz') || archiveName.endsWith('.tar.xz') || archiveName.endsWith('.zip')) {
-    await extractArchivePayloadToDirectory({
-      archiveName: params.archiveName,
-      archivePath: params.archivePath,
-      extractDir: params.extractDir,
-      limits: params.archiveExtractionLimits,
-      tarLinkPolicy: params.skipTarLinks ? 'skip' : 'reject',
-    });
-    if (params.archiveEntries) {
-      await publishDeclaredArchiveEntries({
-        archiveEntries: params.archiveEntries,
-        extractDir: params.extractDir,
-        outputDir: params.outputDir ?? join(dirname(params.outputPath), '..'),
-      });
-    } else {
-      await moveExtractedEntryIntoPlace({
+  try {
+    if (archiveName.endsWith('.tar.gz') || archiveName.endsWith('.tar.xz') || archiveName.endsWith('.zip')) {
+      await extractArchivePayloadToDirectory({
         archiveName: params.archiveName,
+        archivePath: params.archivePath,
         extractDir: params.extractDir,
-        outputPath: params.outputPath,
+        limits: params.archiveExtractionLimits,
+        tarLinkPolicy: params.skipTarLinks ? 'skip' : 'reject',
+        signal: params.signal,
       });
-      if (process.platform !== 'win32') {
-        await chmod(params.outputPath, 0o755);
+      params.signal?.throwIfAborted();
+      if (params.archiveEntries) {
+        await publishDeclaredArchiveEntries({
+          archiveEntries: params.archiveEntries,
+          extractDir: params.extractDir,
+          outputDir: params.outputDir ?? join(dirname(params.outputPath), '..'),
+          signal: params.signal,
+        });
+      } else {
+        await moveExtractedEntryIntoPlace({
+          archiveName: params.archiveName,
+          extractDir: params.extractDir,
+          outputPath: params.outputPath,
+        });
+        if (process.platform !== 'win32') {
+          await chmod(params.outputPath, 0o755);
+        }
       }
+      params.signal?.throwIfAborted();
+      return;
     }
-    return;
-  }
 
-  throw new Error(`[github-release] unsupported asset archive: ${basename(params.archiveName)}`);
+    throw new Error(`[github-release] unsupported asset archive: ${basename(params.archiveName)}`);
+  } catch (error) {
+    params.signal?.throwIfAborted();
+    throw error;
+  }
 }

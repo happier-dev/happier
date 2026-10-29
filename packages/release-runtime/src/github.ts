@@ -103,7 +103,9 @@ export async function fetchGitHubLatestRelease(params: Readonly<{
   userAgent?: string;
   githubToken?: string;
   fetchImpl?: FetchImpl;
+  signal?: AbortSignal;
 }>): Promise<unknown> {
+  params.signal?.throwIfAborted();
   const userAgent = String(params.userAgent ?? '').trim() || 'happier-release-runtime';
   const token = String(params.githubToken ?? '').trim();
   const url = buildGitHubLatestReleaseUrl(params.githubRepo);
@@ -115,12 +117,13 @@ export async function fetchGitHubLatestRelease(params: Readonly<{
 
   if (params.fetchImpl) {
     try {
-      const response = await params.fetchImpl(url, { headers });
+      const response = await params.fetchImpl(url, { headers, signal: params.signal });
       if (!response.ok) {
         throw createHttpError(`[github] failed to resolve latest release (${response.status})`, response.status);
       }
-      return response.json();
+      return await response.json();
     } catch (error) {
+      params.signal?.throwIfAborted();
       throw normalizeGitHubRequestError({
         context: '[github] failed to resolve latest release',
         error,
@@ -128,8 +131,9 @@ export async function fetchGitHubLatestRelease(params: Readonly<{
     }
   }
   try {
-    return await requestJson({ url, headers });
+    return await requestJson({ url, headers, signal: params.signal });
   } catch (error) {
+    params.signal?.throwIfAborted();
     throw normalizeGitHubRequestError({
       context: '[github] failed to resolve latest release',
       error,

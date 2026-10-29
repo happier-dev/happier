@@ -1,3 +1,7 @@
+import { resolveAccountThemeProfileView, type ThemeProfileView } from '../domains/settings/themeProfiles';
+import type { ThemeProfilesLocalStateV1 } from '@/theme/profiles/themeProfileTypes';
+import { applyThemeProfilesFromUi } from './settingsWriters';
+import { loadPendingAccountSettingsState } from '../domains/state/accountSettingsPersistence';
 import React from 'react';
 import type { SessionMessagesTailBoundary } from '@/sync/runtime/sessionMessagesTailDiscontinuity';
 import { useShallow } from 'zustand/react/shallow';
@@ -2420,4 +2424,26 @@ export function useRequestedFriends() {
       return Object.values(state.friends).filter((friend) => friend.status === 'requested');
     })
   );
+}
+/** Shared library plus device activation. The legacy library is migration input only. */
+function useThemeProfileView(): ThemeProfileView {
+  const profiles = useSetting('themeProfiles');
+  const legacy = useLocalSetting('themeProfiles');
+  const selection = useLocalSetting('themeProfileSelection');
+  const legacyScope = useLocalSetting('themeProfileLegacyAccountScope');
+  const scope = getStorage()((state) => state.settingsScope);
+  return React.useMemo(() => {
+    const pending = scope ? loadPendingAccountSettingsState(scope) : null;
+    return resolveAccountThemeProfileView({ profiles, legacy, selection, legacyScope, scope,
+      pendingProfiles: pending?.settings.themeProfiles, pendingIntent: pending?.themeProfileMigration });
+  }, [profiles, legacy, selection, legacyScope, scope]);
+}
+
+export function useThemeProfiles(): ThemeProfilesLocalStateV1 {
+  return useThemeProfileView().state;
+}
+
+export function useThemeProfilesMutable(): [ThemeProfilesLocalStateV1, (value: ThemeProfilesLocalStateV1) => ThemeProfileView, ThemeProfileView] {
+  const before = useThemeProfileView();
+  return [before.state, React.useCallback((value: ThemeProfilesLocalStateV1) => applyThemeProfilesFromUi(value, before), [before]), before];
 }

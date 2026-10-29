@@ -7,9 +7,7 @@ import { installNavigationShellCommonModuleMocks } from '../navigationShellTestH
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-const desktopWindowBridgeState = vi.hoisted(() => ({
-    startDesktopWindowDragging: vi.fn(),
-}));
+const native = vi.hoisted(() => ({ invoke: vi.fn() }));
 
 const itemRowActionsState = vi.hoisted(() => ({
     lastActionIds: [] as string[],
@@ -69,8 +67,11 @@ vi.mock('@/components/ui/lists/ItemRowActions', () => ({
     },
 }));
 
-vi.mock('@/utils/platform/desktopWindowBridge', () => ({
-    startDesktopWindowDragging: () => desktopWindowBridgeState.startDesktopWindowDragging(),
+// Keep app drag eligibility and bridge behavior real; replace only native IPC.
+vi.mock('@/utils/platform/tauri', () => ({
+    isTauriDesktop: () => true,
+    invokeTauri: (command: string) => native.invoke(command),
+    listenTauriEvent: async () => () => {},
 }));
 
 function requireTestInstance(node: ReactTestInstance | null, label: string): ReactTestInstance {
@@ -87,7 +88,12 @@ function directChildTestIDs(instance: ReactTestInstance): string[] {
 
 describe('DesktopSidebarChrome', () => {
     beforeEach(() => {
-        desktopWindowBridgeState.startDesktopWindowDragging.mockReset();
+        native.invoke.mockReset();
+        native.invoke.mockImplementation(async (command: string) => {
+            if (command === 'desktop_get_window_chrome_policy') return { strategy: 'custom-controls' };
+            if (command === 'desktop_get_window_state') return { isMaximized: false };
+            return true;
+        });
         itemRowActionsState.lastActionIds = [];
     });
 
@@ -191,14 +197,14 @@ describe('DesktopSidebarChrome', () => {
 
         const controlsRow = requireTestInstance(screen.findByTestId('desktop-sidebar-chrome-controls-row'), 'controls row');
         const preventDefault = vi.fn();
-        controlsRow.props.onMouseDown?.({
+        await controlsRow.props.onMouseDown?.({
             buttons: 1,
             preventDefault,
             target: { closest: vi.fn(() => null) },
         });
 
         expect(preventDefault).toHaveBeenCalledTimes(1);
-        expect(desktopWindowBridgeState.startDesktopWindowDragging).toHaveBeenCalledTimes(1);
+        await vi.waitFor(() => expect(native.invoke).toHaveBeenCalledWith('desktop_start_window_dragging'));
     });
 
     it('marks unavailable browser history controls disabled without removing them', async () => {

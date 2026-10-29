@@ -1,5 +1,6 @@
-import { methods, type ClientApp } from '@agentclientprotocol/sdk';
+import type { ClientApp } from '@agentclientprotocol/sdk';
 
+import type { AcpSdk } from './acpSdk';
 import type {
   AcpClientConnectionHandlers,
   AcpExtensionContextFactory,
@@ -8,26 +9,27 @@ import type {
 
 export function registerAcpClientHandlers(params: Readonly<{
   app: ClientApp;
+  methods: AcpSdk['methods'];
   handlers: AcpClientConnectionHandlers;
   extensions: ReadonlyArray<AcpExtensionRegistration>;
   createExtensionContext: AcpExtensionContextFactory;
 }>): void {
   params.app
-    .onRequest(methods.client.session.requestPermission, (context) => (
+    .onRequest(params.methods.client.session.requestPermission, (context) => (
       params.handlers.requestPermission(context.params)
     ))
-    .onNotification(methods.client.session.update, (context) => (
+    .onNotification(params.methods.client.session.update, (context) => (
       params.handlers.sessionUpdate(context.params)
     ));
 
   if (params.handlers.readTextFile) {
     const readTextFile = params.handlers.readTextFile;
-    params.app.onRequest(methods.client.fs.readTextFile, (context) => readTextFile(context.params));
+    params.app.onRequest(params.methods.client.fs.readTextFile, (context) => readTextFile(context.params));
   }
 
   if (params.handlers.writeTextFile) {
     const writeTextFile = params.handlers.writeTextFile;
-    params.app.onRequest(methods.client.fs.writeTextFile, (context) => writeTextFile(context.params));
+    params.app.onRequest(params.methods.client.fs.writeTextFile, (context) => writeTextFile(context.params));
   }
 
   const registrationKeys = new Set<string>();

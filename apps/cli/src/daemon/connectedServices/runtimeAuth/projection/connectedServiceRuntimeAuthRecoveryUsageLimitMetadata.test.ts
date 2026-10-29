@@ -13,6 +13,16 @@ const intent = {
 } satisfies RuntimeAuthRecoveryIntent;
 
 describe('daemon recovery intent metadata projection', () => {
+  it('projects a daemon-owned pool wait even when the failed member was not attributed', () => {
+    const updater = buildRuntimeAuthUsageLimitRecoveryMetadataUpdater({ intent: {
+      ...intent, profileId: null,
+      classification: { ...intent.classification, profileId: null, runtimeIssueFingerprint: 'goal-failure' },
+    } });
+    expect(updater?.({})).toMatchObject({ sessionUsageLimitRecoveryV1: {
+      runtimeAuthRecoveryAttemptId: 'attempt-1', issueFingerprint: 'goal-failure',
+      selectedAuth: { kind: 'group', serviceId: 'openai-codex', groupId: 'pool', profileId: null },
+    } });
+  });
   it('projects the captured failure identity separately from its runtime attempt, including a legacy projection', () => {
     const issueFingerprint = 'usage-limit:claude:turn-b:2000:5000';
     const legacy = buildRuntimeAuthUsageLimitRecoveryMetadataUpdater({ intent })!({});

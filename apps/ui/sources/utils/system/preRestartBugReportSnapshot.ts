@@ -1,5 +1,6 @@
 import { Platform } from 'react-native';
 import { File, Paths } from 'expo-file-system';
+import { redactBugReportSensitiveText } from '@happier-dev/protocol';
 
 import type { BugReportUserAction } from '@/utils/system/bugReportActionTrail';
 
@@ -13,7 +14,15 @@ export type PreRestartBugReportSnapshotV1 = Readonly<{
   errorDetails: string;
   appLogs: string;
   userActions: ReadonlyArray<BugReportUserAction>;
+  runtime?: Readonly<Record<string, string | null>>;
 }>;
+
+export function formatPreRestartBugReportSnapshotDetails(snapshot: PreRestartBugReportSnapshotV1): string {
+  return redactBugReportSensitiveText([
+    snapshot.errorDetails,
+    snapshot.runtime ? JSON.stringify({ capturedAt: new Date(snapshot.createdAtMs).toISOString(), ...snapshot.runtime }, null, 2) : '',
+  ].filter(Boolean).join('\n\n'));
+}
 
 const SNAPSHOT_KEY = 'happier_pre_restart_bug_report_snapshot_v1';
 const SNAPSHOT_FILENAME = 'pre-restart-bug-report-snapshot.v1.json';
@@ -44,6 +53,10 @@ function parseSnapshot(raw: string): PreRestartBugReportSnapshotV1 | null {
     const appLogs = typeof parsed.appLogs === 'string' ? parsed.appLogs : '';
     const userActions =
       Array.isArray(parsed.userActions) ? parsed.userActions.filter((a) => isRecord(a)) as BugReportUserAction[] : [];
+    // Optional diagnostic facts extend v1; released readers ignore them and old snapshots remain valid.
+    const runtime = isRecord(parsed.runtime)
+      ? Object.fromEntries(Object.entries(parsed.runtime).filter((entry): entry is [string, string | null] => entry[1] === null || typeof entry[1] === 'string'))
+      : undefined;
 
     return {
       v: 1,
@@ -55,6 +68,7 @@ function parseSnapshot(raw: string): PreRestartBugReportSnapshotV1 | null {
       errorDetails,
       appLogs,
       userActions,
+      ...(runtime ? { runtime } : {}),
     };
   } catch {
     return null;

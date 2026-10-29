@@ -1,7 +1,7 @@
-import {
+import type {
   AGENT_METHODS,
   CLIENT_METHODS,
-  type SessionUpdate,
+  SessionUpdate,
 } from '@agentclientprotocol/sdk';
 
 export type AcpSdkContractDisposition =

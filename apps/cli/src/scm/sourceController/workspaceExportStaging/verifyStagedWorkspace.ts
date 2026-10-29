@@ -9,8 +9,9 @@ import { compareWorkspaceManifests, type WorkspaceManifestComparison } from '../
 import { hashWorkspaceFile } from '../workspaceExportPackaging/hashWorkspaceFile';
 import { scanWorkspaceManifest } from '../workspaceExportPackaging/scanWorkspaceManifest';
 import { inferWorkspaceManifestSafeFilterPolicyFromEntries } from '../workspaceExportPackaging/workspaceManifestSafeFilterPolicy';
+import { lazySchema } from '@happier-dev/protocol';
 
-const workspaceManifestDigestSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/);
+const workspaceManifestDigestSchema = lazySchema(() => z.string().regex(/^sha256:[a-f0-9]{64}$/));
 
 export type StagedWorkspaceBlobFailure =
     | Readonly<{

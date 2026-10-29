@@ -2,6 +2,7 @@ import { accountSettingsParse, buildUsageLimitIssueFingerprint, SESSION_USAGE_LI
   resolveSessionUsageLimitRecoveryResumePromptModeV1, type AccountSettings, type SessionRuntimeIssueV1,
   type SessionUsageLimitRecoveryV1 } from '@happier-dev/protocol';
 import type { Metadata } from '@/api/types';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import type { Credentials } from '@/persistence';
 import type { SessionRuntimeControls } from '@/rpc/handlers/sessionControls';
 import { resolveUsageLimitRecoveryFeatureEnabled } from '@/features/usageLimitRecoveryFeatureGate';
@@ -9,6 +10,7 @@ import { UsageLimitRecoveryScheduler } from '@/daemon/connectedServices/usageLim
 import { resolveInactiveUsageLimitRecoverySchedulerResult } from '@/daemon/connectedServices/usageLimitRecovery/resolveInactiveUsageLimitRecoverySchedulerResult';
 import { continueSessionAfterUsageLimitReset } from '@/daemon/connectedServices/continuation/continueSessionAfterUsageLimitReset';
 import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
+import { callMachineRpc } from '@/session/transport/rpc/machineRpc';
 import { resolveSessionEncryptionContextFromCredentials, resolveSessionStoredContentEncryptionMode,
   tryDecryptSessionMetadata } from '@/session/transport/encryption/sessionEncryptionContext';
 import { updateAccountSettingsV2WithRetry } from '@/settings/accountSettings/updateAccountSettingsV2WithRetry';
@@ -41,8 +43,6 @@ export function createSessionUsageLimitRecoveryRuntime(deps: Readonly<{
   const persist = async (intent: SessionUsageLimitRecoveryV1) => {
     const baseMetadata = deps.getMetadata() ?? {};
     await deps.updateMetadata((metadata) => {
-      const current = SessionUsageLimitRecoveryV1Schema.safeParse(metadata[SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY]);
-      if (current.success && current.data.runtimeAuthRecoveryAttemptId) return metadata;
       return mergeUsageLimitRecoveryFieldIntoMetadata({ latestMetadata: metadata,
         baseMetadata, candidateMetadata: { [SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY]: intent } }) as Metadata;
     });
@@ -55,7 +55,7 @@ export function createSessionUsageLimitRecoveryRuntime(deps: Readonly<{
         let committed: SessionUsageLimitRecoveryV1 | null = null;
         await deps.updateMetadata((metadata) => {
           const parsed = SessionUsageLimitRecoveryV1Schema.safeParse(metadata[SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY]);
-          committed = parsed.success && parsed.data.runtimeAuthRecoveryAttemptId ? parsed.data : merge(parsed.success ? parsed.data : null, intent);
+          committed = merge(parsed.success ? parsed.data : null, intent);
           return committed ? { ...metadata, [SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY]: committed } : metadata;
         });
         return committed;
@@ -97,10 +97,22 @@ export function createSessionUsageLimitRecoveryRuntime(deps: Readonly<{
       ctx: resolveSessionEncryptionContextFromCredentials(credentials, rawSession), mode: resolveSessionStoredContentEncryptionMode(rawSession) };
   }
 
-  async function runRoutedCheck(context: NonNullable<Awaited<ReturnType<typeof readContext>>>, intent: SessionUsageLimitRecoveryV1, operation?: 'consume_reset_credit') {
+  async function runRoutedCheck(context: NonNullable<Awaited<ReturnType<typeof readContext>>>, intent: SessionUsageLimitRecoveryV1,
+    request: Parameters<RuntimeControls['checkUsageLimitRecoveryNow']>[0] = { sessionId: deps.sessionId }) {
       const result = await routeSessionUsageLimitRecoveryCheckNow({ ...context,
-        request: { sessionId: deps.sessionId, ...(operation ? { operation } : {}) },
+        request,
         callLiveSessionRpc: async () => ({ ok: false, errorCode: 'unsupported_session_runtime_method' }),
+        checkRuntimeAuthUsageLimitRecovery: async () => {
+          const unavailable = { ok: false, errorCode: 'session_usage_limit_recovery_control_remote_unavailable' };
+          if (!context.currentMachineId) return unavailable;
+          try {
+            return await callMachineRpc({ credentials: context.credentials, machineId: context.currentMachineId,
+              method: RPC_METHODS.DAEMON_SESSION_USAGE_LIMIT_CHECK_NOW, request,
+              authorization: { kind: 'session.write', sessionId: deps.sessionId } });
+          } catch {
+            return unavailable;
+          }
+        },
         resumeInactiveSessionWhenReady: async ({ rawSession, metadata, readiness }) => {
           const parsed = SessionUsageLimitRecoveryV1Schema.safeParse(metadata[SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY]);
           if (!parsed.success) return false;
@@ -168,6 +180,15 @@ export function createSessionUsageLimitRecoveryRuntime(deps: Readonly<{
       let current = read();
       if (current?.status === 'cancelled') return { ok: true, status: 'cancelled' };
       if (current?.status === 'exhausted') return { ok: true, status: 'exhausted' };
+      if (current?.runtimeAuthRecoveryAttemptId && request.operation !== 'consume_reset_credit') {
+        try {
+          const context = await readContext();
+          return context ? await runRoutedCheck(context, current, request)
+            : { ok: false, errorCode: 'session_usage_limit_recovery_control_remote_unavailable' };
+        } catch {
+          return { ok: false, errorCode: 'session_usage_limit_recovery_control_remote_unavailable' };
+        }
+      }
       if (!current || current.status === 'paused') {
         const enabled = await enable(request, false);
         if (!enabled.ok) return enabled;
@@ -180,7 +201,7 @@ export function createSessionUsageLimitRecoveryRuntime(deps: Readonly<{
         if (!current || current.runtimeAuthRecoveryAttemptId) return { ok: false, errorCode: 'unsupported_session_runtime_method' };
         const context = await readContext();
         if (!context) return { ok: false, errorCode: 'usage_limit_recovery_session_unavailable' };
-        const result = await runRoutedCheck(context, current, 'consume_reset_credit');
+        const result = await runRoutedCheck(context, current, request);
         const latest = read();
         if (latest) await scheduler.upsertScheduled({ sessionId: deps.sessionId, intent: latest });
         return result;
@@ -202,7 +223,7 @@ export function createSessionUsageLimitRecoveryRuntime(deps: Readonly<{
       acceptedFailure = issue.source === 'usage_limit' ? issue : null;
       if (disposed || issue.source !== 'usage_limit' || !issue.usageLimit
         || issue.usageLimit.recoverability !== 'wait' || deps.getAccountSettings()?.usageLimitRecoverySettingsV1?.mode !== 'auto_wait') return;
-      if (!await resolveUsageLimitRecoveryFeatureEnabled() || disposed || acceptedFailure !== issue || read()?.runtimeAuthRecoveryAttemptId) return;
+      if (!await resolveUsageLimitRecoveryFeatureEnabled() || disposed || acceptedFailure !== issue) return;
       const existing = read();
       if (existing?.issueFingerprint === buildUsageLimitIssueFingerprint(issue)) return;
       const resumePromptMode = resolveSessionUsageLimitRecoveryResumePromptModeV1({ existingIntent: existing,

@@ -4,6 +4,7 @@ import type { SessionListRenderableSession } from '@/sync/domains/session/listin
 import { createSessionActionTarget } from '@/components/sessions/actions/sessionActionContext';
 import {
     SESSION_ACTION_ARCHIVE_ID,
+    SESSION_ACTION_DELETE_ID,
     SESSION_ACTION_SET_ATTENTION_STANDING_ID,
     SESSION_ACTION_MARK_UNREAD_ID,
     SESSION_ACTION_MOVE_TO_FOLDER_ID,
@@ -65,6 +66,7 @@ describe('buildSessionRowMoreMenuItems', () => {
             SESSION_ACTION_MARK_UNREAD_ID,
             SESSION_ACTION_STOP_ID,
             SESSION_ACTION_ARCHIVE_ID,
+            SESSION_ACTION_DELETE_ID,
             SESSION_ACTION_MOVE_TO_FOLDER_ID,
         ]);
         expect(items.at(-1)?.disabled).toBe(false);
@@ -112,6 +114,7 @@ describe('buildSessionRowMoreMenuItems', () => {
             SESSION_ACTION_MARK_UNREAD_ID,
             'session.copyDebugInformation',
             SESSION_ACTION_ARCHIVE_ID,
+            SESSION_ACTION_DELETE_ID,
         ]);
     });
 
@@ -162,6 +165,7 @@ describe('buildSessionRowMoreMenuItems', () => {
             'session.fork',
             SESSION_ACTION_STOP_ID,
             SESSION_ACTION_ARCHIVE_ID,
+            SESSION_ACTION_DELETE_ID,
         ]);
         const reminder = items.find((item) => item.id === 'attention-reminder');
         expect(reminder?.subtitle).toBeUndefined();

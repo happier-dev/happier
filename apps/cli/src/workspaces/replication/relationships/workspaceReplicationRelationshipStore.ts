@@ -20,13 +20,14 @@ import {
   type WorkspaceReplicationDirectionScope,
   type WorkspaceReplicationRelationshipScope,
 } from './relationshipScope';
+import { lazySchema } from '@happier-dev/protocol';
 
-const WorkspaceReplicationRelationshipConfigSchema = z.object({
+const WorkspaceReplicationRelationshipConfigSchema = lazySchema(() => z.object({
   mode: z.enum(workspaceReplicationModes),
   ignorePatterns: z.array(z.string().min(1)).optional(),
-}).strict();
+}).strict());
 
-export const WorkspaceReplicationRelationshipRecordSchema = z.object({
+export const WorkspaceReplicationRelationshipRecordSchema = lazySchema(() => z.object({
   schemaVersion: z.literal(WORKSPACE_REPLICATION_SCHEMA_VERSION),
   relationshipId: z.string().regex(/^rel_[A-Za-z0-9_-]+$/u),
   endpoints: z.tuple([
@@ -42,7 +43,7 @@ export const WorkspaceReplicationRelationshipRecordSchema = z.object({
   config: WorkspaceReplicationRelationshipConfigSchema,
   createdAtMs: z.number().int().min(0),
   updatedAtMs: z.number().int().min(0),
-}).strict();
+}).strict());
 
 export type WorkspaceReplicationRelationshipRecord = z.infer<typeof WorkspaceReplicationRelationshipRecordSchema>;
 

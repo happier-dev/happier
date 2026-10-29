@@ -14,7 +14,9 @@ vi.mock('react-native', async () => {
     return createReactNativeWebMock({
         View: 'View',
         Pressable: ({ children, ...props }: Record<string, unknown> & { children?: React.ReactNode }) =>
-            React.createElement('Pressable', props, children),
+            React.createElement('Pressable', props, typeof children === 'function'
+                ? (children as (state: { pressed: boolean; hovered: boolean }) => React.ReactNode)({ pressed: false, hovered: true })
+                : children),
     });
 });
 
@@ -90,6 +92,18 @@ async function renderSurface(overrides: Partial<PressableSurfaceProps> = {}) {
 }
 
 describe('PressableSurface press feedback', () => {
+    it('keeps the interactive frame clear while the inset surface receives hover feedback', async () => {
+        const screen = await renderSurface({
+            style: { width: 28, height: 28 },
+            feedbackInset: 4,
+        });
+        const frame = flattenStyle(screen.findHostByTestId(SURFACE_TEST_ID)?.props.style, { hovered: true });
+        expect(frame.backgroundColor).toBeUndefined();
+        const visualSurface = screen.findHostByTestId(`${SURFACE_TEST_ID}-feedback-surface`);
+        expect(visualSurface).not.toBeNull();
+        expect(flattenStyle(visualSurface?.props.style).backgroundColor).toBe(lightTheme.colors.surface.pressed);
+    });
+
     it('tints the surface on press instead of dimming what is written on it', async () => {
         const screen = await renderSurface();
         const surface = screen.findHostByTestId(SURFACE_TEST_ID);

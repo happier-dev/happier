@@ -93,7 +93,12 @@ export async function createManagedOpenCodeClientFixture() {
 }
 
 /** Fetch-level SSE fixture keeps the parser, subscriptions, reconnect loop and abort wiring real. */
-export function createOpenCodeSseResponse(signal?: AbortSignal | null) {
+export function createOpenCodeSseResponse(signal?: AbortSignal | null): Readonly<{
+  response: Response;
+  send: (event: unknown, id?: string) => void;
+  close: () => void;
+  fail: () => void;
+}> {
   let controller!: ReadableStreamDefaultController<Uint8Array>;
   let settled = false;
   const stream = new ReadableStream<Uint8Array>({

@@ -416,8 +416,6 @@ jobs:
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version-file: .node-version
-          cache: yarn
-          cache-dependency-path: yarn.lock
       - name: Enable Corepack
         if: ${{ !inputs.use_prepared }}
         uses: ./.github/actions/enable-corepack-yarn
@@ -545,8 +543,6 @@ jobs:
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version-file: .node-version
-          cache: yarn
-          cache-dependency-path: yarn.lock
       - name: Enable Corepack
         if: ${{ !inputs.ui_ota_complete && (inputs.expo_action == 'ota' || inputs.expo_action == 'full') }}
         uses: ./.github/actions/enable-corepack-yarn

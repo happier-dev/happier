@@ -3,6 +3,24 @@ import { describe, expect, it } from 'vitest';
 import { applyClaudeRemoteMetaState, DEFAULT_CLAUDE_REMOTE_META_STATE } from './claudeRemoteMetaState';
 
 describe('applyClaudeRemoteMetaState', () => {
+  it('defaults idle reclamation off, accepts opt-in, and rejects invalid durations', () => {
+    expect(DEFAULT_CLAUDE_REMOTE_META_STATE).toMatchObject({
+      claudeRemoteIdleReclaimEnabled: false, claudeRemoteIdleReclaimTimeoutMinutes: 30,
+    });
+    const enabled = applyClaudeRemoteMetaState(DEFAULT_CLAUDE_REMOTE_META_STATE, {
+      claudeRemoteIdleReclaimEnabled: true, claudeRemoteIdleReclaimTimeoutMinutes: 45,
+    });
+    expect(enabled).toMatchObject({ claudeRemoteIdleReclaimEnabled: true, claudeRemoteIdleReclaimTimeoutMinutes: 45 });
+    expect(applyClaudeRemoteMetaState(enabled, {})).toMatchObject({ claudeRemoteIdleReclaimEnabled: true });
+    for (const invalid of [0, -1, 1.5, '30', Math.floor(2_147_483_647 / 60_000) + 1]) {
+      expect(applyClaudeRemoteMetaState(enabled, {
+        claudeRemoteIdleReclaimEnabled: 'false', claudeRemoteIdleReclaimTimeoutMinutes: invalid,
+      })).toMatchObject({ claudeRemoteIdleReclaimEnabled: true, claudeRemoteIdleReclaimTimeoutMinutes: 45 });
+    }
+    expect(applyClaudeRemoteMetaState(enabled, { claudeRemoteIdleReclaimEnabled: false }))
+      .toMatchObject({ claudeRemoteIdleReclaimEnabled: false });
+  });
+
   it('accepts explicit Happier attribution and preserves it when old messages omit the field', () => {
     const enabled = applyClaudeRemoteMetaState(DEFAULT_CLAUDE_REMOTE_META_STATE, { claudeCodeIncludeInNativeHistory: true });
     expect(enabled).toMatchObject({ claudeCodeIncludeInNativeHistory: true });

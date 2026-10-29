@@ -1,228 +1,95 @@
-import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { mkdir } from 'node:fs/promises';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-
-import * as managedPnpm from '@/runtime/managedTools/pnpm/managedPnpm';
 
 import { normalizePackageRunnerInvocation } from './normalizePackageRunnerInvocation';
 
 describe('normalizePackageRunnerInvocation', () => {
   let rootDir: string;
   let processEnv: NodeJS.ProcessEnv;
+  const platformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform')!;
 
   beforeEach(async () => {
-    rootDir = await mkdtemp(join(tmpdir(), 'happier-normalize-package-runner-'));
-    const pnpmPath = join(rootDir, 'pnpm');
-    await writeFile(pnpmPath, '#!/bin/sh\nexit 0\n', 'utf8');
-    await chmod(pnpmPath, 0o755);
-    processEnv = {
-      HAPPIER_PNPM_BIN: pnpmPath,
-      PATH: '',
-    } as NodeJS.ProcessEnv;
+    rootDir = await mkdtemp(join(tmpdir(), 'happier-configured-package-runner-'));
+    processEnv = { PATH: rootDir, HAPPIER_HOME_DIR: join(rootDir, 'home') };
   });
 
   afterEach(async () => {
+    Object.defineProperty(process, 'platform', platformDescriptor);
+    vi.restoreAllMocks();
     await rm(rootDir, { recursive: true, force: true });
   });
 
-  it('rewrites npx invocations to managed pnpm dlx', async () => {
-    await expect(
-      normalizePackageRunnerInvocation({
-        command: 'npx',
-        args: ['-y', '--prefer-offline', '@scope/server', '--flag'],
-        processEnv,
-      }),
-    ).resolves.toEqual({
-      command: processEnv.HAPPIER_PNPM_BIN,
-      args: ['dlx', '@scope/server', '--flag'],
-      cwdPolicy: 'neutral',
-    });
+  async function installRunner(name: string): Promise<string> {
+    const path = join(rootDir, name);
+    await writeFile(path, '#!/bin/sh\nexit 0\n');
+    await chmod(path, 0o755);
+    return path;
+  }
+
+  it.each([
+    ['npx', ['-y', '--prefer-offline', '@scope/server', '--', '--yes', '-y']],
+    ['npm', ['exec', '--package=@scope/server', '--', 'server', '--yes']],
+    ['yarn', ['workspace', 'docs', 'run', 'dev']],
+    ['yarnpkg', ['dlx', '@scope/server']],
+    ['pnpm', ['exec', 'tsx', 'server.ts']],
+    ['bunx', ['@scope/server', '--prefer-offline']],
+  ])('uses installed %s without translating its arguments', async (command, args) => {
+    const path = await installRunner(command);
+    await expect(normalizePackageRunnerInvocation({ command, args, processEnv }))
+      .resolves.toEqual({ command: path, args });
   });
 
-  it('preserves npm exec invocations without package flags for workspace-local binaries', async () => {
-    await expect(
-      normalizePackageRunnerInvocation({
-        command: 'npm',
-        args: ['exec', '--', '@scope/server', '--flag'],
-        processEnv,
-      }),
-    ).resolves.toEqual({
-      command: processEnv.HAPPIER_PNPM_BIN,
-      args: ['exec', '@scope/server', '--flag'],
-      cwdPolicy: 'workspace',
-    });
+  it('preserves an explicit executable rather than selecting another runner', async () => {
+    const command = await installRunner('npx');
+    processEnv.HAPPIER_PNPM_BIN = await installRunner('pnpm');
+    const args = ['--package', '@scope/server', '--', 'server', '--yes'];
+    await expect(normalizePackageRunnerInvocation({ command, args, processEnv }))
+      .resolves.toEqual({ command, args });
   });
 
-  it('rewrites npm exec package installs to managed pnpm dlx', async () => {
-    await expect(
-      normalizePackageRunnerInvocation({
-        command: 'npm',
-        args: ['exec', '--package', '@scope/server', '--', 'server', '--flag'],
-        processEnv,
-      }),
-    ).resolves.toEqual({
-      command: processEnv.HAPPIER_PNPM_BIN,
-      args: ['dlx', '--package', '@scope/server', 'server', '--flag'],
-      cwdPolicy: 'neutral',
-    });
+  it('does not replace a missing configured runner with an installed package manager', async () => {
+    processEnv.HAPPIER_PNPM_BIN = await installRunner('pnpm');
+    await expect(normalizePackageRunnerInvocation({ command: 'npx', args: ['server'], processEnv }))
+      .resolves.toBeNull();
   });
 
-  it('rewrites npm exec combined package flags to managed pnpm dlx', async () => {
-    await expect(
-      normalizePackageRunnerInvocation({
-        command: 'npm',
-        args: ['exec', '--package=@scope/server', '--', 'server', '--flag'],
-        processEnv,
-      }),
-    ).resolves.toEqual({
-      command: processEnv.HAPPIER_PNPM_BIN,
-      args: ['dlx', '--package=@scope/server', 'server', '--flag'],
-      cwdPolicy: 'neutral',
-    });
+  it('does not acquire tooling when the configured runner is missing', async () => {
+    // Network is the genuine boundary: a missing user command must not acquire tooling.
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('unexpected download'));
+    await expect(normalizePackageRunnerInvocation({ command: 'npx', args: ['server'], processEnv }))
+      .resolves.toBeNull();
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it('preserves npm run invocations on managed pnpm for workspace-local scripts', async () => {
-    await expect(
-      normalizePackageRunnerInvocation({
-        command: 'npm',
-        args: ['run', 'dev', '--', '--port', '3000'],
-        processEnv,
-      }),
-    ).resolves.toEqual({
-      command: processEnv.HAPPIER_PNPM_BIN,
-      args: ['run', 'dev', '--', '--port', '3000'],
-      cwdPolicy: 'workspace',
-    });
+  it('does not fall back from a missing explicit path to a PATH command', async () => {
+    await installRunner('npx');
+    await expect(normalizePackageRunnerInvocation({ command: join(rootDir, 'missing', 'npx'), args: [], processEnv }))
+      .resolves.toBeNull();
   });
 
-  it('preserves pnpm exec invocations on managed pnpm for workspace-local binaries', async () => {
-    await expect(
-      normalizePackageRunnerInvocation({
-        command: 'pnpm',
-        args: ['exec', 'tsx', 'server.ts'],
-        processEnv,
-      }),
-    ).resolves.toEqual({
-      command: processEnv.HAPPIER_PNPM_BIN,
-      args: ['exec', 'tsx', 'server.ts'],
-      cwdPolicy: 'workspace',
-    });
+  it('resolves relative executable paths against the session workspace', async () => {
+    await installRunner('npx');
+    await expect(normalizePackageRunnerInvocation({ command: './npx', args: [], processEnv, cwd: rootDir }))
+      .resolves.toEqual({ command: './npx', args: [] });
   });
 
-  it('rewrites yarn dlx invocations to managed pnpm dlx', async () => {
-    await expect(
-      normalizePackageRunnerInvocation({
-        command: 'yarn',
-        args: ['dlx', '@scope/server', '--flag'],
-        processEnv,
-      }),
-    ).resolves.toEqual({
-      command: processEnv.HAPPIER_PNPM_BIN,
-      args: ['dlx', '@scope/server', '--flag'],
-      cwdPolicy: 'neutral',
-    });
+  it('uses Windows Path and PATHEXT to select the configured cmd runner', async () => {
+    const command = await installRunner('npx.cmd');
+    Object.defineProperty(process, 'platform', { ...platformDescriptor, value: 'win32' });
+    await expect(normalizePackageRunnerInvocation({
+      command: 'npx', args: ['--yes', 'server'], processEnv: { Path: rootDir, PATHEXT: '.CMD;.EXE' },
+    })).resolves.toEqual({ command, args: ['--yes', 'server'] });
   });
 
-  it('rewrites yarnpkg.cmd dlx invocations to managed pnpm dlx', async () => {
-    await expect(
-      normalizePackageRunnerInvocation({
-        command: 'yarnpkg.cmd',
-        args: ['dlx', '@scope/server'],
-        processEnv,
-      }),
-    ).resolves.toEqual({
-      command: processEnv.HAPPIER_PNPM_BIN,
-      args: ['dlx', '@scope/server'],
-      cwdPolicy: 'neutral',
-    });
-  });
-
-  it('does not bootstrap managed pnpm for unsupported runner commands', async () => {
-    const ensureSpy = vi.spyOn(managedPnpm, 'ensureManagedPnpmCommand');
-
-    await expect(
-      normalizePackageRunnerInvocation({
-        command: 'unsupported-runner',
-        args: ['--help'],
-        processEnv,
-      }),
-    ).resolves.toBeNull();
-
-    expect(ensureSpy).not.toHaveBeenCalled();
-  });
-
-  it('does not rewrite non-dlx yarn invocations whose semantics depend on yarn', async () => {
-    await expect(
-      normalizePackageRunnerInvocation({
-        command: 'yarn',
-        args: ['workspace', 'docs', 'run', 'dev'],
-        processEnv,
-      }),
-    ).resolves.toBeNull();
-  });
-
-  it('rewrites bunx invocations to managed pnpm dlx', async () => {
-    await expect(
-      normalizePackageRunnerInvocation({
-        command: 'bunx',
-        args: ['@scope/server'],
-        processEnv,
-      }),
-    ).resolves.toEqual({
-      command: processEnv.HAPPIER_PNPM_BIN,
-      args: ['dlx', '@scope/server'],
-      cwdPolicy: 'neutral',
-    });
-  });
-
-  it('keeps pnpm invocations on managed pnpm', async () => {
-    await expect(
-      normalizePackageRunnerInvocation({
-        command: 'pnpm',
-        args: ['dlx', '@scope/server'],
-        processEnv,
-      }),
-    ).resolves.toEqual({
-      command: processEnv.HAPPIER_PNPM_BIN,
-      args: ['dlx', '@scope/server'],
-      cwdPolicy: 'neutral',
-    });
-  });
-
-  it('fails closed when HAPPIER_PNPM_BIN is set but invalid', async () => {
-    processEnv = {
-      HAPPIER_PNPM_BIN: join(rootDir, 'missing-pnpm'),
-      PATH: rootDir,
-    } as NodeJS.ProcessEnv;
-
-    await expect(
-      normalizePackageRunnerInvocation({
-        command: 'npx',
-        args: ['@scope/server'],
-        processEnv,
-      }),
-    ).resolves.toBeNull();
-  });
-
-  it('fails closed when HAPPIER_PNPM_BIN points to an executable directory', async () => {
-    const pnpmDir = join(rootDir, 'pnpm-dir');
-    await mkdir(pnpmDir, { recursive: true });
-    await chmod(pnpmDir, 0o755);
-
-    processEnv = {
-      HAPPIER_PNPM_BIN: pnpmDir,
-      PATH: rootDir,
-    } as NodeJS.ProcessEnv;
-
-    await expect(
-      normalizePackageRunnerInvocation({
-        command: 'npx',
-        args: ['@scope/server'],
-        processEnv,
-      }),
-    ).resolves.toBeNull();
+  it('rejects directories and non-executable files', async () => {
+    await mkdir(join(rootDir, 'npx'));
+    await writeFile(join(rootDir, 'npm'), 'not executable');
+    await expect(normalizePackageRunnerInvocation({ command: 'npx', args: [], processEnv })).resolves.toBeNull();
+    if (process.platform !== 'win32') {
+      await expect(normalizePackageRunnerInvocation({ command: 'npm', args: [], processEnv })).resolves.toBeNull();
+    }
   });
 });

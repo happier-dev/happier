@@ -24,7 +24,7 @@ describe('useBugReportComposerDraftState', () => {
         const snapshot = JSON.stringify({
             v: 1, createdAtMs: Date.now(), reason: 'crash', platform: 'web', origin: null,
             isSecureContext: true, errorDetails: 'Long crash\n' + ' at RecognisableFrame\n'.repeat(500) + 'FINAL_FRAME',
-            appLogs: '', userActions: [],
+            appLogs: '', userActions: [], runtime: { appVersion: 'before-crash', frontendAssets: Array.from({ length: 120 }, (_, n) => 'https://build.example/assets/long-production-frontend-identity-' + n + '.js').join('\n') + '\nFINAL_ASSET.js' },
         });
         const items = new Map([[snapshotKey, snapshot]]);
         vi.stubGlobal('localStorage', {
@@ -33,16 +33,19 @@ describe('useBugReportComposerDraftState', () => {
         });
         const hook = await renderHook(() => {
             const draft = useBugReportComposerDraftState({ profile: null, serverUrlDefault: '' });
-            React.useLayoutEffect(() => { draft.setTitle('My title'); }, []);
+            React.useLayoutEffect(() => { draft.setTitle('My title'); draft.setAppVersion('Reviewed frontend'); }, []);
             return draft;
         });
         expect(hook.getCurrent().title).toBe('My title');
+        expect(hook.getCurrent().appVersion).toBe('Reviewed frontend');
+        expect(hook.getCurrent().currentBehavior).toContain('RecognisableFrame');
         expect(hook.getCurrent().currentBehavior.length).toBeLessThanOrEqual(5000);
         expect(hook.getCurrent().currentBehavior).toContain('appCrash.stackTruncated');
         expect(items.get(snapshotKey)).toBe(snapshot);
         copiedDetails.mockClear();
         await act(async () => hook.getCurrent().copySavedCrash?.());
         expect(copiedDetails).toHaveBeenCalledWith(expect.stringContaining('FINAL_FRAME'));
+        expect(copiedDetails).toHaveBeenCalledWith(expect.stringContaining('FINAL_ASSET.js'));
         await act(async () => hook.getCurrent().discardSavedCrash());
         expect(items.has(snapshotKey)).toBe(false);
         expect(hook.getCurrent().crashReportStatus).toBe('discarded');
@@ -53,6 +56,7 @@ describe('useBugReportComposerDraftState', () => {
             v: 1, createdAtMs: Date.now(), reason: 'crash', platform: 'web', origin: null,
             isSecureContext: true, errorDetails: 'Synthetic crash\n at RecognisableFrame\n token=private-secret',
             appLogs: '', userActions: [],
+            runtime: { appVersion: '0.2.before-restart', osVersion: 'Windows NT 10.0', desktopWrapperVersion: '0.2.wrapper-748' },
         });
         const items = new Map([[snapshotKey, snapshot]]);
         vi.stubGlobal('localStorage', {
@@ -62,6 +66,9 @@ describe('useBugReportComposerDraftState', () => {
         });
         const hook = await renderHook(() => useBugReportComposerDraftState({ profile: null, serverUrlDefault: '' }));
         await flushHookEffects();
+        expect(hook.getCurrent().appVersion).toBe('0.2.before-restart');
+        expect(hook.getCurrent().osVersion).toBe('Windows NT 10.0');
+        expect(hook.getCurrent().currentBehavior).toContain('0.2.wrapper-748');
         expect(hook.getCurrent().title.length).toBeGreaterThan(0);
         expect(hook.getCurrent().summary).toContain('Synthetic crash');
         expect(hook.getCurrent().currentBehavior).toContain('RecognisableFrame');

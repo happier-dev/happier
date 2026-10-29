@@ -40,7 +40,7 @@ describe('createAcpClientConnection', () => {
         return { sessionId: 'session-1' };
       });
 
-    const connection = createAcpClientConnection({
+    const connection = await createAcpClientConnection({
       name: 'connection-test-client',
       transport: testAgent,
       handlers: {
@@ -83,7 +83,7 @@ describe('createAcpClientConnection', () => {
         return { stopReason: 'end_turn', _meta: requestResult };
       });
 
-    const connection = createAcpClientConnection({
+    const connection = await createAcpClientConnection({
       name: 'extension-test-client',
       transport: testAgent,
       handlers: {
@@ -147,7 +147,7 @@ describe('createAcpClientConnection', () => {
           };
         }
       });
-    const connection = createAcpClientConnection({
+    const connection = await createAcpClientConnection({
       name: 'invalid-params-test-client',
       transport: testAgent,
       handlers: {
@@ -184,7 +184,7 @@ describe('createAcpClientConnection', () => {
       .onRequest('example/models', objectWithStringValue, (context) => ({
         model: context.params.value,
       }));
-    const connection = createAcpClientConnection({
+    const connection = await createAcpClientConnection({
       name: 'outgoing-extension-test-client',
       transport: testAgent,
       handlers: {
@@ -205,7 +205,7 @@ describe('createAcpClientConnection', () => {
   });
 
   it('returns method-not-found for an unregistered outgoing extension', async () => {
-    const connection = createAcpClientConnection({
+    const connection = await createAcpClientConnection({
       name: 'unknown-extension-test-client',
       transport: agent({ name: 'unknown-extension-test-agent' }),
       handlers: {
@@ -232,7 +232,7 @@ describe('createAcpClientConnection', () => {
         await context.client.request('example/client-slow', { value: 'request' });
         return { stopReason: 'end_turn' };
       });
-    const connection = createAcpClientConnection({
+    const connection = await createAcpClientConnection({
       name: 'inbound-close-test-client',
       transport: testAgent,
       handlers: {
@@ -269,14 +269,14 @@ describe('createAcpClientConnection', () => {
     expect(handlerAborted).toBe(true);
   });
 
-  it('rejects duplicate registrations for the same extension direction and method', () => {
+  it('rejects duplicate registrations for the same extension direction and method', async () => {
     const duplicate = defineAcpExtensionRequest({
       method: 'example/duplicate',
       params: objectWithStringValue,
       handler: () => ({}),
     });
 
-    expect(() => createAcpClientConnection({
+    await expect(createAcpClientConnection({
       name: 'duplicate-extension-test-client',
       transport: agent({ name: 'duplicate-extension-test-agent' }),
       handlers: {
@@ -284,6 +284,6 @@ describe('createAcpClientConnection', () => {
         sessionUpdate: () => {},
       },
       extensions: [duplicate, duplicate],
-    })).toThrow(/Duplicate ACP extension request registration/);
+    })).rejects.toThrow(/Duplicate ACP extension request registration/);
   });
 });

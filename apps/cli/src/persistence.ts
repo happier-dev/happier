@@ -29,6 +29,7 @@ import { isPidAliveBySignal } from '@/daemon/processRunState';
 import type { PublicReleaseRingLabel } from '@happier-dev/release-runtime/releaseRings';
 import { createServerUrlComparableKey } from '@happier-dev/protocol';
 import type { MachineReplacementReason } from '@happier-dev/protocol';
+import { lazySchema } from '@happier-dev/protocol';
 
 async function bestEffortChmod(path: string, mode: number): Promise<void> {
   if (process.platform === 'win32') return;
@@ -353,7 +354,7 @@ export type DaemonStateCleanupOwner = Readonly<{
   startedAt: number;
 }>;
 
-const DaemonLocallyPersistedStateSchemaV2 = z.object({
+const DaemonLocallyPersistedStateSchemaV2 = lazySchema(() => z.object({
   pid: z.number().int().positive(),
   httpPort: z.number().int().positive(),
   startedAt: z.number().int().nonnegative(),
@@ -368,22 +369,22 @@ const DaemonLocallyPersistedStateSchemaV2 = z.object({
   lastHeartbeatAt: z.number().int().nonnegative().optional(),
   daemonLogPath: z.string().optional(),
   controlToken: z.string().optional(),
-});
+}));
 
 // Legacy format (string timestamps, no control token).
-const DaemonLocallyPersistedStateSchemaLegacy = z.object({
+const DaemonLocallyPersistedStateSchemaLegacy = lazySchema(() => z.object({
   pid: z.number().int().positive(),
   httpPort: z.number().int().positive(),
   startTime: z.string(),
   startedWithCliVersion: z.string(),
   lastHeartbeat: z.string().optional(),
   daemonLogPath: z.string().optional(),
-});
+}));
 
-export const DaemonLocallyPersistedStateSchema = z.union([
+export const DaemonLocallyPersistedStateSchema = lazySchema(() => z.union([
   DaemonLocallyPersistedStateSchemaV2,
   DaemonLocallyPersistedStateSchemaLegacy,
-]);
+]));
 
 function parseDateToEpochMs(value: string): number | null {
   const ms = Date.parse(value);
@@ -655,14 +656,14 @@ export async function updateSettings(
 // Authentication
 //
 
-const credentialsSchema = z.object({
+const credentialsSchema = lazySchema(() => z.object({
   token: z.string(),
   secret: z.string().base64().nullish(), // Legacy
   encryption: z.object({
     publicKey: z.string().base64(),
     machineKey: z.string().base64()
   }).nullish()
-})
+}))
 
 export type Credentials = {
   token: string,

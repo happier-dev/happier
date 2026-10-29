@@ -1,4 +1,5 @@
 export const HAPPY_PROTOCOL_PACKAGE = '@happier-dev/protocol';
+export { lazySchema } from './lazySchema.js';
 export {
   SessionPermissionResponseSchema,
   SessionPermissionResponseToOccurrenceV1Schema,

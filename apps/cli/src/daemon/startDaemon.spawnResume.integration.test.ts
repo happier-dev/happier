@@ -35,7 +35,8 @@ import { UsageLimitRecoveryScheduler } from './connectedServices/usageLimitRecov
 import { RuntimeAuthRecoveryScheduler } from './connectedServices/runtimeAuth/RuntimeAuthRecoveryScheduler';
 import { TemporaryThrottleRecoveryScheduler } from './connectedServices/temporaryThrottle/TemporaryThrottleRecoveryScheduler';
 import { withHerdrApi } from '@/integrations/herdr/herdrApi.testkit';
-import { writeExecutableShim } from '@/testkit/fs/executableShim';
+import { createProviderCliFixture } from '@/testkit/process/providerCliFixture';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { parseAndStripTerminalRuntimeFlags } from '@/terminal/runtime/terminalRuntimeFlags';
 import type { StopSessionResult } from './sessions/stopSessionContract';
 import type { TerminalHostAdapter } from '@/integrations/terminalHost/_types';
@@ -1107,7 +1108,11 @@ describe('startDaemon spawn resume wiring (integration)', () => {
     exitSpy.mockRestore();
   }
 
+  let providerCliEnvScope: ReturnType<typeof createEnvKeyScope>;
+
   beforeEach(async () => {
+    providerCliEnvScope = createEnvKeyScope(['HAPPIER_CLAUDE_PATH', 'HAPPIER_CODEX_PATH']);
+    providerCliEnvScope.patch(await createProviderCliFixture(['claude', 'codex']));
     deliverShutdownWatchdog = undefined;
     firedShutdownTimerWork = [];
     const { getDaemonShutdownWatchdogTimeoutMs } = await import('./shutdownPolicy');
@@ -1145,6 +1150,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
   });
 
   afterEach(async () => {
+    providerCliEnvScope.restore();
     await Promise.all(firedShutdownTimerWork);
     closeHerdrFixture?.();
     await herdrFixtureRun;
@@ -2488,8 +2494,6 @@ describe('startDaemon spawn resume wiring (integration)', () => {
     const previousHeartbeatInterval = process.env.HAPPIER_DAEMON_HEARTBEAT_INTERVAL;
     const previousTmuxInlineLimit = process.env.HAPPIER_CLI_TMUX_INLINE_SPAWN_MAX_CHARS;
     const previousHerdrBinary = process.env.HERDR_BIN_PATH;
-    const previousClaudeBinary = process.env.HAPPIER_CLAUDE_PATH;
-    const previousCodexBinary = process.env.HAPPIER_CODEX_PATH;
     const isTmuxCreation = contract === 'tmux_creation_unconfirmed' || contract === 'tmux_creation_not_started';
     const isHerdrCreation = contract === 'herdr_creation_unconfirmed' || contract === 'herdr_creation_stopped';
     const isTmux = contract === 'tmux_binding_exit_overlap' || isTmuxCreation;
@@ -2561,16 +2565,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
         if (previous) target.mockImplementation(previous);
       });
     };
-    if (fixtureAgent === 'codex') {
-      // Spawn admission requires the Codex CLI the runner would launch.
-      process.env.HAPPIER_CODEX_PATH = await writeExecutableShim({
-        dir: fixtureHome, fileName: 'codex', contents: `#!${process.execPath}\nprocess.exit(0);\n`,
-      });
-    }
     if (fixtureAgent === 'claude') {
-      process.env.HAPPIER_CLAUDE_PATH = await writeExecutableShim({
-        dir: fixtureHome, fileName: 'claude', contents: `#!${process.execPath}\nprocess.exit(0);\n`,
-      });
       setActiveAccountSettingsSnapshot({
         source: 'network', settingsVersion: 1, loadedAtMs: Date.now(), settingsSecretsReadKeys: [],
         settings: accountSettingsParse({ claudeUnifiedTerminalEnabled: false }),
@@ -3214,10 +3209,6 @@ describe('startDaemon spawn resume wiring (integration)', () => {
     } finally {
       if (previousHerdrBinary === undefined) delete process.env.HERDR_BIN_PATH;
       else process.env.HERDR_BIN_PATH = previousHerdrBinary;
-      if (previousClaudeBinary === undefined) delete process.env.HAPPIER_CLAUDE_PATH;
-      else process.env.HAPPIER_CLAUDE_PATH = previousClaudeBinary;
-      if (previousCodexBinary === undefined) delete process.env.HAPPIER_CODEX_PATH;
-      else process.env.HAPPIER_CODEX_PATH = previousCodexBinary;
       replayClock?.mockRestore();
       releaseMarker();
       releaseBinding();

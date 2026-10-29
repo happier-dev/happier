@@ -13,7 +13,11 @@ import {
 import { Typography } from '@/constants/Typography';
 import { getBugReportUserActionTrail } from '@/utils/system/bugReportActionTrail';
 import { getBugReportLogText } from '@/utils/system/bugReportLogBuffer';
-import { persistPreRestartBugReportSnapshot } from '@/utils/system/preRestartBugReportSnapshot';
+import { persistPreRestartBugReportSnapshot, type PreRestartBugReportSnapshotV1 } from '@/utils/system/preRestartBugReportSnapshot';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { sanitizeBugReportUrl } from '@happier-dev/protocol';
+import { captureCurrentAppRuntimeInfo } from '@/sync/runtime/readCurrentAppRuntimeInfo';
+import { exportPreRestartBugReportSnapshot } from '@/components/settings/bugReports/bugReportExport';
 import { persistRestartBugReportIntent } from '@/utils/system/restartBugReportIntent';
 import { requireReactNativeScreens } from '@/utils/web/reactNativeScreensCjs';
 
@@ -27,8 +31,9 @@ type AppCrashRecoveryBoundaryState = {
   error: Error | null;
   copied: boolean;
   componentStack: string;
-  capturedAtMs: number;
   saveFailed: boolean;
+  exportFailed: boolean;
+  exporting: boolean;
 };
 
 export type AppBlockingScreenAction = Readonly<{
@@ -36,6 +41,7 @@ export type AppBlockingScreenAction = Readonly<{
   label: string;
   onPress: () => void;
   variant: 'primary' | 'secondary';
+  busy?: boolean;
 }>;
 
 function readSystemThemeForCrashRecovery(): 'light' | 'dark' | null {
@@ -181,6 +187,8 @@ export function AppBlockingScreen(props: Readonly<{
                   key={action.testID}
                   testID={action.testID}
                   accessibilityRole="button"
+                  accessibilityState={{ disabled: action.busy === true, busy: action.busy === true }}
+                  disabled={action.busy}
                   onPress={action.onPress}
                   style={({ pressed }) => [
                     styles.primaryButton,
@@ -203,6 +211,8 @@ export function AppBlockingScreen(props: Readonly<{
                 key={action.testID}
                 testID={action.testID}
                 accessibilityRole="button"
+                accessibilityState={{ disabled: action.busy === true, busy: action.busy === true }}
+                disabled={action.busy}
                 onPress={action.onPress}
                 style={({ pressed }) => [
                   styles.secondaryButton,
@@ -229,10 +239,31 @@ export class AppCrashRecoveryBoundary extends React.PureComponent<
   AppCrashRecoveryBoundaryProps,
   AppCrashRecoveryBoundaryState
 > {
-  state: AppCrashRecoveryBoundaryState = { error: null, copied: false, componentStack: '', capturedAtMs: 0, saveFailed: false };
+  state: AppCrashRecoveryBoundaryState = { error: null, copied: false, componentStack: '', saveFailed: false, exportFailed: false, exporting: false };
+  private snapshot: Promise<PreRestartBugReportSnapshotV1> | null = null;
 
   override componentDidCatch(error: Error, info: React.ErrorInfo): void {
-    this.setState({ error, copied: false, componentStack: info.componentStack ?? '', capturedAtMs: Date.now(), saveFailed: false });
+    const createdAtMs = Date.now();
+    const captured = {
+      v: 1 as const,
+      createdAtMs,
+      reason: 'crash' as const,
+      platform: Platform.OS,
+      origin: readOriginForDiagnostics(),
+      isSecureContext: readIsSecureContextForDiagnostics(),
+      errorDetails: formatErrorDetails(error, info.componentStack ?? ''),
+      appLogs: getBugReportLogText(),
+      userActions: getBugReportUserActionTrail(),
+    };
+    const serverUrl = sanitizeBugReportUrl(getActiveServerSnapshot().serverUrl) ?? null;
+    this.snapshot = captureCurrentAppRuntimeInfo().then(
+      (runtime) => ({ ...captured, runtime: { ...runtime, serverUrl } }),
+      () => {
+        console.warn('[bug-report] Crash runtime metadata is unavailable');
+        return { ...captured, runtime: { captureStatus: 'unavailable', serverUrl } };
+      },
+    );
+    this.setState({ error, copied: false, componentStack: info.componentStack ?? '', saveFailed: false, exportFailed: false, exporting: false });
     try {
       this.props.onError?.(error, info);
     } catch {
@@ -258,24 +289,11 @@ export class AppCrashRecoveryBoundary extends React.PureComponent<
     const error = this.state.error;
     if (!error) return;
 
-    const createdAtMs = this.state.capturedAtMs;
-    const origin = readOriginForDiagnostics();
-    const isSecureContext = readIsSecureContextForDiagnostics();
-    const errorDetails = formatErrorDetails(error, this.state.componentStack);
-
+    const snapshot = this.snapshot;
+    if (!snapshot) return;
     void (async () => {
       try {
-        await persistPreRestartBugReportSnapshot({
-          v: 1,
-          createdAtMs,
-          reason: 'crash',
-          platform: Platform.OS,
-          origin,
-          isSecureContext,
-          errorDetails,
-          appLogs: getBugReportLogText(),
-          userActions: getBugReportUserActionTrail(),
-        });
+        await persistPreRestartBugReportSnapshot(await snapshot);
 
         if (openReport) {
           await persistRestartBugReportIntent({ v: 1, createdAtMs: Date.now(), reason: 'crash' });
@@ -286,6 +304,15 @@ export class AppCrashRecoveryBoundary extends React.PureComponent<
         this.setState({ saveFailed: true });
       }
     })();
+  };
+
+  private readonly onSaveDiagnostics = () => {
+    const snapshot = this.snapshot;
+    if (!snapshot) return;
+    this.setState({ exportFailed: false, exporting: true });
+    void snapshot.then(exportPreRestartBugReportSnapshot).catch(() => {
+      this.setState({ exportFailed: true });
+    }).finally(() => this.setState({ exporting: false }));
   };
 
   override render(): React.ReactNode {
@@ -321,8 +348,8 @@ export class AppCrashRecoveryBoundary extends React.PureComponent<
         subtitle={t('appCrash.subtitle')}
         detailsTitle={t('appCrash.detailsTitle')}
         details={formatErrorDetails(error, this.state.componentStack)}
-        notice={this.state.saveFailed ? t('appCrash.reportSaveFailed') : undefined}
-        actions={[primaryAction, reportBugAction, secondaryAction]}
+        notice={this.state.exportFailed ? t('appCrash.diagnosticsSaveFailed') : this.state.saveFailed ? t('appCrash.reportSaveFailed') : undefined}
+        actions={[primaryAction, reportBugAction, { testID: 'app-crash-save-diagnostics', label: this.state.exporting ? t('common.loading') : t('appCrash.saveDiagnostics'), onPress: this.onSaveDiagnostics, variant: 'secondary', busy: this.state.exporting }, secondaryAction]}
       />
     );
 

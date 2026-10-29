@@ -7,8 +7,9 @@ import type {
 } from '@happier-dev/protocol';
 import type { ConnectedServiceSharedGenerationMutationCurrentness } from '../credentials/lifecycleTypes';
 import type { ConnectedServiceAccountTransitionVerificationResult } from '../accountTransitions/connectedServiceAccountTransition';
+import { lazySchema } from '@happier-dev/protocol';
 
-export const ConnectedServiceRuntimeAuthFailureKindSchema = z.enum([
+export const ConnectedServiceRuntimeAuthFailureKindSchema = lazySchema(() => z.enum([
   'usage_limit',
   'rate_limit',
   'capacity',
@@ -22,7 +23,7 @@ export const ConnectedServiceRuntimeAuthFailureKindSchema = z.enum([
   'temporary_throttle',
   'dependency_failure',
   'unknown',
-]);
+]));
 
 export type ConnectedServiceRuntimeAuthFailureKind =
   z.infer<typeof ConnectedServiceRuntimeAuthFailureKindSchema>;

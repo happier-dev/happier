@@ -318,8 +318,7 @@ describe('ApprovalDetailScreen', () => {
             await screen.pressByTestIdAsync('approvals.open-session');
         });
 
-        expect(navigateSpy).toHaveBeenCalledWith('/session/session-1?serverId=server-cache', expect.any(Object));
-        expect(navigateSpy.mock.calls[0]?.[1]?.dangerouslySingular?.()).toBe('session');
+        expect(pushSpy).toHaveBeenCalledWith('/session/session-1?serverId=server-cache');
     });
 
     it('places the primary approve action before the reject action', async () => {

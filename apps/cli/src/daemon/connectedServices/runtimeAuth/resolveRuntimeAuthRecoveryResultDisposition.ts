@@ -1,4 +1,5 @@
 import { isTerminalProviderOutcomeProof } from '../recovery/providerOutcomeProof';
+import { DEFAULT_USAGE_LIMIT_RECOVERY_BACKOFF_MS } from '@/session/usageLimitRecoveryControls/createBackoffSessionUsageLimitRecoveryControlAdapter';
 import {
   readRuntimeAuthRecoverySwitchResult,
   resolveRuntimeAuthRecoveryProof,
@@ -72,7 +73,8 @@ function resolveActionRequiredWaitCandidateMs(input: Readonly<{
   const actionReason = readString(action?.reason);
   if (!actionKind || !WAITABLE_ACTION_REQUIRED_KINDS.has(actionKind)) return null;
   if (!actionReason || !WAITABLE_FAILURE_REASONS.has(actionReason)) return null;
-  return resolveEarliestFutureWaitCandidateMs([input.classificationResetsAtMs], input.nowMs);
+  return resolveEarliestFutureWaitCandidateMs([input.classificationResetsAtMs], input.nowMs)
+    ?? (actionReason === 'usage_limit' ? input.nowMs + DEFAULT_USAGE_LIMIT_RECOVERY_BACKOFF_MS : null);
 }
 
 /**
@@ -152,11 +154,15 @@ export function resolveRuntimeAuthRecoveryResultDisposition(input: Readonly<{
     const resetAtMs = resolveEarliestFutureWaitCandidateMs([
       input.classificationResetsAtMs,
     ], input.nowMs);
-    if (resetAtMs !== null) {
+    const nextRetryAtMs = resetAtMs
+      ?? (input.classificationFailureKind === 'usage_limit'
+        ? input.nowMs + DEFAULT_USAGE_LIMIT_RECOVERY_BACKOFF_MS
+        : null);
+    if (nextRetryAtMs !== null) {
       return {
         kind: 'durable_wait',
         reason: 'awaiting_limit_reset',
-        nextRetryAtMs: resetAtMs,
+        nextRetryAtMs,
       };
     }
   }

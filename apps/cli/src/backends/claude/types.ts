@@ -6,21 +6,22 @@
 import { z } from "zod";
 
 import { UsageSchema } from "@/api/usage";
+import { lazySchema } from '@happier-dev/protocol';
 
 export { UsageSchema };
 
-const UsageBestEffortSchema = z
+const UsageBestEffortSchema = lazySchema(() => z
   .unknown()
   .transform((value) => {
     if (value === undefined) return undefined;
     const parsed = UsageSchema.safeParse(value);
     return parsed.success ? parsed.data : undefined;
-  });
+  }));
 
 // Main schema with minimal validation for only the fields we use
 // NOTE: Schema is intentionally lenient to handle various Claude Code message formats
 // including synthetic error messages, API errors, and different SDK versions
-export const RawJSONLinesSchema = z.discriminatedUnion("type", [
+export const RawJSONLinesSchema = lazySchema(() => z.discriminatedUnion("type", [
   // User message - validates uuid and message.content
   z.object({
     type: z.literal("user"),
@@ -78,6 +79,6 @@ export const RawJSONLinesSchema = z.discriminatedUnion("type", [
       type: z.string(),
     }).passthrough(),
   }).passthrough()
-]);
+]));
 
 export type RawJSONLines = z.infer<typeof RawJSONLinesSchema>

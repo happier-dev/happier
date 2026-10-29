@@ -32,6 +32,7 @@ export function resolveRuntimeAuthFailureReportOutboxDelivery(input: Readonly<{
   const result = envelope?.ok === true ? readRecord(envelope.result) : null;
   if (
     result?.status === 'recovery_superseded'
+    || (result?.status === 'not_applicable' && result.reason === 'no_connected_service_binding')
     || result?.status === 'session_not_found'
     || result?.status === 'temporary_retry_armed'
     || result?.status === 'temporary_retry_unavailable'

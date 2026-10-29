@@ -783,6 +783,35 @@ describe('AgentInput (history navigation)', () => {
     expect(mocks.onChangeText).toHaveBeenCalledWith('previous message');
   });
 
+  it('does not let history replace the text of a disabled composer', async () => {
+    mocks.historyMoveUp.mockReturnValue('previous message');
+
+    const { AgentInput } = await import('./AgentInput');
+    const screen = await renderScreen(<AgentInput
+          value="locked prompt"
+          onChangeText={mocks.onChangeText}
+          placeholder="p"
+          onSend={mocks.onSend}
+          autocompleteKinds={[]}
+          autocompleteSuggestions={async () => []}
+          sessionId="s1"
+          metadata={null}
+          disabled
+          showAbortButton={false}
+        />);
+
+    const input = findMultiTextInput(screen);
+    await act(async () => {
+      input.props.onStateChange?.({ text: 'locked prompt', selection: { start: 0, end: 0 } });
+    });
+
+    await act(async () => {
+      input.props.onKeyPress?.({ key: 'ArrowUp', shiftKey: false });
+    });
+
+    expect(mocks.onChangeText).not.toHaveBeenCalledWith('previous message');
+  });
+
   it('uses live key event selection so ArrowUp at the real input start enters history immediately', async () => {
     mocks.historyMoveUp.mockReturnValue('previous message');
 

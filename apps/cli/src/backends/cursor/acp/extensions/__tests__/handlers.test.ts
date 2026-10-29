@@ -1,3 +1,4 @@
+import { withParsedAcpExtensionHandler } from '@/agent/acp/testkit/extensionHandlerHarness';
 import { describe, expect, it } from 'vitest';
 
 import type { ClientApp } from '@agentclientprotocol/sdk';
@@ -28,12 +29,12 @@ async function invokeExtension(params: Readonly<{
 
   const captured: { callback: ExtensionCallback | null } = { callback: null };
   const app = {
-    onRequest: (_method: string, _parser: unknown, handler: unknown) => {
-      captured.callback = handler as ExtensionCallback;
+    onRequest: (_method: string, parser: unknown, handler: unknown) => {
+      captured.callback = withParsedAcpExtensionHandler(parser, handler as ExtensionCallback);
       return app;
     },
-    onNotification: (_method: string, _parser: unknown, handler: unknown) => {
-      captured.callback = handler as ExtensionCallback;
+    onNotification: (_method: string, parser: unknown, handler: unknown) => {
+      captured.callback = withParsedAcpExtensionHandler(parser, handler as ExtensionCallback);
       return app;
     },
   };

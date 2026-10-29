@@ -251,11 +251,7 @@ export const desktopSidebarChromeStyles = StyleSheet.create((theme) => ({
     windowControlsButton: {
         width: DESKTOP_WINDOW_CONTROLS_SLOT_MIN_HEIGHT_PX,
         height: DESKTOP_WINDOW_CONTROLS_SLOT_MIN_HEIGHT_PX,
-        borderRadius: DESKTOP_WINDOW_CONTROLS_SLOT_MIN_HEIGHT_PX / 2,
         alignItems: 'center',
         justifyContent: 'center',
-        borderWidth: StyleSheet.hairlineWidth,
-        borderColor: theme.colors.border.default,
-        backgroundColor: theme.colors.surface.base,
     },
 }));

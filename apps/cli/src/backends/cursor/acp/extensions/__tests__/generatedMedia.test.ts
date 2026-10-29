@@ -1,3 +1,4 @@
+import { withParsedAcpExtensionHandler } from '@/agent/acp/testkit/extensionHandlerHarness';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { AgentMessage } from '@/agent/core';
@@ -15,11 +16,11 @@ describe('Cursor generated-media projection', () => {
     if (!request) throw new Error('missing request descriptor');
 
     const app = {
-      onRequest: (_method: string, _parser: unknown, handler: (context: Readonly<{
+      onRequest: (_method: string, parser: unknown, handler: (context: Readonly<{
         params: unknown;
         signal: AbortSignal;
       }>) => unknown) => {
-        void handler({
+        void withParsedAcpExtensionHandler(parser, handler)({
           params: {
             toolCallId: ' image-call-1\n',
             description: 'A bounded architecture diagram',
@@ -78,8 +79,8 @@ describe('Cursor generated-media projection', () => {
     if (!request) throw new Error('missing request descriptor');
     let callback: ((context: Readonly<{ params: unknown; signal: AbortSignal }>) => unknown) | null = null;
     const app = {
-      onRequest: (_method: string, _parser: unknown, handler: typeof callback) => {
-        callback = handler;
+      onRequest: (_method: string, parser: unknown, handler: typeof callback) => {
+        callback = withParsedAcpExtensionHandler(parser, handler);
         return app;
       },
       onNotification: () => app,
@@ -106,8 +107,8 @@ describe('Cursor generated-media projection', () => {
     if (!request) throw new Error('missing request descriptor');
     let callback: ((context: Readonly<{ params: unknown; signal: AbortSignal }>) => unknown) | null = null;
     const app = {
-      onRequest: (_method: string, _parser: unknown, handler: typeof callback) => {
-        callback = handler;
+      onRequest: (_method: string, parser: unknown, handler: typeof callback) => {
+        callback = withParsedAcpExtensionHandler(parser, handler);
         return app;
       },
       onNotification: () => app,
@@ -137,8 +138,8 @@ describe('Cursor generated-media projection', () => {
     let callback: ((context: Readonly<{ params: unknown; signal: AbortSignal }>) => unknown) | null = null;
     const app = {
       onRequest: () => app,
-      onNotification: (_method: string, _parser: unknown, handler: typeof callback) => {
-        callback = handler;
+      onNotification: (_method: string, parser: unknown, handler: typeof callback) => {
+        callback = withParsedAcpExtensionHandler(parser, handler);
         return app;
       },
     };
@@ -168,8 +169,8 @@ describe('Cursor generated-media projection', () => {
     if (!request) throw new Error('missing request descriptor');
     let callback: ((context: Readonly<{ params: unknown; signal: AbortSignal }>) => unknown) | null = null;
     const app = {
-      onRequest: (_method: string, _parser: unknown, handler: typeof callback) => {
-        callback = handler;
+      onRequest: (_method: string, parser: unknown, handler: typeof callback) => {
+        callback = withParsedAcpExtensionHandler(parser, handler);
         return app;
       },
       onNotification: () => app,

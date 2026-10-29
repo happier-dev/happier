@@ -1,4 +1,4 @@
-import { agent, RequestError, type ClientContext } from '@agentclientprotocol/sdk';
+import { agent, methods, RequestError, type ClientContext } from '@agentclientprotocol/sdk';
 import { describe, expect, it } from 'vitest';
 
 import { createAcpClientConnection } from '../createAcpClientConnection';
@@ -22,7 +22,7 @@ describe('AcpAgentPeer', () => {
     const failure = Object.preventExtensions(new Error('SDK transport unavailable'));
     const context = { request: async () => { throw failure; } } satisfies Pick<ClientContext, 'request'>;
     // SDK boundary fixture: this outgoing operation uses only request; unrelated SDK session builders are absent.
-    const peer = new AcpAgentPeer(context as unknown as ClientContext, new AbortController().signal);
+    const peer = new AcpAgentPeer(methods, context as unknown as ClientContext, new AbortController().signal);
     await expect(peer.loadSession({ sessionId: 'missing', cwd: '/tmp', mcpServers: [] }))
       .rejects.toBe(failure);
     expect(failure).not.toHaveProperty('authenticationSetupFailure');
@@ -34,7 +34,7 @@ describe('AcpAgentPeer', () => {
       .onRequest('session/list', () => { observed.push('list'); return { sessions: [], nextCursor: null }; })
       .onRequest('session/close', () => { observed.push('close'); return {}; })
       .onRequest('session/delete', () => { observed.push('delete'); return {}; });
-    const connection = createConnection(testAgent);
+    const connection = await createConnection(testAgent);
     try {
       await connection.peer.listSessions({ cwd: '/tmp' });
       await connection.peer.closeSession({ sessionId: 'session-1' });
@@ -63,7 +63,7 @@ describe('AcpAgentPeer', () => {
         });
         return {};
       });
-    const connection = createConnection(testAgent);
+    const connection = await createConnection(testAgent);
     const controller = new AbortController();
 
     try {
@@ -95,7 +95,7 @@ describe('AcpAgentPeer', () => {
         });
         return {};
       });
-    const connection = createConnection(testAgent);
+    const connection = await createConnection(testAgent);
 
     try {
       await expect(connection.peer.requestExtension(
@@ -111,7 +111,7 @@ describe('AcpAgentPeer', () => {
   });
 
   it('rejects new requests after the connection is disposed', async () => {
-    const connection = createConnection(agent({ name: 'peer-dispose-test-agent' }));
+    const connection = await createConnection(agent({ name: 'peer-dispose-test-agent' }));
     connection.close();
     await connection.closed;
 
@@ -123,7 +123,7 @@ describe('AcpAgentPeer', () => {
     let observedCancellation = false;
     let resolveStarted: (() => void) | null = null;
     const started = new Promise<void>((resolve) => { resolveStarted = resolve; });
-    const connection = createConnection(agent({ name: 'peer-close-test-agent' })
+    const connection = await createConnection(agent({ name: 'peer-close-test-agent' })
       .onRequest('example/slow', objectParams, async (context) => {
         resolveStarted?.();
         await new Promise<void>((_resolve, reject) => {
@@ -149,7 +149,7 @@ describe('AcpAgentPeer', () => {
       .onRequest('session/load', async () => {
         throw RequestError.internalError({ details: 'No previous sessions found for this project.' });
       });
-    const connection = createConnection(testAgent);
+    const connection = await createConnection(testAgent);
 
     try {
       await expect(connection.peer.loadSession({
@@ -170,7 +170,7 @@ describe('AcpAgentPeer', () => {
           details: 'Upstream rejected the request: token=provider-secret-value trace=trace-123',
         });
       });
-    const connection = createConnection(testAgent);
+    const connection = await createConnection(testAgent);
 
     try {
       const failure = await connection.peer.loadSession({
@@ -204,7 +204,7 @@ describe('AcpAgentPeer', () => {
           },
         });
       });
-    const connection = createConnection(testAgent);
+    const connection = await createConnection(testAgent);
 
     try {
       const failure = await connection.peer.loadSession({

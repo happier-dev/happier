@@ -191,19 +191,6 @@ export const ChatHeaderView = React.memo(function ChatHeaderView({
                     </Text>
                     {badges?.length || subtitle ? (
                         <View style={styles.metadataRow}>
-                            {badges?.map((badge, index) => (
-                                <StatusPill
-                                    key={`${badge}:${index}`}
-                                    variant="neutral"
-                                    chrome="plain"
-                                    hideDot
-                                    label={badge}
-                                    labelVariant="phrase"
-                                    labelNumberOfLines={1}
-                                    style={styles.badge}
-                                    testID={resolveOptionalSessionScreenTestId(sessionScreenTestIdsEnabled, `session-header-badge:${index}`)}
-                                />
-                            ))}
                             {subtitle ? (
                                 <Text
                                     numberOfLines={1}
@@ -225,6 +212,20 @@ export const ChatHeaderView = React.memo(function ChatHeaderView({
                                     ) : subtitle}
                                 </Text>
                             ) : null}
+                            {badges?.map((badge, index) => (
+                                <StatusPill
+                                    key={`${badge}:${index}`}
+                                    variant="neutral"
+                                    chrome="plain"
+                                    foregroundColor={theme.colors.text.secondary}
+                                    hideDot
+                                    label={badge}
+                                    labelVariant="phrase"
+                                    labelNumberOfLines={1}
+                                    style={styles.badge}
+                                    testID={resolveOptionalSessionScreenTestId(sessionScreenTestIdsEnabled, `session-header-badge:${index}`)}
+                                />
+                            ))}
                         </View>
                     ) : null}
                 </View>

@@ -14,18 +14,19 @@ import {
 import { writeWorkspaceReplicationManifestToFile } from '../workspaceReplicationAdapter/workspaceReplicationManifestFile';
 import { resolveTransferPayloadManifestHash } from '@/machines/transfer/transferPayloadSource';
 import { writeJsonAtomic } from '@/utils/fs/writeJsonAtomic';
+import { lazySchema } from '@happier-dev/protocol';
 
 const SOURCE_EXPORT_SCHEMA_VERSION = 1 as const;
 
-const ProviderBundleFileSchema = z.object({
+const ProviderBundleFileSchema = lazySchema(() => z.object({
   transferId: z.string().min(1),
   filePath: z.string().min(1),
   sizeBytes: z.number().int().nonnegative(),
   manifestHash: z.string().regex(/^sha256:[a-f0-9]{64}$/u),
   endpointCandidates: z.array(TransferEndpointCandidateSchema).readonly().optional(),
-}).strict();
+}).strict());
 
-const WorkspaceManifestFileSchema = z.object({
+const WorkspaceManifestFileSchema = lazySchema(() => z.object({
   transferId: z.string().min(1),
   filePath: z.string().min(1),
   sizeBytes: z.number().int().nonnegative(),
@@ -33,9 +34,9 @@ const WorkspaceManifestFileSchema = z.object({
   entriesCount: z.number().int().nonnegative(),
   fileDigestsCount: z.number().int().nonnegative(),
   endpointCandidates: z.array(TransferEndpointCandidateSchema).readonly().optional(),
-}).strict();
+}).strict());
 
-const SourceExportRecordSchemaV1 = z.object({
+const SourceExportRecordSchemaV1 = lazySchema(() => z.object({
   t: z.literal('session_handoff_source_export_v1'),
   schemaVersion: z.literal(SOURCE_EXPORT_SCHEMA_VERSION),
   handoffId: z.string().min(1),
@@ -47,7 +48,7 @@ const SourceExportRecordSchemaV1 = z.object({
   workspaceSourceRootPath: z.string().min(1).optional(),
   providerBundle: ProviderBundleFileSchema.optional(),
   workspaceManifest: WorkspaceManifestFileSchema.optional(),
-}).strict();
+}).strict());
 
 export type SessionHandoffSourceExportRecord = z.infer<typeof SourceExportRecordSchemaV1>;
 

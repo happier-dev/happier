@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import type { Encryption } from '@/sync/encryption/encryption';
 import type { Settings } from '@/sync/domains/settings/settings';
+import { localSettingsDefaults } from '@/sync/domains/settings/localSettings';
 import { invalidateAccountEncryptionModeCache } from '@/sync/api/account/apiAccountEncryptionMode';
 import { openAccountScopedBlobCiphertext, sealAccountScopedBlobCiphertext } from '@happier-dev/protocol';
 
@@ -152,7 +153,7 @@ vi.mock('@/sync/domains/state/persistence', async (importOriginal) => ({
     ...await importOriginal<typeof import('@/sync/domains/state/persistence')>(),
     loadPendingSettings: mocks.loadPendingSettings,
     loadSettings: () => ({ settings: createBaseMockSettings(), version: 9 }),
-    loadLocalSettings: () => ({}),
+    loadLocalSettings: () => localSettingsDefaults,
     loadPurchases: () => ({}),
     loadProfile: () => ({}),
     loadThemePreference: () => 'adaptive',
@@ -196,7 +197,8 @@ vi.mock('@/sync/domains/state/persistence', async (importOriginal) => ({
     clearPersistence: vi.fn(),
 }));
 
-vi.mock('@/sync/domains/state/accountSettingsPersistence', () => ({
+vi.mock('@/sync/domains/state/accountSettingsPersistence', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/sync/domains/state/accountSettingsPersistence')>(),
     loadPendingAccountSettings: mocks.loadPendingAccountSettings,
     loadAccountSettings: mocks.loadAccountSettings,
 }));

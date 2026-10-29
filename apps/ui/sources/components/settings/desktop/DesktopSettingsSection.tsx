@@ -9,6 +9,7 @@ import { t } from '@/text';
 
 import { useDesktopBackgroundServiceAutostart } from './useDesktopBackgroundServiceAutostart';
 import { Icon } from '@/components/ui/icons/Icon';
+import { DesktopWindowChromeSetting } from './DesktopWindowChromeSetting';
 
 /**
  * One truthful sentence for the background-service row (U12): not set up yet is not the same as a
@@ -41,6 +42,7 @@ export const DesktopSettingsSection = React.memo(function DesktopSettingsSection
             title={t('settingsDesktop.title')}
             footer={t('settingsDesktop.footer')}
         >
+            <DesktopWindowChromeSetting />
             <Item
                 testID="settings-desktop-background-service-enabled"
                 title={t('settingsDesktop.backgroundServiceTitle')}

@@ -2,7 +2,7 @@ import React from 'react';
 import { act, type ReactTestInstance } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+import { createDeferred, pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { createServerFetchWithReachabilityProbe, matchServerFetchUrl } from '@/dev/testkit/mocks/serverFetch';
 import { createTextModuleMock } from '@/dev/testkit/mocks/text';
@@ -56,6 +56,7 @@ import * as runtimeFetch from '@/utils/system/runtimeFetch';
 let serverA: ReturnType<typeof upsertServerProfile>;
 let serverB: ReturnType<typeof upsertServerProfile>;
 const modalAlert = vi.mocked(Modal.alert);
+const modalConfirm = vi.mocked(Modal.confirm);
 const token = 'header.eyJzdWIiOiJtZSJ9.signature';
 
 function httpWithReachabilityProbe(handler: typeof runtimeFetch.runtimeFetch): typeof runtimeFetch.runtimeFetch {
@@ -90,19 +91,14 @@ function actionButtons(root: ReactTestInstance, label: string): ReactTestInstanc
     return root.findAll((node) => node.props.accessibilityLabel === label && typeof node.props.onPress === 'function');
 }
 
-async function acceptDelete(): Promise<void> {
-    const args = modalAlert.mock.calls.at(-1);
-    const confirm = args?.[2]?.find((button) => button.style === 'destructive');
-    expect(confirm?.onPress).toBeTypeOf('function');
-    await act(async () => { await confirm?.onPress?.(); });
-}
-
 // Exercise the real store, targeting, executor, sync operations, and server context.
 // Only platform presentation, authentication persistence, and HTTP transport are stubbed.
 describe('Archived sessions delete action', () => {
     beforeEach(() => {
         vi.restoreAllMocks();
         modalAlert.mockReset();
+        modalConfirm.mockReset();
+        modalConfirm.mockResolvedValue(true);
         serverA = upsertServerProfile({ serverUrl: 'https://archive-a.example', name: 'Archive A' });
         serverB = upsertServerProfile({ serverUrl: 'https://archive-b.example', name: 'Archive B' });
         setActiveServerId(serverA.id);
@@ -128,26 +124,30 @@ describe('Archived sessions delete action', () => {
         const Screen = (await import('@/app/(app)/session/archived')).default;
         const screen = await renderScreen(<Screen />);
 
+        const cancellation = createDeferred<boolean>();
+        modalConfirm.mockReturnValueOnce(cancellation.promise);
         await pressTestInstanceAsync(actionButtons(screen.root, 'sessionInfo.deleteSession')[0]);
-        const buttons = modalAlert.mock.calls[0]?.[2];
-        expect(buttons).toEqual(expect.arrayContaining([
-            expect.objectContaining({ style: 'cancel' }),
-            expect.objectContaining({ style: 'destructive' }),
-        ]));
+        expect(modalConfirm).toHaveBeenCalledWith(
+            'sessionInfo.deleteSession',
+            'sessionInfo.deleteSessionWarning',
+            expect.objectContaining({ destructive: true }),
+        );
         expect(apiSocket.request).not.toHaveBeenCalled();
         expect(runtimeFetch.runtimeFetch).not.toHaveBeenCalled();
-        await act(async () => { await buttons?.find((button) => button.style === 'cancel')?.onPress?.(); });
+        await act(async () => { cancellation.resolve(false); });
         expect(apiSocket.request).not.toHaveBeenCalled();
         expect(runtimeFetch.runtimeFetch).not.toHaveBeenCalled();
         expect(screen.getTextContent()).toContain('Owned Archived Session');
 
+        const confirmation = createDeferred<boolean>();
+        modalConfirm.mockReturnValueOnce(confirmation.promise);
         await pressTestInstanceAsync(actionButtons(screen.root, 'sessionInfo.deleteSession')[0]);
         const collision = archivedSession({ serverId: serverB.id, active: true, archivedAt: null });
         await act(async () => {
             setActiveServerId(serverB.id);
             storage.setState({ sessions: { [collision.id]: collision } });
         });
-        await acceptDelete();
+        await act(async () => { confirmation.resolve(true); });
 
         await vi.waitFor(() => expect(screen.getTextContent()).not.toContain('Owned Archived Session'));
         const request = vi.mocked(runtimeFetch.runtimeFetch).mock.calls.find(([, init]) => init?.method === 'DELETE');
@@ -171,17 +171,15 @@ describe('Archived sessions delete action', () => {
         const screen = await renderScreen(<Screen />);
 
         await pressTestInstanceAsync(actionButtons(screen.root, 'sessionInfo.deleteSession')[0]);
-        await acceptDelete();
         await vi.waitFor(() => expect(modalAlert).toHaveBeenLastCalledWith('common.error', 'Delete rejected'));
         expect(screen.getTextContent()).toContain('Owned Archived Session');
 
         await pressTestInstanceAsync(actionButtons(screen.root, 'sessionInfo.deleteSession')[0]);
-        await acceptDelete();
         await vi.waitFor(() => expect(screen.getTextContent()).not.toContain('Owned Archived Session'));
         expect(fetch.mock.calls.filter(([, init]) => init?.method === 'DELETE')).toHaveLength(2);
     });
 
-    it('withholds delete from shared, active, connected, preserved-host, and hidden inactive rows', async () => {
+    it('offers stop-and-delete for owned active and connected rows while withholding delete from ineligible rows', async () => {
         const rows = [
             archivedSession({ id: 'shared', owner: 'someone-else', accessLevel: 'admin', metadata: {
                 name: 'Shared archive', path: '/tmp/shared', host: 'tester.local',
@@ -213,7 +211,17 @@ describe('Archived sessions delete action', () => {
         expect(screen.getTextContent()).toContain('Shared archive');
         expect(screen.getTextContent()).toContain('Active archive');
         expect(screen.getTextContent()).toContain('Connected archive');
-        expect(actionButtons(screen.root, 'sessionInfo.deleteSession')).toHaveLength(0);
+        expect(actionButtons(screen.root, 'sessionInfo.deleteSession')).toHaveLength(2);
+        for (const session of rows) {
+            const title = screen.root.findAll((node) => node.props.children === session.metadata?.name)[0];
+            expect(title).toBeDefined();
+            let row = title.parent;
+            while (row && typeof row.props.onPress !== 'function') row = row.parent;
+            if (!row) throw new Error(`Expected session row for ${session.id}`);
+            expect(actionButtons(row, 'sessionInfo.deleteSession')).toHaveLength(
+                session.id === 'active' || session.id === 'connected' ? 1 : 0,
+            );
+        }
         expect(actionButtons(screen.root, 'sessionInfo.unarchiveSession').length).toBeGreaterThan(0);
     });
 

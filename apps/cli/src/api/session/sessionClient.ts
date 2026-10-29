@@ -2519,41 +2519,11 @@ export class ApiSessionClient extends EventEmitter {
     }
 
     private resolveUsageLimitRecoveryCheckNow(): SessionRuntimeControls['checkUsageLimitRecoveryNow'] {
-        const recovery = SessionUsageLimitRecoveryV1Schema.safeParse(
-            this.metadata?.[SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY],
-        );
         const coreCheck = this.sessionRuntimeControls.checkUsageLimitRecoveryNow;
         const providerCheck = this.providerUsageLimitRecoveryCheckNow;
-        if (!recovery.success || !recovery.data.runtimeAuthRecoveryAttemptId) return async (request) => {
+        return async (request) => {
             const check = request.operation && request.operation !== 'check_now' ? providerCheck ?? coreCheck : coreCheck;
             return check ? await check(request) : { ok: false, errorCode: 'unsupported_session_runtime_method' };
-        };
-
-        // The durable attempt owns reset checks for active and inactive sessions alike.
-        // Provider-only actions retain their existing owner; a failed daemon check
-        // must not fall back to a second scheduler or resume the provider locally.
-        return async (request) => {
-            if (request.operation && request.operation !== 'check_now') {
-                return providerCheck
-                    ? await providerCheck(request)
-                    : { ok: false, errorCode: 'unsupported_session_runtime_method' };
-            }
-            if (request.sessionId !== this.sessionId) return { ok: false, errorCode: 'invalid_input' };
-            const unavailable = { ok: false, errorCode: 'session_usage_limit_recovery_control_remote_unavailable' };
-            try {
-                const credentials = await readCredentials();
-                const machineId = this.metadata?.machineId?.trim();
-                if (!credentials || credentials.token !== this.token || !machineId) return unavailable;
-                return await callMachineRpc({
-                    credentials,
-                    machineId,
-                    method: RPC_METHODS.DAEMON_SESSION_USAGE_LIMIT_CHECK_NOW,
-                    request,
-                    authorization: { kind: 'session.write', sessionId: this.sessionId },
-                });
-            } catch {
-                return unavailable;
-            }
         };
     }
 
@@ -4495,7 +4465,7 @@ export class ApiSessionClient extends EventEmitter {
     /**
      * Send a generic agent message to the session using ACP (Agent Communication Protocol) format.
      * Works for any agent type (Gemini, Codex, Claude, etc.) - CLI normalizes to unified ACP format.
-     * 
+     *
      * @param provider - The agent provider sending the message (e.g., 'gemini', 'codex', 'claude')
      * @param body - The message payload (type: 'message' | 'reasoning' | 'tool-call' | 'tool-result')
      */
@@ -6060,6 +6030,7 @@ export class ApiSessionClient extends EventEmitter {
 
     async close() {
         logger.debug('[API] socket.close() called');
+        this.sessionTurnLifecycle.dispose();
         this.startExecutionRunDisposal();
         this.executionRunPermissionHandler?.reset();
         this.executionRunPermissionHandler = null;

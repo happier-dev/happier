@@ -1,3 +1,6 @@
+import { useThemeProfilesMutable } from '@/sync/domains/state/storage';
+import { createThemeProfileNavigationParams, rebaseThemeProfileUiChange, resolveThemeProfileNavigationId, type ThemeProfileView } from '@/sync/domains/settings/themeProfiles';
+import { applyThemeProfilesFromUi } from '@/sync/store/settingsWriters';
 import * as React from 'react';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Appearance, View } from 'react-native';
@@ -79,14 +82,14 @@ const profileHasAnyColorOverrides = (profile: ThemeProfileV1): boolean => (
     Object.keys(profile.overrides.light).length > 0 || Object.keys(profile.overrides.dark).length > 0
 );
 
-const profileEditorRoute = (profileId: string) => ({
+const profileEditorRoute = (profileId: string, view?: ThemeProfileView) => ({
     pathname: '/settings/appearance/themes/[profileId]' as const,
-    params: { profileId },
+    params: createThemeProfileNavigationParams(view, profileId),
 });
 
-const profileExportRoute = (profileId: string) => ({
+const profileExportRoute = (profileId: string, view?: ThemeProfileView) => ({
     pathname: '/settings/appearance/themes/export' as const,
-    params: { profileId },
+    params: createThemeProfileNavigationParams(view, profileId),
 });
 
 const createProfileName = (count: number): string => t('settingsAppearance.themeProfiles.newProfileName', { count });
@@ -100,8 +103,11 @@ export const ThemeProfileEditorScreen = React.memo(function ThemeProfileEditorSc
     const params = useLocalSearchParams();
     const reduceMotion = useReducedMotionPreference();
     const [themePreference, setThemePreference] = useLocalSettingMutable('themePreference');
-    const [themeProfiles, setThemeProfiles] = useLocalSettingMutable('themeProfiles');
-    const profileId = getProfileIdParam(params.profileId);
+    const [themeProfiles, setThemeProfiles, themeProfileView] = useThemeProfilesMutable();
+    const routeProfileId = getProfileIdParam(params.profileId);
+    const routeIdentity = getProfileIdParam(params.themeProfileIdentity);
+    const routeKey = JSON.stringify([routeProfileId, routeIdentity]);
+    const profileId = resolveThemeProfileNavigationId(themeProfileView, routeProfileId, routeIdentity);
     const isNewProfile = profileId === createNewProfileRouteId;
     const builtInDefinition = BUILT_IN_THEME_PROFILES.find((definition) => definition.profile.id === profileId);
     const storedProfile = themeProfiles.profiles.find((profile) => profile.id === profileId) ?? null;
@@ -146,6 +152,7 @@ export const ThemeProfileEditorScreen = React.memo(function ThemeProfileEditorSc
             sourceProfile: initialPreset?.profile ?? undefined,
         });
     });
+    const editSessionRef = React.useRef({ routeKey, themeProfiles, setThemeProfiles, themeProfileView });
     const [presetMenuOpen, setPresetMenuOpen] = React.useState(false);
     const [assetAppearanceMenuOpen, setAssetAppearanceMenuOpen] = React.useState(false);
     const [invalidByToken, setInvalidByToken] = React.useState<Readonly<Record<string, boolean>>>({});
@@ -154,9 +161,11 @@ export const ThemeProfileEditorScreen = React.memo(function ThemeProfileEditorSc
     const stableSelectionRef = React.useRef({ themePreference, themeProfiles });
 
     React.useEffect(() => {
-        if (isNewProfile) return;
-        setDraft(sourceProfile);
-    }, [isNewProfile, sourceProfile]);
+        if (editSessionRef.current.routeKey !== routeKey || (!draft && sourceProfile)) {
+            editSessionRef.current = { routeKey, themeProfiles, setThemeProfiles, themeProfileView };
+            if (!isNewProfile) setDraft(sourceProfile);
+        }
+    }, [draft, isNewProfile, routeKey, setThemeProfiles, sourceProfile, themeProfiles, themeProfileView]);
 
     React.useEffect(() => {
         stableSelectionRef.current = { themePreference, themeProfiles };
@@ -184,7 +193,9 @@ export const ThemeProfileEditorScreen = React.memo(function ThemeProfileEditorSc
     const recentColors = React.useMemo(() => (draft ? getThemeProfileRecentColors(draft) : []), [draft]);
     const hasInvalidColor = Object.values(invalidByToken).some(Boolean);
     const hasInvalidProfileName = !readonly && draft ? sanitizeThemeProfileName(draft.name) === null : false;
-    const hasProfileLimitReached = !readonly && isNewProfile && themeProfiles.profiles.length >= THEME_PROFILE_MAX_PROFILES;
+    const hasProfileLimitReached = !readonly && isNewProfile
+        && !themeProfiles.profiles.some(profile => profile.id === draft?.id)
+        && themeProfiles.profiles.length >= THEME_PROFILE_MAX_PROFILES;
     const saveDisabled = hasInvalidColor || hasInvalidProfileName || hasProfileLimitReached;
 
     const selectPreset = React.useCallback(async (presetId: string) => {
@@ -218,12 +229,12 @@ export const ThemeProfileEditorScreen = React.memo(function ThemeProfileEditorSc
             sourceProfile: draft,
         });
         setThemeProfiles(upsertThemeProfile(themeProfiles, profile));
-        router.push(profileEditorRoute(id));
-    }, [draft, profileDisplayName, router, setThemeProfiles, themeProfiles]);
+        router.push(profileEditorRoute(id, themeProfileView));
+    }, [draft, profileDisplayName, router, setThemeProfiles, themeProfiles, themeProfileView]);
 
     const exportProfile = React.useCallback(() => {
         if (!draft) return;
-        router.push(profileExportRoute(draft.id));
+        router.push(profileExportRoute(draft.id, editSessionRef.current.themeProfileView));
     }, [draft, router]);
 
     const updateColor = React.useCallback((tokenId: string, value: string) => {
@@ -260,9 +271,10 @@ export const ThemeProfileEditorScreen = React.memo(function ThemeProfileEditorSc
 
     const saveAndActivate = React.useCallback(async () => {
         if (!draft || readonly || saveDisabled) return;
-        committedRef.current = true;
+        const editSession = editSessionRef.current;
+        const commit: { view?: ThemeProfileView } = {};
         const nextThemeProfiles = {
-            ...setActiveThemeProfileForMode(upsertThemeProfile(themeProfiles, draft), assetAppearance, draft.id),
+            ...setActiveThemeProfileForMode(upsertThemeProfile(editSession.themeProfiles, draft), assetAppearance, draft.id),
         };
         await activateThemeProfileFromSettingsScreen({
             profileId: draft.id,
@@ -270,63 +282,88 @@ export const ThemeProfileEditorScreen = React.memo(function ThemeProfileEditorSc
             themePreference,
             themeProfiles: nextThemeProfiles,
             setThemePreference,
-            setThemeProfiles,
+            setThemeProfiles: next => {
+                const accepted = editSession.setThemeProfiles(next);
+                commit.view = accepted;
+                return accepted;
+            },
             forceAnimate: true,
             reduceMotion,
         });
-    }, [assetAppearance, draft, readonly, reduceMotion, saveDisabled, setThemePreference, setThemeProfiles, themePreference, themeProfiles]);
+        committedRef.current = true;
+        if (commit.view && editSessionRef.current.routeKey === routeKey) {
+            const accepted = commit.view;
+            const identity = createThemeProfileNavigationParams(editSession.themeProfileView, draft.id).themeProfileIdentity;
+            const acceptedId = editSession.themeProfiles.profiles.some(profile => profile.id === draft.id)
+                ? resolveThemeProfileNavigationId(accepted, draft.id, identity ?? null) : draft.id;
+            editSessionRef.current = { routeKey, themeProfiles: accepted.state, themeProfileView: accepted,
+                setThemeProfiles: next => applyThemeProfilesFromUi(next, accepted) };
+            setDraft(current => current && acceptedId ? { ...current, id: acceptedId } : current);
+        }
+    }, [assetAppearance, draft, readonly, reduceMotion, routeKey, saveDisabled, setThemePreference, themePreference]);
 
     const deactivate = React.useCallback(async () => {
-        committedRef.current = true;
         if (draft) {
-            const nextThemeProfiles = clearActiveThemeProfileReferences(themeProfiles, draft.id);
-            setThemeProfiles(nextThemeProfiles);
+            const editSession = editSessionRef.current;
+            const nextThemeProfiles = clearActiveThemeProfileReferences(editSession.themeProfiles, draft.id);
+            const accepted = editSession.setThemeProfiles(nextThemeProfiles);
+            committedRef.current = true;
             applyThemeRuntimeSelection({
                 themePreference,
-                themeProfiles: nextThemeProfiles,
+                themeProfiles: accepted.state,
                 systemTheme: Appearance.getColorScheme() === 'dark' ? 'dark' : 'light',
             });
         }
         router.back();
     }, [draft, router, setThemeProfiles, themePreference, themeProfiles]);
 
-    const savePreviewThemeProfiles = React.useCallback(() => {
-        if (!draft) return themeProfiles;
-        return setActiveThemeProfileForMode(upsertThemeProfile(themeProfiles, draft), assetAppearance, draft.id);
-    }, [assetAppearance, draft, themeProfiles]);
+    const previewThemeProfiles = React.useMemo(() => {
+        if (!draft || readonly) return themeProfiles;
+        const editSession = editSessionRef.current;
+        const requested = setActiveThemeProfileForMode(upsertThemeProfile(editSession.themeProfiles, draft), assetAppearance, draft.id);
+        try {
+            return rebaseThemeProfileUiChange(editSession.themeProfileView, requested, themeProfileView);
+        } catch {
+            // An expired or unavailable identity is shown through the existing missing-profile state.
+            return null;
+        }
+    }, [assetAppearance, draft, readonly, themeProfiles, themeProfileView]);
+    const activeDraftId = draft ? resolveThemeProfileNavigationId(themeProfileView, draft.id,
+        createThemeProfileNavigationParams(editSessionRef.current.themeProfileView, draft.id).themeProfileIdentity ?? null) : null;
 
     const deleteProfile = React.useCallback(async () => {
         if (!draft || readonly) return;
+        const editSession = editSessionRef.current;
         const confirmed = await Modal.confirm(
             t('settingsAppearance.themeProfiles.deleteProfile'),
             t('settingsAppearance.themeProfiles.deleteProfileSubtitle'),
             { confirmText: t('common.delete'), destructive: true },
         );
         if (!confirmed) return;
+        const nextThemeProfiles = removeThemeProfile(editSession.themeProfiles, draft.id);
+        const accepted = editSession.setThemeProfiles(nextThemeProfiles);
         committedRef.current = true;
-        const nextThemeProfiles = removeThemeProfile(themeProfiles, draft.id);
-        setThemeProfiles(nextThemeProfiles);
         applyThemeRuntimeSelection({
             themePreference,
-            themeProfiles: nextThemeProfiles,
+            themeProfiles: accepted.state,
             systemTheme: Appearance.getColorScheme() === 'dark' ? 'dark' : 'light',
         });
         router.back();
     }, [draft, readonly, router, setThemeProfiles, themePreference, themeProfiles]);
 
     React.useEffect(() => {
-        if (!draft || readonly || hasInvalidColor || hasInvalidProfileName || hasProfileLimitReached) return;
+        if (!draft || !previewThemeProfiles || readonly || hasInvalidColor || hasInvalidProfileName || hasProfileLimitReached) return;
         const timeout = setTimeout(() => {
             previewAppliedRef.current = true;
             applyThemeRuntimeSelection({
                 themePreference: assetAppearance,
-                themeProfiles: savePreviewThemeProfiles(),
+                themeProfiles: previewThemeProfiles,
                 systemTheme: Appearance.getColorScheme() === 'dark' ? 'dark' : 'light',
             });
         }, 150);
 
         return () => clearTimeout(timeout);
-    }, [assetAppearance, draft, hasInvalidColor, hasInvalidProfileName, hasProfileLimitReached, readonly, savePreviewThemeProfiles]);
+    }, [assetAppearance, draft, hasInvalidColor, hasInvalidProfileName, hasProfileLimitReached, readonly, previewThemeProfiles]);
 
     React.useEffect(() => () => {
         if (!previewAppliedRef.current || committedRef.current) return;
@@ -338,7 +375,7 @@ export const ThemeProfileEditorScreen = React.memo(function ThemeProfileEditorSc
         });
     }, []);
 
-    if (!draft) {
+    if (!draft || !previewThemeProfiles) {
         return (
             <ItemList testID="settings-theme-profile-editor" style={{ paddingTop: 0 }}>
                 <ItemGroup>
@@ -468,7 +505,7 @@ export const ThemeProfileEditorScreen = React.memo(function ThemeProfileEditorSc
                         icon={<Icon name="arrow-clockwise" size={29} color={theme.colors.accent.orange} />}
                         onPress={resetMode}
                     />
-                    {persisted && isThemeProfileActive(themeProfiles, draft.id) ? (
+                    {persisted && activeDraftId && isThemeProfileActive(themeProfiles, activeDraftId) ? (
                         <>
                             <Item
                                 testID="settings-theme-profile-deactivate"

@@ -1,6 +1,7 @@
 import {
     buildClaudeRemoteOutgoingMessageMetaExtras,
     CLAUDE_REMOTE_PROVIDER_FIELDS,
+    MAX_CLAUDE_REMOTE_IDLE_RECLAIM_TIMEOUT_MINUTES,
 } from '@happier-dev/agents';
 
 import type { ProviderSettingEnumOption, ProviderSettingsPlugin } from '@/agents/providers/shared/providerSettingsPlugin';
@@ -171,6 +172,26 @@ export const CLAUDE_PROVIDER_SETTINGS_PLUGIN: ProviderSettingsPlugin = {
                     kind: 'boolean',
                     title: { key: 'settingsProviders.plugins.claude.fields.claudeCodeExperimentalAgentTeamsEnabled.title' },
                     subtitle: { key: 'settingsProviders.plugins.claude.fields.claudeCodeExperimentalAgentTeamsEnabled.subtitle' },
+                },
+            ],
+        },
+        {
+            id: 'claudeIdleReclaim',
+            title: { key: 'settingsProviders.plugins.claude.sections.claudeIdleReclaim.title' },
+            footer: { key: 'settingsProviders.plugins.claude.sections.claudeIdleReclaim.footer' },
+            fields: [
+                {
+                    key: 'claudeRemoteIdleReclaimEnabled',
+                    kind: 'boolean',
+                    title: { key: 'settingsProviders.plugins.claude.fields.claudeRemoteIdleReclaimEnabled.title' },
+                    subtitle: { key: 'settingsProviders.plugins.claude.fields.claudeRemoteIdleReclaimEnabled.subtitle' },
+                },
+                {
+                    key: 'claudeRemoteIdleReclaimTimeoutMinutes',
+                    kind: 'number',
+                    title: { key: 'settingsProviders.plugins.claude.fields.claudeRemoteIdleReclaimTimeoutMinutes.title' },
+                    subtitle: { key: 'settingsProviders.plugins.claude.fields.claudeRemoteIdleReclaimTimeoutMinutes.subtitle' },
+                    numberSpec: { min: 1, max: MAX_CLAUDE_REMOTE_IDLE_RECLAIM_TIMEOUT_MINUTES, step: 1 },
                 },
             ],
         },

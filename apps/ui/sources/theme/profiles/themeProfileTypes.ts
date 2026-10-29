@@ -10,6 +10,27 @@ export type ThemeProfileColorOverrides = Readonly<Record<ThemeProfilePublicToken
 
 export type ThemeProfileSelectionByMode = Readonly<Record<ThemeProfileMode, string | null>>;
 
+/** A legacy reference retains its identity until account migration resolves any ID collision. */
+export type ThemeProfileStoredSelectionByMode = Readonly<Record<ThemeProfileMode,
+    string | Readonly<{ legacyProfileId: string }> | null>>;
+
+export type ThemeProfileMigrationEdit = Readonly<{
+    target: Readonly<{ kind: 'account' | 'legacy'; id: string }>;
+    profile: ThemeProfileV1 | null;
+}>;
+
+export type ThemeProfileMigrationIntent = Readonly<{
+    edits: readonly ThemeProfileMigrationEdit[];
+    /** The server accepted this migration; retain its identity map until local cleanup completes. */
+    acknowledged?: true;
+    /** Original legacy ID to the ID the UI displayed when it accepted these edits. */
+    legacyProfileIds: Readonly<Record<string, string>>;
+    /** Legacy definitions already represented by account-owned rows in the captured view. */
+    representedLegacyProfileIds?: Readonly<Record<string, string>>;
+    /** Actual IDs chosen by the last CAS attempt, retained if its response is lost. */
+    attemptedLegacyProfileIds?: Readonly<Record<string, string>>;
+}>;
+
 export type ThemeProfileV1 = Readonly<{
     schemaVersion: 1;
     id: string;

@@ -60,7 +60,7 @@ function NewSessionScreenInner(props: Readonly<{
     draftId: string;
     onDraftRemoved: () => void;
     statusBadges?: ReadonlyArray<AgentInputStatusBadge>;
-    statusTrailingActions?: React.ReactNode;
+    renderStatusTrailingActions?: (state: Readonly<{ isCreating: boolean }>) => React.ReactNode;
 }>) {
     const model = useNewSessionScreenModel({ draftId: props.draftId, onDraftRemoved: props.onDraftRemoved });
 
@@ -70,7 +70,7 @@ function NewSessionScreenInner(props: Readonly<{
                 {...model.simpleProps}
                 composerTopContent={props.composerTopContent}
                 statusBadges={props.statusBadges}
-                statusTrailingActions={props.statusTrailingActions}
+                statusTrailingActions={props.renderStatusTrailingActions?.({ isCreating: model.simpleProps.isCreating })}
             />
         );
     }
@@ -88,7 +88,7 @@ function NewSessionScreenInner(props: Readonly<{
             footer={footer}
             composerTopContent={props.composerTopContent}
             statusBadges={props.statusBadges}
-            statusTrailingActions={props.statusTrailingActions}
+            statusTrailingActions={props.renderStatusTrailingActions?.({ isCreating: footer?.isCreating ?? false })}
         />
     );
 }
@@ -99,7 +99,7 @@ function NewSessionContent(props: Readonly<{
     draftId: string;
     onDraftRemoved: () => void;
     statusBadges?: ReadonlyArray<AgentInputStatusBadge>;
-    statusTrailingActions?: React.ReactNode;
+    renderStatusTrailingActions?: (state: Readonly<{ isCreating: boolean }>) => React.ReactNode;
 }>) {
     const shouldBlock = useShouldBlockNewSessionWithGettingStartedGuidance();
 
@@ -227,13 +227,16 @@ function NewSessionScreenForDraft(props: Readonly<{ draftId: string }>) {
         ...(draftSyncStatusBadge ? [draftSyncStatusBadge] : []),
         ...(draftConflictBanner.statusBadge ? [draftConflictBanner.statusBadge] : []),
     ], [draftConflictBanner.statusBadge, draftSyncStatusBadge]);
-    const statusTrailingActions = draftScope && draftSnapshot?.materialized ? (
-        <NewSessionDraftComposerActions
-            deleteDisabled={hasUnresolvedLaunch}
-            onStartAnother={startAnother}
-            onDelete={deleteDraft}
-        />
-    ) : null;
+    const showDraftActions = Boolean(draftScope && draftSnapshot?.materialized);
+    const renderStatusTrailingActions = React.useCallback((state: Readonly<{ isCreating: boolean }>) => (
+        showDraftActions ? (
+            <NewSessionDraftComposerActions
+                deleteDisabled={hasUnresolvedLaunch || state.isCreating}
+                onStartAnother={startAnother}
+                onDelete={deleteDraft}
+            />
+        ) : null
+    ), [deleteDraft, hasUnresolvedLaunch, showDraftActions, startAnother]);
     return (
         <NewSessionContent
             allowBlockingGuidance={!hasSeededDraftIntent && !hasSeededRouteIntent}
@@ -241,7 +244,7 @@ function NewSessionScreenForDraft(props: Readonly<{ draftId: string }>) {
             onDraftRemoved={startAnother}
             composerTopContent={composerTopContent}
             statusBadges={statusBadges}
-            statusTrailingActions={statusTrailingActions}
+            renderStatusTrailingActions={renderStatusTrailingActions}
         />
     );
 }

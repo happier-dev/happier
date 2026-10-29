@@ -14,7 +14,7 @@ import {
 import type { Profile } from '@/sync/domains/profiles/profile';
 import { t } from '@/text';
 import { Modal } from '@/modal';
-import { clearPreRestartBugReportSnapshot, peekPreRestartBugReportSnapshot } from '@/utils/system/preRestartBugReportSnapshot';
+import { clearPreRestartBugReportSnapshot, peekPreRestartBugReportSnapshot, formatPreRestartBugReportSnapshotDetails } from '@/utils/system/preRestartBugReportSnapshot';
 
 import { buildBugReportComposerDraftInput, BUG_REPORT_CURRENT_BEHAVIOR_MAX_LENGTH } from '../bugReportComposerDraft';
 import type { BugReportComposerSubmissionInput } from '../bugReportSubmissionFlow';
@@ -93,7 +93,7 @@ export function useBugReportComposerDraftState(input: Readonly<{
 
   const [acceptedPrivacyNotice, setAcceptedPrivacyNotice] = React.useState(false);
   const [crashReportStatus, setCrashReportStatus] = React.useState<'loading' | 'saved' | 'none' | 'discarded'>('loading');
-  const edited = React.useRef({ title: false, summary: false, currentBehavior: false });
+  const edited = React.useRef({ title: false, summary: false, currentBehavior: false, appVersion: false, platformValue: false, osVersion: false });
 
   React.useEffect(() => {
     let cancelled = false;
@@ -101,14 +101,17 @@ export function useBugReportComposerDraftState(input: Readonly<{
       if (cancelled) return;
       setCrashReportStatus(snapshot ? 'saved' : 'none');
       if (!snapshot) return;
-      const details = redactBugReportSensitiveText(snapshot.errorDetails);
+      const details = formatPreRestartBugReportSnapshotDetails(snapshot);
       const suffix = `\n\n${t('appCrash.stackTruncated')}`;
       const visibleDetails = details.length > BUG_REPORT_CURRENT_BEHAVIOR_MAX_LENGTH
         ? details.slice(0, BUG_REPORT_CURRENT_BEHAVIOR_MAX_LENGTH - suffix.length) + suffix
         : details;
       if (!edited.current.title) setTitle(t('appCrash.title'));
-      if (!edited.current.summary) setSummary((details.split('\n')[0] || t('appCrash.title')).slice(0, 800));
+      if (!edited.current.summary) setSummary((redactBugReportSensitiveText(snapshot.errorDetails).split('\n')[0] || t('appCrash.title')).slice(0, 800));
       if (!edited.current.currentBehavior) setCurrentBehavior(visibleDetails);
+      if (!edited.current.appVersion && snapshot.runtime?.appVersion) setAppVersion(snapshot.runtime.appVersion);
+      if (!edited.current.platformValue) setPlatformValue(snapshot.platform);
+      if (!edited.current.osVersion && snapshot.runtime?.osVersion) setOsVersion(snapshot.runtime.osVersion);
     });
     return () => { cancelled = true; };
   }, []);
@@ -124,7 +127,7 @@ export function useBugReportComposerDraftState(input: Readonly<{
   const copySavedCrash = React.useCallback(async () => {
     try {
       const snapshot = await peekPreRestartBugReportSnapshot();
-      if (snapshot) await Clipboard.setStringAsync(redactBugReportSensitiveText(snapshot.errorDetails));
+      if (snapshot) await Clipboard.setStringAsync(formatPreRestartBugReportSnapshotDetails(snapshot));
     } catch {
       await Modal.alert(t('common.error'), t('appCrash.copyFailed'));
     }
@@ -134,6 +137,9 @@ export function useBugReportComposerDraftState(input: Readonly<{
   const editSummary = React.useCallback((value: string) => { edited.current.summary = true; setSummary(value); }, []);
   const editCurrentBehavior = React.useCallback((value: string) => { edited.current.currentBehavior = true; setCurrentBehavior(value); }, []);
 
+  const editAppVersion = React.useCallback((value: string) => { edited.current.appVersion = true; setAppVersion(value); }, []);
+  const editPlatformValue = React.useCallback((value: string) => { edited.current.platformValue = true; setPlatformValue(value); }, []);
+  const editOsVersion = React.useCallback((value: string) => { edited.current.osVersion = true; setOsVersion(value); }, []);
   React.useEffect(() => {
     if (!serverUrlEdited) {
       setServerUrlState(input.serverUrlDefault);
@@ -220,11 +226,11 @@ export function useBugReportComposerDraftState(input: Readonly<{
     deploymentType,
     setDeploymentType,
     appVersion,
-    setAppVersion,
+    setAppVersion: editAppVersion,
     platformValue,
-    setPlatformValue,
+    setPlatformValue: editPlatformValue,
     osVersion,
-    setOsVersion,
+    setOsVersion: editOsVersion,
     deviceModel,
     setDeviceModel,
     serverUrl,

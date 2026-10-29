@@ -77,10 +77,16 @@ export async function resolveRunnerMcpServers(params: Readonly<{
   });
 
   if (materialized.warnings.length > 0) {
-    logger.debug('[mcp] Materialization warnings', {
+    logger.infoFile('[mcp] Materialization warnings', {
       warningCount: materialized.warnings.length,
       warnings: materialized.warnings.map((w) => ({ serverName: w.serverName, code: w.code, detail: w.detail })),
     });
+    for (const warning of materialized.warnings) {
+      params.session.sendSessionEvent?.({
+        type: 'message',
+        message: `MCP server ${warning.serverName} was not started: ${warning.detail}`,
+      });
+    }
   }
 
   const merged = mergeWithBuiltInHappierMcpServer({ builtIn: builtIn.mcpServers, extra: materialized.mcpServers });

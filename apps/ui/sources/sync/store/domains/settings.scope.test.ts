@@ -9,7 +9,7 @@ import {
     saveAccountSettings,
 } from '@/sync/domains/state/accountSettingsPersistence';
 import { loadAccountPurchases, saveAccountPurchases } from '@/sync/domains/state/accountProfilePersistence';
-import { clearPersistence, savePurchases } from '@/sync/domains/state/persistence';
+import { getPersistenceStorage, savePurchases } from '@/sync/domains/state/persistence';
 
 const store = vi.hoisted(() => new Map<string, string>());
 
@@ -98,11 +98,19 @@ function requireScopedMethods(state: ScopedSettingsDomain): asserts state is Sco
 }
 
 describe('createSettingsDomain scoped account settings', () => {
+    it('moves a failed theme migration binding through the existing server-scope alias transition', () => {
+        const { getState } = createTestStore();
+        const legacyScope = { serverId: 'old-server-profile', accountId: 'account-a' };
+        const currentScope = { serverId: 'srv_canonical', accountId: 'account-a' };
+        getState().applyLocalSettings({ themeProfileLegacyAccountScope: legacyScope });
+        getState().activateSettingsScope(currentScope, [legacyScope]);
+        expect(getState().localSettings.themeProfileLegacyAccountScope).toEqual(currentScope);
+    });
     const scopeA = { serverId: 'server-a', accountId: 'account-a' };
     const scopeB = { serverId: 'server-b', accountId: 'account-b' };
 
     beforeEach(() => {
-        clearPersistence();
+        getPersistenceStorage().clearAll();
     });
 
     it('hydrates the active projection when switching to a lower-version settings scope', () => {

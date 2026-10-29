@@ -27,6 +27,7 @@ import {
   GROK_SESSION_NOTIFICATION_METHODS,
   type GrokSessionNotificationObserver,
 } from './sessionNotifications';
+import { lazySchema } from '@happier-dev/protocol';
 
 export const GROK_ASK_USER_QUESTION_METHODS = [
   'x.ai/ask_user_question',
@@ -36,41 +37,41 @@ export const GROK_ASK_USER_QUESTION_METHODS = [
 type GrokAskUserQuestionMethod = (typeof GROK_ASK_USER_QUESTION_METHODS)[number];
 const GROK_FREEFORM_OPTION_LABEL = 'Other' as const;
 
-const NonEmptyExactString = z.string()
+const NonEmptyExactString = lazySchema(() => z.string()
   .max(STRUCTURED_QUESTION_LIMITS.maxStringLength)
-  .refine((value) => value.trim().length > 0, 'must be non-empty');
-const NonEmptyExactIdentifier = z.string()
+  .refine((value) => value.trim().length > 0, 'must be non-empty'));
+const NonEmptyExactIdentifier = lazySchema(() => z.string()
   .max(512)
-  .refine((value) => value.length > 0 && value === value.trim(), 'must be a non-empty exact identifier');
+  .refine((value) => value.length > 0 && value === value.trim(), 'must be a non-empty exact identifier'));
 
-const GrokQuestionOptionSchema = z.object({
+const GrokQuestionOptionSchema = lazySchema(() => z.object({
   id: NonEmptyExactIdentifier.optional(),
   label: NonEmptyExactString,
   description: z.string().max(STRUCTURED_QUESTION_LIMITS.maxStringLength).optional(),
   preview: z.string().max(STRUCTURED_QUESTION_LIMITS.maxStringLength).optional(),
-}).strict();
+}).strict());
 
-const GrokQuestionSchema = z.object({
+const GrokQuestionSchema = lazySchema(() => z.object({
   id: NonEmptyExactIdentifier.optional(),
   question: NonEmptyExactString,
   options: z.array(GrokQuestionOptionSchema)
     .max(STRUCTURED_QUESTION_LIMITS.maxOptionsPerQuestion),
   multiSelect: z.boolean().nullable().optional(),
-}).strict();
+}).strict());
 
-const GrokQuestionPayloadSchema = z.object({
+const GrokQuestionPayloadSchema = lazySchema(() => z.object({
   sessionId: NonEmptyExactIdentifier,
   toolCallId: NonEmptyExactIdentifier,
   questions: z.array(GrokQuestionSchema)
     .min(1, 'A Grok question request must contain at least one question')
     .max(STRUCTURED_QUESTION_LIMITS.maxQuestions),
   mode: z.enum(['default', 'plan']),
-}).strict();
+}).strict());
 
-const GrokWrappedQuestionPayloadSchema = z.object({
+const GrokWrappedQuestionPayloadSchema = lazySchema(() => z.object({
   method: z.enum(GROK_ASK_USER_QUESTION_METHODS),
   params: GrokQuestionPayloadSchema,
-}).strict();
+}).strict());
 
 type GrokQuestionPayload = z.infer<typeof GrokQuestionPayloadSchema>;
 type GrokQuestion = GrokQuestionPayload['questions'][number];

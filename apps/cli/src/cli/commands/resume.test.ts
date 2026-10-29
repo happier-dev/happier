@@ -6,7 +6,7 @@ import { EventEmitter } from 'node:events';
 import { randomBytes } from 'node:crypto';
 import { access, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { delimiter, dirname, join } from 'node:path';
 
 import {
   accountSettingsParse,
@@ -26,6 +26,7 @@ import { resolveConnectedServiceMaterializedRootDir } from '@/daemon/connectedSe
 import { waitForCondition } from '@/testkit/async/waitFor';
 import { withTempDir } from '@/testkit/fs/tempDir';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { createExecutableShim } from '@/testkit/fs/executableShim';
 import { acquireSessionRunnerLock, sessionRunnerLockPathForSessionId } from '@/daemon/sessionRunnerLock';
 import { withHerdrApi } from '@/integrations/herdr/herdrApi.testkit';
 import { createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
@@ -546,6 +547,14 @@ describe('happier resume', () => {
     const prevMaterializedKeysEnv = process.env.HAPPIER_CONNECTED_SERVICE_MATERIALIZED_ENV_KEYS_JSON;
     const prevTargetRootEnv = process.env.HAPPIER_CONNECTED_SERVICE_TARGET_MATERIALIZED_ROOT;
     const prevCwd = process.cwd();
+    // Since 21060ed08d the Codex spawn hook admits App Server resumes only when the Codex CLI resolves.
+    const codexBinDir = dirname(await createExecutableShim({
+      dirPrefix: 'happier-resume-connected-codex-',
+      fileName: process.platform === 'win32' ? 'codex.cmd' : 'codex',
+      contents: process.platform === 'win32' ? '@echo off\r\n' : '#!/bin/sh\n',
+    }));
+    const pathEnv = createEnvKeyScope(['PATH']);
+    pathEnv.patch({ PATH: [codexBinDir, process.env.PATH].filter(Boolean).join(delimiter) });
 
     const now = Date.now();
     const credentials = {
@@ -754,9 +763,11 @@ describe('happier resume', () => {
       else process.env.HAPPIER_CONNECTED_SERVICE_MATERIALIZED_ENV_KEYS_JSON = prevMaterializedKeysEnv;
       if (prevTargetRootEnv === undefined) delete process.env.HAPPIER_CONNECTED_SERVICE_TARGET_MATERIALIZED_ROOT;
       else process.env.HAPPIER_CONNECTED_SERVICE_TARGET_MATERIALIZED_ROOT = prevTargetRootEnv;
+      pathEnv.restore();
       reloadConfiguration();
       await rm(home, { recursive: true, force: true });
       await rm(directory, { recursive: true, force: true });
+      await rm(codexBinDir, { recursive: true, force: true });
     }
   });
 

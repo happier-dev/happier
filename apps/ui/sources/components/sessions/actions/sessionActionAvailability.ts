@@ -85,7 +85,7 @@ export function listVisibleSessionActionIds(params: Readonly<{
         ids.push(SESSION_ACTION_UNARCHIVE_ID);
     }
 
-    if (surface === 'sessionInfo' && target.canDelete) {
+    if (surface !== 'selectionActionBar' && (target.canDelete || target.canStopAndDelete)) {
         ids.push(SESSION_ACTION_DELETE_ID);
     }
 

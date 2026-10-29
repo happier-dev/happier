@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type {
   AcpExtensionHandlerContext,
 } from '@/agent/acp/AcpBackend';
+import { lazySchema } from '@happier-dev/protocol';
 
 export const GROK_MCP_SERVERS_UPDATED_METHOD = '_x.ai/mcp/servers_updated' as const;
 
@@ -10,11 +11,11 @@ const MAX_MCP_SERVERS = 128;
 const MAX_MCP_SERVER_ARGS = 128;
 const MAX_MCP_SERVER_STRING_LENGTH = 16_384;
 
-const NonEmptyExactIdentifier = z.string()
+const NonEmptyExactIdentifier = lazySchema(() => z.string()
   .max(512)
-  .refine((value) => value.length > 0 && value === value.trim(), 'must be a non-empty exact identifier');
+  .refine((value) => value.length > 0 && value === value.trim(), 'must be a non-empty exact identifier'));
 
-const GrokMcpServerUpdateEntrySchema = z.object({
+const GrokMcpServerUpdateEntrySchema = lazySchema(() => z.object({
   name: NonEmptyExactIdentifier,
   source: z.string().max(512).optional(),
   type: z.string().max(128).optional(),
@@ -25,11 +26,11 @@ const GrokMcpServerUpdateEntrySchema = z.object({
 })
   // The notification is status-only and is never persisted. Validate the stable
   // identity and observed stdio fields while discarding future provider metadata.
-  .strip();
+  .strip());
 
-const GrokMcpServersUpdatedPayloadSchema = z.object({
+const GrokMcpServersUpdatedPayloadSchema = lazySchema(() => z.object({
   mcpServers: z.array(GrokMcpServerUpdateEntrySchema).max(MAX_MCP_SERVERS),
-}).strict();
+}).strict());
 
 export class GrokMcpServersUpdatedNotificationError extends Error {
   readonly name = 'GrokMcpServersUpdatedNotificationError';

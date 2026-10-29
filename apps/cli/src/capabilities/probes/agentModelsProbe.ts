@@ -19,6 +19,7 @@ import { spawn } from 'node:child_process';
 import { z } from 'zod';
 import { normalizeContextWindowTokens } from '@/backends/modelCapabilities/contextWindowTokens';
 import { applyObservedAcpModelOptions, isAcpModelScopedConfigOption } from '@/agent/acp/runtime/sessionModelsState';
+import { lazySchema } from '@happier-dev/protocol';
 
 type ProbedAgentModelOptionValue = string | number | boolean | null;
 
@@ -62,37 +63,37 @@ const agentModelsProbeCache = new AsyncTtlCache<ProbedAgentModelsResult>({
   errorTtlMs: PROBE_MODELS_FAILURE_TTL_MS,
 });
 
-const ProbeModelsObservationSchema = z.object({
+const ProbeModelsObservationSchema = lazySchema(() => z.object({
   availableModels: z.array(z.unknown()),
   observedAt: z.number().finite().nonnegative().optional(),
   refreshError: z.boolean().optional(),
   source: z.enum(['dynamic', 'static']).optional(),
-});
-const ProbeNonEmptyStringSchema = z.string().trim().min(1);
-const ProbeDescriptionSchema = z.string();
-const ProbeOptionValueSchema = z.union([z.string(), z.number(), z.boolean(), z.null()]);
-const ProbeModelOptionChoiceInputSchema = z.object({
+}));
+const ProbeNonEmptyStringSchema = lazySchema(() => z.string().trim().min(1));
+const ProbeDescriptionSchema = lazySchema(() => z.string());
+const ProbeOptionValueSchema = lazySchema(() => z.union([z.string(), z.number(), z.boolean(), z.null()]));
+const ProbeModelOptionChoiceInputSchema = lazySchema(() => z.object({
   value: z.unknown().optional(),
   name: ProbeNonEmptyStringSchema,
   description: ProbeDescriptionSchema.optional(),
-});
-const ProbeModelOptionInputSchema = z.object({
+}));
+const ProbeModelOptionInputSchema = lazySchema(() => z.object({
   id: ProbeNonEmptyStringSchema,
   name: ProbeNonEmptyStringSchema,
   description: ProbeDescriptionSchema.optional(),
   type: ProbeNonEmptyStringSchema,
   currentValue: z.unknown().optional(),
   options: z.array(z.unknown()).optional(),
-});
-const ProbeDynamicModelInputSchema = z.object({
+}));
+const ProbeDynamicModelInputSchema = lazySchema(() => z.object({
   id: ProbeNonEmptyStringSchema,
   name: ProbeNonEmptyStringSchema,
   description: ProbeDescriptionSchema.optional(),
   contextWindowTokens: z.unknown().optional(),
   extendedContextModelId: ProbeNonEmptyStringSchema.optional(),
   modelOptions: z.array(z.unknown()).optional(),
-});
-const ProbeConfigOptionCandidateSchema = z.object({
+}));
+const ProbeConfigOptionCandidateSchema = lazySchema(() => z.object({
   id: z.string().optional(),
   name: z.string().optional(),
   category: z.string().optional(),
@@ -100,7 +101,7 @@ const ProbeConfigOptionCandidateSchema = z.object({
   type: z.string().optional(),
   currentValue: z.unknown().optional(),
   options: z.array(z.unknown()).optional(),
-});
+}));
 
 export function resetAgentModelsProbeCacheForTests(): void {
   agentModelsProbeCache.clear();

@@ -211,10 +211,13 @@ describe('ChatHeaderView', () => {
         try {
             const titleRect = layout.rect(text(title));
             const badgeRect = layout.rect(text(badge));
+            const pathRect = layout.rect(text('~/projects/happier'));
+            const storageRect = layout.rect(text('Direct'));
             const actions = layout.rect(screen.root.findByProps({ testID: 'actions' }));
             const back = layout.rect(screen.root.findAll((node) => String(node.type) === 'Pressable' && node.props.testID === 'session-header-back')[0]);
             expect(titleRect.width).toBeGreaterThan(0);
             expect(badgeRect.top).toBeGreaterThanOrEqual(titleRect.top + titleRect.height);
+            expect(pathRect.left + pathRect.width).toBeLessThanOrEqual(storageRect.left);
             for (const label of [title, 'Direct', badge, '~/projects/happier']) {
                 const rect = layout.rect(text(label));
                 expect(rect.left + rect.width).toBeLessThanOrEqual(actions.left + 0.5);

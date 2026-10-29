@@ -86,7 +86,7 @@ export function hashClaudeUnifiedTerminalLaunchOptionsForQueue(mode: EnhancedMod
     return hashObject(buildClaudeUnifiedTerminalLaunchOptionsHashInput(mode));
 }
 
-export function hashClaudeEnhancedModeForQueue(mode: EnhancedMode): string {
+export function hashClaudeEnhancedModeForLaunch(mode: EnhancedMode): string {
     const remoteMode = normalizeClaudeRemoteMode(mode);
     const effectiveAgentModeId = resolveEffectiveClaudeAgentModeId(mode);
     const claudeSdkPermissionMode = resolveClaudeSdkPermissionModeFromEnhancedMode({
@@ -158,5 +158,17 @@ export function hashClaudeEnhancedModeForQueue(mode: EnhancedMode): string {
         fallbackModel: mode.fallbackModel,
         customSystemPrompt: mode.customSystemPrompt,
         appendSystemPrompt: mode.appendSystemPrompt,
+    });
+}
+
+export function hashClaudeEnhancedModeForQueue(mode: EnhancedMode): string {
+    const launchHash = hashClaudeEnhancedModeForLaunch(mode);
+    if (normalizeClaudeRemoteMode(mode).kind === 'unifiedTerminal') return launchHash;
+    // A batching key includes policy as well as launch options: combining prompts with different
+    // policies would keep the first prompt's mode and silently discard a later opt-out.
+    return hashObject({
+        launchHash,
+        claudeRemoteIdleReclaimEnabled: mode.claudeRemoteIdleReclaimEnabled === true,
+        claudeRemoteIdleReclaimTimeoutMinutes: mode.claudeRemoteIdleReclaimTimeoutMinutes,
     });
 }

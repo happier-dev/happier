@@ -494,6 +494,9 @@ export function createDaemonConnectedServiceAuthGroupSwitchCoordinator(params: R
     },
     recordObservedFailureState: async (input) => {
       if (!params.api.updateConnectedServiceAuthGroupRuntimeState) return;
+      // Explicit null is an unattributed provider-started failure. The tracked
+      // pool can be recovered, but no member may acquire a limiter from it.
+      if (input.observedProfileId === null) return;
       const observedProfileId = typeof input.observedProfileId === 'string' && input.observedProfileId.trim().length > 0
         ? input.observedProfileId.trim()
         : input.loaded.activeProfileId;

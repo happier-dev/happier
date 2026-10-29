@@ -741,7 +741,12 @@ export class ConnectedServiceQuotasCoordinator {
     const group = await this.api.getConnectedServiceAuthGroup({
       serviceId: input.serviceId,
       groupId,
-    }).catch(() => null);
+    }).catch(() => {
+      this.recordDiagnostic?.({ event: 'quota_work_suppressed', phase: 'soft_switch',
+        reason: 'soft_switch_group_read_failed', sessionId: input.sessionId,
+        serviceId: input.serviceId, groupId });
+      return null;
+    });
     if (!group) return;
 
     // Reactive preemption: a genuine in-band usage change (delivered outside the poll) is the freshest
@@ -772,7 +777,11 @@ export class ConnectedServiceQuotasCoordinator {
           activeProfileId: changedProfileId,
           groupGeneration: normalizeConnectedServiceQuotaGeneration(input.groupGeneration),
         }],
-      }).catch(() => undefined);
+      }).catch(() => {
+        this.recordDiagnostic?.({ event: 'quota_work_suppressed', phase: 'soft_switch',
+          reason: 'soft_switch_evaluation_failed', sessionId: input.sessionId,
+          serviceId: input.serviceId, groupId, activeProfileId: changedProfileId });
+      });
     }
 
     if (!listener) return;
@@ -1033,8 +1042,14 @@ export class ConnectedServiceQuotasCoordinator {
       groupId: decisionTarget.groupId,
       reason: input.reason,
       observedProfileId: input.observedProfileId,
-    }).catch(() => null);
-    if (!rawDecision || typeof rawDecision !== 'object' || Array.isArray(rawDecision)) return 1;
+    }).catch(() => {
+      this.recordDiagnostic?.({ event: 'quota_work_suppressed', phase: 'soft_switch',
+        reason: 'soft_switch_request_failed', sessionId: decisionTarget.sessionId,
+        serviceId: decisionTarget.serviceId, groupId: decisionTarget.groupId,
+        activeProfileId: input.observedProfileId });
+      return null;
+    });
+    if (!rawDecision || typeof rawDecision !== 'object' || Array.isArray(rawDecision)) return 0;
     const decision = rawDecision as Readonly<Record<string, unknown>>;
     const activeProfileId = typeof decision.activeProfileId === 'string' && decision.activeProfileId.trim()
       ? decision.activeProfileId.trim()
@@ -3060,7 +3075,7 @@ export class ConnectedServiceQuotasCoordinator {
                 groupId,
                 profileId,
                 groupGeneration: group?.generation ?? null,
-                snapshot: observedSnapshot,
+                snapshot: observedSnapshot.snapshot,
               });
               if (deadlineExceeded()) return;
               await this.recordFetchedQuotaSnapshotAsAccountUsage({
@@ -3069,7 +3084,8 @@ export class ConnectedServiceQuotasCoordinator {
                 accountMode: accountMode === 'plain' || accountMode === 'e2ee' ? accountMode : null,
                 groupId,
                 groupContexts: this.buildQuotaGroupContextsForProfile({ group, profileId }),
-                snapshot: observedSnapshot,
+                snapshot: observedSnapshot.snapshot,
+                sourceProviderAccountId: observedSnapshot.sourceProviderAccountId,
                 now,
               });
               if (deadlineExceeded()) return;
@@ -3491,7 +3507,7 @@ export class ConnectedServiceQuotasCoordinator {
     now: number;
     leaseUntil: number;
     signal?: AbortSignal;
-  }>): Promise<ConnectedServiceQuotaSnapshotV1 | null> {
+  }>): Promise<Readonly<{ snapshot: ConnectedServiceQuotaSnapshotV1; sourceProviderAccountId: string | null }> | null> {
     const maxWaitMs = this.quotaFetchLeaseContentionWaitMaxMs;
     if (maxWaitMs > 0) {
       const waitMs = Math.min(maxWaitMs, Math.max(0, Math.trunc(input.leaseUntil - input.now)));
@@ -3522,13 +3538,21 @@ export class ConnectedServiceQuotasCoordinator {
       return null;
     }
     if (!observed) return null;
-    return this.openExistingQuotaSnapshot({
+    const snapshot = this.openExistingQuotaSnapshot({
       storageMode: observed.storageMode,
       serviceId: input.serviceId,
       profileId: input.profileId,
       existing: observed.existing,
       preopenedSnapshot: observed.preopenedSnapshot,
     });
+    if (!snapshot) return null;
+    // Keep identity with the observation that passed freshness/context admission. The
+    // source-link owner must prove this profile still owns the provider account.
+    const credential = observed.credential ?? await this.readCredentialForQuota(input);
+    return {
+      snapshot,
+      sourceProviderAccountId: credential.record ? readCredentialAccountIdentity(credential.record)?.providerAccountId ?? null : null,
+    };
   }
 
   private async runFetcherWithTimeout<TSnapshot>(input: Readonly<{
@@ -4352,11 +4376,12 @@ export class ConnectedServiceQuotasCoordinator {
               leaseUntil: lease.leaseUntil,
             });
             if (observedSnapshot) {
-              this.recordRuntimeProfileSnapshot({ serviceId, profileId, snapshot: observedSnapshot });
+              this.recordRuntimeProfileSnapshot({ serviceId, profileId, snapshot: observedSnapshot.snapshot });
               await this.recordFetchedQuotaSnapshotAsAccountUsage({
                 serviceId,
                 profileId,
-                snapshot: observedSnapshot,
+                snapshot: observedSnapshot.snapshot,
+                sourceProviderAccountId: observedSnapshot.sourceProviderAccountId,
                 now,
                 accountMode,
                 groupContexts,

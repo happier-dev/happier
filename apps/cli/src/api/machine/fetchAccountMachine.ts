@@ -3,8 +3,9 @@ import { z } from 'zod';
 
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { accountMachineSchema, type AccountMachineInventoryRow } from './fetchAccountMachines';
+import { lazySchema } from '@happier-dev/protocol';
 
-const accountMachineResponseSchema = z.object({ machine: accountMachineSchema });
+const accountMachineResponseSchema = lazySchema(() => z.object({ machine: accountMachineSchema }));
 
 /** Reads the exact Account-owned row; transport uncertainty is never absence. */
 export async function fetchAccountMachine(params: Readonly<{

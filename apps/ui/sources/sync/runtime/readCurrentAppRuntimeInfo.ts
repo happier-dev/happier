@@ -1,6 +1,10 @@
 import * as Application from 'expo-application';
 import Constants from 'expo-constants';
 import * as Updates from 'expo-updates';
+import { Platform } from 'react-native';
+import { redactBugReportSensitiveText, sanitizeBugReportUrl } from '@happier-dev/protocol';
+
+import { invokeTauri, isTauriDesktop } from '@/utils/platform/tauri';
 
 export type AppRuntimeLaunchSource = 'embedded' | 'ota' | 'unknown';
 
@@ -56,4 +60,29 @@ export function readCurrentAppRuntimeInfo(): CurrentAppRuntimeInfo {
         updateCreatedAt: createdAt,
         launchSource: resolveLaunchSource(updateId),
     };
+}
+
+/** Capture the loaded realm before awaiting local desktop IPC or restarting the app. */
+export async function captureCurrentAppRuntimeInfo(): Promise<Readonly<Record<string, string | null>>> {
+    const info = {
+        ...readCurrentAppRuntimeInfo(),
+        osVersion: Platform.OS === 'web'
+            ? (typeof navigator !== 'undefined' ? navigator.userAgent : null)
+            : String(Platform.Version ?? ''),
+        frontendRelease: toTrimmedString(process.env.EXPO_PUBLIC_SENTRY_RELEASE),
+        // Asset URLs identify production bundles; a reused Metro URL is not a source revision.
+        frontendAssets: typeof document !== 'undefined'
+            ? Array.from(document.scripts, (script) => sanitizeBugReportUrl(script.src)).filter(Boolean).join('\n')
+            : null,
+        desktopWrapperVersion: null as string | null,
+    };
+    if (isTauriDesktop()) {
+        try {
+            info.desktopWrapperVersion = toTrimmedString(await invokeTauri<unknown>('plugin:app|version'));
+            if (!info.desktopWrapperVersion) throw new Error('Desktop version was empty');
+        } catch {
+            console.warn('[bug-report] Desktop wrapper version is unavailable');
+        }
+    }
+    return Object.fromEntries(Object.entries(info).map(([key, value]) => [key, value === null ? null : redactBugReportSensitiveText(value)]));
 }

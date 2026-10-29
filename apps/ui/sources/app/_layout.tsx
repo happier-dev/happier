@@ -35,6 +35,7 @@ import { RealtimeProvider } from '@/realtime/RealtimeProvider';
 import { FaviconPermissionIndicator } from '@/components/web/FaviconPermissionIndicator';
 import { CommandPaletteProvider } from '@/components/appShell/commandPalette/CommandPaletteProvider';
 import { StatusBarProvider } from '@/components/ui/layout/StatusBarProvider';
+import { ThemeProfileRuntimeSync } from '@/theme/profiles/ThemeProfileRuntimeSync';
 import { UpdatesEntry } from '@/components/updates/UpdatesPopoverButton';
 import { UpdatesSummaryProvider } from '@/updates/useUpdatesSummary';
 import { UpdateFactsBackgroundRuntime } from '@/updates/UpdateFactsBackgroundRuntime';
@@ -719,6 +720,7 @@ function AppBoot(props: {
                         <AuthProvider key={initState.authGeneration} initialCredentials={initState.credentials}>
                             <ThemeProvider value={props.navigationTheme}>
                                 <StatusBarProvider />
+                                <ThemeProfileRuntimeSync />
                                 <AppPaneModalProvider>
                                     <CommandPaletteProvider>
                                         <RealtimeProvider>

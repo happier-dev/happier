@@ -1111,6 +1111,8 @@ export const ca: TranslationStructure = {
     },
 
     appCrash: {
+        saveDiagnostics: "Desa els diagnòstics",
+        diagnosticsSaveFailed: "No s’han pogut desar els diagnòstics. Els detalls de l’error continuen disponibles. Torna-ho a provar o copia’ls.",
         copyFailed: "No s’han pogut copiar els detalls de l’error. Torna-ho a provar.",
         discardFailed: "No s’ha pogut descartar l’error desat. Torna-ho a provar.",
         restartWithoutReport: "Reinicia sense desar",
@@ -3353,6 +3355,10 @@ export const ca: TranslationStructure = {
     },
 
     settingsDesktop: {
+        nativeTitleBarTitle: 'Utilitza la barra de títol del Windows',
+        nativeTitleBarSubtitle: 'Mostra el marc i els controls de finestra estàndard del Windows.',
+        nativeTitleBarChangeFailed: 'No s’ha pogut canviar la barra de títol. Torna-ho a provar.',
+        nativeTitleBarPersistenceFailed: 'No s’ha pogut carregar o desar la preferència de la barra de títol. Torna-la a canviar per reintentar-ho.',
         title: 'Escriptori',
         footer: 'Controla com es comporta el Happier en aquest ordinador.',
         backgroundServiceTitle: 'Segueix disponible en segon pla',
@@ -3919,6 +3925,10 @@ export const ca: TranslationStructure = {
                         title: "Experiments de Claude Code",
                         footer: "Aquests paràmetres s’apliquen tant a les sessions locals de Claude (terminal) com a les remotes de Claude (Agent SDK) iniciades per Happier."
                     },
+                    claudeIdleReclaim: {
+                        title: "Sessions inactives",
+                        footer: "El pròxim prompt reprèn la mateixa sessió de Claude i pot trigar una mica més. S’allibera l’estat en memòria. Les tasques en segon pla, la feina programada i els punts de control de fitxers la mantenen activa. Les sessions de terminal unificat continuen actives."
+                    },
                     claudeRemoteSdk: {
                         title: "Entorn clàssic (alternativa Agent SDK)",
                         footer: "Fes servir la ruta Agent SDK quan l'entorn de terminal unificat està desactivat o no disponible."
@@ -4002,6 +4012,14 @@ export const ca: TranslationStructure = {
                     claudeCodeExperimentalAgentTeamsEnabled: {
                         title: "Força l’activació d’Agent Teams",
                         subtitle: "Activa Agent Teams experimental de Claude Code (eixam d’agents) a totes les sessions de Claude iniciades per Happier."
+                    },
+                    claudeRemoteIdleReclaimEnabled: {
+                        title: "Allibera els processos inactius de Claude",
+                        subtitle: "Allibera memòria després d’un període sense activitat. Desactivat per defecte."
+                    },
+                    claudeRemoteIdleReclaimTimeoutMinutes: {
+                        title: "Temps d’inactivitat (minuts)",
+                        subtitle: "Tria quant de temps es manté preparada una sessió remota de Claude amb aquesta opció activada."
                     },
                     claudeRemoteAgentSdkEnabled: {
                         title: "Usa l'alternativa Agent SDK",
@@ -6436,6 +6454,8 @@ deps: {
         deleteSessionSubtitle: 'Elimina permanentment aquesta sessió',
         deleteSessionConfirm: 'Eliminar la sessió permanentment?',
         deleteSessionWarning: 'Aquesta acció no es pot desfer. Tots els missatges i dades associats amb aquesta sessió s\'eliminaran permanentment.',
+        stopAndDeleteSession: "Atura i elimina",
+        stopAndDeleteSessionWarning: "Això aturarà la sessió i eliminarà permanentment tots els seus missatges i dades. Aquesta acció no es pot desfer.",
         failedToDeleteSession: 'Error en eliminar la sessió',
         sessionDeleted: 'Sessió eliminada amb èxit',
         manageSharing: 'Gestiona l\'accés',

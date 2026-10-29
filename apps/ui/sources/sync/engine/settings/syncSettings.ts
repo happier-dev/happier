@@ -1,3 +1,5 @@
+import { DEFAULT_THEME_PROFILES_LOCAL_STATE, ThemeProfileLibrarySchema, mergeThemeProfileLibraries, resolveThemeProfileSelection } from '@/theme/profiles/themeProfilePersistence';
+import { canUseLegacyThemeProfiles, rememberThemeProfileMigration } from '@/sync/domains/settings/themeProfiles';
 import { tracking } from '@/track';
 import { HappyError } from '@/utils/errors/errors';
 import { applySettings, settingsDefaults, settingsParse, type Settings } from '@/sync/domains/settings/settings';
@@ -14,11 +16,15 @@ import {
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { getServerProfileLegacyServerIds } from '@/sync/domains/server/serverProfiles';
 import { storage } from '@/sync/domains/state/storage';
-import { loadPendingSettings } from '@/sync/domains/state/persistence';
+import { loadLocalSettings, loadPendingSettings, savePendingSettings } from '@/sync/domains/state/persistence';
 import {
     loadAccountSettings,
     loadPendingAccountSettings,
+    loadPendingAccountSettingsState,
+    savePendingAccountSettings,
 } from '@/sync/domains/state/accountSettingsPersistence';
+import { applyThemeProfileMigrationEdits, mergeThemeProfileMigrationEdits, rebaseThemeProfileMigrationEdits, removeCommittedThemeProfileMigrationEdits } from '@/theme/profiles/themeProfileMigrationEdits';
+import type { ThemeProfileMigrationIntent, ThemeProfileV1 } from '@/theme/profiles/themeProfileTypes';
 import { areAccountSettingsJsonValuesEqual } from '@/sync/domains/settings/accountSettingsStructuralEquality';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import type { Encryption } from '@/sync/encryption/encryption';
@@ -64,6 +70,8 @@ export type SyncSettingsParams = {
     encryption: Encryption;
     settingsScope?: AccountSettingsScope | null;
     pendingSettings: Partial<Settings>;
+    /** Current intents from the captured Sync scope, including its quiet disk flush window. */
+    getLatestPendingSettings?: () => Partial<Settings> | null;
     clearPendingSettings: (nextPendingSettings: Partial<Settings>) => void;
     settingsSecretsKey?: Uint8Array | null;
     settingsSecretsReadKeys?: ReadonlyArray<Uint8Array | null | undefined>;
@@ -88,6 +96,35 @@ export async function syncSettings(params: SyncSettingsParams): Promise<void> {
     const pendingServerSettings = stripMigratedSessionOrganizationSettings(
         stripLocalOnlyAccountSettings(pendingSettings) as Record<string, unknown>,
     ) as Partial<Settings>;
+    const submittedThemeIntent = settingsScope
+        ? loadPendingAccountSettingsState(settingsScope).themeProfileMigration : null;
+    const submittedThemeEdits = submittedThemeIntent?.edits ?? [];
+
+    const migrationLocalSettings = loadLocalSettings();
+    const legacyThemeProfiles = settingsScope
+        && areAccountSettingsScopesEqual(storage.getState().settingsScope, settingsScope)
+        && canUseLegacyThemeProfiles(migrationLocalSettings.themeProfileLegacyAccountScope, settingsScope)
+        && migrationLocalSettings.themeProfiles.profiles.length > 0
+        ? migrationLocalSettings.themeProfiles : null;
+    if (legacyThemeProfiles && !migrationLocalSettings.themeProfileLegacyAccountScope) {
+        // Bind before awaiting network work: an account switch must not import this library twice.
+        storage.getState().applyLocalSettings({ themeProfileLegacyAccountScope: settingsScope });
+    }
+
+    function finishThemeProfileMigration(legacyProfileIds: ReadonlyMap<string, string>): void {
+        if (!legacyThemeProfiles) return;
+        const latest = loadLocalSettings();
+        if (!areAccountSettingsJsonValuesEqual(latest.themeProfiles, legacyThemeProfiles)) return;
+        if (settingsScope) rememberThemeProfileMigration(settingsScope, legacyProfileIds);
+        storage.getState().applyLocalSettings({
+            themeProfiles: DEFAULT_THEME_PROFILES_LOCAL_STATE,
+            themeProfileLegacyAccountScope: null,
+            ...(isSettingsScopeActive() || areAccountSettingsJsonValuesEqual(
+                latest.themeProfileSelection, migrationLocalSettings.themeProfileSelection,
+            ) ? { themeProfileSelection: resolveThemeProfileSelection(latest.themeProfileSelection,
+                legacyThemeProfiles, legacyProfileIds) } : {}),
+        });
+    }
 
     // `/v1/account/encryption` and the account-settings GET are independent reads. The mode decides
     // how the fetched document is *opened* and written — `openSettingsContent` branches on the
@@ -130,7 +167,8 @@ export async function syncSettings(params: SyncSettingsParams): Promise<void> {
     function loadPendingSettingsForCapturedScope(): Partial<Settings> {
         // Pre-auth/bootstrap calls may not have a captured account scope yet. Authenticated
         // sync paths always pass a scope and therefore use scoped pending settings.
-        return settingsScope ? loadPendingAccountSettings(settingsScope) : loadPendingSettings();
+        const persisted = settingsScope ? loadPendingAccountSettings(settingsScope) : loadPendingSettings();
+        return { ...persisted, ...params.getLatestPendingSettings?.() };
     }
 
     function applySettingsForCapturedScope(nextSettings: Settings, nextVersion: number): void {
@@ -466,13 +504,44 @@ export async function syncSettings(params: SyncSettingsParams): Promise<void> {
         applyActiveSettingsSideEffects(nextSettings);
     }
 
-    function clearCommittedPendingSettings(submittedPendingSettings: Partial<Settings>): Partial<Settings> {
+    function clearCommittedPendingSettings(submittedPendingSettings: Partial<Settings>, theme?: Readonly<{
+        profiles: readonly ThemeProfileV1[]; legacyProfileIds: ReadonlyMap<string, string>;
+    }>): Partial<Settings> {
         const currentPendingSettings = loadPendingSettingsForCapturedScope();
-        const nextPendingSettings = stripMigratedSessionOrganizationSettings(
+        let nextPendingSettings = stripMigratedSessionOrganizationSettings(
             removeCommittedPendingSettings(currentPendingSettings, submittedPendingSettings) as Record<string, unknown>,
         ) as Partial<Settings>;
+        if (settingsScope && theme) {
+            const currentIntent = loadPendingAccountSettingsState(settingsScope).themeProfileMigration;
+            if (currentIntent || submittedThemeIntent) {
+                const remaining = rebaseThemeProfileMigrationEdits(
+                    removeCommittedThemeProfileMigrationEdits(currentIntent?.edits ?? [], submittedThemeEdits), theme.legacyProfileIds,
+                );
+                const { themeProfiles: _committedProfiles, ...otherPendingSettings } = nextPendingSettings;
+                nextPendingSettings = remaining.length > 0 ? { ...otherPendingSettings,
+                    themeProfiles: applyThemeProfileMigrationEdits(theme.profiles, remaining, new Map()),
+                } : otherPendingSettings;
+                // One atomic pending record bridges server acknowledgement, cache projection and
+                // local backup cleanup. A restart must never re-import the pre-edit backup.
+                savePendingAccountSettings(settingsScope, {
+                    ...nextPendingSettings, themeProfiles: nextPendingSettings.themeProfiles ?? theme.profiles,
+                }, { edits: remaining, legacyProfileIds: Object.fromEntries(theme.legacyProfileIds), acknowledged: true });
+            }
+            else if (legacyThemeProfiles) savePendingAccountSettings(settingsScope, {
+                ...nextPendingSettings, themeProfiles: theme.profiles,
+            }, { edits: [], legacyProfileIds: Object.fromEntries(theme.legacyProfileIds), acknowledged: true });
+            return nextPendingSettings;
+        }
         clearPendingSettings(nextPendingSettings);
         return nextPendingSettings;
+    }
+
+    function completeThemeProfileMigration(theme: Readonly<{ legacyProfileIds: ReadonlyMap<string, string> }> | undefined,
+        remainingPendingSettings: Partial<Settings>): void {
+        if (!theme) return;
+        finishThemeProfileMigration(theme.legacyProfileIds);
+        if (settingsScope) savePendingAccountSettings(settingsScope, remainingPendingSettings, null);
+        clearPendingSettings(remainingPendingSettings);
     }
 
     async function maybeImportLegacySessionOrganization(rawSettings: Record<string, unknown> | null): Promise<void> {
@@ -525,7 +594,7 @@ export async function syncSettings(params: SyncSettingsParams): Promise<void> {
     }
 
     // Apply pending settings
-    if (Object.keys(pendingServerSettings).length > 0) {
+    if (Object.keys(pendingServerSettings).length > 0 || legacyThemeProfiles) {
         dbgSettings('syncSettings: pending detected; will POST', {
             endpoint: activeServerUrl,
             pendingKeys: Object.keys(pendingServerSettings).sort(),
@@ -536,14 +605,46 @@ export async function syncSettings(params: SyncSettingsParams): Promise<void> {
         let baseline = await fetchAccountSettingsBaseline({ requireReadable: true });
         while (retryCount < maxRetries) {
             const version = baseline.version;
+            const themeUpdate = legacyThemeProfiles || submittedThemeIntent;
+            // Merge the definition being imported, not its pre-edit backup. If a successful
+            // POST response was lost, the canonical merger recognizes the already saved copy.
+            const legacyUpserts = new Map(submittedThemeEdits.filter(edit => edit.target.kind === 'legacy' && edit.profile)
+                .map(edit => [edit.target.id, edit.profile!]));
+            const legacyForMerge = legacyThemeProfiles ? { ...legacyThemeProfiles,
+                profiles: legacyThemeProfiles.profiles.filter(profile => !Object.prototype.hasOwnProperty.call(
+                    submittedThemeIntent?.representedLegacyProfileIds ?? {}, profile.id,
+                )).map(profile => {
+                    const edited = legacyUpserts.get(profile.id);
+                    return edited ? { ...edited, id: profile.id } : profile;
+                }),
+            } : DEFAULT_THEME_PROFILES_LOCAL_STATE;
+            const latestThemeIntent = settingsScope ? loadPendingAccountSettingsState(settingsScope).themeProfileMigration : null;
+            const migration = themeUpdate ? mergeThemeProfileLibraries(
+                submittedThemeIntent ? ThemeProfileLibrarySchema.parse(baseline.raw?.themeProfiles)
+                    : pendingServerSettings.themeProfiles ?? ThemeProfileLibrarySchema.parse(baseline.raw?.themeProfiles),
+                submittedThemeIntent?.acknowledged ? DEFAULT_THEME_PROFILES_LOCAL_STATE
+                    : legacyForMerge,
+                new Map(Object.entries({ ...submittedThemeIntent?.legacyProfileIds, ...latestThemeIntent?.attemptedLegacyProfileIds })),
+            ) : null;
+            const legacyProfileIds = new Map(migration?.legacyProfileIds);
+            for (const [id, mapped] of Object.entries(submittedThemeIntent?.representedLegacyProfileIds ?? {})) legacyProfileIds.set(id, mapped);
+            if (submittedThemeIntent?.acknowledged) {
+                for (const [id, mapped] of Object.entries(submittedThemeIntent.legacyProfileIds)) legacyProfileIds.set(id, mapped);
+            }
+            const theme = migration ? {
+                profiles: applyThemeProfileMigrationEdits(migration.profiles, submittedThemeEdits, legacyProfileIds),
+                legacyProfileIds,
+            } : undefined;
+            const pendingWithMigration: Partial<Settings> = theme
+                ? { ...pendingServerSettings, themeProfiles: theme.profiles } : pendingServerSettings;
             const merged = mergePendingSettingsIntoRawBaseline({
                 rawBaseline: baseline.raw,
-                pendingSettings: pendingServerSettings,
+                pendingSettings: pendingWithMigration,
                 normalizeForPersistedStorage: (raw) => normalizeSettingsForServerStorageResult({ raw, mode: accountMode }),
             });
 
             if (!baseline.serverIdentityKeysChanged && !merged.comparisonChanged && areAccountSettingsRawObjectsEqual(merged.comparisonRaw, merged.outgoingRaw)) {
-                const remainingPendingSettings = clearCommittedPendingSettings(pendingServerSettings);
+                const remainingPendingSettings = clearCommittedPendingSettings(pendingServerSettings, theme);
                 dbgSettings('syncSettings: pending merge produced no server change; skipped POST', {
                     endpoint: activeServerUrl,
                     serverVersion: version,
@@ -554,10 +655,26 @@ export async function syncSettings(params: SyncSettingsParams): Promise<void> {
                     version,
                     remainingPendingSettings,
                 });
+                completeThemeProfileMigration(theme, remainingPendingSettings);
                 return;
             }
 
             const { content, v1Settings } = createSettingsContentForWrite(merged.outgoingRaw);
+            if (theme && settingsScope) {
+                const current = loadPendingAccountSettingsState(settingsScope);
+                const latestPending = loadPendingSettingsForCapturedScope();
+                const queued = { ...latestPending, themeProfiles: latestPending.themeProfiles ?? theme.profiles };
+                const accountIds = new Set(ThemeProfileLibrarySchema.parse(baseline.raw?.themeProfiles).map(profile => profile.id));
+                const represented = new Map([...theme.legacyProfileIds].filter(([, id]) => accountIds.has(id)));
+                savePendingAccountSettings(settingsScope, queued, {
+                    ...(current.themeProfileMigration ?? { edits: submittedThemeEdits,
+                        legacyProfileIds: Object.fromEntries([...theme.legacyProfileIds].filter(([id]) => !represented.has(id))),
+                        representedLegacyProfileIds: Object.fromEntries(represented) }),
+                    attemptedLegacyProfileIds: Object.fromEntries(theme.legacyProfileIds),
+                });
+                // Ordinary pending flushes must retain this same record while the POST is in flight.
+                clearPendingSettings(queued);
+            }
             dbgSettings('syncSettings: POST attempt', {
                 endpoint: activeServerUrl,
                 attempt: retryCount + 1,
@@ -573,7 +690,7 @@ export async function syncSettings(params: SyncSettingsParams): Promise<void> {
             }
 
             if (data.success) {
-                const remainingPendingSettings = clearCommittedPendingSettings(pendingServerSettings);
+                const remainingPendingSettings = clearCommittedPendingSettings(pendingServerSettings, theme);
                 dbgSettings('syncSettings: POST success; pending cleared', {
                     endpoint: activeServerUrl,
                     expectedVersion: version,
@@ -584,6 +701,7 @@ export async function syncSettings(params: SyncSettingsParams): Promise<void> {
                     version: data.version,
                     remainingPendingSettings,
                 });
+                completeThemeProfileMigration(theme, remainingPendingSettings);
                 return;
             }
 
@@ -770,6 +888,8 @@ export function applySettingsLocalDelta(params: {
     setPendingSettings: (next: Partial<Settings>) => void;
     schedulePendingSettingsFlush: () => void;
     source?: SettingsAnalyticsSource;
+    durability?: 'immediate';
+    themeProfileMigration?: ThemeProfileMigrationIntent;
 }): void {
     const { settingsSecretsKey, getPendingSettings, setPendingSettings, schedulePendingSettingsFlush } = params;
     let { delta } = params;
@@ -796,7 +916,7 @@ export function applySettingsLocalDelta(params: {
         }
         return true;
     });
-    if (!hasRealChange) {
+    if (!hasRealChange && params.durability !== 'immediate') {
         dbgSettings('applySettings skipped (no-op delta)', {
             delta: summarizeSettingsDelta(delta),
             base: summarizeSettings(currentSettings, { version: storage.getState().settingsVersion }),
@@ -821,6 +941,28 @@ export function applySettingsLocalDelta(params: {
         });
     }
 
+    const deltaForServer = stripMigratedSessionOrganizationSettings(
+        stripLocalOnlyAccountSettings(delta) as Record<string, unknown>,
+    ) as Partial<Settings>;
+    const nextPending = { ...getPendingSettings(), ...deltaForServer };
+    if (Object.keys(deltaForServer).length > 0 && (params.durability === 'immediate' || params.themeProfileMigration)) {
+        const scope = storage.getState().settingsScope;
+        if (scope) {
+            const previous = loadPendingAccountSettingsState(scope).themeProfileMigration;
+            const intent = params.themeProfileMigration ? {
+                edits: mergeThemeProfileMigrationEdits(previous?.edits ?? [], params.themeProfileMigration.edits),
+                legacyProfileIds: previous?.acknowledged ? previous.legacyProfileIds : params.themeProfileMigration.legacyProfileIds,
+                representedLegacyProfileIds: params.themeProfileMigration.representedLegacyProfileIds ?? previous?.representedLegacyProfileIds,
+                attemptedLegacyProfileIds: previous?.attemptedLegacyProfileIds,
+                ...(previous?.acknowledged ? { acknowledged: true as const } : {}),
+            } : 'themeProfiles' in deltaForServer ? null : previous;
+            savePendingAccountSettings(scope, nextPending, intent);
+        } else {
+            if (params.themeProfileMigration) throw new Error('Theme migration requires an account settings scope');
+            savePendingSettings(nextPending);
+        }
+    }
+
     const nextSettings = applySettings(currentSettings, delta);
     emitAccountSettingChangedEvents({
         previousSettings: currentSettings,
@@ -829,9 +971,6 @@ export function applySettingsLocalDelta(params: {
     });
     storage.getState().applySettingsLocal(delta);
 
-    const deltaForServer = stripMigratedSessionOrganizationSettings(
-        stripLocalOnlyAccountSettings(delta) as Record<string, unknown>,
-    ) as Partial<Settings>;
     if (Object.keys(deltaForServer).length === 0) {
         dbgSettings('applySettings: local-only delta (no pending sync)', {
             delta: summarizeSettingsDelta(delta),
@@ -840,7 +979,6 @@ export function applySettingsLocalDelta(params: {
     }
 
     // Save pending settings
-    const nextPending = { ...getPendingSettings(), ...deltaForServer };
     setPendingSettings(nextPending);
     dbgSettings('applySettings: pendingSettings updated', {
         pendingKeys: Object.keys(nextPending).sort(),

@@ -227,7 +227,7 @@ describe('SessionRightPanelAgentsView background tasks', () => {
         await act(async () => {
             screen.findByTestId(`${detailTestId}:open-command`)?.props.onPress();
         });
-        expect(routerNavigate).toHaveBeenCalledWith(`/session/${SESSION_ID}?jumpSeq=${LAUNCH_SEQ}`, expect.any(Object));
+        expect(routerPush).toHaveBeenCalledWith(`/session/${SESSION_ID}?jumpSeq=${LAUNCH_SEQ}`);
 
         await screen.unmount();
     });

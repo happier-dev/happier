@@ -323,8 +323,6 @@ jobs:
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version-file: .mobile-control/.node-version
-          cache: yarn
-          cache-dependency-path: yarn.lock
 
       - name: Bind built candidate identity
         id: candidate
@@ -545,8 +543,6 @@ jobs:
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version-file: .testflight-control/.node-version
-          cache: yarn
-          cache-dependency-path: yarn.lock
 
       - name: Enable Corepack (Yarn)
         uses: ./.github/actions/enable-corepack-yarn
@@ -967,8 +963,6 @@ jobs:
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version-file: .node-version
-          cache: yarn
-          cache-dependency-path: yarn.lock
 
       - name: Enable Corepack (Yarn)
         uses: ./.github/actions/enable-corepack-yarn

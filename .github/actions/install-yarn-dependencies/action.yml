@@ -13,8 +13,20 @@ runs:
     - name: Resolve dependency cache identity
       id: runtime
       shell: bash
+      env:
+        INSTALL_ARGS: ${{ inputs.args }}
       run: |
         echo "node=$(node -p 'process.versions.node')" >> "$GITHUB_OUTPUT"
+        # Key on the flags that change the installed tree. --frozen-lockfile and --ignore-engines
+        # only validate, so installs that differ by them share one modules cache entry.
+        tree=default
+        for flag in $INSTALL_ARGS; do
+          case "$flag" in
+            --frozen-lockfile|--ignore-engines) ;;
+            *) tree="$tree+$flag" ;;
+          esac
+        done
+        echo "tree=$tree" >> "$GITHUB_OUTPUT"
         # Cache keys cannot contain commas; scoped installs list packages comma-separated.
         scope="${HAPPIER_INSTALL_SCOPE:-}"
         echo "scope=${scope//,/+}" >> "$GITHUB_OUTPUT"
@@ -28,7 +40,7 @@ runs:
           packages/*/node_modules
         # Exact keys only: never restore a tree installed for another lockfile,
         # patch set, Node runtime, architecture, or install scope.
-        key: modules-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.runtime.outputs.node }}-${{ inputs.args }}-${{ steps.runtime.outputs.scope }}-${{ hashFiles('yarn.lock', '.yarnrc*', '.node-version', 'package.json', 'apps/*/package.json', 'packages/*/package.json', 'apps/*/modules/*/package.json', 'apps/*/patches/**', 'packages/*/patches/**', 'scripts/postinstall/**', 'apps/ui/tools/**', 'apps/cli/scripts/postinstall/**') }}
+        key: modules-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.runtime.outputs.node }}-${{ steps.runtime.outputs.tree }}-${{ steps.runtime.outputs.scope }}-${{ hashFiles('yarn.lock', '.yarnrc*', '.node-version', 'package.json', 'apps/*/package.json', 'packages/*/package.json', 'apps/*/modules/*/package.json', 'apps/*/patches/**', 'packages/*/patches/**', 'scripts/postinstall/**', 'apps/ui/tools/**', 'apps/cli/scripts/postinstall/**') }}
     - name: Drop restored workspace bundle copies
       if: steps.dependencies.outputs.cache-hit == 'true'
       shell: bash

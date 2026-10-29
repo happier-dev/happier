@@ -51,6 +51,7 @@ export async function invokeProviderCliInstall(params: Readonly<{
   env?: NodeJS.ProcessEnv;
   nodePlatform?: string;
   installProviderCli?: typeof installProviderCliDefault;
+  signal?: AbortSignal;
 }>): Promise<ProviderCliInstallInvocationResult> {
   const nodePlatform = params.nodePlatform ?? process.platform;
   const platform = resolveProviderCliInstallPlatform({
@@ -81,6 +82,7 @@ export async function invokeProviderCliInstall(params: Readonly<{
     skipIfInstalled,
     allowVendorRecipeExecution,
     env: params.env ?? process.env,
+    ...(params.signal ? { signal: params.signal } : {}),
     ...(intent ? { intent, updateTarget: params.params?.updateTarget ?? null } : {}),
   });
 

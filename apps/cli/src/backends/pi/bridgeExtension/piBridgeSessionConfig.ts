@@ -1,6 +1,7 @@
 import { z } from 'zod';
+import { lazySchema } from '@happier-dev/protocol';
 
-export const PiBridgeToolDescriptorSchema = z.object({
+export const PiBridgeToolDescriptorSchema = lazySchema(() => z.object({
   name: z.string().min(1),
   title: z.string().min(1),
   description: z.string().min(1),
@@ -9,9 +10,9 @@ export const PiBridgeToolDescriptorSchema = z.object({
     toolName: z.string().min(1),
     actionId: z.string().min(1).nullable(),
   }).strict(),
-}).strict();
+}).strict());
 
-export const PiBridgeSessionConfigSchema = z.object({
+export const PiBridgeSessionConfigSchema = lazySchema(() => z.object({
   v: z.literal(1),
   sessionId: z.string().min(1),
   directTools: z.array(PiBridgeToolDescriptorSchema),
@@ -21,6 +22,6 @@ export const PiBridgeSessionConfigSchema = z.object({
     argPrefix: z.array(z.string()),
     env: z.record(z.string(), z.string()),
   }).strict(),
-}).strict();
+}).strict());
 
 export type PiBridgeSessionConfig = z.infer<typeof PiBridgeSessionConfigSchema>;

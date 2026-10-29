@@ -589,6 +589,7 @@ export function createAcpRuntime(params: {
   let backend: AcpRuntimeBackend | null = null;
   let backendPromise: Promise<AcpRuntimeBackend> | null = null;
   let messageForwarder: ReturnType<typeof createAcpAgentMessageForwarder> | null = null;
+  let stopObservingProviderTurnEvents: (() => void) | null = null;
   let sessionId: string | null = null;
   let runtimeMetadataPublicationGeneration = 0;
   let pendingProviderSessionInfo: Readonly<{
@@ -1527,7 +1528,12 @@ export function createAcpRuntime(params: {
 
   const attachMessageHandler = (b: AcpRuntimeBackend) => {
     messageForwarder?.dispose();
+    stopObservingProviderTurnEvents?.();
     const handlerGeneration = runtimeMetadataPublicationGeneration;
+    stopObservingProviderTurnEvents = b.onProviderTurnEvent?.(() => {
+      if (handlerGeneration !== runtimeMetadataPublicationGeneration) return;
+      params.session.sessionTurnLifecycle?.observeProviderTurnEvent();
+    }) ?? null;
     const forwarder = createAcpAgentMessageForwarder({
       sendAcp: (provider, body, opts) => params.session.sendAgentMessage(provider, body, opts),
       provider: params.provider,
@@ -2502,6 +2508,8 @@ export function createAcpRuntime(params: {
         params.session.keepAlive(false, 'remote');
         messageForwarder?.dispose();
         messageForwarder = null;
+        stopObservingProviderTurnEvents?.();
+        stopObservingProviderTurnEvents = null;
 
         try {
           const backendCreation = backendPromise;

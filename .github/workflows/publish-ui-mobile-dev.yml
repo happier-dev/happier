@@ -170,8 +170,6 @@ jobs:
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version-file: .node-version
-          cache: yarn
-          cache-dependency-path: yarn.lock
       - name: Enable Corepack (Yarn)
         uses: ./.github/actions/enable-corepack-yarn
       - name: Install candidate preparation dependencies
@@ -231,8 +229,6 @@ jobs:
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version-file: .node-version
-          cache: yarn
-          cache-dependency-path: yarn.lock
       - name: Enable Corepack (Yarn)
         uses: ./.github/actions/enable-corepack-yarn
       - name: Install trusted OTA publisher dependencies
@@ -301,8 +297,6 @@ jobs:
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version-file: .node-version
-          cache: yarn
-          cache-dependency-path: yarn.lock
 
       - name: Enable Corepack (Yarn)
         uses: ./.github/actions/enable-corepack-yarn
@@ -456,8 +450,6 @@ jobs:
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version-file: .testflight-preflight-control/.node-version
-          cache: yarn
-          cache-dependency-path: yarn.lock
 
       - name: Validate configured external TestFlight groups
         working-directory: .testflight-preflight-control
@@ -572,8 +564,6 @@ jobs:
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version-file: .testflight-preflight-control/.node-version
-          cache: yarn
-          cache-dependency-path: yarn.lock
 
       - name: Validate configured external TestFlight groups
         working-directory: .testflight-preflight-control

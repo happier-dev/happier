@@ -18,6 +18,7 @@ import { expandHomeDirPath } from '@/utils/path/expandHomeDirPath';
 import { resolveCanonicalCodexBackendMode } from './codexBackendMode';
 
 import type { SpawnSessionOptions } from './registerSessionHandlers';
+import { lazySchema } from '@happier-dev/protocol';
 
 function asNonEmptyStringTuple<T extends string>(values: readonly T[]): [T, ...T[]] {
   if (values.length === 0) {
@@ -26,8 +27,8 @@ function asNonEmptyStringTuple<T extends string>(values: readonly T[]): [T, ...T
   return values as [T, ...T[]];
 }
 
-export const SpawnSessionPermissionModeSchema = z.enum(asNonEmptyStringTuple(PERMISSION_MODES));
-const SpawnBackendTargetSchema = z.union([
+export const SpawnSessionPermissionModeSchema = lazySchema(() => z.enum(asNonEmptyStringTuple(PERMISSION_MODES)));
+const SpawnBackendTargetSchema = lazySchema(() => z.union([
   z.object({
     kind: z.literal('builtInAgent'),
     agentId: z.enum(asNonEmptyStringTuple(CATALOG_AGENT_IDS as readonly CatalogAgentId[])),
@@ -36,12 +37,12 @@ const SpawnBackendTargetSchema = z.union([
     kind: z.literal('configuredAcpBackend'),
     backendId: z.string().trim().min(1),
   }),
-]);
+]));
 export { SpawnSessionTerminalSchema };
 
 export { SpawnSessionExecutionAuthorizationSchema };
 
-const SpawnDaemonSessionRequestCompatSchema = z.object({
+const SpawnDaemonSessionRequestCompatSchema = lazySchema(() => z.object({
   directory: z.string(),
   machineId: z.string().trim().min(1).optional(),
   spawnNonce: z.string().trim().min(1).optional(),
@@ -89,14 +90,14 @@ const SpawnDaemonSessionRequestCompatSchema = z.object({
    * before creating the child and creates no child on failure.
    */
   sourceContext: SessionSpawnSourceContextV1Schema.optional(),
-});
+}));
 
 type SpawnDaemonSessionRequestCompat = z.output<typeof SpawnDaemonSessionRequestCompatSchema>;
 type SpawnDaemonSessionRequestOutput = Omit<SpawnDaemonSessionRequestCompat, 'experimentalCodexAcp' | 'codexBackendMode'> & {
   codexBackendMode?: SpawnSessionOptions['codexBackendMode'];
 };
 
-export const SpawnDaemonSessionRequestSchema = SpawnDaemonSessionRequestCompatSchema.transform((request): SpawnDaemonSessionRequestOutput => {
+export const SpawnDaemonSessionRequestSchema = lazySchema(() => SpawnDaemonSessionRequestCompatSchema.transform((request): SpawnDaemonSessionRequestOutput => {
   const { experimentalCodexAcp: _experimentalCodexAcp, codexBackendMode, ...rest } = request;
   const canonicalCodexBackendMode = resolveCanonicalCodexBackendMode({
     codexBackendMode,
@@ -108,7 +109,7 @@ export const SpawnDaemonSessionRequestSchema = SpawnDaemonSessionRequestCompatSc
     ...rest,
     ...(canonicalCodexBackendMode ? { codexBackendMode: canonicalCodexBackendMode } : {}),
   };
-});
+}));
 
 export type SpawnDaemonSessionRequest = z.infer<typeof SpawnDaemonSessionRequestSchema>;
 

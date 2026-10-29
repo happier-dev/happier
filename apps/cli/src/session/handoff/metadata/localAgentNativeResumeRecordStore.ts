@@ -9,6 +9,7 @@ import {
     removeProtectedLocalStateFile,
     writeProtectedLocalStateFileAtomic,
 } from '@/utils/fs/protectedLocalState';
+import { lazySchema } from '@happier-dev/protocol';
 
 /**
  * Domain-separated so a Session+Agent record can never collide with any other
@@ -51,7 +52,7 @@ function buildAgentNativeResumeRecordFingerprint(
  * AgentState, PID, permission, cursor, request, or transcript content is
  * retained.
  */
-const StoredLocalAgentResumeRecordV1Schema = z.object({
+const StoredLocalAgentResumeRecordV1Schema = lazySchema(() => z.object({
     v: z.literal(1),
 
     // Scoping. The filename is a hash, so these two are the only proof the file
@@ -78,7 +79,7 @@ const StoredLocalAgentResumeRecordV1Schema = z.object({
      * this record is already read on return.
      */
     departureSeqInclusive: z.number().int().nonnegative(),
-}).strict();
+}).strict());
 
 type StoredLocalAgentResumeRecordV1 = z.infer<typeof StoredLocalAgentResumeRecordV1Schema>;
 

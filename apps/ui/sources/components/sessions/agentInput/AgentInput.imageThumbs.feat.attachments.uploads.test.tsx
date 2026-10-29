@@ -1,5 +1,6 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
 import {
     createUseLocalSettingMock,
     createStorageStoreMock,
@@ -150,7 +151,7 @@ vi.mock('@/agents/catalog/catalog', () => ({
 }));
 
 describe('AgentInput (image attachment thumbnails)', () => {
-    async function renderAgentInput(attachments: readonly AgentInputAttachment[]) {
+    async function renderAgentInput(attachments: readonly AgentInputAttachment[], options?: Readonly<{ disabled?: boolean }>) {
         const { AgentInput } = await import('./AgentInput');
         return renderScreen(React.createElement(AgentInput, {
             value: '',
@@ -161,6 +162,7 @@ describe('AgentInput (image attachment thumbnails)', () => {
             autocompleteSuggestions: async () => [],
             attachments,
             hasSendableAttachments: true,
+            disabled: options?.disabled,
         }));
     }
 
@@ -253,5 +255,33 @@ describe('AgentInput (image attachment thumbnails)', () => {
         const screen = await renderAgentInput(attachments);
 
         expect(screen.findByTestId('agent-input-attachment-remove:a1')?.props.disabled).toBe(true);
+    });
+
+    it('keeps attachments fixed while the composer is disabled', async () => {
+        const onRemoveImage = vi.fn();
+        const onRemoveFile = vi.fn();
+        const attachments = [
+            {
+                key: 'a1',
+                label: 'file.png',
+                preview: { kind: 'image', uri: 'blob:test' },
+                onRemove: onRemoveImage,
+            },
+            {
+                key: 'a2',
+                label: 'notes.txt',
+                onRemove: onRemoveFile,
+            },
+        ] satisfies readonly AgentInputAttachment[];
+
+        const screen = await renderAgentInput(attachments, { disabled: true });
+
+        for (const key of ['a1', 'a2']) {
+            const remove = screen.findByTestId(`agent-input-attachment-remove:${key}`);
+            expect(remove?.props.disabled).toBe(true);
+            await act(async () => remove?.props.onPress?.({ stopPropagation: () => {} }));
+        }
+        expect(onRemoveImage).not.toHaveBeenCalled();
+        expect(onRemoveFile).not.toHaveBeenCalled();
     });
 });

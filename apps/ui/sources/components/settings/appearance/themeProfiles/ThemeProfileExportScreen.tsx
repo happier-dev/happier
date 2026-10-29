@@ -1,3 +1,5 @@
+import { useThemeProfilesMutable } from '@/sync/domains/state/storage';
+import { resolveThemeProfileNavigationId } from '@/sync/domains/settings/themeProfiles';
 import * as React from 'react';
 import { downloadThemeJson } from './themeProfileFileExport';
 import { View } from 'react-native';
@@ -12,7 +14,6 @@ import { CopiedPill } from '@/components/ui/copy/CopiedPill';
 import { SettingsActionFooter } from '@/components/ui/settingsSurface/SettingsActionFooter';
 import { TextInput } from '@/components/ui/text/Text';
 import { useTemporaryCopyFeedback } from '@/components/ui/copy/useTemporaryCopyFeedback';
-import { useLocalSettingMutable } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 import { setClipboardStringSafe } from '@/utils/ui/clipboard';
 import { exportThemeProfileToJson } from '@/theme/profiles/themeProfileImportExport';
@@ -42,8 +43,9 @@ export const ThemeProfileExportScreen = React.memo(function ThemeProfileExportSc
     const styles = stylesheet;
     const copyFeedback = useTemporaryCopyFeedback();
     const params = useLocalSearchParams();
-    const [themeProfiles] = useLocalSettingMutable('themeProfiles');
-    const profileId = getProfileIdParam(params.profileId);
+    const [themeProfiles, , themeProfileView] = useThemeProfilesMutable();
+    const profileId = resolveThemeProfileNavigationId(themeProfileView,
+        getProfileIdParam(params.profileId), getProfileIdParam(params.themeProfileIdentity));
     const builtInProfile = BUILT_IN_THEME_PROFILES.find((definition) => definition.profile.id === profileId)?.profile ?? null;
     const profile = themeProfiles.profiles.find((entry) => entry.id === profileId) ?? builtInProfile;
     const json = React.useMemo(() => (profile ? exportThemeProfileToJson(profile, { mode: resolveExportMode(profile), includeResolvedValues: true }) : ''), [profile]);

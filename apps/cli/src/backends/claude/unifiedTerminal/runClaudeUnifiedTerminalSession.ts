@@ -62,6 +62,8 @@ import {
   type ClaudeUnifiedInFlightSteerWiring,
 } from './createClaudeUnifiedInFlightSteerEvaluator';
 import { createClaudeOwnComposerTextLog, type ClaudeOwnComposerTextLog } from './ownComposerTextLog';
+import { isReplaySdkMessage } from '../remote/runtimeActivityEvidence';
+import { isClaudeSidechainRuntimeEvidence } from '../utils/sessionHookAttribution';
 import { createClaudeUnifiedAcceptedPromptTranscriptDiscovery } from './acceptedPromptTranscriptDiscovery';
 import { retireClaudeEndpointArtifactsForTerminalAttachment } from '../endpointRecovery/claudeEndpointArtifacts';
 import { doesClaudeUnifiedPromptBatchMatchAcceptedTranscript } from './acceptedPromptDeliveryIdentity';
@@ -307,6 +309,9 @@ export type ClaudeUnifiedTerminalSessionOptions<Mode extends EnhancedMode = Enha
   onTerminalScreenObserved?: ((observation: ClaudeUnifiedTerminalScreenObservation) => void) | undefined;
   onRuntimeAuthFailureEvent?: ((error: unknown) => void | Promise<void>) | undefined;
   onProviderPromptStarted?: (() => void | Promise<void>) | undefined;
+  /** Live provider ingress, independent of visible transcript delivery. */
+  onProviderEvent?: (() => void) | undefined;
+  readProviderSessionId?: (() => string | null) | undefined;
   /** Fires only when this runner is about to create a new provider host with spawn argv. */
   onProviderLaunchStarting?: (() => void | Promise<void>) | undefined;
   onProviderSessionStarted?: (() => void) | undefined;
@@ -2467,6 +2472,8 @@ export async function runClaudeUnifiedTerminalSession<Mode extends EnhancedMode 
             },
             onTrustedHookActivation: observeTrustedHookActivation,
             onTrustedProviderProgress: observeTrustedProviderProgress,
+            onProviderEvent: opts.onProviderEvent,
+            readProviderSessionId: opts.readProviderSessionId,
             onMainSessionScreenMayHaveChanged: observePossibleDialogScreenChange,
             onPromptTurnTerminal: async (event) => {
               await observeMetadataApplySafeBoundary();
@@ -2559,6 +2566,7 @@ export async function runClaudeUnifiedTerminalSession<Mode extends EnhancedMode 
               lifecycleBridge?.observeTranscript(message);
             },
             onLiveProviderTaskJsonlValue: ({ sessionId, value }) => {
+              if (!isReplaySdkMessage(value) && !isClaudeSidechainRuntimeEvidence(value)) opts.onProviderEvent?.();
               lifecycleBridge?.observeLiveProviderActivityRow(value, sessionId);
             },
             onLiveProviderTaskObservationLost: ({ reason }) => {

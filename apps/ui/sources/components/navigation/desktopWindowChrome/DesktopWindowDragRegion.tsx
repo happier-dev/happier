@@ -1,9 +1,11 @@
 import * as React from 'react';
 import { Platform } from 'react-native';
 import {
+    desktopWindowChromeUsesAppDragRegions,
     startDesktopWindowDragging,
     toggleDesktopWindowMaximize,
 } from '@/utils/platform/desktopWindowBridge';
+import { useDesktopWindowChromePolicy } from '@/hooks/ui/useDesktopWindowChromePolicy';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
 export type DesktopWindowPointerLikeEvent = Readonly<{
@@ -117,8 +119,10 @@ export function handleDesktopWindowTitlebarMouseAction(
 }
 
 export function useDesktopWindowDragMouseProps(enabled = true): DesktopWindowDragMouseProps {
+    const policy = useDesktopWindowChromePolicy();
+    const appDragRegions = desktopWindowChromeUsesAppDragRegions(policy);
     return React.useMemo(() => {
-        if (Platform.OS !== 'web' || !enabled) {
+        if (!appDragRegions || Platform.OS !== 'web' || !enabled) {
             return {};
         }
         // Mouse down carries the click count. Starting native drag on pointer down
@@ -128,5 +132,5 @@ export function useDesktopWindowDragMouseProps(enabled = true): DesktopWindowDra
                 handleDesktopWindowTitlebarMouseAction(event, 'DesktopWindowDragRegion.mouseDown');
             },
         };
-    }, [enabled]);
+    }, [appDragRegions, enabled]);
 }

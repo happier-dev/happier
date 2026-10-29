@@ -2,28 +2,29 @@ import axios from 'axios';
 import * as z from 'zod';
 import { createAuthenticationHttpStatusError, createHttpStatusError, isAuthenticationStatus } from './client/httpStatusError';
 import { resolveServerHttpBaseUrl } from '@/session/transport/http/serverHttpBaseUrl';
+import { lazySchema } from '@happier-dev/protocol';
 
-export const ChangeEntrySchema = z.object({
+export const ChangeEntrySchema = lazySchema(() => z.object({
   cursor: z.number().int().min(0),
   kind: z.string(),
   entityId: z.string(),
   changedAt: z.number().int().min(0),
   hint: z.unknown().nullable().optional(),
-});
+}));
 
 export type ChangeEntry = z.infer<typeof ChangeEntrySchema>;
 
-export const ChangesResponseSchema = z.object({
+export const ChangesResponseSchema = lazySchema(() => z.object({
   changes: z.array(ChangeEntrySchema),
   nextCursor: z.number().int().min(0),
-});
+}));
 
 export type ChangesResponse = z.infer<typeof ChangesResponseSchema>;
 
-export const CursorGoneErrorSchema = z.object({
+export const CursorGoneErrorSchema = lazySchema(() => z.object({
   error: z.literal('cursor-gone'),
   currentCursor: z.number().int().min(0),
-});
+}));
 
 export type CursorGoneError = z.infer<typeof CursorGoneErrorSchema>;
 

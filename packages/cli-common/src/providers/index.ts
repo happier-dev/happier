@@ -41,6 +41,7 @@ export {
   resolveExistingManagedJavaScriptRuntimeCommand,
 } from './managedJavaScriptRuntime.js';
 export { downloadGitHubReleaseAsset } from './downloadGitHubReleaseAsset.js';
+export type { ManagedToolBootstrapOptions, ManagedToolBootstrapProgress } from './managedToolBootstrap.js';
 export { extractGitHubReleaseAsset } from './extractGitHubReleaseAsset.js';
 export {
   buildManagedPnpmEnvironment,

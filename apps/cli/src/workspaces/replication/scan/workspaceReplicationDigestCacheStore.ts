@@ -10,8 +10,9 @@ import {
   resolveWorkspaceReplicationRelationshipDirectory,
 } from '../state/workspaceReplicationPaths';
 import { WORKSPACE_REPLICATION_SCHEMA_VERSION } from '../state/workspaceReplicationSchemaVersion';
+import { lazySchema } from '@happier-dev/protocol';
 
-const WorkspaceReplicationDigestCacheEntrySchema = z
+const WorkspaceReplicationDigestCacheEntrySchema = lazySchema(() => z
   .object({
     sizeBytes: z.number().int().min(0),
     mtimeMs: z.number().int().min(0),
@@ -20,14 +21,14 @@ const WorkspaceReplicationDigestCacheEntrySchema = z
     device: z.number().int().min(0).optional(),
     digest: z.string().regex(/^sha256:[a-f0-9]{64}$/u),
   })
-  .strict();
+  .strict());
 
-const WorkspaceReplicationDigestCacheSchema = z
+const WorkspaceReplicationDigestCacheSchema = lazySchema(() => z
   .object({
     schemaVersion: z.literal(WORKSPACE_REPLICATION_SCHEMA_VERSION),
     entries: z.record(z.string().min(1), WorkspaceReplicationDigestCacheEntrySchema),
   })
-  .strict();
+  .strict());
 
 export type WorkspaceReplicationDigestCache = z.infer<typeof WorkspaceReplicationDigestCacheSchema>;
 

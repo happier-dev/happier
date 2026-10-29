@@ -38,6 +38,7 @@ import type { ConnectedServiceRuntimeFailureClassification } from './connectedSe
 import { authorizeConnectedServiceRuntimeAuthFailureSource } from './connectedServices/runtimeAuth/handleConnectedServiceRuntimeAuthFailureForSession';
 import { resolveCurrentCodexRuntimeAuthFailureSource } from './connectedServices/runtimeAuth/resolveCurrentCodexRuntimeAuthFailureSource';
 import { ConnectedServiceCredentialRefreshError } from './connectedServices/refresh/ConnectedServiceRefreshCoordinator';
+import { DEFAULT_USAGE_LIMIT_RECOVERY_BACKOFF_MS } from '@/session/usageLimitRecoveryControls/createBackoffSessionUsageLimitRecoveryControlAdapter';
 
 function createDeferred<T>(): Readonly<{
   promise: Promise<T>;
@@ -1735,6 +1736,66 @@ describe('createDaemonControlApp connected-service runtime auth handling', () =>
         event: 'runtime_auth_recovery_terminal',
       }));
     } finally {
+      await app.close();
+    }
+  });
+
+  it.each([null, 500])('settles a non-group usage limit with reset %s to a finite recurring wake', async (resetsAtMs) => {
+    let nowMs = 1_000;
+    const result = { status: 'not_group_selection' as const };
+    const runtimeAuthRecoveryScheduler = new RuntimeAuthRecoveryScheduler({
+      nowMs: () => nowMs,
+      maxAttempts: 1,
+      jitterMs: () => 0,
+      recover: async () => result,
+    });
+    const app = createDaemonControlApp({
+      getChildren: () => [],
+      machineId: 'machine',
+      stopSession: async () => ({ status: 'not_found' as const }),
+      spawnSession: async () => ({
+        type: 'error',
+        errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
+        errorMessage: 'unused',
+      }),
+      requestShutdown: () => {},
+      onHappySessionWebhook: () => {},
+      controlToken: 'token',
+      handleConnectedServiceRuntimeAuthFailure: async () => result,
+      runtimeAuthRecoveryScheduler,
+    });
+    const recoveryKey = buildRuntimeAuthRecoveryKey({
+      sessionId: 'unknown-reset', serviceId: 'openai-codex', profileId: 'primary', groupId: null,
+    });
+
+    try {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/connected-service-runtime-auth/failure',
+        headers: { 'x-happier-daemon-token': 'token' },
+        payload: {
+          sessionId: 'unknown-reset', switchesThisTurn: 0,
+          classification: {
+            kind: 'usage_limit', serviceId: 'openai-codex', profileId: 'primary', groupId: null,
+            resetsAtMs, planType: null, rateLimits: null, source: 'structured_provider_error',
+          },
+        },
+      });
+      expect(response.statusCode).toBe(200);
+      expect(runtimeAuthRecoveryScheduler.readByKey(recoveryKey)).toMatchObject({
+        status: 'waiting', nextRetryAtMs: nowMs + DEFAULT_USAGE_LIMIT_RECOVERY_BACKOFF_MS,
+        lastError: 'awaiting_limit_reset', terminalReason: null,
+      });
+
+      nowMs += DEFAULT_USAGE_LIMIT_RECOVERY_BACKOFF_MS;
+      await expect(runtimeAuthRecoveryScheduler.wakeByKey({ recoveryKey, reason: 'timer' }))
+        .resolves.toEqual({ status: 'waiting' });
+      expect(runtimeAuthRecoveryScheduler.readByKey(recoveryKey)).toMatchObject({
+        status: 'waiting', nextRetryAtMs: nowMs + DEFAULT_USAGE_LIMIT_RECOVERY_BACKOFF_MS,
+        terminalReason: null,
+      });
+    } finally {
+      runtimeAuthRecoveryScheduler.dispose();
       await app.close();
     }
   });

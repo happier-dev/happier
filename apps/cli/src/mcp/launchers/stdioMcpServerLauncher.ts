@@ -2,14 +2,16 @@ import { spawn } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 
 import { z } from 'zod';
+import { lazySchema } from '@happier-dev/protocol';
 
+import { type CommandInvocation, resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process';
 
-const StdioMcpServerLauncherConfigSchema = z.object({
+const StdioMcpServerLauncherConfigSchema = lazySchema(() => z.object({
   command: z.string().min(1),
   args: z.array(z.string()).optional().default([]),
   env: z.record(z.string(), z.string()).optional().default({}),
   cwd: z.string().min(1).optional(),
-});
+}));
 
 type StdioMcpServerLauncherConfig = z.infer<typeof StdioMcpServerLauncherConfigSchema>;
 
@@ -43,9 +45,16 @@ export async function runStdioMcpServerLauncher(): Promise<void> {
     process.exit(2);
   }
 
-  const child = spawn(config.command, config.args, {
+  const env = { ...process.env, ...config.env };
+  const invocation: CommandInvocation = process.platform === 'win32'
+    ? resolveWindowsCommandInvocation({ command: config.command, args: config.args, env })
+    : { command: config.command, args: config.args };
+  const child = spawn(invocation.command, invocation.args, {
     cwd: config.cwd,
-    env: { ...process.env, ...config.env },
+    env,
+    ...(invocation.windowsVerbatimArguments !== undefined
+      ? { windowsVerbatimArguments: invocation.windowsVerbatimArguments }
+      : {}),
     stdio: ['pipe', 'pipe', 'pipe'],
     shell: false,
   });

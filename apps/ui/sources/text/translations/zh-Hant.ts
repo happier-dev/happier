@@ -1900,6 +1900,8 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
     },
 
     appCrash: {
+        saveDiagnostics: "儲存診斷資訊",
+        diagnosticsSaveFailed: "無法儲存診斷資訊。當機詳細資料仍可使用。請重試或複製詳細資料。",
         copyFailed: "無法複製當機詳細資料。請重試。",
         discardFailed: "無法捨棄已儲存的當機。請重試。",
         restartWithoutReport: "不儲存並重新啟動",
@@ -3244,6 +3246,10 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
     },
 
 		    settingsDesktop: {
+		        nativeTitleBarTitle: '使用 Windows 標題列',
+		        nativeTitleBarSubtitle: '顯示 Windows 標準視窗邊框和控制按鈕。',
+		        nativeTitleBarChangeFailed: '無法變更標題列。請再試一次。',
+		        nativeTitleBarPersistenceFailed: '無法載入或儲存標題列偏好設定。請再次變更此設定以重試。',
 		        title: '桌面',
 		        footer: '控制 Happier 在這台電腦上的行為。',
 		        backgroundServiceTitle: '在背景保持可連線',
@@ -3789,6 +3795,10 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
                         title: "Claude Code 實驗功能",
                         footer: "這些設定同時適用於由 Happier 啟動的 Claude 本機工作階段（終端）與遠端工作階段（Agent SDK）。"
                     },
+                    claudeIdleReclaim: {
+                        title: "閒置工作階段",
+                        footer: "下一則提示會恢復同一個 Claude 工作階段，可能需要稍長一點時間。記憶體中的狀態將被釋放。背景工作、排程工作和檔案檢查點會使程序繼續執行。統一終端機工作階段會保持執行。"
+                    },
                     claudeRemoteSdk: {
                         title: "經典執行階段（Agent SDK 後備）",
                         footer: "當統一終端執行階段關閉或不可用時，使用 Agent SDK 路徑。"
@@ -3872,6 +3882,14 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
                     claudeCodeExperimentalAgentTeamsEnabled: {
                         title: "強制啟用 Agent Teams",
                         subtitle: "在所有由 Happier 啟動的 Claude 工作階段中啟用 Claude Code 的實驗性 Agent Teams（代理群）功能。"
+                    },
+                    claudeRemoteIdleReclaimEnabled: {
+                        title: "釋放閒置的 Claude 程序",
+                        subtitle: "在一段閒置時間後釋放記憶體。預設關閉。"
+                    },
+                    claudeRemoteIdleReclaimTimeoutMinutes: {
+                        title: "閒置時間（分鐘）",
+                        subtitle: "選擇啟用此選項後，遠端 Claude 工作階段保持就緒的時間。"
                     },
                     claudeRemoteAgentSdkEnabled: {
                         title: "使用 Agent SDK 後備",
@@ -5778,6 +5796,8 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         deleteSessionSubtitle: '永久刪除此工作階段',
         deleteSessionConfirm: '永久刪除工作階段？',
         deleteSessionWarning: '此操作無法復原。與此工作階段相關的所有訊息和資料將被永久刪除。',
+        stopAndDeleteSession: "停止並刪除",
+        stopAndDeleteSessionWarning: "這將停止工作階段，並永久刪除其所有訊息和資料。此操作無法復原。",
         failedToDeleteSession: '刪除工作階段失敗',
         sessionDeleted: '工作階段刪除成功',
         forkSession: '分支工作階段',

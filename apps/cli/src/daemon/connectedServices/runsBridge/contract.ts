@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { AGENT_IDS } from '@happier-dev/agents';
 import { ConnectedServiceBindingsV1Schema } from '@happier-dev/protocol';
 import { RuntimeAccountIdentitySelectionFactV1Schema } from '../quotas/identity/runtimeAccountIdentityTypes';
+import { lazySchema } from '@happier-dev/protocol';
 
 /**
  * Wire contract for the daemon run-materialization bridge. The runner POSTs here (DEDICATED scoped
@@ -12,7 +13,7 @@ import { RuntimeAccountIdentitySelectionFactV1Schema } from '../quotas/identity/
 export const EXECUTION_RUN_CONNECTED_SERVICE_MATERIALIZE_PATH =
   '/connected-service-auth/execution-run/materialize';
 
-export const ExecutionRunConnectedServiceMaterializeRequestSchema = z.object({
+export const ExecutionRunConnectedServiceMaterializeRequestSchema = lazySchema(() => z.object({
   runId: z.string().min(1),
   agentId: z.string().min(1),
   pid: z.number().int().positive(),
@@ -21,34 +22,34 @@ export const ExecutionRunConnectedServiceMaterializeRequestSchema = z.object({
   sessionDirectory: z.string().nullable().optional(),
   previousMaterializedRoot: z.string().min(1).optional(),
   sessionId: z.string().min(1).optional(),
-});
+}));
 
 export type ExecutionRunConnectedServiceMaterializeRequestWire =
   z.infer<typeof ExecutionRunConnectedServiceMaterializeRequestSchema>;
 
-export const ExecutionRunConnectedServiceMaterializationProofV1Schema = z.object({
+export const ExecutionRunConnectedServiceMaterializationProofV1Schema = lazySchema(() => z.object({
   v: z.literal(1),
   agentId: z.string().min(1),
   materializationKey: z.string().min(1),
   connectedServicesBindings: ConnectedServiceBindingsV1Schema,
-}).strict();
+}).strict());
 
 export type ExecutionRunConnectedServiceMaterializationProofV1 =
   z.infer<typeof ExecutionRunConnectedServiceMaterializationProofV1Schema>;
 
 export const ExecutionRunConnectedServiceRegistrationV1Schema =
-  ExecutionRunConnectedServiceMaterializationProofV1Schema.extend({
+  lazySchema(() => ExecutionRunConnectedServiceMaterializationProofV1Schema.extend({
     brokerSelectionIdentity: z.string().min(1).nullable(),
     runtimeAccountIdentitySelections: z.array(RuntimeAccountIdentitySelectionFactV1Schema).readonly(),
     connectedServiceSelectionsJson: z.string().min(1).nullable().optional(),
     sessionDirectory: z.string().min(1).nullable(),
     materializedRoot: z.string().min(1).nullable(),
-  }).strict();
+  }).strict());
 export type ExecutionRunConnectedServiceRegistrationV1 =
   z.infer<typeof ExecutionRunConnectedServiceRegistrationV1Schema>;
 
 /** Persisted daemon-local launch identity. Fields are non-secret and old markers may omit selections. */
-export const ExecutionRunConnectedServicesLaunchV1Schema = z.object({
+export const ExecutionRunConnectedServicesLaunchV1Schema = lazySchema(() => z.object({
   v: z.literal(1),
   runKey: z.string().min(1),
   agentId: z.enum(AGENT_IDS),
@@ -58,7 +59,7 @@ export const ExecutionRunConnectedServicesLaunchV1Schema = z.object({
   connectedServiceSelectionsJson: z.string().min(1).nullable().optional(),
   sessionDirectory: z.string().min(1).nullable().optional(),
   materializedRoot: z.string().min(1).nullable(),
-}).strict();
+}).strict());
 
 export type ExecutionRunConnectedServicesLaunchV1 = z.infer<typeof ExecutionRunConnectedServicesLaunchV1Schema>;
 
@@ -78,18 +79,18 @@ export function buildExecutionRunConnectedServicesLaunchV1(
   });
 }
 
-export const ExecutionRunConnectedServiceMaterializedEnvSchema = z
+export const ExecutionRunConnectedServiceMaterializedEnvSchema = lazySchema(() => z
   .record(z.string(), z.string())
   .refine(
     (env) => Object.values(env).some((value) => value.trim().length > 0),
     { message: 'Connected-service materialization must contain a non-empty environment value' },
-  );
+  ));
 
-export const ExecutionRunConnectedServiceMaterializeResponseSchema = z.object({
+export const ExecutionRunConnectedServiceMaterializeResponseSchema = lazySchema(() => z.object({
   env: ExecutionRunConnectedServiceMaterializedEnvSchema,
   proof: ExecutionRunConnectedServiceMaterializationProofV1Schema,
   registration: ExecutionRunConnectedServiceRegistrationV1Schema.optional(),
-}).strict();
+}).strict());
 
 export type ExecutionRunConnectedServiceMaterializeResponseWire =
   z.infer<typeof ExecutionRunConnectedServiceMaterializeResponseSchema>;
@@ -98,18 +99,18 @@ export type ExecutionRunConnectedServiceMaterializeResponseWire =
 export const EXECUTION_RUN_CONNECTED_SERVICE_RELEASE_PATH =
   '/connected-service-auth/execution-run/release';
 
-export const ExecutionRunConnectedServiceReleaseRequestSchema = z.object({
+export const ExecutionRunConnectedServiceReleaseRequestSchema = lazySchema(() => z.object({
   runId: z.string().min(1),
   pid: z.number().int().positive(),
   materializationKey: z.string().min(1),
-});
+}));
 
 export type ExecutionRunConnectedServiceReleaseRequestWire =
   z.infer<typeof ExecutionRunConnectedServiceReleaseRequestSchema>;
 
-export const ExecutionRunConnectedServiceReleaseResponseSchema = z.object({
+export const ExecutionRunConnectedServiceReleaseResponseSchema = lazySchema(() => z.object({
   released: z.boolean(),
-});
+}));
 
 export type ExecutionRunConnectedServiceReleaseResponseWire =
   z.infer<typeof ExecutionRunConnectedServiceReleaseResponseSchema>;

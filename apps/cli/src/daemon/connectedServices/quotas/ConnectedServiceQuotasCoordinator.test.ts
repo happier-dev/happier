@@ -17,9 +17,13 @@ import type {
   ProviderAccountUsageSnapshotV1,
 } from '@happier-dev/protocol';
 import { randomBytes } from 'node:crypto';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { sealLegacyConnectedServiceQuotaSnapshotFixtureCiphertext } from '@happier-dev/protocol/testing/accountScopedCipherFixtures';
 
 import type { Credentials } from '@/persistence';
+import type { ApiClient } from '@/api/api';
 import { logger } from '@/ui/logger';
 import { dispatchConnectedServiceAutomaticQuotaResetNotificationAsync } from '../notifications/dispatchConnectedServiceQuotaLifecycleNotification';
 import { createOpenAiCodexQuotaFetcher } from '@/backends/codex/connectedServices/quotaFetcher';
@@ -36,6 +40,13 @@ import { ConnectedServiceQuotaFetchError, type ConnectedServiceQuotaFetcher } fr
 import { DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1 } from '../accountGroups/selection/selectConnectedServiceAuthGroupCandidate';
 import { ConnectedServiceRuntimeRegistry } from '../runtimeRegistry/registry';
 import { buildConnectedServiceAuthGroupCommittedGenerationFact } from '../sessionAuthSwitch/connectedServiceAuthSwitchOutcome';
+import { agent as claudeAgent } from '@/backends/claude';
+import { createQuotaDrivenConnectedServiceAuthGroupSwitchCoordinator } from './createQuotaDrivenConnectedServiceAuthGroupSwitchCoordinator';
+import { createConnectedServiceSwitchDeferralQueue } from '../sessionAuthSwitch/connectedServiceSwitchDeferralQueue';
+import { evaluatePredictiveSoftSwitchPolicy } from '../accountGroups/switching/predictiveSoftSwitchPolicy';
+import { resolveClaudeConnectedServiceStableConfigDir } from '@/backends/claude/connectedServices/resolveClaudeConnectedServiceStableAuthDir';
+import { createConnectedServiceGroupMutationCurrentnessValidator } from '../credentials/createConnectedServiceGroupMutationCurrentnessValidator';
+import { buildProviderAccountUsageSnapshotFromConnectedServiceQuotaObservation } from '../accountUsage/fromConnectedServiceQuotaObservation';
 
 type AccountExhaustionInput = Parameters<ConnectedServiceQuotasCoordinator['recordAccountExhaustionAndFanout']>[0];
 type RuntimeUsageLimitInput = Parameters<ConnectedServiceQuotasCoordinator['recordRuntimeUsageLimitExhaustionAndFanout']>[0];
@@ -307,6 +318,91 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     vi.useRealTimers();
     vi.restoreAllMocks();
     invalidateConnectedServiceAccountMode();
+  });
+
+  it('applies a Claude soft-threshold switch through the shared generation owner during a live turn', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-claude-mid-turn-quota-'));
+    const now = 1_000_000;
+    const serviceId = 'claude-subscription';
+    const fixture = createSoftSwitchEligibilityFixture({ serviceId, now });
+    const usageSnapshot = (profileId: string, remainingPct: number) => buildProviderAccountUsageSnapshotFromConnectedServiceQuotaObservation({
+      snapshot: { ...buildQuotaSnapshotFixture({ serviceId, profileId, now, remainingPct }),
+        providerId: 'claude', activeAccountId: `acct-${profileId}`, providerOrganizationId: 'org-test', confidence: 'exact' },
+      sourceProviderAccountId: `acct-${profileId}`, observedAtMs: now,
+    });
+    const activeSnapshot = usageSnapshot('active', 5);
+    for (const [profileId, snapshot] of [['active', activeSnapshot], ['backup', usageSnapshot('backup', 90)]] as const) {
+      recordGroupMemberAccountUsageFixture(fixture.accountUsageStore, {
+        serviceId, groupId: 'team', profileId, groupGeneration: 1, snapshot,
+      });
+    }
+    fixture.runtimeQuotaSnapshots.recordSnapshot({ serviceId, groupId: 'team', profileId: 'active',
+      snapshot: buildQuotaSnapshotFixture({ serviceId, profileId: 'active', now, remainingPct: 5 }) });
+    const initial = await fixture.getConnectedServiceAuthGroup!({ serviceId, groupId: 'team' });
+    if (!initial) throw new Error('missing fixture group');
+    let currentGroup = initial;
+    // Server transport boundary; selection, switching, materialization and proof stay real.
+    const api = {
+      getConnectedServiceAuthGroup: async () => currentGroup,
+      getAccountEncryptionMode: async () => 'plain' as const,
+      getConnectedServiceCredentialPlain: async () => ({ content: { t: 'plain' as const, v: record },
+        revisionSemantics: 'revisioned' as const, credentialRevision }),
+      getConnectedServiceCredentialSealed: async () => null,
+      updateConnectedServiceAuthGroupActiveProfile: async (input: { activeProfileId: string; expectedGeneration: number }) => {
+        currentGroup = { ...currentGroup, activeProfileId: input.activeProfileId, generation: input.expectedGeneration + 1 };
+        return currentGroup;
+      },
+    };
+    const descriptor = await claudeAgent.getConnectedServiceCredentialLifecycleDescriptor();
+    const queue = createConnectedServiceSwitchDeferralQueue({ timeoutMs: 60_000, disableDeferral: false });
+    queue.recordTurnLifecycleEvent({ sessionId: 'claude-live', event: 'task_started' });
+    const record = buildConnectedServiceCredentialRecord({ now, serviceId, profileId: 'backup', kind: 'token',
+      token: { token: 'sk-ant-oat01-synthetic-mid-turn', providerAccountId: null, providerEmail: null } });
+    const credentialRevision = 'csr_7123456789ABCDEFGHJKMNPQRS' as const;
+    const credentials = { token: 'synthetic', encryption: { type: 'legacy', secret: new Uint8Array(32) } } satisfies Credentials;
+    // The narrowed transport fixture supplies only the endpoints this real validator reads.
+    const validateCurrent = createConnectedServiceGroupMutationCurrentnessValidator({ api: api as unknown as ApiClient, credentials });
+    const proofs: unknown[] = [];
+    const switchCoordinator = createQuotaDrivenConnectedServiceAuthGroupSwitchCoordinator({
+      api, runtimeQuotaSnapshots: fixture.runtimeQuotaSnapshots, quotaFreshnessMs: 300_000, nowMs: () => now,
+      resolveCurrentCredentialRevision: async () => credentialRevision,
+      restartSession: async () => { throw new Error('mid-turn soft switch must hot apply'); },
+      applyConnectedServiceAuthGeneration: async (input) => {
+        const proof = await descriptor.applySharedGenerationApplication!({
+          activeServerDir: root, serviceId, groupId: input.groupId, profileId: input.activeProfileId!,
+          generation: input.generation, credentialRevision, record,
+          validateCurrentBeforeMutation: async () => await validateCurrent({ serviceId, groupId: input.groupId,
+            profileId: input.activeProfileId!, generation: input.generation, credentialRevision }),
+        });
+        proofs.push(proof);
+        return { ok: proof.status === 'verified', action: 'hot_applied' };
+      },
+    });
+    const coordinator = new ConnectedServiceQuotasCoordinator({
+      api: { ...api, getConnectedServiceQuotaSnapshotSealed: async () => null, getConnectedServiceCredentialSealed: async () => null },
+      credentials,
+      quotaFetchers: [], now: () => now, randomBytes, discoveryEnabled: false, groupSwitchCheckMinIntervalMs: 0,
+      accountUsageStore: fixture.accountUsageStore, authGroupSwitchCoordinator: switchCoordinator,
+      softSwitchPolicyGuard: () => evaluatePredictiveSoftSwitchPolicy({
+        context: 'live_session', reason: 'soft_threshold', predictiveSoftSwitchMode: descriptor.predictiveSoftSwitch.mode,
+        turnState: queue.getTurnLifecycleState('claude-live'), runtimeAuthApply: descriptor.runtimeAuthApply,
+      }),
+    });
+    try {
+      await coordinator.handleAccountUsageChanged({ sessionId: 'claude-live', serviceId, profileId: 'active',
+        groupId: 'team', groupGeneration: 1, recordId: activeSnapshot.recordId, snapshot: activeSnapshot, source: 'in_band' });
+      expect(proofs).toContainEqual(expect.objectContaining({ status: 'verified', source: 'claude_shared_group_home_provenance' }));
+      expect(queue.isTurnInFlight('claude-live')).toBe(true);
+      const configDir = resolveClaudeConnectedServiceStableConfigDir({ activeServerDir: root, serviceId, fallbackProfileId: 'backup',
+        selection: { kind: 'group', serviceId, groupId: 'team', activeProfileId: 'backup', fallbackProfileId: 'backup',
+          generation: 2, credentialRevision, record, policy: null } });
+      expect(JSON.parse(await readFile(join(configDir!, '.credentials.json'), 'utf8'))).toMatchObject({
+        claudeAiOauth: { accessToken: 'sk-ant-oat01-synthetic-mid-turn' },
+      });
+    } finally {
+      queue.cancelAll('daemon_shutdown');
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it.each([
@@ -2270,7 +2366,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     }));
   });
 
-  it('asks the auth-group switch coordinator to re-evaluate an active group after refreshing its active profile quota', async () => {
+  it.each([false, true])('requests a soft switch and records request failures (fails=%s)', async (fails) => {
     const now = 1_000_000;
 
     const credentials = {
@@ -2334,7 +2430,10 @@ describe('ConnectedServiceQuotasCoordinator', () => {
         ],
       })),
     };
-    const switchBeforeTurn = vi.fn(async () => ({ status: 'switched' as const, activeProfileId: 'backup', generation: 2 }));
+    const switchBeforeTurn = vi.fn(async () => {
+      if (fails) throw new Error('synthetic transport failure with secret-placeholder');
+      return { status: 'switched' as const, activeProfileId: 'backup', generation: 2 };
+    });
     const diagnostics: unknown[] = [];
     const coordinatorParams = {
       api,
@@ -2405,6 +2504,13 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       targetCount: 1,
       allowedTargetCount: 1,
     }));
+    if (fails) {
+      expect(diagnostics).toContainEqual(expect.objectContaining({
+        event: 'quota_work_suppressed', phase: 'soft_switch', reason: 'soft_switch_request_failed',
+        sessionId: 'session-1', serviceId: 'openai-codex', groupId: 'team',
+      }));
+      expect(JSON.stringify(diagnostics)).not.toContain('secret-placeholder');
+    }
   });
 
   it('uses canonical group truth when an in-band sibling still reports a predecessor profile', async () => {
@@ -11338,7 +11444,9 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     expect(fetcher.fetch).not.toHaveBeenCalled();
   });
 
-  it('uses a shared lease so contending daemons do not duplicate stale quota fetches', async () => {
+  it.each([
+    ['tick', 'acct'], ['probe', 'acct'], ['tick', 'different-account'], ['probe', 'different-account'],
+  ] as const)('uses a shared lease so contending daemons do not duplicate stale quota fetches (%s, %s)', async (mode, snapshotAccountId) => {
     const now = 1_000_000;
     const credentials: Credentials = {
       token: 'happy-token',
@@ -11374,6 +11482,8 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     };
     const freshSnapshot: ConnectedServiceQuotaSnapshotV1 = {
       ...staleSnapshot,
+      activeAccountId: snapshotAccountId,
+      confidence: 'exact',
       fetchedAt: now,
       meters: [
         {
@@ -11396,6 +11506,9 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     let releaseSleep: () => void = () => {};
 
     const apiWithLease = {
+      getConnectedServiceAuthGroup: createSoftSwitchEligibilityFixture({
+        serviceId: 'openai-codex', now, activeProfileId: 'work', targetProfileIds: [],
+      }).getConnectedServiceAuthGroup,
       getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
       getConnectedServiceQuotaSnapshotPlain: vi.fn(async () => ({
         content: { t: 'plain' as const, v: serverSnapshot },
@@ -11460,8 +11573,11 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       machineIdProvider: () => 'machine-1',
       ownerIdProvider: () => 'machine-1:daemon-a',
     });
+    const contendingAccountUsageStore = createProviderAccountUsageStore();
     const coordinatorB = new ConnectedServiceQuotasCoordinator({
       ...common,
+      accountUsageStore: contendingAccountUsageStore,
+      runtimeQuotaSnapshots: new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore(),
       machineIdProvider: () => 'machine-1',
       ownerIdProvider: () => 'machine-1:daemon-b',
     });
@@ -11479,7 +11595,9 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     const tickA = coordinatorA.tickOnce();
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
 
-    const tickB = coordinatorB.tickOnce();
+    const tickB = mode === 'tick' ? coordinatorB.tickOnce() : coordinatorB.probeGroupQuotaSnapshots({
+      serviceId: 'openai-codex', groupId: 'team', profileIds: ['work'],
+    });
     await vi.waitFor(() => {
       if (sleepMs.mock.calls.length === 0 && fetchMock.mock.calls.length < 2) {
         throw new Error('waiting for quota lease contention');
@@ -11492,8 +11610,21 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     await tickB;
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(apiWithLease.getConnectedServiceQuotaSnapshotPlain).toHaveBeenCalledTimes(3);
     expect(sleepMs).toHaveBeenCalledWith(50);
+    const linked = contendingAccountUsageStore.resolveBySource({
+      serviceId: 'openai-codex', profileId: 'work', bindingKind: 'profile',
+    });
+    if (snapshotAccountId === 'acct') {
+      expect(linked).toMatchObject({ fetchedAtMs: now, recordKey: { accountSubjectId: 'acct' } });
+      expect(apiWithLease.registerProviderAccountUsageSnapshotPlain).toHaveBeenLastCalledWith(expect.objectContaining({
+        source: { serviceId: 'openai-codex', profileId: 'work', bindingKind: 'profile' },
+      }));
+    } else {
+      expect(linked).toBeNull();
+      expect(apiWithLease.registerProviderAccountUsageSnapshotPlain).toHaveBeenLastCalledWith(
+        expect.not.objectContaining({ source: expect.anything() }),
+      );
+    }
   });
 
   it('backs off instead of fetching provider quotas when lease acquisition fails', async () => {

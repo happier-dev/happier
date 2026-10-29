@@ -119,6 +119,16 @@ Happier supports:
 
 For local command servers, the main field is a command line so you can paste common README examples directly. Happier then splits that into command + arguments internally.
 
+In current development source (not yet released), local package-runner commands
+such as `npx`, `npm`, `yarn`, `pnpm`, and `bunx` use the executable you configure,
+including a specific executable path. Install that tool on the machine running
+the session. Happier preserves its arguments, applies the configured environment
+values, and runs it from the session's workspace directory.
+
+If the configured tool is missing, Happier reports the prerequisite instead of
+substituting another package runner. An execution error is reported without
+retrying through a different runner.
+
 For remote servers, you provide:
 
 - the URL
@@ -385,6 +395,12 @@ The most common causes are:
 - the URL is wrong
 - a required token/header is missing
 - a machine env reference is not present on the daemon host
+
+For local package-runner commands in unreleased development source, install the
+configured runner on the selected machine, make it available in the daemon's
+environment, or configure its executable path. Test again after correcting the
+prerequisite. Happier's managed pnpm installation serves Happier-owned package
+installs; it does not replace the runner in your MCP command.
 
 ### “I changed MCP settings, but my current session did not change”
 

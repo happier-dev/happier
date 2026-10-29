@@ -38,7 +38,7 @@ import {
 import { extractOpenCodeTextHistoryItems, importOpenCodeTextHistoryCommitted, reconcileOpenCodeCommittedHistoryIdentities } from './openCodeSessionMessageImport';
 import { extractOpenCodeTaskChildSessionId, importOpenCodeTaskSidechainBestEffort } from './openCodeTaskSidechainImport';
 import { createOpenCodeTranscriptStreamBridge } from './openCodeTranscriptStreamBridge';
-import { asRecord, normalizeString, normalizeStringArray } from './openCodeParsing';
+import { asRecord, normalizeString, normalizeStringArray, readOpenCodeEventIdentity, type OpenCodeEventIdentity } from './openCodeParsing';
 import { extractOpenCodeErrorText } from './openCodeErrorText';
 import {
   createOpenCodeConnectedServiceRuntimeAuthAdapter,
@@ -105,6 +105,7 @@ import {
   classifyOpenCodePartForProjection,
 } from '../transcriptProjection';
 import {
+  hasOpenCodeInternalFlag,
   readOpenCodeNestedRecord,
   readOpenCodeTimestampMs,
 } from '../transcriptProjection/openCodeProjectionParsing';
@@ -1159,6 +1160,14 @@ export function createOpenCodeServerRuntime(params: {
         const eventType = normalizeString(evt.payload.type);
         if (delivery.provenance === 'connection-boundary' && eventType !== 'server.connected') {
           return;
+        }
+        if (delivery.provenance === 'accepted-live') {
+          const identity = readOpenCodeEventIdentity(eventType, evt.payload.properties);
+          if (identity && identity.sessionId === sessionId
+            && !isPrePromptMessageId(identity.messageId)
+            && !hasOpenCodeInternalFlag(identity.record)) {
+            params.session.sessionTurnLifecycle?.observeProviderTurnEvent();
+          }
         }
         const isInitialConnectionBoundary = delivery.provenance === 'connection-boundary'
           && eventType === 'server.connected'
@@ -3484,13 +3493,11 @@ export function createOpenCodeServerRuntime(params: {
       });
   };
 
-  const handleSessionNextGuardEvent = (type: string, propsRaw: unknown): boolean => {
+  const handleSessionNextGuardEvent = (type: string, identity: OpenCodeEventIdentity | null): boolean => {
     if (!type.startsWith('session.next.')) return false;
-    const rec = asRecord(propsRaw);
-    if (!rec) return false;
-    const eventSessionId = normalizeString(rec.sessionID)
-      || normalizeString(rec.sessionId)
-      || normalizeString(asRecord(rec.session)?.id);
+    if (!identity) return false;
+    const rec = identity.record;
+    const eventSessionId = identity.sessionId;
     const nativeChildSidechainId = sidechainIdByRemoteSessionId.get(eventSessionId)?.sidechainId;
     if (!eventSessionId || (eventSessionId !== sessionId && !nativeChildSidechainId)) return true;
     if (eventSessionId !== sessionId && !type.startsWith('session.next.tool.')) return true;
@@ -3605,6 +3612,7 @@ export function createOpenCodeServerRuntime(params: {
     const payload = evt.payload;
     const type = normalizeString(payload.type);
     const props = payload.properties;
+    const identity = readOpenCodeEventIdentity(type, props);
     shapeLogger.log(`event:${type || 'unknown'}`, payload);
 
     if (type === 'server.connected') {
@@ -3653,7 +3661,7 @@ export function createOpenCodeServerRuntime(params: {
     }
 
     const eventRecord = asRecord(props);
-    const childSessionId = normalizeString(eventRecord?.sessionID);
+    const childSessionId = identity?.sessionId ?? '';
     if (childSessionId && childSessionId !== sessionId && sidechainIdByRemoteSessionId.has(childSessionId)) {
       const outcome = eventRecord?.executionOutcome;
       if (outcome === 'succeeded') return settleNativeChild(childSessionId);
@@ -3665,11 +3673,10 @@ export function createOpenCodeServerRuntime(params: {
       }
     }
 
-    if (handleSessionNextGuardEvent(type, props)) return;
+    if (handleSessionNextGuardEvent(type, identity)) return;
 
     if (type === 'todo.updated') {
-      const eventSessionId = normalizeString(asRecord(props)?.sessionID)
-        || normalizeString(asRecord(asRecord(props)?.session)?.id);
+      const eventSessionId = identity?.sessionId ?? '';
       if (!eventSessionId || eventSessionId === sessionId) {
         publishNativeTodosWorkStateBestEffort();
       }
@@ -3677,9 +3684,9 @@ export function createOpenCodeServerRuntime(params: {
     }
 
     if (type === 'message.updated') {
-      const info = asRecord(asRecord(props)?.info);
+      const info = identity?.record;
       if (!info) return;
-      const infoSessionId = normalizeString(info.sessionID);
+      const infoSessionId = identity?.sessionId ?? '';
       if (!infoSessionId) return;
       if (infoSessionId !== sessionId) {
         if (!sidechainIdByRemoteSessionId.has(infoSessionId)) return;
@@ -3758,9 +3765,9 @@ export function createOpenCodeServerRuntime(params: {
     }
 
     if (type === 'message.part.updated' || type === 'message.part.created') {
-      const part = asRecord(asRecord(props)?.part);
+      const part = identity?.record;
       if (!part) return;
-      const sessionID = normalizeString(part.sessionID);
+      const sessionID = identity?.sessionId ?? '';
       if (!sessionID) return;
       const sidechainId = sessionID === sessionId ? null : resolveSidechainIdForRemoteSession(sessionID);
       if (sessionID !== sessionId && !sidechainId) return;
@@ -3853,7 +3860,7 @@ export function createOpenCodeServerRuntime(params: {
     if (type === 'message.part.delta') {
       const rec = asRecord(props);
       if (!rec) return;
-      const sessionID = normalizeString(rec.sessionID);
+      const sessionID = identity?.sessionId ?? '';
       if (!sessionID) return;
       const sidechainId = sessionID === sessionId ? null : resolveSidechainIdForRemoteSession(sessionID);
       if (sessionID !== sessionId && !sidechainId) return;
@@ -3948,7 +3955,7 @@ export function createOpenCodeServerRuntime(params: {
     if (type === 'session.status') {
       const rec = asRecord(props);
       if (!rec) return;
-      const sessionID = normalizeString(rec.sessionID);
+      const sessionID = identity?.sessionId ?? '';
       if (!sessionID || sessionID !== sessionId) return;
       const statusRec = asRecord(rec.status);
       const statusType = normalizeString(statusRec?.type);
@@ -3980,7 +3987,7 @@ export function createOpenCodeServerRuntime(params: {
     if (type === 'session.idle') {
       const rec = asRecord(props);
       if (!rec) return;
-      const sessionID = normalizeString(rec.sessionID);
+      const sessionID = identity?.sessionId ?? '';
       if (!sessionID || sessionID !== sessionId) return;
       providerObservedBusy = false;
       if (turnPromptActive) {
@@ -3998,7 +4005,7 @@ export function createOpenCodeServerRuntime(params: {
     if (type === 'session.error') {
       const rec = asRecord(props);
       if (!rec) return;
-      const sessionID = normalizeString(rec.sessionID);
+      const sessionID = identity?.sessionId ?? '';
       if (!sessionID || sessionID !== sessionId) return;
       const isExpectedExplicitCancelError = suppressSessionErrorAbortNotificationForSessionId === sessionID;
       const detail = extractOpenCodeErrorText(rec.error);

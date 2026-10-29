@@ -266,4 +266,44 @@ describe('AgentInput (attachments drag overlay)', () => {
 
         expect(onAttachmentsAdded).toHaveBeenCalledWith([file]);
     }, 120_000);
+
+    it('ignores dropped and pasted files while the composer is disabled', async () => {
+        const { AgentInput } = await import('./AgentInput');
+        const { WebDropTargetView } = await import('@/components/sessions/files/repositoryTree/WebDropTargetView');
+        const onAttachmentsAdded = vi.fn();
+        const file = {
+            name: 'notes.txt',
+            size: 12,
+            type: 'text/plain',
+            lastModified: 1,
+        } as File;
+
+        const screen = await renderScreen(React.createElement(AgentInput, {
+            value: 'locked prompt',
+            placeholder: 'placeholder',
+            onChangeText: () => { },
+            onSend: () => { },
+            autocompleteKinds: [],
+            autocompleteSuggestions: async () => [],
+            onAttachmentsAdded,
+            hasSendableAttachments: false,
+            disabled: true,
+        }));
+
+        const dropTarget = screen.findByType(WebDropTargetView as any);
+        await act(async () => {
+            dropTarget.props.onDragEnter?.({ dataTransfer: { types: ['Files'] } });
+            dropTarget.props.onDrop?.({
+                preventDefault: vi.fn(),
+                dataTransfer: { types: ['Files'], files: [file] },
+            });
+        });
+        const pasteTargets = screen.root.findAll((node) => typeof node.props?.onFilesPasted === 'function');
+        await act(async () => {
+            for (const target of pasteTargets) target.props.onFilesPasted([file]);
+        });
+
+        expect(screen.findByTestId('agent-input-drop-overlay')).toBeNull();
+        expect(onAttachmentsAdded).not.toHaveBeenCalled();
+    }, 120_000);
 });

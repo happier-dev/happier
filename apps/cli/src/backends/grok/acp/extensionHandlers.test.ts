@@ -1,3 +1,4 @@
+import { withParsedAcpExtensionHandler } from '@/agent/acp/testkit/extensionHandlerHarness';
 import { SessionPermissionRpcRouter } from '@/agent/permissions/sessionPermissionRpcRouter';
 import { describe, expect, it } from 'vitest';
 
@@ -37,8 +38,8 @@ function requestHandler(handlers: AcpExtensionHandlers, method: string) {
   return async (payload: Record<string, unknown>, context: AcpExtensionHandlerContext) => {
     const captured: { callback: ((sdkContext: { params: Record<string, unknown>; signal: AbortSignal }) => unknown | Promise<unknown>) | null } = { callback: null };
     const app = {
-      onRequest: (_method: string, _parser: unknown, handler: unknown) => {
-        captured.callback = handler as typeof captured.callback;
+      onRequest: (_method: string, parser: unknown, handler: unknown) => {
+        captured.callback = withParsedAcpExtensionHandler(parser, handler as typeof captured.callback);
         return app;
       },
       onNotification: () => app,

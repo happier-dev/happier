@@ -1155,6 +1155,8 @@ export const zhHans: TranslationStructure = {
   },
 
   appCrash: {
+      saveDiagnostics: "保存诊断信息",
+      diagnosticsSaveFailed: "无法保存诊断信息。崩溃详情仍然可用。请重试或复制详情。",
       copyFailed: "无法复制崩溃详情。请重试。",
       discardFailed: "无法丢弃已保存的崩溃。请重试。",
       restartWithoutReport: "不保存并重启",
@@ -3445,6 +3447,10 @@ export const zhHans: TranslationStructure = {
   },
 
   settingsDesktop: {
+    nativeTitleBarTitle: '使用 Windows 标题栏',
+    nativeTitleBarSubtitle: '显示 Windows 标准窗口边框和控制按钮。',
+    nativeTitleBarChangeFailed: '无法更改标题栏。请重试。',
+    nativeTitleBarPersistenceFailed: '无法加载或保存标题栏偏好设置。请再次更改此设置以重试。',
     title: '桌面',
     footer: '控制 Happier 在这台电脑上的行为。',
     backgroundServiceTitle: '在后台保持可连接',
@@ -4012,6 +4018,10 @@ export const zhHans: TranslationStructure = {
                         title: "Claude Code 实验功能",
                         footer: "这些设置同时适用于由 Happier 启动的 Claude 本地会话（终端）和远程会话（Agent SDK）。"
                     },
+                    claudeIdleReclaim: {
+                        title: "空闲会话",
+                        footer: "下一条提示会恢复同一个 Claude 会话，可能需要稍长一点时间。内存中的状态将被释放。后台任务、计划工作和文件检查点会使进程继续运行。统一终端会话会保持运行。"
+                    },
                     claudeRemoteSdk: {
                         title: "经典运行时（Agent SDK 回退）",
                         footer: "当统一终端运行时关闭或不可用时，使用 Agent SDK 路径。"
@@ -4095,6 +4105,14 @@ export const zhHans: TranslationStructure = {
                     claudeCodeExperimentalAgentTeamsEnabled: {
                         title: "强制启用 Agent Teams",
                         subtitle: "在所有由 Happier 启动的 Claude 会话中启用 Claude Code 的实验性 Agent Teams（代理群）功能。"
+                    },
+                    claudeRemoteIdleReclaimEnabled: {
+                        title: "释放空闲的 Claude 进程",
+                        subtitle: "在一段空闲时间后释放内存。默认关闭。"
+                    },
+                    claudeRemoteIdleReclaimTimeoutMinutes: {
+                        title: "空闲时长（分钟）",
+                        subtitle: "选择启用此选项后，远程 Claude 会话保持就绪的时间。"
                     },
                     claudeRemoteAgentSdkEnabled: {
                         title: "使用 Agent SDK 回退",
@@ -6605,6 +6623,8 @@ export const zhHans: TranslationStructure = {
     deleteSessionConfirm: "永久删除会话？",
     deleteSessionWarning:
       "此操作无法撤销。与此会话相关的所有消息和数据将被永久删除。",
+    stopAndDeleteSession: "停止并删除",
+    stopAndDeleteSessionWarning: "这将停止会话，并永久删除其所有消息和数据。此操作无法撤销。",
     failedToDeleteSession: "删除会话失败",
     sessionDeleted: "会话删除成功",
     manageSharing: "管理共享",

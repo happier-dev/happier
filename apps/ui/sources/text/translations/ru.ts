@@ -1197,6 +1197,8 @@ export const ru: TranslationStructure = {
   },
 
   appCrash: {
+      saveDiagnostics: "Сохранить диагностику",
+      diagnosticsSaveFailed: "Не удалось сохранить диагностику. Сведения об ошибке по-прежнему доступны. Повторите попытку или скопируйте их.",
       copyFailed: "Не удалось скопировать сведения о сбое. Повторите попытку.",
       discardFailed: "Не удалось удалить сохранённый сбой. Повторите попытку.",
       restartWithoutReport: "Перезапустить без сохранения",
@@ -3498,6 +3500,10 @@ export const ru: TranslationStructure = {
   },
 
   settingsDesktop: {
+    nativeTitleBarTitle: 'Использовать строку заголовка Windows',
+    nativeTitleBarSubtitle: 'Показывать стандартную рамку и кнопки управления окном Windows.',
+    nativeTitleBarChangeFailed: 'Не удалось изменить строку заголовка. Попробуйте ещё раз.',
+    nativeTitleBarPersistenceFailed: 'Не удалось загрузить или сохранить настройку строки заголовка. Измените её снова, чтобы повторить попытку.',
     title: 'Рабочий стол',
     footer: 'Управляет поведением Happier на этом компьютере.',
     backgroundServiceTitle: 'Оставаться доступным в фоне',
@@ -4076,6 +4082,10 @@ export const ru: TranslationStructure = {
                         title: "Эксперименты Claude Code",
                         footer: "Эти настройки применяются как к локальным сессиям Claude (терминал), так и к удаленным сессиям Claude (Agent SDK), запущенным из Happier."
                     },
+                    claudeIdleReclaim: {
+                        title: "Неактивные сессии",
+                        footer: "Следующий запрос продолжит ту же сессию Claude и может занять немного больше времени. Состояние в памяти освобождается. Фоновые задачи, запланированная работа и контрольные точки файлов сохраняют процесс активным. Сессии единого терминала остаются активными."
+                    },
                     claudeRemoteSdk: {
                         title: "Классический runtime (fallback Agent SDK)",
                         footer: "Используйте путь Agent SDK, когда единый терминальный runtime выключен или недоступен."
@@ -4159,6 +4169,14 @@ export const ru: TranslationStructure = {
                     claudeCodeExperimentalAgentTeamsEnabled: {
                         title: "Принудительно включить Agent Teams",
                         subtitle: "Включает экспериментальный Agent Teams в Claude Code (рой агентов) во всех сессиях Claude, запущенных из Happier."
+                    },
+                    claudeRemoteIdleReclaimEnabled: {
+                        title: "Освобождать неактивные процессы Claude",
+                        subtitle: "Освобождает память после периода бездействия. По умолчанию выключено."
+                    },
+                    claudeRemoteIdleReclaimTimeoutMinutes: {
+                        title: "Время бездействия (минуты)",
+                        subtitle: "Выбери, как долго удалённая сессия Claude с включённой опцией остаётся готовой."
                     },
                     claudeRemoteAgentSdkEnabled: {
                         title: "Использовать fallback Agent SDK",
@@ -5754,6 +5772,8 @@ export const ru: TranslationStructure = {
     deleteSessionConfirm: "Удалить сессию навсегда?",
     deleteSessionWarning:
       "Это действие нельзя отменить. Все сообщения и данные, связанные с этой сессией, будут удалены навсегда.",
+    stopAndDeleteSession: "Остановить и удалить",
+    stopAndDeleteSessionWarning: "Сессия будет остановлена, а все её сообщения и данные будут удалены навсегда. Это действие нельзя отменить.",
     failedToDeleteSession: "Не удалось удалить сессию",
     sessionDeleted: "Сессия успешно удалена",
     manageSharing: "Управление доступом",

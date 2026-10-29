@@ -17,6 +17,7 @@ import { createConnectedServiceContinuationMessageDispatcher } from '../continua
 import { ConnectedServiceAuthGroupSwitchCoordinator, InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry,
   type ConnectedServiceAuthGroupSwitchState } from '../accountGroups/switching/ConnectedServiceAuthGroupSwitchCoordinator';
 import { DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1 } from '../accountGroups/selection/selectConnectedServiceAuthGroupCandidate';
+import { DEFAULT_USAGE_LIMIT_RECOVERY_BACKOFF_MS } from '@/session/usageLimitRecoveryControls/createBackoffSessionUsageLimitRecoveryControlAdapter';
 
 function classification(): ConnectedServiceRuntimeFailureClassification {
   return {
@@ -1832,11 +1833,12 @@ describe('RuntimeAuthRecoveryScheduler', () => {
     });
   });
 
-  it('keeps a non-group recovery_action_required terminal when no wait-until is computable', async () => {
+  it.each([null, 500])('rechecks a non-group usage limit with reset %s after the shared fallback', async (resetsAtMs) => {
     const scheduler = new RuntimeAuthRecoveryScheduler({
       nowMs: () => 1_000,
       baseBackoffMs: 100,
       maxBackoffMs: 1_000,
+      maxAttempts: 1,
       jitterMs: () => 0,
       recover: async () => ({
         status: 'recovery_action_required' as const,
@@ -1859,16 +1861,18 @@ describe('RuntimeAuthRecoveryScheduler', () => {
     await scheduler.beginClassifiedFailure({
       sessionId: 'session-1',
       switchesThisTurn: 0,
-      classification: classificationFor({ groupId: null, resetsAtMs: null }),
+      classification: classificationFor({ groupId: null, resetsAtMs }),
     });
     await expect(scheduler.wakeByKey({
       recoveryKey,
       reason: 'manual',
-    })).resolves.toEqual({ status: 'terminal' });
+    })).resolves.toEqual({ status: 'waiting' });
 
     expect(scheduler.readByKey(recoveryKey)).toMatchObject({
-      status: 'cancelled',
-      terminalReason: 'recovery_action_required',
+      status: 'waiting',
+      nextRetryAtMs: 1_000 + DEFAULT_USAGE_LIMIT_RECOVERY_BACKOFF_MS,
+      lastError: 'awaiting_limit_reset',
+      terminalReason: null,
     });
   });
 

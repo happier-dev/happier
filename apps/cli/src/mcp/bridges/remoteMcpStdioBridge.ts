@@ -24,14 +24,15 @@ import { callMcpToolWithResolvedTimeout } from '@/mcp/mcpToolCallRequestOptions'
 import { bindMcpStdioBridgeLifecycle } from '@/mcp/runtime/bindMcpStdioBridgeLifecycle';
 import { withMcpTimeout } from '@/mcp/runtime/withMcpTimeout';
 import { createMcpProgressForwarder } from '@/mcp/bridges/createMcpProgressForwarder';
+import { lazySchema } from '@happier-dev/protocol';
 
 const MCP_BRIDGE_CONNECT_TIMEOUT_MS = 60_000;
 
-const RemoteBridgeConfigSchema = z.object({
+const RemoteBridgeConfigSchema = lazySchema(() => z.object({
   transport: z.enum(['http', 'sse']),
   url: z.string().min(1),
   headers: z.record(z.string(), z.string()).optional().default({}),
-});
+}));
 
 type RemoteBridgeConfig = z.infer<typeof RemoteBridgeConfigSchema>;
 

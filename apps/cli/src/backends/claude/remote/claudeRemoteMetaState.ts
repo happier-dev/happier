@@ -1,6 +1,8 @@
 import { normalizeClaudeSettingSourcesV2 } from '@/backends/claude/utils/resolveClaudeSettingSources';
 import {
     CLAUDE_UNIFIED_TERMINAL_HOSTS,
+    CLAUDE_REMOTE_PROVIDER_FIELDS,
+    CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFAULTS,
     CLAUDE_UNIFIED_TERMINAL_RESUME_CHOICES,
     type ClaudeUnifiedTerminalHost,
     type ClaudeUnifiedTerminalResumeChoice,
@@ -10,6 +12,8 @@ import {
 
 export type ClaudeRemoteMetaState = Readonly<{
     claudeRemoteAgentSdkEnabled: boolean;
+    claudeRemoteIdleReclaimEnabled: boolean;
+    claudeRemoteIdleReclaimTimeoutMinutes: number;
     claudeUnifiedTerminalEnabled: boolean;
     claudeUnifiedTerminalHost: ClaudeUnifiedTerminalHost;
     claudeUnifiedTerminalResumeChoice: ClaudeUnifiedTerminalResumeChoice;
@@ -69,6 +73,8 @@ function normalizeDebugCategories(raw: unknown): Array<'api' | 'mcp' | 'hooks' |
 
 export const DEFAULT_CLAUDE_REMOTE_META_STATE: ClaudeRemoteMetaState = Object.freeze({
     claudeRemoteAgentSdkEnabled: true,
+    claudeRemoteIdleReclaimEnabled: CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFAULTS.claudeRemoteIdleReclaimEnabled,
+    claudeRemoteIdleReclaimTimeoutMinutes: CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFAULTS.claudeRemoteIdleReclaimTimeoutMinutes,
     claudeUnifiedTerminalEnabled: false,
     claudeUnifiedTerminalHost: 'auto',
     claudeUnifiedTerminalResumeChoice: 'ask_every_time',
@@ -115,6 +121,16 @@ export function applyClaudeRemoteMetaState(prev: ClaudeRemoteMetaState, meta: un
 
     if (typeof record.claudeRemoteAgentSdkEnabled === 'boolean') {
         next.claudeRemoteAgentSdkEnabled = record.claudeRemoteAgentSdkEnabled;
+    }
+
+    if (typeof record.claudeRemoteIdleReclaimEnabled === 'boolean') {
+        next.claudeRemoteIdleReclaimEnabled = record.claudeRemoteIdleReclaimEnabled;
+    }
+    const idleTimeout = CLAUDE_REMOTE_PROVIDER_FIELDS.claudeRemoteIdleReclaimTimeoutMinutes.schema.safeParse(
+        record.claudeRemoteIdleReclaimTimeoutMinutes,
+    );
+    if (idleTimeout.success) {
+        next.claudeRemoteIdleReclaimTimeoutMinutes = idleTimeout.data;
     }
 
     if (typeof record.claudeUnifiedTerminalEnabled === 'boolean') {

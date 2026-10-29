@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SessionClientPort } from '@/api/session/sessionClientPort';
 import type { PermissionMode } from '@/api/types';
 import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
+import { createSessionTurnLifecycle } from '@/agent/runtime/session/turn/lifecycle';
+import type { SessionTurnMutationV1 } from '@/api/session/mutations/sessionMutationTypes';
 import { Session } from './session';
 import { EventEmitter } from 'node:events';
 import { ChildProcess } from 'node:child_process';
@@ -96,6 +98,7 @@ type LocalHarness = {
   session: Session;
   client: SessionClientStub;
   sendSessionEvent: ReturnType<typeof vi.fn>;
+  turnMutations: SessionTurnMutationV1[];
   switchHandlerReady: Promise<RpcHandler>;
   abortHandlerReady: Promise<RpcHandler>;
 };
@@ -169,6 +172,7 @@ function createLocalHarness(options?: {
   const switchDeferred = createDeferred<RpcHandler>();
   const abortDeferred = createDeferred<RpcHandler>();
   const sendSessionEvent = vi.fn();
+  const turnMutations: SessionTurnMutationV1[] = [];
 
   const client = Object.assign(new EventEmitter(), {
     sessionId: 'happy_sess_1',
@@ -176,9 +180,10 @@ function createLocalHarness(options?: {
     updateMetadata: vi.fn(),
     updateAgentStateRequestSettlement: vi.fn(async () => {}),
       updateAgentState: vi.fn(),
-    sessionTurnLifecycle: {
-      failTurn: vi.fn(async () => {}),
-    },
+    sessionTurnLifecycle: createSessionTurnLifecycle({
+      sessionId: 'happy_sess_1',
+      enqueueSessionTurn: async mutation => { turnMutations.push(mutation); },
+    }),
     getMetadataSnapshot: options?.metadataSnapshot ? vi.fn(() => options.metadataSnapshot) : undefined,
     waitForMetadataUpdate: vi.fn(async () => false),
     waitForPendingEligibilityUpdate: vi.fn(async () => false),
@@ -234,6 +239,7 @@ function createLocalHarness(options?: {
     session,
     client,
     sendSessionEvent,
+    turnMutations,
     switchHandlerReady: switchDeferred.promise,
     abortHandlerReady: abortDeferred.promise,
   };
@@ -254,11 +260,12 @@ describe('claudeLocalLauncher', () => {
   });
 
   afterEach(() => {
-    vi.useRealTimers();
     restoreTTY(originalStdinIsTTY, originalStdoutIsTTY);
     for (const session of createdSessions.splice(0)) {
+      session.client.sessionTurnLifecycle?.dispose();
       session.cleanup();
     }
+    vi.useRealTimers();
   });
 
   it('imports the first fresh local transcript after a provisional identity even when the replay baseline is unavailable', async () => {
@@ -995,7 +1002,7 @@ describe('claudeLocalLauncher', () => {
   });
 
   it('surfaces local StopFailure rate-limit hooks as runtime issues', async () => {
-    const { session, client } = createLocalHarness();
+    const { session, turnMutations } = createLocalHarness();
     const localStarted = createDeferred<void>();
     const releaseLocal = createDeferred<void>();
 
@@ -1016,7 +1023,8 @@ describe('claudeLocalLauncher', () => {
     } as any);
 
     await vi.waitFor(() => {
-      expect(client.sessionTurnLifecycle?.failTurn).toHaveBeenCalledWith(expect.objectContaining({
+      expect(turnMutations).toContainEqual(expect.objectContaining({
+        action: 'fail',
         provider: 'claude',
         issue: expect.objectContaining({
           code: 'usage_limit',

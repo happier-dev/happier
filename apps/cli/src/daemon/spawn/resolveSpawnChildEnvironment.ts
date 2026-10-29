@@ -4,7 +4,8 @@ import type { SpawnSessionErrorCode } from '@/rpc/handlers/registerSessionHandle
 import { resolveCanonicalCodexBackendMode } from '@/rpc/handlers/codexBackendMode';
 import { expandEnvironmentVariables } from '@/utils/expandEnvVars';
 import { sanitizeEnvVarRecord } from '@/terminal/runtime/envVarSanitization';
-import type { DaemonSpawnHooks } from '../spawnHooks';
+import { validateDaemonSpawn, type DaemonSpawnHooks } from '../spawnHooks';
+import { readBuiltInCatalogAgentIdFromBackendTarget } from '../sessions/resolveTrackedSessionCatalogAgentId';
 import { buildAuthEnvUnexpandedErrorMessage, findUnexpandedAuthEnvironmentReferences } from './authEnvValidation';
 import { resolveCodexBackendModeForRun } from '@/backends/codex/utils/resolveCodexBackendModeForRun';
 import { SESSION_REQUESTED_DIRECTORY_ENV } from '@/agent/runtime/resolveRequestedSessionDirectory';
@@ -71,8 +72,7 @@ export async function resolveSpawnChildEnvironment(params: {
   const connectedCleanupOnExit = params.connectedServiceAuth?.cleanupOnExit ?? null;
   const materializationDiagnostics = params.connectedServiceAuth?.diagnostics;
 
-  const agentId =
-    params.options.backendTarget?.kind === 'builtInAgent' ? params.options.backendTarget.agentId : null;
+  const agentId = readBuiltInCatalogAgentIdFromBackendTarget(params.options.backendTarget);
   const explicitResumeId = typeof params.options.resume === 'string' && params.options.resume.trim().length > 0
     ? params.options.resume.trim()
     : null;
@@ -154,56 +154,62 @@ export async function resolveSpawnChildEnvironment(params: {
     };
   }
 
-  if (params.daemonSpawnHooks?.validateSpawn) {
-    const validationContext = {
-      directory: params.options.directory,
-      environmentVariables: { ...params.processEnv, ...extraEnv },
-    };
-    const validation = await params.daemonSpawnHooks.validateSpawn({
+  const validationContext = {
+    directory: params.options.directory,
+    environmentVariables: { ...params.processEnv, ...extraEnv },
+  };
+  const validation = await validateDaemonSpawn({
+    hooks: params.daemonSpawnHooks,
+    agentId,
+    runtimeSelection: {
       experimentalCodexAcp: effectiveExperimentalCodexAcp,
       codexBackendMode: effectiveCodexBackendMode,
       ...validationContext,
-    });
-    if (!validation.ok) {
-      const shouldFallbackToMcp =
-        agentId === 'codex' &&
-        effectiveCodexBackendMode === 'acp' &&
-        explicitResumeId === null &&
-        validation.reasonCode === 'codex_acp_unavailable';
+    },
+  });
+  if (!validation.ok) {
+    const shouldFallbackToMcp =
+      agentId === 'codex' &&
+      effectiveCodexBackendMode === 'acp' &&
+      explicitResumeId === null &&
+      validation.reasonCode === 'codex_acp_unavailable';
 
-      if (!shouldFallbackToMcp) {
-        return {
-          ok: false,
-          errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
-          errorMessage: validation.errorMessage,
-          cleanupOnFailure,
-          cleanupOnExit,
-          ...(materializationDiagnostics ? { materializationDiagnostics } : {}),
-        };
-      }
+    if (!shouldFallbackToMcp) {
+      return {
+        ok: false,
+        errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
+        errorMessage: validation.errorMessage,
+        cleanupOnFailure,
+        cleanupOnExit,
+        ...(materializationDiagnostics ? { materializationDiagnostics } : {}),
+      };
+    }
 
-      // New sessions only: fall back to MCP when Codex ACP cannot run.
-      // Explicit resume must fail closed (resuming via MCP is not supported).
-      effectiveExperimentalCodexAcp = undefined;
-      effectiveCodexBackendMode = 'mcp';
-      codexAcpFallbackMessage = `Codex ACP could not start (${sanitizeCodexAcpFallbackDetail(validation.errorMessage)}). Falling back to MCP for this new session.`;
-      params.logWarn(`[DAEMON RUN] ${codexAcpFallbackMessage}`);
+    // New sessions only: fall back to MCP when Codex ACP cannot run.
+    // Explicit resume must fail closed (resuming via MCP is not supported).
+    effectiveExperimentalCodexAcp = undefined;
+    effectiveCodexBackendMode = 'mcp';
+    codexAcpFallbackMessage = `Codex ACP could not start (${sanitizeCodexAcpFallbackDetail(validation.errorMessage)}). Falling back to MCP for this new session.`;
+    params.logWarn(`[DAEMON RUN] ${codexAcpFallbackMessage}`);
 
-      const validationAfterFallback = await params.daemonSpawnHooks.validateSpawn({
+    const validationAfterFallback = await validateDaemonSpawn({
+      hooks: params.daemonSpawnHooks,
+      agentId,
+      runtimeSelection: {
         experimentalCodexAcp: effectiveExperimentalCodexAcp,
         codexBackendMode: effectiveCodexBackendMode,
         ...validationContext,
-      });
-      if (!validationAfterFallback.ok) {
-        return {
-          ok: false,
-          errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
-          errorMessage: validationAfterFallback.errorMessage,
-          cleanupOnFailure,
-          cleanupOnExit,
-          ...(materializationDiagnostics ? { materializationDiagnostics } : {}),
-        };
-      }
+      },
+    });
+    if (!validationAfterFallback.ok) {
+      return {
+        ok: false,
+        errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
+        errorMessage: validationAfterFallback.errorMessage,
+        cleanupOnFailure,
+        cleanupOnExit,
+        ...(materializationDiagnostics ? { materializationDiagnostics } : {}),
+      };
     }
   }
 

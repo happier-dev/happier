@@ -3,6 +3,7 @@ import {
   ConnectedServiceProfileIdSchema,
 } from '@happier-dev/protocol';
 import { z } from 'zod';
+import { lazySchema } from '@happier-dev/protocol';
 
 /**
  * Daemon access-token bridge for the OpenCode Claude broker plugin. Sibling of the Codex
@@ -14,7 +15,7 @@ export const CLAUDE_SUBSCRIPTION_AUTH_TOKENS_REFRESH_PATH =
   '/connected-service-auth/claude-subscription/anthropic-auth-tokens/refresh';
 export const CLAUDE_SUBSCRIPTION_AUTH_TOKENS_REFRESH_SERVICE_ID = 'claude-subscription';
 
-export const ClaudeSubscriptionAuthTokensRefreshSelectionSchema = z.discriminatedUnion('kind', [
+export const ClaudeSubscriptionAuthTokensRefreshSelectionSchema = lazySchema(() => z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('profile'),
     serviceId: z.literal(CLAUDE_SUBSCRIPTION_AUTH_TOKENS_REFRESH_SERVICE_ID),
@@ -28,17 +29,17 @@ export const ClaudeSubscriptionAuthTokensRefreshSelectionSchema = z.discriminate
     fallbackProfileId: ConnectedServiceProfileIdSchema,
     generation: z.number().int().nonnegative(),
   }),
-]);
+]));
 
 export type ClaudeSubscriptionAuthTokensRefreshSelection =
   z.infer<typeof ClaudeSubscriptionAuthTokensRefreshSelectionSchema>;
 
-export const ClaudeSubscriptionAuthTokensRefreshResponseSchema = z.object({
+export const ClaudeSubscriptionAuthTokensRefreshResponseSchema = lazySchema(() => z.object({
   accessToken: z.string().min(1),
   anthropicAccountId: z.string().nullable(),
   expiresAt: z.number().nullable(),
   selectionEpoch: z.number().int().nonnegative().optional(),
-});
+}));
 
 export type ClaudeSubscriptionAuthTokensRefreshResponse =
   z.infer<typeof ClaudeSubscriptionAuthTokensRefreshResponseSchema>;

@@ -11,6 +11,7 @@ import { mapCommittedGenerationApplyResult } from '../accountGroups/generation/m
 import { buildConnectedServiceAuthGroupCommittedGenerationFact } from '../sessionAuthSwitch/connectedServiceAuthSwitchOutcome';
 import { DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1 } from '../accountGroups/selection/selectConnectedServiceAuthGroupCandidate';
 import { createDaemonConnectedServiceAuthGroupSwitchCoordinator } from './createDaemonConnectedServiceAuthGroupSwitchCoordinator';
+import { handleConnectedServiceRuntimeAuthFailureForSession } from './handleConnectedServiceRuntimeAuthFailureForSession';
 
 function group(activeProfileId: string, generation: number): ConnectedServiceAuthGroupV1 {
   return {
@@ -152,6 +153,48 @@ function createTestDaemonConnectedServiceAuthGroupSwitchCoordinator(
 }
 
 describe('createDaemonConnectedServiceAuthGroupSwitchCoordinator', () => {
+  it('recovers an unattributed goal failure through fresh pool probes without stamping an unproven member', async () => {
+    let current = group('primary', 1);
+    current.policy = { ...current.policy, strategy: 'least_limited', recoveryMode: 'switch_or_wait' };
+    const snapshots = new Map<string, ProviderAccountUsageSnapshotV1>();
+    const updateRuntimeState = vi.fn(async () => current);
+    const api = {
+      getConnectedServiceAuthGroup: async () => current,
+      updateConnectedServiceAuthGroupRuntimeState: updateRuntimeState,
+      updateConnectedServiceAuthGroupActiveProfile: async (input: { activeProfileId: string }) => {
+        current = { ...current, activeProfileId: input.activeProfileId, generation: current.generation + 1 };
+        return current;
+      },
+    };
+    const probed: string[] = [];
+    const coordinator = createTestDaemonConnectedServiceAuthGroupSwitchCoordinator({
+      api, runtimeQuotaSnapshots: new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore(),
+      accountUsageStore: { resolveBySource: ({ profileId }) => snapshots.get(profileId) ?? null },
+      quotaFreshnessMs: 60_000, nowMs: () => 1_000, restartSession: async () => {},
+      probeQuotaSnapshotsForGroup: async ({ profileIds }) => {
+        for (const profileId of profileIds) {
+          probed.push(profileId);
+          snapshots.set(profileId, accountUsageSnapshot(profileId, profileId === 'backup' ? 90 : 0));
+        }
+      },
+    });
+    const tracked = { startedBy: 'daemon' as const, happySessionId: 'goal-pool-failure', pid: 123,
+      spawnOptions: { directory: '/tmp/project' } };
+    const result = await handleConnectedServiceRuntimeAuthFailureForSession({
+      sessionId: tracked.happySessionId, getChildren: () => [tracked], switchesThisTurn: 0,
+      classification: { kind: 'usage_limit', serviceId: 'openai-codex', profileId: null, groupId: null,
+        resetsAtMs: null, planType: null, rateLimits: null, source: 'structured_provider_error' },
+      resolveRegisteredRuntimeAuthFailureSource: () => ({ serviceId: 'openai-codex', groupId: 'main',
+        profileId: 'primary', generation: 1, credentialRevision: 'csr_testcredentialrevision' }),
+      switchCoordinator: coordinator,
+    });
+    expect(result).toMatchObject({ status: 'switch_attempted', result: { status: 'switched', activeProfileId: 'backup' } });
+    expect(probed).toContain('backup');
+    expect(current.activeProfileId).toBe('backup');
+    expect(updateRuntimeState).not.toHaveBeenCalled();
+    expect(current.members.map(member => member.state)).toEqual([{ v: 1 }, { v: 1 }]);
+  });
+
   it('loads group state, commits the selected member, and requests a session restart for rematerialization', async () => {
     const backupRevision = 'csr_abcdefghijklmnopqrstuv';
     const api = {

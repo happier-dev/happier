@@ -40,6 +40,16 @@ keeps icons and images legible against the palette you chose.
 
 ## Moving themes around
 
+The current development implementation synchronizes custom themes through account
+settings. Creating, importing, or editing a theme makes it available to other
+clients signed into that account. Your light/dark selections stay on each device.
+Earlier clients keep custom themes locally; synchronization requires a client
+release containing this change.
+
+Existing local themes migrate into the account library when settings synchronize.
+Conflicting profiles are preserved separately, and an interrupted migration keeps
+the local originals for retry.
+
 Export a theme to JSON and import it on another device, or share it. The export
 is versioned, so a file made today keeps working as the token set grows.
 
@@ -78,7 +88,7 @@ stops turning. These choices are saved per device.
 
 | Thing | Limit |
 | --- | --- |
-| Custom theme profiles | 50 |
+| Creating or importing custom theme profiles | 50 in the library; migration preserves existing profiles beyond this limit |
 | Size of an imported file | 64 KB |
 | Colour overrides per mode | 300 |
 | Theme name length | 64 characters |

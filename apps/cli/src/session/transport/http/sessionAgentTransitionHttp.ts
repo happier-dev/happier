@@ -4,6 +4,7 @@ import { z } from 'zod';
 import type { SessionStoredMessageContent } from '@happier-dev/protocol';
 
 import { resolveServerHttpBaseUrl } from './serverHttpBaseUrl';
+import { lazySchema } from '@happier-dev/protocol';
 
 /**
  * Daemon client for the owner-only Agent-transition cutover.
@@ -31,12 +32,12 @@ import { resolveServerHttpBaseUrl } from './serverHttpBaseUrl';
  * function.
  */
 
-const CutoverSuccessSchema = z.object({
+const CutoverSuccessSchema = lazySchema(() => z.object({
   success: z.literal(true),
   dividerSeq: z.number().int().min(0),
-}).strict();
+}).strict());
 
-const CutoverNoEffectErrorSchema = z.enum([
+const CutoverNoEffectErrorSchema = lazySchema(() => z.enum([
   'invalid-params',
   'forbidden',
   'session-not-found',
@@ -44,9 +45,9 @@ const CutoverNoEffectErrorSchema = z.enum([
   'session-active',
   'version-mismatch',
   'internal',
-]);
+]));
 
-const CutoverConflictSchema = z.discriminatedUnion('effect', [
+const CutoverConflictSchema = lazySchema(() => z.discriminatedUnion('effect', [
   z.object({
     effect: z.literal('none'),
     error: CutoverNoEffectErrorSchema,
@@ -55,7 +56,7 @@ const CutoverConflictSchema = z.discriminatedUnion('effect', [
     effect: z.literal('current_view_committed'),
     error: z.enum(['divider-conflict', 'divider-rejected', 'internal']),
   }).passthrough(),
-]);
+]));
 
 export type SessionAgentTransitionCutoverResponse =
   | Readonly<{ ok: true; dividerSeq: number }>

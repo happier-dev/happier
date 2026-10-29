@@ -177,8 +177,7 @@ describe('StructuredReferencesRow', () => {
         expect(screen.getTextContent()).not.toContain('Title at compose time');
 
         await pressTestInstanceAsync(chip!, 'transcript-session-reference:other-session');
-        expect(routerNavigateSpy).toHaveBeenCalledWith('/session/other-session', expect.any(Object));
-        expect(routerNavigateSpy.mock.calls[0]?.[1]?.dangerouslySingular?.()).toBe('session');
+        expect(routerPushSpy).toHaveBeenCalledWith('/session/other-session');
     });
 
     it('keeps the composed label when a present session has no resolved metadata', async () => {

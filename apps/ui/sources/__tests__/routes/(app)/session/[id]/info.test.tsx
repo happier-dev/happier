@@ -2,7 +2,7 @@ import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 
-import { createSessionFixture, flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createDeferred, createSessionFixture, flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
 import { createServerFetchWithReachabilityProbe, matchServerFetchUrl } from '@/dev/testkit/mocks/serverFetch';
 import { createStorageModuleStub, createStorageStoreProxy } from '@/dev/testkit/mocks/storage';
@@ -16,6 +16,7 @@ import { installSessionRouteCommonModuleMocks } from './sessionRouteTestHelpers'
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 let mockSessionId = 'session-1';
+let mockNavigationFocused = true;
 const realStorageRef = vi.hoisted(() => ({ current: null as typeof import('@/sync/domains/state/storageStore')['storage'] | null }));
 let mockServerId: string | undefined;
 let mockSession: any = null;
@@ -128,6 +129,7 @@ const hydrateSpy = vi.fn((sessionId: string, _tag: string, options?: { serverId?
 );
 
 const routerMock = createExpoRouterMock({
+    navigation: { isFocused: () => mockNavigationFocused },
     router: {
         push: routerPushSpy,
         navigate: routerNavigateSpy,
@@ -433,6 +435,7 @@ describe('/session/[id]/info', () => {
         actionsSettings = settingsDefaults.actionsSettingsV1;
         storage.getState().applySettingsLocal({ actionsSettingsV1: actionsSettings });
         mockSessionId = 'session-1';
+        mockNavigationFocused = true;
         mockServerId = undefined;
         mockSession = null;
         isDataReady = true;
@@ -776,7 +779,7 @@ describe('/session/[id]/info', () => {
 
         const helperParams = completeSessionForkNavigationSpy.mock.calls[0]?.[0] as any;
         await act(async () => { helperParams.navigate('next-child'); });
-        expect(routerNavigateSpy).toHaveBeenCalledWith('/session/next-child?serverId=server-b', expect.any(Object));
+        expect(routerPushSpy).toHaveBeenCalledWith('/session/next-child?serverId=server-b');
     });
 
     it('fails closed and hides the handoff quick action when direct peer truth is runtime-unknown and server-routed fallback would make the UI untruthful', async () => {
@@ -2044,28 +2047,21 @@ describe('/session/[id]/info', () => {
         deleteBoundarySpies.push(fetch);
 
         const screen = await renderInfoScreen();
-        screen.pressByTestId('sessionInfo.deleteSession');
+        const confirmation = createDeferred<boolean>();
+        modalConfirmSpy.mockReturnValueOnce(confirmation.promise);
+        const deletion = screen.pressByTestIdAsync('sessionInfo.deleteSession');
 
-        expect(modalAlertSpy).toHaveBeenCalledWith(
+        expect(modalConfirmSpy).toHaveBeenCalledWith(
             'sessionInfo.deleteSession',
             'sessionInfo.deleteSessionWarning',
-            expect.arrayContaining([
-                expect.objectContaining({ text: 'common.cancel', style: 'cancel' }),
-                expect.objectContaining({ text: 'sessionInfo.deleteSession', style: 'destructive' }),
-            ]),
+            expect.objectContaining({ destructive: true }),
         );
 
-        const alertButtons = modalAlertSpy.mock.calls[0]?.[2];
-        const deleteButton = alertButtons?.find((button: { text?: string }) => button.text === 'sessionInfo.deleteSession');
-        if (!deleteButton?.onPress) {
-            throw new Error('expected delete confirmation button to expose onPress');
-        }
         expect(fetch.mock.calls.some(([, init]) => init?.method === 'DELETE')).toBe(false);
         expect(activeRequest).not.toHaveBeenCalled();
 
-        await act(async () => {
-            await deleteButton.onPress();
-        });
+        confirmation.resolve(true);
+        await deletion;
 
         const request = fetch.mock.calls.find(([, init]) => init?.method === 'DELETE');
         expect(request?.[0]).toEqual(matchServerFetchUrl('https://server-b/v1/sessions/session-1'));
@@ -2082,6 +2078,45 @@ describe('/session/[id]/info', () => {
             router: expect.any(Object),
             fallbackHref: '/',
         });
+    });
+
+    it('removes the deleted session without navigating when the info route loses focus before deletion completes', async () => {
+        mockServerId = 'server-b';
+        setSessionOwnerServer('server-b');
+        sessionIsConnected = false;
+        const session = createSessionFixture({ id: 'session-1', serverId: 'server-b', active: false, presence: 0 });
+        mockSession = session;
+        storage.setState({ sessionListViewDataByServerId: {
+            'server-b': [{ type: 'session', serverId: 'server-b', session: buildSessionListRenderableFromSession(session) }],
+        } });
+        deleteBoundarySpies.push(vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({
+            token: 'header.eyJzdWIiOiJtZSJ9.signature',
+        }));
+        const response = createDeferred<Response>();
+        const deleteStarted = createDeferred<void>();
+        const transport = createServerFetchWithReachabilityProbe(async (_input, init) => {
+            if (init?.method === 'DELETE') {
+                deleteStarted.resolve();
+                return response.promise;
+            }
+            return Response.json({});
+        });
+        const fetch = vi.spyOn(runtimeFetch, 'runtimeFetch').mockImplementation(async (input, init) => {
+            const result = await transport(input, init);
+            if (!(result instanceof Response)) throw new Error('Expected an HTTP response from the transport fixture');
+            return result;
+        });
+        deleteBoundarySpies.push(fetch);
+        const screen = await renderInfoScreen();
+        const deletion = screen.pressByTestIdAsync('sessionInfo.deleteSession');
+        await deleteStarted.promise;
+
+        mockNavigationFocused = false;
+        response.resolve(Response.json({ success: true }));
+        await deletion;
+
+        expect(storage.getState().sessionListViewDataByServerId['server-b']).toEqual([]);
+        expect(safeRouterBackSpy).not.toHaveBeenCalled();
     });
 
     it('keeps the session when it becomes active while delete confirmation is open', async () => {
@@ -2101,18 +2136,46 @@ describe('/session/[id]/info', () => {
         const fetch = vi.spyOn(runtimeFetch, 'runtimeFetch').mockResolvedValue(Response.json({ success: true }));
         deleteBoundarySpies.push(activeRequest, fetch);
         const screen = await renderInfoScreen();
-        screen.pressByTestId('sessionInfo.deleteSession');
-        const deleteButton = modalAlertSpy.mock.calls[0]?.[2]?.find((button: { style?: string }) => button.style === 'destructive');
-        if (!deleteButton?.onPress) throw new Error('Expected delete confirmation');
+        const confirmation = createDeferred<boolean>();
+        modalConfirmSpy.mockReturnValueOnce(confirmation.promise);
+        const deletion = screen.pressByTestIdAsync('sessionInfo.deleteSession');
+        const rejectedDeletion = expect(deletion).rejects.toBeInstanceOf(HappyError);
+        expect(modalConfirmSpy).toHaveBeenCalledWith(
+            'sessionInfo.deleteSession',
+            'sessionInfo.deleteSessionWarning',
+            expect.objectContaining({ destructive: true }),
+        );
         storage.setState({ sessionListViewDataByServerId: {
             'server-b': [{ type: 'session', serverId: 'server-b', session: { ...renderable, active: true } }],
         } });
 
-        await act(async () => {
-            await expect(deleteButton.onPress()).rejects.toBeInstanceOf(HappyError);
-        });
+        confirmation.resolve(true);
+        await rejectedDeletion;
 
         expect(fetch.mock.calls.some(([, init]) => init?.method === 'DELETE')).toBe(false);
+        expect(activeRequest).not.toHaveBeenCalled();
+        expect(storage.getState().sessionListViewDataByServerId['server-b']?.some((row) => row.type === 'session' && row.session.id === session.id)).toBe(true);
+        expect(safeRouterBackSpy).not.toHaveBeenCalled();
+    });
+
+    it('keeps the info screen and session when delete confirmation is cancelled', async () => {
+        mockServerId = 'server-b';
+        setSessionOwnerServer('server-b');
+        sessionIsConnected = false;
+        const session = createSessionFixture({ id: 'session-1', serverId: 'server-b', active: false, presence: 0 });
+        mockSession = session;
+        storage.setState({ sessionListViewDataByServerId: {
+            'server-b': [{ type: 'session', serverId: 'server-b', session: buildSessionListRenderableFromSession(session) }],
+        } });
+        const activeRequest = vi.spyOn(apiSocket, 'request').mockResolvedValue(Response.json({ success: true }));
+        const fetch = vi.spyOn(runtimeFetch, 'runtimeFetch').mockResolvedValue(Response.json({ success: true }));
+        deleteBoundarySpies.push(activeRequest, fetch);
+        modalConfirmSpy.mockResolvedValueOnce(false);
+
+        const screen = await renderInfoScreen();
+        await screen.pressByTestIdAsync('sessionInfo.deleteSession');
+
+        expect(fetch).not.toHaveBeenCalled();
         expect(activeRequest).not.toHaveBeenCalled();
         expect(storage.getState().sessionListViewDataByServerId['server-b']?.some((row) => row.type === 'session' && row.session.id === session.id)).toBe(true);
         expect(safeRouterBackSpy).not.toHaveBeenCalled();

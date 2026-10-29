@@ -1,13 +1,14 @@
 import { z } from 'zod';
 
 import { SCM_COMMIT_MESSAGE_MAX_LENGTH } from '@happier-dev/protocol';
+import { lazySchema } from '@happier-dev/protocol';
 
-const ModelOutputSchema = z.object({
+const ModelOutputSchema = lazySchema(() => z.object({
   title: z.string().min(1).max(200),
   body: z.string().max(20_000).optional(),
   message: z.string().max(SCM_COMMIT_MESSAGE_MAX_LENGTH).optional(),
   confidence: z.number().min(0).max(1).optional(),
-}).passthrough();
+}).passthrough());
 
 export type CommitMessageModelOutput = z.infer<typeof ModelOutputSchema>;
 

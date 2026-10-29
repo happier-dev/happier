@@ -11,6 +11,7 @@ import { createConfiguredAcpProbeBackend } from './createConfiguredAcpProbeBacke
 import { buildAgentProbeCacheKey } from './buildAgentProbeCacheKey';
 import { resolveAgentProbeVariant } from './resolveAgentProbeVariant';
 import { z } from 'zod';
+import { lazySchema } from '@happier-dev/protocol';
 
 export type ProbedAgentMode = Readonly<{ id: string; name: string; description?: string }>;
 
@@ -28,23 +29,23 @@ const agentModesProbeCache = new AsyncTtlCache<ProbedAgentModesResult>({
   successTtlMs: PROBE_MODES_SUCCESS_TTL_MS,
   errorTtlMs: PROBE_MODES_FAILURE_TTL_MS,
 });
-const ProbeNonEmptyStringSchema = z.string().trim().min(1);
-const ProbeDescriptionSchema = z.string();
-const ProbeModeInputSchema = z.object({
+const ProbeNonEmptyStringSchema = lazySchema(() => z.string().trim().min(1));
+const ProbeDescriptionSchema = lazySchema(() => z.string());
+const ProbeModeInputSchema = lazySchema(() => z.object({
   id: ProbeNonEmptyStringSchema,
   name: ProbeNonEmptyStringSchema,
   description: ProbeDescriptionSchema.optional(),
-});
-const ProbeModeConfigCandidateSchema = z.object({
+}));
+const ProbeModeConfigCandidateSchema = lazySchema(() => z.object({
   id: z.string().optional(),
   name: z.string().optional(),
   options: z.array(z.unknown()).optional(),
-});
-const ProbeModeChoiceInputSchema = z.object({
+}));
+const ProbeModeChoiceInputSchema = lazySchema(() => z.object({
   value: ProbeNonEmptyStringSchema,
   name: ProbeNonEmptyStringSchema,
   description: ProbeDescriptionSchema.optional(),
-});
+}));
 
 function buildStatic(agentId: CatalogAgentId): ProbedAgentModesResult {
   return { provider: agentId, availableModes: [], source: 'static' };

@@ -1,6 +1,7 @@
 import { invokeTauri, isTauriDesktop, listenTauriEvent } from '@/utils/platform/tauri';
 
 export const DESKTOP_WINDOW_CHROME_POLICY_COMMAND = 'desktop_get_window_chrome_policy';
+export const DESKTOP_WINDOW_SET_NATIVE_TITLE_BAR_COMMAND = 'desktop_set_native_title_bar';
 export const DESKTOP_WINDOW_STATE_COMMAND = 'desktop_get_window_state';
 export const DESKTOP_WINDOW_MINIMIZE_COMMAND = 'desktop_minimize_window';
 export const DESKTOP_WINDOW_TOGGLE_MAXIMIZE_COMMAND = 'desktop_toggle_window_maximize';
@@ -14,10 +15,14 @@ export const DESKTOP_WINDOW_EVENTS = {
 export type DesktopWindowChromeStrategy =
     | 'none'
     | 'native-macos-traffic-lights'
+    | 'native-windows-frame'
     | 'custom-controls';
 
 export interface DesktopWindowChromePolicy {
     strategy: DesktopWindowChromeStrategy;
+    /** Absent on older desktop binaries and outside the Windows main window. */
+    canSetNativeTitleBar?: boolean;
+    nativeTitleBarPersistenceError?: boolean;
 }
 
 export interface DesktopWindowState {
@@ -40,12 +45,42 @@ function normalizeDesktopWindowChromePolicy(value: unknown): DesktopWindowChrome
     if (
         strategy !== 'none'
         && strategy !== 'native-macos-traffic-lights'
+        && strategy !== 'native-windows-frame'
         && strategy !== 'custom-controls'
     ) {
         return DISABLED_DESKTOP_WINDOW_CHROME_POLICY;
     }
 
-    return { strategy };
+    const payload = value as Partial<DesktopWindowChromePolicy>;
+    return {
+        strategy,
+        ...(payload.canSetNativeTitleBar === true ? { canSetNativeTitleBar: true } : {}),
+        ...(payload.nativeTitleBarPersistenceError === true ? { nativeTitleBarPersistenceError: true } : {}),
+    };
+}
+
+const chromePolicyListeners = new Set<(policy: DesktopWindowChromePolicy) => void>();
+
+export function subscribeDesktopWindowChromePolicy(listener: (policy: DesktopWindowChromePolicy) => void): () => void {
+    chromePolicyListeners.add(listener);
+    return () => { chromePolicyListeners.delete(listener); };
+}
+
+export function desktopWindowChromeUsesAppDragRegions(policy: DesktopWindowChromePolicy): boolean {
+    return policy.strategy === 'custom-controls' || policy.strategy === 'native-macos-traffic-lights';
+}
+
+export async function setDesktopNativeTitleBar(useNativeTitleBar: boolean): Promise<DesktopWindowChromePolicy> {
+    const policy = normalizeDesktopWindowChromePolicy(await invokeTauri<unknown>(
+        DESKTOP_WINDOW_SET_NATIVE_TITLE_BAR_COMMAND, { useNativeTitleBar },
+    ));
+    if (policy.canSetNativeTitleBar !== true) {
+        throw new Error('Native title bar preference is unavailable');
+    }
+    // The main webview is the only writer. Publish the native owner's effective policy,
+    // including a failed save, so settings, controls and drag regions agree immediately.
+    for (const listener of chromePolicyListeners) listener(policy);
+    return policy;
 }
 
 function normalizeDesktopWindowState(value: unknown): DesktopWindowState {

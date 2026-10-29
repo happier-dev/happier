@@ -43,6 +43,7 @@ import {
 import { createTransferPayloadFileSink, type TransferPayloadFileResult } from './transferPayloadFileSink';
 import { IN_MEMORY_TRANSFER_SIZE_LIMIT_ERROR, resolveInMemoryTransferMaxBytes } from './inMemoryTransferSizeLimit';
 import { clampTransferChunkBytes } from './transferChunkSizeLimit';
+import { lazySchema } from '@happier-dev/protocol';
 
 // Direct-peer transfers are used for session handoff + workspace replication, which can take
 // significantly longer than 30s on large repos/slow disks/VMs (host <-> Lima). Keep the default
@@ -885,13 +886,13 @@ export function createDirectPeerTransferRegistry(params: Readonly<{
   };
 }
 
-const DirectPeerTransferResponseSchema = z
+const DirectPeerTransferResponseSchema = lazySchema(() => z
   .object({
     transferId: z.string().min(1),
     manifestHash: z.string().min(1),
     totalChunks: z.number().int().positive(),
   })
-  .strict();
+  .strict());
 
 function createInvalidDirectPeerTransferResponseError(transferId: string): Error {
   return new Error(`Invalid direct peer transfer response for ${transferId}`);

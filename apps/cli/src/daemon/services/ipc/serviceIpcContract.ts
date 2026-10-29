@@ -1,8 +1,9 @@
 import { z } from 'zod';
+import { lazySchema } from '@happier-dev/protocol';
 
-const ServiceIdentifierSchema = z.string().min(1);
-const NonNegativeIntegerSchema = z.number().int().nonnegative();
-const PositiveIntegerSchema = z.number().int().positive();
+const ServiceIdentifierSchema = lazySchema(() => z.string().min(1));
+const NonNegativeIntegerSchema = lazySchema(() => z.number().int().nonnegative());
+const PositiveIntegerSchema = lazySchema(() => z.number().int().positive());
 
 export const SERVICE_IPC_MESSAGE_TYPES = ['heartbeat', 'config_update', 'status_update'] as const;
 

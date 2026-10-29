@@ -33,7 +33,8 @@ const claudeConnectedServiceCredentialLifecycleDescriptor: ConnectedServiceCrede
     // `claude` binary re-reads .credentials.json between requests (live-proven 2026-07-08), and
     // the agent-SDK runner additionally refreshes through the daemon getOAuthToken callback.
     // Refreshed claude-subscription credentials therefore apply WITHOUT restarting sessions —
-    // restarts remain only for account SWITCHES (generation applies via the switch coordinator).
+    // Group account switches also apply mid-turn through the shared generation writer/verifier:
+    // the in-flight request finishes on the old account, and the next request uses the new one.
     noRestartRequiredServiceIds: ['claude-subscription'],
   },
   predictiveSoftSwitch: {
@@ -50,7 +51,7 @@ const claudeConnectedServiceCredentialLifecycleDescriptor: ConnectedServiceCrede
   sharedGenerationApplicationServiceIds: ['claude-subscription'],
   runtimeAuthApply: {
     directLiveHotAuth: {
-      supportsInTurnApply: false,
+      supportsInTurnApply: true,
       requiresExactRuntimeIdentity: false,
       refreshSelectionResync: 'not_applicable',
       authMode: {

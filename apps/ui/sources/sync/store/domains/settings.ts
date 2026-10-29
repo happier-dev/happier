@@ -9,8 +9,10 @@ import { applySettings, settingsDefaults, settingsParse, type Settings } from '.
 import { reconcileSettingsReferences } from '../../domains/settings/reconcileSettingsReferences';
 import {
     loadAccountSettings,
+    loadActiveAccountSettingsScope,
     prepareAccountSettingsScopeForActivation,
     saveAccountSettings,
+    saveActiveAccountSettingsScope,
 } from '../../domains/state/accountSettingsPersistence';
 import {
     areAccountSettingsScopesEqual,
@@ -138,7 +140,8 @@ export function createSettingsDomain<S extends SettingsDomain & SettingsDomainDe
     set: StoreSet<S>;
     get: StoreGet<S>;
 }): SettingsDomain {
-    const { settings: rawSettings, version } = loadSettings();
+    const settingsScope = loadActiveAccountSettingsScope();
+    const { settings: rawSettings, version } = settingsScope ? loadAccountSettings(settingsScope) : loadSettings();
     const settings = settingsParse(rawSettings);
     safeSetPreferredLanguageFromSettings(settings.preferredLanguage);
     const localSettings = loadLocalSettings();
@@ -147,7 +150,7 @@ export function createSettingsDomain<S extends SettingsDomain & SettingsDomainDe
     return {
         settings,
         settingsVersion: version,
-        settingsScope: null,
+        settingsScope,
         localSettings,
         purchases,
         applySettingsLocal: (delta) =>
@@ -190,16 +193,24 @@ export function createSettingsDomain<S extends SettingsDomain & SettingsDomainDe
                 prepareAccountSettingsScopeForActivation(scope, legacyScopes);
                 prepareAccountProfileScopeForActivation(scope, legacyScopes);
                 const loaded = loadParsedAccountSettings(scope);
+                const localSettings = legacyScopes.some((legacyScope) => areAccountSettingsScopesEqual(
+                    state.localSettings.themeProfileLegacyAccountScope, legacyScope,
+                )) ? applyLocalSettings(state.localSettings, { themeProfileLegacyAccountScope: scope }) : state.localSettings;
+                if (localSettings !== state.localSettings) saveLocalSettings(localSettings);
+                saveActiveAccountSettingsScope(scope);
                 return {
                     ...buildSettingsProjectionState(state, loaded.settings, loaded.version, scope),
+                    localSettings,
                     purchases: loadAccountPurchases(scope),
                 };
             }),
-        clearSettingsScope: () =>
+        clearSettingsScope: () => {
+            saveActiveAccountSettingsScope(null);
             set((state) => ({
                 ...buildSettingsProjectionState(state, { ...settingsDefaults }, null, null),
                 purchases: { ...purchasesDefaults },
-            })),
+            }));
+        },
         applySettingsForScope: (scope, nextSettings, nextVersion) =>
             set((state) => {
                 if (!shouldAcceptScopedSettings(scope, nextVersion)) {

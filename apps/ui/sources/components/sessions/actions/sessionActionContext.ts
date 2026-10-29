@@ -84,6 +84,7 @@ export function createSessionActionTarget(params: Readonly<{
         canRename: hasAdminAccess,
         canResume,
         canDelete: isOwnedByCurrentUser && !isActive && !hasPreservedTerminalHost && params.isConnected !== true,
+        canStopAndDelete: isOwnedByCurrentUser && (isActive || hasStoppableTerminalHost || params.isConnected === true),
         readStateAction: isArchived
             ? { kind: 'none', visible: false }
             : resolveSessionReadStateAction(session),

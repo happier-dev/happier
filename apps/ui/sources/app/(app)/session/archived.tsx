@@ -16,6 +16,7 @@ import type { SessionListRenderableSession } from '@/sync/domains/session/listin
 import { getSessionAvatarId, getSessionName, getSessionStatus, getSessionSubtitle } from '@/utils/sessions/sessionUtils';
 import { executeSessionAction } from '@/components/sessions/actions/sessionActionExecution';
 import { createSessionActionTarget } from '@/components/sessions/actions/sessionActionContext';
+import { listVisibleSessionActionIds } from '@/components/sessions/actions/sessionActionAvailability';
 import type { SessionActionTarget } from '@/components/sessions/actions/sessionActionTypes';
 import { resolveSessionArchiveServerId } from '@/sync/domains/session/listing/sessionArchiveState';
 import { nowServerMs } from '@/sync/runtime/time';
@@ -280,24 +281,13 @@ export default function ArchivedSessionsScreen() {
     }, []);
 
     const handleDelete = React.useCallback((target: SessionActionTarget) => {
-        const performDelete = () => {
-            fireAndForget(executeSessionAction({
+        fireAndForget(executeSessionAction({
                 actionId: SESSION_ACTION_DELETE_ID,
                 target,
             }), {
                 tag: 'ArchivedSessions.delete',
                 onError: (error) => Modal.alert(t('common.error'), error instanceof Error ? error.message : t('sessionInfo.failedToDeleteSession')),
             });
-        };
-
-        Modal.alert(
-            t('sessionInfo.deleteSession'),
-            t('sessionInfo.deleteSessionWarning'),
-            [
-                { text: t('common.cancel'), style: 'cancel' },
-                { text: t('sessionInfo.deleteSession'), style: 'destructive', onPress: performDelete },
-            ],
-        );
     }, []);
 
     const renderItem = React.useCallback(
@@ -317,7 +307,8 @@ export default function ArchivedSessionsScreen() {
                     isConnected: getSessionStatus(item, nowServerMs()).isConnected,
                 })
                 : null;
-            const canShowUnarchive = actionTarget?.hasAdminAccess === true;
+            const actionIds = actionTarget ? listVisibleSessionActionIds({ target: actionTarget, surface: 'rowMenu' }) : [];
+            const canShowUnarchive = actionIds.includes(SESSION_ACTION_UNARCHIVE_ID);
 
             return (
                 <Pressable
@@ -351,7 +342,7 @@ export default function ArchivedSessionsScreen() {
                             <Icon name="arrow-arc-left" size={16} color={theme.colors.text.secondary} />
                         </Pressable>
                     ) : null}
-                    {actionTarget?.canDelete === true ? (
+                    {actionTarget && actionIds.includes(SESSION_ACTION_DELETE_ID) ? (
                         <Pressable
                             style={styles.actionButton}
                             onPress={() => handleDelete(actionTarget)}

@@ -5,6 +5,7 @@ import { logger } from "@/ui/logger";
 import { createHappierMcpServer } from "@/mcp/createHappierMcpServer";
 import { listBuiltInHappierTools } from "@/agent/tools/happierTools/listBuiltInHappierTools";
 import type { RpcHandlerManagerLike } from "@/api/rpc/types";
+import type { ApiSessionClient } from "@/api/session/sessionClient";
 import type { Metadata, PermissionMode } from "@/api/types";
 import { configuration } from "@/configuration";
 import type { Credentials } from '@/persistence';
@@ -26,6 +27,7 @@ export type HappyMcpSessionClient = {
     sessionId: string;
     rpcHandlerManager: RpcHandlerManagerLike;
     sendClaudeSessionMessage(message: any, meta?: Record<string, unknown>): void;
+    sendSessionEvent?: ApiSessionClient['sendSessionEvent'];
     updateMetadata(updater: (metadata: Metadata) => Metadata): void | Promise<void>;
     getMetadataSnapshot?(): Metadata | null;
     getPermissionMode?(): PermissionMode | null | undefined;

@@ -4630,7 +4630,7 @@ describe('runCodex CodexACP resume behavior', () => {
     });
   });
 
-  it('settles the Codex turn before surfacing connected-service recovery without duplicating the raw process error', async () => {
+  it('surfaces the app-server terminal owner\'s connected-service recovery once without duplicating the raw process error', async () => {
     resolveRunnerMcpServersSpy.mockImplementationOnce(async () => ({
       happierMcpServer: { url: 'http://127.0.0.1:0', stop: vi.fn() },
       mcpServers: {},
@@ -4649,7 +4649,13 @@ describe('runCodex CodexACP resume behavior', () => {
     const providerError = Object.assign(new Error('unexpected status 401 Unauthorized: token_invalidated bearer secret-test-token'), {
       runtimeAuthClassification,
     });
-    const appServerRuntime = {
+    const flushTurn = vi.fn(async () => {});
+    // The app-server runtime's accepted terminal failure owns the report: it settles
+    // the provider turn and reports through onUsageLimitGroupRecovery before the
+    // prompt rejects. runCodex must neither flush nor report it a second time.
+    createCodexAppServerRuntimeSpy.mockImplementationOnce((runtimeParams: {
+      onUsageLimitGroupRecovery: (input: { classification: typeof runtimeAuthClassification }) => Promise<unknown>;
+    }) => ({
       getSessionId: () => 'thread-runtime-auth',
       supportsInFlightSteer: () => false,
       isTurnInFlight: () => false,
@@ -4662,23 +4668,20 @@ describe('runCodex CodexACP resume behavior', () => {
       setSessionConfigOption: vi.fn(async () => {}),
       steerPrompt: vi.fn(async () => {}),
       sendPrompt: vi.fn(async () => {
+        await runtimeParams.onUsageLimitGroupRecovery({ classification: runtimeAuthClassification });
         throw providerError;
       }),
       compactContext: vi.fn(async () => {}),
-      flushTurn: vi.fn(async () => {}),
+      flushTurn,
       rollbackConversation: vi.fn(async () => ({ ok: true as const, target: { type: 'latest_turn' }, threadId: 'thread-runtime-auth' })),
-    };
-    createCodexAppServerRuntimeSpy.mockImplementationOnce(() => appServerRuntime);
-    notifyDaemonConnectedServiceRuntimeAuthFailureSpy.mockImplementationOnce(async () => {
-      expect(appServerRuntime.flushTurn).toHaveBeenCalledOnce();
-      return {
-        ok: true,
-        result: {
-          status: 'credential_refreshed',
-          restartRequested: true,
-        },
-      };
-    });
+    }));
+    notifyDaemonConnectedServiceRuntimeAuthFailureSpy.mockImplementationOnce(async () => ({
+      ok: true,
+      result: {
+        status: 'credential_refreshed',
+        restartRequested: true,
+      },
+    }));
 
     let waitCallCount = 0;
     sessionInputConsumerWaitForNextInputImpl = async () => {
@@ -4710,6 +4713,7 @@ describe('runCodex CodexACP resume behavior', () => {
       .catch((error: unknown) => ({ ok: false as const, error }));
 
     expect(outcome).toMatchObject({ ok: true });
+    expect(notifyDaemonConnectedServiceRuntimeAuthFailureSpy).toHaveBeenCalledTimes(1);
     expect(notifyDaemonConnectedServiceRuntimeAuthFailureSpy).toHaveBeenCalledWith(
       expect.objectContaining({
         sessionId: 'sess_1',
@@ -4718,6 +4722,7 @@ describe('runCodex CodexACP resume behavior', () => {
       }),
       expect.objectContaining({ timeoutMs: CONNECTED_SERVICE_RUNTIME_AUTH_FAILURE_REPORT_TIMEOUT_MS }),
     );
+    expect(flushTurn).not.toHaveBeenCalled();
     const emittedMessages = (lastSessionClient?.sendSessionEvent as ReturnType<typeof vi.fn> | undefined)?.mock.calls
       .map((call) => call[0]?.message)
       .filter((message): message is string => typeof message === 'string') ?? [];

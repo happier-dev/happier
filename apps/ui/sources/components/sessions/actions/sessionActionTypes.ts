@@ -51,6 +51,7 @@ export type SessionActionTarget = Readonly<{
     canRename: boolean;
     canResume: boolean;
     canDelete: boolean;
+    canStopAndDelete: boolean;
     readStateAction: SessionReadStateAction;
     attentionStandingAction: SessionAttentionStandingAction;
 }>;
@@ -86,7 +87,7 @@ export type SessionActionExecutionOperations = Readonly<{
     unarchiveSession?: (sessionId: string, opts?: Readonly<{ serverId?: string | null }>) => Promise<SessionActionOperationResult>;
     renameSession?: (sessionId: string, title: string, opts?: Readonly<{ serverId?: string | null }>) => Promise<SessionActionOperationResult>;
     resumeSession?: (sessionId: string) => void | Promise<void>;
-    deleteSession?: (sessionId: string, opts?: Readonly<{ serverId?: string | null }>) => Promise<SessionActionOperationResult>;
+    deleteSession?: (sessionId: string, opts?: Readonly<{ serverId?: string | null }> & SessionArchiveRequestOptions) => Promise<SessionActionOperationResult>;
     setPinned?: (
         sessionId: string,
         pinned: boolean,

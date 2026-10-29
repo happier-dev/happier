@@ -27,6 +27,7 @@ import {
   resolveJavaScriptRuntimePathEntries,
 } from './managedJavaScriptRuntime.js';
 import { buildManagedPnpmEnvironment, ensureManagedPnpmCommand, readRawPnpmOverride } from './managedPnpm.js';
+import type { ManagedToolBootstrapOptions, ManagedToolBootstrapProgress } from './managedToolBootstrap.js';
 import { resolveHappyHomeDirFromEnvironment } from './resolveHappyHomeDir.js';
 import {
   resolveProviderCliCommand,
@@ -193,6 +194,8 @@ export async function promoteManagedInstallCandidate(params: Readonly<{
   logPath: string;
   deps?: ManagedInstallPromotionDeps;
   activateVersionedRelease?: boolean;
+  signal?: AbortSignal;
+  onProgress?: ManagedToolBootstrapOptions['onProgress'];
 }>): Promise<void> {
   const currentDir = join(params.installRoot, 'current');
   const previousDir = join(params.installRoot, `previous-${randomUUID()}`);
@@ -203,6 +206,7 @@ export async function promoteManagedInstallCandidate(params: Readonly<{
   await mkdir(params.installRoot, { recursive: true });
   let waitReported = false;
   await withWorkspaceBundleLock(async () => {
+    params.signal?.throwIfAborted();
     if (
       params.activateVersionedRelease
       && process.platform !== 'win32'
@@ -254,9 +258,11 @@ export async function promoteManagedInstallCandidate(params: Readonly<{
     timeoutMs: 60_000,
     staleAfterMs: 60_000,
     errorLabel: 'managed provider install lock',
+    signal: params.signal,
     onWait: ({ waitedMs }) => {
       if (waitReported) return;
       waitReported = true;
+      params.onProgress?.({ t: 'progress', phase: 'waiting-for-lock' });
       appendInstallLogBestEffort(params.logPath, `# waiting for managed provider install lock after ${waitedMs}ms`);
     },
   });
@@ -423,6 +429,27 @@ function appendInstallLogBestEffort(logPath: string, line: string): void {
   }
 }
 
+function createInstallProgressReporter(
+  logPath: string,
+  onProgress: ManagedToolBootstrapOptions['onProgress'],
+): NonNullable<ManagedToolBootstrapOptions['onProgress']> {
+  let lastPhase: ManagedToolBootstrapProgress['phase'] | undefined;
+  let completionReported = false;
+  return (event) => {
+    const phaseChanged = event.phase !== lastPhase;
+    if (phaseChanged) completionReported = false;
+    const complete = event.bytesTotal !== undefined && event.bytesDone === event.bytesTotal;
+    // Keep default install logs useful without one synchronous write per network chunk.
+    if (phaseChanged || (complete && !completionReported)) {
+      const bytes = event.bytesDone === undefined ? '' : ` bytes=${event.bytesDone}/${event.bytesTotal ?? 'unknown'}`;
+      appendInstallLogBestEffort(logPath, `# progress: ${event.phase}${bytes}`);
+    }
+    lastPhase = event.phase;
+    completionReported ||= complete;
+    onProgress?.(event);
+  };
+}
+
 function resolveProviderToolInstallDir(providerId: AgentId, env: NodeJS.ProcessEnv): string {
   return join(resolveHappyHomeDirFromEnvironment(env), 'tools', 'providers', providerId);
 }
@@ -476,6 +503,7 @@ async function runLoggedProviderCommand(params: Readonly<{
   logPath: string;
   timeoutMs: number;
   runCommand: typeof runCommandCapture;
+  signal?: AbortSignal;
 }>): Promise<LoggedCommandOutcome> {
   const result = await params.runCommand({
     cmd: params.cmd,
@@ -483,13 +511,18 @@ async function runLoggedProviderCommand(params: Readonly<{
     env: params.env,
     ...(params.cwd ? { cwd: params.cwd } : {}),
     timeoutMs: params.timeoutMs,
+    signal: params.signal,
     resolveCommandOnPath: true,
   });
   if (result.kind === 'spawn-failed') {
     appendCommandLog(params.logPath, params.cmd, params.args, '', result.message, null, null);
     return { kind: 'exec-failed', message: result.message };
   }
-  if (result.kind === 'aborted') throw result.error;
+  if (result.kind === 'aborted') {
+    appendCommandLog(params.logPath, params.cmd, params.args, '', '', null, 'SIGTERM');
+    throw result.error;
+  }
+  params.signal?.throwIfAborted();
   if (result.kind === 'timed-out') {
     appendCommandLog(params.logPath, params.cmd, params.args, result.stdout, result.stderr, null, 'SIGTERM');
     appendLogLine(params.logPath, `# command timed out after ${params.timeoutMs}ms`);
@@ -769,8 +802,11 @@ async function installManagedPackageProviderCli(params: Readonly<{
   env: NodeJS.ProcessEnv;
   logPath: string;
   deps: InstallProviderCliDeps;
+  signal?: AbortSignal;
+  onProgress?: ManagedToolBootstrapOptions['onProgress'];
 }>): Promise<void> {
-  const pnpmCommand = await (params.deps.ensureManagedPnpmCommand ?? ensureManagedPnpmCommand)(params.env);
+  const bootstrapOptions = { signal: params.signal, onProgress: params.onProgress };
+  const pnpmCommand = await (params.deps.ensureManagedPnpmCommand ?? ensureManagedPnpmCommand)(params.env, undefined, bootstrapOptions);
   if (!pnpmCommand) {
     const rawPnpmOverride = readRawPnpmOverride(params.env);
     if (rawPnpmOverride) {
@@ -781,7 +817,7 @@ async function installManagedPackageProviderCli(params: Readonly<{
     throw new Error('Managed pnpm is unavailable');
   }
   const jsRuntimeCommand =
-    await (params.deps.ensureManagedJavaScriptRuntimeCommand ?? ensureManagedJavaScriptRuntimeCommand)(params.env);
+    await (params.deps.ensureManagedJavaScriptRuntimeCommand ?? ensureManagedJavaScriptRuntimeCommand)(params.env, undefined, bootstrapOptions);
   if (!jsRuntimeCommand) {
     const rawRuntimeOverride = readExplicitJavaScriptRuntimeCommand(params.env);
     if (rawRuntimeOverride) {
@@ -821,6 +857,7 @@ async function installManagedPackageProviderCli(params: Readonly<{
         .join(delimiter);
     }
     const addArgs = ['--dir', workspaceDir, 'add', params.managedInstall.packageName, '--ignore-scripts'];
+    params.onProgress?.({ t: 'progress', phase: 'installing' });
     const outcome = await runLoggedProviderCommand({
       cmd: pnpmCommand,
       args: addArgs,
@@ -829,6 +866,7 @@ async function installManagedPackageProviderCli(params: Readonly<{
       logPath: params.logPath,
       timeoutMs: 0,
       runCommand: params.deps.runCommand ?? runCommandCapture,
+      signal: params.signal,
     });
     if (outcome.kind === 'exec-failed') {
       throw new Error(outcome.message);
@@ -861,6 +899,8 @@ async function installManagedPackageProviderCli(params: Readonly<{
       candidateDir,
       logPath: params.logPath,
       deps: params.deps,
+      signal: params.signal,
+      onProgress: params.onProgress,
     });
   } finally {
     await rm(scratchDir, { recursive: true, force: true });
@@ -872,11 +912,13 @@ async function resolveManagedBinaryAsset(params: Readonly<{
   platform: ProviderCliInstallPlatform;
   deps: InstallProviderCliDeps;
   env: NodeJS.ProcessEnv;
+  signal?: AbortSignal;
 }>): Promise<Readonly<{ name: string; url: string; digest: string | null }>> {
   const release = await (params.deps.fetchGitHubLatestRelease ?? fetchGitHubLatestRelease)({
     githubRepo: params.managedInstall.githubRepo,
     userAgent: 'happier-cli',
     githubToken: params.env.GITHUB_TOKEN,
+    signal: params.signal,
   });
 
   const assets = normalizeGitHubReleaseAssets(release);
@@ -987,9 +1029,13 @@ async function installManagedBinaryProviderCli(params: Readonly<{
   env: NodeJS.ProcessEnv;
   logPath: string;
   deps: InstallProviderCliDeps;
+  signal?: AbortSignal;
+  onProgress?: ManagedToolBootstrapOptions['onProgress'];
 }>): Promise<void> {
   const installRoot = resolveManagedProviderInstallDir(params.providerId, params.env);
+  params.onProgress?.({ t: 'progress', phase: 'fetching-release' });
   const asset = await resolveManagedBinaryAsset(params);
+  params.signal?.throwIfAborted();
   const scratchDir = await createManagedToolScratchDir({
     installDir: installRoot,
     prefix: params.providerId,
@@ -1004,13 +1050,18 @@ async function installManagedBinaryProviderCli(params: Readonly<{
       throw new Error(`Provider ${params.providerId} has no declared runtime archive entries for ${params.platform}`);
     }
 
+    params.onProgress?.({ t: 'progress', phase: 'downloading' });
     await (params.deps.downloadGitHubReleaseAsset ?? downloadGitHubReleaseAsset)({
       url: asset.url,
       destinationPath: archivePath,
       digest: asset.digest,
       userAgent: 'happier-cli',
+      signal: params.signal,
+      onProgress: (event) => params.onProgress?.({ t: 'progress', phase: 'downloading', ...event }),
     });
 
+    params.signal?.throwIfAborted();
+    params.onProgress?.({ t: 'progress', phase: 'installing' });
     await mkdir(dirname(candidateBinPath), { recursive: true });
     await (params.deps.extractGitHubReleaseAsset ?? extractGitHubReleaseAsset)({
       archivePath,
@@ -1020,6 +1071,7 @@ async function installManagedBinaryProviderCli(params: Readonly<{
       outputDir: candidateDir,
       archiveEntries,
       archiveExtractionLimits: params.managedInstall.archiveExtractionLimits,
+      signal: params.signal,
     });
 
     for (const entry of archiveEntries ?? []) {
@@ -1040,6 +1092,8 @@ async function installManagedBinaryProviderCli(params: Readonly<{
       logPath: params.logPath,
       deps: params.deps,
       activateVersionedRelease: params.platform !== 'win32',
+      signal: params.signal,
+      onProgress: params.onProgress,
     });
   } finally {
     await rm(scratchDir, { recursive: true, force: true });
@@ -1064,7 +1118,19 @@ export async function installProviderCli(params: Readonly<{
   /** The exact executable to update (as reported by the detect owner); defaults to the current resolution. */
   updateTarget?: ProviderCliCommandResolution | null;
   deps?: InstallProviderCliDeps;
+  signal?: AbortSignal;
+  onProgress?: ManagedToolBootstrapOptions['onProgress'];
 }>): Promise<InstallProviderCliResult> {
+  if (params.signal?.aborted) {
+    const reason: unknown = params.signal.reason;
+    return {
+      ok: false,
+      errorCode: 'command-failed',
+      errorMessage: reason instanceof Error ? reason.message : String(reason),
+      plan: null,
+      logPath: null,
+    };
+  }
   if (params.intent === 'update') {
     return await updateInstalledProviderCli(params);
   }
@@ -1109,6 +1175,7 @@ export async function installProviderCli(params: Readonly<{
 
   const logPath = resolveLogPath({ providerId: params.providerId, logDir: params.logDir, env });
   writeLogHeader(logPath, plan);
+  const onProgress = createInstallProgressReporter(logPath, params.onProgress);
   const vendorScratchDir =
     plan.installMode === 'vendor_recipe'
       ? await createManagedToolScratchDir({
@@ -1118,7 +1185,9 @@ export async function installProviderCli(params: Readonly<{
       : null;
 
   try {
+    params.signal?.throwIfAborted();
     if (plan.installMode === 'vendor_recipe') {
+      onProgress({ t: 'progress', phase: 'installing' });
       for (const c of plan.commands) {
         if (!commandExistsOnPath(c.cmd, { env })) {
           return { ok: false, errorCode: 'command-not-found', errorMessage: `Command not found: ${c.cmd}`, plan, logPath };
@@ -1135,7 +1204,7 @@ export async function installProviderCli(params: Readonly<{
           }) }),
           ...(vendorScratchDir ? { TMPDIR: vendorScratchDir, TMP: vendorScratchDir, TEMP: vendorScratchDir } : {}),
         };
-        const outcome = await runLoggedProviderCommand({ cmd: c.cmd, args: c.args, env: childEnv, logPath, timeoutMs, runCommand });
+        const outcome = await runLoggedProviderCommand({ cmd: c.cmd, args: c.args, env: childEnv, logPath, timeoutMs, runCommand, signal: params.signal });
         if (outcome.kind === 'timed-out') {
           return {
             ok: false,
@@ -1183,6 +1252,8 @@ export async function installProviderCli(params: Readonly<{
         env,
         logPath,
         deps,
+        signal: params.signal,
+        onProgress,
       });
       return { ok: true, plan, alreadyInstalled: false, logPath };
     }
@@ -1195,6 +1266,8 @@ export async function installProviderCli(params: Readonly<{
         env,
         logPath,
         deps,
+        signal: params.signal,
+        onProgress,
       });
       return { ok: true, plan, alreadyInstalled: false, logPath };
     }
@@ -1283,37 +1356,46 @@ async function updateInstalledProviderCli(
 
     const logPath = resolveLogPath({ providerId: params.providerId, logDir: params.logDir, env });
     writeLogHeader(logPath, plan);
-    const timeoutMs = resolveProviderInstallCommandTimeoutMs(env);
-    const outcome = await runLoggedProviderCommand({
-      cmd: command.cmd,
-      args: command.args,
-      env: { ...process.env, ...env },
-      logPath,
-      timeoutMs,
-      runCommand: params.deps?.runCommand ?? runCommandCapture,
-    });
-    if (outcome.kind === 'timed-out') {
-      return {
-        ok: false,
-        errorCode: 'command-timed-out',
-        errorMessage: `${runtimeSpec.title} update timed out after ${timeoutMs}ms.`,
-        plan,
+    try {
+      params.signal?.throwIfAborted();
+      createInstallProgressReporter(logPath, params.onProgress)({ t: 'progress', phase: 'installing' });
+      const timeoutMs = resolveProviderInstallCommandTimeoutMs(env);
+      const outcome = await runLoggedProviderCommand({
+        cmd: command.cmd,
+        args: command.args,
+        env: { ...process.env, ...env },
         logPath,
-      };
+        timeoutMs,
+        runCommand: params.deps?.runCommand ?? runCommandCapture,
+        signal: params.signal,
+      });
+      if (outcome.kind === 'timed-out') {
+        return {
+          ok: false,
+          errorCode: 'command-timed-out',
+          errorMessage: `${runtimeSpec.title} update timed out after ${timeoutMs}ms.`,
+          plan,
+          logPath,
+        };
+      }
+      if (outcome.kind === 'exec-failed') {
+        return { ok: false, errorCode: 'command-exec-failed', errorMessage: outcome.message, plan, logPath };
+      }
+      if (outcome.status !== 0) {
+        return {
+          ok: false,
+          errorCode: 'command-failed',
+          errorMessage: outcome.stderr.trim() || `${facts.updateCommand} exited with ${outcome.status ?? outcome.signal ?? 'unknown'}.`,
+          plan,
+          logPath,
+        };
+      }
+      return { ok: true, plan, alreadyInstalled: false, logPath };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      appendInstallLogBestEffort(logPath, errorMessage);
+      return { ok: false, errorCode: 'command-failed', errorMessage, plan, logPath };
     }
-    if (outcome.kind === 'exec-failed') {
-      return { ok: false, errorCode: 'command-exec-failed', errorMessage: outcome.message, plan, logPath };
-    }
-    if (outcome.status !== 0) {
-      return {
-        ok: false,
-        errorCode: 'command-failed',
-        errorMessage: outcome.stderr.trim() || `${facts.updateCommand} exited with ${outcome.status ?? outcome.signal ?? 'unknown'}.`,
-        plan,
-        logPath,
-      };
-    }
-    return { ok: true, plan, alreadyInstalled: false, logPath };
   }
 
   return {

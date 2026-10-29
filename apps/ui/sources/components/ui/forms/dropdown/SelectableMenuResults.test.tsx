@@ -154,22 +154,33 @@ describe('SelectableMenuResults', () => {
         expect(registerItemLayout).toHaveBeenCalledWith('0');
     });
 
-    it('renders a row-edge submenu anchor for submenu items', async () => {
+    it('reports every hovered row to the menu with the whole row as the submenu anchor', async () => {
+        const onHoverItem = vi.fn();
+        const onOpenSubmenu = vi.fn();
         const { SelectableMenuResults } = await import('./SelectableMenuResults');
 
         const screen = await renderScreen(<SelectableMenuResults
             categories={[
-                { id: 'c1', title: '', items: [{ id: 'move', title: 'Move', hasSubmenu: true }] },
+                { id: 'c1', title: '', items: [{ id: 'move', title: 'Move', hasSubmenu: true }, { id: 'rename', title: 'Rename' }] },
             ]}
             selectedIndex={0}
             onSelectionChange={() => {}}
             onPressItem={() => {}}
+            onHoverItem={onHoverItem}
+            onOpenSubmenu={onOpenSubmenu}
             rowVariant="slim"
         />);
 
-        const anchor = screen.findByTestId('dropdown-option-move:submenu-anchor');
-        expect(anchor).not.toBeNull();
-        expect(anchor?.props?.style?.width).toBeGreaterThan(1);
+        // No narrow edge strip: a submenu anchored to the row flips left without covering its parent.
+        expect(screen.findByTestId('dropdown-option-move:submenu-anchor')).toBeNull();
+        const rows = screen.findAllByType('SelectableRow');
+        await act(async () => {
+            rows[0]!.props.onHover();
+            rows[1]!.props.onHover();
+            rows[0]!.props.onPress();
+        });
+        expect(onHoverItem.mock.calls.map(([item]) => item.id)).toEqual(['move', 'rename']);
+        expect(onOpenSubmenu).toHaveBeenCalledWith('move', onHoverItem.mock.calls[0]![1]);
     });
 
     it('renders swatch items as pressable colour choices that report the chosen one', async () => {

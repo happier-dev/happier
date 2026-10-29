@@ -43,7 +43,10 @@ export const THEME_PROFILE_TOKEN_DEFINITIONS_BY_ID: Readonly<Record<string, Them
 
 export const THEME_PROFILE_PUBLIC_TOKEN_IDS = THEME_PROFILE_TOKEN_DEFINITIONS.map((definition) => definition.id);
 
-export const getThemeProfileTokenDefinition = (tokenId: string): ThemeProfileTokenDefinition | undefined => THEME_PROFILE_TOKEN_DEFINITIONS_BY_ID[tokenId];
+export const getThemeProfileTokenDefinition = (tokenId: string): ThemeProfileTokenDefinition | undefined => (
+    Object.prototype.hasOwnProperty.call(THEME_PROFILE_TOKEN_DEFINITIONS_BY_ID, tokenId)
+        ? THEME_PROFILE_TOKEN_DEFINITIONS_BY_ID[tokenId] : undefined
+);
 
 export const isThemeProfilePublicTokenId = (tokenId: string): tokenId is ThemeProfilePublicTokenId => getThemeProfileTokenDefinition(tokenId) !== undefined;
 

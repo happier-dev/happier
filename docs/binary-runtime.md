@@ -20,7 +20,9 @@ Do not introduce direct product-runtime calls to:
 - shell installers from UI/daemon/runtime code
 - PATH-only provider detection as the sole source of truth
 
-These are allowed only behind centralized managed runtime/tooling abstractions.
+These calls require the canonical runtime/tooling owner. Happier-owned prerequisites
+use managed runtimes; explicitly configured external commands retain the user's
+chosen executable and its prerequisites.
 
 Before adding or changing a provider/runtime/install/update flow, classify it as one of:
 
@@ -31,6 +33,23 @@ Before adding or changing a provider/runtime/install/update flow, classify it as
 - managed JS-runtime dependent
 
 Provider detection, install status, daemon validation, runtime spawning, and UI/installables must reuse the same source of truth. Backend CLIs should prefer user/system installs by default over Happier-managed installs unless an explicit setting says otherwise.
+
+In current development source (not yet released), MCP package-runner resolution
+honors configured `npx`, `npm`, `yarn`, `pnpm`, and `bunx` commands, including explicit
+executable paths. `normalizePackageRunnerInvocation` resolves the executable using
+the configured environment while preserving its arguments; MCP materialization
+launches it in the session directory. A missing executable produces an actionable
+prerequisite warning, or an error in strict mode. It never triggers managed pnpm
+bootstrap or a substitute runner, including after an execution error. Managed pnpm
+remains the installation tool for Happier-owned managed packages.
+
+In current development source (not yet released), managed pnpm and JavaScript
+runtime bootstrap accept the shared `ManagedToolBootstrapOptions`: an abort signal
+and progress callbacks for lock waiting, release lookup, download bytes, and
+installation. Their lock waits and downloads honor cancellation; failed bootstrap
+propagates its error instead of silently falling back to a PATH command. Installers
+that expose progress and errors consume these signals through their existing
+output. This adds no elapsed-time cutoff, persistent cooldown, or download resume.
 
 In current development source, Windows command discovery and invocation share
 `packages/cli-common/windowsCommandInvocation.mjs`. A recognized npm wrapper that

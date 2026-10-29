@@ -112,9 +112,25 @@ Agent's conversation and is separate from the Happier ID.
 You can also type `@` in the message composer and choose a session from the
 suggestions; `@session:` narrows the suggestions to sessions.
 
+## Deleting a session
+
+In development builds, **Delete Session** is available for sessions you own
+from the info screen, the open session's three-dot menu, and the session's list
+menu. You do not need to stop a running session in a separate step.
+
+When the session still needs to be stopped, the confirmation offers
+**Stop and delete** and explains that it will stop the session and permanently
+delete its messages and data.
+Happier stops the session before deleting it, without archiving it first. If
+stopping fails, the session is kept. If stopping succeeds but deletion fails,
+the stopped session remains so you can retry deleting it.
+
+When no stop is needed, the existing delete confirmation applies. Deleting is
+permanent and cannot be undone.
+
 ## Selecting several at once
 
-Long-press a row, or use its menu, to start a selection. Then archive, delete,
+Long-press a row, or use its menu, to start a selection. Then archive,
 move, mark read, or change attention handling for all of them together. The
 selection survives the list updating underneath you and survives scrolling.
 

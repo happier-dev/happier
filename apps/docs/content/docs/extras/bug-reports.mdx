@@ -56,13 +56,15 @@ To reduce duplicate reports, Happier can search GitHub for potentially similar i
 
 ## Crash recovery (development)
 
-Development source saves the latest UI exception and React component stack before either recovery restart action. **Restart and open bug report** also opens the report composer after restarting. These changes are not yet established as available in a released app.
+Development source captures the latest UI exception, React component stack, timestamp, app/OTA metadata, loaded browser asset URLs, desktop wrapper version when available, OS details and recent action trail before either recovery restart action. Browser asset URLs can identify production bundles; a development Metro URL does not establish an exact source revision. **Restart and open bug report** also opens the report composer after restarting. These changes are not yet established as available in a released app.
 
-The composer fills the title, summary and current behavior from the saved crash. Review and edit those fields before submitting, including removing any remaining private information. Crash-prefilled drafts do not run automatic similar-issue searches. Optional logs and action-trail diagnostics still use the existing preview and consent controls; the original stack is not attached again behind your edited fields.
+The composer fills the title, summary, current behavior and available environment fields from the saved crash. Review and edit those fields before submitting, including removing any remaining private information. Crash-prefilled drafts do not run automatic similar-issue searches. Optional logs and action-trail diagnostics still use the existing preview and consent controls; the original stack is not attached again behind your edited fields.
 
 The saved crash survives opening, leaving and reopening the composer. A successful submission or **Discard saved crash** removes it; a newer crash replaces it. Long stacks are visibly shortened to fit the report field. **Copy error details** copies the full saved stack so you can review the omitted portion locally.
 
-If saving fails, the recovery screen keeps the error visible and offers copying, retrying the report action, or **Restart without saving**. Browser and desktop persistence depend on the app's local storage remaining available. Native apps use durable app storage and can also read crashes saved in the earlier cache location.
+**Save diagnostics** downloads or shares a redacted local diagnostics file without restarting or submitting a report. If that export fails, the error stays visible and the action can be retried.
+
+If saving the crash for restart fails, the recovery screen keeps the error visible and offers copying, retrying the report action, or **Restart without saving**. Browser and desktop persistence depend on the app's local storage remaining available. Native apps use durable app storage and can also read crashes saved in the earlier cache location.
 
 ## CLI reporting
 

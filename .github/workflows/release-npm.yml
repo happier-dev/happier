@@ -348,8 +348,6 @@ jobs:
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version-file: .node-version
-          cache: yarn
-          cache-dependency-path: yarn.lock
 
       - name: Setup Corepack (Yarn 1.22.22)
         uses: ./.github/actions/enable-corepack-yarn

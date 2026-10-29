@@ -51,6 +51,7 @@ describe('resolveThemeProfile', () => {
                 light: {
                     'background.canvas': '#fefefe',
                     'unknown.token': '#111111',
+                    'constructor': '#222222',
                     'surface.base': 'red',
                 },
                 dark: {},

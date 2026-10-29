@@ -32,16 +32,16 @@ await server.connect(transport);
 `;
 }
 
-function buildFakePnpmScript(): string {
-  return `#!/usr/bin/env node
+function buildFakeRunnerScript(): string {
+  return `#!${process.execPath}
 import { spawn } from 'node:child_process';
 
 const goodCwd = process.env.GOOD_CWD ?? '';
 const fixtureServer = process.env.FIXTURE_MCP_SERVER ?? '';
 const args = process.argv.slice(2);
 
-if (!goodCwd || !fixtureServer || process.cwd() !== goodCwd || args[0] !== 'dlx') {
-  setInterval(() => {}, 1000);
+if (!goodCwd || !fixtureServer || process.cwd() !== goodCwd || JSON.stringify(args) !== JSON.stringify(['-y', 'fixture-package', '--', '--yes', '--prefer-offline'])) {
+  throw new Error('Configured runner arguments, environment or session cwd changed');
 } else {
   const child = spawn(process.execPath, [fixtureServer], {
     stdio: 'inherit',
@@ -59,23 +59,23 @@ if (!goodCwd || !fixtureServer || process.cwd() !== goodCwd || args[0] !== 'dlx'
 }
 
 describe.runIf(process.platform !== 'win32')('materializeMcpServerConfigRecord package-runner integration', () => {
-  it('keeps package-runner stdio MCP servers connectable from a bad session cwd by normalizing them through managed pnpm', async () => {
+  it('connects and relaunches through the configured runner with its exact arguments, environment and session cwd', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-mcp-package-runner-integration-'));
-    const badCwd = join(root, 'bad-cwd');
-    const goodHome = join(root, 'good-home');
+    const sessionCwd = join(root, 'session-cwd');
+    const runnerHome = join(root, 'runner-home');
     const fixtureServerPath = join(root, 'fixture-server.mjs');
-    const fakePnpmPath = join(root, 'pnpm');
+    const configuredRunnerPath = join(root, 'npx');
     const tsxCliPath = join(dirname(require.resolve('tsx/package.json')), 'dist', 'cli.mjs');
     const sourceLauncherPath = fileURLToPath(new URL('../launchers/stdioMcpServerLauncher.ts', import.meta.url));
     const originalCwd = process.cwd();
 
-    await mkdir(badCwd, { recursive: true });
-    await mkdir(goodHome, { recursive: true });
-    await writeFile(join(badCwd, 'package.json'), '{"name":"bad-cwd"}\n');
+    await mkdir(sessionCwd, { recursive: true });
+    await mkdir(runnerHome, { recursive: true });
+    await writeFile(join(sessionCwd, 'package.json'), '{"name":"bad-cwd"}\n');
     await writeFile(fixtureServerPath, buildFixtureServerScript());
-    await writeFile(fakePnpmPath, buildFakePnpmScript());
-    await chmod(fakePnpmPath, 0o755);
-    const goodHomeRealpath = realpathSync(goodHome);
+    await writeFile(configuredRunnerPath, buildFakeRunnerScript());
+    await chmod(configuredRunnerPath, 0o755);
+    const sessionCwdRealpath = realpathSync(sessionCwd);
 
     try {
       const settings = McpServersSettingsV1Schema.parse({
@@ -86,9 +86,9 @@ describe.runIf(process.platform !== 'win32')('materializeMcpServerConfigRecord p
             id: 's1',
             name: 'alpha',
             transport: 'stdio',
-            stdio: { command: 'npx', args: ['-y', 'fixture-package'] },
+            stdio: { command: 'npx', args: ['-y', 'fixture-package', '--', '--yes', '--prefer-offline'] },
             env: {
-              GOOD_CWD: { t: 'literal', v: goodHomeRealpath },
+              GOOD_CWD: { t: 'literal', v: sessionCwdRealpath },
               FIXTURE_MCP_SERVER: { t: 'literal', v: fixtureServerPath },
             },
             createdAt: 0,
@@ -98,12 +98,12 @@ describe.runIf(process.platform !== 'win32')('materializeMcpServerConfigRecord p
         bindings: [{ id: 'b1', serverId: 's1', enabled: true, target: { t: 'allMachines' }, createdAt: 0, updatedAt: 0 }],
       });
 
-      const resolved = resolveEffectiveServersV1(settings, { machineId: 'm1', directory: badCwd });
+      const resolved = resolveEffectiveServersV1(settings, { machineId: 'm1', directory: sessionCwd });
       const materialized = await materializeMcpServerConfigRecord({
         resolved,
         settingsSecretsKey: null,
         savedSecretsById: new Map(),
-        processEnv: { HOME: goodHome, HAPPIER_PNPM_BIN: fakePnpmPath },
+        processEnv: { ...process.env, HOME: runnerHome, PATH: root },
         tmpDir: root,
         deps: {
           resolveStdioLauncherCommand: () => ({
@@ -113,12 +113,12 @@ describe.runIf(process.platform !== 'win32')('materializeMcpServerConfigRecord p
         },
       });
 
-      process.chdir(badCwd);
+      process.chdir(sessionCwd);
       const tools = await probeMcpStdioServerTools({
         config: materialized.mcpServers.alpha,
         baseEnv: {
           ...process.env,
-          HOME: goodHome,
+          HOME: runnerHome,
         },
         connectTimeoutMs: 15_000,
         listToolsTimeoutMs: 15_000,
@@ -128,7 +128,7 @@ describe.runIf(process.platform !== 'win32')('materializeMcpServerConfigRecord p
 
       const relaunchedTools = await probeMcpStdioServerTools({
         config: materialized.mcpServers.alpha,
-        baseEnv: { ...process.env, HOME: goodHome },
+        baseEnv: { ...process.env, HOME: runnerHome },
         connectTimeoutMs: 15_000,
         listToolsTimeoutMs: 15_000,
       });

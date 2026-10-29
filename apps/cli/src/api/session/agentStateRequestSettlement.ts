@@ -4,15 +4,16 @@ import type { AgentState } from '@/api/types';
 import { deepEqual } from '@/utils/deterministicJson';
 import { hasPermissionResponseClaimV1, isSameAgentStateRequestOccurrence } from '@/agent/permissions/agentStateRequestStore';
 import { cloneStringKeyedRecordToNullProto } from './agentStateRecords';
+import { lazySchema } from '@happier-dev/protocol';
 
 type CompletedRequest = NonNullable<AgentState['completedRequests']>[string];
 
-const completedRequestSchema = z.object({
+const completedRequestSchema = lazySchema(() => z.object({
     tool: z.string(), arguments: z.unknown(), createdAt: z.number().finite(),
     completedAt: z.number().finite(), status: z.enum(['approved', 'denied', 'canceled']),
-}).passthrough();
+}).passthrough());
 
-export const AgentStateRequestSettlementSchema = z.object({
+export const AgentStateRequestSettlementSchema = lazySchema(() => z.object({
     v: z.literal(1),
     entries: z.array(z.object({
         requestId: z.string().min(1),
@@ -20,7 +21,7 @@ export const AgentStateRequestSettlementSchema = z.object({
         removeRequest: z.boolean(),
         requestAbsent: z.literal(true).optional(),
     }).strict()),
-}).strict();
+}).strict());
 
 export type AgentStateRequestSettlement = z.infer<typeof AgentStateRequestSettlementSchema>;
 

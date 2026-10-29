@@ -11,16 +11,17 @@ import {
 } from '../state/workspaceReplicationPaths';
 import { WORKSPACE_REPLICATION_SCHEMA_VERSION } from '../state/workspaceReplicationSchemaVersion';
 import { isTerminalWorkspaceReplicationJobStatus } from './workspaceReplicationJobTerminalStatuses';
+import { lazySchema } from '@happier-dev/protocol';
 
-export const WorkspaceReplicationJobPhaseSchema = z.enum([
+export const WorkspaceReplicationJobPhaseSchema = lazySchema(() => z.enum([
   'planning',
   'negotiate_missing_digests',
   'transfer_missing_blobs_to_target_cas',
   'apply',
   'commit_baseline',
-]);
+]));
 
-export const WorkspaceReplicationJobCheckpointSchema = z.enum([
+export const WorkspaceReplicationJobCheckpointSchema = lazySchema(() => z.enum([
   'job_created',
   'relationship_resolved',
   'missing_digests_negotiated',
@@ -29,7 +30,7 @@ export const WorkspaceReplicationJobCheckpointSchema = z.enum([
   'apply_started',
   'apply_completed',
   'baseline_committed',
-]);
+]));
 
 function createDefaultWorkspaceReplicationProgressCounters(): Readonly<{
   plannedFiles: number;
@@ -49,7 +50,7 @@ function createDefaultWorkspaceReplicationProgressCounters(): Readonly<{
   };
 }
 
-export const WorkspaceReplicationJobProgressCountersSchema = z
+export const WorkspaceReplicationJobProgressCountersSchema = lazySchema(() => z
   .object({
     plannedFiles: z.number().int().min(0).default(0),
     plannedBytes: z.number().int().min(0).default(0),
@@ -58,9 +59,9 @@ export const WorkspaceReplicationJobProgressCountersSchema = z
     appliedFiles: z.number().int().min(0).default(0),
     appliedBytes: z.number().int().min(0).default(0),
   })
-  .strip();
+  .strip());
 
-export const WorkspaceReplicationJobStatusSchema = z
+export const WorkspaceReplicationJobStatusSchema = lazySchema(() => z
   .object({
     status: z.enum(['pending', 'in_progress', 'completed', 'aborted', 'failed', 'awaiting_recovery']),
     phase: WorkspaceReplicationJobPhaseSchema,
@@ -70,9 +71,9 @@ export const WorkspaceReplicationJobStatusSchema = z
     // Divergence detection is planned but not yet fully implemented; keep this persisted surface stable.
     blockingDivergenceCandidates: z.array(z.unknown()).default([]),
   })
-  .strip();
+  .strip());
 
-export const WorkspaceReplicationJobResumeContextSchema = z
+export const WorkspaceReplicationJobResumeContextSchema = lazySchema(() => z
   .object({
     apply: z
       .object({
@@ -82,9 +83,9 @@ export const WorkspaceReplicationJobResumeContextSchema = z
       })
       .strip(),
   })
-  .strip();
+  .strip());
 
-export const WorkspaceReplicationJobRecordSchema = z
+export const WorkspaceReplicationJobRecordSchema = lazySchema(() => z
   .object({
     schemaVersion: z.literal(WORKSPACE_REPLICATION_SCHEMA_VERSION).optional(),
     lastAttempt: z
@@ -119,12 +120,12 @@ export const WorkspaceReplicationJobRecordSchema = z
       .optional(),
     status: WorkspaceReplicationJobStatusSchema,
   })
-  .strip();
+  .strip());
 
 // Disk records must always include schemaVersion; in-memory/write inputs may omit it because the store stamps it.
-export const WorkspaceReplicationJobRecordDiskSchema = WorkspaceReplicationJobRecordSchema.extend({
+export const WorkspaceReplicationJobRecordDiskSchema = lazySchema(() => WorkspaceReplicationJobRecordSchema.extend({
   schemaVersion: z.literal(WORKSPACE_REPLICATION_SCHEMA_VERSION),
-});
+}));
 
 export type WorkspaceReplicationJobRecord = z.output<typeof WorkspaceReplicationJobRecordDiskSchema>;
 export type WorkspaceReplicationJobRecordInput = z.input<typeof WorkspaceReplicationJobRecordSchema>;

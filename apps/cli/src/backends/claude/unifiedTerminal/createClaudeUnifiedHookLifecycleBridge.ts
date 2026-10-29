@@ -25,7 +25,7 @@ import {
 } from '../connectedServices/mapClaudeRateLimitEventToUsageDetails';
 import type { RawJSONLines } from '../types';
 import type { SessionHookData } from '../utils/startHookServer';
-import { isSidechainSessionHook } from '../utils/sessionHookAttribution';
+import { isLivePrimaryClaudeProviderHook, isSidechainSessionHook } from '../utils/sessionHookAttribution';
 import type {
   ClaudeUnifiedInputArbiter,
   ClaudeUnifiedPromptBatch,
@@ -166,6 +166,8 @@ export function createClaudeUnifiedHookLifecycleBridge(opts: Readonly<{
   }>) => void) | undefined;
   onTrustedHookActivation?: (() => void) | undefined;
   onTrustedProviderProgress?: (() => void) | undefined;
+  onProviderEvent?: (() => void) | undefined;
+  readProviderSessionId?: (() => string | null) | undefined;
   /**
    * Authenticated primary-session lifecycle evidence that Claude may have changed the visible TUI.
    * The terminal screen controller remains the sole dialog owner; this is only an event-driven
@@ -597,6 +599,7 @@ export function createClaudeUnifiedHookLifecycleBridge(opts: Readonly<{
         // session end. Per-request permission accounting and account-level
         // StopFailure usage evidence remain valid from sidechains.
         const sidechain = isSidechainSessionHook(data);
+        if (!observation?.startupReplay && isLivePrimaryClaudeProviderHook(data, opts.readProviderSessionId?.())) opts.onProviderEvent?.();
         if (isClaudeUnifiedTrustedHookActivationEvidence(data)) {
           opts.onTrustedHookActivation?.();
         }

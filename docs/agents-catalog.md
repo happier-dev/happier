@@ -582,6 +582,23 @@ If you’re running this repo via happy-stacks, prefer:
 
 ## Connected-account quota recovery (development)
 
+Codex app-server reports accepted failures from its terminal turn boundary,
+including provider-started native goal turns. See
+[usage-limit reset continuation](cli-architecture.md#usage-limit-reset-continuation-development)
+for daemon binding authorization, native-login ownership and goal reactivation.
+
+Claude pool sessions can proactively switch accounts during a turn through the
+shared `CLAUDE_CONFIG_DIR` home. The catalog's provider-owned auth descriptor
+declares in-turn application; the shared generation writer and verifier prove
+the selected profile, generation, credential revision and native auth. The current
+request finishes on the old account and the next request reads the new credentials
+(maintainer live proof, 2026-07-08). External token injection, such as Codex, still
+requires exact runtime identity and refresh-selection resync. The shared predictive
+policy retains suppression or turn-boundary deferral for descriptors that do not
+support in-turn application, and predictive switching cannot fall back to a restart.
+Quota suppression and request-failure reasons use the existing default-on daemon
+quota diagnostic file log.
+
 Claude OAuth profile normalization belongs to
 `packages/protocol/src/providers/claude/oauthProfile.ts`; the agents package
 re-exports that owner. Credentials retain the provider-attested organization UUID

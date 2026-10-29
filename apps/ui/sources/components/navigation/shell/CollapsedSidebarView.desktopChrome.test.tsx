@@ -16,15 +16,7 @@ const inboxState = vi.hoisted(() => ({
     model: { hasContent: true },
 }));
 
-const desktopWindowBridgeState = vi.hoisted(() => ({
-    getDesktopWindowChromePolicy: vi.fn(),
-    getDesktopWindowState: vi.fn(),
-    listenDesktopWindowState: vi.fn(),
-    minimizeDesktopWindow: vi.fn(),
-    toggleDesktopWindowMaximize: vi.fn(),
-    closeDesktopWindow: vi.fn(),
-    startDesktopWindowDragging: vi.fn(),
-}));
+const native = vi.hoisted(() => ({ invoke: vi.fn() }));
 
 installNavigationShellCommonModuleMocks({
     reactNative: async () => {
@@ -72,30 +64,22 @@ vi.mock('@/utils/platform/responsive', () => ({
     useHeaderHeight: () => 56,
 }));
 
-vi.mock('@/utils/platform/desktopWindowBridge', () => ({
-    getDesktopWindowChromePolicy: () => desktopWindowBridgeState.getDesktopWindowChromePolicy(),
-    getDesktopWindowState: () => desktopWindowBridgeState.getDesktopWindowState(),
-    listenDesktopWindowState: (handler: (state: { isMaximized: boolean }) => void) =>
-        desktopWindowBridgeState.listenDesktopWindowState(handler),
-    minimizeDesktopWindow: () => desktopWindowBridgeState.minimizeDesktopWindow(),
-    toggleDesktopWindowMaximize: () => desktopWindowBridgeState.toggleDesktopWindowMaximize(),
-    closeDesktopWindow: () => desktopWindowBridgeState.closeDesktopWindow(),
-    startDesktopWindowDragging: () => desktopWindowBridgeState.startDesktopWindowDragging(),
+// Keep the bridge and shared policy observer real; replace only native IPC.
+vi.mock('@/utils/platform/tauri', () => ({
+    isTauriDesktop: () => true,
+    invokeTauri: (command: string) => native.invoke(command),
+    listenTauriEvent: async () => () => {},
 }));
 
 describe('CollapsedSidebarView desktop chrome', () => {
     beforeEach(() => {
         collapsedSidebarState.setSidebarCollapsed.mockReset();
-        desktopWindowBridgeState.getDesktopWindowChromePolicy.mockReset();
-        desktopWindowBridgeState.getDesktopWindowState.mockReset();
-        desktopWindowBridgeState.listenDesktopWindowState.mockReset();
-        desktopWindowBridgeState.minimizeDesktopWindow.mockReset();
-        desktopWindowBridgeState.toggleDesktopWindowMaximize.mockReset();
-        desktopWindowBridgeState.closeDesktopWindow.mockReset();
-        desktopWindowBridgeState.startDesktopWindowDragging.mockReset();
-        desktopWindowBridgeState.getDesktopWindowChromePolicy.mockResolvedValue({ strategy: 'custom-controls' });
-        desktopWindowBridgeState.getDesktopWindowState.mockResolvedValue({ isMaximized: false });
-        desktopWindowBridgeState.listenDesktopWindowState.mockResolvedValue(async () => {});
+        native.invoke.mockReset();
+        native.invoke.mockImplementation(async (command: string) => {
+            if (command === 'desktop_get_window_chrome_policy') return { strategy: 'custom-controls' };
+            if (command === 'desktop_get_window_state') return { isMaximized: false };
+            return true;
+        });
     });
 
     it('renders collapsed desktop chrome hosts and expands the sidebar', async () => {

@@ -20,7 +20,24 @@ const directLiveExternalTokenInjectionCapability = {
   },
 } as const;
 
+const sharedGroupAuthCapability = {
+  directLiveHotAuth: {
+    supportsInTurnApply: true,
+    requiresExactRuntimeIdentity: false,
+    refreshSelectionResync: 'not_applicable',
+    authMode: { kind: 'provider_owned', name: 'claude_shared_group_auth_surface' },
+  },
+} as const;
+
 describe('evaluateConnectedServiceSwitchApplyPolicy', () => {
+  it('allows shared-group generation application to a healthy sibling mid-turn', () => {
+    expect(evaluateConnectedServiceSwitchApplyPolicy({
+      context: 'healthy_sibling',
+      reason: 'same_provider_account_exhausted',
+      turnState: { inFlight: true, safeToApply: false },
+      runtimeAuthApply: sharedGroupAuthCapability,
+    })).toMatchObject({ status: 'allow', allowRestartResume: false });
+  });
   it('requires direct live hot apply for healthy sibling fanout', () => {
     expect(evaluateConnectedServiceSwitchApplyPolicy({
       context: 'healthy_sibling',
@@ -173,6 +190,21 @@ describe('evaluateConnectedServiceSwitchApplyPolicy', () => {
 });
 
 describe('evaluatePredictiveSoftSwitchPolicy', () => {
+  it('allows provider-owned shared-group auth mid-turn and preserves restart-only suppression', () => {
+    const input = {
+      context: 'live_session',
+      reason: 'soft_threshold',
+      predictiveSoftSwitchMode: 'supported',
+      turnState: { inFlight: true },
+    } as const;
+    expect(evaluatePredictiveSoftSwitchPolicy({
+      ...input, runtimeAuthApply: sharedGroupAuthCapability,
+    })).toEqual({ status: 'allow' });
+    expect(evaluatePredictiveSoftSwitchPolicy({
+      ...input,
+      runtimeAuthApply: { directLiveHotAuth: { ...sharedGroupAuthCapability.directLiveHotAuth, supportsInTurnApply: false } },
+    })).toEqual({ status: 'suppress', reason: 'predictive_soft_switch_turn_in_flight' });
+  });
   it('suppresses live-session predictive soft-threshold switching for restart-only providers', () => {
     expect(evaluatePredictiveSoftSwitchPolicy({
       context: 'live_session',

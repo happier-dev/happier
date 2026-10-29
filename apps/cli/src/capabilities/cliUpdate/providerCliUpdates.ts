@@ -129,7 +129,7 @@ export function withProviderCliUpdates(cap: Capability, agentId: AgentId, deps: 
     return readInstalledCli(await cap.detect({ request, context }));
   };
 
-  const update = async (params: Record<string, unknown> | undefined): Promise<CapabilitiesInvokeResponse> => {
+  const update = async (params: Record<string, unknown> | undefined, signal?: AbortSignal): Promise<CapabilitiesInvokeResponse> => {
     const before = await detectFresh();
     if (!before) {
       return { ok: false, error: { message: `${agentId} is not installed on this machine.`, code: 'update-not-available' } };
@@ -144,6 +144,7 @@ export function withProviderCliUpdates(cap: Capability, agentId: AgentId, deps: 
       },
       env,
       nodePlatform,
+      signal,
       ...(deps.installProviderCli ? { installProviderCli: deps.installProviderCli } : {}),
     });
     if (!result.ok) {
@@ -218,7 +219,7 @@ export function withProviderCliUpdates(cap: Capability, agentId: AgentId, deps: 
 
   const invoke: Capability['invoke'] = async (args) => {
     if (args.method === 'install' && args.params?.intent === 'update') {
-      return await update(args.params);
+      return await update(args.params, args.signal);
     }
     if (cap.invoke) return await cap.invoke(args);
     return { ok: false, error: { message: `Unsupported method: ${args.method}`, code: 'unsupported-method' } };

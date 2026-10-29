@@ -8,20 +8,21 @@ import { projectCodexNativeHistoryItem } from '../appServer/session/projectCodex
 import { projectCodexRolloutActions } from '../rollout/projectCodexRolloutActions';
 import { mapCodexProjectedEventsToDirectMessages } from './mapCodexRolloutLineToDirectMessages';
 import { measureDirectTranscriptItemBytes } from './codexDirectTranscriptProjection';
+import { lazySchema } from '@happier-dev/protocol';
 
-const TailSchema = z.object({ position: z.string().nullable(), anchor: z.string().nullable(), fingerprint: z.string().nullable() });
-const CursorSchema = z.object({
+const TailSchema = lazySchema(() => z.object({ position: z.string().nullable(), anchor: z.string().nullable(), fingerprint: z.string().nullable() }));
+const CursorSchema = lazySchema(() => z.object({
   v: z.literal(1), kind: z.literal('codexNativeHistory'), threadId: z.string(), home: z.string(),
   direction: z.enum(['older', 'newer']), position: z.string().nullable(), limit: z.number().int().positive(),
   skip: z.number().int().nonnegative(), offset: z.number().int().nonnegative(), pendingId: z.string().nullable(),
   anchor: z.string().nullable(), fingerprint: z.string().nullable(), tail: TailSchema,
-});
+}));
 type NativeCursor = z.infer<typeof CursorSchema>;
-const PageSchema = z.object({
+const PageSchema = lazySchema(() => z.object({
   data: z.array(z.object({ turnId: z.string().min(1), item: z.record(z.string(), z.unknown()),
     startedAtMs: z.number().nonnegative().nullable(), completedAtMs: z.number().nonnegative().nullable() })),
   nextCursor: z.string().min(1).nullable(), backwardsCursor: z.string().min(1).nullable(),
-});
+}));
 type Entry = z.infer<typeof PageSchema>['data'][number];
 
 export function decodeCodexNativeTranscriptCursor(raw: string | undefined): NativeCursor | null {

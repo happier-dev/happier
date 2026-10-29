@@ -376,8 +376,6 @@ jobs:
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version-file: .node-version
-          cache: yarn
-          cache-dependency-path: yarn.lock
       - name: Enable Corepack
         uses: ./.github/actions/enable-corepack-yarn
       - name: Setup Bun
@@ -446,8 +444,6 @@ jobs:
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version-file: .node-version
-          cache: yarn
-          cache-dependency-path: yarn.lock
       - name: Enable Corepack
         uses: ./.github/actions/enable-corepack-yarn
       - name: Install trusted workflow control dependencies
@@ -562,8 +558,6 @@ jobs:
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version-file: .node-version
-          cache: yarn
-          cache-dependency-path: yarn.lock
       - name: Enable Corepack
         uses: ./.github/actions/enable-corepack-yarn
       - name: Install minisign
