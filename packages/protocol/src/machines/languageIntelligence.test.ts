@@ -8,6 +8,18 @@ import {
 const range = { start: { line: 0, character: 0 }, end: { line: 0, character: 3 } };
 
 describe('language intelligence Machine wire contract', () => {
+  it('admits only the live inline operation with captured buffer identity and no client credential or policy authority', () => {
+    const request = { rootPath: '/repo', path: 'a.ts', kind: 'ai.inlineSuggest', version: 3, languageId: 'typescript',
+      position: { line: 1, character: 4 }, inlineSuggestion: { connectionId: 'pc_source', modelId: 'base', prefix: 'const ', suffix: '\n' } };
+    expect(DaemonLspQueryRequestSchema.parse(request)).toEqual(request);
+    for (const extra of [{ key: 'secret' }, { url: 'https://outside.test' }, { headers: { authorization: 'secret' } }, { enabled: true }]) {
+      expect(DaemonLspQueryRequestSchema.safeParse({ ...request, inlineSuggestion: { ...request.inlineSuggestion, ...extra } }).success).toBe(false);
+    }
+    expect(DaemonLspQueryRequestSchema.safeParse({ ...request, kind: 'ai.nextEdit' }).success).toBe(false);
+    expect(DaemonLspQueryRequestSchema.safeParse({ ...request, position: { line: 1, symbol: 'value' } }).success).toBe(false);
+    expect(DaemonLspQueryRequestSchema.safeParse({ ...request, version: undefined }).success).toBe(false);
+    expect(DaemonLspQueryRequestSchema.safeParse({ ...request, kind: 'hover' }).success).toBe(false);
+  });
   it('accepts editor synchronization and symbol-addressed disk queries without admitting native process controls', () => {
     expect(DaemonLspSyncRequestSchema.parse({ rootPath: '/repo', op: { op: 'external', paths: ['src/a.ts'] } })).toEqual({
       rootPath: '/repo', op: { op: 'external', paths: ['src/a.ts'] },

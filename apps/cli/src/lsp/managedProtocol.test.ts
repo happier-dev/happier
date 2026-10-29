@@ -7,16 +7,16 @@ import { createPluginReloadController } from '@/plugins/runtime/reload/controlle
 import { writeCommittedLocalPathPluginFixture } from '@/plugins/store/state.testkit';
 import { PluginStateFileV1Schema } from '@/plugins/store/state';
 import { parseProcessOwnerTag } from '@/processes/ownerTag';
-import { DEFAULT_JSON_RPC_MAX_FRAME_BYTES } from '@/plugins/runtime/exec/jsonRpc';
 import { readSupervisedPluginProcessIdForHost } from '@/plugins/runtime/exec/processSupervisor';
 import { isPidAlive } from '@/testkit/process/spawn';
 import { createLanguageServerProtocolOpener } from './managedProtocol';
+import { createLanguageServerProjectChecker } from './projectCheck';
 import { createLanguageServerDefinitions } from './languageServerDefinitions';
 import { createLanguageServerHost } from './languageServerHost';
 import type { PluginProtocolClientHandle } from '@happier-dev/plugin-sdk/exec/protocol-clients';
 
 describe('managed language server protocol', () => {
-    it.each(['protocol', 'retirement', 'host-disable', 'host-replacement'] as const)('launches an installed declaration through its %s lifecycle', async scenario => {
+    it.each(['protocol', 'retirement', 'host-disable', 'host-replacement', 'project-check', 'project-check-retirement'] as const)('launches an installed declaration through its %s lifecycle', async scenario => {
         await withTempDir('happier-lsp-managed-', async rootPath => {
             const pluginId = 'fixture.language';
             const pluginRoot = join(rootPath, 'plugin');
@@ -26,6 +26,9 @@ describe('managed language server protocol', () => {
             await writeFile(manifestPath, JSON.stringify({ schemaVersion: 2, id: pluginId, version: '1.0.0', displayName: 'Fixture',
                 runtime: { apiVersion: 1 }, contributes: {
                     languageServers: [{ id: 'language', title: 'Fixture', languageIds: { fixture: 'fixture' },
+                        ...(scenario.startsWith('project-check') ? { projectCheck: { executable: { kind: 'systemTool', id: 'native' },
+                            args: [resolve('src/lsp/__fixtures__/projectCheck.cjs'), scenario === 'project-check' ? 'diagnostics' : 'wait', logPath],
+                            projectFile: 'tsconfig.json', output: { kind: 'typescript' } } } : {}),
                         executable: { kind: 'systemTool', id: 'native' }, args: scenario.startsWith('host-')
                             ? [resolve('src/lsp/__fixtures__/languageServer.cjs'), logPath, JSON.stringify({ delayHover: true })]
                             : [resolve('src/lsp/__fixtures__/managedProtocol.cjs'), logPath] }],
@@ -50,6 +53,27 @@ describe('managed language server protocol', () => {
             const definition = createLanguageServerDefinitions({ readCurrentContributionRegistry: () => registry.contributes })
                 .readLanguageServerDefinitions().find(candidate => candidate.pluginId === pluginId);
             if (!definition) throw new Error('Installed language-server definition was not projected');
+            if (scenario.startsWith('project-check')) {
+                const checker = createLanguageServerProjectChecker({ acquireRuntimeRegistry: () => controller.acquireRuntimeRegistry() });
+                try {
+                    const pending = checker.run({ definition, rootPath,
+                        processOwner: { kind: 'service', serviceId: `lsp:${definition.id}:123456789abc` }, signal: new AbortController().signal });
+                    if (scenario === 'project-check') {
+                        expect(await pending).toMatchObject({ status: 'completed', diagnostics: [
+                                { serverId: definition.id, path: 'src/a(b).ts', code: 'TS2322' },
+                                { path: 'tsconfig.json', code: 'TS18003' },
+                            ] });
+                    } else {
+                        await vi.waitFor(async () => expect(await readFile(logPath, 'utf8')).toBe('ready'));
+                        const pid = checker.readProcessRoots()[0].pid;
+                        await registry.retirePluginConsumers?.([pluginId]);
+                        expect(await pending).toMatchObject({ status: 'cancelled' });
+                        expect(isPidAlive(pid)).toBe(false);
+                        expect(checker.readProcessRoots()).toEqual([]);
+                    }
+                } finally { await controller.shutdown(); }
+                return;
+            }
             if (scenario.startsWith('host-')) {
                 const handles: PluginProtocolClientHandle<'jsonRpc'>[] = [];
                 const host = createLanguageServerHost({
@@ -108,8 +132,9 @@ describe('managed language server protocol', () => {
                     expect(isPidAlive(pid)).toBe(false);
                     expect(await pending).toBe('retired');
                 } else {
-                    await expect(handle.client.request('largeReply', { characters: DEFAULT_JSON_RPC_MAX_FRAME_BYTES + 1 }))
-                        .rejects.toMatchObject({ code: 'PLUGIN_EXEC_CLIENT_PROTOCOL_ERROR' });
+                    const characters = 3 * 1024 * 1024;
+                    expect(await handle.client.request('largeReply', { characters })).toEqual({ value: 'x'.repeat(characters) });
+                    expect(await handle.client.request('echo', { afterLargeReply: true })).toEqual({ afterLargeReply: true });
                 }
             } finally { await handle.dispose(); }
             expect((await handle.wait()).termination.observed.kind).not.toBe('failed');

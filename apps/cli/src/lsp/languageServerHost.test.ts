@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createHash } from 'node:crypto';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { watch } from 'node:fs';
 import * as fsPromises from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import type { RpcHandler, RpcHandlerRegistrar } from '@/api/rpc/types';
@@ -11,17 +12,18 @@ import { MachineResourcesPolicyGetResultV1Schema } from '@happier-dev/protocol/m
 import type { MachineResourcesPolicyReader } from '@/processes/toolIdleTimeouts';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { createStablePluginExecService } from '@/plugins/runtime/invocation/services/exec';
-import { DEFAULT_JSON_RPC_MAX_FRAME_BYTES } from '@/plugins/runtime/exec/jsonRpc';
 import { registerLanguageIntelligenceHandlers } from '@/rpc/handlers/languageIntelligence';
 import { withTempDir } from '@/testkit/fs/tempDir';
-import { createLanguageServerHost, pageLanguageServerReferences } from './languageServerHost';
+import { createLanguageServerHost, type LanguageServerHostOptions } from './languageServerHost';
+import { createLanguageServerProjectChecker } from './projectCheck';
 import type { PluginProtocolClientHandle } from '@happier-dev/plugin-sdk/exec/protocol-clients';
 import { readSupervisedPluginProcessIdForHost } from '@/plugins/runtime/exec/processSupervisor';
 import { isPidAlive } from '@/testkit/process/spawn';
 import { createActionExecutor, type ActionExecutorDeps } from '@happier-dev/protocol/actions/actionExecutor';
+import { createTargetedActionRpcRequestV1 } from '@happier-dev/protocol/actions/actionRpcTransport';
 import { DaemonLspApplyResponseSchema } from '@happier-dev/protocol/machines/languageIntelligence';
 import { pathToFileURL } from 'node:url';
-import { buildWorkspaceFileRestoreOperation } from '@happier-dev/protocol/machines/workspaceFilesReplace';
+import { applyWorkspaceFileTextEdits, buildWorkspaceFileRestoreOperation } from '@happier-dev/protocol/machines/workspaceFilesReplace';
 import { applyWorkspaceFileReplace } from '@/rpc/handlers/workspaceFileReplace';
 import type { ResolvedLanguageServerContribution } from '@/plugins/projection/registry/types';
 import { readLspObject } from './languageServerResults';
@@ -31,8 +33,32 @@ vi.mock('node:fs/promises', async () => {
     const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
     return { ...actual, readFile: vi.fn(actual.readFile) };
 });
+function fixtureProjectChecker(rootPath: string, scenario: string, count?: number) {
+    return createLanguageServerProjectChecker({ async acquireExec(input) {
+        // Executable resolution is the OS boundary; the actual process owner,
+        // compiler-output decoder and host projection remain real.
+        const service = createStablePluginExecService({ allowedExecutables: [input.definition.executable], signal: input.signal,
+            processOwner: input.processOwner, isOccurrenceCurrent: () => !input.signal.aborted,
+            resolveExecutable: async () => ({ command: process.execPath,
+                args: [resolve('src/lsp/__fixtures__/projectCheck.cjs'), scenario, join(rootPath, 'started'), ...(count === undefined ? [] : [String(count)])] }),
+            resolvePath: async () => rootPath });
+        return { service, signal: input.signal, release: async () => {} };
+    } });
+}
+async function waitForProjectChecker(rootPath: string) {
+    let wake: (() => void) | undefined;
+    const watcher = watch(rootPath, () => wake?.());
+    try {
+        for (;;) {
+            const changed = new Promise<void>(resolve => { wake = resolve; });
+            try { if (await readFile(join(rootPath, 'started'), 'utf8') === 'ready') return; }
+            catch (error) { if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error; }
+            await changed;
+        }
+    } finally { watcher.close(); }
+}
 async function fixture(rootPath: string, count = 1, behavior: Record<string, unknown> = {}, rootMarkers?: readonly string[], readPolicy?: MachineResourcesPolicyReader,
-    definitionOverrides?: readonly Partial<ResolvedLanguageServerContribution['definition']>[]) {
+    definitionOverrides?: readonly Partial<ResolvedLanguageServerContribution['definition']>[], platform?: NodeJS.Platform, projectChecker?: LanguageServerHostOptions['projectChecker']) {
     const protocolHandles: PluginProtocolClientHandle<'jsonRpc'>[] = [];
     const log = join(rootPath, 'messages.jsonl');
     await writeFile(log, '');
@@ -41,18 +67,17 @@ async function fixture(rootPath: string, count = 1, behavior: Record<string, unk
             definition: { id: `server${index}`, title: `Fixture ${index}`, languageIds: { typescript: 'typescript', tsx: 'typescriptreact' }, filePatterns: ['**/*.ts', '**/*.tsx'], ...(rootMarkers ? { rootMarkers: [...rootMarkers] } : {}), executable: { kind: 'systemTool' as const, id: 'server' }, args: [], initializationOptions: { userPreferences: { tsserver: { automaticTypeAcquisition: { enabled: false } } }, disablePushDiagnostics: true }, ...definitionOverrides?.[index] },
         })) });
     let registry = registryFor(count);
-    const host = createLanguageServerHost({ readCurrentContributionRegistry: () => registry, readPolicy, async openProtocol(input) {
+    const host = createLanguageServerHost({ readCurrentContributionRegistry: () => registry, readPolicy, platform, projectChecker, async openProtocol(input) {
             // The OS executable/protocol child is the system boundary; host, catalog, codec and supervisor stay real.
             const service = createStablePluginExecService({ allowedExecutables: [input.definition.executable], signal: input.signal, processOwner: input.processOwner, isOccurrenceCurrent: () => !input.signal.aborted,
                 resolveExecutable: async () => behavior.nativeTypeScript ? { command: resolve('../../node_modules/@typescript/typescript-linux-x64/lib/tsc'), args: ['--lsp', '--stdio'] }
                     : { command: process.execPath, args: [resolve('src/lsp/__fixtures__/languageServer.cjs'), log, JSON.stringify({ ...readLspObject(input.definition.initializationOptions), ...behavior })] }, resolvePath: async () => rootPath });
-            const protocol = await service.clients.spawn({ kind: 'jsonRpc', framing: 'contentLength', cancellationMethod: '$/cancelRequest', maxFrameBytes: DEFAULT_JSON_RPC_MAX_FRAME_BYTES, launch: { executable: input.definition.executable, cwd: rootPath } });
+            const protocol = await service.clients.spawn({ kind: 'jsonRpc', framing: 'contentLength', cancellationMethod: '$/cancelRequest', launch: { executable: input.definition.executable, cwd: rootPath } });
             protocolHandles.push(protocol);
             return protocol;
         } });
     const handlers = new Map<string, RpcHandler>();
     const registrar: RpcHandlerRegistrar = { registerHandler: (method, handler) => { handlers.set(method, handler); } };
-    registerLanguageIntelligenceHandlers(registrar, rootPath, { host, accessPolicy: { kind: 'restrictedRoots', roots: [rootPath] } });
     const call = async (method: string, input: unknown, signal?: AbortSignal) => {
         const handler = handlers.get(method);
         if (!handler)
@@ -66,9 +91,417 @@ async function fixture(rootPath: string, count = 1, behavior: Record<string, unk
         workspaceFilesReplace: async ({ machineId: _machineId, ...request }, context) => applyWorkspaceFileReplace(request, rootPath, { kind: 'restrictedRoots', roots: [rootPath] }, context.signal ? { signal: context.signal } : undefined),
     } satisfies Pick<ActionExecutorDeps, 'languageIntelligenceQuery' | 'languageIntelligenceApply' | 'workspaceFilesReplace'>;
     const executor = createActionExecutor(deps as ActionExecutorDeps);
-    return { host, open, query, call, executor, protocolHandles, setDefinitionCount: (definitionCount: number) => { registry = registryFor(definitionCount); }, messages: async () => String(await readFile(log, 'utf8')).trim().split('\n').filter(Boolean).map(line => JSON.parse(line) as Record<string, unknown>) };
+    registerLanguageIntelligenceHandlers(registrar, rootPath, { host, machineId: 'machine',
+        resolveActionExecutor: () => executor, accessPolicy: { kind: 'restrictedRoots', roots: [rootPath] } });
+    const callApply = async (method: string, request: unknown) => {
+        const handler = handlers.get(method);
+        if (!handler) throw new Error('Missing production language mutation handler');
+        return handler(createTargetedActionRpcRequestV1(request, { kind: 'machine', machineId: 'machine' }), {
+            signal: new AbortController().signal, localActionContext: { surface: 'ui', authority: 'present_user' },
+        });
+    };
+    return { host, open, query, call, callApply, executor, protocolHandles, setDefinitionCount: (definitionCount: number) => { registry = registryFor(definitionCount); }, messages: async () => String(await readFile(log, 'utf8')).trim().split('\n').filter(Boolean).map(line => JSON.parse(line) as Record<string, unknown>) };
 }
 describe('language intelligence composed host', () => {
+    it('serves visible semantic ranges from a delta-only server through the strict registered transport', async () => {
+        await withTempDir('happier-lsp-host-semantic-delta-', async rootPath => {
+            await writeFile(join(rootPath, 'a.ts'), 'abc\ndef');
+            const f = await fixture(rootPath, 1, { editingFeatures: true, semanticRange: false });
+            try {
+                const opened = DaemonLspSyncResponseSchema.parse(await f.open('a.ts', 'abc\ndef'));
+                expect(opened).toMatchObject({ status: 'ok', capabilities: { semanticTokensRange: false, semanticTokensDelta: true } });
+                const range = { start: { line: 0, character: 0 }, end: { line: 0, character: 3 } };
+                expect(DaemonLspQueryResponseSchema.parse(await f.query('semanticTokens', 'a.ts', { range })))
+                    .toMatchObject({ status: 'ok', kind: 'semanticTokens', tokens: [{ data: [0, 0, 1, 0, 0] }] });
+                expect(DaemonLspQueryResponseSchema.parse(await f.query('semanticTokens', 'a.ts', { range })))
+                    .toMatchObject({ status: 'ok', kind: 'semanticTokens', tokens: [{ data: [0, 0, 2, 0, 0] }] });
+            } finally { await f.host.dispose(); }
+        });
+    });
+
+    it.each(['pull', 'push'] as const)('publishes only changed diagnostic paths through the registered %s watch', async mode => {
+        await withTempDir('happier-lsp-diagnostic-delta-', async rootPath => {
+            const f = await fixture(rootPath, 1, { diagnosticsMode: mode });
+            const watch = async (sinceRevision?: number) => {
+                const response = DaemonLspWatchResponseSchema.parse(await f.call(RPC_METHODS.DAEMON_LSP_WATCH, { rootPath, sinceRevision }));
+                if (response.status !== 'ok') throw new Error('Expected diagnostics watch');
+                return response;
+            };
+            try {
+                for (const path of ['a.ts', 'b.ts']) await f.open(path, 'broken');
+                const client = f.protocolHandles[0].client;
+                const push = async (path: string, message: string) => {
+                    await client.notify('fixture/publishDiagnostics', { uri: pathToFileURL(join(rootPath, path)).href,
+                        version: 1, diagnostics: [{ range: { start: { line: 0, character: 0 }, end: { line: 0, character: 1 } }, severity: 1, message }] });
+                    await client.request('fixture/barrier');
+                };
+                await f.query('diagnostics');
+                if (mode === 'push') { await push('a.ts', 'broken'); await push('b.ts', 'broken'); }
+                const first = await watch();
+                expect(Object.keys(first.diagnostics).sort()).toEqual(['a.ts', 'b.ts']);
+                if (mode === 'push') {
+                    for (let index = 0; index < 12; index++) await push('a.ts', 'broken');
+                    expect((await watch()).revision).toBe(first.revision);
+                    await push('a.ts', 'Changed problem');
+                } else {
+                    await f.call(RPC_METHODS.DAEMON_LSP_SYNC, { rootPath, op: {
+                        op: 'snapshot', path: 'a.ts', languageId: 'typescript', version: 2, text: 'fixed', unsaved: false,
+                    } });
+                    await vi.waitFor(async () => expect((await watch()).diagnostics['a.ts']?.['fixture/server0'])
+                        .toMatchObject({ state: 'ready', version: 2, items: [] }));
+                }
+                const delta = await watch(first.revision);
+                expect(Object.keys(delta.diagnostics)).toEqual(['a.ts']);
+                expect(delta.diagnostics['a.ts']['fixture/server0'].items).toMatchObject(mode === 'push' ? [{ message: 'Changed problem' }] : []);
+                await client.request('fixture/progress', { kind: 'begin', token: 'loading' });
+                const loading = await watch(delta.revision);
+                expect(loading.servers[0].loading).toBe(true);
+                expect(loading.diagnostics).toEqual({});
+                await f.protocolHandles[0].dispose();
+                await vi.waitFor(async () => expect((await watch()).servers[0].state).toBe('crashed'));
+                const crashed = await watch(loading.revision);
+                expect(Object.keys(crashed.diagnostics).sort()).toEqual(['a.ts', 'b.ts']);
+                for (const entry of Object.values(crashed.diagnostics)) expect(entry['fixture/server0']).toMatchObject({ state: 'unavailable', items: [] });
+            } finally { await f.host.dispose(); }
+        });
+    });
+
+    it('retains filesystem currentness through asynchronous LSP apply preparation', async () => {
+        await withTempDir('happier-lsp-currentness-', async rootPath => {
+            await writeFile(join(rootPath, 'a.ts'), 'old');
+            const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+            let current = true;
+            vi.mocked(fsPromises.readFile).mockImplementationOnce(async (...args: Parameters<typeof fsPromises.readFile>) => {
+                const bytes = await actual.readFile(...args);
+                current = false;
+                return bytes;
+            });
+            const host = createLanguageServerHost();
+            try {
+                const response = await host.apply({ rootPath, path: 'a.ts', operation: { kind: 'format', files: [{
+                    path: 'a.ts', expectedHash: createHash('sha256').update('old').digest('hex'), edits: [{
+                        range: { start: { line: 0, character: 0 }, end: { line: 0, character: 3 } }, text: 'new',
+                    }],
+                }] } }, { assertCurrentAuthority: async () => {
+                    if (!current) throw Object.assign(new Error('Requester admission expired'), { code: 'filesystem_identity_custody_unavailable' });
+                } });
+                expect(response).toMatchObject({ ok: true, results: [{ status: 'failed', reason: 'filesystem_identity_custody_unavailable' }] });
+                expect((await actual.readFile(join(rootPath, 'a.ts'), 'utf8')) === 'old').toBe(true);
+            } finally { vi.mocked(fsPromises.readFile).mockImplementation(actual.readFile); await host.dispose(); }
+        });
+    });
+    it.each(['workspace-pull', 'declared-checker'] as const)('retains complete %s project diagnostics beyond the unrelated tunnel budget', async source => {
+        await withTempDir('happier-lsp-project-payload-', async rootPath => {
+            await writeFile(join(rootPath, 'a.ts'), 'saved');
+            const projectChecker = fixtureProjectChecker(rootPath, 'large', 4096);
+            const f = await fixture(rootPath, 1, { editingFeatures: source === 'workspace-pull', projectDiagnosticCount: 4096 }, undefined, undefined,
+                source === 'declared-checker' ? [{ projectCheck: { executable: { kind: 'systemTool', id: 'checker' }, args: [],
+                    projectFile: 'tsconfig.json', output: { kind: 'typescript' } } }] : undefined, undefined, projectChecker);
+            try {
+                const response = DaemonLspQueryResponseSchema.parse(await f.query('diagnostics', 'a.ts', { scope: 'project', text: 'disk' }));
+                expect(response).toMatchObject({ status: 'ok', kind: 'diagnostics', hasMore: false });
+                if (response.status !== 'ok' || response.kind !== 'diagnostics') throw new Error('Missing project diagnostics');
+                expect(response.diagnostics).toHaveLength(4096);
+                if (source === 'workspace-pull') expect(response.diagnostics.at(-1)?.message).toBe('project problem 4095');
+                else expect(response.diagnostics.at(-1)?.range.start.line).toBe(4095);
+                expect(Buffer.byteLength(JSON.stringify(response), 'utf8')).toBeGreaterThan(DEFAULT_MACHINE_TUNNEL_SERVER_ROUTED_MAX_RAW_PAYLOAD_BYTES);
+            } finally { await f.host.dispose(); }
+        });
+    });
+    it.each([false, true])('fences a delayed declared project checker only after a real edit (edited=%s)', async edited => {
+        await withTempDir('happier-lsp-declared-check-fence-', async rootPath => {
+            await writeFile(join(rootPath, 'a.ts'), 'stable');
+            const checker = fixtureProjectChecker(rootPath, 'gated-diagnostics');
+            const f = await fixture(rootPath, 1, {}, undefined, undefined, [{ projectCheck: { executable: { kind: 'systemTool', id: 'checker' }, args: [],
+                projectFile: 'tsconfig.json', output: { kind: 'typescript' } } }], undefined, checker);
+            let pending: Promise<unknown> | undefined;
+            try {
+                const opened = DaemonLspSyncResponseSchema.parse(await f.open('a.ts', 'stable', 7));
+                if (opened.status !== 'ok') throw new Error('Initial editor acquisition failed');
+                expect(opened.capabilities).toMatchObject({ workspaceDiagnostics: false });
+                pending = f.query('diagnostics', 'a.ts', { scope: 'project', version: 7, generation: opened.generation });
+                await waitForProjectChecker(rootPath);
+                expect(await f.open('a.ts', 'stable', 1)).toMatchObject({ status: 'ok', version: 7, generation: opened.generation });
+                expect(await f.call(RPC_METHODS.DAEMON_LSP_SYNC, { rootPath,
+                    op: { op: 'snapshot', path: 'a.ts', languageId: 'typescript', version: 21, text: 'stable', unsaved: false } }))
+                    .toMatchObject({ status: 'ok', version: 7, servers: [{ generation: opened.servers[0].generation }] });
+                if (edited) expect(await f.call(RPC_METHODS.DAEMON_LSP_SYNC, { rootPath,
+                    op: { op: 'change', path: 'a.ts', baseVersion: 7, version: 8, unsaved: true,
+                        edit: { startLine: 0, startCharacter: 6, endLine: 0, endCharacter: 6, text: 'd' } } }))
+                    .toMatchObject({ status: 'ok', version: 8 });
+                await writeFile(join(rootPath, 'started.release'), 'release');
+                expect(await pending).toMatchObject(edited ? { status: 'error', errorCode: 'stale_query' }
+                    : { status: 'ok', kind: 'diagnostics', version: 7, generation: opened.generation,
+                        diagnostics: [{ path: 'src/a(b).ts', code: 'TS2322' }, { path: 'tsconfig.json', code: 'TS18003' }] });
+                expect((await f.messages()).some(message => message.method === 'workspace/diagnostic')).toBe(false);
+                expect(checker.readProcessRoots()).toEqual([]);
+            } finally {
+                await writeFile(join(rootPath, 'started.release'), 'release');
+                await pending?.catch(() => undefined);
+                await f.host.dispose();
+            }
+        });
+    });
+    it('refuses project disk diagnostics when another held file contains unsaved edits', async () => {
+        await withTempDir('happier-lsp-project-text-', async rootPath => {
+            await writeFile(join(rootPath, 'a.ts'), 'saved');
+            await writeFile(join(rootPath, 'b.ts'), 'saved-b');
+            const f = await fixture(rootPath, 1, { editingFeatures: true });
+            try {
+                await f.open('a.ts', 'saved');
+                await f.open('b.ts', 'draft-b', 1, true);
+                expect(await f.query('diagnostics', 'a.ts', { text: 'disk', scope: 'project' }))
+                    .toMatchObject({ status: 'error', errorCode: 'unsaved_editor_changes', diskHash: createHash('sha256').update('saved-b').digest('hex') });
+                expect((await f.messages()).filter(message => message.method === 'workspace/diagnostic')).toHaveLength(0);
+            } finally { await f.host.dispose(); }
+        });
+    });
+    it.each(['rename', 'codeAction'] as const)('saves exact %s bytes through the real query, admitted RPC and guarded writer, then restores them', async kind => {
+        await withTempDir('happier-lsp-saved-journey-', async rootPath => {
+            const original = 'old\r\n';
+            for (const path of ['a.ts', 'b.ts']) await writeFile(join(rootPath, path), original);
+            const f = await fixture(rootPath, 1, { semanticEdits: true });
+            try {
+                const preview = DaemonLspQueryResponseSchema.parse(await f.query(kind === 'rename' ? 'rename' : 'codeActions', 'a.ts', {
+                    text: 'disk', position: { line: 0, symbol: 'old' }, ...(kind === 'rename' ? { newName: 'renamed' } : {}),
+                }));
+                if (preview.status !== 'ok') throw new Error(`Preview unavailable: ${preview.status}`);
+                const operation = preview.kind === 'rename' ? { kind: 'rename' as const, files: preview.files }
+                    : preview.kind === 'codeActions' ? { kind: 'codeAction' as const, action: preview.actions[0], expectedHash: preview.fileHash! }
+                    : undefined;
+                if (!operation) throw new Error('Expected a reviewed semantic operation');
+                const response = DaemonLspApplyResponseSchema.parse(await f.callApply(kind === 'rename' ? RPC_METHODS.DAEMON_LSP_RENAME_APPLY : RPC_METHODS.DAEMON_LSP_CODE_ACTION_APPLY,
+                    { rootPath, path: 'a.ts', operation }));
+                expect(response).toMatchObject({ ok: true });
+                if (!('ok' in response) || !response.ok) throw new Error('Expected guarded write receipts');
+                expect(response.results.every(file => file.status === 'replaced' && !file.reason)).toBe(true);
+                // Inspect the persisted outcome, not just the server edit or Action result.
+                expect(await readFile(join(rootPath, 'a.ts'), 'utf8')).toBe(kind === 'rename' ? 'renamed\r\n' : original);
+                expect(await readFile(join(rootPath, 'b.ts'), 'utf8')).toBe(kind === 'rename' ? 'renamed\r\n' : 'fixed\r\n');
+                expect(await f.executor.execute('workspace.files.replace', { machineId: 'machine', rootPath,
+                    operation: buildWorkspaceFileRestoreOperation(response.results) }, { surface: 'ui', authority: 'present_user' }))
+                    .toMatchObject({ ok: true, result: { ok: true } });
+                for (const path of ['a.ts', 'b.ts']) expect(await readFile(join(rootPath, path), 'utf8')).toBe(original);
+            } finally { await f.host.dispose(); }
+        });
+    });
+    it.each(['disk', 'buffer'] as const)('refuses a reviewed rename as a whole when a later target changes in its %s', async changedAt => {
+        await withTempDir('happier-lsp-stale-set-', async rootPath => {
+            for (const path of ['a.ts', 'b.ts']) await writeFile(join(rootPath, path), 'old');
+            const f = await fixture(rootPath, 1, { semanticEdits: true });
+            try {
+                await f.open('a.ts', 'old');
+                await f.open('b.ts', 'old');
+                const preview = DaemonLspQueryResponseSchema.parse(await f.query('rename', 'a.ts', {
+                    text: 'disk', position: { line: 0, symbol: 'old' }, newName: 'renamed',
+                }));
+                if (preview.status !== 'ok' || preview.kind !== 'rename') throw new Error('Expected rename preview');
+                if (changedAt === 'disk') await writeFile(join(rootPath, 'b.ts'), 'agent edit');
+                else expect(await f.call(RPC_METHODS.DAEMON_LSP_SYNC, { rootPath,
+                    op: { op: 'snapshot', path: 'b.ts', languageId: 'typescript', text: 'draft', version: 2, unsaved: true } }))
+                    .toMatchObject({ status: 'ok' });
+                const outcome = await f.callApply(RPC_METHODS.DAEMON_LSP_RENAME_APPLY,
+                    { rootPath, path: 'a.ts', operation: { kind: 'rename', files: preview.files } });
+                expect(outcome).toMatchObject(changedAt === 'disk'
+                    ? { ok: true, results: [{ path: 'a.ts', status: 'skipped', reason: 'edit_set_aborted' }, { path: 'b.ts', status: 'changed' }] }
+                    : { status: 'error', errorCode: 'unsaved_editor_changes' });
+                expect(await readFile(join(rootPath, 'a.ts'), 'utf8')).toBe('old');
+                expect(await readFile(join(rootPath, 'b.ts'), 'utf8')).toBe(changedAt === 'disk' ? 'agent edit' : 'old');
+                expect(await f.query('hover', 'a.ts', { position: { line: 0, character: 0 } }))
+                    .toMatchObject({ status: 'ok', sections: [{ markdown: 'old' }] });
+                expect(await f.query('hover', 'b.ts', { position: { line: 0, character: 0 } }))
+                    .toMatchObject({ status: 'ok', sections: [{ markdown: changedAt === 'buffer' ? 'draft' : 'old' }] });
+            } finally { await f.host.dispose(); }
+        });
+    });
+    it('serves editing intelligence through the registered strict wire and native supervisor', async () => {
+        await withTempDir('happier-lsp-editing-', async rootPath => {
+            await writeFile(join(rootPath, 'a.ts'), 'abc');
+            const f = await fixture(rootPath, 2, { editingFeatures: true });
+            try {
+                expect(DaemonLspSyncResponseSchema.parse(await f.open('a.ts', 'abc'))).toMatchObject({
+                    status: 'ok', capabilities: { completion: true, formatting: true, workspaceDiagnostics: true },
+                    servers: [{ capabilities: { completionResolve: true } }, { capabilities: { semanticTokensRange: true } }],
+                });
+                const range = { start: { line: 0, character: 0 }, end: { line: 0, character: 1 } };
+                const query = async (kind: string, extra: Record<string, unknown> = {}) => DaemonLspQueryResponseSchema.parse(await f.query(kind, 'a.ts', extra));
+                const completion = await query('completion', { position: range.start });
+                expect(completion).toMatchObject({ status: 'ok', kind: 'completion', isIncomplete: false,
+                    items: [{ label: 'fixture', insertTextFormat: 2 }, { label: 'fixture', insertTextFormat: 2 }] });
+                if (completion.status !== 'ok' || completion.kind !== 'completion') throw new Error('Missing completion response');
+                const item = completion.items[0];
+                await query('hover', { position: range.start });
+                await f.call(RPC_METHODS.DAEMON_LSP_SYNC, { rootPath,
+                    op: { op: 'snapshot', path: 'a.ts', languageId: 'typescript', text: 'abc', version: 1, unsaved: false } });
+                expect(await query('completionResolve', { serverId: item.serverId, itemId: item.itemId }))
+                    .toMatchObject({ status: 'ok', kind: 'completionResolve', item: { detail: 'resolved', additionalTextEdits: [{ newText: 'import x;\n' }] } });
+                expect(await query('signatureHelp', { position: range.start })).toMatchObject({ status: 'ok', kind: 'signatureHelp', help: { activeParameter: 0 } });
+                for (const kind of ['formatting', 'rangeFormatting', 'organizeImports']) {
+                    expect(await query(kind, { range, formattingOptions: { tabSize: 4, insertSpaces: true } }))
+                        .toMatchObject({ status: 'ok', kind, files: [{ path: 'a.ts', expectedHash: createHash('sha256').update('abc').digest('hex') }] });
+                }
+                for (const kind of ['typeDefinition', 'implementation']) expect(await query(kind, { position: range.start }))
+                    .toMatchObject({ status: 'ok', kind, locations: [{ path: 'a.ts' }] });
+                expect(await query('documentHighlight', { position: range.start })).toMatchObject({ status: 'ok', highlights: [{ kind: 2 }] });
+                expect(await query('selectionRange', { position: range.start })).toMatchObject({ status: 'ok', ranges: [{ ranges: [range, { start: range.start, end: { line: 0, character: 3 } }] }] });
+                expect(await query('inlayHint', { range })).toMatchObject({ status: 'ok', hints: [{ label: 'value:' }] });
+                expect(await query('semanticTokens', { range })).toMatchObject({ status: 'ok', tokens: [
+                    { serverId: 'fixture/server0', legend: { tokenTypes: ['variable'] }, data: [0, 0, 1, 0, 0] },
+                    { serverId: 'fixture/server1', legend: { tokenTypes: ['variable'] }, data: [0, 0, 1, 0, 0] },
+                ] });
+                expect(await query('semanticTokens', { serverId: item.serverId, previousResultId: 'tokens-1' })).toMatchObject({ status: 'ok', tokens: [{ edits: [{ deleteCount: 5 }] }] });
+                const calls = await query('callHierarchy', { position: range.start, hierarchy: { direction: 'prepare' } });
+                expect(calls).toMatchObject({ status: 'ok', kind: 'callHierarchy', items: [{ name: 'fixture', path: 'a.ts' }] });
+                if (calls.status !== 'ok' || calls.kind !== 'callHierarchy') throw new Error('Missing call hierarchy');
+                for (const direction of ['incoming', 'outgoing']) expect(await query('callHierarchy', { serverId: calls.items[0].serverId, hierarchy: { direction, itemId: calls.items[0].itemId } }))
+                    .toMatchObject({ status: 'ok', direction, calls: [{ item: { path: 'a.ts' }, ranges: [range] }] });
+                expect(await query('workspaceSymbol', { query: 'fixture' })).toMatchObject({ status: 'ok', symbols: [{ name: 'fixture', path: 'a.ts' }] });
+                expect(await query('diagnostics', { scope: 'project' })).toMatchObject({ status: 'ok', diagnostics: [{ message: 'project problem' }] });
+                expect((await f.messages()).filter(message => message.method === 'textDocument/semanticTokens/full')).toHaveLength(0);
+                expect(JSON.stringify(completion)).not.toContain('"native"');
+                await f.call(RPC_METHODS.DAEMON_LSP_SYNC, { rootPath,
+                    op: { op: 'snapshot', path: 'a.ts', languageId: 'typescript', text: 'edited', version: 2, unsaved: true } });
+                expect(await query('completionResolve', { serverId: item.serverId, itemId: item.itemId }))
+                    .toMatchObject({ status: 'error', errorCode: 'stale_query' });
+            } finally { await f.host.dispose(); }
+        });
+    });
+    it.each(['\n', '\r\n'])('normalizes native completion EOF positions against the held document (%j)', async newline => {
+        await withTempDir('happier-lsp-completion-eof-', async rootPath => {
+            const text = `# Beta${newline}${newline}[[al`;
+            await writeFile(join(rootPath, 'a.ts'), text);
+            // Real Marksman 2026-02-08 emits this exclusive end position for [[al at EOF.
+            const nativeRange = { start: { line: 2, character: 0 }, end: { line: 3, character: 0 } };
+            const expectedRange = { start: nativeRange.start, end: { line: 2, character: 4 } };
+            const f = await fixture(rootPath, 1, { editingFeatures: true, completionItems: [
+                { label: 'Alpha', kind: 18, filterText: '[[Alpha]]', textEdit: { range: nativeRange, newText: '[[alpha]]' } },
+                { label: 'Alpha', kind: 18, textEdit: { insert: nativeRange, replace: nativeRange, newText: '[[alpha]]' } },
+            ] });
+            try {
+                await f.open('a.ts', text, 1, true);
+                const result = DaemonLspQueryResponseSchema.parse(await f.query('completion', 'a.ts', {
+                    position: { line: 2, character: 4 }, completionContext: { triggerKind: 1 },
+                }));
+                expect(result).toMatchObject({ status: 'ok', kind: 'completion', items: [
+                    { textEdit: { range: expectedRange } }, { textEdit: { insert: expectedRange, replace: expectedRange } },
+                ] });
+                if (result.status !== 'ok' || result.kind !== 'completion') throw new Error('Expected native completions');
+                for (const item of result.items) {
+                    if (!item.textEdit) throw new Error('Expected native completion edit');
+                    const edit = item.textEdit;
+                    const range = 'range' in edit ? edit.range : edit.replace;
+                    // The guarded edit consumer accepts the exact projection; Monaco requires a single-line edit.
+                    expect(range.start.line).toBe(range.end.line);
+                    expect(applyWorkspaceFileTextEdits(text, [{ range, text: edit.newText }]).text)
+                        .toBe(`# Beta${newline}${newline}[[alpha]]`);
+                    expect(DaemonLspQueryResponseSchema.parse(await f.query('completionResolve', 'a.ts', {
+                        serverId: item.serverId, itemId: item.itemId,
+                    }))).toMatchObject({ status: 'ok', kind: 'completionResolve', item: { textEdit: edit } });
+                }
+            } finally { await f.host.dispose(); }
+        });
+    });
+    it.each(['identical-snapshot', 'identical-open', 'identical-change', 'unrelated-file', 'watch-and-reference', 'real-edit', 'edit-then-restore', 'reused-counter-edit-restore', 'restart'] as const)
+        ('keeps a pending project answer current only across semantic no-op sync: %s', async scenario => {
+        await withTempDir('happier-lsp-semantic-fence-', async rootPath => {
+            await writeFile(join(rootPath, 'a.ts'), 'stable');
+            await writeFile(join(rootPath, 'b.ts'), 'other');
+            const f = await fixture(rootPath, 1, { editingFeatures: true, delayMethod: 'workspace/diagnostic' });
+            let pending: Promise<unknown> | undefined;
+            try {
+                const opened = DaemonLspSyncResponseSchema.parse(await f.open('a.ts', 'stable', 7));
+                if (opened.status !== 'ok') throw new Error('Initial editor acquisition failed');
+                await f.open('b.ts', 'other', 4);
+                pending = f.query('diagnostics', 'a.ts', { scope: 'project', version: 7, generation: opened.generation });
+                await vi.waitFor(async () => expect((await f.messages()).some(message => message.method === 'workspace/diagnostic')).toBe(true));
+                const snapshot = (path: string, text: string, version: number, unsaved = false) => f.call(RPC_METHODS.DAEMON_LSP_SYNC,
+                    { rootPath, op: { op: 'snapshot', path, languageId: 'typescript', text, version, unsaved } });
+                let accepted: unknown;
+                if (scenario === 'identical-snapshot') accepted = await snapshot('a.ts', 'stable', 21);
+                else if (scenario === 'identical-open') accepted = await f.open('a.ts', 'stable', 1);
+                else if (scenario === 'identical-change') accepted = await f.call(RPC_METHODS.DAEMON_LSP_SYNC, { rootPath,
+                    op: { op: 'change', path: 'a.ts', baseVersion: 7, version: 21, unsaved: false,
+                        edit: { startLine: 0, startCharacter: 0, endLine: 0, endCharacter: 6, text: 'stable' } } });
+                else if (scenario === 'unrelated-file') await snapshot('b.ts', 'updated', 5, true);
+                else if (scenario === 'watch-and-reference') {
+                    expect(await f.host.watch({ rootPath })).toMatchObject({ status: 'ok' });
+                    expect(await f.query('hover', 'a.ts', { position: { line: 0, character: 0 }, version: 7 }))
+                        .toMatchObject({ status: 'ok', version: 7 });
+                } else if (scenario === 'restart') expect(await f.call(RPC_METHODS.DAEMON_LSP_RESTART, { rootPath })).toMatchObject({ status: 'ok' });
+                else if (scenario === 'reused-counter-edit-restore') {
+                    const edited = DaemonLspSyncResponseSchema.parse(await snapshot('a.ts', 'edited', 1, true));
+                    const restored = DaemonLspSyncResponseSchema.parse(await snapshot('a.ts', 'stable', 7));
+                    if (edited.status !== 'ok' || restored.status !== 'ok' || edited.version === undefined || restored.version === undefined)
+                        throw new Error('Missing canonical edit acknowledgements');
+                    expect.soft(edited.version).toBeGreaterThan(7);
+                    expect.soft(restored.version).toBeGreaterThan(edited.version);
+                }
+                else {
+                    await snapshot('a.ts', 'edited', 21, true);
+                    if (scenario === 'edit-then-restore') await snapshot('a.ts', 'stable', 22);
+                }
+                const changed = scenario === 'real-edit' || scenario === 'edit-then-restore' || scenario === 'reused-counter-edit-restore' || scenario === 'restart';
+                const version = scenario === 'real-edit' ? 21 : scenario === 'edit-then-restore' ? 22 : 7;
+                // ACK and the next ordinary query must agree on the canonical
+                // accepted version, not echo a no-op caller's unrelated counter.
+                if (accepted !== undefined) expect.soft(accepted).toMatchObject({ status: 'ok', version: 7, generation: opened.generation,
+                    servers: [{ generation: opened.servers[0].generation }] });
+                const current = DaemonLspQueryResponseSchema.parse(await f.query('hover', 'a.ts', { position: { line: 0, character: 0 } }));
+                expect.soft(current).toMatchObject({ status: 'ok', ...(scenario === 'reused-counter-edit-restore' ? {} : { version }), sections: [{ markdown: scenario === 'real-edit' ? 'edited' : 'stable' }] });
+                if (current.status !== 'ok') throw new Error('Current held editor query failed');
+                if (scenario === 'reused-counter-edit-restore') expect.soft(current.version).toBeGreaterThan(7);
+                if (scenario === 'restart') expect(current.generation).not.toBe(opened.generation);
+                else {
+                    expect(current.generation).toBe(opened.generation);
+                    expect(await f.host.watch({ rootPath })).toMatchObject({ status: 'ok', servers: [{ generation: opened.servers[0].generation }] });
+                    await f.protocolHandles[0].client.notify('fixture/release', { method: 'workspace/diagnostic' });
+                }
+                expect.soft(await pending).toMatchObject(changed ? { status: 'error', errorCode: 'stale_query' }
+                    : { status: 'ok', kind: 'diagnostics', version: 7, generation: opened.generation, diagnostics: [{ message: 'project problem' }] });
+            } finally {
+                await f.protocolHandles[0]?.client.notify('fixture/release', { method: 'workspace/diagnostic' }).catch(() => undefined);
+                await pending?.catch(() => undefined);
+                await f.host.dispose();
+            }
+        });
+    });
+    it('keeps the queued incremental base-version fence when a no-op races a real edit', async () => {
+        await withTempDir('happier-lsp-noop-edit-race-', async rootPath => {
+            await writeFile(join(rootPath, 'a.ts'), 'stable');
+            const f = await fixture(rootPath);
+            try {
+                await f.open('a.ts', 'stable', 7);
+                const edited = f.call(RPC_METHODS.DAEMON_LSP_SYNC, { rootPath, op: { op: 'change', path: 'a.ts', baseVersion: 7, version: 8,
+                    edit: { startLine: 0, startCharacter: 6, endLine: 0, endCharacter: 6, text: 'd' }, unsaved: true } });
+                const noOp = f.call(RPC_METHODS.DAEMON_LSP_SYNC, { rootPath, op: { op: 'change', path: 'a.ts', baseVersion: 7, version: 21,
+                    edit: { startLine: 0, startCharacter: 0, endLine: 0, endCharacter: 6, text: 'stable' }, unsaved: false } });
+                expect(await edited).toMatchObject({ status: 'ok', version: 8 });
+                expect(await noOp).toMatchObject({ status: 'error', errorCode: 'document_out_of_sync' });
+                expect(await f.query('hover', 'a.ts', { position: { line: 0, character: 0 } }))
+                    .toMatchObject({ status: 'ok', version: 8, sections: [{ markdown: 'stabled' }] });
+            } finally { await f.host.dispose(); }
+        });
+    });
+    it('cancels completion and drops a pending answer after incremental text changes', async () => {
+        await withTempDir('happier-lsp-completion-fence-', async rootPath => {
+            await writeFile(join(rootPath, 'a.ts'), 'abc');
+            const f = await fixture(rootPath, 1, { editingFeatures: true, delayMethod: 'textDocument/completion' });
+            try {
+                await f.open('a.ts', 'abc');
+                const pending = f.query('completion', 'a.ts', { position: { line: 0, character: 1 }, version: 1 });
+                await vi.waitFor(async () => expect((await f.messages()).some(message => message.method === 'textDocument/completion')).toBe(true));
+                await f.call(RPC_METHODS.DAEMON_LSP_SYNC, { rootPath, op: { op: 'change', path: 'a.ts', version: 2, baseVersion: 1,
+                    edit: { startLine: 0, startCharacter: 3, endLine: 0, endCharacter: 3, text: 'd' }, unsaved: true } });
+                await f.protocolHandles[0].client.notify('fixture/release', { method: 'textDocument/completion' });
+                expect(await pending).toMatchObject({ status: 'error', errorCode: 'stale_query' });
+                const controller = new AbortController();
+                const cancelled = f.call(RPC_METHODS.DAEMON_LSP_QUERY, { rootPath, path: 'a.ts', kind: 'completion', position: { line: 0, character: 1 } }, controller.signal);
+                await vi.waitFor(async () => expect((await f.messages()).filter(message => message.method === 'textDocument/completion')).toHaveLength(2));
+                controller.abort();
+                expect(await cancelled).toMatchObject({ status: 'error', errorCode: 'cancelled' });
+            } finally { await f.host.dispose(); }
+        });
+    });
     it.each([false, true])('reacquires a lost daemon document and diagnostic revision after reconnect (offline edit=%s)', async offlineEdit => {
         await withTempDir('happier-lsp-reconnect-', async rootPath => {
             let text = 'broken';
@@ -717,7 +1150,7 @@ describe('language intelligence composed host', () => {
             } finally { await f.host.dispose(); }
         });
     });
-    it('keeps narrower marker sessions independent while accepting workspace external changes', async () => {
+    it.each(['linux', 'darwin'] as const)('keeps narrower marker sessions independent with workspace external changes on %s', async platform => {
         await withTempDir('happier-lsp-marker-sessions-', async rootPath => {
             for (const directory of ['one', 'two']) {
                 await mkdir(join(rootPath, directory));
@@ -725,7 +1158,7 @@ describe('language intelligence composed host', () => {
                 await writeFile(join(rootPath, directory, 'a.ts'), directory);
             }
             await writeFile(join(rootPath, 'unrelated.ts'), 'unrelated');
-            const f = await fixture(rootPath, 1, {}, ['project.marker']);
+            const f = await fixture(rootPath, 1, {}, ['project.marker'], undefined, undefined, platform);
             try {
                 await f.open('one/a.ts', 'one');
                 await f.open('two/a.ts', 'two');
@@ -737,7 +1170,7 @@ describe('language intelligence composed host', () => {
                 expect(await f.call(RPC_METHODS.DAEMON_LSP_SYNC, { rootPath, op: { op: 'external', paths: ['two/a.ts', 'unrelated.ts'] } })).toMatchObject({ status: 'ok' });
                 await Promise.all(f.protocolHandles.map(handle => handle.client.request('fixture/barrier')));
                 const changes = (await f.messages()).filter(message => message.method === 'workspace/didChangeWatchedFiles');
-                expect(changes).toHaveLength(2);
+                expect(changes).toHaveLength(platform === 'linux' ? 2 : 0);
                 for (const change of changes) expect(change).toMatchObject({ params: { changes: [{ uri: expect.stringContaining('/two/a.ts') }, { uri: expect.stringContaining('/unrelated.ts') }] } });
                 expect(f.protocolHandles).toHaveLength(2);
             } finally { await f.host.dispose(); }
@@ -748,11 +1181,14 @@ describe('language intelligence composed host', () => {
             await writeFile(join(rootPath, 'a.ts'), 'shared');
             const f = await fixture(rootPath);
             try {
-                await f.open('a.ts', 'shared');
-                await f.open('a.ts', 'shared');
+                await f.open('a.ts', 'shared', 7);
+                await f.open('a.ts', 'shared', 7);
                 f.setDefinitionCount(2);
-                expect(await f.call(RPC_METHODS.DAEMON_LSP_SYNC, { rootPath, op: { op: operation, path: 'a.ts', languageId: 'typescript', version: 2, text: 'shared', unsaved: false } })).toMatchObject({ status: 'ok' });
+                expect.soft(await f.call(RPC_METHODS.DAEMON_LSP_SYNC, { rootPath, op: { op: operation, path: 'a.ts', languageId: 'typescript', version: 21, text: 'shared', unsaved: false } }))
+                    .toMatchObject({ status: 'ok', version: 7 });
                 expect(f.protocolHandles).toHaveLength(2);
+                expect.soft(await f.query('hover', 'a.ts', { position: { line: 0, character: 0 } }))
+                    .toMatchObject({ status: 'ok', version: 7, sections: [{ markdown: 'shared' }, { markdown: 'shared' }] });
                 await f.call(RPC_METHODS.DAEMON_LSP_SYNC, { rootPath, op: { op: 'close', path: 'a.ts' } });
                 expect(await f.query('hover', 'a.ts', { serverId: 'fixture/server1', position: { line: 0, character: 0 } })).toMatchObject({ status: 'ok', sections: [{ serverId: 'fixture/server1', markdown: 'shared' }] });
                 expect(f.protocolHandles).toHaveLength(2);
@@ -788,7 +1224,7 @@ describe('language intelligence composed host', () => {
             } finally { await f.host.dispose(); }
         });
     });
-    it('pages a real native reference response larger than the Machine tunnel reply budget', async () => {
+    it('retains complete stdio reference responses beyond the unrelated tunnel budget', async () => {
         await withTempDir('happier-lsp-large-references-', async rootPath => {
             const text = 'x\n'.repeat(3500);
             await writeFile(join(rootPath, 'a.ts'), text);
@@ -796,31 +1232,28 @@ describe('language intelligence composed host', () => {
             try {
                 await f.open('a.ts', text);
                 const result = DaemonLspQueryResponseSchema.parse(await f.query('references', 'a.ts', { position: { line: 0, character: 0 } }));
-                expect(result).toMatchObject({ status: 'ok', kind: 'references', hasMore: true });
-                if (result.status !== 'ok' || result.kind !== 'references') throw new Error('Expected reference page');
-                expect(result.locations.length).toBeGreaterThan(0);
-                expect(result.locations.length).toBeLessThan(3500);
+                expect(result).toMatchObject({ status: 'ok', kind: 'references', hasMore: false });
+                if (result.status !== 'ok' || result.kind !== 'references') throw new Error('Expected references');
+                expect(result.locations).toHaveLength(3500);
+                expect(result.locations.at(-1)?.range.start.line).toBe(3499);
                 expect(result.locations.every(location => location.lineText === 'x')).toBe(true);
-                expect(Buffer.byteLength(JSON.stringify(result), 'utf8')).toBeLessThanOrEqual(DEFAULT_MACHINE_TUNNEL_SERVER_ROUTED_MAX_RAW_PAYLOAD_BYTES);
+                expect(Buffer.byteLength(JSON.stringify(result), 'utf8')).toBeGreaterThan(DEFAULT_MACHINE_TUNNEL_SERVER_ROUTED_MAX_RAW_PAYLOAD_BYTES);
             } finally { await f.host.dispose(); }
         });
     });
-    it('keeps an exact-byte reference page intact and omits an item on one-byte overflow', () => {
-        const result = { status: 'ok' as const, kind: 'references' as const, locations: [{ serverId: 'fixture/server', path: 'a.ts', range: { start: { line: 0, character: 0 }, end: { line: 0, character: 1 } }, lineText: '' }], hasMore: false };
-        result.locations[0].lineText = 'x'.repeat(DEFAULT_MACHINE_TUNNEL_SERVER_ROUTED_MAX_RAW_PAYLOAD_BYTES - Buffer.byteLength(JSON.stringify(result), 'utf8'));
-        expect(Buffer.byteLength(JSON.stringify(result), 'utf8')).toBe(DEFAULT_MACHINE_TUNNEL_SERVER_ROUTED_MAX_RAW_PAYLOAD_BYTES);
-        expect(pageLanguageServerReferences(result)).toEqual(result);
-        const overflow = { ...result, locations: [{ ...result.locations[0], lineText: `${result.locations[0].lineText}x` }] };
-        const overflowPage = pageLanguageServerReferences(overflow);
-        expect(overflowPage.hasMore).toBe(true);
-        expect(overflowPage.locations).toHaveLength(0);
-    });
-    it('pages reference results at the existing transport byte boundary without a result-count cap', () => {
-        const result = { status: 'ok' as const, kind: 'references' as const, locations: Array.from({ length: 3000 }, (_, line) => ({ serverId: 'fixture/server', path: 'a.ts', range: { start: { line, character: 0 }, end: { line, character: 1 } }, lineText: 'λ'.repeat(100) })), hasMore: false };
-        const page = pageLanguageServerReferences(result);
-        expect(page.hasMore).toBe(true);
-        expect(page.locations.length).toBeGreaterThan(0);
-        expect(Buffer.byteLength(JSON.stringify(page), 'utf8')).toBeLessThanOrEqual(DEFAULT_MACHINE_TUNNEL_SERVER_ROUTED_MAX_RAW_PAYLOAD_BYTES);
-        expect(Buffer.byteLength(JSON.stringify({ ...page, locations: result.locations.slice(0, page.locations.length + 1) }), 'utf8')).toBeGreaterThan(DEFAULT_MACHINE_TUNNEL_SERVER_ROUTED_MAX_RAW_PAYLOAD_BYTES);
+    it('retains one reference with a multibyte preview larger than the unrelated tunnel budget', async () => {
+        await withTempDir('happier-lsp-large-reference-row-', async rootPath => {
+            const text = 'λ'.repeat(DEFAULT_MACHINE_TUNNEL_SERVER_ROUTED_MAX_RAW_PAYLOAD_BYTES);
+            await writeFile(join(rootPath, 'a.ts'), text);
+            const f = await fixture(rootPath);
+            try {
+                await f.open('a.ts', text);
+                const result = DaemonLspQueryResponseSchema.parse(await f.query('references', 'a.ts', { position: { line: 0, character: 0 } }));
+                expect(result).toMatchObject({ status: 'ok', kind: 'references', hasMore: false });
+                if (result.status !== 'ok' || result.kind !== 'references') throw new Error('Expected references');
+                expect(result.locations).toHaveLength(1);
+                expect(result.locations[0]).toMatchObject({ path: 'a.ts', lineText: text });
+            } finally { await f.host.dispose(); }
+        });
     });
 });

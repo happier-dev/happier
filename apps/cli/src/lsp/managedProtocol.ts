@@ -1,7 +1,7 @@
-import { PluginError } from '@happier-dev/plugin-sdk';
+import { PluginError, type JsonValue } from '@happier-dev/plugin-sdk';
 import type { PluginProtocolClientHandle } from '@happier-dev/plugin-sdk/exec/protocol-clients';
 import type { ManagedExecutableRef } from '@happier-dev/plugin-sdk/managed-services';
-import { DEFAULT_JSON_RPC_MAX_FRAME_BYTES } from '@/plugins/runtime/exec/jsonRpc';
+import type { ExecService } from '@happier-dev/plugin-sdk/exec';
 import type { ProcessOwnerRef } from '@/processes/ownerTag';
 import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
@@ -27,9 +27,46 @@ export class LanguageServerProtocolUnavailableError extends PluginError {
     }
 }
 
-export function createLanguageServerProtocolOpener(options: Readonly<{
+export type LanguageServerManagedExec = Readonly<{ service: ExecService; signal: AbortSignal; release(): Promise<void> }>;
+export type AcquireLanguageServerManagedExec = (
+    input: OpenLanguageServerProtocolInput,
+) => Promise<LanguageServerManagedExec>;
+
+export type ReadLanguageServerInitializationOptions = (
+    definition: Pick<LanguageServerDefinition, 'pluginId' | 'initializationOptions' | 'initializationOptionsSetting'>,
+    signal: AbortSignal,
+) => Promise<JsonValue | undefined>;
+
+/** Read the plugin's declared setting at explicit startup; there is no watcher or query-time settings read. */
+export function createLanguageServerInitializationOptionsReader(options: Readonly<{
     acquireRuntimeRegistry(): Promise<PluginRuntimeRegistryLease>;
-}>): (input: OpenLanguageServerProtocolInput) => Promise<PluginProtocolClientHandle<'jsonRpc'>> {
+}>): ReadLanguageServerInitializationOptions {
+    return async (definition, signal) => {
+        const binding = definition.initializationOptionsSetting;
+        if (!binding) return definition.initializationOptions;
+        signal.throwIfAborted();
+        const lease = await options.acquireRuntimeRegistry();
+        try {
+            const settings = lease.registry.createPluginSettingsService?.({
+                pluginId: definition.pluginId, scope: { kind: binding.scope }, signal,
+            });
+            if (!settings) throw new PluginError({ code: 'language_server_settings_unavailable', message: 'Language server settings are unavailable' });
+            const value = await settings.get(binding.field, { signal });
+            if (value === null) throw new PluginError({ code: 'language_server_settings_unavailable', message: 'Language server initialization options are unavailable' });
+            signal.throwIfAborted();
+            return value;
+        } finally { await lease.release(); }
+    };
+}
+
+export const readLanguageServerInitializationOptions = createLanguageServerInitializationOptionsReader({
+    acquireRuntimeRegistry: () => pluginReloadController.acquireRuntimeRegistry(),
+});
+
+/** One occurrence fence and lease owner for protocol sessions and finite checks. */
+export function createLanguageServerManagedExecAcquirer(options: Readonly<{
+    acquireRuntimeRegistry(): Promise<PluginRuntimeRegistryLease>;
+}>): AcquireLanguageServerManagedExec {
     return async input => {
         input.signal.throwIfAborted();
         const lease = await options.acquireRuntimeRegistry();
@@ -72,9 +109,30 @@ export function createLanguageServerProtocolOpener(options: Readonly<{
                 // filesystem path is consumed by this service.
                 resolvePath: async () => input.rootPath,
             });
-            const handle = await service.clients.spawn({
+            let released = false;
+            return { service, signal, async release() {
+                if (released) return;
+                released = true;
+                unsubscribeRetirement?.();
+                await lease.release();
+            } };
+        } catch (error) {
+            unsubscribeRetirement?.();
+            await lease.release();
+            throw error;
+        }
+    };
+}
+
+export function createLanguageServerProtocolOpener(options: Readonly<{
+    acquireRuntimeRegistry(): Promise<PluginRuntimeRegistryLease>;
+}>): (input: OpenLanguageServerProtocolInput) => Promise<PluginProtocolClientHandle<'jsonRpc'>> {
+    const acquireExec = createLanguageServerManagedExecAcquirer(options);
+    return async input => {
+        const managed = await acquireExec(input);
+        try {
+            const handle = await managed.service.clients.spawn({
                 kind: 'jsonRpc', framing: 'contentLength',
-                maxFrameBytes: DEFAULT_JSON_RPC_MAX_FRAME_BYTES,
                 cancellationMethod: '$/cancelRequest',
                 launch: { executable: input.definition.executable, args: input.definition.args, cwd: input.rootPath },
             });
@@ -86,13 +144,11 @@ export function createLanguageServerProtocolOpener(options: Readonly<{
             // Preserve the canonical handle identity for its host-private disposal hook.
             void handle.wait().finally(async () => {
                 stderr.dispose();
-                unsubscribeRetirement?.();
-                await lease.release();
+                await managed.release();
             }).catch(error => logger.infoFile('[LanguageServer] Runtime lease cleanup failed', error));
             return handle;
         } catch (error) {
-            unsubscribeRetirement?.();
-            await lease.release();
+            await managed.release();
             throw error;
         }
     };

@@ -8,8 +8,85 @@ import { resolveApprovalRequestApproveAdmission } from './actionApprovalPresenta
 import type { ApprovalRequest } from '../approvals/approvalRequestV1.js';
 import { DaemonWorkspaceFileSearchRequestSchema, DaemonWorkspaceFileSearchResponseSchema } from '../machines/workspaceFiles.js';
 import { bindContextualActionToolInput } from './actionToolContext.js';
+import { DaemonLspApplyRequestSchema, DaemonLspQueryRequestSchema } from '../machines/languageIntelligence.js';
 
 describe('search-backed code Actions', () => {
+  it('binds the new editing intelligence reads to the session and preserves query operands', async () => {
+    const requests: unknown[] = [];
+    const executor = createActionExecutor({ languageIntelligenceQuery: async args => {
+      requests.push({ ...args, request: DaemonLspQueryRequestSchema.parse(args.request) }); return { status: 'loading' };
+    } });
+    const context = { surface: 'agent' as const, serverId: 'home', defaultSessionId: 'session', defaultSessionMachineId: 'machine',
+      defaultSessionRootPath: '/repo' };
+    const cases = [
+      { id: 'code.completion.list', input: { line: 3, character: 2 }, query: { kind: 'completion', position: { line: 2, character: 2 } } },
+      { id: 'code.signature.get', input: { line: 3, symbol: 'call' }, query: { kind: 'signatureHelp', position: { line: 2, symbol: 'call' } } },
+      { id: 'code.typeDefinition.get', input: { line: 3, symbol: 'value' }, query: { kind: 'typeDefinition', position: { line: 2, symbol: 'value' } } },
+      { id: 'code.implementation.get', input: { line: 3, symbol: 'value' }, query: { kind: 'implementation', position: { line: 2, symbol: 'value' } } },
+      { id: 'code.symbols.workspace', input: { query: 'Widget' }, query: { kind: 'workspaceSymbol', query: 'Widget' } },
+      { id: 'code.callHierarchy.get', input: { line: 3, symbol: 'call', hierarchy: { direction: 'prepare' } },
+        query: { kind: 'callHierarchy', position: { line: 2, symbol: 'call' }, hierarchy: { direction: 'prepare' } } },
+      { id: 'code.callHierarchy.get', input: { line: 3, symbol: 'call', hierarchy: { direction: 'incoming' } },
+        query: { kind: 'callHierarchy', position: { line: 2, symbol: 'call' }, hierarchy: { direction: 'incoming' } } },
+      { id: 'code.callHierarchy.get', input: { line: 3, character: 0, hierarchy: { direction: 'outgoing' } },
+        query: { kind: 'callHierarchy', position: { line: 2, character: 0 }, hierarchy: { direction: 'outgoing' } } },
+      { id: 'code.callHierarchy.get', input: { hierarchy: { direction: 'incoming', itemId: 'call-item' }, serverId: 'fixture/server' },
+        query: { kind: 'callHierarchy', hierarchy: { direction: 'incoming', itemId: 'call-item' }, serverId: 'fixture/server' } },
+      { id: 'code.diagnostics.list', input: { scope: 'project' }, query: { kind: 'diagnostics', scope: 'project' } },
+    ] as const;
+    for (const item of cases) {
+      const id = ActionIdSchema.parse(item.id);
+      const input = bindContextualActionToolInput({ actionId: id, input: { path: 'a.ts', ...item.input }, context });
+      expect(await executor.execute(id, input, context)).toEqual({ ok: true, result: { status: 'loading' } });
+      expect(requests.at(-1)).toEqual({ machineId: 'machine', request: { rootPath: '/repo', path: 'a.ts', text: 'disk', ...item.query } });
+      expect(isApprovalRequiredByActionsSettings(id, { v: 1, actions: {} }, context)).toBe(false);
+    }
+    expect(requests).toHaveLength(cases.length);
+  });
+
+  it('previews format/import edits without writes and applies only the reviewed guarded files', async () => {
+    const requests: unknown[] = [];
+    const executor = createActionExecutor({
+      languageIntelligenceQuery: async args => { requests.push({ ...args, request: DaemonLspQueryRequestSchema.parse(args.request) }); return { status: 'loading' }; },
+      languageIntelligenceApply: async args => { requests.push({ ...args, request: DaemonLspApplyRequestSchema.parse(args.request) }); return { ok: true, results: [] }; },
+    });
+    const target = { machineId: 'machine', rootPath: '/repo', path: 'a.ts' };
+    const files = [{ path: 'a.ts', expectedHash: 'a'.repeat(64), edits: [] }];
+    const range = { start: { line: 1, character: 0 }, end: { line: 2, character: 0 } };
+    const formattingOptions = { tabSize: 4, insertSpaces: true };
+    const approvals: unknown[] = [];
+    const admittedExecutor = createActionExecutor({
+      languageIntelligenceQuery: async () => ({ status: 'loading' }),
+      languageIntelligenceApply: async () => { throw new Error('Rejected edits must never reach the Machine'); },
+      approvalsCreate: async ({ request }) => { approvals.push(request); return { artifactId: 'edit-approval' }; },
+      approvalsUpdate: async () => ({ ok: true }),
+      approvalsWaitForDecision: async ({ request }) => ({ decision: 'reject', request }),
+      isActionApprovalRequired: (id, context, input) => isApprovalRequiredByActionsSettings(id, { v: 1, actions: {} }, context, undefined, undefined, input),
+    });
+    for (const name of ['code.format.apply', 'code.imports.organize'] as const) {
+      const id = ActionIdSchema.parse(name);
+      const kind = name === 'code.format.apply' ? 'format' : 'organizeImports';
+      expect(await executor.execute(id, { ...target, operation: { kind: 'preview',
+        ...(kind === 'format' ? { range, formattingOptions } : {}) } }, { surface: 'ui', authority: 'present_user' }))
+        .toEqual({ ok: true, result: { status: 'loading' } });
+      expect(requests.at(-1)).toEqual({ machineId: 'machine', request: { rootPath: '/repo', path: 'a.ts', text: 'disk',
+        kind: kind === 'format' ? 'rangeFormatting' : 'organizeImports', ...(kind === 'format' ? { range, formattingOptions } : {}) } });
+      expect(await executor.execute(id, { ...target, operation: { kind: 'apply', files } }, { surface: 'ui', authority: 'present_user' }))
+        .toEqual({ ok: true, result: { ok: true, results: [] } });
+      expect(requests.at(-1)).toEqual({ machineId: 'machine', actionId: id, request: { rootPath: '/repo', path: 'a.ts', operation: { kind, files } } });
+      expect(isApprovalRequiredByActionsSettings(id, { v: 1, actions: {} }, { surface: 'agent' })).toBe(true);
+      expect(isApprovalRequiredByActionsSettings(id, { v: 1, actions: {} }, { surface: 'ui', authority: 'present_user' })).toBe(false);
+      const context = { surface: 'agent', authority: 'account_automation', actionRequestId: `review-${id}`,
+        serverId: 'home', runtimeAccountId: 'account', externalActionTarget: { kind: 'machine', machineId: 'machine' } } as const;
+      expect(await admittedExecutor.execute(id, { ...target, operation: { kind: 'preview' } }, context))
+        .toEqual({ ok: true, result: { status: 'loading' } });
+      const input = { ...target, operation: { kind: 'apply', files } };
+      expect(await admittedExecutor.execute(id, input, context)).toMatchObject({ ok: false, errorCode: 'approval_rejected' });
+      expect(approvals.at(-1)).toMatchObject({ actionId: id, actionArgs: input });
+    }
+    expect(requests).toHaveLength(4);
+    expect(approvals).toHaveLength(2);
+  });
   it('resolves a session code query through the shared tool-scope owner before Action dispatch', async () => {
     const requests: unknown[] = [];
     const executor = createActionExecutor({ languageIntelligenceQuery: async args => {
@@ -157,7 +234,8 @@ describe('search-backed code Actions', () => {
   });
 
   it('keeps both safe reads available to plugins and honors explicit approval settings', () => {
-    for (const rawId of ['code.hover.get', 'code.definition.get', 'code.references.list', 'code.symbols.list', 'code.diagnostics.list', 'code.restart']) {
+    for (const rawId of ['code.hover.get', 'code.definition.get', 'code.references.list', 'code.symbols.list', 'code.diagnostics.list', 'code.restart',
+      'code.completion.list', 'code.signature.get', 'code.typeDefinition.get', 'code.implementation.get', 'code.symbols.workspace', 'code.callHierarchy.get']) {
       const id = ActionIdSchema.parse(rawId);
       const spec = getActionSpec(id);
       expect(spec).toMatchObject({ sideEffectClass: id === 'code.restart' ? 'write' : 'read', safety: 'safe', approval: { result: 'required' }, executionPlacement: 'machine' });

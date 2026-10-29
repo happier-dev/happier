@@ -17,14 +17,14 @@ const definition: LanguageServerDefinition = {
     executable: { kind: 'systemTool', id: 'server' }, args: [], languageIds: { typescript: 'typescript' },
 };
 
-async function fixture(rootPath: string, options: Readonly<Record<string, unknown>> = {}) {
+async function fixture(rootPath: string, options: Readonly<Record<string, unknown>> = {}, definitionOverrides: Partial<LanguageServerDefinition> = {}) {
     const log = join(rootPath, 'messages.jsonl');
     await writeFile(log, '');
     const protocols: PluginProtocolClientHandle<'jsonRpc'>[] = [];
     const observedDiagnostics: string[] = [];
     const listeners = new Set<() => void>();
     const session = createServerSession({
-        definition, rootPath, workspaceRoot: rootPath, platform: 'linux', onChange: () => {
+        definition: { ...definition, ...definitionOverrides }, rootPath, workspaceRoot: rootPath, platform: 'linux', onChange: () => {
             for (const entry of session.diagnostics.values()) observedDiagnostics.push(...entry.items.map(item => item.message));
             for (const listener of listeners) listener();
         },
@@ -83,6 +83,22 @@ const document = { path: 'a.ts', languageId: 'typescript', text: 'broken', versi
 const range = { start: { line: 0, character: 0 }, end: { line: 0, character: 1 } };
 
 describe('language server session process behavior', () => {
+    it('configures notification-based servers before opening documents, once per server start', async () => {
+        await withTempDir('happier-lsp-settings-', async root => {
+            const settings = { fixture: { validate: true, schemas: [{ fileMatch: ['*.fixture'], schema: { type: 'object' } }] } };
+            const f = await fixture(root, {}, { settings });
+            try {
+                await f.session.open(document);
+                await f.session.start();
+                await f.barrier();
+                await f.session.query({ path: document.path, kind: 'hover', position: { line: 0, character: 0 } });
+                const messages = await f.messages();
+                const configurations = messages.filter(message => message.method === 'workspace/didChangeConfiguration');
+                expect(configurations).toEqual([expect.objectContaining({ params: { settings } })]);
+                expect(messages.indexOf(configurations[0])).toBeLessThan(messages.findIndex(message => message.method === 'textDocument/didOpen'));
+            } finally { await f.session.dispose(); }
+        });
+    });
     it('cancels a delayed hover through the managed codec and sends its wire request id once', async () => {
         await withTempDir('happier-lsp-cancel-', async root => {
             const { session, protocols, messages, received, barrier } = await fixture(root, { delayHover: true });

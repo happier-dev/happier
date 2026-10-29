@@ -15,6 +15,8 @@ export async function normalizeWorkspaceEdit(input: Readonly<{
     platform: NodeJS.Platform;
     edit: unknown;
     document(path: string): Readonly<{ text: string; version: number; unsaved: boolean }> | undefined;
+    /** Editor-only previews address the held buffer; guarded disk writes still require the returned hash. */
+    text?: 'held' | 'disk';
     rename?: Readonly<{ path: string; newPath: string }>;
 }>): Promise<WorkspaceFileEditSetFile[]> {
     const files = new Map<string, { edits: WorkspaceFileEditSetFile['edits']; renameTo?: string; version?: number }>();
@@ -82,9 +84,11 @@ export async function normalizeWorkspaceEdit(input: Readonly<{
     }
     const results: WorkspaceFileEditSetFile[] = [];
     for (const [path, value] of files) {
-        const bytes = await readFile(resolveWorkspacePath(input, path)), expectedHash = createHash('sha256').update(bytes).digest('hex');
         const held = input.document(path);
-        if (held?.unsaved) throw new LspWorkspaceEditError('unsaved_editor_changes', expectedHash);
+        const useHeld = input.text === 'held' && held !== undefined;
+        const bytes = useHeld ? Buffer.from(held.text, 'utf8') : await readFile(resolveWorkspacePath(input, path));
+        const expectedHash = createHash('sha256').update(bytes).digest('hex');
+        if (held?.unsaved && !useHeld) throw new LspWorkspaceEditError('unsaved_editor_changes', expectedHash);
         const text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes);
         if (held && (held.text !== text || (value.version !== undefined && held.version !== value.version))) throw new LspWorkspaceEditError('stale_query');
         if (!held && value.version !== undefined) throw new LspWorkspaceEditError('stale_query');

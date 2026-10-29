@@ -2,7 +2,7 @@
 const fs = require('node:fs');
 const log = process.argv[2];
 const options = JSON.parse(process.argv[3] || '{}');
-let input = Buffer.alloc(0), registered = false, queued = [], documents = new Map(), pending = new Map(), externalDiagnosticMessage, progressRequest, commandRequest;
+let input = Buffer.alloc(0), registered = false, queued = [], documents = new Map(), pending = new Map(), externalDiagnosticMessage, progressRequest, commandRequest, organizerUri;
 const record = value => fs.appendFileSync(log, JSON.stringify(value) + '\n');
 const send = value => { const json = JSON.stringify({jsonrpc:'2.0', ...value}); process.stdout.write(`Content-Length: ${Buffer.byteLength(json)}\r\n\r\n${json}`); };
 const reply = (id, result) => send({id, result});
@@ -11,6 +11,27 @@ const answer = message => {
   if (message.method === 'shutdown') {reply(message.id,null);return;}
   const uri = message.params?.textDocument?.uri;
   const document = documents.get(uri);
+  if (options.editingFeatures) {
+    const item = {name:'fixture',kind:12,uri:uri || message.params?.item?.uri,range,selectionRange:range,data:{native:true}};
+    if (message.method === 'textDocument/completion') {reply(message.id,options.completionItems?{isIncomplete:false,items:options.completionItems}:options.completionDefaults?{isIncomplete:false,itemDefaults:{data:{native:true},insertTextFormat:2,editRange:range},items:[{label:'fixture',kind:3,textEditText:'fixture(${1:value})$0'}]}:{isIncomplete:false,items:[{label:'fixture',kind:3,insertText:'fixture(${1:value})$0',insertTextFormat:2,data:{native:true}}]});return;}
+    if (message.method === 'completionItem/resolve') {reply(message.id,{...message.params,detail:'resolved',additionalTextEdits:[{range:{start:{line:0,character:0},end:{line:0,character:0}},newText:'import x;\n'}]});return;}
+    if (message.method === 'textDocument/signatureHelp') {reply(message.id,{signatures:[{label:'fixture(value)',parameters:[{label:[8,13]}]}],activeSignature:0,activeParameter:0});return;}
+    if (message.method === 'textDocument/formatting' || message.method === 'textDocument/rangeFormatting') {reply(message.id,[{range,newText:'formatted'}]);return;}
+    if (message.method === 'textDocument/codeAction' && message.params?.context?.only?.includes('source.organizeImports')) {organizerUri=uri;reply(message.id,[{title:'Organize',kind:'source.organizeImports.fixture',...(options.organizerNeedsResolve?{}:options.organizerCommandOnly?{command:{title:'Organize',command:'fixture.fix'}}:{edit:{changes:{[uri]:[{range,newText:'organized'}]}}})}]);return;}
+    if (message.method === 'codeAction/resolve') {reply(message.id,{...message.params,edit:{changes:{[organizerUri]:[{range,newText:'organized'}]}}});return;}
+    if (message.method === 'textDocument/typeDefinition' || message.method === 'textDocument/implementation') {reply(message.id,[{uri,range}]);return;}
+    if (message.method === 'textDocument/documentHighlight') {reply(message.id,[{range,kind:2}]);return;}
+    if (message.method === 'textDocument/selectionRange') {reply(message.id,[{range,parent:{range:{start:range.start,end:{line:0,character:3}}}}]);return;}
+    if (message.method === 'textDocument/inlayHint') {reply(message.id,[{position:range.start,label:'value:',kind:2,paddingRight:true}]);return;}
+    if (message.method === 'textDocument/semanticTokens/range') {reply(message.id,{resultId:'tokens-1',data:[0,0,1,0,0]});return;}
+    if (message.method === 'textDocument/semanticTokens/full') {reply(message.id,{resultId:'tokens-1',data:[0,0,1,0,0,1,0,1,0,0]});return;}
+    if (message.method === 'textDocument/semanticTokens/full/delta') {reply(message.id,{resultId:'tokens-2',edits:[{start:0,deleteCount:5,data:[0,0,2,0,0]}]});return;}
+    if (message.method === 'textDocument/prepareCallHierarchy') {reply(message.id,[item]);return;}
+    if (message.method === 'callHierarchy/incomingCalls') {reply(message.id,[{from:item,fromRanges:[range]}]);return;}
+    if (message.method === 'callHierarchy/outgoingCalls') {reply(message.id,[{to:item,fromRanges:[range]}]);return;}
+    if (message.method === 'workspace/symbol') {reply(message.id,[{name:message.params.query,kind:12,location:{uri:new URL('a.ts',options.rootUri).href,range}}]);return;}
+    if (message.method === 'workspace/diagnostic') {reply(message.id,{items:[{uri:new URL('a.ts',options.rootUri).href,version:null,kind:'full',items:Array.from({length:options.projectDiagnosticCount ?? 1},(_,index)=>({range,severity:1,message:options.projectDiagnosticCount?'project problem '+index:'project problem'}))}]});return;}
+  }
   if (options.requiredLanguageId && document?.languageId !== options.requiredLanguageId) {
     send({id:message.id,error:{code:-32602,message:'The document language id is unsupported'}});return;
   }
@@ -50,9 +71,10 @@ const receive = (message, fromQueue = false) => {
     reply(progressRequest.id,null);progressRequest=undefined;return;
   }
   if (message.method === 'initialize') {
+    options.rootUri=message.params.rootUri+'/';
     if (options.stallInitialize) return;
     if (options.failInitialize) { send({id:message.id,error:{code:-32000,message:'fixture initialization failed'}}); return; }
-    reply(message.id,{capabilities:{positionEncoding:'utf-16',textDocumentSync:{openClose:true,change:options.syncKind ?? 2},hoverProvider:true,definitionProvider:true,referencesProvider:true,documentSymbolProvider:true,...(options.semanticEdits ? {renameProvider:{prepareProvider:true},codeActionProvider:true,executeCommandProvider:{commands:['fixture.fix']},workspace:{fileOperations:{willRename:{filters:[]},didRename:{filters:[]}}}}:{}),...(options.diagnosticsMode === 'push' ? {} : {diagnosticProvider:{interFileDependencies:true,workspaceDiagnostics:false}})}}); return;
+    reply(message.id,{capabilities:{positionEncoding:'utf-16',textDocumentSync:{openClose:true,change:options.syncKind ?? 2},hoverProvider:true,definitionProvider:true,referencesProvider:true,documentSymbolProvider:true,...(options.semanticEdits ? {renameProvider:{prepareProvider:true},codeActionProvider:true,executeCommandProvider:{commands:['fixture.fix']},workspace:{fileOperations:{willRename:{filters:[]},didRename:{filters:[]}}}}:{}),...(options.editingFeatures ? {completionProvider:{resolveProvider:true,triggerCharacters:['.']},signatureHelpProvider:{triggerCharacters:['('],retriggerCharacters:[',']},documentFormattingProvider:true,documentRangeFormattingProvider:true,codeActionProvider:{codeActionKinds:options.organizerGenericKind?['source']:['source.organizeImports.fixture'],resolveProvider:options.organizerNeedsResolve === true},typeDefinitionProvider:true,implementationProvider:true,documentHighlightProvider:true,selectionRangeProvider:true,inlayHintProvider:true,semanticTokensProvider:{legend:{tokenTypes:['variable'],tokenModifiers:[]},range:options.semanticRange !== false,full:options.semanticDelta === false ? true : {delta:true}},callHierarchyProvider:true,workspaceSymbolProvider:true}:{}),...(options.diagnosticsMode === 'push' ? {} : {diagnosticProvider:{interFileDependencies:true,workspaceDiagnostics:options.editingFeatures === true}})}}); return;
   }
   if (message.method === 'initialized') { send({id:'registration',method:'client/registerCapability',params:{registrations:options.watching === false ? [] : [{id:'files',method:'workspace/didChangeWatchedFiles',registerOptions:{watchers:[{globPattern:'**/*'}]}}]}}); return; }
   if (message.method === 'shutdown') {
@@ -84,9 +106,9 @@ const receive = (message, fromQueue = false) => {
     reply(message.id,{changes:{[target]:[{range:{start:{line:0,character:0},end:{line:0,character:3}},newText:'updated'}]}});
   }
   if (message.method === 'workspace/executeCommand') answer(message);
-  if (message.method?.startsWith('textDocument/') && message.id !== undefined) {
+  if ((message.method?.startsWith('textDocument/') || message.method?.startsWith('completionItem/') || message.method?.startsWith('callHierarchy/') || message.method?.startsWith('codeAction/') || ['workspace/symbol','workspace/diagnostic'].includes(message.method)) && message.id !== undefined) {
     if (options.crashOnHover && message.method === 'textDocument/hover') process.exit(2);
-    if ((options.delayHover && message.method === 'textDocument/hover') || (options.delayDiagnostic && message.method === 'textDocument/diagnostic' && (!options.delayDiagnosticPath || uriOf(message)?.endsWith('/'+options.delayDiagnosticPath)))) pending.set(message.id,message);
+    if (options.delayMethod === message.method || (options.delayHover && message.method === 'textDocument/hover') || (options.delayDiagnostic && message.method === 'textDocument/diagnostic' && (!options.delayDiagnosticPath || uriOf(message)?.endsWith('/'+options.delayDiagnosticPath)))) pending.set(message.id,message);
     else answer(message);
   }
 };

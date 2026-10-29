@@ -20,6 +20,15 @@ function manifest(executableId: string) {
 }
 
 describe('declared language servers', () => {
+  it('admits an explicit scoped initialization-options setting without raw commands or implicit scope', () => {
+    const initializationOptionsSetting = { scope: 'daemon', field: 'initializationOptions' };
+    expect(PluginContributesV2Schema.parse({ languageServers: [{ ...server, initializationOptionsSetting }] }))
+      .toMatchObject({ languageServers: [{ initializationOptionsSetting }] });
+    for (const invalid of [{ field: 'initializationOptions' }, { scope: 'daemon', field: '' },
+      { ...initializationOptionsSetting, pluginId: 'other.plugin' }]) {
+      expect(PluginContributesV2Schema.safeParse({ languageServers: [{ ...server, initializationOptionsSetting: invalid }] }).success).toBe(false);
+    }
+  });
   it('retains generic static language-server declarations without requiring plugin activation', () => {
     const parsed = PluginContributesV2Schema.safeParse({ languageServers: [server] });
     expect(parsed.success).toBe(true);
@@ -53,5 +62,31 @@ describe('declared language servers', () => {
     expect(family?.extractReferences({ ...server, executable: { kind: 'managedDependency', id: 'managed-server' } })).toEqual([
       { targetFamily: 'managedDependencies', reference: 'managed-server', path: ['executable', 'id'] },
     ]);
+  });
+
+  it('retains a declared project checker and validates its executable reference and closed codec', () => {
+    const projectCheck = { executable: { kind: 'systemTool', id: 'example-server' },
+      args: ['--check'], projectFile: 'example.config', output: { kind: 'typescript' } };
+    expect(PluginContributesV2Schema.parse({ languageServers: [{ ...server, projectCheck }] }))
+      .toMatchObject({ languageServers: [{ projectCheck }] });
+    expect(PluginContributesV2Schema.parse({ languageServers: [{ ...server,
+      projectCheck: { ...projectCheck, projectFile: ' config.json ' } }] }))
+      .toMatchObject({ languageServers: [{ projectCheck: { projectFile: ' config.json ' } }] });
+    const family = PLUGIN_CONTRIBUTION_CATALOG_V2.find(entry => entry.manifestKey === 'languageServers');
+    expect(family?.extractReferences({ ...server, projectCheck })).toContainEqual({
+      targetFamily: 'systemTools', reference: 'example-server', path: ['projectCheck', 'executable', 'id'],
+    });
+    expect(ingestPluginManifestV2({ ...manifest('example-server'), contributes: {
+      ...manifest('example-server').contributes,
+      languageServers: [{ ...server, projectCheck: { ...projectCheck, executable: { kind: 'managedDependency', id: 'missing-checker' } } }],
+    } })).toMatchObject({ ok: false, diagnostics: expect.arrayContaining([
+      expect.objectContaining({ code: 'plugin_manifest_dangling_reference' }),
+    ]) });
+    for (const invalid of [
+      { ...projectCheck, output: { kind: 'typescript', command: 'run' } },
+      { ...projectCheck, output: { kind: 'unknown' } },
+      { ...projectCheck, projectFile: '../tsconfig.json' },
+      { ...projectCheck, args: ['\0'] },
+    ]) expect(PluginContributesV2Schema.safeParse({ languageServers: [{ ...server, projectCheck: invalid }] }).success).toBe(false);
   });
 });

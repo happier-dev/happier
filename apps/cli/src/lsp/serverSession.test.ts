@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { createServerSession } from './serverSession';
@@ -24,7 +24,7 @@ async function fixture(rootPath: string, options: Record<string, unknown> = {}) 
                 resolveExecutable: async () => ({ command: process.execPath, args: [resolve('src/lsp/__fixtures__/languageServer.cjs'), log, JSON.stringify(options)] }),
                 resolvePath: async () => rootPath,
             });
-            const protocol = await service.clients.spawn({ kind: 'jsonRpc', framing: 'contentLength', maxFrameBytes: DEFAULT_MACHINE_TUNNEL_SERVER_ROUTED_MAX_RAW_PAYLOAD_BYTES, launch: { executable: definition.executable, cwd: rootPath } });
+            const protocol = await service.clients.spawn({ kind: 'jsonRpc', framing: 'contentLength', cancellationMethod: '$/cancelRequest', maxFrameBytes: DEFAULT_MACHINE_TUNNEL_SERVER_ROUTED_MAX_RAW_PAYLOAD_BYTES, launch: { executable: definition.executable, cwd: rootPath } });
             protocols.push(protocol);
             return protocol;
         } });
@@ -32,6 +32,185 @@ async function fixture(rootPath: string, options: Record<string, unknown> = {}) 
     return { session, protocols, messages };
 }
 describe('language server session', () => {
+    it('bootstraps a delta-only server once, applies deltas across edits and returns only the visible range', async () => {
+        await withTempDir('happier-lsp-semantic-delta-', async root => {
+            const { session, messages } = await fixture(root, { editingFeatures: true, semanticRange: false });
+            const range = { start: { line: 0, character: 0 }, end: { line: 0, character: 3 } };
+            try {
+                await session.open({ path: 'a.ts', languageId: 'typescript', text: 'abc\ndef', version: 1, unsaved: false });
+                await expect(session.query({ path: 'a.ts', kind: 'semanticTokens', range }))
+                    .resolves.toMatchObject({ value: { data: [0, 0, 1, 0, 0] } });
+                await session.change({ path: 'a.ts', baseVersion: 1, version: 2, unsaved: true,
+                    edit: { startLine: 0, startCharacter: 0, endLine: 0, endCharacter: 1, text: 'A' } });
+                await expect(session.query({ path: 'a.ts', kind: 'semanticTokens', range }))
+                    .resolves.toMatchObject({ value: { data: [0, 0, 2, 0, 0] } });
+                const nextRange = { start: { line: 1, character: 0 }, end: { line: 1, character: 3 } };
+                await expect(session.query({ path: 'a.ts', kind: 'semanticTokens', range: nextRange }))
+                    .resolves.toMatchObject({ value: { data: [1, 0, 1, 0, 0] } });
+                const semantic = (await messages()).filter(message => String(message.method).startsWith('textDocument/semanticTokens/'));
+                expect(semantic.map(message => message.method)).toEqual([
+                    'textDocument/semanticTokens/full', 'textDocument/semanticTokens/full/delta', 'textDocument/semanticTokens/full/delta',
+                ]);
+                expect(semantic[1]).toMatchObject({ params: { previousResultId: 'tokens-1' } });
+                expect(semantic[2]).toMatchObject({ params: { previousResultId: 'tokens-2' } });
+                await session.restart();
+                await session.query({ path: 'a.ts', kind: 'semanticTokens', range });
+                expect((await messages()).filter(message => message.method === 'textDocument/semanticTokens/full')).toHaveLength(2);
+            } finally { await session.dispose(); }
+        });
+    });
+
+    it('retains native completion and hierarchy items only for their captured buffer', async () => {
+        await withTempDir('happier-lsp-items-', async root => {
+            const { session, messages } = await fixture(root, { editingFeatures: true });
+            try {
+                await session.open({ path: 'a.ts', languageId: 'typescript', text: 'value', version: 1, unsaved: false });
+                const completion = await session.query({ path: 'a.ts', kind: 'completion', position: { line: 0, character: 1 } });
+                const item = (completion.value as { items: Array<{ itemId: string }> }).items[0]!;
+                expect(item.itemId).toEqual(expect.any(String));
+                await expect(session.query({ path: 'a.ts', kind: 'completionResolve', itemId: item.itemId }))
+                    .resolves.toMatchObject({ value: { itemId: item.itemId, additionalTextEdits: [{ newText: 'import x;\n' }] } });
+                expect((await messages()).find(message => message.method === 'completionItem/resolve'))
+                    .toMatchObject({ params: { data: { native: true } } });
+                const prepare = await session.query({ path: 'a.ts', kind: 'callHierarchy', position: { line: 0, character: 1 }, hierarchy: { direction: 'prepare' } });
+                const hierarchyItem = (prepare.value as Array<{ itemId: string }>)[0]!;
+                await expect(session.query({ path: 'a.ts', kind: 'callHierarchy', hierarchy: { direction: 'incoming', itemId: hierarchyItem.itemId } }))
+                    .resolves.toMatchObject({ value: [{ from: { itemId: expect.any(String) } }] });
+                expect((await messages()).find(message => message.method === 'callHierarchy/incomingCalls'))
+                    .toMatchObject({ params: { item: { data: { native: true } } } });
+                await session.snapshot({ path: 'a.ts', languageId: 'typescript', text: 'changed', version: 2, unsaved: true });
+                await expect(session.query({ path: 'a.ts', kind: 'completionResolve', itemId: item.itemId })).rejects.toMatchObject({ code: 'stale_query' });
+                await expect(session.query({ path: 'a.ts', kind: 'callHierarchy', hierarchy: { direction: 'outgoing', itemId: hierarchyItem.itemId } })).rejects.toMatchObject({ code: 'stale_query' });
+                const next = await session.query({ path: 'a.ts', kind: 'completion', position: { line: 0, character: 1 } });
+                const nextItem = (next.value as { items: Array<{ itemId: string }> }).items[0]!;
+                await session.restart();
+                await expect(session.query({ path: 'a.ts', kind: 'completionResolve', itemId: nextItem.itemId })).rejects.toMatchObject({ code: 'stale_query' });
+            } finally { await session.dispose(); }
+        });
+    });
+
+    it('projects per-server capabilities and closes held documents before graceful shutdown', async () => {
+        await withTempDir('happier-lsp-editing-capabilities-', async root => {
+            const { session, messages } = await fixture(root, { editingFeatures: true });
+            await session.open({ path: 'a.ts', languageId: 'typescript', text: 'value', version: 1, unsaved: false });
+            try {
+                await session.start();
+                expect(session.status()).toMatchObject({ capabilities: { completion: true, completionResolve: true,
+                    completionTriggerCharacters: ['.'], signatureHelp: true, signatureTriggerCharacters: ['('],
+                    signatureRetriggerCharacters: [','], organizeImports: true, semanticTokensRange: true,
+                    semanticTokensDelta: true, workspaceDiagnostics: true } });
+            } finally { await session.dispose(); }
+            const methods = (await messages()).map(message => message.method);
+            expect(methods.indexOf('textDocument/didClose')).toBeGreaterThan(methods.indexOf('textDocument/didOpen'));
+            expect(methods.indexOf('textDocument/didClose')).toBeLessThan(methods.indexOf('shutdown'));
+        });
+    });
+
+    it('prepares and traverses calls in one position-addressed query for transient Action documents', async () => {
+        await withTempDir('happier-lsp-transient-calls-', async root => {
+            const { session, messages } = await fixture(root, { editingFeatures: true });
+            try {
+                await session.open({ path: 'a.ts', languageId: 'typescript', text: 'value', version: 1, unsaved: false });
+                await expect(session.query({ path: 'a.ts', kind: 'callHierarchy', position: { line: 0, character: 1 }, hierarchy: { direction: 'outgoing' } }))
+                    .resolves.toMatchObject({ value: [{ to: { name: 'fixture', itemId: expect.any(String) } }] });
+                const methods = (await messages()).map(message => message.method);
+                expect(methods.indexOf('textDocument/prepareCallHierarchy')).toBeLessThan(methods.indexOf('callHierarchy/outgoingCalls'));
+            } finally { await session.dispose(); }
+        });
+    });
+
+    it('expands completion defaults before native resolution and retires the previous completion list', async () => {
+        await withTempDir('happier-lsp-completion-defaults-', async root => {
+            const { session, messages } = await fixture(root, { editingFeatures: true, completionDefaults: true });
+            try {
+                await session.open({ path: 'a.ts', languageId: 'typescript', text: 'value', version: 1, unsaved: false });
+                const result = await session.query({ path: 'a.ts', kind: 'completion', position: { line: 0, character: 1 } });
+                const item = (result.value as { items: Array<{ itemId: string }> }).items[0]!;
+                expect(item).toMatchObject({ insertTextFormat: 2, textEdit: { newText: expect.any(String), range: { start: { line: 0, character: 0 } } } });
+                await session.query({ path: 'a.ts', kind: 'completionResolve', itemId: item.itemId });
+                const resolve = (await messages()).find(message => message.method === 'completionItem/resolve');
+                expect(resolve).toMatchObject({ params: { data: { native: true }, insertTextFormat: 2, textEdit: { range: { start: { line: 0, character: 0 } } } } });
+                expect(resolve?.params).not.toHaveProperty('itemId');
+                await session.query({ path: 'a.ts', kind: 'completion', position: { line: 0, character: 2 } });
+                await expect(session.query({ path: 'a.ts', kind: 'completionResolve', itemId: item.itemId })).rejects.toMatchObject({ code: 'stale_query' });
+            } finally { await session.dispose(); }
+        });
+    });
+
+    it('never requests whole-file semantic tokens or an unadvertised delta and refuses command-only import previews', async () => {
+        await withTempDir('happier-lsp-read-only-features-', async root => {
+            const { session, messages } = await fixture(root, { editingFeatures: true, semanticDelta: false, organizerCommandOnly: true });
+            try {
+                await session.open({ path: 'a.ts', languageId: 'typescript', text: 'value', version: 1, unsaved: false });
+                const range = { start: { line: 0, character: 0 }, end: { line: 0, character: 1 } };
+                await expect(session.query({ path: 'a.ts', kind: 'semanticTokens', range }))
+                    .resolves.toMatchObject({ value: { data: [0, 0, 1, 0, 0], legend: { tokenTypes: ['variable'] } } });
+                expect((await messages()).find(message => message.method === 'initialize')).toMatchObject({ params: { capabilities: {
+                    textDocument: { semanticTokens: { tokenTypes: expect.arrayContaining(['variable', 'function']), augmentsSyntaxTokens: true } },
+                } } });
+                await expect(session.query({ path: 'a.ts', kind: 'semanticTokens' })).rejects.toMatchObject({ code: 'unsupported' });
+                await expect(session.query({ path: 'a.ts', kind: 'semanticTokens', previousResultId: 'tokens-1' })).rejects.toMatchObject({ code: 'unsupported' });
+                await expect(session.query({ path: 'a.ts', kind: 'organizeImports' })).rejects.toMatchObject({ code: 'unsupported' });
+                const methods = (await messages()).map(message => message.method);
+                expect(methods.filter(method => typeof method === 'string' && method.startsWith('textDocument/semanticTokens/'))).toEqual(['textDocument/semanticTokens/range']);
+                expect(methods).not.toContain('workspace/executeCommand');
+                expect(methods).not.toContain('textDocument/diagnostic');
+            } finally { await session.dispose(); }
+        });
+    });
+
+    it.each(['cancel', 'edit'] as const)('keeps typing independent from completion and fences a late answer after %s', async action => {
+        await withTempDir('happier-lsp-pending-completion-', async root => {
+            const { session, protocols, messages } = await fixture(root, { editingFeatures: true, delayMethod: 'textDocument/completion' });
+            try {
+                await session.open({ path: 'a.ts', languageId: 'typescript', text: 'value', version: 1, unsaved: false });
+                const abort = new AbortController();
+                const pending = session.query({ path: 'a.ts', kind: 'completion', position: { line: 0, character: 1 }, signal: abort.signal });
+                const rejected = expect(pending).rejects.toMatchObject({ code: action === 'cancel' ? 'cancelled' : 'stale_query' });
+                await vi.waitFor(async () => expect((await messages()).some(message => message.method === 'textDocument/completion')).toBe(true));
+                if (action === 'cancel') abort.abort();
+                else {
+                    await session.change({ path: 'a.ts', version: 2, baseVersion: 1,
+                        edit: { startLine: 0, startCharacter: 0, endLine: 0, endCharacter: 1, text: 'V' }, unsaved: true });
+                    expect(session.document('a.ts')).toMatchObject({ text: 'Value', version: 2 });
+                    await protocols[0]!.client.notify('fixture/release', { method: 'textDocument/completion' });
+                }
+                await rejected;
+            } finally { await session.dispose(); }
+        });
+    });
+
+    it('rejects an in-flight resolve when a newer completion list replaces its native item', async () => {
+        await withTempDir('happier-lsp-replaced-completion-', async root => {
+            const { session, protocols, messages } = await fixture(root, { editingFeatures: true, delayMethod: 'completionItem/resolve' });
+            try {
+                await session.open({ path: 'a.ts', languageId: 'typescript', text: 'value', version: 1, unsaved: false });
+                const result = await session.query({ path: 'a.ts', kind: 'completion', position: { line: 0, character: 1 } });
+                const item = (result.value as { items: Array<{ itemId: string }> }).items[0]!;
+                const pending = session.query({ path: 'a.ts', kind: 'completionResolve', itemId: item.itemId });
+                const rejected = expect(pending).rejects.toMatchObject({ code: 'stale_query' });
+                await vi.waitFor(async () => expect((await messages()).some(message => message.method === 'completionItem/resolve')).toBe(true));
+                await session.query({ path: 'a.ts', kind: 'completion', position: { line: 0, character: 2 } });
+                await protocols[0]!.client.notify('fixture/release', { method: 'completionItem/resolve' });
+                await rejected;
+            } finally { await session.dispose(); }
+        });
+    });
+
+    it.each([false, true])('resolves an import preview with no opaque data, generic kind advertised: %s', async organizerGenericKind => {
+        await withTempDir('happier-lsp-resolve-imports-', async root => {
+            const { session, messages } = await fixture(root, { editingFeatures: true, organizerNeedsResolve: true, organizerGenericKind });
+            try {
+                await session.open({ path: 'a.ts', languageId: 'typescript', text: 'value', version: 1, unsaved: false });
+                await expect(session.query({ path: 'a.ts', kind: 'organizeImports' }))
+                    .resolves.toMatchObject({ value: [{ kind: 'source.organizeImports.fixture', edit: { changes: expect.any(Object) } }] });
+                const recorded = await messages();
+                expect(recorded.find(message => message.method === 'codeAction/resolve')).toMatchObject({ params: { kind: 'source.organizeImports.fixture' } });
+                expect(recorded.some(message => message.method === 'workspace/executeCommand')).toBe(false);
+            } finally { await session.dispose(); }
+        });
+    });
+
     it('starts a stopped language server again through its retained Processes owner and replays open buffers', async () => {
         await withTempDir('happier-lsp-process-restart-', async root => {
             const { session, protocols } = await fixture(root);
@@ -42,7 +221,7 @@ describe('language server session', () => {
                 await session.start();
                 const generation = session.status().generation;
                 const source = session.readProcessRoots()[0]!;
-                const retained = { ...source, start: { startTimeMs: 1 }, live: true, ownerCreatedAtMs: source.ownerCreatedAtMs! };
+                const retained = { ...source, live: true, start: { startTimeMs: 1 }, ownerCreatedAtMs: source.ownerCreatedAtMs! };
                 await owners.stopOwner(retained, {});
                 await protocols[0].wait();
                 expect(session.status().state).toBe('stopped');
@@ -61,7 +240,7 @@ describe('language server session', () => {
                 // A stale Start again must not stop a replacement generation.
                 expect(await owners.startOwner(retained, {})).toMatchObject({ status: 'refused' });
                 expect(protocols).toHaveLength(2);
-                const current = { ...session.readProcessRoots()[0]!, start: { startTimeMs: 2 }, live: true, ownerCreatedAtMs: 0 };
+                const current = { ...session.readProcessRoots()[0]!, live: true, start: { startTimeMs: 2 }, ownerCreatedAtMs: 0 };
                 await owners.stopOwner(current, {});
                 await session.close('a.ts');
                 await session.close('b.ts');
@@ -79,7 +258,7 @@ describe('language server session', () => {
             try {
                 await session.open({ path: 'a.ts', languageId: 'typescript', text: 'buffer', version: 1, unsaved: false });
                 await session.start();
-                const root = { ...session.readProcessRoots()[0]!, start: { startTimeMs: 1 }, live: true, ownerCreatedAtMs: 0 };
+                const root = { ...session.readProcessRoots()[0]!, live: true, start: { startTimeMs: 1 }, ownerCreatedAtMs: 0 };
                 await owners.stopOwner(root, {});
                 behavior.failInitialize = true;
                 expect(await owners.startOwner(root, {})).toMatchObject({ status: 'refused', reasonCode: 'start_failed' });
@@ -130,11 +309,13 @@ describe('language server session', () => {
     });
     it.each([0, 1, 2])('honors sync kind %s while keeping the document version', async (syncKind) => {
         await withTempDir('happier-lsp-sync-', async (root) => {
-            const { session, messages } = await fixture(root, { syncKind });
+            const { session, protocols, messages } = await fixture(root, { syncKind });
             try {
                 await session.open({ path: 'a.ts', languageId: 'typescript', text: 'one', version: 1, unsaved: false });
                 await session.query({ path: 'a.ts', kind: 'hover', position: { line: 0, character: 0 } });
                 await session.change({ path: 'a.ts', version: 2, baseVersion: 1, edit: { startLine: 0, startCharacter: 0, endLine: 0, endCharacter: 3, text: 'two' }, unsaved: true });
+                // notify() confirms the pipe write; the barrier confirms the child consumed it.
+                await protocols[0]!.client.request('fixture/barrier', {});
                 const changes = (await messages()).filter(m => m.method === 'textDocument/didChange');
                 if (syncKind === 0)
                     expect(changes).toHaveLength(0);
