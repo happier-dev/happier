@@ -79,12 +79,7 @@ export function resolveFloatingFrameRect(input: Readonly<{
     }
     const maxX = available.x + availableWidth - width;
     const maxY = available.y + availableHeight - height;
-    const desired = input.projectedPoint
-        ? resolveFloatingFrameCornerRect(resolveFloatingFrameCorner({
-            x: input.projectedPoint.x + width / 2,
-            y: input.projectedPoint.y + height / 2,
-        }, available), { width, height }, available)
-        : input.rect;
+    const desired = input.projectedPoint ?? input.rect;
     const rect = {
         x: clamp(desired.x, available.x, maxX),
         y: clamp(desired.y, available.y, maxY),

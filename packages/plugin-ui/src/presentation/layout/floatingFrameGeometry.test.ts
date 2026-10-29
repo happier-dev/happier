@@ -47,7 +47,7 @@ describe('measured floating frame placement', () => {
         expect(short.y + short.height).toBeLessThanOrEqual(220);
         expect(short.x + short.width).toBe(300);
     });
-    it('settles a native or web throw at the projected corner through aspect and obstacle constraints', () => {
+    it('settles a native or web throw at its projected position through aspect and obstacle constraints', () => {
         const input = {
             rect: { x: 40, y: 50, width: 200, height: 165 },
             availableRect: { x: 10, y: 20, width: 800, height: 600 },
@@ -57,6 +57,10 @@ describe('measured floating frame placement', () => {
         };
         expect(resolveFloatingFrameRect(input)).toEqual({
             rect: { x: 610, y: 290, width: 200, height: 165 }, fits: true,
+        });
+        // A released picture stays where the person put it; only its bounds may clamp it.
+        expect(resolveFloatingFrameRect({ ...input, projectedPoint: { x: 330, y: 200 }, avoidRects: [] })).toEqual({
+            rect: { x: 330, y: 200, width: 200, height: 165 }, fits: true,
         });
     });
     it('keeps the closest unobstructed placement inside the measured available rect', () => {

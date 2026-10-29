@@ -217,7 +217,7 @@ describe('FloatingFrame', () => {
     view.unmount();
   });
 
-  it('moves 1:1 by its picture while watching and settles into the nearest corner on release', () => {
+  it('moves 1:1 by its picture while watching and keeps the released placement', () => {
     const { view, byId, onRectChange } = mount();
     drag(byId('picture'), -400, -300);
 
@@ -227,7 +227,7 @@ describe('FloatingFrame', () => {
     expect(moves.at(-1)).toMatchObject({ x: START.x - 400, y: START.y - 300 });
     const [settled, change] = onRectChange.mock.calls.at(-1)!;
     expect(change).toEqual({ kind: 'settle' });
-    expect(settled).toEqual({ ...START, x: AVAILABLE.x, y: AVAILABLE.y });
+    expect(settled).toEqual({ ...START, x: START.x - 400, y: START.y - 300 });
     view.unmount();
   });
 
