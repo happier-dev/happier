@@ -13660,6 +13660,7 @@ const walkthroughSettingsTranslations = { 'zh-Hans': copy({
         model: '摘要模型',
         modelDescription: '用于生成解释、变更导览和提交建议。',
         chooseModel: '选择模型',
+        sessionModel: '会话模型',
         searchModels: '搜索模型',
         loadModels: "查找更多模型",
         loadFailed: "无法加载已保存的导览。",
@@ -13675,6 +13676,7 @@ const walkthroughSettingsTranslations = { 'zh-Hans': copy({
         costPremium: "高成本",
         loadingModels: "正在加载模型…",
         noModels: "未找到模型",
+        chooseMachineForModels: "请先选择一台机器，以查看其模型。",
         loadModelsFailed: "无法加载模型。请重试。",
         startFailure: {
             notInstalled: { title: "这台机器上未安装", next: "请检查其命令和工作目录，然后重试。" },

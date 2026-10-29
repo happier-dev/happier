@@ -47,6 +47,8 @@ type StartModel = Readonly<{
     modelChoices?: React.ComponentProps<typeof ScmDiffSummaryModelPicker>['modelChoices'];
     machineId?: string | null;
     serverId?: string | null;
+    /** What an unset choice runs on (a Session's own model), so it never reads as a step still to take. */
+    unsetLabel?: string | null;
     testID: string;
 }>;
 
@@ -79,6 +81,7 @@ export function ScmDiffSummaryStartOptions(props: Readonly<{
                     modelChoices={props.model.modelChoices}
                     machineId={props.model.machineId}
                     serverId={props.model.serverId}
+                    unsetLabel={props.model.unsetLabel}
                     testID={props.model.testID}
                 />
             ) : null}
@@ -150,7 +153,9 @@ export function scmDiffSummaryStartOptionsOf(
         message: bound.error ?? input.prerequisite,
         ...(input.modelTestID ? {
             model: { value: bound.model, onChange: bound.setModel, modelChoices: bound.modelChoices,
-                machineId: bound.machine?.machineId, serverId: bound.serverId, testID: input.modelTestID },
+                machineId: bound.machine?.machineId, serverId: bound.serverId, testID: input.modelTestID,
+                // A Session-hosted start with no choice runs on that Session's model (the binding sends no override).
+                unsetLabel: 'sessionId' in bound.host && bound.host.sessionId ? t('walkthroughSettings.sessionModel') : null },
             onChooseModel: () => bound.modelChoices.setOpen(true),
         } : {}),
     };

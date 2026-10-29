@@ -7,7 +7,7 @@ export type Copy = typeof en;
 export const en = {
     title: 'Walkthroughs', description: 'An AI-written reading order, with an explanation beside the exact changes and optional commit proposals. Runs on the machine that has the code.',
     enabled: 'Explain changes', enabledDescription: 'Add a reading order and explanations to a comparison. Files remain available without a model.',
-    model: 'Summary model', modelDescription: 'Used for explanations, walkthroughs and commit proposals.', chooseModel: 'Choose a model', searchModels: 'Search models',
+    model: 'Summary model', modelDescription: 'Used for explanations, walkthroughs and commit proposals.', chooseModel: 'Choose a model', sessionModel: 'Session model', searchModels: 'Search models',
     unavailable: 'Model unavailable. Choose another.',
     loadModels: 'Find more models',
     loadFailed: 'Couldn’t load saved walkthroughs.',
@@ -23,6 +23,7 @@ export const en = {
     costPremium: "Premium cost",
     loadingModels: 'Loading models…',
     noModels: 'No models found',
+    chooseMachineForModels: 'Choose a machine first to see its models.',
     loadModelsFailed: "Couldn’t load models. Try again.",
     startFailure: {
         notInstalled: { title: 'Not installed on this machine', next: 'Check its command and working directory, then try again.' },

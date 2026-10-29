@@ -13170,6 +13170,7 @@ const walkthroughSettingsTranslations = { de: copy({
         model: 'Zusammenfassungsmodell',
         modelDescription: 'Wird für Erklärungen, Rundgänge und Commit-Vorschläge verwendet.',
         chooseModel: 'Modell wählen',
+        sessionModel: 'Modell der Sitzung',
         searchModels: 'Modelle suchen',
         loadModels: "Weitere Modelle suchen",
         loadFailed: "Gespeicherte Walkthroughs konnten nicht geladen werden.",
@@ -13185,6 +13186,7 @@ const walkthroughSettingsTranslations = { de: copy({
         costPremium: "Hohe Kosten",
         loadingModels: "Modelle werden geladen …",
         noModels: "Keine Modelle gefunden",
+        chooseMachineForModels: "Wähle zuerst ein Gerät, um seine Modelle zu sehen.",
         loadModelsFailed: "Modelle konnten nicht geladen werden. Versuche es erneut.",
         startFailure: {
             notInstalled: { title: "Auf diesem Rechner nicht installiert", next: "Prüfe Befehl und Arbeitsverzeichnis, dann versuche es erneut." },

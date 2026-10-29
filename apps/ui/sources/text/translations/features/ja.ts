@@ -13664,6 +13664,7 @@ const walkthroughSettingsTranslations = { ja: copy({
         model: '要約モデル',
         modelDescription: '説明、ウォークスルー、コミット案の作成に使います。',
         chooseModel: 'モデルを選択',
+        sessionModel: 'セッションのモデル',
         searchModels: 'モデルを検索',
         loadModels: "他のモデルを探す",
         loadFailed: "保存したウォークスルーを読み込めませんでした。",
@@ -13679,6 +13680,7 @@ const walkthroughSettingsTranslations = { ja: copy({
         costPremium: "高コスト",
         loadingModels: "モデルを読み込み中…",
         noModels: "モデルが見つかりません",
+        chooseMachineForModels: "まずマシンを選ぶと、そのモデルが表示されます。",
         loadModelsFailed: "モデルを読み込めませんでした。もう一度お試しください。",
         startFailure: {
             notInstalled: { title: "このマシンにインストールされていません", next: "コマンドと作業ディレクトリを確認して、もう一度お試しください。" },

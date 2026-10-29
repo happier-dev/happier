@@ -13700,6 +13700,7 @@ const walkthroughSettingsTranslations = { ca: copy({
         model: 'Model de resum',
         modelDescription: 'S’utilitza per a explicacions, guies de canvis i propostes de commits.',
         chooseModel: 'Tria un model',
+        sessionModel: 'Model de la sessió',
         searchModels: 'Cerca models',
         loadModels: "Cerca més models",
         loadFailed: "No s’han pogut carregar els recorreguts desats.",
@@ -13715,6 +13716,7 @@ const walkthroughSettingsTranslations = { ca: copy({
         costPremium: "Cost alt",
         loadingModels: "Carregant models…",
         noModels: "No s’ha trobat cap model",
+        chooseMachineForModels: "Tria primer una màquina per veure’n els models.",
         loadModelsFailed: "No s’han pogut carregar els models. Torna-ho a provar.",
         startFailure: {
             notInstalled: { title: "No està instal·lat en aquesta màquina", next: "Comprova’n l’ordre i el directori de treball i torna-ho a provar." },

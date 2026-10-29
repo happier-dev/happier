@@ -13660,6 +13660,7 @@ const walkthroughSettingsTranslations = { 'zh-Hant': copy({
         model: '摘要模型',
         modelDescription: '用於產生說明、變更導覽和提交建議。',
         chooseModel: '選擇模型',
+        sessionModel: '工作階段模型',
         searchModels: '搜尋模型',
         loadModels: "尋找更多模型",
         loadFailed: "無法載入已儲存的導覽。",
@@ -13675,6 +13676,7 @@ const walkthroughSettingsTranslations = { 'zh-Hant': copy({
         costPremium: "高成本",
         loadingModels: "正在載入模型…",
         noModels: "找不到模型",
+        chooseMachineForModels: "請先選擇一台機器，以查看其模型。",
         loadModelsFailed: "無法載入模型。請重試。",
         startFailure: {
             notInstalled: { title: "這台機器上未安裝", next: "請檢查其指令和工作目錄，然後重試。" },

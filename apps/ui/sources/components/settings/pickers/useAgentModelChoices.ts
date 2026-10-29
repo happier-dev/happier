@@ -287,9 +287,10 @@ export function useAgentModelChoices(params: Readonly<{
     if (params.value && restoredSelection) selections.set(params.value, restoredSelection);
     // An empty menu says why: the Machine has not answered yet, the answer could not be read, or nothing is offered.
     const awaitingCatalog = purpose === 'walkthrough' && observing && Boolean(params.machineId) && !executableCatalog;
+    const needsMachine = purpose === 'walkthrough' && !params.machineId;
     const emptyLabel = awaitingCatalog
         ? t(catalogReadFailed ? 'walkthroughSettings.loadModelsFailed' : 'walkthroughSettings.loadingModels')
-        : t('walkthroughSettings.noModels');
+        : t(needsMachine ? 'walkthroughSettings.chooseMachineForModels' : 'walkthroughSettings.noModels');
     return { open, setOpen, emptyLabel, discoveryTargetKey, setDiscoveryTargetKey, selections, discoveryTargets, customModelTargets, items, sections,
         catalogProfiles, defaultProfile, groups: projected.groups,
         selectedItem: items.find(item => item.id === effectiveId), selectionAvailable: selections.has(params.value),

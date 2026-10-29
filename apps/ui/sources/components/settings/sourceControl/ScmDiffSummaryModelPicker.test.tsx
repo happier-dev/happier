@@ -382,6 +382,12 @@ describe('Summary model discovery', () => {
         await vi.waitFor(() => expect(menu().props.emptyLabel).toBe(label));
         await screen.unmount();
     });
+    it('says a Machine is needed first, rather than "No models found", when none is chosen', async () => {
+        const screen = await renderSettingsView(<ScmDiffSummaryModelPicker value="" onChange={vi.fn()} />);
+        const menu = screen.findAll(node => node.type === DropdownMenu)[0];
+        expect(menu.props.emptyLabel).toBe('Choose a machine first to see its models.');
+        await screen.unmount();
+    });
     it('names what an unset choice runs on instead of asking for a choice that is not required', async () => {
         const trigger = async (unsetLabel?: string) => {
             const screen = await renderSettingsView(<ScmDiffSummaryModelPicker presentation="inline" value="" onChange={vi.fn()} unsetLabel={unsetLabel} />);

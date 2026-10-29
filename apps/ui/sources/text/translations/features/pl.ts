@@ -13696,6 +13696,7 @@ const walkthroughSettingsTranslations = { pl: copy({
         model: 'Model podsumowania',
         modelDescription: 'Używany do wyjaśnień, przewodników i propozycji commitów.',
         chooseModel: 'Wybierz model',
+        sessionModel: 'Model sesji',
         searchModels: 'Szukaj modeli',
         loadModels: "Znajdź więcej modeli",
         loadFailed: "Nie udało się wczytać zapisanych przeglądów.",
@@ -13711,6 +13712,7 @@ const walkthroughSettingsTranslations = { pl: copy({
         costPremium: "Wysoki koszt",
         loadingModels: "Wczytywanie modeli…",
         noModels: "Nie znaleziono modeli",
+        chooseMachineForModels: "Najpierw wybierz maszynę, aby zobaczyć jej modele.",
         loadModelsFailed: "Nie udało się wczytać modeli. Spróbuj ponownie.",
         startFailure: {
             notInstalled: { title: "Nie zainstalowano na tej maszynie", next: "Sprawdź polecenie i katalog roboczy, a potem spróbuj ponownie." },

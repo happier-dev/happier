@@ -13708,6 +13708,7 @@ const walkthroughSettingsTranslations = { ru: copy({
         model: 'Модель сводки',
         modelDescription: 'Используется для объяснений, обзоров изменений и предложений коммитов.',
         chooseModel: 'Выбрать модель',
+        sessionModel: 'Модель сессии',
         searchModels: 'Поиск моделей',
         loadModels: "Найти другие модели",
         loadFailed: "Не удалось загрузить сохранённые обзоры.",
@@ -13723,6 +13724,7 @@ const walkthroughSettingsTranslations = { ru: copy({
         costPremium: "Высокая стоимость",
         loadingModels: "Загрузка моделей…",
         noModels: "Модели не найдены",
+        chooseMachineForModels: "Сначала выберите машину, чтобы увидеть её модели.",
         loadModelsFailed: "Не удалось загрузить модели. Повторите попытку.",
         startFailure: {
             notInstalled: { title: "Не установлено на этой машине", next: "Проверьте команду и рабочий каталог, затем повторите попытку." },

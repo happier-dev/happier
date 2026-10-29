@@ -13727,6 +13727,7 @@ const walkthroughSettingsTranslations = { es: copy({
         model: 'Modelo de resumen',
         modelDescription: 'Se usa para explicaciones, recorridos y propuestas de commits.',
         chooseModel: 'Elegir un modelo',
+        sessionModel: 'Modelo de la sesión',
         searchModels: 'Buscar modelos',
         loadModels: "Buscar más modelos",
         loadFailed: "No se pudieron cargar los recorridos guardados.",
@@ -13742,6 +13743,7 @@ const walkthroughSettingsTranslations = { es: copy({
         costPremium: "Coste alto",
         loadingModels: "Cargando modelos…",
         noModels: "No se encontró ningún modelo",
+        chooseMachineForModels: "Elige primero una máquina para ver sus modelos.",
         loadModelsFailed: "No se pudieron cargar los modelos. Inténtalo de nuevo.",
         startFailure: {
             notInstalled: { title: "No está instalado en esta máquina", next: "Revisa su comando y su directorio de trabajo y vuelve a intentarlo." },
