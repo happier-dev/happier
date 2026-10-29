@@ -64,6 +64,26 @@ describe('HAPPIER_BUILT_IN_TOOLS', () => {
     expect(new Set(HAPPIER_BUILT_IN_TOOL_NAMES).size).toBe(HAPPIER_BUILT_IN_TOOL_NAMES.length);
   });
 
+  it('keeps the landed change-explanation operations on their public MCP tool names', () => {
+    // Agents call these by name; the table above follows whatever name a spec declares.
+    const byName = new Map(HAPPIER_BUILT_IN_TOOLS.map((tool) => [tool.name, tool]));
+    for (const [id, name] of [
+      ['scm.diffSummary.capture', 'scm_diff_summary_capture'],
+      ['scm.diffSummary.generate', 'scm_diff_summary_generate'],
+      ['scm.diffSummary.result.read', 'scm_diff_summary_result_read'],
+      ['scm.diffSummary.result.edit', 'scm_diff_summary_result_edit'],
+      ['scm.diffSummary.result.undo', 'scm_diff_summary_result_undo'],
+      ['scm.diffSummary.result.delete', 'scm_diff_summary_result_delete'],
+      ['scm.diffSummary.refine', 'scm_diff_summary_refine'],
+      ['scm.diffSummary.addOutputs', 'scm_diff_summary_add_outputs'],
+      ['scm.diffSummary.discuss', 'scm_diff_summary_discuss'],
+      ['scm.diffSummary.reviewed.mark', 'scm_diff_summary_reviewed_mark'],
+      ['scm.diffSummary.reviewed.unmark', 'scm_diff_summary_reviewed_unmark'],
+    ] as const) {
+      expect(byName.get(name)?.actionId, id).toBe(id);
+    }
+  });
+
   it('keeps the raw ActionSpec tool catalog separate from session-agent direct exposure', () => {
     const expected = listActionSpecs()
       .map((spec) => String(spec.bindings?.mcpToolName ?? '').trim())
