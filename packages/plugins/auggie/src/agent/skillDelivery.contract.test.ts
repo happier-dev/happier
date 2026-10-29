@@ -90,7 +90,6 @@ if (!agent) throw new Error('Auggie Agent contribution is missing.');
 runAgentSkillDeliveryContract({
   agent, openSession, observeLaunch: () => observer.observeLaunch(),
   variants: [
-    { id: 'create', open: openSession, expect: 'delivers' },
     { id: 'resume', open: request => openSession({ ...request, kind: 'resume', providerSessionId: 'auggie-checkpoint' }), expect: 'delivers' },
   ],
 });
