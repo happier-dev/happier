@@ -17,8 +17,8 @@ import type { CodeEntryHistoryState } from './codeEntryHistoryPresentation';
  * batch for the visible rows answers; a pending entry holds a quiet bar in each column.
  *
  * `layout="columns"` is the desktop table (subject and time as columns beside the name);
- * `"time"` and `"subject"` are a narrow table's two halves (time at the end, the subject after the
- * name in a smaller share, so names keep their width).
+ * `"time"` and `"subject"` are a narrow table's two halves (time at the end, the subject under the
+ * name, so names keep their width).
  */
 export const CodeEntryHistoryCells = React.memo(function CodeEntryHistoryCells(props: Readonly<{
     testID?: string;
@@ -80,12 +80,8 @@ const styles = StyleSheet.create((theme) => ({
         minWidth: 0,
         justifyContent: 'center',
     },
-    // The stacked row's subject shares the line after the name (the row's meta slot), and the name wins:
-    // the subject starts from no width and takes a smaller share of what is left, truncating first.
+    // The stacked row's subject sits under the name (lab p-code BROWSEp), in the name's column.
     subjectLine: {
-        flexGrow: 0.6,
-        flexShrink: 1,
-        flexBasis: 0,
         minWidth: 0,
     },
     timeCell: {
