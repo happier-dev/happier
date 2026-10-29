@@ -1227,7 +1227,12 @@ async function flushDeferredDirectSessionTranscriptDeltas(sessionId: string): Pr
                         maxArrivalToApplyMs,
                     });
                 }
-                deferredDirectSessionTranscriptDeltaQueues.delete(sessionId);
+                // Release only THIS drain's own queue: a mid-drain scope reset releases this queue
+                // while a later delta may already have created a fresh one for the same session, and
+                // deleting by key alone would evict that innocent queue and strand its entries.
+                if (deferredDirectSessionTranscriptDeltaQueues.get(sessionId) === state) {
+                    deferredDirectSessionTranscriptDeltaQueues.delete(sessionId);
+                }
                 return;
             }
             if (!entry.shouldContinue()) {

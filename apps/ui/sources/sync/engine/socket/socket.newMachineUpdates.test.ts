@@ -1452,6 +1452,56 @@ describe('socket direct-session transcript delta apply window', () => {
         await vi.advanceTimersByTimeAsync(1_000);
         expect(updateDirectSessionTranscript).not.toHaveBeenCalled();
     });
+
+    it('flushes a delta queued behind a mid-drain scope reset instead of stranding it with the released window', async () => {
+        vi.useFakeTimers();
+        const sessionId = 'mid_drain_scope_reset_direct_delta_session';
+        setActiveViewingSessionId(sessionId, 1);
+        markSessionVisible(sessionId);
+        storage.getState().applySessions([buildSession(sessionId, 'plain')]);
+
+        // Hold the first delta's apply open so the drain is provably mid-flight when the scope resets.
+        // The resolve handle lives on a mutable object: a bare `let` would be control-flow-narrowed
+        // to its null initializer here (the executor assigns it asynchronously for the checker).
+        const firstApplyGate = { release: (() => {}) as () => void };
+        const firstApply = new Promise<void>((resolve) => {
+            firstApplyGate.release = resolve;
+        });
+        const updateDirectSessionTranscript = vi.fn(
+            (update: DirectSessionTranscriptUpdatedEphemeralUpdate): Promise<void> => {
+                if (update.items[0]?.id === 'delta-item-1') return firstApply;
+                return Promise.resolve();
+            },
+        );
+
+        await handleEphemeralSocketUpdate({
+            ...buildDirectDeltaParams(sessionId, updateDirectSessionTranscript),
+            update: buildDirectSessionTranscriptDeltaUpdate(sessionId, {
+                itemId: 'delta-item-1', text: 'pre-reset tail', fromCursor: 'tail', nextCursor: 'cursor-1',
+            }),
+        });
+
+        await vi.advanceTimersByTimeAsync(1_000);
+        expect(updateDirectSessionTranscript).toHaveBeenCalledTimes(1);
+
+        // Mid-drain: the server scope resets (releasing the drain's own queue) and a delta for the
+        // fresh scope arrives, creating a new queue for the same session.
+        resetSocketSessionProjectionStateForServerScope();
+        await handleEphemeralSocketUpdate({
+            ...buildDirectDeltaParams(sessionId, updateDirectSessionTranscript),
+            update: buildDirectSessionTranscriptDeltaUpdate(sessionId, {
+                itemId: 'delta-item-2', text: 'post-reset tail', fromCursor: 'cursor-1', nextCursor: 'cursor-2',
+            }),
+        });
+
+        firstApplyGate.release();
+        await vi.advanceTimersByTimeAsync(1_000);
+
+        // The old drain releases only its OWN queue: the post-reset delta belongs to the new queue
+        // and must still flush through it — an unconditional per-session delete would strand it.
+        expect(updateDirectSessionTranscript).toHaveBeenCalledTimes(2);
+        expect(updateDirectSessionTranscript.mock.calls[1][0].items[0]?.id).toBe('delta-item-2');
+    });
 });
 
 describe('flushMachineActivityUpdates', () => {
