@@ -60,11 +60,22 @@ describe('mapCryptoBatchWithYield', () => {
     });
 
     it('falls back to the default chunk size for an invalid chunk size', async () => {
-        const items = Array.from({ length: 5 }, (_, index) => index);
+        const items = Array.from({ length: DEFAULT_CRYPTO_BATCH_YIELD_CHUNK_SIZE * 2 + 1 }, (_, index) => index);
 
-        await expect(mapCryptoBatchWithYield(items, (item) => item, { chunkSize: 0 })).resolves.toEqual(items);
-        await expect(
-            mapCryptoBatchWithYield(items, (item) => item, { chunkSize: Number.NaN }),
-        ).resolves.toEqual(items);
+        for (const chunkSize of [0, Number.NaN]) {
+            let processed = 0;
+            let processedAtFirstYield: number | null = null;
+            setTimeout(() => {
+                processedAtFirstYield = processed;
+            }, 0);
+
+            const results = await mapCryptoBatchWithYield(items, (item) => {
+                processed += 1;
+                return item;
+            }, { chunkSize });
+
+            expect(processedAtFirstYield).toBe(DEFAULT_CRYPTO_BATCH_YIELD_CHUNK_SIZE);
+            expect(results).toEqual(items);
+        }
     });
 });

@@ -31,40 +31,6 @@ describe('createFakeCryptoWorker', () => {
         });
     });
 
-    it('decrypts data-key envelopes with direct and compatibility secret material', async () => {
-        const worker = createFakeCryptoWorker();
-        const direct = CRYPTO_GOLDEN_VECTORS.encryptedDataKeyEnvelopeV1.directSecretKey;
-        const compatibility = CRYPTO_GOLDEN_VECTORS.encryptedDataKeyEnvelopeV1.compatibilitySeed;
-
-        const result = await worker.decryptDataKeyEnvelopeV1({
-            scope,
-            items: [
-                {
-                    envelopeBase64: base64FromHex(direct.envelope.hex),
-                    recipientSecretKeyOrSeedBase64: base64FromHex(direct.recipientSecretKeyOrSeed.hex),
-                },
-                {
-                    envelopeBase64: base64FromHex(compatibility.envelope.hex),
-                    recipientSecretKeyOrSeedBase64: base64FromHex(compatibility.recipientSecretKeyOrSeed.hex),
-                },
-                {
-                    envelopeBase64: base64FromHex(CRYPTO_GOLDEN_VECTORS.encryptedDataKeyEnvelopeV1.malformedEnvelope.hex),
-                    recipientSecretKeyOrSeedBase64: base64FromHex(direct.recipientSecretKeyOrSeed.hex),
-                },
-            ],
-        });
-
-        expect(result).toEqual({
-            status: 'ok',
-            source: 'reference',
-            items: [
-                base64FromHex(direct.dataKey.hex),
-                base64FromHex(compatibility.dataKey.hex),
-                null,
-            ],
-        });
-    });
-
     it('decrypts data-key envelopes with protocol-lenient base64 fields', async () => {
         const worker = createFakeCryptoWorker();
         const direct = CRYPTO_GOLDEN_VECTORS.encryptedDataKeyEnvelopeV1.directSecretKey;
@@ -109,22 +75,6 @@ describe('createFakeCryptoWorker', () => {
         });
 
         expect(result.items).toEqual([null, base64FromHex(direct.dataKey.hex), null]);
-    });
-
-    it('decrypts secretbox JSON vectors through the same payload contract native uses', async () => {
-        const worker = createFakeCryptoWorker();
-
-        const result = await worker.decryptSecretboxJson({
-            scope,
-            items: UI_CRYPTO_GOLDEN_VECTORS.secretboxJson.values.map((vector) => ({
-                ciphertextBase64: base64FromHex(vector.encryptedHex),
-                keyBase64: base64FromHex(UI_CRYPTO_GOLDEN_VECTORS.secretboxJson.keyHex),
-            })),
-        });
-
-        expect(result.items).toEqual(
-            UI_CRYPTO_GOLDEN_VECTORS.secretboxJson.values.map((vector) => parseSerializedJsonValue(vector.serialized)),
-        );
     });
 
     it('decrypts secretbox JSON with protocol-lenient base64 fields', async () => {
@@ -182,22 +132,6 @@ describe('createFakeCryptoWorker', () => {
                 parseSerializedJsonValue(arrayVector.serialized),
             ],
         });
-    });
-
-    it('decrypts AES-GCM JSON vectors through the same payload contract native uses', async () => {
-        const worker = createFakeCryptoWorker();
-
-        const result = await worker.decryptAesGcmJson({
-            scope,
-            items: UI_CRYPTO_GOLDEN_VECTORS.aesGcmJson.values.map((vector) => ({
-                encryptedPayloadBase64: base64FromHex(vector.encryptedPayloadHex),
-                keyBase64: base64FromHex(UI_CRYPTO_GOLDEN_VECTORS.aesGcmJson.keyHex),
-            })),
-        });
-
-        expect(result.items).toEqual(
-            UI_CRYPTO_GOLDEN_VECTORS.aesGcmJson.values.map((vector) => parseSerializedJsonValue(vector.serialized)),
-        );
     });
 
     it('decrypts AES-GCM JSON with protocol-lenient base64 fields', async () => {

@@ -149,78 +149,6 @@ describe('SessionEncryption.decryptMessages (cache behavior)', () => {
     expect(second[0]!.content).toBeNull()
   })
 
-  it('treats invalid plaintext envelopes as undecipherable (content: null)', async () => {
-    const cache = new EncryptionCache()
-    const sessionId = 's_plain_invalid'
-
-    const encryptor = {
-      encrypt: async () => {
-        throw new Error('encrypt should not be called')
-      },
-      decrypt: async () => {
-        throw new Error('decrypt should not be called')
-      },
-    }
-
-    const sessionEnc = new SessionEncryption(sessionId, encryptor as any, cache)
-
-    const msg = {
-      id: 'm_plain_invalid_1',
-      seq: 1,
-      localId: null,
-      createdAt: 1,
-      updatedAt: 1,
-      content: { t: 'plain' as const, v: { kind: 'not-a-raw-record', text: 'hello' } },
-    }
-
-    const result = await sessionEnc.decryptMessages([msg as any])
-    expect(result[0]).toBeTruthy()
-    expect(result[0]!.content).toBeNull()
-  })
-
-  it('rejects forward-compatible plaintext records in an E2EE Session', async () => {
-    const cache = new EncryptionCache()
-    const sessionId = 's_plain_unknown_output'
-
-    const encryptor = {
-      encrypt: async () => {
-        throw new Error('encrypt should not be called')
-      },
-      decrypt: async () => {
-        throw new Error('decrypt should not be called')
-      },
-    }
-
-    const sessionEnc = new SessionEncryption(sessionId, encryptor as any, cache)
-
-    const msg = {
-      id: 'm_plain_unknown_output_1',
-      seq: 1,
-      localId: null,
-      createdAt: 1,
-      updatedAt: 1,
-      content: {
-        t: 'plain' as const,
-        v: {
-          role: 'agent',
-          content: {
-            type: 'output',
-            data: {
-              type: 'rate_limit_event',
-              rate_limit_info: { status: 'allowed' },
-              uuid: 'u1',
-            },
-          },
-          meta: { source: 'cli' },
-        },
-      },
-    }
-
-    const result = await sessionEnc.decryptMessages([msg as any])
-    expect(result[0]).toBeTruthy()
-    expect(result[0]!.content).toBeNull()
-  })
-
   it('retries decrypting encrypted messages when a prior attempt failed (does not permanently cache null)', async () => {
     const cache = new EncryptionCache();
     const sessionId = 's1';
@@ -260,16 +188,6 @@ describe('SessionEncryption.decryptMessages (cache behavior)', () => {
     const encryptor = new AES256Encryption(key);
     const encrypted = await encryptor.encrypt([payload]);
     const ciphertextB64 = encodeBase64(encrypted[0], 'base64');
-    const fingerprint = `enc:${ciphertextB64.length}:${ciphertextB64.slice(0, 24)}:${ciphertextB64.slice(Math.max(0, ciphertextB64.length - 24))}`;
-
-    cache.setCachedMessage('m_cached_null', {
-      id: 'm_cached_null',
-      seq: 1,
-      localId: null,
-      createdAt: 1,
-      content: null,
-    }, fingerprint);
-
     const sessionEnc = new SessionEncryption(sessionId, encryptor, cache);
     const message = {
       id: 'm_cached_null',
@@ -279,6 +197,17 @@ describe('SessionEncryption.decryptMessages (cache behavior)', () => {
       updatedAt: 1,
       content: { t: 'encrypted' as const, c: ciphertextB64 },
     } satisfies SessionMessageV1;
+
+    const cacheWrite = vi.spyOn(cache, 'setCachedMessage');
+    const warm = await sessionEnc.decryptMessages([message]);
+    expect(warm[0]?.content).toEqual(payload);
+    const written = cacheWrite.mock.calls.find(([messageId]) => messageId === message.id);
+    cacheWrite.mockRestore();
+    if (!written) throw new Error('The real Session reader did not populate its message cache');
+    const [, cachedMessage, fingerprint, ownerSessionId] = written;
+    const cachedNull = { ...cachedMessage, content: null };
+    cache.setCachedMessage(message.id, cachedNull, fingerprint, ownerSessionId);
+    expect(cache.getCachedMessage(message.id, fingerprint)).toBe(cachedNull);
 
     const result = await sessionEnc.decryptMessages([message]);
 

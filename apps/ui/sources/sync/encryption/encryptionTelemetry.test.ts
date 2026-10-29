@@ -20,6 +20,7 @@ import {
     measureMachineEncryptRawAttribution,
 } from './machineEncryption';
 import { SessionEncryption } from './sessionEncryption';
+import { createFakeCryptoWorker } from './nativeCryptoWorker/fakeCryptoWorker';
 
 class MapCountingArray<T> extends Array<T> {
     mapCalls = 0;
@@ -336,37 +337,25 @@ describe('encryption telemetry', () => {
         });
     });
 
-    it('preserves data-key decrypt result ordering when a native worker batch becomes stale', async () => {
+    it('withholds every stale data-key result and recovers aligned keys in the current scope', async () => {
         const encryption = await Encryption.create(new Uint8Array(32).fill(4));
-        const staleDataKey = new Uint8Array(32).fill(101);
+        const dataKeys = [new Uint8Array(32).fill(101), new Uint8Array(32).fill(102)];
+        const envelopes = await Promise.all(dataKeys.map(async (key) =>
+            encodeBase64(await encryption.encryptEncryptionKey(key), 'base64')));
+        const inputs = [envelopes[0]!, 'not-reference-decodable', envelopes[1]!];
+        const referenceWorker = createFakeCryptoWorker();
+        let retireScopeDuringDispatch = true;
         const worker: NativeCryptoWorker = {
-            async probe() {
-                return {
-                    available: true,
-                    failureReason: NATIVE_CRYPTO_WORKER_PROBE_FAILURE_REASON.ok,
-                    nativeVersion: 1,
-                    supportedOperations: [NATIVE_CRYPTO_WORKER_OPERATION.decryptDataKeyEnvelopeV1],
-                };
-            },
-            async decryptDataKeyEnvelopeV1() {
-                encryption.configureNativeCryptoWorker({
-                    scope: {
-                        accountId: 'account',
-                        serverId: 'server',
-                        generation: 1,
-                    },
-                });
-                return {
-                    status: 'ok',
-                    source: 'native',
-                    items: [encodeBase64(staleDataKey, 'base64')],
-                };
-            },
-            async decryptSecretboxJson() {
-                throw new Error('not used');
-            },
-            async decryptAesGcmJson() {
-                throw new Error('not used');
+            ...referenceWorker,
+            async decryptDataKeyEnvelopeV1(request) {
+                const result = await referenceWorker.decryptDataKeyEnvelopeV1(request);
+                if (retireScopeDuringDispatch) {
+                    retireScopeDuringDispatch = false;
+                    encryption.configureNativeCryptoWorker({
+                        scope: { accountId: 'account', serverId: 'server', generation: 1 },
+                    });
+                }
+                return result;
             },
         };
 
@@ -383,11 +372,14 @@ describe('encryption telemetry', () => {
             },
         });
 
-        await expect(encryption.decryptEncryptionKeys(['not-reference-decodable'])).resolves.toEqual([null]);
+        await expect(encryption.decryptEncryptionKeys(inputs)).resolves.toEqual([null, null, null]);
+        await expect(encryption.decryptEncryptionKeys(inputs)).resolves.toEqual([dataKeys[0], null, dataKeys[1]]);
     });
 
     it('falls back when native data-key decrypt returns non-ok status', async () => {
         const encryption = await Encryption.create(new Uint8Array(32).fill(4));
+        const dataKey = new Uint8Array(32).fill(103);
+        const envelope = encodeBase64(await encryption.encryptEncryptionKey(dataKey), 'base64');
         const worker: NativeCryptoWorker = {
             async probe() {
                 return {
@@ -425,11 +417,14 @@ describe('encryption telemetry', () => {
             },
         });
 
-        await expect(encryption.decryptEncryptionKeys(['not-reference-decodable'])).resolves.toEqual([null]);
+        await expect(encryption.decryptEncryptionKeys([envelope])).resolves.toEqual([dataKey]);
     });
 
     it('falls back when native data-key decrypt returns a short result', async () => {
         const encryption = await Encryption.create(new Uint8Array(32).fill(4));
+        const dataKeys = [new Uint8Array(32).fill(104), new Uint8Array(32).fill(105)];
+        const envelopes = await Promise.all(dataKeys.map(async (key) =>
+            encodeBase64(await encryption.encryptEncryptionKey(key), 'base64')));
         const nativeDataKey = new Uint8Array(32).fill(102);
         const worker: NativeCryptoWorker = {
             async probe() {
@@ -468,10 +463,7 @@ describe('encryption telemetry', () => {
             },
         });
 
-        await expect(encryption.decryptEncryptionKeys([
-            'not-reference-decodable-a',
-            'not-reference-decodable-b',
-        ])).resolves.toEqual([null, null]);
+        await expect(encryption.decryptEncryptionKeys(envelopes)).resolves.toEqual(dataKeys);
     });
 
     it('warms the configured native worker and records its capability', async () => {

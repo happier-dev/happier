@@ -1,4 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import tweetnacl from 'tweetnacl';
+import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { deriveSettingsSecretsKeySetV1 } from '@happier-dev/protocol/crypto/settingsSecretStringsV1';
+
+import { encodeBase64 } from '@/encryption/base64';
 
 const deviceKey = new Uint8Array(32).fill(9);
 const resolveDeviceLocalSettingsSecretsKey = vi.hoisted(() =>
@@ -59,20 +64,36 @@ describe('resolveSettingsSecretsKeySet', () => {
 
     it('keeps E2EE settings secrets account-scoped and does not consult device-local custody', async () => {
         const { resolveSettingsSecretsKeySet } = await import('./resolveSettingsSecretsKeySet');
+        const keysByAccount = [];
 
-        const resolved = await resolveSettingsSecretsKeySet({
-            credentials: {
-                token: 'token-a',
-                encryption: {
-                    publicKey: 'cHVibGljLWtleQ==',
-                    machineKey: 'bWFjaGluZS1rZXktMzItYnl0ZXMtbG9uZy0wMDAwMDA=',
+        for (const [index, secret] of [new Uint8Array(32).fill(21), new Uint8Array(32).fill(22)].entries()) {
+            const machineKey = deriveAccountMachineKeyFromRecoverySecret(secret);
+            const publicKey = tweetnacl.box.keyPair.fromSecretKey(machineKey).publicKey;
+            const scope = { serverId: 'server-a', accountId: `account-${index}` };
+            const legacy = await resolveSettingsSecretsKeySet({
+                credentials: { token: `token-${index}`, secret: encodeBase64(secret, 'base64url') },
+                scope,
+            });
+            const dataKey = await resolveSettingsSecretsKeySet({
+                credentials: {
+                    token: `token-${index}`,
+                    encryption: {
+                        publicKey: encodeBase64(publicKey, 'base64'),
+                        machineKey: encodeBase64(machineKey, 'base64'),
+                    },
                 },
-            },
-            scope: { serverId: 'server-a', accountId: 'account-a' },
-        });
+                scope,
+            });
+
+            expect(legacy).toEqual(deriveSettingsSecretsKeySetV1({ type: 'legacy', secret }));
+            expect(dataKey).toEqual(deriveSettingsSecretsKeySetV1({ type: 'dataKey', machineKey }));
+            expect(legacy?.readKeys).toHaveLength(2);
+            expect(dataKey?.readKeys).toHaveLength(1);
+            expect(dataKey?.writeKey).toEqual(legacy?.writeKey);
+            keysByAccount.push(dataKey?.writeKey);
+        }
 
         expect(resolveDeviceLocalSettingsSecretsKey).not.toHaveBeenCalled();
-        expect(resolved?.writeKey).toBeInstanceOf(Uint8Array);
-        expect(resolved?.readKeys[0]).toEqual(resolved?.writeKey);
+        expect(keysByAccount[0]).not.toEqual(keysByAccount[1]);
     });
 });

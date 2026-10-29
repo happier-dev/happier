@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { EncryptionCache } from './encryptionCache';
 import type { DecryptedMessage } from '../domains/state/storageTypes';
@@ -74,20 +74,24 @@ describe('EncryptionCache decrypted-message retention', () => {
     });
 
     it('evicts what was used least recently, not whatever shares a millisecond with it', () => {
-        // Everything below happens far inside one clock tick, which is exactly the
-        // condition that makes a wall-clock recency stamp meaningless.
-        const cache = new EncryptionCache({ maxMessageBytes: 4_000 });
-        const write = writeMessage(cache);
-        const body = 'y'.repeat(200);
+        const clock = vi.spyOn(Date, 'now').mockReturnValue(1_000);
+        try {
+            const cache = new EncryptionCache({ maxMessageBytes: 4_000 });
+            const write = writeMessage(cache);
+            const body = 'y'.repeat(200);
 
-        write('keep', message('keep', body), 'fp', 'session-a');
-        for (let i = 0; i < 12; i += 1) {
-            write(`filler_${i}`, message(`filler_${i}`, body), 'fp', 'session-a');
-            // Reading `keep` is what makes it most recently USED.
+            write('keep', message('keep', body), 'fp', 'session-a');
+            for (let i = 0; i < 12; i += 1) {
+                write(`filler_${i}`, message(`filler_${i}`, body), 'fp', 'session-a');
+                // Reading `keep` must refresh its recency even when every clock stamp ties.
+                expect(cache.getCachedMessage('keep', 'fp')).not.toBeNull();
+            }
+
             expect(cache.getCachedMessage('keep', 'fp')).not.toBeNull();
+            expect(cache.getCachedMessage('filler_0', 'fp')).toBeNull();
+        } finally {
+            clock.mockRestore();
         }
-
-        expect(cache.getCachedMessage('keep', 'fp')).not.toBeNull();
     });
 
     it('keeps the newest writes when a large batch displaces the budget', () => {

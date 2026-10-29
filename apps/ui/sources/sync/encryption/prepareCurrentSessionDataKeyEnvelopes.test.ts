@@ -378,6 +378,7 @@ describe('prepareCurrentSessionDataKeyEnvelopes', () => {
             transport,
             sessionDataKey: SESSION_DATA_KEY,
             isHostScopeCurrent: () => hostScopeCurrent,
+            onProgress,
             // The Home/account switch lands between cooperative sealing chunks.
             yieldBetweenChunks: async () => { hostScopeCurrent = false; },
         });
