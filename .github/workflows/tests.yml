@@ -227,6 +227,9 @@ env:
   # Tests and native builds do not require these assets.
   HAPPIER_UI_VENDOR_WEB_ASSETS: "0"
 
+permissions:
+  contents: read
+
 jobs:
   gate-prepare:
     name: Gate — select and prepare shared workspace

@@ -13,6 +13,9 @@ on:
       - '.github/workflows/cli-smoke-test.yml'
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   smoke-test-linux:
     runs-on: ubuntu-latest

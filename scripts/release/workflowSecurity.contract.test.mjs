@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
-import { readdir, readFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { spawnSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test from 'node:test';
 
 import YAML from 'yaml';
@@ -158,6 +161,18 @@ test('workflow security W8: privileged composite actions pin every nested remote
   }
   assert.deepEqual(violations, []);
 });
+
+test('workflow security W1: PR workflows cap candidate tokens explicitly at read', () => {
+  for (const workflow of workflows.values()) {
+    if (!Object.hasOwn(workflow.on ?? {}, 'pull_request')) continue;
+    assert.ok(workflow.permissions && typeof workflow.permissions === 'object');
+    assert.ok(Object.values(workflow.permissions).every((value) => ['read', 'none'].includes(value)));
+  }
+});
+
+
+
+
 
 
 
