@@ -4,6 +4,7 @@ import { join } from 'node:path';
 
 import type { RelayAccessConfig } from '@happier-dev/cli-common/relayAccess';
 import type { RelayAccessTaskTarget, SystemTaskSshConnectionConfig } from '@happier-dev/cli-common/systemTasks';
+import { RelayAccessConfigV1Schema } from '@happier-dev/protocol/system/tasks/relayAccessConfigV1';
 
 type RemoteTextResult = Readonly<{
   status: number;
@@ -41,24 +42,8 @@ function parsePersistedRelayAccessConfig(raw: string): RelayAccessConfig | null 
   } catch {
     return null;
   }
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
-  const record = parsed as Record<string, unknown>;
-  const providerId = typeof record.providerId === 'string' ? record.providerId.trim() : '';
-  if (!providerId) return null;
-
-  if (providerId === 'localOnly') return { providerId: 'localOnly' };
-  if (providerId === 'tailscaleServe') return { providerId: 'tailscaleServe' };
-  if (providerId === 'tailscaleFunnel') return { providerId: 'tailscaleFunnel' };
-  if (providerId === 'lan') {
-    const url = typeof record.url === 'string' ? record.url.trim() : '';
-    return url ? { providerId: 'lan', url } : null;
-  }
-  if (providerId === 'cloudflareNamed') {
-    const hostname = typeof record.hostname === 'string' ? record.hostname.trim() : '';
-    const token = typeof record.token === 'string' ? record.token.trim() : '';
-    return hostname && token ? { providerId: 'cloudflareNamed', hostname, token } : null;
-  }
-  return null;
+  const result = RelayAccessConfigV1Schema.safeParse(parsed);
+  return result.success ? result.data : null;
 }
 
 function stringifyPersistedRelayAccessConfig(config: RelayAccessConfig): string {
