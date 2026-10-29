@@ -65,6 +65,8 @@ export const CommitChangeRow = React.memo(function CommitChangeRow(props: Readon
     onMove?: (change: CommitProposalChange, target: CommitMoveTarget) => void;
     phone: boolean;
     inspect?: Readonly<{ expanded: boolean; onPress: () => void }>;
+    /** Drawn inside a block that already sits in the commit's text column, so the row keeps no column of its own. */
+    nested?: boolean;
 }>) {
     const { theme } = useUnistyles();
     const { change } = props;
@@ -121,6 +123,7 @@ export const CommitChangeRow = React.memo(function CommitChangeRow(props: Readon
             style={[
                 styles.row,
                 props.phone ? styles.rowPhone : null,
+                props.nested ? styles.rowNested : null,
                 props.focused || open ? styles.rowFocused : null,
                 change.hookChanged ? styles.rowHook : null,
             ]}
@@ -333,6 +336,7 @@ const styles = StyleSheet.create((theme) => ({
         borderTopColor: theme.colors.border.default,
     },
     rowPhone: { paddingLeft: theme.space.s16, gap: theme.space.s8 },
+    rowNested: { paddingLeft: theme.space.s12, borderTopWidth: 0 },
     rowFocused: { backgroundColor: theme.colors.surface.inset },
     rowHook: { backgroundColor: theme.colors.state.warning.background },
     part: { flexShrink: 0, ...Typography.variant('meta'), color: theme.colors.text.tertiary, fontVariant: ['tabular-nums'],  },

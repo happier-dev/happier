@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { View } from 'react-native';
+import { StyleSheet } from 'react-native-unistyles';
 import { classifyScmChangePath } from '@happier-dev/protocol/scm/comparison';
 import type { ScmDiffCommitResponse } from '@happier-dev/protocol/scm';
 
@@ -55,7 +56,7 @@ export function CommitHookChanges(props: Readonly<{ evidence: CommitHookEvidence
         const stats = buildDiffFileEntries([{ filePath: file.path, unifiedDiff: file.unifiedDiff }])[0];
         const change: CommitProposalChange = { key: file.path, path: file.path, changeKind: file.changeKind,
             added: stats?.added ?? 0, removed: stats?.removed ?? 0, changeRefs: [], part: null,
-            ...classifyScmChangePath(file.path), hookChanged: true };
+            ...classifyScmChangePath(file.path), hookChanged: false };
         return { file, change };
     }), [evidence.files]);
     if (evidence.state !== 'ready') return (
@@ -63,11 +64,11 @@ export function CommitHookChanges(props: Readonly<{ evidence: CommitHookEvidence
             size="line" kind={evidence.state === 'loading' ? 'loading' : 'unavailable'}
             title={evidence.state === 'loading' ? t('common.loading') : t('common.unavailable')} />
     );
-    return <View>
+    return <View style={styles.block}>
         {rows.map(({ file, change }) => {
             const expanded = opened?.key === evidence.key && opened.path === file.path;
             return <View key={file.path}>
-                <CommitChangeRow change={change} groupNumber={props.groupNumber} choices={null} focused={expanded} phone={props.phone}
+                <CommitChangeRow change={change} groupNumber={props.groupNumber} choices={null} focused={expanded} phone={props.phone} nested
                     inspect={{ expanded, onPress: () => setOpened(expanded ? null : { key: evidence.key, path: file.path }) }} />
                 {expanded ? <DiffViewer testID={`commit-hook-diff:${file.path}`} mode="unified" filePath={file.path}
                     unifiedDiff={file.unifiedDiff} showLineNumbers showPrefix wrapLines={props.phone}
@@ -76,3 +77,8 @@ export function CommitHookChanges(props: Readonly<{ evidence: CommitHookEvidence
         })}
     </View>;
 }
+
+// What the hook changed reads as one inset block under its sentence, like a hook's output or a rewritten message.
+const styles = StyleSheet.create((theme) => ({
+    block: { marginTop: theme.space.s10, borderRadius: 10, overflow: 'hidden', backgroundColor: theme.colors.surface.inset },
+}));
