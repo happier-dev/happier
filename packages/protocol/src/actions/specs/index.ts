@@ -150,6 +150,8 @@ function createRuntimeActionSpecFor<
   const serviceCli = createLocalServiceActionCliProjection(actionId);
   return {
     id: actionId, approvalPolicy: { ...RUNTIME_ACTION_APPROVAL_POLICIES[actionId] }, approval: actionId === 'computer.secret.fill' || actionId === 'browser.automation.secret.fill' ? { result: 'required', flow: 'deferred' } : { result: 'required' },
+    executionPlacement: actionId === 'browser.workspace.open' || actionId === 'devices.simulator.input.orientation'
+      ? 'client' : actionId === 'browser.recording.attachToComposer' ? 'session' : 'machine',
     title,
     ...RUNTIME_ACTION_CONFIRMATION_FACTS[actionId],
     description: executorReal ? humanDescription : RUNTIME_ACTION_PROJECTION_CONTRACT_DESCRIPTION,

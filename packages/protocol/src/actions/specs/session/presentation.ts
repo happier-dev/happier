@@ -17,7 +17,7 @@ export const SESSION_PRESENTATION_ACTION_SPECS = Object.freeze([
   // executor and Agents through the generic Action/tool projection; neither gets a
   // Board-specific dispatcher, parser, or approval rule.
   {
-    id: 'session.presentation.apply', approval: {result: 'required'},
+    id: 'session.presentation.apply', toolExposure: { agent: 'direct', mcp: 'direct' }, approval: {result: 'required'},
     cli: { commands: [{ path: ['session', 'presentation', 'apply'], visibility: 'canonical' }] },
     title: 'Present in the current Session',
     description: 'Apply one reversible Board, Companion, Chat, or Computer/Browser viewer presentation intent to the exact focused client bound to this Agent Session. This never mutates durable Board content or target execution.',

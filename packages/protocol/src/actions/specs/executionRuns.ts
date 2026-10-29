@@ -303,7 +303,7 @@ export const EXECUTION_RUN_WAIT_OBSERVATION_DESCRIPTION =
 
 export const EXECUTION_RUN_ACTION_SPECS = Object.freeze([
   {
-    id: 'execution.run.start', approval: {result: 'optional',flow: 'deferred'},
+    id: 'execution.run.start', executionPlacement: 'machine', approval: {result: 'optional',flow: 'deferred'},
     title: 'Start execution run',
     description: `Start a new execution run. Resolve dependent model, config, and connected-service options with draftInput.backendTargetKey set to the selected backend option.value; then supply the schema-defined backendTarget object to start. Set waitForCompletion=true to wait for a terminal run result. waitTimeoutSeconds only bounds this observation; it never stops, retries, or starts the run. ${EXECUTION_RUN_SESSION_SCOPE_DESCRIPTION}`,
     safety: 'safe',
@@ -400,7 +400,7 @@ export const EXECUTION_RUN_ACTION_SPECS = Object.freeze([
     inputSchema: ExecutionRunStartInputSchema,
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'execution.run.list', approval: {result: 'required'},
+    id: 'execution.run.list', executionPlacement: 'machine', toolExposure: { agent: 'direct', mcp: 'direct' }, approval: {result: 'required'},
     title: 'List execution runs',
     description: `List agent execution runs in the selected scope. Saved workflow definitions are read with workflow.definition.list; workflow Run history is read with workflow.run.list. An empty runs result says only that this execution scope has no matching runs. ${EXECUTION_RUN_SESSION_SCOPE_DESCRIPTION}`,
     safety: 'safe',
@@ -447,7 +447,7 @@ export const EXECUTION_RUN_ACTION_SPECS = Object.freeze([
     })),
 	  } satisfies PreNormalizedActionSpec,
   {
-    id: 'execution.run.get', approval: {result: 'required'},
+    id: 'execution.run.get', executionPlacement: 'machine', toolExposure: { agent: 'direct', mcp: 'direct' }, approval: {result: 'required'},
     title: 'Get execution run',
     description: `Get one execution run from the selected scope. ${EXECUTION_RUN_SESSION_SCOPE_DESCRIPTION}`,
     safety: 'safe',
@@ -479,7 +479,7 @@ export const EXECUTION_RUN_ACTION_SPECS = Object.freeze([
     inputSchema: ExecutionRunGetInputSchema,
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'execution.run.send', approval: {result: 'optional',flow: 'deferred'},
+    id: 'execution.run.send', executionPlacement: 'machine', approval: {result: 'optional',flow: 'deferred'},
     title: 'Send to detached execution run',
     description: 'Send a message to a detached execution run on the selected Machine. Requires sessionId: null. Session-owned runs use session.message.send with a recipient.',
     safety: 'safe',
@@ -507,7 +507,7 @@ export const EXECUTION_RUN_ACTION_SPECS = Object.freeze([
     inputSchema: DetachedExecutionRunSendInputSchema,
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'execution.run.ensure', approval: {result: 'optional',flow: 'deferred'},
+    id: 'execution.run.ensure', executionPlacement: 'machine', approval: {result: 'optional',flow: 'deferred'},
     title: 'Ensure execution run',
     description: `Ensure an existing execution run is active or resumable. ${EXECUTION_RUN_SESSION_SCOPE_DESCRIPTION}`,
     safety: 'safe',
@@ -535,7 +535,7 @@ export const EXECUTION_RUN_ACTION_SPECS = Object.freeze([
     inputSchema: ExecutionRunEnsureInputSchema,
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'execution.run.ensure_or_start', approval: {result: 'optional',flow: 'deferred'},
+    id: 'execution.run.ensure_or_start', executionPlacement: 'machine', approval: {result: 'optional',flow: 'deferred'},
     title: 'Ensure or start execution run',
     description: `Ensure an existing execution run, or start a new one when no run id is supplied. ${EXECUTION_RUN_SESSION_SCOPE_DESCRIPTION}`,
     safety: 'safe',
@@ -566,7 +566,7 @@ export const EXECUTION_RUN_ACTION_SPECS = Object.freeze([
     inputSchema: ExecutionRunEnsureOrStartInputSchema,
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'execution.run.stream.start', approval: {result: 'optional',flow: 'deferred'},
+    id: 'execution.run.stream.start', executionPlacement: 'machine', approval: {result: 'optional',flow: 'deferred'},
     title: 'Start execution run stream',
     description: `Start a bounded streaming turn for an execution run. ${EXECUTION_RUN_SESSION_SCOPE_DESCRIPTION}`,
     safety: 'safe',
@@ -596,7 +596,7 @@ export const EXECUTION_RUN_ACTION_SPECS = Object.freeze([
     inputSchema: ExecutionRunStreamStartInputSchema,
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'execution.run.stream.read', approval: {result: 'required'},
+    id: 'execution.run.stream.read', executionPlacement: 'machine', approval: {result: 'required'},
     title: 'Read execution run stream',
     description: `Read bounded deltas from an execution-run stream cursor. ${EXECUTION_RUN_SESSION_SCOPE_DESCRIPTION}`,
     safety: 'safe',
@@ -626,7 +626,7 @@ export const EXECUTION_RUN_ACTION_SPECS = Object.freeze([
     inputSchema: ExecutionRunStreamReadInputSchema,
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'execution.run.stream.cancel', approval: {result: 'optional',flow: 'deferred'},
+    id: 'execution.run.stream.cancel', executionPlacement: 'machine', approval: {result: 'optional',flow: 'deferred'},
     title: 'Cancel execution run stream',
     description: `Cancel a bounded streaming turn for an execution run. ${EXECUTION_RUN_SESSION_SCOPE_DESCRIPTION}`,
     safety: 'safe',
@@ -654,7 +654,7 @@ export const EXECUTION_RUN_ACTION_SPECS = Object.freeze([
     inputSchema: ExecutionRunStreamCancelInputSchema,
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'execution.run.stop', approval: {result: 'optional',flow: 'deferred'},
+    id: 'execution.run.stop', executionPlacement: 'machine', approval: {result: 'optional',flow: 'deferred'},
     title: 'Stop execution run',
     description: `Stop one execution run in the selected scope. ${EXECUTION_RUN_SESSION_SCOPE_DESCRIPTION}`,
     safety: 'safe',
@@ -684,7 +684,7 @@ export const EXECUTION_RUN_ACTION_SPECS = Object.freeze([
 	    inputSchema: ExecutionRunIdInputSchema,
 	  } satisfies PreNormalizedActionSpec,
   {
-    id: 'execution.run.cancel_turn', approval: {result: 'optional',flow: 'deferred'},
+    id: 'execution.run.cancel_turn', executionPlacement: 'machine', approval: {result: 'optional',flow: 'deferred'},
     title: 'Cancel this response',
     description: `Cancel the addressed active response without stopping its execution run. ${EXECUTION_RUN_SESSION_SCOPE_DESCRIPTION}`,
     safety: 'safe',
@@ -705,7 +705,7 @@ export const EXECUTION_RUN_ACTION_SPECS = Object.freeze([
     inputSchema: lazyZodSchema(() => z.extend(ExecutionRunCancelTurnRequestSchema, { sessionId: ExecutionRunScopeSessionIdSchema })),
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'execution.run.action', approval: {result: 'optional',flow: 'deferred'},
+    id: 'execution.run.action', executionPlacement: 'machine', approval: {result: 'optional',flow: 'deferred'},
     title: 'Apply execution run action',
     description: `Apply an action to one execution run in the selected scope. ${EXECUTION_RUN_SESSION_SCOPE_DESCRIPTION}`,
     safety: 'safe',
@@ -736,7 +736,7 @@ export const EXECUTION_RUN_ACTION_SPECS = Object.freeze([
     inputSchema: ExecutionRunActionInputSchema,
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'execution.run.permission.respond', approval: {result: 'optional',flow: 'deferred'},
+    id: 'execution.run.permission.respond', executionPlacement: 'machine', approval: {result: 'optional',flow: 'deferred'},
     title: 'Answer detached run request',
     description: 'Approve or deny a permission request, or answer a structured question, on an exact detached execution run. Only a present user may answer; autonomous callers can discover this operation but cannot execute it.',
     safety: 'safe',
@@ -755,7 +755,7 @@ export const EXECUTION_RUN_ACTION_SPECS = Object.freeze([
     outputSchema: lazyZodSchema(() => z.strictObject({ ok: z.literal(true) })),
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'execution.run.wait', approval: {result: 'required'},
+    id: 'execution.run.wait', executionPlacement: 'machine', toolExposure: { agent: 'direct', mcp: 'direct' }, approval: {result: 'required'},
     title: 'Wait for execution run',
     description: `Observe an execution run until terminal by default, or select permission attention, either condition, or a changed snapshot. Pass timeoutSeconds to bound the observation; omit it for no Happier-side deadline. ${EXECUTION_RUN_WAIT_OBSERVATION_DESCRIPTION} ${EXECUTION_RUN_SESSION_SCOPE_DESCRIPTION}`,
     safety: 'safe',

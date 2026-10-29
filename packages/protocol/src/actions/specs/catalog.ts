@@ -92,7 +92,7 @@ export const ActionOptionsResolveResultSchema = lazyZodSchema(() => z.strictObje
 
 export const ACTION_CATALOG_ACTION_SPECS = Object.freeze([
   {
-    id: 'action.spec.search', originalExecution: { accountRoot: 'allowed' }, approval: {result: 'required'},
+    id: 'action.spec.search', executionPlacement: 'account', toolExposure: { agent: 'direct', mcp: 'direct' }, originalExecution: { accountRoot: 'allowed' }, approval: {result: 'required'},
     title: 'Search action specs',
     sideEffectClass: 'read',
     description: 'Search available Happier action specs by name, description, bindings, and field hints.',
@@ -147,7 +147,7 @@ export const ACTION_CATALOG_ACTION_SPECS = Object.freeze([
     inputSchema: ActionSpecSearchInputSchema,
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'action.spec.get', originalExecution: { accountRoot: 'allowed' }, approval: {result: 'required'},
+    id: 'action.spec.get', executionPlacement: 'account', toolExposure: { agent: 'direct', mcp: 'direct' }, originalExecution: { accountRoot: 'allowed' }, approval: {result: 'required'},
     title: 'Get action spec',
     sideEffectClass: 'read',
     description: 'Get a Happier action spec, hints, examples and invoking Session context. Agent, MCP and CLI results reference named schemaSections: retrieve any section with the same id and schemaPath. Nothing is truncated. Section-local # references resolve against the original inputSchema or outputSchema root. Set includeOutputSchema:true for outputs. UI/API keep full schemas. Session Board actions fill omitted sessionId from the invoking Session; widget Actions require a qualified surface: use invocationContext.widgetSurface for this Session Board, changing only owner to {kind:"home"} for Home. Never guess serverId/accountId.',
@@ -190,7 +190,7 @@ export const ACTION_CATALOG_ACTION_SPECS = Object.freeze([
 
 export const ACTION_OPTIONS_ACTION_SPECS = Object.freeze([
   {
-    id: 'action.options.resolve', approval: {result: 'required'},
+    id: 'action.options.resolve', executionPlacement: 'machine', toolExposure: { agent: 'direct', mcp: 'direct' }, approval: {result: 'required'},
     title: 'Resolve action options',
     sideEffectClass: 'read',
     description: 'Resolve valid options for one Action field or one declared workflow/widget input. Provide actionId and fieldPath, consumer and fieldPath, or a direct optionsSourceId. A consumer always requires fieldPath.',
@@ -227,7 +227,7 @@ export const ACTION_OPTIONS_ACTION_SPECS = Object.freeze([
     inputSchema: ActionOptionsResolveInputSchema,
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'action.invoke', approval: {result: 'required'},
+    id: 'action.invoke', executionPlacement: 'machine', approval: {result: 'required'},
     title: 'Invoke contributed action',
     description: 'Invoke one currently available contributed Action through the canonical host dispatcher. If the result is `denied`, the person declined the confirmation: report that and do not invoke it again unless they ask.',
     sideEffectClass: 'external',

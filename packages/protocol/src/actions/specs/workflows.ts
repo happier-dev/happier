@@ -114,6 +114,7 @@ export const WORKFLOW_ACTION_SPECS_V1: readonly PreNormalizedActionSpec[] = WORK
   const deletesRetainedContent = actionId === 'workflow.run.delete' || actionId === 'workflow.definition.delete';
   return {
     id: actionId,
+    executionPlacement: actionId === 'workflow.run.start' ? 'machine' : 'account',
     approvalPolicy: {
       uiConfirmation: deletesRetainedContent ? 'policy' : 'direct',
       // Removing a child leaves the Habit intact; deleting the whole set loses its saved recipe.
@@ -150,7 +151,9 @@ export const WORKFLOW_ACTION_SPECS_V1: readonly PreNormalizedActionSpec[] = WORK
     // other Workflow operations stay executable through the generic external
     // MCP `action_execute` transport and discoverable through Action search
     // without gaining a dedicated tool row.
-    ...(directMcp ? {} : { toolExposure: { mcp: 'discoverable_only' as const } }),
+    toolExposure: directMcp
+      ? { agent: 'direct' as const, mcp: 'direct' as const }
+      : { mcp: 'discoverable_only' as const },
     sideEffectClass,
     ...(actionId === 'workflow.run.invocations.complete_review' ? { requiredAuthority: 'present_user' as const } : {}),
     inputSchema: WorkflowActionInputSchemasV1[actionId],

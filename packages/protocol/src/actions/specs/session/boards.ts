@@ -53,7 +53,7 @@ export const WORK_BOARD_ACTION_SPECS_V1: readonly PreNormalizedActionSpec[] = WO
 
 export const SESSION_BOARD_ACTION_SPECS = Object.freeze([
   {
-    id: 'session.board.get', approval: {result: 'required'},
+    id: 'session.board.get', executionPlacement: 'session', toolExposure: { agent: 'direct', mcp: 'direct' }, approval: {result: 'required'},
     title: 'Read Session visuals',
     description: 'Read shared Session visuals and Board placement: item identities, exact revisions, and current Session capabilities. Exact itemIds return full item content.',
     safety: 'safe',
@@ -85,7 +85,7 @@ export const SESSION_BOARD_ACTION_SPECS = Object.freeze([
     cli: SESSION_BOARD_GET_CLI_PROJECTION,
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'session.board.item.upsert', originalExecution: { nativePurpose: 'session_board_write' }, approvalPolicy: {
+    id: 'session.board.item.upsert', executionPlacement: 'session', toolExposure: { agent: 'direct', mcp: 'direct' }, originalExecution: { nativePurpose: 'session_board_write' }, approvalPolicy: {
       uiConfirmation: 'direct',
       uiConfirmationForInput: (input: unknown) => {
         const item = SessionSurfaceItemV1Schema.safeParse(readRecord(input).item);
@@ -134,7 +134,7 @@ export const SESSION_BOARD_ACTION_SPECS = Object.freeze([
     cli: SESSION_BOARD_ITEM_UPSERT_CLI_PROJECTION,
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'session.board.item.remove', approval: {result: 'optional',flow: 'deferred'},
+    id: 'session.board.item.remove', executionPlacement: 'session', toolExposure: { agent: 'direct', mcp: 'direct' }, approval: {result: 'optional',flow: 'deferred'},
     irreversible: true,
     title: 'Remove a Session visual',
     description: 'Remove one Session visual. Include expectedLayoutRevision to atomically remove its Board placements. All Session readers lose the visual; installed plugins are unaffected.',
@@ -170,7 +170,7 @@ export const SESSION_BOARD_ACTION_SPECS = Object.freeze([
     cli: SESSION_BOARD_ITEM_REMOVE_CLI_PROJECTION,
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'session.board.layout.update', approvalPolicy: { uiConfirmation: 'direct' }, approval: {result: 'optional',flow: 'deferred'},
+    id: 'session.board.layout.update', executionPlacement: 'session', toolExposure: { agent: 'direct', mcp: 'direct' }, approvalPolicy: { uiConfirmation: 'direct' }, approval: {result: 'optional',flow: 'deferred'},
     title: 'Organize the Session Board',
     description: 'Apply exactly one semantic Board organization change: create, rename, move or remove a view, or place, move, unpin, resize or set a shared frame style on an item placement. Frame styles are card or plain; null clears the override. Moves use stable sibling anchors, never indices.',
     safety: 'danger',

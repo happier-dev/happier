@@ -73,7 +73,8 @@ export const ROLE_ACTION_SPECS = Object.freeze([
       'roles.override.reset': ['Reset role settings', 'Remove your changes to a role and use its original settings.'],
     } as const satisfies Record<RoleActionIdV1, readonly [title: string, summary: string]>)[id];
     return {
-      id, approval: { result: 'required' }, title: copy[0], safety: accountMutation ? 'danger' : 'safe',
+      id, executionPlacement: id.startsWith('session.') ? 'session' : 'account',
+      approval: { result: 'required' }, title: copy[0], safety: accountMutation ? 'danger' : 'safe',
       ...(id === 'roles.delete' || id === 'roles.override.reset' ? { irreversible: true as const } : {}),
       ...(id.startsWith('session.') ? { sessionTarget: { field: 'sessionId', cardinality: 'one' as const } } : {}),
       ...(['roles.create', 'roles.update', 'roles.override.set'].includes(id)
