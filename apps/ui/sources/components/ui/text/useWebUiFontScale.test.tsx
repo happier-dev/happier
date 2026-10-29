@@ -3,6 +3,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 
 import { act, renderHook, standardCleanup } from '@/dev/testkit';
 import { HAPPIER_UI_FONT_OVERRIDE_STYLE_ELEMENT_ID, HAPPIER_UI_FONT_SCALE_CSS_VAR } from './webUnistylesFontOverrides';
+import { observeDocumentUnistylesFontMetrics, setRootCssVar } from './webUnistylesFontOverrides';
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -20,6 +21,51 @@ afterEach(() => {
     for (const key of ['__HAPPIER_WEB_UI_FONT_SCALE_SYNC_SCHEDULED__', '__HAPPIER_WEB_UI_FONT_SCALE_INSERT_RULE_PATCHED__']) {
         Reflect.deleteProperty(globalThis, key);
     }
+});
+
+it('scales late nested CSSOM font declarations used by Unistyles, including a changed metric, without polling', async () => {
+    const dom = new JSDOM('<!doctype html><html><head><style></style></head><body><span class="unistyles_label">Label</span></body></html>');
+    const document = dom.window.document;
+    const stop = observeDocumentUnistylesFontMetrics(document);
+    try {
+        setRootCssVar(document, 2);
+        const sheet = document.styleSheets[0]!;
+        // react-native-unistyles 3.5.3 + the repo patch: CSSState.updateRule inserts
+        // an empty rule inside @media, then assigns its declaration through cssText.
+        sheet.insertRule('@media all {}', 0);
+        const group = sheet.cssRules[0] as CSSGroupingRule;
+        group.insertRule('.unistyles_label {}', 0);
+        const rule = group.cssRules[0] as CSSStyleRule;
+        rule.style.cssText = 'font-size: 14px; line-height: 20px;';
+        await Promise.resolve();
+        const override = () => document.getElementById(HAPPIER_UI_FONT_OVERRIDE_STYLE_ELEMENT_ID)!.textContent!;
+        expect(override()).toContain('font-size: calc(14px * var(--happier-ui-font-scale))');
+        expect(document.documentElement.style.getPropertyValue(HAPPIER_UI_FONT_SCALE_CSS_VAR)).toBe('2');
+        const retained = override();
+        rule.style.cssText = 'font-size: 14px; line-height: 20px; color: red;';
+        await Promise.resolve();
+        expect(override()).toBe(retained);
+        rule.style.cssText = 'font-size: 16px; line-height: 24px;';
+        await Promise.resolve();
+        expect(override()).toContain('font-size: calc(16px * var(--happier-ui-font-scale))');
+        expect(override()).not.toContain('font-size: calc(14px *');
+    } finally { stop(); dom.window.close(); }
+});
+
+it('keeps the same class separate across Unistyles media queries and preserves child selectors', () => {
+    const dom = new JSDOM('<!doctype html><html><head><style>@media all { .unistyles_responsive { font-size: 14px; } } @media (min-width: 800px) { .unistyles_responsive { font-size: 18px; } .unistyles_child > * { font-size: 12px; } }</style></head><body></body></html>');
+    const stop = observeDocumentUnistylesFontMetrics(dom.window.document);
+    try {
+        const sheet = (dom.window.document.getElementById(HAPPIER_UI_FONT_OVERRIDE_STYLE_ELEMENT_ID) as HTMLStyleElement).sheet!;
+        const media = Array.from(sheet.cssRules).filter(rule => rule.type === 4) as CSSMediaRule[];
+        expect([...new Set(media.map(rule => rule.conditionText))]).toEqual(['all', '(min-width: 800px)']);
+        const rulesFor = (condition: string) => media.filter(rule => rule.conditionText === condition)
+            .flatMap(rule => Array.from(rule.cssRules)) as CSSStyleRule[];
+        expect(rulesFor('all').find(rule => rule.selectorText === '.unistyles_responsive')!.style.getPropertyValue('font-size')).toContain('14px');
+        const wide = rulesFor('(min-width: 800px)');
+        expect(wide.find(rule => rule.selectorText === '.unistyles_responsive')!.style.getPropertyValue('font-size')).toContain('18px');
+        expect(wide.some(rule => rule.selectorText === '.unistyles_child > *')).toBe(true);
+    } finally { stop(); dom.window.close(); }
 });
 
 it('updates only new font rules, without idle frames or observing its own writes, for both mounted roots', async () => {

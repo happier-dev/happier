@@ -7,24 +7,18 @@ export type UnistylesFontMetric = Readonly<{
     letterSpacing?: string;
 }>;
 
+type UnistylesFontRule = Readonly<{
+    selectorText: string;
+    media: readonly string[];
+    metric: UnistylesFontMetric;
+}>;
+
 function isCssStyleRule(rule: CSSRule): rule is CSSStyleRule {
     return rule.type === 1;
 }
 
 function isCssGroupingRule(rule: CSSRule): rule is CSSGroupingRule {
     return 'cssRules' in rule && rule.type !== 1;
-}
-
-function extractUnistylesClassNames(selectorText: string): string[] {
-    // `.unistyles_xxx` style rules are emitted by Unistyles on web.
-    // A selector may contain multiple classes and/or be a comma-separated group.
-    const matches = selectorText.match(/\.unistyles_[A-Za-z0-9_-]+/g) ?? [];
-    const out: string[] = [];
-    for (const m of matches) {
-        const cls = m.startsWith('.') ? m.slice(1) : m;
-        if (cls && !out.includes(cls)) out.push(cls);
-    }
-    return out;
 }
 
 function isPx(value: string): boolean {
@@ -58,29 +52,38 @@ function pickMetricFromRule(rule: CSSStyleRule): UnistylesFontMetric | null {
 
 function collectRuleFontMetrics(
     rule: CSSRule,
-    cache: Map<string, UnistylesFontMetric>,
+    cache: Map<string, UnistylesFontRule>,
+    observeRule?: (rule: CSSRule) => void,
 ): number {
+    observeRule?.(rule);
     let added = 0;
     if (isCssStyleRule(rule)) {
         const selectorText = rule.selectorText ?? '';
         if (!selectorText.includes('unistyles_')) return 0;
         const metric = pickMetricFromRule(rule);
         if (!metric) return 0;
-        for (const cls of extractUnistylesClassNames(selectorText)) {
-            if (!cache.has(cls)) {
-                cache.set(cls, metric);
-                added++;
-            }
+        // Unistyles emits responsive metrics under @media, and child styles as
+        // `.unistyles_hash_child > *`. Keep that exact CSS scope in the override.
+        const media: string[] = [];
+        for (let parent = rule.parentRule; parent; parent = parent.parentRule) {
+            if (parent.type === 4) media.unshift((parent as CSSMediaRule).conditionText);
+        }
+        const key = JSON.stringify([media, selectorText]);
+        const previous = cache.get(key)?.metric;
+        if (!previous || previous.fontSize !== metric.fontSize || previous.lineHeight !== metric.lineHeight
+            || previous.letterSpacing !== metric.letterSpacing) {
+            cache.set(key, { selectorText, media, metric });
+            added++;
         }
     } else if (isCssGroupingRule(rule)) {
-        for (const child of Array.from(rule.cssRules)) added += collectRuleFontMetrics(child, cache);
+        for (const child of Array.from(rule.cssRules)) added += collectRuleFontMetrics(child, cache, observeRule);
     }
     return added;
 }
 
-function collectSheetFontMetrics(sheet: CSSStyleSheet, cache: Map<string, UnistylesFontMetric>): number {
+function collectSheetFontMetrics(sheet: CSSStyleSheet, cache: Map<string, UnistylesFontRule>, observeRule?: (rule: CSSRule) => void): number {
     try {
-        return Array.from(sheet.cssRules).reduce((added, rule) => added + collectRuleFontMetrics(rule, cache), 0);
+        return Array.from(sheet.cssRules).reduce((added, rule) => added + collectRuleFontMetrics(rule, cache, observeRule), 0);
     } catch {
         // Cross-origin sheets can be inaccessible; they were never admitted font sources.
         return 0;
@@ -89,11 +92,12 @@ function collectSheetFontMetrics(sheet: CSSStyleSheet, cache: Map<string, Unisty
 
 function scanDocumentForUnistylesFontMetrics(
     document: Document,
-    cache: Map<string, UnistylesFontMetric>,
+    cache: Map<string, UnistylesFontRule>,
+    observeRule?: (rule: CSSRule) => void,
 ): number {
     let added = 0;
     for (const sheet of Array.from(document.styleSheets)) {
-        added += collectSheetFontMetrics(sheet, cache);
+        added += collectSheetFontMetrics(sheet, cache, observeRule);
     }
 
     return added;
@@ -113,15 +117,7 @@ function ensureOverrideStyleElement(document: Document): HTMLStyleElement {
     return style;
 }
 
-function getInjectedSet(styleEl: HTMLStyleElement): Set<string> {
-    const marked = styleEl as HTMLStyleElement & { __happierInjectedUnistylesFontClasses?: Set<string> };
-    if (!marked.__happierInjectedUnistylesFontClasses) {
-        marked.__happierInjectedUnistylesFontClasses = new Set<string>();
-    }
-    return marked.__happierInjectedUnistylesFontClasses;
-}
-
-function buildOverrideRule(className: string, metric: UnistylesFontMetric): string {
+function buildOverrideRule({ selectorText, media, metric }: UnistylesFontRule): string {
     const parts: string[] = [];
     if (metric.fontSize) {
         parts.push(`font-size: calc(${metric.fontSize} * var(${HAPPIER_UI_FONT_SCALE_CSS_VAR})) !important;`);
@@ -133,27 +129,26 @@ function buildOverrideRule(className: string, metric: UnistylesFontMetric): stri
         parts.push(`letter-spacing: calc(${metric.letterSpacing} * var(${HAPPIER_UI_FONT_SCALE_CSS_VAR})) !important;`);
     }
     if (parts.length === 0) return '';
-    return `.${className} { ${parts.join(' ')} }\n`;
+    let rule = `${selectorText} { ${parts.join(' ')} }`;
+    for (const condition of [...media].reverse()) rule = `@media ${condition} { ${rule} }`;
+    return `${rule}\n`;
 }
 
 function syncOverrideStyleElement(
     styleEl: HTMLStyleElement,
-    cache: Map<string, UnistylesFontMetric>,
+    cache: Map<string, UnistylesFontRule>,
 ): number {
-    const injected = getInjectedSet(styleEl);
     let appended = 0;
-    let next = styleEl.textContent ?? '';
+    let next = `[data-happier-ui-font-scaling="disabled"] { ${HAPPIER_UI_FONT_SCALE_CSS_VAR}: 1; }\n`;
 
-    for (const [className, metric] of cache.entries()) {
-        if (injected.has(className)) continue;
-        const rule = buildOverrideRule(className, metric);
+    for (const fontRule of cache.values()) {
+        const rule = buildOverrideRule(fontRule);
         if (!rule) continue;
-        injected.add(className);
         next += rule;
         appended += 1;
     }
 
-    if (appended > 0) {
+    if (next !== styleEl.textContent) {
         styleEl.textContent = next;
     }
 
@@ -177,10 +172,8 @@ const fontObservations = new WeakMap<Document, FontObservation>();
 export function observeDocumentUnistylesFontMetrics(document: Document): () => void {
     let observation = fontObservations.get(document);
     if (!observation) {
-        const cache = new Map<string, UnistylesFontMetric>();
+        const cache = new Map<string, UnistylesFontRule>();
         const override = ensureOverrideStyleElement(document);
-        scanDocumentForUnistylesFontMetrics(document, cache);
-        syncOverrideStyleElement(override, cache);
         let active = true;
         let publicationPending = false;
         const publishAdded = (added: number) => {
@@ -197,17 +190,51 @@ export function observeDocumentUnistylesFontMetrics(document: Document): () => v
             if (element === override) return;
             if (element.tagName === 'STYLE' || element.tagName === 'LINK') {
                 const sheet = (element as HTMLStyleElement | HTMLLinkElement).sheet;
-                if (sheet) publishAdded(collectSheetFontMetrics(sheet, cache));
+                if (sheet) publishAdded(collectSheetFontMetrics(sheet, cache, observeRule));
             }
         };
-        const proto = document.defaultView?.CSSStyleSheet?.prototype;
-        const originalInsertRule = proto?.insertRule;
-        const insertRule: CSSStyleSheet['insertRule'] = function (this: CSSStyleSheet, rule, index = 0) {
-            const result = originalInsertRule!.call(this, rule, index);
-            if (active) publishAdded(collectRuleFontMetrics(this.cssRules[result]!, cache));
-            return result;
+        const restorers: (() => void)[] = [];
+        const patched = new WeakSet<object>();
+        // CSSOM writes do not emit DOM mutations. Unistyles inserts empty nested
+        // rules and then fills cssText; observe those same boundaries as well.
+        const patchProperty = (target: object, key: 'insertRule' | 'cssText', wrap: (descriptor: PropertyDescriptor) => PropertyDescriptor) => {
+            let owner: object | null = target;
+            while (owner && !Object.getOwnPropertyDescriptor(owner, key)) owner = Object.getPrototypeOf(owner);
+            if (!owner || patched.has(owner)) return;
+            const descriptor = Object.getOwnPropertyDescriptor(owner, key)!;
+            const next = wrap(descriptor);
+            Object.defineProperty(owner, key, next);
+            patched.add(owner);
+            const propertyOwner = owner;
+            restorers.push(() => {
+                const current = Object.getOwnPropertyDescriptor(propertyOwner, key);
+                if (current?.value === next.value && current?.set === next.set) Object.defineProperty(propertyOwner, key, descriptor);
+            });
         };
-        if (proto && originalInsertRule) proto.insertRule = insertRule;
+        const observeInsertions = (target: object) => patchProperty(target, 'insertRule', descriptor => ({
+            ...descriptor,
+            value: function (this: CSSStyleSheet | CSSGroupingRule, rule: string, index = 0) {
+                const result = (descriptor.value as CSSStyleSheet['insertRule']).call(this, rule, index);
+                if (active) publishAdded(collectRuleFontMetrics(this.cssRules[result]!, cache, observeRule));
+                return result;
+            },
+        }));
+        const observeRule = (rule: CSSRule) => {
+            if (isCssGroupingRule(rule)) observeInsertions(rule);
+            else if (isCssStyleRule(rule) && rule.selectorText.includes('unistyles_')) {
+                patchProperty(rule.style, 'cssText', descriptor => ({
+                    ...descriptor,
+                    set: function (this: CSSStyleDeclaration, value: string) {
+                        descriptor.set!.call(this, value);
+                        if (active && this.parentRule) publishAdded(collectRuleFontMetrics(this.parentRule, cache, observeRule));
+                    },
+                }));
+            }
+        };
+        const sheetPrototype = document.defaultView?.CSSStyleSheet?.prototype;
+        if (sheetPrototype) observeInsertions(sheetPrototype);
+        scanDocumentForUnistylesFontMetrics(document, cache, observeRule);
+        syncOverrideStyleElement(override, cache);
 
         const Observer = document.defaultView?.MutationObserver;
         const observer = Observer ? new Observer(records => {
@@ -228,7 +255,7 @@ export function observeDocumentUnistylesFontMetrics(document: Document): () => v
             active = false;
             observer?.disconnect();
             document.head.removeEventListener('load', onLoad, true);
-            if (proto?.insertRule === insertRule) proto.insertRule = originalInsertRule!;
+            for (const restore of restorers.reverse()) restore();
         } };
         fontObservations.set(document, observation);
     }
