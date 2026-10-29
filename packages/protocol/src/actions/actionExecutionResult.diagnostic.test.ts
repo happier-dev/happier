@@ -2,10 +2,14 @@ import { describe, expect, it } from 'vitest';
 import { readUnexpectedActionErrorDiagnosticV1 } from './actionExecutionResult.js';
 
 describe('code-only JSON-RPC failure diagnostics', () => {
-  it.each(['database_transaction_conflict_exhausted', 'database_connection_unavailable'])('retains the known Home refusal %s without its body', code => {
+  it.each(['database_transaction_conflict_exhausted', 'database_connection_unavailable', 'database_transaction_timeout'])('retains the known Home refusal %s without its body', code => {
     const result = readUnexpectedActionErrorDiagnosticV1({ code: 'ERR_BAD_RESPONSE',
       response: { status: 503, data: { error: code, message: 'PRIVATE_MESSAGE', token: 'PRIVATE_TOKEN' } } });
     expect(result).toMatchObject({ errorCode: code, httpStatus: 503 });
+    expect(readUnexpectedActionErrorDiagnosticV1({ code }).errorCode).toBe(code);
+    expect(readUnexpectedActionErrorDiagnosticV1({ response: {
+      status: 503, data: { error: 'invalid_request', code, message: 'PRIVATE_MESSAGE' },
+    } })).toMatchObject({ errorCode: code, httpStatus: 503 });
     expect(JSON.stringify(result)).not.toMatch(/PRIVATE_MESSAGE|PRIVATE_TOKEN/);
     expect(readUnexpectedActionErrorDiagnosticV1({ response: { status: 503, data: { error: 'PRIVATE_TOKEN' } } }).errorCode).toBeNull();
   });
