@@ -7,6 +7,7 @@ import { decodeUploadChunkBase64 } from './decodeUploadChunkBase64.js';
 import { TransferSessionStore } from './transferSessionStore.js';
 import type { DownloadTransferSource } from './downloadTransferSource.js';
 import type { UploadTransferFinalizeResult, UploadTransferTarget } from './uploadTransferTarget.js';
+import { readUploadTransferFinalizeErrorCode } from './uploadTransferTarget.js';
 
 type UploadSessionHandle = NonNullable<ReturnType<TransferSessionStore['getUploadSession']>>;
 type DownloadSessionHandle = NonNullable<ReturnType<TransferSessionStore['getDownloadSession']>>;
@@ -256,14 +257,20 @@ export function createTransferSessionLifecycle(params: Readonly<{
                         sha256,
                     });
                     if (!finalized.success) {
-                        return finalized;
+                        return { success: false, error: 'Failed to finalize upload',
+                            errorCode: readUploadTransferFinalizeErrorCode(finalized.errorCode) ?? 'TRANSFER_FINALIZE_FAILED',
+                            ...(finalized.keepSession === undefined ? {} : { keepSession: finalized.keepSession }) };
                     }
 
                     await params.store.finalizeUploadSession(input.uploadId);
                     return { success: true, finalized, sha256 };
                 } catch (error) {
                     await params.store.abortUploadSession(input.uploadId);
-                    return { success: false, error: error instanceof Error ? error.message : 'Failed to finalize upload' };
+                    const coded = error !== null && typeof error === 'object' ? error : {};
+                    const errorCode = readUploadTransferFinalizeErrorCode('errorCode' in coded ? coded.errorCode : undefined)
+                        ?? readUploadTransferFinalizeErrorCode('code' in coded ? coded.code : undefined)
+                        ?? 'TRANSFER_FINALIZE_FAILED';
+                    return { success: false, error: 'Failed to finalize upload', errorCode };
                 }
             } finally {
                 activeOperation.release();

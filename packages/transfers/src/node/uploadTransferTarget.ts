@@ -8,6 +8,20 @@ export type FinalizeUploadTransferInput = Readonly<{
 export const TRANSFER_FINALIZE_RECOVERY_REQUIRED_ERROR_CODE =
   'TRANSFER_FINALIZE_RECOVERY_REQUIRED' as const;
 
+// Only non-content reason codes cross the finalization boundary. In particular,
+// an exception's arbitrary `code` must never become a path/credential carrier.
+export const UPLOAD_TRANSFER_FINALIZE_ERROR_CODES = [
+  TRANSFER_FINALIZE_RECOVERY_REQUIRED_ERROR_CODE, 'TRANSFER_FINALIZE_FAILED',
+  'file_replace_failed', 'hash_mismatch', 'expected_file_absent', 'expected_file_missing',
+  'EACCES', 'EPERM', 'ENOENT', 'EXDEV', 'EEXIST', 'ENOTDIR', 'EISDIR',
+  'ENOSPC', 'EDQUOT', 'EROFS', 'EMFILE', 'ENFILE', 'EBUSY', 'EIO',
+  'EINVAL', 'ENAMETOOLONG', 'ELOOP', 'ENOTEMPTY', 'EFBIG', 'ETXTBSY', 'ENOSYS', 'ENOTSUP',
+] as const;
+
+export function readUploadTransferFinalizeErrorCode(value: unknown): typeof UPLOAD_TRANSFER_FINALIZE_ERROR_CODES[number] | undefined {
+  return UPLOAD_TRANSFER_FINALIZE_ERROR_CODES.find(code => code === value);
+}
+
 export type UploadTransferFinalizeResult<TResult = undefined> =
   | Readonly<{
       success: true;
