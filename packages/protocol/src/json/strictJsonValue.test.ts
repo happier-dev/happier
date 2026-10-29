@@ -2,7 +2,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Session } from 'node:inspector/promises';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { normalizeStrictJsonValue, projectNativeJsonValueForTransport, sameStrictJsonValue } from './strictJsonValue.js';
 
@@ -85,6 +85,25 @@ describe('strict JSON vocabulary ownership', () => {
 });
 
 describe('sameStrictJsonValue', () => {
+  it('compares admitted native optional members without normalizing either value again', () => {
+    const left = { child: { value: 1, optional: undefined }, rows: [{ optional: undefined }] };
+    const right = { rows: [{}], child: { value: 1 } };
+    const descriptors = vi.spyOn(Object, 'getOwnPropertyDescriptors');
+    let results: boolean[];
+    let walks: number;
+    try {
+      results = [
+        sameStrictJsonValue(left, right, { omitUndefinedObjectMembers: true }),
+        sameStrictJsonValue(right, left, { omitUndefinedObjectMembers: true }),
+        sameStrictJsonValue(left, right),
+        sameStrictJsonValue(left, { ...right, child: { value: 1, optional: null } }, { omitUndefinedObjectMembers: true }),
+      ];
+      walks = descriptors.mock.calls.length;
+    } finally { descriptors.mockRestore(); }
+    expect(results).toEqual([true, true, false, false]);
+    expect(walks).toBe(0);
+  });
+
   it('compares wide retained Usage curves without allocating one pending pair per value', async () => {
     const left = Array.from({ length: 45_000 }, (_, index) => ({ observedAtMs: index, usedFraction: index / 45_000 }));
     const right = left.map(point => ({ usedFraction: point.usedFraction, observedAtMs: point.observedAtMs }));

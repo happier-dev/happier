@@ -32,8 +32,13 @@ export function projectNativeJsonValueForTransport(input: unknown): JsonValue {
   return cloneNativeJsonValueForTransport(input, 'value') as JsonValue;
 }
 
-/** Compares normalized strict JSON without depending on object insertion order. */
-export function sameStrictJsonValue(left: unknown, right: unknown): boolean {
+/**
+ * Compares admitted JSON without depending on object insertion order. Native
+ * carriers can opt into transport's omission of undefined object members;
+ * comparison never validates, clones or re-admits either input.
+ */
+export function sameStrictJsonValue(left: unknown, right: unknown,
+  options?: Readonly<{ omitUndefinedObjectMembers: true }>): boolean {
   if (left === right) return true;
   // Keep one reusable frame per nesting level. A wide Usage curve must not
   // allocate a pending pair for every point and each of its scalar fields.
@@ -63,8 +68,15 @@ export function sameStrictJsonValue(left: unknown, right: unknown): boolean {
       length = leftItems.length;
     } else {
       keys = Object.keys(currentLeft);
+      let rightKeys = Object.keys(currentRight);
+      if (options?.omitUndefinedObjectMembers) {
+        const leftRecord = currentLeft as Readonly<Record<string, unknown>>;
+        const rightRecord = currentRight as Readonly<Record<string, unknown>>;
+        keys = keys.filter(key => leftRecord[key] !== undefined);
+        rightKeys = rightKeys.filter(key => rightRecord[key] !== undefined);
+      }
       length = keys.length;
-      if (length !== Object.keys(currentRight).length) return false;
+      if (length !== rightKeys.length) return false;
     }
     const frame = frames[depth];
     if (frame) {
