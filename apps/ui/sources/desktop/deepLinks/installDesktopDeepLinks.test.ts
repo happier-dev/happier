@@ -72,6 +72,16 @@ describe('desktop deep-link delivery', () => {
         dispose();
     });
 
+    it('leaves native notification activation to its notification owner without navigating to a missing page', async () => {
+        native.invoke.mockResolvedValue(['happier-preview://notification-action?payload=original']);
+        const navigate = vi.fn();
+        const dispose = installDesktopDeepLinks(navigate);
+        await flush();
+        native.receive?.(['happier-dev://notification-action?payload=next']);
+        expect(navigate).not.toHaveBeenCalled();
+        dispose();
+    });
+
     it('preserves in-app routes in both double- and triple-slash system URLs', async () => {
         const navigate = vi.fn();
         const dispose = installDesktopDeepLinks(navigate);

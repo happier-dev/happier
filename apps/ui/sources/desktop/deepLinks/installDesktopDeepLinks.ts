@@ -1,23 +1,12 @@
-import { redirectSystemPath } from '@/app/+native-intent';
 import { invokeDesktopHost, listenDesktopHostEvent } from '@/utils/platform/desktopHost';
-import { resolveTerminalConnectWebHref } from '@/utils/path/terminalConnectUrl';
 import { isAcceptedHappierUrlProtocol } from '@/utils/url/appScheme';
+import { resolveNativeAppLinkHref } from '@/utils/url/nativeAppLink';
 
 function resolveDesktopHref(url: string): string | null {
     let parsed: URL;
     try { parsed = new URL(url); } catch { return null; }
     if (!isAcceptedHappierUrlProtocol(parsed.protocol)) return null;
-
-    const systemPath = redirectSystemPath({ path: url, initial: false });
-    if (systemPath !== url) return systemPath;
-
-    const terminalHref = resolveTerminalConnectWebHref(url);
-    if (terminalHref) return terminalHref;
-
-    const pathname = parsed.pathname.startsWith('/') ? parsed.pathname : `/${parsed.pathname}`;
-    const path = parsed.hostname ? `/${parsed.hostname}${pathname === '/' ? '' : pathname}` : pathname;
-    // A system URL can navigate only inside this webview, never to an external authority.
-    return path.startsWith('//') ? null : `${path}${parsed.search}`;
+    return resolveNativeAppLinkHref(url);
 }
 
 /** Native deep-link IPC, using the existing Tauri transport and pairing route owners. */
