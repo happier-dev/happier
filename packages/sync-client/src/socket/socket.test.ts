@@ -1,4 +1,5 @@
 import { createServer, type Server as HttpServer } from 'node:http';
+import { setTimeout as delay } from 'node:timers/promises';
 import { Server } from 'socket.io';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createHappierSocket } from './createHappierSocket.js';
@@ -6,9 +7,9 @@ import { createHappierSocket } from './createHappierSocket.js';
 let http: HttpServer;
 let server: Server;
 const disposers: Array<() => Promise<void>> = [];
-async function start() {
+async function start(options: Partial<ConstructorParameters<typeof Server>[1]> = {}) {
   http = createServer();
-  server = new Server(http, { path: '/v1/updates/' });
+  server = new Server(http, { path: '/v1/updates/', ...options });
   await new Promise<void>((resolve) => http.listen(0, '127.0.0.1', resolve));
   const address = http.address();
   if (!address || typeof address === 'string') throw new Error('No bound address');
@@ -20,6 +21,97 @@ afterEach(async () => {
 });
 
 describe('shared Socket.IO transport', () => {
+  it('keeps all settled UI purposes on WebSocket with zero polling or connection churn for an idle minute', async () => {
+    const endpoint = await start();
+    let pollingRequests = 0, connections = 0, disconnects = 0;
+    http.prependListener('request', (request) => {
+      if (new URL(request.url ?? '/', endpoint).searchParams.get('transport') === 'polling') pollingRequests++;
+    });
+    server.engine.on('connection', (engine) => {
+      connections++;
+      engine.on('close', () => { disconnects++; });
+    });
+    const clients = ['sync', 'scoped-rpc', 'concurrent-server-cache'].map((clientPurpose) => {
+      const client = createHappierSocket({ endpoint, token: 'test', clientType: 'user-scoped', clientPurpose });
+      disposers.push(() => client.transport.destroy());
+      return client;
+    });
+    await Promise.all(clients.map(async ({ socket, transport }) => {
+      await transport.connect();
+      if (socket.io.engine.transport.name !== 'websocket') {
+        await new Promise<void>((resolve) => socket.io.engine.once('upgrade', () => resolve()));
+      }
+    }));
+    expect(pollingRequests).toBeGreaterThan(0);
+    const settled = { pollingRequests, connections, disconnects };
+    await delay(60_000);
+    expect({ pollingRequests, connections, disconnects }).toEqual(settled);
+    expect(clients.map(({ socket }) => socket.io.engine.transport.name)).toEqual(['websocket', 'websocket', 'websocket']);
+    expect(connections).toBe(3);
+    expect(disconnects).toBe(0);
+  }, 90_000);
+
+  it('keeps polling usable when the server cannot upgrade', async () => {
+    const endpoint = await start({ allowUpgrades: false, pingInterval: 25, pingTimeout: 1_000 });
+    let pollingRequests = 0, connections = 0;
+    http.prependListener('request', (request) => {
+      if (new URL(request.url ?? '/', endpoint).searchParams.get('transport') === 'polling') pollingRequests++;
+    });
+    server.on('connection', (socket) => {
+      connections++;
+      socket.on('fixture-echo', (value, ack) => ack(value));
+    });
+    const { socket, transport } = createHappierSocket({ endpoint, token: 'test', clientType: 'user-scoped' });
+    disposers.push(() => transport.destroy());
+    await transport.connect();
+    const settledRequests = pollingRequests;
+    await delay(150);
+    expect(socket.io.engine.transport.name).toBe('polling');
+    expect(pollingRequests).toBeGreaterThan(settledRequests);
+    expect(await socket.emitWithAck('fixture-echo', { value: 1 })).toEqual({ value: 1 });
+    expect(connections).toBe(1);
+  });
+
+  it('can keep one client on fallback while another upgrades without idle connection churn', async () => {
+    const endpoint = await start({ pingInterval: 25, pingTimeout: 1_000 });
+    let blockedConnection: string | undefined;
+    let fallbackPolls = 0, connections = 0, disconnects = 0;
+    server.engine.on('connection', (engine) => {
+      connections++;
+      blockedConnection ??= engine.id;
+      engine.on('close', () => { disconnects++; });
+    });
+    // A real network failure at the HTTP upgrade boundary affects one dial,
+    // while leaving the same server's other WebSocket upgrades available.
+    http.prependListener('upgrade', (request, connection) => {
+      if (new URL(request.url ?? '/', endpoint).searchParams.get('sid') === blockedConnection) connection.destroy();
+    });
+    http.prependListener('request', (request) => {
+      const url = new URL(request.url ?? '/', endpoint);
+      if (url.searchParams.get('transport') === 'polling' && url.searchParams.get('sid') === blockedConnection) fallbackPolls++;
+    });
+    const fallback = createHappierSocket({ endpoint, token: 'test', clientType: 'user-scoped', clientPurpose: 'sync' });
+    disposers.push(() => fallback.transport.destroy());
+    const failedProbe = new Promise<void>((resolve) => fallback.socket.io.once('open', () => {
+      fallback.socket.io.engine.once('upgradeError', () => resolve());
+    }));
+    await fallback.transport.connect();
+    await failedProbe;
+    const healthy = createHappierSocket({ endpoint, token: 'test', clientType: 'user-scoped', clientPurpose: 'scoped-rpc' });
+    disposers.push(() => healthy.transport.destroy());
+    await healthy.transport.connect();
+    if (healthy.socket.io.engine.transport.name !== 'websocket') {
+      await new Promise<void>((resolve) => healthy.socket.io.engine.once('upgrade', () => resolve()));
+    }
+    const settledPolls = fallbackPolls;
+    await delay(150);
+    expect(fallbackPolls).toBeGreaterThan(settledPolls);
+    expect(fallback.socket.io.engine.transport.name).toBe('polling');
+    expect(healthy.socket.io.engine.transport.name).toBe('websocket');
+    expect([fallback.socket.connected, healthy.socket.connected]).toEqual([true, true]);
+    expect({ connections, disconnects }).toEqual({ connections: 2, disconnects: 0 });
+  });
+
   it.each([
     { clientType: 'user-scoped' as const },
     { clientType: 'session-scoped' as const, sessionId: 's' },
