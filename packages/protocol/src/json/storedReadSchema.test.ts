@@ -8,6 +8,51 @@ import { PluginContributionIdentityV1Schema } from '../plugins/contributionIdent
 import { lazyZodSchema } from '../lazyZodSchema.js';
 
 describe('stored JSON schema derivation', () => {
+    it('shares one stored projection for a resolved definition and its concrete schema', () => {
+        let constructions = 0;
+        const concrete = z.strictObject({ value: z.string().check(z.minLength(1)) });
+        const definition = lazyZodSchema(() => { constructions++; return concrete; });
+        const stored = createStoredReadSchema(definition);
+        expect(constructions).toBe(0);
+        expect(definition.parse({ value: 'kept' })).toEqual({ value: 'kept' });
+        const projections = new Set([stored]);
+        for (let index = 0; index < 100; index++) {
+            projections.add(createStoredReadSchema(concrete));
+            projections.add(createStoredReadSchema(definition));
+        }
+        expect(projections.size).toBe(1);
+        expect(stored.parse({ value: 'kept', retired: true })).toEqual({ value: 'kept' });
+        expect(definition.safeParse({ value: 'kept', retired: true }).success).toBe(false);
+        expect(constructions).toBe(1);
+    });
+
+    it('retains an explicitly registered concrete read contract when the facade has an ordinary reader', () => {
+        const concrete = defineStoredReadProjection(z.strictObject({ value: z.string() }),
+            () => z.object({ value: z.string() }).check(z.refine(value => value.value === 'allowed')));
+        const definition = lazyZodSchema(() => concrete);
+        const ordinary = createStoredReadSchema(definition);
+        definition.parse({ value: 'kept' });
+        const custom = createStoredReadSchema(concrete);
+        expect(ordinary.parse({ value: 'kept', retired: true })).toEqual({ value: 'kept' });
+        expect(custom.safeParse({ value: 'kept', retired: true }).success).toBe(false);
+        expect(custom.parse({ value: 'allowed', retired: true })).toEqual({ value: 'allowed' });
+        expect(createStoredReadSchema(concrete)).toBe(custom);
+    });
+
+    it('does not replace an admitted concrete alias reader after late custom registration', () => {
+        const concrete = z.strictObject({ value: z.string() });
+        const definition = lazyZodSchema(() => concrete);
+        const ordinary = createStoredReadSchema(definition);
+        definition.parse({ value: 'kept' });
+        const first = createStoredReadSchema(concrete);
+        expect(first).toBe(ordinary);
+        defineStoredReadProjection(concrete,
+            () => z.object({ value: z.string() }).check(z.refine(value => value.value === 'late')));
+        const second = createStoredReadSchema(concrete);
+        expect(second).toBe(first);
+        expect(second.parse({ value: 'kept', retired: true })).toEqual({ value: 'kept' });
+    });
+
     it.each(['canonical', 'stored'] as const)('shares the native lazy definition when %s admission comes first', (first) => {
         let constructions = 0;
         const canonical = z.lazy(() => {

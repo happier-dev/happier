@@ -18,12 +18,23 @@ export function defineStoredReadProjection<T extends z.core.$ZodType>(schema: T,
  * Zod 4's documented core definitions keep this derivation at one owner.
  */
 export function createStoredReadSchema<T extends z.core.$ZodType>(schema: T): T {
-  const cached = reads.get(schema);
-  if (cached) return cached as T;
-  // Registration after this admission must not replace the selected read contract.
+  const admitted = reads.get(schema);
+  if (admitted) return admitted as T;
+  // Native composition can return the concrete schema behind a resolved lazy
+  // definition. Share their reader unless the concrete schema owns a distinct
+  // explicitly registered read contract.
   const source = getResolvedLazyDefinitionSource(schema);
-  const custom = customReads.get(schema) ?? (source && customReads.get(source));
-  const read = lazyDefinition(() => deriveStoredReadSchema(schema, custom), schema);
+  const ownCustom = customReads.get(schema);
+  const identity = source && !ownCustom ? source : schema;
+  const cached = reads.get(identity);
+  if (cached) {
+    reads.set(schema, cached);
+    return cached as T;
+  }
+  // Registration after this admission must not replace the selected read contract.
+  const custom = ownCustom ?? (source && customReads.get(source));
+  const read = lazyDefinition(() => deriveStoredReadSchema(identity, custom), identity);
+  reads.set(identity, read);
   reads.set(schema, read);
   return read as T;
 }
