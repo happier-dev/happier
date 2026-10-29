@@ -1,4 +1,6 @@
-import type { ReactTestInstance } from 'react-test-renderer';
+import { act, type ReactTestInstance } from 'react-test-renderer';
+
+import { createLayoutChangeEvent } from '../fixtures/nativeEventFixtures';
 
 type Side = 'top' | 'bottom' | 'left' | 'right';
 
@@ -85,4 +87,37 @@ export function hitAreaOverlap(
         ? first.insets.right + second.insets.left
         : first.insets.bottom + second.insets.top;
     return Math.max(0, facing - (options.gap ?? 0));
+}
+
+/**
+ * Lays the pressable `node` out at `drawn` (the layout engine's report, which is how the shared owner
+ * learns the drawn box) and returns the hit area it then has. `read` re-finds the node afterwards, since
+ * the owner re-renders with its measured reach.
+ */
+export async function layoutHitArea(
+    read: () => ReactTestInstance | null | undefined,
+    drawn: Readonly<{ width: number; height: number }>,
+): Promise<HitArea> {
+    const before = read();
+    if (!before || typeof before.props.onLayout !== 'function') throw new Error('The control declares no hit area to measure (no onLayout)');
+    await act(async () => { before.props.onLayout(createLayoutChangeEvent({ x: 0, y: 0, ...drawn })); });
+    const after = read();
+    if (!after) throw new Error('The control unmounted while its hit area was measured');
+    return readHitArea(after, drawn);
+}
+
+/**
+ * The host views from `node` (the pressable) up to, not including, `within` that clip their overflow.
+ * A hit area reaches past the drawn box (web frame, native `hitSlop`), and a clipping view on that path
+ * cuts it off on every platform: the browser never hit-tests the clipped part, and native never
+ * hit-tests a child outside a clipping parent. Rounded paint that must clip belongs on a noninteractive
+ * inner or backing view; an empty result is the contract for a control whose box is tighter than its hit
+ * area.
+ */
+export function hitAreaClippingAncestors(node: ReactTestInstance, within?: ReactTestInstance): ReactTestInstance[] {
+    const clipping: ReactTestInstance[] = [];
+    for (let current: ReactTestInstance | null = node; current !== null && current !== within; current = current.parent) {
+        if (typeof current.type === 'string' && flattenStyle(current.props.style).overflow === 'hidden') clipping.push(current);
+    }
+    return clipping;
 }
