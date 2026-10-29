@@ -18,7 +18,8 @@ import { createHash } from 'node:crypto';
 import { basename, dirname, relative, resolve, sep } from 'node:path';
 
 import { vendorBundledPackageRuntimeDependenciesFallback } from './vendorBundledWorkspaceRuntimeDependenciesFallback.mjs';
-import { assertPhysicalPathWithinApprovedRoot, omitWorkspaceSourceCondition, resolveWorkspacePackageDeclaredFileEntries, vendorRuntimeDependencyTree } from '../../packages/cli-common/workspaceRuntimeDependencies.mjs';
+import { assertPhysicalPathWithinApprovedRoot, isCanonicalWorkspacePackageLink, omitWorkspaceSourceCondition, publishStagedDirectoryMountedSync, resolveInternalWorkspacePackageNameClosure, resolveWorkspacePackageDeclaredFileEntries, vendorRuntimeDependencyTree } from '../../packages/cli-common/workspaceRuntimeDependencies.mjs';
+import { resolveWorkspaceBundlePublicationMode } from './workspaceBundlePublication.mjs';
 import { findUnservableBundledPluginPackageResources, readBundledPluginPackageResourceRelativePaths } from '../../packages/cli-common/bundledPluginResources.mjs';
 import { fileDigestMetadataIdentity, readCachedFileDigestSync } from '../../apps/stack/scripts/utils/fs/cached_file_digest.mjs';
 import { WORKSPACE_PACKAGE_BUILD_INPUT_RECORD } from '../../packages/cli-common/packageBuildOutputTargets.mjs';
@@ -145,7 +146,6 @@ let sanitizeBundledPackageJsonImpl = sanitizeBundledPackageJsonFallback;
 let readBundledWorkspacePackageNamesImpl = null;
 let vendorBundledPackageRuntimeDependenciesImpl = null;
 let bundleWorkspacePackageWithRuntimeDependenciesImpl = null;
-let resolveInternalWorkspacePackageNameClosureImpl = null;
 let atomicReplaceDirSyncImpl = null;
 let copyDirSafeSyncImpl = null;
 let rmDirSafeSyncImpl = null;
@@ -163,9 +163,6 @@ try {
   }
   if (mod && typeof mod.bundleWorkspacePackageWithRuntimeDependencies === 'function') {
     bundleWorkspacePackageWithRuntimeDependenciesImpl = mod.bundleWorkspacePackageWithRuntimeDependencies;
-  }
-  if (mod && typeof mod.resolveInternalWorkspacePackageNameClosure === 'function') {
-    resolveInternalWorkspacePackageNameClosureImpl = mod.resolveInternalWorkspacePackageNameClosure;
   }
   if (mod && typeof mod.atomicReplaceDirSync === 'function') {
     atomicReplaceDirSyncImpl = mod.atomicReplaceDirSync;
@@ -465,10 +462,6 @@ function resolveDefaultBundledWorkspacePackageNames(
     typeof cliCommonWorkspacesModule?.readBundledWorkspacePackageNames === 'function'
       ? cliCommonWorkspacesModule.readBundledWorkspacePackageNames
       : readBundledWorkspacePackageNamesImpl;
-  const resolvePackageClosure =
-    typeof cliCommonWorkspacesModule?.resolveInternalWorkspacePackageNameClosure === 'function'
-      ? cliCommonWorkspacesModule.resolveInternalWorkspacePackageNameClosure
-      : resolveInternalWorkspacePackageNameClosureImpl;
 
   const out = new Set();
   for (const hostPackageDir of hostPackageDirs) {
@@ -487,12 +480,8 @@ function resolveDefaultBundledWorkspacePackageNames(
     }
   }
   const packageNames = [...out].map((leaf) => `@happier-dev/${leaf}`);
-  if (!resolvePackageClosure) {
-    return [...out];
-  }
-
   const declaredPackageNames = new Set(packageNames);
-  return resolvePackageClosure({
+  return resolveInternalWorkspacePackageNameClosure({
     repoRoot: repo,
     packageNames,
   })
@@ -652,11 +641,12 @@ function replaceDirFromSourceSync(targetDir, srcDir, fsOps, options = {}) {
   if (atomicReplaceDirSyncImpl && !hasInjectedFileSystemOps(fsOps)) {
     atomicReplaceDirSyncImpl({
       destDir: outDir,
+      preserveDestinationPath: options.preserveDestinationPath === true,
+      pruneStale: options.pruneStale === true,
       buildInto(tempDir) {
         copyDirSafeSync(sourceDir, tempDir, fsOps, { retries: 5, delayMs: 25 });
       },
       fsOps: {
-        existsSync,
         mkdirSync,
         renameSync,
         rmSync,
@@ -670,15 +660,30 @@ function replaceDirFromSourceSync(targetDir, srcDir, fsOps, options = {}) {
   const suffix = resolveSyncSwapSuffix(options.syncSuffix);
   const stagingDir = `${outDir}.__sync_tmp__.${suffix}`;
   const backupDir = `${outDir}.__sync_backup__.${suffix}`;
+  // Publication replaces directory entries, including dangling workspace links.
+  // Keep injected virtual filesystems in control of their existence boundary.
+  const exists = fsOps.existsSync === existsSync
+    ? path => lstatSync(path, { throwIfNoEntry: false }) !== undefined
+    : fsOps.existsSync;
 
   fsOps.mkdirSync(parentDir, { recursive: true });
   rmDirSafeSync(stagingDir, fsOps);
   rmDirSafeSync(backupDir, fsOps);
   copyDirSafeSync(sourceDir, stagingDir, fsOps, { retries: 5, delayMs: 25 });
 
+  if (options.preserveDestinationPath === true) {
+    try {
+      publishStagedDirectoryMountedSync({
+        stagedDir: stagingDir, liveDir: outDir, rollbackDir: backupDir,
+        pruneStale: options.pruneStale === true,
+      });
+    } finally { rmDirSafeSync(stagingDir, fsOps); }
+    return;
+  }
+
   let movedExistingDir = false;
   try {
-    if (fsOps.existsSync(outDir)) {
+    if (exists(outDir)) {
       fsOps.renameSync(outDir, backupDir);
       movedExistingDir = true;
     }
@@ -690,7 +695,7 @@ function replaceDirFromSourceSync(targetDir, srcDir, fsOps, options = {}) {
     }
   } catch (error) {
     rmDirSafeSync(stagingDir, fsOps);
-    if (movedExistingDir && fsOps.existsSync(backupDir) && !fsOps.existsSync(outDir)) {
+    if (movedExistingDir && exists(backupDir) && !exists(outDir)) {
       fsOps.renameSync(backupDir, outDir);
     }
     throw error;
@@ -703,6 +708,8 @@ export function bundleWorkspacePackageFallbackTransactionally({
   packageName,
   syncId,
   dereferenceRootDir = srcPackageDir,
+  preserveDestinationPath = false,
+  pruneStale = false,
   validatePreparedPackage,
   vendorBundledPackageRuntimeDependencies =
     vendorBundledPackageRuntimeDependenciesImpl ?? vendorBundledPackageRuntimeDependenciesFallback,
@@ -761,7 +768,7 @@ export function bundleWorkspacePackageFallbackTransactionally({
         renameSync,
         rmSync,
       },
-      { syncSuffix: `${suffix}.publish` },
+      { syncSuffix: `${suffix}.publish`, preserveDestinationPath, pruneStale },
     );
   } finally {
     rmDirSafeSync(preparedDir);
@@ -771,6 +778,8 @@ export function bundleWorkspacePackageFallbackTransactionally({
 export function syncBundledWorkspacePackages(opts = {}) {
   const repoRoot = String(opts.repoRoot ?? '').trim();
   if (!repoRoot) return;
+  const publicationMode = resolveWorkspaceBundlePublicationMode({ mode: opts.publicationMode });
+  const preserveDestinationPath = publicationMode === 'live';
 
   const cliCommonWorkspacesModule =
     opts.cliCommonWorkspacesModule && typeof opts.cliCommonWorkspacesModule === 'object'
@@ -822,8 +831,8 @@ export function syncBundledWorkspacePackages(opts = {}) {
 
     for (const hostPackageDir of hostPackageDirs) {
       const destPackageDir = resolve(hostPackageDir, 'node_modules', '@happier-dev', pkg);
-      if (opts.pruneStale !== true && !hasInjectedPackageSyncOps(opts) && existsSync(destPackageDir)
-        && realpathSync(destPackageDir) === realpathSync(srcPackageDir)) {
+      if (preserveDestinationPath && !hasInjectedPackageSyncOps(opts)
+        && isCanonicalWorkspacePackageLink({ srcDir: srcPackageDir, destDir: destPackageDir })) {
         // A live canonical workspace link already consumes the producer. Never
         // mount a sanitized physical copy over it or mutate its source tree.
         continue;
@@ -842,7 +851,7 @@ export function syncBundledWorkspacePackages(opts = {}) {
           srcDir: srcPackageDir,
           destDir: destPackageDir,
           dereferenceRootDir: repoRoot,
-          preserveDestinationPath: true,
+          preserveDestinationPath,
           // Currentness-bearing callers opt into exact reconciliation. Presence-only preflight
           // refreshes intentionally retain prior targets for in-flight module resolution.
           pruneStale: opts.pruneStale === true,
@@ -861,6 +870,8 @@ export function syncBundledWorkspacePackages(opts = {}) {
           packageName: `@happier-dev/${pkg}`,
           syncId,
           dereferenceRootDir: repoRoot,
+          preserveDestinationPath,
+          pruneStale: opts.pruneStale === true,
           vendorBundledPackageRuntimeDependencies,
           validatePreparedPackage: opts.validatePreparedPackage,
         });

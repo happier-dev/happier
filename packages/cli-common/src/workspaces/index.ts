@@ -21,14 +21,19 @@ import {
   assertResolvedRuntimeDependencyMatchesDeclaration,
   collectBundledPrepublicationAuthorPackageNames,
   collectExternalRuntimeDependencies,
+  collectInternalRuntimeWorkspaceDepNames,
   collectWorkspacePackageDeclaredFileEntries,
   copyDirDereferenceContainedSync,
   isPrepublicationAuthorPackage,
+  isInternalWorkspacePackageName,
+  isCanonicalWorkspacePackageLink,
   isPublicSdkGeneratedGovernanceRecord,
   omitWorkspaceSourceCondition,
   parsePackageNameSegments,
   publishStagedDirectoryMountedSync,
   resolveInstalledRuntimePackage,
+  resolveInternalWorkspacePackageNameClosure as resolveInternalWorkspacePackageNameClosureCanonical,
+  resolveWorkspaceSourceDir as resolveWorkspaceSourceDirCanonical,
   resolveWorkspacePackageDeclaredFileEntries,
   vendorRuntimeDependencyTree as vendorRuntimeDependencyTreeCanonical,
 } from '../../workspaceRuntimeDependencies.mjs';
@@ -43,7 +48,6 @@ import {
 } from '../../bundledPluginResources.mjs';
 import { WORKSPACE_PACKAGE_BUILD_INPUT_RECORD } from '../../packageBuildOutputTargets.mjs';
 
-const PLUGINS_PACKAGE_PREFIX = '@happier-dev/plugins-';
 const INTERNAL_PACKAGE_PREFIX = '@happier-dev/';
 
 type ReaddirWithFileTypesSync = (path: string) => Dirent[];
@@ -191,23 +195,6 @@ export function readBundledDependencyNames(rawPackageJson: any): string[] {
 
 export function readBundledWorkspacePackageNames(rawPackageJson: any): string[] {
   return readBundledDependencyNames(rawPackageJson).filter(isInternalWorkspacePackageName);
-}
-
-function isInternalWorkspacePackageName(packageName: string): boolean {
-  return packageName.startsWith(INTERNAL_PACKAGE_PREFIX);
-}
-
-function collectInternalRuntimeWorkspaceDepNames(packageJson: any): string[] {
-  const result = new Set<string>();
-  for (const deps of [packageJson?.dependencies, packageJson?.optionalDependencies]) {
-    if (!deps || typeof deps !== 'object') continue;
-    for (const name of Object.keys(deps)) {
-      if (isInternalWorkspacePackageName(name)) {
-        result.add(name);
-      }
-    }
-  }
-  return [...result].sort((left, right) => left.localeCompare(right));
 }
 
 export function rmDirSafeSync(
@@ -726,6 +713,11 @@ export function bundleWorkspacePackageWithRuntimeDependencies(params: Readonly<{
     packageDir: string;
   }>) => void;
 }>): void {
+  if (params.preserveDestinationPath === true && isCanonicalWorkspacePackageLink(params)) {
+    // A workspace consumer already reads the canonical source/dist producer.
+    // Sanitizing a private copy here would freeze its exports and future edits.
+    return;
+  }
   const packageDetails = readWorkspacePackageDetails(params);
   const referencedFiles = collectWorkspacePackageReferencedFiles(packageDetails.rawPackageJson);
 
@@ -1079,60 +1071,14 @@ export function resolveWorkspaceSourceDir(params: Readonly<{
   repoRoot: string;
   packageName: string;
 }>): string {
-  const packageName = String(params.packageName ?? '').trim();
-  const workspaceName = packageName.split('/').at(-1);
-  if (!workspaceName) {
-    throw new Error(`Unable to resolve workspace name from bundled dependency: ${packageName}`);
-  }
-
-  if (packageName.startsWith(PLUGINS_PACKAGE_PREFIX)) {
-    return resolve(params.repoRoot, 'packages', 'plugins', packageName.slice(PLUGINS_PACKAGE_PREFIX.length));
-  }
-  return resolve(params.repoRoot, 'packages', workspaceName);
+  return resolveWorkspaceSourceDirCanonical(params);
 }
 
 export function resolveInternalWorkspacePackageNameClosure(params: Readonly<{
   repoRoot: string;
   packageNames: ReadonlyArray<string>;
 }>): string[] {
-  const emitted = new Set<string>();
-  const visiting = new Set<string>();
-  const orderedPackageNames: string[] = [];
-
-  const visit = (packageName: string): void => {
-    const normalizedName = String(packageName ?? '').trim();
-    if (!isInternalWorkspacePackageName(normalizedName) || emitted.has(normalizedName)) {
-      return;
-    }
-    // Internal workspace cycles are invalid for publication ordering, but keep closure resolution
-    // finite and deterministic so the existing missing-closure diagnostic remains actionable.
-    if (visiting.has(normalizedName)) return;
-    visiting.add(normalizedName);
-
-    const sourcePackageJsonPath = resolve(
-      resolveWorkspaceSourceDir({
-        repoRoot: params.repoRoot,
-        packageName: normalizedName,
-      }),
-      'package.json',
-    );
-    if (existsSync(sourcePackageJsonPath)) {
-      const sourcePackageJson = readJson(sourcePackageJsonPath);
-      for (const dependencyName of collectInternalRuntimeWorkspaceDepNames(sourcePackageJson)) {
-        visit(dependencyName);
-      }
-    }
-
-    visiting.delete(normalizedName);
-    emitted.add(normalizedName);
-    orderedPackageNames.push(normalizedName);
-  };
-
-  for (const packageName of [...params.packageNames].sort((left, right) => left.localeCompare(right))) {
-    visit(packageName);
-  }
-
-  return orderedPackageNames;
+  return resolveInternalWorkspacePackageNameClosureCanonical(params);
 }
 
 function resolveBundledWorkspaceRepoRoot(params: Readonly<{
@@ -1350,6 +1296,9 @@ function hasBundledWorkspacePackageManifestParity(
   const bundledPackageJsonPath = resolve(hostPackageDir, 'node_modules', ...packageName.split('/'), 'package.json');
   if (!existsSync(bundledPackageJsonPath)) return false;
   if (!existsSync(workspacePackageJsonPath)) return true;
+  if (isCanonicalWorkspacePackageLink({ srcDir: dirname(workspacePackageJsonPath), destDir: dirname(bundledPackageJsonPath) })) {
+    return true;
+  }
 
   const workspaceExports = omitWorkspaceSourceCondition(readPackageJsonField(workspacePackageJsonPath, 'exports'));
   const bundledExports = readPackageJsonField(bundledPackageJsonPath, 'exports');

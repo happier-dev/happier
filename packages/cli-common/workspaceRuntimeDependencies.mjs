@@ -22,6 +22,62 @@ import semver from 'semver';
 const PACKAGE_NAME_SEGMENT_PATTERN = /^[A-Za-z0-9_][A-Za-z0-9._-]*$/u;
 const PREPUBLICATION_AUTHOR_PACKAGE_VERSION = '0.0.0';
 
+export function isInternalWorkspacePackageName(packageName) {
+  return packageName.startsWith('@happier-dev/');
+}
+
+export function isCanonicalWorkspacePackageLink({ srcDir, destDir }) {
+  return existsSync(destDir) && realpathSync(destDir) === realpathSync(srcDir);
+}
+
+export function collectInternalRuntimeWorkspaceDepNames(packageJson) {
+  const result = new Set();
+  for (const deps of [packageJson?.dependencies, packageJson?.optionalDependencies]) {
+    if (!deps || typeof deps !== 'object') continue;
+    for (const name of Object.keys(deps)) {
+      if (isInternalWorkspacePackageName(name)) result.add(name);
+    }
+  }
+  return [...result].sort((left, right) => left.localeCompare(right));
+}
+
+export function resolveWorkspaceSourceDir({ repoRoot, packageName: rawPackageName }) {
+  const packageName = String(rawPackageName ?? '').trim();
+  const workspaceName = packageName.split('/').at(-1);
+  if (!workspaceName) {
+    throw new Error(`Unable to resolve workspace name from bundled dependency: ${packageName}`);
+  }
+  const pluginPrefix = '@happier-dev/plugins-';
+  if (packageName.startsWith(pluginPrefix)) {
+    return resolve(repoRoot, 'packages', 'plugins', packageName.slice(pluginPrefix.length));
+  }
+  return resolve(repoRoot, 'packages', workspaceName);
+}
+
+export function resolveInternalWorkspacePackageNameClosure({ repoRoot, packageNames }) {
+  const emitted = new Set();
+  const visiting = new Set();
+  const orderedPackageNames = [];
+  const visit = packageName => {
+    const normalizedName = String(packageName ?? '').trim();
+    if (!isInternalWorkspacePackageName(normalizedName) || emitted.has(normalizedName)) return;
+    // Keep invalid publication cycles finite so the existing missing-closure
+    // diagnostic remains actionable.
+    if (visiting.has(normalizedName)) return;
+    visiting.add(normalizedName);
+    const sourcePackageJsonPath = resolve(resolveWorkspaceSourceDir({ repoRoot, packageName: normalizedName }), 'package.json');
+    if (existsSync(sourcePackageJsonPath)) {
+      const sourcePackageJson = JSON.parse(readFileSync(sourcePackageJsonPath, 'utf8'));
+      for (const dependencyName of collectInternalRuntimeWorkspaceDepNames(sourcePackageJson)) visit(dependencyName);
+    }
+    visiting.delete(normalizedName);
+    emitted.add(normalizedName);
+    orderedPackageNames.push(normalizedName);
+  };
+  for (const packageName of [...packageNames].sort((left, right) => left.localeCompare(right))) visit(packageName);
+  return orderedPackageNames;
+}
+
 export function isPrepublicationAuthorPackage(rawPackageJson) {
   const happier = rawPackageJson?.happier;
   const publicSdkRelease = happier?.publicSdkRelease;

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { cpSync, existsSync, mkdtempSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, lstatSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -16,8 +16,42 @@ import {
 } from './syncBundledWorkspacePackages.mjs';
 import * as workspaceRuntimeDependencies from '../../packages/cli-common/workspaceRuntimeDependencies.mjs';
 
+test('exact live preparation preserves the canonical workspace source link', () => {
+  const repoRoot = mkdtempSync(join(tmpdir(), 'happier-sync-live-link-'));
+  try {
+    const srcDir = resolve(repoRoot, 'packages/protocol');
+    const hostDir = resolve(repoRoot, 'apps/cli');
+    const destDir = resolve(hostDir, 'node_modules/@happier-dev/protocol');
+    mkdirSync(resolve(srcDir, 'dist'), { recursive: true });
+    mkdirSync(resolve(srcDir, 'src'), { recursive: true });
+    mkdirSync(dirname(destDir), { recursive: true });
+    writeFileSync(resolve(srcDir, 'package.json'), JSON.stringify({
+      name: '@happier-dev/protocol', version: '0.0.0', type: 'module',
+      exports: { '.': { 'happier-source': './src/index.js', default: './dist/index.js' } },
+    }));
+    writeFileSync(resolve(srcDir, 'src/index.js'), 'export const current = "source";\n');
+    writeFileSync(resolve(srcDir, 'dist/index.js'), 'export const current = "dist";\n');
+    symlinkSync(srcDir, destDir, process.platform === 'win32' ? 'junction' : 'dir');
+    syncBundledWorkspacePackages({ repoRoot, packages: ['protocol'], hostPackageDirs: [hostDir], pruneStale: true });
+    const readCurrent = () => execFileSync(process.execPath, [
+      '--conditions=happier-source', '--input-type=module', '-e',
+      'console.log((await import("@happier-dev/protocol")).current);',
+    ], { cwd: hostDir, encoding: 'utf8' }).trim();
+    assert.equal(readCurrent(), 'source');
+    assert.equal(lstatSync(destDir).isSymbolicLink(), true);
+    writeFileSync(resolve(srcDir, 'src/index.js'), 'export const current = "updated";\n');
+    assert.equal(readCurrent(), 'updated');
+    syncBundledWorkspacePackages({ repoRoot, packages: ['protocol'], hostPackageDirs: [hostDir], publicationMode: 'artifact', pruneStale: true });
+    assert.equal(lstatSync(destDir).isSymbolicLink(), false);
+    assert.equal(readCurrent(), 'dist');
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
 function copySyncVerificationInputs(sourceRepoRoot, repoRoot) {
   for (const path of [
+    'scripts/workspaces/workspaceBundlePublication.mjs',
     'packages/cli-common/bundledPluginResources.mjs',
     'packages/cli-common/packageBuildOutputTargets.mjs',
     'apps/stack/scripts/utils/fs/cached_file_digest.mjs',
@@ -224,7 +258,7 @@ test('bootstrap publication preserves conditional package imports without compil
     assert.equal((await import(pathToFileURL(resolve(destinationDir, 'src/index.js')).href)).selected, 'source');
     assert.equal(execFileSync(process.execPath, ['--conditions=happier-source', '--input-type=module', '-e',
       'const module = await import("@happier-dev/sdk"); console.log(module.transport);',
-    ], { cwd: resolve(repoRoot, 'apps', 'cli'), encoding: 'utf8' }).trim(), 'node');
+    ], { cwd: resolve(repoRoot, 'apps', 'cli'), env: { ...process.env, NODE_OPTIONS: '' }, encoding: 'utf8' }).trim(), 'node');
     assert.deepEqual(JSON.parse(readFileSync(resolve(destinationDir, 'package.json'), 'utf8')).imports, {
       ...imports, '#http': { node: './runtime/node.js', default: './dist/fetch.js' },
     });
@@ -1057,26 +1091,40 @@ test('syncBundledWorkspacePackages syncs non-dist exported file targets referenc
 
 test('syncBundledWorkspacePackages publishes cli-common package-root helpers consumed by compiled modules', async () => {
   const sourceRepoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
-  const testTempRoot = resolve(sourceRepoRoot, '.project', 'tmp');
-  mkdirSync(testTempRoot, { recursive: true });
-  const hostPackageDir = mkdtempSync(join(testTempRoot, 'happier-sync-bundled-cli-common-helper-'));
+  const fixtureRepoRoot = mkdtempSync(join(tmpdir(), 'happier-sync-bundled-cli-common-helper-'));
+  const hostPackageDir = resolve(fixtureRepoRoot, 'apps/cli');
+  const commonSource = resolve(sourceRepoRoot, 'packages/cli-common');
+  const commonFixture = resolve(fixtureRepoRoot, 'packages/cli-common');
   const bundledPackageDir = resolve(hostPackageDir, 'node_modules', '@happier-dev', 'cli-common');
   try {
     const tsx = createRequire(import.meta.url).resolve('tsx/esm');
-    const healthOwner = pathToFileURL(resolve(sourceRepoRoot, 'packages/cli-common/src/workspaces/index.ts')).href;
-    const workspaceClosure = JSON.parse(execFileSync(process.execPath, ['--import', tsx, '--input-type=module', '--eval', `
-      const owner = await import(${JSON.stringify(healthOwner)});
-      console.log(JSON.stringify(owner.resolveInternalWorkspacePackageNameClosure({
-        repoRoot: ${JSON.stringify(sourceRepoRoot)}, packageNames: ['@happier-dev/cli-common'],
-      })));
-    `], { env: { ...process.env, NODE_OPTIONS: '' }, encoding: 'utf8' }));
-    const packages = workspaceClosure.map(name => name.slice('@happier-dev/'.length));
+    const manifest = JSON.parse(readFileSync(resolve(commonSource, 'package.json'), 'utf8'));
+    mkdirSync(hostPackageDir, { recursive: true });
+    mkdirSync(resolve(commonFixture, 'dist/componentArtifacts'), { recursive: true });
+    for (const entry of readdirSync(commonSource, { withFileTypes: true })) {
+      if (entry.isFile() && /\.(?:mjs|cjs|d\.mts)$/.test(entry.name)) {
+        cpSync(resolve(commonSource, entry.name), resolve(commonFixture, entry.name));
+      }
+    }
+    cpSync(resolve(commonSource, 'src'), resolve(commonFixture, 'src'), {
+      recursive: true, filter: path => !/\.(?:test|spec)\.[cm]?[jt]sx?$/.test(path),
+    });
+    const semverSource = dirname(createRequire(import.meta.url).resolve('semver/package.json'));
+    cpSync(semverSource, resolve(fixtureRepoRoot, 'node_modules/semver'), { recursive: true });
+    writeFileSync(resolve(commonFixture, 'package.json'), JSON.stringify({
+      name: manifest.name, version: manifest.version, type: manifest.type, exports: manifest.exports,
+      files: ['dist', 'src'], dependencies: { semver: manifest.dependencies.semver },
+    }));
+    // Keep the actual consumer and its private imports fixture-local. The
+    // source loader supplies transpilation without building unrelated workspaces.
+    writeFileSync(resolve(commonFixture, 'dist/componentArtifacts/buildCliBinaryArtifactPayload.js'),
+      'export { buildCliBinaryArtifactPayload } from "../../src/componentArtifacts/buildCliBinaryArtifactPayload.ts";\n');
     writeFileSync(join(hostPackageDir, 'package.json'), JSON.stringify({
-      name: 'cli-common-closure-consumer', bundledDependencies: workspaceClosure,
+      name: 'cli-common-closure-consumer', bundledDependencies: ['@happier-dev/cli-common'],
     }));
     syncBundledWorkspacePackages({
-      repoRoot: sourceRepoRoot,
-      packages,
+      repoRoot: fixtureRepoRoot,
+      packages: ['cli-common'],
       hostPackageDirs: [hostPackageDir],
     });
 
@@ -1121,33 +1169,26 @@ test('syncBundledWorkspacePackages publishes cli-common package-root helpers con
       'function',
     );
 
-    const bundledComponentArtifacts = await import(
-      `${pathToFileURL(resolve(
-        bundledPackageDir,
-        'dist',
-        'componentArtifacts',
-        'buildCliBinaryArtifactPayload.js',
-      )).href}?bundled-cli-common-helper=${Date.now()}`
-    );
-    assert.equal(typeof bundledComponentArtifacts.buildCliBinaryArtifactPayload, 'function');
-
     // A fresh process must load the actual published package, without the
     // checkout source resolver masking a missing exported or private sibling.
+    const componentArtifacts = pathToFileURL(resolve(bundledPackageDir, 'dist/componentArtifacts/buildCliBinaryArtifactPayload.js')).href;
     const privateStage = pathToFileURL(resolve(bundledPackageDir, 'src/componentArtifacts/stageProcessCustodyRuntime.ts')).href;
     execFileSync(process.execPath, ['--import', tsx, '--input-type=module', '--eval', `
       import assert from 'node:assert/strict';
       const observer = await import('@happier-dev/cli-common/fileChangeObserver');
       const ownership = await import('@happier-dev/cli-common/tempDirOwnership');
       const stage = await import(${JSON.stringify(privateStage)});
+      const artifacts = await import(${JSON.stringify(componentArtifacts)});
       assert.equal(typeof observer.createFileChangeObserver, 'function');
       assert.equal(typeof ownership.readHappierTempDirOwnerLiveness, 'function');
       assert.equal(typeof stage.stageProcessCustodyRuntime, 'function');
+      assert.equal(typeof artifacts.buildCliBinaryArtifactPayload, 'function');
     `], { cwd: hostPackageDir, env: { ...process.env, NODE_OPTIONS: '' }, encoding: 'utf8' });
     // Whole-closure health is tested below with complete owned outputs. This
     // real helper import must not assume unrelated moving Protocol exports
     // have already been compiled on the selected worker.
   } finally {
-    rmSync(hostPackageDir, { recursive: true, force: true });
+    rmSync(fixtureRepoRoot, { recursive: true, force: true });
   }
 });
 

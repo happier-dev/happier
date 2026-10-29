@@ -202,6 +202,53 @@ describe('sanitizeBundledPackageJson', () => {
 });
 
 describe('bundleWorkspacePackageWithRuntimeDependencies', () => {
+  it('keeps canonical workspace links live across preparation and later producer edits', () => {
+    const root = createTempRoot('workspace-package-live-link-');
+    const sourceDir = join(root, 'packages', 'sdk');
+    const hostDir = join(root, 'apps', 'cli');
+    const destinationDir = join(hostDir, 'node_modules', '@happier-dev', 'sdk');
+    writePackage(hostDir, { bundledDependencies: ['@happier-dev/sdk'] });
+    writePackage(sourceDir, {
+      name: '@happier-dev/sdk', version: '0.0.0', type: 'module',
+      exports: { '.': { 'happier-source': './src/index.js', default: './dist/index.js' } },
+    }, {
+      'src/index.js': 'export const selected = "source-before";\n',
+      'dist/index.js': 'export const selected = "dist-before";\n',
+    });
+    mkdirSync(dirname(destinationDir), { recursive: true });
+    symlinkSync(sourceDir, destinationDir, process.platform === 'win32' ? 'junction' : 'dir');
+    expect(hasBundledWorkspacePackagesHealthy({ repoRoot: root, hostPackageDir: hostDir })).toBe(true);
+    const prepare = () => bundleWorkspacePackagesWithRuntimeDependencies({
+      publicationMode: 'live',
+      // Exact prepared readers must preserve the source authority too.
+      pruneStale: true,
+      bundles: [{ packageName: '@happier-dev/sdk', srcDir: sourceDir, destDir: destinationDir }],
+    });
+    prepare();
+    const readSelection = (source: boolean) => execFileSync(process.execPath, [
+      ...(source ? ['--conditions=happier-source'] : []), '--input-type=module', '-e',
+      'console.log((await import("@happier-dev/sdk")).selected);',
+    ], { cwd: hostDir, encoding: 'utf8' }).trim();
+    expect(readSelection(true)).toBe('source-before');
+    expect(lstatSync(destinationDir).isSymbolicLink()).toBe(true);
+    writeFileSync(join(sourceDir, 'src/index.js'), 'export const selected = "source-after";\n');
+    writeFileSync(join(sourceDir, 'dist/index.js'), 'export const selected = "dist-after";\n');
+    expect(readSelection(true)).toBe('source-after');
+    expect(readSelection(false)).toBe('dist-after');
+    prepare();
+    expect(realpathSync(destinationDir)).toBe(realpathSync(sourceDir));
+    rmSync(join(sourceDir, 'dist/index.js'));
+    expect(hasBundledWorkspacePackagesHealthy({ repoRoot: root, hostPackageDir: hostDir })).toBe(false);
+    writeFileSync(join(sourceDir, 'dist/index.js'), 'export const selected = "dist-after";\n');
+    // Prepack still detaches the same link and publishes compiled contents.
+    bundleWorkspacePackagesWithRuntimeDependencies({
+      publicationMode: 'artifact',
+      bundles: [{ packageName: '@happier-dev/sdk', srcDir: sourceDir, destDir: destinationDir }],
+    });
+    expect(lstatSync(destinationDir).isSymbolicLink()).toBe(false);
+    expect(readSelection(true)).toBe('dist-after');
+  });
+
   it.each(['live', 'artifact'] as const)('replaces dangling workspace links during %s publication', (publicationMode) => {
     const root = createTempRoot('workspace-dangling-link-');
     const sourceDir = join(root, 'packages', 'sdk');

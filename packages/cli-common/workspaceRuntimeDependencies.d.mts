@@ -12,6 +12,22 @@ export type ResolvedRuntimePackage = Readonly<{
 
 export function parsePackageNameSegments(packageName: unknown): string[];
 
+export function isInternalWorkspacePackageName(packageName: string): boolean;
+
+export function isCanonicalWorkspacePackageLink(params: Readonly<{ srcDir: string; destDir: string }>): boolean;
+
+export function collectInternalRuntimeWorkspaceDepNames(packageJson: unknown): string[];
+
+export function resolveWorkspaceSourceDir(params: Readonly<{
+  repoRoot: string;
+  packageName: string;
+}>): string;
+
+export function resolveInternalWorkspacePackageNameClosure(params: Readonly<{
+  repoRoot: string;
+  packageNames: ReadonlyArray<string>;
+}>): string[];
+
 export function isPrepublicationAuthorPackage(rawPackageJson: unknown): boolean;
 
 export const PUBLIC_SDK_GENERATED_GOVERNANCE_RECORDS: Readonly<Record<string, readonly string[]>>;
