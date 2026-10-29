@@ -122,11 +122,12 @@ export function createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator(
     params: Readonly<{
         token: string;
         accountScope?: ConnectedServiceAuthGroupAccountScope;
-        isCurrent?: () => Promise<boolean>;
+        isCurrent?: (signal?: AbortSignal) => Promise<boolean>;
         quotaFreshnessMs: number;
         nowMs: () => number;
         accountUsageStore?: AccountUsageStoreForAuthGroupSwitchState;
         probeQuotaSnapshotsForGroup?: (input: Readonly<{
+            signal?: AbortSignal;
             serviceId: QualifiedConnectedAccountServiceRef; groupId: string; profileIds: ReadonlyArray<string>; reason: string;
         }>) => Promise<ConnectedServiceAuthGroupQuotaProbeResult | void>;
         consumeAvailableRecoveryCreditForProfile?: (input: Readonly<{
@@ -143,6 +144,7 @@ export function createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator(
             >,
         ) => Promise<ConnectedServiceAuthGroupGenerationApplyResult>;
         prepareCandidateForSwitch?: (input: Readonly<{
+            signal?: AbortSignal;
             serviceId: QualifiedConnectedAccountServiceRef;
             groupId: string;
             profileId: string;
@@ -159,8 +161,10 @@ export function createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator(
 > {
     const api =
         params.api ?? defaultQualifiedConnectedAccountAuthGroupApi;
-    const assertCurrent = async () => {
-        if (params.isCurrent && !await params.isCurrent()) throw new Error('requester_session_not_current');
+    const assertCurrent = async (signal?: AbortSignal) => {
+        signal?.throwIfAborted();
+        if (params.isCurrent && !await params.isCurrent(signal)) throw new Error('requester_session_not_current');
+        signal?.throwIfAborted();
     };
     const buildState = (input: Parameters<typeof buildQualifiedConnectedAccountAuthGroupSwitchState>[0]) => {
         const state = buildQualifiedConnectedAccountAuthGroupSwitchState(input);
@@ -174,6 +178,7 @@ export function createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator(
     };
 
     const loadState = async (input: Readonly<{
+        signal?: AbortSignal;
         serviceId: QualifiedConnectedAccountServiceRef;
         groupId: string;
     }>) => {
@@ -181,8 +186,9 @@ export function createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator(
             QualifiedConnectedAccountServiceRefSchema.parse(
                 input.serviceId,
             );
-        await assertCurrent();
+        await assertCurrent(input.signal);
         const group = await api.readGroup({
+            signal: input.signal,
             token: params.token,
             group: { service, groupId: input.groupId },
         });
@@ -192,13 +198,14 @@ export function createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator(
             );
         }
         assertExactGroup(group, service, input.groupId);
-        await assertCurrent();
+        await assertCurrent(input.signal);
         const listed = await api.listAccounts({
+            signal: input.signal,
             token: params.token,
             service,
         });
         assertExactAccountList(service, listed);
-        await assertCurrent();
+        await assertCurrent(input.signal);
         const accountIds = new Set(
             listed.accounts.map((profile) => profile.ref.accountId),
         );
@@ -246,7 +253,8 @@ export function createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator(
                     'qualified_connected_account_switch_basis_unavailable',
                 );
             }
-            await assertCurrent();
+            await assertCurrent(input.signal);
+            // Mutation admission ends cancellation; committed group/application custody settles below.
             const group = await api.setActiveAccount({
                 token: params.token,
                 mutation: {

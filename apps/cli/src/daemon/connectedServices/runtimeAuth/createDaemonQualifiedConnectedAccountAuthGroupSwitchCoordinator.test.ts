@@ -15,6 +15,7 @@ import { applyConnectedAccountRequestAuthRecovery } from '../requestAuth/Connect
 import { DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1 } from '../accountGroups/selection/selectConnectedServiceAuthGroupCandidate';
 import { createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator } from './createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator';
 import { createProviderAccountUsageStore } from '../accountUsage/store';
+import { InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry } from '../accountGroups/switching/ConnectedServiceAuthGroupSwitchCoordinator';
 
 const service = {
     pluginId: 'example.connected-accounts',
@@ -134,6 +135,77 @@ function accountScopedUsageFailure() {
 }
 
 describe('createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator', () => {
+    it('cancels pre-commit lease waiting without releasing its transaction owner', async () => {
+        const leases = new InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry();
+        const owner = leases.acquire({ serviceId: 'quota-service', groupId: 'fallbacks' });
+        const waiter = leases.acquire({ serviceId: 'quota-service', groupId: 'fallbacks' });
+        if (owner.kind !== 'owner' || waiter.kind !== 'loser') throw new Error('expected one transaction owner and one waiter');
+        const controller = new AbortController();
+        const cancelled = new Error('quota loop stopped');
+        let settled = false;
+        const waiting = waiter.waitForOwner({ ...{ signal: controller.signal } }).catch(error => error)
+            .then(result => { settled = true; return result; });
+        controller.abort(cancelled);
+        try {
+            await vi.waitFor(() => expect(settled).toBe(true));
+            expect(await waiting).toBe(cancelled);
+            expect(leases.acquire({ serviceId: 'quota-service', groupId: 'fallbacks' }).kind).toBe('loser');
+        } finally {
+            owner.completeResult({ status: 'auto_switch_disabled', generation: 7 });
+            owner.finish();
+            await waiting;
+        }
+        const nextOwner = leases.acquire({ serviceId: 'quota-service', groupId: 'fallbacks' });
+        expect(nextOwner.kind).toBe('owner');
+        if (nextOwner.kind === 'owner') nextOwner.finish();
+    });
+
+    it.each(['group', 'accounts'] as const)('cancels pre-commit %s HTTP for a stopped quota tick', async phase => {
+        const controller = new AbortController();
+        const cancelled = new Error('quota loop stopped');
+        let requestSignal: AbortSignal | undefined;
+        let requestStarted = false;
+        let release: () => void = () => {};
+        let settled = false;
+        const block = async (signal?: AbortSignal) => {
+            requestSignal = signal;
+            requestStarted = true;
+            await new Promise<void>((resolve, reject) => {
+                release = resolve;
+                signal?.addEventListener('abort', () => reject(signal.reason), { once: true });
+            });
+        };
+        const forbiddenEffect = async (): Promise<never> => { throw new Error('cancelled read must not switch'); };
+        const coordinator = createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator({
+            token: 'cancellation-account', quotaFreshnessMs: 60_000, nowMs: () => 1_000,
+            api: {
+                // Qualified Home HTTP is the boundary; state loading and selection stay real.
+                readGroup: async input => {
+                    if (phase === 'group') await block(input.signal);
+                    return group({ activeConnectedAccountId: 'primary', generation: 7, runtimeStateRevision: 3 });
+                },
+                listAccounts: async input => { if (phase === 'accounts') await block(input.signal); return accounts(); },
+                setActiveAccount: forbiddenEffect, updateRuntimeState: forbiddenEffect,
+            },
+            applyGeneration: forbiddenEffect,
+        });
+        const switching = coordinator.switchBeforeTurn({ serviceId: service, groupId: 'fallbacks',
+            reason: 'soft_threshold', ...{ signal: controller.signal } }).catch(error => error)
+            .then(error => { settled = true; return error; });
+        await vi.waitFor(() => expect(requestStarted).toBe(true));
+        controller.abort(cancelled);
+        try {
+            await vi.waitFor(() => {
+                expect(requestSignal?.aborted).toBe(true);
+                expect(settled).toBe(true);
+            });
+            expect(await switching).toBe(cancelled);
+        } finally {
+            release();
+            await switching;
+        }
+    });
+
     it.each(['usage_limit', 'manual'])('selects recovered priority quota from the persisted %s selection provenance', async lastSwitchReason => {
         const base = group({ activeConnectedAccountId: 'backup', generation: 7, runtimeStateRevision: 3 });
         const currentGroup = QualifiedConnectedAccountGroupV4Schema.parse({

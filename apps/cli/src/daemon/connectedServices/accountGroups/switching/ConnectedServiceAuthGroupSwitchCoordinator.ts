@@ -1,4 +1,17 @@
 import {
+    ConnectedServiceAuthGroupSwitchLeaseExpiredError,
+    InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry,
+    defaultServiceIdentityKey,
+    switchKey,
+    type ConnectedServiceAuthGroupAccountScope,
+    type LeaseAcquireResult,
+    type LeaseCompletion,
+    type LeaseResultCompletion,
+} from './lease';
+export { ConnectedServiceAuthGroupSwitchLeaseExpiredError, InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry } from './lease';
+export type { ConnectedServiceAuthGroupAccountScope } from './lease';
+
+import {
     hasConnectedServiceAuthGroupCandidateEvidenceForSwitchReason,
     isConnectedServiceAuthGroupProviderLimitSelected,
     selectConnectedServiceAuthGroupCandidate,
@@ -23,6 +36,7 @@ import type {
     ConnectedServiceAuthGroupStateV1,
 } from '@happier-dev/protocol';
 import { logger } from '@/ui/logger';
+import { observeCurrentConnectedServiceMaterializationPhase } from '../../materialize/materializationPhase';
 import type { AutomaticQuotaResetContext, ConnectedServiceQuotaRecoveryCreditConsumeResult } from '../../quotas/ConnectedServiceQuotasCoordinator';
 import type { ConnectedServicePoolSelectionGetRequestV1 } from '@happier-dev/protocol/connect/connectedServicePoolSelection';
 
@@ -110,15 +124,7 @@ export type ConnectedServiceAuthGroupMemberRuntimeStateOverride = Readonly<{
     state: ConnectedServiceAuthGroupMemberRuntimeState;
 }>;
 
-type LeaseCompletion<TServiceIdentity = string> = Readonly<{
-    serviceId: TServiceIdentity;
-    groupId: string;
-    activeProfileId: string | null;
-    generation: number;
-    credentialRevision?: ConnectedServiceCredentialRevisionV1 | null;
-    decisionTrace?: ConnectedServiceAuthGroupCandidateDecisionTrace;
-    quotaRecovery?: Extract<ConnectedServiceAuthGroupSwitchResult, { status: 'observed_generation' }>['quotaRecovery'];
-}>;
+
 
 export type ConnectedServiceAuthGroupGenerationApplyInput<
     TServiceIdentity = string,
@@ -127,12 +133,7 @@ export type ConnectedServiceAuthGroupGenerationApplyInput<
     reason?: string;
 }>;
 
-type LeaseResultCompletion = Readonly<{
-    kind: 'result';
-    activeProfileId: string | null;
-    generation: number;
-    result: ConnectedServiceAuthGroupSwitchResult;
-}>;
+
 
 type ConnectedServiceAccountSwitchMode = 'hot_apply' | 'restart_resume' | 'spawn_next_turn';
 
@@ -155,47 +156,14 @@ type ConnectedServiceAuthGroupSwitchDecisionDiagnostics = Readonly<{
     decisionTrace: ConnectedServiceAuthGroupCandidateDecisionTrace;
 }>;
 
-type LeaseOutcome<TServiceIdentity = string> =
-    | Readonly<{
-        status: 'completed';
-        completion: LeaseCompletion<TServiceIdentity>;
-    }>
-    | Readonly<{ status: 'completed_result'; completion: LeaseResultCompletion }>
-    | Readonly<{ status: 'failed'; error: unknown }>;
 
-type LeaseAcquireResult<TServiceIdentity = string> =
-    | Readonly<{
-        kind: 'owner';
-        complete(completion: LeaseCompletion<TServiceIdentity>): void;
-        completeResult(
-            result: ConnectedServiceAuthGroupSwitchResult,
-            context?: Readonly<{ activeProfileId: string | null; generation: number }>,
-        ): void;
-        finish(): void;
-        fail(error: unknown): void;
-    }>
-    | Readonly<{
-        kind: 'loser';
-        waitForOwner(options?: Readonly<{ timeoutMs?: number }>): Promise<
-            LeaseCompletion<TServiceIdentity> | LeaseResultCompletion
-        >;
-    }>;
+
+
 
 export const SESSION_SWITCH_LIMIT_WINDOW_MS = 60 * 60 * 1000;
 
-export type ConnectedServiceAuthGroupAccountScope = Readonly<{ serverId: string; accountId: string }>;
 
-function defaultServiceIdentityKey(serviceId: unknown): string {
-    if (typeof serviceId === 'string') return `legacy:${JSON.stringify(serviceId)}`;
-    return `qualified:${JSON.stringify(serviceId)}`;
-}
 
-function switchKey(
-    serviceIdentityKey: string,
-    groupId: string,
-): string {
-    return `${serviceIdentityKey}\0${groupId}`;
-}
 
 function normalizeProfileId(value: string | null | undefined): string | null {
     return typeof value === 'string' && value.trim() ? value.trim() : null;
@@ -222,113 +190,6 @@ function isLeaseResultCompletion<TServiceIdentity>(
     return 'kind' in value && value.kind === 'result';
 }
 
-function buildLeaseResultCompletion(
-    result: ConnectedServiceAuthGroupSwitchResult,
-    context?: Readonly<{ activeProfileId: string | null; generation: number }>,
-): LeaseResultCompletion {
-    return {
-        kind: 'result',
-        activeProfileId: context?.activeProfileId ?? ('activeProfileId' in result ? result.activeProfileId : null),
-        generation: context?.generation ?? result.generation,
-        result,
-    };
-}
-
-export class ConnectedServiceAuthGroupSwitchLeaseExpiredError extends Error {
-    constructor() {
-        super('connected_service_auth_group_switch_lease_expired');
-    }
-}
-
-export class InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry<
-    TServiceIdentity = string,
-> {
-    private readonly pendingByKey = new Map<string, {
-        promise: Promise<LeaseOutcome<TServiceIdentity>>;
-        resolve: (outcome: LeaseOutcome<TServiceIdentity>) => void;
-        settled: boolean;
-    }>();
-
-    constructor(private readonly options: Readonly<{
-        leaseTimeoutMs?: number;
-        serviceIdentityKey?: (serviceId: TServiceIdentity) => string;
-    }> = {}) {}
-
-    acquire(input: Readonly<{
-        serviceId: TServiceIdentity;
-        groupId: string;
-        accountScope?: ConnectedServiceAuthGroupAccountScope;
-    }>): LeaseAcquireResult<TServiceIdentity> {
-        const groupKey = switchKey(
-            this.options.serviceIdentityKey?.(input.serviceId)
-                ?? defaultServiceIdentityKey(input.serviceId),
-            input.groupId,
-        );
-        const key = JSON.stringify([input.accountScope?.serverId ?? null, input.accountScope?.accountId ?? null, groupKey]);
-        const pending = this.pendingByKey.get(key);
-        if (pending) {
-            return {
-                kind: 'loser',
-                waitForOwner: async (waitOptions) => {
-                    const timeoutMs = waitOptions?.timeoutMs ?? this.options.leaseTimeoutMs;
-                    let timeout: ReturnType<typeof setTimeout> | null = null;
-                    const outcome = await Promise.race([
-                        pending.promise,
-                        new Promise<LeaseOutcome<TServiceIdentity>>(
-                            (_resolve, reject) => {
-                                if (timeoutMs === undefined) return;
-                                timeout = setTimeout(() => reject(new ConnectedServiceAuthGroupSwitchLeaseExpiredError()), timeoutMs);
-                                timeout.unref?.();
-                            },
-                        ),
-                    ]).finally(() => {
-                        if (timeout) clearTimeout(timeout);
-                    });
-                    if (outcome.status === 'failed') throw outcome.error;
-                    if (outcome.status === 'completed_result') return outcome.completion;
-                    return outcome.completion;
-                },
-            };
-        }
-
-        let resolveCompletion: (
-            outcome: LeaseOutcome<TServiceIdentity>,
-        ) => void = () => {};
-        const promise = new Promise<LeaseOutcome<TServiceIdentity>>((resolve) => {
-            resolveCompletion = resolve;
-        });
-        const entry = { promise, resolve: resolveCompletion, settled: false };
-        this.pendingByKey.set(key, entry);
-        return {
-            kind: 'owner',
-            complete: (completion) => {
-                const current = this.pendingByKey.get(key);
-                if (current !== entry || entry.settled) return;
-                entry.settled = true;
-                current.resolve({ status: 'completed', completion });
-            },
-            completeResult: (result, context) => {
-                const current = this.pendingByKey.get(key);
-                if (current !== entry || entry.settled) return;
-                entry.settled = true;
-                current.resolve({ status: 'completed_result', completion: buildLeaseResultCompletion(result, context) });
-            },
-            finish: () => {
-                if (this.pendingByKey.get(key) !== entry) return;
-                this.pendingByKey.delete(key);
-            },
-            fail: (error) => {
-                const current = this.pendingByKey.get(key);
-                if (current !== entry) return;
-                this.pendingByKey.delete(key);
-                if (!entry.settled) {
-                    entry.settled = true;
-                    current.resolve({ status: 'failed', error });
-                }
-            },
-        };
-    }
-}
 
 export type ConnectedServiceAuthGroupSwitchResult =
     | (Readonly<{
@@ -753,10 +614,12 @@ export class ConnectedServiceAuthGroupSwitchCoordinator<
         nowMs: () => number;
         quotaFreshnessMs: number;
         loadState(input: Readonly<{
+            signal?: AbortSignal;
             serviceId: TServiceIdentity;
             groupId: string;
         }>): Promise<ConnectedServiceAuthGroupSwitchState<TServiceIdentity>>;
         commitSwitch(input: Readonly<{
+            signal?: AbortSignal;
             serviceId: TServiceIdentity;
             groupId: string;
             fromProfileId: string | null;
@@ -769,6 +632,7 @@ export class ConnectedServiceAuthGroupSwitchCoordinator<
             reason: string;
         }>): Promise<ConnectedServiceAuthGroupSwitchState<TServiceIdentity>>;
         prepareCandidateForSwitch?(input: Readonly<{
+            signal?: AbortSignal;
             serviceId: TServiceIdentity;
             groupId: string;
             profileId: string;
@@ -805,6 +669,7 @@ export class ConnectedServiceAuthGroupSwitchCoordinator<
             planType?: string | null;
         }>): Promise<void>;
         probeQuotaSnapshotsForGroup?(input: Readonly<{
+            signal?: AbortSignal;
             serviceId: TServiceIdentity;
             groupId: string;
             profileIds: ReadonlyArray<string>;
@@ -863,6 +728,7 @@ export class ConnectedServiceAuthGroupSwitchCoordinator<
     }
 
     private async selectPreparedCandidate(input: Readonly<{
+        signal?: AbortSignal;
         state: ConnectedServiceAuthGroupSwitchState<TServiceIdentity>;
         activeProfileId: string | null | undefined;
         reason: string;
@@ -875,6 +741,7 @@ export class ConnectedServiceAuthGroupSwitchCoordinator<
         );
         const unavailableProfileIds = new Set(input.unavailableProfileIds);
         for (;;) {
+            input.signal?.throwIfAborted();
             const selected = selectConnectedServiceAuthGroupCandidate({
                 nowMs: this.deps.nowMs(),
                 quotaFreshnessMs: this.deps.quotaFreshnessMs,
@@ -899,11 +766,13 @@ export class ConnectedServiceAuthGroupSwitchCoordinator<
                 return selected;
             }
             const prepared = await this.deps.prepareCandidateForSwitch({
+                signal: input.signal,
                 serviceId: input.state.serviceId,
                 groupId: input.state.groupId,
                 profileId: selected.selected.profileId,
                 reason: input.reason,
             });
+            input.signal?.throwIfAborted();
             if (prepared.status === 'ready') return selected;
             // Retryable health remains globally usable, but a failed preflight must not be retried
             // indefinitely in this operation or disappear from the selector's exclusion evidence.
@@ -920,6 +789,7 @@ export class ConnectedServiceAuthGroupSwitchCoordinator<
     private resolvePolicyResult(input: Readonly<{
         trigger: 'classified_failure' | 'pre_turn';
         request: Readonly<{
+            signal?: AbortSignal;
             serviceId: TServiceIdentity; groupId: string; sessionId?: string; reason: string;
             switchesThisTurn?: number; sessionSwitchesThisHour?: number;
             retryAtMs?: number | null; retryAfterMs?: number | null; resetsAtMs?: number | null;
@@ -969,6 +839,7 @@ export class ConnectedServiceAuthGroupSwitchCoordinator<
     }>> {
         let loaded = input.loaded;
         let selected = await this.selectPreparedCandidate({ state: loaded, activeProfileId: input.activeProfileId,
+            signal: input.request.signal,
             reason: input.request.reason, allowCurrentProfileRetry: input.allowCurrentProfileRetry,
             providerLimitId: input.request.providerLimitId });
         let quotaRecovery = input.allowCurrentProfileRetry === true
@@ -976,6 +847,7 @@ export class ConnectedServiceAuthGroupSwitchCoordinator<
             : undefined;
         if (selected.selected?.profileId === loaded.activeProfileId && !quotaRecovery) {
             selected = await this.selectPreparedCandidate({
+                signal: input.request.signal,
                 state: loaded,
                 activeProfileId: input.activeProfileId,
                 reason: input.request.reason,
@@ -995,6 +867,7 @@ export class ConnectedServiceAuthGroupSwitchCoordinator<
                 : this.resolvePolicyResult({ ...input, loaded });
             if (policyResult) return;
             selected = await this.selectPreparedCandidate({ state: loaded, activeProfileId: loaded.activeProfileId,
+                signal: input.request.signal,
                 reason: input.request.reason, allowCurrentProfileRetry: true, unavailableProfileIds,
                 providerLimitId: input.request.providerLimitId });
             for (const entry of selected.excluded) if (entry.reason === 'credential_unavailable') unavailableProfileIds.add(entry.profileId);
@@ -1006,6 +879,7 @@ export class ConnectedServiceAuthGroupSwitchCoordinator<
             });
             if (chosen?.profileId === loaded.activeProfileId && !quotaRecovery) {
                 selected = await this.selectPreparedCandidate({ state: loaded, activeProfileId: loaded.activeProfileId,
+                    signal: input.request.signal,
                     reason: input.request.reason, unavailableProfileIds,
                     providerLimitId: input.request.providerLimitId });
             }
@@ -1085,6 +959,7 @@ export class ConnectedServiceAuthGroupSwitchCoordinator<
 
     private async probeQuotaSnapshotsBeforePreTurnSelection(input: Readonly<{
         request: Readonly<{
+            signal?: AbortSignal;
             serviceId: TServiceIdentity;
             groupId: string;
             reason: string;
@@ -1093,7 +968,9 @@ export class ConnectedServiceAuthGroupSwitchCoordinator<
         activeProfileId?: string | null;
         allowCurrentProfileRetry: boolean;
     }>): Promise<ConnectedServiceAuthGroupSwitchState<TServiceIdentity>> {
-        if (!this.deps.probeQuotaSnapshotsForGroup) return input.loaded;
+        const probeQuotaSnapshotsForGroup = this.deps.probeQuotaSnapshotsForGroup;
+        input.request.signal?.throwIfAborted();
+        if (!probeQuotaSnapshotsForGroup) return input.loaded;
         const profileIds = resolveConnectedServiceAuthGroupPreTurnQuotaProbeProfileIds({
             activeProfileId: input.activeProfileId ?? input.loaded.activeProfileId,
             members: input.loaded.members,
@@ -1104,16 +981,19 @@ export class ConnectedServiceAuthGroupSwitchCoordinator<
             allowCurrentProfileRetry: input.allowCurrentProfileRetry,
         });
         if (profileIds.length === 0) return input.loaded;
-        const probeResult = await this.deps.probeQuotaSnapshotsForGroup({
+        const probeResult = await observeCurrentConnectedServiceMaterializationPhase('group_quota_probe', () => probeQuotaSnapshotsForGroup.call(this.deps, {
+            signal: input.request.signal,
             serviceId: input.request.serviceId,
             groupId: input.request.groupId,
             profileIds,
             reason: input.request.reason,
-        });
+        }));
+        input.request.signal?.throwIfAborted();
         if (probeResult?.status === 'incomplete') {
             throw new ConnectedServiceAuthGroupQuotaProbeIncompleteError(probeResult);
         }
         return await this.deps.loadState({
+            signal: input.request.signal,
             serviceId: input.request.serviceId,
             groupId: input.request.groupId,
         });
@@ -1587,6 +1467,7 @@ export class ConnectedServiceAuthGroupSwitchCoordinator<
     }
 
     private async waitForLeaseOwnerOrAuthoritativeState(input: Readonly<{
+        signal?: AbortSignal;
         serviceId: TServiceIdentity;
         groupId: string;
         observedProfileId?: string | null;
@@ -1599,7 +1480,7 @@ export class ConnectedServiceAuthGroupSwitchCoordinator<
     }>> {
         try {
             return {
-                observed: await lease.waitForOwner(),
+                observed: await observeCurrentConnectedServiceMaterializationPhase('group_lease_wait', () => lease.waitForOwner({ signal: input.signal })),
                 fromAuthoritativeReread: false,
             };
         } catch (error) {
@@ -2268,6 +2149,7 @@ export class ConnectedServiceAuthGroupSwitchCoordinator<
     }
 
     async switchBeforeTurn(input: Readonly<{
+        signal?: AbortSignal;
         sessionId?: string;
         serviceId: TServiceIdentity;
         groupId: string;
@@ -2278,11 +2160,14 @@ export class ConnectedServiceAuthGroupSwitchCoordinator<
         sessionSwitchesThisHour?: number;
         memberStateOverridesByProfileId?: ReadonlyArray<ConnectedServiceAuthGroupMemberRuntimeStateOverride>;
     }>): Promise<ConnectedServiceAuthGroupSwitchResult> {
+        // Caller cancellation governs reads and waiting up to mutation admission.
+        input.signal?.throwIfAborted();
         const startedAtMs = this.deps.nowMs();
         let preloaded = applyMemberStateOverrides({
             loaded: await this.deps.loadState(input),
             overrides: input.memberStateOverridesByProfileId,
         });
+        input.signal?.throwIfAborted();
         let didProbePreTurnQuota = false;
         // Persisted model entitlement is independent of current usage quota.
         const needsQuotaProbe = !(input.reason === 'plan' && input.providerLimitId?.trim());
@@ -2304,9 +2189,11 @@ export class ConnectedServiceAuthGroupSwitchCoordinator<
             didProbePreTurnQuota = true;
         }
 
+        input.signal?.throwIfAborted();
         const lease = this.deps.leases.acquire({ ...input, accountScope: this.deps.accountScope });
         if (lease.kind === 'loser') {
             const { observed } = await this.waitForLeaseOwnerOrAuthoritativeState(input, lease);
+            input.signal?.throwIfAborted();
             if (isLeaseResultCompletion(observed)) return await this.switchBeforeTurn(input);
             const observedResult = await this.applyObservedGeneration(this.buildSessionApplyInput({
                 completion: observed,
@@ -2388,6 +2275,7 @@ export class ConnectedServiceAuthGroupSwitchCoordinator<
                 trigger: 'pre_turn', request: input, loaded, overrides: input.memberStateOverridesByProfileId,
                 activeProfileId: loaded.activeProfileId, allowCurrentProfileRetry: allowLoadedActiveProfileRetry,
             });
+            input.signal?.throwIfAborted();
             loaded = recovery.loaded;
             const selected = recovery.selected;
             if (recovery.policyResult) {
@@ -2437,6 +2325,7 @@ export class ConnectedServiceAuthGroupSwitchCoordinator<
                 TServiceIdentity
             >;
             for (;;) {
+                input.signal?.throwIfAborted();
                 try {
                     const preflightFailure = await this.preflightPredictiveSessionApply({
                         sessionId: input.sessionId,
@@ -2473,6 +2362,7 @@ export class ConnectedServiceAuthGroupSwitchCoordinator<
                         return result;
                     }
                     committed = await this.deps.commitSwitch({
+                        signal: input.signal,
                         serviceId: input.serviceId,
                         groupId: input.groupId,
                         fromProfileId: commitLoaded.activeProfileId,
@@ -2523,6 +2413,7 @@ export class ConnectedServiceAuthGroupSwitchCoordinator<
                             overrides: input.memberStateOverridesByProfileId,
                         });
                         const retrySelected = await this.selectPreparedCandidate({
+                            signal: input.signal,
                             state: commitLoaded,
                             activeProfileId: commitLoaded.activeProfileId,
                             reason: input.reason,
