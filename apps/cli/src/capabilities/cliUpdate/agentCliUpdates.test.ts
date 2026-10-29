@@ -11,7 +11,7 @@ import { createTempDirSync, removeTempDirSync } from '@/testkit/fs/tempDir';
 
 import { withAgentCliUpdates } from './agentCliUpdates';
 import { fetchAgentCliLatestVersion } from '@happier-dev/cli-common/agents';
-import { fetchGitHubLatestRelease } from '@happier-dev/release-runtime/github';
+import { fetchGitHubLatestRelease } from './githubReleaseLookup';
 
 /** Claude's manifest update facts (packages/plugins/claude/src/manifest.ts `cli.install`). */
 const claudeRuntimeSpec: AgentCliRuntimeDescriptor = {

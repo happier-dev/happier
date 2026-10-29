@@ -5,7 +5,7 @@ import { join, delimiter as PATH_DELIMITER } from 'node:path';
 import { GH_BINARY_NAME, GH_DEP_ID, GH_GITHUB_REPO, GH_RUNTIME_INSTALLABLE_POLICY } from '@happier-dev/protocol/installables/definitions/gh';
 import { INSTALLABLE_KEYS } from '@happier-dev/protocol/installables/codexAcp';
 import { execFileWithDeadline, resolveWindowsCommandInvocation, resolveWindowsCommandOnPath } from '@happier-dev/cli-common/process';
-import { fetchGitHubLatestRelease } from '@happier-dev/release-runtime/github';
+import { fetchGitHubLatestRelease } from '@/capabilities/cliUpdate/githubReleaseLookup';
 import { resolveManagedToolsRoot } from '@happier-dev/cli-common/agents';
 
 import { configuration } from '@/configuration';
@@ -75,7 +75,7 @@ export async function resolveGhNativeToken(
   }
 }
 
-const githubFetchImpl = typeof globalThis.fetch === 'function' ? globalThis.fetch.bind(globalThis) : undefined;
+const githubFetchImpl = typeof globalThis.fetch === 'function' ? globalThis.fetch : undefined;
 
 export type GhDepData = Readonly<{
   installed: boolean;

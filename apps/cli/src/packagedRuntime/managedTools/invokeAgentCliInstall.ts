@@ -8,6 +8,7 @@ import {
   type InstallAgentCliResult,
   type AgentInstallProgressCallback,
 } from '@happier-dev/cli-common/agents';
+import { fetchGitHubLatestRelease, fetchGitHubReleaseByTag } from '@/capabilities/cliUpdate/githubReleaseLookup';
 
 type AgentCliInstallIntent = 'install' | 'update';
 
@@ -99,7 +100,7 @@ export async function invokeAgentCliInstall(params: Readonly<{
     env: params.env ?? process.env,
     ...(params.signal ? { signal: params.signal } : {}),
     ...(params.onProgress ? { onProgress: params.onProgress } : {}),
-    ...(params.installerDeps ? { deps: params.installerDeps } : {}),
+    deps: { fetchGitHubLatestRelease, fetchGitHubReleaseByTag, ...params.installerDeps },
   } as const;
   const result = params.runtimeSpec
     ? await (params.installAgentCliForRuntime ?? installAgentCliForRuntimeDefault)({

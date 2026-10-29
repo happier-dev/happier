@@ -97,14 +97,14 @@ describe('invokeAgentCliInstall', () => {
       installAgentCli,
     });
 
-    expect(installAgentCli).toHaveBeenCalledWith({
+    expect(installAgentCli).toHaveBeenCalledWith(expect.objectContaining({
       agentId: 'codex',
       platform: 'linux',
       dryRun: true,
       skipIfInstalled: true,
       allowVendorRecipeExecution: false,
       env: { TEST_ENV: '1' },
-    });
+    }));
     expect(result).toEqual({
       ok: true,
       alreadyInstalled: false,

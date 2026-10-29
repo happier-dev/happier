@@ -1,6 +1,7 @@
 import {
   classifyAgentCliInstall,
   fetchAgentCliLatestVersion,
+  resolveAgentCliLatestVersionSource,
   resolvePlatformFromNodePlatform,
   type AgentCliInstallSource,
   type AgentCliLatestVersionFacts,
@@ -10,7 +11,6 @@ import {
 } from '@happier-dev/cli-common/agents';
 import { compareVersions } from '@happier-dev/cli-common/update';
 import { AsyncTtlCache } from '@happier-dev/protocol/common/asyncTtlCache';
-import { GitHubReleaseRateLimitError } from '@happier-dev/release-runtime/github';
 
 import { configuration } from '@/configuration';
 import { buildDetectContext } from '@/capabilities/context/buildDetectContext';
@@ -20,6 +20,7 @@ import type { CapabilitiesInvokeResponse, CapabilityDetectRequest } from '@/capa
 import { invokeAgentCliInstall } from '@/packagedRuntime/managedTools/invokeAgentCliInstall';
 import { resolveAgentCliRuntimeSpecForLookupId } from '@/packagedRuntime/managedTools/requireAgentCliCommand';
 import { logger } from '@/ui/logger';
+import { fetchGitHubLatestRelease } from './githubReleaseLookup';
 
 type InstalledCli = Readonly<{
   command: string;
@@ -95,7 +96,10 @@ export function withAgentCliUpdates(cap: Capability, agentId: string, deps: Agen
   };
   const fetchLatestVersion = deps.fetchLatestVersion
     ?? ((runtimeSpec: AgentCliRuntimeDescriptor, installSource: AgentCliInstallSource) =>
-      fetchAgentCliLatestVersion({ runtimeSpec, installSource, env, signal: deps.signal }));
+      fetchAgentCliLatestVersion({ runtimeSpec, installSource, env, signal: deps.signal,
+        deps: { fetchGitHubLatestRelease: (params) => fetchGitHubLatestRelease({ ...params,
+          cacheTtlMs: deps.latestVersionTtlMs ?? configuration.installablesRuntimeAutoUpdateCheckIntervalMs }) },
+      }));
   const latestVersionCache = new AsyncTtlCache<AgentCliLatestVersionFacts>({
     successTtlMs: deps.latestVersionTtlMs ?? configuration.installablesRuntimeAutoUpdateCheckIntervalMs,
     errorTtlMs: 0,
@@ -108,25 +112,25 @@ export function withAgentCliUpdates(cap: Capability, agentId: string, deps: Agen
     installSource: AgentCliInstallSource,
     bypassCache: boolean,
   ): Promise<AgentCliLatestVersionFacts | null> => {
-    const key = installSource === 'managed' ? 'managed' : 'registry';
-    const cached = latestVersionCache.get(key);
-    // A user refresh cannot replenish GitHub's per-IP REST budget. Reuse the
-    // existing cache only until the response's reset, not an invented retry TTL.
-    if (cached?.kind === 'error' && latestVersionCache.isFresh(cached)) return null;
-    if (!bypassCache && cached?.kind === 'success' && latestVersionCache.isFresh(cached)) return cached.value;
-    return await latestVersionCache.runDedupe(key, async () => {
+    const load = async (): Promise<AgentCliLatestVersionFacts | null> => {
       try {
-        const facts = await fetchLatestVersion(runtimeSpec, installSource);
-        latestVersionCache.setSuccess(key, facts);
-        return facts;
+        return await fetchLatestVersion(runtimeSpec, installSource);
       } catch (error) {
         deps.signal?.throwIfAborted();
-        if (error instanceof GitHubReleaseRateLimitError && error.resetAtMs !== null) {
-          latestVersionCache.setError(key, { ttlMs: Math.max(0, error.resetAtMs - Date.now()) });
-        }
         logger.debug(`[capabilities] latest version lookup failed for ${agentId}: ${error instanceof Error ? error.message : String(error)}`);
         return null;
       }
+    };
+    // GitHub reads (including refreshes) use the same owner as dependencies and
+    // installers. This cache is only for npm's source-specific release-age facts.
+    if (resolveAgentCliLatestVersionSource(runtimeSpec)?.kind === 'github_release') return load();
+    const key = installSource === 'managed' ? 'managed' : 'registry';
+    const cached = latestVersionCache.get(key);
+    if (!bypassCache && cached?.kind === 'success' && latestVersionCache.isFresh(cached)) return cached.value;
+    return await latestVersionCache.runDedupe(key, async () => {
+      const facts = await load();
+      if (facts) latestVersionCache.setSuccess(key, facts);
+      return facts;
     });
   };
 
