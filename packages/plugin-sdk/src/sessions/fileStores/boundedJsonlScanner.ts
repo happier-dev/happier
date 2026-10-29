@@ -602,7 +602,8 @@ async function scanJsonlBackwardPage(
   let fileSize = 0;
   try {
     fileSize = Math.max(0, Math.trunc((await fileSystem.stat(params.filePath)).size));
-  } catch {
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     return { items: [], nextEndOffsetBytes: 0, reachedStart: true, tailOffsetBytes: 0 };
   }
 

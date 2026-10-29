@@ -10,7 +10,7 @@ afterEach(async () => { await Promise.all(roots.splice(0).map((root) => rm(root,
 const line = (id: string, total: number) => `${JSON.stringify({ id, total })}\n`;
 // This filesystem-only fixture has no admitted process or managed API service.
 const unavailableService = async () => { throw new Error('External service unavailable in JSONL fixture'); };
-async function setup() {
+async function setup(failProjection?: () => boolean) {
   const root = await mkdtemp(join(tmpdir(), 'happier-accounting-frontier-')); roots.push(root);
   const file = join(root, 'native.jsonl');
   await writeFile(file, line('first', 10));
@@ -28,6 +28,7 @@ async function setup() {
       ripgrep: { run: unavailableService },
     }, ...(cursor ? { cursor } : {}),
     projectRecord(record, state) {
+      if (failProjection?.()) throw new Error('Transient native dependency failure');
       if (!record || typeof record !== 'object' || !('id' in record) || typeof record.id !== 'string'
         || !('total' in record) || typeof record.total !== 'number') return { state, observations: [], incomplete: true };
       // This fixture grammar is the helper's real caller-supplied projection seam.
@@ -40,6 +41,20 @@ async function setup() {
   });
   return { file, read };
 }
+it('retries a transient projection failure without acknowledging or losing an appended Usage record', async () => {
+  let fail = false;
+  const { file, read } = await setup(() => { const current = fail; fail = false; return current; });
+  const initial = await read();
+  if (!initial.ok || initial.value.outcome !== 'advanced') throw new Error('Accounting setup failed');
+  await appendFile(file, line('second', 20));
+  fail = true;
+  expect(await read(initial.value.nextCursor)).toEqual({ ok: true, value: { outcome: 'read_failed' } });
+  const retry = await read(initial.value.nextCursor);
+  expect(retry).toMatchObject({ ok: true, value: { outcome: 'advanced', observations: [{ inferenceId: 'second' }] } });
+  if (!retry.ok || retry.value.outcome !== 'advanced') throw new Error('Accounting retry failed');
+  expect(retry.value.observations).toHaveLength(1);
+  expect(await read(retry.value.nextCursor)).toEqual({ ok: true, value: { outcome: 'unchanged' } });
+});
 it('rejects a larger same-inode rewrite before treating its suffix as appended accounting', async () => {
   const { file, read } = await setup();
   const initial = await read();

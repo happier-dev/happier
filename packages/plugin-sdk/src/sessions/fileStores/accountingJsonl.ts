@@ -224,8 +224,7 @@ export async function readAgentAccountingJsonlSource(params: Readonly<{
             let projection: AgentAccountingJsonlProjection = { state: frontier.state, observations: [] };
             if (item.malformed) projection = { state: frontier.state, observations: [], incomplete: true };
             else if (item.value !== null) {
-              try { projection = await params.projectRecord(item.value, frontier.state, path, item.offset, context); }
-              catch { projection = { state: frontier.state, observations: [], incomplete: true }; }
+              projection = await params.projectRecord(item.value, frontier.state, path, item.offset, context);
             }
             frontier.state = projection.state; frontier.offset = item.endOffset;
             if (item.hash) frontier.lastRecord = { start: item.offset, end: item.endOffset, hash: item.hash };

@@ -105,6 +105,17 @@ afterEach(async () => {
 });
 
 describe('bounded JSONL session scanner', () => {
+  it('reports unreadable history as a read failure and only missing history as empty', async () => {
+    const { readJsonlFileBackwardPage } = await import('./boundedJsonlScanner.js');
+    const page = (code: string) => readJsonlFileBackwardPage({ filePath: 'history.jsonl', endOffsetBytes: null,
+      maxBytes: 4096, maxItems: 10, fileSystem: {
+        stat: async () => { throw Object.assign(new Error('Filesystem failure'), { code }); },
+        read: async () => { throw new Error('Cannot read a file without stat'); },
+      } });
+    await expect(page('EACCES')).rejects.toMatchObject({ code: 'EACCES' });
+    await expect(page('EIO')).rejects.toMatchObject({ code: 'EIO' });
+    await expect(page('ENOENT')).resolves.toMatchObject({ items: [], reachedStart: true });
+  });
   it('assembles forward multi-chunk records with linear buffer copying and exact page continuation', async () => {
     const scanner = await import('./boundedJsonlScanner.js');
     const root = await mkdtemp(join(tmpdir(), 'happier-jsonl-allocation-'));
