@@ -846,7 +846,6 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
 
     },
 
-
     inbox: {
         // Inbox screen
         emptyTitle: '都處理完了',
@@ -4230,6 +4229,16 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             hRipple: "H · 漣漪",
             hAurora: "H · 極光",
             classicRing: "經典圓環",
+            // @happier-platform:begin feat=status-lights 样式列表末尾选项
+            statusDot: '狀態點',
+            // @happier-platform:begin feat=status-lights 五灯 a11y 标签
+            statusLightIdle: '閒置',
+            statusLightWorking: '進行中',
+            statusLightDone: '已完成',
+            statusLightPending: '等待你的選擇',
+            statusLightFailed: '出現錯誤',
+            // @happier-platform:end feat=status-lights
+            // @happier-platform:end feat=status-lights
         },
         loadingIndicatorSpeed: "速度",
         loadingIndicatorSpeedDescription: "光點在圓點間移動的快慢",
@@ -4326,6 +4335,8 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         expConnectedServicesSubtitle: '啟用已連結服務設定與工作階段綁定',
         expConnectedServicesQuotas: '已連結服務配額',
         expConnectedServicesQuotasSubtitle: '顯示已連結服務的配額徽章與用量儀表',
+        expMachinesResources: '機器資源儀表',
+        expMachinesResourcesSubtitle: '啟用工作階段列表上方的機器 CPU、記憶體與磁碟狀態儀表',
         expChannelBridges: '頻道橋接',
         expChannelBridgesSubtitle: '將 Telegram 等聊天頻道連接到 Happier 工作階段（實驗性）',
         expMemorySearch: '記憶搜尋',
@@ -4381,6 +4392,10 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             projectSubtitle: '按機器 + 路徑分組工作階段',
             dateTitle: '日期',
             dateSubtitle: '按最近活動日期分組工作階段',
+            // @happier-platform:begin feat=platform-session-list-folders
+            foldersTitle: '資料夾',
+            foldersSubtitle: '依頂層資料夾分組會話',
+            // @happier-platform:end feat=platform-session-list-folders
         },
         enhancedSessionWizard: '增強工作階段精靈',
         enhancedSessionWizardEnabled: '設定檔優先的工作階段啟動器已啟用',
@@ -4544,6 +4559,9 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             emptyInThisFolder: '此資料夾中沒有相符項目',
             favoriteAdd: '加入我的最愛',
             favoriteRemove: '從我的最愛移除',
+            // @happier-platform:begin feat=recent-paths-curation
+            removeRecent: '從最近使用中移除',
+            // @happier-platform:end feat=recent-paths-curation
             hints: {
                 navigate: '導覽',
                 commit: '確認路徑',
@@ -5520,6 +5538,13 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         clearFolderFocus: '清除資料夾焦點',
         folderVisibility: '資料夾可見性',
         folderViewTree: '資料夾檢視',
+        // @happier-platform:begin feat=platform-session-list-folders
+        addTopLevelFolder: '新增資料夾',
+        addTopLevelFolderPromptTitle: '新增資料夾',
+        // @happier-platform:begin feat=platform-session-list-folders
+        newSessionWithSetup: '新增會話',
+        // @happier-platform:end feat=platform-session-list-folders
+        // @happier-platform:end feat=platform-session-list-folders
         folderViewOff: '隱藏資料夾',
         folderSortMode: '資料夾順序',
         folderSortFoldersFirst: '資料夾優先',
@@ -5604,17 +5629,6 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             managePresets: '管理預設', managePresetsMessage: '重新命名、排序或移除已儲存的提醒選項。',
             presetName: '預設名稱', movePresetUp: '上移預設', movePresetDown: '下移預設',
             noPresets: '沒有已儲存的預設', noPresetsMessage: '下次選擇自訂提醒時即可儲存。',
-        },
-        appearance: {
-            setColor: '設定顏色',
-            customColor: '自訂顏色…',
-            customColorTitle: '自訂顏色',
-            customColorMessage: '選擇一個色調，或輸入十六進位值。',
-            invalidColor: '請使用十六進位值，例如 #3A7BD5。',
-            removeColor: '移除顏色',
-            inheritedFromProject: '來自專案',
-            customColorLabel: ({ hex }: { hex: string }) => `自訂顏色 ${hex}`,
-            colors: { blue: '藍色', green: '綠色', orange: '橙色', yellow: '黃色', red: '紅色', indigo: '靛藍', purple: '紫色' },
         },
         workingSectionTitle: '正在工作',
         hideInactiveSessions: '隱藏非使用中工作階段',
@@ -5756,9 +5770,6 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         thinking: '思考中',
         thinkingSince: '思考開始時間',
         thinkingLevel: '思考等級',
-        peerReportFrom: ({ name }: { name: string }) => `來自${name}的報告`,
-        peerMessageFrom: ({ name }: { name: string }) => `來自${name}的訊息`,
-        peerUnnamedSender: '另一個代理',
         cliVersion: 'CLI 版本',
         cliVersionOutdated: '需要更新 CLI',
         cliVersionOutdatedMessage: ({ currentVersion, requiredVersion }: { currentVersion: string; requiredVersion: string }) =>
@@ -6973,6 +6984,7 @@ settingsSession: {
 	              workingStatusAnimatedTextTitle: '動態工作文字',
 	              workingStatusAnimatedTextEnabledSubtitle: '工作階段執行時輪換工作動詞',
 	              workingStatusAnimatedTextDisabledSubtitle: '工作階段執行時顯示固定的「正在工作...」標籤',
+
 	              backgroundWorkAttentionModeTitle: "背景工作期間的未讀回覆",
 	              backgroundWorkAttentionModeSubtitle: "選擇背景工作持續進行時未讀回覆的顯示位置。需要你處理的請求仍會標記為需要注意。",
 	              backgroundWorkAttentionKeepWorkingTitle: "保留工作狀態",
@@ -8587,7 +8599,6 @@ settingsSession: {
 
         },
 
-
     setupSurface: {
         acquisitionResolvingReleaseStatus: "正在尋找 Happier 命令列版本。",
         acquisitionDownloadingStatus: "正在下載 Happier 命令列。",
@@ -8748,6 +8759,11 @@ settingsSession: {
         },
         daemon: '守護程序',
         status: '狀態',
+        resources: {
+            cpu: 'CPU',
+            memory: '記憶體',
+            disk: '磁碟',
+        },
         daemonStatus: {
             unknown: '未知',
             stopped: '已停止',
@@ -8890,6 +8906,7 @@ settingsSession: {
     chatFooter: {
         permissionsTerminalOnly: '權限只會顯示在終端機中。重設或傳送訊息即可從 app 控制。',
         sessionRunningLocally: '此工作階段正在這台電腦上以本機模式執行。你可以切換到遠端，從 app 控制它。',
+        sessionRunningLocallyNoSwitch: '此工作階段正在這台電腦上以本機模式執行。',
         sessionRunningLocallyAndRemotely: '此工作階段已在 OpenCode 中本機附加，且仍可從 app 控制。',
         switchingToRemote: '正在切換到遠端模式…',
         switchToRemote: '切換到遠端',

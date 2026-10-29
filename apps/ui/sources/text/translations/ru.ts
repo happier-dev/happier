@@ -767,7 +767,6 @@ export const ru: TranslationStructure = {
 
   },
 
-
   inbox: {
     // Inbox screen
     emptyTitle: "Вы в курсе всего",
@@ -4552,6 +4551,16 @@ export const ru: TranslationStructure = {
       hRipple: "H · Рябь",
       hAurora: "H · Сияние",
       classicRing: "Классическое кольцо",
+      // @happier-platform:begin feat=status-lights 样式列表末尾选项
+      statusDot: 'Точки статуса',
+      // @happier-platform:begin feat=status-lights 五灯 a11y 标签
+      statusLightIdle: 'Простой',
+      statusLightWorking: 'Выполняется',
+      statusLightDone: 'Готово',
+      statusLightPending: 'Ожидает вашего выбора',
+      statusLightFailed: 'Ошибка',
+      // @happier-platform:end feat=status-lights
+      // @happier-platform:end feat=status-lights
     },
     loadingIndicatorSpeed: "Скорость",
     loadingIndicatorSpeedDescription: "Как быстро свет проходит по точкам",
@@ -4672,6 +4681,8 @@ export const ru: TranslationStructure = {
     expExecutionRunsSubtitle:
       "Включить панель управления запусками (суб-агенты / ревью)",
     expAttachmentsUploads: "Загрузка вложений",
+    expMachinesResources: "Индикаторы ресурсов машины",
+    expMachinesResourcesSubtitle: "Показывать индикаторы процессора, памяти и диска машины над списком сессий",
     expAttachmentsUploadsSubtitle:
       "Включить загрузку файлов/изображений для чтения агентом с диска",
     expUsageReporting: "Отчёты об использовании",
@@ -4760,6 +4771,10 @@ export const ru: TranslationStructure = {
       projectSubtitle: "Группировать сессии по машине и пути",
       dateTitle: "Дата",
       dateSubtitle: "Группировать сессии по дате последней активности",
+      // @happier-platform:begin feat=platform-session-list-folders
+      foldersTitle: "Папки",
+      foldersSubtitle: "Группировать сессии по папкам верхнего уровня",
+      // @happier-platform:end feat=platform-session-list-folders
     },
     groupInactiveSessionsByProject:
       "Группировать неактивные сессии по проектам",
@@ -5079,6 +5094,9 @@ export const ru: TranslationStructure = {
       emptyInThisFolder: "Нет совпадений в этой папке",
       favoriteAdd: "Добавить в избранное",
       favoriteRemove: "Удалить из избранного",
+      // @happier-platform:begin feat=recent-paths-curation
+      removeRecent: "Удалить из недавних",
+      // @happier-platform:end feat=recent-paths-curation
       hints: {
         navigate: "навигация",
         commit: "подтвердить путь",
@@ -5445,6 +5463,13 @@ export const ru: TranslationStructure = {
     clearFolderFocus: 'Сбросить фокус папки',
     folderVisibility: 'Видимость папок',
     folderViewTree: 'Вид папок',
+    // @happier-platform:begin feat=platform-session-list-folders
+    addTopLevelFolder: 'Новая папка',
+    addTopLevelFolderPromptTitle: 'Новая папка',
+    // @happier-platform:begin feat=platform-session-list-folders
+    newSessionWithSetup: 'Новая сессия',
+    // @happier-platform:end feat=platform-session-list-folders
+    // @happier-platform:end feat=platform-session-list-folders
     folderViewOff: 'Скрыть папки',
     folderSortMode: 'Порядок папок',
     folderSortFoldersFirst: 'Сначала папки',
@@ -5529,17 +5554,6 @@ export const ru: TranslationStructure = {
       managePresets: 'Управление шаблонами', managePresetsMessage: 'Переименовывайте, меняйте порядок или удаляйте сохранённые напоминания.',
       presetName: 'Название шаблона', movePresetUp: 'Переместить вверх', movePresetDown: 'Переместить вниз',
       noPresets: 'Нет сохранённых шаблонов', noPresetsMessage: 'Сохраните шаблон при следующем выборе своего времени.',
-    },
-    appearance: {
-      setColor: 'Задать цвет',
-      customColor: 'Свой цвет…',
-      customColorTitle: 'Свой цвет',
-      customColorMessage: 'Выберите оттенок или введите шестнадцатеричное значение.',
-      invalidColor: 'Используйте шестнадцатеричное значение, например #3A7BD5.',
-      removeColor: 'Убрать цвет',
-      inheritedFromProject: 'Из проекта',
-      customColorLabel: ({ hex }: { hex: string }) => `Свой цвет ${hex}`,
-      colors: { blue: 'Синий', green: 'Зелёный', orange: 'Оранжевый', yellow: 'Жёлтый', red: 'Красный', indigo: 'Индиго', purple: 'Фиолетовый' },
     },
     workingSectionTitle: 'В работе',
     hideInactiveSessions: 'Скрыть неактивные сессии',
@@ -5724,9 +5738,6 @@ export const ru: TranslationStructure = {
     thinking: "Думает",
     thinkingSince: "Думает с",
     thinkingLevel: "Уровень размышлений",
-    peerReportFrom: ({ name }: { name: string }) => `Отчёт от ${name}`,
-    peerMessageFrom: ({ name }: { name: string }) => `Сообщение от ${name}`,
-    peerUnnamedSender: "другого агента",
     cliVersion: "Версия CLI",
     cliVersionOutdated: "Требуется обновление CLI",
     cliVersionOutdatedMessage: ({
@@ -8248,6 +8259,7 @@ settingsSession: {
 	        workingStatusAnimatedTextTitle: 'Анимированный рабочий текст',
 	        workingStatusAnimatedTextEnabledSubtitle: 'Менять рабочие глаголы, пока сессия выполняется',
 	        workingStatusAnimatedTextDisabledSubtitle: 'Показывать постоянную метку работаю..., пока сессия выполняется',
+
 	        backgroundWorkAttentionModeTitle: "Непрочитанные ответы во время фоновой работы",
 	        backgroundWorkAttentionModeSubtitle: "Выберите, где показывать непрочитанные ответы, пока продолжается фоновая работа. Запросы к вам по-прежнему требуют внимания.",
 	        backgroundWorkAttentionKeepWorkingTitle: "Сохранять статус работы",
@@ -10618,6 +10630,11 @@ settingsSession: {
     },
     daemon: "Демон",
     status: "Статус",
+    resources: {
+        cpu: "CPU",
+        memory: "Память",
+        disk: "Диск",
+    },
     daemonStatus: {
       unknown: "Неизвестно",
       stopped: "Остановлен",
@@ -10810,6 +10827,8 @@ settingsSession: {
     permissionsTerminalOnly:
       "Разрешения отображаются только в терминале. Сбросьте их или отправьте сообщение, чтобы управлять из приложения.",
     sessionRunningLocally:
+      "Эта сессия запущена локально на этом компьютере.",
+    sessionRunningLocallyNoSwitch:
       "Эта сессия запущена локально на этом компьютере. Вы можете переключиться на удалённый режим, чтобы управлять из приложения.",
     sessionRunningLocallyAndRemotely:
       "Эта сессия локально подключена в OpenCode и по-прежнему управляется из приложения.",

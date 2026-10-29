@@ -801,7 +801,6 @@ export const pt: TranslationStructure = {
 
   },
 
-
   inbox: {
     // Inbox screen
     emptyTitle: "Tudo em dia",
@@ -4723,6 +4722,16 @@ export const pt: TranslationStructure = {
       hRipple: "H · Ondulação",
       hAurora: "H · Aurora",
       classicRing: "Anel clássico",
+      // @happier-platform:begin feat=status-lights 样式列表末尾选项
+      statusDot: 'Pontos de status',
+      // @happier-platform:begin feat=status-lights 五灯 a11y 标签
+      statusLightIdle: 'Ocioso',
+      statusLightWorking: 'Em execução',
+      statusLightDone: 'Concluído',
+      statusLightPending: 'Aguardando sua escolha',
+      statusLightFailed: 'Erro',
+      // @happier-platform:end feat=status-lights
+      // @happier-platform:end feat=status-lights
     },
     loadingIndicatorSpeed: "Velocidade",
     loadingIndicatorSpeedDescription: "A rapidez com que a luz percorre os pontos",
@@ -4843,6 +4852,8 @@ export const pt: TranslationStructure = {
       expExecutionRunsSubtitle:
         "Ativar superfícies de controle para execuções (subagentes / revisões)",
       expAttachmentsUploads: "Upload de anexos",
+      expMachinesResources: "Medidores de recursos da máquina",
+      expMachinesResourcesSubtitle: "Mostrar medidores de CPU, memória e disco da máquina acima da lista de sessões",
       expAttachmentsUploadsSubtitle:
         "Ativar upload de arquivos/imagens para que o agente possa lê-los do disco",
       expUsageReporting: "Relatórios de uso",
@@ -4935,6 +4946,10 @@ export const pt: TranslationStructure = {
       projectSubtitle: "Agrupar sessões por máquina + caminho",
       dateTitle: "Data",
       dateSubtitle: "Agrupar sessões pela data da última atividade",
+      // @happier-platform:begin feat=platform-session-list-folders
+      foldersTitle: "Pastas",
+      foldersSubtitle: "Agrupar sessões por pastas de nível superior",
+      // @happier-platform:end feat=platform-session-list-folders
     },
     groupInactiveSessionsByProject: "Agrupar sessões inativas por projeto",
     groupInactiveSessionsByProjectSubtitle:
@@ -5266,6 +5281,9 @@ export const pt: TranslationStructure = {
       emptyInThisFolder: "Sem correspondências nesta pasta",
       favoriteAdd: "Adicionar aos favoritos",
       favoriteRemove: "Remover dos favoritos",
+      // @happier-platform:begin feat=recent-paths-curation
+      removeRecent: "Remover dos recentes",
+      // @happier-platform:end feat=recent-paths-curation
       hints: {
         navigate: "navegar",
         commit: "confirmar caminho",
@@ -6620,6 +6638,13 @@ export const pt: TranslationStructure = {
     clearFolderFocus: 'Limpar foco da pasta',
     folderVisibility: 'Visibilidade de pastas',
     folderViewTree: 'Visualização de pastas',
+    // @happier-platform:begin feat=platform-session-list-folders
+    addTopLevelFolder: 'Nova pasta',
+    addTopLevelFolderPromptTitle: 'Nova pasta',
+    // @happier-platform:begin feat=platform-session-list-folders
+    newSessionWithSetup: 'Nova sessão',
+    // @happier-platform:end feat=platform-session-list-folders
+    // @happier-platform:end feat=platform-session-list-folders
     folderViewOff: 'Ocultar pastas',
     folderSortMode: 'Ordem das pastas',
     folderSortFoldersFirst: 'Pastas primeiro',
@@ -6704,17 +6729,6 @@ export const pt: TranslationStructure = {
       managePresets: 'Gerir predefinições', managePresetsMessage: 'Muda o nome, a ordem ou remove lembretes guardados.',
       presetName: 'Nome da predefinição', movePresetUp: 'Mover para cima', movePresetDown: 'Mover para baixo',
       noPresets: 'Sem predefinições guardadas', noPresetsMessage: 'Guarda uma ao escolheres um lembrete personalizado.',
-    },
-    appearance: {
-      setColor: 'Definir cor',
-      customColor: 'Cor personalizada…',
-      customColorTitle: 'Cor personalizada',
-      customColorMessage: 'Escolha um tom ou introduza um valor hexadecimal.',
-      invalidColor: 'Use um valor hexadecimal como #3A7BD5.',
-      removeColor: 'Remover cor',
-      inheritedFromProject: 'Do projeto',
-      customColorLabel: ({ hex }: { hex: string }) => `Cor personalizada ${hex}`,
-      colors: { blue: 'Azul', green: 'Verde', orange: 'Laranja', yellow: 'Amarelo', red: 'Vermelho', indigo: 'Índigo', purple: 'Roxo' },
     },
     workingSectionTitle: 'Trabalhando',
     hideInactiveSessions: 'Ocultar sessões inativas',
@@ -6910,9 +6924,6 @@ export const pt: TranslationStructure = {
     thinking: "Pensando",
     thinkingSince: "Pensando desde",
     thinkingLevel: "Nível de pensamento",
-    peerReportFrom: ({ name }: { name: string }) => `Relatório de ${name}`,
-    peerMessageFrom: ({ name }: { name: string }) => `Mensagem de ${name}`,
-    peerUnnamedSender: "outro agente",
     cliVersion: "Versão do CLI",
     cliVersionOutdated: "Atualização do CLI necessária",
     cliVersionOutdatedMessage: ({
@@ -8382,6 +8393,7 @@ settingsSession: {
 	          workingStatusAnimatedTextTitle: 'Texto de trabalho animado',
 	          workingStatusAnimatedTextEnabledSubtitle: 'Alterne verbos de trabalho enquanto uma sessão está em execução',
 	          workingStatusAnimatedTextDisabledSubtitle: 'Mostre um rótulo fixo trabalhando... enquanto uma sessão está em execução',
+
 	          backgroundWorkAttentionModeTitle: "Respostas não lidas durante o trabalho em segundo plano",
 	          backgroundWorkAttentionModeSubtitle: "Escolha onde mostrar as respostas não lidas enquanto o trabalho continua em segundo plano. As solicitações dirigidas a você continuam precisando de atenção.",
 	          backgroundWorkAttentionKeepWorkingTitle: "Manter o status de trabalho",
@@ -10673,7 +10685,6 @@ settingsSession: {
 
       },
 
-
     setupSurface: {
         acquisitionResolvingReleaseStatus: "Buscando a versão da linha de comando do Happier.",
         acquisitionDownloadingStatus: "Baixando a linha de comando do Happier.",
@@ -10837,6 +10848,11 @@ settingsSession: {
     },
     daemon: "Daemon (serviço)",
     status: "Estado",
+    resources: {
+        cpu: "CPU",
+        memory: "Memória",
+        disk: "Disco",
+    },
     daemonStatus: {
       unknown: "Desconhecido",
       stopped: "Parado",
@@ -11029,6 +11045,8 @@ settingsSession: {
     permissionsTerminalOnly:
       "As permissões são mostradas apenas no terminal. Redefina ou envie uma mensagem para controlar pelo app.",
     sessionRunningLocally:
+      "Esta sessão está sendo executada localmente neste computador.",
+    sessionRunningLocallyNoSwitch:
       "Esta sessão está sendo executada localmente neste computador. Você pode alternar para remoto para controlar pelo app.",
     sessionRunningLocallyAndRemotely:
       "Esta sessão está conectada localmente no OpenCode e ainda pode ser controlada pelo app.",

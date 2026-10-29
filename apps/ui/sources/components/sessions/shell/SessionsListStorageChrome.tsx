@@ -4,6 +4,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { MachineResourcesStrip } from '@/components/machines/resources/MachineResourcesStrip';
 import type { SessionStorageKind } from '@/sync/domains/session/sessionStorageKind';
 import { t } from '@/text';
 import { SessionListStorageTabsBar } from './SessionListStorageTabsBar';
@@ -42,6 +43,7 @@ export const SessionsListStorageChrome = React.memo((props: SessionsListStorageC
                     onSelectTab={props.onSelectStorageKind}
                 />
             ) : null}
+            <MachineResourcesStrip />
             {showDirectBrowseAction ? (
                 <ItemGroup
                     style={styles.browseActionContainer}

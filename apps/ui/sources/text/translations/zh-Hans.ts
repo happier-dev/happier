@@ -750,7 +750,6 @@ export const zhHans: TranslationStructure = {
 
   },
 
-
   inbox: {
     // Inbox screen
     emptyTitle: "已全部处理完",
@@ -4474,6 +4473,16 @@ export const zhHans: TranslationStructure = {
       hRipple: "H · 涟漪",
       hAurora: "H · 极光",
       classicRing: "经典圆环",
+      // @happier-platform:begin feat=status-lights 样式列表末尾选项
+      statusDot: '状态点',
+      // @happier-platform:begin feat=status-lights 五灯 a11y 标签
+      statusLightIdle: '空闲',
+      statusLightWorking: '进行中',
+      statusLightDone: '已完成',
+      statusLightPending: '等待你的选择',
+      statusLightFailed: '出现错误',
+      // @happier-platform:end feat=status-lights
+      // @happier-platform:end feat=status-lights
     },
     loadingIndicatorSpeed: "速度",
     loadingIndicatorSpeedDescription: "光点在圆点间移动的快慢",
@@ -4589,6 +4598,8 @@ export const zhHans: TranslationStructure = {
     expExecutionRunsSubtitle:
       "启用执行运行（子代理/审查）控制平面界面",
     expAttachmentsUploads: "附件上传",
+    expMachinesResources: "机器资源仪表",
+    expMachinesResourcesSubtitle: "启用会话列表上方的机器 CPU、内存与磁盘状态仪表",
     expAttachmentsUploadsSubtitle:
       "启用文件/图片上传，让代理可以从磁盘读取",
     expUsageReporting: "用量报告",
@@ -4673,6 +4684,10 @@ export const zhHans: TranslationStructure = {
       projectSubtitle: "按机器 + 路径分组会话",
       dateTitle: "日期",
       dateSubtitle: "按最近活动日期分组会话",
+      // @happier-platform:begin feat=platform-session-list-folders
+      foldersTitle: "文件夹",
+      foldersSubtitle: "按顶层文件夹分组会话",
+      // @happier-platform:end feat=platform-session-list-folders
     },
     groupInactiveSessionsByProject: "按项目分组非活跃会话",
     groupInactiveSessionsByProjectSubtitle: "按项目整理非活跃聊天",
@@ -4977,6 +4992,9 @@ export const zhHans: TranslationStructure = {
       emptyInThisFolder: "此文件夹内无匹配项",
       favoriteAdd: "添加到收藏",
       favoriteRemove: "从收藏中移除",
+      // @happier-platform:begin feat=recent-paths-curation
+      removeRecent: "从最近使用中移除",
+      // @happier-platform:end feat=recent-paths-curation
       hints: {
         navigate: "导航",
         commit: "确认路径",
@@ -6300,6 +6318,13 @@ export const zhHans: TranslationStructure = {
     clearFolderFocus: '清除文件夹焦点',
     folderVisibility: '文件夹可见性',
     folderViewTree: '文件夹视图',
+    // @happier-platform:begin feat=platform-session-list-folders
+    addTopLevelFolder: '新建文件夹',
+    addTopLevelFolderPromptTitle: '新建文件夹',
+    // @happier-platform:begin feat=platform-session-list-folders
+    newSessionWithSetup: '新建会话',
+    // @happier-platform:end feat=platform-session-list-folders
+    // @happier-platform:end feat=platform-session-list-folders
     folderViewOff: '隐藏文件夹',
     folderSortMode: '文件夹顺序',
     folderSortFoldersFirst: '文件夹优先',
@@ -6384,17 +6409,6 @@ export const zhHans: TranslationStructure = {
       managePresets: '管理预设', managePresetsMessage: '重命名、排序或移除已保存的提醒选项。',
       presetName: '预设名称', movePresetUp: '上移预设', movePresetDown: '下移预设',
       noPresets: '没有已保存的预设', noPresetsMessage: '下次选择自定义提醒时即可保存。',
-    },
-    appearance: {
-      setColor: '设置颜色',
-      customColor: '自定义颜色…',
-      customColorTitle: '自定义颜色',
-      customColorMessage: '选择一个色调，或输入十六进制值。',
-      invalidColor: '请使用十六进制值，例如 #3A7BD5。',
-      removeColor: '移除颜色',
-      inheritedFromProject: '来自项目',
-      customColorLabel: ({ hex }: { hex: string }) => `自定义颜色 ${hex}`,
-      colors: { blue: '蓝色', green: '绿色', orange: '橙色', yellow: '黄色', red: '红色', indigo: '靛蓝', purple: '紫色' },
     },
     workingSectionTitle: '正在工作',
     hideInactiveSessions: '隐藏非活动会话',
@@ -6576,9 +6590,6 @@ export const zhHans: TranslationStructure = {
     thinking: "思考中",
     thinkingSince: "思考开始时间",
     thinkingLevel: "思考级别",
-    peerReportFrom: ({ name }: { name: string }) => `来自${name}的报告`,
-    peerMessageFrom: ({ name }: { name: string }) => `来自${name}的消息`,
-    peerUnnamedSender: "另一个代理",
     cliVersion: "CLI 版本",
     cliVersionOutdated: "需要更新 CLI",
     cliVersionOutdatedMessage: ({
@@ -8014,6 +8025,7 @@ settingsSession: {
 	        workingStatusAnimatedTextTitle: '动态工作文本',
 	        workingStatusAnimatedTextEnabledSubtitle: '会话运行时轮换工作动词',
 	        workingStatusAnimatedTextDisabledSubtitle: '会话运行时显示固定的“正在工作...”标签',
+
 	        backgroundWorkAttentionModeTitle: "后台工作期间的未读回复",
 	        backgroundWorkAttentionModeSubtitle: "选择后台工作继续进行时未读回复的显示位置。需要你处理的请求仍会标记为需要注意。",
 	        backgroundWorkAttentionKeepWorkingTitle: "保留工作状态",
@@ -10195,7 +10207,6 @@ settingsSession: {
 
       },
 
-
     setupSurface: {
         acquisitionResolvingReleaseStatus: "正在查找 Happier 命令行版本。",
         acquisitionDownloadingStatus: "正在下载 Happier 命令行。",
@@ -10352,6 +10363,11 @@ settingsSession: {
         notify: "通知",
         auto: "自动",
       },
+    },
+    resources: {
+        cpu: "CPU",
+        memory: "内存",
+        disk: "磁盘",
     },
     daemonStatus: {
       unknown: "未知",
@@ -10537,6 +10553,8 @@ settingsSession: {
     permissionsTerminalOnly:
       "权限仅在终端中显示。重置或发送消息即可从应用中控制。",
     sessionRunningLocally:
+      "此会话正在本机上以本地模式运行。",
+    sessionRunningLocallyNoSwitch:
       "此会话正在本机上以本地模式运行。你可以切换到远程以在应用中控制。",
     sessionRunningLocallyAndRemotely:
       "此会话已在 OpenCode 中本地附加，同时仍可从应用中控制。",

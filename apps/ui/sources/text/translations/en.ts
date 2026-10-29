@@ -1155,7 +1155,6 @@ export const en = {
         status: 'Status',
     },
 
-
     status: {
         connected: 'connected',
         connecting: 'connecting',
@@ -4311,6 +4310,16 @@ export const en = {
             hRipple: "H · Ripple",
             hAurora: "H · Aurora",
             classicRing: "Classic Ring",
+            // @happier-platform:begin feat=status-lights 样式列表末尾选项
+            statusDot: 'Status dots',
+            // @happier-platform:begin feat=status-lights 五灯 a11y 标签
+            statusLightIdle: 'Idle',
+            statusLightWorking: 'Working',
+            statusLightDone: 'Done',
+            statusLightPending: 'Needs your choice',
+            statusLightFailed: 'Error',
+            // @happier-platform:end feat=status-lights
+            // @happier-platform:end feat=status-lights
         },
         loadingIndicatorSpeed: "Speed",
         loadingIndicatorSpeedDescription: "How quickly the light moves through the dots",
@@ -4434,6 +4443,8 @@ export const en = {
         expExecutionRunsSubtitle: 'Enable Subagents (reviews / delegation) control plane surfaces',
         expAttachmentsUploads: 'Attachment uploads',
         expAttachmentsUploadsSubtitle: 'Enable file/image uploads so the agent can read them from disk',
+        expMachinesResources: 'Machine resource gauges',
+        expMachinesResourcesSubtitle: 'Show machine CPU, memory, and disk gauges above the session list',
         expUsageReporting: 'Usage reporting',
         expUsageReportingSubtitle: 'Enable usage and token reporting screens',
         expScmOperations: 'Source control operations',
@@ -4506,6 +4517,10 @@ export const en = {
             projectSubtitle: 'Group sessions by machine + path',
             dateTitle: 'Date',
             dateSubtitle: 'Group sessions by last activity date',
+            // @happier-platform:begin feat=platform-session-list-folders
+            foldersTitle: 'Folders',
+            foldersSubtitle: 'Group sessions by your top-level folders',
+            // @happier-platform:end feat=platform-session-list-folders
         },
         groupInactiveSessionsByProject: 'Group inactive sessions by project',
         groupInactiveSessionsByProjectSubtitle: 'Organize inactive chats under each project',
@@ -4792,6 +4807,9 @@ export const en = {
             emptyInThisFolder: 'No matches in this folder',
             favoriteAdd: 'Add to favorites',
             favoriteRemove: 'Remove from favorites',
+            // @happier-platform:begin feat=recent-paths-curation
+            removeRecent: 'Remove from recent',
+            // @happier-platform:end feat=recent-paths-curation
             hints: {
                 navigate: 'navigate',
                 commit: 'commit path',
@@ -6163,6 +6181,13 @@ export const en = {
         clearFolderFocus: 'Clear folder focus',
         folderVisibility: 'Folder visibility',
         folderViewTree: 'Folder view',
+        // @happier-platform:begin feat=platform-session-list-folders
+        addTopLevelFolder: 'New folder',
+        addTopLevelFolderPromptTitle: 'New folder',
+        // @happier-platform:begin feat=platform-session-list-folders
+        newSessionWithSetup: 'New session',
+        // @happier-platform:end feat=platform-session-list-folders
+        // @happier-platform:end feat=platform-session-list-folders
         folderViewOff: 'Hide folders',
         folderSortMode: 'Folder order',
         folderSortFoldersFirst: 'Folders first',
@@ -6253,17 +6278,6 @@ export const en = {
             managePresets: 'Manage presets', managePresetsMessage: 'Rename, reorder, or remove your saved reminder choices.',
             presetName: 'Preset name', movePresetUp: 'Move preset up', movePresetDown: 'Move preset down',
             noPresets: 'No saved presets', noPresetsMessage: 'Save one the next time you choose a custom reminder.',
-        },
-        appearance: {
-            setColor: 'Set color',
-            customColor: 'Custom color…',
-            customColorTitle: 'Custom color',
-            customColorMessage: 'Pick a shade or enter a hex value.',
-            invalidColor: 'Use a hex value like #3A7BD5.',
-            removeColor: 'Remove color',
-            inheritedFromProject: 'From the project',
-            customColorLabel: ({ hex }: { hex: string }) => `Custom color ${hex}`,
-            colors: { blue: 'Blue', green: 'Green', orange: 'Orange', yellow: 'Yellow', red: 'Red', indigo: 'Indigo', purple: 'Purple' },
         },
         workingSectionTitle: 'Working',
         hideInactiveSessions: 'Hide inactive sessions',
@@ -6432,9 +6446,6 @@ export const en = {
         thinking: 'Thinking',
         thinkingSince: 'Thinking Since',
         thinkingLevel: 'Thinking level',
-        peerReportFrom: ({ name }: { name: string }) => `Report from ${name}`,
-        peerMessageFrom: ({ name }: { name: string }) => `Message from ${name}`,
-        peerUnnamedSender: 'another agent',
         cliVersion: 'CLI Version',
         cliVersionOutdated: 'CLI Update Required',
         cliVersionOutdatedMessage: ({ currentVersion, requiredVersion }: { currentVersion: string; requiredVersion: string }) =>
@@ -7847,6 +7858,7 @@ settingsSession: {
 	              workingStatusAnimatedTextTitle: 'Animated working text',
 	              workingStatusAnimatedTextEnabledSubtitle: 'Rotate working verbs while a session is running',
 	              workingStatusAnimatedTextDisabledSubtitle: 'Show a steady working... label while a session is running',
+
 	              backgroundWorkAttentionModeTitle: "Unread replies during background work",
 	              backgroundWorkAttentionModeSubtitle: "Choose where unread replies appear while background work continues. Requests for you still need attention.",
 	              backgroundWorkAttentionKeepWorkingTitle: "Keep working status",
@@ -9878,7 +9890,6 @@ settingsSession: {
         brandHeroGetStarted: 'Get started',
     },
 
-
     sessionGettingStarted: {
         title: {
             connectMachine: 'Set up this computer',
@@ -10107,6 +10118,11 @@ settingsSession: {
         },
         daemon: 'Daemon',
         status: 'Status',
+        resources: {
+            cpu: 'CPU',
+            memory: 'Memory',
+            disk: 'Disk',
+        },
         daemonStatus: {
             unknown: 'Unknown',
             stopped: 'Stopped',
@@ -10279,6 +10295,7 @@ settingsSession: {
     chatFooter: {
         permissionsTerminalOnly: 'Permissions are shown in the terminal only. Reset or send a message to control from the app.',
         sessionRunningLocally: 'This session is running locally on this computer. You can switch to remote to control it from the app.',
+        sessionRunningLocallyNoSwitch: 'This session is running locally on this computer.',
         sessionRunningLocallyAndRemotely: 'This session is attached locally in OpenCode and is still controllable from the app.',
         switchingToRemote: 'Switching to remote mode…',
         switchToRemote: 'Switch to remote',

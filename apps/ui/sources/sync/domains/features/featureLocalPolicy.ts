@@ -39,6 +39,7 @@ const LOCAL_POLICY_BY_FEATURE: Readonly<Partial<Record<FeatureId, FeatureLocalPo
     'sessions.direct': (settings) => resolveUiFeatureToggleEnabled(settings, 'sessions.direct'),
     'zen.navigation': (settings) => resolveUiFeatureToggleEnabled(settings, 'zen.navigation'),
     'usage.reporting': (settings) => resolveUiFeatureToggleEnabled(settings, 'usage.reporting'),
+    'machines.resources': (settings) => resolveUiFeatureToggleEnabled(settings, 'machines.resources'),
 };
 
 export function resolveLocalFeaturePolicyEnabled(featureId: FeatureId, settings: FeatureLocalPolicySettings): boolean {

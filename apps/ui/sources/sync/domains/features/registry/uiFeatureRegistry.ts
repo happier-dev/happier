@@ -26,7 +26,7 @@ export const UI_FEATURE_REGISTRY = {
     automations: {
         settingsToggle: {
             showInSettings: true,
-            isExperimental: false,
+            isExperimental: true,
             defaultEnabled: true,
             titleKey: 'settingsFeatures.expAutomations',
             subtitleKey: 'settingsFeatures.expAutomationsSubtitle',
@@ -36,8 +36,8 @@ export const UI_FEATURE_REGISTRY = {
     'execution.runs': {
         settingsToggle: {
             showInSettings: true,
-            isExperimental: false,
-            defaultEnabled: true,
+            isExperimental: true,
+            defaultEnabled: false,
             titleKey: 'settingsFeatures.expExecutionRuns',
             subtitleKey: 'settingsFeatures.expExecutionRunsSubtitle',
             icon: { ioniconName: 'code-slash-outline', color: '#AF52DE' },
@@ -92,8 +92,8 @@ export const UI_FEATURE_REGISTRY = {
     connectedServices: {
         settingsToggle: {
             showInSettings: true,
-            isExperimental: false,
-            defaultEnabled: true,
+            isExperimental: true,
+            defaultEnabled: false,
             titleKey: 'settingsFeatures.expConnectedServices',
             subtitleKey: 'settingsFeatures.expConnectedServicesSubtitle',
             icon: { ioniconName: 'link-outline', color: '#007AFF' },
@@ -102,8 +102,8 @@ export const UI_FEATURE_REGISTRY = {
     'connectedServices.quotas': {
         settingsToggle: {
             showInSettings: true,
-            isExperimental: false,
-            defaultEnabled: true,
+            isExperimental: true,
+            defaultEnabled: false,
             titleKey: 'settingsFeatures.expConnectedServicesQuotas',
             subtitleKey: 'settingsFeatures.expConnectedServicesQuotasSubtitle',
             icon: { ioniconName: 'analytics-outline', color: '#34C759' },
@@ -192,6 +192,16 @@ export const UI_FEATURE_REGISTRY = {
     },
     'machines.transfer.serverRouted': {
         settingsToggle: undefined,
+    },
+    'machines.resources': {
+        settingsToggle: {
+            showInSettings: true,
+            isExperimental: true,
+            defaultEnabled: false,
+            titleKey: 'settingsFeatures.expMachinesResources',
+            subtitleKey: 'settingsFeatures.expMachinesResourcesSubtitle',
+            icon: { ioniconName: 'speedometer-outline', color: '#007AFF' },
+        },
     },
     'social.friends': {
         settingsToggle: {
@@ -295,8 +305,8 @@ export const UI_FEATURE_REGISTRY = {
     'attachments.uploads': {
         settingsToggle: {
             showInSettings: true,
-            isExperimental: false,
-            defaultEnabled: true,
+            isExperimental: true,
+            defaultEnabled: false,
             titleKey: 'settingsFeatures.expAttachmentsUploads',
             subtitleKey: 'settingsFeatures.expAttachmentsUploadsSubtitle',
             icon: { ioniconName: 'attach-outline', color: '#007AFF' },
@@ -358,8 +368,8 @@ export const UI_FEATURE_REGISTRY = {
     'terminal.embeddedPty': {
         settingsToggle: {
             showInSettings: true,
-            isExperimental: false,
-            defaultEnabled: true,
+            isExperimental: true,
+            defaultEnabled: false,
             titleKey: 'settingsFeatures.expEmbeddedTerminal',
             subtitleKey: 'settingsFeatures.expEmbeddedTerminalSubtitle',
             icon: { ioniconName: 'terminal-outline', color: '#AF52DE' },

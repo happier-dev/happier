@@ -735,7 +735,6 @@ export const ja: TranslationStructure = {
 
   },
 
-
   inbox: {
     // Inbox screen
     emptyTitle: "すべて完了です",
@@ -4887,6 +4886,16 @@ localTailscale: {
       hRipple: "H · リップル",
       hAurora: "H · オーロラ",
       classicRing: "クラシックリング",
+      // @happier-platform:begin feat=status-lights 样式列表末尾选项
+      statusDot: 'ステータスドット',
+      // @happier-platform:begin feat=status-lights 五灯 a11y 标签
+      statusLightIdle: '待機中',
+      statusLightWorking: '実行中',
+      statusLightDone: '完了',
+      statusLightPending: '選択を待っています',
+      statusLightFailed: 'エラー',
+      // @happier-platform:end feat=status-lights
+      // @happier-platform:end feat=status-lights
     },
     loadingIndicatorSpeed: "速度",
     loadingIndicatorSpeedDescription: "光がドットを通り抜ける速さ",
@@ -5005,6 +5014,8 @@ localTailscale: {
     expExecutionRunsSubtitle:
       "実行ラン（サブエージェント/レビュー）の制御プレーンUIを有効化",
     expAttachmentsUploads: "添付ファイルのアップロード",
+    expMachinesResources: "マシンリソースゲージ",
+    expMachinesResourcesSubtitle: "セッションリストの上部にマシンのCPU・メモリ・ディスクの使用状況を表示する",
     expAttachmentsUploadsSubtitle:
       "ファイル/画像のアップロードを有効にし、エージェントがディスクから読めるようにします",
     expUsageReporting: "使用状況レポート",
@@ -5093,6 +5104,10 @@ localTailscale: {
       projectSubtitle: "マシン + パスでセッションをグループ化",
       dateTitle: "日付",
       dateSubtitle: "最終アクティビティの日付でセッションをグループ化",
+      // @happier-platform:begin feat=platform-session-list-folders
+      foldersTitle: "フォルダー",
+      foldersSubtitle: "最上位フォルダーでセッションを分類",
+      // @happier-platform:end feat=platform-session-list-folders
     },
     groupInactiveSessionsByProject:
       "非アクティブセッションをプロジェクト別にグループ化",
@@ -5422,6 +5437,9 @@ localTailscale: {
       emptyInThisFolder: "このフォルダーに一致するものはありません",
       favoriteAdd: "お気に入りに追加",
       favoriteRemove: "お気に入りから削除",
+      // @happier-platform:begin feat=recent-paths-curation
+      removeRecent: "最近の項目から削除",
+      // @happier-platform:end feat=recent-paths-curation
       hints: {
         navigate: "移動",
         commit: "パスを確定",
@@ -6767,6 +6785,13 @@ localTailscale: {
     clearFolderFocus: 'フォルダーのフォーカスを解除',
     folderVisibility: 'フォルダー表示',
     folderViewTree: 'フォルダー表示',
+    // @happier-platform:begin feat=platform-session-list-folders
+    addTopLevelFolder: '新しいフォルダー',
+    addTopLevelFolderPromptTitle: '新しいフォルダー',
+    // @happier-platform:begin feat=platform-session-list-folders
+    newSessionWithSetup: '新規セッション',
+    // @happier-platform:end feat=platform-session-list-folders
+    // @happier-platform:end feat=platform-session-list-folders
     folderViewOff: 'フォルダーを非表示',
     folderSortMode: 'フォルダーの順序',
     folderSortFoldersFirst: 'フォルダーを先頭',
@@ -6851,17 +6876,6 @@ localTailscale: {
       managePresets: 'プリセットを管理', managePresetsMessage: '保存したリマインダーの名前、順序、削除を編集します。',
       presetName: 'プリセット名', movePresetUp: '上へ移動', movePresetDown: '下へ移動',
       noPresets: '保存済みプリセットはありません', noPresetsMessage: '次にカスタムリマインダーを選ぶ際に保存できます。',
-    },
-    appearance: {
-      setColor: '色を設定',
-      customColor: 'カスタムカラー…',
-      customColorTitle: 'カスタムカラー',
-      customColorMessage: '色を選ぶか、16進数の値を入力してください。',
-      invalidColor: '#3A7BD5 のような16進数の値を使ってください。',
-      removeColor: '色を削除',
-      inheritedFromProject: 'プロジェクトから',
-      customColorLabel: ({ hex }: { hex: string }) => `カスタムカラー ${hex}`,
-      colors: { blue: '青', green: '緑', orange: 'オレンジ', yellow: '黄', red: '赤', indigo: '藍', purple: '紫' },
     },
     workingSectionTitle: '処理中',
     hideInactiveSessions: '非アクティブなセッションを非表示',
@@ -7053,9 +7067,6 @@ localTailscale: {
     thinking: "思考中",
     thinkingSince: "思考開始時刻",
     thinkingLevel: "思考レベル",
-    peerReportFrom: ({ name }: { name: string }) => `${name} からのレポート`,
-    peerMessageFrom: ({ name }: { name: string }) => `${name} からのメッセージ`,
-    peerUnnamedSender: "別のエージェント",
     cliVersion: "CLIバージョン",
     cliVersionOutdated: "CLIの更新が必要",
     cliVersionOutdatedMessage: ({
@@ -8514,6 +8525,7 @@ settingsSession: {
 	        workingStatusAnimatedTextTitle: '作業中テキストのアニメーション',
 	        workingStatusAnimatedTextEnabledSubtitle: 'セッションの実行中に作業中の動詞を切り替えます',
 	        workingStatusAnimatedTextDisabledSubtitle: 'セッションの実行中は固定の「作業中...」ラベルを表示します',
+
 	        backgroundWorkAttentionModeTitle: "バックグラウンド処理中の未読返信",
 	        backgroundWorkAttentionModeSubtitle: "バックグラウンド処理が続いている間の未読返信の表示先を選びます。あなたへのリクエストは引き続き確認が必要です。",
 	        backgroundWorkAttentionKeepWorkingTitle: "処理中のステータスを維持",
@@ -10788,7 +10800,6 @@ settingsSession: {
 
       },
 
-
     setupSurface: {
         acquisitionResolvingReleaseStatus: "Happier コマンドラインのリリースを探しています。",
         acquisitionDownloadingStatus: "Happier コマンドラインをダウンロードしています。",
@@ -10951,6 +10962,11 @@ settingsSession: {
     },
     daemon: "デーモン",
     status: "ステータス",
+    resources: {
+        cpu: "CPU",
+        memory: "メモリ",
+        disk: "ディスク",
+    },
     daemonStatus: {
       unknown: "不明",
       stopped: "停止",
@@ -11143,6 +11159,8 @@ settingsSession: {
     permissionsTerminalOnly:
       "権限はターミナルにのみ表示されます。リセットするかメッセージを送信して、アプリから制御してください。",
     sessionRunningLocally:
+      "このセッションはこのコンピュータでローカル実行されています。",
+    sessionRunningLocallyNoSwitch:
       "このセッションはこのコンピュータでローカル実行されています。アプリから制御するにはリモートに切り替えられます。",
     sessionRunningLocallyAndRemotely:
       "このセッションは OpenCode にローカル接続されたままで、アプリからも引き続き操作できます。",

@@ -1256,7 +1256,6 @@ export const ca: TranslationStructure = {
         status: 'Estat',
     },
 
-
     status: {
         connected: 'connectat',
         connecting: 'connectant',
@@ -4380,6 +4379,16 @@ export const ca: TranslationStructure = {
             hRipple: "H · Ona",
             hAurora: "H · Aurora",
             classicRing: "Anell clàssic",
+            // @happier-platform:begin feat=status-lights 样式列表末尾选项
+            statusDot: 'Punts d’estat',
+            // @happier-platform:begin feat=status-lights 五灯 a11y 标签
+            statusLightIdle: 'Inactiu',
+            statusLightWorking: 'En curs',
+            statusLightDone: 'Completat',
+            statusLightPending: 'Espera la teva elecció',
+            statusLightFailed: 'Fallada',
+            // @happier-platform:end feat=status-lights
+            // @happier-platform:end feat=status-lights
         },
         loadingIndicatorSpeed: "Velocitat",
         loadingIndicatorSpeedDescription: "Com de ràpid recorre la llum els punts",
@@ -4485,6 +4494,8 @@ export const ca: TranslationStructure = {
         expExecutionRuns: 'Execucions',
         expExecutionRunsSubtitle: 'Activa les superfícies de control per a execucions (subagents / revisions)',
         expAttachmentsUploads: 'Pujada d’adjunts',
+        expMachinesResources: 'Indicadors de recursos de la màquina',
+        expMachinesResourcesSubtitle: 'Mostra indicadors de CPU, memòria i disc de la màquina sobre la llista de sessions',
         expAttachmentsUploadsSubtitle: 'Activa la pujada de fitxers/imatges perquè l’agent els pugui llegir del disc',
         expUsageReporting: 'Informe d’ús',
         expUsageReportingSubtitle: 'Activa pantalles d’ús i tokens',
@@ -4558,6 +4569,10 @@ export const ca: TranslationStructure = {
             projectSubtitle: 'Agrupa les sessions per màquina + camí',
             dateTitle: 'Data',
             dateSubtitle: 'Agrupa les sessions per la data de l\'última activitat',
+            // @happier-platform:begin feat=platform-session-list-folders
+            foldersTitle: 'Carpetes',
+            foldersSubtitle: 'Agrupa sessions per carpetes de nivell superior',
+            // @happier-platform:end feat=platform-session-list-folders
         },
         groupInactiveSessionsByProject: 'Agrupa les sessions inactives per projecte',
         groupInactiveSessionsByProjectSubtitle: 'Organitza els xats inactius per projecte',
@@ -4834,6 +4849,9 @@ deps: {
             emptyInThisFolder: 'Sense coincidències en aquesta carpeta',
             favoriteAdd: 'Afegeix als preferits',
             favoriteRemove: 'Treu dels preferits',
+            // @happier-platform:begin feat=recent-paths-curation
+            removeRecent: 'Elimina dels recents',
+            // @happier-platform:end feat=recent-paths-curation
             hints: {
                 navigate: 'navega',
                 commit: 'confirma el camí',
@@ -6138,6 +6156,13 @@ deps: {
         clearFolderFocus: 'Neteja el focus de carpeta',
         folderVisibility: 'Visibilitat de carpetes',
         folderViewTree: 'Vista de carpetes',
+        // @happier-platform:begin feat=platform-session-list-folders
+        addTopLevelFolder: 'Nova carpeta',
+        addTopLevelFolderPromptTitle: 'Nova carpeta',
+        // @happier-platform:begin feat=platform-session-list-folders
+        newSessionWithSetup: 'Nova sessió',
+        // @happier-platform:end feat=platform-session-list-folders
+        // @happier-platform:end feat=platform-session-list-folders
         folderViewOff: 'Amaga carpetes',
         folderSortMode: 'Ordre de carpetes',
         folderSortFoldersFirst: 'Carpetes primer',
@@ -6222,17 +6247,6 @@ deps: {
             managePresets: 'Gestiona els predefinits', managePresetsMessage: 'Canvia el nom, l’ordre o elimina les opcions desades.',
             presetName: 'Nom del predefinit', movePresetUp: 'Mou amunt', movePresetDown: 'Mou avall',
             noPresets: 'Cap predefinit desat', noPresetsMessage: 'Desa’n un quan triïs un recordatori personalitzat.',
-        },
-        appearance: {
-            setColor: 'Defineix el color',
-            customColor: 'Color personalitzat…',
-            customColorTitle: 'Color personalitzat',
-            customColorMessage: 'Tria un to o introdueix un valor hexadecimal.',
-            invalidColor: 'Fes servir un valor hexadecimal com #3A7BD5.',
-            removeColor: 'Treu el color',
-            inheritedFromProject: 'Del projecte',
-            customColorLabel: ({ hex }: { hex: string }) => `Color personalitzat ${hex}`,
-            colors: { blue: 'Blau', green: 'Verd', orange: 'Taronja', yellow: 'Groc', red: 'Vermell', indigo: 'Indi', purple: 'Porpra' },
         },
         workingSectionTitle: 'Treballant',
         hideInactiveSessions: 'Amaga sessions inactives',
@@ -6414,9 +6428,6 @@ deps: {
         thinking: 'Pensant',
         thinkingSince: 'Pensant des de',
         thinkingLevel: 'Nivell de pensament',
-        peerReportFrom: ({ name }: { name: string }) => `Informe de ${name}`,
-        peerMessageFrom: ({ name }: { name: string }) => `Missatge de ${name}`,
-        peerUnnamedSender: 'un altre agent',
         cliVersion: 'Versió del CLI',
         cliVersionOutdated: 'Actualització del CLI requerida',
         cliVersionOutdatedMessage: ({ currentVersion, requiredVersion }: { currentVersion: string; requiredVersion: string }) =>
@@ -7812,6 +7823,7 @@ settingsSession: {
 	                workingStatusAnimatedTextTitle: 'Text de treball animat',
 	                workingStatusAnimatedTextEnabledSubtitle: 'Alterna verbs de treball mentre una sessió s’executa',
 	                workingStatusAnimatedTextDisabledSubtitle: 'Mostra una etiqueta fixa de treballant... mentre una sessió s’executa',
+
 	                backgroundWorkAttentionModeTitle: "Respostes no llegides durant el treball en segon pla",
 	                backgroundWorkAttentionModeSubtitle: "Tria on es mostren les respostes no llegides mentre continua el treball en segon pla. Les sol·licituds adreçades a tu continuen requerint atenció.",
 	                backgroundWorkAttentionKeepWorkingTitle: "Mantén l’estat de treball",
@@ -9782,7 +9794,6 @@ settingsSession: {
         brandHeroGetStarted: 'Comença',
     },
 
-
     sessionGettingStarted: {
         title: {
             connectMachine: 'Configura aquest ordinador',
@@ -10011,6 +10022,11 @@ settingsSession: {
             },
           daemon: 'Dimoni',
         status: 'Estat',
+        resources: {
+            cpu: 'CPU',
+            memory: 'Memòria',
+            disk: 'Disc',
+        },
         daemonStatus: {
             unknown: 'Desconegut',
             stopped: 'Aturat',
@@ -10183,6 +10199,7 @@ settingsSession: {
       chatFooter: {
           permissionsTerminalOnly: 'Els permisos només es mostren al terminal. Reinicia o envia un missatge per controlar des de l\'app.',
           sessionRunningLocally: 'This session is running locally.',
+          sessionRunningLocallyNoSwitch: 'This session is running locally.',
           sessionRunningLocallyAndRemotely: 'Aquesta sessió està adjunta localment a OpenCode i encara es pot controlar des de l’app.',
           switchingToRemote: 'Canviant al mode remot…',
           switchToRemote: 'Canvia a remot',

@@ -64,6 +64,7 @@ import {
     runMachineDetailSpawnAttempt,
     type MachineDetailSpawnAttempt,
 } from '@/components/machines/machineDetailSpawnAttempt';
+import { renameMachineWithPrompt } from '@/components/machines/renameMachineWithPrompt';
 
 
 const styles = StyleSheet.create((theme) => ({
@@ -647,45 +648,16 @@ export default function MachineDetailScreen() {
         theme.colors.text.secondary,
     ]);
 
-    const handleRenameMachine = async () => {
-        if (!machine || !machineId) return;
+    const handleRenameMachine = useCallback(async () => {
+        if (!machine) return;
 
-        const newDisplayName = await Modal.prompt(
-            t('machine.renameTitle'),
-            t('machine.renameDescription'),
-            {
-                defaultValue: machine.metadata?.displayName || '',
-                placeholder: machine.metadata?.host || t('machine.renamePlaceholder'),
-                cancelText: t('common.cancel'),
-                confirmText: t('common.rename')
-            }
-        );
-
-        if (newDisplayName !== null) {
-            setIsRenamingMachine(true);
-            try {
-                const updatedMetadata = {
-                    ...machine.metadata!,
-                    displayName: newDisplayName.trim() || undefined
-                };
-                
-                await machineUpdateMetadata(
-                    machineId,
-                    updatedMetadata,
-                    machine.metadataVersion
-                );
-            } catch (error) {
-                Modal.alert(
-                    t('common.error'),
-                    error instanceof Error ? error.message : t('machine.renameFailed')
-                );
-                // Refresh to get latest state
-                await sync.refreshMachines();
-            } finally {
-                setIsRenamingMachine(false);
-            }
+        setIsRenamingMachine(true);
+        try {
+            await renameMachineWithPrompt(machine);
+        } finally {
+            setIsRenamingMachine(false);
         }
-    };
+    }, [machine]);
 
     const updateMachineWindowsRemoteSessionLaunchMode = useCallback(async (mode: 'hidden' | 'windows_terminal' | 'console' | null) => {
         if (!machine || !machineId || !machine.metadata) return;

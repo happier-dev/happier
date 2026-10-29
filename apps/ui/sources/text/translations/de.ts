@@ -1157,7 +1157,6 @@ export const de: TranslationStructure = {
         status: 'Status',
     },
 
-
     status: {
         connected: 'verbunden',
         connecting: 'verbindet',
@@ -4291,6 +4290,16 @@ export const de: TranslationStructure = {
             hRipple: "H · Kräuseln",
             hAurora: "H · Polarlicht",
             classicRing: "Klassischer Ring",
+            // @happier-platform:begin feat=status-lights 样式列表末尾选项
+            statusDot: 'Statuspunkte',
+            // @happier-platform:begin feat=status-lights 五灯 a11y 标签
+            statusLightIdle: 'Inaktiv',
+            statusLightWorking: 'Läuft',
+            statusLightDone: 'Fertig',
+            statusLightPending: 'Wartet auf deine Auswahl',
+            statusLightFailed: 'Fehler',
+            // @happier-platform:end feat=status-lights
+            // @happier-platform:end feat=status-lights
         },
         loadingIndicatorSpeed: "Geschwindigkeit",
         loadingIndicatorSpeedDescription: "Wie schnell das Licht durch die Punkte läuft",
@@ -4413,6 +4422,8 @@ export const de: TranslationStructure = {
         expExecutionRuns: 'Subagents',
         expExecutionRunsSubtitle: 'Steuerungsoberflächen für Subagents (Reviews / Delegation) aktivieren',
         expAttachmentsUploads: 'Uploads von Anhängen',
+        expMachinesResources: 'Ressourcenanzeiger der Maschine',
+        expMachinesResourcesSubtitle: 'CPU-, Speicher- und Festplattenauslastung der Maschine über der Sitzungsliste anzeigen',
         expAttachmentsUploadsSubtitle: 'Datei- und Bild-Uploads aktivieren, damit der Agent sie von der Festplatte lesen kann',
         expUsageReporting: 'Nutzungsberichte',
         expUsageReportingSubtitle: 'Bildschirme für Nutzungs- und Token-Berichte aktivieren',
@@ -4486,6 +4497,10 @@ export const de: TranslationStructure = {
             projectSubtitle: 'Sessions nach Rechner + Pfad gruppieren',
             dateTitle: 'Datum',
             dateSubtitle: 'Sessions nach dem Datum der letzten Aktivität gruppieren',
+            // @happier-platform:begin feat=platform-session-list-folders
+            foldersTitle: 'Ordner',
+            foldersSubtitle: 'Sitzungen nach Ordnern der obersten Ebene gruppieren',
+            // @happier-platform:end feat=platform-session-list-folders
         },
         groupInactiveSessionsByProject: 'Inaktive Sessions nach Projekt gruppieren',
         groupInactiveSessionsByProjectSubtitle: 'Inaktive Chats unter ihrem jeweiligen Projekt einsortieren',
@@ -4771,6 +4786,9 @@ export const de: TranslationStructure = {
             emptyInThisFolder: 'Keine Treffer in diesem Ordner',
             favoriteAdd: 'Zu Favoriten hinzufügen',
             favoriteRemove: 'Aus Favoriten entfernen',
+            // @happier-platform:begin feat=recent-paths-curation
+            removeRecent: 'Aus Zuletzt genutzt entfernen',
+            // @happier-platform:end feat=recent-paths-curation
             hints: {
                 navigate: 'navigieren',
                 commit: 'Commit-Pfad',
@@ -6137,6 +6155,13 @@ export const de: TranslationStructure = {
         clearFolderFocus: 'Ordnerfokus aufheben',
         folderVisibility: 'Sichtbarkeit der Ordner',
         folderViewTree: 'Ordneransicht',
+        // @happier-platform:begin feat=platform-session-list-folders
+        addTopLevelFolder: 'Neuer Ordner',
+        addTopLevelFolderPromptTitle: 'Neuer Ordner',
+        // @happier-platform:begin feat=platform-session-list-folders
+        newSessionWithSetup: 'Neue Sitzung',
+        // @happier-platform:end feat=platform-session-list-folders
+        // @happier-platform:end feat=platform-session-list-folders
         folderViewOff: 'Ordner ausblenden',
         folderSortMode: 'Reihenfolge der Ordner',
         folderSortFoldersFirst: 'Ordner zuerst',
@@ -6221,17 +6246,6 @@ export const de: TranslationStructure = {
             managePresets: 'Vorlagen verwalten', managePresetsMessage: 'Gespeicherte Erinnerungen umbenennen, sortieren oder entfernen.',
             presetName: 'Vorlagenname', movePresetUp: 'Nach oben', movePresetDown: 'Nach unten',
             noPresets: 'Keine gespeicherten Vorlagen', noPresetsMessage: 'Speichere beim nächsten benutzerdefinierten Termin eine Vorlage.',
-        },
-        appearance: {
-            setColor: 'Farbe festlegen',
-            customColor: 'Eigene Farbe…',
-            customColorTitle: 'Eigene Farbe',
-            customColorMessage: 'Wähle einen Farbton oder gib einen Hex-Wert ein.',
-            invalidColor: 'Verwende einen Hex-Wert wie #3A7BD5.',
-            removeColor: 'Farbe entfernen',
-            inheritedFromProject: 'Vom Projekt',
-            customColorLabel: ({ hex }: { hex: string }) => `Eigene Farbe ${hex}`,
-            colors: { blue: 'Blau', green: 'Grün', orange: 'Orange', yellow: 'Gelb', red: 'Rot', indigo: 'Indigo', purple: 'Lila' },
         },
         workingSectionTitle: 'Arbeitet',
         hideInactiveSessions: 'Inaktive Sessions ausblenden',
@@ -6400,9 +6414,6 @@ export const de: TranslationStructure = {
         thinking: 'Nachdenken',
         thinkingSince: 'Thinking seit',
         thinkingLevel: 'Thinking-Stufe',
-        peerReportFrom: ({ name }: { name: string }) => `Bericht von ${name}`,
-        peerMessageFrom: ({ name }: { name: string }) => `Nachricht von ${name}`,
-        peerUnnamedSender: 'einem anderen Agenten',
         cliVersion: 'CLI-Version',
         cliVersionOutdated: 'CLI-Update erforderlich',
         cliVersionOutdatedMessage: ({ currentVersion, requiredVersion }: { currentVersion: string; requiredVersion: string }) =>
@@ -7815,6 +7826,7 @@ settingsSession: {
 	              workingStatusAnimatedTextTitle: 'Animierter Arbeitstext',
 	              workingStatusAnimatedTextEnabledSubtitle: 'Während eine Session läuft, wechselnde Verben zeigen',
 	              workingStatusAnimatedTextDisabledSubtitle: 'Während eine Session läuft, ein festes „arbeitet…“ zeigen',
+
 	              backgroundWorkAttentionModeTitle: "Ungelesene Antworten bei Hintergrundarbeit",
 	              backgroundWorkAttentionModeSubtitle: "Wähle, wo ungelesene Antworten erscheinen, während die Hintergrundarbeit weiterläuft. Anfragen an dich brauchen weiterhin Aufmerksamkeit.",
 	              backgroundWorkAttentionKeepWorkingTitle: "Arbeitsstatus beibehalten",
@@ -9846,7 +9858,6 @@ settingsSession: {
         brandHeroGetStarted: 'Loslegen',
     },
 
-
     sessionGettingStarted: {
         title: {
             connectMachine: 'Diesen Computer einrichten',
@@ -10075,6 +10086,11 @@ settingsSession: {
         },
         daemon: 'Daemon',
         status: 'Status',
+        resources: {
+            cpu: 'CPU',
+            memory: 'Arbeitsspeicher',
+            disk: 'Festplatte',
+        },
         daemonStatus: {
             unknown: 'Unbekannt',
             stopped: 'Gestoppt',
@@ -10247,6 +10263,7 @@ settingsSession: {
     chatFooter: {
         permissionsTerminalOnly: 'Berechtigungen erscheinen nur im Terminal. Setz zurück oder schick eine Nachricht, um sie aus der App zu steuern.',
         sessionRunningLocally: 'Diese Session läuft lokal auf diesem Computer. Du kannst auf „remote“ wechseln, um sie aus der App zu steuern.',
+        sessionRunningLocallyNoSwitch: 'Diese Session läuft lokal auf diesem Computer.',
         sessionRunningLocallyAndRemotely: 'Diese Session ist lokal in OpenCode angehängt und lässt sich weiterhin aus der App steuern.',
         switchingToRemote: 'Wechsel in den Remote-Modus…',
         switchToRemote: 'Auf remote wechseln',

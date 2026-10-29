@@ -3,6 +3,7 @@ import { normalizeSessionListBackgroundWorkAttentionMode } from '@/sync/domains/
 import {
     View,
     Platform,
+    Pressable,
     RefreshControl,
     type NativeScrollEvent,
     type NativeSyntheticEvent,
@@ -12,7 +13,7 @@ import {
 import { SessionListVirtualizedList } from '@/components/ui/lists/flashListCompat/SessionListVirtualizedList';
 import { usePathname, useRouter } from 'expo-router';
 import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
-import { SessionListViewItem, storage, useSetting } from '@/sync/domains/state/storage';
+import { SessionListViewItem, storage, useLocalSetting, useSetting } from '@/sync/domains/state/storage';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useVisibleSessionListViewData } from '@/hooks/session/useVisibleSessionListViewData';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -41,11 +42,21 @@ import {
 import { sessionTagKey } from './sessionTagUtils';
 import { t } from '@/text';
 import { Modal } from '@/modal';
+// @happier-platform:begin feat=platform-session-list-folders
+import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
+// @happier-platform:end feat=platform-session-list-folders
 import type { DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { sync } from '@/sync/sync';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+// @happier-platform:begin feat=platform-session-list-folders
+import { usePendingNewSessionPlacement } from './placement/usePendingNewSessionPlacement';
+import { setSessionFolderAssignment as setSessionFolderAssignmentOp } from '@/sync/ops/sessionOrganization';
+// @happier-platform:end feat=platform-session-list-folders
+// @happier-platform:begin feat=platform-fork-session-naming
+import { usePendingNewSessionNaming } from './naming/usePendingNewSessionNaming';
+// @happier-platform:end feat=platform-fork-session-naming
 import type { SessionListStorageFilter } from '@/sync/domains/session/sessionStorageKind';
 import { FolderGroupHeader } from './sessionFolderHeader';
 import {
@@ -189,6 +200,76 @@ const stylesheet = StyleSheet.create((theme) => ({
 }));
 
 const SESSION_LIST_END_REACHED_THRESHOLD_RATIO = 0.4;
+
+// @happier-platform:begin feat=platform-session-list-folders
+// folders 分组段头右侧的 ＋ 下拉（新建顶层文件夹 / 新建会话）。
+// 模块级组件：避免渲染体内声明导致整树 remount。
+function SessionListTopLevelCreateMenu(props: Readonly<{
+    iconColor: string;
+    onAddTopLevelFolder: () => void | Promise<void>;
+    onNewSession: () => void;
+}>) {
+    const [open, setOpen] = React.useState(false);
+    const items = React.useMemo((): DropdownMenuItem[] => [
+        {
+            id: 'top-new-session',
+            title: t('sessionsList.newSessionWithSetup'),
+            icon: <Icon name="plus-circle" size={16} color={props.iconColor} />,
+        },
+        {
+            id: 'top-add-folder',
+            title: t('sessionsList.addTopLevelFolder'),
+            icon: <Icon name="folder-open" size={16} color={props.iconColor} />,
+        },
+    ], [props.iconColor]);
+    const handleSelect = React.useCallback((itemId: string) => {
+        if (itemId === 'top-new-session') {
+            props.onNewSession();
+        } else if (itemId === 'top-add-folder') {
+            void props.onAddTopLevelFolder();
+        }
+    }, [props]);
+    return (
+        <DropdownMenu
+            open={open}
+            onOpenChange={setOpen}
+            items={items}
+            onSelect={handleSelect}
+            placement="bottom"
+            variant="slim"
+            matchTriggerWidth={false}
+            maxWidthCap={220}
+            showCategoryTitles={false}
+            popoverPortalWebTarget="body"
+            trigger={({ toggle }) => (
+                <Pressable
+                    testID="session-list-top-level-create-menu"
+                    style={topLevelCreateMenuStyles.trigger}
+                    onPress={(event) => {
+                        event?.stopPropagation?.();
+                        toggle();
+                    }}
+                    accessibilityRole="button"
+                    accessibilityLabel={t('common.add')}
+                    hitSlop={8}
+                >
+                    <Icon name="plus" size={14} color={props.iconColor} />
+                </Pressable>
+            )}
+        />
+    );
+}
+
+const topLevelCreateMenuStyles = StyleSheet.create({
+    trigger: {
+        width: 22,
+        height: 20,
+        alignItems: 'center' as const,
+        justifyContent: 'center' as const,
+        borderRadius: 999,
+    },
+});
+// @happier-platform:end feat=platform-session-list-folders
 
 function isSessionListScrollNearEnd(event: NativeSyntheticEvent<NativeScrollEvent>): boolean {
     const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
@@ -616,8 +697,6 @@ export const SessionsListContent = React.memo(function SessionsListContent(props
         rememberLastProjectSessionSelections,
         workspaceLabelsV1,
         setWorkspaceLabelsV1,
-        setWorkspaceColor,
-        setSessionAppearance,
         workspaceFaviconsEnabled,
         workspaceMachineSubtitlesEnabled,
         collapsedGroupKeysV1,
@@ -640,11 +719,20 @@ export const SessionsListContent = React.memo(function SessionsListContent(props
         sessionListSurfaceDataActive: surfaceOwnership.dataActive,
     });
     const sessionListWorkingIndicatorStyle = useSetting('sessionListNarrowWorkingIndicatorStyle');
+    // @happier-platform:begin feat=status-lights 五灯模式=外观加载指示器样式选了状态点
+    const loadingIndicatorStyle = useLocalSetting('loadingIndicatorStyle');
+    // @happier-platform:end feat=status-lights
     const backgroundWorkAttentionMode = normalizeSessionListBackgroundWorkAttentionMode(useSetting('sessionListBackgroundWorkAttentionModeV1'));
     const sessionListAgentActivityCountEnabled = useSetting('sessionListAgentActivityCountEnabled');
     const sessionListIdentityDisplay = useSessionListIdentityDisplay();
     const sessionListActiveColorMode = useSetting('sessionListActiveColorModeV1');
     const sessionListSectionModeRaw = useSetting('sessionListSectionModeV1');
+    // @happier-platform:begin feat=platform-session-list-folders
+    const sessionListActiveGroupingSetting = useSetting('sessionListActiveGroupingV1');
+    const sessionListInactiveGroupingSetting = useSetting('sessionListInactiveGroupingV1');
+    const sessionListGroupingUsesFolders = sessionListActiveGroupingSetting === 'folders'
+        || sessionListInactiveGroupingSetting === 'folders';
+    // @happier-platform:end feat=platform-session-list-folders
     const sessionReplayEnabled = useSetting('sessionReplayEnabled');
     const executionRunsEnabled = useFeatureEnabled('execution.runs');
     const forkActionContext = React.useMemo(() => ({
@@ -937,6 +1025,9 @@ export const SessionsListContent = React.memo(function SessionsListContent(props
             identityDisplay: sessionListIdentityDisplay,
             activeColorMode: normalizeActiveColorMode(sessionListActiveColorMode),
             workingIndicatorMode: normalizeWorkingIndicatorMode(sessionListWorkingIndicatorStyle),
+            // @happier-platform:begin feat=status-lights memo 字段
+            statusLightMode: loadingIndicatorStyle === 'statusDot',
+            // @happier-platform:end feat=status-lights
             workingTextMode: 'static',
             backgroundWorkAttentionMode,
             statusColors: theme.colors.status,
@@ -975,6 +1066,9 @@ export const SessionsListContent = React.memo(function SessionsListContent(props
         sessionListActiveColorMode,
         sessionListIdentityDisplay,
         sessionListWorkingIndicatorStyle,
+        // @happier-platform:begin feat=status-lights memo deps
+        loadingIndicatorStyle,
+        // @happier-platform:end feat=status-lights
         backgroundWorkAttentionMode,
         sessionTagsEnabled,
         sessionTagsV1,
@@ -1097,9 +1191,17 @@ export const SessionsListContent = React.memo(function SessionsListContent(props
 
     const handleCreateSessionFromFolder = React.useCallback((folder: { workspace?: unknown }) => {
         const workspace = folder.workspace;
+        // @happier-platform:begin feat=platform-session-list-folders
+        // 顶层虚拟文件夹（无 workspace）内新建会话：打开 /new 不带目录预填。
         if (!workspace || typeof workspace !== 'object' || (workspace as { t?: unknown }).t !== 'workspaceScope') {
+            const draftId = resolveNewSessionDraftRouteIdentity({ routeDraftId: undefined }).draftId;
+            router.push({
+                pathname: '/new',
+                params: buildNewSessionLaunchRouteParams({ draftId }),
+            } as any);
             return;
         }
+        // @happier-platform:end feat=platform-session-list-folders
         const scope = workspace as { serverId?: string | null; machineId: string; rootPath: string };
         const draftId = resolveNewSessionDraftRouteIdentity({ routeDraftId: undefined }).draftId;
         router.push({
@@ -1138,8 +1240,34 @@ export const SessionsListContent = React.memo(function SessionsListContent(props
         setSessionFoldersV1(created.next);
     }, [folderActionsEnabled, sessionFoldersV1, setSessionFoldersV1]);
 
-    const handleAddSessionSubfolder = React.useCallback(async (folder: ReturnType<typeof asSessionFolderHeaderItem>) => {
-        if (!folderActionsEnabled || !folder?.workspace) return;
+    // @happier-platform:begin feat=platform-session-list-folders
+    // 顶层虚拟文件夹：在列表顶层新建账号级全局 folder（不属于任何 workspace）。
+    const handleAddTopLevelFolder = React.useCallback(async () => {
+        if (!folderActionsEnabled) return;
+        const name = await Modal.prompt(
+            t('sessionsList.addTopLevelFolderPromptTitle'),
+            undefined,
+            {
+                placeholder: t('sessionsList.folderNamePlaceholder'),
+                confirmText: t('common.add'),
+                cancelText: t('common.cancel'),
+            },
+        );
+        if (name === null) return;
+        const created = createSessionFolder({
+            current: sessionFoldersV1,
+            parentId: null,
+            name,
+            now: Date.now(),
+        });
+        setSessionFoldersV1(created.next);
+    }, [folderActionsEnabled, sessionFoldersV1, setSessionFoldersV1]);
+    // @happier-platform:end feat=platform-session-list-folders
+
+    const handleAddSessionSubfolder = React.useCallback(async (folder: ReturnType<typeof asSessionFolderHeaderItem>) => {        // @happier-platform:begin feat=platform-session-list-folders
+        // 顶层虚拟文件夹的子文件夹也是顶层系（workspace 省略）。
+        if (!folderActionsEnabled || !folder) return;
+        // @happier-platform:end feat=platform-session-list-folders
         const name = await Modal.prompt(
             t('sessionsList.addSubfolderPromptTitle'),
             undefined,
@@ -1152,7 +1280,9 @@ export const SessionsListContent = React.memo(function SessionsListContent(props
         if (name === null) return;
         const created = createSessionFolder({
             current: sessionFoldersV1,
-            workspace: folder.workspace,
+            // @happier-platform:begin feat=platform-session-list-folders
+            workspace: folder.workspace ?? undefined,
+            // @happier-platform:end feat=platform-session-list-folders
             renderWorkspaceKey: folder.renderWorkspaceKey,
             parentId: folder.folderId,
             name,
@@ -1511,6 +1641,32 @@ export const SessionsListContent = React.memo(function SessionsListContent(props
         () => visibleSessionNavigationEntries.map((entry) => entry.sessionKey),
         [visibleSessionNavigationEntries],
     );
+
+    // @happier-platform:begin feat=platform-session-list-folders
+    // 落位消费：新建/分叉会话自动继承原会话 folder 并插入其正下方（pending 单次消费）。
+    usePendingNewSessionPlacement({
+        listItems,
+        knownSessionKeys: new Set(knownSessionKeys),
+        sessionListGroupOrderV1: currentGroupOrderMap,
+        setSessionListGroupOrderV1,
+        setSessionFolderAssignment: async (assignment) => {
+            const resolved = await resolveSessionOrganizationMutationScope(assignment.serverId);
+            if (!resolved.ok) return;
+            await setSessionFolderAssignmentOp({
+                credentials: resolved.scope.credentials,
+                serverId: assignment.serverId,
+                serverUrl: resolved.scope.serverUrl,
+                sessionId: assignment.sessionId,
+                folderId: assignment.folderId,
+            });
+        },
+    });
+    // @happier-platform:end feat=platform-session-list-folders
+    // @happier-platform:begin feat=platform-fork-session-naming
+    // 命名 watch：同配置新会话首 turn 完成后写标题（原会话名+(n)）并读回验证
+    // （时序铁律：提前写会被 agent 首 turn 的 change_title 覆盖）。
+    usePendingNewSessionNaming();
+    // @happier-platform:end feat=platform-fork-session-naming
     // Freezing the lateral-navigation order is a side effect of this surface going data-inactive:
     // on phone that happens on every `/session/*` route, so the last published order is exactly
     // the one the user was looking at when they opened a session.
@@ -1845,6 +2001,9 @@ export const SessionsListContent = React.memo(function SessionsListContent(props
                 onFolderSortModeChange={setSessionListFolderSortModeV1}
                 hideInactiveSessions={hideInactiveSessions}
                 onHideInactiveSessionsChange={setHideInactiveSessions}
+                // @happier-platform:begin feat=platform-session-list-folders
+                onAddTopLevelFolder={handleAddTopLevelFolder}
+                // @happier-platform:end feat=platform-session-list-folders
                 disabled={!folderActionsEnabled}
             />
         );
@@ -1865,6 +2024,7 @@ export const SessionsListContent = React.memo(function SessionsListContent(props
         allKnownTags,
         headerControlsAnchorKey,
         activeSearchHeaderControlsAnchorKey,
+        handleAddTopLevelFolder,
         handleHeaderSearchOpenChange,
         selectedHeaderTags,
         searchQuery,
@@ -1949,13 +2109,13 @@ export const SessionsListContent = React.memo(function SessionsListContent(props
                         item={item}
                         hasMultipleMachines={hasMultipleMachines}
                         dragHandleGesture={dragHandleGesture}
+                        workspaceLabelsV1={workspaceLabelsV1}
                         workspaceFaviconsEnabled={workspaceFaviconsEnabled}
                         workspaceMachineSubtitlesEnabled={workspaceMachineSubtitlesEnabled}
                         onMoveUp={moveActionHandlers.onMoveUp}
                         onMoveDown={moveActionHandlers.onMoveDown}
                         onRenameWorkspace={handleRenameWorkspace}
                         onResetWorkspaceName={handleResetWorkspaceName}
-                        onSetWorkspaceColor={setWorkspaceColor}
                         onCreateSession={() => handleCreateSessionFromProject(item)}
                         onAddFolder={folderActionsEnabled && resolveDurableWorkspaceRefForSessionListHeader(item)
                             ? () => handleAddFolderToProject(item)
@@ -1993,12 +2153,39 @@ export const SessionsListContent = React.memo(function SessionsListContent(props
                     collapsed={isCollapsed}
                     onPress={() => handleToggleCollapse(collapseKey)}
                     headerTestId={headerTestId}
-                    rightElement={shouldRenderHeaderControls ? renderHeaderControls(controlsAnchorKey) : null}
+                    rightElement={shouldRenderHeaderControls ? (
+                        // @happier-platform:begin feat=platform-session-list-folders
+                        // folders 分组：段头右侧 ＋ 下拉（新建顶层文件夹/新建会话），
+                        // 替代 Web 无右键菜单的顶层入口。
+                        sessionListGroupingUsesFolders ? (
+                            <>
+                                <SessionListTopLevelCreateMenu
+                                    iconColor={theme.colors.text.secondary}
+                                    onAddTopLevelFolder={handleAddTopLevelFolder}
+                                    onNewSession={() => {
+                                        const draftId = resolveNewSessionDraftRouteIdentity({ routeDraftId: undefined }).draftId;
+                                        router.push({
+                                            pathname: '/new',
+                                            params: buildNewSessionLaunchRouteParams({ draftId }),
+                                        } as any);
+                                    }}
+                                />
+                                {renderHeaderControls(controlsAnchorKey)}
+                            </>
+                        ) : renderHeaderControls(controlsAnchorKey)
+                        // @happier-platform:end feat=platform-session-list-folders
+                    ) : null}
                 />
             </SessionListHeaderFrame>
         );
     }, [
         collapsedKeys,
+        // @happier-platform:begin feat=platform-session-list-folders
+        sessionListGroupingUsesFolders,
+        handleAddTopLevelFolder,
+        theme,
+        router,
+        // @happier-platform:end feat=platform-session-list-folders
         folderActionsEnabled,
         folderViewEnabled,
         dropOverlayShared,
@@ -2013,7 +2200,6 @@ export const SessionsListContent = React.memo(function SessionsListContent(props
         handleRenameWorkspace,
         handleRenameSessionFolder,
         handleResetWorkspaceName,
-        setWorkspaceColor,
         handleToggleCollapse,
         headerControlsAnchorKey,
         hasMultipleMachines,
@@ -2172,7 +2358,6 @@ export const SessionsListContent = React.memo(function SessionsListContent(props
                 getRowNativeContextMenuOpenChangeHandler={getRowNativeContextMenuOpenChangeHandler}
                 getRowSetTagsHandler={getRowSetTagsHandler}
                 getRowTogglePinnedHandler={getRowTogglePinnedHandler}
-                onSetSessionAppearance={setSessionAppearance}
                 groupKey={groupKey}
                 item={item}
                 nativeContextMenuSessionKey={nativeContextMenuSessionKey}
@@ -2212,7 +2397,6 @@ export const SessionsListContent = React.memo(function SessionsListContent(props
         getRowNativeContextMenuOpenChangeHandler,
         getRowSetTagsHandler,
         getRowTogglePinnedHandler,
-        setSessionAppearance,
         resolveStableDropResult,
         registerTreeRowBounds,
         sessionListOrderingMode,

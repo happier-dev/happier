@@ -1157,7 +1157,6 @@ export const fr: TranslationStructure = {
         status: 'Statut',
     },
 
-
     status: {
         connected: 'connecté',
         connecting: 'connexion en cours',
@@ -4291,6 +4290,16 @@ export const fr: TranslationStructure = {
             hRipple: "H · Ondulation",
             hAurora: "H · Aurore",
             classicRing: "Anneau classique",
+            // @happier-platform:begin feat=status-lights 样式列表末尾选项
+            statusDot: 'Points d’état',
+            // @happier-platform:begin feat=status-lights 五灯 a11y 标签
+            statusLightIdle: 'Inactif',
+            statusLightWorking: 'En cours',
+            statusLightDone: 'Terminé',
+            statusLightPending: 'Attend votre choix',
+            statusLightFailed: 'Erreur',
+            // @happier-platform:end feat=status-lights
+            // @happier-platform:end feat=status-lights
         },
         loadingIndicatorSpeed: "Vitesse",
         loadingIndicatorSpeedDescription: "La vitesse à laquelle la lumière parcourt les points",
@@ -4413,6 +4422,8 @@ export const fr: TranslationStructure = {
         expExecutionRuns: 'Subagents',
         expExecutionRunsSubtitle: 'Activer les surfaces du plan de contrôle Subagents (reviews / délégation)',
         expAttachmentsUploads: 'Envoi de pièces jointes',
+        expMachinesResources: 'Jauges de ressources de la machine',
+        expMachinesResourcesSubtitle: 'Afficher les jauges de processeur, mémoire et disque de la machine au-dessus de la liste des sessions',
         expAttachmentsUploadsSubtitle: 'Activer l’envoi de fichiers/images pour que l’agent puisse les lire depuis le disque',
         expUsageReporting: 'Rapports d’utilisation',
         expUsageReportingSubtitle: 'Activer les écrans de rapport d’utilisation et de tokens',
@@ -4486,6 +4497,10 @@ export const fr: TranslationStructure = {
             projectSubtitle: 'Regrouper les sessions par machine + chemin',
             dateTitle: 'Date',
             dateSubtitle: 'Regrouper les sessions par date de dernière activité',
+            // @happier-platform:begin feat=platform-session-list-folders
+            foldersTitle: 'Dossiers',
+            foldersSubtitle: 'Regrouper les sessions par dossiers racine',
+            // @happier-platform:end feat=platform-session-list-folders
         },
         groupInactiveSessionsByProject: 'Regrouper les sessions inactives par projet',
         groupInactiveSessionsByProjectSubtitle: 'Organiser les chats inactifs sous chaque projet',
@@ -4771,6 +4786,9 @@ export const fr: TranslationStructure = {
             emptyInThisFolder: 'Aucun résultat dans ce dossier',
             favoriteAdd: 'Ajouter aux favoris',
             favoriteRemove: 'Retirer des favoris',
+            // @happier-platform:begin feat=recent-paths-curation
+            removeRecent: 'Retirer des récents',
+            // @happier-platform:end feat=recent-paths-curation
             hints: {
                 navigate: 'naviguer',
                 commit: 'valider le chemin',
@@ -6124,6 +6142,13 @@ export const fr: TranslationStructure = {
         clearFolderFocus: 'Quitter le focus dossier',
         folderVisibility: 'Visibilité des dossiers',
         folderViewTree: 'Vue dossiers',
+        // @happier-platform:begin feat=platform-session-list-folders
+        addTopLevelFolder: 'Nouveau dossier',
+        addTopLevelFolderPromptTitle: 'Nouveau dossier',
+        // @happier-platform:begin feat=platform-session-list-folders
+        newSessionWithSetup: 'Nouvelle session',
+        // @happier-platform:end feat=platform-session-list-folders
+        // @happier-platform:end feat=platform-session-list-folders
         folderViewOff: 'Masquer les dossiers',
         folderSortMode: 'Ordre des dossiers',
         folderSortFoldersFirst: 'Dossiers d’abord',
@@ -6208,17 +6233,6 @@ export const fr: TranslationStructure = {
             managePresets: 'Gérer les préréglages', managePresetsMessage: 'Renomme, réorganise ou supprime tes rappels enregistrés.',
             presetName: 'Nom du préréglage', movePresetUp: 'Déplacer vers le haut', movePresetDown: 'Déplacer vers le bas',
             noPresets: 'Aucun préréglage enregistré', noPresetsMessage: 'Enregistre-en un lors de ton prochain rappel personnalisé.',
-        },
-        appearance: {
-            setColor: 'Définir la couleur',
-            customColor: 'Couleur personnalisée…',
-            customColorTitle: 'Couleur personnalisée',
-            customColorMessage: 'Choisissez une teinte ou saisissez une valeur hexadécimale.',
-            invalidColor: 'Utilisez une valeur hexadécimale comme #3A7BD5.',
-            removeColor: 'Retirer la couleur',
-            inheritedFromProject: 'Du projet',
-            customColorLabel: ({ hex }: { hex: string }) => `Couleur personnalisée ${hex}`,
-            colors: { blue: 'Bleu', green: 'Vert', orange: 'Orange', yellow: 'Jaune', red: 'Rouge', indigo: 'Indigo', purple: 'Violet' },
         },
         workingSectionTitle: 'En cours',
         hideInactiveSessions: 'Masquer les sessions inactives',
@@ -6387,9 +6401,6 @@ export const fr: TranslationStructure = {
         thinking: 'Réflexion',
         thinkingSince: 'Réflexion depuis',
         thinkingLevel: 'Niveau de réflexion',
-        peerReportFrom: ({ name }: { name: string }) => `Rapport de ${name}`,
-        peerMessageFrom: ({ name }: { name: string }) => `Message de ${name}`,
-        peerUnnamedSender: 'cet autre agent',
         cliVersion: 'Version du CLI',
         cliVersionOutdated: 'Mise à jour du CLI requise',
         cliVersionOutdatedMessage: ({ currentVersion, requiredVersion }: { currentVersion: string; requiredVersion: string }) =>
@@ -7802,6 +7813,7 @@ settingsSession: {
 	              workingStatusAnimatedTextTitle: 'Texte d’activité animé',
 	              workingStatusAnimatedTextEnabledSubtitle: 'Fait défiler des verbes d’activité pendant qu’une session tourne',
 	              workingStatusAnimatedTextDisabledSubtitle: 'Affiche un libellé « en cours… » fixe pendant qu’une session tourne',
+
 	              backgroundWorkAttentionModeTitle: "Réponses non lues pendant le travail en arrière-plan",
 	              backgroundWorkAttentionModeSubtitle: "Choisis où afficher les réponses non lues pendant que le travail continue en arrière-plan. Les demandes qui te sont adressées nécessitent toujours ton attention.",
 	              backgroundWorkAttentionKeepWorkingTitle: "Garder le statut En cours",
@@ -9833,7 +9845,6 @@ settingsSession: {
         brandHeroGetStarted: 'Commencer',
     },
 
-
     sessionGettingStarted: {
         title: {
             connectMachine: 'Configurer cet ordinateur',
@@ -10062,6 +10073,11 @@ settingsSession: {
         },
         daemon: 'Daemon',
         status: 'État',
+        resources: {
+            cpu: 'CPU',
+            memory: 'Mémoire',
+            disk: 'Disque',
+        },
         daemonStatus: {
             unknown: 'Inconnu',
             stopped: 'Arrêté',
@@ -10234,6 +10250,7 @@ settingsSession: {
     chatFooter: {
         permissionsTerminalOnly: 'Les permissions ne s’affichent que dans le terminal. Réinitialise ou envoie un message pour piloter depuis l’app.',
         sessionRunningLocally: 'Cette session tourne localement sur cet ordinateur. Tu peux passer en distant pour la piloter depuis l’app.',
+        sessionRunningLocallyNoSwitch: 'Cette session tourne localement sur cet ordinateur.',
         sessionRunningLocallyAndRemotely: 'Cette session est attachée localement dans OpenCode et reste pilotable depuis l’app.',
         switchingToRemote: 'Passage en mode distant…',
         switchToRemote: 'Passer en distant',
