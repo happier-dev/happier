@@ -276,7 +276,27 @@ test('workflow security W6: roadmap App token has exact organization and project
   });
 });
 
+test('workflow security W7: mobile credential validation requires actor admission and inert secret data', () => {
+  const jobs = workflows.get('build-ui-mobile-local.yml').jobs;
+  for (const id of ['validate_expo_token', 'validate_apple_api_private_key']) {
+    assert.ok(guardedByActor(jobs, id), id);
+    for (const step of jobs[id].steps) assert.doesNotMatch(String(step.run ?? ''), secretReference);
+  }
+});
 
+test('workflow security W7: the real validation shells accept quoted credentials and refuse missing credentials', () => {
+  const jobs = workflows.get('build-ui-mobile-local.yml').jobs;
+  for (const [id, key] of [['validate_expo_token', 'EXPO_TOKEN'], ['validate_apple_api_private_key', 'APPLE_API_PRIVATE_KEY']]) {
+    const step = jobs[id].steps[0];
+    assert.ok(step.env?.[key]);
+    for (const value of ['', 'test-value"; $(exit 17)\nsecond-line']) {
+      const result = spawnSync('bash', ['-e', '-o', 'pipefail', '-c', step.run], {
+        env: { ...process.env, [key]: value }, encoding: 'utf8',
+      });
+      assert.equal(result.status === 0, value.length > 0, id);
+    }
+  }
+});
 
 
 

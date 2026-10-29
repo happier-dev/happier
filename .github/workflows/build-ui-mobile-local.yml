@@ -322,14 +322,17 @@ jobs:
   validate_expo_token:
     timeout-minutes: 240
     name: Validate EXPO_TOKEN
+    needs: [release_actor_guard]
     if: ${{ inputs.retry_version == '' && inputs.action != 'retry_testflight_distribution' && inputs.action != 'retry_store_publication' && (inputs.action == 'ota' || inputs.action == 'retry_android_store_submit' || inputs.platform == 'all' || inputs.platform == 'android' || inputs.platform == 'ios') }}
     runs-on: ubuntu-latest
     environment: release-shared
     steps:
       - name: Fail when EXPO_TOKEN is missing
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
         run: |
           set -euo pipefail
-          if [ -z "${{ secrets.EXPO_TOKEN }}" ]; then
+          if [ -z "$EXPO_TOKEN" ]; then
             echo "EXPO_TOKEN is required for BUILD — UI Mobile (local runner)." >&2
             echo "Set the repository secret EXPO_TOKEN, or call this workflow from a trusted workflow that provides it." >&2
             exit 1
@@ -338,14 +341,17 @@ jobs:
   validate_apple_api_private_key:
     timeout-minutes: 240
     name: Validate APPLE_API_PRIVATE_KEY (iOS submit)
+    needs: [release_actor_guard]
     if: ${{ ((inputs.action == 'build_and_submit' && (inputs.platform == 'all' || inputs.platform == 'ios')) || inputs.action == 'retry_testflight_distribution' || (inputs.action == 'retry_store_publication' && inputs.platform == 'ios')) && (inputs.environment == 'dev' || inputs.environment == 'preview' || inputs.environment == 'production') }}
     runs-on: ubuntu-latest
     environment: release-shared
     steps:
       - name: Fail when APPLE_API_PRIVATE_KEY is missing
+        env:
+          APPLE_API_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
         run: |
           set -euo pipefail
-          if [ -z "${{ secrets.APPLE_API_PRIVATE_KEY }}" ]; then
+          if [ -z "$APPLE_API_PRIVATE_KEY" ]; then
             echo "APPLE_API_PRIVATE_KEY is required for iOS submit in non-interactive mode." >&2
             echo "Set the repository secret APPLE_API_PRIVATE_KEY, or run via workflow_call from a trusted workflow that provides it." >&2
             exit 1
