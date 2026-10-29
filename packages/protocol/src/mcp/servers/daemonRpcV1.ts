@@ -78,6 +78,8 @@ export const DaemonMcpServersDetectRequestSchema = lazyZodSchema(() => z.looseOb
 
 export type DaemonMcpServersDetectRequest = z.infer<typeof DaemonMcpServersDetectRequestSchema>;
 
+export const DaemonMcpServersDetectErrorCodeSchema = lazyZodSchema(() => z.enum(['invalid_request', 'internal_error']));
+
 export const DaemonMcpServersDetectResponseSchema = lazyZodSchema(() => z.union([
   z.looseObject({
     ok: z.literal(true),
@@ -86,7 +88,7 @@ export const DaemonMcpServersDetectResponseSchema = lazyZodSchema(() => z.union(
   }),
   z.looseObject({
     ok: z.literal(false),
-    errorCode: z.enum(['invalid_request', 'internal_error']),
+    errorCode: DaemonMcpServersDetectErrorCodeSchema,
     error: z.string().check(z.minLength(1)),
   }),
 ]));
