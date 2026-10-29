@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { AccessibilityInfo, findNodeHandle, Platform } from 'react-native';
 import { useOptionalSessionTranscriptSource } from '@/components/sessions/transcript/source/SessionTranscriptSourceContext';
+import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { normalizeSessionAddress } from '@/sync/domains/session/sessionAddress';
 import { usePendingNavigationLanding, markSessionPendingAnswer, type PendingNavigationLanding } from '@/activity/source/pendingNavigationRuntime';
 import type { SessionTranscriptSource } from '@/components/sessions/transcript/source/types';
@@ -17,9 +18,12 @@ export function usePendingPromptLanding(requestId: string | null, messageId?: st
 /** Focus the real answer control after it mounts; focusing never chooses or submits an answer. */
 export function usePendingPromptPrimaryFocus(requestId: string | null, enabled: boolean, messageId?: string) {
     const landing = usePendingPromptLanding(requestId, messageId);
+    const presented = useLayoutPresentationActive();
     const nodeRef = React.useRef<unknown>(null);
     const focusedToken = React.useRef<number | null>(null);
-    const token = enabled && landing ? landing.token : null;
+    // Retained destinations receive their landing before they are revealed.
+    // A hidden host cannot take focus, so leave that intent unconsumed until presentation.
+    const token = enabled && presented && landing ? landing.token : null;
     const focus = React.useCallback(() => {
         const node = nodeRef.current;
         if (token === null || token === focusedToken.current || !node || typeof node !== 'object') return;
