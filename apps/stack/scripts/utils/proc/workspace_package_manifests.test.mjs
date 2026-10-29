@@ -90,6 +90,18 @@ test('reads quoted string globs and comments without loading installed dependenc
   await assert.rejects(readWorkspacePatterns(root), /Unsupported packages syntax/u);
 });
 
+test('reads an empty flow sequence as no workspace packages', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'hs-empty-workspace-patterns-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(join(root, 'packages', 'unused'), { recursive: true });
+  await writeJson(join(root, 'packages', 'unused', 'package.json'), { name: '@fixture/unused' });
+  for (const source of ['packages: []\n', 'packages: [ ] # no packages\r\nnodeLinker: hoisted\r\n']) {
+    await writeFile(join(root, 'pnpm-workspace.yaml'), source);
+    assert.deepEqual(await readWorkspacePatterns(root), []);
+    assert.deepEqual(await collectWorkspacePackageJsonPaths(root), []);
+  }
+});
+
 test('reads the declared Yarn predecessor workspace without requiring a pnpm manifest', async t => {
   const root = await mkdtemp(join(tmpdir(), 'hs-yarn-workspaces-'));
   t.after(() => rm(root, { recursive: true, force: true }));

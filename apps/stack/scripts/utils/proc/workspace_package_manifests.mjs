@@ -25,7 +25,7 @@ function readWorkspaceString(item, unsupported) {
 }
 
 // This reader runs before installation. Both workspace membership and patch
-// inputs consume the repository's block-string YAML without installed parsers.
+// inputs consume block-string YAML and empty collections without installed parsers.
 async function readWorkspaceStringBlock(monorepoRoot, field, { mapping = false, optional = false } = {}) {
   const workspacePath = join(monorepoRoot, 'pnpm-workspace.yaml');
   let contents;
@@ -38,6 +38,7 @@ async function readWorkspaceStringBlock(monorepoRoot, field, { mapping = false, 
   const unsupported = () => new Error(`Unsupported ${field} syntax in ${workspacePath}: expected a block ${mapping ? 'mapping of string paths' : 'sequence of string globs'}.`);
   if (header < 0 && optional) return [];
   if (mapping && header >= 0 && /^patchedDependencies:\s*\{\}\s*(?:#.*)?$/u.test(lines[header])) return [];
+  if (!mapping && header >= 0 && /^packages:\s*\[\s*\]\s*(?:#.*)?$/u.test(lines[header])) return [];
   if (header < 0 || !new RegExp(`^${field}:\\s*(?:#.*)?$`, 'u').test(lines[header])) throw unsupported();
   const values = [];
   for (const line of lines.slice(header + 1)) {
