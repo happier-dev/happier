@@ -37,6 +37,7 @@ describe('Machine rows through captured Home readers', () => {
             const { Encryption } = await import('@/sync/encryption/encryption');
             const { socketRpcCodec } = await import('@happier-dev/sync-client');
             const { machineRpcWithServerScope } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc');
+            const { sync } = await import('@/sync/sync');
             const encryption = await Encryption.create(secret);
             await encryption.initializeMachines(new Map(ids.map(id => [id, null])));
             const rpcTargets: string[] = [];
@@ -72,6 +73,9 @@ describe('Machine rows through captured Home readers', () => {
                 return response;
             } });
             try {
+                // Initial cursor capture publishes a Home wake that separates read
+                // revisions. Exercise one demand after that real startup phase.
+                expect(await sync.awaitBootstrapForegroundAcquisition()).toBe(true);
                 const results = await Promise.all(ids.map(machineId => machineRpcWithServerScope({
                     serverId: home.homes.resource!.id, machineId, method: RPC_METHODS.CAPABILITIES_DETECT,
                     payload: {}, preferScoped: true,
