@@ -71,6 +71,35 @@ describe('machine terminal ops (server-scoped routing)', () => {
         }));
     });
 
+    it('makes a 0.2 package-script rejection operation-specific without retrying or disabling shell and attach', async () => {
+        const { machineTerminalEnsure, machineTerminalRestart } = await import('./machineTerminal');
+        const rejected = { ok: false, errorCode: 'terminal_invalid_request', error: 'terminal_invalid_request' };
+        for (const create of [machineTerminalEnsure, machineTerminalRestart]) {
+            machineRpcWithServerScopeMock.mockResolvedValueOnce(rejected);
+            await expect(create('machine-1', {
+                terminalKey: 'script', launch: { kind: 'package_script', runTargetId: 'script:test' },
+            })).resolves.toEqual({ ...rejected, error: 'cli_update_required' });
+        }
+        expect(machineRpcWithServerScopeMock).toHaveBeenCalledTimes(2);
+        for (const request of machineRpcWithServerScopeMock.mock.calls) {
+            expect(request[0].payload).toEqual({
+                terminalKey: 'script', launch: { kind: 'package_script', runTargetId: 'script:test' },
+            });
+        }
+        const success = { ok: true, terminalId: 'shell', reused: false };
+        machineRpcWithServerScopeMock.mockResolvedValueOnce(success).mockResolvedValueOnce(success);
+        await expect(machineTerminalEnsure('machine-1', { terminalKey: 'plain' })).resolves.toEqual(success);
+        await expect(machineTerminalEnsure('machine-1', {
+            terminalKey: 'attach', launch: { kind: 'session_attach', sessionId: 'session-1' },
+        })).resolves.toEqual(success);
+        // Current-daemon domain refusals are not mistaken for version skew.
+        const denied = { ...rejected, error: 'project_workspace_changed' };
+        machineRpcWithServerScopeMock.mockResolvedValueOnce(denied);
+        await expect(machineTerminalEnsure('machine-1', {
+            terminalKey: 'script', launch: { kind: 'package_script', runTargetId: 'script:test' },
+        })).resolves.toEqual(denied);
+    });
+
     it('routes daemon terminal stream reads through server-scoped machine rpc', async () => {
         machineRpcWithServerScopeMock.mockResolvedValueOnce({ ok: true, terminalId: 't1', events: [], nextCursor: 1, done: false });
         const { machineTerminalStreamRead } = await import('./machineTerminal');
@@ -169,13 +198,13 @@ describe('machine terminal ops (server-scoped routing)', () => {
         }));
     });
 
-    it('routes terminal restart with an initial command through server-scoped machine rpc', async () => {
+    it('routes terminal restart with a typed login through server-scoped machine rpc', async () => {
         machineRpcWithServerScopeMock.mockResolvedValueOnce({ ok: true, terminalId: 't2', reused: false });
         const { machineTerminalRestart } = await import('./machineTerminal');
 
         const res = await machineTerminalRestart(
             'machine-1',
-            { terminalKey: 'provider-login:codex', cwd: '/tmp', cols: 100, rows: 30, initialCommand: 'codex login' },
+            { terminalKey: 'provider-login:codex', cwd: '/tmp', cols: 100, rows: 30, launch: { kind: 'agent_login', agentId: 'codex' } },
             { serverId: 'server-a' },
         );
 
@@ -189,7 +218,7 @@ describe('machine terminal ops (server-scoped routing)', () => {
                 cwd: '/tmp',
                 cols: 100,
                 rows: 30,
-                initialCommand: 'codex login',
+                launch: { kind: 'agent_login', agentId: 'codex' },
             }),
         }));
     });

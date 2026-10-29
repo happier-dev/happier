@@ -86,6 +86,19 @@ function throwUnsupportedResponse(method: string): never {
     throw new Error(`Unsupported response from machine RPC (${method})`);
 }
 
+function normalizeTerminalLaunchResponse(
+    input: DaemonTerminalEnsureRequest,
+    response: DaemonTerminalEnsureResponse,
+): DaemonTerminalEnsureResponse {
+    // 0.2 rejects this typed arm before execution. Keep the refusal scoped to
+    // this operation: never retry it as shell text or disable ordinary PTYs.
+    if (input.launch?.kind === 'package_script' && !response.ok
+        && response.errorCode === 'terminal_invalid_request' && response.error === 'terminal_invalid_request') {
+        return { ...response, error: 'cli_update_required' };
+    }
+    return response;
+}
+
 /** Null means this daemon lacks listing; operational failures retain their real result. */
 export async function machineTerminalList(
     machineId: string,
@@ -131,7 +144,7 @@ export async function machineTerminalEnsure(
         if (!parsed.success) {
             throwUnsupportedResponse(RPC_METHODS.DAEMON_TERMINAL_ENSURE);
         }
-        return parsed.data;
+        return normalizeTerminalLaunchResponse(payload, parsed.data);
     });
 }
 
@@ -317,6 +330,6 @@ export async function machineTerminalRestart(
         if (!parsed.success) {
             throwUnsupportedResponse(RPC_METHODS.DAEMON_TERMINAL_RESTART);
         }
-        return parsed.data;
+        return normalizeTerminalLaunchResponse(payload, parsed.data);
     });
 }
