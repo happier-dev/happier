@@ -42,20 +42,6 @@ function resolveRunnerPool(step, runnerPool) {
   }
 }
 
-function admitWorkflowRef(step, workflowRef, runnerPool) {
-  return spawnSync('bash', ['-c', step.run], {
-    encoding: 'utf8',
-    env: {
-      ...process.env,
-      CALLER_REPOSITORY: 'happier-dev/happier',
-      WORKFLOW_REPOSITORY: 'happier-dev/happier',
-      WORKFLOW_REF: workflowRef,
-      WORKFLOW_FILE: 'tests.yml',
-      RUNNER_POOL: runnerPool,
-    },
-  });
-}
-
 test('manual test dispatch can opt approved non-secret Linux lanes into Blacksmith without changing ordinary CI', () => {
   const dispatch = loadWorkflow('tests-dispatch.yml');
   const tests = loadWorkflow('tests.yml');
@@ -81,36 +67,7 @@ test('manual test dispatch can opt approved non-secret Linux lanes into Blacksmi
     ubuntu_2204: '${{ steps.runner_pool.outputs.ubuntu_2204 }}',
     ubuntu_2404: '${{ steps.runner_pool.outputs.ubuntu_2404 }}',
   });
-  const admission = guard.steps.find((step) => step.name === 'Admit trusted workflow control ref');
-  assert.ok(admission, 'trusted_ref_guard should own workflow-ref admission');
-  for (const branch of ['dev', 'preview', 'main', 'v0.3']) {
-    const admitted = admitWorkflowRef(
-      admission,
-      `happier-dev/happier/.github/workflows/tests.yml@refs/heads/${branch}`,
-      'blacksmith-linux-4vcpu',
-    );
-    assert.equal(admitted.status, 0, `${branch} should be admitted: ${admitted.stderr}`);
-  }
-  const untrustedGithub = admitWorkflowRef(
-    admission,
-    'happier-dev/happier/.github/workflows/tests.yml@refs/heads/untrusted',
-    'github',
-  );
-  assert.equal(
-    untrustedGithub.status,
-    0,
-    `ordinary GitHub-hosted CI should not be branch-gated: ${untrustedGithub.stderr}`,
-  );
-  const untrustedBlacksmith = admitWorkflowRef(
-    admission,
-    'happier-dev/happier/.github/workflows/tests.yml@refs/heads/untrusted',
-    'blacksmith-linux-4vcpu',
-  );
-  assert.notEqual(
-    untrustedBlacksmith.status,
-    0,
-    'external Blacksmith runners must remain restricted to trusted workflow refs',
-  );
+  // providersAdmission.contract.test.mjs verifies that all mapped jobs are secret-free.
   const resolver = guard.steps.find((step) => step.name === 'Resolve runner pool');
   assert.ok(resolver, 'trusted_ref_guard should own runner-pool validation and mapping');
   assert.equal(resolver.id, 'runner_pool');

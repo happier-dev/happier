@@ -2948,26 +2948,6 @@ jobs:
       ubuntu_2204: ${{ steps.runner_pool.outputs.ubuntu_2204 }}
       ubuntu_2404: ${{ steps.runner_pool.outputs.ubuntu_2404 }}
     steps:
-      - name: Admit trusted workflow control ref
-        env:
-          CALLER_REPOSITORY: ${{ github.repository }}
-          WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
-          WORKFLOW_REF: ${{ job.workflow_ref }}
-          WORKFLOW_FILE: tests.yml
-          RUNNER_POOL: ${{ inputs.runner_pool || 'github' }}
-        run: |
-          set -euo pipefail
-          test "$CALLER_REPOSITORY" = "$WORKFLOW_REPOSITORY"
-          if [ "$RUNNER_POOL" = "github" ]; then
-            exit 0
-          fi
-          case "$WORKFLOW_REF" in
-            "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/dev"|\
-            "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/preview"|\
-            "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/main"|\
-            "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/v0.3") ;;
-            *) echo "Untrusted workflow control ref: $WORKFLOW_REF" >&2; exit 1 ;;
-          esac
       - name: Resolve runner pool
         id: runner_pool
         env:

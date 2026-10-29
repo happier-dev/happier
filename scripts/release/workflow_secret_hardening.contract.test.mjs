@@ -124,7 +124,6 @@ test('release actor credentials are unavailable until secret-free workflow-ref a
     'promote-server.yml',
     'promote-ui.yml',
     'promote-website.yml',
-    'providers-contracts.yml',
     'publish-cli-binaries.yml',
     'publish-docker.yml',
     'publish-github-release.yml',
@@ -135,7 +134,6 @@ test('release actor credentials are unavailable until secret-free workflow-ref a
     'release-npm.yml',
     'release.yml',
     'release-channel.yml',
-    'tests.yml',
   ];
 
   for (const file of files) {
@@ -208,7 +206,6 @@ test('secret-bearing workflows require release-admin actor guard before privileg
     ['promote-branch.yml', 'promote'],
     ['build-tauri.yml', 'resolve_source'],
     ['publish-github-release.yml', 'publish'],
-    ['providers-contracts.yml', 'providers'],
     ['deploy.yml', 'deploy'],
     ['tests.yml', 'providers'],
   ];

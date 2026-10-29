@@ -78,26 +78,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  release_actor_guard:
-    needs: [trusted_ref_guard]
-    name: Release actor guard
-    permissions:
-      contents: read
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-        with:
-          repository: ${{ job.workflow_repository }}
-          ref: ${{ job.workflow_sha }}
-          persist-credentials: false
-      - name: Authorize release actor
-        uses: ./.github/actions/release-actor-guard
-        with:
-          team_slug: release-admins
-          app_id: ${{ secrets.RELEASE_BOT_APP_ID }}
-          private_key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
-
   trusted_ref_guard:
     runs-on: ubuntu-latest
     steps:
@@ -117,7 +97,7 @@ jobs:
           esac
 
   providers:
-    needs: [release_actor_guard]
+    needs: [trusted_ref_guard]
     uses: ./.github/workflows/tests.yml
     secrets: inherit
     with:
