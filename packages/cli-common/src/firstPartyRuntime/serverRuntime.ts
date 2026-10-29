@@ -6,6 +6,8 @@ export {
     resolveServerLightSqliteDatabaseUrlOptionsFromEnv,
 } from './selfHostServerEnv.js';
 export type { PrismaSqliteDatabaseUrlOptions } from './selfHostServerEnv.js';
+export { readPrismaMigrationLedger, readSqlitePrismaMigrationLedger } from './prismaMigrationLedger.js';
+export type { PrismaMigrationLedgerRow } from './prismaMigrationLedger.js';
 
 export {
     PERSONAL_HOME_UPDATER_FORWARD_RECOVERY_CAPABILITY,
@@ -13,7 +15,7 @@ export {
     RELAY_RUNTIME_IRREVERSIBLE_MIGRATIONS,
 } from './serverRuntimeContract.js';
 
-export { resolvePersonalHomeRuntimeLayout } from './personalHome/layout.js';
+export { resolvePersonalHomeRuntimeLayout, resolveHomeIrohEndpointKeyPath } from './personalHome/layout.js';
 export type { PersonalHomeRuntimeLayout } from './personalHome/layout.js';
 export {
     resolveManagedServerLightPathEnvValue,

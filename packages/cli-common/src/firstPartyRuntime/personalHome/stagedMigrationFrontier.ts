@@ -13,7 +13,7 @@ import {
     resolveServerLightSqliteDatabaseUrlOptionsFromEnv,
 } from '../selfHostServerEnv.js';
 import type { PersonalHomeRuntimeLayout } from './layout.js';
-import { openPersonalHomeSqliteDatabase, type PersonalHomeSqliteDatabase } from './sqlite.js';
+import { readSqlitePrismaMigrationLedger, type PrismaMigrationLedgerRow } from '../prismaMigrationLedger.js';
 
 export type PersonalHomeSqliteMigrationFrontierErrorCode =
     | 'installed_catalog_empty'
@@ -56,13 +56,6 @@ export type PersonalHomeMigrationProcessRunner = (input: Readonly<{
     env: NodeJS.ProcessEnv;
 }>) => Promise<void>;
 
-type LedgerRow = Readonly<{
-    migration_name: unknown;
-    checksum: unknown;
-    finished_at: unknown;
-    rolled_back_at: unknown;
-}>;
-
 const DATA_AUTHORITY_ENV_KEYS = Object.freeze([
     'DATABASE_URL',
     'RUN_MIGRATIONS',
@@ -89,22 +82,11 @@ function normalizeChecksum(value: unknown): string {
     return String(value ?? '').trim().toLowerCase();
 }
 
-function readLedger(databasePath: string): LedgerRow[] {
-    let database: PersonalHomeSqliteDatabase;
+async function readLedger(databasePath: string): Promise<readonly PrismaMigrationLedgerRow[]> {
     try {
-        database = openPersonalHomeSqliteDatabase(databasePath, { readOnly: true });
+        return await readSqlitePrismaMigrationLedger(databasePath);
     } catch {
         return fail('migration_ledger_unavailable', 'The staged SQLite migration ledger is unavailable');
-    }
-    try {
-        return database.prepare([
-            'SELECT migration_name, checksum, finished_at, rolled_back_at',
-            'FROM _prisma_migrations',
-        ].join(' ')).all() as LedgerRow[];
-    } catch {
-        return fail('migration_ledger_unavailable', 'The staged SQLite migration ledger is unavailable');
-    } finally {
-        database.close();
     }
 }
 
@@ -117,7 +99,7 @@ export async function inspectPersonalHomeSqliteMigrationFrontier(params: Readonl
         fail('installed_catalog_empty', 'The installed SQLite migration catalog is empty');
     }
     const catalogByName = new Map(params.catalog.map((migration) => [migration.name, migration]));
-    const activeRows = readLedger(params.databasePath).filter((row) => row.rolled_back_at == null);
+    const activeRows = (await readLedger(params.databasePath)).filter((row) => row.rolled_back_at == null);
     const activeNames = new Set<string>();
     const completedByName = new Map<string, PersonalHomeSqliteMigrationRecord>();
 

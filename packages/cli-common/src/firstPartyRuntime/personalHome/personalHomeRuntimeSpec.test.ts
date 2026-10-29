@@ -8,7 +8,7 @@ import {
   renderPersonalHomeRuntimeEnv,
   resolvePersonalHomeRuntimeSpec,
 } from './personalHomeRuntimeSpec.js';
-import { resolvePersonalHomeRuntimeLayout } from './layout.js';
+import { resolveHomeIrohEndpointKeyPath, resolvePersonalHomeRuntimeLayout } from './layout.js';
 import { parseRelayRuntimeTaskParams } from '../../systemTasks/kinds/relayRuntimeKinds.js';
 
 describe('Personal Home runtime purpose', () => {
@@ -220,6 +220,18 @@ describe('Personal Home runtime purpose', () => {
         },
       });
       expect(layout.databasePath).toBe('/tmp/authoritative home.sqlite');
+    });
+
+    it.each([
+      { platform: 'linux' as const, homeDir: '/home/me', expected: '/home/me/Happier Home/runtime/iroh/endpoint.key' },
+      { platform: 'darwin' as const, homeDir: '/Users/me', expected: '/Users/me/Happier Home/runtime/iroh/endpoint.key' },
+      { platform: 'win32' as const, homeDir: 'C:\\Users\\me', expected: 'C:\\Users\\me\\Happier Home\\runtime\\iroh\\endpoint.key' },
+    ])('resolves the persistent $platform transport key independently of a Postgres database', ({ platform, homeDir, expected }) => {
+      const params = { platform, homeDir, env: {
+        HAPPIER_SERVER_LIGHT_DATA_DIR: '~/Happier Home', DATABASE_URL: 'postgresql://fixture.invalid/home',
+      } };
+      expect(resolveHomeIrohEndpointKeyPath(params)).toBe(expected);
+      expect(() => resolvePersonalHomeRuntimeLayout(params)).toThrow('Personal Home requires a local SQLite DATABASE_URL');
     });
 
     it('matches Prisma Windows file URL path semantics with query parameters', () => {
