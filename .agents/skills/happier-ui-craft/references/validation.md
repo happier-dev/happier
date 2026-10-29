@@ -57,6 +57,7 @@ scope comes from the surfaces the program touched, not from a list of earlier fi
    family, popover; empty, populated, long, error, phone). Pair each with its lab scene or the closest
    shipped reference, and mark surfaces that have none. A surface missing from the inventory has not
    been verified.
+   Before `DONE`, checklist every plan row and lab element for the surface: built, ruled out (with authority), or owed. Any owed item keeps the surface incomplete.
 2. **Real, heavy data.** Render with the program's real saved objects, not only fixtures. Include
    the longest and deepest examples (built-ins, nested loops and conditions, long names, real ids,
    several steps), plus at least one object created through the live flow. Also render the sparse
@@ -206,7 +207,7 @@ Run it on the rendered screen, not the code.
 - [ ] 390px phone: nothing wide sits beside a label; nothing hidden under the tab bar or keyboard.
 - [ ] Keyboard order equals visual order; focus lands somewhere useful on open.
 - [ ] Every control has an accessible name and role; hit areas meet the target without making any control drawn larger (a control, row or gap drawn bigger than the design to reach a touch target is a finding; the touch target is the hit area, see the taste digest); reduced motion works.
-      Probe it live with `node apps/ui/scripts/qa/hitAreaProbe.mjs --session <name>` (every `[data-happier-hit-area]` frame pairwise: zero overlaps, nothing drawn under 24 px without a hit area) on phone (coarse pointer) and desktop.
+      Probe it live with `node apps/ui/scripts/qa/hitAreaProbe.mjs --session <name>` (every `[data-happier-hit-area]` frame pairwise: zero overlaps; every frame edge the browser hit-tests as its control, so no clipping box cuts the reach off; nothing drawn under 24 px without a hit area) on phone (coarse pointer) and desktop.
 
 **Truthfulness**
 

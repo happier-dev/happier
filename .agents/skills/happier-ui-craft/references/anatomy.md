@@ -65,10 +65,11 @@ Description of what the section controls, above it.
   a section starts on the same line whether or not its row has an icon.
 - Title (medium weight) says what it is. Description (secondary) says the current value, the state,
   or the consequence.
-- **Row height follows content.** Two-line rows (title + description, or a control beneath) keep the
-  roomy page row. A long index-style list of single-line rows (shortcuts, languages, a flat list of
-  names) uses compact density for the whole section: `ItemGroup density="compact"`, never a local
-  height or padding.
+- **Three row contracts.** Described collection records use `catalogRow`, including narrow
+  Settings columns; `HAPPIER_COLLECTION_LIST_METRICS.catalogRow` owns its floor, bare mark box,
+  gap and rhythm. A peer without a description keeps that collection's role, with no invented
+  copy. Title-only navigation, menus and indexes stay compact (`item`/`menu`); preference rows
+  keep their divided page anatomy. Never infer catalog role from a preference's help subtitle.
 - One control on the right. It sits inline when it is a switch, short value or chevron; the row
   stacks it beneath (`accessoryLayout="adaptive"` / `"stacked"`) when it is wider.
 - A row with a destination shows the current value as a summary before the chevron
@@ -109,26 +110,35 @@ Description of what the section controls, above it.
 - `ExpandableItem`: the row itself expands in place. Its closed state shows a summary of the value
   ("On · Regular"). Never open a form below the group, and never hide an error or required field in
   a closed disclosure.
+- One caret for every disclosure: it points at the row while closed and turns a quarter down toward
+  the body while open (the shared `HappierDisclosureTurn` rule; never a swap to up/down glyphs). An
+  `Item` header that spreads the disclosure's `headerProps` draws it at its trailing edge, after any
+  summary (`keepChevronWithRightElement` keeps it beside a right element); never pass a caret as
+  `leftElement`/`rightElement`. A header that is not an `Item` renders `DisclosureCaret`. A menu or
+  field that opens a popover keeps its own up/down caret; that is a different control.
 
 ## Collections
 
-The generic Collection (model, list/table/board/grid presentations, detail containers) is owned by
-the Triage program (`.happier/design-lab/prs-and-issues/COLLECTION-SPEC.md`). Pages consume it; this
-program's requirements are in `COLLECTION-REQUIREMENTS.md` beside the configuration-surfaces plan.
-Never build a page-local generic collection (a page-local composition is fine until the Collection
-presentation lands).
+The generic Collection (model, list/table/board/grid presentations, detail containers) lives in
+`@happier-dev/plugin-ui`; [Collection presentation](../../../../docs/collection-presentation.md)
+names its current owners. Pages bind their data, routes and Actions to those owners.
 
 - **Presentations and their detail containers.** List → list + detail (split). Grid → a drawer on
   wide screens, so the grid stays visible. Board → a drawer. Phones push. Closing returns to the same
   view with scroll, filters and search kept.
 - **Grid | List** where both help, a default per surface, remembered locally. Never a switch that
   swaps the whole page's shape.
-- **Grid cards** keep a fixed footer (status left, action right) and reserve two lines of
-  description; the footer action acts and never opens the item.
+- **One card.** Grid, shelf and Board use `CollectionCards` and its shared portable WidgetFrame
+  chrome: mark and independent right slot, title, description only when supplied, quiet facts,
+  optional rich body. Bounded `card.headerRight/facts/body` slots retain frame and activation
+  ownership; there is no divided footer. Truly title-only cards remain compact. A body height is
+  a text-scaled minimum, never a clipping cap. Interactive controls remain siblings of open.
 
 | Shape | When | Build |
 | --- | --- | --- |
 | List + detail | Named things with substantial configuration (agents, providers, machines, prompts) | `HappierListDetailLayout`; selection comes from the route |
+| Described catalog rows | Described collections, including narrow columns | `Collection` / core collection binding selects `catalogRow`; shared status leads line 2, count stays with title |
+| Cards and rich widgets | A few choices, or retained domain content | `Collection` bounded card slots / existing `WidgetFrame`; one portable chrome, domain-owned data and body lifecycle |
 | Expand in place | Shallow things with two or three settings each (MCP bindings, channels) | `ExpandableItem` rows |
 | Tiles | A handful of actions or choices that benefit from space (devices, templates) | `SelectionTiles variant="action"` |
 
@@ -142,8 +152,10 @@ presentation lands).
   (see `patterns.md` → "Adding a thing to a collection"); there is no separate "new" page.
 - Group rows by truth the user cares about ("On MacBook Pro" / "Available to install"), with
   counts. Without the data to group truthfully, show one ungrouped list rather than a false heading.
-- Rows: mark, name, optional small badge (Beta), a status line. Only trouble gets a dot. Items that
-  are not usable yet are dimmed but still selectable, with their primary action (Install) inline.
+- Catalog rows: name, optional mixed-kind word, held count/scope; canonical speaking status then
+  description. Status/fix survive narrow widths; description yields first, with full text in the
+  accessible name, preview and detail. Fix/checkbox/open are independent. Unavailable identity uses
+  the shared dim value and stays openable. Preference and work rows retain their own contracts.
 
 ## Context chips
 

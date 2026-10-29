@@ -26,6 +26,9 @@ owner, do not create one. Paths are under `apps/ui/sources/` unless stated.
 | A configuration or detail page | `ItemList` (page presentation by default) + `PageHeader` (`components/ui/layout/PageHeader.tsx`: title, description, `actions`, `leading` mark, `meta` facts with icons, and a back slot filled by the navigation chrome); settings use `SettingsPageHeader`. Non-page lists explicitly use `presentation="grouped"`. |
 | A section | `ItemGroup` with `title`, `description`, optional `action` (drops beneath the title on narrow widths); `surface="none"` for sheetless content (tiles, a button row) |
 | A row | `Item` |
+| A described catalog record, including a narrow Settings column | Shared `catalogRow` role in `HAPPIER_COLLECTION_LIST_METRICS`, selected by the Collection binding; core `Item` and public `List.Item` consume it. Preference subtitles do not select it. |
+| A card in a grid, shelf or Board | Existing `Collection` → `CollectionCards` → portable `HappierWidgetFrame`; use `card.headerRight`, `card.facts`, `card.body`, never a replacement frame |
+| A rich widget | Existing public/core `WidgetFrame` over the same portable chrome; retain disclosure, Resource/body demand, manipulation and independent controls |
 | Free content inside a sheet | `SectionContentRow` |
 | A searchable setting row | `SettingRow` / `SettingAnchor` (`components/settings/shell/SettingRow.tsx`) + a `defineSettingsPage` declaration |
 | A generic collection (list, table, board, grid + detail composition) | Public `Collection` in `@happier-dev/plugin-ui`, with the `useHappierCollection` model and layout owners in `/presentation`; see [Collection presentation](../../../../docs/collection-presentation.md). Optional visit-memory landing, drafts and route-owned open state use those owners |
@@ -84,6 +87,10 @@ Rules that come with the table:
 - A dot only for trouble (needs sign-in, offline, failed). A green dot for "fine" is noise, except
   presence (online) where it is the identity of the state.
 - Counts are quiet and tabular.
+- Capability catalog words, tone, fixes and blocking order come from
+  `presentation/capabilities/capabilityStatus.ts` in plugin-ui. The shared
+  `capabilityCollectionAnatomy` places the plain word before description and held count with title;
+  header and standalone treatments keep their existing semantics. Never add a rail/status table.
 
 ## Identity marks
 
@@ -96,6 +103,14 @@ Rules that come with the table:
 - **Glyphs and logos stand alone.** Icons and agent, provider and service marks have no backing
   tile, fill or border. Only avatars and an app icon rendered as an actual app icon are exceptions.
   Empty-state glyphs also remain bare.
+- `HappierBrandMark` is the shared drawing/fallback owner. Public marks accept admitted PNG bytes;
+  public `BrandMark` selects manifest-owned artwork and `Image` selects a PNG Resource. Catalog
+  URI inputs stay host-private. Third-party images draw as supplied, with declared theme variants;
+  only declared monochrome art is tinted. Missing/refused/broken art gets one bare grapheme in
+  secondary ink. Clean owned/curated symbols at their producer, never during render.
+- Add feedback consumes the existing Action result and `HappierMotionFeedback`: working, confirmed
+  check, then the supplied next step. `CapabilityAddBody` owns catalog selection/detail and input
+  modes; callers retain loaders, installation/review and setup. No second Add state or polling owner.
 
 ## Plugins
 

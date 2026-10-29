@@ -678,8 +678,28 @@ live in the page-presentation owners in code.
     Closing returns to the same view with its scroll, filters and search kept.
   - Offer **Grid | List** only where both genuinely help (a default per surface, remembered on the
     device). Never a switch that swaps the whole page's shape.
-  - Grid cards keep one fixed footer (status left, action right) and reserve two lines of
-    description; the footer action acts, it never opens the item.
+- **Happier has one card.** Every card in a grid, shelf or board — plugins, suggestions, jobs,
+  presets, providers, widgets' pickers — uses the Collection card owner (`CollectionCards` in
+  `@happier-dev/plugin-ui`), core and plugin alike:
+  - a **header row** the height of the identity mark: the item's logo (catalog mark box, 32) or,
+    for a group or a thing without a brand, one glyph at the row-icon size (20) in secondary ink,
+    top-left; the **right slot** top-right;
+  - the **title** below it (`heading`, one line), then the **description** (`body`, secondary ink,
+    up to two lines reserved only for items with descriptions). Truly title-only items keep the
+    compact mark-and-title card; no empty description band;
+  - one quiet **facts line** at the foot (`meta`, tertiary ink, one line): the kind, then one or
+    two facts. Nothing truncates in it: if three facts do not fit at the narrowest card width,
+    the third moves to the detail;
+  - no footer band, divider, agent strip or second box inside the card. Insets are the card
+    padding role, cards sit the card gap apart, the radius is the sheet radius, and the edge is flat;
+  - **the right slot says one thing.** An item shows its state when it speaks (Update available,
+    Needs review, Added · Sign in) or its quiet add control; a group (a job, a preset) shows the
+    marks of what it brings together — at most four distinct marks, never the same mark twice,
+    then "+N". Inside a section whose title already names the state (Installed, Needs you),
+    the state stays silent;
+  - hover paints the fill (colour only); selection is the shared ring; an unavailable card is
+    dimmed and still opens. The card opens the item; its right-slot control acts independently.
+  A card is a choice to browse and compare a few at a time. Long or scannable sets are rows.
 - **Phones recompose rather than shrink.** Only a switch, a short value or a chevron may sit to the
   right of a label; anything wider moves beneath it. A setting that can never apply on a platform is
   not shown there.
@@ -695,6 +715,22 @@ live in the page-presentation owners in code.
   title, and moves onto the title row only when there is no room for it.
 - **Glyphs and logos stand alone.** No icon, agent, provider or service mark has a backing tile,
   fill or border. Only avatars and an app icon rendered as an actual app icon are exceptions.
+- **Catalog mark decisions happen once at admission, never guessed per render.** One drawing and
+  fallback owner serves public packaged marks and the host-only catalog path; public plugin props
+  accept no remote URI:
+  - **Owned/curated logos.** Choose a symbol instead of a wordmark, trim transparent padding and
+    review optical sizing at the asset producer. Without a usable symbol, curate a letter fallback.
+  - **Third-party artwork.** Draw as supplied with contain geometry. Preserve declared theme
+    variants, including MCP icon `theme`. Never crop unknown images, infer wordmarks from aspect
+    ratio or guess contrast.
+  - **Declared theme.** Use the matching dark variant; otherwise keep the coloured image. Only
+    declared monochrome artwork uses primary-ink silhouette. No guessed silhouette or substitution.
+  - **Letter fallback.** Absent, refused or broken artwork uses the first grapheme, bare, in the
+    owner's fallback weight and secondary ink, centred in the same box. No plate, disc, tile,
+    halo or two-letter badge.
+  - Marks come from admitted catalog/contribution or package facts; generic UI never hand-draws
+    a brand or branches on an id. Host image display may acquire its selected URI; no render-time
+    cleanup or credential forwarding is authorized.
 - **Emptiness is designed.** An empty page shows a calm mark without a tile, a short title, one line
   of purpose and one primary action; an empty list or rail says so in one quiet line. A rail and its
   detail never both show the full state. Where a state has room (a page, pane or card state, about
@@ -710,8 +746,23 @@ live in the page-presentation owners in code.
   appears (pills, capsules, the status cell, scene beacons, the tray badge); rose means failure only.
   Working is a moving mark, done is quiet, healthy says nothing. Blue is reserved for focus and links;
   green appears only where "live" is the identity of the state (presence).
-- **Row height follows content.** A long list of single-line rows is compact; rows with a description
-  keep their room.
+- **Three row types, chosen by content, never by page.**
+  1. **The catalog row** — any described item (Store, Add, Settings kind columns, Installed,
+     Found, Needs you), with or without a brand: a bare mark in the 32 leading box when supplied,
+     the name (`label`), an optional quiet kind word (`meta`, tertiary; mixed-kind lists only),
+     and one description line (`body`, secondary; two on a phone). A speaking status leads line 2
+     as its word, never a pill. No dividers or sheet; use
+     `HAPPIER_COLLECTION_LIST_METRICS.catalogRow` (60 minimum, rows 2 apart, shared row radius).
+     This applies in narrow Settings columns too. A quiet count sits at the end of line 1;
+     only a fix or action sits at the row's end.
+  2. **The single-line row** — title-only navigation, menus and indexes of names use the compact
+     `rowMinHeight` step with the glyph or mark in the shared leading column.
+  3. **The preference row** — one decision with its switch, select, segmented control, field or
+     button uses the divided page row on a sheet (`Item`, page density).
+  A described collection keeps the catalog floor for a peer missing its description and centres
+  its title; no invented copy. A title-only navigation group above it stays compact. Narrow rails
+  use the shared Collection rule: name, meaningful scope, status and fix survive; description
+  yields first. Full text remains in the accessible name, preview and opened detail.
 - **Controls are truthful.** A control acting on an empty set is hidden (no "Show archived" when
   nothing is archived). When the viewer cannot take the page's main action, the page says why and
   who can. An action is offered only when every prerequisite for its success holds (sending mail
@@ -735,6 +786,59 @@ live in the page-presentation owners in code.
 
 These are shared, generally named primitives. Plugins compose the same anatomy through the public
 plugin UI package; they do not reproduce it locally.
+
+### Catalogs: the Store, Add and Installed
+
+This is the composition intent for the Catalog Store program. Shared primitives are implemented
+in 0.3 development source; the following page compositions are design requirements, not a claim
+of shipped availability or completed visual acceptance.
+
+Everything Happier can add — apps, software, MCP servers, skills, agents, providers, plugins — is
+browsed with one presentation and managed at one home per kind. The Store is where you look;
+each kind's home (its Settings page, a Machine's Setup tab, a project) is where it lives; one verb
+per kind leads there (Add, Install on…, Deploy…, Use).
+
+- **The Store page.** Its column lists Discover, Installed and Updates, then kinds, then plugin
+  pages, with Sources and developers at its foot. Discover is one wide page column, in this order:
+  1. the page header (title, one sentence), with a project scope chip when a project is in scope;
+  2. one search field across the column, `/` to focus;
+  3. **one featured item**: the same card spanning the column, under a section saying why it is featured;
+  4. **Suggested for {project}**, only with a project in scope: three cards quoting the facts they
+     come from; these items are not repeated further down the page;
+  5. **Browse by job**: job cards with a glyph, what you want done, the marks of what does it,
+     and "N ways · kinds";
+  6. **Happier picks**, then kind/category sections: catalog rows in two row-major columns on wide
+     pages, one when a column would be narrower than a row can hold;
+  7. each title row ends with "All N ›" for a known count or "All ›"; links to another home say
+     where ("Browse in the Store").
+  An item appears once per page. No ratings, download counts or popularity. Offline, Installed
+  and built-in content remain, with one quiet line for each unreachable catalog.
+- **A listing** opens in the details pane beside the page, pushed on a phone: identity header
+  (mark, kind · category kicker, name, publisher/verification/version meta), one sentence, the
+  kind's one primary action with its consequence, then sheets in task order — what it reaches
+  or runs, where it is on, what it needs, versions, source and licence. A fact appears once.
+- **Adding in place.** An add needing no review shows working, a confirmed check and any next step
+  ("Added · Sign in") where it was pressed, without navigation or layout shift. Apps, software
+  and plugins needing review open that existing review anchored to the control; confirmation
+  turns it into progress through the owning operation lifecycle.
+- **The Add dialog is the catalog at dialog scale.** Search and rows on the left, selected listing
+  on the right; the first result is selected when the wide split can show it. The frame keeps its
+  size as results change. Catalog/Paste/Custom or Browse/Link/Upload/Write modes swap the body in
+  the same frame. Providers, plugins and agents continue to their existing setup. On a phone,
+  show the full-screen list first, push the chosen listing, and keep its primary action at the top.
+- **Installed** shows what Happier manages across Machines and projects: a present-tense header,
+  search and Machine/project filters, then Needs you and one section per kind, grouped by kind,
+  Machine or project. Each row says where it runs and opens its home. *What's on this Machine*
+  is the same composition scoped to one Machine. Needs you consumes Inbox and Machine attention;
+  it creates no second status classifier.
+- **Presets** use the same card: a creation preset leads with its provider's mark and price on the
+  right; a setup preset leads with its glyph and related marks. Facts lead with Creates the Machine,
+  Sets it up, or Creates and sets up. "Add to a preset…" is secondary beside the primary action,
+  opening its popover beneath it. Offline software targets are unavailable in the combined review;
+  the person runs the operation later, without an automatic queue.
+- **The capability homes keep their maps.** MCP's ring and Skills' moons share the orbit-map owner
+  with Your Home. They retain the present-tense line, legend and pointer/focus previews. True
+  title-only map keys stay compact; described Machine/capability entries use catalog rows.
 
 ## Canonical components and ownership
 
