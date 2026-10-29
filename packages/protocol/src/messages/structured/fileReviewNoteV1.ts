@@ -34,16 +34,22 @@ export function readFileReviewNoteV1(meta: unknown): FileReviewNoteV1 | null {
   return parsed.success ? parsed.data : null;
 }
 
-/** Agent-facing facts; rendering/localization is owned by the transcript surface. */
-export function formatFileReviewNoteV1(note: FileReviewNoteV1): string {
-  if (note.action === 'mixed') return note.operations.map(formatFileReviewNoteV1).join(' ');
+/** Transcript copy addresses the person; provider context explicitly attributes their review actions. */
+export function formatFileReviewNoteV1(note: FileReviewNoteV1, audience: 'person' | 'agent' = 'person'): string {
+  if (note.action === 'mixed') return note.operations.map(operation => formatFileReviewNoteV1(operation, audience)).join(' ');
+  const agent = audience === 'agent';
+  const subject = agent ? 'The person reviewing your work' : 'You';
   const paths = note.paths.map(path => JSON.stringify(path)).join(', ');
   const turn = note.turnId ? ` (turn ${JSON.stringify(note.turnId)})` : '';
   if (note.action === 'undo') {
-    return `You undid ${note.undoes ? `the ${note.undoes}` : 'the file review action'} in ${paths}${turn}.`;
+    return `${subject} undid ${note.undoes ? `the ${note.undoes}` : 'the file review action'} in ${paths}${turn}.`
+      + (agent ? ' Respect the resulting file state unless asked to change it.' : '');
   }
-  if (note.action === 'restore') return `You restored ${paths}${note.turnId
-    ? ` to before turn ${JSON.stringify(note.turnId)}` : ' to the previous state'}.`;
+  if (note.action === 'restore') return `${subject} restored ${paths}${note.turnId
+    ? ` to before turn ${JSON.stringify(note.turnId)}` : ' to the previous state'}.`
+    + (agent ? ' Do not undo this restoration unless asked.' : '');
   const count = note.changeCount;
-  return `You discarded ${count === undefined ? 'changes' : `${count} ${count === 1 ? 'change' : 'changes'}`} in ${paths}${turn}.`;
+  const changes = count === undefined ? `${agent ? 'your ' : ''}changes`
+    : `${count}${agent ? ' of your' : ''} ${count === 1 && !agent ? 'change' : 'changes'}`;
+  return `${subject} discarded ${changes} in ${paths}${turn}.` + (agent ? ' Do not reapply them unless asked.' : '');
 }
