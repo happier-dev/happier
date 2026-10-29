@@ -1,4 +1,4 @@
-import { spawnBackgroundSync } from './spawnBackgroundSync.js';
+import { resolveExecutableCommand } from './resolveExecutableCommand.js';
 
 import { resolveWindowsCommandInvocation } from './windows/resolveWindowsCommandInvocation.js';
 
@@ -14,8 +14,7 @@ export function commandExistsOnPath(
   if (!name) return false;
 
   const env = options.env ?? process.env;
-  const pathEnv = options.path ?? env.PATH ?? process.env.PATH;
-  const probeEnv = { ...process.env, ...env, PATH: pathEnv };
+  const probeEnv = options.path === undefined ? env : { ...env, PATH: options.path };
 
   if (process.platform === 'win32') {
     if (/^cmd(?:\.exe)?$/i.test(name)) {
@@ -28,19 +27,7 @@ export function commandExistsOnPath(
         return true;
       }
     }
-
-    const res = spawnBackgroundSync('where', [name], {
-      stdio: 'ignore',
-      env: probeEnv,
-      cwd: options.cwd,
-    });
-    return (res.status ?? 1) === 0;
   }
 
-  const res = spawnBackgroundSync('sh', ['-lc', 'command -v "$1" >/dev/null 2>&1', 'sh', name], {
-    stdio: 'ignore',
-    env: probeEnv,
-    cwd: options.cwd,
-  });
-  return (res.status ?? 1) === 0;
+  return resolveExecutableCommand(name, { env: probeEnv, cwd: options.cwd }) !== null;
 }

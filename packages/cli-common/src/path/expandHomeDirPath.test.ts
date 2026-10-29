@@ -1,4 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import {
   canonicalAbsolutePathsEqual,
@@ -10,6 +13,20 @@ import {
 } from './expandHomeDirPath.js';
 
 describe('expandHomeDirPath', () => {
+  it.skipIf(process.platform === 'win32')('preserves physical parent traversal after a home-relative symlink', () => {
+    const root = mkdtempSync(join(tmpdir(), 'happier-home-physical-'));
+    try {
+      const home = join(root, 'home');
+      const physical = join(root, 'physical');
+      mkdirSync(home);
+      mkdirSync(join(physical, 'deep'), { recursive: true });
+      symlinkSync(join(physical, 'deep'), join(home, 'link'));
+      writeFileSync(join(home, 'selected'), 'wrong-lexical-directory');
+      writeFileSync(join(physical, 'selected'), 'physical-directory');
+      expect(readFileSync(expandHomeDirPath('~/link/../selected', { HOME: home }), 'utf8')).toBe('physical-directory');
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+
   it('reuses the canonical equality and containment decisions for one read', () => {
     const compare = createCanonicalAbsolutePathComparator();
     for (const [root, child, equal, inside] of [
@@ -39,6 +56,13 @@ describe('expandHomeDirPath', () => {
     expect(windows.contains('~\\', 'C:/Users/Alice2/projects/app')).toBe(false);
   });
   it.each([
+    {
+      label: 'Windows drive root home without a child',
+      value: '~/',
+      env: { USERPROFILE: 'C:\\' },
+      platform: 'win32',
+      expected: 'C:\\',
+    },
     {
       label: 'Windows forward-slash prefix and mixed separators',
       value: '~/projects\\happier/src',

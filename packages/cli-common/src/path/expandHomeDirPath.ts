@@ -29,7 +29,13 @@ export function expandHomeDirPath(
       .slice(2)
       .split(/[\\/]+/)
       .filter(Boolean);
-    return api.join(resolveHomeDirFromEnvironment(processEnv, platform), ...relativePathSegments);
+    const rawHome = resolveHomeDirFromEnvironment(processEnv, platform);
+    const nativeHome = platform === 'win32' ? rawHome.replaceAll('/', api.sep) : rawHome;
+    const root = api.parse(nativeHome).root;
+    const home = nativeHome.length > root.length ? nativeHome.replace(/[\\/]+$/u, '') : nativeHome;
+    // Expansion retains physical symlink/.. traversal; identity normalization is separate below.
+    if (relativePathSegments.length === 0) return home;
+    return `${home}${home.endsWith(api.sep) ? '' : api.sep}${relativePathSegments.join(api.sep)}`;
   }
   return value;
 }

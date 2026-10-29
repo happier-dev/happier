@@ -33,3 +33,5 @@ export {
   type WindowsSystemToolName,
 } from './windows/windowsSystemToolPath.js';
 export { spawnBackgroundSync } from './spawnBackgroundSync.js';
+
+export { resolveExecutableCommand } from './resolveExecutableCommand.js';
