@@ -370,3 +370,5 @@ export type {
 } from './ensureHappierCliPathExposure.js';
 export { FirstPartyAcquisitionError, readAcquisitionFailureCause, redactAcquisitionDiagnostic } from './acquisitionProgress.js';
 export type { FirstPartyAcquisitionOptions } from './acquisitionProgress.js';
+export * from './resolveSelfContainedCliRuntimeRoot.js';
+export * from './runtimePaths.js';
