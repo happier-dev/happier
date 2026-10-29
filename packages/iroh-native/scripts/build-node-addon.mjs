@@ -9,18 +9,11 @@
 // platform-arch because one host has exactly one libc).
 import { spawnSync } from "node:child_process";
 import { copyFileSync, mkdirSync, rmSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { resolveRustCargoBinDir } from "./ensure-rust-toolchain.mjs";
 
-const packageDir = dirname(dirname(fileURLToPath(import.meta.url)));
-const crateDir = join(packageDir, "rust", "happier-iroh-node");
-// This crate is a member of the package-level Rust workspace, so Cargo writes
-// artifacts beneath the workspace target directory rather than `crateDir`.
-// Set it explicitly so artifact discovery does not depend on Cargo's workspace
-// root inference or the process working directory.
-const cargoTargetDir = resolve(process.env.CARGO_TARGET_DIR || join(packageDir, "rust", "target"));
-const nativeDir = join(packageDir, "native");
-const nativeTestDir = join(packageDir, "native-test");
+const defaultPackageDir = dirname(dirname(fileURLToPath(import.meta.url)));
 const crateLibName = "happier_iroh_node";
 
 const DYLIB_NAMES = {
@@ -58,15 +51,33 @@ export function resolveRustTarget(platform, arch, { musl = false } = {}) {
   return base;
 }
 
-function main() {
-  const args = process.argv.slice(2);
-  const profile = args.includes("--debug") ? "debug" : "release";
-  const musl = args.includes("--musl");
-  const testRelayFixture = args.includes("--test-relay-fixture");
-  const platform = process.platform;
-  const arch = process.arch;
-  const target = resolveRustTarget(platform, arch, { musl });
+async function runCargo(command, args, options) {
+  const build = spawnSync(command, args, { ...options, stdio: "inherit" });
+  if (build.error) throw build.error;
+  if (build.status !== 0) {
+    throw Object.assign(new Error(`Cargo failed with status ${build.status ?? "unknown"}`), {
+      exitCode: build.status ?? 1,
+    });
+  }
+}
 
+// Source runtime construction and the standalone command share this builder.
+// Cargo scratch may be reused; every consumer receives its own physical addon.
+export async function buildNodeAddon({
+  packageDir = defaultPackageDir,
+  env = process.env,
+  cargoTargetDir = resolve(env.CARGO_TARGET_DIR || join(packageDir, "rust", "target")),
+  testRelayFixture = false,
+  artifactDir = join(packageDir, testRelayFixture ? "native-test" : "native"),
+  platform = process.platform,
+  arch = process.arch,
+  profile = "release",
+  musl = false,
+  offline = false,
+  runCommand = runCargo,
+} = {}) {
+  const target = resolveRustTarget(platform, arch, { musl });
+  const crateDir = join(packageDir, "rust", "happier-iroh-node");
   const cargoArgs = ["build", "--locked", "--manifest-path", join(crateDir, "Cargo.toml"), "--target", target];
   if (profile === "release") {
     cargoArgs.push("--release");
@@ -74,32 +85,37 @@ function main() {
   if (testRelayFixture) {
     cargoArgs.push("--features", "test-relay-fixture");
   }
-  if (args.includes("--offline")) {
+  if (offline) {
     cargoArgs.push("--offline");
   }
 
-  const build = spawnSync("cargo", cargoArgs, {
-    env: { ...process.env, CARGO_TARGET_DIR: cargoTargetDir },
-    stdio: "inherit",
+  const pathName = Object.keys(env).find(name => name.toUpperCase() === 'PATH') || 'PATH';
+  await runCommand("cargo", cargoArgs, {
+    cwd: packageDir,
+    env: { ...env, CARGO_TARGET_DIR: cargoTargetDir,
+      [pathName]: [env[pathName], resolveRustCargoBinDir(env)].filter(Boolean).join(delimiter) },
   });
-  if (build.error) {
-    process.stderr.write(`Unable to start Cargo for the Iroh native addon build: ${build.error.message}\n`);
-  }
-  if (build.status !== 0) {
-    process.exit(build.status ?? 1);
-  }
 
   const dylib = join(cargoTargetDir, target, profile, DYLIB_NAMES[platform]);
   // Relay-fixture bytes are development-only and must never share the package's
   // publishable `native/` directory with the ordinary lifecycle addon.
-  const artifactDir = testRelayFixture ? nativeTestDir : nativeDir;
   const artifact = join(artifactDir, resolveArtifactName(platform, arch, { testRelayFixture }));
   mkdirSync(artifactDir, { recursive: true });
   rmSync(artifact, { force: true });
   copyFileSync(dylib, artifact);
-  process.stdout.write(`${artifact} (rust target ${target}, ${profile})\n`);
+  return artifact;
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
-  main();
+  const args = process.argv.slice(2);
+  try {
+    const profile = args.includes("--debug") ? "debug" : "release";
+    const musl = args.includes("--musl");
+    const artifact = await buildNodeAddon({ profile, musl,
+      testRelayFixture: args.includes("--test-relay-fixture"), offline: args.includes("--offline") });
+    process.stdout.write(`${artifact} (rust target ${resolveRustTarget(process.platform, process.arch, { musl })}, ${profile})\n`);
+  } catch (error) {
+    process.stderr.write(`Unable to build the Iroh native addon: ${error.message}\n`);
+    process.exitCode = error.exitCode ?? 1;
+  }
 }

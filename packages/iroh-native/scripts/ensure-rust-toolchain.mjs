@@ -78,8 +78,12 @@ export function resolveRustToolchainPlan({ platform, channel, hasRustup, install
   return { status: 'install', targets: [...targets], commands };
 }
 
+export function resolveRustCargoBinDir(env = process.env) {
+  return join(env.CARGO_HOME || join(env.HOME || env.USERPROFILE || homedir(), '.cargo'), 'bin');
+}
+
 export function prepareRustToolchain({ platform, channel, env = process.env }) {
-  const cargoBin = join(env.CARGO_HOME || join(env.HOME || homedir(), '.cargo'), 'bin');
+  const cargoBin = resolveRustCargoBinDir(env);
   const rustup = spawnSync('rustup', ['--version'], { env, stdio: 'ignore' }).status === 0
     ? 'rustup' : join(cargoBin, 'rustup');
   const hasRustup = spawnSync(rustup, ['--version'], { env, stdio: 'ignore' }).status === 0;
