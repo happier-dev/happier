@@ -1,4 +1,7 @@
 import { z } from "zod/mini";
+import { PushNotificationTestResultSchema } from '@happier-dev/protocol/push/pushNotificationTest';
+import { sendAccountExpoPushMessages } from '@/app/activity/accountPushTransport';
+import { getOrCreateServerIdentityId } from '@/app/serverIdentity/serverIdentity';
 import { type Fastify } from "../../types";
 import { db, getActivePrismaRuntime } from "@/storage/db";
 import { eventRouter } from '@/app/events/eventRouter';
@@ -24,6 +27,31 @@ function normalizeClientServerUrl(raw: unknown): string | null {
 }
 
 export function pushRoutes(app: Fastify) {
+    // Deliberate plumbing check: exact Account registration, fixed payload, ordinary
+    // Home push transport. It changes no alert policy or enrollment state.
+    app.post('/v1/push-tokens/:tokenId/test', {
+        schema: { params: z.strictObject({ tokenId: z.string().check(z.minLength(1)) }),
+            body: z.strictObject({}), response: { 200: PushNotificationTestResultSchema } },
+        preHandler: app.authenticate,
+    }, async (request, reply) => {
+        const registration = await db.accountPushToken.findFirst({
+            where: { id: request.params.tokenId, accountId: request.userId },
+            select: { token: true, clientServerUrl: true },
+        });
+        if (!registration) return reply.send({ status: 'not_registered' as const });
+        const serverId = await getOrCreateServerIdentityId();
+        const result = await sendAccountExpoPushMessages([{
+            accountId: request.userId, token: registration.token,
+            message: { to: registration.token, title: 'Happier notification test',
+                body: 'This is a remote push test requested from notification settings.',
+                sound: 'default', priority: 'high', data: {
+                    url: '/settings/notifications', serverId, accountId: request.userId,
+                    ...(registration.clientServerUrl ? { serverUrl: registration.clientServerUrl } : {}),
+                } },
+        }], 'push-diagnostics');
+        return reply.send({ status: result.acceptedCount === 1 && result.failedCount === 0 ? 'accepted' as const
+            : result.invalidCredentials ? 'invalid_credentials' as const : 'rejected' as const });
+    });
     
     // Push Token Registration API
     app.post('/v1/push-tokens', {

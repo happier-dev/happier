@@ -10,6 +10,14 @@ import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lig
 import { pushRoutes } from "./pushRoutes";
 import { eventRouter } from '@/app/events/eventRouter';
 
+const diagnosticSend = vi.hoisted(() => vi.fn(async (messages: unknown[]) => messages.map((): { status: string; id?: string; details?: { error: string } } => ({ status: 'ok', id: 'ticket' }))));
+// Only Expo's network boundary is replaced; authentication, SQLite, route selection,
+// payload construction and the canonical Account push transport remain real.
+vi.mock('expo-server-sdk', () => ({ Expo: class {
+    static isExpoPushToken(token: unknown) { return typeof token === 'string' && token.startsWith('ExponentPushToken['); }
+    chunkPushNotifications(messages: unknown[]) { return [messages]; }
+    sendPushNotificationsAsync = diagnosticSend;
+} }));
 const { trackApp, closeTrackedApps } = createAppCloseTracker();
 
 function createTestApp() {
@@ -44,6 +52,37 @@ describe("pushRoutes (clientServerUrl) (integration)", () => {
 
     afterAll(async () => {
         await harness.close();
+    });
+
+    it('sends a deliberate diagnostic only to the addressed authenticated registration', async () => {
+        diagnosticSend.mockClear();
+        const app = createTestApp();
+        const account = await db.account.create({ data: { publicKey: 'pk_diagnostic_owner' } });
+        const other = await db.account.create({ data: { publicKey: 'pk_diagnostic_other' } });
+        const credential = await auth.createToken(account.id, undefined, { kind: 'account', authority: 'present_user' });
+        const headers = { authorization: `Bearer ${credential}` };
+        const registration = await db.accountPushToken.create({ data: { accountId: account.id, token: 'ExponentPushToken[diagnostic]', clientServerUrl: 'https://diagnostic-home.test' } });
+        const foreign = await db.accountPushToken.create({ data: { accountId: other.id, token: 'ExponentPushToken[foreign]' } });
+        const send = (id: string, payload = {}) => app.inject({ method: 'POST', url: `/v1/push-tokens/${id}/test`, headers, payload });
+        const accepted = await send(registration.id);
+        expect(accepted.statusCode).toBe(200);
+        expect(accepted.json()).toEqual({ status: 'accepted' });
+        expect(diagnosticSend.mock.calls[0]?.[0]).toEqual([expect.objectContaining({ to: registration.token, title: 'Happier notification test' })]);
+        expect((await send(foreign.id)).json()).toEqual({ status: 'not_registered' });
+        expect((await send('missing')).json()).toEqual({ status: 'not_registered' });
+        expect((await send(registration.id, { to: foreign.token, body: 'Caller text' })).statusCode).toBe(400);
+        expect(diagnosticSend).toHaveBeenCalledTimes(1);
+    });
+
+    it.each(['MessageTooBig', 'InvalidCredentials'])('reports a known service failure without claiming delivery: %s', async error => {
+        diagnosticSend.mockResolvedValueOnce([{ status: 'error', details: { error } }]);
+        const app = createTestApp();
+        const account = await db.account.create({ data: { publicKey: `pk_diagnostic_${error}` } });
+        const credential = await auth.createToken(account.id, undefined, { kind: 'account', authority: 'present_user' });
+        const registration = await db.accountPushToken.create({ data: { accountId: account.id, token: 'ExponentPushToken[diagnostic]' } });
+        const result = await app.inject({ method: 'POST', url: `/v1/push-tokens/${registration.id}/test`, headers: { authorization: `Bearer ${credential}` }, payload: {} });
+        expect(result.statusCode).toBe(200);
+        expect(result.json()).toEqual({ status: error === 'InvalidCredentials' ? 'invalid_credentials' : 'rejected' });
     });
 
     it('filters only opted-in focused-account alert requests and fails open on unavailable focus', async () => {

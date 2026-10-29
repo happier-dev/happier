@@ -1,10 +1,12 @@
 import { Expo, type ExpoPushMessage } from "expo-server-sdk";
-import { collectExpoPushTokensMarkedUnregistered } from '@happier-dev/protocol/push/expoPushDelivery';
+import { collectExpoPushTokensMarkedUnregistered, getExpoErrorCode } from '@happier-dev/protocol/push/expoPushDelivery';
 
 import { db } from "@/storage/db";
 import { log } from "@/utils/logging/log";
 
 const expo = new Expo();
+
+export type AccountPushSendResult = Readonly<{ acceptedCount: number; failedCount: number; invalidCredentials: boolean }>;
 
 export type AccountPushDelivery = Readonly<{
     accountId: string;
@@ -34,9 +36,11 @@ async function deleteInvalidAccountPushTokens(deliveries: ReadonlyArray<AccountP
 export async function sendAccountExpoPushMessages(
     deliveries: ReadonlyArray<AccountPushDelivery>,
     logModule: string,
-): Promise<void> {
+): Promise<AccountPushSendResult> {
+    let acceptedCount = 0;
+    let invalidCredentials = false;
     const validDeliveries = deliveries.filter((delivery) => Expo.isExpoPushToken(delivery.message.to));
-    if (validDeliveries.length === 0) return;
+
     const invalidDeliveries = new Map<string, AccountPushDelivery>();
     let deliveryOffset = 0;
 
@@ -45,6 +49,8 @@ export async function sendAccountExpoPushMessages(
         deliveryOffset += chunk.length;
         try {
             const ticketChunk = await expo.sendPushNotificationsAsync(chunk);
+            acceptedCount += ticketChunk.slice(0, chunk.length).filter(ticket => ticket.status === 'ok').length;
+            invalidCredentials ||= ticketChunk.some(ticket => getExpoErrorCode(ticket) === 'InvalidCredentials');
             const invalidTokens = new Set(
                 collectExpoPushTokensMarkedUnregistered({
                     messages: chunk,
@@ -63,4 +69,7 @@ export async function sendAccountExpoPushMessages(
     }
 
     await deleteInvalidAccountPushTokens([...invalidDeliveries.values()]);
+    const failedCount = deliveries.length - acceptedCount;
+    if (failedCount > 0) log({ module: logModule, level: 'warn', acceptedCount, failedCount }, 'Expo push service acceptance was not confirmed for every recipient');
+    return { acceptedCount, failedCount, invalidCredentials };
 }
