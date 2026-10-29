@@ -17,14 +17,8 @@ import { collectInternalWorkspaceDependencyNames } from './workspacePackageDepen
 import { callerHoldsWorkspaceBundleLock } from './workspaceBundleLock.mjs';
 import { resolveWorkspacePackageBuildLockPath } from './workspacePackageBuildLock.mjs';
 import { callerHoldsDependencyConsumption } from '../../apps/stack/scripts/utils/proc/dependency_refresh.mjs';
-import { resolvePackageBuildOutputTargetMatches } from './packageBuildOutputTargets.mjs';
+import { resolvePackageBuildOutputTargetMatches, resolvePackageDeclarationTarget } from './packageBuildOutputTargets.mjs';
 import { createDistTypeScriptProjectConfig, readTypeScriptBuildInputFileNames } from './buildTypeScriptPackageDist.mjs';
-
-function declarationTarget(value) {
-  if (typeof value === 'string') return /\.d\.[cm]?ts$/.test(value) ? value : undefined;
-  if (!value || typeof value !== 'object') return;
-  return declarationTarget(value.types) ?? Object.values(value).map(declarationTarget).find(Boolean);
-}
 
 async function workspaceDeclarationInputs(componentDir) {
   const repoDir = coerceHappyMonorepoRootFromPath(componentDir);
@@ -49,7 +43,7 @@ async function workspaceDeclarationInputs(componentDir) {
       ? Object.entries(exports) : [['.', exports ?? manifest.types]];
     const targets = [];
     for (const [, value] of entries) {
-      const target = declarationTarget(value);
+      const target = resolvePackageDeclarationTarget(value);
       if (!target) continue;
       const suffix = relative(source.parsed.options.outDir, resolve(dir, target));
       if (suffix.startsWith('..')) continue;

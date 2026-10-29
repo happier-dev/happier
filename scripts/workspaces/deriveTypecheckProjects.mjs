@@ -3,6 +3,7 @@ import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path
 import ts from 'typescript';
 import { writeJsonAtomic } from '../../apps/stack/scripts/utils/fs/json.mjs';
 import { resolveTypeScriptCliInvocation } from './resolveTypeScriptCliInvocation.mjs';
+import { readWorkspaceTypecheckDeclarationPaths } from './workspaceTypecheckDeclarationPaths.mjs';
 
 export function readTypecheckProject(path) {
   const config = ts.readConfigFile(path, ts.sys.readFile);
@@ -38,8 +39,6 @@ export function resolveTypecheckPrimaryTypeReferences({ configPath, parsed }) {
   return new Map(names.map(name => [name,
     ts.resolveTypeReferenceDirective(name, configPath, parsed.options, ts.sys).resolvedTypeReferenceDirective]));
 }
-
-const readProject = readTypecheckProject;
 
 function readSourceText(file) {
   try { return readFileSync(file, 'utf8'); }
@@ -100,6 +99,16 @@ export function readTypecheckAmbientModules(file) {
 export async function deriveTypecheckProjects(packageDir, { sourceNames, testNames, testProject = "test", testGroup = () => 0, testCompilerOptions = () => ({}), resolveSourceOwners = false, check = false, writeAuthored = false, declarationOverrides = new Map() } = {}) {
   const names = [...sourceNames, ...testNames];
   packageDir = resolve(packageDir);
+  const workspaceDeclarationPaths = await readWorkspaceTypecheckDeclarationPaths(packageDir);
+  const hasWorkspaceDeclarationPaths = Object.keys(workspaceDeclarationPaths).length > 0;
+  const readProject = path => {
+    const project = readTypecheckProject(path);
+    if (hasWorkspaceDeclarationPaths) {
+      project.parsed.options.paths = { ...workspaceDeclarationPaths, ...project.parsed.options.paths };
+      project.parsed.options.pathsBasePath ??= dirname(path);
+    }
+    return project;
+  };
   const original = readProject(resolve(packageDir, 'tsconfig.json'));
   const projects = names.map(name => readProject(resolve(packageDir, `tsconfig.${name}.json`)));
   const declarationRoot = file => resolve(declarationOverrides.get(resolve(file)) ?? file);
@@ -421,6 +430,10 @@ export async function deriveTypecheckProjects(packageDir, { sourceNames, testNam
       extends: resolve(packageDir, `tsconfig.${names[index]}.json`),
       compilerOptions: {
         ...(index >= sourceNames.length ? testOptionOverrides[index - sourceNames.length] : {}),
+        ...(hasWorkspaceDeclarationPaths ? {
+          paths: Object.fromEntries(Object.entries(projects[index].parsed.options.paths).map(([name, targets]) => [name,
+            targets.map(target => resolve(projects[index].parsed.options.baseUrl ?? projects[index].parsed.options.pathsBasePath, target))])),
+        } : {}),
         ...(cacheSuffix && projects[index].parsed.options.outDir
           ? { outDir: `${projects[index].parsed.options.outDir}${cacheSuffix}` } : {}),
       },
