@@ -20,11 +20,20 @@ vi.mock('@/startServer', () => ({
   startServer: mocks.startServer,
 }));
 
-it('starts the light server when the executable entrypoint is evaluated', async () => {
-  await import('./main.light?entrypoint-test');
-  await vi.dynamicImportSettled();
+it('starts the light executable and preserves its command exit status', async () => {
+  const originalExitCode = process.exitCode;
+  process.exitCode = 37;
+  const exit = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+  try {
+    await import('./main.light?entrypoint-test');
+    await vi.dynamicImportSettled();
 
-  await vi.waitFor(() => {
-    expect(mocks.startServer).toHaveBeenCalledWith('light');
-  });
+    await vi.waitFor(() => {
+      expect(mocks.startServer).toHaveBeenCalledWith('light');
+      expect(exit).toHaveBeenCalledWith(37);
+    });
+  } finally {
+    process.exitCode = originalExitCode;
+    exit.mockRestore();
+  }
 });
