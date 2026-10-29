@@ -13,9 +13,9 @@ vi.mock('node:fs', async (importOriginal) => {
     const fs = await importOriginal<typeof import('node:fs')>();
     return {
         ...fs,
-        rmSync: (...args: Parameters<typeof fs.rmSync>) => {
+        unlinkSync: (...args: Parameters<typeof fs.unlinkSync>) => {
             if (cleanupBoundary.fail) throw new Error('OS denied private-index cleanup');
-            return fs.rmSync(...args);
+            return fs.unlinkSync(...args);
         },
     };
 });
@@ -65,7 +65,8 @@ describe('Git private index mechanics', () => {
             } finally {
                 result.tempIndex.cleanup();
             }
-            expect(existsSync(directory)).toBe(false);
+            expect(existsSync(result.tempIndex.indexPath)).toBe(false);
+            expect(existsSync(directory)).toBe(true);
             result.tempIndex.cleanup();
         }
     }));
@@ -117,7 +118,27 @@ describe('Git private index mechanics', () => {
         finally { result.tempIndex.cleanup(); }
     }));
 
-    it('fails an invalid captured tree without falling back to empty and removes the private directory', async () => withRepo(async (cwd) => {
+    it('keeps an isolated command index beside the canonical checkout index without changing live staged content', async () => withRepo(async (cwd) => {
+        writeFileSync(join(cwd, 'file.txt'), 'staged\n');
+        await git(cwd, ['add', '.']);
+        const liveIndexPath = join(cwd, '.git', 'index');
+        const before = readFileSync(liveIndexPath);
+        const result = await createGitTemporaryIndex({ cwd, runGit, seed: { kind: 'current-index' } });
+        if (!result.success) throw new Error(result.error);
+        try {
+            expect(dirname(result.tempIndex.indexPath)).toBe(dirname(liveIndexPath));
+            expect(result.tempIndex.indexPath).not.toBe(liveIndexPath);
+            expect(await git(cwd, ['show', ':file.txt'], result.tempIndex.env)).toBe('staged');
+            writeFileSync(join(cwd, 'file.txt'), 'isolated checkpoint\n');
+            await git(cwd, ['add', '.'], result.tempIndex.env);
+            expect(await git(cwd, ['show', ':file.txt'], result.tempIndex.env)).toBe('isolated checkpoint');
+            expect(readFileSync(liveIndexPath)).toEqual(before);
+        } finally { result.tempIndex.cleanup(); }
+        expect(existsSync(result.tempIndex.indexPath)).toBe(false);
+        expect(existsSync(liveIndexPath)).toBe(true);
+    }));
+
+    it('fails an invalid captured tree without falling back to empty and removes only its owned index', async () => withRepo(async (cwd) => {
         let indexPath = '';
         const observeGit: GitTemporaryIndexCommandAdapter = async (input) => {
             indexPath = input.env?.GIT_INDEX_FILE ?? indexPath;
@@ -126,7 +147,8 @@ describe('Git private index mechanics', () => {
         const result = await createGitTemporaryIndex({ cwd, runGit: observeGit, seed: { kind: 'tree', treeOid: 'missing-tree' } });
         expect(result.success).toBe(false);
         expect(indexPath).not.toBe('');
-        expect(existsSync(dirname(indexPath))).toBe(false);
+        expect(existsSync(indexPath)).toBe(false);
+        expect(existsSync(dirname(indexPath))).toBe(true);
         expect(existsSync(join(cwd, '.git', 'index'))).toBe(false);
     }));
 
@@ -141,6 +163,7 @@ describe('Git private index mechanics', () => {
             cleanupBoundary.fail = false;
             result.tempIndex.cleanup();
         }
-        expect(existsSync(dirname(result.tempIndex.indexPath))).toBe(false);
+        expect(existsSync(result.tempIndex.indexPath)).toBe(false);
+        expect(existsSync(dirname(result.tempIndex.indexPath))).toBe(true);
     }));
 });

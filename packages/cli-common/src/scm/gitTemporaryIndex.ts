@@ -1,6 +1,6 @@
-import { copyFileSync } from 'node:fs';
-import { isAbsolute, join, resolve } from 'node:path';
-import { createHappierTempDir, removeHappierTempDir } from '../tempDirs/createHappierTempDir.js';
+import { constants, copyFileSync, unlinkSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 
 export type GitTemporaryIndexCommand = Readonly<{
     cwd: string;
@@ -54,18 +54,26 @@ export async function createGitTemporaryIndex(input: Readonly<{
     runGit: GitTemporaryIndexCommandAdapter;
     seed: GitTemporaryIndexSeed;
 }>): Promise<Readonly<{ success: true; tempIndex: GitTemporaryIndex }> | GitTemporaryIndexFailure> {
-    const tempDir = createHappierTempDir({ purpose: 'scm-index' });
-    const indexPath = join(tempDir, 'index');
+    const sourceIndex = await resolveGitIndexPath(input);
+    if (!sourceIndex.success) return sourceIndex;
+    // Index contents are repository data. Keep the isolated file under the
+    // same admitted checkout permissions, rather than a daemon-private home.
+    const indexPath = join(dirname(sourceIndex.indexPath), `happier-index-${randomUUID()}`);
     const env = { GIT_INDEX_FILE: indexPath };
-    const cleanup = () => removeHappierTempDir(tempDir);
+    const cleanup = () => {
+        for (const ownedPath of [indexPath, `${indexPath}.lock`]) {
+            try { unlinkSync(ownedPath); }
+            catch (error) {
+                if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+            }
+        }
+    };
     let retained = false;
     try {
         let initializeEmpty = input.seed.kind === 'empty';
         if (input.seed.kind === 'current-index') {
-            const sourceIndex = await resolveGitIndexPath(input);
-            if (!sourceIndex.success) return sourceIndex;
             try {
-                copyFileSync(sourceIndex.indexPath, indexPath);
+                copyFileSync(sourceIndex.indexPath, indexPath, constants.COPYFILE_EXCL);
             } catch (error) {
                 if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
                 initializeEmpty = true;
