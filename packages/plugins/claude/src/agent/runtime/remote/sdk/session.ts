@@ -2018,15 +2018,12 @@ export function createClaudeAgentSdkTurnOperations(
                     turnQuery,
                     turnId,
                 };
-                // SDK 0.3.243 gives success and error results the same queue contract:
-                // positive counts retain the submitted turn until its queued sends finish.
-                const queuedTurnCount = message.queued_turn_count;
+                // Query owns native prompt attribution; this ordered consumer owns turn lifecycle.
+                const retainForeground = turnQuery.shouldRetainForegroundForResult(message);
                 if (
                     !foregroundCompleted
                     && !cancelledQueries.has(turnQuery)
-                    && typeof queuedTurnCount === 'number'
-                    && Number.isSafeInteger(queuedTurnCount)
-                    && queuedTurnCount > 0
+                    && retainForeground
                 ) {
                     publishResultEvidence(resultTurn);
                     if (!isSuccessfulResultMessage) {

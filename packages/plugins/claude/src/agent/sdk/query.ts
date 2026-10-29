@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import { createClaudePromptSettlementTracker, type ClaudeSdkPromptTransportOutcome } from './promptSettlement.js';
+export type { ClaudeSdkPromptTransportOutcome } from './promptSettlement.js';
 
 import { redactBugReportSensitiveText } from '@happier-dev/plugin-sdk';
 import { createClaudeManagedMcpPolicyConflictError } from '../mcp/managedPolicy.js';
@@ -117,11 +119,6 @@ export type ClaudeSdkContextUsageResponse = Readonly<{
     }>[];
     [key: string]: unknown;
 }>;
-
-export type ClaudeSdkPromptTransportOutcome =
-    | Readonly<{ kind: 'accepted' }>
-    | Readonly<{ kind: 'rejected_before_effect'; error: Error }>
-    | Readonly<{ kind: 'effect_may_have_occurred'; error: Error }>;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
     return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -369,7 +366,7 @@ export class ClaudeSdkQuery implements AsyncIterableIterator<SDKMessage> {
     private handle: ClaudeSdkExecClientHandle | null = null;
     private exitResult: ClaudeSdkExecResult | null = null;
     private unsubscribe: (() => void) | null = null;
-    private readonly pendingUserPrompts = new Map<string, (outcome: ClaudeSdkPromptTransportOutcome) => void>();
+    private readonly promptSettlement = createClaudePromptSettlementTracker();
     private promptSubmissionClosed: Error | null = null;
     private promptTransportAttempted = false;
     private promptTransportSettled = false;
@@ -406,6 +403,10 @@ export class ClaudeSdkQuery implements AsyncIterableIterator<SDKMessage> {
 
     next(): Promise<IteratorResult<SDKMessage>> {
         return this.messages.next();
+    }
+
+    shouldRetainForegroundForResult(message: SDKMessage): boolean {
+        return this.promptSettlement.shouldRetainForegroundForResult(message);
     }
 
     readExitResult(): ClaudeSdkExecResult | null {
@@ -468,14 +469,14 @@ export class ClaudeSdkQuery implements AsyncIterableIterator<SDKMessage> {
             });
         }
         const uuid = typeof message.uuid === 'string' && message.uuid.length > 0 ? message.uuid : randomUUID();
-        if (this.pendingUserPrompts.has(uuid)) {
+        if (this.promptSettlement.hasPendingAcknowledgement(uuid)) {
             return publishOutcome({ kind: 'rejected_before_effect', error: new Error('Claude SDK prompt UUID is already awaiting acknowledgment.') });
         }
         const acknowledged = new Promise<ClaudeSdkPromptTransportOutcome>(resolve => {
-            this.pendingUserPrompts.set(uuid, outcome => { resolve(publishOutcome(outcome)); });
+            this.promptSettlement.registerSubmission(uuid, outcome => { resolve(publishOutcome(outcome)); });
         });
         const failWrite = (error: unknown): void => {
-            this.settleUserPrompt(uuid, {
+            this.promptSettlement.settleSubmission(uuid, {
                 kind: 'effect_may_have_occurred',
                 error: error instanceof Error ? error : new Error(String(error)),
             });
@@ -483,7 +484,7 @@ export class ClaudeSdkQuery implements AsyncIterableIterator<SDKMessage> {
         try {
             void client.writeRecord({ ...message, uuid }, { signal }).then(outcome => {
                 if (outcome.kind !== 'written') {
-                    this.settleUserPrompt(uuid, {
+                    this.promptSettlement.settleSubmission(uuid, {
                         kind: outcome.kind === 'rejected_before_write'
                             ? 'rejected_before_effect'
                             : 'effect_may_have_occurred',
@@ -497,18 +498,9 @@ export class ClaudeSdkQuery implements AsyncIterableIterator<SDKMessage> {
         return await acknowledged;
     }
 
-    private settleUserPrompt(uuid: string, outcome: ClaudeSdkPromptTransportOutcome): void {
-        const resolve = this.pendingUserPrompts.get(uuid);
-        if (!resolve) return;
-        this.pendingUserPrompts.delete(uuid);
-        resolve(outcome);
-    }
-
     private closePromptSubmissions(error: Error): void {
         this.promptSubmissionClosed ??= error;
-        for (const uuid of this.pendingUserPrompts.keys()) {
-            this.settleUserPrompt(uuid, { kind: 'effect_may_have_occurred', error });
-        }
+        this.promptSettlement.settlePending(error);
         this.settlePromptTransport({
             kind: this.promptTransportAttempted ? 'effect_may_have_occurred' : 'rejected_before_effect',
             error,
@@ -757,10 +749,7 @@ export class ClaudeSdkQuery implements AsyncIterableIterator<SDKMessage> {
             return;
         }
         if (!isSdkMessage(record)) return;
-        if (record.type === 'user' && record.isSynthetic !== true && record.parent_tool_use_id == null
-            && typeof record.uuid === 'string') {
-            this.settleUserPrompt(record.uuid, { kind: 'accepted' });
-        }
+        this.promptSettlement.observeMessage(record);
         // Preserve protocol observations; runtime projection owns visibility and distinguishes
         // stdout acknowledgments from ordered native transcript facts.
         if (record.type === 'system' && record.subtype === 'commands_changed') {

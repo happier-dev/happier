@@ -1020,15 +1020,25 @@ attribute the row at this reader rather than adding consumer-specific classifier
 
 ##### Queued SDK result boundaries (development)
 
-The SDK runtime in `packages/plugins/claude/src/agent/runtime/remote/sdk/session.ts`
-retains the submitted turn when a result reports a positive integer
-`queued_turn_count`. Both successful and failed results can precede queued user
-work; their transcript and usage evidence remain visible, and earlier failures are
-logged without completing the submitted turn. The final result keeps its normal
-success or failure behavior, while explicit cancellation still ends the turn. This
-follows the optional result field introduced in the
-[Claude Agent SDK 0.3.243 contract](https://github.com/anthropics/claude-agent-sdk-typescript/blob/v0.3.243/CHANGELOG.md);
-results without the field retain the existing completion behavior.
+The native query's `sdk/promptSettlement.ts` owns submitted UUIDs, exact input
+acknowledgments and result attribution. A main-chain replayed user record or a
+result naming `user_message_uuid` / `user_message_uuids` establishes acceptance
+for that exact input; attributed results remain visible in the transcript.
+The SDK runtime consumes results in order and retains the foreground while any
+of its submitted inputs remain unanswered. When every submitted input has an
+attributed result, a positive `queued_turn_count` for other native sends no
+longer blocks completion. Successful and failed results use the same attribution;
+normal failure and explicit cancellation behavior remain unchanged.
+
+For native versions without result attribution, positive integer queue counts
+retain the existing behavior and zero or absent counts permit completion. With
+attribution, an empty queue can retire omitted older result IDs only after the
+latest submitted input itself has an attributed answer; this accommodates
+Claude's capped result UUID list without acknowledging omitted inputs. A write
+proven rejected before reaching the native process is removed from correlation.
+No idle event, elapsed time or automatic resend establishes delivery or completion.
+The optional queue field was introduced in the
+[Claude Agent SDK 0.3.243 contract](https://github.com/anthropics/claude-agent-sdk-typescript/blob/v0.3.243/CHANGELOG.md).
 
 ##### Permission hook input changes (development)
 

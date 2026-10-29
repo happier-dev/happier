@@ -35,6 +35,7 @@ function createControlledTransport() {
     const writeStarted = deferred<unknown>();
     const exit = deferred<ProcessExit>();
     const records: unknown[] = [];
+    let nextWriteOutcome: ClaudeSdkJsonStreamWriteOutcome | null = null;
     let subscriber: ((record: unknown) => void | Promise<void>) | null = null;
     const client: ClaudeSdkJsonStreamClient = {
         closed: new Promise(() => undefined),
@@ -47,6 +48,11 @@ function createControlledTransport() {
         async writeRecord(record) {
             records.push(record);
             writeStarted.resolve(record);
+            if (nextWriteOutcome) {
+                const outcome = nextWriteOutcome;
+                nextWriteOutcome = null;
+                return outcome;
+            }
             return await write.promise;
         },
     };
@@ -74,6 +80,7 @@ function createControlledTransport() {
         write,
         writeStarted,
         records,
+        rejectNextWrite(error: Error) { nextWriteOutcome = { kind: 'rejected_before_write', error }; },
         exit,
         async emit(record: unknown) {
             await subscriber?.(record);
@@ -107,6 +114,126 @@ function readPromptTransportOutcome(sdkQuery: unknown): Promise<PromptTransportO
 }
 
 describe('Claude plugin SDK provider transport boundary', () => {
+    it.each(['single', 'batch'] as const)('accepts an attributed result without a replay echo and preserves its output (%s)', async attribution => {
+        const transport = createControlledTransport();
+        const onMessageReceived = vi.fn();
+        const sdkQuery = query(transport.ctx, { prompt: exactPrompt(), onMessageReceived });
+        let outcome: PromptTransportOutcome | undefined;
+        void sdkQuery.promptTransportOutcome.then(value => { outcome = value; });
+        try {
+            await transport.writeStarted.promise;
+            const result = { type: 'result', subtype: 'success', queued_turn_count: 1, result: 'Answered input',
+                ...(attribution === 'single' ? { user_message_uuid: 'initial-prompt' } : { user_message_uuids: ['initial-prompt'] }) };
+            for (const invalid of [
+                { ...result, parent_tool_use_id: 'child' },
+                { ...result, isSynthetic: true },
+            ]) {
+                await transport.emit(invalid);
+                await sdkQuery.next();
+            }
+            expect(outcome).toBeUndefined();
+            await transport.emit(result);
+            await expect(sdkQuery.next()).resolves.toEqual({ done: false, value: result });
+            expect(outcome).toEqual({ kind: 'accepted' });
+            expect(onMessageReceived).toHaveBeenCalledWith(result);
+        } finally {
+            transport.write.resolve({ kind: 'written' });
+            await sdkQuery.dispose();
+        }
+    });
+
+    it.each([
+        { user_message_uuid: ' initial-prompt ', user_message_uuids: [' initial-prompt '] },
+        { user_message_uuid: 'initial-prompt', user_message_uuids: [] },
+    ])('requires exact result IDs and honors an authoritative plural list (%j)', async attribution => {
+        const transport = createControlledTransport();
+        const sdkQuery = query(transport.ctx, { prompt: exactPrompt() });
+        let outcome: PromptTransportOutcome | undefined;
+        void sdkQuery.promptTransportOutcome.then(value => { outcome = value; });
+        try {
+            await transport.writeStarted.promise;
+            await transport.emit({ type: 'result', subtype: 'success', ...attribution });
+            await sdkQuery.next();
+            expect(outcome).toBeUndefined();
+            await transport.emit({ type: 'result', subtype: 'success', user_message_uuid: 'initial-prompt' });
+            await expect(sdkQuery.promptTransportOutcome).resolves.toEqual({ kind: 'accepted' });
+        } finally {
+            transport.write.resolve({ kind: 'written' });
+            await sdkQuery.dispose();
+        }
+    });
+
+    it('retains only unanswered submissions across out-of-order, duplicate, and buffered results', async () => {
+        const transport = createControlledTransport();
+        const sdkQuery = query(transport.ctx, { prompt: exactPrompt() });
+        try {
+            await transport.writeStarted.promise;
+            transport.write.resolve({ kind: 'written' });
+            await transport.emit({ type: 'user', uuid: 'initial-prompt' });
+            await sdkQuery.promptTransportOutcome;
+            const steer = sdkQuery.sendUserMessage('steer', 'steer-prompt');
+            await new Promise<void>(resolve => setImmediate(resolve));
+            await transport.emit({ type: 'user', uuid: 'steer-prompt' });
+            await steer;
+            const earlier = { type: 'result', subtype: 'success', user_message_uuid: 'initial-prompt', queued_turn_count: 0 };
+            const latest = { type: 'result', subtype: 'success', user_message_uuids: ['steer-prompt'], queued_turn_count: 1 };
+            // Native ingress may read ahead of the ordered runtime result consumer.
+            await transport.emit(earlier);
+            await transport.emit(latest);
+            expect(sdkQuery.shouldRetainForegroundForResult(earlier)).toBe(true);
+            expect(sdkQuery.shouldRetainForegroundForResult(earlier)).toBe(true);
+            expect(sdkQuery.shouldRetainForegroundForResult(latest)).toBe(false);
+            const next = sdkQuery.sendUserMessage('next turn', 'next-prompt');
+            await new Promise<void>(resolve => setImmediate(resolve));
+            await transport.emit({ type: 'user', uuid: 'next-prompt' });
+            await next;
+            expect(sdkQuery.shouldRetainForegroundForResult(latest)).toBe(true);
+            expect(sdkQuery.shouldRetainForegroundForResult({ ...latest, user_message_uuids: ['next-prompt'] })).toBe(false);
+        } finally {
+            await sdkQuery.dispose();
+        }
+    });
+
+    it('uses an empty queue to retire omitted older result IDs only after the latest submission was answered', async () => {
+        const transport = createControlledTransport();
+        const sdkQuery = query(transport.ctx, { prompt: exactPrompt() });
+        try {
+            await transport.writeStarted.promise;
+            transport.write.resolve({ kind: 'written' });
+            await transport.emit({ type: 'user', uuid: 'initial-prompt' });
+            await sdkQuery.promptTransportOutcome;
+            const steer = sdkQuery.sendUserMessage('latest', 'latest-prompt');
+            await new Promise<void>(resolve => setImmediate(resolve));
+            await transport.emit({ type: 'user', uuid: 'latest-prompt' });
+            await steer;
+            expect(sdkQuery.shouldRetainForegroundForResult({ type: 'result', user_message_uuid: 'latest-prompt', queued_turn_count: 1 })).toBe(true);
+            expect(sdkQuery.shouldRetainForegroundForResult({ type: 'result', user_message_uuid: 'unrelated', queued_turn_count: 0 })).toBe(false);
+        } finally {
+            await sdkQuery.dispose();
+        }
+    });
+
+    it('removes a definitely unwritten steer without losing the prior latest submitted prompt', async () => {
+        const transport = createControlledTransport();
+        const sdkQuery = query(transport.ctx, { prompt: exactPrompt() });
+        try {
+            await transport.writeStarted.promise;
+            transport.write.resolve({ kind: 'written' });
+            await transport.emit({ type: 'user', uuid: 'initial-prompt' });
+            await sdkQuery.promptTransportOutcome;
+            const firstSteer = sdkQuery.sendUserMessage('latest accepted', 'accepted-steer');
+            await new Promise<void>(resolve => setImmediate(resolve));
+            await transport.emit({ type: 'user', uuid: 'accepted-steer' });
+            await firstSteer;
+            expect(sdkQuery.shouldRetainForegroundForResult({ type: 'result', user_message_uuid: 'accepted-steer', queued_turn_count: 1 })).toBe(true);
+            transport.rejectNextWrite(new Error('frame rejected before write'));
+            await expect(sdkQuery.sendUserMessage('rejected', 'rejected-steer')).resolves.toMatchObject({ kind: 'rejected_before_effect' });
+            expect(sdkQuery.shouldRetainForegroundForResult({ type: 'result', user_message_uuid: 'unrelated', queued_turn_count: 0 })).toBe(false);
+        } finally {
+            await sdkQuery.dispose();
+        }
+    });
+
     it('sends the provider-native stop_task control request for an exact background task', async () => {
         const transport = createControlledTransport();
         const sdkQuery = query(transport.ctx, { prompt: 'keep the stream open' });

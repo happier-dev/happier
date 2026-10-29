@@ -2874,6 +2874,32 @@ describe('bindClaudeAgentSdkFallbackSession', () => {
     });
   });
 
+  it.each(['single', 'batch'] as const)('completes the submitted SDK turn from an attributed result despite other queued sends (%s)', async attribution => {
+    const exec = createSdkExecFixture({ providerExitOwnership: 'direct', acknowledgePrompts: false });
+    const ctx = createPluginContextFixture(createTerminalHostFixture().service, createEventsFixture().service, { exec: exec.service });
+    const operations = createClaudeAgentSdkProviderOperations({ ctx, directory: '/tmp/claude-project', launchEnv: {},
+      permissionMode: 'default', happierSessionId: 'attributed-queued-result', publishTranscriptMessages: true });
+    const observed: unknown[] = [];
+    operations.subscribeProviderEvents(event => observed.push(event));
+    let acceptance: unknown;
+    try {
+      operations.beginProviderTurn('attributed-turn');
+      const submission = operations.sendProviderTurnPrompt('Answer this input');
+      void submission.then(value => { acceptance = value; });
+      await vi.waitFor(() => expect(exec.written).toContainEqual(expect.objectContaining({ type: 'user' })));
+      const submitted = exec.written.find(record => typeof record === 'object' && record !== null && Reflect.get(record, 'type') === 'user');
+      const uuid = Reflect.get(submitted as object, 'uuid');
+      await exec.emit({ type: 'result', subtype: 'success', is_error: false, session_id: 'native-attributed',
+        uuid: 'attributed-result', result: 'Answered input', queued_turn_count: 1,
+        ...(attribution === 'single' ? { user_message_uuid: uuid } : { user_message_uuids: [uuid] }),
+        num_turns: 1, duration_ms: 1, duration_api_ms: 1, total_cost_usd: 0 });
+      await vi.waitFor(() => expect(observed).toContainEqual(expect.objectContaining({ kind: 'turn-complete', turnId: 'attributed-turn' })));
+      expect(acceptance).toEqual({ kind: 'accepted' });
+      expect(observed).toContainEqual(expect.objectContaining({ localId: 'claude-sdk-result-attributed-result' }));
+      await operations.waitForProviderTurnCompletion();
+    } finally { await operations.disposeProviderSession(); }
+  });
+
   it.each(['complete', 'exit', 'queued-error'] as const)('keeps the submitted SDK turn open while result queued_turn_count is positive (%s)', async (ending) => {
     const terminalHost = createTerminalHostFixture();
     const events = createEventsFixture();
