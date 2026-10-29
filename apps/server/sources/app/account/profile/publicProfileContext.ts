@@ -29,10 +29,17 @@ export function readPublicProfileReportUrl(env: NodeJS.ProcessEnv, handle?: stri
     return url.toString();
 }
 
+/** The service's name on its public pages: its configured presentation, else its public host; none without ingress. */
+export function resolvePublicProfileServiceName(env: NodeJS.ProcessEnv): string | undefined {
+    const publicBaseUrl = resolveConfiguredPublicServerUrl(env);
+    return publicBaseUrl ? resolveAuthPolicyFromEnv(env).accountServicePresentation?.displayName ?? new URL(publicBaseUrl).hostname : undefined;
+}
+
 /** Canonical Account identity and request-effective service configuration, independent of publication state. */
 export async function readPublicProfileContextInTx(tx: Tx, accountId: string, env: NodeJS.ProcessEnv): Promise<PublicProfileContextV1> {
     const account = await tx.account.findUniqueOrThrow({ where: { id: accountId }, select: { username: true, name: true, createdAt: true } });
     const publicBaseUrl = resolveConfiguredPublicServerUrl(env);
+    const displayName = resolvePublicProfileServiceName(env);
     const report = readPublicProfileReportUrl(env, account.username ?? undefined);
     const name = resolveAccountDisplayLabelV1(account);
     const page = publicBaseUrl && account.username ? publicProfilePageUrl(publicBaseUrl, account.username) : null;
@@ -40,10 +47,7 @@ export async function readPublicProfileContextInTx(tx: Tx, accountId: string, en
         handle: account.username,
         // Account avatars have no admitted public-profile URL yet; never expose a private storage/provider URL.
         identity: { ...(name ? { name } : {}), sinceMs: account.createdAt.getTime() },
-        service: publicBaseUrl ? {
-            displayName: resolveAuthPolicyFromEnv(env).accountServicePresentation?.displayName ?? publicBaseUrl,
-            publicBaseUrl,
-        } : null,
+        service: publicBaseUrl && displayName ? { displayName, publicBaseUrl } : null,
         urls: page && publicBaseUrl && account.username && report ? {
             page,
             json: `${publicBaseUrl}/v1/public/profiles/${encodeURIComponent(account.username)}`,

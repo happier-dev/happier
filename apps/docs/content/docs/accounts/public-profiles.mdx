@@ -63,6 +63,10 @@ Look, library or plugin changes must not alter the applied image.
 Existing private recap images keep their seven styles and three formats.
 Development delivery includes HTML and JSON, SVG badges, SVG or PNG cards and
 PNG social previews; these are not yet available as a complete user workflow.
+Public pages name the Account service with its configured
+`HAPPIER_ACCOUNT_SERVICE_DISPLAY_NAME`. Without one, they show only the public
+ingress host, omitting its scheme, port and path; links still use the complete
+public URL.
 Development-only native daemon wiring checks for facts-only refresh after 24
 hours. Preparation is connected, but the complete publication and refresh
 journey remains unverified.

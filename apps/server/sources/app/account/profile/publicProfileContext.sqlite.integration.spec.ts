@@ -41,7 +41,8 @@ describe('public-profile canonical context', () => {
         const account = await db.account.create({ data: { publicKey: 'profile-context-absent', name: 'Unpublished' } });
         const env = { HAPPIER_PUBLIC_SERVER_URL: 'http://localhost:3000/base', HAPPIER_PUBLIC_PROFILE_REPORT_URL: 'https://reports.example.test/contact' };
         const absent = await inTx(tx => readPublicProfileContextInTx(tx, account.id, env));
-        expect(absent).toMatchObject({ handle: null, urls: null, service: { publicBaseUrl: 'http://localhost:3000/base' } });
+        expect(absent).toMatchObject({ handle: null, urls: null,
+            service: { displayName: 'localhost', publicBaseUrl: 'http://localhost:3000/base' } });
         expect(resolvePublicProfilePrerequisite(env)).toBeNull();
         await db.account.update({ where: { id: account.id }, data: { username: 'local_owner' } });
         const local = await inTx(tx => readPublicProfileContextInTx(tx, account.id, env));
