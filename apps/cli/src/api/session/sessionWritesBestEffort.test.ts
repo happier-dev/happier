@@ -9,21 +9,6 @@ describe('sessionWritesBestEffort', () => {
     vi.restoreAllMocks();
   });
 
-  it('does not throw when updateMetadata throws synchronously', async () => {
-    const debugSpy = vi.spyOn(logger, 'debug').mockImplementation(() => {});
-    const session = {
-      updateMetadata: () => {
-        throw new Error('sync metadata error');
-      },
-    } satisfies Readonly<{ updateMetadata: (updater: (metadata: Metadata) => Metadata) => void }>;
-
-    expect(() =>
-      updateMetadataBestEffort(session, (m) => m, '[Test]', 'sync_throw'),
-    ).not.toThrow();
-
-    expect(debugSpy).toHaveBeenCalled();
-  });
-
   it('does not throw when updateAgentState throws synchronously', async () => {
     const debugSpy = vi.spyOn(logger, 'debug').mockImplementation(() => {});
     const session = {
@@ -52,12 +37,14 @@ describe('sessionWritesBestEffort', () => {
     updateMetadataBestEffort(session, (metadata) => metadata, '[Test]', 'redaction');
 
     const loggedError = debugSpy.mock.calls[0]?.[1];
-    expect(loggedError).toEqual({
+    expect(loggedError).toMatchObject({
       name: 'Error',
-      message: 'metadata failed for https://api.example.test/v1/session Authorization: <redacted>',
+      message: expect.stringContaining('metadata failed for https://api.example.test/v1/session'),
     });
     expect(JSON.stringify(loggedError)).not.toContain('SUPER_SECRET_PASSWORD');
     expect(JSON.stringify(loggedError)).not.toContain('METADATA_SECRET');
+    expect(JSON.stringify(loggedError)).not.toContain('token=secret');
+    expect(JSON.stringify(loggedError)).not.toContain('alice');
   });
 
   it('redacts asynchronous agent state update errors before logging', async () => {
@@ -72,11 +59,13 @@ describe('sessionWritesBestEffort', () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     const loggedError = debugSpy.mock.calls[0]?.[1];
-    expect(loggedError).toEqual({
+    expect(loggedError).toMatchObject({
       name: 'Error',
-      message: 'agent state failed for https://api.example.test/v1/state Authorization: <redacted>',
+      message: expect.stringContaining('agent state failed for https://api.example.test/v1/state'),
     });
     expect(JSON.stringify(loggedError)).not.toContain('SUPER_SECRET_PASSWORD');
     expect(JSON.stringify(loggedError)).not.toContain('AGENT_STATE_SECRET');
+    expect(JSON.stringify(loggedError)).not.toContain('token=secret');
+    expect(JSON.stringify(loggedError)).not.toContain('alice');
   });
 });

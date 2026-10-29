@@ -1,12 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import axios from 'axios';
 
 const mockGet = vi.fn();
-
-vi.mock('axios', () => ({
-  default: {
-    get: (...args: any[]) => mockGet(...args),
-  },
-}));
 
 vi.mock('@/configuration', () => ({
   configuration: {
@@ -22,10 +17,12 @@ import { fetchEncryptedTranscriptPageAfterSeq, fetchEncryptedTranscriptPageLates
 describe('fetchEncryptedTranscriptWindow', () => {
   beforeEach(() => {
     mockGet.mockReset();
+    vi.spyOn(axios, 'get').mockImplementation(mockGet);
     vi.stubEnv('HAPPIER_LOCAL_SERVER_URL', 'http://localhost:1234');
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     vi.unstubAllEnvs();
   });
 

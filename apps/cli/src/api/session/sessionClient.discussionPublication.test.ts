@@ -215,7 +215,12 @@ it.each(['failed', 'cancelled'] as const)('publishes an Account Action and its e
   expect(publications).toHaveLength(1);
   const createInput = { creationLocalId: 'create-by-agent', title: 'Created by actual Session', firstMessage: { localId: 'first-by-agent', content } };
   expect(await execute({ ...operation, requestId: 'create-tool', actionId: 'discussion.create', input: createInput },
-    { sessionId, isCurrent: async () => true })).toMatchObject({ ok: false, errorCode: 'present_user_required' });
+    { sessionId, isCurrent: async () => true })).toMatchObject({ ok: true });
+  expect(publications).toHaveLength(2);
+  expect(publications[1]).toMatchObject({ operation: 'create', request: {
+    creationLocalId: createInput.creationLocalId,
+    firstMessage: { content: { t: 'plain', v: content } },
+  } });
   // This test owns the current Session publisher. Actual approved MCP replay
   // uses the real Artifact store in sessionClient.discussionApprovalReplay.test.ts.
   const created = await client.rpcHandlerManager.invokeLocal('discussion.agentPost.v1', {
@@ -227,12 +232,12 @@ it.each(['failed', 'cancelled'] as const)('publishes an Account Action and its e
   expect(created).toMatchObject({ ok: true, value: {
     firstMessage: { id: 'committed-first', producerV1: { sessionId } },
   } });
-  expect(publications).toHaveLength(2);
+  expect(publications).toHaveLength(3);
   expect(requests.every(url => !url.includes('/sessions/'))).toBe(true);
   active = false;
   hostTurnAbort.abort();
   expect(await execute(operation, { sessionId, isCurrent: async () => true })).toMatchObject({ ok: false });
-  expect(publications).toHaveLength(2);
+  expect(publications).toHaveLength(3);
   const terminalRequest = { ...admittedRequest,
     request: { ...admittedRequest.request, localId: deriveSessionMessageReplyReturnLocalIdV1({
       sessionId, localId: 'original', acceptedTurnId: witness.turnId }),
@@ -245,12 +250,12 @@ it.each(['failed', 'cancelled'] as const)('publishes an Account Action and its e
     text: terminalKind === 'cancelled' ? 'Stopped partial answer' : 'The requested session failed.' }] } };
   expect(await client.rpcHandlerManager.invokeLocal('discussion.agentPost.v1', { request: terminalRequest }))
     .toMatchObject({ ok: true, value: { message: { id: 'committed-answer' } } });
-  expect(publications).toHaveLength(3);
-  expect(publications[2]).toMatchObject({ terminalReturn: true });
+  expect(publications).toHaveLength(4);
+  expect(publications[3]).toMatchObject({ terminalReturn: true });
   terminalReturned = true;
   expect(await client.rpcHandlerManager.invokeLocal('discussion.agentPost.v1', { request: terminalRequest }))
     .toMatchObject({ ok: true, value: { message: { id: 'committed-answer' } } });
-  expect(publications).toHaveLength(4);
+  expect(publications).toHaveLength(5);
   explicitlyReturned = true;
   expect(await client.rpcHandlerManager.invokeLocal('discussion.agentPost.v1', { request: terminalRequest }))
     .toEqual({ v: 1, ok: false, error: 'discussion_post_denied' });
@@ -269,5 +274,5 @@ it.each(['failed', 'cancelled'] as const)('publishes an Account Action and its e
     request: { ...admittedRequest, request: { ...admittedRequest.request, replyTarget: { kind: 'message', messageId: 'question-1' } },
       replyReturn: { serverId: 'srv_discussion_home', requestLocalId: 'original', acceptedTurnId: witness.turnId } },
   })).toEqual({ v: 1, ok: false, error: 'discussion_post_denied' });
-  expect(publications).toHaveLength(4);
+  expect(publications).toHaveLength(5);
 });

@@ -1,15 +1,16 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import axios from 'axios';
 
 import { reportPendingSessionActivationFailure } from './pendingActivationTransport';
 
 const post = vi.hoisted(() => vi.fn());
 
-vi.mock('axios', () => ({
-  default: { post },
-}));
-
 describe('pending activation transport', () => {
-  beforeEach(() => post.mockReset());
+  beforeEach(() => {
+    post.mockReset();
+    vi.spyOn(axios, 'post').mockImplementation(post);
+  });
+  afterEach(() => vi.restoreAllMocks());
   it('keeps the predecessor failure body and sends optional diagnostic query facts', async () => {
     post.mockResolvedValueOnce({ data: { ok: true, didFail: true } });
     await reportPendingSessionActivationFailure({ token: 'token', sessionId: 'session', requestId: 'p1', requestedAt: 1,

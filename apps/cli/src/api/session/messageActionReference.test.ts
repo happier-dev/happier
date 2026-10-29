@@ -1,12 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import axios from 'axios';
 
 const mockPost = vi.hoisted(() => vi.fn());
-
-vi.mock('axios', () => ({
-  default: {
-    post: (...args: unknown[]) => mockPost(...args),
-  },
-}));
 
 import {
   resolveMessageActionReferenceSnapshotV1,
@@ -37,7 +32,10 @@ const durableAvailable = {
 describe('Message Action current-reference resolution', () => {
   beforeEach(() => {
     mockPost.mockReset();
+    vi.spyOn(axios, 'post').mockImplementation(mockPost);
   });
+
+  afterEach(() => vi.restoreAllMocks());
 
   it('builds only a bounded text snapshot from the exact durable row', () => {
     const result = resolveMessageActionSnapshotFromCurrentMessageV1({

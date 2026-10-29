@@ -276,7 +276,10 @@ describe('released-server Pending-input adapter', () => {
         });
         expect(harness.socket.emitWithAck).toHaveBeenCalledTimes(1);
         expect(axiosGetMock).toHaveBeenCalledTimes(2);
-        expect(axiosGetMock.mock.calls[1]).toEqual(axiosGetMock.mock.calls[0]);
+        expect(axiosGetMock.mock.calls[1]).toEqual([
+            axiosGetMock.mock.calls[0]?.[0],
+            { ...axiosGetMock.mock.calls[0]?.[1], beforeRedirect: expect.any(Function) },
+        ]);
         expect(harness.deliverMaterializedUserMessageToAgentQueue).toHaveBeenCalledTimes(1);
     });
 

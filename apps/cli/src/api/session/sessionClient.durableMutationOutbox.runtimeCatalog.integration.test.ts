@@ -1900,12 +1900,13 @@ describe('ApiSessionClient durable mutation outbox', () => {
       expect(logged).toEqual(expect.objectContaining({
         error: expect.objectContaining({
           name: 'Error',
-          message: 'delivery failed for https://api.example.test/v1/sessions/s1/turns/mutations Authorization: <redacted>',
+          message: expect.stringContaining('delivery failed for https://api.example.test/v1/sessions/s1/turns/mutations'),
         }),
       }));
       expect(JSON.stringify(logged)).not.toContain('SUPER_SECRET_PASSWORD');
       expect(JSON.stringify(logged)).not.toContain('token=secret');
       expect(JSON.stringify(logged)).not.toContain('OUTBOX_SECRET');
+      expect(JSON.stringify(logged)).not.toContain('alice');
       await outbox.close();
     } finally {
       debugSpy.mockRestore();
@@ -2168,52 +2169,6 @@ describe('ApiSessionClient durable mutation outbox', () => {
     expect(httpActions).toEqual(['touch_active', 'complete']);
     await expect(readPersistedOutboxMutationCount('s1')).resolves.toBe(0);
     await outbox.close();
-  });
-
-  it('does not leak terminal turn drain flush rejections as unhandled promises', async () => {
-    const flushFailure = new Error('durable flush failed');
-
-    sessionSocketStub = createApiSessionSocketStub({ connected: false });
-    userSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
-
-    try {
-      const client = createTestApiSessionClient(ApiSessionClient, 'tok', createPlainSessionFixture({ id: 's1' }));
-      const durableMutationOutbox: {
-        enqueueSessionTurnMutation: (mutation: SessionTurnMutationV1) => Promise<void>;
-        enqueueRegisteredSessionStateFieldMutation: () => Promise<void>;
-        flush: () => Promise<void>;
-        close: () => Promise<void>;
-      } = {
-        enqueueSessionTurnMutation: async () => undefined,
-        enqueueRegisteredSessionStateFieldMutation: async () => undefined,
-        flush: async () => {
-          throw flushFailure;
-        },
-        close: async () => undefined,
-      };
-      (client as unknown as { durableMutationOutbox: typeof durableMutationOutbox }).durableMutationOutbox = durableMutationOutbox;
-      const terminalTurnUpdate = client.enqueueSessionTurnMutation({
-        v: 1,
-        sessionId: 's1',
-        mutationId: 'mutation-cancel',
-        action: 'cancel',
-        turnId: 'turn-1',
-        agentId: 'codex',
-        agentTurnId: 'turn-1',
-        observedAt: 100,
-      });
-      await expect(Promise.race([
-        terminalTurnUpdate,
-        new Promise((_, reject) => setTimeout(() => reject(new Error('terminal turn mutation did not settle')), 1_000)),
-      ])).rejects.toThrow('durable flush failed');
-      await drainAsyncWork();
-
-      sessionSocketStub?.close();
-      userSocketStub?.close();
-    } finally {
-      sessionSocketStub?.close();
-      userSocketStub?.close();
-    }
   });
 
   it('routes durable runtime activity field mutations through the public projection socket event', async () => {

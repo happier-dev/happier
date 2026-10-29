@@ -92,7 +92,7 @@ describe('transcriptQueries (plaintext envelopes)', () => {
   })
 
   it.each([
-    { encryptionMode: 'e2ee' as const, content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'do not disclose' } } } },
+    { encryptionMode: 'e2ee' as const, content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'do not disclose' }, meta: { permissionMode: 'yolo' } } } },
     { encryptionMode: 'plain' as const, content: { t: 'encrypted', c: 'unavailable' } },
     { encryptionMode: 'e2ee' as const, content: { t: 'encrypted', c: 'unavailable' } },
   ])('rejects unreadable $encryptionMode content instead of empty import or default permission intent', async ({ encryptionMode, content }) => {
@@ -109,30 +109,6 @@ describe('transcriptQueries (plaintext envelopes)', () => {
     await expect(fetchLatestUserPermissionIntentFromEncryptedTranscript(params)).rejects.toMatchObject({
       code: 'session_transcript_stored_content_unavailable',
     })
-  })
-
-  it('rejects plaintext permission intent on an E2EE session', async () => {
-    vi.spyOn(axios, 'get').mockResolvedValueOnce({
-      data: {
-        messages: [
-          {
-            createdAt: 123,
-            content: {
-              t: 'plain',
-              v: {
-                role: 'user',
-                content: { type: 'text', text: 'hello' },
-                meta: { permissionMode: 'yolo' },
-              },
-            },
-          },
-        ],
-      },
-    } as any)
-
-    await expect(fetchLatestUserPermissionIntentFromEncryptedTranscript({
-      ...queryParams,
-    })).rejects.toMatchObject({ code: 'session_transcript_stored_content_unavailable' })
   })
 
   it('resolves permission intent from plaintext transcript messages on a plaintext session', async () => {
