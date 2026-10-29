@@ -9,6 +9,7 @@ import {
 import { db } from "@/storage/db";
 import { QualifiedProviderAccountUsageHistoryRequestV4Schema } from '@happier-dev/protocol/connect/providerAccountUsageHistory';
 import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
+import { sealProviderAccountUsageSnapshot } from '@happier-dev/protocol/connect/accountUsage';
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 import { connectRoutes } from "./connectRoutes";
 import {
@@ -115,6 +116,97 @@ describe("connectRoutes provider-account usage source-of-truth phase 4 contract"
         await db.providerAccountUsageRecord.deleteMany().catch(() => {});
         await db.serviceAccountToken.deleteMany().catch(() => {});
         await db.account.deleteMany().catch(() => {});
+    });
+
+    it.each(['plain', 'plain-without-fingerprint', 'e2ee'] as const)(
+        'publishes zero material quota changes for repeated %s freshness writes through the real route', async mode => {
+        harness.resetEnv({
+            HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED: 'true',
+            HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: 'optional',
+            HAPPIER_FEATURE_ENCRYPTION__PLAIN_ACCOUNT_CREDENTIALS_AT_REST: 'none',
+        });
+        const account = mode === 'e2ee' ? await createReadyE2eeAccount()
+            : await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' }, select: { id: true } });
+        const app = createProviderAccountUsageTestApp();
+        connectRoutes(app as never);
+        await app.ready();
+        const headers = { 'x-test-user-id': account.id };
+        const ref = createQualifiedLegacyRef();
+        const observedAtMs = Date.now() - 30_000;
+        const first = { ...createUsageSnapshot({ fetchedAt: observedAtMs }), subscription: {
+            status: 'subscribed' as const, renewal: 'on' as const, observedAtMs, staleAfterMs: 60_000,
+        } };
+        // Load the real writer fixture without adding CLI compilation roots to
+        // the server package; Vitest resolves the CLI module's own aliases.
+        const { computeProviderAccountUsageSnapshotFingerprint }: {
+            computeProviderAccountUsageSnapshotFingerprint: (snapshot: ReturnType<typeof createUsageSnapshot>, key: Uint8Array) => string;
+        } = await import(new URL('../../../../../../cli/src/daemon/connectedServices/accountUsage/fingerprint.ts', import.meta.url).href);
+        const credential = await app.inject({ method: 'POST', url: '/v4/connect/qualified/credential', headers, payload: {
+            ref, authenticationModeId: 'oauth', expectedCredentialRevision: null,
+            content: mode === 'e2ee' ? { t: 'encrypted', c: 'fixture-credential' } : { t: 'plain', v: { token: 'fixture' } },
+            metadata: { scopes: ['quota.read'], providerIdentity: { accountId: first.recordKey.accountSubjectId } },
+        } });
+        expect(credential.statusCode, credential.body).toBe(200);
+        const basis = credential.json();
+        const material = { type: 'legacy' as const, secret: new Uint8Array(32).fill(7) };
+        const fingerprintKey = new Uint8Array(32).fill(8);
+        const write = async (snapshot: ReturnType<typeof createUsageSnapshot>, status: 'ok' | 'error' = 'ok') => {
+            const response = await app.inject({ method: 'POST', url: '/v4/connect/qualified/provider-account-usage', headers, payload: {
+                source: { ref, bindingKind: 'account' }, expectedCredentialRevision: basis.credentialRevision,
+                expectedConfigurationRevision: basis.configurationRevision,
+                recordId: snapshot.recordId, recordKey: snapshot.recordKey,
+                payloadMode: mode === 'e2ee' ? 'sealed_account_scoped_v1' : 'plain_json_v1', status,
+                ...(mode === 'e2ee' ? { sealedPayload: sealProviderAccountUsageSnapshot({ snapshot, material,
+                    randomBytes: length => new Uint8Array(length).fill(9) }) } : { snapshot }),
+                fetchedAt: snapshot.fetchedAtMs, staleAfterMs: snapshot.staleAfterMs,
+                ...(mode === 'plain-without-fingerprint' ? {} : { metadata: {
+                    materialFingerprint: computeProviderAccountUsageSnapshotFingerprint(snapshot, fingerprintKey),
+                } }),
+            } });
+            expect(response.statusCode, response.body).toBe(200);
+        };
+        const cursor = async () => (await db.accountChange.findFirstOrThrow({ where: {
+            accountId: account.id, kind: 'account', entityId: 'provider-account-usage',
+        } })).cursor;
+        await write(first);
+        let previousCursor = await cursor();
+        let extraMaterialPublications = 0;
+        let refreshed = first;
+        for (let index = 1; index <= 20; index++) {
+            refreshed = { ...first, fetchedAtMs: first.fetchedAtMs + index * 1000, observedAtMs: first.observedAtMs + index * 1000,
+                subscription: { ...first.subscription, observedAtMs: first.subscription.observedAtMs + index * 1000 } };
+            await write(refreshed);
+            const nextCursor = await cursor();
+            if (nextCursor !== previousCursor) extraMaterialPublications++;
+            previousCursor = nextCursor;
+        }
+        expect(extraMaterialPublications).toBe(0);
+        const latest = await app.inject({ method: 'GET', url: '/v4/connect/qualified/provider-account-usage/record?recordId=' + encodeURIComponent(first.recordId), headers });
+        expect(latest.statusCode, latest.body).toBe(200);
+        expect(latest.json().metadata.fetchedAt).toBe(refreshed.fetchedAtMs);
+        const changed = { ...refreshed, fetchedAtMs: refreshed.fetchedAtMs + 1000, observedAtMs: refreshed.observedAtMs + 1000,
+            meters: refreshed.meters.map(meter => ({ ...meter, used: 83 })) };
+        await write(changed);
+        expect(await cursor()).toBe(previousCursor + 1);
+        previousCursor = await cursor();
+        await write({ ...changed, fetchedAtMs: changed.fetchedAtMs + 1, observedAtMs: changed.observedAtMs + 1 }, 'error');
+        expect(await cursor()).toBe(previousCursor + 1);
+        previousCursor = await cursor();
+        const renewalChanged = { ...changed, fetchedAtMs: changed.fetchedAtMs + 2, observedAtMs: changed.observedAtMs + 2,
+            subscription: { ...changed.subscription, renewal: 'off' as const, observedAtMs: changed.fetchedAtMs + 2 } };
+        await write(renewalChanged, 'error');
+        expect(await cursor()).toBe(previousCursor + 1);
+        const refresh = await app.inject({ method: 'POST', url: '/v4/connect/qualified/provider-account-usage/record/refresh',
+            headers, payload: { recordId: first.recordId } });
+        expect(refresh.statusCode, refresh.body).toBe(200);
+        const refreshCursor = (await db.account.findUniqueOrThrow({ where: { id: account.id }, select: { seq: true } })).seq;
+        const completionAt = Date.now();
+        const completed = { ...renewalChanged, fetchedAtMs: completionAt, observedAtMs: completionAt,
+            subscription: { ...renewalChanged.subscription, observedAtMs: completionAt } };
+        await write(completed, 'error');
+        expect(await cursor()).toBe(refreshCursor + 1);
+        await write(completed, 'error');
+        expect(await cursor()).toBe(refreshCursor + 1);
     });
 
     it("resolves a V4 qualified usage source without exposing its snapshot payload", async () => {

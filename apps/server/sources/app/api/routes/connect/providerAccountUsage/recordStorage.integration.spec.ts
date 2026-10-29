@@ -434,6 +434,7 @@ describe("provider account usage record storage (integration)", () => {
         const history = await readProviderAccountUsageHistory({ accountId: account.id, recordId: base.recordId,
             history: { range: { startAtMs: at, endAtMs: at + 3000 }, pageSize: 10 } });
         expect(history.entries.map(entry => entry.record.snapshot)).toEqual(snapshots);
+        expect((await db.account.findUniqueOrThrow({ where: { id: account.id }, select: { seq: true } })).seq).toBe(snapshots.length);
     });
 
     it('coalesces plain subscription-only observation refreshes without relying on caller fingerprints', async () => {
@@ -460,7 +461,7 @@ describe("provider account usage record storage (integration)", () => {
         expect(page.entries.map(entry => entry.record.snapshot)).toEqual([observed]);
     });
 
-    it('publishes a content-free Account change for accepted current freshness without retaining unchanged history', async () => {
+    it('persists accepted freshness without publishing material Account changes or retaining unchanged history', async () => {
         const account = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' }, select: { id: true } });
         const first = createUsageSnapshot({ fetchedAt: Date.now() - 3000 });
         const write = (snapshot: typeof first, materialFingerprint: string) => writeProviderAccountUsageRecordWithPolicy({ accountId: account.id, recordId: snapshot.recordId, recordKey: snapshot.recordKey, payloadMode: 'plain_json_v1', status: 'ok', fetchedAt: snapshot.fetchedAtMs, staleAfterMs: snapshot.staleAfterMs, snapshot, materialFingerprint });
@@ -475,7 +476,7 @@ describe("provider account usage record storage (integration)", () => {
         await expect(write(refreshed, 'first')).resolves.toBe('written');
         await expect(readProviderAccountUsageRecord({ accountId: account.id, recordId: first.recordId })).resolves.toMatchObject({ fetchedAt: refreshed.fetchedAtMs, snapshot: refreshed });
         const freshnessChanged = await db.accountChange.findFirst({ where: { accountId: account.id, kind: 'account', entityId: 'provider-account-usage' } });
-        expect(freshnessChanged?.cursor).toBeGreaterThan(initial!.cursor);
+        expect(freshnessChanged?.cursor).toBe(initial!.cursor);
         const history = await readProviderAccountUsageHistory({ accountId: account.id, recordId: first.recordId, history: { range: { startAtMs: first.fetchedAtMs, endAtMs: refreshed.fetchedAtMs + 1 }, pageSize: 10 } });
         expect(history.entries.map(entry => entry.record.snapshot)).toEqual([first]);
         await write({ ...first, fetchedAtMs: first.fetchedAtMs + 2000, observedAtMs: first.observedAtMs + 2000, planLabel: 'new tier' }, 'changed');

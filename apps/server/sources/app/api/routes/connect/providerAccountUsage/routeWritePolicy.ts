@@ -337,10 +337,18 @@ async function writeProviderAccountUsageRecordWithPolicyInClient(
             const changedMaterial = nextWrite.snapshot && existing.snapshot
                 ? serializeProviderAccountUsageHistoryMaterialV1(nextWrite.snapshot) !== serializeProviderAccountUsageHistoryMaterialV1(existing.snapshot)
                 : !incomingFingerprint || existingFingerprint !== incomingFingerprint;
-            if (changedMaterial || !await hasProviderAccountUsageHistory({ accountId: params.accountId, recordId: params.recordId }, params.client)) {
+            const historyChanged = changedMaterial || !await hasProviderAccountUsageHistory({ accountId: params.accountId, recordId: params.recordId }, params.client);
+            if (historyChanged) {
                 await retainProviderAccountUsageHistory(nextWrite, params.client);
             }
-            await markAccountChanged(params.client, { accountId: params.accountId, kind: 'account', entityId: PROVIDER_ACCOUNT_USAGE_ACCOUNT_CHANGE_ENTITY_ID_V1 });
+            // Freshness is persisted on the exact record, not a material
+            // allowance invalidation. Reuse the history/writer equality basis:
+            // it preserves quota reset phases and excludes observation clocks.
+            // Opaque writers without a fingerprint remain conservative.
+            if (historyChanged || nextWrite.status !== existing.status
+                || nextWrite.staleAfterMs !== existing.staleAfterMs || clearsRefreshRequest) {
+                await markAccountChanged(params.client, { accountId: params.accountId, kind: 'account', entityId: PROVIDER_ACCOUNT_USAGE_ACCOUNT_CHANGE_ENTITY_ID_V1 });
+            }
             return result;
         }
     }
