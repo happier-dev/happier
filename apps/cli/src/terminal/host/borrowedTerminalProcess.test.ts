@@ -21,6 +21,34 @@ import { waitForCondition } from '@/testkit/async/waitFor';
 import { resolveProcessCustodySupportExecutable } from '@/subprocess/supervision/processCustody';
 
 describe('launchBorrowedTerminalProcess', () => {
+  it('does not spawn when cancellation wins the awaited before-spawn admission', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'happier-borrowed-before-spawn-'));
+    const controller = new AbortController();
+    const launcher = createTerminalLauncherFixture();
+    let starts = 0;
+    let admitted = false;
+    try {
+      const result = launchBorrowedTerminalProcess({
+        spawnArgv: ['/native/agent'], workingDirectory: directory, spawnEnv: {}, signal: controller.signal,
+        beforeSpawn: async () => { admitted = true; controller.abort(); },
+        spawnProcess: (...args) => { starts += 1; return launcher.spawnProcess(...args); },
+      });
+      // Observe both outcomes before cleanup; a post-await cancellation check
+      // must prevent reaching the actual OS-spawn adapter altogether.
+      const settled = await result.then(async process => {
+        launcher.child.emit('exit', 0, null);
+        launcher.child.emit('disconnect');
+        await process.whenExited;
+        return 'spawned' as const;
+      }, () => 'refused' as const);
+      expect({ admitted, starts, settled }).toEqual({ admitted: true, starts: 0, settled: 'refused' });
+    } finally {
+      launcher.child.emit('exit', 0, null);
+      launcher.child.emit('disconnect');
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it.each(['closed', 'empty'] as const)('drains private IPC before deciding native closure proof (%s)', async (proof) => {
     const directory = await mkdtemp(join(tmpdir(), 'happier-borrowed-exit-drain-'));
     // The OS child boundary deliberately delivers its IPC packet after its exit event.

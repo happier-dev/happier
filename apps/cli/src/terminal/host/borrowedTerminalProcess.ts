@@ -33,7 +33,7 @@ export async function launchBorrowedTerminalProcess(params: Readonly<{
   signal?: AbortSignal;
   envPassthroughKeys?: readonly string[];
   windowsVerbatimArguments?: boolean;
-  beforeSpawn?: () => void;
+  beforeSpawn?: () => void | Promise<void>;
 }>): Promise<BorrowedTerminalProcess> {
   const [command, ...args] = params.spawnArgv;
   if (!command) throw new Error('Borrowed terminal launch requires a command');
@@ -54,7 +54,8 @@ export async function launchBorrowedTerminalProcess(params: Readonly<{
   let child: ChildProcess;
   try {
     params.signal?.throwIfAborted();
-    params.beforeSpawn?.();
+    if (params.beforeSpawn) await params.beforeSpawn();
+    params.signal?.throwIfAborted();
     child = (params.spawnProcess ?? spawn)(launcherInvocation.command, launcherInvocation.args, {
       cwd: params.workingDirectory,
       env,
