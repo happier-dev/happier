@@ -5,6 +5,7 @@ import type { Metadata, UserMessage } from '@/api/types';
 import type { RuntimeActivitySnapshotTail } from '@/api/session/sessionClientPort';
 import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
 import { registerPermissionModeMessageQueueBinding } from '@/agent/runtime/permissions/bindModeQueue';
+import { combinePermissionModeQueuedPrompts } from '@/agent/runtime/permissions/queuedPrompt';
 import type {
   PermissionModeQueuedPrompt,
   PermissionModeQueuedPromptMode,
@@ -1208,6 +1209,64 @@ describe('createSessionProviderInputConsumer', () => {
 
     expect(events).toEqual(['metadata', 'returned:hello']);
   });
+
+  it.each(['queued', 'materialized'] as const)(
+    'retains the complete %s batch during metadata refresh and cancellation before draining later Pending input', async (source) => {
+      const metadataStarted = createDeferred<void>();
+      const metadataFinished = createDeferred<void>();
+      const controller = new AbortController();
+      const mode = { id: 'original-mode' };
+      const message: PermissionModeQueuedPrompt = {
+        text: 'original input', localId: 'original-local-id', localIds: ['original-local-id'],
+        userMessageSeq: 41, userMessageSeqs: [41],
+      };
+      const queue = new MessageQueue2<TestMode, PermissionModeQueuedPrompt>(
+        () => 'custody-hash', { batcher: combinePermissionModeQueuedPrompts },
+      );
+      let originalPending = source === 'materialized';
+      if (source === 'queued') queue.pushIsolateAndClear(message, mode);
+      const consumer = createSessionProviderInputConsumer({
+        messageQueue: queue,
+        session: {
+          waitForMetadataUpdate: () => new Promise<boolean>(() => {}),
+          materializeNextPendingMessageSafely: async () => {
+            if (!originalPending) return { type: 'no_pending' as const };
+            originalPending = false;
+            queue.pushIsolateAndClear(message, mode);
+            return { type: 'materialized' as const, localId: 'original-local-id', seq: 41, content: null };
+          },
+        },
+        onMetadataUpdate: async () => {
+          metadataStarted.resolve();
+          await metadataFinished.promise;
+        },
+      });
+      const waiting = consumer.waitForNextInput({ abortSignal: controller.signal });
+      try {
+        await metadataStarted.promise;
+        await expect(consumer.drainPending({ reason: 'metadata-wait-custody' })).resolves.toEqual({
+          materialized: 0, stoppedReason: 'materialization_blocked',
+        });
+        controller.abort();
+        await expect(waiting).resolves.toBeNull();
+        await expect(consumer.drainPending({ reason: 'cancelled-input-custody' })).resolves.toEqual({
+          materialized: 0, stoppedReason: 'materialization_blocked',
+        });
+        const laterMessage: PermissionModeQueuedPrompt = { text: 'later input', localId: 'later-local-id' };
+        queue.pushImmediate(laterMessage, { id: 'later-mode' });
+        await expect(consumer.waitForNextInput({ abortSignal: new AbortController().signal })).resolves.toEqual({
+          message, mode, isolate: true, hash: 'custody-hash',
+        });
+        metadataFinished.resolve();
+        await expect(consumer.waitForNextInput({ abortSignal: new AbortController().signal }))
+          .resolves.toMatchObject({ message: laterMessage, mode: { id: 'later-mode' } });
+      } finally {
+        controller.abort();
+        metadataFinished.resolve();
+        await waiting;
+      }
+    },
+  );
 
   it('uses structured pending materialization without invoking the boolean compatibility surface', async () => {
     type Mode = { id: string };

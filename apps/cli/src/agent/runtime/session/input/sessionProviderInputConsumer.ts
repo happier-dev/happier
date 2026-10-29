@@ -1006,22 +1006,22 @@ async function returnBatch<Mode, Message>(
   batch: MessageBatch<Mode, Message>,
   refreshBeforeReturn: boolean,
 ): Promise<MessageBatch<Mode, Message> | null> {
+  // Keep dequeued input in local custody across metadata and admission waits,
+  // so concurrent Pending drains cannot overtake an interrupted batch.
+  opts.reserveBatch(batch);
   if (!await opts.waitUntilAdmitted(opts.abortSignal)) {
-    opts.reserveBatch(batch);
     return null;
   }
   if (refreshBeforeReturn) {
     await callMetadataUpdate(opts.onMetadataUpdate, opts.abortSignal);
   }
   if (opts.abortSignal.aborted) {
-    opts.reserveBatch(batch);
     return null;
   }
   if (!await opts.waitUntilAdmitted(opts.abortSignal)) {
-    opts.reserveBatch(batch);
     return null;
   }
-  return batch;
+  return opts.takeReservedBatch();
 }
 
 async function collectQueuedBatch<Mode, Message>(
