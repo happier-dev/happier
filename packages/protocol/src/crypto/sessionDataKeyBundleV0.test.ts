@@ -30,6 +30,10 @@ describe('session data-key bundle version 0', () => {
 
   it('distinguishes authenticated invalid JSON from authentication failure', async () => {
     const payload = await sealAesGcmPayloadWebCrypto(new TextEncoder().encode('{'), key);
-    expect(await openSessionDataKeyBundleV0(frameSessionDataKeyBundleV0(payload), key)).toEqual({ status: 'invalid_payload' });
+    const bundle = frameSessionDataKeyBundleV0(payload);
+    expect(await openSessionDataKeyBundleV0(bundle, key)).toEqual({ status: 'invalid_payload' });
+    const tampered = bundle.slice();
+    tampered[tampered.length - 1] ^= 1;
+    expect(await openSessionDataKeyBundleV0(tampered, key)).toEqual({ status: 'authentication_failed' });
   });
 });

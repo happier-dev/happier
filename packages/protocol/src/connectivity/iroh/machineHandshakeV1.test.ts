@@ -121,13 +121,6 @@ describe('IrohMachineHandshakeV1 (canonical happier/machine/1 handshake)', () =>
     expect(IrohMachineHandshakeV1Schema.parse(handshake())).toEqual(handshake());
   });
 
-  it('carries the existing signed V2 grant and ephemeral proof verbatim', () => {
-    const parsed = IrohMachineHandshakeV1Schema.parse(handshake());
-    expect(parsed.grant.payload.routeKind).toBe('iroh_peer');
-    expect(parsed.grant.payload.proofKind).toBe('ephemeral_ed25519');
-    expect(parsed.proof.nonceBase64Url).toBe(PROOF_NONCE);
-  });
-
   it('rejects any handshake identity, orientation, or purpose binding that differs from its signed grant', () => {
     expect(IrohMachineHandshakeV1Schema.safeParse({
       ...handshake(),

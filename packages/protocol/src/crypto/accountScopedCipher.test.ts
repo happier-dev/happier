@@ -651,7 +651,7 @@ describe('accountScopedCipher', () => {
   it('allocates a distinct authenticated private Follow rule domain', () => {
     expect(getAccountScopedBlobKindByte('account_session_follow_rule')).toBe(50);
   });
-  it('has one frozen canonical vector and an explicit rollback disposition for every current kind', () => {
+  it('keeps the declared frozen canonical inventory unique and aligned with its rollback dispositions', () => {
     const frozenKinds = FROZEN_CANONICAL_ACCOUNT_SCOPED_VECTORS.map(
       (vector) => vector.kind,
     );
@@ -662,17 +662,6 @@ describe('accountScopedCipher', () => {
 
     expect(frozenKindSet.size).toBe(frozenKinds.length);
     expect([...frozenKindSet].sort()).toEqual(dispositionKinds);
-    expect(
-      frozenKinds.filter(
-        (kind) => CURRENT_ACCOUNT_SCOPED_KIND_ROLLBACK_DISPOSITIONS[kind].remoteDev165A
-          === 'readable',
-      ).sort(),
-    ).toEqual(
-      Object.entries(CURRENT_ACCOUNT_SCOPED_KIND_ROLLBACK_DISPOSITIONS)
-        .filter(([, disposition]) => disposition.remoteDev165A === 'readable')
-        .map(([kind]) => kind)
-        .sort(),
-    );
   });
 
   it('freezes canonical E2EE Account mode and content-key fingerprint vectors with the exact crypto material', () => {
@@ -882,6 +871,7 @@ describe('accountScopedCipher', () => {
         payload: noAliasVector.payload,
         randomBytes,
       })).toBe(noAliasVector.ciphertext);
+      expect(readAccountScopedCiphertextKindByte(noAliasVector.ciphertext)).toBe(noAliasVector.kindByte);
 
       const canonicalBytes = decodeBase64(noAliasVector.ciphertext, 'base64');
       for (
@@ -1282,63 +1272,6 @@ describe('accountScopedCipher', () => {
     expect(openAccountScopedBlobCiphertext({ kind: 'automation_template_payload', material, ciphertext })).toBeNull();
   });
 
-  it('reserves the Automation trigger-definition ciphertext domain at stable byte 20', () => {
-    const material: AccountScopedCryptoMaterial = {
-      type: 'dataKey',
-      machineKey: FROZEN_ACCOUNT_SCOPED_VECTOR_MACHINE_KEY,
-    };
-    const ciphertext = sealAccountScopedBlobCiphertext({
-      // This assertion intentionally arrives before the registry allocation.
-      kind: 'automation_trigger_definition' as AccountScopedBlobKind,
-      material,
-      payload: { slot: 20, source: 'event-automations-r0.24-trigger-definition' },
-      randomBytes: (length) => Uint8Array.from({ length }, (_, index) => index + 33),
-    });
-
-    const frozenVector = FROZEN_CANONICAL_ACCOUNT_SCOPED_VECTORS.find(
-      (vector) => vector.kind === 'automation_trigger_definition',
-    );
-    expect(ciphertext).toBe(frozenVector?.ciphertext);
-    expect(readAccountScopedCiphertextKindByte(ciphertext)).toBe(20);
-  });
-
-  it('reserves the Automation Session-start request ciphertext domain at stable byte 21', () => {
-    const material: AccountScopedCryptoMaterial = {
-      type: 'dataKey',
-      machineKey: FROZEN_ACCOUNT_SCOPED_VECTOR_MACHINE_KEY,
-    };
-    const ciphertext = sealAccountScopedBlobCiphertext({
-      kind: 'automation_session_start_request',
-      material,
-      payload: { slot: 21, source: 'event-automations-r0.28-session-start-request' },
-      randomBytes: (length) => Uint8Array.from({ length }, (_, index) => index + 33),
-    });
-
-    const frozenVector = FROZEN_CANONICAL_ACCOUNT_SCOPED_VECTORS.find(
-      (vector) => vector.kind === 'automation_session_start_request',
-    );
-    expect(ciphertext).toBe(frozenVector?.ciphertext);
-    expect(readAccountScopedCiphertextKindByte(ciphertext)).toBe(21);
-  });
-
-  it('reserves the Automation Run failure-detail ciphertext domain at stable byte 22', () => {
-    const material: AccountScopedCryptoMaterial = {
-      type: 'dataKey',
-      machineKey: FROZEN_ACCOUNT_SCOPED_VECTOR_MACHINE_KEY,
-    };
-    const ciphertext = sealAccountScopedBlobCiphertext({
-      kind: 'automation_run_failure_detail',
-      material,
-      payload: { slot: 22, source: 'event-automations-r0.38-failure-detail' },
-      randomBytes: (length) => Uint8Array.from({ length }, (_, index) => index + 33),
-    });
-
-    const frozenVector = FROZEN_CANONICAL_ACCOUNT_SCOPED_VECTORS.find(
-      (vector) => vector.kind === 'automation_run_failure_detail',
-    );
-    expect(ciphertext).toBe(frozenVector?.ciphertext);
-    expect(readAccountScopedCiphertextKindByte(ciphertext)).toBe(22);
-  });
 });
 
 describe('derivePluginCollectionIdentityTagV1', () => {

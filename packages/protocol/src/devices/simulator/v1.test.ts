@@ -181,22 +181,29 @@ describe('Simulator device protocol V1', () => {
     expect(mod).toHaveProperty('SimulatorDeviceResourceV1Schema');
     if (!('SimulatorDeviceResourceV1Schema' in mod)) return;
 
-    const result = mod.SimulatorDeviceResourceV1Schema.safeParse({
+    const resource = {
       v: 1,
       simulatorId: 'sim_1',
       platform: 'ios',
       deviceId: 'E4B5B8D6-0000-0000-0000-000000000001',
       displayName: 'iPhone 16 Pro',
       capture: {
+        status: 'available',
         sourceId: 'sim_1:screen',
         supportedCodecs: ['image.mjpeg'],
         inputMode: 'exclusive',
-        rawSideband: { logs: true },
       },
-      rawSideband: { logs: true },
-    });
+    };
 
-    expect(result.success).toBe(false);
+    expect(mod.SimulatorDeviceResourceV1Schema.safeParse(resource).success).toBe(true);
+    expect(mod.SimulatorDeviceResourceV1Schema.safeParse({
+      ...resource,
+      rawSideband: { logs: true },
+    }).success).toBe(false);
+    expect(mod.SimulatorDeviceResourceV1Schema.safeParse({
+      ...resource,
+      capture: { ...resource.capture, rawSideband: { logs: true } },
+    }).success).toBe(false);
   });
 
   it('represents capture-unavailable simulator resources without fake codec capabilities', async () => {

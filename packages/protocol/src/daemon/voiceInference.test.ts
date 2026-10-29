@@ -268,8 +268,8 @@ describe('daemonVoiceInference schemas', () => {
 
     it('rejects daemon TTS codecs that no packaged runtime can produce', () => {
         for (const output of [
-            { codec: 'mp3', mimeType: 'audio/mpeg' },
-            { codec: 'opus', mimeType: 'audio/opus' },
+            { codec: 'mp3', mimeType: 'audio/wav' },
+            { codec: 'opus', mimeType: 'audio/wav' },
         ]) {
             expect(DaemonVoiceInferenceTtsSynthesizeRequestSchema.safeParse({
                 requestId: 'tts-unsupported',
@@ -408,7 +408,7 @@ describe('daemonVoiceInference schemas', () => {
         });
 
         expect('runtimeState' in parsed).toBe(false);
-        expect('residentMemoryBytes' in parsed).toBe(false);
+        expect('loadedArtifactBytes' in parsed).toBe(false);
     });
 
     it('exposes the canonical model runtime-state enum', () => {
