@@ -39,6 +39,37 @@ export const SessionOrganizationSnapshotRequestSchema = lazyZodSchema(() => z.st
   }));
 export type SessionOrganizationSnapshotRequest = z.infer<typeof SessionOrganizationSnapshotRequestSchema>;
 
+/** The existing HTTP query codec, shared by the route and signed-phase admission. */
+export function sessionOrganizationSnapshotRequestFromQueryV1(query: unknown): Readonly<Record<string, unknown>> {
+  const record = query && typeof query === 'object' ? query as Record<string, unknown> : {};
+  const boolean = (value: unknown): boolean | undefined => value === true || value === 'true' || value === '1' ? true
+    : value === false || value === 'false' || value === '0' ? false : undefined;
+  const list = (value: unknown): string[] | undefined => {
+    if (typeof value !== 'string') return undefined;
+    const values = [...new Set(value.split(',').map(entry => entry.trim()).filter(Boolean))];
+    return values.length ? values : undefined;
+  };
+  const orderScopes = (() => {
+    if (typeof record.orderScopes !== 'string') return undefined;
+    try { const value: unknown = JSON.parse(record.orderScopes); return Array.isArray(value) ? value : [{}]; }
+    catch { return [{}]; }
+  })();
+  const result: Record<string, unknown> = {};
+  if (record.projectionVersion !== undefined) result.projectionVersion = record.projectionVersion === String(SESSION_ORGANIZATION_CURRENT_PROJECTION_VERSION)
+    ? SESSION_ORGANIZATION_CURRENT_PROJECTION_VERSION : record.projectionVersion;
+  for (const key of ['includeFolders', 'includeTags', 'includeLabels', 'includeAllFolderAssignments',
+    'includeAllTagAssignments', 'includeAttentionStandings', 'includeAttentionReminderTimes', 'includeSessionAppearances'] as const) {
+    const value = boolean(record[key]);
+    if (value !== undefined) result[key] = value;
+  }
+  for (const key of ['assignmentSessionIds', 'folderIds', 'tagIds'] as const) {
+    const value = list(record[key]);
+    if (value) result[key] = value;
+  }
+  if (orderScopes) result.orderScopes = orderScopes;
+  return result;
+}
+
 /** Exact existing assignment read shared by transports and signed-purpose admission. */
 export function buildSessionOrganizationAssignmentSnapshotHttpRequestV1(sessionIds: readonly string[]) {
   const request = SessionOrganizationSnapshotRequestSchema.parse({ includeFolders: false, includeTags: false, includeLabels: false,

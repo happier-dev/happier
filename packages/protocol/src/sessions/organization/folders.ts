@@ -1,5 +1,6 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod/mini';
+import { generateKeyBetween } from 'fractional-indexing';
 
 import {
   SESSION_ORGANIZATION_MAX_ID_LENGTH,
@@ -55,6 +56,32 @@ export function compareSessionSectionOrderV1(
   if (left.sortKey !== null && right.sortKey === null) return -1;
   if (left.sortKey !== right.sortKey) return (left.sortKey ?? '') < (right.sortKey ?? '') ? -1 : 1;
   return left.sectionId.localeCompare(right.sectionId);
+}
+
+/** The fresh key and its next neighbor in the canonical Section order; retained rows are never repaired. */
+export function resolveSessionSectionCreatePlacementV1(
+  sections: readonly Pick<SessionSectionV1, 'sectionId' | 'sortKey'>[],
+): Readonly<{ sortKey: string; beforeSectionId: string | null }> {
+  let lastValid: Pick<SessionSectionV1, 'sectionId' | 'sortKey'> | null = null;
+  let sortKey = generateKeyBetween(null, null);
+  for (const section of sections) {
+    if (section.sortKey === null || lastValid && compareSessionSectionOrderV1(section, lastValid) <= 0) continue;
+    try {
+      sortKey = generateKeyBetween(section.sortKey, null);
+      lastValid = section;
+    } catch {
+      // Null/padded/invalid legacy keys remain untouched; only explicit reorder repairs them.
+    }
+  }
+  // The generated key cannot equal a retained valid key, so the placeholder id
+  // never participates in the comparator's equal-key identity tie-break.
+  const created = { sectionId: '', sortKey };
+  let before: Pick<SessionSectionV1, 'sectionId' | 'sortKey'> | null = null;
+  for (const section of sections) {
+    const direction = compareSessionSectionOrderV1(section, created);
+    if (direction > 0 && (!before || compareSessionSectionOrderV1(section, before) < 0)) before = section;
+  }
+  return { sortKey, beforeSectionId: before?.sectionId ?? null };
 }
 
 export type SessionOrganizationOpenedDisplayStateV1 = Readonly<
