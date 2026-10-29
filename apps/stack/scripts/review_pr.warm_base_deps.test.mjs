@@ -56,6 +56,7 @@ test('review-pr warms cached workspace deps when shouldRunPnpmInstall returns tr
 import { appendFileSync } from 'node:fs';
 import { EventEmitter } from 'node:events';
 export const fork = process.getBuiltinModule('node:child_process').fork;
+export const execFileSync = process.getBuiltinModule('node:child_process').execFileSync;
 
 function log(call) {
   const p = process.env.HSTACK_REVIEW_PR_MARKER;

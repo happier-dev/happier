@@ -1,10 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { createTempFixture } from '../../testkit/core/temp_fixture.mjs';
+import { buildGitIdentityEnv } from '../../testkit/core/env_scope.mjs';
 
 function resolveRepoRoot() {
   // This test must run from anywhere (repo root, package root, CI, etc.).
@@ -20,8 +21,27 @@ function buildToolStubPath(binDir) {
   return [binDir, nodeBinDir, ...rest].join(path.delimiter);
 }
 
-test('review script provides a non-empty prompt to augment in normal uncommitted mode', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'happier-review-auggie-'));
+async function createReviewFixture(t) {
+  const fixture = await createTempFixture(t, { prefix: 'happier-review-auggie-' });
+  const repoRoot = fixture.path('repo');
+  for (const component of ['ui', 'cli', 'server']) {
+    const dir = path.join(repoRoot, 'apps', component);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: `@happier-dev/${component}` }));
+  }
+  const userHome = fixture.path('user');
+  fs.mkdirSync(userHome);
+  const env = buildGitIdentityEnv({ extraEnv: { HOME: userHome, USERPROFILE: userHome } });
+  for (const args of [['init', '-b', 'main'], ['add', '.'], ['commit', '-m', 'fixture']]) {
+    const result = spawnSync('git', args, { cwd: repoRoot, env, encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+  }
+  fs.writeFileSync(path.join(repoRoot, 'apps', 'cli', 'changed.txt'), 'review this change\n');
+  return { tmp: fixture.root, repoRoot, env };
+}
+
+test('review script provides a non-empty prompt to augment in normal uncommitted mode', async (t) => {
+  const { tmp, repoRoot, env: fixtureEnv } = await createReviewFixture(t);
   const binDir = path.join(tmp, 'bin');
   fs.mkdirSync(binDir, { recursive: true });
 
@@ -40,9 +60,8 @@ process.stdout.write('ok\\n\\n===FINDINGS_JSON===\\n[]\\n');
     { mode: 0o755 }
   );
 
-  const repoRoot = resolveRepoRoot();
   const env = {
-    ...process.env,
+    ...fixtureEnv,
     // Keep the real Node bin available without letting its real auggie binary shadow our stub.
     PATH: buildToolStubPath(binDir),
     // Keep Augment cache writes out of the repo.
@@ -53,9 +72,10 @@ process.stdout.write('ok\\n\\n===FINDINGS_JSON===\\n[]\\n');
   const res = spawnSync(
     process.execPath,
     [
-      path.join(repoRoot, 'apps', 'stack', 'scripts', 'review.mjs'),
+      path.join(resolveRepoRoot(), 'apps', 'stack', 'scripts', 'review.mjs'),
       'all',
       '--reviewers=augment',
+      '--base-ref=HEAD',
       '--type=uncommitted',
       '--depth=normal',
       '--no-chunks',
@@ -68,8 +88,8 @@ process.stdout.write('ok\\n\\n===FINDINGS_JSON===\\n[]\\n');
   assert.equal(res.status, 0, `expected exit 0; stderr:\n${res.stderr}\nstdout:\n${res.stdout}`);
 });
 
-test('review script infers repo dir from cwd even when target positionals are provided', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'happier-review-auggie-'));
+test('review script infers repo dir from cwd even when target positionals are provided', async (t) => {
+  const { tmp, repoRoot, env: fixtureEnv } = await createReviewFixture(t);
   const binDir = path.join(tmp, 'bin');
   fs.mkdirSync(binDir, { recursive: true });
 
@@ -82,9 +102,8 @@ process.stdout.write('ok\\n\\n===FINDINGS_JSON===\\n[]\\n');
     { mode: 0o755 }
   );
 
-  const repoRoot = resolveRepoRoot();
   const env = {
-    ...process.env,
+    ...fixtureEnv,
     PATH: buildToolStubPath(binDir),
     HAPPIER_STACK_AUGMENT_CACHE_DIR: path.join(tmp, 'augment-home'),
     // Do NOT set HAPPIER_STACK_REPO_DIR here; we want it inferred from cwd.
@@ -93,9 +112,10 @@ process.stdout.write('ok\\n\\n===FINDINGS_JSON===\\n[]\\n');
   const res = spawnSync(
     process.execPath,
     [
-      path.join(repoRoot, 'apps', 'stack', 'scripts', 'review.mjs'),
+      path.join(resolveRepoRoot(), 'apps', 'stack', 'scripts', 'review.mjs'),
       'all',
       '--reviewers=augment',
+      '--base-ref=HEAD',
       '--type=uncommitted',
       '--depth=normal',
       '--no-chunks',
