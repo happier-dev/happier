@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { t } from '@/text';
 
-import { describeMachineLockedReason, getMachineDisplayName, getMachineSentenceName, getSessionMachineLabel, readMachineName, resolveMachineDisplayNames } from './machineDisplayNames';
+import { describeMachineLockedReason, getMachineDisplayName, getMachineSentenceName, getSettledMachineDisplayName, getSessionMachineLabel, readMachineName, resolveMachineDisplayNames } from './machineDisplayNames';
 
 const m = (id: string, displayName?: string, host?: string) => ({ id, metadata: { displayName, host } });
 
@@ -39,6 +39,19 @@ describe('getMachineDisplayName', () => {
         }, inventory)).toBe(t('machine.lockedMachine'));
         expect(getMachineDisplayName({ id: 'machine-1', metadata: null }, inventory))
             .toBe(t('common.loading'));
+    });
+});
+
+describe('getSettledMachineDisplayName', () => {
+    it('never offers the "Loading…" placeholder as a name: a machine that never hydrates has none', () => {
+        expect(getSettledMachineDisplayName({ id: 'machine-a', metadata: null })).toBeNull();
+        expect(getSettledMachineDisplayName(null)).toBeNull();
+    });
+
+    it('names every machine whose state is settled exactly as getMachineDisplayName does', () => {
+        expect(getSettledMachineDisplayName(m('a-1', 'Studio'))).toBe('Studio');
+        expect(getSettledMachineDisplayName({ id: 'a-1', metadata: null, availability: { kind: 'locked' } })).toBe(t('machine.lockedMachine'));
+        expect(getSettledMachineDisplayName({ id: 'a-1', metadata: null, absence: 'removed' })).toBe(t('machine.removedMachine'));
     });
 });
 

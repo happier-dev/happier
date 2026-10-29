@@ -120,6 +120,18 @@ export function getMachineDisplayName(machine: MachineNameInput | null | undefin
     return name;
 }
 
+/**
+ * The machine's name only once it has been read; `null` while its details are still hydrating. A row that
+ * names a machine inside a line of facts (a subtitle, a request's source) never prints the
+ * "Loading…" placeholder as if it were the name: a machine on another Home or one that is offline may
+ * never hydrate, and the placeholder would then sit there for good. The caller falls back to what it
+ * knows (the Session's own host) or leaves the machine out.
+ */
+export function getSettledMachineDisplayName(machine: MachineNameInput | null | undefined, inventory?: readonly MachineNameSource[]): string | null {
+    if (!machine || (!machine.absence && isMachineDisplayHydrating(machine))) return null;
+    return getMachineDisplayName(machine, inventory);
+}
+
 function machineBaseDisplayName(machine: MachineNameInput): string {
     if (machine.absence) return t(ABSENT_MACHINE_NAME_KEYS[machine.absence]);
     if (isMachineLocked(machine)) return lockedMachineName();

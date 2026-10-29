@@ -10,7 +10,7 @@ import * as React from 'react';
 import { Message } from "@happier-dev/session-core/messages";
 import { readLatestLocalOutboundPendingUserMessageAt } from '@/sync/domains/messages/outgoingUserMessage';
 import { storage, useSession, useSessionMessagesVersion, useSessionPendingMessages } from '@/sync/domains/state/storage';
-import { getMachineDisplayName } from './machineDisplayNames';
+import { getSettledMachineDisplayName } from './machineDisplayNames';
 import { getActiveServerId } from '@/sync/domains/server/serverProfiles';
 import { readSessionPresentationAgentId } from '@/sync/domains/session/presentation/readSessionPresentationAgentId';
 import { resolveAgentCatalogProjection } from '@/agents/backendCatalog/agentCatalogProjection';
@@ -671,7 +671,7 @@ export function getSessionWorkContextParts(session: SessionDisplayNameSource, se
     const machineId = target?.machineId ?? ownerMetadata?.machineId ?? null;
     const machine = machineId ? state.machineListByServerId[home]?.find(item => item.id === machineId)
         ?? (home === getActiveServerId() ? state.machines[machineId] : undefined) : undefined;
-    const machineName = getMachineDisplayName(machine) ?? readSessionOwnerHostName(session);
+    const machineName = getSettledMachineDisplayName(machine) ?? readSessionOwnerHostName(session);
     const agentId = readSessionPresentationAgentId({
         metadataLayoutVersion: session.metadataLayoutVersion,
         metadata: 'ownerMetadataView' in session || 'agentState' in session
@@ -699,7 +699,7 @@ export function getSessionSubtitle(session: SessionDisplayNameSource, serverId?:
         // Where a no-folder session runs is its machine; its private folder is not a place to show.
         const machineId = readPrivateDisplayMachineTarget(session, ownerMetadata, serverId)?.machineId ?? ownerMetadata?.machineId;
         const machine = machineId ? storage.getState().machines[machineId] : undefined;
-        return getMachineDisplayName(machine) ?? ownerMetadata?.host ?? t('status.unknown');
+        return getSettledMachineDisplayName(machine) ?? ownerMetadata?.host ?? t('status.unknown');
     }
     const path = readPrivateDisplayMachineTarget(session, ownerMetadata, serverId)?.basePath
         ?? ownerMetadata?.path

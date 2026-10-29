@@ -2267,6 +2267,15 @@ describe('a no-folder session', () => {
         expect(getSessionAvatarId(first)).not.toContain('session-directories');
         expect(getSessionSubtitle(first)).toBe('MacBook Pro');
     });
+
+    it('never prints the hydrating placeholder as a machine name: the Session keeps the host it published', async () => {
+        const { getSessionSubtitle } = await import('./sessionUtils');
+        // The presence shell a heartbeat leaves for a machine this device never read (another Home, offline).
+        const { buildMachineActivityPlaceholder } = await import('@/sync/domains/machines/machineActivity');
+        storage.setState({ machines: { 'machine-a': buildMachineActivityPlaceholder({ id: 'machine-a', active: false, activeAt: 1 }) } });
+        const session = createBaseSession({ id: 'chat-3', metadata: { ...managedMetadata, host: 'studio.local' } });
+        expect(getSessionSubtitle(session)).toBe('studio.local');
+    });
 });
 
 describe('getSessionName for a list row', () => {
