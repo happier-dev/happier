@@ -53,17 +53,25 @@ test('macOS candidate admission verifies the complete unchanged stapled bundle a
   const archivePath = join(root, archiveName);
   const evidencePath = join(root, 'notarization.json');
   try {
-    // Archive admission checks canonical modes; the fixture must not inherit
-    // the execution host's group-writable umask.
-    for (const directory of ['Contents/MacOS', 'Contents/_CodeSignature', 'Contents/Resources']) await mkdir(join(bundlePath, directory), { recursive: true, mode: 0o755 });
+    // Model the signed bundle's exact modes, independently of the host umask.
+    for (const directory of ['', 'Contents', 'Contents/MacOS', 'Contents/_CodeSignature', 'Contents/Resources']) {
+      const path = join(bundlePath, directory);
+      await mkdir(path, { recursive: true, mode: 0o755 });
+      await chmod(path, 0o755);
+    }
     for (const name of ['happier-runner', 'happier-runner-core']) {
       const file = join(bundlePath, 'Contents/MacOS', name);
       await writeFile(file, Buffer.concat([Buffer.from('cffaedfe', 'hex'), Buffer.from(name)]));
       await chmod(file, 0o755);
     }
-    await writeFile(join(bundlePath, 'Contents/Info.plist'), '<plist/>', { mode: 0o644 });
-    await writeFile(join(bundlePath, 'Contents/_CodeSignature/CodeResources'), 'sealed resources fixture', { mode: 0o644 });
-    await writeFile(join(bundlePath, 'Contents/CodeResources'), 'stapled ticket fixture', { mode: 0o644 });
+    for (const [path, contents] of [
+      ['Contents/Info.plist', '<plist/>'],
+      ['Contents/_CodeSignature/CodeResources', 'sealed resources fixture'],
+      ['Contents/CodeResources', 'stapled ticket fixture'],
+    ]) {
+      await writeFile(join(bundlePath, path), contents, { mode: 0o644 });
+      await chmod(join(bundlePath, path), 0o644);
+    }
     await symlink('../Info.plist', join(bundlePath, 'Contents/Resources/info'));
     const evidence = {
       schemaVersion: 3, payloadKind: 'app-bundle', payload: 'Happier Runner.app',
