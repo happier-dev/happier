@@ -124,7 +124,7 @@ const SelectedElementSchema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(s
     })),
 })));
 
-const BrowserAnnotationRectV1Schema = lazyZodSchema(() => z.strictObject({
+export const BrowserAnnotationRectV1Schema = lazyZodSchema(() => z.strictObject({
     x: z.number(),
     y: z.number(),
     width: z.number().check(z.nonnegative()),
@@ -132,12 +132,7 @@ const BrowserAnnotationRectV1Schema = lazyZodSchema(() => z.strictObject({
   }));
 export type BrowserAnnotationRectV1 = z.infer<typeof BrowserAnnotationRectV1Schema>;
 
-export const BrowserAnnotationTargetV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
-  z.strictObject({
-      kind: z.literal('region'),
-      rect: BrowserAnnotationRectV1Schema,
-    }),
-  z.strictObject({
+const BrowserAnnotationElementTargetV1Schema = lazyZodSchema(() => z.strictObject({
       kind: z.literal('element'),
       selectorPath: z.string().check(z.trim(), z.minLength(1), z.maxLength(1024)),
       accessibleName: z.optional(z.string().check(z.maxLength(512))),
@@ -149,7 +144,14 @@ export const BrowserAnnotationTargetV1Schema = lazyZodSchema(() => z.discriminat
        */
       componentName: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(128))),
       sourceLocation: z.optional(BrowserDiagnosticsElementSourceLocationV1Schema),
+    }));
+
+export const BrowserAnnotationTargetV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
+  z.strictObject({
+      kind: z.literal('region'),
+      rect: BrowserAnnotationRectV1Schema,
     }),
+  BrowserAnnotationElementTargetV1Schema,
 ]));
 export type BrowserAnnotationTargetV1 = z.infer<typeof BrowserAnnotationTargetV1Schema>;
 
@@ -179,6 +181,26 @@ export const BrowserAnnotationStrokeV1Schema = lazyZodSchema(() => z.strictObjec
     widthPx: z.optional(z.number().check(z.positive(), z.maximum(64))),
   }));
 export type BrowserAnnotationStrokeV1 = z.infer<typeof BrowserAnnotationStrokeV1Schema>;
+
+// Authoring uses CSS viewport coordinates; committed strokes above use normalized media points.
+export const BrowserAnnotationDraftStrokeV1Schema = lazyZodSchema(() => z.strictObject({
+  shape: BrowserAnnotationStrokeV1Schema.shape.shape,
+  points: z.array(z.strictObject({ x: z.number(), y: z.number() })).check(z.minLength(1)),
+  colorToken: BrowserAnnotationStrokeV1Schema.shape.colorToken,
+  widthPx: BrowserAnnotationStrokeV1Schema.shape.widthPx,
+}));
+export type BrowserAnnotationDraftStrokeV1 = z.infer<typeof BrowserAnnotationDraftStrokeV1Schema>;
+
+export const BrowserAnnotationDraftTargetV1Schema = lazyZodSchema(() => z.pick(
+  BrowserAnnotationElementTargetV1Schema,
+  { kind: true, selectorPath: true, accessibleName: true, rect: true },
+));
+export type BrowserAnnotationDraftTargetV1 = z.infer<typeof BrowserAnnotationDraftTargetV1Schema>;
+
+export const BrowserAnnotationDraftMarkHandleV1Schema = lazyZodSchema(() => z.strictObject({
+  draftId: IdSchema,
+  kind: z.enum(['element', 'region', 'stroke']),
+}));
 
 const AnnotationSchema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(BrowserContextItemBaseV1Schema, {
   kind: z.literal('browserAnnotation'),
