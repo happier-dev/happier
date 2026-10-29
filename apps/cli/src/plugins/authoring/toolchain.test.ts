@@ -1311,7 +1311,7 @@ describe('runPluginAuthorToolchain', () => {
     }
   });
 
-  it('rejects an ancestor or non-TypeScript-7 @typescript/native package', async () => {
+  it('resolves an ancestor TypeScript 7 package while refusing a non-TypeScript-7 package', async () => {
     const parentRoot = await mkdtemp(join(tmpdir(), 'happier-author-typescript-owner-'));
     const projectRoot = join(parentRoot, 'plugin');
     const ancestorPackageRoot = join(parentRoot, 'node_modules', '@typescript', 'native');
@@ -1325,7 +1325,9 @@ describe('runPluginAuthorToolchain', () => {
         bin: { tsc: './bin/tsc' },
       }), 'utf8');
       await writeFile(join(ancestorPackageRoot, 'bin', 'tsc'), '', 'utf8');
-      expect(() => resolveNativeTypeScriptBin(projectRoot)).toThrow(/project-local/u);
+      expect(resolveNativeTypeScriptBin(projectRoot)).toBe(await realpath(join(ancestorPackageRoot, 'bin', 'tsc')));
+      await rm(join(ancestorPackageRoot, 'bin', 'tsc'));
+      expect(() => resolveNativeTypeScriptBin(projectRoot)).toThrow();
 
       const versionProjectRoot = join(parentRoot, 'plugin-version');
       const localPackageRoot = join(versionProjectRoot, 'node_modules', '@typescript', 'native');
@@ -1338,15 +1340,25 @@ describe('runPluginAuthorToolchain', () => {
       }), 'utf8');
       await writeFile(join(localPackageRoot, 'bin', 'tsc'), '', 'utf8');
       expect(() => resolveNativeTypeScriptBin(versionProjectRoot)).toThrow(/TypeScript 7/u);
+      await writeFile(join(localPackageRoot, 'package.json'), JSON.stringify({
+        name: 'different-compiler', version: '7.0.2', bin: { tsc: './bin/tsc' },
+      }), 'utf8');
+      expect(() => resolveNativeTypeScriptBin(versionProjectRoot)).toThrow(/@typescript\/native/u);
+      await writeFile(join(localPackageRoot, 'package.json'), JSON.stringify({
+        name: '@typescript/native', version: '7.0.2',
+      }), 'utf8');
+      expect(() => resolveNativeTypeScriptBin(versionProjectRoot)).toThrow(/entrypoint/u);
     } finally {
       await rm(parentRoot, { recursive: true, force: true });
     }
   });
 
-  it('resolves the declared Plugin UI builder only from the project-local SDK package', async () => {
+  it('resolves a linked external SDK builder while refusing an entrypoint outside that SDK', async () => {
     const projectRoot = await mkdtemp(join(tmpdir(), 'happier-author-ui-builder-'));
-    const packageRoot = join(projectRoot, 'node_modules', '@happier-dev', 'plugin-sdk');
+    const packageRoot = join(projectRoot, 'sdk');
     try {
+      await mkdir(join(projectRoot, 'node_modules', '@happier-dev'), { recursive: true });
+      await symlink(packageRoot, join(projectRoot, 'node_modules', '@happier-dev', 'plugin-sdk'), 'junction');
       await mkdir(join(packageRoot, 'dist', 'ui', 'build'), { recursive: true });
       await writeFile(join(projectRoot, 'package.json'), JSON.stringify({
         dependencies: { '@happier-dev/plugin-sdk': '0.0.0' },
@@ -1360,12 +1372,22 @@ describe('runPluginAuthorToolchain', () => {
       await writeFile(expectedBuilder, 'export {};\n', 'utf8');
 
       expect(resolvePluginUiBuildBin(projectRoot)).toBe(await realpath(expectedBuilder));
+      const nestedProject = join(projectRoot, 'nested-plugin');
+      await mkdir(nestedProject);
+      await writeFile(join(nestedProject, 'package.json'), JSON.stringify({
+        dependencies: { '@happier-dev/plugin-sdk': '0.0.0' },
+      }), 'utf8');
+      expect(resolvePluginUiBuildBin(nestedProject)).toBe(await realpath(expectedBuilder));
 
       const outsideBuilder = join(projectRoot, 'outside-builder.js');
       await writeFile(outsideBuilder, 'export {};\n', 'utf8');
       await rm(expectedBuilder);
       await symlink(outsideBuilder, expectedBuilder);
       expect(() => resolvePluginUiBuildBin(projectRoot)).toThrow(/contained regular file/u);
+      await writeFile(join(packageRoot, 'package.json'), JSON.stringify({ name: '@happier-dev/plugin-sdk' }), 'utf8');
+      expect(() => resolvePluginUiBuildBin(projectRoot)).toThrow(/entrypoint/u);
+      await writeFile(join(packageRoot, 'package.json'), JSON.stringify({ name: 'different-sdk' }), 'utf8');
+      expect(() => resolvePluginUiBuildBin(projectRoot)).toThrow(/@happier-dev\/plugin-sdk/u);
     } finally {
       await rm(projectRoot, { recursive: true, force: true });
     }
@@ -1482,7 +1504,7 @@ describe('classifyPluginAuthorDaemonBuild', () => {
     expect(invocation?.args.some(arg => arg.endsWith('/cli-common/registerSourceRuntime.mjs'))).toBe(true);
   });
 
-  it('does not grant workspace builder resolution to a copied author package', async () => {
+  it('uses the resolved SDK package bin rather than granting source-workspace authority to a copied author', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-devplug-copied-author-'));
     try {
       await writeFile(join(root, 'package.json'), JSON.stringify({
@@ -1491,7 +1513,7 @@ describe('classifyPluginAuthorDaemonBuild', () => {
       }));
       await mkdir(join(root, 'node_modules/@happier-dev'), { recursive: true });
       await symlink(resolve(REPO_ROOT, 'packages/plugin-sdk'), join(root, 'node_modules/@happier-dev/plugin-sdk'), 'junction');
-      expect(() => resolvePluginUiBuildBin(root)).toThrow(/project-local/);
+      expect(resolvePluginUiBuildBin(root)).toBe(await realpath(resolve(REPO_ROOT, 'packages/plugin-sdk/dist/ui/build/bin.js')));
     } finally {
       await rm(root, { recursive: true, force: true });
     }

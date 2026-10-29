@@ -2,12 +2,13 @@ import { spawn as spawnChild } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, lstatSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { cp, lstat, mkdir, mkdtemp, readFile, readdir, readlink, rm, stat, writeFile } from 'node:fs/promises';
-import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { createHappierTempDir, removeHappierTempDirAsync } from '@happier-dev/cli-common/tempDirs';
 import { runPluginAuthorPhase } from './phaseLog';
+import { resolveNativeTypeScriptBin, resolvePluginUiBuildBin } from './toolEntrypoints';
+export { resolveNativeTypeScriptBin, resolvePluginUiBuildBin } from './toolEntrypoints';
 
 import {
   buildManagedPnpmEnvironment,
@@ -68,7 +69,6 @@ import {
   resolvePackagedCliBundledWorkspacePackageRoot,
   resolvePhysicalBundledWorkspacePackageRoot,
   resolvePluginAuthorSourceWorkspace,
-  resolvePluginAuthorWorkspaceUiBuilder,
   resolvePluginUiBuildArguments,
   type RuntimePackageJson,
 } from './hostSdkResolution';
@@ -513,87 +513,6 @@ async function prepareBundledPrepublicationResolution(params: Readonly<{
     await materialization.cleanup();
     throw error;
   }
-}
-
-export function resolveNativeTypeScriptBin(projectRoot: string): string {
-  const require = createRequire(join(projectRoot, 'package.json'));
-  const packageJsonPath = require.resolve('@typescript/native/package.json');
-  const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf8')) as {
-    bin?: { tsc?: unknown };
-    version?: unknown;
-  };
-  const projectNodeModulesRoot = join(realpathSync(projectRoot), 'node_modules');
-  if (!isCanonicalAbsolutePathInsideRoot(projectNodeModulesRoot, packageJsonPath)) {
-    throw new Error('Resolved @typescript/native package must be project-local');
-  }
-  if (typeof packageJson.version !== 'string' || !/^7\./u.test(packageJson.version)) {
-    throw new Error('Resolved @typescript/native package must provide TypeScript 7');
-  }
-  const relativeBin = packageJson.bin?.tsc;
-  if (typeof relativeBin !== 'string' || !relativeBin.trim()) {
-    throw new Error('@typescript/native does not declare the TypeScript compiler entrypoint');
-  }
-  const packageRoot = realpathSync(dirname(packageJsonPath));
-  if (!isCanonicalAbsolutePathInsideRoot(projectNodeModulesRoot, packageRoot)) {
-    throw new Error('Resolved @typescript/native package root must remain inside project-local node_modules');
-  }
-  const compilerPath = resolve(packageRoot, relativeBin);
-  if (!isCanonicalAbsolutePathInsideRoot(packageRoot, compilerPath)) {
-    throw new Error('Resolved TypeScript compiler entrypoint must remain inside the installed @typescript/native package');
-  }
-  const resolvedCompilerPath = realpathSync(compilerPath);
-  if (!statSync(resolvedCompilerPath).isFile() || !isCanonicalAbsolutePathInsideRoot(packageRoot, resolvedCompilerPath)) {
-    throw new Error('Resolved TypeScript compiler entrypoint must be a contained regular file inside @typescript/native');
-  }
-  return resolvedCompilerPath;
-}
-
-export function resolvePluginUiBuildBin(projectRoot: string): string | null {
-  const resolvedProjectRoot = realpathSync(projectRoot);
-  const projectPackageJson = JSON.parse(readFileSync(join(resolvedProjectRoot, 'package.json'), 'utf8')) as {
-    dependencies?: Record<string, unknown>;
-    devDependencies?: Record<string, unknown>;
-  };
-  if (
-    typeof projectPackageJson.dependencies?.[PLUGIN_SDK_PACKAGE_NAME] !== 'string'
-    && typeof projectPackageJson.devDependencies?.[PLUGIN_SDK_PACKAGE_NAME] !== 'string'
-  ) {
-    return null;
-  }
-  const sourceBuilder = resolvePluginAuthorWorkspaceUiBuilder(resolvedProjectRoot);
-  if (sourceBuilder) return sourceBuilder;
-  const projectNodeModulesRoot = realpathSync(join(resolvedProjectRoot, 'node_modules'));
-  const packageJsonPath = realpathSync(join(
-    resolvedProjectRoot,
-    'node_modules',
-    '@happier-dev',
-    'plugin-sdk',
-    'package.json',
-  ));
-  if (!isCanonicalAbsolutePathInsideRoot(projectNodeModulesRoot, packageJsonPath)) {
-    throw new Error('Resolved Plugin SDK package must be project-local');
-  }
-  const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf8')) as {
-    name?: unknown;
-    bin?: Record<string, unknown>;
-  };
-  if (packageJson.name !== '@happier-dev/plugin-sdk') {
-    throw new Error('Resolved Plugin UI builder must come from @happier-dev/plugin-sdk');
-  }
-  const relativeBin = packageJson.bin?.['happier-plugin-build-ui'];
-  if (typeof relativeBin !== 'string' || !relativeBin.trim()) {
-    throw new Error('@happier-dev/plugin-sdk does not declare the Plugin UI builder entrypoint');
-  }
-  const packageRoot = dirname(packageJsonPath);
-  const builderPath = resolve(packageRoot, relativeBin);
-  if (!isCanonicalAbsolutePathInsideRoot(packageRoot, builderPath)) {
-    throw new Error('Resolved Plugin UI builder entrypoint must remain inside @happier-dev/plugin-sdk');
-  }
-  const resolvedBuilderPath = realpathSync(builderPath);
-  if (!statSync(resolvedBuilderPath).isFile() || !isCanonicalAbsolutePathInsideRoot(packageRoot, resolvedBuilderPath)) {
-    throw new Error('Resolved Plugin UI builder entrypoint must be a contained regular file');
-  }
-  return resolvedBuilderPath;
 }
 
 export function resolvePluginAuthorToolchainSpawnInvocation(
