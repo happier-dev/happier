@@ -27,5 +27,7 @@ export function PluginVoiceStatusLine(props: VoiceStatusLineProps): React.ReactE
 }
 export function PluginVoiceTransport(props: VoiceTransportProps): React.ReactElement | null {
     const voice = React.useContext(VoiceContext);
-    return voice ? <VoiceTransport voice={voice} size={props.size} testID={props.testID} /> : null;
+    // The public `touch` size predates hit areas: the controls draw at the Island size under every pointer and a
+    // finger reaches the platform target through the shared hit area.
+    return voice ? <VoiceTransport voice={voice} size={props.size === 'touch' ? 'island' : props.size} testID={props.testID} /> : null;
 }
