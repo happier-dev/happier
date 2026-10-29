@@ -37,7 +37,6 @@ import {
   invalidateDaemonContributionRegistryProjectionCache,
   registerDaemonContributionRegistryProjectionHandler,
 } from '../../../../apps/cli/src/rpc/handlers/daemonContributionRegistryProjection';
-import { createReactNativeWebLoaderBackend } from '../../../../apps/ui/sources/components/plugins/reactNative/webLoaderBackend.web';
 import { resolvePluginUiClientActionRegistration } from '../../../../apps/ui/sources/components/plugins/reactNative/clientExecutableContributions';
 import { AppPaneProvider } from '../../../../apps/ui/sources/components/appShell/panes/AppPaneProvider';
 import {
@@ -119,7 +118,6 @@ const composedBoundary = vi.hoisted(() => ({
   handlers: new Map<string, RpcBoundaryHandler>(),
   audioSessionAcquireRequests: [] as Array<Record<string, unknown>>,
   audioSessionReleaseCount: 0,
-  loaderBackend: null as ReturnType<typeof createReactNativeWebLoaderBackend> | null,
   machines: [] as Array<Record<string, unknown>>,
   settings: null as ReturnType<typeof settingsParse> | null,
   latestHarnessVoice: null as VoiceSettings | null,
@@ -186,15 +184,6 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', (
     const handler = composedBoundary.handlers.get(input.method);
     if (!handler) throw new Error(`unregistered_machine_rpc:${input.method}`);
     return await handler(input.payload, { signal: input.signal });
-  },
-}));
-
-vi.mock('@/components/plugins/reactNative/resolveDefaultReactNativeLoaderBackend', () => ({
-  resolveDefaultReactNativeLoaderBackend: () => {
-    if (!composedBoundary.loaderBackend) {
-      throw new Error('packed_voice_loader_backend_unavailable');
-    }
-    return composedBoundary.loaderBackend;
   },
 }));
 
@@ -859,12 +848,6 @@ describePackedCandidate('candidate-bound packed public-authoring Voice lifecycle
         reactNativeHostRuntime: { platform: 'web', channel: 'internal' },
       });
       invalidateDaemonContributionRegistryProjectionCache();
-      composedBoundary.loaderBackend = createReactNativeWebLoaderBackend({
-        importModule: async (blobUrl) => {
-          const source = await (await originalFetch(blobUrl)).text();
-          return await import(/* @vite-ignore */ `data:text/javascript,${encodeURIComponent(source)}`);
-        },
-      });
 
       const initialProjection = await machineContributionRegistryProjectionDescribe(MACHINE_ID, {
         serverId: SERVER_ID,
@@ -1690,7 +1673,6 @@ describePackedCandidate('candidate-bound packed public-authoring Voice lifecycle
       invalidateDaemonContributionRegistryProjectionCache();
       clearPluginAccountAvailabilityProjection();
       composedBoundary.handlers.clear();
-      composedBoundary.loaderBackend = null;
       composedBoundary.machines = [];
       composedBoundary.settings = null;
       composedBoundary.latestHarnessVoice = null;

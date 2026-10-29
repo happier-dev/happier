@@ -3114,42 +3114,6 @@ describe("external Action execution authorization", () => {
                 body: undefined, privateKey: fixture.keyPair.secretKey }) });
             expect([census.statusCode, census.json()]).toEqual([200, { rules: [] }]);
             const get = (path: string) => app.inject({ method: 'GET', url: path, headers: machineHeaders({
-    it('admits installed contributed target preparation without inspection borrowing final Session read authority', async () => {
-        const fixture = await createFixture({ qualifiedPat: false });
-        const session = await db.session.create({ data: { accountId: fixture.account.id, tag: crypto.randomUUID(),
-            encryptionMode: 'plain', metadata: '{}' } });
-        const { app } = await createApp(fixture.team.id, false, undefined, undefined, false);
-        const query = buildSessionListServerQueryV1(projectSessionListFilterHomeQueriesV1(normalizeSessionListFilterV1({
-            show: 'sessions', scope: 'all_accessible', homeServerIds: ['home'],
-        }), { storage: 'active', includeInactive: true, mountedHomeServerIds: ['home'] })[0]!.query);
-        try {
-            const contributed = await mint(app, fixture, 'action.invoke', { ...fixture.envelope,
-                requestId: crypto.randomUUID(), input: { action: { pluginId: 'example.session-targets', localId: 'inspect' },
-                    input: { sessionId: { selector: 'workers', of: session.id } } } });
-            const preview = await mint(app, fixture, 'session.targets.resolve', { ...fixture.envelope,
-                requestId: crypto.randomUUID(), input: { actionId: 'example.session-targets/actions/inspect',
-                    target: { selector: 'workers', of: session.id } } });
-            for (const root of [contributed, preview]) {
-                const verify = (method: string, path: string, body?: unknown, routeInput?: unknown,
-                    sessionRouteTarget?: { kind: 'session'; sessionId: string; actionId: 'session.transcript.get' },
-                    effectActionId = root.binding.actionId) => verifyExternalActionDomainExecutionRequest({
-                    authorizationToken: root.token, effectActionId,
-                    encodedTarget: encodeExternalActionResolvedTargetV1(root.binding.target), method, path, body, routeInput, sessionRouteTarget,
-                    machineSignature: signExternalActionMachineRequestV1({ authorizationToken: root.token, effectActionId,
-                        target: root.binding.target, installationId: fixture.machine.installationId!, requestId: root.binding.requestId,
-                        method, path, body, privateKey: fixture.keyPair.secretKey }),
-                });
-                const scope = { kind: 'session' as const, sessionId: session.id, actionId: 'session.transcript.get' as const };
-                expect(await verify('GET', '/v1/account/encryption/currentness', undefined, {})).not.toBeNull();
-                expect(await verify('POST', '/v2/sessions/query', query, query)).not.toBeNull();
-                expect(await verify('GET', `/v2/sessions/${session.id}`, undefined, { sessionId: session.id }, scope)).not.toBeNull();
-                expect(await verify('GET', '/v1/account/encryption/currentness', undefined, {}, undefined, 'session.status.get')).toBeNull();
-                expect(await verify('GET', '/v2/account/settings', undefined, {})).toBeNull();
-                expect(await verify('GET', `/v1/sessions/${session.id}/messages`, undefined, { sessionId: session.id }, scope)).toBeNull();
-            }
-        } finally { await app.close(); }
-    });
-
                 authorizationToken: authorization.token, effectActionId: actionId, method: 'GET', path,
                 body: undefined, privateKey: fixture.keyPair.secretKey }) });
             const foreignAccount = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
@@ -3238,6 +3202,42 @@ describe("external Action execution authorization", () => {
             expect(await verifyExternalActionDomainExecutionRequest(detailProof(`/v2/sessions/${foreignSession.id}`,
                 restrictedGoal, foreignSession.id))).toBeNull();
         } finally { await app.close(); vi.unstubAllEnvs(); }
+    });
+
+    it('admits installed contributed target preparation without inspection borrowing final Session read authority', async () => {
+        const fixture = await createFixture({ qualifiedPat: false });
+        const session = await db.session.create({ data: { accountId: fixture.account.id, tag: crypto.randomUUID(),
+            encryptionMode: 'plain', metadata: '{}' } });
+        const { app } = await createApp(fixture.team.id, false, undefined, undefined, false);
+        const query = buildSessionListServerQueryV1(projectSessionListFilterHomeQueriesV1(normalizeSessionListFilterV1({
+            show: 'sessions', scope: 'all_accessible', homeServerIds: ['home'],
+        }), { storage: 'active', includeInactive: true, mountedHomeServerIds: ['home'] })[0]!.query);
+        try {
+            const contributed = await mint(app, fixture, 'action.invoke', { ...fixture.envelope,
+                requestId: crypto.randomUUID(), input: { action: { pluginId: 'example.session-targets', localId: 'inspect' },
+                    input: { sessionId: { selector: 'workers', of: session.id } } } });
+            const preview = await mint(app, fixture, 'session.targets.resolve', { ...fixture.envelope,
+                requestId: crypto.randomUUID(), input: { actionId: 'example.session-targets/actions/inspect',
+                    target: { selector: 'workers', of: session.id } } });
+            for (const root of [contributed, preview]) {
+                const verify = (method: string, path: string, body?: unknown, routeInput?: unknown,
+                    sessionRouteTarget?: { kind: 'session'; sessionId: string; actionId: 'session.transcript.get' },
+                    effectActionId = root.binding.actionId) => verifyExternalActionDomainExecutionRequest({
+                    authorizationToken: root.token, effectActionId,
+                    encodedTarget: encodeExternalActionResolvedTargetV1(root.binding.target), method, path, body, routeInput, sessionRouteTarget,
+                    machineSignature: signExternalActionMachineRequestV1({ authorizationToken: root.token, effectActionId,
+                        target: root.binding.target, installationId: fixture.machine.installationId!, requestId: root.binding.requestId,
+                        method, path, body, privateKey: fixture.keyPair.secretKey }),
+                });
+                const scope = { kind: 'session' as const, sessionId: session.id, actionId: 'session.transcript.get' as const };
+                expect(await verify('GET', '/v1/account/encryption/currentness', undefined, {})).not.toBeNull();
+                expect(await verify('POST', '/v2/sessions/query', query, query)).not.toBeNull();
+                expect(await verify('GET', `/v2/sessions/${session.id}`, undefined, { sessionId: session.id }, scope)).not.toBeNull();
+                expect(await verify('GET', '/v1/account/encryption/currentness', undefined, {}, undefined, 'session.status.get')).toBeNull();
+                expect(await verify('GET', '/v2/account/settings', undefined, {})).toBeNull();
+                expect(await verify('GET', `/v1/sessions/${session.id}/messages`, undefined, { sessionId: session.id }, scope)).toBeNull();
+            }
+        } finally { await app.close(); }
     });
 
     it('admits signed Follow preview corpus phases without widening collection or private Account authority', async () => {

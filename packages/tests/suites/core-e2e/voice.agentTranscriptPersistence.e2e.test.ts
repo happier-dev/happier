@@ -10,7 +10,7 @@ import {
   persistSessionTranscriptMessage,
   type PersistedSessionTranscriptMessage,
   type PersistSessionTranscriptMessageInput,
-} from '../../../../apps/ui/sources/sync/domains/messages/persistSessionTranscriptMessage';
+} from '../../../session-core/src/messages/persistSessionTranscriptMessage';
 import { createVoiceTranscriptProjector } from '../../../../apps/ui/sources/voice/transcript/VoiceTranscriptProjector';
 import { deriveBoxPublicKeyFromSeed } from '../../../protocol/src/crypto/boxBundle';
 import {
