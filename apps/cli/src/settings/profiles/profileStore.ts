@@ -1,4 +1,4 @@
-import axios from 'axios';
+import axios from '@/api/client/credentialAxios';
 import { randomBytes } from 'node:crypto';
 import { loadProfileCatalogV1, type ProfileCatalogSnapshotV1 } from '@happier-dev/protocol/profiles/profileCatalogV1';
 import { isLegacyProfileSourcePreservingCloneV1, loadAiLaunchProfileArtifacts, removeProfilePreferenceReferencesV1, readEffectiveProfileSecretBindingsV1 } from '@happier-dev/protocol/profiles/read';

@@ -1,6 +1,6 @@
 import { ACCOUNT_SECURITY_USAGE, CLI_APPROVALS_USAGE } from './accountSecurityHelp';
 export { ACCOUNT_SECURITY_USAGE } from './accountSecurityHelp';
-import axios from 'axios';
+import axios from '@/api/client/credentialAxios';
 
 import { ACCOUNT_PASSWORD_MUTATION_CHALLENGE_PATH_V1, ACCOUNT_PASSWORD_ENROLL_EMAIL_REQUEST_PATH_V1, AccountEmailChangeRequestV1Schema, AccountPasswordEnrollRequestV1Schema, AccountPasswordEnrollEmailRequestV1Schema, AccountEmailChangeRequestResponseV1Schema, AccountPasswordChangeRequestV1Schema, AccountPasswordRemoveRequestV1Schema, AccountSecurityGetResponseV1Schema, AccountTerminalPresentUserPolicySetRequestV1Schema, AccountTerminalPresentUserPolicySetResponseV1Schema, AccountSecurityRouteErrorV1Schema, PasswordMutationPreparationRequestV1Schema, PasswordMutationPreparationResponseV1Schema } from '@happier-dev/protocol/auth/accountSecurity';
 import { AccountExternalAuthProofV1Schema } from '@happier-dev/protocol/auth/accountExternalAuthProof';

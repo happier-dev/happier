@@ -1,5 +1,5 @@
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
-import axios from 'axios';
+import axios from '@/api/client/credentialAxios';
 
 import { PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1 } from '@happier-dev/protocol/plugins/installations/manifests';
 import { PluginPermissionGrantRequestActionInputV1Schema, PluginPermissionGrantRequestActionOutputV1Schema } from '@happier-dev/protocol/plugins/permissions/grants';

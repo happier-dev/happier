@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import axios from 'axios';
+import axios from '@/api/client/credentialAxios';
 
 import { normalizeAccountSettingsHistoryClientV1,
   type AccountSettingsHistoryCleanupResultV1, type AccountSettingsHistorySavedSecretRecoveryV1,

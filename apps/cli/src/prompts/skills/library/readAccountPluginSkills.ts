@@ -1,7 +1,7 @@
 import type { ReadOnlySkillV1 } from '@happier-dev/protocol/prompts/library/skills/firstPartySkillsV1';
 import type { AccountSettings } from '@happier-dev/protocol/account/settings/accountSettings';
 import type { StoredCredentials } from '@/persistence';
-import axios from 'axios';
+import axios from '@/api/client/credentialAxios';
 import { PluginAvailabilityActionHttpPathsV1, PluginAvailabilityMaterializationsReadActionOutputV1Schema } from '@happier-dev/protocol/plugins/availability/actions';
 import type { PluginMachineMaterializationV1 } from '@happier-dev/protocol/plugins/availability/v1';
 import { DaemonContributionRegistryProjectionDescribeResponseSchema, PluginProjectedSkillEntryV1Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';

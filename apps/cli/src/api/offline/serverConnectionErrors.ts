@@ -48,7 +48,7 @@
  * @module serverConnectionErrors
  */
 
-import axios from 'axios';
+import axios from '@/api/client/credentialAxios';
 import chalk from 'chalk';
 import { writeConsoleErrorBestEffort } from '@/utils/writeConsoleBestEffort';
 import { exponentialBackoffDelay } from '@/utils/time';

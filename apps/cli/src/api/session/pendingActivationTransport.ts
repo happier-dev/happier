@@ -1,4 +1,4 @@
-import axios from 'axios';
+import axios from '@/api/client/credentialAxios';
 import { PendingActivationFailureDetailsV1Schema, PendingActivationFailureRequestV1Schema, PendingActivationFailureResponseV1Schema, type PendingActivationFailureDetailsV1 } from '@happier-dev/protocol/sessions/pending/pendingActivationAuthorizationV1';
 import type { PendingActivationFailureCodeV1 } from '@happier-dev/protocol';
 

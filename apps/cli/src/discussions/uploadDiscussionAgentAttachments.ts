@@ -1,4 +1,4 @@
-import axios from 'axios';
+import axios from '@/api/client/credentialAxios';
 import { Readable } from 'node:stream';
 import { decodeBase64 } from '@/api/encryption';
 import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';

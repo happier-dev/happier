@@ -1,4 +1,4 @@
-import axios from 'axios';
+import axios from '@/api/client/credentialAxios';
 import { encodeBase64, encodeBase64Url, authChallenge } from './encryption';
 import { resolveServerHttpBaseUrl } from './client/serverHttpBaseUrl';
 

@@ -2,7 +2,7 @@ import '../configureZodLocale';
 import { dispatchCli } from '@/cli/dispatch';
 import { readCliProcessArgs, parseCliArgs } from '@/cli/parseArgs';
 import { initToolTraceIfEnabled } from '@/agent/tools/trace/toolTrace';
-import axios from 'axios';
+import axios from '@/api/client/credentialAxios';
 import { configuration } from '@/configuration';
 import { maybeAutoUpdateNotice } from '@/cli/runtime/update/autoUpdateNotice';
 import { maybeReexecToRuntime } from '@/cli/runtime/update/runtimeReexec';

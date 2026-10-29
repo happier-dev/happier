@@ -1,4 +1,4 @@
-import axios from 'axios';
+import axios from '@/api/client/credentialAxios';
 import { randomUUID } from 'node:crypto';
 
 import { buildCurrentSessionRunnerCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';

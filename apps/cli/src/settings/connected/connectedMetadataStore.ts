@@ -1,4 +1,4 @@
-import axios from 'axios';
+import axios from '@/api/client/credentialAxios';
 import { isDeepStrictEqual } from 'node:util';
 import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';

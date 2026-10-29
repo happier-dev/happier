@@ -1,5 +1,5 @@
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
-import axios from 'axios';
+import axios from '@/api/client/credentialAxios';
 import type { HappierService } from '@happier-dev/cli-common/happierRuntime';
 import { selectServingDaemonService } from '@happier-dev/cli-common/systemTasks';
 import { isAuthenticationError } from '@/api/client/httpStatusError';

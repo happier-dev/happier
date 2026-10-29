@@ -1,4 +1,4 @@
-import axios from 'axios';
+import axios from '@/api/client/credentialAxios';
 import { setImmediate } from 'node:timers/promises';
 import { MachineAccessRecipientCensusResponseV1Schema, MachineAccessRefusalV1Schema, MachineRecipientKeyEnvelopeCommitInputV1Schema, MachineRecipientKeyEnvelopeCommitResponseV1Schema, type MachineAccessRecipientCensusResponseV1, type MachineKeyPreparationResultV1 } from '@happier-dev/protocol/machines/machineAccessV1';
 import { MachineDataKeyPreparationErrorV1, prepareMachineDataKeyEnvelopesV1 } from '@happier-dev/protocol/machines/prepareMachineDataKeyEnvelopesV1';

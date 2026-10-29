@@ -1,5 +1,5 @@
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
-import axios from 'axios';
+import axios from '@/api/client/credentialAxios';
 import { readActionCredentialScopeDeniedHttpFailureV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { SessionSubagentCustodyCapabilityV1Schema, SessionSubagentCustodyMutationRequestV1Schema, SessionSubagentCustodyMutationResponseV1Schema, SessionSubagentCustodyPageV1Schema, SessionSubagentCustodyRetirementRequestV1Schema, SessionSubagentCustodyRetirementResponseV1Schema } from '@happier-dev/protocol/sessions/subagents/durableCustodyV1';
 import type { SessionSubagentCustodyMutationRequestV1, SessionSubagentCustodyRecordV1, SessionSubagentCustodyScopeV1, PluginSourceCustodyV1 } from '@happier-dev/protocol';

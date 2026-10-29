@@ -1,7 +1,7 @@
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import { StoredJsonContentEnvelopeSchema } from '@happier-dev/protocol/storage/storedJsonContentEnvelope';
 import type { StoredJsonContentEnvelope } from '@happier-dev/protocol';
-import axios from 'axios';
+import axios from '@/api/client/credentialAxios';
 import { z } from 'zod/mini';
 
 import { resolveConnectedServicesServerApiTimeoutMs } from './connectedServicesServerApiTimeout';

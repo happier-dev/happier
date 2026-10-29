@@ -1,4 +1,4 @@
-import axios from 'axios';
+import axios from '@/api/client/credentialAxios';
 import { Readable } from 'node:stream';
 import { isDeepStrictEqual } from 'node:util';
 import { LocalServicePreviewNativeRegistrationAdmittedV1Schema, LocalServicePreviewNativeRegistrationRequestV1Schema } from '@happier-dev/protocol/local/services/preview/nativeDirect';

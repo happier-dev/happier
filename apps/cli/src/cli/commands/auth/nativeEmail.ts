@@ -1,7 +1,7 @@
 import { NATIVE_EMAIL_USAGE } from './nativeEmailHelp';
 export { NATIVE_EMAIL_USAGE } from './nativeEmailHelp';
 import * as z from 'zod/mini';
-import axios from 'axios';
+import axios from '@/api/client/credentialAxios';
 import { randomBytes } from 'node:crypto';
 import tweetnacl from 'tweetnacl';
 

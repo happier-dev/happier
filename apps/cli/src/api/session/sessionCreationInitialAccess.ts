@@ -10,7 +10,7 @@ import type { PatchSessionDataKeyEnvelopesV1, SessionDataKeyEnvelopeItemV1, Sess
 import { OperationUpdateRequiredV1Schema } from '@happier-dev/protocol/compat/operationUpdateRequiredV1';
 import { sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
 import { SessionSpawnNewInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
-import axios from 'axios';
+import axios from '@/api/client/credentialAxios';
 import { setImmediate } from 'node:timers/promises';
 
 import { getRandomBytes } from '@/api/encryption';

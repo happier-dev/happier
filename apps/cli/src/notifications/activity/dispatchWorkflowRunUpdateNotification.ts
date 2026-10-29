@@ -1,5 +1,5 @@
 import type { AccountSettings, WorkflowRunUpdateKindV1 } from '@happier-dev/protocol';
-import axios from 'axios';
+import axios from '@/api/client/credentialAxios';
 import { resolveSessionFollowActionRequest } from '@happier-dev/protocol/sessions/follow/actionTransport';
 import { GetOtherAccountFollowResponseV1Schema, SessionFollowErrorResponseSchema } from '@happier-dev/protocol/sessions/follow/api';
 import type { NotificationChannelCatalogSnapshotV1 } from '@happier-dev/protocol/account/settings/notificationChannelRecordV1';

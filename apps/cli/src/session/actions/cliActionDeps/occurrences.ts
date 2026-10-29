@@ -1,4 +1,4 @@
-import axios from 'axios';
+import axios from '@/api/client/credentialAxios';
 import { AutomationV3RunMutationResponseSchema } from '@happier-dev/protocol/automations/automationApiV3';
 import { automationOccurrenceRequest } from '@happier-dev/protocol/actions';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';

@@ -1,7 +1,7 @@
 import type { CliActionDepsParams } from './types';
 import type { CliProjectAdmission } from './projectAdmission';
 import type { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
-import axios from 'axios';
+import axios from '@/api/client/credentialAxios';
 import type { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import { MachineDeploymentReferencesPageV1Schema, readMachineReferenceCensusV1, type MachineReferenceCensusV1,
   type MachineDeploymentReferencesInputV1, type MachineDeploymentReferencesPageV1 } from '@happier-dev/protocol/machines/machineReferenceCensusV1';

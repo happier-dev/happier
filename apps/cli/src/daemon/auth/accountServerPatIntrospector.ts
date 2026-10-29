@@ -1,4 +1,4 @@
-import axios from "axios";
+import axios from '@/api/client/credentialAxios';
 import { ACCOUNT_API_TOKEN_INTROSPECTION_HTTP_PATH_V1, AccountApiTokenIntrospectionSubjectFailureV1Schema, AccountApiTokenIntrospectionSuccessV1Schema, parseAccountApiTokenBearerV1 } from '@happier-dev/protocol/auth/accountApiTokens';
 import type { AccountApiTokenIntrospectionRequestV1 } from '@happier-dev/protocol';
 

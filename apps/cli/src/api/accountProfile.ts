@@ -1,5 +1,5 @@
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
-import axios from 'axios';
+import axios from '@/api/client/credentialAxios';
 import { AccountProfileResponseSchema } from '@happier-dev/protocol/account/profile';
 import type { AccountProfileResponse } from '@happier-dev/protocol';
 

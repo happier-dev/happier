@@ -1,4 +1,4 @@
-import axios from 'axios';
+import axios from '@/api/client/credentialAxios';
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import { SessionDraftListResponseV2Schema, SESSION_DRAFT_V2_ROUTE_LIST } from '@happier-dev/protocol/drafts/sessionDraftsV2';
 

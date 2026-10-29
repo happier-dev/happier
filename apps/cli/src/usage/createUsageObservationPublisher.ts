@@ -1,5 +1,5 @@
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
-import axios from 'axios';
+import axios from '@/api/client/credentialAxios';
 import type { UsageNativeAccountingSubject, UsageNativeAccountingEvidence, UsageRequestAttribution } from '@happier-dev/protocol';
 import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import { fetchServerFeaturesSnapshot } from '@/features/serverFeaturesClient';

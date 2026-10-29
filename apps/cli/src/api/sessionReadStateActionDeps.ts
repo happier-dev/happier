@@ -1,4 +1,4 @@
-import axios from 'axios';
+import axios from '@/api/client/credentialAxios';
 import { resolveSessionReadStateActionRequest, projectSessionReadStateActionTransportFailure } from '@happier-dev/protocol/sessions/readState/actionTransport';
 import type { ActionExecutorDeps } from '@happier-dev/protocol';
 import { createAuthenticationHttpStatusError, createHttpStatusError, isAuthenticationStatus } from '@/api/client/httpStatusError';

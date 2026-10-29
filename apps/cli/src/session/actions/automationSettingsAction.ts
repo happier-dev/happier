@@ -1,4 +1,4 @@
-import axios from 'axios';
+import axios from '@/api/client/credentialAxios';
 import { executeAutomationSettingDeclaration } from '@happier-dev/protocol/actions/settings/automationSettingsDeclarationAction';
 import { AutomationV3SettingsUpdateRequestSchema,
     type AutomationV3Settings } from '@happier-dev/protocol/automations/automationApiV3';

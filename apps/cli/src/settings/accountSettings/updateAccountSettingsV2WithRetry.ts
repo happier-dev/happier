@@ -4,7 +4,7 @@ import { isDeepStrictEqual } from 'node:util';
 
 import type { Credentials, StoredCredentials } from '@/persistence';
 
-import axios from 'axios';
+import axios from '@/api/client/credentialAxios';
 
 import { configuration } from '@/configuration';
 import { classifyServerEndpointError } from '@/api/client/classifyServerEndpointError';

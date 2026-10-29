@@ -1,4 +1,5 @@
-import axios from 'axios';
+import axios from '@/api/client/credentialAxios';
+import { CredentialRequestRedirectError } from '@happier-dev/cli-common/homeTarget';
 import { AccountEncryptionCurrentnessResponseSchema, AccountEncryptionCurrentnessErrorResponseSchema } from '@happier-dev/protocol/account/encryptionMode';
 import type { AccountEncryptionCurrentnessResponse, AccountEncryptionCurrentnessErrorResponse } from '@happier-dev/protocol/account/encryptionMode';
 
@@ -19,9 +20,8 @@ export class AccountEncryptionCurrentnessUnavailableError extends Error {
     readonly recipientEnvelopeReadiness?: AccountEncryptionCurrentnessErrorResponse['recipientEnvelopeReadiness'],
     options?: ErrorOptions,
   ) {
-    // The wrapped transport failure stays reachable as `cause` so the caller
-    // that owns the offline/auth classification (getOrCreateSession) can
-    // classify this preflight exactly as it classifies its own request.
+    // Keep the observation phase and original transport cause together.
+    // A failed read does not establish that the Home is offline.
     super(message, options);
     this.name = 'AccountEncryptionCurrentnessUnavailableError';
   }
@@ -70,6 +70,7 @@ export async function fetchAccountEncryptionCurrentnessFromServer(params: Accoun
   try {
     response = await readCurrentness();
   } catch (error) {
+    if (error instanceof CredentialRequestRedirectError) throw error;
     if (params.signal?.aborted) throw error;
     throw new AccountEncryptionCurrentnessUnavailableError(undefined, undefined, { cause: error });
   }
@@ -119,6 +120,7 @@ export async function fetchAccountEncryptionCurrentnessFromServer(params: Accoun
           response = await readCurrentness();
         }
       } catch (error) {
+        if (error instanceof CredentialRequestRedirectError) throw error;
         params.signal?.throwIfAborted();
         // Preserve the original typed recovery result when proof cannot be completed.
       }

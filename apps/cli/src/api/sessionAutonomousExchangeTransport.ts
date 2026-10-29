@@ -1,4 +1,4 @@
-import axios from 'axios';
+import axios from '@/api/client/credentialAxios';
 import { AutonomousExchangeStatusV1Schema,
   type AutonomousExchangeControlRequestV1 } from '@happier-dev/protocol/sessions/messages/autonomousExchangeV1';
 

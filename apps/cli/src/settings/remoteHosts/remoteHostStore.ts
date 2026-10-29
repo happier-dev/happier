@@ -1,4 +1,4 @@
-import axios from 'axios';
+import axios from '@/api/client/credentialAxios';
 import { randomBytes } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { loadRemoteHostCatalogProjectionV1 } from '@happier-dev/protocol/remoteHosts/remoteHostCatalogV1';
