@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useScreenSafeAreaBleed } from '@/components/navigation/safeArea/HorizontalSafeArea';
 import { View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -28,7 +29,7 @@ export type BrandPanelProps = Readonly<{
     /**
      * Required when variant === 'mobile-hero'. Called when the user taps
      * "Get started" to dismiss the one-time mobile brand prelude. The shell
-     * passes a callback that writes `brandHeroSeenAt` to local settings.
+     * passes a callback that records the timestamp in device history.
      */
     onGetStarted?: () => void;
     testID?: string;
@@ -53,9 +54,13 @@ export type BrandPanelProps = Readonly<{
 export const BrandPanel = React.memo(function BrandPanel(props: BrandPanelProps) {
     const { theme } = useUnistyles();
     const safeAreaInsets = useSafeAreaInsets();
+    const safeAreaBleed = useScreenSafeAreaBleed();
     const tokens = useBrandPaneTokens();
     const styles = stylesheet;
-    const rootStyle = [styles.root, { backgroundColor: tokens.background }];
+    const rootStyle = [styles.root, { backgroundColor: tokens.background }, props.variant === 'mobile-hero' ? {
+        marginLeft: -safeAreaBleed.left,
+        marginRight: -safeAreaBleed.right,
+    } : null];
     const fadeColors = [tokens.backgroundTransparent, tokens.background] as const;
     const markTone: 'on-dark' | 'on-light' = theme.dark ? 'on-dark' : 'on-light';
 
