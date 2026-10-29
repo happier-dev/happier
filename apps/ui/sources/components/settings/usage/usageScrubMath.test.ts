@@ -27,8 +27,9 @@ describe('scrubMath', () => {
     });
 
     it('computes cell centers consistent with index resolution', () => {
-        for (let index = 0; index < layout.count; index += 1) {
-            const center = scrubCellCenterX(index, layout);
+        const centers = Array.from({ length: layout.count }, (_, index) => scrubCellCenterX(index, layout));
+        expect(centers).toEqual([25, 77, 129, 181, 233]);
+        for (const [index, center] of centers.entries()) {
             expect(resolveScrubIndex(center, layout)).toBe(index);
         }
     });

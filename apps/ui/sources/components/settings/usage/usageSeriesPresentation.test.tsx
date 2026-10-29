@@ -5,6 +5,8 @@ import { StackedSeriesChart } from '@happier-dev/plugin-ui/presentation';
 import { pressTestInstance, renderScreen } from '@/dev/testkit';
 import { projectPluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemeProjection';
 import { lightTheme } from '@/theme';
+import { Text } from '@/components/ui/text/Text';
+import { t } from '@/text';
 import { fillUsageMixCalendar, fillUsageTrendCalendar, usageAxisTicks, usageSeriesFrame, usageSourceTimelineSeries, usageVolumeSeries, useUsageSeriesLens, type UsageSeriesChoice } from './usageSeriesPresentation';
 import type { UsageAnalyticsCoverage } from '@happier-dev/protocol';
 
@@ -47,7 +49,12 @@ describe('the all-series lens', () => {
         // An unknown part is said, and no total is made up around it.
         expect(screen.getTextContent()).toContain('300 tok');
         expect(screen.getTextContent()).not.toContain('2000 tok');
-        expect(screen.findByTestId('lens-lens')).toBeTruthy();
+        const lens = screen.findByTestId('lens-lens')!;
+        expect(lens).toBeTruthy();
+        // Read only the painted lens: a fabricated partial total would add another value here.
+        const lensText = lens.findAllByType(Text).map(node => node.props.children);
+        expect(lensText).toContain(t('common.unavailable'));
+        expect(lensText.filter(value => typeof value === 'string' && value.endsWith(' tok'))).toEqual(['300 tok']);
     });
     it('lets a held lens narrow to one series, and only while it is held', async () => {
         const chosen: string[] = [];

@@ -6,12 +6,6 @@ const HOUR = 3_600_000;
 const reading = (key: string, resetAtMs: number | null, remainingFraction: number | null): UsageWindowReading => ({ key, resetAtMs, remainingFraction });
 
 describe('witnessed reset', () => {
-    it('is a window that was used up and is then read in a later cycle with room again', () => {
-        const hit = [reading('claude:5h', 10 * HOUR, 0), reading('claude:week', 90 * HOUR, 0.4)];
-        const after = [reading('claude:5h', 15 * HOUR, 1), reading('claude:week', 90 * HOUR, 0.38)];
-        expect(detectWitnessedResets(hit, after).map((entry) => entry.key)).toEqual(['claude:5h']);
-    });
-
     it('never celebrates a first read, a window that was not used up, or a reading that is unknown', () => {
         const after = [reading('claude:5h', 15 * HOUR, 1)];
         // Hydration: there is nothing before it to have witnessed.
@@ -29,8 +23,8 @@ describe('witnessed reset', () => {
 
     it('fires once per reset, and forgets what it saw while nobody was looking', () => {
         const watch = createWitnessedResetWatch();
-        const hit = [reading('claude:5h', 10 * HOUR, 0)];
-        const after = [reading('claude:5h', 15 * HOUR, 1)];
+        const hit = [reading('claude:5h', 10 * HOUR, 0), reading('claude:week', 90 * HOUR, 0.4)];
+        const after = [reading('claude:5h', 15 * HOUR, 1), reading('claude:week', 90 * HOUR, 0.38)];
         expect(watch.observe(hit, true)).toEqual([]);
         expect(watch.observe(after, true).map((entry) => entry.key)).toEqual(['claude:5h']);
         // The same facts again (a re-render, a second mounted body) do not replay it.

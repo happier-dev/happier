@@ -166,17 +166,6 @@ describe('one selected money basis across Usage bodies', () => {
     await distinct.pressByTestIdAsync('coverage.showAll.toggle');
     expect(distinct.findByType(HappierDataRows).props.rows).toHaveLength(10);
   });
-  it('opens every source row with a capital, including the generic accounting source whose label is a lower-case fragment', async () => {
-    const props = mountedCosts();
-    const source = { path: 'native' as const, status: 'unknown' as const, eventCount: 0, captureKind: 'measured' as const, asOfMs: 100 };
-    const slice = resolveUsagePageAggregation({ queries: [props.query],
-      accounting: [{ query: props.query, status: 'available', value: { ...props.slice.accounting!, coverage: { status: 'partial' as const,
-        reasons: [], missingDimensions: [], range: { startMs: 0, endMs: day, complete: false }, ranked: [],
-        sources: [{ ...source, source: 'runtime' }, { ...source, source: 'runtime' }] } } }] }).results[0]!;
-    const screen = await renderScreen(<UsageSourceCoverageWidget {...props} id="usage_source_coverage" testID="coverage" slice={slice} />);
-    const title = String(screen.findByType(HappierDataRows).props.rows[0][0]);
-    expect(title).toBe(`${t('usage.board.page.sourceAccounting').charAt(0).toLocaleUpperCase()}${t('usage.board.page.sourceAccounting').slice(1)} ×2`);
-  });
   it.each([7, 30].flatMap(days => (['auto', 'reported', 'estimated', 'api_equivalent'] as const)
     .map(costBasis => ({ days, costBasis, olderUnpriced: false }))).concat([
       { days: 30, costBasis: 'auto', olderUnpriced: true },

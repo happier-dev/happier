@@ -24,7 +24,7 @@ import { resolveUsagePageInitialFilters } from '../usageRouteParams';
 import { buildUsageAnalyticsViewModel } from '@/sync/api/account/usageAnalytics';
 import { UsageWidgetBody } from './UsageWidgetBody';
 import { storage } from '@/sync/domains/state/storage';
-import { createSessionAccessFixture, createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { createPlainSessionCurrentProjectionRecordFixture, createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
 import { CoreCollectionScope } from '@/components/ui/lists/collection/CoreCollectionScope';
 import { HappierDataMetric, HappierDataRows } from '@happier-dev/plugin-ui/presentation';
@@ -216,12 +216,9 @@ describe('Usage page batch', () => {
         if (request.path === '/v2/usage/query') return Response.json(accounting);
         if (request.path === '/v1/account/encryption/currentness') return Response.json({ mode: 'plain', version: 1,
           signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 });
-        if (request.path === '/v2/sessions/work') return Response.json({ session: { id: 'work',
+        if (request.path === '/v2/sessions/work') return Response.json({ session: createPlainSessionCurrentProjectionRecordFixture({ id: 'work',
           createdAt: 1, updatedAt: 900, seq: 1, active: true, activeAt: 900,
-          encryptionMode: 'plain', dataEncryptionKey: null, metadataLayoutVersion: 0,
-          metadataVersion: 1, metadata: JSON.stringify({ name: 'work' }), agentStateVersion: 1,
-          agentState: null, share: null, effectiveAccess: { v: 1, level: 'owner', sources: [{ kind: 'owner' }],
-            capabilities: createSessionAccessFixture().capabilities }, responsibleAccountId: null, responsibleAccount: null } });
+          metadataVersion: 1, metadata: { path: '', host: '', name: 'work' }, agentStateVersion: 1 }) });
         if (request.path === '/v1/sessions/work/turns') return Response.json({ v: 1, sessionId: 'work', updatedAt: 900,
           turns: [{ turnId: 'turn', agentId: 'codex', status: 'completed', startedAt: 100, terminalAt: 400, updatedAt: 900 }] });
         if (request.path === '/v1/sessions/work/messages') return Response.json({ messages: [], hasMore: false });
@@ -245,26 +242,27 @@ describe('Usage page batch', () => {
     const screen = await renderScreen(body(narrowId));
     await expect.poll(() => home!.requests.filter(request => request.path === '/v2/usage/query').length).toBeGreaterThan(0);
     await flushHookEffects({ cycles: 30 });
-    expect(home.requests.filter(request => request.path === '/v2/sessions/read-batch' || request.path === '/v2/sessions/work'
-      || request.path.startsWith('/v1/sessions/work/'))).toEqual([]);
+    expect(home.requests.filter(request => request.method === 'POST' && request.path === '/v2/sessions/read-batch'
+      || request.method === 'GET' && (request.path === '/v2/sessions/work' || request.path.startsWith('/v1/sessions/work/')))).toEqual([]);
     await screen.update(body('usage_period_summary'));
-    await expect.poll(() => sessionReads.componentRequests.filter(request => request.path === '/v1/sessions/work/turns').length).toBe(1);
+    await expect.poll(() => sessionReads.componentRequests.filter(request => request.method === 'GET' && request.path === '/v1/sessions/work/turns').length).toBe(1);
     await flushHookEffects({ cycles: 30 });
-    expect(sessionReads.componentRequests.filter(request => request.path === '/v1/sessions/work/messages')).toHaveLength(0);
-    expect(home.requests.filter(request => request.path === '/v2/sessions/read-batch').map(request => [request.method, request.body]))
+    expect(sessionReads.componentRequests.filter(request => request.method === 'GET' && request.path === '/v1/sessions/work/messages')).toHaveLength(0);
+    expect(home.requests.filter(request => request.method === 'POST' && request.path === '/v2/sessions/read-batch').map(request => [request.method, request.body]))
       .toEqual([['POST', expect.objectContaining({ sessionIds: ['work'], includeSnapshot: true, includeMessages: false })]]);
     await expect.poll(() => slices.find(slice => slice.howYouWork)?.howYouWork?.intervals?.agentTimeMs).toBe(300);
     expect(slices.find(slice => slice.howYouWork)?.sources).toContainEqual({ source: 'how_you_work:transcripts', status: 'not_loaded' });
     await screen.update(body('usage_coach'));
-    await expect.poll(() => sessionReads.componentRequests.filter(request => request.path === '/v1/sessions/work/messages').length).toBe(1);
+    await expect.poll(() => sessionReads.componentRequests.filter(request => request.method === 'GET' && request.path === '/v1/sessions/work/messages').length).toBe(1);
     await flushHookEffects({ cycles: 30 });
-    expect(sessionReads.componentRequests.filter(request => request.path === '/v2/sessions/work')).toHaveLength(1);
-    expect(home.requests.filter(request => request.path === '/v2/sessions/read-batch').map(request => [request.method, request.body]))
+    expect(sessionReads.componentRequests.filter(request => request.method === 'GET' && request.path === '/v2/sessions/work')).toHaveLength(1);
+    expect(home.requests.filter(request => request.method === 'POST' && request.path === '/v2/sessions/read-batch').map(request => [request.method, request.body]))
       .toEqual([
         ['POST', expect.objectContaining({ sessionIds: ['work'], includeSnapshot: true, includeMessages: false })],
         ['POST', expect.objectContaining({ sessionIds: ['work'], includeSnapshot: false, includeMessages: true })],
       ]);
-    expect(home.requests.filter(request => request.path === '/v2/sessions/work' || request.path.startsWith('/v1/sessions/work/'))).toEqual([]);
+    expect(home.requests.filter(request => request.method === 'GET'
+      && (request.path === '/v2/sessions/work' || request.path.startsWith('/v1/sessions/work/')))).toEqual([]);
     await expect.poll(() => slices.find(slice => slice.howYouWork)?.sources)
       .toContainEqual({ source: 'how_you_work:transcripts', status: 'available' });
   });

@@ -5,7 +5,7 @@ import { renderHook, renderScreen } from '@/dev/testkit';
 import { useUsageWork } from './useUsageWork';
 import { router } from 'expo-router';
 import { getPreferredLanguage, preloadTranslations, setPreferredLanguageFromSettings, t } from '@/text';
-import { HappierDataMetric, HappierDataRows, IntervalTimeline } from '@happier-dev/plugin-ui/presentation';
+import { HappierDataMetric, HappierDataRows, IntervalTimeline, OutcomeFunnel, OutcomeScatter, RankedRows } from '@happier-dev/plugin-ui/presentation';
 import { DEFAULT_USAGE_COACH_PREFERENCES_V1 } from '@happier-dev/protocol/account/settings/usageCoachPreferencesV1';
 import {
   getUsageQueryKey,
@@ -693,14 +693,18 @@ describe('Work and Coach widget bodies', () => {
 
   it('session value never draws an unlinked session as zero output', async () => {
     const screen = await renderScreen(
-      <UsageSessionValueWidget
-        {...props}
-        id="usage_session_value"
-        testID="value"
-      />,
+      <WidgetPresentationProvider value={{ size: 'full',
+        footprint: { columns: 2, columnSpan: 2, rowSpan: 2, width: 'full', height: 'tall' },
+        geometry: { width: 700, height: 500 } }}>
+        <UsageSessionValueWidget {...props} id="usage_session_value" testID="value" />
+      </WidgetPresentationProvider>,
     );
-    expect(screen.findByTestId('value.merged')).toBeTruthy();
-    expect(screen.findByTestId('value.unlinked')).toBeTruthy();
+    expect(screen.findByType(OutcomeScatter).props.points).toMatchObject([
+      { id: 's1', x: 6, y: 1 },
+    ]);
+    const unlinked = screen.findAllByType(RankedRows).find(rows => rows.props.testID === 'value.unlinked');
+    expect(unlinked?.props.rows).toMatchObject([{ id: 's2', value: 3 }]);
+    expect(screen.findHostByTestId('value.open.s2')).not.toBeNull();
   });
 
   it('shows unlinked Sessions once when a wide scatter has no witnessed outcome axis', async () => {
@@ -719,7 +723,12 @@ describe('Work and Coach widget bodies', () => {
     const screen = await renderScreen(
       <UsageOutcomesWidget {...props} id="usage_outcomes" testID="outcomes" />,
     );
-    expect(screen.findByTestId('outcomes.funnel')).toBeTruthy();
+    expect(screen.findByType(OutcomeFunnel).props.steps).toMatchObject([
+      { id: 'sessions', value: 2 },
+      { id: 'witnessed', value: 1 },
+      { id: 'allocated', value: 1 },
+      { id: 'merged', value: 1 },
+    ]);
     expect(screen.getTextContent()).toContain('2493');
   });
 

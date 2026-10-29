@@ -23,6 +23,7 @@ import { ConnectedServiceQuotaGetResultV1Schema, ProviderAccountUsagePageProject
 import { buildProviderAccountUsageRecordId, ProviderAccountUsageSnapshotV1Schema } from '@happier-dev/protocol/connect/account-usage-primitives';
 import { parseQualifiedConnectedAccountV4StructuredQueryValue } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4QueryCodec';
 import { WidgetPresentationProvider } from '@happier-dev/plugin-ui';
+import { IntervalTimeline } from '@happier-dev/plugin-ui/presentation';
 import type { UsageWidgetBodyModel } from '../useUsageWidgetResource';
 import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
 import { QualifiedConnectedAccountGroupV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
@@ -368,6 +369,11 @@ it('keeps each reset and renewal as an exact point when the shared plot cannot f
     </WidgetPresentationProvider>
   </InjectedAuthProvider>);
   expect(screen.findByTestId('reset.timeline-plot')).toBeNull();
+  expect(screen.findByType(IntervalTimeline).props.intervals).toMatchObject([
+    { kind: 'point', start: now + 3_600_000, end: now + 3_600_000 },
+    { kind: 'point', start: now + 2 * 3_600_000, end: now + 2 * 3_600_000 },
+    { kind: 'point', start: now + 86_400_000, end: now + 86_400_000 },
+  ]);
   const rows = [0, 1, 2].map(index => screen.findHostByTestId(`reset.timeline-values-row-${index}`));
   expect(rows.every(Boolean)).toBe(true);
   expect(rows.every(row => !row!.props.accessibilityLabel.includes('End:'))).toBe(true);

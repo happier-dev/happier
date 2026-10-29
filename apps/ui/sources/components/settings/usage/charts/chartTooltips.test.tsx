@@ -7,8 +7,12 @@ import { withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
 import { projectPluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemeProjection';
 import { lightTheme } from '@/theme';
 import { usageSignatureAccent } from '../usageAccent';
-import { usageCompositionSegments } from '../usageCompositionPresentation';
-import { ChartTooltip } from '@/components/ui/charts';
+import { createUsageHourRhythmSeries, usageSeriesTooltip } from '../usageSeriesPresentation';
+import { UsageEfficiencyWidget } from '../widgets/UsageEfficiencyWidget';
+import { UsageAnalyticsQueryResponseSchema } from '@happier-dev/protocol';
+import { normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
+import { resolveUsagePageAggregation } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
+import type { UsageWidgetBodyModel } from '../useUsageWidgetResource';
 import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
 import { OverlayPortalHost, OverlayPortalProvider } from '@/components/ui/popover/OverlayPortal';
 import { formatHappierDataValue } from '@happier-dev/plugin-ui/presentation';
@@ -106,7 +110,6 @@ describe('usage chart tooltips (one ChartTooltip owner across all charts)', () =
 
     it('hour rhythm: all 24 bars carry tooltip triggers; pressing the busiest shows its exact count', async () => {
         const { StackedSeriesChart } = await import('@happier-dev/plugin-ui/presentation');
-        const { createUsageHourRhythmSeries, usageSeriesTooltip } = await import('../usageSeriesPresentation');
         const hours = Array.from({ length: 24 }, (_value, hour) => ({ hour, eventCount: hour === 14 ? 96 : 0 }));
         const accent = usageSignatureAccent(lightTheme);
         const screen = await renderChart(
@@ -155,32 +158,23 @@ describe('usage chart tooltips (one ChartTooltip owner across all charts)', () =
     });
 
     it('composition strip: each present segment carries a tooltip trigger with the exact token count', async () => {
-        const { CompositionStrip } = await import('@happier-dev/plugin-ui/presentation');
+        const query = normalizeUsageQuery({ period: { startMs: 0, endMs: 86_400_000 }, metric: 'tokens' });
+        const accounting = UsageAnalyticsQueryResponseSchema.parse({ v: 1, totals: {
+            eventCount: 1,
+            tokens: { input: 123_456, output: 82_304, cacheRead: 0, cacheWrite: 0, reasoning: 0, total: 205_760 },
+            cost: { reportedUsd: 0, estimatedUsd: 0, currency: 'USD' },
+        } });
+        const slice = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, status: 'available', value: accounting }] }).results[0]!;
+        const model = { requestedQuery: null, shownQuery: null, slice, pending: false, error: null,
+            freshness: 'fresh', updatingPreviousPeriod: false, refreshing: false, refresh: async () => {} } satisfies UsageWidgetBodyModel;
         const screen = await renderChart(
-            <CompositionStrip
-                theme={projectPluginUiTheme(lightTheme)}
-                label="Token mix"
-                total={205_760}
-                segments={usageCompositionSegments({
-                    segments: [
-                        { key: 'input', tokens: 123_456, pct: 60 },
-                        { key: 'output', tokens: 82_304, pct: 40 },
-                        { key: 'cacheRead', tokens: 0, pct: 0 },
-                        { key: 'cacheWrite', tokens: 0, pct: 0 },
-                        { key: 'reasoning', tokens: 0, pct: 0 },
-                    ],
-                    total: 205_760,
-                }, () => usageSignatureAccent(lightTheme))}
-                renderBarSegment={(segment, visual) => <ChartTooltip triggerTestID="usage-composition-segment-trigger"
-                    title={segment.label} value={segment.value?.toLocaleString() ?? '—'} accentColor={segment.color ?? usageSignatureAccent(lightTheme)}>{visual}</ChartTooltip>}
-                testID="composition"
-            />,
+            <UsageEfficiencyWidget id="usage_efficiency" query={query} slice={slice} model={model} serverId="home" testID="composition" />,
         );
 
-        const triggers = screen.findAllHostsByTestId('usage-composition-segment-trigger');
+        const triggers = screen.findAllHostsByTestId('usage-efficiency-mix-trigger');
         expect(triggers).toHaveLength(2);
         act(() => {
-            pressTestInstance(triggers[0]!, 'usage-composition-segment-trigger');
+            pressTestInstance(triggers[0]!, 'usage-efficiency-mix-trigger');
         });
         await expectRenderedTooltipValue(screen, '123,456');
     });
