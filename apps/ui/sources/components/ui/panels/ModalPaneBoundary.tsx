@@ -8,6 +8,7 @@ import { NativeBackLayerBoundary } from '@/components/ui/overlays/NativeBackLaye
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { ESCAPE_LAYER_PRIORITIES, useEscapeLayer } from '@/keyboard/escape';
 import { useWebOverlayFocusContainment } from '@/keyboard/webOverlayFocusContainment';
+import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import {
     focusNativeAccessibilityTarget,
     restoreFocusToBestTarget,
@@ -244,7 +245,9 @@ export function useModalPaneBoundary(options: ModalPaneBoundaryOptions): ModalPa
         // incumbent editing behavior.
         allowEditableTarget: options.allowEditableEscape === true,
         onEscape: () => {
-            optionsRef.current.onRequestClose();
+            // Settle the focused editor's existing dirty-close decision (including
+            // its pending input flush) before the pane starts its close animation.
+            void runGuardedNavigation(() => optionsRef.current.onRequestClose());
             return true;
         },
     });
