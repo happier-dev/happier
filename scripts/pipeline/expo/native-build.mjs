@@ -859,8 +859,6 @@ async function main() {
 	        }
 
 	        if (!fs.existsSync(outAbs)) fail(`Missing build metadata json at: ${outAbs}`);
-	        const size = fs.statSync(artifactAbs).size;
-	        if (size < 1_000_000) fail(`Build artifact is unexpectedly small (${size} bytes): ${artifactAbs}`);
 	        // Ensure JSON is parseable.
         JSON.parse(fs.readFileSync(outAbs, 'utf8'));
       }
@@ -972,10 +970,6 @@ async function main() {
         fail(`Missing EAS local build output at: ${absOut}`);
       }
       if (platform === 'android' && absOut.endsWith('.aab')) verifyAndroidPageSize({ aabPath: absOut });
-      const size = fs.statSync(absOut).size;
-      if (size < 1_000_000) {
-        fail(`EAS local build output is unexpectedly small (${size} bytes): ${absOut}`);
-      }
     }
 
     writeJson(outPath, {

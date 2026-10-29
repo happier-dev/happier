@@ -31,13 +31,16 @@ function writeExecutable(filePath, content) {
   fs.writeFileSync(filePath, content, { encoding: 'utf8', mode: 0o700 });
 }
 
-test('expo native-build can delegate local Android builds to Dagger runtime', () => {
+test('expo native-build accepts a small ZIP exported by the Dagger runtime', () => {
   const dir = makeTempDir();
   const binDir = path.join(dir, 'bin');
   fs.mkdirSync(binDir, { recursive: true });
 
   const artifactOut = path.join(dir, 'happier-preview-android.apk');
   const outJson = path.join(dir, 'eas_build_android.json');
+  const fixture = path.join(dir, 'fixture.apk');
+  fs.writeFileSync(fixture, Buffer.from('UEsDBBQAAAAAAOGzXV0W4xE2KQAAACkAAAATAAAAQW5kcm9pZE1hbmlmZXN0LnhtbDxtYW5pZmVzdCBwYWNrYWdlPSJkZXYuaGFwcGllci5maXh0dXJlIi8+UEsBAhQDFAAAAAAA4bNdXRbjETYpAAAAKQAAABMAAAAAAAAAAAAAAIABAAAAAEFuZHJvaWRNYW5pZmVzdC54bWxQSwUGAAAAAAEAAQBBAAAAWgAAAAAA', 'base64'));
+  execFileSync('unzip', ['-t', fixture], { stdio: 'pipe' });
 
   const daggerPath = path.join(binDir, 'dagger');
   writeExecutable(
@@ -61,7 +64,7 @@ test('expo native-build can delegate local Android builds to Dagger runtime', ()
       'mkdir -p "${outdir}"',
       'artifact="${outdir}/${artifact_name}"',
       'outjson="${outdir}/${outjson_name}"',
-      'head -c 1000001 /dev/zero > "${artifact}"',
+      `cp ${JSON.stringify(fixture)} "\${artifact}"`,
       'printf \'{"mode":"local","platform":"android","profile":"preview-apk","artifactPath":"%s"}\\n\' "${artifact}" > "${outjson}"',
       'exit 0',
       '',

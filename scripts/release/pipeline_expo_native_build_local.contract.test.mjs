@@ -71,13 +71,17 @@ test('expo native-build allows local iOS dry-runs without requiring fastlane or 
   assert.match(stdout, /\[dry-run\].*--local/);
 });
 
-test('expo native-build treats local builds as successful when EAS cleanup fails after writing the artifact', () => {
+test('expo native-build preserves a small ZIP artifact when only EAS cleanup fails', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'happier-pipeline-eas-local-cleanup-noise-'));
   const binDir = path.join(dir, 'bin');
   fs.mkdirSync(binDir, { recursive: true });
 
   const outJson = path.join(dir, 'out.json');
   const artifactOut = path.join(dir, 'app.apk');
+  const fixture = path.join(dir, 'fixture.apk');
+  // A small ZIP with AndroidManifest.xml: archive length is not a validity contract.
+  fs.writeFileSync(fixture, Buffer.from('UEsDBBQAAAAAAOGzXV0W4xE2KQAAACkAAAATAAAAQW5kcm9pZE1hbmlmZXN0LnhtbDxtYW5pZmVzdCBwYWNrYWdlPSJkZXYuaGFwcGllci5maXh0dXJlIi8+UEsBAhQDFAAAAAAA4bNdXRbjETYpAAAAKQAAABMAAAAAAAAAAAAAAIABAAAAAEFuZHJvaWRNYW5pZmVzdC54bWxQSwUGAAAAAAEAAQBBAAAAWgAAAAAA', 'base64'));
+  execFileSync('unzip', ['-t', fixture], { stdio: 'pipe' });
 
   const npxPath = path.join(binDir, 'npx');
   writeExecutable(
@@ -99,7 +103,7 @@ test('expo native-build treats local builds as successful when EAS cleanup fails
       'done',
       'if [ -z "${out}" ]; then echo "missing --output" >&2; exit 1; fi',
       'mkdir -p "$(dirname "${out}")"',
-      'head -c 1000001 /dev/zero > "${out}"',
+      `cp ${JSON.stringify(fixture)} "\${out}"`,
       "echo \"ENOTEMPTY: directory not empty, rmdir '/tmp/eas-local-build/.git'\" >&2",
       'echo "Error: ENOTEMPTY: directory not empty, rmdir \'/tmp/eas-local-build/.git\'" >&2',
       'exit 1',
