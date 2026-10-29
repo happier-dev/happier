@@ -61,7 +61,7 @@ export function useOpenDiscussion(input: Readonly<{
             router.push(buildDiscussionRouteHref({ target, sourceSurface }) as Href);
         }
     }, [inSessionPane, openDetailsTab, router, serverId, sessionId, sourceSurface]);
-    return React.useMemo(() => ({
+    const actions = React.useMemo(() => ({
         openNewDiscussion: () => {
             const draftId = randomUUID();
             prepareNewDraft?.(draftId);
@@ -70,6 +70,6 @@ export function useOpenDiscussion(input: Readonly<{
         openDiscussion: (discussionId: string, title?: string | null, messageId?: string) => openTarget({
             kind: 'discussion', address: { serverId }, discussionId, ...(messageId ? { messageId } : {}),
         }, title),
-        activeDiscussionKey,
-    }), [activeDiscussionKey, anchor, openTarget, prepareNewDraft, serverId]);
+    }), [anchor, openTarget, prepareNewDraft, serverId]);
+    return { ...actions, activeDiscussionKey };
 }
