@@ -10,6 +10,7 @@ type PromptCapabilitiesSnapshot = Readonly<{
 type McpCapabilitiesSnapshot = Readonly<{
   http: boolean;
   sse: boolean;
+  acp: boolean;
 }>;
 
 function normalizePromptCapabilities(raw: unknown): PromptCapabilitiesSnapshot {
@@ -26,6 +27,7 @@ function normalizeMcpCapabilities(raw: unknown): McpCapabilitiesSnapshot {
   return {
     http: value.http === true,
     sse: value.sse === true,
+    acp: value.acp === true,
   };
 }
 

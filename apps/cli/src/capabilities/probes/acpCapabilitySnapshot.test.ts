@@ -20,6 +20,7 @@ describe('buildAcpCapabilitySnapshot', () => {
         mcpCapabilities: {
           http: true,
           sse: false,
+          acp: true,
         },
       },
     } as any);
@@ -41,6 +42,7 @@ describe('buildAcpCapabilitySnapshot', () => {
         mcpCapabilities: {
           http: true,
           sse: false,
+          acp: true,
         },
       },
     });
