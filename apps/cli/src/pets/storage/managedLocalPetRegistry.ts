@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '@happier-dev/protocol/lazyZodSchema';
 import { lstat, readFile, realpath, rm } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 
@@ -37,18 +38,18 @@ type ManagedLocalPetRegistryForgetResult =
   | Readonly<{ ok: true; sourceKey: string }>
   | Readonly<{ ok: false; errorCode: 'not_found' | 'validation_failed' | 'unsupported_source' | 'internal_error'; error: string }>;
 
-const PetSourceKeySchema = z.string().check(z.regex(/^pet:[a-f0-9]{32}$/u));
+const PetSourceKeySchema = lazyZodSchema(() => z.string().check(z.regex(/^pet:[a-f0-9]{32}$/u)));
 
-const ManagedLocalPetRegistryEntrySchema = z.object({
+const ManagedLocalPetRegistryEntrySchema = lazyZodSchema(() => z.object({
   kind: z.literal('happierManagedLocal'),
   sourceKey: PetSourceKeySchema,
   packagePath: z.string().check(z.minLength(1), z.maxLength(10_000)),
-});
+}));
 
-const ManagedLocalPetRegistryFileSchema = z.object({
+const ManagedLocalPetRegistryFileSchema = lazyZodSchema(() => z.object({
   version: z.literal(1),
   pets: z.record(z.string(), z.unknown()),
-});
+}));
 
 function registryPath(managedRoot: string): string {
   return join(managedRoot, MANAGED_LOCAL_PET_REGISTRY_FILE);
