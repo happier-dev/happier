@@ -22,6 +22,31 @@ import { withPatchedProcessEnv } from '../../apps/stack/scripts/testkit/core/env
 // not these independent owners; joint admission is covered by its native suite.
 withPatchedProcessEnv(test, { HAPPIER_WORKSPACE_DIST_BUILD_LOCK_WAIT_ALLOWED: undefined });
 
+test('an explicit unlimited async bootstrap wait preserves live legacy owners without hot polling', async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'workspace-bootstrap-unlimited-'));
+  const lockPath = join(root, 'bootstrap.lock');
+  let nowMs = Date.now();
+  t.mock.method(Date, 'now', () => nowMs);
+  writeFileSync(lockPath, JSON.stringify({ pid: process.pid, createdAt: nowMs }));
+  const waits = [];
+  try {
+    const result = await withWorkspaceBundleLock(() => 'admitted', {
+      lockPath, timeoutMs: null, staleAfterMs: 300_000,
+      // Clock and filesystem-change waiting are system boundaries; admission stays real.
+      waitForLockChangeImpl: async ({ maxWaitMs }) => {
+        waits.push(maxWaitMs);
+        assert.ok(maxWaitMs > 1, 'an unlimited wait retains the directory-watch catch-up cadence');
+        nowMs += DEFAULT_WORKSPACE_BUNDLE_LOCK_TIMEOUT_MS + 1;
+        if (waits.length === 2) rmSync(lockPath);
+      },
+    });
+    assert.equal(result, 'admitted');
+    assert.equal(waits.length, 2);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('CLI publication adapter reenters the exact inherited joint lease supplied by its environment', async () => {
   const root = mkdtempSync(join(tmpdir(), 'workspace-cli-joint-lease-'));
   const lockPath = join(root, 'publication.lock');
