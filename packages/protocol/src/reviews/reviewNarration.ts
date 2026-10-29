@@ -56,6 +56,15 @@ export type ExecutionRunOutputObservation = z.infer<
   typeof ExecutionRunOutputObservationSchema
 >;
 
+/** Exact saved output identity; an observation revision is separate from identity. */
+export const ExecutionRunOutputRefV1Schema = lazyZodSchema(() => z.union([
+  z.strictObject({ kind: z.literal('review_walkthrough'), comparisonId: z.string().check(z.minLength(1)),
+    resultId: z.string().check(z.minLength(1)) }),
+  z.strictObject({ kind: z.literal('scm_diff_summary'), output: ScmDiffSummaryOutputKindSchema,
+    comparisonId: z.string().check(z.minLength(1)), resultId: z.string().check(z.minLength(1)) }),
+]));
+export type ExecutionRunOutputRefV1 = z.infer<typeof ExecutionRunOutputRefV1Schema>;
+
 // A re-export, not a copied const: this module sits in an import cycle with diffSummary, so it must not read that binding while loading.
 export { ScmReviewFindingIdentitySchema as ReviewFindingIdentitySchema } from '../scm/diffSummary.js';
 export type ReviewFindingIdentity = z.infer<
