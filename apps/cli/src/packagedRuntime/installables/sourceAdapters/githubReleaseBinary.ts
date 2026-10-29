@@ -11,6 +11,7 @@ import {
   extractGitHubReleaseAsset,
   promoteManagedCurrentInstall,
   resolveHappyHomeDirFromEnvironment,
+  resolveManagedToolsRoot,
   selectManagedDependencyReleaseAsset,
 } from '@happier-dev/cli-common/agents';
 import { extractReleasePayloadRootFromArchive } from '@happier-dev/cli-common/firstPartyRuntime';
@@ -60,7 +61,7 @@ function primaryCommand(descriptor: InstallableDependencyDescriptor): string {
 }
 
 function managedInstallDir(descriptor: InstallableDependencyDescriptor, env?: NodeJS.ProcessEnv): string {
-  return join(env ? resolveHappyHomeDirFromEnvironment(env) : configuration.happyHomeDir, 'tools', descriptor.key);
+  return join(resolveManagedToolsRoot(env ?? { ...process.env, HAPPIER_HOME_DIR: configuration.happyHomeDir }), descriptor.key);
 }
 
 function managedBinPath(descriptor: InstallableDependencyDescriptor, env?: NodeJS.ProcessEnv): string {

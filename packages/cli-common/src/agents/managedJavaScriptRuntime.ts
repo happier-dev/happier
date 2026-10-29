@@ -11,7 +11,7 @@ import { downloadGitHubReleaseAsset } from './downloadGitHubReleaseAsset.js';
 import { extractGitHubReleaseAsset } from './extractGitHubReleaseAsset.js';
 import { fetchNodeRuntimeReleaseAsset } from './nodeRelease.js';
 import { promoteManagedCurrentInstall } from './promoteManagedCurrentInstall.js';
-import { resolveHappyHomeDirFromEnvironment } from './resolveHappyHomeDir.js';
+import { resolveManagedToolsRoot } from './managedToolsRoot.js';
 import type { AgentInstallProgressCallback } from './installProgress.js';
 
 function resolveManagedJavaScriptRuntimeBinaryName(): string {
@@ -19,7 +19,7 @@ function resolveManagedJavaScriptRuntimeBinaryName(): string {
 }
 
 export function managedJavaScriptRuntimeInstallDir(processEnv: NodeJS.ProcessEnv = process.env): string {
-  return join(resolveHappyHomeDirFromEnvironment(processEnv), 'tools', 'js-runtime');
+  return join(resolveManagedToolsRoot(processEnv), 'js-runtime');
 }
 
 export function managedJavaScriptRuntimeBinPath(processEnv: NodeJS.ProcessEnv = process.env): string {

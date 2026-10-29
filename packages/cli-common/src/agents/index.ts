@@ -42,6 +42,7 @@ export type {
   ManagedAgentCliResolution,
 } from './prepareForRuntime.js';
 export { prepareAgentCliForRuntime } from './prepareForRuntime.js';
+export { resolveManagedToolsRoot } from './managedToolsRoot.js';
 export {
   isAgentCliPathRunnable,
   readBackendCliSourcePreferenceForAgent,

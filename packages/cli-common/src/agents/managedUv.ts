@@ -7,7 +7,7 @@ import { downloadGitHubReleaseAsset } from './downloadGitHubReleaseAsset.js';
 import { createManagedToolScratchDir } from './createManagedToolScratchDir.js';
 import { removeHappierTempDirAsync } from '../tempDirs/createHappierTempDir.js';
 import { promoteManagedCurrentInstall } from './promoteManagedCurrentInstall.js';
-import { resolveHappyHomeDirFromEnvironment } from './resolveHappyHomeDir.js';
+import { resolveManagedToolsRoot } from './managedToolsRoot.js';
 import type { AgentInstallProgressCallback } from './installProgress.js';
 
 // Immutable upstream release assets and their publisher SHA-256 files:
@@ -24,7 +24,7 @@ const UV_ASSETS = {
 } as const;
 
 export function managedUvInstallDir(processEnv: NodeJS.ProcessEnv = process.env): string {
-  return join(resolveHappyHomeDirFromEnvironment(processEnv), 'tools', 'uv');
+  return join(resolveManagedToolsRoot(processEnv), 'uv');
 }
 
 export function managedUvBinPath(processEnv: NodeJS.ProcessEnv = process.env): string {

@@ -11,6 +11,7 @@ import {
   readInstalledPypiWheelAsset,
   resolvePypiWheelAssetHostCompatibility,
   resolveHappyHomeDirFromEnvironment,
+  resolveManagedToolsRoot,
   type PypiWheelAssetHostCompatibility,
 } from '@happier-dev/cli-common/agents';
 import { ExecFileTerminationError, resolveWindowsCommandOnPath } from '@happier-dev/cli-common/process';
@@ -37,7 +38,7 @@ function primaryCommand(descriptor: InstallableDependencyDescriptor): string {
 }
 
 function managedInstallDir(descriptor: InstallableDependencyDescriptor, env?: NodeJS.ProcessEnv): string {
-  return join(env ? resolveHappyHomeDirFromEnvironment(env) : configuration.happyHomeDir, 'tools', descriptor.key);
+  return join(resolveManagedToolsRoot(env ?? { ...process.env, HAPPIER_HOME_DIR: configuration.happyHomeDir }), descriptor.key);
 }
 
 type SupportedHostCompatibility = Extract<PypiWheelAssetHostCompatibility, { ok: true }>;

@@ -92,7 +92,7 @@ describe('pinned archive acquisition progress and cancellation', () => {
     await expect(adapter.resolveLaunchCommand?.()).resolves.toMatchObject({ ok: true, command });
   });
 
-  it('ensures an unregistered Account descriptor through the canonical dispatch and selected home', async () => {
+  it.each([false, true])('ensures an Account descriptor through install, validation and launch (dedicated tools: %s)', async (dedicatedTools) => {
     const { home, asset } = await createFixture();
     const selectedHome = await mkdtemp(join(tmpdir(), 'happier-pinned-descriptor-'));
     homes.push(selectedHome);
@@ -114,18 +114,21 @@ describe('pinned archive acquisition progress and cancellation', () => {
     await expect(getRuntimeInstallableAdapterForDescriptor(descriptor, { ownerId: 'account-agent' }, {
       platform: 'linux', architecture: 's390x',
     })).rejects.toThrow('not executable');
-    const env = { HAPPIER_HOME_DIR: selectedHome };
+    const installHome = join(selectedHome, 'public-payload');
+    const toolsRoot = dedicatedTools ? join(installHome, 'tools') : join(selectedHome, 'tools');
+    const env = { HAPPIER_HOME_DIR: selectedHome, ...(dedicatedTools ? { HAPPIER_FIRST_PARTY_INSTALL_HOME: installHome } : {}) };
     await expect(ensureRuntimeInstallableDescriptorForLaunch({
       descriptor, settings: accountSettingsParse({}), machineId: 'machine-1', env,
       managedAcpDefinition: { definitionId: 'definition-1', title: 'Registry agent' },
     })).resolves.toEqual({
       ok: true, installedKeys: ['registry-agent'],
     });
-    expect(JSON.parse(await readFile(join(selectedHome, 'tools', descriptor.capabilityId, 'current', '.happier-managed-version'), 'utf8'))).toEqual({
+    expect(JSON.parse(await readFile(join(toolsRoot, descriptor.capabilityId, 'current', '.happier-managed-version'), 'utf8'))).toEqual({
       version: '1', definitionId: 'definition-1', title: 'Registry agent', kind: 'archive',
     });
     const adapter = await getRuntimeInstallableAdapterForDescriptor(descriptor, { ownerId: 'account-agent' });
-    await expect(adapter.resolveLaunchCommand?.({ env })).resolves.toMatchObject({ ok: true, command: join(selectedHome, 'tools', descriptor.capabilityId, 'current', asset.executableSubpath) });
+    await expect(adapter.resolveLaunchCommand?.({ env })).resolves.toMatchObject({ ok: true, command: join(toolsRoot, descriptor.capabilityId, 'current', asset.executableSubpath) });
+    if (dedicatedTools) await expect(stat(join(selectedHome, 'tools'))).rejects.toMatchObject({ code: 'ENOENT' });
     await expect(stat(join(home, 'tools'))).rejects.toMatchObject({ code: 'ENOENT' });
   });
 

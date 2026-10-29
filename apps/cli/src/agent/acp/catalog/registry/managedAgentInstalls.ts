@@ -2,7 +2,7 @@ import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   readManagedAgentCliInstallMetadata, removeAgentCliManagedInstallForRuntime,
-  resolveAgentCliManagedInstallRootForRuntime, resolveHappyHomeDirFromEnvironment,
+  resolveAgentCliManagedInstallRootForRuntime, resolveManagedToolsRoot,
   managedAcpAccountNamespace, readManagedAcpInstallNamespace,
   uninstallManagedUvAgent,
 } from '@happier-dev/cli-common/agents';
@@ -30,7 +30,7 @@ async function directories(path: string): Promise<string[]> {
 }
 
 export async function listManagedAcpInstalls(params: Readonly<{ env?: NodeJS.ProcessEnv; accountId?: string; accountNamespace?: string }> = {}): Promise<readonly ManagedAcpInstall[]> {
-  const tools = join(resolveHappyHomeDirFromEnvironment(params.env ?? process.env), 'tools');
+  const tools = resolveManagedToolsRoot(params.env ?? process.env);
   const namespace = params.accountId === undefined ? params.accountNamespace : managedAcpAccountNamespace(params.accountId);
   const installs: ManagedAcpInstall[] = [];
   for (const installId of await directories(tools)) {

@@ -4,6 +4,10 @@ import { dirname, join, win32 } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 import { legacyCustomAcpCompat } from '@happier-dev/agents';
+import { managedJavaScriptRuntimeInstallDir } from './managedJavaScriptRuntime';
+import { buildManagedPnpmEnvironment, managedPnpmInstallDir } from './managedPnpm';
+import { managedUvInstallDir } from './managedUv';
+import { resolveManagedToolsRoot } from './managedToolsRoot';
 
 import {
   isAgentCliPathRunnable,
@@ -58,6 +62,40 @@ describe('readBackendCliSourcePreference', () => {
 });
 
 describe('resolveAgentCliManagedCommandPath', () => {
+  it.each([undefined, '   '])('preserves the personal tools layout without a configured payload (%s)', (override) => {
+    const home = join(tmpdir(), 'personal-happier');
+    expect(resolveManagedToolsRoot({ HAPPIER_HOME_DIR: home, HAPPIER_FIRST_PARTY_INSTALL_HOME: override }))
+      .toBe(join(home, 'tools'));
+  });
+
+  it.each(['~/payload', '~\\payload'])('expands a dedicated tools root through the path owner (%s)', (override) => {
+    const home = tmpdir();
+    expect(resolveManagedToolsRoot({ HOME: home, USERPROFILE: home, HAPPIER_FIRST_PARTY_INSTALL_HOME: override }))
+      .toBe(join(home, 'payload', 'tools'));
+  });
+
+  it('keeps supporting runtimes and package stores in the dedicated tools payload', () => {
+    const installHome = join(tmpdir(), 'happier-managed-payload');
+    const toolsRoot = join(installHome, 'tools');
+    const env = { HAPPIER_HOME_DIR: join(tmpdir(), 'private-daemon-state'), HAPPIER_FIRST_PARTY_INSTALL_HOME: installHome };
+    expect(managedJavaScriptRuntimeInstallDir(env)).toBe(join(toolsRoot, 'js-runtime'));
+    expect(managedPnpmInstallDir(env)).toBe(join(toolsRoot, 'pnpm'));
+    expect(managedUvInstallDir(env)).toBe(join(toolsRoot, 'uv'));
+    expect(buildManagedPnpmEnvironment(env)).toMatchObject({
+      PNPM_HOME: join(toolsRoot, 'pnpm', 'home'),
+      npm_config_store_dir: join(toolsRoot, 'pnpm', 'store'),
+    });
+  });
+
+  it('resolves a dedicated tools payload independently of private daemon state', () => {
+    const installHome = join(tmpdir(), 'happier-managed-payload');
+    const toolsRoot = join(installHome, 'tools');
+    expect(resolveAgentCliManagedCommandPath('codex', {
+      happyHomeDir: join(tmpdir(), 'private-daemon-state'),
+      processEnv: { HAPPIER_FIRST_PARTY_INSTALL_HOME: installHome },
+    })).toBe(join(toolsRoot, 'providers', 'codex', 'current', 'bin', process.platform === 'win32' ? 'codex.exe' : 'codex'));
+  });
+
   it('prefers a complete active managed release over the retained legacy current install on POSIX', () => {
     if (process.platform === 'win32') return;
 

@@ -5,7 +5,7 @@ import { configuration } from '../../configuration';
 import { resolveExistingManagedJavaScriptRuntimeCommand } from '@/packagedRuntime/js/managedJavaScriptRuntime';
 import { readRuntimeInstallableLastCheckAtMs } from '@/packagedRuntime/installables/updateState';
 import { fetchGitHubLatestRelease } from '@happier-dev/release-runtime/github';
-import { resolveHappyHomeDirFromEnvironment, selectManagedDependencyReleaseAsset } from '@happier-dev/cli-common/agents';
+import { resolveManagedToolsRoot, selectManagedDependencyReleaseAsset } from '@happier-dev/cli-common/agents';
 import { readRuntimeInstallableDescriptor } from '@/packagedRuntime/installables/descriptors';
 import type { InstallableDependencyDescriptor } from '@happier-dev/protocol';
 
@@ -20,7 +20,7 @@ type LatestVersionCheck =
 
 const githubFetchImpl = typeof globalThis.fetch === 'function' ? globalThis.fetch.bind(globalThis) : undefined;
 
-export const codexAcpInstallDir = (env?: NodeJS.ProcessEnv) => join(env ? resolveHappyHomeDirFromEnvironment(env) : configuration.happyHomeDir, 'tools', 'codex-acp');
+export const codexAcpInstallDir = (env?: NodeJS.ProcessEnv) => join(resolveManagedToolsRoot(env ?? { ...process.env, HAPPIER_HOME_DIR: configuration.happyHomeDir }), 'codex-acp');
 
 export const codexAcpBinPath = (env?: NodeJS.ProcessEnv) => {
   const binaryName = process.platform === 'win32' ? 'codex-acp.exe' : 'codex-acp';

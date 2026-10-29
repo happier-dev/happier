@@ -22,7 +22,7 @@ import {
   resolveExplicitJavaScriptRuntimeCommand,
   resolveJavaScriptRuntimeCommand,
 } from './managedJavaScriptRuntime.js';
-import { resolveHappyHomeDirFromEnvironment } from './resolveHappyHomeDir.js';
+import { resolveManagedToolsRoot } from './managedToolsRoot.js';
 import { resolveManagedPackageBin } from './managedPackageBin.js';
 
 export type AgentCliResolutionSource = 'override' | 'system' | 'managed';
@@ -216,11 +216,11 @@ export function resolveAgentCliManagedInstallRootForRuntime(
   opts: Readonly<{ happyHomeDir?: string | null; processEnv?: NodeJS.ProcessEnv }> = {},
 ): string {
   const processEnv = opts.processEnv ?? process.env;
-  const happyHomeDir = typeof opts.happyHomeDir === 'string' && opts.happyHomeDir.trim().length > 0
-    ? opts.happyHomeDir.trim()
-    : resolveHappyHomeDirFromEnvironment(processEnv);
+  const env = typeof opts.happyHomeDir === 'string' && opts.happyHomeDir.trim().length > 0
+    ? { ...processEnv, HAPPIER_HOME_DIR: opts.happyHomeDir.trim() }
+    : processEnv;
   // On-disk layout contract: tools/providers/<agentId> is where existing managed installs live (kept in R.16).
-  return join(happyHomeDir, 'tools', 'providers', runtimeSpec.id);
+  return join(resolveManagedToolsRoot(env), 'providers', runtimeSpec.id);
 }
 
 export function resolveAgentCliManagedCommandPathForRuntime(

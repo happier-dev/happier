@@ -6,7 +6,7 @@ import { GH_BINARY_NAME, GH_DEP_ID, GH_GITHUB_REPO, GH_RUNTIME_INSTALLABLE_POLIC
 import { INSTALLABLE_KEYS } from '@happier-dev/protocol/installables/codexAcp';
 import { execFileWithDeadline, resolveWindowsCommandInvocation, resolveWindowsCommandOnPath } from '@happier-dev/cli-common/process';
 import { fetchGitHubLatestRelease } from '@happier-dev/release-runtime/github';
-import { resolveHappyHomeDirFromEnvironment } from '@happier-dev/cli-common/agents';
+import { resolveManagedToolsRoot } from '@happier-dev/cli-common/agents';
 
 import { configuration } from '@/configuration';
 import { readRuntimeInstallableLastCheckAtMs } from '@/packagedRuntime/installables/updateState';
@@ -94,7 +94,7 @@ export type GhDepData = Readonly<{
   latestVersionCheck?: LatestVersionCheck;
 }>;
 
-export const ghInstallDir = (env?: NodeJS.ProcessEnv) => join(env ? resolveHappyHomeDirFromEnvironment(env) : configuration.happyHomeDir, 'tools', INSTALLABLE_KEYS.GH);
+export const ghInstallDir = (env?: NodeJS.ProcessEnv) => join(resolveManagedToolsRoot(env ?? { ...process.env, HAPPIER_HOME_DIR: configuration.happyHomeDir }), INSTALLABLE_KEYS.GH);
 
 export const ghBinPath = (env?: NodeJS.ProcessEnv) => {
   const binaryName = process.platform === 'win32' ? 'gh.exe' : GH_BINARY_NAME;

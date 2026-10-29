@@ -16,6 +16,7 @@ import { downloadGitHubReleaseAsset } from './downloadGitHubReleaseAsset.js';
 import { promoteManagedCurrentInstall } from './promoteManagedCurrentInstall.js';
 import { resolvePnpmReleaseAsset, PNPM_GITHUB_REPO } from './pnpmRelease.js';
 import { resolveHappyHomeDirFromEnvironment } from './resolveHappyHomeDir.js';
+import { resolveManagedToolsRoot } from './managedToolsRoot.js';
 import type { AgentInstallProgressCallback } from './installProgress.js';
 
 type EnsureManagedPnpmDeps = Readonly<{
@@ -31,7 +32,7 @@ const STALE_PNPM_BOOTSTRAP_LOCK_MAX_AGE_MS = 5 * 60 * 1000;
 const MANAGED_PNPM_BOOTSTRAP_ENV_VAR = 'HAPPIER_MANAGED_PNPM_BOOTSTRAP';
 
 export function managedPnpmInstallDir(processEnv: NodeJS.ProcessEnv = process.env): string {
-  return join(resolveHappyHomeDirFromEnvironment(processEnv), 'tools', 'pnpm');
+  return join(resolveManagedToolsRoot(processEnv), 'pnpm');
 }
 
 export function managedPnpmBinPath(processEnv: NodeJS.ProcessEnv = process.env): string {
@@ -318,13 +319,14 @@ export async function ensureManagedPnpmCommand(
 
 export function buildManagedPnpmEnvironment(processEnv: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
   const homeDir = resolveHappyHomeDirFromEnvironment(processEnv);
+  const installDir = managedPnpmInstallDir(processEnv);
   return {
     ...processEnv,
-    PNPM_HOME: join(homeDir, 'tools', 'pnpm', 'home'),
+    PNPM_HOME: join(installDir, 'home'),
     // pnpm reads CLI configuration from npm_config_* environment variables;
     // PNPM_STORE_DIR is not a recognized store-dir setting and silently lets
     // the SQLite-backed store fall through to the process user's home.
-    npm_config_store_dir: join(homeDir, 'tools', 'pnpm', 'store'),
+    npm_config_store_dir: join(installDir, 'store'),
     XDG_CACHE_HOME: processEnv.XDG_CACHE_HOME || join(homeDir, 'cache'),
   };
 }

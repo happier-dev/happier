@@ -9,7 +9,7 @@ import {
   downloadGitHubReleaseAsset,
   AgentCliDownloadError,
   promoteManagedCurrentInstall,
-  resolveHappyHomeDirFromEnvironment,
+  resolveManagedToolsRoot,
 } from '@happier-dev/cli-common/agents';
 import { ExecFileTerminationError } from '@happier-dev/cli-common/process';
 import { removeHappierTempDirAsync } from '@happier-dev/cli-common/tempDirs';
@@ -34,7 +34,7 @@ export type PinnedArchiveInstallResult =
   | Readonly<{ ok: false; errorMessage: string; errorCode?: RuntimeInstallableInstallErrorCode }>;
 
 function installRoot(installId: string, env?: NodeJS.ProcessEnv): string {
-  return join(env ? resolveHappyHomeDirFromEnvironment(env) : configuration.happyHomeDir, 'tools', installId);
+  return join(resolveManagedToolsRoot(env ?? { ...process.env, HAPPIER_HOME_DIR: configuration.happyHomeDir }), installId);
 }
 
 const MANAGED_VERSION_FILENAME = '.happier-managed-version';
