@@ -1,8 +1,9 @@
 import { spawnSync } from 'node:child_process';
-import { chmodSync, lstatSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath, URL as NodeURL } from 'node:url';
+import { removeOwnedDirectorySync } from '../../../apps/stack/scripts/utils/fs/fs.mjs';
 
 const roots = new Set();
 const inheritedRoots = String(process.env.HAPPIER_TEST_TEMP_ROOTS ?? '').split('\n').filter(Boolean);
@@ -16,20 +17,6 @@ function publishRoots() {
   const bindings = [...new Set([...inheritedRoots, ...owned])];
   if (bindings.length) process.env.HAPPIER_TEST_TEMP_ROOTS = bindings.join('\n');
   else delete process.env.HAPPIER_TEST_TEMP_ROOTS;
-}
-
-function makeOwnedDirectoriesWritable(path) {
-  let entry;
-  try { entry = lstatSync(path); }
-  catch (error) {
-    if (error?.code === 'ENOENT') return;
-    throw error;
-  }
-  // Fixture trees may contain Go's read-only module cache. Never change a
-  // symlink's target: it is not part of the temporary directory we own.
-  if (!entry.isDirectory()) return;
-  chmodSync(path, entry.mode | 0o700);
-  for (const child of readdirSync(path)) makeOwnedDirectoriesWritable(join(path, child));
 }
 
 function cleanupFixtures(fixtures) {
@@ -50,12 +37,7 @@ function cleanupFixtures(fixtures) {
   }
   for (const fixture of fixtures) {
     if (retained.has(fixture.root)) continue;
-    try { rmSync(fixture.root, { recursive: true, force: true }); }
-    catch (error) {
-      if (error?.code !== 'EACCES' && error?.code !== 'EPERM') throw error;
-      makeOwnedDirectoriesWritable(fixture.root);
-      rmSync(fixture.root, { recursive: true, force: true });
-    }
+    removeOwnedDirectorySync(fixture.root);
     roots.delete(fixture);
   }
   publishRoots();
