@@ -25,6 +25,7 @@ import { bootstrapAccountSettingsContext, resetInMemoryAccountSettingsContextFor
 import { beginActivePromptLibraryCatalogRefresh, getActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshotLifetimeToken, setActiveAccountSettingsSnapshot } from './activeAccountSettingsSnapshot';
 import { createAccountSettingsScopeKey } from './accountSettingsScopeKey';
 import { resolveAccountSettingsCachePath, writeAccountSettingsCacheAtomic } from './accountSettingsCache';
+import { createDeferred } from '@/testkit/async/deferred';
 
 function createCredentialsStub(): Credentials {
   return {
@@ -75,6 +76,65 @@ describe('bootstrapAccountSettingsContext', () => {
 
   beforeEach(() => {
     resetInMemoryAccountSettingsContextForTests();
+  });
+
+  it('shares requester reads across different version floors but checks each publication and cancellation independently', async () => {
+    Object.assign(mutableConfigurationForTest(), { clientEncryptionRequirement: 'follow_account' });
+    const response = createDeferred<{ status: number; data: { version: number; content: { t: 'plain'; v: object } } }>();
+    const get = vi.spyOn(axios, 'get').mockImplementation(() => response.promise);
+    const logs = vi.spyOn(logger, 'infoFile');
+    const cancelled = new AbortController();
+    let current = true;
+    const options = { credentials: createTokenOnlyCredentialsStub(), refresh: 'force' as const,
+      publication: 'invocation' as const, allowCacheFallback: false,
+      deps: { resolveCachePath: () => '/tmp/happier-requester-shared', readCache: async () => null } };
+    const outcomes = Promise.allSettled([
+      bootstrapAccountSettingsContext({ ...options, signal: cancelled.signal }),
+      bootstrapAccountSettingsContext({ ...options, minSettingsVersion: 2 }),
+      bootstrapAccountSettingsContext({ ...options, minSettingsVersion: 3 }),
+      bootstrapAccountSettingsContext({ ...options, shouldCommit: () => current }),
+    ]);
+    await expect.poll(() => logs.mock.calls.filter(([label, fact]) => label === '[accountSettings] Bootstrap phase'
+      && fact?.phase === 'cache_read' && fact?.status === 'completed').length).toBe(4);
+    cancelled.abort();
+    current = false;
+    response.resolve({ status: 200, data: { version: 2, content: { t: 'plain', v: {} } } });
+    const results = await outcomes;
+    expect(get).toHaveBeenCalledTimes(1);
+    expect(results[0]).toMatchObject({ status: 'rejected', reason: { name: 'AbortError' } });
+    expect(results[1]).toMatchObject({ status: 'fulfilled', value: { source: 'network', settingsVersion: 2 } });
+    expect(results[2]).toMatchObject({ status: 'rejected', reason: { code: 'ACCOUNT_SETTINGS_STALE' } });
+    expect(results[3]).toMatchObject({ status: 'rejected', reason: { code: 'ACCOUNT_SETTINGS_SOURCE_STALE' } });
+    expect(getActiveAccountSettingsSnapshot()).toBeNull();
+  });
+
+  it('isolates requester Homes and discards cancelled or failed flights before a later read', async () => {
+    Object.assign(mutableConfigurationForTest(), { clientEncryptionRequirement: 'follow_account' });
+    const held = createDeferred<{ status: number; data: { version: number; content: null } }>();
+    const get = vi.spyOn(axios, 'get').mockImplementation(() => held.promise);
+    const options = { credentials: createTokenOnlyCredentialsStub(), refresh: 'force' as const,
+      publication: 'invocation' as const, allowCacheFallback: false,
+      deps: { resolveCachePath: () => '/tmp/happier-requester-home', readCache: async () => null } };
+    const cancelled = new AbortController();
+    const first = runWithServerHttpBaseUrl('http://home-a.test', () => bootstrapAccountSettingsContext({ ...options, signal: cancelled.signal }))
+      .catch((error: unknown) => error);
+    await expect.poll(() => get.mock.calls.length).toBe(1);
+    const other = runWithServerHttpBaseUrl('http://home-b.test', () => bootstrapAccountSettingsContext(options));
+    await expect.poll(() => get.mock.calls.length).toBe(2);
+    cancelled.abort();
+    await expect(first).resolves.toMatchObject({ name: 'AbortError' });
+    const replacement = runWithServerHttpBaseUrl('http://home-a.test', () => bootstrapAccountSettingsContext(options));
+    await expect.poll(() => get.mock.calls.length).toBe(3);
+    held.resolve({ status: 200, data: { version: 1, content: null } });
+    await Promise.all([other, replacement]);
+    get.mockRejectedValueOnce(new Error('unavailable'));
+    await expect(runWithServerHttpBaseUrl('http://home-a.test', () => bootstrapAccountSettingsContext(options)))
+      .rejects.toThrow('unavailable');
+    get.mockResolvedValue({ status: 200, data: { version: 2, content: null } });
+    await expect(runWithServerHttpBaseUrl('http://home-a.test', () => bootstrapAccountSettingsContext(options)))
+      .resolves.toMatchObject({ settingsVersion: 2 });
+    expect(get).toHaveBeenCalledTimes(5);
+    expect(getActiveAccountSettingsSnapshot()).toBeNull();
   });
 
   it.each(['plain', 'e2ee'] as const)('parses unchanged %s refresh content once while retaining fresh reads and changed-content admission', async mode => {

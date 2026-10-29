@@ -54,6 +54,7 @@ export function createRequesterAccountSettingsPublication(input: Readonly<{
         ? applyAccountSettingsV2Update({ credentials: context.credentials, update: update.data,
           publication: 'invocation', expectedAccountEncryptionMode: fact.mode, shouldCommit: current })
         : bootstrapAccountSettingsContext({ credentials: context.credentials, mode: 'blocking', refresh: 'force',
+          caller: 'requester_settings_recovery',
           publication: 'invocation', expectedAccountEncryptionMode: fact.mode, honorAccountSettingsModeEnv: false, signal: captured.signal,
           minSettingsVersion: highestVersion, shouldCommit: current }));
       if (!current() || next.source !== 'network' || next.settingsVersion < highestVersion

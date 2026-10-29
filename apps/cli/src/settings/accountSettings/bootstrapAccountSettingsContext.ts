@@ -1,8 +1,9 @@
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import axios from 'axios';
 import { HttpStatusError } from '@/api/client/httpStatusError';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
+import { waitForAccountEncryptionObservation } from '@happier-dev/sync-client';
 
 import type { AgentId } from '@happier-dev/agents';
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
@@ -428,6 +429,20 @@ type BootstrapDeps = Readonly<{
   }) => void;
 }>;
 
+type RequesterSettingsRead = Readonly<{
+  settingsContent: AccountSettingsContentEnvelope | null;
+  settingsVersion: number;
+  parsed: Readonly<{ rawSettings: Readonly<Record<string, unknown>>; settings: AccountSettings }>;
+}>;
+
+// Only outstanding reads live here. Each requester still admits its own
+// version floor and publication, with independent cancellation/currentness.
+const requesterSettingsReads = new Map<string, {
+  pending: Promise<RequesterSettingsRead>;
+  controller: AbortController;
+  readers: number;
+}>();
+
 function readAccountSettingsModeFromEnv(): 'auto' | 'never' {
   const raw = typeof process.env.HAPPIER_ACCOUNT_SETTINGS_MODE === 'string'
     ? process.env.HAPPIER_ACCOUNT_SETTINGS_MODE.trim().toLowerCase()
@@ -517,6 +532,7 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
   allowCacheFallback?: boolean;
   /** Finite requester admission reads must not retarget the daemon's Account or process defaults. */
   publication?: 'active' | 'invocation';
+  caller?: 'requester_session_admission' | 'requester_action_admission' | 'requester_settings_recovery';
   expectedAccountEncryptionMode?: 'plain' | 'e2ee';
   /**
    * When false, ignore `HAPPIER_ACCOUNT_SETTINGS_MODE` (defense-in-depth for
@@ -548,7 +564,8 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
   const beginPhase = (phase: 'cache_read' | 'network_read' | 'content_parse' | 'publication' | 'cache_write') => {
     const startedAt = performance.now();
     const record = (status: 'started' | 'completed' | 'failed') => logger.infoFile('[accountSettings] Bootstrap phase', {
-      bootstrapId, phase, status, durationMs: Math.round(performance.now() - startedAt),
+      bootstrapId, caller: params.caller ?? params.publication ?? 'active', phase, status,
+      durationMs: Math.round(performance.now() - startedAt),
       elapsedMs: Math.round(performance.now() - bootstrapStartedAt),
     });
     record('started');
@@ -867,16 +884,56 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
     return publication.context;
   };
 
-  const fetchAndPersist = async (): Promise<AccountSettingsContext> => {
-    params.signal?.throwIfAborted();
-    const fetched = await observePhase('network_read', () => deps.fetchFromServer({ credentials: params.credentials, signal: params.signal }));
-    params.signal?.throwIfAborted();
+  const fetchAndParse = async (signal?: AbortSignal): Promise<RequesterSettingsRead> => {
+    signal?.throwIfAborted();
+    const fetched = await observePhase('network_read', () => deps.fetchFromServer({ credentials: params.credentials, signal }));
+    signal?.throwIfAborted();
     const settingsVersion = typeof fetched.settingsVersion === 'number' ? fetched.settingsVersion : 0;
     const settingsContent: AccountSettingsContentEnvelope | null =
       'settingsContent' in fetched
         ? (fetched.settingsContent ?? null)
         : (fetched.settingsCiphertext ? { t: 'encrypted', c: fetched.settingsCiphertext } : null);
     const parsed = await observePhase('content_parse', () => parseFromContent(settingsContent));
+    signal?.throwIfAborted();
+    return { settingsContent, settingsVersion, parsed };
+  };
+
+  const readRequesterSettings = async (): Promise<RequesterSettingsRead> => {
+    params.signal?.throwIfAborted();
+    // Signed Action authorization and injected transports have distinct read
+    // authority; they cannot borrow an ordinary bearer request's result.
+    if (params.resolveAuthorizationHeaders || params.deps?.fetchFromServer || params.deps?.decryptCiphertext) {
+      return fetchAndParse(params.signal);
+    }
+    const readKey = createHash('sha256').update(JSON.stringify([
+      scopeKey, resolveAccountSettingsHttpBaseUrl(), params.credentials.token,
+      settingsSecretsReadKeys.map(key => Buffer.from(key).toString('base64')),
+      params.expectedAccountEncryptionMode ?? null,
+    ])).digest('hex');
+    let flight = requesterSettingsReads.get(readKey);
+    if (!flight) {
+      const controller = new AbortController();
+      const pending = fetchAndParse(controller.signal).finally(() => {
+        if (requesterSettingsReads.get(readKey)?.pending === pending) requesterSettingsReads.delete(readKey);
+      });
+      flight = { pending, controller, readers: 0 };
+      requesterSettingsReads.set(readKey, flight);
+    }
+    flight.readers++;
+    try {
+      return await (params.signal ? waitForAccountEncryptionObservation(flight.pending, params.signal) : flight.pending);
+    } finally {
+      if (--flight.readers === 0 && requesterSettingsReads.get(readKey) === flight) {
+        requesterSettingsReads.delete(readKey);
+        flight.controller.abort();
+      }
+    }
+  };
+
+  const fetchAndPersist = async (): Promise<AccountSettingsContext> => {
+    const { settingsContent, settingsVersion, parsed } = await (params.publication === 'invocation'
+      ? readRequesterSettings() : fetchAndParse(params.signal));
+    params.signal?.throwIfAborted();
     const candidate: AccountSettingsContext = {
       source: 'network',
       settings: parsed.settings,
