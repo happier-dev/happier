@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Animated, View, ViewProps, useAnimatedValue } from 'react-native';
+import { Animated, Platform, View, ViewProps } from 'react-native';
 
 export type ShakeInstance = {
     shake: () => void;
@@ -8,7 +8,7 @@ export type ShakeInstance = {
 export const Shaker = React.memo(React.forwardRef<ShakeInstance, ViewProps>((props, ref) => {
     const { style, ...rest } = props;
     const baseRef = React.useRef<View>(null);
-    const shakeValue = useAnimatedValue(0, { useNativeDriver: true });
+    const [shakeValue] = React.useState(() => new Animated.Value(0));
     React.useImperativeHandle(ref, () => ({
         shake: () => {
             let offsets = shakeKeyframes();
@@ -18,7 +18,7 @@ export const Shaker = React.memo(React.forwardRef<ShakeInstance, ViewProps>((pro
                 animations.push(Animated.timing(shakeValue, {
                     toValue: offsets[i],
                     duration: duration / offsets.length,
-                    useNativeDriver: true
+                    useNativeDriver: Platform.OS !== 'web'
                 }));
             }
             Animated.sequence(animations).start();
