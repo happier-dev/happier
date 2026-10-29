@@ -12,6 +12,61 @@ const update = (fact: unknown, id = 'account') => ({ id: 'update', seq: 2, creat
 const unavailable = () => new Error('currentness unavailable');
 
 describe('portable Account encryption observation', () => {
+    it('settles a non-retryable initialization failure across repeated borrowers until real invalidation', async () => {
+        const failure = Object.assign(new Error('currentness response unavailable'), { canTryAgain: false });
+        let available = false;
+        const readFresh = vi.fn(async () => {
+            if (!available) throw failure;
+            return plain;
+        });
+        const observation = createAccountEncryptionCurrentnessObservation({ accountId: 'account', readFresh, unavailable });
+        try {
+            observation.connected();
+            for (let index = 0; index < 171; index++) await expect(observation.read()).rejects.toBe(failure);
+            expect(observation.peek()).toBeNull();
+            expect(readFresh).toHaveBeenCalledTimes(1);
+            available = true;
+            await expect(observation.read()).rejects.toBe(failure);
+            expect(readFresh).toHaveBeenCalledTimes(1);
+            observation.invalidate();
+            await expect(observation.read()).resolves.toEqual(projectAccountEncryptionIdentity(plain));
+            expect(readFresh).toHaveBeenCalledTimes(2);
+        } finally { observation.dispose(); }
+    });
+
+    it('recovers a transient initialization failure on the next demand without an invalidation', async () => {
+        const failure = Object.assign(new Error('temporary currentness failure'), { canTryAgain: true });
+        const readFresh = vi.fn().mockRejectedValueOnce(failure).mockResolvedValue(plain);
+        const observation = createAccountEncryptionCurrentnessObservation({ accountId: 'account', readFresh, unavailable });
+        try {
+            observation.connected();
+            await expect(observation.read()).rejects.toBe(failure);
+            await expect(observation.read()).resolves.toEqual(projectAccountEncryptionIdentity(plain));
+            expect(readFresh).toHaveBeenCalledTimes(2);
+        } finally { observation.dispose(); }
+    });
+
+    it('keeps equal Account identity publications settled while advancing the stale-push witness', async () => {
+        const readFresh = vi.fn(async () => plain);
+        const observation = createAccountEncryptionCurrentnessObservation({ accountId: 'account', readFresh, unavailable });
+        try {
+            observation.connected();
+            const identity = await observation.read();
+            let invalidations = 0;
+            for (let version = 2; version <= 61; version++) {
+                if (observation.update(update({ ...plain, version, settingsVersion: version }))) invalidations++;
+            }
+            expect(invalidations).toBe(0);
+            expect(observation.peek()).toBe(identity);
+            expect(readFresh).toHaveBeenCalledOnce();
+            // Equal identity does not discard the newer ordering witness.
+            expect(observation.update(update(encrypted))).toBe(false);
+            expect(observation.peek()).toBe(identity);
+            expect(observation.update(update({ ...encrypted, version: 62 }))).toBe(true);
+            expect(observation.peek()).toEqual(projectAccountEncryptionIdentity(encrypted));
+        } finally { observation.dispose(); }
+    });
+
     it('does no whole-update validation for unrelated feed traffic while strictly checking matching facts', async () => {
         // Pass-through performance instrumentation: the real strict parser runs
         // unchanged; its invocation count is the multiplied feed cost under test.
@@ -63,6 +118,7 @@ describe('portable Account encryption observation', () => {
         const readFresh = vi.fn(() => new Promise<AccountEncryptionCurrentnessResponse>(resolve => { finish = resolve; }));
         const observation = createAccountEncryptionCurrentnessObservation({ accountId: 'account', readFresh, unavailable });
         observation.connected();
+        expect(observation.getDiagnosticState()).toEqual({ connected: true, factPresent: false, pending: true, disposed: false });
         const initial = observation.read();
         const late = finish;
         observation.update(update(encrypted));
@@ -70,6 +126,7 @@ describe('portable Account encryption observation', () => {
         late(plain);
         expect(await observation.read()).toEqual(projectAccountEncryptionIdentity(encrypted));
         observation.disconnected();
+        expect(observation.getDiagnosticState()).toEqual({ connected: false, factPresent: false, pending: false, disposed: false });
         expect(observation.peek()).toBeNull();
         await expect(observation.read()).rejects.toThrow('currentness unavailable');
         observation.connected();

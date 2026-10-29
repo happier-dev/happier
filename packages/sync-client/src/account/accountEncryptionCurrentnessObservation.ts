@@ -60,6 +60,10 @@ export function createAccountEncryptionCurrentnessObservation(options: Readonly<
     };
     const refresh = () => {
         if (!connected || disposed || fact || pending) return;
+        // Respect the transport owner's explicit terminal verdict. Retaining
+        // unavailable authority grants nothing; real invalidation clears it.
+        if (readError !== null && typeof readError === 'object'
+            && 'canTryAgain' in readError && readError.canTryAgain === false) return;
         const captured = lifetime;
         pending = waitForAccountEncryptionObservation(options.readFresh(captured.signal), captured.signal)
             .then(next => {
@@ -72,6 +76,9 @@ export function createAccountEncryptionCurrentnessObservation(options: Readonly<
             .finally(() => { if (lifetime === captured) pending = null; });
     };
     return {
+        /** Passive redacted facts; never refreshes or exposes Account identity/content. */
+        getDiagnosticState: (): Readonly<{ connected: boolean; factPresent: boolean; pending: boolean; disposed: boolean }> =>
+            ({ connected, factPresent: fact !== null, pending: pending !== null, disposed }),
         invalidate,
         connected() {
             if (disposed) return;
@@ -96,6 +103,12 @@ export function createAccountEncryptionCurrentnessObservation(options: Readonly<
                 || !('encryptionCurrentness' in parsed.data.body)) return false;
             const next = parsed.data.body.encryptionCurrentness;
             if (next && fact && next.version < fact.witness.version) return false;
+            if (next && fact && sameAccountEncryptionIdentity(next, fact.identity)) {
+                // Cursor advances still fence stale pushes without retiring an
+                // unchanged encryption identity or its consumers' live work.
+                fact = { witness: next, identity: fact.identity };
+                return false;
+            }
             // A push retires the old HTTP lifetime before publishing its fact.
             invalidate();
             fact = next ? { witness: next, identity: projectAccountEncryptionIdentity(next) } : null;
