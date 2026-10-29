@@ -15,6 +15,25 @@ afterEach(() => {
 });
 
 describe('performance count instruments', () => {
+    it('leaves the platform clock intact across repeated fake-clock census cleanup', () => {
+        const platformClock = { setTimeout, setInterval, clearTimeout, clearInterval, queueMicrotask, Date };
+        for (let pass = 0; pass < 3; pass += 1) {
+            vi.useFakeTimers();
+            const census = installTimerCensus();
+            const timer = setTimeout(() => {}, 20);
+            clearTimeout(timer);
+            census.stop();
+            vi.restoreAllMocks();
+            vi.useRealTimers();
+            expect({ setTimeout, setInterval, clearTimeout, clearInterval, queueMicrotask, Date }).toEqual(platformClock);
+        }
+        // A later real-clock test also restores mocks. Retired census spies must
+        // not reinstall the old fake-clock functions after fake mode has ended.
+        vi.restoreAllMocks();
+        vi.useRealTimers();
+        expect({ setTimeout, setInterval, clearTimeout, clearInterval, queueMicrotask, Date }).toEqual(platformClock);
+    });
+
     it('counts hook renders and commits independently of the mount baseline', async () => {
         const counter = createRenderCommitCounter();
         const hook = await renderHook(({ value }: { value: number }) => {
@@ -126,7 +145,11 @@ describe('performance count instruments', () => {
         ]);
         vi.advanceTimersByTime(20);
         expect(fired).toHaveBeenCalledTimes(1);
+        expect(census.readFires()).toEqual({ timeout: 1, interval: 0 });
         expect(census.read()).toEqual([{ kind: 'interval', delayMs: 50, consumer: null }]);
+        vi.advanceTimersByTime(130);
+        expect(fired).toHaveBeenCalledTimes(4);
+        expect(census.readFires()).toEqual({ timeout: 1, interval: 3 });
         clearInterval(orphan);
         expect(census.read()).toEqual([]);
         const cancelled = setTimeout(fired, 20);
