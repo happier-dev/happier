@@ -112,6 +112,7 @@ import {
 
 import { resolveSocketMaxHttpBufferSizeFromEnv } from './socket/transportBudget';
 import { destroyUnclaimedHttpUpgrades } from './utils/httpUpgradeOwnership';
+import { registerEngineHeartbeatDiagnostics } from './socket/engineHeartbeatDiagnostics';
 export { DEFAULT_SOCKET_MAX_HTTP_BUFFER_SIZE, resolveSocketMaxHttpBufferSizeFromEnv } from './socket/transportBudget';
 // Socket.IO adds its event name, acknowledgement id, and packet framing around the
 // serialized command. Keep that reserve beside the one live transport ceiling.
@@ -292,6 +293,10 @@ export function startSocket(app: Fastify) {
         serveClient: false // Don't serve the client files
     });
 
+    registerEngineHeartbeatDiagnostics(io, process.env, diagnostic => {
+        // Opt-in only; emit at warn so the flag works under the default warn log level.
+        warn({ module: 'socket-heartbeat-diagnostic', ...diagnostic }, 'Engine.IO heartbeat diagnostic');
+    });
     destroyUnclaimedHttpUpgrades(app.server, SOCKET_IO_PATH);
     registerSocketRoomDiscovery(io);
     app.machineDaemonPresence = io;
