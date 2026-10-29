@@ -11,7 +11,6 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
   resources: {
     'brand-icon': { kind: 'asset', path: 'assets/brand.png', contentType: 'image/png' },
   },
-  engines: { happier: '^0.0.0' }, runtime: { apiVersion: 1 },
   hostAccess: { required: [], optional: [] },
   providers: {
     openai: { declaration: OPENAI_PROVIDER_CONTRIBUTION },

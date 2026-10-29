@@ -10,7 +10,6 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
   id: 'happier.agent.qwen',
   version: '0.0.0',
   displayName: 'Qwen Code',
-  engines: { happier: '^0.0.0' }, runtime: { apiVersion: 1 },
   entrypoints: { daemon: './.happier-plugin/daemon.js' },
   hostAccess: {
     required: [{

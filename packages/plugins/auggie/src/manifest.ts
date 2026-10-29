@@ -16,7 +16,6 @@ export const AUGGIE_PLUGIN = definePlugin({
   id: 'happier.agent.auggie',
   version: '0.0.0',
   displayName: 'Auggie',
-  engines: { happier: '^0.0.0' }, runtime: { apiVersion: 1 },
   entrypoints: { daemon: './.happier-plugin/daemon.js' },
   hostAccess: {
     required: [{

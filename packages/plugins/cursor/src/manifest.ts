@@ -17,7 +17,6 @@ export const CURSOR_PLUGIN = definePlugin({
   id: 'happier.agent.cursor',
   version: '0.0.0',
   displayName: 'Cursor',
-  engines: { happier: '^0.0.0' }, runtime: { apiVersion: 1 },
   entrypoints: { daemon: './.happier-plugin/daemon.js' },
   hostAccess: {
     required: [{
