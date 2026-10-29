@@ -14,6 +14,7 @@ import { buildSessionAccessWhere } from "@/app/session/access/sessionAccessWhere
 import type { SessionAccessAuthentication } from "@/app/session/access/sessionAccessAuthentication";
 import { afterTx, inReadSnapshot, inTx, type Tx } from "@/storage/inTx";
 import { db } from "@/storage/db";
+import { portableQueryChunks } from "@/storage/portableQueryChunks";
 
 import {
     ACCOUNT_SESSION_DRAFT_KV_PREFIX,
@@ -258,8 +259,22 @@ export async function tombstoneSessionDraftForLifecycleInTx(
     if (!application.success) {
         throw new Error("Session draft lifecycle tombstone lost its transactional revision");
     }
+    // The KV CAS result has revisions but not persisted timestamps. Read those
+    // facts together while retaining the census order for publication below.
+    const updatedByKey = new Map<string, SessionDraftKvRow>();
+    for (const keys of portableQueryChunks({
+        values: targets.map(({ row }) => row.key),
+        bindingsPerValue: 1,
+        fixedBindings: 2, // Account id and Prisma's offset bind.
+    })) {
+        const updated = await tx.userKVStore.findMany({
+            where: { accountId: params.accountId, key: { in: [...keys] } },
+            select: SESSION_DRAFT_ROW_SELECT,
+        });
+        for (const row of updated) updatedByKey.set(row.key, row);
+    }
     for (const { row, address } of targets) {
-        const updated = await readRowInTx(tx, params.accountId, row.key);
+        const updated = updatedByKey.get(row.key);
         if (!updated) throw new Error("Session draft lifecycle tombstone row disappeared");
         await publishDraftMutationInTx(tx, {
             accountId: params.accountId,

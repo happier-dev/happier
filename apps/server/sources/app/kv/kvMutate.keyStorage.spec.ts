@@ -6,7 +6,7 @@ import { applyUserKvMutationsInTx } from './kvMutate';
 function createStorageBoundary() {
     const writes: string[] = [];
     const userKVStore = {
-        findUnique: vi.fn(async () => null),
+        findMany: vi.fn(async () => []),
         create: vi.fn(async (input: { data: { key: string } }) => {
             writes.push(input.data.key);
             return { version: 0 };

@@ -14,12 +14,11 @@ import {
 
 import { db } from '@/storage/db';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
+import { eventRouter } from '@/app/events/connectionEventRouter';
 
-const { emitEphemeral } = vi.hoisted(() => ({ emitEphemeral: vi.fn() }));
-vi.mock('@/app/events/eventRouter', async () => {
-    const actual = await vi.importActual<typeof import('@/app/events/eventRouter')>('@/app/events/eventRouter');
-    return { ...actual, eventRouter: { ...actual.eventRouter, emitEphemeral } };
-});
+// Observe the canonical socket boundary without cloning the router singleton
+// while its barrel and production consumers are still being initialized.
+const emitEphemeral = vi.spyOn(eventRouter, 'emitEphemeral').mockImplementation(() => {});
 
 import { inTx } from '@/storage/inTx';
 import { AccountScopedKvReservedKeyError } from '@/app/kv/accountScopedKv';
@@ -155,7 +154,7 @@ describe('sessionDraftService (SQLite integration)', () => {
         await db.account.deleteMany();
     });
 
-    afterAll(async () => harness.close());
+    afterAll(async () => { emitEphemeral.mockRestore(); await harness.close(); });
 
     it('converts both Discussion draft families with complete coverage and exact replay in both directions', async () => {
         const account = await db.account.create({ data: { encryptionMode: 'plain' } });

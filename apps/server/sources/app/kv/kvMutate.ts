@@ -14,6 +14,7 @@ import { acquireAccountEncryptionTransitionFenceInTx } from "@/app/encryption/ac
 import { assertPublicGenericKvKey } from "./accountScopedKv";
 import { getDbProviderFromEnv, isPrismaErrorCode } from "@/storage/prisma";
 import { db } from "@/storage/db";
+import { portableQueryChunks } from "@/storage/portableQueryChunks";
 import { assertUserKvKeyStorageAdmission } from "./userKvKeyStorage";
 
 export interface KVMutation {
@@ -107,16 +108,17 @@ export async function applyUserKvMutationsInTx(
     const errors: NonNullable<KVMutateResult["errors"]> = [];
     const existingByKey = new Map<string, UserKvStoreRow>();
 
-    for (const mutation of mutations) {
-        const existing = await tx.userKVStore.findUnique({
-            where: {
-                accountId_key: {
-                    accountId: ctx.uid,
-                    key: mutation.key,
-                },
-            },
+    // Admit the requested rows together; CAS below still arbitrates every write.
+    // Internal migration/lifecycle callers can exceed the HTTP batch size.
+    for (const keys of portableQueryChunks({
+        values: [...new Set(mutations.map(mutation => mutation.key))],
+        bindingsPerValue: 1,
+        fixedBindings: 2, // Account id and Prisma's offset bind.
+    })) {
+        const rows = await tx.userKVStore.findMany({
+            where: { accountId: ctx.uid, key: { in: [...keys] } },
         });
-        existingByKey.set(mutation.key, existing);
+        for (const row of rows) existingByKey.set(row.key, row);
     }
 
     for (const mutation of mutations) {

@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { PrismaClient, type Prisma } from '@prisma/client';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import {
     SESSION_DRAFT_ROUTE_MUTATE, SESSION_DRAFT_ROUTE_READ,
@@ -9,7 +10,11 @@ import {
 
 import { withAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
 import { db, getDbProviderFromEnv, initDbPostgres } from '@/storage/db';
-import type { Tx } from '@/storage/inTx';
+import { inTx, type Tx } from '@/storage/inTx';
+import { readSessionDraft, tombstoneSessionDraftForLifecycleInTx } from './sessionDraftService';
+import { sessionDraftPhysicalKey } from './sessionDraftPhysicalKey';
+import { canonicalSessionDraftAddressV2 } from '@happier-dev/protocol/drafts/sessionDraftsV2';
+import { readSessionAccessAuthenticationFromRequest } from '@/app/session/access/sessionAccessAuthentication';
 import { registerSessionDraftRoutes } from './registerSessionDraftRoutes';
 
 describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('draft mutation PostgreSQL contention', () => {
@@ -24,6 +29,58 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('d
         connected = true;
     });
     afterAll(async () => { if (connected) await db.$disconnect(); });
+
+    it('set-rereads lifecycle tombstones while preserving every publication, timestamp and sibling draft', async () => {
+        const account = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const session = await db.session.create({ data: { accountId: account.id, tag: randomUUID(), metadata: '{}', encryptionMode: 'plain' } });
+        const addresses = [
+            { kind: 'session' as const, sessionId: session.id },
+            ...Array.from({ length: 31 }, (_, index) => ({ kind: 'run' as const, sessionId: session.id, runId: `run-${index}` })),
+        ];
+        const sibling = { kind: 'run' as const, sessionId: `${session.id}-sibling`, runId: 'retained' };
+        const before = new Date('2000-01-01T00:00:00Z');
+        await db.userKVStore.createMany({ data: [...addresses, sibling].map(address => ({
+            accountId: account.id, key: sessionDraftPhysicalKey(address)!, version: 3,
+            value: Buffer.from(JSON.stringify({ t: 'encrypted', c: 'retained-before-delete' })),
+            createdAt: before, updatedAt: before,
+        })) });
+        const statements: Prisma.QueryEvent[] = [];
+        const client = new PrismaClient({ log: [{ emit: 'event', level: 'query' }] });
+        client.$on('query', event => statements.push(event));
+        await client.$connect();
+        const transaction = db.$transaction;
+        // Observe real SQL; no internal admission, mutation or publication is replaced.
+        db.$transaction = new Proxy(transaction, { apply(_target, _receiver, args) {
+            return Reflect.apply(client.$transaction, client, args);
+        } });
+        try {
+            expect(await inTx(tx => tombstoneSessionDraftForLifecycleInTx(tx, { accountId: account.id, sessionId: session.id }))).toBe(true);
+            const reads = statements.filter(event => /^SELECT\b/.test(event.query.trimStart())
+                && /FROM\s+"public"\."UserKVStore"(?:\s|$)/.test(event.query)).length;
+            const publications = await db.accountChange.findMany({ where: { accountId: account.id }, orderBy: { cursor: 'asc' } });
+            expect(publications).toHaveLength(addresses.length);
+            for (const address of addresses) {
+                const stored = await db.userKVStore.findUniqueOrThrow({ where: { accountId_key: { accountId: account.id, key: sessionDraftPhysicalKey(address)! } } });
+                expect(await readSessionDraft({ accountId: account.id, address,
+                    authentication: readSessionAccessAuthenticationFromRequest({ authAuthority: 'present_user' }),
+                })).toMatchObject({ status: 'deleted', record: {
+                    address, revision: 4, content: null, createdAt: before.getTime(), updatedAt: stored.updatedAt.getTime(),
+                } });
+                expect(stored.updatedAt.getTime()).toBeGreaterThan(before.getTime());
+            }
+            expect(publications.map(row => row.entityId)).toEqual([...addresses].sort((a, b) => sessionDraftPhysicalKey(a)! < sessionDraftPhysicalKey(b)! ? -1 : 1)
+                .map(address => `session-draft:${canonicalSessionDraftAddressV2(address)}`));
+            expect(publications.every(row => {
+                const hint = row.hint as { revision?: number; status?: string };
+                return hint.revision === 4 && hint.status === 'deleted';
+            })).toBe(true);
+            expect(await db.userKVStore.findUniqueOrThrow({ where: { accountId_key: { accountId: account.id, key: sessionDraftPhysicalKey(sibling)! } } }))
+                .toMatchObject({ version: 3, updatedAt: before });
+            console.info('DRAFT_LIFECYCLE_SQL', JSON.stringify({ changed: addresses.length, reads, publications: publications.length }));
+            // One census, one KV preflight, and at most one post-write set read.
+            expect(reads).toBeLessThanOrEqual(3);
+        } finally { db.$transaction = transaction; await client.$disconnect(); }
+    });
 
     it.each([
         { mutateUrl: SESSION_DRAFT_ROUTE_MUTATE, readUrl: SESSION_DRAFT_ROUTE_READ,
