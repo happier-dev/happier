@@ -193,6 +193,8 @@ The workflow's job-scoped token is a second narrow pre-authorized exception to t
 
 Use the `v0.3` milestone for issues intentionally targeted to the 0.3 release/roadmap outcome. A milestone expresses planning intent and scope; it is not proof that a correction exists, has merged, or has reached any channel. Do not create `roadmap:0.3` or `release:0.3` labels for the same fact. Keep the milestone until the project deliberately retargets or removes the issue, and let `stage:*` independently record verified availability as the implementation moves through source, dev, preview, and stable.
 
+In the v0.3 development workflow, roadmap label changes also synchronize the Project's Priority and Release stage fields. The current stage labels map to the Project's existing display options: source → Not shipped, dev → Experimental, preview → Beta, stable → GA. Removing a priority or stage label clears its corresponding field. If the workflow fails because Project auto-add has not created the item yet, confirm auto-add is enabled for `label:roadmap`, then run **Roadmap: Add to Project** manually with the issue's `issue_number` to resync it.
+
 ## Reporter response and closure
 
 Respond as a grateful project collaborator, not a status bot. If the thread does not already contain a project thank-you, thank the author naturally for taking the time to report the issue. When a report or comment contributed a useful reproduction detail, diagnostic insight, or fix direction, name that contribution and how it helped. Do not repeat a ceremonial thank-you in every update, and do not let appreciation imply that an unverified diagnosis has been accepted.

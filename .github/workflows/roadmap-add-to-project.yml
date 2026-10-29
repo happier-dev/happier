@@ -72,20 +72,15 @@ jobs:
               : null;
             const stageKey = stageLabel ? String(stageLabel.split(':')[1] ?? '').trim().toLowerCase() : null;
             const stageOptionName =
-              stageKey === 'ga'
+              stageKey === 'stable'
                 ? 'GA'
-                : stageKey === 'beta'
+                : stageKey === 'preview'
                   ? 'Beta'
-                  : stageKey === 'experimental'
+                  : stageKey === 'dev'
                     ? 'Experimental'
-                    : stageKey === 'not-shipped'
+                    : stageKey === 'source'
                       ? 'Not shipped'
                       : null;
-
-            if (!priorityOptionName && !stageOptionName) {
-              core.info('No priority:* or stage:* labels found; skipping field sync.');
-              return;
-            }
 
             const org = String(process.env.PROJECT_ORG ?? '').trim();
             const number = Number.parseInt(String(process.env.PROJECT_NUMBER ?? '0'), 10);
@@ -129,8 +124,7 @@ jobs:
 
             async function findProjectItemIdForContent() {
               let cursor = null;
-              // Reasonable cap: curated roadmap project shouldn't be massive; still paginate to be safe.
-              for (let page = 0; page < 20; page++) {
+              while (true) {
                 const res = await github.graphql(
                   `
                     query ProjectItems($org: String!, $number: Int!, $after: String) {
@@ -161,29 +155,35 @@ jobs:
 
                 if (!items?.pageInfo?.hasNextPage) return null;
                 cursor = items.pageInfo.endCursor ?? null;
-                if (!cursor) return null;
+                if (!cursor) throw new Error('Project pagination returned no cursor for the next page.');
               }
-              return null;
             }
 
-            let itemId = null;
-            for (let attempt = 1; attempt <= 10; attempt++) {
-              itemId = await findProjectItemIdForContent();
-              if (itemId) break;
-              core.info(`Project item not found yet (attempt ${attempt}/10); waiting...`);
-              await new Promise((r) => setTimeout(r, 3000));
-            }
-
+            const itemId = await findProjectItemIdForContent();
             if (!itemId) {
-              core.info('Project item not found; ensure Project auto-add is enabled for label:roadmap.');
-              return;
+              throw new Error('Project item not found; ensure Project auto-add is enabled for label:roadmap, then resync with workflow_dispatch issue_number.');
             }
 
             async function setSingleSelect(field, optionName) {
-              if (!field?.id) return false;
+              if (!field?.id) throw new Error('Project single-select field not found.');
+              if (optionName === null) {
+                await github.graphql(
+                  `
+                    mutation ClearField($projectId: ID!, $itemId: ID!, $fieldId: ID!) {
+                      clearProjectV2ItemFieldValue(input: {
+                        projectId: $projectId
+                        itemId: $itemId
+                        fieldId: $fieldId
+                      }) { projectV2Item { id } }
+                    }
+                  `,
+                  { projectId: projectV2.id, itemId, fieldId: field.id },
+                );
+                return;
+              }
               const options = Array.isArray(field.options) ? field.options : [];
               const option = options.find((o) => String(o?.name ?? '').trim() === optionName);
-              if (!option?.id) return false;
+              if (!option?.id) throw new Error(`Project field ${field.name} has no option ${optionName}.`);
               await github.graphql(
                 `
                   mutation SetField($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
@@ -197,15 +197,10 @@ jobs:
                 `,
                 { projectId: projectV2.id, itemId, fieldId: field.id, optionId: option.id },
               );
-              return true;
             }
 
-            if (priorityOptionName) {
-              const ok = await setSingleSelect(priorityField, priorityOptionName);
-              core.info(ok ? `Set ${priorityFieldName}=${priorityOptionName}` : `Skipped ${priorityFieldName} (field/option not found)`);
-            }
+            await setSingleSelect(priorityField, priorityOptionName);
+            core.info(`${priorityFieldName}=${priorityOptionName ?? '(cleared)'}`);
 
-            if (stageOptionName) {
-              const ok = await setSingleSelect(stageField, stageOptionName);
-              core.info(ok ? `Set ${stageFieldName}=${stageOptionName}` : `Skipped ${stageFieldName} (field/option not found)`);
-            }
+            await setSingleSelect(stageField, stageOptionName);
+            core.info(`${stageFieldName}=${stageOptionName ?? '(cleared)'}`);
