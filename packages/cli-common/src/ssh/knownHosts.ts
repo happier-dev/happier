@@ -1,5 +1,5 @@
-import { createHash } from 'node:crypto';
-import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { createHash, randomUUID } from 'node:crypto';
+import { chmodSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
@@ -42,8 +42,8 @@ function renderKnownHosts(entries: readonly SshKnownHostEntry[]): string {
 }
 
 export function normalizeKnownHostsText(text: string): string {
-  const normalized = String(text ?? '').trim();
-  return normalized ? `${normalized}\n` : '';
+  const normalized = String(text ?? '').trimEnd();
+  return normalized ? `${normalized}${text.includes('\r\n') ? '\r\n' : '\n'}` : '';
 }
 
 export function readKnownHostsTextSync(knownHostsPath: string | undefined): string {
@@ -62,23 +62,40 @@ export function readKnownHostsTextSyncWithFs(
   }
 }
 
-export function writeKnownHostsTextSync(knownHostsPath: string | undefined, text: string): void {
+export function writeKnownHostsTextSync(knownHostsPath: string | undefined, text: string | ((currentText: string) => string)): void {
   return writeKnownHostsTextSyncWithFs(knownHostsPath, text);
 }
 
 export function writeKnownHostsTextSyncWithFs(
   knownHostsPath: string | undefined,
-  text: string,
-  fsDeps: Readonly<Pick<typeof import('node:fs'), 'mkdirSync' | 'writeFileSync' | 'chmodSync'>>
-    = { mkdirSync, writeFileSync, chmodSync },
+  text: string | ((currentText: string) => string),
+  fsDeps: Readonly<Pick<typeof import('node:fs'), 'readFileSync' | 'mkdirSync' | 'writeFileSync' | 'chmodSync' | 'renameSync' | 'unlinkSync'>>
+    = { readFileSync, mkdirSync, writeFileSync, chmodSync, renameSync, unlinkSync },
 ): void {
   if (!knownHostsPath) return;
+  let nextText: string;
+  if (typeof text === 'function') {
+    let currentText = '';
+    try {
+      currentText = fsDeps.readFileSync(knownHostsPath, 'utf8');
+    } catch (error) {
+      // Only an absent file is an empty trust store. An unreadable store must not be replaced.
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+    nextText = text(currentText);
+    if (nextText === currentText) return;
+  } else {
+    nextText = text;
+  }
+  // No await separates reading, merging and replacement: approvals in this process
+  // cannot interleave a second read/write within the current-file update.
   fsDeps.mkdirSync(dirname(knownHostsPath), { recursive: true, mode: 0o700 });
-  fsDeps.writeFileSync(knownHostsPath, normalizeKnownHostsText(text), { encoding: 'utf8', mode: 0o600 });
+  const temporaryPath = `${knownHostsPath}.${randomUUID()}.tmp`;
   try {
-    fsDeps.chmodSync(knownHostsPath, 0o600);
-  } catch {
-    // best-effort
+    fsDeps.writeFileSync(temporaryPath, normalizeKnownHostsText(nextText), { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+    fsDeps.renameSync(temporaryPath, knownHostsPath);
+  } finally {
+    try { fsDeps.unlinkSync(temporaryPath); } catch { /* Renamed or already absent. */ }
   }
 }
 

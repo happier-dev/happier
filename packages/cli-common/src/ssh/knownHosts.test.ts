@@ -1,13 +1,31 @@
 import { describe, expect, it } from 'vitest';
 
-import { mkdtempSync, statSync } from 'node:fs';
+import * as fs from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { writeKnownHostsTextSync } from './knownHosts.js';
+import { writeKnownHostsTextSync, writeKnownHostsTextSyncWithFs } from './knownHosts.js';
 import { SshKnownHostsStore } from './knownHosts.js';
 
 describe('writeKnownHostsTextSync', () => {
+  it('leaves existing trust intact and removes its temporary file if atomic replacement fails', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'happier-known-hosts-test-'));
+    const path = join(dir, 'known_hosts');
+    const original = 'retained.test ssh-ed25519 AAAA\n';
+    fs.writeFileSync(path, original);
+    const failure = new Error('rename refused');
+    try {
+      expect(() => writeKnownHostsTextSyncWithFs(path, 'new.test ssh-ed25519 BBBB', {
+        ...fs, renameSync: () => { throw failure; },
+      })).toThrow(failure);
+      expect(readFileSync(path, 'utf8')).toBe(original);
+      expect(readdirSync(dir)).toEqual(['known_hosts']);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('writes known_hosts with owner-only permissions on posix', () => {
     const dir = mkdtempSync(join(tmpdir(), 'happier-known-hosts-test-'));
     const path = join(dir, 'known_hosts');
