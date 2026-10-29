@@ -1631,19 +1631,50 @@ describe('authenticated finite Project Action owner', () => {
         expect(h.spawned).toEqual([]);
     });
 
-    it('does not treat a setup digest as approval of the exact requested Script effect', async () => {
-        const h = await harness();
+    it('runs an unchanged named native Script after completed setup but refuses a setup digest as its Script precondition', async () => {
+        const h = await harness({ version: 1,
+            workspace: { setup: [{ kind: 'command', command: 'echo setup' }] },
+            scripts: { checked: { source: { kind: 'native', tool: 'make', file: 'Makefile', target: 'check' } } },
+        });
+        h.waiveSetupApproval();
         const prepared = await h.invoke('projects.prepare', { workspace: h.address, phase: 'setup' });
         expect(prepared).toMatchObject({ operation: { operationId: 'operation' } });
         const scope = { accountId: 'owner', machineId: 'machine' };
+        await expect.poll(() => h.spawned.length).toBe(1);
+        h.spawned[0]!.pty.exit(0);
         await expect.poll(() => h.operationRuntime.store.get(scope, 'operation')?.state).toBe('succeeded');
         const preparationResult = h.operationRuntime.store.get(scope, 'operation')!.result;
         if (!preparationResult || typeof preparationResult !== 'object' || !('reviewedEffectDigest' in preparationResult)) throw new Error('missing preparation review');
-        expect(await h.invoke('projects.script.run', { workspace: h.address, selection: { kind: 'native', source: { kind: 'native', tool: 'make', file: 'Makefile', target: 'check' } },
-            expectedEffectDigest: preparationResult.reviewedEffectDigest })).toMatchObject({ operation: { operationId: 'operation-2' } });
-        await expect.poll(() => h.operationRuntime.store.get(scope, 'operation-2')?.state).toBe('failed');
-        expect(h.operationRuntime.store.get(scope, 'operation-2')).toMatchObject({ error: { errorCode: 'project_script_effect_changed' } });
-        expect(h.spawned).toEqual([]);
+        h.askSetupApproval();
+        const input = { workspace: h.address, selection: { kind: 'named', name: 'checked' } };
+        expect(await h.rpcInvoke('projects.script.run', input, { ...h.context, transportRequestId: 'named-after-setup' }))
+            .toMatchObject({ operation: { operationId: 'operation-2' } });
+        await expect.poll(() => h.spawned.length).toBe(2);
+        expect(h.spawned[1]!.params).toMatchObject({ file: '/managed/make', args: ['-f', join(h.root, 'Makefile'), 'check'] });
+        h.spawned[1]!.pty.output(Buffer.from('checked\r\n'));
+        h.spawned[1]!.pty.exit(0);
+        await expect.poll(() => h.operationRuntime.store.get(scope, 'operation-2')?.state).toBe('succeeded');
+        const output = await executeActionOperationActionV1({ actionId: 'projects.execution.output.read',
+            input: { serverId: 'home', machineId: 'machine', operationId: 'operation-2', byteOffset: 0 },
+            transport: async request => {
+                if (request.method === 'actionOperation.get.v2') return h.operationRuntime.handlers.getV2(request.payload, h.context);
+                if (request.method !== RPC_METHODS.DAEMON_TERMINAL_STREAM_READ_BYTES) throw new Error(request.method);
+                const { TerminalStreamReadRequestSchema } = await import('@happier-dev/protocol/terminal/stream');
+                return h.terminalSessions.readByteStream(TerminalStreamReadRequestSchema.parse(request.payload));
+            } });
+        const replay = TerminalStreamReadResponseSchema.parse(output);
+        if (!replay.ok) throw new Error(replay.code);
+        expect(Buffer.concat(replay.frames.flatMap(frame => frame.t === 'bytes' ? [decodeTerminalStreamBytesFrame(frame)] : []))
+            .toString('utf8')).toBe('checked\r\n');
+        expect(await h.rpcInvoke('projects.script.run', { ...input,
+            expectedEffectDigest: preparationResult.reviewedEffectDigest }, { ...h.context, transportRequestId: 'wrong-setup-precondition' }))
+            .toMatchObject({ operation: { operationId: 'operation-3' } });
+        await expect.poll(() => h.operationRuntime.store.get(scope, 'operation-3')?.state).toBe('failed');
+        expect(h.operationRuntime.store.get(scope, 'operation-3')).toMatchObject({ error: {
+            errorCode: 'project_script_effect_changed', details: { reviewedEffect: { purpose: 'script',
+                setupEffect: preparationResult.reviewedEffectDigest, command: { source: { tool: 'make', target: 'check' } } } },
+        } });
+        expect(h.spawned).toHaveLength(2);
     });
 
     it('refuses a queued invocation when its actual requester credential lifetime retires', async () => {

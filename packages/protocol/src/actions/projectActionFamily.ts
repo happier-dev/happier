@@ -189,7 +189,8 @@ const PROJECT_ACTION_INPUT_FIELDS = {
     { path: 'workspace', title: 'Qualified checkout', widget: 'json', required: true },
     { path: 'selection', title: 'Selected script', widget: 'json', required: true },
     { path: 'choice', title: 'Execution placement', widget: 'json' },
-    { path: 'expectedEffectDigest', title: 'Reviewed setup effect', widget: 'text' },
+    { path: 'expectedEffectDigest', title: 'Reviewed Script effect', widget: 'text',
+      description: 'Optional freshness precondition for this exact Script effect. Omit unless you have its reviewed Script digest; a setup or projects.prepare digest is a different value. This field does not grant approval.' },
     { path: 'memoryDemand', title: 'Memory demand', widget: 'json' },
   ],
   'projects.compute.exec': [
