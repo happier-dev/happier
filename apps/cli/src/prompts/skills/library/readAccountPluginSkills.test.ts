@@ -112,6 +112,9 @@ describe('Account plugin skill sources', () => {
       resolvePluginProjectionExecutionOriginContext: () => ({ serverIdentityId: materialization.serverIdentityId, machineId: 'source-A' }),
     });
     let offline = false, emptyAccountCensus = false, retired = false, staleOccurrence = false, invalidCensus = false, unrelatedOffline = false, knownUnrelated = false;
+    let scaledUnrelated = false;
+    const describedMachines: string[] = [];
+    const unrelatedMachineIds = Array.from({ length: 128 }, (_, index) => `unrelated-${index}`);
     const unrelatedManifest = definePlugin({ id: 'com.acme.unrelated', version: '1.0.0', entrypoints: { daemon: './daemon.mjs' },
       skills: { check: { directory: './skills/check' } } }).manifest;
     const machine = { id: 'source-A', kind: 'persistent', active: true, activeAt: Date.now(), revokedAt: null, replacedByMachineId: null,
@@ -121,8 +124,11 @@ describe('Account plugin skill sources', () => {
     vi.spyOn(axios, 'get').mockImplementation(async (url, config) => {
       expect(String(url).startsWith(base)).toBe(true);
       expect(config?.headers?.Authorization).toBe(`Bearer ${credentials.token}`);
-      if (String(url).endsWith('/v1/machines')) return { data: [{ ...machine, active: !offline, activeAt: offline ? 0 : machine.activeAt }] };
+      if (String(url).endsWith('/v1/machines')) return { data: [{ ...machine, active: !offline, activeAt: offline ? 0 : machine.activeAt },
+        ...(scaledUnrelated ? unrelatedMachineIds.map(id => ({ ...machine, id })) : [])] };
       if (String(url).endsWith('/v1/machines/source-A')) return { data: { machine } };
+      const unrelatedMachineId = scaledUnrelated ? unrelatedMachineIds.find(id => String(url).endsWith(`/v1/machines/${id}`)) : undefined;
+      if (unrelatedMachineId) return { data: { machine: { ...machine, id: unrelatedMachineId } } };
       if (String(url).endsWith('/v1/account/encryption')) return { data: { mode: 'plain', updatedAt: 1 } };
       throw new Error(`Unexpected source read: ${String(url)}`);
     });
@@ -134,11 +140,16 @@ describe('Account plugin skill sources', () => {
         ...(unrelatedOffline ? [{ serverIdentityId: materialization.serverIdentityId, machineId: 'offline-unrelated', materializations: [{
           ...materialization, machineId: 'offline-unrelated', pluginId: 'com.acme.unrelated', materializationId: 'offline-installation',
           ...(knownUnrelated ? { declaredManifest: unrelatedManifest } : {}),
-        }] }] : [])] } };
+        }] }] : []),
+        ...(scaledUnrelated ? unrelatedMachineIds.map(machineId => ({ serverIdentityId: materialization.serverIdentityId,
+          machineId, materializations: [{ ...materialization, machineId, pluginId: 'com.acme.unrelated',
+            materializationId: `installation-${machineId}` }] })) : [])] } };
     });
     bindApiSessionSocketMock(io, createApiSessionSocketStub({ emitWithAck: async (event, raw) => {
       expect(event).toBe(SOCKET_RPC_EVENTS.CALL);
       if (!raw || typeof raw !== 'object') throw new Error('Invalid source RPC envelope');
+      const request = Reflect.get(raw, 'params');
+      describedMachines.push(String(request?.machineId));
       expect(raw).toMatchObject({ method: `source-A:${RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE}`,
         params: { machineId: 'source-A', selection: 'skills' } });
       const current = DaemonContributionRegistryProjectionDescribeResponseSchema.parse(await handlers
@@ -184,6 +195,21 @@ describe('Account plugin skill sources', () => {
       await expect(runWithServerHttpBaseUrl(base, () => readAccountPluginSkills({ credentials,
         serverHttpBaseUrl: base, skillIds: [skillId] }))).resolves.toContainEqual(expect.objectContaining({ skillId }));
       unrelatedOffline = false;
+      // Demand must not expand with the Account fleet. Unknown declarations on
+      // reachable unrelated suppliers would all be described by a census read.
+      for (const includeUnrelated of [false, true]) {
+        scaledUnrelated = includeUnrelated;
+        describedMachines.length = 0;
+        await expect(runWithServerHttpBaseUrl(base, () => readAccountPluginSkills({ credentials,
+          serverHttpBaseUrl: base, skillIds: [skillId, skillId, 'personal-artifact'] })))
+          .resolves.toContainEqual(expect.objectContaining({ skillId }));
+        expect(describedMachines).toEqual(['source-A']);
+      }
+      describedMachines.length = 0;
+      await expect(readAccountPluginSkills({ credentials, serverHttpBaseUrl: base, skillIds: [] })).resolves.toEqual([]);
+      await expect(readAccountPluginSkills({ credentials, serverHttpBaseUrl: base, skillIds: ['personal-artifact'] })).resolves.toEqual([]);
+      expect(describedMachines).toEqual([]);
+      scaledUnrelated = false;
       const artifacts = { list: async () => ({ items: [], coverage: 'complete' as const }), read: async () => null };
       const names = await readSkillLibraryCatalog({ ...artifacts, readPluginSkills: async () => fromA });
       const rules = [{ id: 'everywhere', skillId, target: { t: 'allMachines' as const }, enabled: true, createdAt: 1, updatedAt: 1 }];
