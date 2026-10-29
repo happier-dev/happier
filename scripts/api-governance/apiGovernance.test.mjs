@@ -12,9 +12,21 @@ import {
 } from './apiGovernance.mjs';
 import { parseApiGovernanceCliArgs } from './cli.mjs';
 import { projectPreparedDeclarationSurface } from './emittedDeclarationSurface.mjs';
+import { resolveWorkspaceBundleLockPath, withWorkspaceBundleLock } from '../workspaces/workspaceBundleLock.mjs';
+import { withPatchedProcessEnv } from '../../apps/stack/scripts/testkit/core/env_scope.mjs';
 
 const CLI_PATH = fileURLToPath(new URL('./cli.mjs', import.meta.url));
 const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
+
+test('a competing API publisher cannot replace outputs without the publication lease', async t => {
+  const root = await createEntrypointFixture();
+  t.after(() => rm(root, { recursive: true, force: true }));
+  withPatchedProcessEnv(t, { HAPPIER_WORKSPACE_DIST_BUILD_LOCK_WAIT_ALLOWED: '0' });
+  await withWorkspaceBundleLock(async () => {
+    await assert.rejects(runApiGovernance({ profileId: 'plugin-ui', packageRoot: root, write: true }),
+      error => error.code === 'EWORKSPACEBUNDLELOCKBUSY');
+  }, { lockPath: resolveWorkspaceBundleLockPath(root) });
+});
 
 async function writeFixtureFile(root, relativePath, contents) {
   const path = join(root, relativePath);
@@ -266,6 +278,15 @@ test('the SDK profile projects identical declaration bytes from repo and package
   assert.equal(projectFrom(REPOSITORY_ROOT), projectFrom(packageRoot));
 });
 
+test('consumer typechecks leave generated surface publication to its owning input changes', async () => {
+  for (const name of ['plugin-ui', 'sdk']) {
+    const { scripts } = JSON.parse(await readFile(join(REPOSITORY_ROOT, `packages/${name}/package.json`), 'utf8'));
+    const command = scripts['typecheck:local'];
+    assert.doesNotMatch(command, /generate:|api-governance|prepare:declarations/u,
+      `${name} source checking must consume the already prepared public inputs`);
+  }
+});
+
 test('plugin package scripts prepare declarations and invoke the shared governance owner', async () => {
   const pluginSdkPackage = JSON.parse(await readFile(
     join(REPOSITORY_ROOT, 'packages/plugin-sdk/package.json'),
@@ -320,7 +341,7 @@ test('plugin package scripts prepare declarations and invoke the shared governan
   );
   assert.equal(
     pluginUiPackage.scripts['prepare:api-governance'],
-    'pnpm --silent run prepare:declarations && pnpm --dir ../plugin-sdk --silent run generate:public-toolchain:prepared && pnpm --silent run build:compiled',
+    'pnpm --silent run prepare:declarations && pnpm --dir ../plugin-sdk --silent run check:public-toolchain:prepared && pnpm --silent run build:compiled',
   );
   assert.equal(
     pluginUiPackage.scripts['build:compiled'],

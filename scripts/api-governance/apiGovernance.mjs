@@ -22,6 +22,8 @@ import {
   isExactCanonicalPublishedVersion,
   projectPublishedInventoryProvenance,
 } from './publicationProvenance.mjs';
+import { resolveWorkspaceBundleLockPath, withWorkspaceBundleLock } from '../workspaces/workspaceBundleLock.mjs';
+import { AUTHOR_EXCLUDED_ENTRYPOINT_ROOTS } from './authorExports.mjs';
 
 const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const ENTRYPOINT_INVENTORY_KEYS = Object.freeze(['schemaVersion', 'packageName', 'entrypoints', 'symbols']);
@@ -68,7 +70,7 @@ export const API_GOVERNANCE_PROFILES = Object.freeze({
     title: 'Plugin UI public API',
     declarationTitle: 'Plugin UI public declaration report',
     sourceEntrypointSpecs: true,
-    excludedEntrypointRoots: Object.freeze(['./presentation']),
+    excludedEntrypointRoots: AUTHOR_EXCLUDED_ENTRYPOINT_ROOTS['@happier-dev/plugin-ui'],
   }),
   sdk: Object.freeze({
     id: 'sdk',
@@ -754,7 +756,13 @@ export async function runApiGovernance(options) {
   }
   assertPublicationOptions(options);
   if (profile.kind === 'plugin-sdk') return runPluginSdkProfile(profile, options);
-  if (profile.kind === 'entrypoint-declarations') return runEntrypointDeclarationProfile(profile, options);
+  if (profile.kind === 'entrypoint-declarations') {
+    if (!options.write) return runEntrypointDeclarationProfile(profile, options);
+    return withWorkspaceBundleLock(() => runEntrypointDeclarationProfile(profile, options), {
+      lockPath: resolveWorkspaceBundleLockPath(options.packageRoot ?? REPOSITORY_ROOT),
+      errorLabel: `${profile.id} API governance publication`,
+    });
+  }
   throw new Error(`API governance profile ${profile.id} has no generator kind`);
 }
 

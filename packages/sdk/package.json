@@ -76,7 +76,7 @@
     "test:external-consumer": "node --import tsx ./scripts/validateNodeNextConsumer.mjs",
     "test:browser-consumer": "node --import tsx ./scripts/validateBrowserConsumer.mjs",
     "typecheck": "../../apps/stack/bin/hstack-exec --script=typecheck:local",
-    "typecheck:local": "pnpm --silent run check:api-governance && node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.tests.json && pnpm --silent run test:external-consumer",
+    "typecheck:local": "node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.tests.json && pnpm --silent run test:external-consumer",
     "typecheck:finite": "node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.tests.json && pnpm --silent run test:external-consumer"
   },
   "bundledDependencies": [

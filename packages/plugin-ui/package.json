@@ -93,7 +93,7 @@
   },
   "scripts": {
     "prepare:declarations": "pnpm --dir ../plugin-sdk --silent run prepare:declarations",
-    "prepare:api-governance": "pnpm --silent run prepare:declarations && pnpm --dir ../plugin-sdk --silent run generate:public-toolchain:prepared && pnpm --silent run build:compiled",
+    "prepare:api-governance": "pnpm --silent run prepare:declarations && pnpm --dir ../plugin-sdk --silent run check:public-toolchain:prepared && pnpm --silent run build:compiled",
     "api-governance": "pnpm --silent run prepare:api-governance && pnpm --silent run api-governance:emit",
     "api-governance:emit": "node --max-old-space-size=6144 ../../scripts/api-governance/cli.mjs --profile plugin-ui --write",
     "check:api-governance": "pnpm --silent run prepare:api-governance && node --max-old-space-size=6144 ../../scripts/api-governance/cli.mjs --profile plugin-ui --check",
@@ -111,8 +111,8 @@
     "test:external-authoring:current-source": "pnpm --dir ../plugin-sdk --silent run build:finite && pnpm --silent run build:finite && node ./scripts/validateExternalAuthoringFixture.mjs --mode current-source",
     "test:external-authoring:tarballs": "node ./scripts/validateExternalAuthoringFixture.mjs",
     "typecheck": "../../apps/stack/bin/hstack-exec --script=typecheck:local",
-    "typecheck:local": "pnpm --dir ../plugin-sdk --silent run generate:public-toolchain && node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json",
-    "typecheck:source:finite": "pnpm --dir ../plugin-sdk --silent run generate:public-toolchain:prepared && node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit --tsBuildInfoFile node_modules/.cache/tsc/plugin-ui.typecheck.tsbuildinfo -p tsconfig.json",
+    "typecheck:local": "node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json",
+    "typecheck:source:finite": "node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit --tsBuildInfoFile node_modules/.cache/tsc/plugin-ui.typecheck.tsbuildinfo -p tsconfig.json",
     "api-declarations": "pnpm --silent run api-governance",
     "check:api-declarations": "pnpm --silent run check:api-governance"
   },
