@@ -1,4 +1,7 @@
 import { z } from 'zod/mini';
+export { readOpenedSessionFollowOriginalV1, captureSemanticSessionFollowRuleSourceEvidenceV1,
+  readSessionFollowSemanticSourceEventV1, readVerifiedSessionFollowHumanInputOriginalV1, isPotentialSessionFollowHumanInputV1 } from './sessionFollowOriginalV1.js';
+export type { SessionFollowOriginalOccurrenceV1, SessionFollowOriginalReadV1 } from './sessionFollowOriginalV1.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { SessionAwarenessPresentationStateV1Schema } from '../awareness/presentationV1.js';
 import { matchSessionListFilterV1, type SessionListFilterFactsV1 } from '../listFilter/sessionListFilterV1.js';
@@ -8,7 +11,7 @@ import { equalFollowRuleReceiverV1 } from './sessionFollowRuleV1.js';
 import type { OpenedSessionFollowRuleV1 } from './actions.js';
 export type { OpenedSessionFollowRuleV1 } from './actions.js';
 import { SessionMetadataPublisherPreconditionV1Schema } from '../metadata/sessionMetadataSchemasV1.js';
-import { SessionFollowSourceMessageV1Schema, SessionFollowSourceRequestsV1Schema } from './sessionFollowSourceOccurrenceV1.js';
+import { SessionFollowSourceMessageV1Schema, SessionFollowSourceRequestsV1Schema, SessionFollowSourceTurnV1Schema } from './sessionFollowSourceOccurrenceV1.js';
 import { normalizeSessionFollowDefaultRulesV1, type SessionAutoFollowPreferencesV1, type SessionAutoFollowTriggerV1,
   type SessionFollowDefaultRelationshipsV1 } from './accountFollow.js';
 
@@ -38,6 +41,7 @@ export function projectSessionFollowRuleSharedSourceEvidenceV1(evidence: Session
 export const SessionFollowRuleSourceOccurrenceV1Schema = lazyZodSchema(() => {
   const fields = { sourceSessionId: z.string().check(z.minLength(1)), sourcePublisher: SessionMetadataPublisherPreconditionV1Schema };
   return z.union([
+    z.strictObject({ ...fields, sourceTurn: SessionFollowSourceTurnV1Schema, evidence: SessionFollowRuleSourceEvidenceV1Schema }),
     z.strictObject({ ...fields, sourceMessage: SessionFollowSourceMessageV1Schema, evidence: SessionFollowRuleSourceEvidenceV1Schema })
       .check(z.refine(value => isMessageBackedFollowEventV1(value.evidence.event), {
         path: ['evidence', 'event'], message: 'Question events require an exact source request',
@@ -57,6 +61,13 @@ export type SessionFollowRuleOccurrenceEvaluationV1 = Readonly<{ status: 'other_
   pendingDefaultKeys?: readonly SessionAutoFollowTriggerV1[];
 }>;
 
+/** Placement follows original production custody, never current daemon availability. */
+export function resolveSessionFollowRuleOccurrenceEvaluatorV1(input: Readonly<{
+  accountId: string; ownerAccountId: string; production: 'source' | 'recovery';
+}>): 'source' | 'receiver' {
+  return input.production === 'source' && input.ownerAccountId === input.accountId ? 'source' : 'receiver';
+}
+
 /** One source occurrence × the already-opened Account rules; no lookup, enrollment or delivery side effects. */
 export function evaluateSessionFollowRuleOccurrenceV1(input: Readonly<{
   accountId: string; evaluator: 'source' | 'receiver'; sourceSessionId: string; production: 'source' | 'recovery';
@@ -68,8 +79,8 @@ export function evaluateSessionFollowRuleOccurrenceV1(input: Readonly<{
     hasPersistentFollow?: boolean }>;
   personalFollowSuppressed?: boolean;
 }>): SessionFollowRuleOccurrenceEvaluationV1 {
-  const sourceEvaluates = input.production === 'source' && input.evidence.ownerAccountId === input.accountId;
-  if (sourceEvaluates !== (input.evaluator === 'source')) return { status: 'other_evaluator' };
+  if (resolveSessionFollowRuleOccurrenceEvaluatorV1({ accountId: input.accountId,
+    ownerAccountId: input.evidence.ownerAccountId, production: input.production }) !== input.evaluator) return { status: 'other_evaluator' };
   const pendingRuleIds: string[] = [];
   const candidates = new Map<string, { receiver: FollowReceiverRefV1; rules: { ruleId: string; version: number }[]; policies: FollowPolicyV1[];
     defaultKeys?: SessionAutoFollowTriggerV1[]; defaultPolicies?: FollowPolicyV1[] }>();

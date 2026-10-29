@@ -17,6 +17,7 @@ import type { ApiSessionClient } from '@/api/session/sessionClient';
 import { logger } from '@/ui/logger';
 import type { SessionFollowInputV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowInputV1';
 import { classifyHomeReadPreparationError } from '@/agent/prompts/library/homeReadPreparationError';
+import { renderRunFollowNotice } from './sessionFollowNotice';
 
 export type SessionFollowQueuedDelivery = Readonly<{
   delivery: SessionFollowInputV1;
@@ -45,7 +46,7 @@ export type SessionFollowHydrateObservation = (input: Readonly<{
   selectionChannel?: 'voice';
 }>) => Promise<(SessionFollowUpdateEnvelopeV1 & Partial<Pick<
   SessionFollowHydratedUpdate,
-  'sourceRecencyMs' | 'transcriptConsumedThroughByRenderedMessageCount' | 'pendingHumanIngress' | 'workerUpdate' | 'recheckWorkerUpdateAdmission' | 'sourceTerminalTurn' | 'isOriginalRequestWithdrawn'
+  'sourceRecencyMs' | 'transcriptConsumedThroughByRenderedMessageCount' | 'pendingHumanIngress' | 'workerUpdate' | 'recheckWorkerUpdateAdmission' | 'isOriginalRequestWithdrawn'
 >>) | null>;
 
 /** One hydrated-source decision shared by active and absent-host Follow admission. */
@@ -58,7 +59,7 @@ export function shouldWakeForSessionFollowObservation(
     || source.edge.sourceSessionId !== observation.sourceSessionId
     || source.edge.destinationSessionId !== observation.destinationSessionId
     || source.awareness.sessionId !== observation.sourceSessionId) return false;
-  if ('kind' in observation) return observation.delivery.delivery === 'wake';
+  if ('kind' in observation || observation.relation === 'rule') return observation.effectiveDelivery === 'wake';
   const wakes = (event: Parameters<typeof resolveFollowDeliveryV1>[0]['event']) =>
     resolveFollowDeliveryV1({ policies: [observation.policy], event }).session.wake;
   if ((source.pendingHumanIngress === true || source.recentMessages.some(isAuthoritativeHumanSessionFollowMessageV1))
@@ -83,6 +84,7 @@ export function shouldWakeForSessionFollowWorkerUpdate(
     || source.edge.destinationSessionId !== observation.destinationSessionId
     || source.awareness.sessionId !== observation.sourceSessionId) return false;
   const kind = classifyWorkerUpdateEventV1(source.workerUpdate);
+  if (observation.relation === 'rule') return kind === 'stalled' && observation.effectiveDelivery === 'wake';
   return kind !== null && resolveFollowDeliveryV1({ policies: [observation.policy], event: kind === 'needs_you'
     ? { kind, type: source.awareness.operational.primary === 'permission_required' ? 'approval'
       : source.awareness.operational.reasons.includes('blocked_input') ? 'blocked' : 'decision' }
@@ -166,7 +168,7 @@ function resolveSessionFollowHydrationReadMode(input: Readonly<{
  *   so they stay retryable. Budget-omitted sources are excluded from `updates` and stay pending.
  * - Original publications/questions use their admitted Pending input; configured routes
  *   cannot also inject them as legacy context. The input owner rejoins accepted originals
- *   across route/publisher replacement. No-original manager Turn facts retain their own
+ *   across route/publisher replacement. No-original Turn facts retain their own
  *   incumbent frontier ACK and at-least-once transport semantics.
  * - Re-admission is enforced by the server observe/ACK owners plus the hydration fetch
  *   immediately before injection; revocation between hydrate and inject fails the final CAS
@@ -198,7 +200,7 @@ export function createSessionFollowContextReconciler(input: Readonly<{
   }>;
   const pendingAcknowledgements = new Set<PendingAcknowledgement>();
   const isTurnWorkerUpdate = (observation: SessionFollowPendingObservationV1, update: WorkerUpdateV1 | undefined): boolean =>
-    observation.relation === 'manager' && observation.observed.turn !== null
+    !('kind' in observation) && observation.observed.turn !== null
     && update !== undefined
     && update.wake !== 'published' && !(update.workerKind === 'session' && update.ownerState === 'needs_input');
   type Options = Readonly<{ signal: AbortSignal; maxFollowContextUtf8Bytes?: number | null;
@@ -316,7 +318,11 @@ export function createSessionFollowContextReconciler(input: Readonly<{
           ? 'kind' in entry && entry.localInputId === observation.localInputId
             && sameStrictJsonValue(entry.delivery, observation.delivery)
             && isSessionFollowFrontierEqualV1(entry.observed, observation.observed)
-          : !('kind' in entry) && isFollowPolicyEqualV1(entry.policy, observation.policy))
+            && (entry.effectiveDelivery === 'wake' || deliveryIntent !== 'wake' && entry.effectiveDelivery === 'next_turn')
+          : !('kind' in entry) && (observation.relation === 'rule'
+            ? entry.relation === 'rule' && entry.effectiveDelivery === observation.effectiveDelivery
+              && sameStrictJsonValue(entry.presence, observation.presence)
+            : entry.relation !== 'rule' && isFollowPolicyEqualV1(entry.policy, observation.policy)))
         && isSessionFollowFrontierEqualV1(entry.delivered, observation.delivered)
         // A presence-derived stall is withdrawable until dispatch; numeric
         // transcript progress must not keep a recovered own turn admissible.
@@ -359,28 +365,37 @@ export function createSessionFollowContextReconciler(input: Readonly<{
               && isSessionFollowTurnEqualV1(represented.observed.turn, observation.observed.turn)
             : represented.relation === observation.relation && represented.attachedAt === observation.attachedAt
               && ('kind' in represented ? 'kind' in observation && represented.localInputId === observation.localInputId
-                : !('kind' in observation) && isFollowPolicyEqualV1(represented.policy, observation.policy))
+                : !('kind' in observation) && (represented.relation === 'rule'
+                  ? observation.relation === 'rule' && represented.effectiveDelivery === observation.effectiveDelivery
+                    && sameStrictJsonValue(represented.presence, observation.presence)
+                  : observation.relation !== 'rule' && isFollowPolicyEqualV1(represented.policy, observation.policy)))
               && isSessionFollowFrontierEqualV1(represented.delivered, observation.delivered))) return true;
       }
       return false;
     };
 
-    const managerSources = new Set(observed.observations.filter(observation => observation.relation === 'manager')
+    const cooperatingWorkerSources = new Set(observed.observations.filter(observation => observation.relation === 'manager'
+      || !('kind' in observation) && observation.observed.turn?.status === 'stalled'
+        && (observation.relation === 'rule' ? observation.effectiveDelivery === 'wake'
+          : resolveFollowDeliveryV1({ policies: [observation.policy], event: { kind: 'stalled' } }).session.wake))
       .map(observation => observation.sourceSessionId));
     // Destination original records enter through the admitted-input owner. The
     // configured routes still establish membership/currentness, but cannot also
     // turn those records into optional context after their Pending disappears.
-    // Account Voice retains its separate source/read lifetime. Managers keep
-    // only the lifecycle facts which have no original-input representation.
+    // Account Voice retains its separate source/read lifetime. Stalled Turns
+    // and manager waiting Turns have no original-input representation.
     const candidateObservations = observed.observations.filter(observation => observer.kind === 'account_voice'
-      || 'kind' in observation || observation.relation === 'manager' && !(observation.observed.turn?.status === 'waiting'
+      || ('kind' in observation ? observation.effectiveDelivery === 'wake' || observation.effectiveDelivery === 'next_turn'
+        : (observation.observed.turn?.status === 'stalled'
+          || observation.relation === 'manager' && observation.observed.turn?.status === 'waiting')
+        && !(observation.observed.turn?.status === 'waiting'
         && observed.observations!.some(original => 'kind' in original
           && followDeliveries.some(queued => queued.localInputId === original.localInputId
             && sameStrictJsonValue(queued.delivery, original.delivery))
           && 'sourceSessionId' in original.delivery.original
           && original.delivery.original.sourceSessionId === observation.sourceSessionId
           && 'sourceRequests' in original.delivery.original && original.delivery.original.sourceRequests.requests.some(request =>
-            request.turnId === observation.observed.turn?.id))));
+            request.turnId === observation.observed.turn?.id)))));
     const hydrated = await Promise.all(candidateObservations.map(async (observation) => {
       if (signal.aborted) return null;
       if (observation.destinationSessionId !== destinationSessionId) return null;
@@ -429,7 +444,7 @@ export function createSessionFollowContextReconciler(input: Readonly<{
           deliveryIntent === 'wake'
           && !acceptedOriginalRejoin
           && observation.relation !== 'manager'
-          && !managerSources.has(observation.sourceSessionId)
+          && !cooperatingWorkerSources.has(observation.sourceSessionId)
           && !shouldWakeForSessionFollowObservation(observation, update)
         ) return null;
         const {
@@ -438,7 +453,6 @@ export function createSessionFollowContextReconciler(input: Readonly<{
           pendingHumanIngress: _pendingHumanIngress,
           workerUpdate,
           recheckWorkerUpdateAdmission,
-          sourceTerminalTurn,
           isOriginalRequestWithdrawn,
           ...rawPromptUpdate
         } = update;
@@ -462,7 +476,7 @@ export function createSessionFollowContextReconciler(input: Readonly<{
           : rawPromptUpdate;
         if (observer.kind === 'destination_session' && observation.relation === 'manager' && !workerUpdate) return null;
         return { update: promptUpdate, sourceRecencyMs, transcriptConsumedThroughByRenderedMessageCount, readMode, workerUpdate, recheckWorkerUpdateAdmission,
-          sourceTerminalTurn, acceptedOriginalRejoin, isOriginalRequestWithdrawn,
+          acceptedOriginalRejoin, isOriginalRequestWithdrawn,
           mayWake: shouldWakeForSessionFollowObservation(observation, update) };
       } catch (error) {
         // A queued original is required input, so its unavailable Home read must
@@ -495,18 +509,12 @@ export function createSessionFollowContextReconciler(input: Readonly<{
       return entry;
     }))).flatMap(entry => entry ? [entry] : []);
     if (signal.aborted) return null;
-    const stillAdmitted = readmittedEntries.filter(entry => !entry.acceptedOriginalRejoin
-      && !(entry.observation.relation === 'manager' && readmitted?.ok && readmitted.observations?.some(current => current.relation === 'manager'
-        && current.sourceSessionId === entry.observation.sourceSessionId && current.attachedAt === entry.observation.attachedAt
-        && isSessionFollowTurnEqualV1(current.observed.turn, entry.observation.observed.turn))
-        && readmittedEntries.some(original => original.sourceTerminalTurn
-        && original.observation.sourceSessionId === entry.observation.sourceSessionId
-        && isSessionFollowTurnEqualV1(original.sourceTerminalTurn, entry.observation.observed.turn))));
+    const stillAdmitted = readmittedEntries.filter(entry => !entry.acceptedOriginalRejoin);
     if (stillAdmitted.length === 0) return null;
 
-    // Originals enter once through admitted input. Managers retain only their
-    // separate no-original Turn facts; Account Voice retains its own read path.
-    const followCandidates = stillAdmitted.filter(({ observation, workerUpdate }) => observation.relation !== 'manager' || !workerUpdate);
+    // Originals enter once through admitted input. No-original Turn facts and
+    // Account Voice retain their own read paths.
+    const followCandidates = stillAdmitted.filter(({ observation, workerUpdate }) => 'kind' in observation || !workerUpdate);
     // Each Pending already names one original. Keep distinct originals in the
     // budget even when they share a source; this is only a local presentation
     // address, not another occurrence identity or acceptance store.
@@ -515,6 +523,8 @@ export function createSessionFollowContextReconciler(input: Readonly<{
     const followBySource = new Map(followCandidates.map(entry => [budgetKey(entry.observation), entry] as const));
     const followAdmitted = [...followBySource.values()];
     let remainingBytes = maxFollowContextUtf8Bytes;
+    const wakingWorkerSources = new Set(stillAdmitted.filter(entry => entry.mayWake).map(entry => entry.observation.sourceSessionId));
+    const fittedWorkers = new Map<string, WorkerUpdateV1>();
     const workerPrepared = stillAdmitted.flatMap((entry) => {
       const { observation, update, workerUpdate, recheckWorkerUpdateAdmission } = entry;
       if ('kind' in observation) return [];
@@ -523,12 +533,28 @@ export function createSessionFollowContextReconciler(input: Readonly<{
       // Foreground questions retain their separate exact-Turn witness rule.
       if (followDeliveries.some(({ delivery }) => 'sourceMessage' in delivery.original
         && delivery.original.sourceSessionId === observation.sourceSessionId)) return [];
-      if (!workerUpdate || deliveryIntent === 'wake' && !entry.mayWake) return [];
-      const fitted = fitWorkerUpdateWithinHostContextAllowance(workerUpdate, Math.max(0, remainingBytes - 2));
+      if (!workerUpdate || deliveryIntent === 'wake' && !wakingWorkerSources.has(observation.sourceSessionId)) return [];
+      const event = classifyWorkerUpdateEventV1(workerUpdate);
+      if (!event || (observation.relation === 'rule' ? event !== 'stalled' : !resolveFollowDeliveryV1({ policies: [observation.policy], event: event === 'needs_you'
+        ? { kind: event, type: update.awareness.operational.primary === 'permission_required' ? 'approval'
+          : update.awareness.operational.reasons.includes('blocked_input') ? 'blocked' : 'decision' }
+        : { kind: event } }).selected)) return [];
+      const shared = fittedWorkers.get(observation.sourceSessionId);
+      const fitted = shared ?? fitWorkerUpdateWithinHostContextAllowance(workerUpdate, Math.max(0, remainingBytes - 2));
       if (!fitted) return [];
-      remainingBytes -= measureSessionFollowUtf8Bytes(renderWorkerUpdatePromptBlockV1(fitted)) + 2;
+      if (!shared) {
+        fittedWorkers.set(observation.sourceSessionId, fitted);
+        remainingBytes -= measureSessionFollowUtf8Bytes(renderWorkerUpdatePromptBlockV1(fitted)) + 2;
+      }
       return [{ observation, update, workerUpdate: fitted, recheckWorkerUpdateAdmission, ackable: update.reason !== 'source_unavailable' }];
     });
+    const workerGroups = new Map<string, typeof workerPrepared>();
+    for (const entry of workerPrepared) {
+      const group = workerGroups.get(entry.observation.sourceSessionId);
+      if (group) group.push(entry);
+      else workerGroups.set(entry.observation.sourceSessionId, [entry]);
+    }
+    const renderedWorkers = [...workerGroups.values()].map(group => group[0]!);
     const originalProjection = (entry: typeof followAdmitted[number], keptSeqs: readonly number[], truncated: boolean) => {
       const consumedTranscriptSeq = entry.readMode === 'initial_current_snapshot'
         ? entry.observation.observed.transcriptSeq
@@ -631,9 +657,9 @@ export function createSessionFollowContextReconciler(input: Readonly<{
 
     const wakeCandidates = prepared.flatMap(({ observation, update }) => 'kind' in observation ? [] : [{
           sourceSessionId: observation.sourceSessionId,
-          policy: observation.policy,
-          relation: observation.relation,
-          attachedAt: observation.attachedAt,
+          ...(observation.relation === 'rule' ? { relation: observation.relation,
+            effectiveDelivery: observation.effectiveDelivery, presence: observation.presence }
+            : { policy: observation.policy, relation: observation.relation, attachedAt: observation.attachedAt }),
           expected: observation.delivered,
           consumed: update.observed,
         }]);
@@ -653,18 +679,23 @@ export function createSessionFollowContextReconciler(input: Readonly<{
       ...(representedDeliveries.length ? { representedFollowLocalInputIds: representedDeliveries.map(delivery => delivery.localInputId) } : {}),
       updates: prefixPrepared.filter(entry => entry.renderFollow).map(({ update }) => update),
       ...(prepared.some(entry => entry.workerUpdate) ? {
-        workerUpdates: prepared.flatMap(entry => entry.workerUpdate ? [entry.workerUpdate] : []),
+        workerUpdates: [...renderedWorkers.map(entry => entry.workerUpdate),
+          ...prefixPrepared.flatMap(entry => entry.workerUpdate ? [entry.workerUpdate] : [])],
       } : {}),
       ...((deliveryIntent === 'wake' && workerPrepared.length) || prefixPrepared.some(entry => entry.workerUpdate && 'kind' in entry.observation) ? {
-        workerUpdateEvents: [...(deliveryIntent === 'wake' ? workerPrepared : []).map(({ observation, update, workerUpdate }) => ({
+        workerUpdateEvents: [...(deliveryIntent === 'wake' ? renderedWorkers : []).map(({ observation, update, workerUpdate }) => ({
           localId: deriveSessionFollowWakeEventLocalIdV1({
             destinationSessionId, publisherGeneration,
-            observations: [{ sourceSessionId: observation.sourceSessionId, relation: 'manager',
-              policy: observation.policy,
-              attachedAt: observation.attachedAt, expected: observation.delivered, consumed: update.observed }],
+            observations: [{ sourceSessionId: observation.sourceSessionId,
+              ...(observation.relation === 'rule' ? { relation: observation.relation,
+                effectiveDelivery: observation.effectiveDelivery, presence: observation.presence }
+                : { relation: observation.relation, policy: observation.policy, attachedAt: observation.attachedAt }),
+              expected: observation.delivered, consumed: update.observed }],
           }),
           update: workerUpdate,
-          followMatches: [{ kind: 'relation' as const, relation: observation.relation }],
+          followMatches: workerGroups.get(observation.sourceSessionId)!
+            .map(entry => entry.observation.relation === 'rule' ? { kind: 'rule' as const }
+              : { kind: 'relation' as const, relation: entry.observation.relation }),
         })), ...prefixPrepared.flatMap(({ observation, workerUpdate }) => {
           if (!('kind' in observation) || !workerUpdate) return [];
           const queued = representedDeliveries.find(delivery => delivery.localInputId === observation.localInputId);
@@ -718,10 +749,8 @@ export function createSessionFollowContextReconciler(input: Readonly<{
           && (!('kind' in observation) || acceptance.kind === 'admitted_input' && representedDeliveries.some(delivery =>
             delivery.localInputId === localInputId && delivery.userMessageSeq === userMessageSeq
             && delivery.localInputId === observation.localInputId)));
-        const workerObservations = new Map(accepted.flatMap(entry => isTurnWorkerUpdate(entry.observation, entry.workerUpdate)
-          ? [[entry.observation.sourceSessionId, entry.observation] as const] : []));
-        for (const { observation, update } of accepted) {
-          const workerObservation = workerObservations.get(observation.sourceSessionId);
+        for (const { observation, update, workerUpdate } of accepted) {
+          const workerObservation = isTurnWorkerUpdate(observation, workerUpdate) ? observation : undefined;
           const consumed = update.observed;
           let inFlight = false;
           const request: PendingAcknowledgement = { observation, publisherGeneration, workerObservation, retry: async () => {
@@ -758,9 +787,9 @@ export function createSessionFollowContextReconciler(input: Readonly<{
                     acceptance: { kind: 'admitted_input', localInputId, userMessageSeq },
                   } : {
                     sourceSessionId: observation.sourceSessionId,
-                    policy: observation.policy,
-                    relation: observation.relation,
-                    attachedAt: observation.attachedAt,
+                    ...(observation.relation === 'rule' ? { relation: observation.relation,
+                      effectiveDelivery: observation.effectiveDelivery, presence: observation.presence }
+                      : { policy: observation.policy, relation: observation.relation, attachedAt: observation.attachedAt }),
                     expectedPublisherGeneration: publisherGeneration,
                     expected: observation.delivered,
                     observed: observation.observed,
@@ -824,16 +853,42 @@ export function createSessionFollowContextReconciler(input: Readonly<{
         && !withdrawnFollowLocalInputIds.includes(entry.localInputId)) withdrawnFollowLocalInputIds.push(entry.localInputId);
     };
     readWithdrawn(observed.observations);
-    const admitted = queued.filter(entry => observed.observations.some(observation =>
+    const selectsRunIntake = (mode: 'wake' | 'next_turn' | null) => mode === 'wake'
+      || options.deliveryIntent !== 'wake' && mode === 'next_turn';
+    const indexRuns = (observations: typeof observed.observations) => new Map(observations.flatMap(observation =>
       'kind' in observation && observation.kind === 'admitted_run_input'
-      && observation.disposition !== 'withdrawn'
-      && observation.destinationSessionId === input.session.sessionId && observation.localInputId === entry.localInputId
-      && sameStrictJsonValue(observation.delivery, entry.delivery)));
+        && observation.destinationSessionId === input.session.sessionId ? [[observation.localInputId, observation] as const] : []));
+    const observedRuns = indexRuns(observed.observations);
+    const runWorkerEvents: NonNullable<SessionFollowPreparedContext['workerUpdateEvents']>[number][] = [];
+    let remainingBytes = Math.max(0, (options.maxFollowContextUtf8Bytes ?? input.maxFollowContextUtf8Bytes ?? 0)
+      - measureSessionFollowUtf8Bytes(renderSessionInputContextPromptV1({ sessionFollowUpdates: sessions?.updates,
+        workerUpdates: sessions?.workerUpdates, transformedUserText: '' })));
+    const admitted = queued.filter(entry => {
+      const observation = observedRuns.get(entry.localInputId);
+      if (!observation || observation.disposition === 'withdrawn' || !selectsRunIntake(observation.effectiveDelivery)
+        || !sameStrictJsonValue(observation.delivery, entry.delivery)) return false;
+      if (!('terminalEventId' in entry.delivery.original && 'sessionId' in entry.delivery.original.source)) return true;
+      const update = observation.workerUpdate;
+      // A terminal notice cannot consume its original before the typed outcome
+      // reaches the provider. Missing material and budget omissions stay pending.
+      if (!update) return false;
+      const cost = measureSessionFollowUtf8Bytes(`${renderWorkerUpdatePromptBlockV1(update)}\n\n${renderRunFollowNotice(entry.delivery)}\n`);
+      if (cost > remainingBytes) return false;
+      remainingBytes -= cost;
+      runWorkerEvents.push({ localId: `execution-run-worker-update:${entry.delivery.original.terminalEventId}`,
+        update, followInputLocalId: entry.localInputId, ...(entry.followMatches ? { followMatches: entry.followMatches } : {}) });
+      return true;
+    });
+    const runWorkersByInput = new Map(runWorkerEvents.map(event => [event.followInputLocalId, event.update]));
     if (!admitted.length && !withdrawnFollowLocalInputIds.length) return sessions;
     return {
       updates: sessions?.updates ?? [],
-      ...(sessions?.workerUpdates ? { workerUpdates: sessions.workerUpdates } : {}),
-      ...(sessions?.workerUpdateEvents ? { workerUpdateEvents: sessions.workerUpdateEvents } : {}),
+      ...(sessions?.workerUpdates || runWorkerEvents.length ? {
+        workerUpdates: [...sessions?.workerUpdates ?? [], ...runWorkerEvents.map(event => event.update)],
+      } : {}),
+      ...(sessions?.workerUpdateEvents || runWorkerEvents.length ? {
+        workerUpdateEvents: [...sessions?.workerUpdateEvents ?? [], ...runWorkerEvents],
+      } : {}),
       ...(sessions?.wakeEventLocalId ? { wakeEventLocalId: sessions.wakeEventLocalId } : {}),
       representedFollowLocalInputIds: [...(sessions?.representedFollowLocalInputIds ?? []), ...admitted.map(entry => entry.localInputId)],
       withdrawnFollowLocalInputIds,
@@ -841,11 +896,15 @@ export function createSessionFollowContextReconciler(input: Readonly<{
         if (signal.aborted || options.signal.aborted || sessions && !await sessions.recheckAdmission(signal)) return false;
         const current = await observe(signal);
         if (current?.ok) readWithdrawn(current.observations);
+        const currentRuns = current?.ok ? indexRuns(current.observations) : null;
         return !signal.aborted && !options.signal.aborted && current?.ok === true && current.publisherGeneration === observed.publisherGeneration
-          && admitted.every(entry => current.observations.some(observation => 'kind' in observation
-            && observation.kind === 'admitted_run_input' && observation.destinationSessionId === input.session.sessionId
-            && observation.disposition !== 'withdrawn'
-            && observation.localInputId === entry.localInputId && sameStrictJsonValue(observation.delivery, entry.delivery)));
+          && admitted.every(entry => {
+            const observation = currentRuns?.get(entry.localInputId);
+            const worker = runWorkersByInput.get(entry.localInputId);
+            return observation !== undefined && observation.disposition !== 'withdrawn'
+              && selectsRunIntake(observation.effectiveDelivery) && sameStrictJsonValue(observation.delivery, entry.delivery)
+              && (!worker || sameStrictJsonValue(observation.workerUpdate, worker));
+          });
       },
       acknowledgeAccepted: (acceptance, pendingSettlement) => {
         sessions?.acknowledgeAccepted(acceptance, pendingSettlement);

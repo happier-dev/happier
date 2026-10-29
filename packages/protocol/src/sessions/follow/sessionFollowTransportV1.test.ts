@@ -17,6 +17,8 @@ import {
   SessionFollowPendingObservationV1Schema,
   SessionFollowRunOccurrenceRoutesRequestV1Schema,
   SessionFollowRunOccurrenceRoutesResponseV1Schema,
+  SessionFollowRunOccurrenceRoutesQueryV1Schema,
+  SessionFollowWakeObservationV1Schema,
 } from './sessionFollowTransportV1.js';
 
 const frontier = { transcriptSeq: 1, readyEventSeq: 2, agentStateVersion: 3, turn: null } as const;
@@ -27,6 +29,50 @@ const wakeObservations = [{ policy: { preset: 'everything' as const },
 }] as const;
 
 describe('Session Follow socket transport V1', () => {
+  it('carries only an aggregate admitted rule decision through no-original observation, wake and ACK', () => {
+    const delivered = { transcriptSeq: 0, readyEventSeq: 0, agentStateVersion: 0, turn: null };
+    const observed = { ...delivered, turn: { id: 'live-turn', status: 'stalled' } };
+    const route = { relation: 'rule', effectiveDelivery: 'wake', presence: { turnId: 'live-turn', publisherFence: 42 } };
+    const observation = { sourceSessionId: 'source', destinationSessionId: 'receiver', delivered, observed, ...route };
+    const wake = { sourceSessionId: 'source', expected: delivered, consumed: observed, ...route };
+    const ack = { v: 1, destinationSessionId: 'receiver', sourceSessionId: 'source', expectedPublisherGeneration: '1',
+      expected: delivered, observed, consumed: observed, ...route,
+      acceptance: { kind: 'context_only_wake', eventLocalId: 'session-follow-wake:accepted', observations: [wake] } };
+    expect(SessionFollowPendingObservationV1Schema.parse(observation)).toEqual(observation);
+    expect(SessionFollowWakeObservationV1Schema.parse(wake)).toEqual(wake);
+    expect(SessionFollowAcknowledgeRequestV1Schema.parse(ack)).toEqual(ack);
+    for (const privateFields of [{ ruleId: 'secret' }, { ruleVersion: 2 }, { sources: [] }, { policy: { preset: 'important' } }]) {
+      expect(SessionFollowPendingObservationV1Schema.safeParse({ ...observation, ...privateFields }).success).toBe(false);
+      expect(SessionFollowWakeObservationV1Schema.safeParse({ ...wake, ...privateFields }).success).toBe(false);
+      expect(SessionFollowAcknowledgeRequestV1Schema.safeParse({ ...ack, ...privateFields }).success).toBe(false);
+    }
+    const identity = deriveSessionFollowWakeEventLocalIdV1({ destinationSessionId: 'receiver', publisherGeneration: '1',
+      observations: [SessionFollowWakeObservationV1Schema.parse(wake)] });
+    expect(deriveSessionFollowWakeEventLocalIdV1({ destinationSessionId: 'receiver', publisherGeneration: '1',
+      observations: [SessionFollowWakeObservationV1Schema.parse({ ...wake, presence: { ...route.presence, publisherFence: 43 } })] }))
+      .not.toBe(identity);
+  });
+  it('carries an optional content-free target only on an unavailable Run refusal', () => {
+    const refusal = { ok: false, v: 1, error: 'source_unavailable' };
+    expect(SessionFollowRunOccurrenceRoutesResponseV1Schema.safeParse(refusal).success).toBe(true);
+    expect(SessionFollowRunOccurrenceRoutesResponseV1Schema.safeParse({ ...refusal, targetMachineId: 'target-machine' }).success).toBe(true);
+    expect(SessionFollowRunOccurrenceRoutesResponseV1Schema.safeParse({ ...refusal, targetMachineId: '' }).success).toBe(false);
+    expect(SessionFollowRunOccurrenceRoutesResponseV1Schema.safeParse({ ...refusal, error: 'forbidden', targetMachineId: 'target-machine' }).success).toBe(false);
+    expect(SessionFollowRunOccurrenceRoutesResponseV1Schema.safeParse({ ...refusal, targetMachineId: 'target-machine', payload: 'private' }).success).toBe(false);
+  });
+  it('keeps the target opt-in and closed release diagnostics outside the strict Run body', () => {
+    const body = { v: 1, source: { kind: 'execution_run', sessionId: 'parent', runId: 'run' } };
+    expect(SessionFollowRunOccurrenceRoutesRequestV1Schema.parse(body)).toEqual(body);
+    expect(SessionFollowRunOccurrenceRoutesRequestV1Schema.safeParse({ ...body, releaseReason: 'target_machine' }).success).toBe(false);
+    expect(SessionFollowRunOccurrenceRoutesQueryV1Schema.parse({})).toEqual({});
+    for (const releaseReason of ['exact_run', 'target_machine', 'account_reconnect', 'full_recovery', 'legacy_broad']) {
+      const query = { includeTargetMachineId: 'true', releaseReason };
+      expect(SessionFollowRunOccurrenceRoutesQueryV1Schema.parse(query)).toEqual(query);
+    }
+    expect(SessionFollowRunOccurrenceRoutesQueryV1Schema.safeParse({ includeTargetMachineId: true }).success).toBe(false);
+    expect(SessionFollowRunOccurrenceRoutesQueryV1Schema.safeParse({ releaseReason: 'untrusted-prose' }).success).toBe(false);
+    expect(SessionFollowRunOccurrenceRoutesQueryV1Schema.safeParse({ payload: 'private' }).success).toBe(false);
+  });
   it('carries an actual live Run attention frontier through strict routes, input and source notifications', () => {
     const frontier = ExecutionRunFollowFrontierResponseSchema.parse({ sessionId: 'parent', runId: 'run-1', status: 'running',
       terminalEventId: null, attention: { kind: 'permission_required', requestIds: ['permission-1'], requests: [{ requestId: 'permission-1', createdAt: 1 }] } });
@@ -38,7 +84,7 @@ describe('Session Follow socket transport V1', () => {
     expect(RunFollowUpdateNotificationV1Schema.parse({ topic: 'follow_update', follow: produced })).toMatchObject({ follow: produced });
     expect(SessionFollowRunOccurrenceRoutesResponseV1Schema.safeParse({ ...response, event: { kind: 'finished' } }).success).toBe(false);
     expect(SessionFollowPendingObservationV1Schema.parse({ kind: 'admitted_run_input', localInputId: 'follow-input',
-      destinationSessionId: 'receiver', disposition: 'withdrawn', delivery: { v: 1, ...produced, delivery: 'wake' } }))
+      destinationSessionId: 'receiver', disposition: 'withdrawn', effectiveDelivery: null, delivery: { v: 1, ...produced, delivery: 'wake' } }))
       .toMatchObject({ disposition: 'withdrawn' });
     expect(resolveExecutionRunFollowOccurrenceV1({ ...frontier, attention: undefined })).toBeNull();
   });

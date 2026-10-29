@@ -9,11 +9,14 @@ import {
   SessionAutoFollowPreferencesV1Schema,
   SessionFollowNotificationLevelSchema,
   PersonalFollowOnceV1Schema,
+  PersonalRunFollowOnceSetV1Schema,
+  type PersonalRunFollowOnceV1,
   type PersonalFollowOnceV1,
   type SessionFollowNotificationLevel,
 } from './accountFollow.js';
 import { FollowPolicyV1Schema, type FollowPolicyV1 } from './sessionFollowPolicyV1.js';
 import { FollowListPageResultFieldsV1 } from './sessionFollowListV1.js';
+import type { FollowSourceRefV1 } from './sessionDeliveryMuteV1.js';
 
 /**
  * The closed Follow failure vocabulary. Domain failures are mapped once in the
@@ -60,6 +63,26 @@ export const ListAccountSessionFollowsResponseV1Schema = lazyZodSchema(() => z.s
 export const GetOtherAccountFollowResponseV1Schema = lazyZodSchema(() => z.strictObject({ follow: z.nullable(OtherAccountFollowV1Schema) }));
 export const SetOtherAccountFollowResponseV1Schema = lazyZodSchema(() => z.strictObject({ changed: z.boolean(), follow: OtherAccountFollowV1Schema }));
 export type ListAccountSessionFollowsResponseV1 = z.infer<typeof ListAccountSessionFollowsResponseV1Schema>;
+
+/** A Run convenience edit preserves ongoing policy unless policy is supplied. */
+export function hasOtherAccountFollowMutationV1(value: Readonly<{
+  policy?: FollowPolicyV1; once?: readonly PersonalRunFollowOnceV1[] | null; clearOnceDeliveries?: true;
+}>): boolean {
+  return value.policy !== undefined || value.once !== undefined || value.clearOnceDeliveries === true;
+}
+export function isOtherAccountFollowMutationSupportedV1(source: FollowSourceRefV1, value: Readonly<{
+  policy?: FollowPolicyV1; once?: readonly PersonalRunFollowOnceV1[] | null; clearOnceDeliveries?: true;
+}>): boolean {
+  if (source.kind === 'discussion') return value.policy !== undefined && value.once === undefined && value.clearOnceDeliveries === undefined;
+  if (source.kind === 'execution_run') return hasOtherAccountFollowMutationV1(value);
+  return source.kind === 'workflow_run' && hasOtherAccountFollowMutationV1(value)
+    && !value.once?.some(once => once.kind === 'output_ready');
+}
+export const SetOtherAccountFollowRequestV1Schema = lazyZodSchema(() => z.strictObject({
+  policy: z.optional(FollowPolicyV1Schema), once: z.optional(z.nullable(PersonalRunFollowOnceSetV1Schema)),
+  clearOnceDeliveries: z.optional(z.literal(true)),
+}).check(z.refine(hasOtherAccountFollowMutationV1, { message: 'A persistent policy or one-shot mutation is required' })));
+export type SetOtherAccountFollowRequestV1 = z.infer<typeof SetOtherAccountFollowRequestV1Schema>;
 
 /**
  * A policy edit establishes persistent Follow. A one-shot-only edit changes
@@ -121,11 +144,12 @@ export type GetSessionAutoFollowPreferencesRequest = z.infer<
 >;
 
 /**
- * Replaces the four relationship defaults and patches any supplied creation
- * policies. Omitted policies preserve saved choices; existing relations are unchanged.
+ * Replaces defaultRules (legacy top-level booleans remain readable) and patches
+ * supplied creation policies. Omitted policies preserve saved choices;
+ * existing relations are unchanged.
  */
 export const SetSessionAutoFollowPreferencesRequestSchema = lazyZodSchema(() => SessionAutoFollowPreferencesV1Schema);
-export type SetSessionAutoFollowPreferencesRequest = z.infer<
+export type SetSessionAutoFollowPreferencesRequest = z.input<
   typeof SetSessionAutoFollowPreferencesRequestSchema
 >;
 

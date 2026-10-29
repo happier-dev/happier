@@ -8,7 +8,8 @@ export function sourceKeyForSessionFollowSourceV1(source: SessionFollowSourceIde
     switch (source.kind) {
         case 'session': return `session:${source.sessionId}`;
         case 'discussion': return `discussion:${source.discussionId}`;
-        case 'execution_run': return `execution_run:${createHash('sha256').update(JSON.stringify([source.sessionId, source.runId])).digest('hex')}`;
+        case 'execution_run': return `execution_run:${createHash('sha256').update(JSON.stringify('sessionId' in source
+            ? [source.sessionId, source.runId] : ['machine', source.machineId, source.runId])).digest('hex')}`;
         case 'workflow_run': return `workflow_run:${createHash('sha256').update(JSON.stringify([source.runId])).digest('hex')}`;
     }
 }
@@ -31,15 +32,20 @@ export function sourceForSessionFollowEdgeV1(row: Readonly<{
     sourceSessionId?: string | null;
     sourceDiscussionId?: string | null;
     sourceExecutionRunSessionId: string | null;
+    sourceExecutionRunMachineId?: string | null;
     sourceExecutionRunId: string | null;
     sourceWorkflowRunId: string | null;
 }>): SessionFollowSourceIdentityV1 | null {
-    const raw = row.sourceExecutionRunSessionId !== null && row.sourceExecutionRunId !== null
+    const machineId = row.sourceExecutionRunMachineId ?? null;
+    const raw = row.sourceExecutionRunId !== null
+        && (row.sourceExecutionRunSessionId !== null) !== (machineId !== null)
         && row.sourceWorkflowRunId === null
-        ? { kind: 'execution_run' as const, sessionId: row.sourceExecutionRunSessionId, runId: row.sourceExecutionRunId }
-        : row.sourceWorkflowRunId !== null && row.sourceExecutionRunSessionId === null && row.sourceExecutionRunId === null
+        ? row.sourceExecutionRunSessionId !== null
+            ? { kind: 'execution_run' as const, sessionId: row.sourceExecutionRunSessionId, runId: row.sourceExecutionRunId }
+            : { kind: 'execution_run' as const, machineId: machineId!, runId: row.sourceExecutionRunId }
+        : row.sourceWorkflowRunId !== null && row.sourceExecutionRunSessionId === null && machineId === null && row.sourceExecutionRunId === null
             ? { kind: 'workflow_run' as const, runId: row.sourceWorkflowRunId }
-            : row.sourceExecutionRunSessionId === null && row.sourceExecutionRunId === null && row.sourceWorkflowRunId === null
+            : row.sourceExecutionRunSessionId === null && machineId === null && row.sourceExecutionRunId === null && row.sourceWorkflowRunId === null
                 ? sourceForSessionFollowSourceKeyV1(row.sourceKey) : null;
     if (!raw || sourceKeyForSessionFollowSourceV1(raw) !== row.sourceKey) return null;
     if (row.sourceSessionId !== undefined && row.sourceSessionId !== (raw.kind === 'session' ? raw.sessionId : null)) return null;

@@ -129,6 +129,7 @@ async function admitDiscussionDocSourcesInTx(tx: Tx, input: Reader & Readonly<{
 
 type ReadableDiscussionMessageGroup = Readonly<{
     discussionId: string; context: DiscussionContext; rows: readonly DiscussionMessageRow[];
+    discussion?: Pick<DiscussionRow, 'anchorV1'>;
 }>;
 type ReadableDiscussionMessages = Readonly<{
     messages: DiscussionMessageV1[]; docSources: ReadonlyMap<string, DiscussionDocSource | null>;

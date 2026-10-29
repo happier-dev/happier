@@ -37,6 +37,36 @@ describe('pendingQueueV2 decrypt mapping', () => {
         await resetPendingQueueState();
     });
 
+    it.each(['plain', 'encrypted'] as const)('reads retained terminal Follow authority through the stored Pending reader (%s)', async mode => {
+        const { OutgoingUserTextRecordSchema } = await import('@/sync/domains/messages/outgoingUserMessage');
+        const { resolvePendingMessageContentPresentation } = await import('@/components/sessions/pending/pendingMessageVisualState');
+        const sessionId = 'retained-pending-follow';
+        const encryption = await createPendingQueueEncryption({ sessionId });
+        // Redacted seq267–273 shape: the durable blocked Pending twin still owns
+        // the transcript slot. This is stored authority, not a new input request.
+        const follow = { v: 1, delivery: 'next_turn', original: { sourceSessionId: 'worker',
+            sourceMessage: { localId: 'terminal', seq: 7 } }, event: { kind: 'finished' } } as const;
+        const rawRecord = { role: 'user', content: { type: 'text', text: 'Synthetic Follow instructions' }, meta: {
+            happierProvenanceV1: { v: 1, kind: 'host', producer: 'sessionAction' },
+            happierInputAuthorityV1: { v: 1, producer: 'sessionAction', caller: { kind: 'host' },
+                permission: { admittedPermissionCeiling: 'default' }, followDeliveryV1: follow },
+        } } as const;
+        expect(OutgoingUserTextRecordSchema.safeParse(rawRecord).success).toBe(false);
+        const content = mode === 'plain' ? { t: 'plain', v: rawRecord } : { t: 'encrypted',
+            c: await encryptRawRecordForPending({ encryption, sessionId, rawRecord }) };
+        await fetchAndApplyPendingMessagesV2({ sessionId, encryption,
+            request: async () => Response.json({ pending: [{ localId: 'follow-original:retained', messageRole: 'user',
+                content, hostFollowInput: follow, status: 'queued', deliveryState: 'blocked', deliveryBlockedReason: 'host_retired_before_dispatch',
+                position: 0, createdAt: 1, updatedAt: 1 }] }) });
+        const message = storage.getState().sessionPending[sessionId]?.messages[0];
+        expect(message).toMatchObject({ text: rawRecord.content.text, source: 'server_pending',
+            pendingDeliveryStatus: 'blocked', pendingDeliveryBlockedReason: 'host_retired_before_dispatch', pendingHostFollowInput: follow });
+        expect(message).not.toHaveProperty('pendingDecryptFailure');
+        expect(message).toBeDefined();
+        expect(resolvePendingMessageContentPresentation(message!)).toMatchObject({ isHostInput: true, followInput: follow });
+        expect(SessionFollowInputV1Schema.safeParse(follow).success).toBe(false);
+    });
+
     it('keeps admitted host identity separate from encrypted authored metadata and withdraws it on refresh', async () => {
         const sessionId = 'pending-host-follow';
         const encryption = await createPendingQueueEncryption({ sessionId });

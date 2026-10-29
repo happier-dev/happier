@@ -59,15 +59,19 @@ export function isSessionFollowActionHttpRequestV1(actionId: SessionFollowAction
     const body = request.body && typeof request.body === 'object' && !Array.isArray(request.body) ? request.body : {};
     const page = FollowListPageQueryV1Schema.parse({ ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
       ...(input.limit === undefined ? {} : { limit: input.limit }) });
-    if (input.source !== undefined) {
+    if (input.source !== undefined || input.sourceKinds !== undefined) {
       if (actionId !== 'follow.list' || input.sourceRef !== undefined || input.sourceSessionId !== undefined) return false;
-      const selection = parseFollowListQueryV1({ ...page, source: input.source });
+      const selection = parseFollowListQueryV1({ ...page,
+        ...(input.source === undefined ? {} : { source: input.source }),
+        ...(input.sourceKinds === undefined ? {} : { sourceKinds: input.sourceKinds }) });
       const destinationSessionId = input.destinationSessionId;
       if (destinationSessionId !== undefined && (typeof destinationSessionId !== 'string' || request.sessionRouteSessionId !== destinationSessionId)
         || destinationSessionId === undefined && request.sessionRouteSessionId !== undefined) return false;
       const receiver = typeof destinationSessionId === 'string' ? { kind: 'session', sessionId: destinationSessionId } : { kind: 'account' };
       return matches(resolveSessionFollowActionRequest('follow.list', { direction: 'following', receiver, ...selection }),
-        { ...page, source: input.source, ...(destinationSessionId === undefined ? {} : { destinationSessionId }) });
+        { ...page, ...(input.source === undefined ? {} : { source: input.source }),
+          ...(input.sourceKinds === undefined ? {} : { sourceKinds: input.sourceKinds }),
+          ...(destinationSessionId === undefined ? {} : { destinationSessionId }) });
     }
     if (input.sourceRef !== undefined) {
       if (typeof input.sourceRef !== 'string') return false;
@@ -178,6 +182,11 @@ export function resolveSessionFollowActionRequest(actionId: SessionFollowActionI
   path: string; method: 'GET' | 'PUT' | 'DELETE'; body?: Record<string, unknown>;
 }> {
   const data: Record<string, unknown> = SessionFollowActionInputSchemasV1[actionId].parse(input);
+  if (actionId === 'follow.preferences.set') {
+    const { assigned, direct, team, group, ...policies } = data;
+    return { method: 'PUT', path: SESSION_FOLLOW_HTTP_PATHS_V1.preferences,
+      body: { defaultRules: { assigned, direct, team, group }, ...policies } };
+  }
   if (actionId === 'follow.preview') throw new Error('follow_preview_requires_authorized_corpus');
   if (actionId === 'follow.list') {
     const page = FollowListPageRequestV1Schema.parse({ cursor: data.cursor, limit: data.limit });
@@ -192,7 +201,7 @@ export function resolveSessionFollowActionRequest(actionId: SessionFollowActionI
     const receiver = FollowReceiverRefV1Schema.parse(data.receiver);
     return { method: 'GET', path: appendFollowListPageQueryV1(receiver.kind === 'account' ? '/v2/account/session-follows'
       : SESSION_FOLLOW_SOURCES_HTTP_PATHS_V1.list.replace(':destinationSessionId', encodeURIComponent(receiver.sessionId)),
-      FollowListRequestV1Schema.parse({ ...page, source: data.source })) };
+      FollowListRequestV1Schema.parse({ ...page, source: data.source, sourceKinds: data.sourceKinds })) };
   }
   if (actionId === 'follow.get' || actionId === 'follow.set' || actionId === 'follow.remove') {
     const receiver = FollowReceiverRefV1Schema.parse(data.receiver);
@@ -209,7 +218,9 @@ export function resolveSessionFollowActionRequest(actionId: SessionFollowActionI
       const base = receiver.kind === 'account' ? SESSION_FOLLOW_HTTP_PATHS_V1.otherSource
         : SESSION_FOLLOW_SOURCES_HTTP_PATHS_V1.otherSource.replace(':destinationSessionId', encodeURIComponent(receiver.sessionId));
       return { path: appendFollowSourceRefQueryV1(base, FollowSourceRefV1Schema.parse(source)), method,
-        ...(method === 'PUT' ? { body: { policy: data.policy } } : {}) };
+        ...(method === 'PUT' ? { body: { ...(data.policy !== undefined ? { policy: data.policy } : {}),
+          ...(data.once !== undefined ? { once: data.once } : {}),
+          ...(data.clearOnceDeliveries === true ? { clearOnceDeliveries: true } : {}) } } : {}) };
     }
     if (receiver.kind === 'account') return {
       path: SESSION_FOLLOW_HTTP_PATHS_V1.follow.replace(':sessionId', encodeURIComponent(String(source.sessionId))), method,

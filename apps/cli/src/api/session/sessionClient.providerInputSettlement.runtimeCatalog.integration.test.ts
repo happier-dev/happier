@@ -231,7 +231,7 @@ describe('ApiSessionClient provider-input settlement', () => {
       if (event === SESSION_FOLLOW_OBSERVE_PENDING_EVENT_V1) return { ok: true, v: 1, sessionId: 's1',
         publisherGeneration: '1', currentSourceSessionIds: detached || unavailable ? [] : ['source'], observations: !detached && !unavailable && pending.get(localId) === 'delivering' ? [{
           kind: 'admitted_input', localInputId: localId, delivery, sourceSessionId: 'source', destinationSessionId: 's1',
-          delivered: { ...observed, agentStateVersion: 0 }, observed,
+          delivered: { ...observed, agentStateVersion: 0 }, observed, effectiveDelivery: delivery.delivery,
         }] : [] };
       if (event === 'session-pending-admission-settlement-v1') {
         const input = SessionPendingAdmissionSettlementRequestV1Schema.parse(payload);

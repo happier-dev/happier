@@ -2,11 +2,12 @@ import { isPublicSessionShareActive } from "@/app/share/publicSessionSharePublic
 import type { Tx } from "@/storage/inTx";
 import {
     listCurrentSessionAudienceAccountsInTx,
-    resolveEffectiveSessionAccess,
     resolveEffectiveSessionAccessForSessionsInTx,
     resolveStructuralSessionAccess,
     resolveStructuralSessionAccessForAccountsInTx,
+    resolveStructuralSessionAccessForSessionsInTx,
 } from "./sessionAccess";
+import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import { resolveCurrentSessionRecipientAccountIdsBySessionInTx } from "./sessionRecipients";
 import type { SessionAccessAuthentication } from "./sessionAccessAuthentication";
 import type { VerifiedEphemeralSessionRunnerPrincipal } from "@happier-dev/protocol/ephemeralRunner/principal";
@@ -35,13 +36,34 @@ export async function mayInjectResourceContextInTx(tx: Tx, input: Readonly<{
     source: ContextDisclosureResource;
     destination: ContextDisclosureResource;
 }>): Promise<ResourceContextInjectionDecision> {
+    return evaluateResourceContextInTx(tx, { source: input.source, destination: input.destination,
+        configurer: { accountId: input.configuringAccountId, authentication: input.authentication } });
+}
+
+/** Re-admit an existing binding after its caller has separately admitted the operation.
+ * Like the Session-only transition entry point, this does not require fresh target control. */
+export async function evaluateCurrentResourceContextPairInTx(tx: Tx, input: Readonly<{
+    source: ContextDisclosureResource;
+    destination: ContextDisclosureResource;
+}>): Promise<ResourceContextInjectionDecision> {
+    return evaluateResourceContextInTx(tx, input);
+}
+
+async function evaluateResourceContextInTx(tx: Tx, input: Readonly<{
+    source: ContextDisclosureResource;
+    destination: ContextDisclosureResource;
+    configurer?: Readonly<{ accountId: string; authentication: SessionAccessAuthentication }>;
+}>): Promise<ResourceContextInjectionDecision> {
     // A content disclosure can use its own Session as destination (for example
     // its trusted Discussion publisher). Follow self-links remain forbidden by
     // the Follow entry point; same-Session content still checks all facts below.
     if (input.source.kind === 'session' && input.destination.kind === 'session'
         && input.source.sessionId !== input.destination.sessionId) {
-        const decision = await mayInjectSessionContextInTx(tx, { configuringAccountId: input.configuringAccountId,
-            authentication: input.authentication, sourceSessionId: input.source.sessionId, destinationSessionId: input.destination.sessionId });
+        const pair = { sourceSessionId: input.source.sessionId, destinationSessionId: input.destination.sessionId };
+        const decision = input.configurer
+            ? await mayInjectSessionContextInTx(tx, { ...pair, configuringAccountId: input.configurer.accountId,
+                authentication: input.configurer.authentication })
+            : await evaluateCurrentSessionContextPairInTx(tx, pair);
         return decision.ok ? { ok: true } : decision;
     }
     const sourceSessionId = input.source.kind === 'session' ? input.source.sessionId : null;
@@ -58,22 +80,25 @@ export async function mayInjectResourceContextInTx(tx: Tx, input: Readonly<{
     if ((input.source.kind === 'resource' ? !sourceResource : !sourceSession)
         || (input.destination.kind === 'resource' ? !destinationResource : !destinationSession)) return { ok: false, reason: 'unavailable' };
 
-    const configuringSessionAccess = await resolveEffectiveSessionAccessForSessionsInTx(tx, {
-        accountId: input.configuringAccountId, sessionIds, authentication: input.authentication,
-    });
-    const [sourceAccess, destinationAccess] = await Promise.all([
-        input.source.kind === 'resource' ? input.source.adapter.resolveConfigurerAccessInTx(tx, {
-            resourceId: input.source.resourceId, actorAccountId: input.configuringAccountId, authentication: input.authentication,
-        }) : null,
-        input.destination.kind === 'resource' ? input.destination.adapter.resolveConfigurerAccessInTx(tx, {
-            resourceId: input.destination.resourceId, actorAccountId: input.configuringAccountId, authentication: input.authentication,
-        }) : null,
-    ]);
-    const configurerMayRead = sourceResource ? sourceAccess !== null
-        : sourceSession !== undefined && configuringSessionAccess.get(sourceSession.id)?.capabilities.readTranscript === true;
-    const configurerMayWrite = destinationResource ? destinationAccess !== null && destinationAccess.level !== 'view'
-        : destinationSession !== undefined && configuringSessionAccess.get(destinationSession.id)?.capabilities.submitAgentInput === true;
-    if (!configurerMayRead || !configurerMayWrite) return { ok: false, reason: 'configurer_not_allowed' };
+    if (input.configurer) {
+        const { accountId, authentication } = input.configurer;
+        const configuringSessionAccess = await resolveEffectiveSessionAccessForSessionsInTx(tx, {
+            accountId, sessionIds, authentication,
+        });
+        const [sourceAccess, destinationAccess] = await Promise.all([
+            input.source.kind === 'resource' ? input.source.adapter.resolveConfigurerAccessInTx(tx, {
+                resourceId: input.source.resourceId, actorAccountId: accountId, authentication,
+            }) : null,
+            input.destination.kind === 'resource' ? input.destination.adapter.resolveConfigurerAccessInTx(tx, {
+                resourceId: input.destination.resourceId, actorAccountId: accountId, authentication,
+            }) : null,
+        ]);
+        const configurerMayRead = sourceResource ? sourceAccess !== null
+            : sourceSession !== undefined && configuringSessionAccess.get(sourceSession.id)?.capabilities.readTranscript === true;
+        const configurerMayWrite = destinationResource ? destinationAccess !== null && destinationAccess.level !== 'view'
+            : destinationSession !== undefined && configuringSessionAccess.get(destinationSession.id)?.capabilities.submitAgentInput === true;
+        if (!configurerMayRead || !configurerMayWrite) return { ok: false, reason: 'configurer_not_allowed' };
+    }
 
     const audience = destinationResource ? resolveResourceGrantAudienceFromFacts(destinationResource)
         : destinationSession ? (await resolveCurrentSessionRecipientAccountIdsBySessionInTx(tx, { sessionIds: [destinationSession.id] }))
@@ -138,25 +163,16 @@ function evaluateContextDisclosurePair(facts: Readonly<{
     return { ok: true };
 }
 
-/** Pairwise policy over transaction-loaded custody, separate from the author. */
+/** Structural access transitions have no request credential to qualify. */
 async function evaluateSessionContextPairInTx(
     tx: Tx,
     sourceSessionId: string,
     destination: DestinationSession,
-    admission:
-        | Readonly<{ kind: "content_free_structural_authoring" }>
-        | Readonly<{ kind: "runtime_principal"; authentication: SessionAccessAuthentication }>,
 ): Promise<SessionContextInjectionDecision> {
-    const runtimeAccess = admission.kind === "runtime_principal"
-        ? await resolveEffectiveSessionAccess(tx, {
-            accountId: destination.accountId,
-            sessionId: sourceSessionId,
-            authentication: admission.authentication,
-        })
-        : await resolveStructuralSessionAccess(tx, {
-            accountId: destination.accountId,
-            sessionId: sourceSessionId,
-        });
+    const runtimeAccess = await resolveStructuralSessionAccess(tx, {
+        accountId: destination.accountId,
+        sessionId: sourceSessionId,
+    });
     const custody = evaluateSessionContextPair(destination, {
         runtimeMayReadSource: runtimeAccess?.capabilities.readTranscript === true,
         audienceMayReadSource: true,
@@ -218,7 +234,6 @@ export async function evaluateCurrentSessionContextPairInTx(
         tx,
         source.id,
         destination,
-        { kind: "content_free_structural_authoring" },
     );
 }
 
@@ -236,10 +251,86 @@ export async function mayInjectSessionContextInTx(
         authentication: SessionAccessAuthentication;
     }>,
 ): Promise<SessionContextInjectionDecision> {
-    const decisions = await mayInjectSessionContextForDestinationsInTx(tx, {
-        ...input, destinationSessionIds: [input.destinationSessionId],
+    const decisions = await mayInjectSessionContextForSourcesInTx(tx, {
+        ...input, sourceSessionIds: [input.sourceSessionId],
     });
-    return decisions.get(input.destinationSessionId)!;
+    return decisions.get(input.sourceSessionId)!;
+}
+
+/** One destination's current custody and complete audience, shared by its source set. */
+async function readSessionContextSourcesInTx(tx: Tx, input: Readonly<{
+    sourceSessionIds: readonly string[];
+    destinationSessionId: string;
+    admission:
+        | Readonly<{ kind: 'authoring'; accountId: string; authentication: SessionAccessAuthentication }>
+        | Readonly<{ kind: 'runtime'; principal: SessionFollowRuntimePrincipalV1 }>;
+}>): Promise<ReadonlyMap<string, SessionContextInjectionDecision>> {
+    const decisions = new Map<string, SessionContextInjectionDecision>();
+    const requestedIds = [...new Set(input.sourceSessionIds)];
+    if (requestedIds.includes(input.destinationSessionId)) decisions.set(input.destinationSessionId, { ok: false, reason: 'same_session' });
+    const sourceIds = requestedIds.filter(id => id !== input.destinationSessionId);
+    if (!sourceIds.length) return decisions;
+    const sessions: DestinationSession[] = [];
+    // Session ids plus Prisma's OFFSET bind stay below the portable provider boundary.
+    for (const ids of portableQueryChunks({ values: [...sourceIds, input.destinationSessionId], bindingsPerValue: 1, fixedBindings: 1 })) {
+        sessions.push(...await tx.session.findMany({ where: { id: { in: [...ids] } },
+            select: { id: true, accountId: true, publicShare: { select: { expiresAt: true } } } }));
+    }
+    const byId = new Map(sessions.map(session => [session.id, session]));
+    const destination = byId.get(input.destinationSessionId);
+    const accountId = input.admission.kind === 'authoring' ? input.admission.accountId
+        : input.admission.principal.kind === 'destination_runtime'
+            ? input.admission.principal.destinationRuntimeAccountId : input.admission.principal.accountId;
+    if (!destination || input.admission.kind === 'runtime' && destination.accountId !== accountId) {
+        for (const id of sourceIds) decisions.set(id, { ok: false, reason: !destination || !byId.has(id)
+            ? 'unavailable' : 'destination_runtime_not_allowed' });
+        return decisions;
+    }
+    const authentication = input.admission.kind === 'authoring' ? input.admission.authentication
+        : await resolveSessionFollowRuntimePrincipalAuthenticationInTx(tx, input.admission.principal);
+    const access = await resolveEffectiveSessionAccessForSessionsInTx(tx, {
+        accountId, authentication, sessionIds: input.admission.kind === 'authoring'
+            ? sessions.map(session => session.id) : sourceIds.filter(id => byId.has(id)),
+    });
+    const admittedIds: string[] = [];
+    for (const id of sourceIds) {
+        if (!byId.has(id)) decisions.set(id, { ok: false, reason: 'unavailable' });
+        else if (input.admission.kind === 'authoring'
+            && (access.get(id)?.capabilities.readTranscript !== true || access.get(destination.id)?.capabilities.submitAgentInput !== true)) {
+            decisions.set(id, { ok: false, reason: 'configurer_not_allowed' });
+        } else admittedIds.push(id);
+    }
+    if (!admittedIds.length) return decisions;
+    const audience = (await resolveCurrentSessionRecipientAccountIdsBySessionInTx(tx, { sessionIds: [destination.id] })).get(destination.id) ?? [];
+    const sourceAccess = await resolveStructuralSessionAccessForSessionsInTx(tx, {
+        sessionIds: admittedIds, accountIds: [...new Set([destination.accountId, ...audience])],
+    });
+    for (const id of admittedIds) {
+        const structural = sourceAccess.get(id);
+        decisions.set(id, evaluateSessionContextPair(destination, {
+            runtimeMayReadSource: input.admission.kind === 'runtime'
+                ? access.get(id)?.capabilities.readTranscript === true
+                : structural?.get(destination.accountId)?.capabilities.readTranscript === true,
+            audienceMayReadSource: audience.every(account => structural?.get(account)?.capabilities.readTranscript === true),
+        }));
+    }
+    return decisions;
+}
+
+/** Source-major authoring uses the same credential and disclosure decisions as a point read. */
+export async function mayInjectSessionContextForSourcesInTx(tx: Tx, input: Readonly<{
+    configuringAccountId: string; sourceSessionIds: readonly string[]; destinationSessionId: string;
+    authentication: SessionAccessAuthentication;
+}>): Promise<ReadonlyMap<string, SessionContextInjectionDecision>> {
+    return readSessionContextSourcesInTx(tx, { ...input,
+        admission: { kind: 'authoring', accountId: input.configuringAccountId, authentication: input.authentication } });
+}
+
+/** Current transaction-loaded Follow source ids; no per-edge audience census or retained verdict. */
+export async function assertSessionFollowSourceReadsInTx(tx: Tx, input: Readonly<{
+    principal: SessionFollowRuntimePrincipalV1; sourceSessionIds: readonly string[]; destinationSessionId: string;
+}>): Promise<ReadonlyMap<string, SessionContextInjectionDecision>> {
+    return readSessionContextSourcesInTx(tx, { ...input, admission: { kind: 'runtime', principal: input.principal } });
 }
 
 /** Authoring page admission shares source facts and the complete canonical audience census. */
@@ -327,24 +418,10 @@ export async function assertSessionFollowSourceReadInTx(
     if (input.sourceSessionId !== input.edge.sourceSessionId) {
         return { ok: false, reason: "unavailable" };
     }
-    const sessions = await tx.session.findMany({
-        where: { id: { in: [input.edge.sourceSessionId, input.edge.destinationSessionId] } },
-        select: { id: true, accountId: true, publicShare: { select: { expiresAt: true } } },
+    const decisions = await assertSessionFollowSourceReadsInTx(tx, {
+        principal: input.principal, sourceSessionIds: [input.sourceSessionId], destinationSessionId: input.edge.destinationSessionId,
     });
-    const source = sessions.find(({ id }) => id === input.edge.sourceSessionId);
-    const destination = sessions.find(({ id }) => id === input.edge.destinationSessionId);
-    if (!source || !destination) return { ok: false, reason: "unavailable" };
-    const destinationRuntimeAccountId = input.principal.kind === "destination_runtime"
-        ? input.principal.destinationRuntimeAccountId
-        : input.principal.accountId;
-    if (destination.accountId !== destinationRuntimeAccountId) {
-        return { ok: false, reason: "destination_runtime_not_allowed" };
-    }
-    const authentication = await resolveSessionFollowRuntimePrincipalAuthenticationInTx(tx, input.principal);
-    return await evaluateSessionContextPairInTx(tx, source.id, destination, {
-        kind: "runtime_principal",
-        authentication,
-    });
+    return decisions.get(input.sourceSessionId)!;
 }
 
 /**

@@ -146,7 +146,7 @@ describe('restricted Follow source-key receiver', () => {
         currentSourceSessionIds: edgeIsCurrent ? ['source'] : [],
         observations: edgeIsCurrent
           ? [SessionFollowAdmittedInputObservationV1Schema.parse({ kind: 'admitted_input', localInputId: 'accepted-input',
-            sourceSessionId: 'source', destinationSessionId: 'destination', delivered, observed, delivery })]
+            sourceSessionId: 'source', destinationSessionId: 'destination', delivered, observed, delivery, effectiveDelivery: delivery.delivery })]
           : [],
       })),
       acknowledgeSessionFollow,

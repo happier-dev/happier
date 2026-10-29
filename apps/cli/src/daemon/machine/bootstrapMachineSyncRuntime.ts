@@ -1717,7 +1717,7 @@ export async function bootstrapMachineSyncRuntime(
           // predicate owner. Their own destination/reconnect recovery stays broad.
           const selected = await params.dispatchSessionFollowOccurrence?.({ sourceSessionIdChanged: sourceSessionId,
             contextSessionId: sessionId });
-          if (!selected || !('coveredEvents' in selected) || !selected.receiverSessionIds?.includes(sessionId)
+          if (!selected || !('receiverSessionIds' in selected) || !selected.receiverSessionIds.includes(sessionId)
             || !await isCurrent()) return;
         }
         const installation = readInstallationIdentityIfExistsSync();
@@ -1787,9 +1787,9 @@ export async function bootstrapMachineSyncRuntime(
         // receiver identities from the installed Account's existing cache;
         // every destination still proves its exact Home/Machine admission.
         const rules = await params.dispatchSessionFollowOccurrence?.({ sourceSessionIdChanged: change.sessionId });
-        const receivers = [...new Set(rules && 'coveredEvents' in rules ? rules.receiverSessionIds ?? [] : [])].filter(sessionId => sessionId !== change.sessionId);
-        const results = await Promise.allSettled([reconcileFollowReceiver(change.sessionId),
-          ...receivers.map(sessionId => reconcileFollowReceiver(sessionId, change.sessionId))]);
+        const receivers = [...new Set(rules && 'receiverSessionIds' in rules ? rules.receiverSessionIds : [])];
+        const results = await Promise.allSettled(receivers.map(sessionId => reconcileFollowReceiver(sessionId,
+          sessionId === change.sessionId ? undefined : change.sessionId)));
         const rejected = results.find(result => result.status === 'rejected');
         if (rejected?.status === 'rejected') throw rejected.reason;
       });

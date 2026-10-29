@@ -125,6 +125,22 @@ export const WorkerUpdateV1Schema = lazyZodSchema(() => z.discriminatedUnion('wo
 })));
 export type WorkerUpdateV1 = z.infer<typeof WorkerUpdateV1Schema>;
 
+/** One terminal Run projection for retained parent reports and content-free Follow outcomes. */
+export function composeExecutionRunWorkerUpdateV1(input: Readonly<{
+  runId: string;
+  sessionId: string;
+  status: Extract<WorkerUpdateV1, { workerKind: 'execution_run' }>['ownerState'];
+  canInspect: boolean;
+}> & Partial<Pick<Extract<WorkerUpdateV1, { workerKind: 'execution_run' }>,
+  'result' | 'deliverables' | 'truncated' | 'engine' | 'runtimeIssueV1'>>): WorkerUpdateV1 {
+  const { runId, sessionId, status, ...content } = input;
+  return WorkerUpdateV1Schema.parse({ v: 1, workerKind: 'execution_run', workerId: runId,
+    ownerState: status, wake: resolveWorkerUpdateWakeV1(classifyWorkerUpdateEventV1({ workerKind: 'execution_run', ownerState: status })!),
+    headline: `Background run ${status}`,
+    transcriptPointer: { kind: 'execution_run', sessionId, runId }, ...content,
+  });
+}
+
 /** Compact presentation facts; result bodies and references stay with their transcript row. */
 export type WorkerUpdateHeadlineFactsV1 = {
   [Kind in WorkerUpdateV1['workerKind']]: Pick<Extract<WorkerUpdateV1, { workerKind: Kind }>,

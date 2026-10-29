@@ -2130,6 +2130,7 @@ model AccountSessionFollow {
     sourceKey String? @db.VarChar(202)
     sourceDiscussionId String?
     sourceExecutionRunSessionId String?
+    sourceExecutionRunMachineId String?
     sourceExecutionRunId String?
     sourceWorkflowRunId String?
     deliveredDiscussionSeq Int?
@@ -2150,6 +2151,7 @@ model AccountSessionFollow {
     session Session? @relation(fields: [sessionId], references: [id], onDelete: Cascade)
     sourceDiscussion Discussion? @relation("AccountFollowDiscussionSource", fields: [sourceDiscussionId], references: [id], onDelete: Cascade)
     sourceExecutionRunSession Session? @relation("AccountFollowExecutionRunSource", fields: [sourceExecutionRunSessionId], references: [id], onDelete: Cascade)
+    sourceExecutionRunMachine Machine? @relation("AccountFollowExecutionRunMachineSource", fields: [sourceExecutionRunMachineId], references: [id], onDelete: Cascade)
     sourceWorkflowRun AutomationRun? @relation("AccountFollowWorkflowRunSource", fields: [sourceWorkflowRunId], references: [id], onDelete: Cascade)
 
     @@unique([accountId, sessionId])
@@ -2157,6 +2159,7 @@ model AccountSessionFollow {
     @@index([sessionId])
     @@index([sourceDiscussionId])
     @@index([sourceExecutionRunSessionId])
+    @@index([sourceExecutionRunMachineId])
     @@index([sourceWorkflowRunId])
 }
 
@@ -2180,6 +2183,7 @@ model SessionFollowEdge {
     sourceSessionId      String?
     sourceDiscussionId   String?
     sourceExecutionRunSessionId String?
+    sourceExecutionRunMachineId String?
     sourceExecutionRunId String?
     sourceWorkflowRunId String?
     destinationSessionId String
@@ -2202,6 +2206,7 @@ model SessionFollowEdge {
     sourceSession      Session? @relation("SessionFollowSource", fields: [sourceSessionId], references: [id], onDelete: Cascade)
     sourceDiscussion   Discussion? @relation("DiscussionFollowSource", fields: [sourceDiscussionId], references: [id], onDelete: Cascade)
     sourceExecutionRunSession Session? @relation("ExecutionRunFollowSource", fields: [sourceExecutionRunSessionId], references: [id], onDelete: Cascade)
+    sourceExecutionRunMachine Machine? @relation("ExecutionRunMachineFollowSource", fields: [sourceExecutionRunMachineId], references: [id], onDelete: Cascade)
     sourceWorkflowRun AutomationRun? @relation("WorkflowRunFollowSource", fields: [sourceWorkflowRunId], references: [id], onDelete: Cascade)
     destinationSession Session @relation("SessionFollowDestination", fields: [destinationSessionId], references: [id], onDelete: Cascade)
 
@@ -2211,6 +2216,7 @@ model SessionFollowEdge {
     @@index([sourceSessionId])
     @@index([sourceDiscussionId])
     @@index([sourceExecutionRunSessionId, sourceExecutionRunId], map: "SessionFollowEdge_executionRunSource_idx")
+    @@index([sourceExecutionRunMachineId, sourceExecutionRunId], map: "SessionFollowEdge_executionRunMachineSource_idx")
     @@index([sourceWorkflowRunId])
 }
 
@@ -2522,6 +2528,8 @@ enum MachineKind {
 }
 
 model Machine {
+    accountExecutionRunFollowSources AccountSessionFollow[] @relation("AccountFollowExecutionRunMachineSource")
+    sessionExecutionRunFollowSources SessionFollowEdge[] @relation("ExecutionRunMachineFollowSource")
     accountGrants MachineAccountGrant[]
     teamGrants MachineTeamGrant[]
     groupGrants MachineGroupGrant[]

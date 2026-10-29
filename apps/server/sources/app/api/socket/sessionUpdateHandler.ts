@@ -806,8 +806,9 @@ export function sessionUpdateHandler(
                         : await acknowledgeSessionFollowFrontierInTx(tx, {
                             principal,
                             destinationSessionId, sourceSessionId: request.data.sourceSessionId,
-                            policy: request.data.policy,
-                            relation: request.data.relation, attachedAt: request.data.attachedAt,
+                            ...(request.data.relation === 'rule' ? { relation: request.data.relation,
+                                effectiveDelivery: request.data.effectiveDelivery, presence: request.data.presence }
+                                : { policy: request.data.policy, relation: request.data.relation, attachedAt: request.data.attachedAt }),
                             expectedPublisherGeneration: BigInt(request.data.expectedPublisherGeneration),
                             expected: request.data.expected, observed: request.data.observed, consumed: request.data.consumed,
                             acceptance: request.data.acceptance,

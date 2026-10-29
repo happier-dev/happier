@@ -1,4 +1,4 @@
-import { GetOtherAccountFollowResponseV1Schema, SetOtherAccountFollowResponseV1Schema, GetSessionFollowResponseSchema, SetSessionFollowRequestSchema, SetSessionFollowResponseSchema, RemoveSessionFollowResponseSchema, SessionFollowErrorResponseSchema, ReplaceSessionVoiceInclusionsRequestSchema, ReplaceSessionVoiceInclusionsResponseSchema, SESSION_FOLLOW_HTTP_PATHS_V1 } from '@happier-dev/protocol/sessions/follow/api';
+import { GetOtherAccountFollowResponseV1Schema, SetOtherAccountFollowRequestV1Schema, SetOtherAccountFollowResponseV1Schema, GetSessionFollowResponseSchema, SetSessionFollowRequestSchema, SetSessionFollowResponseSchema, RemoveSessionFollowResponseSchema, SessionFollowErrorResponseSchema, ReplaceSessionVoiceInclusionsRequestSchema, ReplaceSessionVoiceInclusionsResponseSchema, SESSION_FOLLOW_HTTP_PATHS_V1 } from '@happier-dev/protocol/sessions/follow/api';
 import { FollowPolicyV1Schema } from '@happier-dev/protocol/sessions/follow/sessionFollowPolicyV1';
 import { parseOtherFollowSourceRefV1 } from '@happier-dev/protocol/sessions/follow/followSourceRefTransportV1';
 import { SessionAutoFollowPreferencesV1Schema } from '@happier-dev/protocol/sessions/follow/accountFollow';
@@ -87,13 +87,14 @@ export function registerSessionFollowRoutes(app: Fastify) {
     }, async (request, reply) => {
         const query = otherSourceQuerySchema.safeParse(request.query);
         const source = query.success ? parseOtherFollowSourceRefV1(query.data.sourceRef) : null;
-        const body = z.strictObject({ policy: FollowPolicyV1Schema }).safeParse(request.body);
+        const body = SetOtherAccountFollowRequestV1Schema.safeParse(request.body);
         if (!source || !body.success) return reply.code(400).send({ error: 'invalid_parameters' });
         const authentication = readSessionAccessAuthenticationFromRequest(request);
         const executionRunFrontier = source.kind === 'execution_run'
             ? await readCurrentExecutionRunFollowSource({ app, accountId: request.userId,
-                sessionId: source.sessionId, runId: source.runId, authentication }) : null;
-        const result = await setOtherAccountFollow({ accountId: request.userId, source, policy: body.data.policy,
+                ...source, authentication,
+                outputRefs: body.data.once?.flatMap(once => once.kind === 'output_ready' ? [once.outputRef] : []) }) : null;
+        const result = await setOtherAccountFollow({ accountId: request.userId, source, ...body.data,
             authentication, ...(executionRunFrontier?.ok ? { executionRunFrontier: executionRunFrontier.value } : {}) });
         return result.ok ? reply.send(result.value) : reply.code(FAILURE_STATUS[result.error]).send({ error: result.error });
     });
@@ -116,7 +117,9 @@ export function registerSessionFollowRoutes(app: Fastify) {
         const authentication = readSessionAccessAuthenticationFromRequest(request);
         const source = 'original' in request.body ? request.body.original.source : null;
         const frontier = source?.kind === 'execution_run' ? await readCurrentExecutionRunFollowSource({ app,
-            accountId: request.userId, authentication, sessionId: source.sessionId, runId: source.runId }) : null;
+            accountId: request.userId, authentication, ...source,
+            ...('original' in request.body && 'output' in request.body.original
+                ? { outputRefs: [request.body.original.output.outputRef] } : {}) }) : null;
         const result = await acceptAccountFollowPersonalProgress({ accountId: request.userId,
             authentication, occurrence: request.body, ...(frontier?.ok ? { executionRunFrontier: frontier.value } : {}) });
         return result.ok ? reply.send(result.value) : reply.code(ruleFailureStatus[result.error]).send({ error: result.error });

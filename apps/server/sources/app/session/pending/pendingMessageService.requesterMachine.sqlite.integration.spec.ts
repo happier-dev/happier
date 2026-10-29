@@ -78,27 +78,33 @@ describe('requester Session input through the custodian Machine socket', () => {
             mutation: { receiver, content, expectedVersion: -1 } })).toMatchObject({ ok: true });
         const readyContent = { t: 'plain' as const, v: { role: 'agent', content: { type: 'event',
             data: { type: 'ready', completedTurnId: 'source-completed-turn' } } } };
+        const finalContent = { t: 'plain' as const, v: { role: 'agent', content: { type: 'text', text: 'Finished private work' } } };
+        const sourceTurn = { id: 'source-completed-turn', status: 'completed' as const };
+        const terminalAt = BigInt(Date.now());
         await db.sessionTurn.create({ data: { sessionId: source.id, turnId: 'source-completed-turn', status: 'completed',
-            startedAt: 1n, updatedAt: 2n, terminalAt: 2n, transcriptAnchorsJson: JSON.stringify({ startSeqInclusive: 1, endSeqInclusive: 1 }) } });
+            startedAt: terminalAt, updatedAt: terminalAt, terminalAt,
+            transcriptAnchorsJson: JSON.stringify({ startSeqInclusive: 1, endSeqInclusive: 3, finalAssistantMessageSeq: 2 }) } });
         await db.sessionMessage.create({ data: { sessionId: source.id, localId: 'source-start', seq: 1,
             messageRole: 'user', content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'source work' } } },
             inputAdmissionReceipt: { v: 1, issuer: 'authenticatedAccount', actorAccountId: sourceOwner.id, sessionRelationship: 'owner' },
             acceptedTurnId: 'source-completed-turn', acceptedTurnKind: 'newTurn', turnStartWitnessId: 'source-completed-turn' } });
-        const sourceMessage = { localId: 'private-ready-original', seq: 2 };
+        await db.sessionMessage.create({ data: { sessionId: source.id, localId: 'private-final-result', seq: 2,
+            messageRole: 'agent', content: finalContent } });
+        const sourceMessage = { localId: 'private-ready-original', seq: 3 };
         await db.sessionMessage.create({ data: { sessionId: source.id, ...sourceMessage,
             messageRole: 'agent', content: readyContent } });
-        await db.session.update({ where: { id: source.id }, data: { seq: 2, latestReadyEventSeq: 2,
+        await db.session.update({ where: { id: source.id }, data: { seq: 3, latestReadyEventSeq: 3,
             latestTurnId: 'source-completed-turn', latestTurnStatus: 'completed' } });
         const delivery = SessionFollowInputV1Schema.parse({ v: 1, delivery: 'next_turn', event: { kind: 'finished' },
-            original: { sourceSessionId: source.id, sourceMessage } });
+            original: { sourceSessionId: source.id, sourceTurn } });
         const localId = deriveSessionFollowInputLocalIdV1({ destinationSessionId: destination.id, original: delivery.original });
         const host = buildTrustedHostSessionInputAdmissionV1('agent');
         const token = await auth.createToken(owner.id, undefined, { kind: 'account', authority: 'present_user' });
         await withAuthenticatedTestApp(sessionPendingRoutes, async app => {
             const enqueue = await app.inject({ method: 'POST', url: `/v2/sessions/${destination.id}/pending`,
                 headers: { authorization: `Bearer ${token}` }, payload: { localId, targetMachineId: machine.id,
-                    followDeliveryV1: delivery, followSources: [{ evaluation: 'receiver', destinationSessionId: destination.id,
-                        sourceSessionId: source.id, sourceMessage, rule: { ruleId, ruleVersion: 0 } }],
+                    followDeliveryV1: delivery, followSources: [{ evaluation: 'receiver', selectedDelivery: 'next_turn', destinationSessionId: destination.id,
+                        sourceSessionId: source.id, sourceTurn, rule: { ruleId, ruleVersion: 0 } }],
                     content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'finished source' },
                         meta: withSessionInputRequestV1({ [SESSION_MESSAGE_PROVENANCE_META_KEY]: host.provenance },
                             { ...host.request, followDeliveryV1: delivery }) } } } });
@@ -136,12 +142,12 @@ describe('requester Session input through the custodian Machine socket', () => {
             const project = (inputId = localId) => inTx(tx => projectSessionFollowSourceForRunnerInTx(tx, { principal,
                 destinationSessionId: destination.id, request: SessionFollowSourceProjectionRequestV1Schema.parse({
                     v: 1, sourceSessionId: source.id, localInputId: inputId,
-                    afterTranscriptSeq: 1, observedTranscriptSeq: 2, limit: 1 }) }));
-            expect(await project()).toMatchObject({ source: { id: source.id }, messages: [{ seq: 2, content: readyContent }] });
+                    afterTranscriptSeq: 0, observedTranscriptSeq: 0, limit: 1 }) }));
+            expect(await project()).toMatchObject({ source: { id: source.id }, messages: [{ seq: 2, content: finalContent }] });
             expect(await removeAccountFollowRule({ accountId: owner.id, authentication, ruleId, receiver, expectedVersion: 0 }))
                 .toMatchObject({ ok: true });
             const projected = await project();
-            expect(projected).toMatchObject({ source: { id: source.id }, messages: [{ seq: 2, content: readyContent }] });
+            expect(projected).toMatchObject({ source: { id: source.id }, messages: [{ seq: 2, content: finalContent }] });
             expect(JSON.stringify(projected)).not.toContain(ruleId);
             expect(await project(unrelatedId)).toBeNull();
             expect(await project('missing-input')).toBeNull();
@@ -182,7 +188,7 @@ describe('requester Session input through the custodian Machine socket', () => {
             agentState: JSON.stringify({ requests: { q: { createdAt: 3, turnId: 'waiting-turn' } } }) } });
         const original = { sourceSessionId: source.id, sourceRequests: { agentStateVersion: 1,
             requests: [{ requestId: 'q', createdAt: 3, ...(scenario === 'missing_turn' ? {} : { turnId: 'waiting-turn' }) }] } };
-        const delivery = SessionFollowInputV1Schema.parse({ v: 1, original, delivery: 'next_turn',
+        const delivery = SessionFollowInputV1Schema.parse({ v: 1, original, delivery: 'wake',
             requestEvents: [{ requestId: 'q', event: { kind: 'needs_you', type: 'decision' } }] });
         const localId = deriveSessionFollowInputLocalIdV1({ destinationSessionId: destination.id, original });
         const host = buildTrustedHostSessionInputAdmissionV1('agent');
@@ -233,7 +239,7 @@ describe('requester Session input through the custodian Machine socket', () => {
             createdAt: new Date(1), messageRole: 'agent', content: { t: 'plain', v: { role: 'agent', content: [] } } } });
         await db.sessionMessage.create({ data: { sessionId: source.id, localId: 'after-rule', seq: 2,
             createdAt: new Date(inceptionCreatedAt), messageRole: 'agent', content: { t: 'plain', v: { role: 'agent', content: [] } } } });
-        const witness = { evaluation: 'receiver' as const, destinationSessionId: destination.id,
+        const witness = { evaluation: 'receiver' as const, selectedDelivery: kind === 'message' ? 'next_turn' as const : 'wake' as const, destinationSessionId: destination.id,
             sourceSessionId: source.id, rule: { ruleId: 'inception-rule', ruleVersion: 0 } };
         const admit = (original: { sourceMessage: { localId: string; seq: number } }
             | { sourceRequests: { agentStateVersion: number; requests: { requestId: string; createdAt: number }[] } }) =>
@@ -287,8 +293,12 @@ describe('requester Session input through the custodian Machine socket', () => {
         await db.sessionMessage.create({ data: { sessionId: source.id, localId: 'source-original', seq: 7, messageRole: 'agent',
             content: { t: 'plain', v: { role: 'agent', content: [] } } } });
         await db.session.update({ where: { id: source.id }, data: { seq: 7 } });
+        const terminalAt = BigInt(Date.now());
+        const sourceTurn = { id: 'source-original-turn', status: 'failed' as const };
+        await db.sessionTurn.create({ data: { sessionId: source.id, turnId: sourceTurn.id, status: sourceTurn.status,
+            startedAt: terminalAt, updatedAt: terminalAt, terminalAt } });
         const relations = SessionFollowRelationWitnessesV1Schema.parse([{ relation: 'follower' }]);
-        const original = { sourceSessionId: source.id, sourceMessage: { localId: 'source-original', seq: 7 } };
+        const original = { sourceSessionId: source.id, sourceTurn };
         const quiet = SessionFollowInputV1Schema.parse({ v: 1, original, delivery: preset === 'quiet' ? 'next_turn' : 'wake', event: { kind: 'failed_or_stopped' } });
         const important = SessionFollowInputV1Schema.parse({ ...quiet, delivery: 'wake' });
         const localId = deriveSessionFollowInputLocalIdV1({ destinationSessionId: destination.id, original });
@@ -310,7 +320,7 @@ describe('requester Session input through the custodian Machine socket', () => {
                 sessionId: destination.id, localId } } });
             expect(initialPending.inputAdmissionReceipt).toMatchObject({ followRelations: relations,
                 followDeliveryV1: quiet });
-            const sources = SessionFollowSourceOccurrenceWitnessesV1Schema.parse([{ evaluation: 'receiver',
+            const sources = SessionFollowSourceOccurrenceWitnessesV1Schema.parse([{ evaluation: 'receiver', selectedDelivery: 'wake',
                 ...original, destinationSessionId: destination.id, rule: { ruleId: 'private-rule-0', ruleVersion: 1 } }]);
             const late = await app.inject({ method: 'POST', url: `/v2/sessions/${destination.id}/pending`,
                 headers: { authorization: `Bearer ${token}` }, payload: { ...payload(important), followSources: sources } });
@@ -337,9 +347,12 @@ describe('requester Session input through the custodian Machine socket', () => {
             await db.sessionMessage.create({ data: { sessionId: source.id, localId: 'different-original', seq: 8, messageRole: 'agent',
                 content: { t: 'plain', v: { role: 'agent', content: [] } } } });
             await db.session.update({ where: { id: source.id }, data: { seq: 8 } });
-            const otherOriginal = { sourceSessionId: source.id, sourceMessage: { localId: 'different-original', seq: 8 } };
+            const otherTurn = { id: 'different-original-turn', status: 'failed' as const };
+            await db.sessionTurn.create({ data: { sessionId: source.id, turnId: otherTurn.id, status: otherTurn.status,
+                startedAt: terminalAt, updatedAt: terminalAt, terminalAt } });
+            const otherOriginal = { sourceSessionId: source.id, sourceTurn: otherTurn };
             expect((await enqueueLate({ ...payload(SessionFollowInputV1Schema.parse({ ...important, original: otherOriginal })), followSources: [{ ...sources[0],
-                sourceMessage: otherOriginal.sourceMessage }] })).statusCode).toBe(400);
+                sourceTurn: otherOriginal.sourceTurn }] })).statusCode).toBe(400);
             const publisherAuthority = { accountId: owner.id, sessionId: destination.id, machineId: machine.id, committedFence: new Date(1) };
             await db.session.update({ where: { id: destination.id }, data: { active: true, lastActiveAt: new Date(1), publisherGeneration: 1n } });
             expect(await materializeNextPendingMessage({ actorUserId: owner.id, sessionId: destination.id, publisherAuthority,
@@ -384,7 +397,7 @@ describe('requester Session input through the custodian Machine socket', () => {
                 expect(changedRetry.json()).toMatchObject({ didWrite: false });
             } else {
                 expect(changedRetry.statusCode, changedRetry.body).toBe(400);
-                expect(changedRetry.json()).toMatchObject({ admissionRejectionCode: 'session_input_idempotency_conflict' });
+                expect(changedRetry.json()).toMatchObject({ code: 'session_input_idempotency_conflict' });
             }
             expect(await resolveAcceptedPendingDelivery({ actorUserId: owner.id, sessionId: destination.id, publisherAuthority,
                 localId, acceptedTurn: { kind: 'followUp', turnId: 'accepted-original' },
@@ -431,7 +444,7 @@ describe('requester Session input through the custodian Machine socket', () => {
             content: { t: 'plain', v: { role: 'agent', content: [] } }, messageRole: 'agent' } });
         await db.session.update({ where: { id: source.id }, data: { seq: 1 } });
         const token = await auth.createToken(owner.id, undefined, { kind: 'account', authority: 'present_user' });
-        const witness = { destinationSessionId: destination.id, rule: { ruleId: 'follow-rule', ruleVersion: 0 },
+        const witness = { destinationSessionId: destination.id, selectedDelivery: 'next_turn' as const, rule: { ruleId: 'follow-rule', ruleVersion: 0 },
             sourceSessionId: source.id, expectedSourcePublisherGeneration: '1', sourceMessage: { localId: 'original-finished', seq: 1 },
             machineId: sourceMachine.id, installationId: sourceMachine.installationId! };
         const followDeliveryV1 = { v: 1, delivery: 'next_turn', original: { sourceSessionId: source.id,
@@ -546,8 +559,8 @@ describe('requester Session input through the custodian Machine socket', () => {
             agentState: JSON.stringify({ requests: { question: { createdAt: requestCreatedAt } } }) } });
         const requestInput = { accountId: owner.id, sourceMachineId: sourceMachine.id, targetMachineId: targetMachine.id,
             sessionId: destination.id, content: { t: 'plain' as const, v: { role: 'user', content: { type: 'text', text: 'question notice' } } },
-            requestedAction: { v: 1 as const, kind: 'enqueue' as const }, followSources: [{ ...witness, sourceMessage: undefined, sourceRequests }],
-            followDeliveryV1: { v: 1 as const, delivery: 'next_turn' as const, original: { sourceSessionId: source.id, sourceRequests },
+            requestedAction: { v: 1 as const, kind: 'enqueue' as const }, followSources: [{ ...witness, selectedDelivery: 'wake' as const, sourceMessage: undefined, sourceRequests }],
+            followDeliveryV1: { v: 1 as const, delivery: 'wake' as const, original: { sourceSessionId: source.id, sourceRequests },
                 requestEvents: [{ requestId: 'question', event: { kind: 'needs_you' as const, type: 'decision' as const } }] } };
         expect(await enqueuePendingMessageByAuthenticatedMachine({ ...requestInput, localId: 'request-original' }))
             .toEqual({ status: 'accepted', localId: 'request-original' });
@@ -594,7 +607,7 @@ describe('requester Session input through the custodian Machine socket', () => {
         let response: unknown;
         await getSocketHandler(socket, SESSION_PENDING_ENQUEUE_BY_MACHINE_EVENT_V1)({ v: 1, sessionId: destination.id,
             targetMachineId: machine.id, localId: 'foreign-private-input', content: { t: 'plain', v: { role: 'user' } },
-            requestedAction: { v: 1, kind: 'enqueue' }, followSources: [{ evaluation: 'receiver', rule: { ruleId: 'private-rule', ruleVersion: 0 },
+            requestedAction: { v: 1, kind: 'enqueue' }, followSources: [{ evaluation: 'receiver', selectedDelivery: 'next_turn', rule: { ruleId: 'private-rule', ruleVersion: 0 },
                 sourceSessionId: source.id, destinationSessionId: destination.id, sourceMessage: { localId: 'private-report', seq: 1 } }],
             followDeliveryV1: { v: 1, delivery: 'next_turn', original: { sourceSessionId: source.id,
                 sourceMessage: { localId: 'private-report', seq: 1 } }, event: { kind: 'update_posted' } },
@@ -604,7 +617,7 @@ describe('requester Session input through the custodian Machine socket', () => {
         expect(await inTx(tx => admitSessionFollowRuleOccurrenceInTx(tx, { accountId: requester.id,
             authority: { kind: 'account', authentication: { ...createPresentUserSessionAccessAuthentication(), apiTokenGrant: {
                 ...API_TOKEN_FULL_GRANT_V1, actions: { families: [], ids: ['session.message.send'] } } } },
-            witness: { evaluation: 'receiver', rule: { ruleId: 'private-rule', ruleVersion: 0 },
+            witness: { evaluation: 'receiver', selectedDelivery: 'next_turn', rule: { ruleId: 'private-rule', ruleVersion: 0 },
                 sourceSessionId: source.id, destinationSessionId: destination.id, sourceMessage: { localId: 'private-report', seq: 1 } },
         }))).toBeNull();
         const requesterToken = await auth.createToken(requester.id, undefined, { kind: 'account', authority: 'present_user' });
@@ -612,7 +625,7 @@ describe('requester Session input through the custodian Machine socket', () => {
             const admitted = await app.inject({ method: 'POST', url: `/v2/sessions/${destination.id}/pending`,
                 headers: { authorization: `Bearer ${requesterToken}` }, payload: { localId: 'requester-private-input',
                     targetMachineId: machine.id, content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'selected original' } } },
-                    followSources: [{ evaluation: 'receiver', rule: { ruleId: 'private-rule', ruleVersion: 0 },
+                    followSources: [{ evaluation: 'receiver', selectedDelivery: 'next_turn', rule: { ruleId: 'private-rule', ruleVersion: 0 },
                         sourceSessionId: source.id, destinationSessionId: destination.id, sourceMessage: { localId: 'private-report', seq: 1 } }],
                     followDeliveryV1: { v: 1, delivery: 'next_turn', original: { sourceSessionId: source.id,
                         sourceMessage: { localId: 'private-report', seq: 1 } }, event: { kind: 'update_posted' } } } });
@@ -642,7 +655,7 @@ describe('requester Session input through the custodian Machine socket', () => {
         }, { authentication: 'real' });
     });
 
-    it.each([false, true])('rejoins an accepted ordinary original when a private rule arrives late (cross-Account: %s)', async crossAccount => {
+    it.each([false, true])('rejoins an accepted terminal original when a private rule arrives late (cross-Account: %s)', async crossAccount => {
         const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
         const sourceOwner = crossAccount ? await db.account.create({ data: { encryptionMode: 'plain' } }) : owner;
         const machine = await db.machine.create({ data: { id: randomUUID(), accountId: owner.id, installationId: randomUUID(),
@@ -670,8 +683,9 @@ describe('requester Session input through the custodian Machine socket', () => {
                 content: { t: 'plain', v: { v: 1, enabled: true, filter: normalizeSessionListFilterV1(), policy: { preset: 'important' } } } })!) } });
         await db.sessionMessage.create({ data: { sessionId: source.id, localId: 'report', seq: 1, messageRole: 'agent',
             content: { t: 'plain', v: { role: 'agent', content: { type: 'codex', data: { type: 'turn_failed', id: 'native-id' } } } } } });
+        const terminalAt = BigInt(Date.now());
         await db.sessionTurn.create({ data: { sessionId: source.id, turnId: 'source-failed-turn', status: 'failed',
-            startedAt: 1n, updatedAt: 2n, terminalAt: 2n,
+            startedAt: terminalAt, updatedAt: terminalAt, terminalAt,
             transcriptAnchorsJson: JSON.stringify({ startSeqInclusive: 1, endSeqInclusive: 1 }) } });
         await db.session.update({ where: { id: source.id }, data: { latestTurnId: 'source-failed-turn', latestTurnStatus: 'failed',
             active: true, lastActiveAt: new Date() } });
@@ -679,11 +693,13 @@ describe('requester Session input through the custodian Machine socket', () => {
             sourceKey: `session:${source.id}`, relation: 'follower', policyJson: JSON.stringify({ preset: 'important' }),
             // A seeded edge cursor is not an accepted-input fact.
             deliveredTranscriptSeq: 1 } });
-        const followDeliveryV1 = { v: 1 as const, delivery: 'next_turn' as const,
-            original: { sourceSessionId: source.id, sourceMessage: { localId: 'report', seq: 1 } }, event: { kind: 'failed_or_stopped' as const } };
+        const sourceTurn = { id: 'source-failed-turn', status: 'failed' as const };
+        const followDeliveryV1 = { v: 1 as const, delivery: 'wake' as const,
+            original: { sourceSessionId: source.id, sourceTurn }, event: { kind: 'failed_or_stopped' as const } };
         const content = { t: 'plain' as const, v: { role: 'user', content: { type: 'text', text: 'original context' } } };
         const input = { accountId: owner.id, sourceMachineId: machine.id, targetMachineId: machine.id,
-            sessionId: destination.id, localId: 'ordinary-input', content, requestedAction: { v: 1 as const, kind: 'enqueue' as const },
+            sessionId: destination.id, localId: deriveSessionFollowInputLocalIdV1({ destinationSessionId: destination.id,
+                original: followDeliveryV1.original }), content, requestedAction: { v: 1 as const, kind: 'enqueue' as const },
             followRelations: [{ relation: 'follower' as const }], followDeliveryV1 };
         expect(await enqueuePendingMessageByAuthenticatedMachine(input)).toEqual({ status: 'accepted', localId: input.localId });
         const publisherAuthority = { accountId: owner.id, sessionId: destination.id, machineId: machine.id, committedFence: new Date(1) };
@@ -705,8 +721,10 @@ describe('requester Session input through the custodian Machine socket', () => {
                     authentication: createPresentUserSessionAccessAuthentication() },
                 destinationSessionId: destination.id, includeManager: true,
             }));
-            expect((await observe()).observations).not.toContainEqual(expect.objectContaining({
+            expect((await observe()).observations).toContainEqual(expect.objectContaining({
                 sourceSessionId: source.id, relation: 'manager',
+                delivered: expect.objectContaining({ transcriptSeq: 1, turn: null }),
+                observed: expect.objectContaining({ transcriptSeq: 1, turn: sourceTurn }),
             }));
             await db.sessionMessage.create({ data: { sessionId: source.id, localId: 'different-turn-output', seq: 2,
                 messageRole: 'agent', content: { t: 'plain', v: { role: 'agent', content: { type: 'event',
@@ -714,7 +732,7 @@ describe('requester Session input through the custodian Machine socket', () => {
             await db.session.update({ where: { id: source.id }, data: { seq: 2 } });
             expect((await observe()).observations).toContainEqual(expect.objectContaining({
                 sourceSessionId: source.id, relation: 'manager',
-                observed: expect.objectContaining({ transcriptSeq: 2, turn: null }),
+                observed: expect.objectContaining({ transcriptSeq: 2, turn: sourceTurn }),
             }));
             await db.sessionFollowEdge.update({ where: { destinationSessionId_sourceSessionId_relation: {
                 destinationSessionId: destination.id, sourceSessionId: source.id, relation: 'manager',
@@ -728,17 +746,19 @@ describe('requester Session input through the custodian Machine socket', () => {
         }
         const acceptedReceipt = (await db.sessionMessage.findUniqueOrThrow({ where: { sessionId_localId: {
             sessionId: destination.id, localId: input.localId } } })).inputAdmissionReceipt;
-        // A new source/receiver publisher and a different route/localId are a
-        // new attempt at the same original, not another provider input.
+        // A new source/receiver publisher and a private route reoffer the same
+        // canonical original, never another provider input or alias localId.
         await db.session.update({ where: { id: source.id }, data: { publisherGeneration: 2n } });
         await db.session.update({ where: { id: destination.id }, data: {
             publisherGeneration: 2n, lastActiveAt: new Date(2),
         } });
-        const witness = { destinationSessionId: destination.id, rule: { ruleId: 'late-rule', ruleVersion: 0 },
-            sourceSessionId: source.id, sourceMessage: { localId: 'report', seq: 1 },
+        const witness = { destinationSessionId: destination.id, selectedDelivery: 'wake' as const, rule: { ruleId: 'late-rule', ruleVersion: 0 },
+            sourceSessionId: source.id, sourceTurn,
             ...(crossAccount ? { evaluation: 'receiver' as const } : { expectedSourcePublisherGeneration: '2',
                 machineId: machine.id, installationId: machine.installationId! }) };
         expect(await enqueuePendingMessageByAuthenticatedMachine({ ...input, localId: 'late-rule-input',
+            followSources: [witness], followRelations: undefined })).toMatchObject({ status: 'rejected' });
+        expect(await enqueuePendingMessageByAuthenticatedMachine({ ...input,
             followSources: [witness], followRelations: undefined })).toEqual({ status: 'alreadyAccepted', localId: input.localId });
         expect(await db.sessionMessage.count({ where: { sessionId: destination.id } })).toBe(1);
         expect(await db.sessionPendingMessage.count({ where: { sessionId: destination.id } })).toBe(0);
@@ -747,7 +767,7 @@ describe('requester Session input through the custodian Machine socket', () => {
         const row = await db.userKVStore.findUniqueOrThrow({ where: { accountId_key: {
             accountId: owner.id, key: buildSessionFollowRulePhysicalKeyV1('late-rule') } } });
         expect(decodeAccountScopedKvJson(row.value!)).toMatchObject({ sources: [{ sourceSessionId: source.id,
-            delivered: { transcriptSeq: 1 } }] });
+            delivered: { transcriptSeq: 0, turn: sourceTurn } }] });
     });
 
     it('admits the hosted requester tuple, refuses another source Machine, and rechecks grant loss', async () => {

@@ -53,8 +53,15 @@ function runtimeFixture(policy: FollowPolicyV1 = { preset: 'quiet' }, sourceCoun
         session: {
             findUnique: vi.fn(async ({ where }: { where: { id: string }; select?: Record<string, unknown> }) =>
                 [...sources, destination].find(value => value.id === where.id) ?? null),
-            findMany: vi.fn(async () => [...sources, destination]),
+            findMany: vi.fn(async ({ where }: { where: { id: { in: readonly string[] } } }) =>
+                [...sources, destination].filter(row => where.id.in.includes(row.id))),
         },
+        sessionShare: {
+            findMany: vi.fn(async () => audience.filter(account => account.id !== destination.accountId)
+                .map(account => ({ sessionId: destination.id, sharedWithUserId: account.id }))),
+        },
+        sessionTeamGrant: { findMany: vi.fn(async () => []) },
+        sessionGroupGrant: { findMany: vi.fn(async () => []) },
         sessionMessage: {
             findUnique: vi.fn(async ({ where }: { where: { sessionId_localId: { sessionId: string; localId: string } } }) =>
                 where.sessionId_localId.sessionId === destination.id && where.sessionId_localId.localId === "input-1"
@@ -109,6 +116,18 @@ function runtimeFixture(policy: FollowPolicyV1 = { preset: 'quiet' }, sourceCoun
 }
 
 describe("ordinary Account Follow runtime admission", () => {
+    it('keeps source observation database reads constant within one access batch', async () => {
+        const reads: number[] = [];
+        for (const sourceCount of [1, 128]) {
+            const f = runtimeFixture({ preset: 'everything' }, sourceCount);
+            const result = await observePendingSessionFollowForDestinationInTx(f.tx, f.observeInput);
+            expect(result.observations).toHaveLength(sourceCount);
+            reads.push(f.storage.session.findUnique.mock.calls.length + f.storage.session.findMany.mock.calls.length);
+        }
+        console.info('FOLLOW_OBSERVATION_DATABASE_READS', JSON.stringify(reads));
+        expect(reads[1]).toBe(reads[0]);
+    });
+
     it.each([1, 128])('reads destination mute settings once for %i admitted source candidates', async count => {
         const f = runtimeFixture({ preset: 'everything' }, count);
         const result = await observePendingSessionFollowForDestinationInTx(f.tx, f.observeInput);
@@ -118,7 +137,7 @@ describe("ordinary Account Follow runtime admission", () => {
         expect(muteReads).toHaveLength(1);
     });
 
-    it('keeps per-source admission, selective mutes and next-request mute changes', async () => {
+    it('keeps admitted originals reachable for mute settlement and reads the next request policy fresh', async () => {
         const f = runtimeFixture({ preset: 'everything' }, 128);
         f.sources[1]!.shares = [];
         const observe = () => observePendingSessionFollowForDestinationInTx(f.tx, f.observeInput);
@@ -128,9 +147,9 @@ describe("ordinary Account Follow runtime admission", () => {
             { kind: 'source', source: { kind: 'session', sessionId: f.sources[3]!.id } },
         ]);
         const muted = await observe();
-        expect(muted.observations).toHaveLength(125);
+        expect(muted.observations).toHaveLength(127);
         expect(muted.currentSourceSessionIds).toHaveLength(127);
-        expect(muted.observations).not.toEqual(expect.arrayContaining([
+        expect(muted.observations).toEqual(expect.arrayContaining([
             expect.objectContaining({ sourceSessionId: f.sources[2]!.id }),
             expect.objectContaining({ sourceSessionId: f.sources[3]!.id }),
         ]));

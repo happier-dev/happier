@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import { createServer } from 'node:http';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
+import type { RpcHandlerContext } from '@/api/rpc/types';
 import { createCliActionExecutor } from '@/session/actions/createCliActionExecutor';
 import { createScopedRuntimeActionSettingsProvider } from '@/settings/scopedRuntimeActionSettingsProvider';
 import { extractAssistantTextSnapshotFromAcpMessage } from '@/api/session/turns/extractAssistantTextSnapshot';
@@ -19,7 +20,7 @@ import { installEmptyProjectAccountRowsHttpBoundary } from '@/testkit/http/proje
 import { UpdateSchema, UserMessageSchema } from '@/api/types';
 import * as machineRpcTransport from '@/session/transport/rpc/machineRpc';
 import * as storedAuthTransport from '@/auth/validateStoredAuthTokenAgainstActiveServer';
-import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { normalizeServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { createProductionFreshWorkflowSessionConversation, createProductionWorkflowSessionStepExecutor } from '@/daemon/workflows/sessionStepExecutor';
 import { registerPrivateSpawnSessionRpcHandlers } from '@/rpc/handlers/sessionLifecycle';
 import { createSpawnNewSessionLifecycleActionHandler } from '@/session/actions/lifecycle/createSpawnNewSessionLifecycleActionHandler';
@@ -75,6 +76,7 @@ import {
 import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { SessionModelMutationReversalV1Schema } from '@happier-dev/protocol/sessions/control/modelTransitionV1';
 import { emptyMcpServerCatalogV1 } from '@happier-dev/protocol/mcp/servers/serverCatalogV1';
+import { SessionMcpSelectionV1Schema } from '@happier-dev/protocol/mcp/servers/sessionSelectionV1';
 import { emptyPromptLibraryRecordV1, readPromptLibraryCatalogRecordV1 } from '@happier-dev/protocol/prompts/library/promptLibraryCatalogV1';
 import { PromptLibraryCatalogKeyV1Schema, PromptLibraryRowMutationV1Schema, PromptLibraryRowMutationResponseV1Schema } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
 import { readSessionCapabilityNoticeV1 } from '@happier-dev/protocol/sessions/messages/sessionCapabilityNoticeV1';
@@ -120,6 +122,7 @@ vi.mock('@/agent/catalog/snapshot', async (importOriginal) => {
 });
 
 import { runHostSessionRuntime, type HostRuntimeReplacementLifecycle, type HostSessionRuntimeConfig, type HostSessionRuntimeFactoryParams, type HostSessionRuntimeRunOptions } from './runHostSessionRuntime';
+import { createAdmittedFollowInputFixture, installFollowHomeReadinessBoundary } from './runHostSessionRuntime.follow.testkit';
 import { readSessionPreparationFailureDiagnostic } from '@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';
 import { createSessionRunnerRespawnManager } from '@/daemon/processSupervision/sessionRunnerRespawn';
 import { resolveSessionRunnerFailureExitCode } from '@/cli/resolveSessionRunnerFailureExitCode';
@@ -163,6 +166,7 @@ import {
 import { createMutableApiSessionClientFixture, createPlainSessionFixture, createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 import { DeferredApiSessionClient } from '@/agent/runtime/startup/DeferredApiSessionClient';
+import { createTestApiSessionClient } from '@/testkit/backends/createTestApiSessionClient';
 import { applyRunnerMcpSessionContext } from '@/mcp/runtime/applyRunnerMcpSessionContext';
 import { createMachineContentCodec } from '@/api/machine/machineStoredContent';
 import { MachineResourcesPolicyV1Schema } from '@happier-dev/protocol/machines/resources/machineResourcesPolicyV1';
@@ -438,27 +442,36 @@ async function unsupportedRuntimeConfigUpdate(): Promise<RuntimeConfigUpdateOutc
   return { status: 'unsupported', timing: 'not_applicable', reason: 'native_agent_configuration_unsupported' };
 }
 
-function createSessionFixture(sessionId: string) {
-  const handlers = new Map<string, (payload?: unknown) => unknown>();
+type HarnessManagedMcpSelection = 'empty' | 'account-default';
+const harnessHomeFeatures = Object.freeze({ status: 'ready' as const, provenance: 'authenticated' as const,
+  features: FeaturesResponseSchema.parse({ features: {}, capabilities: { serverIdentity: { serverIdentityId: 'srv_runtime_catalog_fixture' } } }) });
+
+function createSessionFixture(sessionId: string, managedMcpSelection: HarnessManagedMcpSelection = 'empty') {
+  const handlers = new Map<string, (payload?: unknown, context?: RpcHandlerContext) => unknown>();
   // The offline Session transport is substituted; mutable metadata, Agent state
   // and their event delivery remain owned by the canonical Session testkit.
   const sessionBoundary = createMutableApiSessionClientFixture({
     sessionId,
-    metadata: createTestMetadata({ path: '/tmp/workspace', permissionMode: 'default' }),
+    metadata: createTestMetadata({ path: '/tmp/workspace', permissionMode: 'default',
+      mcpSelectionV1: SessionMcpSelectionV1Schema.parse({ managedServersEnabled: managedMcpSelection === 'account-default' }),
+    }),
+    // Home's authenticated feature response is the transport boundary. The
+    // canonical Session reader derives its stable Home identity from it.
+    overrides: { getServerFeaturesSnapshot: () => harnessHomeFeatures },
   });
   const session: any = {
     ...sessionBoundary,
     sessionId,
     rpcHandlerManager: {
       sessionId,
-      registerHandler: (name: string, handler: (payload?: unknown) => unknown) => {
+      registerHandler: (name: string, handler: (payload?: unknown, context?: RpcHandlerContext) => unknown) => {
         handlers.set(name, handler);
       },
     },
     setSessionRuntimeControls: vi.fn(),
     setOwnerActivityDelivery: vi.fn(),
     sendAgentMessage: vi.fn(),
-    enqueueAgentMessageCommitted: vi.fn(async () => undefined),
+    enqueueAgentMessageCommitted: vi.fn(async () => ({ persisted: true, delivered: false })),
     sendSessionEvent: vi.fn(),
     // The transcript transport admits Ready into durable custody before notification.
     enqueueSessionEventCommitted: vi.fn(async (): ReturnType<ApiSessionClient['enqueueSessionEventCommitted']> => ({
@@ -527,7 +540,11 @@ function createDeferred<T>() {
   return { promise, resolve, reject };
 }
 
-function createHarness(sessionId = 'session-1') {
+function createHarness(sessionId = 'session-1', fixture: Readonly<{
+  managedMcpSelection?: HarnessManagedMcpSelection;
+  credentials?: HostSessionRuntimeRunOptions['credentials'];
+  accountId?: string;
+}> = {}) {
   let defaultReadyCalls = 0;
   let customReadyCalls = 0;
   let cleanupCalls = 0;
@@ -543,7 +560,8 @@ function createHarness(sessionId = 'session-1') {
   let killHandler: (() => void | Promise<void>) | null = null;
   const killHandlersBySessionId = new Map<string, () => void | Promise<void>>();
 
-  const sessionFixture = createSessionFixture(sessionId);
+  const createHarnessSessionFixture = (id: string) => createSessionFixture(id, fixture.managedMcpSelection ?? 'empty');
+  const sessionFixture = createHarnessSessionFixture(sessionId);
   const session = sessionFixture.session;
   const handlers = sessionFixture.handlers;
   const runtimeMessageSubscribers = new Set<(message: unknown) => void>();
@@ -634,8 +652,32 @@ function createHarness(sessionId = 'session-1') {
   };
 
   const opts: HostSessionRuntimeRunOptions = {
-    credentials: { token: 'x' } as any,
+    // Authentication is an external Home boundary in this offline harness.
+    // Author its Account subject; never reinterpret an opaque caller token.
+    credentials: fixture.credentials ?? {
+      token: `e30.${Buffer.from(JSON.stringify({ sub: fixture.accountId ?? 'runtime-catalog-account', session: 'runtime-catalog-terminal' })).toString('base64url')}.fixture`,
+      encryption: null,
+    },
   };
+  if ((fixture.managedMcpSelection ?? 'empty') === 'empty') {
+    // A real runner captures this observation before composing its runtime
+    // options. Never reselect a lifetime from a later API callback or getter.
+    const existing = getActiveAccountSettingsSnapshot();
+    const snapshot = existing ?? {
+      source: 'network' as const, settings: accountSettingsParse({}), rawSettings: {},
+      scopeKey: resolveAccountSettingsScopeKey(opts.credentials), settingsVersion: 1, loadedAtMs: 1,
+      settingsSecretsReadKeys: [],
+      promptLibraryCatalog: { status: 'ready' as const,
+        rows: PromptLibraryCatalogKeyV1Schema.options.map(key => ({ revision: 1,
+          record: emptyPromptLibraryRecordV1(key) })), tombstones: [], diagnostics: [] },
+    };
+    opts.accountSettingsContext = { ...snapshot, whenRefreshed: null };
+    if (!existing) {
+      setActiveAccountSettingsSnapshot(snapshot);
+      onTestFinished(() => resetActiveAccountSettingsSnapshotForTests());
+      if (!fixture.credentials) onTestFinished(installEmptyProjectAccountRowsHttpBoundary());
+    }
+  }
 
   const config: HostSessionRuntimeConfig = {
     flavor: 'qwen',
@@ -679,16 +721,18 @@ function createHarness(sessionId = 'session-1') {
       processStartTimeMs: 1_000,
       command: '/usr/local/bin/happier qwen',
     }),
-    initializeBackendApiContextFn: async () => ({
-      api: {
-        push: () => ({
-          sendToAllDevices: () => {
-            defaultReadyCalls += 1;
-          },
-        }),
-      },
-      machineId: 'machine-1',
-    }),
+    initializeBackendApiContextFn: async () => {
+      return {
+        api: {
+          push: () => ({
+            sendToAllDevices: () => {
+              defaultReadyCalls += 1;
+            },
+          }),
+        },
+        machineId: 'machine-1',
+      };
+    },
     createSessionMetadataFn: () => ({
       state: { controlledByUser: false },
       metadata: { path: '/tmp/workspace', permissionMode: 'default', permissionModeUpdatedAt: Date.now() },
@@ -795,7 +839,7 @@ function createHarness(sessionId = 'session-1') {
         return killHandlersBySessionId.get(sessionId) ?? null;
       },
     },
-    createSessionFixture,
+    createSessionFixture: createHarnessSessionFixture,
   };
 }
 
@@ -955,7 +999,7 @@ describe('runHostSessionRuntime', () => {
     { name: 'deferred', outcome: { status: 'applied' as const, timing: 'next_idle' as const }, warns: true },
     { name: 'unsupported', outcome: { status: 'unsupported' as const }, warns: true },
   ])('classifies an external Agent native MCP policy update outcome: $name', async ({ outcome, warns }) => {
-    const harness = createHarness();
+    const harness = createHarness('session-1', { managedMcpSelection: 'account-default' });
     const agentId = 'acme-native-policy';
     const fixture = createExternalContributionFixtures(agentId);
     if (!fixture.agent.richDefinition || !runtimeRegistryLease) throw new Error('Missing external Agent boundary');
@@ -1096,7 +1140,7 @@ describe('runHostSessionRuntime', () => {
 
   it.each(['create', 'resume', 'missing-skill', 'admitted-route', 'retired-during-skills', 'parallel-capabilities', 'parallel-capabilities-retired', 'capabilities-timing', 'selected-role', 'selected-role-account-wake', 'selected-role-later-turn', 'selected-role-loading', 'selected-role-loading-unavailable', 'selected-role-settings-refresh'] as const)(
     'starts the real host runner with a skipped optional MCP server once for %s', async scenario => {
-      const harness = createHarness();
+      const harness = createHarness('session-1', { managedMcpSelection: 'account-default' });
       if (!runtimeRegistryLease) throw new Error('Missing runtime fixture');
       const agentId = 'acme-optional-reader';
       const fixture = createExternalContributionFixtures(agentId);
@@ -1423,7 +1467,7 @@ describe('runHostSessionRuntime', () => {
     const { buildPromptLibraryPhysicalKeyV1, PROMPT_LIBRARY_ACCOUNT_ROW_PREFIX_V1, PromptLibraryRecordV1Schema } = await import('@happier-dev/protocol/prompts/library/promptLibraryRowsV1');
     const sqlite = await createLightSqliteHarness({ tempDirPrefix: 'happier-ctx-source-runner-', initEncrypt: true });
     const app = createAuthenticatedTestApp();
-    const harness = createHarness();
+    const harness = createHarness('session-1', { managedMcpSelection: 'account-default' });
     harness.config.flavor = 'claude';
     harness.config.policyAgentId = 'happier.agent.claude/claude';
     harness.config.agentMessageType = 'claude';
@@ -1633,7 +1677,7 @@ describe('runHostSessionRuntime', () => {
     const wakes: unknown[] = []; observer.on('update', event => wakes.push(event));
     await new Promise<void>((resolve, reject) => { observer.once('connect', resolve); observer.once('connect_error', reject); });
     const releaseHome = publishServerHttpRuntimeOrigin(url, 'https');
-    const harness = createHarness();
+    const harness = createHarness('session-1', { managedMcpSelection: 'account-default' });
     // The host's real origin-delivery read requires its Account-owned Session identity.
     await db.session.create({ data: { id: harness.session.sessionId, tag: 'rule-live-apply',
       accountId: account.id, metadata: '{}', encryptionMode: 'plain' } });
@@ -2017,7 +2061,9 @@ describe('runHostSessionRuntime', () => {
 
   it.each(['create', 'resume', 'daemon-unreachable', 'launch-unsupported', 'session-scoped'] as const)(
     'resolves Account skill delivery at the real host owner for %s', async scenario => {
-      const harness = createHarness();
+      const harness = createHarness('session-1', { credentials: {
+        token: `header.${Buffer.from(JSON.stringify({ sub: 'skills-account' })).toString('base64url')}.signature`, encryption: null,
+      } });
       const agentId = 'acme-skills-reader';
       const fixture = createExternalContributionFixtures(agentId);
       if (!fixture.agent.richDefinition || !runtimeRegistryLease) throw new Error('Missing runtime fixture');
@@ -2033,7 +2079,6 @@ describe('runHostSessionRuntime', () => {
           ...fixture.agent, richDefinition: { ...fixture.agent.richDefinition, definition }, catalogEntry,
         }] }),
       } };
-      harness.opts.credentials = { token: `header.${Buffer.from(JSON.stringify({ sub: 'skills-account' })).toString('base64url')}.signature`, encryption: null };
       if (scenario === 'resume') harness.opts.resume = 'vendor-skills-session';
       if (scenario === 'session-scoped') harness.config.runtimeAuthority = {
         scope: 'session', sessionCredentials: harness.opts.credentials, accountCredentials: null,
@@ -2093,12 +2138,10 @@ describe('runHostSessionRuntime', () => {
   );
 
   it.each(['ordinary', 'deferred', 'session-scoped'] as const)('reads manual-start tool policy only with Account authority through a %s push-only loop port', async (startup) => {
-    const harness = createHarness();
+    const harness = createHarness('session-1', { credentials: {
+      token: `header.${Buffer.from(JSON.stringify({ sub: 'manual-policy-account' })).toString('base64url')}.signature`, encryption: null,
+    } });
     harness.opts.startedBy = 'terminal';
-    harness.opts.credentials = {
-      token: `header.${Buffer.from(JSON.stringify({ sub: 'manual-policy-account' })).toString('base64url')}.signature`,
-      encryption: null,
-    };
     let inheritedTimeout: string | undefined;
     const startupHookFailure = new Error('Startup contribution stopped before Agent admission');
     const stopAtStartupContribution = async () => {
@@ -2170,11 +2213,9 @@ describe('runHostSessionRuntime', () => {
   });
 
   it('starts an Account-scoped queued prompt with the canonical Agent identity at the daemon auth boundary', async () => {
-    const harness = createHarness();
-    harness.opts.credentials = {
-      token: `header.${Buffer.from(JSON.stringify({ sub: 'queued-workflow-account' })).toString('base64url')}.signature`,
-      encryption: null,
-    };
+    const harness = createHarness('session-1', { credentials: {
+      token: `header.${Buffer.from(JSON.stringify({ sub: 'queued-workflow-account' })).toString('base64url')}.signature`, encryption: null,
+    } });
     // The server queue is materialized, while this exact input retains provider custody.
     harness.session.hasPendingProviderInput = vi.fn((localId?: string) => localId === 'queued-workflow-input');
     harness.session.enqueueAgentMessageCommitted = vi.fn(async () => ({ persisted: true, delivered: false }));
@@ -2295,13 +2336,11 @@ describe('runHostSessionRuntime', () => {
     { backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' }, viaGateway: false },
     { backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' }, viaGateway: true },
   ] satisfies ReadonlyArray<{ backendTarget: BackendTargetRefV2Input; viaGateway: boolean }>)('inherits actual readback through the attached child factory (Gateway: $viaGateway, target: $backendTarget.kind)', async ({ backendTarget, viaGateway }) => {
-    const harness = createHarness();
+    const harness = createHarness('session-1', { credentials: {
+      token: `header.${Buffer.from(JSON.stringify({ sub: 'attached-parent-account' })).toString('base64url')}.signature`, encryption: null,
+    } });
     harness.config.policyAgentId = 'codex';
     harness.opts.backendTarget = backendTarget;
-    harness.opts.credentials = {
-      token: `header.${Buffer.from(JSON.stringify({ sub: 'attached-parent-account' })).toString('base64url')}.signature`,
-      encryption: null,
-    };
     harness.opts.modelSelection = { v: 1, updatedAt: 1, ref: {
       agentTargetKey: buildBackendTargetKeyV2(backendTarget), providerConnectionId: null, modelId: 'default',
     } };
@@ -2556,11 +2595,10 @@ describe('runHostSessionRuntime', () => {
   });
 
   it('completes a fresh Workflow Agent step through real spawn, Session runtime and exact input observation', async () => {
-    const harness = createHarness();
+    const credentials = { token: `header.${Buffer.from(JSON.stringify({ sub: 'composed-workflow-account' })).toString('base64url')}.signature`, encryption: null };
+    const harness = createHarness('session-1', { credentials });
     harness.session.sessionId = 'workflow-composed-session';
     harness.config.policyAgentId = 'claude';
-    const credentials = { token: `header.${Buffer.from(JSON.stringify({ sub: 'composed-workflow-account' })).toString('base64url')}.signature`, encryption: null };
-    harness.opts.credentials = credentials;
     const directory = await mkdtemp(join(tmpdir(), 'workflow-runtime-composition-'));
     const envScope = createEnvKeyScope(['HAPPIER_HOME_DIR']);
     const input = createDeferred<import('@/api/types').UserMessage>();
@@ -2728,13 +2766,9 @@ describe('runHostSessionRuntime', () => {
   });
 
   it('uses the admitted creation tag for server create-or-load instead of minting a random tag', async () => {
-    const harness = createHarness();
-    // An Account-subject token reaches model-mutation scope admission during startup;
-    // the harness's opaque token otherwise skips that production path.
-    harness.opts.credentials = {
-      ...harness.opts.credentials,
-      token: `header.${Buffer.from(JSON.stringify({ sub: 'runtime-account' })).toString('base64url')}.signature`,
-    };
+    const harness = createHarness('session-1', { credentials: {
+      token: `header.${Buffer.from(JSON.stringify({ sub: 'runtime-account' })).toString('base64url')}.signature`, encryption: null,
+    } });
     // Use the real permission queue owner so startup exercises live-work admission.
     delete harness.deps.createPermissionModeQueueStateFn;
     const sessionCreationTag = 'create:v1:9Qf8pTqHIQxEYXv3sHohC0y7sD2pRqclZxY_V_GKcJ0';
@@ -2857,7 +2891,9 @@ describe('runHostSessionRuntime', () => {
 
   it('composes the bound UI Agent-realtime service through the host runtime RPC producer', async () => {
     const createAgentSessionRealtimeService = await loadAgentSessionRealtimeService();
-    const harness = createHarness();
+    const harness = createHarness('session-1', { credentials: {
+      token: `e30.${Buffer.from(JSON.stringify({ sub: 'voice-receipt-account' })).toString('base64url')}.signature`, encryption: null,
+    } });
     harness.config.policyAgentId = 'codex';
     const provider = {
       pluginId: 'happier.agent.codex',
@@ -3848,7 +3884,7 @@ describe('runHostSessionRuntime', () => {
   });
 
   it('scopes next-turn composition tool selection through the existing native MCP session context', async () => {
-    const harness = createHarness();
+    const harness = createHarness('session-1', { managedMcpSelection: 'account-default' });
     harness.config.policyAgentId = 'claude';
     let mcpSession: Readonly<{
       getActiveAgentCompositionToolSelection?: () => unknown;
@@ -7538,9 +7574,8 @@ describe('runHostSessionRuntime', () => {
       import('@happier-dev/plugin-sdk'),
       import('@/daemon/workflows/workflowCoordinator.testkit'),
     ]);
-    const harness = createHarness(storedSession.id);
     const credentials = { token: 'startup-refusal-fixture', encryption: null };
-    harness.opts.credentials = credentials;
+    const harness = createHarness(storedSession.id, { credentials });
     const agentId = 'acme-startup-refusal';
     const contributions = fixtures.createExternalContributionFixtures(agentId);
     const failure = new PluginError({ code: 'native_agent_session_mode_unavailable', retryable: false });
@@ -8174,7 +8209,9 @@ describe('runHostSessionRuntime', () => {
   });
 
   it('preserves exact capture and conditional refusal through the registered live model RPC owner', async () => {
-    const harness = createHarness();
+    const harness = createHarness('session-1', { credentials: {
+      token: `e30.${Buffer.from(JSON.stringify({ sub: 'owner-account' })).toString('base64url')}.signature`, encryption: null,
+    } });
     let swapSession: InitializeBackendRunSessionOptions['onSessionSwap'] | undefined;
     const initialize = harness.deps.initializeBackendRunSessionFn;
     harness.deps.initializeBackendRunSessionFn = async (options: InitializeBackendRunSessionOptions) => {
@@ -8183,7 +8220,6 @@ describe('runHostSessionRuntime', () => {
     };
     const before = { agentTargetKey: 'agent:happier.agent.claude/claude', providerConnectionId: null, modelId: 'old-model' };
     harness.config.policyAgentId = 'claude';
-    harness.opts.credentials = { token: `e30.${Buffer.from(JSON.stringify({ sub: 'owner-account' })).toString('base64url')}.signature`, encryption: null };
     harness.opts.modelSelection = { v: 1, updatedAt: 10, ref: before };
     let metadata: Record<string, unknown> = { path: '/tmp/workspace', permissionMode: 'default',
       modelSelectionIntentV1: { v: 1, updatedAt: 10, selection: before } };
@@ -9687,7 +9723,7 @@ describe('runHostSessionRuntime', () => {
   });
 
   it('passes resolved MCP servers to the provider runtime', async () => {
-    const harness = createHarness();
+    const harness = createHarness('session-1', { managedMcpSelection: 'account-default' });
     harness.config.flavor = 'claude';
     harness.config.policyAgentId = 'claude';
 
@@ -9713,7 +9749,7 @@ describe('runHostSessionRuntime', () => {
   });
 
   it('passes resolved MCP servers to an external Agent that declares native MCP delivery', async () => {
-    const harness = createHarness();
+    const harness = createHarness('session-1', { managedMcpSelection: 'account-default' });
     const agentId = 'com.acme.review/review';
     const catalog = getResolvedContributionRegistry();
     readAgentCatalogSnapshotOverride.mockReturnValue({
@@ -9755,7 +9791,7 @@ describe('runHostSessionRuntime', () => {
   });
 
   it('releases durable custody when MCP resolution fails before runtime construction', async () => {
-    const harness = createHarness();
+    const harness = createHarness('session-1', { managedMcpSelection: 'account-default' });
     const mcpFailure = new Error('MCP resolution failed before provider construction');
     const createSessionRuntime = vi.fn(harness.config.createSessionRuntime!);
     const runSessionLoopLifecycleFn = vi.fn(async () => undefined);
@@ -9779,7 +9815,7 @@ describe('runHostSessionRuntime', () => {
   });
 
   it('admits Session startup with a typed notice when optional daemon plugin tools are unavailable', async () => {
-    const harness = createHarness();
+    const harness = createHarness('session-1', { managedMcpSelection: 'account-default' });
     harness.config.flavor = 'grok';
     harness.config.policyAgentId = 'grok';
     let admittedMcpServers: unknown;
@@ -9908,7 +9944,7 @@ describe('runHostSessionRuntime', () => {
     const attempts: ReturnType<typeof createHarness>[] = [];
     const start = async () => {
       setActiveAccountSettingsSnapshot(snapshot);
-      const harness = createHarness();
+      const harness = createHarness('session-1', { managedMcpSelection: source === 'Account currentness' ? 'account-default' : 'empty' });
       attempts.push(harness);
       harness.opts.credentials = credentials;
       harness.opts.accountSettingsContext = snapshot;
@@ -10059,7 +10095,7 @@ describe('runHostSessionRuntime', () => {
   });
 
   it('resolves and passes native MCP servers for the Grok catalog policy', async () => {
-    const harness = createHarness();
+    const harness = createHarness('session-1', { managedMcpSelection: 'account-default' });
     harness.config.flavor = 'grok';
     harness.config.policyAgentId = 'grok';
 
@@ -10089,7 +10125,7 @@ describe('runHostSessionRuntime', () => {
   });
 
   it('passes the MCP account settings snapshot to the provider runtime', async () => {
-    const harness = createHarness();
+    const harness = createHarness('session-1', { managedMcpSelection: 'account-default' });
     const runnerAccountSettings = {
       actionsSettingsV1: {
         v: 1,
@@ -10159,7 +10195,7 @@ describe('runHostSessionRuntime', () => {
   });
 
   it('threads an explicitly scoped Action policy to the Session tool transports without ambient Account settings', async () => {
-    const harness = createHarness();
+    const harness = createHarness('session-1', { managedMcpSelection: 'account-default' });
     const scopedActionsSettings = {
       v: 1 as const,
       actions: {
@@ -10277,7 +10313,7 @@ describe('runHostSessionRuntime', () => {
   });
 
   it('uses attached session metadata for runtime metadata, runtime directory, and MCP directory resolution', async () => {
-    const harness = createHarness();
+    const harness = createHarness('session-1', { managedMcpSelection: 'account-default' });
     harness.config.flavor = 'claude';
     harness.config.policyAgentId = 'claude';
     const attachedMetadata = {
@@ -10612,7 +10648,7 @@ describe('runHostSessionRuntime', () => {
   });
 
   it('skips native MCP resolution for shell-bridge providers', async () => {
-    const harness = createHarness();
+    const harness = createHarness('session-1', { managedMcpSelection: 'account-default' });
     await useShellBridgeRuntimeFixture(harness.config);
 
     let capturedMcpServers: any = null;
@@ -11933,7 +11969,7 @@ describe('runHostSessionRuntime', () => {
   });
 
   it('uses an explicit policy agent id instead of inferring customAcp from the flavor', async () => {
-    const harness = createHarness();
+    const harness = createHarness('session-1', { managedMcpSelection: 'account-default' });
     const createSessionMetadataFn = vi.fn(() => ({
       state: { controlledByUser: false },
       metadata: { path: '/tmp/workspace', permissionMode: 'default', permissionModeUpdatedAt: Date.now() },
@@ -12123,18 +12159,13 @@ describe('runHostSessionRuntime', () => {
     onTestFinished(installEmptyProjectAccountRowsHttpBoundary());
     const accountGet = vi.mocked(axios.get).getMockImplementation();
     if (!accountGet) throw new Error('Expected the canonical Project Account HTTP boundary');
-    const harness = createHarness();
-    const preparationErrors: string[] = [];
-    harness.opts.credentials = { token: 'follow-token', encryption: null };
+    const harness = createHarness('session-1', { accountId: 'follow-account' });
     harness.session.hasPendingProviderInput = vi.fn(() => false);
     harness.session.enqueueAgentMessageCommitted = vi.fn(async () => ({ persisted: true, delivered: false }));
     let userMessageHandler: ((message: unknown) => boolean | void) | null = null;
     harness.session.onUserMessage = (handler: (message: unknown) => boolean | void) => {
       userMessageHandler = handler;
     };
-    harness.session.getCommittedUserMessageSeq = vi.fn((localId: string) => (
-      localId === 'local-follow-runtime' ? 41 : null
-    ));
     delete harness.deps.createPermissionModeQueueStateFn;
 
     const observed = {
@@ -12149,19 +12180,17 @@ describe('runHostSessionRuntime', () => {
       agentStateVersion: 4,
       turn: null,
     };
+    const admitted = createAdmittedFollowInputFixture({ destinationSessionId: harness.session.sessionId,
+      sourceSessionId: 'source-session', sourceLocalId: 'source-message-8', delivered, observed });
+    onTestFinished(installFollowHomeReadinessBoundary(harnessHomeFeatures.features));
+    harness.session.getCommittedUserMessageSeq = vi.fn((localId: string) => localId === admitted.localId ? 41 : null);
     harness.session.observePendingSessionFollow = vi.fn(async () => ({
       ok: true as const,
       v: 1 as const,
       sessionId: 'session-1',
       publisherGeneration: '17',
       currentSourceSessionIds: ['source-session'],
-      observations: [{
-        sourceSessionId: 'source-session',
-        destinationSessionId: 'session-1',
-        delivered,
-        observed,
-        relation: 'follower' as const, policy: { preset: 'quiet' as const },
-      }],
+      observations: [admitted.observation],
     }));
     harness.session.acknowledgeSessionFollow = vi.fn(async () => ({
       ok: true as const,
@@ -12179,29 +12208,36 @@ describe('runHostSessionRuntime', () => {
     // HTTP is the source-content boundary; transport, decoding, hydration and frontier selection stay real.
     const get = vi.spyOn(axios, 'get').mockImplementation(async (url) => {
       const request = new URL(String(url));
+      if (request.pathname === admitted.lookupPath) return admitted.lookupResponse;
+      if (request.pathname === admitted.mutePath) return { status: 200, data: { scopes: [] } };
+      if (request.pathname === '/v1/features') return { status: 200, data: harnessHomeFeatures.features };
+      if (request.pathname === '/v1/auth/ping') return { status: 200, data: {} };
       if (request.pathname === '/v1/account/encryption') return await accountGet(url);
-      if (request.origin !== 'https://follow-home.example') throw new Error('Follow source read escaped the destination Home');
+      if (normalizeServerHttpBaseUrl(request.origin) !== new URL(normalizeServerHttpBaseUrl(harness.session.getServerBinding().serverUrl)).origin) {
+        throw new Error('Follow source read escaped the destination Home');
+      }
       if (request.pathname === '/v1/account/encryption/currentness') return { status: 200, data: {
         mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
       } };
       if (request.pathname === '/v2/sessions/source-session') return { status: 200, data: { session: source } };
       if (request.pathname === '/v1/sessions/source-session/messages') return { status: 200, data: {
         messages: [{
-          id: 'source-message-8', seq: 8, localId: null, createdAt: 8_000, updatedAt: 8_000,
-          content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'source context accepted by the provider' } } },
+          id: 'source-message-8', seq: 8, localId: 'source-message-8', createdAt: 8_000, updatedAt: 8_000,
+          content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'source context accepted by the provider' },
+            meta: { [SESSION_MESSAGE_PROVENANCE_META_KEY]: { v: 1, kind: 'cli' } } } },
         }],
         hasMore: false, nextBeforeSeq: null, nextAfterSeq: null,
       } };
       throw new Error(`Unexpected Follow source request: ${request.pathname}`);
     });
-    const sourceHome = new ApiSessionClient(harness.opts.credentials.token, createPlainSessionFixture({ id: 'session-1' }), {
+    const sourceHome = createTestApiSessionClient(ApiSessionClient, harness.opts.credentials.token, createPlainSessionFixture({ id: 'session-1' }), {
+      localMachineId: 'machine-1',
+      getServerFeaturesSnapshot: harness.session.getServerFeaturesSnapshot.bind(harness.session),
       metadataAuthority: { kind: 'owner', credentials: harness.opts.credentials },
-      transport: {
-        serverId: 'follow-home', serverUrl: 'https://follow-home.example',
-        createSessionSocketTransport: () => { throw new Error('Session socket is supplied by the network boundary fixture'); },
-      },
+      transport: admitted.transport(harness.session.getServerBinding(), harness.opts.credentials.token),
     });
     harness.session.runSessionFollowSourceRequest = sourceHome.runSessionFollowSourceRequest.bind(sourceHome);
+    harness.session.reconcileSessionInputForProviderDispatch = sourceHome.reconcileSessionInputForProviderDispatch.bind(sourceHome);
 
     let providerOutcome: ((outcome: HostProviderInputOutcomeEvidence) => void) | null = null;
     const runtime = harness.runtime;
@@ -12221,18 +12257,9 @@ describe('runHostSessionRuntime', () => {
     harness.deps.runPermissionModePromptLoopFn = async (params: Parameters<typeof runPermissionModePromptLoop>[0]) => {
       let shouldExit = false;
       expect(userMessageHandler).toBeTypeOf('function');
-      userMessageHandler?.({
-        role: 'user',
-        content: { type: 'text', text: 'continue the destination work' },
-        localId: 'local-follow-runtime',
-        meta: {},
-      });
+      userMessageHandler?.(admitted.message);
       await runPermissionModePromptLoop({
         ...params,
-        formatPromptErrorMessage: error => {
-          preparationErrors.push(error instanceof Error ? error.message : String(error));
-          return params.formatPromptErrorMessage(error);
-        },
         shouldExit: () => shouldExit,
         sendReady: () => { shouldExit = true; },
       });
@@ -12248,56 +12275,51 @@ describe('runHostSessionRuntime', () => {
       }
     }
 
-    expect(runtime.sendTurnPrompt, preparationErrors.join('\n')).toHaveBeenCalled();
+    expect(runtime.sendTurnPrompt).toHaveBeenCalled();
     expect(harness.session.observePendingSessionFollow).toHaveBeenCalled();
     expect(runtime.sendTurnPrompt).toHaveBeenCalledWith(
-      expect.stringContaining('source context accepted by the provider'),
-      expect.objectContaining({ localId: 'local-follow-runtime', userMessageSeq: 41 }),
+      expect.stringContaining('<session_follow>'),
+      expect.objectContaining({ localId: admitted.localId, userMessageSeq: 41 }),
     );
+    expect(runtime.sendTurnPrompt.mock.calls[0]?.[0]).not.toContain('source context accepted by the provider');
     expect(harness.session.acknowledgeSessionFollow).toHaveBeenCalledWith({
       sourceSessionId: 'source-session',
-      relation: 'follower', policy: { preset: 'quiet' },
+      localInputId: admitted.localId,
       expectedPublisherGeneration: '17',
       expected: delivered,
       observed,
       consumed: observed,
-      acceptance: { kind: 'admitted_input', localInputId: 'local-follow-runtime', userMessageSeq: 41 },
+      acceptance: { kind: 'admitted_input', localInputId: admitted.localId, userMessageSeq: 41 },
     });
   });
 
   it('withdraws a Follow wake at the final recheck without committing a host event or sending a provider prompt', async () => {
-    const harness = createHarness();
-    harness.opts.credentials = { token: 'follow-token', encryption: null };
+    onTestFinished(installEmptyProjectAccountRowsHttpBoundary());
+    const accountGet = vi.mocked(axios.get).getMockImplementation();
+    if (!accountGet) throw new Error('Expected the canonical Account HTTP boundary');
+    const harness = createHarness('session-1', { accountId: 'follow-account' });
     harness.session.hasPendingProviderInput = vi.fn(() => false);
-    const wakeQueue = new MessageQueue2(() => 'default', { batcher: (messages) => messages[0]! });
-    harness.deps.createPermissionModeQueueStateFn = () => ({
-      messageQueue: wakeQueue,
-      rebindSession: () => undefined,
-      getCurrentPermissionMode: () => 'default',
-      setCurrentPermissionMode: () => undefined,
-      getCurrentPermissionModeUpdatedAt: () => 0,
-      setCurrentPermissionModeUpdatedAt: () => undefined,
-    });
+    delete harness.deps.createPermissionModeQueueStateFn;
+    let userMessageHandler: ((message: import('@/api/types').UserMessage) => boolean | void) | null = null;
+    harness.session.onUserMessage = handler => { userMessageHandler = handler; };
     const delivered = { transcriptSeq: 1, readyEventSeq: 0, agentStateVersion: 0, turn: null };
     const observed = { transcriptSeq: 2, readyEventSeq: 0, agentStateVersion: 0, turn: null };
+    const admitted = createAdmittedFollowInputFixture({ destinationSessionId: harness.session.sessionId,
+      sourceSessionId: 'source-session', sourceLocalId: 'source-human-2', delivered, observed });
+    onTestFinished(installFollowHomeReadinessBoundary(harnessHomeFeatures.features));
+    harness.session.getCommittedUserMessageSeq = vi.fn(() => 41);
     let shouldExit = false;
     harness.session.observePendingSessionFollow = vi.fn(async () => {
       // Initial admission and post-hydration admission succeed; withdraw at dispatch.
       const withdrawn = harness.session.observePendingSessionFollow.mock.calls.length > 2;
-      if (withdrawn) shouldExit = true;
+      if (withdrawn) { admitted.withdraw(); shouldExit = true; }
       return {
         ok: true as const,
         v: 1 as const,
         sessionId: 'session-1',
         publisherGeneration: '17',
         currentSourceSessionIds: withdrawn ? [] : ['source-session'],
-        observations: withdrawn ? [] : [{
-          sourceSessionId: 'source-session',
-          destinationSessionId: 'session-1',
-          delivered,
-          observed,
-          policy: { preset: 'everything' as const },
-        }],
+        observations: [{ ...admitted.observation, effectiveDelivery: withdrawn ? null : 'wake' as const }],
       };
     });
     harness.session.acknowledgeSessionFollow = vi.fn();
@@ -12311,14 +12333,21 @@ describe('runHostSessionRuntime', () => {
     // Mock HTTP, not hydration/admission: the final recheck must withdraw a real hydrated wake.
     const get = vi.spyOn(axios, 'get').mockImplementation(async (url) => {
       const request = new URL(String(url));
-      if (request.origin !== 'https://follow-home.example') throw new Error('Follow source read escaped the destination Home');
+      if (request.pathname === '/v1/account/encryption') return await accountGet(url);
+      if (request.pathname === admitted.lookupPath) return admitted.lookupResponse;
+      if (request.pathname === admitted.mutePath) return { status: 200, data: { scopes: [] } };
+      if (request.pathname === '/v1/features') return { status: 200, data: harnessHomeFeatures.features };
+      if (request.pathname === '/v1/auth/ping') return { status: 200, data: {} };
+      if (normalizeServerHttpBaseUrl(request.origin) !== new URL(normalizeServerHttpBaseUrl(harness.session.getServerBinding().serverUrl)).origin) {
+        throw new Error('Follow source read escaped the destination Home');
+      }
       if (request.pathname === '/v1/account/encryption/currentness') return { status: 200, data: {
         mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
       } };
       if (request.pathname === '/v2/sessions/source-session') return { status: 200, data: { session: source } };
       if (request.pathname === '/v1/sessions/source-session/messages') return { status: 200, data: {
         messages: [{
-          id: 'source-human-2', seq: 2, localId: null, createdAt: 2_000, updatedAt: 2_000,
+          id: 'source-human-2', seq: 2, localId: 'source-human-2', createdAt: 2_000, updatedAt: 2_000,
           content: { t: 'plain', v: {
             role: 'user', content: { type: 'text', text: 'Context withdrawn before delivery' },
             meta: { [SESSION_MESSAGE_PROVENANCE_META_KEY]: { v: 1, kind: 'cli' } },
@@ -12328,14 +12357,14 @@ describe('runHostSessionRuntime', () => {
       } };
       throw new Error(`Unexpected Follow source request: ${request.pathname}`);
     });
-    const sourceHome = new ApiSessionClient(harness.opts.credentials.token, createPlainSessionFixture({ id: 'session-1' }), {
+    const sourceHome = createTestApiSessionClient(ApiSessionClient, harness.opts.credentials.token, createPlainSessionFixture({ id: 'session-1' }), {
+      localMachineId: 'machine-1',
+      getServerFeaturesSnapshot: harness.session.getServerFeaturesSnapshot.bind(harness.session),
       metadataAuthority: { kind: 'owner', credentials: harness.opts.credentials },
-      transport: {
-        serverId: 'follow-home', serverUrl: 'https://follow-home.example',
-        createSessionSocketTransport: () => { throw new Error('Session socket is supplied by the network boundary fixture'); },
-      },
+      transport: admitted.transport(harness.session.getServerBinding(), harness.opts.credentials.token),
     });
     harness.session.runSessionFollowSourceRequest = sourceHome.runSessionFollowSourceRequest.bind(sourceHome);
+    harness.session.reconcileSessionInputForProviderDispatch = sourceHome.reconcileSessionInputForProviderDispatch.bind(sourceHome);
     const runtime = {
       ...harness.runtime,
       readSessionIdentity: vi.fn(() => ({ sessionId: null })),
@@ -12346,6 +12375,8 @@ describe('runHostSessionRuntime', () => {
     };
     setSessionRuntimeFactory(harness.config, () => ({ operations: runtime, nativeRuntime: runtime }));
     harness.deps.runPermissionModePromptLoopFn = async (params: Parameters<typeof runPermissionModePromptLoop>[0]) => {
+      if (!userMessageHandler) throw new Error('Expected the production admitted-input binding');
+      userMessageHandler(admitted.message);
       await runPermissionModePromptLoop({ ...params, shouldExit: () => shouldExit });
     };
 
@@ -12367,9 +12398,10 @@ describe('runHostSessionRuntime', () => {
   });
 
   it.each(['attached', 'wake', 'step'] as const)('pulls an originating workflow through the default host context owner (%s)', async (delivery) => {
-    const harness = createHarness();
     const accountId = 'origin-account';
-    harness.opts.credentials = { token: `e30.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`, encryption: null };
+    const harness = createHarness('session-1', { credentials: {
+      token: `e30.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`, encryption: null,
+    } });
     const run: WorkflowRunSummaryV1 = { sourceArtifactId: null, ownerAccountId: accountId, visibleTeamId: null,
       id: 'origin-run', origin: { kind: 'direct', originSessionId: 'session-1' }, machineId: 'machine-1',
       state: delivery === 'step' ? 'running' : 'succeeded', revision: 3,
@@ -12726,8 +12758,7 @@ describe('runHostSessionRuntime', () => {
         import('@/plugins/runtime/runtimeCore/plugin/session'),
         import('@/plugins/runtime/runtimeCore/plugin/sessionLaunch'),
       ]);
-      const harness = createHarness();
-      harness.opts.credentials = { token: 'worker-update-fixture', encryption: null };
+      const harness = createHarness('session-1', { accountId: 'worker-update-account' });
       const runIds = ['natural-sibling-one', 'natural-sibling-two'];
       const finishSiblings = async () => await Promise.all(runIds.map(async (runId) => {
         const run: import('@/agent/runtime/bridges/executionRun/executionRunTypes').ExecutionRunState = {
@@ -13052,8 +13083,7 @@ describe('runHostSessionRuntime', () => {
       import('@happier-dev/protocol/sessions/follow/sessionFollowTransportV1'),
     ]);
     const destination = 'c123456789012345678901234';
-    const harness = createHarness(destination);
-    harness.opts.credentials = { token: 'discussion-reobserve-token', encryption: null };
+    const harness = createHarness(destination, { credentials: { token: 'discussion-reobserve-token', encryption: null } });
     const addressing = { discussionId: 'discussion', messageId: 'question', throughSeq: 2, participantSessionId: destination };
     const localId = deriveDiscussionFollowInputLocalIdV1(addressing);
     const actor = { v: 1, accountId: 'owner', profile: null };
@@ -13189,44 +13219,27 @@ describe('runHostSessionRuntime', () => {
   });
 
   it.each(['follower', 'manager'] as const)('commits one stable %s Follow wake identity before delivery and ACKs that identity', async (relation) => {
-    const harness = createHarness();
+    onTestFinished(installEmptyProjectAccountRowsHttpBoundary());
+    const accountGet = vi.mocked(axios.get).getMockImplementation();
+    if (!accountGet) throw new Error('Expected the canonical Account HTTP boundary');
+    const harness = createHarness('session-1', { accountId: 'follow-account' });
     harness.session.hasPendingProviderInput = vi.fn(() => false);
-    const wakeQueue = new MessageQueue2(() => 'default', {
-      batcher: (messages) => messages[0]!,
-    });
-    harness.deps.createPermissionModeQueueStateFn = () => ({
-      messageQueue: wakeQueue,
-      rebindSession: () => undefined,
-      getCurrentPermissionMode: () => 'default',
-      setCurrentPermissionMode: () => undefined,
-      getCurrentPermissionModeUpdatedAt: () => 0,
-      setCurrentPermissionModeUpdatedAt: () => undefined,
-    });
+    delete harness.deps.createPermissionModeQueueStateFn;
+    let userMessageHandler: ((message: import('@/api/types').UserMessage) => boolean | void) | null = null;
+    harness.session.onUserMessage = handler => { userMessageHandler = handler; };
     const delivered = { transcriptSeq: 1, readyEventSeq: 0, agentStateVersion: 0, turn: null };
     const observed = { transcriptSeq: 2, readyEventSeq: 0, agentStateVersion: 0, turn: null };
-    const expectedEventLocalId = deriveSessionFollowWakeEventLocalIdV1({
-      destinationSessionId: 'session-1',
-      publisherGeneration: '17',
-      observations: [{ sourceSessionId: 'source-session', policy: { preset: 'everything' as const },
-        ...(relation === 'manager' ? { relation, attachedAt: 100 } : {}),
-        expected: delivered, consumed: observed }],
-    });
-    harness.session.observePendingSessionFollow = vi.fn(async (options?: { wakeAdmission?: unknown }) => ({
+    const admitted = createAdmittedFollowInputFixture({ destinationSessionId: harness.session.sessionId,
+      sourceSessionId: 'source-session', sourceLocalId: 'source-human-2', delivered, observed, relation });
+    onTestFinished(installFollowHomeReadinessBoundary(harnessHomeFeatures.features));
+    harness.session.getCommittedUserMessageSeq = vi.fn((localId: string) => localId === admitted.localId ? 41 : 42);
+    harness.session.observePendingSessionFollow = vi.fn(async () => ({
       ok: true as const,
       v: 1 as const,
       sessionId: 'session-1',
       publisherGeneration: '17',
       currentSourceSessionIds: ['source-session'],
-      observations: [{
-        sourceSessionId: 'source-session',
-        destinationSessionId: 'session-1',
-        relation,
-        ...(relation === 'manager' ? { attachedAt: 100 } : {}),
-        delivered,
-        observed,
-        policy: { preset: 'everything' as const },
-      }],
-      ...(options?.wakeAdmission ? { wakeAdmission: { status: 'allowed' as const } } : {}),
+      observations: [admitted.observation],
     }));
     harness.session.acknowledgeSessionFollow = vi
       .fn()
@@ -13239,61 +13252,63 @@ describe('runHostSessionRuntime', () => {
         delivered: observed,
       });
     harness.session.enqueueAgentMessageCommitted = vi.fn(async () => ({ persisted: true, delivered: false }));
-    harness.deps.createSessionFollowSourceHydratorFn = vi.fn(() => vi.fn(async () => ({
-      v: 1 as const,
-      kind: 'session_follow_update' as const,
-      edge: { sourceSessionId: 'source-session', destinationSessionId: 'session-1' },
-      reason: 'source_changed' as const,
-      deliveryIntent: 'context_only' as const,
-      observed,
-      awareness: {
-        v: 1 as const,
-        sessionId: 'source-session',
-        lifecycle: 'ready' as const,
-        runtime: 'idle' as const,
-        freshness: 'live' as const,
-        operational: { primary: 'ready' as const, reasons: ['ready' as const] },
-        encryption: 'plain' as const,
-        availability: 'complete' as const,
-      },
-      recentMessages: [{
-        messageId: 'source-human-2',
-        seq: 2,
-        text: 'Please re-check the destination',
-        provenance: { v: 1 as const, kind: 'cli' as const },
-      }],
-      ...(relation === 'manager' ? { workerUpdate: {
-        v: 1 as const, workerKind: 'session' as const, workerId: 'source-session',
-        ownerState: 'published' as const, wake: 'published' as const,
-        headline: 'Worker published an update', result: 'Please re-check the destination',
-        transcriptPointer: { kind: 'session' as const, sessionId: 'source-session', seq: 2 },
-        canInspect: true,
-      } } : {}),
-      truncated: false,
-    })));
+    const source = createSessionRecordFixture({ id: 'source-session', encryptionMode: 'plain', seq: 2,
+      metadata: JSON.stringify({ path: '/workspace/source', host: 'source-host' }), active: true, activeAt: 9_000 });
+    // Only HTTP is substituted. Receipt admission, queue binding, hydration and ACK retry stay real.
+    const get = vi.spyOn(axios, 'get').mockImplementation(async url => {
+      const path = new URL(String(url)).pathname;
+      if (path === '/v1/account/encryption') return await accountGet(url);
+      if (path === admitted.lookupPath) return admitted.lookupResponse;
+      if (path === admitted.mutePath) return { status: 200, data: { scopes: [] } };
+      if (path === '/v1/features') return { status: 200, data: harnessHomeFeatures.features };
+      if (path === '/v1/auth/ping') return { status: 200, data: {} };
+      if (path === '/v1/account/encryption/currentness') return { status: 200, data: {
+        mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
+      } };
+      if (path === '/v2/sessions/source-session') return { status: 200, data: { session: source } };
+      if (path === '/v1/sessions/source-session/messages') return { status: 200, data: {
+        messages: [{ id: 'source-human-2', seq: 2, localId: 'source-human-2', createdAt: 2_000, updatedAt: 2_000,
+          content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'Please re-check the destination' },
+            meta: { [SESSION_MESSAGE_PROVENANCE_META_KEY]: { v: 1, kind: 'cli' } } } } }],
+        hasMore: false, nextBeforeSeq: null, nextAfterSeq: null,
+      } };
+      throw new Error(`Unexpected Follow source request: ${path}`);
+    });
+    onTestFinished(() => get.mockRestore());
+    const sourceHome = createTestApiSessionClient(ApiSessionClient, harness.opts.credentials.token, createPlainSessionFixture({ id: 'session-1' }), {
+      localMachineId: 'machine-1',
+      transport: admitted.transport(harness.session.getServerBinding(), harness.opts.credentials.token),
+      getServerFeaturesSnapshot: harness.session.getServerFeaturesSnapshot.bind(harness.session),
+    });
+    onTestFinished(() => sourceHome.close());
+    harness.session.runSessionFollowSourceRequest = sourceHome.runSessionFollowSourceRequest.bind(sourceHome);
+    harness.session.reconcileSessionInputForProviderDispatch = sourceHome.reconcileSessionInputForProviderDispatch.bind(sourceHome);
 
-    let deliveryHandler: ((outcome: any) => void) | null = null;
+    let deliveryHandler: ((outcome: HostProviderInputOutcomeEvidence) => void) | null = null;
     const runtime = {
       ...harness.runtime,
       readSessionIdentity: vi.fn(() => ({ sessionId: null })),
       updateSessionRuntimeConfig: vi.fn(unsupportedRuntimeConfigUpdate),
       beginTurnLifecycle: vi.fn(),
       waitForTurnCompletion: vi.fn(async () => undefined),
-      setOnPromptDeliveryOutcome: vi.fn((handler: ((outcome: any) => void) | null) => {
+      setOnPromptDeliveryOutcome: vi.fn((handler: ((outcome: HostProviderInputOutcomeEvidence) => void) | null) => {
         deliveryHandler = handler;
       }),
       sendTurnPrompt: vi.fn(async (_prompt: string, meta?: { localId?: string }) => {
-        expect(harness.session.enqueueAgentMessageCommitted).toHaveBeenCalled();
+        if (!meta?.localId) throw new Error('Expected a committed Pending input');
+        expect(harness.session.getCommittedUserMessageSeq(meta.localId)).toBeGreaterThan(0);
         deliveryHandler?.({
           type: 'input-accepted',
-          localInputId: meta?.localId,
-          userMessageSeq: null,
+          localInputId: meta.localId,
+          userMessageSeq: meta.localId === admitted.localId ? 41 : 42,
           delivery: { kind: 'newTurn', turnId: `wake-turn-${runtime.sendTurnPrompt.mock.calls.length}` },
         });
       }),
     };
     setSessionRuntimeFactory(harness.config, () => ({ operations: runtime, nativeRuntime: runtime }));
     harness.deps.runPermissionModePromptLoopFn = async (params: Parameters<typeof runPermissionModePromptLoop>[0]) => {
+      if (!userMessageHandler) throw new Error('Expected the production admitted-input binding');
+      userMessageHandler(admitted.message);
       let completedTurns = 0;
       let shouldExit = false;
       await runPermissionModePromptLoop({
@@ -13301,7 +13316,8 @@ describe('runHostSessionRuntime', () => {
         shouldExit: () => shouldExit,
         sendReady: () => {
           completedTurns += 1;
-          if (completedTurns === 1) publishSessionFollowWakeInvalidation();
+          if (completedTurns === 1) userMessageHandler?.({ role: 'user', localId: 'after-follow-acceptance',
+            content: { type: 'text', text: 'Continue after accepting the original.' }, meta: {} });
           else shouldExit = true;
         },
       });
@@ -13312,41 +13328,23 @@ describe('runHostSessionRuntime', () => {
 
     expect(runtime.sendTurnPrompt).toHaveBeenCalledTimes(2);
     expect(harness.session.observePendingSessionFollow).toHaveBeenCalledWith(expect.objectContaining({
-      wakeAdmission: { eventLocalId: expectedEventLocalId,
-        observations: [{ sourceSessionId: 'source-session', policy: { preset: 'everything' }, relation,
-          ...(relation === 'manager' ? { attachedAt: 100 } : {}),
-          expected: delivered, consumed: observed }] },
+      inputLocalIds: [admitted.localId],
     }));
-    expect(harness.session.enqueueAgentMessageCommitted).toHaveBeenCalledTimes(2);
-    for (const call of harness.session.enqueueAgentMessageCommitted.mock.calls) {
-      expect(call).toEqual([
-        'qwen',
-        { type: 'event', id: expectedEventLocalId, data: relation === 'manager'
-          ? expect.objectContaining({ type: 'worker-update', followWakeEventLocalId: expectedEventLocalId })
-          : { type: 'message', message: SESSION_FOLLOW_WAKE_EVENT_MESSAGE } },
-        expect.objectContaining({
-          localId: expectedEventLocalId,
-          provenance: { kind: 'non_dependent', source: 'external' },
-        }),
-      ]);
-    }
-    expect(harness.session.confirmUserMessageLocallyConsumed).not.toHaveBeenCalled();
-    expect(harness.session.observeProviderInputSettlement).not.toHaveBeenCalled();
+    expect(runtime.sendTurnPrompt.mock.calls[0]?.[0]).toContain('<session_follow>');
+    expect(runtime.sendTurnPrompt.mock.calls[0]?.[0]).not.toContain('Please re-check the destination');
+    expect(runtime.sendTurnPrompt.mock.calls[0]?.[1]).toMatchObject({ localId: admitted.localId, userMessageSeq: 41 });
+    expect(runtime.sendTurnPrompt.mock.calls[1]?.[0]).not.toContain('<session_follow>');
+    expect(harness.session.enqueueAgentMessageCommitted).not.toHaveBeenCalled();
     expect(harness.session.acknowledgeSessionFollow).toHaveBeenCalledTimes(2);
     expect(harness.session.acknowledgeSessionFollow).toHaveBeenNthCalledWith(2, {
       sourceSessionId: 'source-session',
-      policy: { preset: 'everything' }, relation,
-      ...(relation === 'manager' ? { attachedAt: 100 } : {}),
+      localInputId: admitted.localId,
       expectedPublisherGeneration: '17',
       expected: delivered,
       observed,
       consumed: observed,
       acceptance: {
-        kind: 'context_only_wake',
-        eventLocalId: expectedEventLocalId,
-        observations: [{ sourceSessionId: 'source-session', policy: { preset: 'everything' }, relation,
-          ...(relation === 'manager' ? { attachedAt: 100 } : {}),
-          expected: delivered, consumed: observed }],
+        kind: 'admitted_input', localInputId: admitted.localId, userMessageSeq: 41,
       },
     });
   });

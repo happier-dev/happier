@@ -1,6 +1,6 @@
 import { parseSessionFollowActionResponse, resolveSessionFollowActionRequest } from '@happier-dev/protocol/sessions/follow/actionTransport';
 import { readActionCredentialScopeDeniedHttpFailureV1 } from '@happier-dev/protocol/actions/externalActionApi';
-import { SessionFollowErrorCodeV1Schema, type SetSessionFollowRequest, GetSessionFollowResponseSchema, SetSessionFollowResponseSchema, RemoveSessionFollowResponseSchema, SessionAutoFollowPreferencesResponseSchema, ReplaceSessionVoiceInclusionsResponseSchema, SESSION_FOLLOW_HTTP_PATHS_V1 } from '@happier-dev/protocol/sessions/follow/api';
+import { SessionFollowErrorCodeV1Schema, type SessionFollowErrorCodeV1, type SetSessionFollowRequest, GetSessionFollowResponseSchema, SetSessionFollowResponseSchema, RemoveSessionFollowResponseSchema, SessionAutoFollowPreferencesResponseSchema, ReplaceSessionVoiceInclusionsResponseSchema, SESSION_FOLLOW_HTTP_PATHS_V1 } from '@happier-dev/protocol/sessions/follow/api';
 import { SessionFollowSourcesErrorCodeV1Schema, type SessionFollowSourcesErrorCodeV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowSourcesApi';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import type { SessionAutoFollowPreferencesV1 } from '@happier-dev/protocol/sessions/follow/accountFollow';
@@ -18,7 +18,7 @@ import type { AccountEncryptionReadUsage } from '@/sync/api/account/apiAccountEn
 import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
 import { assertSessionFollowRulesScope, readSessionFollowRuleCensus, type SessionFollowReadInputs, type SessionFollowRulesSnapshot } from './sessionFollowRulesApi';
 import { resolveAuthCredentialsScopeKey } from '@/auth/storage/resolveAuthCredentialsScopeKey';
-import type { FollowListPageRequestV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowListV1';
+import type { FollowListRequestV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowListV1';
 import { FollowReceiverRefV1Schema, FollowSourceRefV1Schema, type FollowDeliveryMuteScopeV1 } from '@happier-dev/protocol/sessions/follow/sessionDeliveryMuteV1';
 
 import { subscribeHomeCredentialMutations } from '@/auth/storage/tokenStorage';
@@ -30,16 +30,21 @@ import { createServerRequestForResolvedServerScope, runWithServerRequestAuthorit
 import { readSessionSnapshotForAuthority } from '@/sync/runtime/orchestration/serverScopedRpc/readSessionSnapshotForAuthority';
 import { resolveServerAccountRequestContext } from '@/sync/runtime/orchestration/serverScopedRpc/resolveServerAccountRequestContext';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
-import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { isActionEffectResult } from '@/sync/domains/scope/actionAccountScopeError';
+import type { ActionExecuteFailure, ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { createFrontDoorActionExecute, requireActionSuccess } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { HappyError } from '@/utils/errors/errors';
 
 type PersonalFollowActionExecute = (actionId: ActionId, input: unknown) => Promise<ActionExecuteResult>;
 const executePersonalFollowAction = createFrontDoorActionExecute();
 
-export type SessionFollowApiResult<T> =
+type SessionFollowApiError = SessionFollowSourcesErrorCodeV1 | SessionFollowRuleFailureV1;
+
+export type SessionFollowApiResult<T, TError extends SessionFollowApiError = SessionFollowApiError> =
     | Readonly<{ kind: 'ok'; value: T }>
-    | Readonly<{ kind: 'failed'; error: SessionFollowSourcesErrorCodeV1 | SessionFollowRuleFailureV1 | 'credential_scope_denied' | 'unavailable' }>;
+    | Readonly<{ kind: 'failed'; error: TError | 'credential_scope_denied' | 'unavailable';
+        actionFailure?: ActionExecuteFailure }>;
 
 const UNAVAILABLE = Object.freeze({ kind: 'failed', error: 'unavailable' } as const);
 
@@ -127,7 +132,7 @@ async function sendFollowRequest(params: Readonly<{
 }
 
 /** Explicit private Account relations only; this does not claim a rule census. */
-export async function readAccountSessionFollowRelations(scope: ServerAccountScope, page?: FollowListPageRequestV1, signal?: AbortSignal
+export async function readAccountSessionFollowRelations(scope: ServerAccountScope, page?: FollowListRequestV1, signal?: AbortSignal
 ): Promise<SessionFollowApiResult<ListAccountSessionFollowsResponseV1>> {
     return await withCurrentFollowRequest({
         serverId: scope.serverId, expectedAccountId: scope.accountId, signal,
@@ -141,7 +146,7 @@ export async function readAccountSessionFollowRelations(scope: ServerAccountScop
     });
 }
 
-/** One family adapter for human controls and the shared Action executor. */
+/** Physical transport for the shared Action executor and scoped read adapters. */
 export async function executeSessionFollowAction<TActionId extends SessionFollowActionIdV1>(
     actionId: TActionId,
     input: unknown,
@@ -151,9 +156,13 @@ export async function executeSessionFollowAction<TActionId extends SessionFollow
     sourceSessionId?: string,
     readInputs?: SessionFollowReadInputs,
 ): Promise<SessionFollowApiResult<SessionFollowActionOutputV1[TActionId]>> {
+    if (signal?.aborted) return UNAVAILABLE;
     return await withCurrentFollowRequest({
         serverId,
-        signal,
+        // Admission already checked the caller's intent. A started write keeps its
+        // Account transport until settlement; closing its editor cannot undo it.
+        // Reads still withdraw demand with the caller, and credentials revoke both.
+        signal: isActionEffectResult(getActionSpec(actionId).sideEffectClass) ? undefined : signal,
         ...(expectedAccountId !== undefined ? { expectedAccountId } : {}),
         operation: async ({ context, signal: requestSignal, isCurrent }) => {
             const actionInput = SessionFollowActionInputSchemasV1[actionId].parse(input);
@@ -239,7 +248,7 @@ export async function executeSessionFollowAction<TActionId extends SessionFollow
                 const list = SessionFollowActionInputSchemasV1['follow.list'].parse(input);
                 if (list.direction === 'followers') return { kind: 'ok', value: parseSessionFollowActionResponse(actionId, input, payload) };
                 const receiver = FollowReceiverRefV1Schema.parse(list.receiver);
-                const census = list.cursor === undefined ? await readRules() : null;
+                const census = list.cursor === undefined && list.sourceKinds === undefined ? await readRules() : null;
                 if (census) {
                     const current = await readStorage();
                     if (current.mode !== census.mode) return UNAVAILABLE;
@@ -282,37 +291,69 @@ export const sessionFollowAction = async (args: Parameters<NonNullable<ActionExe
     };
 };
 
-async function executeAccountFollowAction<TActionId extends SessionFollowActionIdV1, TValue>(
+// These inputs select the closed personal parser below, never the source/rule error arms.
+export function executeUiSessionFollowAction<TValue>(
+    actionId: 'follow.get' | 'follow.set' | 'follow.remove',
+    input: Readonly<{ receiver: Readonly<{ kind: 'account' }>; source: Readonly<{ kind: 'session'; sessionId: string }> }>,
+    serverId: string,
+    parse: (value: unknown) => TValue,
+    execute?: PersonalFollowActionExecute,
+    signal?: AbortSignal,
+): Promise<SessionFollowApiResult<TValue, SessionFollowErrorCodeV1>>;
+export function executeUiSessionFollowAction<TActionId extends SessionFollowActionIdV1, TValue>(
     actionId: TActionId,
     input: unknown,
     serverId: string,
     parse: (value: unknown) => TValue,
     execute?: PersonalFollowActionExecute,
-) {
+    signal?: AbortSignal,
+): Promise<SessionFollowApiResult<TValue>>;
+export async function executeUiSessionFollowAction<TActionId extends SessionFollowActionIdV1, TValue>(
+    actionId: TActionId,
+    input: unknown,
+    serverId: string,
+    parse: (value: unknown) => TValue,
+    execute?: PersonalFollowActionExecute,
+    signal?: AbortSignal,
+): Promise<SessionFollowApiResult<TValue>> {
     try {
         const result = execute ? await execute(actionId, input)
             : await executePersonalFollowAction(actionId, input, { surface: 'ui', authority: 'present_user',
-                actionCaller: { kind: 'host' }, serverId });
+                actionCaller: { kind: 'host' }, serverId, ...(signal ? { signal } : {}) });
         requireActionSuccess(result);
         return { kind: 'ok' as const, value: parse(result.result) };
     } catch (failure) {
         const code = failure instanceof HappyError ? failure.code : undefined;
         if (code === 'credential_scope_denied') return { kind: 'failed' as const, error: code };
+        const actionInput = SessionFollowActionInputSchemasV1[actionId].safeParse(input);
+        if (actionInput.success && 'source' in actionInput.data && actionInput.data.source?.kind === 'rule') {
+            const ruleError = SessionFollowRuleErrorResponseV1Schema.safeParse({ error: code });
+            if (ruleError.success) return { kind: 'failed', error: ruleError.data.error };
+        }
+        if (actionInput.success && 'receiver' in actionInput.data && actionInput.data.receiver.kind === 'session') {
+            const sourceError = SessionFollowSourcesErrorCodeV1Schema.safeParse(code);
+            if (sourceError.success) return { kind: 'failed', error: sourceError.data };
+        }
         const error = SessionFollowErrorCodeV1Schema.safeParse(code);
-        return { kind: 'failed' as const, error: error.success ? error.data : 'unavailable' as const };
+        return { kind: 'failed', error: error.success ? error.data : 'unavailable',
+            ...(!error.success && code && failure instanceof HappyError ? { actionFailure: {
+                ok: false as const, errorCode: code, error: failure.message,
+                ...(failure.details !== undefined ? { details: failure.details } : {}),
+            } } : {}),
+        };
     }
 }
 
 export function sessionFollowGet(address: SessionAddress, execute?: PersonalFollowActionExecute) {
-    return executeAccountFollowAction('follow.get', { receiver: { kind: 'account' }, source: { kind: 'session', sessionId: address.sessionId } }, address.serverId, GetSessionFollowResponseSchema.parse, execute);
+    return executeUiSessionFollowAction('follow.get', { receiver: { kind: 'account' }, source: { kind: 'session', sessionId: address.sessionId } }, address.serverId, GetSessionFollowResponseSchema.parse, execute);
 }
 
 export function sessionFollowSet(address: SessionAddress, preferences: Pick<SetSessionFollowRequest, 'policy' | 'once'>, execute?: PersonalFollowActionExecute) {
-    return executeAccountFollowAction('follow.set', { receiver: { kind: 'account' }, source: { kind: 'session', sessionId: address.sessionId }, ...preferences }, address.serverId, SetSessionFollowResponseSchema.parse, execute);
+    return executeUiSessionFollowAction('follow.set', { receiver: { kind: 'account' }, source: { kind: 'session', sessionId: address.sessionId }, ...preferences }, address.serverId, SetSessionFollowResponseSchema.parse, execute);
 }
 
 export function sessionFollowRemove(address: SessionAddress, execute?: PersonalFollowActionExecute) {
-    return executeAccountFollowAction('follow.remove', { receiver: { kind: 'account' }, source: { kind: 'session', sessionId: address.sessionId } }, address.serverId, RemoveSessionFollowResponseSchema.parse, execute);
+    return executeUiSessionFollowAction('follow.remove', { receiver: { kind: 'account' }, source: { kind: 'session', sessionId: address.sessionId } }, address.serverId, RemoveSessionFollowResponseSchema.parse, execute);
 }
 
 export async function replaceSessionVoiceInclusions(
@@ -348,9 +389,9 @@ export async function replaceSessionVoiceInclusions(
 }
 
 export function sessionAutoFollowPreferencesGet(serverId: string) {
-    return executeAccountFollowAction('follow.preferences.get', {}, serverId, SessionAutoFollowPreferencesResponseSchema.parse);
+    return executeUiSessionFollowAction('follow.preferences.get', {}, serverId, SessionAutoFollowPreferencesResponseSchema.parse);
 }
 
 export function sessionAutoFollowPreferencesSet(serverId: string, preferences: SessionAutoFollowPreferencesV1) {
-    return executeAccountFollowAction('follow.preferences.set', preferences, serverId, SessionAutoFollowPreferencesResponseSchema.parse);
+    return executeUiSessionFollowAction('follow.preferences.set', preferences, serverId, SessionAutoFollowPreferencesResponseSchema.parse);
 }

@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { buildSessionFollowReceiverChangeEntityIdV1 } from '@happier-dev/protocol/sessions/follow/changes';
 
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { encodeBase64, MACHINE_PLAIN_DATA_KEY_MARKER, TranscriptRawAgentEventV1Schema } from '@happier-dev/protocol';
@@ -15,8 +16,20 @@ import { markSessionProjectionRecipientsChanged } from '@/app/session/changeTrac
 import { changeDeliveryMute } from './sessionDeliveryMuteService';
 import { setSessionManager } from './sessionManagerService';
 import { sourceKeyForSessionFollowSourceV1 } from './sessionFollowSourceIdentity';
+import { readAdmittedSessionFollowInputInTx, readSessionFollowOriginalOccurrenceFrontiersInTx, sessionFollowInputFrontiers, settleSessionFollowInputReasonsInTx } from './sessionFollowRuleProgress';
+import { setAccountFollowRule } from './accountFollowRuleService';
+import { normalizeSessionListFilterV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
+import { buildSessionInputAdmissionReceipt } from '@/app/session/messages/sessionInputAdmission';
+import { SessionInputAdmissionReceiptV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { SessionFollowInputV1Schema, deriveSessionFollowInputLocalIdV1, deriveSessionFollowOriginalOccurrenceKeyV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowInputV1';
+import { decodeBase64 } from 'privacy-kit';
+import { withAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
+import { sessionPendingRoutes } from '@/app/api/routes/session/pendingRoutes';
+import { getOrCreateServerIdentityId } from '@/app/serverIdentity/serverIdentity';
+import { encodePlainMachineStoredContent } from '@happier-dev/protocol/machines/machineStoredContent';
 
 import {
+    admitSessionFollowRelationsForInputInTx,
     acknowledgeSessionFollowFrontierInTx as acknowledgeSessionFollowFrontierAuthenticatedInTx,
     authorizeSessionFollowSourceKeyPreparation as authorizeSessionFollowSourceKeyPreparationAuthenticated,
     authorizeSessionFollowSourceKeyPreparer,
@@ -125,6 +138,7 @@ describe('SessionFollowEdge service', () => {
         harness = await createLightSqliteHarness({
             tempDirPrefix: 'happier-session-follow-edge-',
             initEncrypt: true,
+            env: { HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: 'optional', HAPPIER_FEATURE_SESSIONS_FOLLOWING__ENABLED: 'true' },
         });
     }, 180_000);
 
@@ -180,6 +194,237 @@ describe('SessionFollowEdge service', () => {
         expect(await db.sessionFollowEdge.count({ where: { destinationSessionId: destination.id } })).toBe(1);
         await db.session.delete({ where: { id: source.id } });
         expect(await db.sessionFollowEdge.count({ where: { destinationSessionId: destination.id } })).toBe(0);
+    });
+
+    it('verifies an exact terminal Turn original and settles it without consuming the report suffix', async () => {
+        const owner = await createAccount();
+        const source = await createSession(owner.id, { seq: 100, agentStateVersion: 9 });
+        const destination = await createSession(owner.id);
+        await db.sessionTurn.create({ data: { sessionId: source.id, turnId: 'terminal-original',
+            status: 'failed', startedAt: 10n, updatedAt: 20n, terminalAt: 20n } });
+        expect((await setSessionFollowSource({ accountId: owner.id, sourceSessionId: source.id,
+            destinationSessionId: destination.id })).ok).toBe(true);
+        const edge = await db.sessionFollowEdge.update({ where: { destinationSessionId_sourceSessionId_relation: {
+            destinationSessionId: destination.id, sourceSessionId: source.id, relation: 'follower',
+        } }, data: { deliveredTranscriptSeq: 7, deliveredAgentStateVersion: 2 } });
+        const delivered = { transcriptSeq: 7, readyEventSeq: 0, agentStateVersion: 2, turn: null };
+        const occurrence = { sourceSessionId: source.id, sourceTurn: { id: 'terminal-original', status: 'failed' as const } };
+        const original = await inTx(tx => readSessionFollowOriginalOccurrenceFrontiersInTx(tx, { source, occurrence, delivered }));
+        expect(original).toMatchObject({ baseline: delivered, observed: { ...delivered, turn: occurrence.sourceTurn } });
+        expect(await inTx(tx => readSessionFollowOriginalOccurrenceFrontiersInTx(tx, { source,
+            occurrence: { ...occurrence, sourceTurn: { ...occurrence.sourceTurn, status: 'completed' } }, delivered }))).toBeNull();
+        const delivery = { v: 1 as const, delivery: 'next_turn' as const, original: occurrence,
+            event: { kind: 'failed_or_stopped' as const } };
+        const admission = { accountId: owner.id, destinationSessionId: destination.id, authentication,
+            delivery, relations: [{ relation: 'follower' as const }] };
+        expect(await inTx(tx => admitSessionFollowRelationsForInputInTx(tx, admission))).toHaveLength(1);
+        expect(await inTx(tx => admitSessionFollowRelationsForInputInTx(tx, { ...admission,
+            delivery: { ...delivery, event: { kind: 'finished' } } }))).toBeNull();
+        await inTx(tx => settleSessionFollowInputReasonsInTx(tx, { progresses: [], relations: [edge], delivery,
+            observed: sessionFollowInputFrontiers(delivery).observed }));
+        expect(await readEdge(destination.id, source.id)).toMatchObject({ deliveredTranscriptSeq: 7,
+            deliveredAgentStateVersion: 2, deliveredTurnId: occurrence.sourceTurn.id, deliveredTurnStatus: 'failed' });
+    });
+
+    it('rejects a direct Pending terminal notice backed only by a source message', async () => {
+        const owner = await createAccount();
+        const source = await createSession(owner.id, { seq: 2 });
+        const destination = await createSession(owner.id);
+        const localId = randomUUID();
+        await db.sessionMessage.create({ data: { sessionId: source.id, seq: 1, localId, messageRole: 'event',
+            content: { t: 'plain', v: { role: 'agent', content: { type: 'event', id: localId,
+                data: TranscriptRawAgentEventV1Schema.parse({ type: 'ready', completedTurnId: 'unverified-turn' }) } } } } });
+        const reportLocalId = randomUUID();
+        await db.sessionMessage.create({ data: { sessionId: source.id, seq: 2, localId: reportLocalId, messageRole: 'agent',
+            content: { t: 'plain', v: { role: 'agent', content: { type: 'text', text: 'An ordinary report' } } } } });
+        expect((await setSessionFollowSource({ accountId: owner.id, sourceSessionId: source.id,
+            destinationSessionId: destination.id })).ok).toBe(true);
+        const machine = await db.machine.create({ data: { id: randomUUID(), accountId: owner.id, installationId: randomUUID(),
+            active: true, metadata: encodePlainMachineStoredContent({}), dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER),
+            operationProtocolCapabilities: { sessionInputAdmission: { protocolVersions: [1] } }, operationProtocolCapabilitiesRevision: 1 } });
+        await db.accessKey.create({ data: { accountId: owner.id, machineId: machine.id, sessionId: destination.id,
+            data: MACHINE_PLAIN_DATA_KEY_MARKER } });
+        await db.session.update({ where: { id: destination.id }, data: { runtimeMachineTarget: {
+            homeId: await getOrCreateServerIdentityId(), accountId: owner.id, sessionId: destination.id,
+            machineId: machine.id, installationId: machine.installationId!,
+        } } });
+        const original = { sourceSessionId: source.id, sourceMessage: { localId, seq: 1 } };
+        const terminalLocalId = deriveSessionFollowInputLocalIdV1({ destinationSessionId: destination.id, original });
+        await withAuthenticatedTestApp(sessionPendingRoutes, async app => {
+            const controlOriginal = { sourceSessionId: source.id, sourceMessage: { localId: reportLocalId, seq: 2 } };
+            const control = await app.inject({ method: 'POST', url: `/v2/sessions/${destination.id}/pending`,
+                headers: { 'x-test-user-id': owner.id, 'x-happier-account-stored-content-protocol': '4' },
+                payload: { targetMachineId: machine.id, localId: deriveSessionFollowInputLocalIdV1({ destinationSessionId: destination.id, original: controlOriginal }),
+                    content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'Ordinary report' } } },
+                    requestedAction: { v: 1, kind: 'enqueue' }, followRelations: [{ relation: 'follower' }],
+                    followDeliveryV1: { v: 1, delivery: 'wake', original: controlOriginal, event: { kind: 'update_posted' } } },
+            });
+            expect(control.statusCode, control.body).toBe(200);
+            const response = await app.inject({ method: 'POST', url: `/v2/sessions/${destination.id}/pending`,
+                headers: { 'x-test-user-id': owner.id, 'x-happier-account-stored-content-protocol': '4' },
+                payload: { targetMachineId: machine.id, localId: terminalLocalId,
+                    content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'Unverified terminal notice' } } },
+                    requestedAction: { v: 1, kind: 'enqueue' }, followRelations: [{ relation: 'follower' }],
+                    followDeliveryV1: { v: 1, delivery: 'wake', original, event: { kind: 'finished' } } },
+            });
+            expect(response.statusCode, response.body).toBe(400);
+        });
+        expect(await db.sessionPendingMessage.count({ where: { sessionId: destination.id, localId: terminalLocalId } })).toBe(0);
+        expect(await db.sessionMessage.count({ where: { sessionId: destination.id } })).toBe(0);
+    });
+
+    it.each([false, true])('rejects stale wake writes and replays before reoffering the same original quietly (private Quiet: %s)', async privateQuiet => {
+        const owner = await createAccount();
+        const source = await createSession(owner.id);
+        const destination = await createSession(owner.id);
+        expect(await setSessionManager({ accountId: owner.id, sessionId: source.id, managerSessionId: destination.id,
+            expectedManagerSessionId: null, authentication })).toMatchObject({ ok: true });
+        const manager = await db.sessionFollowEdge.findUniqueOrThrow({ where: { managerSourceSessionId: source.id } });
+        const ruleId = randomUUID();
+        if (privateQuiet) expect(await setAccountFollowRule({ accountId: owner.id, ruleId, authentication, mutation: {
+            receiver: { kind: 'session', sessionId: destination.id }, expectedVersion: -1,
+            content: { t: 'plain', v: { v: 1, enabled: true, filter: normalizeSessionListFilterV1({
+                homeServerIds: [await getOrCreateServerIdentityId()], startedBy: ['you', 'triggers', 'agents'] }),
+                policy: { preset: 'quiet' } } },
+        } })).toMatchObject({ ok: true });
+        const machine = await db.machine.create({ data: { id: randomUUID(), accountId: owner.id, installationId: randomUUID(),
+            active: true, metadata: encodePlainMachineStoredContent({}), dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER),
+            operationProtocolCapabilities: { sessionInputAdmission: { protocolVersions: [1] } }, operationProtocolCapabilitiesRevision: 1 } });
+        await db.accessKey.create({ data: { accountId: owner.id, machineId: machine.id, sessionId: destination.id,
+            data: MACHINE_PLAIN_DATA_KEY_MARKER } });
+        await db.session.update({ where: { id: destination.id }, data: { runtimeMachineTarget: {
+            homeId: await getOrCreateServerIdentityId(), accountId: owner.id, sessionId: destination.id,
+            machineId: machine.id, installationId: machine.installationId!,
+        } } });
+        const createTurn = async (turnId: string) => {
+            const terminalAt = BigInt(Date.now());
+            await db.sessionTurn.create({ data: { sessionId: source.id, turnId, status: 'failed',
+                startedAt: terminalAt, updatedAt: terminalAt, terminalAt } });
+            return { id: turnId, status: 'failed' as const };
+        };
+        const first = await createTurn('admitted-before-quiet');
+        await withAuthenticatedTestApp(sessionPendingRoutes, async app => {
+            const send = (sourceTurn: typeof first, delivery: 'wake' | 'next_turn') => {
+                const original = { sourceSessionId: source.id, sourceTurn };
+                return app.inject({ method: 'POST', url: `/v2/sessions/${destination.id}/pending`,
+                    headers: { 'x-test-user-id': owner.id, 'x-happier-account-stored-content-protocol': '4' }, payload: {
+                        targetMachineId: machine.id, localId: deriveSessionFollowInputLocalIdV1({ destinationSessionId: destination.id, original }),
+                        content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: `Failed ${sourceTurn.id}` } } },
+                        requestedAction: { v: 1, kind: 'enqueue' }, followDeliveryV1: { v: 1, delivery, original, event: { kind: 'failed_or_stopped' } },
+                        followRelations: [{ relation: 'manager', attachedAt: manager.attachedAt.getTime() }],
+                        ...(privateQuiet ? { followSources: [{ rule: { ruleId, ruleVersion: 0 }, evaluation: 'receiver',
+                            selectedDelivery: 'next_turn', sourceSessionId: source.id, destinationSessionId: destination.id, sourceTurn }] } : {}),
+                    },
+                });
+            };
+            const admitted = await send(first, 'wake');
+            expect(admitted.statusCode, admitted.body).toBe(200);
+            await db.sessionFollowEdge.update({ where: { managerSourceSessionId: source.id },
+                data: { policyJson: JSON.stringify({ preset: 'quiet' }) } });
+            const replay = await send(first, 'wake');
+            expect(replay.statusCode, replay.body).toBe(403);
+            const quiet = await send(first, 'next_turn');
+            expect(quiet.statusCode, quiet.body).toBe(200);
+            const later = await createTurn('first-observed-after-quiet');
+            const stale = await send(later, 'wake');
+            expect(stale.statusCode, stale.body).toBe(403);
+            expect(await db.sessionPendingMessage.count({ where: { sessionId: destination.id } })).toBe(1);
+            const nextTurn = await send(later, 'next_turn');
+            expect(nextTurn.statusCode, nextTurn.body).toBe(200);
+            expect(await db.sessionPendingMessage.count({ where: { sessionId: destination.id } })).toBe(2);
+        });
+        expect(await db.sessionMessage.count({ where: { sessionId: destination.id } })).toBe(0);
+    });
+
+    it.each(['next_turn', 'wake'] as const)('combines current manager policy with a pinned private %s vote without rewriting original custody', async selectedDelivery => {
+        const owner = await createAccount();
+        const source = await createSession(owner.id);
+        const destination = await createSession(owner.id);
+        expect(await setSessionManager({ accountId: owner.id, sessionId: source.id, managerSessionId: destination.id,
+            expectedManagerSessionId: null, authentication })).toMatchObject({ ok: true });
+        const manager = await db.sessionFollowEdge.findUniqueOrThrow({ where: { managerSourceSessionId: source.id } });
+        const ruleId = randomUUID();
+        const rule = { accountId: owner.id, ruleId, authentication };
+        const definition = { t: 'plain' as const, v: { v: 1 as const, enabled: true,
+            filter: normalizeSessionListFilterV1({ homeServerIds: [await getOrCreateServerIdentityId()], startedBy: ['you', 'triggers', 'agents'] }),
+            policy: { preset: selectedDelivery === 'wake' ? 'important' as const : 'quiet' as const } } };
+        expect(await setAccountFollowRule({ ...rule, mutation: { receiver: { kind: 'session', sessionId: destination.id },
+            expectedVersion: -1, content: definition } })).toMatchObject({ ok: true });
+        const terminalAt = BigInt(Date.now());
+        await db.sessionTurn.create({ data: { sessionId: source.id, turnId: 'private-vote-turn', status: 'failed',
+            startedAt: terminalAt, updatedAt: terminalAt, terminalAt } });
+        const sourceTurn = { id: 'private-vote-turn', status: 'failed' as const };
+        const delivery = SessionFollowInputV1Schema.parse({ v: 1, delivery: 'wake', event: { kind: 'failed_or_stopped' },
+            original: { sourceSessionId: source.id, sourceTurn } });
+        const localInputId = deriveSessionFollowInputLocalIdV1({ destinationSessionId: destination.id, original: delivery.original });
+        const receipt = SessionInputAdmissionReceiptV1Schema.parse({
+            ...buildSessionInputAdmissionReceipt({ issuer: 'authenticatedMachine', admittedTarget: { homeId: 'home',
+                accountId: owner.id, sessionId: destination.id, machineId: 'producer', installationId: 'installation' } }),
+            followDeliveryV1: delivery, followRelations: [{ relation: 'manager', attachedAt: manager.attachedAt.getTime() }],
+            followSources: [{ rule: { ruleId, ruleVersion: 0 }, evaluation: 'receiver', selectedDelivery,
+                sourceSessionId: source.id, destinationSessionId: destination.id, sourceTurn }],
+        });
+        await db.sessionMessage.create({ data: { sessionId: destination.id, seq: 1, localId: localInputId,
+            messageRole: 'user', content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'Original failed Turn' } } },
+            inputAdmissionReceipt: receipt } });
+        const read = () => inTx(tx => readAdmittedSessionFollowInputInTx(tx, { principal: runtimePrincipal(owner.id),
+            accountId: owner.id, destinationSessionId: destination.id, localInputId }));
+        expect(await read()).toMatchObject({ effectiveDelivery: 'wake', delivery });
+        await db.sessionFollowEdge.update({ where: { managerSourceSessionId: source.id }, data: { policyJson: JSON.stringify({ preset: 'quiet' }) } });
+        expect(await read()).toMatchObject({ effectiveDelivery: selectedDelivery, delivery });
+        const observed = await inTx(tx => observeSessionFollowForDestinationInTx(tx, { principal: runtimePrincipal(owner.id),
+            destinationSessionId: destination.id, inputLocalIds: [localInputId] }));
+        expect(observed.observations).toContainEqual(expect.objectContaining({ kind: 'admitted_input', localInputId,
+            effectiveDelivery: selectedDelivery, delivery }));
+        // A new rule version withdraws only the pinned private reason. Current
+        // Quiet still selects the same immutable original for the next turn.
+        expect(await setAccountFollowRule({ ...rule, mutation: { receiver: { kind: 'session', sessionId: destination.id },
+            expectedVersion: 0, content: definition } })).toMatchObject({ ok: true });
+        expect(await read()).toMatchObject({ effectiveDelivery: 'next_turn', delivery });
+        await db.sessionFollowEdge.update({ where: { managerSourceSessionId: source.id }, data: {
+            policyJson: JSON.stringify({ preset: 'custom', events: {} }),
+        } });
+        expect(await read()).toBeNull();
+        await db.sessionMessage.update({ where: { sessionId_localId: { sessionId: destination.id, localId: localInputId } },
+            data: { acceptedTurnId: 'receiver-accepted-turn', acceptedFollowOriginalKey: deriveSessionFollowOriginalOccurrenceKeyV1(delivery.original) } });
+        expect(await read()).toMatchObject({ effectiveDelivery: null, nativeAccepted: true, delivery });
+        const accepted = await inTx(tx => observeSessionFollowForDestinationInTx(tx, { principal: runtimePrincipal(owner.id),
+            destinationSessionId: destination.id, inputLocalIds: [localInputId] }));
+        expect(accepted.observations).toContainEqual(expect.objectContaining({ kind: 'admitted_input', localInputId,
+            effectiveDelivery: null, delivery }));
+        expect((await db.sessionMessage.findUniqueOrThrow({ where: { sessionId_localId: {
+            sessionId: destination.id, localId: localInputId,
+        } } })).inputAdmissionReceipt).toEqual(receipt);
+    });
+
+    it('observes a terminal Turn without scanning its 1,000 transcript originals or destination custody', async () => {
+        const owner = await createAccount();
+        const source = await createSession(owner.id, { seq: 1000 });
+        const destination = await createSession(owner.id);
+        await db.sessionMessage.createMany({ data: Array.from({ length: 1000 }, (_, index) => ({
+            sessionId: source.id, seq: index + 1, localId: `original-${index}`,
+            content: { t: 'plain' as const, v: { role: 'assistant', content: { type: 'text', text: 'Result' } } },
+            messageRole: 'assistant',
+        })) });
+        expect(await setSessionManager({ accountId: owner.id, sessionId: source.id, managerSessionId: destination.id,
+            expectedManagerSessionId: null, authentication })).toMatchObject({ ok: true });
+        await db.sessionTurn.create({ data: { sessionId: source.id, turnId: 'terminal-cost', status: 'failed',
+            startedAt: 10n, updatedAt: 20n, terminalAt: 20n,
+            transcriptAnchorsJson: JSON.stringify({ startSeqInclusive: 1, endSeqInclusive: 1000 }) } });
+        await db.session.update({ where: { id: source.id }, data: { latestTurnId: 'terminal-cost', latestTurnStatus: 'failed' } });
+        await inTx(async tx => {
+            // Observe the persistent DB boundary without replacing its behavior.
+            const messages = vi.spyOn(tx.sessionMessage, 'findMany');
+            const pending = vi.spyOn(tx.sessionPendingMessage, 'findMany');
+            try {
+                const observations = await observeSessionFollowForDestinationInTx(tx, {
+                    principal: runtimePrincipal(owner.id), destinationSessionId: destination.id, includeManager: true,
+                });
+                expect(observations.observations).toMatchObject([{ observed: { turn: { id: 'terminal-cost', status: 'failed' } } }]);
+                expect(messages).toHaveBeenCalledTimes(0);
+                expect(pending).toHaveBeenCalledTimes(0);
+            } finally { messages.mockRestore(); pending.mockRestore(); }
+        });
     });
 
     it('persists explicit Custom policy through set, list and observation without reseeding on a policy-only edit', async () => {
@@ -440,12 +685,13 @@ describe('SessionFollowEdge service', () => {
             await tx.session.update({ where: { id: source.id }, data: { seq: { increment: 1 } } });
             await markSessionProjectionRecipientsChanged({ tx, sessionId: source.id });
         });
-        // Source and destination are two projection changes even when two
-        // independent relations point at that same receiver.
+        // Source and destination each project once, with one independently
+        // coalesced Follow wake even when two relations share the receiver.
         expect(await db.account.findUniqueOrThrow({ where: { id: owner.id }, select: { seq: true } }))
-            .toEqual({ seq: before.seq + 2 });
+            .toEqual({ seq: before.seq + 3 });
         expect(await db.accountChange.findMany({ where: { accountId: owner.id }, select: { entityId: true }, orderBy: { entityId: 'asc' } }))
-            .toEqual([source.id, destination.id].sort().map(entityId => ({ entityId })));
+            .toEqual([source.id, destination.id, buildSessionFollowReceiverChangeEntityIdV1(destination.id)]
+                .sort().map(entityId => ({ entityId })));
     });
 
     it.each(['plain', 'e2ee'] as const)(
@@ -576,6 +822,64 @@ describe('SessionFollowEdge service', () => {
         await expect(inTx((tx) => projectSessionFollowSourceForRunnerInTx(tx, {
             principal, destinationSessionId: destination.id, request: managerRequest,
         }))).resolves.toBeNull();
+
+        const { encryptWithDataKey, decryptWithDataKeyResult } = await vi.importActual<{
+            encryptWithDataKey(value: unknown, key: Uint8Array): Uint8Array;
+            decryptWithDataKeyResult(value: Uint8Array, key: Uint8Array): { status: string; value?: unknown };
+        }>('../../../../../cli/src/api/encryption');
+        const sourceKey = new Uint8Array(32).fill(23);
+        const finalContent = { role: 'agent', content: { type: 'text', text: 'Exact anchored terminal result' } };
+        const storedFinal = encryptionMode === 'plain' ? { t: 'plain' as const, v: finalContent }
+            : { t: 'encrypted' as const, c: encodeBase64(encryptWithDataKey(finalContent, sourceKey)) };
+        const finalMessage = await db.sessionMessage.create({ data: { sessionId: source.id, seq: 4, localId: 'exact-terminal-result',
+            messageRole: 'agent', content: storedFinal } });
+        await db.sessionMessage.create({ data: { sessionId: source.id, seq: 5, localId: 'unanchored-terminal-neighbor',
+            messageRole: 'agent', content: encryptionMode === 'plain'
+                ? { t: 'plain', v: { role: 'agent', content: { type: 'text', text: 'Unanchored private neighbor' } } }
+                : { t: 'encrypted', c: encodeBase64(encryptWithDataKey({ role: 'agent', content: {
+                    type: 'text', text: 'Unanchored private neighbor',
+                } }, sourceKey)) } } });
+        await db.session.update({ where: { id: source.id }, data: { seq: 5 } });
+        const terminal = await db.sessionTurn.create({ data: { sessionId: source.id, turnId: 'exact-terminal', status: 'completed',
+            startedAt: 1n, updatedAt: 2n, terminalAt: 2n,
+            transcriptAnchorsJson: JSON.stringify({ startSeqInclusive: 3, endSeqInclusive: 4, finalAssistantMessageSeq: 4 }) } });
+        const delivery = SessionFollowInputV1Schema.parse({ v: 1, delivery: 'next_turn', event: { kind: 'finished' },
+            original: { sourceSessionId: source.id, sourceTurn: { id: terminal.turnId, status: 'completed' } } });
+        const localInputId = deriveSessionFollowInputLocalIdV1({ destinationSessionId: destination.id, original: delivery.original });
+        const receipt = SessionInputAdmissionReceiptV1Schema.parse({
+            ...buildSessionInputAdmissionReceipt({ issuer: 'authenticatedMachine', admittedTarget: {
+                homeId: 'home', accountId: owner.id, sessionId: destination.id,
+                machineId: machine.id, installationId: 'runner-installation',
+            } }), followRelations: [{ relation: 'follower' }], followDeliveryV1: delivery,
+        });
+        await db.sessionMessage.create({ data: { sessionId: destination.id, seq: 1, localId: localInputId, messageRole: 'user',
+            content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'Admitted terminal notice' } } },
+            inputAdmissionReceipt: receipt } });
+        const terminalRequest = { v: 1 as const, sourceSessionId: source.id, relation: 'follower' as const,
+            localInputId, afterTranscriptSeq: 0, observedTranscriptSeq: 0, limit: 1 };
+        const projectTerminal = () => inTx(tx => projectSessionFollowSourceForRunnerInTx(tx, {
+            principal, destinationSessionId: destination.id, request: terminalRequest,
+        }));
+        const projectedTerminal = await projectTerminal();
+        expect(projectedTerminal).toMatchObject({ source: { lastRuntimeIssue: null },
+            messages: [{ seq: 4, localId: 'exact-terminal-result', content: storedFinal }], hasMore: false });
+        expect(projectedTerminal!.messages).toHaveLength(1);
+        const content = projectedTerminal!.messages[0]!.content;
+        expect(content.t === 'plain' ? content.v : decryptWithDataKeyResult(decodeBase64(content.c), sourceKey).value).toEqual(finalContent);
+        await db.sessionMessage.update({ where: { id: finalMessage.id }, data: { content: encryptionMode === 'plain'
+            ? { t: 'encrypted', c: encodeBase64(encryptWithDataKey(finalContent, sourceKey)) }
+            : { t: 'plain', v: finalContent } } });
+        expect(await projectTerminal()).toBeNull();
+        await db.sessionMessage.update({ where: { id: finalMessage.id }, data: { content: storedFinal } });
+        await db.sessionMessage.update({ where: { id: finalMessage.id }, data: { sidechainId: 'private-run' } });
+        expect(await projectTerminal()).toMatchObject({ messages: [], hasMore: false });
+        await db.sessionMessage.update({ where: { id: finalMessage.id }, data: { sidechainId: null } });
+        await db.sessionTurn.update({ where: { id: terminal.id }, data: { transcriptAnchorsJson: JSON.stringify({
+            startSeqInclusive: 3, endSeqInclusive: 4,
+        }) } });
+        expect(await projectTerminal()).toMatchObject({ messages: [], hasMore: false });
+        await db.sessionTurn.update({ where: { id: terminal.id }, data: { status: 'failed' } });
+        expect(await projectTerminal()).toBeNull();
         await db.machine.update({ where: { id: machine.id }, data: { revokedAt: new Date() } });
         await expect(inTx((tx) => projectSessionFollowSourceForRunnerInTx(tx, { principal, destinationSessionId: destination.id, request })))
             .resolves.toBeNull();
@@ -975,7 +1279,7 @@ describe('SessionFollowEdge service', () => {
         expect(pending[0]?.observed.readyEventSeq).toBe(1);
     });
 
-    it('keeps muted manager and ordinary Follow progress pending without muting another receiver', async () => {
+    it('keeps muted manager and ordinary originals reachable for suppression without muting another receiver', async () => {
         const owner = await createAccount();
         const source = await createSession(owner.id, { latestReadyEventSeq: null });
         const destination = await createSession(owner.id);
@@ -996,7 +1300,7 @@ describe('SessionFollowEdge service', () => {
             receiver: { kind: 'session', sessionId: destination.id },
             scope: { kind: 'sender_session', sessionId: source.id }, operation, authentication });
         expect(await change('set')).toMatchObject({ ok: true, value: { changed: true } });
-        expect(await observe()).toEqual([]);
+        expect((await observe()).map(row => row.relation).sort()).toEqual(['follower', 'manager']);
         expect(await observe(otherDestination.id)).toHaveLength(1);
         expect((await readEdge(destination.id, source.id))?.deliveredReadyEventSeq).toBe(0);
         expect((await db.sessionFollowEdge.findUniqueOrThrow({ where: { destinationSessionId_sourceSessionId_relation: {
@@ -1227,7 +1531,7 @@ describe('SessionFollowEdge service', () => {
         } } })).toMatchObject({ cursor: accountSeqBeforeCreate + 1 });
         await db.session.update({ where: { id: source.id }, data: { seq: 42 } });
         expect(await setSessionFollowSource(args)).toMatchObject({ ok: true, value: { changed: false } });
-        expect((await db.account.findUniqueOrThrow({ where: { id: owner.id } })).seq).toBe(accountSeqBeforeCreate + 1);
+        expect((await db.account.findUniqueOrThrow({ where: { id: owner.id } })).seq).toBe(accountSeqBeforeCreate + 2);
         // A repeated set must not reseed: the pending delta stays deliverable.
         expect(await readEdge(destination.id, source.id)).toMatchObject({ deliveredTranscriptSeq: 5 });
 
@@ -1237,9 +1541,9 @@ describe('SessionFollowEdge service', () => {
             sourceSessionId: source.id,
         };
         expect(await removeSessionFollowSource(removeArgs)).toEqual({ ok: true, value: { changed: true } });
-        expect((await db.account.findUniqueOrThrow({ where: { id: owner.id } })).seq).toBe(accountSeqBeforeCreate + 2);
+        expect((await db.account.findUniqueOrThrow({ where: { id: owner.id } })).seq).toBe(accountSeqBeforeCreate + 4);
         expect(await removeSessionFollowSource(removeArgs)).toEqual({ ok: true, value: { changed: false } });
-        expect((await db.account.findUniqueOrThrow({ where: { id: owner.id } })).seq).toBe(accountSeqBeforeCreate + 2);
+        expect((await db.account.findUniqueOrThrow({ where: { id: owner.id } })).seq).toBe(accountSeqBeforeCreate + 4);
     });
 
     it('invalidates the exact destination Session once for an actual policy change', async () => {
@@ -1258,7 +1562,7 @@ describe('SessionFollowEdge service', () => {
             ok: true,
             value: { changed: true, source: { policy: { preset: 'custom' as const, events: { person_wrote: { delivery: 'interrupt' as const }, message: { delivery: 'quiet' as const } } } } },
         });
-        expect((await db.account.findUniqueOrThrow({ where: { id: owner.id } })).seq).toBe(seqAfterCreate + 1);
+        expect((await db.account.findUniqueOrThrow({ where: { id: owner.id } })).seq).toBe(seqAfterCreate + 2);
         expect(await db.accountChange.findUnique({ where: { accountId_kind_entityId: {
             accountId: owner.id, kind: 'session', entityId: destination.id,
         } } })).toMatchObject({ cursor: seqAfterCreate + 1 });
@@ -1267,7 +1571,7 @@ describe('SessionFollowEdge service', () => {
             ok: true,
             value: { changed: false },
         });
-        expect((await db.account.findUniqueOrThrow({ where: { id: owner.id } })).seq).toBe(seqAfterCreate + 1);
+        expect((await db.account.findUniqueOrThrow({ where: { id: owner.id } })).seq).toBe(seqAfterCreate + 2);
     });
 
     it('converges concurrent first writers on one seeded edge', async () => {
@@ -1287,7 +1591,7 @@ describe('SessionFollowEdge service', () => {
 
         expect(results.every((result) => result.ok)).toBe(true);
         expect(results.filter((result) => result.ok && result.value.changed)).toHaveLength(1);
-        expect((await db.account.findUniqueOrThrow({ where: { id: owner.id } })).seq).toBe(1);
+        expect((await db.account.findUniqueOrThrow({ where: { id: owner.id } })).seq).toBe(2);
         expect(await db.sessionFollowEdge.count({ where: {
             destinationSessionId: destination.id,
             sourceSessionId: source.id,
@@ -1531,7 +1835,7 @@ describe('SessionFollowEdge service', () => {
         const pending = (await inTx(tx => observePendingSessionFollowForDestinationInTx(tx, {
             principal: runtimePrincipal(owner.id), destinationSessionId: destination.id, includeManager: true,
         }))).map(observation => {
-            if (!('relation' in observation)) throw new Error('Expected independently stored Session Follow routes');
+            if (!('relation' in observation) || observation.relation === 'rule') throw new Error('Expected independently stored Session Follow routes');
             return observation;
         });
         const follower = pending.find(row => row.relation === 'follower');

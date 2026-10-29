@@ -27,6 +27,7 @@ import { changeDeliveryMute } from '@/app/session/follow/sessionDeliveryMuteServ
 import { removeAccountSessionFollow } from '@/app/session/follow/accountFollowService';
 import { createAuthenticatedTestApp } from '../../testkit/sqliteFastify';
 import { registerSessionFollowRoutes } from './registerSessionFollowRoutes';
+import { registerSessionFollowSourceRoutes } from './registerSessionFollowSourceRoutes';
 
 const url = '/v2/account/session-follow-rules/personal-progress';
 const authentication = createPresentUserSessionAccessAuthentication();
@@ -59,6 +60,7 @@ describe('Account personal Follow accepted progress (SQLite + HTTP)', () => {
         } } });
         const app = createAuthenticatedTestApp();
         registerSessionFollowRoutes(app);
+        registerSessionFollowSourceRoutes(app);
         await app.ready();
         const headers = { 'x-test-user-id': account.id };
         // Load the real CLI platform adapter at runtime without compiling the
@@ -96,8 +98,44 @@ describe('Account personal Follow accepted progress (SQLite + HTTP)', () => {
         };
         const base = { sourceSessionId: source.id, expectedSourcePublisherGeneration: '1', machineId: machine.id,
             installationId: machine.installationId! };
-        return { account, source, machine, app, headers, rule, original, base, context, codec };
+        return { account, source, machine, app, headers, rule, original, base, context, codec, keys };
     }
+
+    it.each(['plain', 'e2ee'] as const)('admits %s stalled Session selection privately without claiming provider acceptance', async mode => {
+        const s = await setup(mode);
+        try {
+            const destination = await inTx(tx => createLegacyLayout0SessionInTx(tx, { accountId: s.account.id, tag: randomUUID(),
+                metadata: '{}', agentState: null, encryptionMode: mode, requestedStorageState: undefined, dataEncryptionKey: null }));
+            const receiver = { kind: 'session' as const, sessionId: destination.id };
+            const ruleId = randomUUID();
+            expect(await setAccountFollowRule({ accountId: s.account.id, ruleId, authentication,
+                mutation: { receiver, expectedVersion: -1, content: sealSessionFollowRuleContentV1({ ruleId, receiver, mode,
+                    material: mode === 'e2ee' ? { type: 'dataKey', machineKey: s.keys.secretKey } : null,
+                    definition: { v: 1, enabled: true, filter: normalizeSessionListFilterV1(), policy: { preset: 'important' } } }) } }))
+                .toMatchObject({ ok: true });
+            await db.session.update({ where: { id: s.source.id }, data: { active: false,
+                lastActiveAt: new Date(42), latestTurnId: 'live-turn', latestTurnStatus: 'in_progress' } });
+            const payload = { kind: 'session_stalled', sourceSessionId: s.source.id, destinationSessionId: destination.id,
+                presence: { turnId: 'live-turn', publisherFence: 42 }, rules: [{ ruleId, ruleVersion: 0, selectedDelivery: 'wake' }] };
+            const send = () => s.app.inject({ method: 'POST', url, headers: s.headers, payload });
+            const first = await send();
+            expect(first.statusCode).toBe(200);
+            expect(first.json()).toEqual({ accepted: true, alreadyRepresented: false });
+            const afterAdmission = (await db.account.findUniqueOrThrow({ where: { id: s.account.id } })).version;
+            expect((await send()).json()).toEqual({ accepted: true, alreadyRepresented: false });
+            expect((await db.account.findUniqueOrThrow({ where: { id: s.account.id } })).version).toBe(afterAdmission);
+            expect(await getAccountFollowRule({ accountId: s.account.id, ruleId, authentication })).toMatchObject({ ok: true,
+                value: { rule: { version: 0, sources: [{ delivered: { transcriptSeq: 0, turn: null },
+                    stalled: { presence: payload.presence, effectiveDelivery: 'wake' } }] } } });
+            const { readStalledSessionFollowRulesInTx } = await import('@/app/session/follow/sessionFollowStalledRule');
+            const pending = await inTx(tx => readStalledSessionFollowRulesInTx(tx, { accountId: s.account.id, destinationSessionId: destination.id }));
+            expect(pending.map(entry => entry.observation)).toMatchObject([{ relation: 'rule', effectiveDelivery: 'wake', presence: payload.presence }]);
+            expect(JSON.stringify(pending.map(entry => entry.observation))).not.toContain(ruleId);
+            expect(await db.sessionPendingMessage.count({ where: { sessionId: destination.id } })).toBe(0);
+            await db.session.update({ where: { id: s.source.id }, data: { active: true } });
+            expect(await inTx(tx => readStalledSessionFollowRulesInTx(tx, { accountId: s.account.id, destinationSessionId: destination.id }))).toEqual([]);
+        } finally { await s.app.close(); }
+    });
 
     it.each(['plain', 'e2ee'] as const)('settles %s original Inbox effects once across retries and changed matching routes, without enrollment', async mode => {
         const s = await setup(mode);
@@ -130,6 +168,87 @@ describe('Account personal Follow accepted progress (SQLite + HTTP)', () => {
             const untouched = await getAccountFollowRule({ accountId: s.account.id, authentication, ruleId: third.ruleId });
             expect(untouched.ok && untouched.value.rule).not.toHaveProperty('sources');
         } finally { await s.app.close(); }
+    });
+
+    it.each(['plain', 'e2ee'] as const)('admits receiver-person %s progress only with current source access and own rules, deduping devices', async mode => {
+        const source = await setup(mode);
+        const receiver = await setup(mode);
+        const secondDevice = createAuthenticatedTestApp();
+        registerSessionFollowRoutes(secondDevice);
+        await secondDevice.ready();
+        try {
+            const rule = await receiver.rule('receiver-rule');
+            const foreignRule = await source.rule('foreign-rule');
+            const sourceMessage = await source.original();
+            const occurrence = { evaluation: 'receiver', production: 'source', sourceSessionId: source.source.id,
+                rules: [rule], sourceMessage };
+            const send = (payload: unknown = occurrence, app = receiver.app, headers = receiver.headers) =>
+                app.inject({ method: 'POST', url, headers, payload });
+            expect((await send()).json()).toEqual({ accepted: false, alreadyRepresented: false });
+            await db.sessionShare.create({ data: { sessionId: source.source.id, sharedByUserId: source.account.id,
+                sharedWithUserId: receiver.account.id, accessLevel: 'view' } });
+            const observationUrl = `/v2/sessions/${source.source.id}/follows/occurrence-routes`;
+            const observation = { v: 1, receiver: { kind: 'account' }, production: 'source', sourceMessage };
+            const observed = await receiver.app.inject({ method: 'POST', url: observationUrl, headers: receiver.headers, payload: observation });
+            expect([observed.statusCode, observed.json()]).toEqual([200, { ok: true, v: 1, sourceSessionId: source.source.id,
+                routes: [], originalCreatedAt: expect.any(Number), receiverEvaluation: { ownerAccountId: source.account.id, production: 'source' } }]);
+            expect((await receiver.app.inject({ method: 'POST', url: observationUrl, headers: receiver.headers,
+                payload: { ...observation, production: 'recovery' } })).json())
+                .toEqual({ ok: false, v: 1, error: 'recovery_unverified' });
+            expect((await source.app.inject({ method: 'POST', url: observationUrl, headers: source.headers, payload: observation })).json())
+                .toEqual({ ok: false, v: 1, error: 'other_evaluator' });
+            expect((await send({ ...occurrence, rules: [foreignRule] })).json()).toEqual({ accepted: false, alreadyRepresented: false });
+            expect((await send({ ...occurrence, rules: [{ ...rule, ruleVersion: 1 }] })).json()).toEqual({ accepted: false, alreadyRepresented: false });
+            expect((await send({ ...occurrence, sourceMessage: { ...sourceMessage, seq: sourceMessage.seq + 1 } })).json())
+                .toEqual({ accepted: false, alreadyRepresented: false });
+            expect((await send({ ...occurrence, production: 'recovery' })).json())
+                .toEqual({ accepted: false, alreadyRepresented: false, reason: 'recovery_unverified' });
+            expect((await send({ ...occurrence, rules: [foreignRule] }, source.app, source.headers)).json())
+                .toEqual({ accepted: false, alreadyRepresented: false, reason: 'other_evaluator' });
+            const results = await Promise.all([send(), send(occurrence, secondDevice)]);
+            expect(results.map(result => result.statusCode)).toEqual([200, 200]);
+            expect(results.map(result => result.json().alreadyRepresented).sort()).toEqual([false, true]);
+            expect(results.every(result => result.json().accepted)).toBe(true);
+            expect((await send()).json()).toEqual({ accepted: true, alreadyRepresented: true });
+            expect(await getAccountFollowRule({ accountId: receiver.account.id, authentication, ruleId: rule.ruleId }))
+                .toMatchObject({ ok: true, value: { rule: { sources: [{ sourceSessionId: source.source.id,
+                    delivered: { transcriptSeq: sourceMessage.seq } }] } } });
+            expect(await db.accountSessionFollow.count({ where: { accountId: receiver.account.id } })).toBe(0);
+            expect(await db.sessionFollowEdge.count({ where: { sourceSessionId: source.source.id } })).toBe(0);
+            const terminalSourceMessage = await source.original();
+            const sourceTurn = { id: randomUUID(), status: 'completed' } as const;
+            await db.sessionTurn.create({ data: { sessionId: source.source.id, turnId: sourceTurn.id, status: sourceTurn.status,
+                startedAt: BigInt(Date.now()), updatedAt: BigInt(Date.now()), terminalAt: BigInt(Date.now()) } });
+            const terminal = { evaluation: 'receiver', production: 'source', sourceSessionId: source.source.id,
+                rules: [rule], sourceTurn, terminalSourceMessage };
+            expect((await send({ ...terminal, sourceTurn: { ...sourceTurn, status: 'failed' } })).json())
+                .toEqual({ accepted: false, alreadyRepresented: false });
+            expect((await send({ ...terminal, sourceTurn: { ...sourceTurn, id: randomUUID() } })).json())
+                .toEqual({ accepted: false, alreadyRepresented: false });
+            expect((await send({ ...terminal, terminalSourceMessage: { ...terminalSourceMessage, seq: terminalSourceMessage.seq + 1 } })).json())
+                .toEqual({ accepted: false, alreadyRepresented: false });
+            expect((await send(terminal)).json()).toEqual({ accepted: true, alreadyRepresented: false });
+            expect((await send(terminal, secondDevice)).json()).toEqual({ accepted: true, alreadyRepresented: true });
+            const createdAt = Date.now();
+            const requestId = randomUUID();
+            const requestState = { requests: { [requestId]: { kind: 'user_action', tool: 'AskUserQuestion', arguments: {}, createdAt } } };
+            expect(await updateSessionAgentState({ actorUserId: source.account.id, sessionId: source.source.id, expectedVersion: 0,
+                agentStateCiphertext: source.context.mode === 'plain' ? JSON.stringify(requestState)
+                    : source.codec.encryptSessionPayload({ ctx: source.context.ctx, payload: requestState }), pendingUserActionRequestCount: 1 }))
+                .toMatchObject({ ok: true });
+            const requests = { evaluation: 'receiver', production: 'source', sourceSessionId: source.source.id,
+                rules: [{ ...rule, requestIds: [requestId] }], sourceRequests: { agentStateVersion: 1, requests: [{ requestId, createdAt }] } };
+            expect((await send(requests)).json()).toEqual({ accepted: true, alreadyRepresented: false });
+            expect((await send(requests, secondDevice)).json()).toEqual({ accepted: true, alreadyRepresented: true });
+            expect(await db.userKVStore.count({ where: { accountId: receiver.account.id } })).toBe(1);
+            expect(await applyViewerReadCursorOperation({ accountId: receiver.account.id, sessionId: source.source.id,
+                authentication, operation: { kind: 'mark-read' } })).toMatchObject({ ok: true });
+            expect((await send()).json()).toEqual({ accepted: false, alreadyRepresented: false });
+            await db.sessionShare.deleteMany({ where: { sessionId: source.source.id, sharedWithUserId: receiver.account.id } });
+            expect((await send()).json()).toEqual({ accepted: false, alreadyRepresented: false });
+            expect((await receiver.app.inject({ method: 'POST', url: observationUrl, headers: receiver.headers, payload: observation })).json())
+                .toEqual({ ok: false, v: 1, error: 'forbidden' });
+        } finally { await secondDevice.close(); await source.app.close(); await receiver.app.close(); }
     });
 
     it.each(['plain', 'e2ee'] as const)('does not consume partial or replaced %s request maps and rejects stale source, rule, mute and Account witnesses', async mode => {
@@ -210,6 +329,13 @@ describe('Account personal Follow accepted progress (SQLite + HTTP)', () => {
             expect([response.statusCode, response.json()]).toEqual([403, { error: 'present_user_required' }]);
             const deniedRuntime = await restricted.inject({ method: 'POST', url, headers: s.headers, payload: occurrence });
             expect([deniedRuntime.statusCode, deniedRuntime.json()]).toEqual([403, { error: 'credential_scope_denied' }]);
+            const receiverOccurrence = { evaluation: 'receiver', production: 'source', sourceSessionId: s.source.id,
+                rules: [await s.rule('receiver-runtime')], sourceMessage: occurrence.sourceMessage };
+            const deniedReceiverRuntime = await restricted.inject({ method: 'POST', url, headers: s.headers, payload: receiverOccurrence });
+            expect([deniedReceiverRuntime.statusCode, deniedReceiverRuntime.json()]).toEqual([403, { error: 'credential_scope_denied' }]);
+            const deniedReceiverToken = await app.inject({ method: 'POST', url,
+                headers: { authorization: `Bearer ${limited.token}` }, payload: receiverOccurrence });
+            expect([deniedReceiverToken.statusCode, deniedReceiverToken.json()]).toEqual([403, { error: 'present_user_required' }]);
         } finally { await restricted.close(); await app.close(); await s.app.close(); }
     });
 

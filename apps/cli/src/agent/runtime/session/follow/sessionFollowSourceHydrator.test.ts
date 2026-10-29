@@ -107,7 +107,7 @@ describe('Session Follow source hydrator', () => {
       requestEvents: [{ requestId: 'approval', event: { kind: 'needs_you', type: 'approval' } }] });
     const signal = new AbortController().signal;
     try {
-      const result = await hydrate({ signal, observation: { kind: 'admitted_input', localInputId: 'request-original',
+      const result = await hydrate({ signal, observation: { kind: 'admitted_input', localInputId: 'request-original', effectiveDelivery: delivery.delivery,
         sourceSessionId: 'source', destinationSessionId: 'destination', delivery,
         delivered: { transcriptSeq: 0, readyEventSeq: 0, agentStateVersion: 0, turn: null },
         observed: { transcriptSeq: 0, readyEventSeq: 0, agentStateVersion: 1, turn: null } } });
@@ -125,7 +125,7 @@ describe('Session Follow source hydrator', () => {
           deps: { fetchRunnerSourceProjection: async () => SessionFollowSourceProjectionResponseV1Schema.parse({
             v: 1, source: original, messages: [], hasMore: false,
           }) } });
-        const pending = await originalHydrate({ signal, observation: { kind: 'admitted_input', localInputId: 'request-original',
+        const pending = await originalHydrate({ signal, observation: { kind: 'admitted_input', localInputId: 'request-original', effectiveDelivery: delivery.delivery,
           sourceSessionId: 'source', destinationSessionId: 'destination', delivery,
           delivered: { transcriptSeq: 0, readyEventSeq: 0, agentStateVersion: 0, turn: null },
           observed: { transcriptSeq: 0, readyEventSeq: 0, agentStateVersion: 1, turn: null } } });
@@ -141,7 +141,7 @@ describe('Session Follow source hydrator', () => {
         survivor: { tool: 'Bash', arguments: {}, createdAt: 44 },
       } });
       const hydrateRequests = async (requests: ReadonlyArray<{ requestId: string; createdAt: number }>) => await hydrate({ signal,
-        observation: { kind: 'admitted_input', localInputId: 'request-original', sourceSessionId: 'source', destinationSessionId: 'destination',
+        observation: { kind: 'admitted_input', localInputId: 'request-original', effectiveDelivery: delivery.delivery, sourceSessionId: 'source', destinationSessionId: 'destination',
           delivery: SessionFollowInputV1Schema.parse({ ...delivery,
             original: { sourceSessionId: 'source', sourceRequests: { agentStateVersion: 2, requests } },
             requestEvents: requests.map(request => ({ requestId: request.requestId, event: { kind: 'needs_you', type: 'approval' } })),
@@ -157,36 +157,40 @@ describe('Session Follow source hydrator', () => {
     } finally { material.dispose(); }
   });
 
-  it.each(['plain', 'e2ee'] as const)('reads exact terminal correlation only from a schema-validated %s ready original', async mode => {
+  it.each(['plain', 'e2ee'] as const)('materializes the admitted %s Turn outcome and its exact anchored result without advancing the transcript', async mode => {
     const key = new Uint8Array(32).fill(21);
     const ctx = { encryptionKey: key, encryptionVariant: 'dataKey' as const };
     const material = createSessionFollowSourceMaterialResolver();
     material.installPreparedDataKey({ sourceSessionId: 'source', dataKey: key });
     try {
-      for (const variant of ['exact', 'contextless', 'malformed', 'row_sidechain', 'event_sidechain'] as const) {
-        const completedTurnId = variant === 'contextless' ? undefined : variant === 'malformed' ? '' : 'completed-turn';
-        const payload = { role: 'agent', content: { type: 'event', id: 'ready-original',
-          data: { type: 'ready', ...(completedTurnId === undefined ? {} : { completedTurnId }),
-            ...(variant === 'event_sidechain' ? { sidechainId: 'child' } : {}) } } };
+      for (const status of ['completed', 'failed', 'cancelled'] as const) {
+        const payload = { role: 'agent', content: { type: 'text', text: 'Exact historical final answer' } };
+        const metadata = { path: '/source', host: 'test' };
+        const projection = vi.fn(async () => ({ v: 1 as const, source: {
+          id: 'source', encryptionMode: mode, metadata: mode === 'plain' ? JSON.stringify(metadata)
+            : encryptSessionPayload({ ctx, payload: metadata }), archivedAt: null,
+          createdAt: 1, updatedAt: 1, active: true, activeAt: Date.now(), thinking: false, thinkingAt: null,
+          latestTurnStatus: 'completed', latestTurnId: 'a-later-turn', latestTurnStatusObservedAt: 1,
+          latestReadyEventSeq: 9, latestReadyEventAt: 1, meaningfulActivityAt: 1, agentStateVersion: 0, pendingReviewRuns: 0,
+        }, messages: [{ seq: 2, localId: 'final-message', createdAt: 1, messageRole: 'agent' as const, content: mode === 'plain'
+          ? { t: 'plain' as const, v: payload } : { t: 'encrypted' as const, c: encryptSessionPayload({ ctx, payload }) } }], hasMore: false }));
         const hydrate = createSessionFollowSourceHydrator({ session: destinationSession,
           credentials: { token: 'token', encryption: null }, sourceMaterialResolver: material,
-          deps: { fetchRunnerSourceProjection: async () => ({ v: 1, source: {
-            id: 'source', encryptionMode: mode, metadata: mode === 'plain' ? '{}'
-              : encryptSessionPayload({ ctx, payload: {} }), archivedAt: null,
-            createdAt: 1, updatedAt: 1, active: true, activeAt: Date.now(), thinking: false, thinkingAt: null,
-            latestTurnStatus: 'completed', latestTurnId: 'completed-turn', latestTurnStatusObservedAt: 1,
-            latestReadyEventSeq: 2, latestReadyEventAt: 1, meaningfulActivityAt: 1, agentStateVersion: 0,
-          }, messages: [{ seq: 2, localId: 'ready-original', createdAt: 1, messageRole: 'event',
-            ...(variant === 'row_sidechain' ? { sidechainId: 'child' } : {}), content: mode === 'plain'
-            ? { t: 'plain', v: payload } : { t: 'encrypted', c: encryptSessionPayload({ ctx, payload }) } }], hasMore: false }) },
+          deps: { fetchRunnerSourceProjection: projection },
         });
-        const delivery = SessionFollowInputV1Schema.parse({ v: 1, delivery: 'next_turn', event: { kind: 'finished' },
-          original: { sourceSessionId: 'source', sourceMessage: { localId: 'ready-original', seq: 2 } } });
+        const delivery = SessionFollowInputV1Schema.parse({ v: 1, delivery: 'next_turn',
+          event: { kind: status === 'completed' ? 'finished' : 'failed_or_stopped' },
+          original: { sourceSessionId: 'source', sourceTurn: { id: 'completed-turn', status } } });
         const result = await hydrate({ signal: new AbortController().signal, observation: { kind: 'admitted_input',
-          localInputId: 'accepted-ready', sourceSessionId: 'source', destinationSessionId: 'destination',
-          delivered: { transcriptSeq: 1, readyEventSeq: 0, agentStateVersion: 0, turn: null },
-          observed: { transcriptSeq: 2, readyEventSeq: 0, agentStateVersion: 0, turn: null }, delivery } });
-        expect(result?.sourceTerminalTurn, variant).toEqual(variant === 'exact' ? { id: completedTurnId, status: 'completed' } : undefined);
+          localInputId: 'accepted-turn', effectiveDelivery: delivery.delivery, sourceSessionId: 'source', destinationSessionId: 'destination',
+          delivered: { transcriptSeq: 0, readyEventSeq: 0, agentStateVersion: 0, turn: null },
+          observed: { transcriptSeq: 0, readyEventSeq: 0, agentStateVersion: 0, turn: { id: 'completed-turn', status } }, delivery } });
+        expect(result?.workerUpdate).toMatchObject({ ownerState: status === 'completed' ? 'settled' : status,
+          headline: status === 'completed' ? 'Finished its turn' : status === 'failed' ? 'Failed' : 'Stopped',
+          result: 'Exact historical final answer', transcriptPointer: { kind: 'session', sessionId: 'source', seq: 2 } });
+        expect(result?.observed.transcriptSeq).toBe(0);
+        expect(result?.recentMessages).toEqual([]);
+        expect(projection).toHaveBeenCalledTimes(1);
       }
     } finally { material.dispose(); }
   });
@@ -333,7 +337,7 @@ describe('Session Follow source hydrator', () => {
     const acknowledgements: unknown[] = [];
     const session = { ...destinationSession,
       observePendingSessionFollow: async () => ({ ok: true, publisherGeneration: '1', observations: [
-        ...routes, { kind: 'admitted_input', localInputId: 'accepted-notice', delivery,
+        ...routes, { kind: 'admitted_input', localInputId: 'accepted-notice', delivery, effectiveDelivery: delivery.delivery,
           sourceSessionId: 'source', destinationSessionId: 'destination', delivered, observed },
       ] }),
       acknowledgeSessionFollow: async (request: unknown) => { acknowledgements.push(request); return { ok: true }; },
@@ -386,7 +390,7 @@ describe('Session Follow source hydrator', () => {
       },
     });
     const envelope = await hydrate({ signal: new AbortController().signal,
-      observation: { kind: 'admitted_input', localInputId: 'accepted-report', sourceSessionId: 'source', destinationSessionId: 'destination',
+      observation: { kind: 'admitted_input', localInputId: 'accepted-report', effectiveDelivery: 'next_turn', sourceSessionId: 'source', destinationSessionId: 'destination',
         delivered: observation.delivered, observed: { ...observation.delivered, transcriptSeq: 2 },
         delivery: SessionFollowInputV1Schema.parse({ v: 1, delivery: 'next_turn', event: { kind: 'update_posted' },
           original: { sourceSessionId: 'source', sourceMessage: { localId: 'report-original', seq: 2 } } }) },
@@ -419,7 +423,7 @@ describe('Session Follow source hydrator', () => {
       },
     });
     const envelope = await hydrate({ signal: new AbortController().signal,
-      observation: { kind: 'admitted_input', localInputId: 'accepted-report', sourceSessionId: 'source', destinationSessionId: 'destination',
+      observation: { kind: 'admitted_input', localInputId: 'accepted-report', effectiveDelivery: 'next_turn', sourceSessionId: 'source', destinationSessionId: 'destination',
         delivered: observation.delivered, observed: { ...observation.delivered, transcriptSeq: 2 },
         delivery: SessionFollowInputV1Schema.parse({ v: 1, delivery: 'next_turn', event: { kind: 'update_posted' },
           original: { sourceSessionId: 'source', sourceMessage: { localId: 'report-original', seq: 2 } } }) },

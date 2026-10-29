@@ -11,8 +11,8 @@ import { backgroundDeliveryAuthentication, type SessionAccessAuthentication } fr
 import { assertSessionFollowSourceReadInTx, evaluateCurrentSessionContextPairInTx, mayInjectSessionContextInTx, type SessionFollowRuntimePrincipalV1 } from '@/app/session/access/sessionContextInjection';
 import { readCurrentCommittedSessionInputMachineTargetInTx, readStoredSessionInputAdmissionReceipt } from '@/app/session/messages/sessionInputAdmission';
 import { isDeepStrictEqual } from 'node:util';
-import { deriveSessionFollowOriginalOccurrenceKeyV1, isRunFollowOriginalV1, type SessionFollowInputV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowInputV1';
-import { admitSessionFollowRelationsForInputInTx } from './sessionFollowEdgeService';
+import { deriveSessionFollowOriginalOccurrenceKeyV1, isRunFollowOriginalV1, isSessionFollowQuestionHandlerV1, resolveSessionFollowTurnEventV1, type SessionFollowInputV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowInputV1';
+import { admitSessionFollowRelationsForInputInTx, readStoredPolicy } from './sessionFollowEdgeService';
 import { resolveSessionFollowRuntimePrincipalAuthenticationInTx } from '@/app/session/access/sessionContextInjection';
 import { readStoredSessionFollowFrontier, writeSessionFollowFrontierColumns, type SessionFollowDeliveredColumns } from '@/app/session/relations/sessionEdgeFrontier';
 import { invalidateSessionRelationProjectionsInTx } from '@/app/session/relations/sessionRelationChanges';
@@ -22,6 +22,8 @@ import { isDeliveryMutedInTx } from './sessionDeliveryMuteService';
 import { hasCanonicalFollowProviderInputAcceptanceInTx } from './providerInputAcceptance';
 import { markAccountChangesForSessionAccounts } from '@/app/session/changeTracking/markAccountChangesForSessionAccounts';
 import { deriveSessionMessageAuthorAccountIdV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageAccountActorV1';
+import { mergeSessionFollowSelectedDeliveriesV1, resolveSessionFollowSelectedDeliveryV1,
+    type SessionFollowSelectedDeliveryV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowPolicyV1';
 
 export interface SessionFollowRuleProgressAdmission {
     accountId: string;
@@ -61,7 +63,8 @@ export async function writeSessionFollowRuleProgressInTx(tx: Tx, admission: Sess
     delivered: SessionFollowFrontierV1): Promise<boolean> {
     if (admission.encountered && isSessionFollowFrontierEqualV1(admission.delivered, delivered)) return true;
     const sources = (admission.envelope.sources ?? []).filter(source => source.sourceSessionId !== admission.sourceSessionId);
-    sources.push({ sourceSessionId: admission.sourceSessionId, delivered });
+    const previous = admission.envelope.sources?.find(source => source.sourceSessionId === admission.sourceSessionId);
+    sources.push({ ...previous, sourceSessionId: admission.sourceSessionId, delivered });
     const physicalKey = buildSessionFollowRulePhysicalKeyV1(admission.rule.ruleId);
     const result = await mutateReservedAccountScopedKvRowInTx(tx, {
         accountId: admission.accountId, physicalKey,
@@ -101,6 +104,8 @@ type RuleOccurrenceAuthority =
  */
 export async function admitSessionFollowRuleOccurrenceInTx(tx: Tx, input: Readonly<{
     accountId: string; witness: SessionFollowSourceOccurrenceWitnessV1; authority: RuleOccurrenceAuthority;
+    /** Only the Pending owner may validate a muted original for discarded custody. */
+    settleSuppressedOriginal?: true;
 }>) {
     const { witness, authority } = input;
     if (authority.kind === 'account' && !authority.admitted && (authority.authentication.sessionRuntimePrincipal
@@ -145,7 +150,7 @@ export async function admitSessionFollowRuleOccurrenceInTx(tx: Tx, input: Readon
                 sourceSessionId: source.id, edge: pair })).ok
             : (await evaluateCurrentSessionContextPairInTx(tx, pair)).ok;
     if (!allowed) return null;
-    for (const scope of [{ kind: 'session', sessionId: source.id }, { kind: 'rule', ruleId: witness.rule.ruleId }] as const) {
+    for (const scope of input.settleSuppressedOriginal ? [] : [{ kind: 'session', sessionId: source.id }, { kind: 'rule', ruleId: witness.rule.ruleId }] as const) {
         if (await isDeliveryMutedInTx(tx, { accountId: input.accountId, receiver: { kind: 'session', sessionId: destination.id },
             candidate: { senderSessionId: source.id, source: scope } }) !== false) return null;
     }
@@ -163,7 +168,7 @@ export async function admitSessionFollowRuleOccurrenceInTx(tx: Tx, input: Readon
 /** Original-record identity only; callers retain source, publisher and receiver admission. */
 export async function readSessionFollowOriginalOccurrenceFrontiersInTx(tx: Tx, input: Readonly<{
     source: Readonly<{ id: string; seq: number; agentStateVersion: number; encryptionMode: string }>;
-    occurrence: Pick<SessionFollowSourceOccurrenceWitnessV1, 'sourceMessage' | 'sourceRequests'>;
+    occurrence: Pick<SessionFollowSourceOccurrenceWitnessV1, 'sourceMessage' | 'sourceRequests' | 'sourceTurn'>;
     delivered: SessionFollowFrontierV1;
     /** Stored custody only: native admission still verifies current opened request identity. */
     allowHistoricalRequests?: true;
@@ -191,6 +196,14 @@ export async function readSessionFollowOriginalOccurrenceFrontiersInTx(tx: Tx, i
         baseline = { ...SESSION_FOLLOW_ZERO_FRONTIER_V1, agentStateVersion: version - 1 };
         observed = { ...delivered, agentStateVersion: version };
         originalCreatedAt = occurrence.sourceRequests.requests.reduce((oldest, request) => Math.min(oldest, request.createdAt), Infinity);
+    } else if (occurrence.sourceTurn) {
+        const turn = await tx.sessionTurn.findUnique({ where: { sessionId_turnId: {
+            sessionId: source.id, turnId: occurrence.sourceTurn.id,
+        } }, select: { status: true, terminalAt: true, updatedAt: true } });
+        if (!turn || turn.status !== occurrence.sourceTurn.status) return null;
+        baseline = delivered;
+        observed = { ...delivered, turn: occurrence.sourceTurn };
+        originalCreatedAt = Number(turn.terminalAt ?? turn.updatedAt);
     } else return null;
     return { baseline, observed, originalCreatedAt, ...(originalAuthorAccountId ? { originalAuthorAccountId } : {}) };
 }
@@ -203,10 +216,11 @@ export async function readAdmittedSessionFollowInputInTx(tx: Tx, input: Readonly
     | { principal?: never; authority: Extract<RuleOccurrenceAuthority, { kind: 'account' }> })>) {
     const key = { sessionId: input.destinationSessionId, localId: input.localInputId };
     const pending = await tx.sessionPendingMessage.findUnique({ where: { sessionId_localId: key },
-        select: { inputAdmissionReceipt: true } });
+        select: { inputAdmissionReceipt: true, status: true, discardedReason: true } });
     const materialized = pending ? null : await tx.sessionMessage.findUnique({ where: { sessionId_localId: key },
         select: { inputAdmissionReceipt: true, acceptedFollowOriginalKey: true, seq: true } });
     const receipt = readStoredSessionInputAdmissionReceipt((pending ?? materialized)?.inputAdmissionReceipt);
+    const suppressed = pending?.status === 'discarded' && pending.discardedReason === 'session_input_muted';
     const destination = await tx.session.findUnique({ where: { id: input.destinationSessionId },
         select: { accountId: true, archivedAt: true } });
     if (!receipt?.followDeliveryV1
@@ -215,6 +229,8 @@ export async function readAdmittedSessionFollowInputInTx(tx: Tx, input: Readonly
         || receipt.admittedTarget.sessionId !== input.destinationSessionId) return null;
     if ((input.principal || receipt.followSources?.length) && input.accountId !== destination.accountId) return null;
     const delivery = receipt.followDeliveryV1;
+    if ('sourceTurn' in delivery.original && (!('event' in delivery)
+        || !isDeepStrictEqual(delivery.event, resolveSessionFollowTurnEventV1(delivery.original.sourceTurn)))) return null;
     const nativeAccepted = materialized?.acceptedFollowOriginalKey != null
         && materialized.acceptedFollowOriginalKey === deriveSessionFollowOriginalOccurrenceKeyV1(delivery.original)
         && await hasCanonicalFollowProviderInputAcceptanceInTx(tx, { destinationSessionId: input.destinationSessionId,
@@ -228,7 +244,9 @@ export async function readAdmittedSessionFollowInputInTx(tx: Tx, input: Readonly
             accountId: destination.accountId, destinationSessionId: input.destinationSessionId,
             delivery, relations: receipt.followRelations, authentication, admittedOriginal: true,
         });
-        return relations ? { delivery, receipt, admissions: [], relations, nativeAccepted } : null;
+        const effectiveDelivery = !suppressed && relations ? resolveSessionFollowInputSelectedDelivery(delivery, relations, []) : null;
+        return relations && (effectiveDelivery || nativeAccepted || suppressed)
+            ? { delivery, receipt, admissions: [], relations, nativeAccepted, effectiveDelivery } : null;
     }
     if (input.sourceSessionId !== undefined && delivery.original.sourceSessionId !== input.sourceSessionId) return null;
     const pair = { sourceSessionId: delivery.original.sourceSessionId, destinationSessionId: input.destinationSessionId };
@@ -244,10 +262,12 @@ export async function readAdmittedSessionFollowInputInTx(tx: Tx, input: Readonly
     if (!allowed || await isDeliveryMutedInTx(tx, { accountId: destination.accountId, receiver: { kind: 'session', sessionId: pair.destinationSessionId },
             candidate: { senderSessionId: pair.sourceSessionId, source: { kind: 'session', sessionId: pair.sourceSessionId } } }) !== false) return null;
     const admissions: NonNullable<Awaited<ReturnType<typeof admitSessionFollowRuleOccurrenceInTx>>>[] = [];
+    const privateVotes: SessionFollowSelectedDeliveryV1[] = [];
     for (const witness of receipt.followSources ?? []) {
         if (witness.sourceSessionId !== delivery.original.sourceSessionId || witness.destinationSessionId !== input.destinationSessionId
-            || !isDeepStrictEqual(witness.sourceMessage ?? witness.sourceRequests,
-                'sourceMessage' in delivery.original ? delivery.original.sourceMessage : delivery.original.sourceRequests)) return null;
+            || !isDeepStrictEqual(witness.sourceMessage ?? witness.sourceRequests ?? witness.sourceTurn,
+                'sourceMessage' in delivery.original ? delivery.original.sourceMessage
+                    : 'sourceRequests' in delivery.original ? delivery.original.sourceRequests : delivery.original.sourceTurn)) return null;
         const admitted = await admitSessionFollowRuleOccurrenceInTx(tx, { accountId: destination.accountId, witness,
             authority: input.principal ? { kind: 'admitted_input', principal: input.principal } : { ...input.authority, admitted: true } });
         // Keep only current reasons from the original union. One removed route
@@ -255,6 +275,7 @@ export async function readAdmittedSessionFollowInputInTx(tx: Tx, input: Readonly
         // with no current reason. Source/pair access still controls every read.
         if (!admitted) continue;
         admissions.push(admitted);
+        privateVotes.push(witness.selectedDelivery);
     }
     const relations = [];
     for (const reason of receipt.followRelations ?? []) {
@@ -264,10 +285,31 @@ export async function readAdmittedSessionFollowInputInTx(tx: Tx, input: Readonly
         if (!edge || reason.relation === 'manager' && edge.attachedAt.getTime() !== reason.attachedAt) {
             continue;
         }
+        if (!resolveSessionFollowInputSelectedDelivery(delivery, [edge], [])) continue;
         relations.push(edge);
     }
-    if (!nativeAccepted && !admissions.length && !relations.length) return null;
-    return { delivery, receipt, admissions, relations, nativeAccepted };
+    // An exact owner-assigned question uses its existing admitted input custody,
+    // not a permanent worker → ancestor edge or a fabricated private rule.
+    const effectiveDelivery = suppressed ? null : resolveSessionFollowInputSelectedDelivery(delivery, relations, privateVotes,
+        isSessionFollowQuestionHandlerV1(delivery, input.destinationSessionId));
+    if (!nativeAccepted && !effectiveDelivery && !suppressed) return null;
+    return { delivery, receipt, admissions, relations, nativeAccepted, effectiveDelivery };
+}
+
+/** Private votes are pinned to admitted rule versions; visible relation policy stays current. */
+export function resolveSessionFollowInputSelectedDelivery(delivery: SessionFollowInputV1,
+    relations: readonly Pick<SessionFollowInputRelation, 'policyJson'>[],
+    privateVotes: readonly SessionFollowSelectedDeliveryV1[], questionHandler = false): SessionFollowSelectedDeliveryV1 | null {
+    const policies = relations.flatMap(relation => {
+        const policy = readStoredPolicy(relation.policyJson);
+        return policy ? [policy] : [];
+    });
+    const events = 'requestEvents' in delivery ? delivery.requestEvents.map(request => request.event) : [delivery.event];
+    return mergeSessionFollowSelectedDeliveriesV1([
+        ...privateVotes,
+        ...events.map(event => resolveSessionFollowSelectedDeliveryV1({ policies, event })),
+        questionHandler ? delivery.delivery : null,
+    ]);
 }
 
 /** A public input represents one original, never an unbounded current source suffix. */
@@ -280,12 +322,15 @@ export function sessionFollowInputFrontiers(delivery: SessionFollowInputV1) {
     } else if ('sourceRequests' in delivery.original) {
         expected.agentStateVersion = delivery.original.sourceRequests.agentStateVersion - 1;
         observed.agentStateVersion = delivery.original.sourceRequests.agentStateVersion;
+    } else if ('sourceTurn' in delivery.original) {
+        observed.turn = delivery.original.sourceTurn;
     }
     return { expected, observed };
 }
 
 export type SessionFollowInputRelation = SessionFollowDeliveredColumns & Readonly<{
     destinationSessionId: string; sourceSessionId: string | null; relation: string; attachedAt: Date;
+    policyJson: string;
     sourceKey?: string;
     deliveredWorkflowRunRevision?: number | null;
     deliveredExecutionRunTerminalEventId?: string | null;
@@ -322,7 +367,8 @@ export async function settleSessionFollowInputReasonsInTx(tx: Tx, input: Readonl
     const advance = (current: SessionFollowFrontierV1, manager = false) => ({ ...current,
         transcriptSeq: Math.max(current.transcriptSeq, input.observed.transcriptSeq),
         agentStateVersion: Math.max(current.agentStateVersion, input.observed.agentStateVersion),
-        ...(manager && waitingTurn ? { turn: waitingTurn } : {}) });
+        ...('sourceTurn' in original ? { turn: original.sourceTurn }
+            : manager && waitingTurn ? { turn: waitingTurn } : {}) });
     for (const progress of input.progresses) {
         if (!await writeSessionFollowRuleProgressInTx(tx, progress, advance(progress.delivered))) throw new TransactionReplayRequiredError('follow-rule-progress-conflict');
     }
@@ -349,8 +395,8 @@ async function readExactFollowWaitingTurnInTx(tx: Tx, delivery: SessionFollowInp
 }
 
 /**
- * Provider acceptance settles a Run's original cursor or an exactly witnessed
- * manager waiting fact in the same transaction. Optional Follow ACK loss cannot
+ * Provider acceptance settles an original terminal Turn, Run cursor or exactly
+ * witnessed manager waiting fact in the same transaction. Optional Follow ACK loss cannot
  * reoffer that accepted occurrence; stale attachments remain pending.
  */
 export async function settleAcceptedSessionFollowInputInTx(tx: Tx, input: Readonly<{
@@ -359,6 +405,24 @@ export async function settleAcceptedSessionFollowInputInTx(tx: Tx, input: Readon
 }>): Promise<void> {
     const delivery = input.receipt.followDeliveryV1;
     if (!delivery) return;
+    if ('sourceTurn' in delivery.original && input.receipt.admittedTarget) {
+        const accountId = input.receipt.admittedTarget.accountId;
+        const relations = await admitSessionFollowRelationsForInputInTx(tx, {
+            accountId, destinationSessionId: input.destinationSessionId, delivery,
+            relations: input.receipt.followRelations ?? [],
+            authentication: backgroundDeliveryAuthentication(), admittedOriginal: true,
+        });
+        if (!relations) return;
+        const progresses: SessionFollowRuleProgressAdmission[] = [];
+        for (const witness of input.receipt.followSources ?? []) {
+            const admitted = await admitSessionFollowRuleOccurrenceInTx(tx, { accountId, witness,
+                authority: { kind: 'account', authentication: backgroundDeliveryAuthentication(), admitted: true } });
+            if (admitted) progresses.push(admitted.progress);
+        }
+        await settleSessionFollowInputReasonsInTx(tx, { progresses, relations, delivery,
+            observed: sessionFollowInputFrontiers(delivery).observed });
+        return;
+    }
     if (isRunFollowOriginalV1(delivery.original) && input.receipt.admittedTarget) {
         const relations = await admitSessionFollowRelationsForInputInTx(tx, {
             accountId: input.receipt.admittedTarget.accountId, destinationSessionId: input.destinationSessionId,
@@ -391,9 +455,9 @@ export async function encounterSessionFollowRuleOccurrenceInTx(tx: Tx,
     if (!admitted.progress.encountered) {
         if (!await writeSessionFollowRuleProgressInTx(tx, admitted.progress, admitted.baseline)) return null;
         admitted.progress.delivered = admitted.baseline;
-        admitted.observed = 'sourceMessage' in input.witness && input.witness.sourceMessage
-            ? { ...admitted.baseline, transcriptSeq: input.witness.sourceMessage.seq }
-            : { ...admitted.baseline, agentStateVersion: admitted.source.agentStateVersion };
+        admitted.observed = { ...admitted.observed,
+            ...(input.witness.sourceMessage ? { transcriptSeq: input.witness.sourceMessage.seq }
+                : input.witness.sourceRequests ? { agentStateVersion: admitted.source.agentStateVersion } : {}) };
     }
     return admitted;
 }

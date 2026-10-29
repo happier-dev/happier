@@ -51,7 +51,7 @@ import { readPendingLocalId } from '@happier-dev/protocol/sessions/pending/pendi
 import { normalizePendingDeliveryBlockedReason, type PendingDeliveryBlockedReason } from '@happier-dev/protocol/sessions/messages/pendingDeliveryBlockedReason';
 import { PendingRequestedActionV1Schema, PendingRequestedActionV1StoredSchema, PendingResetStartSetResultV1Schema, DEFAULT_PENDING_REQUESTED_ACTION_V1, type PendingRequestedActionV1, type PendingResetStartSetResultV1 } from '@happier-dev/protocol/sessions/pending/pendingRequestedActionV1';
 import { AutonomousExchangeRootV1Schema } from '@happier-dev/protocol/sessions/messages/autonomousExchangeV1';
-import { SessionFollowInputV1Schema } from '@happier-dev/protocol/sessions/follow/sessionFollowInputV1';
+import { SessionFollowReceiptDeliveryV1Schema } from '@happier-dev/protocol/sessions/follow/sessionFollowInputV1';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import { HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1, SessionPendingMessageComposerAdmissionAcceptedRequestV1Schema, type SessionPendingMessageComposerAdmissionAcceptedRequestV1, type SessionPendingMessageComposerAdmissionPrepareResponseV1 } from '@happier-dev/protocol/sessions/userMessageRpc';
 import { hasRawComposerAttachmentSelectionV1, HappierStructuredInputV1Schema, HappierStructuredInputV1StoredSchema, RawIngressStructuredInputV1Schema, RawIngressStructuredInputV1StoredSchema, readIngressComposerAttachmentSelectionV1, type RawIngressStructuredInputV1, type HappierStructuredInputV1 } from '@happier-dev/protocol/runtime/input/structuredInputV1';
@@ -952,7 +952,7 @@ function parsePendingRows(raw: unknown, serverId: string): PendingRow[] | null {
         const activationHoldReason = PendingActivationHoldReasonV1Schema.safeParse(item.activationHoldReason);
         const autonomousExchangeRoot = AutonomousExchangeRootV1Schema.safeParse(item.autonomousExchangeRoot);
         const recovery = PendingDeliveryRecoveryV1Schema.safeParse(item.recovery);
-        const hostFollowInput = SessionFollowInputV1Schema.safeParse(item.hostFollowInput);
+        const hostFollowInput = SessionFollowReceiptDeliveryV1Schema.safeParse(item.hostFollowInput);
         out.push({
             ...(hostFollowInput.success ? { hostFollowInput: hostFollowInput.data } : {}),
             ...(recovery.success ? { recovery: recovery.data } : {}),

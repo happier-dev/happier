@@ -92,7 +92,7 @@ describe('Run original Follow input at Pending admission and provider acceptance
         await db.sessionFollowEdge.update({ where: { destinationSessionId_sourceKey_relation: {
             destinationSessionId: f.destination.id, sourceKey: edge.sourceKey, relation: 'follower' } },
             data: { deliveredWorkflowRunRevision: 3 } });
-        expect(await enqueuePendingMessageByAuthenticatedMachine({ ...input, localId: 'late-rejoin' }))
+        expect(await enqueuePendingMessageByAuthenticatedMachine(input))
             .toEqual({ status: 'alreadyAccepted', localId });
         expect((await db.sessionFollowEdge.findUniqueOrThrow({ where: { destinationSessionId_sourceKey_relation: {
             destinationSessionId: f.destination.id, sourceKey: edge.sourceKey, relation: 'follower' } } })).deliveredWorkflowRunRevision).toBe(3);

@@ -15,10 +15,14 @@ export const FollowReceiverRefV1Schema = lazyZodSchema(() => z.discriminatedUnio
 export type FollowReceiverRefV1 = z.infer<typeof FollowReceiverRefV1Schema>;
 
 /** Source identity is exact. A selector or display name never becomes a mute scope. */
-export const FollowSourceRefV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
+export const ExecutionRunFollowSourceV1Schema = lazyZodSchema(() => z.union([
+  z.strictObject({ kind: z.literal('execution_run'), sessionId, runId: id }),
+  z.strictObject({ kind: z.literal('execution_run'), machineId: id, runId: id }),
+]));
+export const FollowSourceRefV1Schema = lazyZodSchema(() => z.union([
   z.strictObject({ kind: z.literal('session'), sessionId }),
   z.strictObject({ kind: z.literal('discussion'), discussionId: id }),
-  z.strictObject({ kind: z.literal('execution_run'), sessionId, runId: id }),
+  ExecutionRunFollowSourceV1Schema,
   z.strictObject({ kind: z.literal('workflow_run'), runId: id }),
   z.strictObject({ kind: z.literal('rule'), ruleId: id }),
 ]));
@@ -52,7 +56,9 @@ export function followDeliveryMuteScopeKeyV1(scope: FollowDeliveryMuteScopeV1): 
   switch (source.kind) {
     case 'session': return JSON.stringify(['source', 'session', source.sessionId]);
     case 'discussion': return JSON.stringify(['source', 'discussion', source.discussionId]);
-    case 'execution_run': return JSON.stringify(['source', 'execution_run', source.sessionId, source.runId]);
+    case 'execution_run': return JSON.stringify('sessionId' in source
+      ? ['source', 'execution_run', source.sessionId, source.runId]
+      : ['source', 'execution_run', 'machine', source.machineId, source.runId]);
     case 'workflow_run': return JSON.stringify(['source', 'workflow_run', source.runId]);
     case 'rule': return JSON.stringify(['source', 'rule', source.ruleId]);
   }

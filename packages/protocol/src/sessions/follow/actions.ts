@@ -7,12 +7,13 @@ import { FollowReceiverRefV1Schema, ChangeDeliveryMuteRequestV1Schema, ChangeDel
 import { FollowSourceRefV1Schema } from './sessionDeliveryMuteV1.js';
 import { SessionFollowRuleDefinitionV1Schema, SessionFollowRuleDefinitionStoredReadV1Schema, SessionFollowRuleIdV1Schema, SessionFollowRuleV1Schema, SetSessionFollowRuleRequestV1Schema, RemoveSessionFollowRuleRequestV1Schema, RemoveSessionFollowRuleResponseV1Schema } from './sessionFollowRuleV1.js';
 import { FollowPolicyV1Schema } from './sessionFollowPolicyV1.js';
-import { PersonalFollowOnceV1Schema, AccountFollowRelationV1Schema } from './accountFollow.js';
+import { PersonalFollowOnceV1Schema, PersonalRunFollowOnceSetV1Schema, AccountFollowRelationV1Schema } from './accountFollow.js';
 import { FollowSourceRelationV1Schema } from './sessionFollowSourcesApi.js';
 import { SessionListFilterStoredReadV1Schema } from '../listFilter/sessionListFilterV1.js';
 import { FollowRulePreviewResultV1Schema } from './sessionFollowRulePreviewV1.js';
 import { SessionTargetV1Schema } from '../../actions/sessionTargetV1.js';
 import { FollowListPageRequestV1Schema, FollowListRequestV1Schema, FollowListPageResultFieldsV1 } from './sessionFollowListV1.js';
+import { isOtherAccountFollowMutationSupportedV1 } from './api.js';
 
 export type SessionFollowActionIdV1 = typeof ACTION_ID_FAMILIES_V1.session_follow[number];
 /** Operational receiver intent resolves once at Actions; stored/wire refs remain exact. */
@@ -59,10 +60,22 @@ const ordinaryPair = { receiver: FollowActionReceiverV1Schema, source: ordinaryS
 export const FollowGetActionInputV1Schema = z.strictObject(followPair);
 export const FollowSetActionInputV1Schema = lazyZodSchema(() => z.union([
   FollowRuleSetActionInputV1Schema,
-  z.strictObject({ ...ordinaryPair, policy: z.optional(FollowPolicyV1Schema), once: z.optional(z.nullable(PersonalFollowOnceV1Schema)) })
-    .check(z.refine(value => value.receiver.kind === 'account' && value.source.kind === 'session'
-      ? value.policy !== undefined || value.once !== undefined
-      : value.policy !== undefined && value.once === undefined)),
+  z.strictObject({ ...ordinaryPair, policy: z.optional(FollowPolicyV1Schema),
+    once: z.optional(z.nullable(z.union([PersonalFollowOnceV1Schema, PersonalRunFollowOnceSetV1Schema]))),
+    clearOnceDeliveries: z.optional(z.literal(true)) })
+    .check(z.refine(value => {
+      if (value.receiver.kind !== 'account') return value.policy !== undefined && value.once === undefined && value.clearOnceDeliveries === undefined;
+      if (value.source.kind === 'session') return (value.policy !== undefined || value.once !== undefined)
+        && !Array.isArray(value.once) && value.clearOnceDeliveries === undefined;
+      if (value.source.kind === 'execution_run' || value.source.kind === 'workflow_run') {
+        return (value.once === undefined || value.once === null || Array.isArray(value.once))
+          && isOtherAccountFollowMutationSupportedV1(value.source, { policy: value.policy,
+            clearOnceDeliveries: value.clearOnceDeliveries,
+            ...(value.once === null || Array.isArray(value.once) ? { once: value.once } : {}) });
+      }
+      return value.once === undefined && isOtherAccountFollowMutationSupportedV1(value.source,
+        { policy: value.policy, clearOnceDeliveries: value.clearOnceDeliveries });
+    })),
 ]));
 export const FollowRemoveActionInputV1Schema = z.union([
   FollowRuleRemoveActionInputV1Schema, z.strictObject(ordinaryPair),

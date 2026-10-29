@@ -1,35 +1,77 @@
 import type { SessionAwarenessOriginV1, SessionAwarenessProjectionV1 } from '@happier-dev/protocol';
-import { readSessionListStartedByV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
-import { readSessionAwarenessPresentationV1 } from '@happier-dev/protocol/sessions/awareness/presentationV1';
-import { SessionFollowRuleSourceEvidenceV1Schema, type SessionFollowRuleSourceEvidenceV1, type SessionFollowRuleSourceOccurrenceV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowRuleOccurrenceV1';
-import type { FollowEventV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowPolicyV1';
+import { readOpenedSessionFollowOriginalV1, readSessionFollowSemanticSourceEventV1 as readSessionFollowSemanticSourceEvent,
+  captureSemanticSessionFollowRuleSourceEvidenceV1 as captureSemanticSessionFollowRuleSourceEvidence,
+  type SessionFollowOriginalOccurrenceV1, type SessionFollowOriginalReadV1,
+  type SessionFollowRuleSourceEvidenceV1, type SessionFollowRuleSourceOccurrenceV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowRuleOccurrenceV1';
 import type { ACPMessageData } from '@/api/session/sessionMessageTypes';
 import type { RawTranscriptRow } from '@/session/replay/fetchEncryptedTranscriptMessages';
 import { openSessionStoredContent, type SessionStoredContentEncryptionMode, type SessionEncryptionContext } from '@/session/transport/encryption/sessionEncryptionContext';
-import { createTranscriptRawRecordV1Schema, TranscriptRawAgentEventV1Schema } from '@happier-dev/protocol/sessions/messages/transcriptRawRecordV1';
 import { SessionMessageV1Schema } from '@happier-dev/protocol/sessions/messages/sessionMessagesPageV1';
-import { SessionFollowSourceMessageV1Schema } from '@happier-dev/protocol/sessions/follow/sessionFollowSourceOccurrenceV1';
-import { SessionIdSchema } from '@happier-dev/protocol/sessions/idsV1';
-import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
-import { z } from 'zod/mini';
-import { readVerifiedSessionFollowHumanInputOriginal } from '@/api/session/client/transcript/sessionFollowHumanInputOccurrence';
+import { resolveSessionFollowTurnEventV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowInputV1';
+import axios from '@/api/client/credentialAxios';
+import type { StoredCredentials } from '@/persistence';
+import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
+import { fetchEncryptedTranscriptMessagesPage } from '@/session/replay/fetchEncryptedTranscriptMessages';
+import { SessionFollowObserveSourceRoutesRequestV1Schema, SessionFollowObserveSourceRoutesResponseV1Schema } from '@happier-dev/protocol/sessions/follow/sessionFollowTransportV1';
+import { SESSION_FOLLOW_SOURCES_HTTP_PATHS_V1 } from '@happier-dev/protocol/sessions/follow/sessionFollowSourcesApi';
+export { readSessionFollowSemanticSourceEvent, captureSemanticSessionFollowRuleSourceEvidence };
+export type SessionFollowAccountOccurrence = SessionFollowOriginalOccurrenceV1;
+export type CommittedSessionFollowSourceOccurrenceRead = SessionFollowOriginalReadV1;
 
-type WithoutPublisher<Occurrence> = Occurrence extends unknown ? Omit<Occurrence, 'sourcePublisher'> : never;
-export type SessionFollowAccountOccurrence = WithoutPublisher<SessionFollowRuleSourceOccurrenceV1>;
-export type CommittedSessionFollowSourceOccurrenceRead = Readonly<{ status: 'occurrence'; occurrence: SessionFollowAccountOccurrence }>
-  | Readonly<{ status: 'not_semantic' }> | Readonly<{ status: 'unavailable' }>;
+type SourceReadContext = Readonly<{ credentials: StoredCredentials; serverHttpBaseUrl: string; signal: AbortSignal;
+  isCurrent: () => Promise<boolean> }>;
 
-// Authored metadata is not semantic evidence. Its protected human fields have
-// their own canonical proof owner; the raw-record factory validates the body.
-const SourceRawRecordSchema = createTranscriptRawRecordV1Schema(z, { metaSchema: z.unknown() });
+/** A native terminal hint selects an existing host Turn, never a provider identity. */
+export async function normalizeSessionFollowTerminalSourceOccurrence(input: SourceReadContext & Readonly<{
+  occurrence: Extract<SessionFollowRuleSourceOccurrenceV1 | SessionFollowAccountOccurrence, { sourceMessage: unknown }>;
+}>) {
+  const occurrence = input.occurrence;
+  if (occurrence.evidence.event.kind !== 'finished' && occurrence.evidence.event.kind !== 'failed_or_stopped') return null;
+  if (!await input.isCurrent()) return null;
+  const transport = await runWithServerHttpBaseUrl(input.serverHttpBaseUrl, () => resolveSessionTransportContext({ reason: 'follow-source-hydration',
+    credentials: input.credentials, idOrPrefix: occurrence.sourceSessionId, signal: input.signal }));
+  if (!transport.ok || !await input.isCurrent()) return null;
+  const page = await runWithServerHttpBaseUrl(input.serverHttpBaseUrl, () => fetchEncryptedTranscriptMessagesPage({
+    token: input.credentials.token, sessionId: occurrence.sourceSessionId, scope: 'all',
+    afterSeq: occurrence.sourceMessage.seq - 1, limit: 1, signal: input.signal }));
+  const row = page.messages.find(row => row.seq === occurrence.sourceMessage.seq && row.localId === occurrence.sourceMessage.localId);
+  if (!row || row.sidechainId || !await input.isCurrent()) return null;
+  const read = readCommittedSessionFollowSourceOccurrence({ sourceSessionId: occurrence.sourceSessionId,
+    serverId: occurrence.evidence.facts.serverId, ownerAccountId: occurrence.evidence.ownerAccountId,
+    origin: transport.rawSession.origin ?? null, row, mode: transport.mode, ctx: transport.ctx });
+  if (read.status === 'unavailable') return null;
+  if (read.status !== 'occurrence' || !('sourceTurn' in read.occurrence)
+    || read.occurrence.evidence.event.kind !== occurrence.evidence.event.kind) return null;
+  return { sourceSessionId: occurrence.sourceSessionId, sourceTurn: read.occurrence.sourceTurn,
+    evidence: { ...occurrence.evidence, event: resolveSessionFollowTurnEventV1(read.occurrence.sourceTurn) },
+    ...('sourcePublisher' in occurrence ? { sourcePublisher: occurrence.sourcePublisher } : {}) };
+}
+
+/** Exact persisted-original verification shared by source dispatch and ordinary live fallback. */
+export async function readSessionFollowOriginalRoutes(input: SourceReadContext & Readonly<{
+  occurrence: SessionFollowRuleSourceOccurrenceV1 | SessionFollowAccountOccurrence; destinationSessionId?: string;
+}>) {
+  const occurrence = input.occurrence;
+  const request = SessionFollowObserveSourceRoutesRequestV1Schema.parse({ v: 1,
+    ...('sourcePublisher' in occurrence ? { sourcePublisher: occurrence.sourcePublisher }
+      : input.destinationSessionId ? { destinationSessionId: input.destinationSessionId } : {}),
+    ...('sourceMessage' in occurrence ? { sourceMessage: occurrence.sourceMessage }
+      : 'sourceTurn' in occurrence ? { sourceTurn: occurrence.sourceTurn } : { sourceRequests: occurrence.sourceRequests }) });
+  const path = SESSION_FOLLOW_SOURCES_HTTP_PATHS_V1.occurrenceRoutes.replace(':sourceSessionId', encodeURIComponent(occurrence.sourceSessionId));
+  const response = await axios.post(`${input.serverHttpBaseUrl}${path}`, request, {
+    headers: { Authorization: `Bearer ${input.credentials.token}` }, signal: input.signal, validateStatus: () => true });
+  if (response.status !== 200 || !await input.isCurrent()) return null;
+  const parsed = SessionFollowObserveSourceRoutesResponseV1Schema.safeParse(response.data);
+  return parsed.success && parsed.data.ok && parsed.data.sourceSessionId === occurrence.sourceSessionId ? parsed.data : null;
+}
 
 /** Opens one already-authorized committed row; callers own paging and current predicate facts. */
 export function readCommittedSessionFollowSourceOccurrence(input: Pick<SourceFacts, 'serverId' | 'ownerAccountId' | 'origin'> & Readonly<{
   sourceSessionId: string; row: RawTranscriptRow; mode: SessionStoredContentEncryptionMode; ctx: SessionEncryptionContext | null;
 }>): CommittedSessionFollowSourceOccurrenceRead {
   const row = SessionMessageV1Schema.safeParse(input.row);
-  const sourceSessionId = SessionIdSchema.safeParse(input.sourceSessionId);
-  if (!row.success || !sourceSessionId.success) return { status: 'unavailable' };
+  if (!row.success) return { status: 'unavailable' };
   if (row.data.sidechainId) return { status: 'not_semantic' };
   try {
     let opened: unknown;
@@ -38,28 +80,7 @@ export function readCommittedSessionFollowSourceOccurrence(input: Pick<SourceFac
       if (!input.ctx) return { status: 'unavailable' };
       opened = openSessionStoredContent({ mode: 'e2ee', ctx: input.ctx, content: row.data.content });
     }
-    const body = SourceRawRecordSchema.safeParse(opened);
-    if (!body.success) return { status: 'unavailable' };
-    if (body.data.sidechainId || body.data.role === 'agent' && 'sidechainId' in body.data.content
-      && body.data.content.sidechainId) return { status: 'not_semantic' };
-    let event: FollowEventV1 | null;
-    if (body.data.role === 'user') {
-      event = readVerifiedSessionFollowHumanInputOriginal({ sessionId: sourceSessionId.data,
-        ownerAccountId: input.ownerAccountId, row: row.data, meta: body.data.meta }) ? { kind: 'person_wrote' } : null;
-    } else {
-      if (row.data.messageRole === 'user') return { status: 'unavailable' };
-      const content = body.data.content;
-      event = content.type === 'acp' || content.type === 'codex'
-        ? readSessionFollowSemanticSourceEvent(content.data)
-        : content.type === 'event' ? readSessionFollowSemanticSourceEvent(content) : null;
-    }
-    if (!event) return { status: 'not_semantic' };
-    const sourceMessage = SessionFollowSourceMessageV1Schema.safeParse({ localId: row.data.localId, seq: row.data.seq });
-    if (!sourceMessage.success) return { status: 'unavailable' };
-    const evidence = captureSemanticSessionFollowRuleSourceEvidence({ serverId: input.serverId,
-      ownerAccountId: input.ownerAccountId, origin: input.origin, event });
-    return evidence ? { status: 'occurrence', occurrence: { sourceSessionId: sourceSessionId.data,
-      sourceMessage: sourceMessage.data, evidence } } : { status: 'unavailable' };
+    return readOpenedSessionFollowOriginalV1({ ...input, row: row.data, opened });
   } catch { return { status: 'unavailable' }; }
 }
 
@@ -71,40 +92,4 @@ type SourceFacts = Readonly<{
 export function captureSessionFollowRuleSourceEvidence(input: SourceFacts & Readonly<{ body: ACPMessageData }>): SessionFollowRuleSourceEvidenceV1 | null {
   const event = readSessionFollowSemanticSourceEvent(input.body);
   return event ? captureSemanticSessionFollowRuleSourceEvidence({ ...input, event }) : null;
-}
-
-/** One classifier for live typed producers and canonically opened stored records, never metadata hints. */
-export function readSessionFollowSemanticSourceEvent(body: Readonly<{
-  type: string; sidechainId?: unknown; message?: unknown; data?: unknown;
-}>): FollowEventV1 | null {
-  // Run-sidechain output has its own lifecycle and cannot assert a parent Session event.
-  if (body.sidechainId) return null;
-  if (body.type === 'event') {
-    const event = createStoredReadSchema(TranscriptRawAgentEventV1Schema).safeParse(body.data);
-    return event.success && event.data.type === 'worker-report' ? { kind: 'update_posted' }
-      : event.success && event.data.type === 'goal-changed' ? { kind: 'goal_changed' }
-        : event.success && event.data.type === 'ready' && typeof event.data.completedTurnId === 'string'
-          ? { kind: 'finished' } : null;
-  }
-  return body.type === 'message' && typeof body.message === 'string' && body.message.trim() ? { kind: 'message' }
-    : body.type === 'task_complete' ? { kind: 'finished' }
-    : body.type === 'turn_failed' || body.type === 'turn_cancelled' || body.type === 'turn_aborted'
-      ? { kind: 'failed_or_stopped' }
-    : null;
-}
-
-/** Only original semantic owners supply this event; authored message metadata never does. */
-export function captureSemanticSessionFollowRuleSourceEvidence(input: SourceFacts & Readonly<{ event: FollowEventV1 }>): SessionFollowRuleSourceEvidenceV1 | null {
-  const event = input.event;
-  const parsed = SessionFollowRuleSourceEvidenceV1Schema.safeParse({
-    v: 1, ownerAccountId: input.ownerAccountId, event,
-    facts: { serverId: input.serverId, kind: 'session',
-      startedBy: readSessionListStartedByV1({ origin: input.origin ?? undefined,
-        ownerAccountId: input.ownerAccountId, viewerAccountId: input.ownerAccountId }),
-      source: 'persisted',
-      ...(input.awareness ? { status: readSessionAwarenessPresentationV1(input.awareness) } : {}),
-      ...(event.kind === 'needs_you' ? { attentionRequired: true } : {}),
-    },
-  });
-  return parsed.success ? parsed.data : null;
 }

@@ -9,6 +9,9 @@ import { FOLLOW_EVENT_KINDS_V1, FollowPolicyV1Schema, resolveFollowDeliveryV1, t
 import { normalizeSessionListFilterV1 } from '../listFilter/sessionListFilterV1.js';
 import type { SessionFollowRuleDefinitionV1 } from './sessionFollowRuleV1.js';
 import { FollowSourceRefV1Schema } from './sessionDeliveryMuteV1.js';
+import { ExecutionRunOutputRefV1Schema } from '../../reviews/reviewNarration.js';
+import { RunFollowOccurrenceV1Schema, ExecutionRunFollowOriginalV1Schema, WorkflowRunFollowOriginalV1Schema } from './sessionFollowInputV1.js';
+import { sameStrictJsonValue } from '../../json/strictJsonValue.js';
 
 /** A convenience intent, independent of the persistent Follow and Voice choices. */
 export const PersonalFollowOnceV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
@@ -16,6 +19,77 @@ export const PersonalFollowOnceV1Schema = lazyZodSchema(() => z.discriminatedUni
   z.strictObject({ kind: z.literal('first_needs_you') }),
 ]));
 export type PersonalFollowOnceV1 = z.infer<typeof PersonalFollowOnceV1Schema>;
+
+/** Run intents share Follow custody, with independently armable exact outputs. */
+export const PersonalRunFollowOnceV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
+  z.strictObject({ kind: z.literal('run_settled') }),
+  z.strictObject({ kind: z.literal('first_needs_you') }),
+  z.strictObject({ kind: z.literal('output_ready'), outputRef: ExecutionRunOutputRefV1Schema,
+    afterRevision: z.optional(z.number().check(z.int(), z.nonnegative())) }),
+]));
+export type PersonalRunFollowOnceV1 = z.infer<typeof PersonalRunFollowOnceV1Schema>;
+export function personalRunFollowOnceKeyV1(once: PersonalRunFollowOnceV1): string {
+  return JSON.stringify(once.kind === 'output_ready' ? [once.kind, once.outputRef.kind,
+    once.outputRef.kind === 'scm_diff_summary' ? once.outputRef.output : null,
+    once.outputRef.comparisonId, once.outputRef.resultId] : [once.kind]);
+}
+export const PersonalRunFollowOnceSetV1Schema = lazyZodSchema(() => z.array(PersonalRunFollowOnceV1Schema)
+  .check(z.refine(intents => new Set(intents.map(personalRunFollowOnceKeyV1)).size === intents.length,
+    { message: 'Run one-shot controls require unique exact intent identities' })));
+export const PersonalRunFollowOnceOccurrenceV1Schema = lazyZodSchema(() => RunFollowOccurrenceV1Schema);
+export type PersonalRunFollowOnceOccurrenceV1 = z.infer<typeof PersonalRunFollowOnceOccurrenceV1Schema>;
+export const PersonalRunFollowOnceBaselineV1Schema = lazyZodSchema(() => z.strictObject({
+  original: z.nullable(z.union([ExecutionRunFollowOriginalV1Schema, WorkflowRunFollowOriginalV1Schema])),
+  outputRevision: z.optional(z.number().check(z.int(), z.nonnegative())),
+}));
+export type PersonalRunFollowOnceBaselineV1 = z.infer<typeof PersonalRunFollowOnceBaselineV1Schema>;
+export const PersistedPersonalRunFollowOnceV1Schema = lazyZodSchema(() => z.strictObject({
+  v: z.literal(1), intents: z.array(z.discriminatedUnion('state', [
+    z.strictObject({ state: z.literal('armed'), once: PersonalRunFollowOnceV1Schema, baseline: PersonalRunFollowOnceBaselineV1Schema }),
+    z.strictObject({ state: z.literal('fulfilled'), once: PersonalRunFollowOnceV1Schema, baseline: PersonalRunFollowOnceBaselineV1Schema,
+      occurrence: PersonalRunFollowOnceOccurrenceV1Schema }),
+  ])).check(z.refine(intents => new Set(intents.map(entry => personalRunFollowOnceKeyV1(entry.once))).size === intents.length),
+    z.refine(intents => intents.every(entry => entry.state !== 'fulfilled' || matchesPersonalRunFollowOnceOccurrenceV1(entry)))),
+}));
+export type PersistedPersonalRunFollowOnceV1 = z.infer<typeof PersistedPersonalRunFollowOnceV1Schema>;
+defineStoredReadProjection(PersonalRunFollowOnceV1Schema, () => PersonalRunFollowOnceV1Schema);
+defineStoredReadProjection(PersistedPersonalRunFollowOnceV1Schema, () => PersistedPersonalRunFollowOnceV1Schema);
+
+export function parsePersistedPersonalRunFollowOnceV1(value: string | null | undefined): PersistedPersonalRunFollowOnceV1 | null {
+  if (!value) return null;
+  try { return PersistedPersonalRunFollowOnceV1Schema.safeParse(JSON.parse(value)).data ?? null; }
+  catch { return null; }
+}
+export function projectPersonalRunFollowCustodyV1(row: Readonly<{ notifyOnce?: string | null }>): Readonly<{
+  once?: PersonalRunFollowOnceV1[] | null; onceDeliveries?: PersonalRunFollowOnceOccurrenceV1[];
+}> {
+  if (row.notifyOnce === undefined) return {};
+  const parsed = parsePersistedPersonalRunFollowOnceV1(row.notifyOnce);
+  const armed = parsed?.intents.flatMap(entry => entry.state === 'armed' ? [entry.once] : []) ?? [];
+  const deliveries = parsed?.intents.flatMap(entry => entry.state === 'fulfilled' ? [entry.occurrence] : []) ?? [];
+  return { once: armed.length ? armed : null,
+    ...(deliveries.length ? { onceDeliveries: deliveries } : {}) };
+}
+export function matchesPersonalRunFollowOnceOccurrenceV1(input: Readonly<{
+  once: PersonalRunFollowOnceV1; baseline: PersonalRunFollowOnceBaselineV1; occurrence: PersonalRunFollowOnceOccurrenceV1;
+}>): boolean {
+  const { once, baseline, occurrence } = input;
+  if (baseline.original && !sameStrictJsonValue(baseline.original.source, occurrence.original.source)) return false;
+  if (once.kind === 'output_ready') {
+    if (!('output' in occurrence.original) || !sameStrictJsonValue(once.outputRef, occurrence.original.output.outputRef)) return false;
+    const after = once.afterRevision ?? baseline.outputRevision;
+    return after === undefined || occurrence.original.output.revision > after;
+  }
+  if ('output' in occurrence.original) return false;
+  if (once.kind === 'run_settled') return occurrence.event.kind === 'finished' || occurrence.event.kind === 'failed_or_stopped';
+  if (occurrence.event.kind !== 'needs_you') return false;
+  if ('revision' in occurrence.original) return !baseline.original || !('revision' in baseline.original)
+    || occurrence.original.revision > baseline.original.revision;
+  if (!('permissionRequests' in occurrence.original)) return false;
+  return !baseline.original || !('permissionRequests' in baseline.original)
+    || occurrence.original.permissionRequests.some(request => !baseline.original || !('permissionRequests' in baseline.original)
+      || !baseline.original.permissionRequests.some(prior => sameStrictJsonValue(prior, request)));
+}
 
 /** Original source identity only; the content and resolution stay at the source. */
 export const PersonalFollowOnceOccurrenceV1Schema = lazyZodSchema(() => z.strictObject({
@@ -181,7 +255,10 @@ export const OtherAccountFollowV1Schema = lazyZodSchema(() => z.strictObject({
   following: z.boolean(),
   persistent: z.boolean(),
   policy: FollowPolicyV1Schema,
-}).check(z.refine(row => row.source.kind !== 'session' && row.source.kind !== 'rule')));
+  once: z.optional(z.nullable(PersonalRunFollowOnceSetV1Schema)),
+  onceDeliveries: z.optional(z.array(PersonalRunFollowOnceOccurrenceV1Schema)),
+}).check(z.refine(row => row.source.kind !== 'session' && row.source.kind !== 'rule'
+  && (row.onceDeliveries ?? []).every(delivery => sameStrictJsonValue(row.source, delivery.original.source)))));
 export type OtherAccountFollowV1 = z.infer<typeof OtherAccountFollowV1Schema>;
 export const AccountFollowRelationV1Schema = lazyZodSchema(() => z.union([
   AccountSessionFollowV1Schema, OtherAccountFollowV1Schema,
@@ -213,16 +290,29 @@ export const DEFAULT_SESSION_FOLLOW_CREATION_POLICIES_V1: SessionFollowCreationP
 } satisfies SessionFollowCreationPoliciesV1);
 export const SESSION_FOLLOW_CREATION_PREFERENCES_ACCOUNT_KEY_V1 = '@happier/account/session-follow-creation-preferences/v1' as const;
 
-/** Relationship defaults and prospective creation policy share the existing preferences Action. */
-export const SessionAutoFollowPreferencesV1Schema = lazyZodSchema(() => z.strictObject({
+/** The four operational relationship choices remain stored in the existing Account columns. */
+const SessionFollowDefaultRulesV1Schema = lazyZodSchema(() => z.strictObject({
     assigned: z.boolean(),
     direct: z.boolean(),
     team: z.boolean(),
     group: z.boolean(),
+}));
+/** Current writes name defaultRules; legacy flat reads normalize to the same operational owner. */
+export const SessionAutoFollowPreferencesV1Schema = lazyZodSchema(() => {
+  const creationPolicyFields = {
     managerPolicy: z.optional(FollowPolicyV1Schema),
     runReportPolicy: z.optional(FollowPolicyV1Schema),
     discussionReceivePolicy: z.optional(FollowPolicyV1Schema),
+  };
+  return z.pipe(z.union([
+    z.strictObject({ defaultRules: SessionFollowDefaultRulesV1Schema, ...creationPolicyFields }),
+    z.strictObject({ ...SessionFollowDefaultRulesV1Schema.shape, ...creationPolicyFields }),
+  ]), z.transform(value => {
+    if (!('defaultRules' in value)) return value;
+    const { defaultRules, ...policies } = value;
+    return { ...defaultRules, ...policies };
   }));
+});
 export type SessionAutoFollowPreferencesV1 = z.infer<typeof SessionAutoFollowPreferencesV1Schema>;
 
 export const DEFAULT_SESSION_AUTO_FOLLOW_PREFERENCES_V1: SessionAutoFollowPreferencesV1 =

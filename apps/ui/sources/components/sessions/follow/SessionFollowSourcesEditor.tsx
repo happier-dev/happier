@@ -2,7 +2,7 @@ import * as React from 'react';
 import { editFollowPolicyV1, projectFollowPolicyEditorV1 } from '@happier-dev/protocol/sessions/follow/followPolicyEditorV1';
 import type { FollowPolicyV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowPolicyV1';
 import type { SessionFollowSourceKeyPreparationWaitingReasonV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowSourceKeyPreparationV1';
-import type { FollowSourceRefV1 } from '@happier-dev/protocol/sessions/follow/sessionDeliveryMuteV1';
+import { followDeliveryMuteScopeKeyV1, type FollowSourceRefV1 } from '@happier-dev/protocol/sessions/follow/sessionDeliveryMuteV1';
 import type { FollowSourceRelationV1, SessionFollowSourceV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowSourcesApi';
 import type { SessionListFilterV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
 import type { QualifiedProjectKeyV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
@@ -37,7 +37,7 @@ import {
 } from '@/sync/api/session/sessionFollowRuleEdits';
 import { SessionListStoredFilterEditor } from '@/components/sessions/shell/search/SessionListStoredFilterEditor';
 import { describeSessionListFilterFacts } from '@/components/sessions/shell/search/sessionListFilterSummary';
-import { useSessionListFilterProjectOptions } from '@/components/sessions/shell/search/useSessionListFilterProjectOptions';
+import { useProjectPickerOptions } from '@/components/projects/useProjectPickerOptions';
 import { readSessionListRowsForServerId } from '@/sync/domains/session/listing/sessionListRowStateLookup';
 import { useActiveServerAccountScope, useServerScopedMachine, useSessionListRowsByServerId } from '@/sync/domains/state/storage';
 import { selectActiveServerAccountScopeForServer } from '@/sync/domains/scope/activeServerAccountScope';
@@ -46,6 +46,7 @@ import { useMachineReachabilityRevision } from '@/sync/domains/machines/reachabi
 import { isMachineReachable } from '@/sync/domains/machines/reachability/machineReachability';
 import { resolveMachinePickerPresence } from '@/sync/domains/machines/identity/resolveMachinePickerPresence';
 import { useMachinePresenceNowMs } from '@/hooks/machine/useMachinePresenceNowMs';
+import { useMachineActivity } from '@/hooks/machine/useMachineActivity';
 import { t } from '@/text';
 import { getSessionName } from '@/utils/sessions/sessionUtils';
 import {
@@ -100,7 +101,7 @@ export function followSourceKey(source: FollowSourceRefV1): string {
     switch (source.kind) {
         case 'session': return source.sessionId;
         case 'discussion': return `discussion:${source.discussionId}`;
-        case 'execution_run': return `execution_run:${source.sessionId}:${source.runId}`;
+        case 'execution_run': return followDeliveryMuteScopeKeyV1({ kind: 'source', source });
         case 'workflow_run': return `workflow_run:${source.runId}`;
         case 'rule': return `rule:${source.ruleId}`;
     }
@@ -222,7 +223,7 @@ export function SessionFollowSourcesEditor(props: Readonly<{
     const sources = following.projection?.sources ?? EMPTY_SOURCES;
     // A rule follows whatever matches it when each event happens; it is a row like a source, never enrolled sessions.
     const rules = following.projection?.rules ?? EMPTY_RULES;
-    const projects = useSessionListFilterProjectOptions();
+    const projects = useProjectPickerOptions();
     const ruleCountInputs = React.useMemo(() => rules.map((rule) => ({ key: ruleKey(rule), filter: rule.definition.filter })), [rules]);
     const ruleCounts = useFollowRuleMatchCounts(enabled ? props.serverId : null, props.destination.id, ruleCountInputs, following.ruleInputs);
     const { loading, refresh } = following;
@@ -335,7 +336,10 @@ export function SessionFollowSourcesEditor(props: Readonly<{
         activeMutationRequestRef.current = request;
         setSavingId(request.sourceKey);
         dispatchMutation({ kind: 'started', intent: { kind: 'remove', source } });
-        const result = await removeSessionFollowSource({ serverId: props.serverId, destinationSessionId: props.destination.id, ...sourcePair(source) });
+        const rule = source.kind === 'rule' ? rules.find((candidate) => candidate.ruleId === source.ruleId) : undefined;
+        const result = await removeSessionFollowSource({ serverId: props.serverId, destinationSessionId: props.destination.id,
+            ...sourcePair(source), ...(rule ? { expectedVersion: rule.version } : {}),
+        });
         if (
             preparationTargetKeyRef.current !== request.targetKey
             || activeMutationRequestRef.current !== request
@@ -355,7 +359,7 @@ export function SessionFollowSourcesEditor(props: Readonly<{
         else dispatchMutation({ kind: 'failed', error: true });
         activeMutationRequestRef.current = null;
         setSavingId(null);
-    }, [online, preparationTargetKey, props.destination.id, props.page, props.serverId, refresh, savingId]);
+    }, [online, preparationTargetKey, props.destination.id, props.page, props.serverId, refresh, rules, savingId]);
 
     const updatePolicy = React.useCallback(async (source: FollowSourceRefV1, policy: FollowPolicyV1) => {
         if (!online || !props.serverId || savingId) return;
@@ -380,7 +384,7 @@ export function SessionFollowSourcesEditor(props: Readonly<{
             preparationTargetKeyRef.current !== request.targetKey
             || activeMutationRequestRef.current !== request
         ) return;
-        if (result.kind === 'ok') {
+        if (result.kind === 'ok' || ('committedSource' in result && result.committedSource)) {
             dispatchMutation({ kind: 'succeeded' });
             await refresh();
             if (
@@ -448,6 +452,18 @@ export function SessionFollowSourcesEditor(props: Readonly<{
         && destinationMachine.availability?.kind !== 'locked'
         && destinationPresence !== 'revoked' && destinationPresence !== 'replaced';
     const destinationReachable = destinationMachine !== null && isMachineReachable(accountScope, destinationMachine, nowMs);
+    const preparationNeedsActivity = enabled && online && canPrepareSource && sources.some((source) => {
+        if (!isSessionSource(source)) return false;
+        const session = homeSessions.find(candidate => candidate.id === source.sourceSessionId);
+        return resolveSessionFollowSourceRuntimeState({ accountScope, nowMs, machine: destinationMachine,
+            deliveryState: source.deliveryState, sourceEncryptionMode: session?.encryptionMode ?? null,
+            preparedInUiLifetime: preparedSourceKeys.has(sourcePreparationKey(preparationTargetKey, source.sourceSessionId)),
+            hasPendingUpdates: source.hasPendingUpdates,
+        }) === 'waiting_for_source_key';
+    });
+    // Retain this exact clock during a pending attempt as well as after a
+    // waiting result. Settling the attempt must not reset its readiness key.
+    const destinationActivity = useMachineActivity(preparationNeedsActivity ? destinationMachine : null);
 
     const prepareSource = React.useCallback(async (sourceSessionId: string, intent?: 'retry') => {
         if (!canPrepareSource || !props.serverId) return;
@@ -503,7 +519,7 @@ export function SessionFollowSourcesEditor(props: Readonly<{
         destinationReachable ? 'reachable' : 'unreachable',
         props.destinationMachineId ?? '',
         destinationMachine?.active === true ? 'active' : 'inactive',
-        String(destinationMachine?.activeAt ?? ''),
+        String(destinationActivity?.activeAt ?? ''),
         String(destinationMachine?.operationProtocolCapabilitiesRevision ?? ''),
         ...sources.filter(isSessionSource).map((source) => {
             const session = homeSessions.find((candidate) => candidate.id === source.sourceSessionId);
@@ -602,7 +618,7 @@ export function SessionFollowSourcesEditor(props: Readonly<{
             }
             case 'execution_run':
                 return { key, ref, session: undefined, icon: 'play', mark: glyph('play'),
-                    sourceTitle: t('session.follow.sources.executionRun', { title: sessionTitle(ref.sessionId).title }) };
+                    sourceTitle: t('session.follow.sources.executionRun', { title: 'sessionId' in ref ? sessionTitle(ref.sessionId).title : ref.machineId }) };
             case 'workflow_run': {
                 const run = workflowRuns.find((row) => row.id === ref.runId);
                 return { key, ref, session: undefined, icon: 'tree-structure', mark: glyph('tree-structure'),
@@ -871,7 +887,7 @@ export function SessionFollowSourcesEditor(props: Readonly<{
                 ? <View style={styles.paneEmpty}><EmptyState testID="session-follow-sources-empty" layout="line" title={t('session.follow.sources.empty')} /></View>
                 : <Item {...rowLook} testID="session-follow-sources-empty" title={t('session.follow.sources.empty')} showChevron={false} mode="info" />) : null}
             {sources.map((source) => {
-                const { key, sourceTitle, icon } = sourceIdentity(source);
+                const { key, ref, session, sourceTitle, icon } = sourceIdentity(source);
                 const status = isSessionSource(source) ? sessionSourceStatus(source) : {
                     // Another source kind has no key to prepare: it is current, paused while archived, or gone.
                     text: source.sourceAvailability === 'unavailable' ? t('session.follow.sources.sourceUnavailable')
@@ -885,7 +901,10 @@ export function SessionFollowSourcesEditor(props: Readonly<{
                     key={key}
                     row={(triggerRef) => <Item
                         {...rowLook}
-                        {...(pane ? { icon: <Icon name={icon} size={18} color={theme.colors.text.secondary} /> } : {})}
+                        {...(pane ? { icon: ref.kind === 'session'
+                            // A followed Session keeps its own Agent mark, like the session list (lab P1-P).
+                            ? <FollowSessionMark session={session ?? null} serverId={serverId} rowGlyph />
+                            : <Icon name={icon} size={18} color={theme.colors.text.secondary} /> } : {})}
                         pressableRef={triggerRef}
                         testID={`session-follow-source-${key}`}
                         accessibilityLabel={[
@@ -957,6 +976,8 @@ export function SessionFollowSourcesEditor(props: Readonly<{
     const addRow = <Item
         pressableRef={addSourceRef}
         testID="session-follow-source-add"
+        // In the sheet every row carries a mark, so Add keeps its title on the same edge (lab P1-P).
+        {...(props.sheet ? { icon: <Icon name="plus" size={18} color={theme.colors.text.secondary} /> } : {})}
         title={t('session.follow.sources.addSource')}
         subtitle={t('session.follow.sources.includeNextTurn')}
         disabled={!online || savingId !== null}

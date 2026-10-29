@@ -69,7 +69,7 @@ function originalInputFixture(texts: readonly string[]) {
     observePendingSessionFollow: async () => ({ ok: true, v: 1, sessionId: 'destination',
       publisherGeneration: state.publisherGeneration, currentSourceSessionIds: state.revoked ? [] : ['source'],
       observations: state.revoked ? [] : deliveries.map(({ delivery, localInputId }, index) => ({
-        kind: 'admitted_input' as const, localInputId, delivery,
+        kind: 'admitted_input' as const, localInputId, delivery, effectiveDelivery: delivery.delivery,
         sourceSessionId: 'source', destinationSessionId: 'destination',
         delivered: { ...zeroFrontier, transcriptSeq: index }, observed: { ...zeroFrontier, transcriptSeq: index + 1 },
       })),
@@ -99,6 +99,31 @@ function originalInputFixture(texts: readonly string[]) {
 }
 
 describe('Session Follow context reconciler', () => {
+  it.each(['execution_run', 'workflow_run'] as const)('rechecks current %s mode without losing the original on Important to Quiet', async kind => {
+    const delivery = SessionFollowInputV1Schema.parse({ v: 1, delivery: 'wake', event: { kind: 'failed_or_stopped' },
+      original: kind === 'execution_run'
+        ? { source: { kind, machineId: 'machine', runId: 'run' }, terminalEventId: 'terminal' }
+        : { source: { kind, runId: 'run' }, revision: 1 } });
+    let effectiveDelivery: 'wake' | 'next_turn' | null = 'wake';
+    const session = createMutableApiSessionClientFixture({ sessionId: 'destination', overrides: {
+      observePendingSessionFollow: async () => ({ ok: true, v: 1, sessionId: 'destination', publisherGeneration: '1',
+        currentSourceSessionIds: [], observations: [{ kind: 'admitted_run_input', localInputId: 'run-input',
+          destinationSessionId: 'destination', delivery, effectiveDelivery }] }),
+    } });
+    const reconcile = createSessionFollowContextReconciler({ session, hydrateObservation: async () => {
+      throw new Error('Run admission must not hydrate a Session source');
+    }, maxFollowContextUtf8Bytes: 100_000 });
+    const followDeliveries = [{ localInputId: 'run-input', delivery, userMessageSeq: 2 }];
+    const signal = new AbortController().signal;
+    const wake = await reconcile({ signal, deliveryIntent: 'wake', followDeliveries });
+    expect(wake?.representedFollowLocalInputIds).toEqual(['run-input']);
+    effectiveDelivery = 'next_turn';
+    expect(await wake!.recheckAdmission(signal)).toBe(false);
+    expect(await reconcile({ signal, deliveryIntent: 'wake', followDeliveries })).toBeNull();
+    expect((await reconcile({ signal, deliveryIntent: 'natural', followDeliveries }))?.representedFollowLocalInputIds).toEqual(['run-input']);
+    effectiveDelivery = null;
+    expect(await reconcile({ signal, deliveryIntent: 'natural', followDeliveries })).toBeNull();
+  });
   it('retains required-original Home failure classification while omitting optional context from the same unavailable source', async () => {
     const f = originalInputFixture(['Original']);
     try {
@@ -191,7 +216,7 @@ describe('Session Follow context reconciler', () => {
         publisherGeneration: '1', currentSourceSessionIds: ['source'], observations: [...routes,
           ...(options?.inputLocalIds?.includes('accepted-follow') ? [{ kind: 'admitted_input' as const,
             localInputId: 'accepted-follow', sourceSessionId: 'source', destinationSessionId: 'destination',
-            delivered: zeroFrontier, observed, delivery }] : [])],
+            delivered: zeroFrontier, observed, delivery, effectiveDelivery: delivery.delivery }] : [])],
       }),
       acknowledgeSessionFollow: async request => {
         acknowledgements.push(request);
@@ -328,7 +353,7 @@ describe('Session Follow context reconciler', () => {
           { sourceSessionId: 'source', destinationSessionId: 'destination', relation: 'manager', attachedAt: 1,
             policy: { preset: 'important' }, delivered: zeroFrontier, observed: managerObserved },
           { kind: 'admitted_input', localInputId: 'question-input', sourceSessionId: 'source', destinationSessionId: 'destination',
-            delivered: zeroFrontier, observed: questionObserved, delivery },
+            delivered: zeroFrontier, observed: questionObserved, delivery, effectiveDelivery: delivery.delivery },
         ] }),
     } });
     const material = createSessionFollowSourceMaterialResolver();
@@ -392,7 +417,7 @@ describe('Session Follow context reconciler', () => {
         observations.push(options);
         return { ok: true, v: 1, sessionId: 'destination', publisherGeneration: '1', currentSourceSessionIds: ['source'],
           observations: [{ kind: 'admitted_input', localInputId: 'rule-input',
-            sourceSessionId: 'source', destinationSessionId: 'destination', delivered, observed, delivery }] };
+            sourceSessionId: 'source', destinationSessionId: 'destination', delivered, observed, delivery, effectiveDelivery: delivery.delivery }] };
       },
       acknowledgeSessionFollow: async input => {
         acknowledgements.push(input);

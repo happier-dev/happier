@@ -19,43 +19,50 @@ import { DISCUSSION_MESSAGE_SELECT } from '@/app/discussions/projection';
 import type { SessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication';
 import type { SessionFollowDiscussionOccurrenceRoutesRequestV1, SessionFollowDiscussionOccurrenceV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowTransportV1';
 
+export type DiscussionFollowOccurrenceUnavailableCode = 'discussion_follow_unavailable' | 'discussion_unavailable'
+    | 'discussion_message_absent' | 'discussion_message_unreadable' | 'discussion_message_invalid'
+    | 'discussion_delivery_held' | 'discussion_occurrence_unavailable' | 'occurrence_absent';
+
 /** Personal Follow reads original C3 messages, never executable participant addressing or an attention mirror. */
 export async function observeAccountDiscussionFollowOccurrenceInTx(tx: Tx, input: Readonly<{
     accountId: string; authentication: SessionAccessAuthentication; request: SessionFollowDiscussionOccurrenceRoutesRequestV1;
+    onUnavailable?: (code: DiscussionFollowOccurrenceUnavailableCode) => void;
 }>): Promise<SessionFollowDiscussionOccurrenceV1 | null> {
     const { source, messageId } = input.request;
+    const unavailable = (code: DiscussionFollowOccurrenceUnavailableCode) => { input.onUnavailable?.(code); return null; };
     const follow = await readAccountOtherFollowInTx(tx, { ...input, source });
     // A missing seed is unavailable custody, never an implicit history replay.
-    if (!follow || follow.deliveredDiscussionSeq === null) return null;
+    if (!follow || follow.deliveredDiscussionSeq === null) return unavailable('discussion_follow_unavailable');
     const deliveredSeq = follow.deliveredDiscussionSeq;
     const context = await resolveDiscussionContextInTx(tx, { discussionId: source.discussionId,
         accountId: input.accountId, authentication: input.authentication });
-    const discussion = await tx.discussion.findUnique({ where: { id: source.discussionId }, select: { archivedAt: true } });
-    if (!context?.keyReadiness || !discussion || discussion.archivedAt !== null) return null;
+    const discussion = await tx.discussion.findUnique({ where: { id: source.discussionId }, select: { archivedAt: true, anchorV1: true } });
+    if (!context?.keyReadiness || !discussion || discussion.archivedAt !== null) return unavailable('discussion_unavailable');
     let afterSeq = deliveredSeq;
     for (;;) {
         const rows = await tx.discussionMessage.findMany({ where: { discussionId: source.discussionId,
             ...(messageId ? { id: messageId } : { seq: { gt: afterSeq } }) },
             select: DISCUSSION_MESSAGE_SELECT, orderBy: { seq: 'asc' }, take: DISCUSSION_DEFAULT_PAGE_SIZE_V1 });
-        if (!rows.length) return null;
+        if (!rows.length) return unavailable(messageId ? 'discussion_message_absent' : 'occurrence_absent');
         const readable = await projectReadableMessagesInTx(tx, { actorAccountId: input.accountId,
-            authentication: input.authentication, discussionId: source.discussionId, context, rows });
-        if (!readable.ok) return null;
+            authentication: input.authentication, discussionId: source.discussionId, context, rows, discussion });
+        if (!readable.ok) return unavailable('discussion_message_unreadable');
         for (const message of readable.value.messages) {
             const producer = message.producerV1;
             // These are protected append-owner facts: an absent producer is
             // admitted only for present-user ingress, never authored metadata.
             if (!producer && message.authorAccountId === input.accountId
                 || producer?.kind === 'agent' && producer.actionRequestAttributionV1?.requester?.accountId === input.accountId) continue;
-            if (!producer && message.authorAccountId === null) return null;
+            if (!producer && message.authorAccountId === null) return unavailable('discussion_message_invalid');
             const event = { kind: producer ? 'message' as const : 'person_wrote' as const };
             if (!resolveFollowDeliveryV1({ policies: [follow.policy], event }).selected) continue;
             if (await isDeliveryMutedInTx(tx, { accountId: input.accountId, receiver: { kind: 'account' },
-                candidate: { source, ...(producer?.kind === 'agent' ? { senderSessionId: producer.sessionId } : {}) } }) !== false) return null;
+                candidate: { source, ...(producer?.kind === 'agent' ? { senderSessionId: producer.sessionId } : {}) } }) !== false) return unavailable('discussion_delivery_held');
             return { source, messageId: message.id, seq: message.seq, event,
                 personal: { policy: follow.policy, alreadyRepresented: deliveredSeq >= message.seq } };
         }
-        if (messageId || rows.length < DISCUSSION_DEFAULT_PAGE_SIZE_V1) return null;
+        if (messageId || rows.length < DISCUSSION_DEFAULT_PAGE_SIZE_V1)
+            return unavailable(messageId ? 'discussion_occurrence_unavailable' : 'occurrence_absent');
         afterSeq = rows[rows.length - 1]!.seq;
     }
 }
@@ -92,9 +99,10 @@ function receiptHasAddressing(value: unknown, addressing: DiscussionAddressingV1
 }
 
 /**
- * One oldest selected, executable unaccepted original per attachment. Pages use the
- * Discussion owner's indexed (discussionId, seq) traversal; accepted originals
- * are batch-read by their existing exact Pending/materialized identity. The
+ * One oldest selected unsettled original per attachment. Pages use the
+ * Discussion owner's indexed (discussionId, seq) traversal; settled originals
+ * are batch-read by their existing exact Pending/materialized identity, including
+ * rejected muted custody that never became executable input. The
  * delivered frontier normally excludes all prior accepted history. Unaddressed
  * rows since that frontier are revisited, not hidden behind an invented cap.
  * Receiver Pending owns check-in admission for its Account, including questions
@@ -143,22 +151,22 @@ export async function observeDiscussionFollowSourcesInTx(tx: Tx, input: Readonly
                     senderSessionId: producer?.success && producer.data.kind === 'agent' ? producer.data.sessionId : undefined }];
             });
             const localIds = candidates.map(candidate => candidate.localId);
-            const accepted = localIds.length ? await Promise.all([
+            const settled = localIds.length ? await Promise.all([
                 tx.sessionPendingMessage.findMany({ where: { sessionId: input.destinationSessionId, localId: { in: localIds } }, select: { localId: true, inputAdmissionReceipt: true } }),
                 tx.sessionMessage.findMany({ where: { sessionId: input.destinationSessionId, localId: { in: localIds } }, select: { localId: true, inputAdmissionReceipt: true } }),
             ]) : [];
             for (const candidate of candidates) {
-                if (accepted.flat().some(original => original.localId === candidate.localId && receiptHasAddressing(original.inputAdmissionReceipt, candidate.addressing))) continue;
+                if (settled.flat().some(original => original.localId === candidate.localId && receiptHasAddressing(original.inputAdmissionReceipt, candidate.addressing))) continue;
                 const reply = await createSessionInputReplyProgressInTx(tx, { accountId: input.destinationRuntimeAccountId,
                     reply: { mode: 'return', discussion: candidate.addressing,
                         ...(candidate.sourceSession ? { sourceSession: candidate.sourceSession } : {}) } });
                 if (!reply) continue;
-                // Shared receiver policy suppresses a muted original. A later
-                // accepted eligible original may cross it; there is no second
-                // deferred queue or suppression receipt for that earlier ask.
+                // Confirmed mute still needs final Pending admission to retain
+                // discarded original custody. Unknown policy is a retryable
+                // hold; observation itself never claims an accepted effect.
                 if (await readDeliveryMuted({ source: { kind: 'discussion', discussionId },
                     ...(candidate.senderSessionId ? { senderSessionId: candidate.senderSessionId } : {}),
-                }) !== false) continue;
+                }) === null) continue;
                 if (!resolveFollowDeliveryV1({ policies: [policy], event: candidate.event,
                     discussionInput: { addressing: candidate.addressing, original: candidate.original, reply } }).selected) continue;
                 observations.push({ source: { kind: 'discussion', discussionId }, destinationSessionId: input.destinationSessionId,
@@ -183,8 +191,8 @@ export async function admitDiscussionFollowAddressingInTx(tx: Tx, input: Readonl
 export async function acknowledgeDiscussionFollowInputInTx(tx: Tx, input: Readonly<{ addressing: DiscussionAddressingV1; localInputId: string }>): Promise<void> {
     if (deriveDiscussionFollowInputLocalIdV1(input.addressing) !== input.localInputId) throw new Error('Discussion Follow input identity mismatch');
     const original = await tx.sessionPendingMessage.findUnique({ where: { sessionId_localId: {
-        sessionId: input.addressing.participantSessionId, localId: input.localInputId } }, select: { inputAdmissionReceipt: true } });
-    if (!original || !receiptHasAddressing(original.inputAdmissionReceipt, input.addressing)) throw new Error('Discussion Follow Pending acceptance is unavailable');
+        sessionId: input.addressing.participantSessionId, localId: input.localInputId } }, select: { status: true, inputAdmissionReceipt: true } });
+    if (!original || original.status !== 'queued' || !receiptHasAddressing(original.inputAdmissionReceipt, input.addressing)) throw new Error('Discussion Follow Pending acceptance is unavailable');
     // Advance only through this exact accepted original; receiver admission
     // retains unaccepted questions before any Pending receipt or source ACK.
     const changed = await tx.sessionFollowEdge.updateMany({ where: { destinationSessionId: input.addressing.participantSessionId,

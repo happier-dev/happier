@@ -7,6 +7,10 @@ import { SessionFollowRuleWitnessV1Schema } from './sessionFollowRuleV1.js';
 import { TurnIdSchema } from '../idsV1.js';
 import { isProjectedSessionStalledV1 } from '../awareness/runtime.js';
 import { defineStoredReadProjection } from '../../json/storedReadSchema.js';
+import { ExecutionRunFollowSourceV1Schema } from './sessionDeliveryMuteV1.js';
+import { SessionFollowTerminalTurnV1Schema } from './sessionFollowFrontierV1.js';
+import { SessionFollowSelectedDeliveryV1Schema } from './sessionFollowSelectedDeliveryV1.js';
+import { SessionQuestionHandlerV1Schema } from '../permissions/questionV1.js';
 
 /** Existing committed presence fence + exact in-flight Turn; not a Message or a delivery cursor. */
 export const SessionFollowStalledOccurrenceV1Schema = lazyZodSchema(() => z.strictObject({
@@ -30,8 +34,7 @@ export const SessionFollowRelationWitnessesV1Schema = lazyZodSchema(() => z.arra
   z.strictObject({ relation: z.literal('follower') }),
   z.strictObject({ relation: z.literal('manager'), attachedAt: relationAttachedAt }),
   z.strictObject({ relation: z.literal('follower'), attachedAt: relationAttachedAt,
-    source: z.strictObject({ kind: z.literal('execution_run'), sessionId: asProtocolZod(SessionIdSchema),
-      runId: z.string().check(z.minLength(1)) }),
+    source: ExecutionRunFollowSourceV1Schema,
     expectedTerminalEventId: z.nullable(z.string().check(z.minLength(1))) }),
   z.strictObject({ relation: z.literal('follower'), attachedAt: relationAttachedAt,
     source: z.strictObject({ kind: z.literal('workflow_run'), runId: z.string().check(z.minLength(1)) }),
@@ -46,16 +49,24 @@ defineStoredReadProjection(SessionFollowRelationWitnessesV1Schema, () => Session
 export const SessionFollowSourceMessageV1Schema = lazyZodSchema(() => z.strictObject({
   localId: PendingLocalIdSchema, seq: z.number().check(z.int(), z.positive(), z.maximum(Number.MAX_SAFE_INTEGER)),
 }));
+/** The host's persisted terminal Turn is the original, irrespective of native marker timing. */
+export const SessionFollowSourceTurnV1Schema = SessionFollowTerminalTurnV1Schema;
+export type SessionFollowSourceTurnV1 = z.infer<typeof SessionFollowSourceTurnV1Schema>;
 export const SessionFollowSourceRequestsV1Schema = lazyZodSchema(() => z.strictObject({
   agentStateVersion: z.number().check(z.int(), z.positive(), z.maximum(Number.MAX_SAFE_INTEGER)),
   requests: z.array(z.strictObject({
     requestId: z.string().check(z.minLength(1)),
     createdAt: z.number().check(z.int(), z.nonnegative(), z.maximum(Number.MAX_SAFE_INTEGER)),
     turnId: z.optional(TurnIdSchema),
+    /** Exact request-owner assignment; omitted for an ordinary informational notice. */
+    currentHandler: z.optional(SessionQuestionHandlerV1Schema),
   })).check(z.minLength(1), z.superRefine((requests, context) => {
     const ids = new Set<string>();
     for (const [index, request] of requests.entries()) {
       if (ids.has(request.requestId)) context.addIssue({ code: 'custom', path: [index, 'requestId'], message: 'Request identities must be unique' });
+      if (request.currentHandler && (requests.length !== 1 || request.currentHandler.kind !== 'session')) {
+        context.addIssue({ code: 'custom', path: [index, 'currentHandler'], message: 'A question offer names one assigned Session handler' });
+      }
       ids.add(request.requestId);
     }
   })),
@@ -63,6 +74,8 @@ export const SessionFollowSourceRequestsV1Schema = lazyZodSchema(() => z.strictO
 /** One visible Machine-admission witness, bound by the existing receipt to encrypted receiver input. */
 export const SessionFollowSourceOccurrenceWitnessFieldsV1 = {
   rule: z.lazy(() => SessionFollowRuleWitnessV1Schema),
+  /** Exact vote from the authorized private evaluator for this pinned rule version. */
+  selectedDelivery: SessionFollowSelectedDeliveryV1Schema,
   sourceSessionId: asProtocolZod(SessionIdSchema), destinationSessionId: asProtocolZod(SessionIdSchema),
   evaluation: z.optional(z.enum(['source', 'receiver'])),
   expectedSourcePublisherGeneration: z.optional(SessionFollowPublisherGenerationV1Schema),
@@ -71,9 +84,11 @@ export const SessionFollowSourceOccurrenceWitnessFieldsV1 = {
 function occurrenceWitnessSchema<Fields extends Record<string, z.ZodMiniType>>(extraFields: Fields) {
   return z.union([
     z.strictObject({ ...SessionFollowSourceOccurrenceWitnessFieldsV1, ...extraFields,
-      sourceMessage: SessionFollowSourceMessageV1Schema, sourceRequests: z.optional(z.never()) }),
+      sourceMessage: SessionFollowSourceMessageV1Schema, sourceRequests: z.optional(z.never()), sourceTurn: z.optional(z.never()) }),
     z.strictObject({ ...SessionFollowSourceOccurrenceWitnessFieldsV1, ...extraFields,
-      sourceRequests: SessionFollowSourceRequestsV1Schema, sourceMessage: z.optional(z.never()) }),
+      sourceRequests: SessionFollowSourceRequestsV1Schema, sourceMessage: z.optional(z.never()), sourceTurn: z.optional(z.never()) }),
+    z.strictObject({ ...SessionFollowSourceOccurrenceWitnessFieldsV1, ...extraFields,
+      sourceTurn: SessionFollowSourceTurnV1Schema, sourceMessage: z.optional(z.never()), sourceRequests: z.optional(z.never()) }),
   ]).check(z.refine<Record<string, unknown>>(value => value.sourceSessionId !== value.destinationSessionId, {
   path: ['destinationSessionId'], message: 'Follow cannot deliver a source to itself',
   }), z.refine<Record<string, unknown>>(value => value.evaluation === 'receiver'
@@ -91,7 +106,8 @@ export const SessionFollowSourceOccurrenceWitnessesV1Schema = lazyZodSchema(() =
       if (rules.has(item.rule.ruleId)) context.addIssue({ code: 'custom', path: [index, 'rule'], message: 'Each rule is represented once' });
       rules.add(item.rule.ruleId);
       if (first && (item.sourceSessionId !== first.sourceSessionId || item.destinationSessionId !== first.destinationSessionId
-        || JSON.stringify(item.sourceMessage ?? item.sourceRequests) !== JSON.stringify(first.sourceMessage ?? first.sourceRequests)
+        || JSON.stringify(item.sourceMessage ?? item.sourceRequests ?? ('sourceTurn' in item ? item.sourceTurn : undefined))
+          !== JSON.stringify(first.sourceMessage ?? first.sourceRequests ?? ('sourceTurn' in first ? first.sourceTurn : undefined))
         || item.expectedSourcePublisherGeneration !== first.expectedSourcePublisherGeneration
         || item.machineId !== first.machineId || item.installationId !== first.installationId)) {
         context.addIssue({ code: 'custom', path: [index], message: 'One Follow input represents one original source occurrence' });

@@ -1,6 +1,7 @@
 import { z } from 'zod/mini';
 
 import { lazyZodSchema } from '../../lazyZodSchema.js';
+import type { SessionFollowSelectedDeliveryV1 } from './sessionFollowSelectedDeliveryV1.js';
 import { defineStoredReadProjection } from '../../json/storedReadSchema.js';
 import type { SessionQuestionContextV1, SessionQuestionHandlerV1 } from '../permissions/questionV1.js';
 import { classifyWorkerUpdateEventV1, type WorkerUpdateV1 } from '../relations/workerUpdateV1.js';
@@ -73,6 +74,7 @@ export const FollowEventV1Schema = lazyZodSchema(() => z.union([
   ]) }),
 ]));
 export type FollowEventV1 = z.infer<typeof FollowEventV1Schema>;
+export { SessionFollowSelectedDeliveryV1Schema, type SessionFollowSelectedDeliveryV1 } from './sessionFollowSelectedDeliveryV1.js';
 
 /** Transient questions require current request identity, never an immutable transcript original. */
 export function isMessageBackedFollowEventV1(event: FollowEventV1): boolean {
@@ -251,4 +253,20 @@ export function resolveInboxItemAttentionV1(type: InboxItemAttentionTypeV1) {
       ? { kind: 'update_posted' }
       : { kind: 'needs_you', type },
   });
+}
+
+/** One policy decision projected onto the existing Session intake boundaries. */
+export function resolveSessionFollowSelectedDeliveryV1(input: ResolveFollowDeliveryV1Params): SessionFollowSelectedDeliveryV1 | null {
+  const selected = resolveFollowDeliveryV1(input);
+  return selected.session.wake ? 'wake' : selected.session.nextTurn ? 'next_turn' : null;
+}
+
+/** Surviving reasons coalesce without turning no-selection into a quiet vote. */
+export function mergeSessionFollowSelectedDeliveriesV1(votes: Iterable<SessionFollowSelectedDeliveryV1 | null>): SessionFollowSelectedDeliveryV1 | null {
+  let selected: SessionFollowSelectedDeliveryV1 | null = null;
+  for (const vote of votes) {
+    if (vote === 'wake') return 'wake';
+    if (vote === 'next_turn') selected = vote;
+  }
+  return selected;
 }

@@ -878,7 +878,8 @@ describe('ApiSessionClient pending queue materialization', () => {
             }
             if (event === 'session-follow-observe-pending-v1') return { ok: true, v: 1, sessionId: session.id,
                 publisherGeneration: '1', currentSourceSessionIds: [sourceSessionId], observations: [{ kind: 'admitted_input',
-                    localInputId: localId, delivery, sourceSessionId, destinationSessionId: session.id, delivered, observed }] };
+                    localInputId: localId, delivery, effectiveDelivery: delivery.delivery,
+                    sourceSessionId, destinationSessionId: session.id, delivered, observed }] };
             if (event === 'session-follow-acknowledge-v1') return { ok: true, v: 1, sourceSessionId,
                 destinationSessionId: session.id, delivered: observed };
             return resolveApiSessionSocketDefaultAck(event, payload);

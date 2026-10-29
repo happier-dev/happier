@@ -15,16 +15,24 @@ export type FollowListPageRequestV1 = z.infer<typeof FollowListPageRequestV1Sche
 export const FollowListRequestV1Schema = z.strictObject({
   ...FollowListPageRequestV1Schema.shape,
   source: z.optional(FollowSourceRefV1Schema.check(z.refine(source => source.kind !== 'rule'))),
+  sourceKinds: z.optional(z.array(z.enum(['session', 'discussion', 'execution_run', 'workflow_run'])).check(z.minLength(1))),
 });
 export type FollowListRequestV1 = z.infer<typeof FollowListRequestV1Schema>;
+/** Kind selection is a set; equivalent requests retain the same continuation scope. */
+export function parseFollowListRequestV1(input: unknown): FollowListRequestV1 {
+  const request = FollowListRequestV1Schema.parse(input);
+  return request.sourceKinds === undefined ? request : { ...request, sourceKinds: [...new Set(request.sourceKinds)].sort() };
+}
 /** Keep the encoded query stable through Fastify's validator and handler validation. */
 export const FollowListQueryV1Schema = z.strictObject({
   ...FollowListPageQueryV1Schema.shape,
   source: z.optional(z.string().check(z.minLength(1))),
+  sourceKinds: z.optional(z.string().check(z.minLength(1))),
 });
 export function parseFollowListQueryV1(input: unknown): FollowListRequestV1 {
-  const { source, ...page } = FollowListQueryV1Schema.parse(input);
-  return FollowListRequestV1Schema.parse({ ...page, ...(source === undefined ? {} : { source: JSON.parse(source) }) });
+  const { source, sourceKinds, ...page } = FollowListQueryV1Schema.parse(input);
+  return parseFollowListRequestV1({ ...page, ...(source === undefined ? {} : { source: JSON.parse(source) }),
+    ...(sourceKinds === undefined ? {} : { sourceKinds: JSON.parse(sourceKinds) }) });
 }
 export const FollowListPageResultFieldsV1 = {
   continuation: z.optional(z.string().check(z.minLength(1))),
@@ -61,9 +69,11 @@ export function pageFollowListV1<T>(input: FollowListPageRequestV1 & Readonly<{
 }
 
 export function appendFollowListPageQueryV1(path: string, request: FollowListRequestV1): string {
+  const selection = parseFollowListRequestV1(request);
   const query = new URLSearchParams();
-  if (request.cursor !== undefined) query.set('cursor', request.cursor);
-  if (request.limit !== undefined) query.set('limit', String(request.limit));
-  if (request.source !== undefined) query.set('source', JSON.stringify(FollowListRequestV1Schema.parse(request).source));
+  if (selection.cursor !== undefined) query.set('cursor', selection.cursor);
+  if (selection.limit !== undefined) query.set('limit', String(selection.limit));
+  if (selection.source !== undefined) query.set('source', JSON.stringify(selection.source));
+  if (selection.sourceKinds !== undefined) query.set('sourceKinds', JSON.stringify(selection.sourceKinds));
   return query.size ? `${path}?${query}` : path;
 }

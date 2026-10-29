@@ -1,4 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
+export { buildChangesReadRequest, CHANGES_AFTER_CURSOR_HTTP_HEADER } from './readRequest.js';
 import { z } from 'zod/mini';
 
 import { SessionIdSchema } from '../sessions/idsV1.js';
@@ -60,6 +61,9 @@ export function isMachineProjectionChangeKindV1(kind: string): kind is 'machine'
 /** AccountChange entity identities for reconstructible Home administration projections. */
 export const HOME_GOVERNANCE_ACCOUNT_CHANGE_ENTITY_ID_V1 = 'home-governance' as const;
 export const TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 = 'teams' as const;
+/** Delivered/withdrawn credential material changes no Team or source authority.
+ * A separate coalescing row preserves any pending Team-authority invalidation. */
+export const TEAM_CREDENTIAL_MATERIAL_ACCOUNT_CHANGE_ENTITY_ID_V1 = 'team-credential-material' as const;
 /** Separate coalescing rows keep service invalidations relative to the reader's cursor. */
 const CONNECTED_SERVICE_ACCOUNT_CHANGE_PREFIX_V1 = 'connected-service:';
 const CONNECTED_SERVICES_ACCOUNT_CHANGE_ENTITY_ID_V1 = 'connected-services';
@@ -148,7 +152,7 @@ export const EPHEMERAL_RUNNER_ACTIVATION_ACCOUNT_CHANGE_ENTITY_ID_V1 = 'ephemera
 /** Additive-open advisory hint for the canonical Session Organization owner. */
 export const SessionOrganizationChangeHintSchema = lazyZodSchema(() => z.looseObject({
   sessionOrganization: z.literal(true),
-  scope: z.enum(['pins', 'folders', 'folderAssignments', 'tags', 'tagAssignments', 'order', 'labels', 'attentionStandings']),
+  scope: z.enum(['pins', 'folders', 'folderAssignments', 'tags', 'tagAssignments', 'order', 'labels', 'attentionStandings', 'sessionAppearances']),
   sessionIds: z.optional(z.array(z.string().check(z.trim(), z.minLength(1)))),
   folderIds: z.optional(z.array(z.string().check(z.trim(), z.minLength(1)))),
   tagIds: z.optional(z.array(z.string().check(z.trim(), z.minLength(1)))),
@@ -194,6 +198,39 @@ export const ChangeEntrySchema = lazyZodSchema(() => z.strictObject({
 })));
 
 export type ChangeEntry = z.infer<typeof ChangeEntrySchema>;
+
+/** The existing Account cursor preceding a run of projection-only Session writes. */
+export function readSessionFollowProjectionOnlySinceCursorV1(hint: unknown): number | null {
+  if (!hint || typeof hint !== 'object' || Array.isArray(hint)) return null;
+  const record = hint as Record<string, unknown>;
+  const cursor = record.followSourceUnchangedSinceCursor;
+  return record.followSourceChanged === false && typeof cursor === 'number'
+    && Number.isSafeInteger(cursor) && cursor >= 0 ? cursor : null;
+}
+
+/** A coalesced title/read projection cannot hide a source fact not yet consumed. */
+export function readSessionFollowSourceChangedV1(
+  change: Readonly<{ kind: string; cursor: number; hint?: unknown }>, afterCursor: number,
+): boolean {
+  const since = change.kind === 'session' ? readSessionFollowProjectionOnlySinceCursorV1(change.hint) : null;
+  return since === null || !Number.isSafeInteger(afterCursor) || afterCursor < since || since >= change.cursor;
+}
+
+/** Availability is advisory; a retained event is relevant only before its Account cursor. */
+export function readSessionFollowReceiverAvailabilityChangedV1(
+  change: Readonly<{ kind: string; cursor: number; hint?: unknown }>, afterCursor: number,
+): boolean | undefined {
+  if (change.kind !== 'session') return false;
+  if (!change.hint || typeof change.hint !== 'object' || Array.isArray(change.hint)) return undefined;
+  const hint = change.hint as Record<string, unknown>;
+  if (hint.followReceiverAvailabilityChanged === false) return false;
+  if (hint.followReceiverAvailabilityChanged === undefined) return undefined;
+  if (hint.followReceiverAvailabilityChanged !== true) return false;
+  const eventCursor = hint.followReceiverAvailabilityChangedAtCursor;
+  const at = typeof eventCursor === 'number' && Number.isSafeInteger(eventCursor)
+    && eventCursor > 0 && eventCursor <= change.cursor ? eventCursor : change.cursor;
+  return !Number.isSafeInteger(afterCursor) || afterCursor < at;
+}
 
 /** Append and revision hints share the existing Session transcript carrier. */
 export function readSessionTranscriptChangeHintV1(

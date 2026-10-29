@@ -54,7 +54,8 @@ async function createAdmittedRulePublisher() {
             admittedTarget: { homeId: 'follow-contract-home', accountId: owner.id, sessionId: destination.id,
                 machineId: machine.id, installationId: machine.installationId! }, followDeliveryV1: delivery,
             followSources: [{ evaluation: 'receiver', destinationSessionId: destination.id, sourceSessionId: source.id,
-                sourceMessage, rule: { ruleId: scope.ruleId, ruleVersion: created.value.rule.version } }] });
+                sourceMessage, selectedDelivery: delivery.delivery,
+                rule: { ruleId: scope.ruleId, ruleVersion: created.value.rule.version } }] });
         await db.sessionMessage.create({ data: { sessionId: destination.id, localId: localInputId, seq,
             messageRole: 'user', acceptedTurnId: `accepted-${seq}`, inputAdmissionReceipt: receipt,
             acceptedFollowOriginalKey: deriveSessionFollowOriginalOccurrenceKeyV1(delivery.original),

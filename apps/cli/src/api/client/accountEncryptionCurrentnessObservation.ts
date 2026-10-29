@@ -1,6 +1,6 @@
 import { createAccountEncryptionCurrentnessObservation, projectAccountEncryptionIdentity, sameAccountEncryptionIdentity,
     waitForAccountEncryptionObservation, type AccountEncryptionIdentity } from '@happier-dev/sync-client';
-import { UpdateContainerSchema } from '@happier-dev/protocol/updates';
+import { EphemeralUpdateSchema, UpdateContainerSchema } from '@happier-dev/protocol/updates';
 import { createManagedConnectionSupervisor, DEFAULT_MANAGED_CONNECTION_POLICY, type ManagedConnectionSupervisor, type ManagedConnectionTransport } from '@happier-dev/connection-supervisor';
 import { fetchAccountEncryptionCurrentnessFromServer, AccountEncryptionCurrentnessUnavailableError } from './accountEncryptionCurrentness';
 import { normalizeServerHttpBaseUrl, resolveServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -8,9 +8,14 @@ import { classifyTransportErrorToProbeResult } from '@/api/connection/classifyTr
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { logger } from '@/ui/logger';
 import { DEFAULT_ACCOUNT_CHANGES_PAGE_LIMIT, fetchChanges } from '@/api/changes';
-import { readSessionFollowChangeHintV1 } from '@happier-dev/protocol/sessions/follow/changes';
-import { readConnectedServicesAccountChangeV1, readProviderAccountUsageRefreshRecordIdV1 } from '@happier-dev/protocol/changes';
+import { readSessionFollowChangeHintV1, readSessionFollowReceiverChangeV1 } from '@happier-dev/protocol/sessions/follow/changes';
+import { readConnectedServicesAccountChangeV1, readProviderAccountUsageRefreshRecordIdV1, readSessionFollowSourceChangedV1, readSessionFollowReceiverAvailabilityChangedV1 } from '@happier-dev/protocol/changes';
 import { parseConnectedAccountCatalogPhysicalKeyV1 } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
+import type { RunFollowOriginalV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowInputV1';
+
+export type RunFollowAvailability = Extract<RunFollowOriginalV1['source'], { kind: 'execution_run' }>
+    | Readonly<{ kind: 'reconnected' }> | Readonly<{ kind: 'machine'; machineId: string }>;
+export type RequesterSessionFollowRuleInvalidation = Readonly<{ full: true; continuityReset?: true }>;
 
 type Scope = Readonly<{ accountId: string; token: string; serverBaseUrl: string; signal?: AbortSignal }>;
 export type RequesterAccountSettingsObservation = Readonly<
@@ -23,14 +28,21 @@ export type RequesterConnectedAccountObservation = Readonly<{
     services?: readonly import('@happier-dev/protocol').QualifiedConnectedAccountRef['service'][];
     resetQuotaSchedule?: boolean;
 }>;
+/** Private invalidations over the existing Account cursor, never Session access authority. */
+export type RequesterSessionInventoryObservation =
+    | Readonly<{ kind: 'changes'; sessionIds: readonly string[]; reset: boolean }>
+    | Readonly<{ kind: 'connected' | 'disconnected' | 'currentness' | 'unavailable' }>
+    | Readonly<{ kind: 'activity'; id: string; active: boolean; activeAt: number }>;
 type Observation = Readonly<{
-    read(signal?: AbortSignal): Promise<AccountEncryptionIdentity>;
+    read(signal?: AbortSignal, options?: Readonly<{ requireLiveObservation?: true }>): Promise<AccountEncryptionIdentity>;
     isCurrent(expected: AccountEncryptionIdentity): boolean;
     subscribeAccountSettings(listener: (event: RequesterAccountSettingsObservation) => void): () => void;
-    subscribeSessionFollowRules(listener: () => void): () => void;
+    subscribeSessionFollowRules(listener: (change?: RequesterSessionFollowRuleInvalidation) => void): () => void;
+    subscribeRunFollowAvailability(listener: (change: RunFollowAvailability) => void): () => void;
     subscribeConnectedAccounts(listener: (event: RequesterConnectedAccountObservation) => void): () => void;
     /** Exact Session invalidation; null rebuilds demanded ranges after a gap/reconnect. */
-    subscribeSessionFollowSources(listener: (sourceSessionId: string | null) => void): () => void;
+    subscribeSessionFollowSources(listener: (sourceSessionId: string | null, receiver?: true, availabilityChanged?: boolean, sourceChanged?: false) => void): () => void;
+    subscribeSessionInventory(listener: (event: RequesterSessionInventoryObservation) => void): () => void;
     dispose(): Promise<void>;
 }>;
 type SharedObservation = Observation & {
@@ -122,8 +134,8 @@ export function acquireRequesterAccountEncryptionCurrentness(scope: Scope): Obse
     let released = false;
     const subscriptions = new Set<() => void>();
     return {
-        read: signal => released ? Promise.reject(new AccountEncryptionCurrentnessUnavailableError())
-            : owned.read(signal ? AbortSignal.any([signal, retirement.signal]) : retirement.signal),
+        read: (signal, options) => released ? Promise.reject(new AccountEncryptionCurrentnessUnavailableError())
+            : owned.read(signal ? AbortSignal.any([signal, retirement.signal]) : retirement.signal, options),
         isCurrent: expected => !released && owned.isCurrent(expected),
         subscribeAccountSettings(listener) {
             if (released) throw new AccountEncryptionCurrentnessUnavailableError();
@@ -137,9 +149,21 @@ export function acquireRequesterAccountEncryptionCurrentness(scope: Scope): Obse
             subscriptions.add(release);
             return () => { subscriptions.delete(release); release(); };
         },
+        subscribeRunFollowAvailability(listener) {
+            if (released) throw new AccountEncryptionCurrentnessUnavailableError();
+            const release = owned.subscribeRunFollowAvailability(listener);
+            subscriptions.add(release);
+            return () => { subscriptions.delete(release); release(); };
+        },
         subscribeSessionFollowSources(listener) {
             if (released) throw new AccountEncryptionCurrentnessUnavailableError();
             const release = owned.subscribeSessionFollowSources(listener);
+            subscriptions.add(release);
+            return () => { subscriptions.delete(release); release(); };
+        },
+        subscribeSessionInventory(listener) {
+            if (released) throw new AccountEncryptionCurrentnessUnavailableError();
+            const release = owned.subscribeSessionInventory(listener);
             subscriptions.add(release);
             return () => { subscriptions.delete(release); release(); };
         },
@@ -175,6 +199,7 @@ function createObservation(scope: Scope): SharedObservation {
     let lifetime = new AbortController();
     const retirement = new AbortController();
     let connected = false;
+    let hasConnected = false;
     let disposed = false;
     let unsupported = false;
     const currentness = createAccountEncryptionCurrentnessObservation({
@@ -186,20 +211,33 @@ function createObservation(scope: Scope): SharedObservation {
     let supervisor: ManagedConnectionSupervisor | undefined;
     const settingsListeners = new Set<(event: RequesterAccountSettingsObservation) => void>();
     let settingsEvent: RequesterAccountSettingsObservation | null = null;
-    const followListeners = new Set<() => void>();
-    const sourceListeners = new Set<(sourceSessionId: string | null) => void>();
+    const followListeners = new Set<(change?: RequesterSessionFollowRuleInvalidation) => void>();
+    const runAvailabilityListeners = new Set<(change: RunFollowAvailability) => void>();
+    const publishRunAvailability = (change: RunFollowAvailability) => {
+        for (const listener of runAvailabilityListeners) listener(change);
+    };
+    const sourceListeners = new Set<(sourceSessionId: string | null, receiver?: true, availabilityChanged?: boolean, sourceChanged?: false) => void>();
     const connectedAccountListeners = new Set<(event: RequesterConnectedAccountObservation) => void>();
+    const inventoryListeners = new Set<(event: RequesterSessionInventoryObservation) => void>();
+    const publishInventory = (event: RequesterSessionInventoryObservation) => {
+        for (const listener of inventoryListeners) listener(event);
+    };
     let followCursor = 0;
     let followCursorAcknowledged = false;
     let followSyncRequested = false;
     let followRequestedCursor: number | undefined;
     let followSyncPending: Promise<void> | null = null;
-    const publishFollow = () => { for (const listener of followListeners) listener(); };
-    const publishSource = (sourceSessionId: string | null) => { for (const listener of sourceListeners) listener(sourceSessionId); };
+    const publishFollow = (continuityReset?: true) => {
+        for (const listener of followListeners) listener({ full: true, ...(continuityReset ? { continuityReset } : {}) });
+    };
+    const publishSource = (sourceSessionId: string | null, receiver?: true, availabilityChanged?: boolean, sourceChanged?: false) => {
+        for (const listener of sourceListeners) listener(sourceSessionId, receiver, availabilityChanged, sourceChanged);
+    };
     const publishConnectedAccounts = (event: RequesterConnectedAccountObservation) => {
         for (const listener of connectedAccountListeners) listener(event);
     };
-    const hasFollowDemand = () => followListeners.size > 0 || sourceListeners.size > 0 || connectedAccountListeners.size > 0;
+    const hasFollowDemand = () => followListeners.size > 0 || sourceListeners.size > 0 || connectedAccountListeners.size > 0
+        || inventoryListeners.size > 0;
     const publishSettings = (event: RequesterAccountSettingsObservation) => {
         settingsEvent = event;
         for (const listener of settingsListeners) listener(event);
@@ -233,6 +271,9 @@ function createObservation(scope: Scope): SharedObservation {
                 }
                 followSyncRequested = false;
                 followRequestedCursor = undefined;
+                const sessionIds = inventoryListeners.size ? new Set<string>() : null;
+                let resetInventory = false;
+                let inventoryUnavailable = false;
                 let more = false;
                 do {
                     followCursorAcknowledged = false;
@@ -243,7 +284,23 @@ function createObservation(scope: Scope): SharedObservation {
                     if (result.status === 'ok') {
                         if (result.response.changes.some(change => change.kind === 'account'
                             && readSessionFollowChangeHintV1(change.hint) !== null)) publishFollow();
-                        for (const change of result.response.changes) if (change.kind === 'session') publishSource(change.entityId);
+                        for (const change of result.response.changes) {
+                            const receiver = readSessionFollowReceiverChangeV1(change);
+                            if (receiver !== null) publishSource(receiver, true);
+                            if (change.kind === 'session') {
+                                const availabilityChanged = readSessionFollowReceiverAvailabilityChangedV1(change, followCursor);
+                                const sourceChanged = readSessionFollowSourceChangedV1(change, followCursor);
+                                // An older server can classify a metadata write as
+                                // non-source without qualifying receiver availability.
+                                // Preserve that distinction for bounded own-receiver recovery.
+                                if (availabilityChanged !== false || sourceChanged) {
+                                    publishSource(change.entityId, undefined, availabilityChanged, sourceChanged ? undefined : false);
+                                }
+                                sessionIds?.add(change.entityId);
+                            }
+                        }
+                        resetInventory ||= inventoryListeners.size > 0 && result.response.changes.some(change => change.kind === 'share'
+                            || change.kind === 'account' && change.entityId === 'teams');
                         const quotaRefreshRecordIds = result.response.changes.flatMap(change => {
                             const recordId = readProviderAccountUsageRefreshRecordIdV1(change);
                             return recordId ? [recordId] : [];
@@ -270,14 +327,21 @@ function createObservation(scope: Scope): SharedObservation {
                         more = result.response.changes.length === DEFAULT_ACCOUNT_CHANGES_PAGE_LIMIT;
                     } else {
                         // A gap/failed classification cannot preserve a trusted cached rule set.
-                        publishFollow();
+                        publishFollow(true);
                         publishSource(null);
                         publishConnectedAccounts({ resetQuotaSchedule: true });
-                        if (result.status === 'cursor-gone') followCursor = result.currentCursor;
-                        else logger.warn('Requester Follow Account changes unavailable.');
+                        if (result.status === 'cursor-gone') {
+                            followCursor = result.currentCursor;
+                            resetInventory = true;
+                        } else {
+                            inventoryUnavailable = true;
+                            logger.warn('Requester Follow Account changes unavailable.');
+                        }
                         more = false;
                     }
                 } while (more && current());
+                if (current() && inventoryListeners.size) publishInventory(inventoryUnavailable ? { kind: 'unavailable' }
+                    : { kind: 'changes', sessionIds: sessionIds ? [...sessionIds] : [], reset: resetInventory });
             }
         })().finally(() => {
             if (followSyncPending === work) followSyncPending = null;
@@ -335,20 +399,61 @@ function createObservation(scope: Scope): SharedObservation {
                     lifetime.abort();
                     lifetime = new AbortController();
                     followCursorAcknowledged = false;
+                    publishInventory({ kind: 'currentness' });
+                    if (inventoryListeners.size) syncFollowChanges();
                 }
             });
-            transport.onConnected(() => { if (isActive()) { connected = true; invalidate(); currentness.connected(); publishSettings({ kind: 'reconnected' }); publishFollow(); publishSource(null); publishConnectedAccounts({ resetQuotaSchedule: true }); syncFollowChanges(); } });
-            transport.onDisconnected(() => { if (isActive()) { connected = false; invalidate(); currentness.disconnected(); publishSettings({ kind: 'disconnected' }); publishFollow(); publishSource(null); } });
+            socket.on('ephemeral', (raw: unknown) => {
+                if (!isActive() || !connected || !transport.isConnected()) return;
+                if (runAvailabilityListeners.size && raw && typeof raw === 'object' && 'type' in raw
+                    && (raw.type === 'execution-run-updated' || raw.type === 'machine-activity')) {
+                    const parsed = EphemeralUpdateSchema.safeParse(raw);
+                    if (parsed.success && parsed.data.type === 'execution-run-updated') {
+                        const update = parsed.data;
+                        if ('sessionId' in update && typeof update.sessionId === 'string' && update.run && typeof update.run === 'object'
+                            && 'runId' in update.run && typeof update.run.runId === 'string') {
+                            publishRunAvailability({ kind: 'execution_run', sessionId: update.sessionId, runId: update.run.runId });
+                        } else if (typeof update.machineId === 'string' && typeof update.runId === 'string') {
+                            publishRunAvailability({ kind: 'execution_run', machineId: update.machineId, runId: update.runId });
+                        }
+                    } else if (parsed.success && parsed.data.type === 'machine-activity'
+                        && parsed.data.active && parsed.data.reconnected === true) {
+                        publishRunAvailability({ kind: 'machine', machineId: parsed.data.id });
+                    }
+                }
+                if (inventoryListeners.size === 0) return;
+                if (!raw || typeof raw !== 'object' || !('type' in raw) || raw.type !== 'activity') return;
+                const parsed = EphemeralUpdateSchema.safeParse(raw);
+                if (parsed.success && parsed.data.type === 'activity') {
+                    const { id, active, activeAt } = parsed.data;
+                    publishInventory({ kind: 'activity', id, active, activeAt });
+                }
+            });
+            transport.onConnected(() => { if (isActive()) {
+                const reconnected = hasConnected;
+                hasConnected = true;
+                connected = true; invalidate(); currentness.connected(); publishInventory({ kind: 'connected' });
+                publishSettings({ kind: 'reconnected' }); publishFollow(true); publishSource(null);
+                // Initial attachment already has its caller's cold demand.
+                if (reconnected) publishRunAvailability({ kind: 'reconnected' });
+                publishConnectedAccounts({ resetQuotaSchedule: true }); syncFollowChanges();
+            } });
+            transport.onDisconnected(() => { if (isActive()) { connected = false; invalidate(); currentness.disconnected(); publishInventory({ kind: 'disconnected' }); publishSettings({ kind: 'disconnected' }); publishFollow(true); publishSource(null); } });
             return transport;
         };
         supervisor = createManagedConnectionSupervisor({ ...DEFAULT_MANAGED_CONNECTION_POLICY,
             createTransport,
             probeReadiness: async () => ({ status: 'ready' }), classifyTransportErrorToProbeResult,
-            onAuthFailed: () => { connected = false; invalidate(); currentness.disconnected(); },
+            onAuthFailed: () => {
+                connected = false; invalidate(); currentness.disconnected();
+                publishInventory({ kind: 'disconnected' });
+                publishInventory({ kind: 'unavailable' });
+            },
         });
         // A runtime without this transport keeps the incumbent fresh HTTP path.
         // Once a channel exists, connection failure is unknown, never fallback.
         try { await startConnection(); } catch (error) {
+            publishInventory({ kind: 'unavailable' });
             if (createdTransport) throw error;
             logger.warn('Account encryption observation transport unavailable; using fresh HTTP reads.');
             unsupported = true;
@@ -368,6 +473,10 @@ function createObservation(scope: Scope): SharedObservation {
             if (!alreadyDemanded) syncFollowChanges();
             return () => { followListeners.delete(listener); };
         },
+        subscribeRunFollowAvailability(listener) {
+            runAvailabilityListeners.add(listener);
+            return () => { runAvailabilityListeners.delete(listener); };
+        },
         subscribeSessionFollowSources(listener) {
             const alreadyDemanded = hasFollowDemand();
             sourceListeners.add(listener);
@@ -381,6 +490,13 @@ function createObservation(scope: Scope): SharedObservation {
             if (!alreadyDemanded) syncFollowChanges();
             return () => { connectedAccountListeners.delete(listener); };
         },
+        subscribeSessionInventory(listener) {
+            inventoryListeners.add(listener);
+            listener({ kind: connected ? 'connected' : 'disconnected' });
+            // Join an in-flight catch-up, or establish this new demand's cursor baseline.
+            syncFollowChanges();
+            return () => { inventoryListeners.delete(listener); };
+        },
         async releaseCredential(token) {
             if (disposed || token !== activeToken || references.has(token)) return;
             const nextToken = references.keys().next().value;
@@ -390,9 +506,10 @@ function createObservation(scope: Scope): SharedObservation {
             connected = false;
             invalidate();
             currentness.disconnected();
+            publishInventory({ kind: 'disconnected' });
             // Settings holders lose the retired credential's channel like any disconnect.
             publishSettings({ kind: 'disconnected' });
-            publishFollow();
+            publishFollow(true);
             publishSource(null);
             // Before the async import completes, its first factory uses the new token.
             if (!supervisor || unsupported) return;
@@ -405,12 +522,15 @@ function createObservation(scope: Scope): SharedObservation {
             });
         },
         isCurrent: expected => !disposed && (unsupported || connected && currentness.isCurrent(expected)),
-        async read(signal) {
+        async read(signal, options) {
             signal?.throwIfAborted();
             const readerSignal = signal ? AbortSignal.any([signal, retirement.signal]) : retirement.signal;
             await waitForObservation(initial, readerSignal);
             if (disposed) throw new AccountEncryptionCurrentnessUnavailableError();
             if (unsupported) {
+                // Retained private snapshots require push continuity. Other
+                // readers retain their incumbent fresh-HTTP fallback.
+                if (options?.requireLiveObservation) throw new AccountEncryptionCurrentnessUnavailableError();
                 const fallbackSignal = AbortSignal.any([readerSignal, lifetime.signal]);
                 return projectAccountEncryptionIdentity(await waitForObservation(fetchAccountEncryptionCurrentnessFromServer({ token: activeToken,
                     serverBaseUrl: scope.serverBaseUrl, signal: fallbackSignal }), fallbackSignal));
@@ -429,11 +549,14 @@ function createObservation(scope: Scope): SharedObservation {
         async dispose() {
             disposed = true; activeTransport = undefined; connected = false; retirement.abort(); invalidate();
             currentness.dispose();
+            publishInventory({ kind: 'disconnected' });
             publishSettings({ kind: 'disconnected' });
             settingsListeners.clear();
             followListeners.clear();
+            runAvailabilityListeners.clear();
             sourceListeners.clear();
             connectedAccountListeners.clear();
+            inventoryListeners.clear();
             settingsEvent = null;
             await stopConnection();
             await initial;

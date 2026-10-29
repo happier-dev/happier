@@ -95,6 +95,7 @@ async function fixture(status: 'completed' | 'failed' | 'cancelled' | 'running' 
   app.get('/v1/account/encryption/currentness', async () => createAccountEncryptionCurrentnessFixture(
     review?.keyState ? witness : { mode: 'plain' }));
   const reviewRun = WorkflowRunSummaryV1Schema.parse({ sourceArtifactId: null, visibleTeamId: null,
+    attentionRequired: false, failureUnseen: false, invocationAttentionRequired: false, attentionSeenFailureAt: null, finishedAt: null,
     id: 'review-run', ownerAccountId: 'worker-account', machineId: 'worker-machine',
     origin: { kind: 'automation', automationId: 'review-trigger', originSessionId: workerId,
       cause: { kind: 'trigger', triggerId: 'review-trigger', triggerRevision: 0, triggerKind: 'sessionLifecycle',

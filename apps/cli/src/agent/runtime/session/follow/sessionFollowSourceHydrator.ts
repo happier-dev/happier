@@ -1,5 +1,4 @@
 import * as z from 'zod/mini';
-import { isAxiosError } from 'axios';
 import { openSessionStateValue } from '@happier-dev/sync-client';
 import { AgentStateSchema } from '@happier-dev/session-core/state';
 
@@ -11,12 +10,6 @@ import type {
   VoiceSourceDisclosureV1,
 } from '@happier-dev/protocol';
 import type { SessionFollowSessionPendingObservationV1, SessionFollowAdmittedInputObservationV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowTransportV1';
-import { composeWorkflowRunWorkerUpdateV1 } from '@happier-dev/protocol/workflows/composeWorkflowRunWorkerUpdateV1';
-import { openWorkflowAcceptedSnapshotStoredEnvelopeV1, openWorkflowFinalResultStoredEnvelopeV1, parseWorkflowStoredContentEnvelopeV1 } from '@happier-dev/protocol/workflows/workflowStoredContentV1';
-import { resolveWorkflowRunDataKeyV1 } from '@happier-dev/protocol/workflows/workflowRunDataKeyV1';
-import { WorkflowRunRecipientCensusResponseV1Schema } from '@happier-dev/protocol/workflows/workflowRunKeyV1';
-import { EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES } from '@happier-dev/protocol/actions/externalActionLimits';
-import { WorkflowLoopOutcomeV1Schema, WorkflowRunSummaryV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { isAuthoritativeHumanSessionFollowMessageV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowUpdateEnvelopeV1';
 import { isSessionFollowTurnEqualV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowFrontierV1';
 import { SESSION_FOLLOW_SOURCE_PROJECTION_MAX_PAGE_ROWS_V1 } from '@happier-dev/protocol/sessions/follow/sessionFollowSourceProjectionV1';
@@ -33,12 +26,12 @@ import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSch
 import { resolveFollowDeliveryV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowPolicyV1';
 import { readSessionFollowSemanticSourceEvent } from './sessionFollowRuleSourceEvidence';
 import { SessionFollowSourceMessageV1Schema, SessionFollowSourceRequestsV1Schema } from '@happier-dev/protocol/sessions/follow/sessionFollowSourceOccurrenceV1';
-import { TurnIdSchema } from '@happier-dev/protocol/sessions/idsV1';
 
 import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { StoredCredentials } from '@/persistence';
 import { classifyHomeReadPreparationError } from '@/agent/prompts/library/homeReadPreparationError';
 import { readActiveForegroundAgentRequests, readForegroundAgentRequestFollowEvent } from '@/agent/permissions/activeForegroundRequests';
+import { readStructuredQuestionPermissionQuestions } from '@/agent/permissions/structuredQuestionAnswers';
 import {
   projectCliSessionAwarenessFromMaterialV1,
   projectCliSessionAwarenessUnavailableMaterialV1,
@@ -58,12 +51,6 @@ import {
 } from '@/session/transport/encryption/sessionEncryptionContext';
 import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
 import { fetchSessionFollowSourceProjection } from '@/session/transport/http/sessionFollowSourceProjectionHttp';
-import { createWorkflowRunStorageClient } from '@/daemon/workflows/workflowRunStorageClient';
-import { fetchAccountEncryptionCurrentness } from '@/api/client/connectedServiceCredentialApi';
-import {
-  createAutomationAccountEncryptionMaterialSnapshotV1,
-  resolveValidatedAutomationAccountEncryptionV1,
-} from '@/plugins/runtime/automations/automationAccountCurrentness';
 
 /** Public admitted originals have no native-readable route policy or private witness. */
 export type SessionFollowHydrationObservationV1 = SessionFollowSessionPendingObservationV1
@@ -123,8 +110,6 @@ export type SessionFollowHydratedUpdate = SessionFollowUpdateEnvelopeV1 & Readon
   pendingHumanIngress?: boolean;
   /** Manager delivery uses the same authorized hydration and source-owned worker outcome. */
   workerUpdate?: WorkerUpdateV1;
-  /** Exact typed original correlation, opened under this source's own key. */
-  sourceTerminalTurn?: Readonly<{ id: string; status: 'completed' }>;
   /** Recheck outcome-specific evidence after Follow rechecks its source grant. */
   recheckWorkerUpdateAdmission?: (signal: AbortSignal) => Promise<boolean>;
   /** Only a successfully opened, sufficiently current request snapshot proves withdrawal. */
@@ -178,91 +163,6 @@ type SessionFollowTranscriptRowOpenResult =
 
 function recordValue(value: unknown): Readonly<Record<string, unknown>> | null {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Readonly<Record<string, unknown>> : null;
-}
-
-/** Read FIN's committed outcome under the lead's own Run grant, within the Follow Home context. */
-async function readCurrentReviewWorkerUpdate(input: Readonly<{
-  credentials: StoredCredentials;
-  observation: SessionFollowPendingObservationV1;
-  signal: AbortSignal;
-}>): Promise<WorkerUpdateV1 | null> {
-  const { observation, signal, credentials } = input;
-  if (observation.observed.turn?.status !== 'completed') return null;
-  const storage = createWorkflowRunStorageClient({ token: credentials.token });
-  const reviewFiringAt = (run: ReturnType<typeof WorkflowRunSummaryV1Schema.parse>) => {
-    const cause = run.origin.kind === 'automation' ? run.origin.cause : undefined;
-    return run.origin.originSessionId === observation.sourceSessionId
-      && cause?.kind === 'trigger' && cause.triggerKind === 'sessionLifecycle'
-      && cause.evidence.event === 'parentTurnCompleted'
-      && cause.evidence.sourceSessionId === observation.sourceSessionId
-      ? cause.occurredAt : null;
-  };
-  // Verify/fix steps advance the provider turn, not the review's immutable firing
-  // cause. Select the latest review firing, including non-exhausted outcomes, so
-  // a historical exhausted result cannot override a newer completed review.
-  let latestReview: Readonly<{ occurredAt: number; update: WorkerUpdateV1 | null }> | null = null;
-  let cursor: string | undefined;
-  do {
-    let page: Readonly<Record<string, unknown>> | null;
-    try {
-      page = recordValue(await storage.execute({ operation: 'list',
-        request: { originSessionId: observation.sourceSessionId, ...(cursor ? { cursor } : {}) },
-        pageByteLimit: EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES }, { signal }));
-    } catch (error) {
-      if (isAxiosError(error) && (error.response?.status === 403 || error.response?.status === 404)) return null;
-      throw error;
-    }
-    if (!page) throw new Error('workflow_delivery_response_invalid');
-    for (const run of z.array(WorkflowRunSummaryV1Schema).parse(page.runs)) {
-      const firingAt = reviewFiringAt(run);
-      if (firingAt === null || (latestReview && firingAt < latestReview.occurredAt)) continue;
-      let raw: Readonly<Record<string, unknown>> | null;
-      try {
-        raw = recordValue(await storage.execute({ operation: 'get', runId: run.id }, { signal }));
-      } catch (error) {
-        // A Session grant is never a Run grant; revoked/inaccessible outcomes disclose nothing.
-        if (isAxiosError(error) && (error.response?.status === 403 || error.response?.status === 404)) continue;
-        throw error;
-      }
-      if (!raw) throw new Error('workflow_delivery_response_invalid');
-      const current = WorkflowRunSummaryV1Schema.parse(raw.run);
-      const currentFiringAt = reviewFiringAt(current);
-      if (current.id !== run.id || currentFiringAt === null
-        || (latestReview && currentFiringAt < latestReview.occurredAt)) continue;
-      const census = WorkflowRunRecipientCensusResponseV1Schema.parse(raw.keyCensus);
-      if (census.runId !== run.id || (current.ownerAccountId !== undefined && current.ownerAccountId !== census.ownerAccountId)) {
-        throw new Error('workflow_delivery_binding_mismatch');
-      }
-      const accountEncryption = await resolveValidatedAutomationAccountEncryptionV1({ signal,
-        resolveAccountEncryptionCurrentness: (currentnessSignal) => fetchAccountEncryptionCurrentness({ token: credentials.token, signal: currentnessSignal }),
-        resolveAccountEncryptionMaterial: async () => createAutomationAccountEncryptionMaterialSnapshotV1(credentials),
-      });
-      if (accountEncryption.kind !== 'available') continue;
-      const resolved = resolveWorkflowRunDataKeyV1({ encryption: accountEncryption, census });
-      if (resolved.kind !== 'available') continue;
-      const binding = { v: 1 as const, accountId: census.ownerAccountId, runId: run.id };
-      const accepted = openWorkflowAcceptedSnapshotStoredEnvelopeV1({ ...resolved.encryption.runCrypto,
-        binding: { ...binding, purpose: 'accepted_snapshot' }, envelope: parseWorkflowStoredContentEnvelopeV1(raw.acceptedEnvelope) });
-      if (accepted.kind !== 'available') continue;
-      if (accepted.content.origin?.originSessionId !== observation.sourceSessionId
-        || accepted.content.machineId !== current.machineId
-        || accepted.content.source.kind !== 'catalog' || accepted.content.source.ref !== 'builtin:review-and-converge') continue;
-      if (!latestReview || currentFiringAt > latestReview.occurredAt) latestReview = { occurredAt: currentFiringAt, update: null };
-      if (current.state !== 'succeeded') continue;
-      if (raw.resultEnvelope == null) continue;
-      const final = openWorkflowFinalResultStoredEnvelopeV1({ ...resolved.encryption.runCrypto,
-        binding: { ...binding, purpose: 'final_result' }, envelope: parseWorkflowStoredContentEnvelopeV1(raw.resultEnvelope) });
-      if (final.kind !== 'available' || final.content.result.kind !== 'json') continue;
-      const outcome = WorkflowLoopOutcomeV1Schema.safeParse(final.content.result.value);
-      if (!outcome.success || outcome.data.kind !== 'exhausted') continue;
-      const update = composeWorkflowRunWorkerUpdateV1({ run: current, finalResult: final.content });
-      latestReview = { occurredAt: currentFiringAt,
-        update: update ? { ...update, wake: 'needs_you', headline: "Review didn't converge" } : null };
-    }
-    cursor = typeof page.nextCursor === 'string' ? page.nextCursor : undefined;
-  } while (cursor && !signal.aborted);
-  signal.throwIfAborted();
-  return latestReview?.update ?? null;
 }
 
 /** Parse actual MCP/Action admission output, never a tool-attempt summary. */
@@ -563,7 +463,7 @@ export function createSessionFollowSourceHydrator(input: Readonly<{
       } else {
         transport = await input.session.runSessionFollowSourceRequest({
           credentials: input.credentials,
-          request: async () => await resolveTransport({
+          request: async () => await resolveTransport({ reason: 'follow-source-hydration',
             credentials: input.credentials,
             idOrPrefix: observation.sourceSessionId,
             ...(signal ? { signal } : {}),
@@ -624,44 +524,22 @@ export function createSessionFollowSourceHydrator(input: Readonly<{
       // edge ACK already records the exact turn accepted by the lead.
       const terminalTurnAlreadyDelivered = observation.observed.turn !== null
         && isSessionFollowTurnEqualV1(observation.delivered.turn, observation.observed.turn);
-      const terminalWorkerState = awareness.lifecycle === 'failed' && observation.observed.turn?.status === 'failed' ? 'failed'
-        : awareness.lifecycle === 'cancelled' && observation.observed.turn?.status === 'cancelled' ? 'cancelled'
-          : awareness.lifecycle === 'ready' && observation.observed.turn?.status === 'completed' && pendingReviewRuns === 0 ? 'settled'
-            : null;
-      const workerState = observation.relation === 'manager'
+      const workerState = observation.observed.turn?.status === 'stalled' && !terminalTurnAlreadyDelivered
+        && (observation.relation === 'manager' || !('kind' in observation) && !('voiceExpected' in observation)) ? 'stalled'
+        : observation.relation === 'manager'
         ? observation.observed.turn?.status === 'waiting'
           // A yielded question is an exact host lifecycle occurrence. Its
           // accepted frontier, not AgentState/content/count changes, owns replay.
           ? terminalTurnAlreadyDelivered
             || rawSession.latestTurnId !== observation.observed.turn.id
             || rawSession.latestTurnStatus !== 'waiting' ? null : 'needs_input'
-          : terminalWorkerState
-          ? terminalTurnAlreadyDelivered ? null : terminalWorkerState
           : awareness.operational.primary === 'permission_required' || awareness.operational.primary === 'action_required' ? 'needs_input'
-            : observation.observed.turn?.status === 'stalled'
-              && !isSessionFollowTurnEqualV1(observation.delivered.turn, observation.observed.turn) ? 'stalled' : null
+            : null
         : null;
       let workerText: Readonly<{ text: string; seq: number; agentId?: string }> | null = null;
       let publishedReport: Readonly<{ text: string; seq: number; deliverables?: WorkerUpdateV1['deliverables'] }> | null = null;
-      let sourceTerminalTurn: SessionFollowHydratedUpdate['sourceTerminalTurn'];
       let reachedObservedTranscript = observation.observed.transcriptSeq <= observation.delivered.transcriptSeq;
-      const reviewWorkerUpdate = observation.relation === 'manager' && workerState === 'settled'
-        && isSessionAwarenessContentReadableV1(awareness.encryption)
-        ? await input.session.runSessionFollowSourceRequest({ credentials: input.credentials,
-            request: () => readCurrentReviewWorkerUpdate({ credentials: input.credentials, observation, signal }) })
-        : null;
-      let workerAdmission: Pick<SessionFollowHydratedUpdate, 'recheckWorkerUpdateAdmission' | 'isOriginalRequestWithdrawn'> = reviewWorkerUpdate ? {
-        recheckWorkerUpdateAdmission: async (recheckSignal: AbortSignal) => {
-          try {
-            const current = await input.session.runSessionFollowSourceRequest({ credentials: input.credentials,
-              request: () => readCurrentReviewWorkerUpdate({ credentials: input.credentials, observation, signal: recheckSignal }) });
-            return !recheckSignal.aborted && current !== null
-              && JSON.stringify(current) === JSON.stringify(reviewWorkerUpdate);
-          } catch {
-            return false;
-          }
-        },
-      } : workerState === 'needs_input' && observation.observed.turn?.status === 'waiting' ? {
+      let workerAdmission: Pick<SessionFollowHydratedUpdate, 'recheckWorkerUpdateAdmission' | 'isOriginalRequestWithdrawn'> = workerState === 'needs_input' && observation.observed.turn?.status === 'waiting' ? {
         recheckWorkerUpdateAdmission: async (recheckSignal: AbortSignal) => {
           try {
             // Answer admission can replace the ended waiting turn after its
@@ -671,7 +549,7 @@ export function createSessionFollowSourceHydrator(input: Readonly<{
               ? (await fetchRunnerPage(observation.delivered.transcriptSeq, recheckSignal))?.source
               : await input.session.runSessionFollowSourceRequest({ credentials: input.credentials,
                   request: async () => {
-                    const result = await resolveTransport({ credentials: input.credentials,
+                    const result = await resolveTransport({ reason: 'follow-source-hydration', credentials: input.credentials,
                       idOrPrefix: observation.sourceSessionId, signal: recheckSignal });
                     return result.ok ? result.rawSession : null;
                   } });
@@ -686,9 +564,8 @@ export function createSessionFollowSourceHydrator(input: Readonly<{
       const outgoingCalls = new Map<string, Readonly<{ target: string; message: string; seq: number }>>();
       let lastOutgoingSend: Readonly<{ target: string; message: string; seq: number; accepted: boolean }> | null = null;
       const composeWorkerUpdate = (): WorkerUpdateV1 | undefined => {
-        if (observation.relation !== 'manager' && !publishedReport) return undefined;
+        if (!workerState && !publishedReport) return undefined;
         if (!reachedObservedTranscript) return undefined;
-        if (reviewWorkerUpdate) return WorkerUpdateV1Schema.parse(reviewWorkerUpdate);
         const ownerState = publishedReport ? 'published' : workerState;
         if (!ownerState) return undefined;
         const event = classifyWorkerUpdateEventV1({ workerKind: 'session', ownerState });
@@ -756,7 +633,39 @@ export function createSessionFollowSourceHydrator(input: Readonly<{
       }
 
       const selectsVoiceOriginals = selectionChannel === 'voice' && readMode === 'incremental' && !('kind' in observation);
+      if ('kind' in observation && 'sourceTurn' in observation.delivery.original) {
+        // The admitted input already selected and verified this exact host
+        // outcome. This projection opens only its anchored final message; it
+        // cannot choose another terminal meaning or consume transcript progress.
+        const projection = runnerProjection ?? await fetchRunnerPage(0);
+        if (!projection) return { ...buildUnavailableEnvelope({ observation, awareness }), sourceRecencyMs };
+        let final: Readonly<{ text: string; seq: number }> | undefined;
+        for (const row of projection.messages) {
+          const opened = openSessionFollowTranscriptRow({ mode, ctx, row });
+          if (!opened.ok) return { ...buildUnavailableEnvelope({ observation, awareness }), sourceRecencyMs };
+          const decoded = decodeTranscriptBody({ role: opened.row.role, content: opened.row.content, meta: opened.row.meta });
+          if (decoded?.semanticRole === 'assistant' && decoded.text && !decoded.sidechainId) final = { text: decoded.text, seq: row.seq };
+        }
+        const turn = observation.delivery.original.sourceTurn;
+        if (turn.status === 'completed' && pendingReviewRuns !== 0) return null;
+        const ownerState = turn.status === 'completed' ? 'settled' : turn.status;
+        const wake = resolveWorkerUpdateWakeV1(classifyWorkerUpdateEventV1({ workerKind: 'session', ownerState })!);
+        const issue = turn.status === 'failed' ? SessionRuntimeIssueV1Schema.safeParse(projection.source.lastRuntimeIssue) : null;
+        const result = final?.text;
+        return { v: 1, kind: 'session_follow_update', edge: {
+          sourceSessionId: observation.sourceSessionId, destinationSessionId: observation.destinationSessionId,
+        }, reason: 'source_changed', deliveryIntent: 'context_only', observed: observation.observed,
+          awareness: projectDisclosedAwareness(awareness), recentMessages: [], truncated: false, sourceRecencyMs,
+          transcriptConsumedThroughByRenderedMessageCount: [observation.observed.transcriptSeq],
+          workerUpdate: WorkerUpdateV1Schema.parse({ v: 1, workerKind: 'session', workerId: observation.sourceSessionId,
+            ownerState, wake, headline: composeSessionWorkerUpdateHeadlineV1({ ownerState, wake }),
+            ...(result ? { result: result.slice(0, 8000), ...(result.length > 8000 ? { truncated: true } : {}) } : {}),
+            ...(issue?.success ? { runtimeIssueV1: issue.data } : {}),
+            transcriptPointer: { kind: 'session', sessionId: observation.sourceSessionId, ...(final ? { seq: final.seq } : {}) }, canInspect: true }),
+        };
+      }
       const requestContext = ctx;
+      let questionOffers: SessionFollowUpdateEnvelopeV1['questionOffers'];
       const readLiveRequests = async (source: Readonly<{
           agentState?: string | null; agentStateVersion?: number; encryptionMode?: unknown;
         }>, minimumVersion: number) => {
@@ -775,12 +684,17 @@ export function createSessionFollowSourceHydrator(input: Readonly<{
       if ('kind' in observation && 'sourceRequests' in observation.delivery.original) {
         const original = observation.delivery.original.sourceRequests;
         let withdrawn = false;
-        const currentRequestIsLive = async (source: Parameters<typeof readLiveRequests>[0]): Promise<boolean> => {
+        const readCurrentOriginalRequests = async (source: Parameters<typeof readLiveRequests>[0]) => {
           const active = await readLiveRequests(source, original.agentStateVersion);
           const live = active !== null && original.requests.every(request => active.some(([requestId, current]) => requestId === request.requestId
-            && current.createdAt === request.createdAt && current.turnId === request.turnId));
+            && current.createdAt === request.createdAt && current.turnId === request.turnId
+            && (!request.currentHandler || request.currentHandler.kind === 'session'
+              && request.currentHandler.sessionId === observation.destinationSessionId
+              && current.currentHandler?.kind === 'session' && current.currentHandler.sessionId === request.currentHandler.sessionId)));
           withdrawn = active !== null && !live;
-          return live;
+          return live && (!questionOffers?.length || questionOffers.every(offer => active?.some(([id, request]) =>
+            id === offer.requestId && request.currentHandler?.kind === 'session'
+            && request.currentHandler.sessionId === observation.destinationSessionId))) ? active : null;
         };
         workerAdmission = { isOriginalRequestWithdrawn: () => withdrawn,
           recheckWorkerUpdateAdmission: async (requestSignal: AbortSignal) => {
@@ -789,22 +703,37 @@ export function createSessionFollowSourceHydrator(input: Readonly<{
             if (useRunnerProjection) {
               const current = await fetchRunnerPage(observation.delivered.transcriptSeq, requestSignal);
               return !requestSignal.aborted && current?.source.id === observation.sourceSessionId
-                && await currentRequestIsLive(current.source);
+                && (await readCurrentOriginalRequests(current.source)) !== null;
             }
             const current = await input.session.runSessionFollowSourceRequest({ credentials: input.credentials,
-              request: () => resolveTransport({ credentials: input.credentials, idOrPrefix: observation.sourceSessionId,
+              request: () => resolveTransport({ reason: 'follow-source-hydration', credentials: input.credentials, idOrPrefix: observation.sourceSessionId,
                 signal: requestSignal }) });
             return !requestSignal.aborted && current.ok && current.sessionId === observation.sourceSessionId
-              && await currentRequestIsLive(current.rawSession);
+              && (await readCurrentOriginalRequests(current.rawSession)) !== null;
           } catch (error) {
             const preparationError = classifyHomeReadPreparationError(error);
             if (preparationError !== error) throw preparationError;
             return false;
           }
         } };
-        if (!await currentRequestIsLive(transport.rawSession)) {
+        const active = await readCurrentOriginalRequests(transport.rawSession);
+        if (active === null) {
           return { ...buildUnavailableEnvelope({ observation, awareness }), sourceRecencyMs, ...workerAdmission };
         }
+        // Reuse the already authorized exact source snapshot. Only the request
+        // owner's assigned handler receives the form; this is presentation,
+        // never another manager/answer-eligibility decision.
+        questionOffers = active.flatMap(([requestId, request]) => {
+          const event = readForegroundAgentRequestFollowEvent(request);
+          if (!original.requests.some(original => original.requestId === requestId && original.currentHandler?.kind === 'session'
+              && original.currentHandler.sessionId === observation.destinationSessionId)
+            || request.currentHandler?.kind !== 'session'
+            || request.currentHandler.sessionId !== observation.destinationSessionId
+            || event?.kind !== 'needs_you' || event.type === 'approval') return [];
+          const questions = readStructuredQuestionPermissionQuestions({ toolName: request.tool, toolInput: request.arguments });
+          return questions.length ? [{ requestId, currentHandler: request.currentHandler,
+            ...(request.questionV1 ? { questionV1: request.questionV1 } : {}), questions }] : [];
+        });
       }
 
       const deliveredSeq = observation.delivered.transcriptSeq;
@@ -822,7 +751,7 @@ export function createSessionFollowSourceHydrator(input: Readonly<{
         workerAdmission = { recheckWorkerUpdateAdmission: async (requestSignal: AbortSignal) => {
           try {
             const current = await input.session.runSessionFollowSourceRequest({ credentials: input.credentials,
-              request: () => resolveTransport({ credentials: input.credentials, idOrPrefix: observation.sourceSessionId,
+              request: () => resolveTransport({ reason: 'follow-source-hydration', credentials: input.credentials, idOrPrefix: observation.sourceSessionId,
                 signal: requestSignal }) });
             if (requestSignal.aborted || !current.ok || current.sessionId !== observation.sourceSessionId) return false;
             const active = await readLiveRequests(current.rawSession, observation.observed.agentStateVersion);
@@ -852,6 +781,7 @@ export function createSessionFollowSourceHydrator(input: Readonly<{
           observed: observation.observed,
           awareness: projectDisclosedAwareness(awareness),
           recentMessages: [],
+          ...(questionOffers?.length ? { questionOffers } : {}),
           truncated: false,
           sourceRecencyMs,
           transcriptConsumedThroughByRenderedMessageCount: [deliveredSeq],
@@ -929,16 +859,6 @@ export function createSessionFollowSourceHydrator(input: Readonly<{
           break;
         }
         const row = opened.row;
-        if ('kind' in observation && 'sourceMessage' in observation.delivery.original
-          && row.seq === observation.delivery.original.sourceMessage.seq && row.role === 'agent' && !row.sidechainId
-          && recordValue(row.content)?.type === 'event' && !recordValue(recordValue(row.content)?.data)?.sidechainId
-          && 'event' in observation.delivery && observation.delivery.event.kind === 'finished') {
-          const event = createStoredReadSchema(TranscriptRawAgentEventV1Schema).safeParse(recordValue(row.content)?.data);
-          if (event.success && event.data.type === 'ready') {
-            const turnId = TurnIdSchema.safeParse(event.data.completedTurnId);
-            if (turnId.success) sourceTerminalTurn = { id: turnId.data, status: 'completed' };
-          }
-        }
         if ('kind' in observation && 'sourceMessage' in observation.delivery.original
           && row.seq === observation.delivery.original.sourceMessage.seq && row.role === 'agent'
           && recordValue(row.content)?.type === 'event'
@@ -1148,13 +1068,13 @@ export function createSessionFollowSourceHydrator(input: Readonly<{
             },
         awareness: projectDisclosedAwareness(awareness),
         recentMessages: mayQuoteSourceMessages ? disclosedSummaries : [],
+        ...(questionOffers?.length ? { questionOffers } : {}),
         truncated: pageHasMore
           || selectsVoiceOriginals && disclosedCheckpoints.at(-1)! < consumedTranscriptSeq
           || traversalBaseline > deliveredSeq
           || consumedTranscriptSeq < observedSeq
           || omittedObservedMessage,
         sourceRecencyMs,
-        ...(sourceTerminalTurn ? { sourceTerminalTurn } : {}),
         transcriptConsumedThroughByRenderedMessageCount: Object.freeze(
           mayQuoteSourceMessages
             ? [...disclosedCheckpoints]

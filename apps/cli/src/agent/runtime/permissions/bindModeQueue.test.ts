@@ -138,7 +138,7 @@ describe('registerPermissionModeMessageQueueBinding', () => {
       followDeliveryV1: delivery,
       followRelations: [{ relation: 'manager' as const, attachedAt: 1 }, { relation: 'follower' as const }],
       followSources: [{ rule: { ruleId: 'private-rule', ruleVersion: 1 }, sourceSessionId: 'source',
-        destinationSessionId: 'receiver', evaluation: 'receiver' as const,
+        destinationSessionId: 'receiver', evaluation: 'receiver' as const, selectedDelivery: 'next_turn' as const,
         sourceMessage: { localId: 'source-original', seq: 2 } }],
     };
     const request = SessionInputRequestV1Schema.parse({ ...buildTrustedHostSessionInputAdmissionV1('agent').request,

@@ -1,11 +1,11 @@
 import * as zMini from 'zod/mini';
-import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { createStoredReadSchema } from '../../json/storedReadSchema.js';
+import { lazyDefinition, lazyZodSchema } from '../../lazyZodSchema.js';
+import { createStoredReadSchema, defineStoredReadProjection } from '../../json/storedReadSchema.js';
 import { z } from 'zod/mini';
 import { CallerInputConstraintsV1Schema } from '../../auth/callerInputConstraintsV1.js';
 import { sha256 } from '@noble/hashes/sha2';
 import { ActionRequestAttributionV1Schema } from '../../actions/actionRequestAttributionV1.js';
-import { isRunFollowOriginalV1, SessionFollowInputV1Schema } from '../follow/sessionFollowInputV1.js';
+import { isRunFollowOriginalV1, SessionFollowInputV1Schema, SessionFollowReceiptDeliveryV1Schema } from '../follow/sessionFollowInputV1.js';
 import { DiscussionAddressingV1Schema } from '../../discussions/references.js';
 import { SessionFollowSourceOccurrenceWitnessesV1Schema, SessionFollowRelationWitnessesV1Schema } from '../follow/sessionFollowSourceOccurrenceV1.js';
 import { NextTurnFileReviewNoteV1Schema } from '../../messages/structured/fileReviewNoteV1.js';
@@ -35,7 +35,8 @@ import {
 import { PendingLocalIdSchema, readPendingLocalId } from '../pending/pendingLocalId.js';
 import { PendingRequestedActionV1Schema, type PendingRequestedActionV1 } from '../pending/pendingRequestedActionV1.js';
 import { HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1, RawIngressStructuredInputV1Schema } from '../../runtime/input/structuredInputV1.js';
-import { asProtocolZod } from "../../plugins/actions/internalProtocolZodAdapter.js";
+import { asProtocolZod, projectZodProtocolSchema } from "../../plugins/actions/internalProtocolZodAdapter.js";
+import { withSessionTargetFanoutResultV1 } from '../../actions/sessionTargetV1.js';
 import { preservedBoundedNfcString } from '../../strings/preservedBoundedNfcString.js';
 import { WorkflowInvocationRecordIdSchema } from '../../workflows/workflowIdsV1.js';
 import {
@@ -43,6 +44,7 @@ import {
   requireSessionInputContent,
 } from './sessionInputAuthoringV1.js';
 import { SessionInputAdmissionRejectionCodeV1Schema } from './sessionInputAdmissionRejectionV1.js';
+import { SessionInputForgeEvidenceV1Schema } from './sessionInputForgeEvidenceV1.js';
 export {
   SESSION_INPUT_ADMISSION_REJECTION_CODES_V1,
   SessionInputAdmissionRejectionCodeV1Schema,
@@ -57,6 +59,9 @@ export {
 export type { PluginSessionInputAttachmentV1 } from './sessionInputAuthoringV1.js';
 
 export const SESSION_MESSAGE_PROVENANCE_META_KEY = 'happierProvenanceV1' as const;
+export type { SessionInputResultV1, SessionInputUsageV1, SessionInputResultGetResultV1 } from './sessionInputResultV1.js';
+export { SessionInputRefusalDispositionV1Schema } from './sessionInputResultV1.js';
+export type { SessionInputRefusalDispositionV1 } from './sessionInputResultV1.js';
 export const SESSION_INPUT_REQUEST_META_KEY = 'happierInputRequestV1' as const;
 export const SESSION_INPUT_AUTHORITY_META_KEY = 'happierInputAuthorityV1' as const;
 
@@ -200,6 +205,8 @@ export const PluginSessionUserTextAuthoredFieldSchemasV1 = Object.freeze({
   recipient: zMini.optional(ParticipantRecipientRoutingIdentityV1Schema),
   source: z.optional(PluginSessionInputSourceV1Schema),
   attachments: zMini.optional(PluginSessionInputAttachmentsV1Schema),
+  /** Descriptive authored context only; neither its source nor author grants authority. */
+  forgeEvidence: z.optional(asProtocolZod(SessionInputForgeEvidenceV1Schema)),
   /** Identifies a provider-facing reply whose visible answer belongs on its question tool. */
   toolAnswerDelivery: z.optional(z.strictObject({ toolCallId: z.string().check(z.trim(), z.minLength(1)) })),
 });
@@ -725,6 +732,12 @@ export const SessionInputAuthorityV1Schema = lazyZodSchema(() => (<T extends z.Z
   }),
 })).check(z.superRefine(refineProtectedInputCommon)));
 export type SessionInputAuthorityV1 = z.infer<typeof SessionInputAuthorityV1Schema>;
+// Historical authority sealed into transcript content uses the same retained
+// Follow delivery shape as the server receipt, without relaxing fresh input.
+defineStoredReadProjection(SessionInputAuthorityV1Schema, () => createStoredReadSchema(z.safeExtend(
+  SessionInputAuthorityV1Schema,
+  { followDeliveryV1: z.optional(SessionFollowReceiptDeliveryV1Schema) },
+)));
 export const SessionInputAuthoritySchema = lazyZodSchema(() => z.union([SessionInputAuthorityV1Schema, SessionInputAuthorityV2Schema]));
 export type SessionInputAuthority = z.infer<typeof SessionInputAuthoritySchema>;
 
@@ -803,7 +816,8 @@ function assertFollowInputReceipt(request: SessionInputRequestV1, receipt: Sessi
     || serializeCanonicalJsonForSessionMutationEqualityV1(requested) !== serializeCanonicalJsonForSessionMutationEqualityV1(receipt.followDeliveryV1)
     || admitted?.some(source => source.destinationSessionId !== admittedTarget.sessionId
       || serializeCanonicalJsonForSessionMutationEqualityV1({ sourceSessionId: source.sourceSessionId,
-        ...(source.sourceMessage ? { sourceMessage: source.sourceMessage } : { sourceRequests: source.sourceRequests }) })
+        ...(source.sourceMessage ? { sourceMessage: source.sourceMessage }
+          : 'sourceTurn' in source ? { sourceTurn: source.sourceTurn } : { sourceRequests: source.sourceRequests }) })
         !== serializeCanonicalJsonForSessionMutationEqualityV1(requested.original))) {
     throw new TypeError('Follow input requires its exact authenticated original occurrence receipt');
   }
@@ -931,12 +945,17 @@ export const SESSION_NEXT_TURN_NOTE_ADMISSION_FIELDS_V1 = {
   nextTurnNote: z.optional(NextTurnFileReviewNoteV1Schema),
 };
 
+const SESSION_FOLLOW_INPUT_RECEIPT_FIELDS_V1 = {
+  ...SESSION_FOLLOW_INPUT_ADMISSION_FIELDS_V1,
+  followDeliveryV1: z.optional(z.lazy(() => SessionFollowReceiptDeliveryV1Schema)),
+};
+
 export const SessionInputAdmissionReceiptV1Schema = lazyZodSchema(() => z.discriminatedUnion('issuer', [
   z.strictObject({
     v: z.literal(1),
     issuer: z.literal('authenticatedAccount'),
     ...SESSION_NEXT_TURN_NOTE_ADMISSION_FIELDS_V1,
-    ...SESSION_FOLLOW_INPUT_ADMISSION_FIELDS_V1,
+    ...SESSION_FOLLOW_INPUT_RECEIPT_FIELDS_V1,
     callerInputConstraints: zMini.optional(CallerInputConstraintsV1Schema),
     actorAccountId: AccountIdSchema,
     sessionRelationship: z.enum(['owner', 'sharedEditor', 'sharedAdmin']),
@@ -946,7 +965,7 @@ export const SessionInputAdmissionReceiptV1Schema = lazyZodSchema(() => z.discri
     v: z.literal(1),
     issuer: z.literal('authenticatedMachine'),
     ...SESSION_NEXT_TURN_NOTE_ADMISSION_FIELDS_V1,
-    ...SESSION_FOLLOW_INPUT_ADMISSION_FIELDS_V1,
+    ...SESSION_FOLLOW_INPUT_RECEIPT_FIELDS_V1,
     discussionAddressing: z.optional(DiscussionAddressingV1Schema),
     callerInputConstraints: zMini.optional(CallerInputConstraintsV1Schema),
     admittedTarget: z.optional(SessionInputMachineTargetV1Schema),
@@ -995,6 +1014,9 @@ export function settleSessionMessageProvenanceV1(params: Readonly<{
     inputAdmissionReceipt: params.inputAdmissionReceipt,
   });
   if (request.producer === 'happierApp') {
+    // Machine transport does not turn the original protected UI requester into
+    // host prose. This describes the person, without asserting a relationship.
+    const requester = request.actionRequestAttributionV1?.requester;
     return SessionMessageProvenanceV1Schema.parse(
       inputAdmissionReceipt.issuer === 'authenticatedAccount'
         ? {
@@ -1006,7 +1028,9 @@ export function settleSessionMessageProvenanceV1(params: Readonly<{
                 : 'sharedCollaborator',
             },
           }
-        : { v: 1, kind: 'host', producer: 'happierApp' },
+        : requester && !request.returnedAnswer
+          ? { v: 1, kind: 'happierApp', actor: { kind: 'person', accountId: requester.accountId } }
+          : { v: 1, kind: 'host', producer: 'happierApp' },
     );
   }
   const requestedProvenance = SessionMessageProvenanceV1Schema.safeParse(params.requestedProvenance);
@@ -1107,6 +1131,11 @@ export const SessionMessageSendResultV1Schema = lazyZodSchema(() => z.union([
   }),
 ]));
 export type SessionMessageSendResultV1 = z.infer<typeof SessionMessageSendResultV1Schema>;
+
+/** Complete Action outcome, including the front door's exact-target fanout. */
+export const SessionMessageSendActionResultV1Schema = lazyZodSchema(() =>
+  withSessionTargetFanoutResultV1(SessionMessageSendResultV1Schema));
+export const SessionMessageSendResultV1ProtocolSchema = lazyDefinition(() => projectZodProtocolSchema(SessionMessageSendActionResultV1Schema));
 
 export const SessionPermissionSourceAuthorityV1Schema = lazyZodSchema(() => z.strictObject({
   kind: z.literal('mediatedExternal'),

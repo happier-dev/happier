@@ -7,6 +7,7 @@ import { PendingRequestedActionV1Schema, PendingResetStartSetResultV1Schema } fr
 import { createDeferred, createSessionFixture, renderScreen, standardCleanup } from '@/dev/testkit';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { Modal } from '@/modal';
 import { resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
 import { Encryption } from '@/sync/encryption/encryption';
@@ -69,6 +70,8 @@ beforeEach(async () => {
         session: { ...createRootLayoutFeaturesResponse().capabilities.session, pendingInput: { protocolVersion: 3 } },
     } });
     const respond = (path: string, init?: RequestInit): Response => {
+        if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+        if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
         if (init?.method === 'PATCH' && path.endsWith('/action')) {
             actionRequests.push(path);
             const localId = path.split('/').at(-2)!;

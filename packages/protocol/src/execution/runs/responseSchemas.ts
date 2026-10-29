@@ -277,6 +277,8 @@ const executionRunFollowFrontierResponseFields = () => ({
   runId: z.string().check(z.minLength(1)),
   status: ExecutionRunStatusSchema,
   terminalEventId: z.nullable(z.string().check(z.minLength(1))),
+  /** Existing sanitized recovery facts, never a Run result body or read grant. */
+  runtimeIssueV1: z.optional(SessionRuntimeIssueV1Schema),
   attention: z.optional(ExecutionRunPermissionAttentionSchema),
   outputs: z.optional(z.array(ExecutionRunFollowOutputV1Schema)),
 });

@@ -42,6 +42,7 @@ import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSch
 import { deriveSessionMessageAuthorAccountIdV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageAccountActorV1';
 import { SessionInputAdmissionRejectionCodeV1Schema, type SessionInputAdmissionRejectionCodeV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmissionRejectionV1';
 import { isDeliveryMutedInTx } from '@/app/session/follow/sessionDeliveryMuteService';
+import { readSessionFollowInputSuppressionInTx, retainSuppressedFollowInputInTx, retainSuppressedSessionFollowInputInTx } from '@/app/session/follow/sessionFollowSuppression';
 import { reconcileAutonomousExchangeAcceptedTurnInTx } from '@/app/session/pending/reconcileAutonomousExchangeAcceptedTurnInTx';
 import { backgroundDeliveryAuthentication } from '@/app/session/access/sessionAccessAuthentication';
 import type { Fastify } from '@/app/api/types';
@@ -108,8 +109,8 @@ import { createSessionInputReplyProgressInTx, bindSessionInputReplyAcceptedTurnI
 import { admitDiscussionFollowAddressingInTx, acknowledgeDiscussionFollowInputInTx, admitSessionFollowRelationsForInputInTx } from '@/app/session/follow/sessionFollowEdgeService';
 import { deriveDiscussionFollowInputLocalIdV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowTransportV1';
 import type { SessionPendingEnqueueByMachineRequestV1 } from '@happier-dev/protocol/sessions/messages/sessionPendingMachineAdmissionV1';
-import { admitSessionFollowRuleOccurrenceInTx, readAdmittedSessionFollowInputInTx, sessionFollowInputFrontiers, settleSessionFollowInputReasonsInTx, settleAcceptedSessionFollowInputInTx, type SessionFollowRuleProgressAdmission } from '@/app/session/follow/sessionFollowRuleProgress';
-import { deriveSessionFollowOriginalOccurrenceKeyV1, deriveSessionFollowInputLocalIdV1, isRunFollowOriginalV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowInputV1';
+import { admitSessionFollowRuleOccurrenceInTx, readAdmittedSessionFollowInputInTx, resolveSessionFollowInputSelectedDelivery, sessionFollowInputFrontiers, settleSessionFollowInputReasonsInTx, settleAcceptedSessionFollowInputInTx, type SessionFollowRuleProgressAdmission } from '@/app/session/follow/sessionFollowRuleProgress';
+import { deriveSessionFollowOriginalOccurrenceKeyV1, deriveSessionFollowInputLocalIdV1, isRunFollowOriginalV1, isSessionFollowQuestionHandlerV1, resolveSessionFollowTurnEventV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowInputV1';
 import { DiscussionProducerV1Schema } from '@happier-dev/protocol/discussions/content';
 import { markDiscussionReadersChangedInTx } from '@/app/discussions/changes';
 import { resolveDiscussionAudienceInTx } from '@/app/discussions/access';
@@ -749,11 +750,11 @@ export async function enqueuePendingMessage(
     if (!decision.access.capabilities.submitAgentInput) return { ok: false, error: "forbidden" };
     let executionRunFrontier: ExecutionRunFollowFrontierWitness | undefined;
     const original = params.followDeliveryV1?.original;
-    if (original && isRunFollowOriginalV1(original) && 'terminalEventId' in original) {
+    if (original && isRunFollowOriginalV1(original) && original.source.kind === 'execution_run') {
         if (!params.followSourceApp) return { ok: false, error: 'forbidden' };
         const read = await readCurrentExecutionRunFollowSource({ app: params.followSourceApp, accountId: actorUserId,
-            sessionId: original.source.sessionId, runId: original.source.runId, authentication: params.authentication });
-        if (!read.ok || read.value.terminalEventId !== original.terminalEventId) return { ok: false, error: 'forbidden' };
+            ...original.source, authentication: params.authentication });
+        if (!read.ok || 'terminalEventId' in original && read.value.terminalEventId !== original.terminalEventId) return { ok: false, error: 'forbidden' };
         executionRunFrontier = read.value;
     }
     return await enqueuePendingMessageWithAdmission({ ...params, ...(executionRunFrontier ? { executionRunFrontier } : {}) }, {
@@ -865,9 +866,18 @@ async function enqueuePendingMessageWithAdmission(
                 && requestAccountId !== session.accountId) return {
                 ok: false, error: 'forbidden', admissionRejectionCode: 'session_input_unauthorized',
             } as const;
-            const retainedReplyRow = await tx.sessionPendingMessage.findUnique({ where: { sessionId_localId: { sessionId, localId } }, select: { replyProgress: true } })
+            const retainedPending = await tx.sessionPendingMessage.findUnique({ where: { sessionId_localId: { sessionId, localId } },
+                select: { replyProgress: true, status: true, discardedReason: true, inputAdmissionReceipt: true } });
+            const retainedReplyRow = retainedPending
                 ?? await tx.sessionMessage.findUnique({ where: { sessionId_localId: { sessionId, localId } }, select: { replyProgress: true } });
-            if (retainedReplyRow) {
+            const suppressedReceipt = retainedPending?.status === 'discarded' && retainedPending.discardedReason === 'session_input_muted'
+                ? readStoredSessionInputAdmissionReceipt(retainedPending.inputAdmissionReceipt) : undefined;
+            const suppressedDiscussionReplay = suppressedReceipt?.issuer === 'authenticatedMachine'
+                && suppressedReceipt.discussionAddressing !== undefined
+                && isDeepStrictEqual(suppressedReceipt.discussionAddressing, params.reply?.discussion);
+            // Rejected custody deliberately has no live reply obligation. Its
+            // exact replay still passes Machine/target/issuer admission below.
+            if (retainedReplyRow && !suppressedDiscussionReplay) {
                 const retained = retainedReplyRow.replyProgress == null ? null : SessionMessageReplyProgressV1Schema.safeParse(retainedReplyRow.replyProgress);
                 if (retained && (!retained.success || !matchesOriginalReplyAdmission(retained.data, params.reply))
                     || !retained && params.reply !== undefined) return { ok: false, error: 'invalid-params' } as const;
@@ -1009,37 +1019,55 @@ async function enqueuePendingMessageWithAdmission(
                 if (admittedTarget) inputAdmissionReceipt = SessionInputAdmissionReceiptV1Schema.parse({ ...inputAdmissionReceipt, admittedTarget });
             }
 
+            let suppressedFollow: Pick<Parameters<typeof retainSuppressedSessionFollowInputInTx>[1], 'delivery' | 'progresses' | 'relations'> | undefined;
             if (inputAdmissionReceipt.followSources || inputAdmissionReceipt.followRelations || inputAdmissionReceipt.followDeliveryV1) {
                 const delivery = inputAdmissionReceipt.followDeliveryV1;
+                const questionHandler = delivery !== undefined && isSessionFollowQuestionHandlerV1(delivery, sessionId);
                 if (!delivery || !inputAdmissionReceipt.admittedTarget || requestAccountId !== session.accountId
-                    || (!inputAdmissionReceipt.followSources?.length && !inputAdmissionReceipt.followRelations?.length)) {
+                    || (!questionHandler && !inputAdmissionReceipt.followSources?.length && !inputAdmissionReceipt.followRelations?.length)) {
                     return { ok: false, error: 'invalid-params' } as const;
                 }
-                if (isRunFollowOriginalV1(delivery.original) && localId !== deriveSessionFollowInputLocalIdV1({
+                if ('sourceTurn' in delivery.original && (!('event' in delivery)
+                    || !isDeepStrictEqual(delivery.event, resolveSessionFollowTurnEventV1(delivery.original.sourceTurn)))) {
+                    return { ok: false, error: 'forbidden' } as const;
+                }
+                if ((isRunFollowOriginalV1(delivery.original) || 'sourceTurn' in delivery.original) && localId !== deriveSessionFollowInputLocalIdV1({
                     destinationSessionId: sessionId, original: delivery.original,
                 })) return { ok: false, error: 'invalid-params' } as const;
+                const suppressed = await readSessionFollowInputSuppressionInTx(tx, {
+                    accountId: session.accountId, destinationSessionId: sessionId, receipt: inputAdmissionReceipt,
+                });
+                if (suppressed === null) return { ok: false, error: 'forbidden' } as const;
                 const progresses: SessionFollowRuleProgressAdmission[] = [];
                 for (const witness of inputAdmissionReceipt.followSources ?? []) {
                     if (!('sourceSessionId' in delivery.original)) return { ok: false, error: 'invalid-params' } as const;
                     if (witness.destinationSessionId !== sessionId || witness.sourceSessionId !== delivery.original.sourceSessionId
-                        || !isDeepStrictEqual(witness.sourceMessage ?? witness.sourceRequests,
-                            'sourceMessage' in delivery.original ? delivery.original.sourceMessage : delivery.original.sourceRequests)) {
+                        || !isDeepStrictEqual(witness.sourceMessage ?? witness.sourceRequests ?? witness.sourceTurn,
+                            'sourceMessage' in delivery.original ? delivery.original.sourceMessage
+                                : 'sourceRequests' in delivery.original ? delivery.original.sourceRequests : delivery.original.sourceTurn)) {
                         return { ok: false, error: 'forbidden' } as const;
                     }
                     const admitted = await admitSessionFollowRuleOccurrenceInTx(tx, { accountId: session.accountId, witness,
+                        ...(suppressed ? { settleSuppressedOriginal: true as const } : {}),
                         authority: admission.kind === 'machine' ? { kind: 'source_machine', machineId: admission.sourceMachineId }
                             : { kind: 'account', authentication: admission.authentication } });
                     if (!admitted) return { ok: false, error: 'forbidden' } as const;
                     progresses.push(admitted.progress);
                 }
-                const relations = inputAdmissionReceipt.followRelations ? await admitSessionFollowRelationsForInputInTx(tx, {
+                const relations = inputAdmissionReceipt.followRelations || questionHandler ? await admitSessionFollowRelationsForInputInTx(tx, {
                     accountId: session.accountId, destinationSessionId: sessionId,
                     ...(admission.kind === 'machine' ? { sourceMachineId: admission.sourceMachineId }
                         : { authentication: admission.authentication }),
-                    delivery, relations: inputAdmissionReceipt.followRelations,
+                    delivery, relations: inputAdmissionReceipt.followRelations ?? [],
+                    ...(suppressed ? { settleSuppressedOriginal: true as const } : {}),
                     ...(params.executionRunFrontier ? { executionRunFrontier: params.executionRunFrontier } : {}),
                 }) : [];
                 if (!relations) return { ok: false, error: 'forbidden' } as const;
+                if (resolveSessionFollowInputSelectedDelivery(delivery, relations,
+                    (inputAdmissionReceipt.followSources ?? []).map(witness => witness.selectedDelivery), questionHandler) !== delivery.delivery) {
+                    return { ok: false, error: 'forbidden' } as const;
+                }
+                if (suppressed) suppressedFollow = { delivery, progresses, relations };
                 const originalKey = deriveSessionFollowOriginalOccurrenceKeyV1(delivery.original);
                 if (!originalKey) return { ok: false, error: 'invalid-params' } as const;
                 const accepted = await tx.sessionMessage.findFirst({ where: { sessionId, acceptedFollowOriginalKey: originalKey },
@@ -1162,6 +1190,13 @@ async function enqueuePendingMessageWithAdmission(
                         error: "invalid-params",
                         admissionRejectionCode: "session_input_idempotency_conflict",
                     } as const;
+                }
+                if (existing.status === 'discarded' && existing.discardedReason === 'session_input_muted'
+                    && existingReceipt?.success && (existingReceipt.data.followDeliveryV1 && inputAdmissionReceipt.followDeliveryV1
+                        && deriveSessionFollowOriginalOccurrenceKeyV1(existingReceipt.data.followDeliveryV1.original)
+                            === deriveSessionFollowOriginalOccurrenceKeyV1(inputAdmissionReceipt.followDeliveryV1.original)
+                        || suppressedDiscussionReplay)) {
+                    return { ok: false, error: 'invalid-params', admissionRejectionCode: 'session_input_muted' } as const;
                 }
                 const retainedFollow = existingReceipt?.success && existingReceipt.data.issuer === 'authenticatedAccount'
                     ? existingReceipt.data.followDeliveryV1 : undefined;
@@ -1444,6 +1479,11 @@ async function enqueuePendingMessageWithAdmission(
             }
 
             const position = await reserveNextPendingQueuePosition(tx, sessionId);
+            if (suppressedFollow) {
+                await retainSuppressedSessionFollowInputInTx(tx, { ...suppressedFollow,
+                    destinationSessionId: sessionId, localId, content, requestedAction, receipt: inputAdmissionReceipt, position });
+                return { ok: false, error: 'invalid-params', admissionRejectionCode: 'session_input_muted' } as const;
+            }
 
             if (admissionMode === "continuation_if_no_queued_user_input") {
                 const queuedUserInput = await tx.sessionPendingMessage.findFirst({
@@ -1509,6 +1549,19 @@ async function enqueuePendingMessageWithAdmission(
                     select: { operationProtocolCapabilities: true, operationProtocolCapabilitiesRevision: true } });
                 if (!machine?.operationProtocolCapabilitiesRevision || !supportsMachineOperationProtocolCapabilityV1(machine.operationProtocolCapabilities, 'sessionMessageReply')) {
                     return { ok: false, error: 'invalid-params', admissionRejectionCode: 'session_input_target_update_required' } as const;
+                }
+            }
+            if (replyProgress?.discussion && !replyProgress.workflow) {
+                const muted = await readSessionFollowInputSuppressionInTx(tx, {
+                    accountId: session.accountId, destinationSessionId: sessionId, receipt: inputAdmissionReceipt,
+                });
+                if (muted === null) return { ok: false, error: 'invalid-params', admissionRejectionCode: 'session_input_target_unavailable' } as const;
+                if (muted) {
+                    await retainSuppressedFollowInputInTx(tx, { destinationSessionId: sessionId, localId,
+                        content, requestedAction, receipt: inputAdmissionReceipt, position });
+                    // Keep per-original rejected custody without moving the
+                    // accepted frontier past any earlier unresolved question.
+                    return { ok: false, error: 'invalid-params', admissionRejectionCode: 'session_input_muted' } as const;
                 }
             }
             const created = await tx.sessionPendingMessage.create({
@@ -1647,12 +1700,12 @@ export async function enqueuePendingMessageByAuthenticatedMachine(params: Readon
 }>): Promise<SessionInputAdmissionResultV1> {
     let executionRunFrontier: ExecutionRunFollowFrontierWitness | undefined;
     const original = params.followDeliveryV1?.original;
-    if (original && isRunFollowOriginalV1(original) && 'terminalEventId' in original) {
+    if (original && isRunFollowOriginalV1(original) && original.source.kind === 'execution_run') {
         if (!params.followSourceApp) return { status: 'rejected', code: 'session_input_target_unavailable' };
         const read = await readCurrentExecutionRunFollowSource({ app: params.followSourceApp, accountId: params.accountId,
-            sessionId: original.source.sessionId, runId: original.source.runId,
+            ...original.source,
             authentication: params.sourceAuthentication ?? backgroundDeliveryAuthentication() });
-        if (!read.ok || read.value.terminalEventId !== original.terminalEventId)
+        if (!read.ok || 'terminalEventId' in original && read.value.terminalEventId !== original.terminalEventId)
             return { status: 'rejected', code: 'session_input_target_unavailable' };
         executionRunFrontier = read.value;
     }
@@ -1854,11 +1907,14 @@ async function validateInputSettlementDomainFactsInTx(params: Readonly<{
     // observation to the host (detached manager, removed rule or revoked access).
     if (originalReceipt.success && originalReceipt.data.followDeliveryV1
         && 'sourceSessionId' in originalReceipt.data.followDeliveryV1.original
-        && !original?.turnStartWitnessId
-        && !await readAdmittedSessionFollowInputInTx(params.tx, {
+        && !original?.turnStartWitnessId) {
+        const custody = await readAdmittedSessionFollowInputInTx(params.tx, {
             accountId: params.accountId, destinationSessionId: params.targetSessionId, localInputId: params.localId,
             authority: { kind: 'account', authentication: backgroundDeliveryAuthentication() },
-        })) return { ok: false, rejectionCode: 'session_input_cancelled' };
+        });
+        // Current policy gates a future effect, not an already verified acceptance.
+        if (!custody?.nativeAccepted && !custody?.effectiveDelivery) return { ok: false, rejectionCode: 'session_input_cancelled' };
+    }
     if (originalProgress.success && originalProgress.data.humanOrigin) {
         if (!originalReceipt.success || originalReceipt.data.issuer !== 'authenticatedAccount') {
             return { ok: false, rejectionCode: 'session_input_unauthorized' };

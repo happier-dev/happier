@@ -43,6 +43,7 @@ it.each([
   ['source-dispatch', 'prepares the source-dispatch admitted input through real Session/Runner resolution and installs only the standalone source key'],
   ['source-cost', 'measures 20 private rules and 200 encountered Sessions through semantic Pending admission'],
   ['preacceptance-route', 'reobserves a pre-existing private rule before ordinary Pending acceptance and keeps the original id on redispatch'],
+  ['preacceptance-private', 'discovers a pre-existing private-only route before its delayed Account notification'],
   ['rule-inception', 'selects only originals at or after the private rule inception, leaving ordinary routes independent'],
 ] as const)('%s: %s', async mode => {
   const sourceSessionId = 'c111111111111111111111111';
@@ -50,7 +51,9 @@ it.each([
   const localInputId = 'accepted-original-not-attempt-alias';
   const costSources = new Set(Array.from({ length: 200 }, (_, index) => `c${String(index + 300).padStart(23, '0')}`));
   const ruleCount = mode === 'source-cost' ? 20 : 1;
-  let ruleAvailable = mode !== 'preacceptance-route';
+  const delayedRuleNotification = mode === 'preacceptance-route' || mode === 'preacceptance-private';
+  let ruleAvailable = !delayedRuleNotification;
+  let ruleCensusReads = 0;
   let originalCreatedAt: number | undefined = mode === 'rule-inception' ? 99 : undefined;
   const ruleChanges: { invalidate?: () => void } = {};
   const machineId = 'runner-one';
@@ -75,6 +78,7 @@ it.each([
   const row = (id: string, key: Uint8Array) => ({ ...createSessionNotificationContextFixture(id),
     active: true, archivedAt: null, ownerAccountId: 'account-1', origin: { kind: 'none' as const },
     seq: id === destinationSessionId ? 0 : 7,
+    ...(id === destinationSessionId ? {} : { latestTurnId: 'source-turn', latestTurnStatus: 'failed' as const }),
     encryptionMode: 'e2ee' as const, dataEncryptionKey: seal(key),
     metadata: encodeBase64(encrypt(key, 'dataKey', { machineId: id === destinationSessionId ? machineId : 'source-machine',
       path: '/workspace/project', host: 'host' })),
@@ -85,7 +89,7 @@ it.each([
     activationId: '11111111-1111-4111-8111-111111111111', installationId: 'runner-installation',
     machineContentKeyFingerprint: computeRunnerMachineContentKeyFingerprintV1(runnerKey) };
   const paths: string[] = [];
-  vi.spyOn(axios, 'get').mockImplementation(async (url, options) => {
+  const reads = vi.spyOn(axios, 'get').mockImplementation(async (url, options) => {
     const path = new URL(String(url)).pathname;
     paths.push(path);
     if (path === '/v1/account/encryption/currentness') return { status: 200,
@@ -101,6 +105,7 @@ it.each([
     if (path === '/v2/account/session-follow-preferences') return { status: 200,
       data: { assigned: false, direct: false, team: false, group: false } };
     if (path === '/v2/account/session-follow-rules') {
+      if (!options?.params?.destinationSessionId) ruleCensusReads++;
       const receiver = { kind: 'session' as const, sessionId: destinationSessionId };
       return { status: 200, data: { rules: Array.from({ length: ruleAvailable ? ruleCount : 0 }, (_, index) => {
         const ruleId = `private-rule-${index}`;
@@ -190,7 +195,7 @@ it.each([
     expect(JSON.stringify(opened)).not.toContain('private-rule');
     expect(JSON.stringify(opened)).not.toContain('followSources');
     // The already accepted ordinary input is the exact receipt/key custody.
-    return mode === 'source-cost' || mode === 'preacceptance-route' ? { status: 200, data: { didWrite: true } }
+    return mode === 'source-cost' || delayedRuleNotification ? { status: 200, data: { didWrite: true } }
       : { status: 200, data: { didWrite: false, terminal: true, message: { localId: localInputId } } };
   });
   let dispatcher: ReturnType<typeof createSessionFollowOccurrenceDispatcher> | null = null;
@@ -200,8 +205,11 @@ it.each([
       const prepare = createSessionFollowSourceKeyPreparationAfterSet({ credentials,
         serverHttpBaseUrl: 'https://home.example', serverIdentityId: 'home-one' });
       await expect(prepare({ sourceSessionId, destinationSessionId, localInputId, context: {} })).resolves.toEqual({ kind: 'prepared' });
+      expect(reads.mock.calls.filter(([url]) => new URL(String(url)).pathname.startsWith('/v2/sessions/'))
+        .map(([, config]) => config?.headers?.['X-Happier-Request-Purpose']))
+        .toEqual(['session-detail:follow-source-hydration', 'session-detail:follow-source-hydration']);
     } else {
-      if (mode === 'preacceptance-route') {
+      if (delayedRuleNotification) {
         primedRulesCache = createAccountSessionFollowRuleCache({ accountId: 'account-1', credentials,
           serverHttpBaseUrl: 'https://home.example', signal: new AbortController().signal, isCurrent: async () => true,
           subscribeInvalidation: listener => { ruleChanges.invalidate = listener; return () => { delete ruleChanges.invalidate; }; } });
@@ -221,7 +229,7 @@ it.each([
       });
       if (mode === 'rule-inception') {
         const occurrence = { sourceSessionId, sourcePublisher: { publisherGeneration: '1', machineId: 'source-machine', committedFenceMs: 1 },
-          sourceMessage: { localId: 'source-original', seq: 7 }, evidence: { v: 1 as const, ownerAccountId: 'account-1',
+          sourceTurn: { id: 'source-turn', status: 'failed' as const }, evidence: { v: 1 as const, ownerAccountId: 'account-1',
             event: { kind: 'failed_or_stopped' as const }, facts: { serverId: 'home-one', kind: 'session' as const, startedBy: 'you' as const } } };
         await dispatcher.dispatch(occurrence);
         expect(produced).toHaveLength(0);
@@ -236,9 +244,9 @@ it.each([
         expect(produced[0]?.sources).toMatchObject([{ rule: { ruleId: 'private-rule-0', ruleVersion: 1 } }]);
         return;
       }
-      if (mode === 'preacceptance-route') {
+      if (delayedRuleNotification) {
         const occurrence = { sourceSessionId, sourcePublisher: { publisherGeneration: '1', machineId: 'source-machine', committedFenceMs: 1 },
-          sourceMessage: { localId: 'source-original', seq: 7 }, evidence: { v: 1 as const, ownerAccountId: 'account-1',
+          sourceTurn: { id: 'source-turn', status: 'failed' as const }, evidence: { v: 1 as const, ownerAccountId: 'account-1',
             event: { kind: 'failed_or_stopped' as const }, facts: { serverId: 'home-one', kind: 'session' as const, startedBy: 'you' as const } } };
         await dispatcher.dispatch(occurrence);
         if (!ruleChanges.invalidate) throw new Error('Missing captured Account rule-change subscription');
@@ -247,10 +255,12 @@ it.each([
         expect(produced).toHaveLength(2);
         // Source notifications reobserve the ordered range before admission;
         // its fresh rule read must strengthen even the first Pending input.
-        expect(produced[0]).toMatchObject({ delivery: { delivery: 'wake' }, relations: [{ relation: 'follower' }],
+        const relations = mode === 'preacceptance-route' ? [{ relation: 'follower' }] : undefined;
+        expect(produced[0]).toMatchObject({ delivery: { delivery: 'wake' }, relations,
           sources: [{ rule: { ruleId: 'private-rule-0', ruleVersion: 1 } }] });
         expect(produced[1]).toMatchObject({ localId: produced[0]?.localId, delivery: { delivery: 'wake', original: produced[0]?.delivery.original },
           relations: produced[0]?.relations, sources: [{ rule: { ruleId: 'private-rule-0', ruleVersion: 1 } }] });
+        expect(ruleCensusReads, 'one priming read plus one fresh census per original admission').toBe(3);
         // Redispatch retains one original identity; the server/DB owner decides
         // immutable Pending custody and effect deduplication.
         return;
@@ -259,9 +269,10 @@ it.each([
         const started = performance.now();
         for (const sessionId of costSources) await dispatcher.dispatch({ sourceSessionId: sessionId,
           sourcePublisher: { publisherGeneration: '1', machineId: 'source-machine', committedFenceMs: 1 },
-          sourceMessage: { localId: 'source-original', seq: 7 }, evidence: { v: 1, ownerAccountId: 'account-1',
+          sourceTurn: { id: 'source-turn', status: 'failed' }, evidence: { v: 1, ownerAccountId: 'account-1',
             event: { kind: 'failed_or_stopped' }, facts: { serverId: 'home-one', kind: 'session', startedBy: 'you' } } });
         expect(produced).toHaveLength(costSources.size);
+        expect(ruleCensusReads, 'one fresh rule census shared by each original and its receiver range').toBe(costSources.size);
         expect(new Set(produced.map(item => 'sourceSessionId' in item.delivery.original
           ? item.delivery.original.sourceSessionId : undefined))).toEqual(costSources);
         // Diagnostic only: no guessed latency ceiling. This source-owner slice
@@ -276,7 +287,7 @@ it.each([
         return;
       }
       await dispatcher.dispatch({ sourceSessionId, sourcePublisher: { publisherGeneration: '1', machineId: 'source-machine', committedFenceMs: 1 },
-        sourceMessage: { localId: 'source-original', seq: 7 }, evidence: { v: 1, ownerAccountId: 'account-1',
+        sourceTurn: { id: 'source-turn', status: 'failed' }, evidence: { v: 1, ownerAccountId: 'account-1',
           event: { kind: 'failed_or_stopped' }, facts: { serverId: 'home-one', kind: 'session', startedBy: 'you' } } });
       expect(attemptedLocalId, JSON.stringify(paths)).toBeTypeOf('string');
       expect(attemptedLocalId).not.toBe(localInputId);

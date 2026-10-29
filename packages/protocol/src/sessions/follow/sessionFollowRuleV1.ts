@@ -9,7 +9,8 @@ import { createStoredReadSchema } from '../../json/storedReadSchema.js';
 import { FollowPolicyV1Schema } from './sessionFollowPolicyV1.js';
 import { FollowReceiverRefV1Schema, type FollowReceiverRefV1 } from './sessionDeliveryMuteV1.js';
 import { SessionFollowFrontierV1Schema } from './sessionFollowFrontierV1.js';
-import { SessionFollowPublisherGenerationV1Schema, SessionFollowSourceMessageV1Schema, SessionFollowSourceRequestsV1Schema } from './sessionFollowSourceOccurrenceV1.js';
+import { SessionFollowPublisherGenerationV1Schema, SessionFollowSourceMessageV1Schema, SessionFollowSourceRequestsV1Schema, SessionFollowSourceTurnV1Schema, SessionFollowStalledOccurrenceV1Schema } from './sessionFollowSourceOccurrenceV1.js';
+import { SessionFollowSelectedDeliveryV1Schema } from './sessionFollowSelectedDeliveryV1.js';
 import { ExecutionRunFollowOriginalV1Schema, WorkflowRunFollowOriginalV1Schema } from './sessionFollowInputV1.js';
 import { DiscussionMessageRefV1Schema } from '../../discussions/messageRefs.js';
 
@@ -23,7 +24,7 @@ export const SessionFollowRuleWitnessV1Schema = lazyZodSchema(() => z.strictObje
 }));
 export type SessionFollowRuleWitnessV1 = z.infer<typeof SessionFollowRuleWitnessV1Schema>;
 export const SESSION_FOLLOW_PERSONAL_PROGRESS_ROUTE_V1 = `${SESSION_FOLLOW_RULES_ROUTE_V1}/personal-progress` as const;
-/** Private source-owner settlement. Definitions, match facts and channel results never cross this boundary. */
+/** Private settlement by the source executor or the authenticated person receiver. */
 export const SessionFollowPersonalProgressRequestV1Schema = lazyZodSchema(() => {
   const fields = {
     sourceSessionId: asProtocolZod(SessionIdSchema), expectedSourcePublisherGeneration: SessionFollowPublisherGenerationV1Schema,
@@ -33,10 +34,27 @@ export const SessionFollowPersonalProgressRequestV1Schema = lazyZodSchema(() => 
   const requestRules = z.array(z.strictObject({ ruleId: SessionFollowRuleIdV1Schema, ruleVersion: version,
     requestIds: z.array(z.string().check(z.minLength(1))).check(z.minLength(1), z.refine(ids => new Set(ids).size === ids.length)),
   })).check(z.refine(rules => new Set(rules.map(rule => rule.ruleId)).size === rules.length));
+  const receiver = { evaluation: z.literal('receiver'), production: z.enum(['source', 'recovery']),
+    sourceSessionId: asProtocolZod(SessionIdSchema) };
   return z.union([
+    // Private daemon admission. This records selected interest, never accepted
+    // provider consumption; rule identities stay at this Account boundary.
+    z.strictObject({ kind: z.literal('session_stalled'), sourceSessionId: asProtocolZod(SessionIdSchema),
+      destinationSessionId: asProtocolZod(SessionIdSchema), presence: SessionFollowStalledOccurrenceV1Schema,
+      rules: z.array(z.strictObject({ ruleId: SessionFollowRuleIdV1Schema, ruleVersion: version,
+        selectedDelivery: SessionFollowSelectedDeliveryV1Schema })).check(z.minLength(1),
+        z.refine(rules => new Set(rules.map(rule => rule.ruleId)).size === rules.length)) }),
+    z.strictObject({ ...receiver, rules: messageRules.check(z.minLength(1)), sourceMessage: SessionFollowSourceMessageV1Schema,
+      sourceRequests: z.optional(z.never()) }),
+    z.strictObject({ ...receiver, rules: messageRules.check(z.minLength(1)), sourceTurn: SessionFollowSourceTurnV1Schema,
+      terminalSourceMessage: SessionFollowSourceMessageV1Schema }),
+    z.strictObject({ ...receiver, rules: requestRules.check(z.minLength(1)), sourceRequests: SessionFollowSourceRequestsV1Schema,
+      sourceMessage: z.optional(z.never()) }),
     z.strictObject({ discussion: z.strictObject({ original: DiscussionMessageRefV1Schema,
       seq: z.number().check(z.int(), z.positive()) }) }),
     z.strictObject({ original: z.union([ExecutionRunFollowOriginalV1Schema, WorkflowRunFollowOriginalV1Schema]) }),
+    z.strictObject({ ...fields, rules: messageRules, sourceTurn: SessionFollowSourceTurnV1Schema,
+      terminalSourceMessage: SessionFollowSourceMessageV1Schema }),
     z.strictObject({ ...fields, rules: messageRules, sourceMessage: SessionFollowSourceMessageV1Schema, sourceRequests: z.optional(z.never()) }),
     z.strictObject({ ...fields, rules: requestRules, sourceRequests: SessionFollowSourceRequestsV1Schema, sourceMessage: z.optional(z.never()) }),
   ]);
@@ -44,7 +62,8 @@ export const SessionFollowPersonalProgressRequestV1Schema = lazyZodSchema(() => 
 export type SessionFollowPersonalProgressRequestV1 = z.infer<typeof SessionFollowPersonalProgressRequestV1Schema>;
 export const SessionFollowPersonalProgressResponseV1Schema = lazyZodSchema(() => z.strictObject({
   accepted: z.boolean(), alreadyRepresented: z.boolean(),
-}).check(z.refine(value => value.accepted || !value.alreadyRepresented)));
+  reason: z.optional(z.enum(['other_evaluator', 'recovery_unverified'])),
+}).check(z.refine(value => (value.accepted || !value.alreadyRepresented) && (!value.reason || !value.accepted))));
 export type SessionFollowPersonalProgressResponseV1 = z.infer<typeof SessionFollowPersonalProgressResponseV1Schema>;
 /** Server-owned start of a route, independent of authoring edits and accepted progress. */
 export const SessionFollowRuleInceptionV1Schema = lazyZodSchema(() => z.strictObject({
@@ -65,6 +84,9 @@ export type SessionFollowRuleContentV1 = z.infer<typeof SessionFollowRuleContent
 export const SessionFollowRuleContentStoredReadV1Schema = createStoredReadSchema(SessionFollowRuleContentV1Schema);
 const ruleSourcesSchema = lazyZodSchema(() => z.array(z.strictObject({
   sourceSessionId: asProtocolZod(SessionIdSchema), delivered: SessionFollowFrontierV1Schema,
+  /** Daemon-selected pending presence; not a cursor, filter or enrollment. */
+  stalled: z.optional(z.strictObject({ ruleVersion: version, presence: SessionFollowStalledOccurrenceV1Schema,
+    effectiveDelivery: SessionFollowSelectedDeliveryV1Schema })),
 })).check(z.superRefine((sources, context) => {
   const seen = new Set<string>();
   for (const [index, source] of sources.entries()) {
