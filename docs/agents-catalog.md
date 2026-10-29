@@ -1968,6 +1968,12 @@ home and provider item identities. Connected-account native reads pin SQLite to
 the admitted home: the current state-sharing declaration shares rollout entries,
 not ambient user SQLite storage. This adds no SDK service or host-side Codex policy.
 
+Native `webSearch`, `imageView`, and `sleep` items project as `WebSearch`,
+`view_image`, and `sleep` tool rows through the Codex app-server projector shared
+by live Sessions, native children, and External Sessions history. Web searches
+publish on completion, when their query is known, and preserve structured results.
+The separate rollout projection still omits `web_search_call` response items.
+
 Three optional same-Agent siblings add narrower capabilities without creating another Agent or Provider catalog:
 
 - `externalSessionObservation` supplies resource-scoped status evidence and content-free transcript-change signals. `watch_file_changes` and `observe_resource` can support live follow through the host owner; `reconcile_only` cannot.

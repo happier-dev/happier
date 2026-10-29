@@ -347,6 +347,55 @@ describe('Codex public Agent External Sessions contribution', () => {
     } finally { contentReadClock.nativeProxyAvailable = true; await rm(home, { recursive: true, force: true }); }
   });
 
+  it('pages and follows native web searches, image views and sleeps without losing tool rows', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'codex-native-tools-plugin-'));
+    try {
+      const results = [{ title: 'Fusion benchmark', url: 'https://example.invalid/bench', snippet: 'Compared.' }];
+      const tools = [
+        { id: 'search', type: 'webSearch', query: 'fused kernels', action: { type: 'search', query: 'fused kernels', queries: null }, results },
+        { id: 'view', type: 'imageView', path: '/repo/plot.png' },
+        { id: 'sleep', type: 'sleep', durationMs: 30_000 },
+      ].map(item => ({ turnId: 'turn-tools', startedAtMs: 1000, completedAtMs: 2000, item }));
+      const history = { items: tools };
+      const contribution = createCodexExternalSessionsContribution({ env: { CODEX_HOME: home } });
+      const request = { ...invocation({ exec: createThreadListingExec([], [], history) }),
+        source: { kind: 'codexHome', home: 'user' }, remoteSessionId: 'native-thread', maxItems: 1 };
+      const items: Array<{ id: string; raw: unknown }> = [];
+      let cursor: string | undefined;
+      let tail: string | null = null;
+      do {
+        const page = await contribution.pageTranscript({ ...request, direction: 'older', cursor });
+        if (!page.ok) throw new Error(JSON.stringify(page));
+        items.unshift(...page.value.items);
+        tail ??= page.value.tailCursor;
+        cursor = page.value.nextCursor ?? undefined;
+      } while (cursor);
+      expect(items.map(item => item.raw)).toMatchObject([
+        { content: { data: { type: 'tool-call', name: 'WebSearch', input: { query: 'fused kernels' } } } },
+        { content: { data: { type: 'tool-call-result', output: { results } } } },
+        { content: { data: { type: 'tool-call', name: 'view_image', input: { path: '/repo/plot.png' } } } },
+        { content: { data: { type: 'tool-call-result' } } },
+        { content: { data: { type: 'tool-call', name: 'sleep', input: { durationMs: 30_000 } } } },
+        { content: { data: { type: 'tool-call-result' } } },
+      ]);
+      expect(new Set(items.map(item => item.id)).size).toBe(6);
+      history.items.push({ ...tools[0]!, item: { ...tools[0]!.item, id: 'search-follow' } });
+      const followed: unknown[] = [];
+      let followCursor = tail!;
+      do {
+        const page = await contribution.readAfterTranscript({ ...request, cursor: followCursor });
+        if (!page.ok || page.value.outcome !== 'advanced') throw new Error(JSON.stringify(page));
+        followed.push(...page.value.items.map(item => item.raw));
+        followCursor = page.value.nextCursor;
+        if (!page.value.hasMore) break;
+      } while (true);
+      expect(followed).toMatchObject([
+        { content: { data: { type: 'tool-call', name: 'WebSearch' } } },
+        { content: { data: { type: 'tool-call-result', output: { results } } } },
+      ]);
+    } finally { await rm(home, { recursive: true, force: true }); }
+  });
+
   it('preserves partial native command rows and empty native follow continuations', async () => {
     const home = await mkdtemp(join(tmpdir(), 'codex-native-partial-plugin-'));
     try {

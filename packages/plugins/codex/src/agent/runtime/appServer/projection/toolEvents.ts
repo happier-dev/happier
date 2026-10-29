@@ -246,6 +246,26 @@ function projectNativeCodexAppServerToolEvents(params: Readonly<{
     return projectResponseItemToolEvents(item);
   }
 
+  // Native ThreadItem shapes from codex-cli 0.162.1. History and live
+  // notifications share this projection; scoped publication owns deduplication.
+  if (itemType === 'websearch' || itemType === 'imageview' || itemType === 'sleep') {
+    const callId = readFirstString(item, ['callId', 'call_id', 'id', 'itemId', 'item_id']);
+    if (!callId) return [];
+    const name = itemType === 'websearch' ? 'WebSearch' : itemType === 'imageview' ? 'view_image' : 'sleep';
+    const input = itemType === 'websearch' ? { query: item.query, action: item.action }
+      : itemType === 'imageview' ? { path: item.path } : { durationMs: item.durationMs };
+    const call: CodexAppServerProjectedToolEvent = { type: 'tool-call', callId, name, input, sidechainId: null };
+    if (params.method === 'item/started') {
+      // Web search starts with an empty query. Publish the immutable input once it completes.
+      return itemType === 'websearch' ? [] : [call];
+    }
+    if (params.method === 'item/completed') {
+      return [call, { type: 'tool-result', callId,
+        output: itemType === 'websearch' ? { results: item.results } : {}, sidechainId: null }];
+    }
+    return [];
+  }
+
   if (itemType === 'mcptoolcall') {
     if (params.method === 'item/started') {
       const event = readMcpToolCallToolCall(item);
