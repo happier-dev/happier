@@ -3,7 +3,7 @@ import { View, Pressable, type GestureResponderEvent, Platform } from 'react-nat
 import { usePresentationWindowDimensions } from '@/utils/platform/responsive';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { ITEM_ROW_ACTIONS_COMPACT_THRESHOLD_PX, type ItemAction } from '@/components/ui/lists/itemActions';
-import { Popover, type PopoverPlacement, type PopoverPortalOptions } from '@/components/ui/popover';
+import { Popover, type PopoverPlacement, type PopoverPortalOptions, type PopoverRenderProps } from '@/components/ui/popover';
 import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
 import { ActionListSection, type ActionListItem } from '@/components/ui/lists/ActionListSection';
 import { t } from '@/text';
@@ -121,6 +121,7 @@ export function ItemRowActions(props: ItemRowActionsProps) {
         open: props.overflowOpen, onOpenChange: props.onOverflowOpenChange,
     });
     const overflowAnchorRef = React.useRef<View>(null);
+    const requestPopoverCloseRef = React.useRef<PopoverRenderProps['requestClose']>(() => setShowOverflow(false));
     const onOverflowTriggerKeyDown = React.useCallback((event: OverflowTriggerKeyEvent) => {
         if (event.target !== event.currentTarget || !props.onOverflowTriggerKeyDown?.(event.key)) return;
         event.preventDefault();
@@ -151,11 +152,12 @@ export function ItemRowActions(props: ItemRowActionsProps) {
     }, [compact, compactIds, props.actions]);
 
     const closeThen = React.useCallback((fn: () => void) => {
-        setShowOverflow(false);
+        if (props.renderOverflowSurface) setShowOverflow(false);
+        else requestPopoverCloseRef.current('selection');
         // InteractionManager can be delayed by long/continuous interactions (scroll, gestures).
         // Use an immediate fallback so the action still runs promptly.
         runAfterInteractionsWithFallback(fn, { fallbackDelayMs: 0 });
-    }, [setShowOverflow]);
+    }, [props.renderOverflowSurface, setShowOverflow]);
 
     const overflowActionItems = React.useMemo((): ActionListItem[] => {
         return overflowActions.map((action) => {
@@ -372,16 +374,19 @@ export function ItemRowActions(props: ItemRowActionsProps) {
                         {...(props.overflowPhoneSheet ? { phonePresentation: 'sheet' as const, accessibilityLabel: props.title,
                             ...(props.overflowPhoneSheet.subtitle ? { sheetSubtitle: props.overflowPhoneSheet.subtitle } : {}) } : {})}
                     >
-                        {({ maxHeight }) => (
-                            <FloatingOverlay
-                                maxHeight={maxHeight}
-                                keyboardShouldPersistTaps="always"
-                                edgeFades={{ top: true, bottom: true, size: 24 }}
-                                edgeIndicators={true}
-                            >
-                                {content}
-                            </FloatingOverlay>
-                        )}
+                        {({ maxHeight, requestClose }) => {
+                            requestPopoverCloseRef.current = requestClose;
+                            return (
+                                <FloatingOverlay
+                                    maxHeight={maxHeight}
+                                    keyboardShouldPersistTaps="always"
+                                    edgeFades={{ top: true, bottom: true, size: 24 }}
+                                    edgeIndicators={true}
+                                >
+                                    {content}
+                                </FloatingOverlay>
+                            );
+                        }}
                     </Popover>
                 ) : null}
             </View>

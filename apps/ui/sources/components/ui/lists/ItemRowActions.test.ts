@@ -67,7 +67,7 @@ describe('ItemRowActions', () => {
         viewport.width = 320;
         viewport.height = 800;
         // The touch floors below are the finger contract: a phone browser's primary pointer cannot hover.
-        // A precise pointer keeps the dense desktop sizes (see `resolveMinimumInteractiveTargetSize`).
+        // A precise pointer keeps the dense desktop sizes (see `HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE`).
         restoreWebGlobals = withPopoverWebGlobals({
             window: {
                 addEventListener: vi.fn(),
