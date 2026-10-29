@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { readDatabaseTransactionConfigFromEnv } from "@/config/databaseTransactions";
 import { db, initDbPostgres } from "@/storage/db";
-import { afterTx, inTx, TransactionConflictExhaustedError, type Tx } from "@/storage/inTx";
+import { afterTx, inTx, TransactionDeadlineExceededError, type Tx } from "@/storage/inTx";
 import { createDbMaintenanceClient, getDbProviderFromEnv, type PrismaClientType } from "@/storage/prisma";
 import { observeLazyPrismaQuery } from "@/app/changes/accountPublicationContention.testkit";
 
@@ -88,6 +88,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("P
                     expect(row.milliseconds).toBeLessThanOrEqual(configuredMs || 10_000);
                 }
             }, { readOnly: true, timeoutMs: 10_000, transactionClass: "test-unchanged-sql-budget-cost" }));
+            console.info("TRANSACTION_BUDGET_COST", { queries, configuredMs, ...measured });
             const expectedRefreshes = configuredMs === 0 ? queries : 0;
             expect(measured.refreshes).toBe(expectedRefreshes);
             expect(measured.operations).toBe(queries + 2 + expectedRefreshes);
@@ -230,7 +231,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("P
             SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE pid = ${pid} AND xact_start IS NOT NULL) AS "inTransaction"
         `;
 
-        it("ends a lock wait at the budget as a rolled-back conflict and frees the backend while the holder still holds", async () => {
+        it("ends a lock wait at the budget as a rolled-back timeout and frees the backend while the holder still holds", async () => {
             const account = await db.account.create({ data: { publicKey: randomUUID() } });
             let release!: () => void;
             const released = new Promise<void>(resolve => { release = resolve; });
@@ -252,7 +253,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("P
                 }, { transactionClass: "test-lock-wait-budget" })]);
                 const elapsedMs = Date.now() - startedAtMs;
                 expect(outcome[0].status).toBe("rejected");
-                expect((outcome[0] as PromiseRejectedResult).reason).toBeInstanceOf(TransactionConflictExhaustedError);
+                expect((outcome[0] as PromiseRejectedResult).reason).toBeInstanceOf(TransactionDeadlineExceededError);
                 expect(elapsedMs).toBeLessThan(1500 + 3_000);
                 expect(await readBackend(waiterPid)).toEqual([{ inTransaction: false }]);
                 expect(await db.$queryRaw<Array<{ value: number }>>`SELECT 1::int AS value`).toEqual([{ value: 1 }]);
@@ -263,7 +264,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("P
             }
         });
 
-        it("reports a statement cancelled by an earlier SQL budget as a rolled-back conflict", async () => {
+        it("reports a statement cancelled by an earlier SQL budget as a rolled-back timeout", async () => {
             const account = await db.account.create({ data: { publicKey: randomUUID() } });
             const [{ setting: original }] = await db.$queryRaw<Array<{ setting: string }>>`SELECT current_setting('statement_timeout') AS setting`;
             let release!: () => void;
@@ -284,7 +285,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("P
                 const startedAtMs = Date.now();
                 await expect(inTx(async tx => {
                     await tx.account.update({ where: { id: account.id }, data: { seq: { increment: 1 } } });
-                }, { transactionClass: "test-statement-budget-cancel" })).rejects.toBeInstanceOf(TransactionConflictExhaustedError);
+                }, { transactionClass: "test-statement-budget-cancel" })).rejects.toBeInstanceOf(TransactionDeadlineExceededError);
                 expect(Date.now() - startedAtMs).toBeLessThan(1_500);
             } finally {
                 await db.$executeRaw`SELECT set_config('statement_timeout', ${original}, false)`;

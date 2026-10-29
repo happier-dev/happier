@@ -38,6 +38,16 @@ export function projectApiTokenSessionSpawnAdmissionV1(input: unknown): ApiToken
   });
 }
 
+export const ApiTokenGrantDenialReasonV1Schema = z.enum([
+  'action_not_granted',
+  'target_required',
+  'target_not_granted',
+  'create_not_granted',
+  'automation_not_granted',
+  'environment_not_granted',
+]);
+export type ApiTokenGrantDenialReasonV1 = z.infer<typeof ApiTokenGrantDenialReasonV1Schema>;
+
 export const ApiTokenGrantOriginV1Schema = lazyZodSchema(() => CanonicalHttpOriginSchema.check(z.refine((value) => {
   // Zod runs refinements after a dirty superRefine; invalid input must stay a typed refusal.
   if (!CanonicalHttpOriginSchema.safeParse(value).success) return false;

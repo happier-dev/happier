@@ -59,6 +59,7 @@ export type ExternalActionPlacementErrorCode =
     | "target_not_local"
     | "target_unavailable"
     | "database_transaction_conflict_exhausted"
+    | "database_transaction_timeout"
     | "database_connection_unavailable"
     | "encrypted_action_unsupported"
     | "session_input_target_update_required";
@@ -160,7 +161,7 @@ interface DispatchPhaseFailure {
     readonly errorClass: 'TypeError' | 'RangeError' | 'SyntaxError' | 'Error' | 'UnknownError';
     readonly message: 'Unexpected phase failure (details redacted)';
     readonly credentialScopeDenied: boolean;
-    readonly databaseErrorCode: 'database_transaction_conflict_exhausted' | 'database_connection_unavailable' | null;
+    readonly databaseErrorCode: ReturnType<typeof readDatabaseErrorCode>;
 }
 
 type DispatchPhaseResult<T> = Readonly<{ kind: 'ready'; value: T }> | DispatchPhaseFailure;

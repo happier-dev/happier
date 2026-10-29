@@ -1,39 +1,75 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Fastify from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { symbols, type DestinationStream } from 'pino';
 
-import { logger } from './logging/log';
+import { logger, resolveServerLogLevelFromEnv } from './logging/log';
 import { annotateWebLatencyQuery, readWebLatencyRequestId, timeWebLatencyPhase, withWebLatencyTrace } from './webLatencyTrace';
 import { enableMonitoring } from '@/app/api/utils/enableMonitoring';
 import type { Fastify as HappierFastify } from '@/app/api/types';
 
+const originalLevel = logger.level;
+
+beforeEach(() => {
+    logger.level = resolveServerLogLevelFromEnv({ HAPPIER_SERVER_LOG_LEVEL: 'debug' });
+});
+
 afterEach(() => {
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
+    logger.level = originalLevel;
 });
 
 describe('web latency request correlation', () => {
+    it('runs operations without phase clocks or submissions when detailed tracing is disabled', async () => {
+        vi.stubEnv('HAPPIER_WEB_LATENCY_TRACE', '0');
+        const clock = vi.spyOn(performance, 'now');
+        const debug = vi.spyOn(logger, 'debug');
+        const trace = vi.spyOn(logger, 'trace');
+        const result = await withWebLatencyTrace('req-disabled', () => timeWebLatencyPhase('db.Session.findMany', () => {
+            expect(readWebLatencyRequestId()).toBe('req-disabled');
+            expect(annotateWebLatencyQuery('SELECT 1')).toBe('SELECT 1');
+            return 'ok';
+        }));
+        expect(result).toBe('ok');
+        expect(clock).not.toHaveBeenCalled();
+        expect(debug).not.toHaveBeenCalled();
+        expect(trace).not.toHaveBeenCalled();
+    });
+
     it('keeps successful database span detail at trace while debug retains request summaries and failures', async () => {
         vi.stubEnv('HAPPIER_WEB_LATENCY_TRACE', '1');
         const originalLevel = logger.level;
-        const records: { phase?: string; level?: string }[] = [];
+        const records: { phase?: string; level?: string; spanId?: number; parentSpanId?: number }[] = [];
         const stream = (logger as unknown as { [symbols.streamSym]: DestinationStream })[symbols.streamSym];
         vi.spyOn(stream, 'write').mockImplementation(message => {
             records.push(JSON.parse(message));
         });
         try {
             logger.level = 'debug';
+            // Observe submissions to external Pino, before its real threshold filtering.
+            const trace = vi.spyOn(logger, 'trace');
             await withWebLatencyTrace('23b2ed82-2ef7-4e4e-af0f-f64d599a08c6', async () => {
-                await timeWebLatencyPhase('db.Session.findMany', () => 'ok');
-                await timeWebLatencyPhase('db.transaction.callback', () => 'ok');
+                for (let index = 0; index < 1_000; index++) {
+                    expect(await timeWebLatencyPhase('db.Session.findMany', () => {
+                        expect(annotateWebLatencyQuery('SELECT 1')).toContain(`happier-web-latency:23b2ed82-2ef7-4e4e-af0f-f64d599a08c6:${index + 1}`);
+                        return index;
+                    })).toBe(index);
+                }
                 await timeWebLatencyPhase('http.GET./v2/changes', () => 'ok');
                 await expect(timeWebLatencyPhase('db.transaction.attempt', () => { throw new Error('private'); })).rejects.toThrow();
             });
             expect(records.map(record => record.phase)).toEqual(['http.GET./v2/changes', 'db.transaction.attempt']);
+            expect(trace.mock.calls.length).toBe(0);
             logger.level = 'trace';
-            await timeWebLatencyPhase('db.Session.findMany', () => 'ok');
-            expect(records.at(-1)).toMatchObject({ phase: 'db.Session.findMany', level: 'trace' });
+            const enabledTrace = vi.spyOn(logger, 'trace');
+            await withWebLatencyTrace('req-enabled', () => timeWebLatencyPhase('db.transaction.callback', () =>
+                timeWebLatencyPhase('db.Session.findMany', () => 'ok')));
+            expect(enabledTrace).toHaveBeenCalledTimes(2);
+            const child = records.find(record => record.phase === 'db.Session.findMany');
+            const parent = records.find(record => record.phase === 'db.transaction.callback');
+            expect(parent).toMatchObject({ spanId: 1 });
+            expect(child).toMatchObject({ phase: 'db.Session.findMany', level: 'trace', spanId: 2, parentSpanId: parent?.spanId });
         } finally {
             logger.level = originalLevel;
         }
@@ -135,6 +171,7 @@ describe('web latency request correlation', () => {
 
     it('keeps failed attempts at debug and successful database detail at trace', async () => {
         vi.stubEnv('HAPPIER_WEB_LATENCY_TRACE', '1');
+        logger.level = 'trace';
         const debug = vi.spyOn(logger, 'debug').mockImplementation(() => undefined);
         const trace = vi.spyOn(logger, 'trace').mockImplementation(() => undefined);
         const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);

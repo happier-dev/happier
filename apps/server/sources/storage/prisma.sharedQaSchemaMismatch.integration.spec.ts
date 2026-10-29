@@ -10,6 +10,8 @@ import { startSocket } from '@/app/api/socket';
 import type { Fastify as AppFastify } from '@/app/api/types';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
 import { logger } from '@/utils/logging/log';
+import { enableErrorHandlers } from '@/app/api/utils/enableErrorHandlers';
+import { symbols, type DestinationStream } from 'pino';
 import { db, withSqliteReadSnapshot, type TransactionClient } from './prisma';
 
 describe('shared QA schema errors at the Prisma and socket boundaries', () => {
@@ -22,6 +24,65 @@ describe('shared QA schema errors at the Prisma and socket boundaries', () => {
         });
     }, 120_000);
     afterAll(async () => { await harness?.close(); });
+
+    it.each(['root', 'batch', 'interactive', 'snapshot'] as const)('keeps Prisma validation names through the real query and HTTP diagnostic without query values (%s)', async mode => {
+        harness.resetEnv({ HAPPIER_STACK_SHARED_DB_SOURCE_STACK: 'dev-test' });
+        const records: Record<string, unknown>[] = [];
+        const stream = Reflect.get(logger, symbols.streamSym) as DestinationStream;
+        const sink = vi.spyOn(stream, 'write').mockImplementation(chunk => { records.push(JSON.parse(String(chunk))); });
+        const app = Fastify({ logger: false });
+        enableErrorHandlers(app as unknown as AppFastify);
+        const query = (client: Pick<TransactionClient, 'account'>) => client.account.findMany({
+            where: {
+                id: 'private-query-value',
+                // Prisma's generic input permits extra properties; runtime validation rejects this one.
+                reporterMachineId: 'private-query-value',
+            },
+        });
+        app.get('/validation-query', async () => {
+            if (mode === 'batch') return db.$transaction([query(db)]);
+            if (mode === 'interactive') return db.$transaction(tx => query(tx));
+            if (mode === 'snapshot') return withSqliteReadSnapshot(tx => query(tx));
+            return query(db);
+        });
+        try {
+            const response = await app.inject({ method: 'GET', url: '/validation-query' });
+            expect(response.statusCode).toBe(500);
+            expect(response.json()).toMatchObject({ code: 'database_query_validation_failed', statusCode: 500 });
+            expect(records).toEqual(expect.arrayContaining([expect.objectContaining({
+                module: 'fastify-error', errorClass: 'PrismaClientValidationError',
+                errorCode: 'database_query_validation_failed', httpStatus: 500,
+                prismaModel: 'Account', prismaOperation: 'findMany',
+                validationSummary: ['Unknown argument: reporterMachineId'],
+            })]));
+            expect(JSON.stringify(records)).not.toContain('private-query-value');
+            expect(response.body).not.toContain('reporterMachineId');
+            expect(response.body).not.toContain('private-query-value');
+        } finally { sink.mockRestore(); await app.close(); }
+    });
+
+    it('reproduces the captured old catalog selector while the current Machine-qualified selector reads successfully', async () => {
+        harness.resetEnv({ HAPPIER_STACK_SHARED_DB_SOURCE_STACK: 'dev-test' });
+        const identity = {
+            accountId: 'validation-capture', eventPluginId: 'validation-capture',
+            reporterMaterializationId: 'validation-capture', scopeKey: 'validation-capture',
+        };
+        // Exact old producer shape observed in runtime-47234f634be4…-2BFezb,
+        // startServer-FJNPRU7R.js:2:9295460. Deliberately bypass current input types.
+        const legacyArgs = { where: { accountId_eventPluginId_reporterMaterializationId_scopeKey: identity } } as unknown as
+            Parameters<TransactionClient['automationEventSourceCatalogStatus']['findUnique']>[0];
+        const failure: unknown = await db.automationEventSourceCatalogStatus.findUnique(legacyArgs).catch(error => error);
+        expect(failure).toMatchObject({
+            code: 'database_query_validation_failed',
+            diagnostic: { prismaModel: 'AutomationEventSourceCatalogStatus', prismaOperation: 'findUnique',
+                validationSummary: expect.arrayContaining(['Unknown argument: accountId_eventPluginId_reporterMaterializationId_scopeKey']) },
+        });
+        await expect(db.automationEventSourceCatalogStatus.findUnique({ where: {
+            accountId_eventPluginId_reporterMachineId_reporterMaterializationId_scopeKey: {
+                ...identity, reporterMachineId: 'validation-capture',
+            },
+        } })).resolves.toBeNull();
+    });
 
     it('preserves root metrics beside diagnostic snapshot queries', async () => {
         harness.resetEnv({ HAPPIER_STACK_SHARED_DB_SOURCE_STACK: 'dev-test' });

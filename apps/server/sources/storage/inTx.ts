@@ -1,3 +1,6 @@
+import { TransactionConflictExhaustedError, TransactionAcquisitionUnavailableError, TransactionDeadlineExceededError, isTransactionDeadlineExceededError } from "@/storage/transactionErrors";
+export { TransactionConflictExhaustedError, TransactionAcquisitionUnavailableError, TransactionDeadlineExceededError,
+    isTransactionConflictExhaustedError, isTransactionAcquisitionUnavailableError, isTransactionDeadlineExceededError } from "@/storage/transactionErrors";
 import { readDatabaseTransactionConfigFromEnv, resolveTransactionRetryDelayMs, type DatabaseTransactionConfig } from "@/config/databaseTransactions";
 import { recordDatabaseTransactionRetry } from "@/app/monitoring/metrics/sessionWriteMetrics";
 import { delay } from "@/utils/runtime/delay";
@@ -6,7 +9,8 @@ import { getDbProviderFromEnv, getPooledTransactionAdmission, isPrismaErrorCode,
 import { isLockAdmissionDeadlineExceededError, LockAdmissionDeadlineExceededError } from "@/utils/runtime/lock";
 import { isRetryableSqliteWriteError } from "@/storage/sqliteRetryClassifier";
 import { log } from "@/utils/logging/log";
-import { readWebLatencyRequestId, timeWebLatencyPhase } from '@/utils/webLatencyTrace';
+import { createWebLatencyTransactionAttempt, readWebLatencyRequestId, settleWebLatencyTransactionAttempt,
+    timeWebLatencyPhase, type WebLatencyTransactionAttempt } from '@/utils/webLatencyTrace';
 import { flushAccountChangesInTx } from '@/app/changes/markAccountChanged';
 
 export type Tx = TransactionClient;
@@ -77,42 +81,6 @@ export class TransactionReplayRequiredError extends Error {
         super("Database transaction must replay its current account audience");
         this.name = "TransactionReplayRequiredError";
     }
-}
-
-/** Recovery exhausted after the transaction owner established rollback. */
-export class TransactionConflictExhaustedError extends Error {
-    readonly code = "database_transaction_conflict_exhausted";
-
-    constructor(readonly cause: unknown) {
-        super("Database transaction conflict recovery is exhausted");
-        this.name = "TransactionConflictExhaustedError";
-    }
-}
-
-export function isTransactionConflictExhaustedError(error: unknown): error is TransactionConflictExhaustedError {
-    return error instanceof TransactionConflictExhaustedError;
-}
-
-export class TransactionAcquisitionUnavailableError extends Error {
-    readonly code = "P2028";
-    readonly cause: unknown;
-
-    constructor(cause: unknown) {
-        super("Database transaction acquisition is temporarily unavailable");
-        this.name = "TransactionAcquisitionUnavailableError";
-        this.cause = cause;
-    }
-}
-
-export class TransactionDeadlineExceededError extends Error {
-    constructor(readonly cause: unknown, readonly transactionClass?: string) {
-        super("Database transaction request deadline expired");
-        this.name = "TransactionDeadlineExceededError";
-    }
-}
-
-export function isTransactionDeadlineExceededError(error: unknown): error is TransactionDeadlineExceededError {
-    return error instanceof TransactionDeadlineExceededError;
 }
 
 /** Thrown inside the interactive callback, whose rejection rolls back this
@@ -192,22 +160,17 @@ function readContentFreeDriverErrorMessage(error: unknown): string | undefined {
 export function isRetryableTransactionError(params: Readonly<{ provider: string; err: unknown }>): boolean {
     // Acquisition-shaped P2028 requires callback-entry context, which only inTx owns.
     if (isTransactionAcquisitionTimeout(params.err)) return false;
+    if (params.provider === "postgres") {
+        const sqlState = readPostgresTransactionSqlState(params.err);
+        // Only genuine concurrency aborts can replay the complete operation.
+        // Expired execution/acquisition and ordinary lock timeouts settle;
+        // unstructured messages cannot authorize replay of an unknown outcome.
+        return isPrismaErrorCode(params.err, "P2034") || sqlState === "40001" || sqlState === "40P01";
+    }
+
     if (isPrismaErrorCode(params.err, "P2034")) return true;
     if (isExpiredTransactionError(params.err)) return true;
     if (params.err instanceof TransactionAttemptDeadlineExceededError) return true;
-
-    if (params.provider === "postgres") {
-        const sqlState = readPostgresTransactionSqlState(params.err);
-        // 57014 is the transaction's own statement budget (SET LOCAL
-        // statement_timeout) ending a lock wait; it aborts the transaction.
-        if (sqlState === "40001" || sqlState === "40P01" || sqlState === "55P03" || sqlState === "57014") return true;
-        // Retain historical recovery heuristics without treating them as
-        // confirmed rollback when recovery ultimately fails.
-        const message = errorMessage(params.err).toLowerCase();
-        if (message.includes("could not serialize access")) return true;
-        if (message.includes("serialization failure")) return true;
-        if (message.includes("deadlock detected")) return true;
-    }
 
     if (params.provider === "sqlite") {
         if (isRetryableSqliteWriteError(params.err)) return true;
@@ -242,11 +205,6 @@ export function isTransactionAcquisitionTimeout(error: unknown): boolean {
         && readTransactionErrorMessage(error).toLowerCase().includes("unable to start a transaction");
 }
 
-export function isTransactionAcquisitionUnavailableError(
-    error: unknown,
-): error is TransactionAcquisitionUnavailableError {
-    return error instanceof TransactionAcquisitionUnavailableError;
-}
 
 export function afterTx(tx: Tx, callback: () => void) {
     // Golden rule:
@@ -367,6 +325,7 @@ async function withPostgresStatementBudget(tx: Tx, timeoutMs: number, startedAtM
 }
 
 export async function inTx<T>(fn: (tx: Tx) => Promise<T>, options?: InTxOptions): Promise<ResolvedTransactionResult<T>> {
+    const startedAtMs = Date.now();
     const provider = getDbProviderFromEnv(process.env, "postgres");
     if (provider === "sqlite" && options?.readOnly) {
         if (options.prepare) {
@@ -379,68 +338,87 @@ export async function inTx<T>(fn: (tx: Tx) => Promise<T>, options?: InTxOptions)
         return await withSqliteReadSnapshot(async tx => resolveTransactionResult(await fn(tx)), { deadlineAtMs: options.deadlineAtMs });
     }
     const transactionConfig = readDatabaseTransactionConfigFromEnv(process.env, provider);
+    const configuredMaxWaitMs = options?.maxWaitMs ?? transactionConfig.maxWaitMs;
+    const configuredTimeoutMs = options?.timeoutMs ?? transactionConfig.timeoutMs;
+    // One operation owns preparation, admission, execution and retry backoff.
+    // Legacy PostgreSQL callers derive it from the existing phase allowances;
+    // never import SQLite's total retry budget or renew it on replay.
+    const deadlineAtMs = options?.deadlineAtMs ?? (provider === "postgres"
+        ? startedAtMs + configuredMaxWaitMs + configuredTimeoutMs : undefined);
     const admission = provider === "postgres" ? getPooledTransactionAdmission() : undefined;
     let counter = 0;
-    const startedAtMs = Date.now();
     let ambiguousAttemptFailure: { error: unknown } | undefined;
     let transactionCallbackEntered = false;
     let transactionCallbackCompleted = false;
-    let wrapped = async (tx: Tx, timeoutMs: number, acquisitionDeadlineAtMs: number, fence?: (tx: Tx) => Promise<void>) => {
+    let attemptTrace: WebLatencyTransactionAttempt | undefined;
+    let wrapped = async (tx: Tx, timeoutMs: number, acquisitionDeadlineAtMs: number, fence?: (tx: Tx) => Promise<void>, trace?: WebLatencyTransactionAttempt) => {
         const attemptStartedAtMs = Date.now();
-        if (
-            options?.deadlineAtMs !== undefined
-            && attemptStartedAtMs >= options.deadlineAtMs
-        ) {
-            throw new TransactionDeadlineExceededError(null, options?.transactionClass);
+        if (trace) trace.nativeCallbackStartedAtMs = attemptStartedAtMs;
+        try {
+            if (
+                deadlineAtMs !== undefined
+                && attemptStartedAtMs >= deadlineAtMs
+            ) {
+                throw new TransactionDeadlineExceededError(null, options?.transactionClass);
+            }
+            // Prisma maxWait bounds its pool, but a proxy-queued BEGIN can enter
+            // later. Reject before admitting user work; callback rejection rolls
+            // the native transaction back through the existing acquisition path.
+            if (attemptStartedAtMs >= acquisitionDeadlineAtMs) throw new LockAdmissionDeadlineExceededError();
+            transactionCallbackEntered = true;
+            if (provider === "postgres" && options?.readOnly) {
+                await tx.$executeRaw`SET TRANSACTION READ ONLY`;
+            }
+            if (provider === "postgres") {
+                // Prisma's interactive deadline does not interrupt an in-flight SQL
+                // lock wait. Charge earlier operations to the same execution budget so
+                // an expired callback cannot retain a pooled connection indefinitely.
+                tx = await withPostgresStatementBudget(tx, timeoutMs, attemptStartedAtMs);
+            }
+            // Keep all per-attempt state on this closure-owned object, rather than
+            // assigning through Prisma's proxy onto a potentially shared client.
+            const context: TransactionContext = {
+                callbacks: [], readOnly: options?.readOnly === true,
+                transactionClass: options?.transactionClass ?? "unspecified",
+                requestId: readWebLatencyRequestId(),
+            };
+            tx = new Proxy(tx, {
+                get(target, property) {
+                    return property === symbol ? context : Reflect.get(target, property, target);
+                },
+            });
+            if (fence) await fence(tx);
+            let result = await timeWebLatencyPhase('db.transaction.callback', () => fn(tx), options?.transactionClass);
+            await flushAccountChangesInTx(tx);
+            if (trace) trace.publicationCompletedAtMs = Date.now();
+            const resolvedResult = resolveTransactionResult(result);
+            let callbacks = context.callbacks;
+            transactionCallbackCompleted = true;
+            return { result: resolvedResult, callbacks };
+        } finally {
+            if (trace) trace.nativeCallbackEndedAtMs = Date.now();
         }
-        // Prisma maxWait bounds its pool, but a proxy-queued BEGIN can enter
-        // later. Reject before admitting user work; callback rejection rolls
-        // the native transaction back through the existing acquisition path.
-        if (attemptStartedAtMs >= acquisitionDeadlineAtMs) throw new LockAdmissionDeadlineExceededError();
-        transactionCallbackEntered = true;
-        if (provider === "postgres" && options?.readOnly) {
-            await tx.$executeRaw`SET TRANSACTION READ ONLY`;
-        }
-        if (provider === "postgres") {
-            // Prisma's interactive deadline does not interrupt an in-flight SQL
-            // lock wait. Charge earlier operations to the same execution budget so
-            // an expired callback cannot retain a pooled connection indefinitely.
-            tx = await withPostgresStatementBudget(tx, timeoutMs, attemptStartedAtMs);
-        }
-        // Keep all per-attempt state on this closure-owned object, rather than
-        // assigning through Prisma's proxy onto a potentially shared client.
-        const context: TransactionContext = {
-            callbacks: [], readOnly: options?.readOnly === true,
-            transactionClass: options?.transactionClass ?? "unspecified",
-            requestId: readWebLatencyRequestId(),
-        };
-        tx = new Proxy(tx, {
-            get(target, property) {
-                return property === symbol ? context : Reflect.get(target, property, target);
-            },
-        });
-        if (fence) await fence(tx);
-        let result = await timeWebLatencyPhase('db.transaction.callback', () => fn(tx), options?.transactionClass);
-        await flushAccountChangesInTx(tx);
-        const resolvedResult = resolveTransactionResult(result);
-        let callbacks = context.callbacks;
-        transactionCallbackCompleted = true;
-        return { result: resolvedResult, callbacks };
     }
     while (true) {
         transactionCallbackEntered = false;
         transactionCallbackCompleted = false;
+        attemptTrace = process.env.HAPPIER_WEB_LATENCY_TRACE === '1' ? createWebLatencyTransactionAttempt({
+            transactionClass: options?.transactionClass ?? 'unspecified', provider,
+            isolationLevel: provider === 'sqlite' ? null : options?.isolationLevel ?? 'ReadCommitted',
+            entryAtMs: startedAtMs, deadlineAtMs: deadlineAtMs ?? null, configuredMaxWaitMs, configuredTimeoutMs,
+        }) : undefined;
         try {
             const fence = options?.prepare
-                ? await prepareTransactionAttempt(options.prepare, options.deadlineAtMs, options.transactionClass)
+                ? await prepareTransactionAttempt(options.prepare, deadlineAtMs, options.transactionClass)
                 : undefined;
-            const configuredMaxWaitMs = options?.maxWaitMs ?? transactionConfig.maxWaitMs;
             const acquisitionStartedAtMs = Date.now();
-            const acquisitionDeadlineAtMs = Math.min(acquisitionStartedAtMs + configuredMaxWaitMs, options?.deadlineAtMs ?? Infinity);
+            if (attemptTrace) attemptTrace.admissionSubmittedAtMs = acquisitionStartedAtMs;
+            const acquisitionDeadlineAtMs = Math.min(acquisitionStartedAtMs + configuredMaxWaitMs, deadlineAtMs ?? Infinity);
             const attempt = async () => {
-                const remainingMs = options?.deadlineAtMs === undefined
+                if (attemptTrace) attemptTrace.admissionAcquiredAtMs = Date.now();
+                const remainingMs = deadlineAtMs === undefined
                     ? null
-                    : Math.floor(options.deadlineAtMs - Date.now());
+                    : Math.floor(deadlineAtMs - Date.now());
                 if (remainingMs !== null && remainingMs < 2) {
                     throw new TransactionDeadlineExceededError(null, options?.transactionClass);
                 }
@@ -449,7 +427,6 @@ export async function inTx<T>(fn: (tx: Tx) => Promise<T>, options?: InTxOptions)
                 const remainingMaxWaitMs = admission
                     ? configuredMaxWaitMs - (Date.now() - acquisitionStartedAtMs) : configuredMaxWaitMs;
                 if (remainingMaxWaitMs < 1) throw new LockAdmissionDeadlineExceededError();
-                const configuredTimeoutMs = options?.timeoutMs ?? transactionConfig.timeoutMs;
                 const boundedMaxWaitMs = remainingMs === null
                     ? remainingMaxWaitMs
                     : Math.max(1, Math.min(remainingMaxWaitMs, Math.floor(remainingMs / 3)));
@@ -473,11 +450,17 @@ export async function inTx<T>(fn: (tx: Tx) => Promise<T>, options?: InTxOptions)
                               timeout: boundedTimeoutMs,
                               maxWait: boundedMaxWaitMs,
                           };
-                return await timeWebLatencyPhase('db.transaction.attempt', () => db.$transaction(tx => wrapped(tx, boundedTimeoutMs, attemptAcquisitionDeadlineAtMs, fence), txOpts), options?.transactionClass);
+                if (attemptTrace) {
+                    attemptTrace.boundedMaxWaitMs = boundedMaxWaitMs;
+                    attemptTrace.boundedTimeoutMs = boundedTimeoutMs;
+                }
+                const trace = attemptTrace;
+                return await timeWebLatencyPhase('db.transaction.attempt', () => db.$transaction(tx => wrapped(tx, boundedTimeoutMs, attemptAcquisitionDeadlineAtMs, fence, trace), txOpts), options?.transactionClass, trace);
             };
             const result = admission
                 ? await admission.inLock(attempt, { deadlineAtMs: acquisitionDeadlineAtMs })
                 : await attempt();
+            if (attemptTrace) settleWebLatencyTransactionAttempt(attemptTrace, 'committed');
             for (let callback of result.callbacks) {
                 try {
                     callback();
@@ -508,8 +491,7 @@ export async function inTx<T>(fn: (tx: Tx) => Promise<T>, options?: InTxOptions)
             // After the return, the same error remains an unknown outcome.
             const missingBeforeCommit = transactionCallbackEntered && !transactionCallbackCompleted
                 && isMissingPrismaTransactionError(e);
-            const retryable = acquisitionTimeout
-                || missingBeforeCommit
+            const retryable = (provider !== "postgres" && (acquisitionTimeout || missingBeforeCommit))
                 || (transactionCallbackEntered && e instanceof TransactionReplayRequiredError)
                 || isRetryableTransactionError({ provider, err: e });
             const confirmedRollback = (transactionCallbackEntered && e instanceof TransactionReplayRequiredError)
@@ -520,6 +502,8 @@ export async function inTx<T>(fn: (tx: Tx) => Promise<T>, options?: InTxOptions)
                 // transaction. Other P2028 states do not prove no commit.
                 || isExpiredTransactionError(e)
                 || sqlState === "40001" || sqlState === "40P01" || sqlState === "55P03" || sqlState === "57014";
+            if (attemptTrace) settleWebLatencyTransactionAttempt(attemptTrace,
+                acquisitionTimeout ? 'not-started' : confirmedRollback ? 'rolled-back' : 'unknown', e, sqlState);
             // Retryable transport failures and legacy message heuristics do
             // not prove an earlier attempt failed to commit. Later rollback or
             // acquisition failure cannot erase that unknown outcome.
@@ -537,6 +521,12 @@ export async function inTx<T>(fn: (tx: Tx) => Promise<T>, options?: InTxOptions)
                 }
                 if (ambiguousAttemptFailure) throw ambiguousAttemptFailure.error;
                 if (confirmedRollback || acquisitionTimeout) {
+                    const driverErrorMessage = sqlState ? readContentFreeDriverErrorMessage(e) : undefined;
+                    // A query-cancel/lock SQLSTATE alone does not identify a
+                    // deadline (for example, user cancellation or NOWAIT).
+                    const expired = isExpiredTransactionError(e) || e instanceof TransactionAttemptDeadlineExceededError
+                        || (sqlState === "57014" && driverErrorMessage === "canceling statement due to statement timeout")
+                        || (sqlState === "55P03" && driverErrorMessage === "canceling statement due to lock timeout");
                     const meta = typeof e === "object" && e !== null && "meta" in e ? e.meta : undefined;
                     const failedStatementRelation = typeof meta === "object" && meta !== null
                         && "modelName" in meta && typeof meta.modelName === "string" ? meta.modelName : undefined;
@@ -552,19 +542,27 @@ export async function inTx<T>(fn: (tx: Tx) => Promise<T>, options?: InTxOptions)
                         module: "storage-tx", level: "warn", event: acquisitionTimeout ? "transaction-acquisition" : "transaction-rollback",
                         transactionClass: options?.transactionClass ?? "unspecified",
                         provider, sqlState, prismaCode, prismaTransactionErrorKind, failedStatementRelation,
-                        outcome: acquisitionTimeout ? "acquisition-unavailable" : "conflict-exhausted",
+                        outcome: acquisitionTimeout ? "acquisition-unavailable" : expired ? "deadline-exceeded" : "conflict-exhausted",
                         driverErrorCode: sqlState,
-                        driverErrorMessage: sqlState ? readContentFreeDriverErrorMessage(e) : undefined,
+                        driverErrorMessage,
                         isolationLevel: provider === "sqlite" ? undefined : options?.isolationLevel ?? "ReadCommitted",
                         readOnly: options?.readOnly === true,
                         attempts: counter + 1,
                         ...(e instanceof TransactionReplayRequiredError ? { replayReason: e.reason } : {}),
-                    }, acquisitionTimeout ? "Database transaction acquisition is unavailable" : "Database transaction rollback recovery exhausted");
+                    }, acquisitionTimeout ? "Database transaction acquisition is unavailable"
+                        : expired ? "Database transaction deadline expired" : "Database transaction rollback recovery exhausted");
                     if (acquisitionTimeout) throw new TransactionAcquisitionUnavailableError(e);
+                    if (expired) throw new TransactionDeadlineExceededError(e, options?.transactionClass);
                     throw new TransactionConflictExhaustedError(e);
                 }
                 throw e;
             };
+            if (provider === "postgres" && (confirmedRollback || acquisitionTimeout)
+                && (!retryable || (deadlineAtMs !== undefined && Date.now() >= deadlineAtMs))) {
+                // Execution/admission exhaustion never opens another window.
+                // Keep this owner's established rollback/availability certainty.
+                throwExhausted();
+            }
             if (
                 options?.deadlineAtMs !== undefined
                 && transactionCallbackEntered
@@ -590,7 +588,8 @@ export async function inTx<T>(fn: (tx: Tx) => Promise<T>, options?: InTxOptions)
                 ) {
                     throwExhausted();
                 }
-                if (options?.deadlineAtMs !== undefined && Date.now() + retryDelayMs >= options.deadlineAtMs) {
+                if (deadlineAtMs !== undefined && Date.now() + retryDelayMs >= deadlineAtMs) {
+                    if (provider === "postgres") throwExhausted();
                     throw new TransactionDeadlineExceededError(ambiguousAttemptFailure?.error ?? e, options?.transactionClass);
                 }
                 counter = nextAttempt;

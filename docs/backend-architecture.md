@@ -361,6 +361,12 @@ or the existing presence-expiry path.
 
 ## Storage and persistence
 ### Database (Prisma)
+In 0.3 development source, `sources/storage/prisma.ts` constructs runtime and
+maintenance clients with `errorFormat: 'minimal'` for every database provider.
+This disables Prisma's per-query source call-site capture in development and QA,
+while retaining error messages, codes and metadata for `inTx` and the shared HTTP
+error handler. Server diagnostics do not depend on Prisma source snippets.
+
 Prisma models live in `prisma/schema.prisma`. Key tables:
 
 ```mermaid
@@ -444,7 +450,9 @@ flowchart TD
 - Session organization counts, hierarchy and whole-order replacement share the existing exclusive Account admission through `organization/changes.ts`, before reading the aggregate. Session-specific operations admit their complete Session audience at that strongest intent initially; nested import owners reuse it without widening or upgrading. Creation placement retains its opposing content admission. Private reply-progress HTTP/socket writers instead use the existing exact original-JSON CAS and current linked admission at ReadCommitted; they allocate no Account cursor and do not introduce a second progress owner.
 - `afterTx()` to emit socket updates after commit.
 
-In 0.3 development source, local admission and native transaction acquisition consume the same acquisition budget. Callback entry rechecks that budget before user work, including when a transaction pooler delays BEGIN beyond Prisma's own pool wait. An expired entry rolls back without running user work or `afterTx`; it uses the existing retry owner and budgets. Request-deadline and acquisition exhaustion both project through the shared HTTP error mapper as 503 `database_connection_unavailable`. This entry check prevents a late commit; it does not interrupt a BEGIN still queued at the pooler.
+In 0.3 development source, PostgreSQL transactions share one absolute operation deadline across preparation, local admission, native acquisition, callback SQL and retry backoff. `inTx` uses the caller's deadline when supplied; otherwise it derives one at entry from the configured maxWait plus timeout (normally 10 + 15 seconds). Retries never renew that allowance. Whole-transaction replay is limited to structured concurrency aborts (`P2034`, SQLSTATE `40001`/`40P01`) and explicit domain replay requests, within the existing retry cap and backoff. Expired `P2028`, internal execution expiry, statement cancellation (`57014`) and ordinary lock timeout (`55P03`) settle without another attempt. Expired execution and statement/lock-budget expiry use `database_transaction_timeout` HTTP 503; exhausted conflicts use `database_transaction_conflict_exhausted`. Cancellation without evidence of expiry retains its rollback classification; unknown commit outcomes remain distinct. SQLite retains its own retry budget.
+
+Local admission and native transaction acquisition consume the same acquisition budget. Callback entry rechecks that budget before user work, including when a transaction pooler delays BEGIN beyond Prisma's own pool wait. An expired PostgreSQL entry settles without running user work, `afterTx` or another acquisition attempt. Request-deadline and acquisition exhaustion both project through the shared HTTP error mapper as 503 `database_connection_unavailable`. This entry check prevents a late commit; it does not interrupt a BEGIN still queued at the pooler.
 
 Account publication holds its row locks through commit. The required lock order is the complete prospective Account audience in id order before Session write locks or the retained owner-metadata fence. Session discovery includes retained grants on unpublished Sessions and inactive Accounts, so later publication or reactivation cannot introduce an unfenced reader. The same census covers manager Follow destinations, managed source Sessions and requested lifecycle Automation publications. After acquisition, the canonical Session helper rechecks the audience; an expanded audience rolls back and replays the whole transaction instead of extending locks out of order. Grant/membership/Account-status writers fence their affected Session audiences before mutation. Pending admission similarly rechecks its selected Machine/controller after acquisition.
 
@@ -456,7 +464,9 @@ In development source, the Account admission owner sets PostgreSQL `application_
 
 The same opt-in development trace distinguishes Session RPC connection, issue and ACK wait; runner outbox persistence, delivery-slot admission and transcript socket ACK; and server publisher queue admission versus execution. `socket.transcript-observation.ack` marks the successful observation response immediately before invoking its callback, not proof that the caller received it. Actor resolution and realtime/ready publication can follow that marker, so the complete socket-handler span is not an ACK latency. Successful `db.*` spans require trace-level server logs; other phase summaries use debug. Request roots are process-local: join the caller, runner and server using the owned Session and a single unambiguous original operation, not an assumed shared UUID. The default Session RPC ACK budget is 20 seconds after connection; whole-command time additionally includes startup and admission outside that wait.
 
-Exhaustion diagnostics distinguish Prisma P2028 as `acquisition-unavailable`, `expired-timeout`, `transaction-not-found` or `unclassified` in `prismaTransactionErrorKind`, using the existing recovery classifiers. Acquisition exhaustion records `outcome: acquisition-unavailable`; confirmed rollback retains `outcome: conflict-exhausted`. These labels do not change retry or outcome-certainty policy, and never include raw Prisma messages. Team restore and credential deletion supply `teams.restore` and `teams.credentials.delete` transaction classes to this same owner and Account admission label.
+Development source adds one content-free `db.transaction.phases` record per managed interactive `inTx` attempt with `HAPPIER_WEB_LATENCY_TRACE=1` and `HAPPIER_SERVER_LOG_LEVEL=trace`. It records the original entry/deadline, configured and bounded allowances, local admission submit/acquire, native callback start/end, publication completion and native settlement; unreached phases are null. Existing SQL spans carry the same request id and attempt id, so their durations and completion timestamps distinguish SQL from gaps between statements. Settlement uses the transaction owner's existing certainty (`committed`, `rolled-back`, `not-started` or `unknown`); P2028 discovery is a fixed query, batch query, or commit label, with numeric native timeout/elapsed and SQLSTATE when exposed. No SQL, parameters or raw Prisma messages enter these records. Disabled capture adds no trace state, clock or timer work. This capture does not itself identify a lock holder or explain time in client/event-loop gaps; those require contemporaneous evidence.
+
+Exhaustion diagnostics distinguish Prisma P2028 as `acquisition-unavailable`, `expired-timeout`, `transaction-not-found` or `unclassified` in `prismaTransactionErrorKind`, using the existing recovery classifiers. Acquisition exhaustion records `outcome: acquisition-unavailable`; execution or statement-budget expiry records `outcome: deadline-exceeded`; other confirmed rollback exhaustion records `outcome: conflict-exhausted`. These labels do not change retry or outcome-certainty policy, and never include raw Prisma messages. Team restore and credential deletion supply `teams.restore` and `teams.credentials.delete` transaction classes to this same owner and Account admission label.
 
 This development-source pattern is used for multi-write operations like batch KV mutation and session deletion.
 
@@ -523,6 +533,17 @@ graph TB
 - **Push tokens**: stored for later notification delivery.
 
 ## Observability
+
+In 0.3 development source, Prisma validation failures reaching the global HTTP
+error handler return the opaque HTTP 500 envelope with code
+`database_query_validation_failed`. The existing shared-QA/latency query extension
+captures model and operation at the query boundary. `storage/prismaErrors.ts`
+projects recognized validation sentences into field/argument names only; request
+logs and sanitized exception monitoring never receive the invocation or its
+values. Failures outside that extension retain unknown model/operation rather
+than inferring them from query text. This diagnostic is distinct from shared-QA
+P2021/P2022 schema mismatch guidance and adds no retry or database write.
+
 - `/health` route checks DB connectivity.
 - Metrics server exposes `/metrics` for Prometheus.
 - HTTP request counters and duration histograms are captured via Fastify hooks.

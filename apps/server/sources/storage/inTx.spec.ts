@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { PrismaClientKnownRequestError, PrismaClientUnknownRequestError } from "@prisma/client/runtime/library";
+import { PrismaClientKnownRequestError } from "@prisma/client/runtime/library";
 
 import { applyEnvValues, restoreEnv, snapshotEnv } from "@/testkit/env";
 import { installDbModuleMock, inTxPostgresControlStatementMock } from "../app/api/testkit/dbMocks";
@@ -22,7 +22,10 @@ installDbModuleMock({
 const logMock = vi.fn();
 
 vi.mock("@/utils/runtime/delay", () => ({ delay: delayMock }));
-vi.mock("@/utils/logging/log", () => ({ log: (...args: any[]) => logMock(...args) }));
+vi.mock("@/utils/logging/log", () => ({
+    log: (...args: any[]) => logMock(...args),
+    logger: { isLevelEnabled: () => true },
+}));
 vi.mock("@/app/monitoring/metrics/sessionWriteMetrics", () => ({
     recordDatabaseTransactionRetry: (...args: any[]) => recordDatabaseTransactionRetry(...args),
 }));
@@ -196,17 +199,17 @@ describe("inTx", () => {
     });
 
     it.each([
-        { code: "P2028", message: "A query cannot be executed on an expired transaction.", isolationLevel: "RepeatableRead", readOnly: true },
-        { code: "P2034", message: "Transaction failed due to a write conflict or a deadlock.", isolationLevel: "Serializable", readOnly: false },
+        { code: "P2028", message: "A query cannot be executed on an expired transaction.", isolationLevel: "RepeatableRead", readOnly: true, outcome: "deadline-exceeded" },
+        { code: "P2034", message: "Transaction failed due to a write conflict or a deadlock.", isolationLevel: "Serializable", readOnly: false, outcome: "conflict-exhausted" },
     ] as const)("distinguishes $code rollback diagnostics at the actual isolation policy", async failure => {
         applyEnvValues({ HAPPIER_DB_PROVIDER: "postgres", HAPPIER_DB_TX_MAX_RETRIES: "0" });
         await expect(inTx(async () => { throw new PrismaClientKnownRequestError(failure.message, {
             code: failure.code, clientVersion: "6.19.2",
         }); }, { isolationLevel: failure.isolationLevel, readOnly: failure.readOnly, transactionClass: "measured-owner" }))
-            .rejects.toBeInstanceOf(inTxModule.TransactionConflictExhaustedError);
+            .rejects.toBeInstanceOf(failure.code === "P2028" ? inTxModule.TransactionDeadlineExceededError : inTxModule.TransactionConflictExhaustedError);
         expect(logMock).toHaveBeenCalledWith(expect.objectContaining({ event: "transaction-rollback", prismaCode: failure.code,
-            isolationLevel: failure.isolationLevel, readOnly: failure.readOnly, transactionClass: "measured-owner", attempts: 1 }),
-        "Database transaction rollback recovery exhausted");
+            isolationLevel: failure.isolationLevel, readOnly: failure.readOnly, transactionClass: "measured-owner", attempts: 1, outcome: failure.outcome }),
+        failure.code === "P2028" ? "Database transaction deadline expired" : "Database transaction rollback recovery exhausted");
     });
 
     it("uses read-committed transactions by default", async () => {
@@ -268,7 +271,7 @@ describe("inTx", () => {
         }));
         const callback = vi.fn(async () => "must not run");
         await expect(inTx(callback, { timeoutMs: 100 }))
-            .rejects.toBeInstanceOf(inTxModule.TransactionConflictExhaustedError);
+            .rejects.toBeInstanceOf(inTxModule.TransactionDeadlineExceededError);
         expect(callback).not.toHaveBeenCalled();
     });
 
@@ -343,7 +346,31 @@ describe("inTx", () => {
         expect(callback).not.toHaveBeenCalled();
     });
 
-    it.each([undefined, 10_000])("replays its expired PostgreSQL attempt while the request budget remains for queued SQL (deadline: %s)", async deadlineAtMs => {
+    it("charges preparation to the derived maxWait plus timeout deadline without a caller deadline", async () => {
+        applyEnvValues({ HAPPIER_DB_PROVIDER: "postgres" });
+        const now = vi.spyOn(Date, "now").mockReturnValue(1_000);
+        const callback = vi.fn(async () => "unreachable");
+        await expect(inTx(callback, { maxWaitMs: 100, timeoutMs: 100, prepare: async () => {
+            now.mockReturnValue(1_200);
+            return async () => {};
+        } })).rejects.toBeInstanceOf(inTxModule.TransactionDeadlineExceededError);
+        expect(transaction).not.toHaveBeenCalled();
+        expect(callback).not.toHaveBeenCalled();
+    });
+
+    it("refuses conflict backoff beyond the derived operation deadline", async () => {
+        applyEnvValues({ HAPPIER_DB_PROVIDER: "postgres", HAPPIER_DB_TX_RETRY_BASE_DELAY_MS: "200",
+            HAPPIER_DB_TX_RETRY_JITTER_FACTOR: "0" });
+        const now = vi.spyOn(Date, "now").mockReturnValue(1_000);
+        const conflict = Object.assign(new Error("Rolled back"), { code: "P2034" });
+        transaction.mockImplementationOnce(async () => { now.mockReturnValue(1_100); throw conflict; });
+        await expect(inTx(async () => "must not replay", { maxWaitMs: 100, timeoutMs: 100 }))
+            .rejects.toMatchObject({ name: "TransactionConflictExhaustedError", cause: conflict });
+        expect(transaction).toHaveBeenCalledTimes(1);
+        expect(delayMock).not.toHaveBeenCalled();
+    });
+
+    it.each([undefined, 10_000])("settles its expired PostgreSQL attempt without replaying queued SQL (deadline: %s)", async deadlineAtMs => {
         applyEnvValues({ HAPPIER_DB_PROVIDER: "postgres", HAPPIER_DB_TX_MAX_RETRIES: "1" });
         const now = vi.spyOn(Date, "now").mockReturnValue(1_000);
         let attempts = 0;
@@ -370,11 +397,12 @@ describe("inTx", () => {
                 tx.$queryRawUnsafe("admission write"),
             ]);
             return "committed";
-        }, { timeoutMs: 1_000, ...(deadlineAtMs === undefined ? {} : { deadlineAtMs }) })).resolves.toBe("committed");
-        expect(attempts).toBe(2);
-        expect(writes).toEqual([2]);
-        expect(published).toEqual([2]);
-        expect(delayMock).toHaveBeenCalledTimes(1);
+        }, { timeoutMs: 1_000, ...(deadlineAtMs === undefined ? {} : { deadlineAtMs }) }))
+            .rejects.toBeInstanceOf(inTxModule.TransactionDeadlineExceededError);
+        expect(attempts).toBe(1);
+        expect(writes).toEqual([]);
+        expect(published).toEqual([]);
+        expect(delayMock).not.toHaveBeenCalled();
     });
 
     it("does not replay its expired PostgreSQL attempt beyond the original request deadline", async () => {
@@ -417,9 +445,9 @@ describe("inTx", () => {
             await tx.$queryRawUnsafe("never execute");
         }, { timeoutMs: 1_000 });
         if (earlierUnknown) await expect(result).rejects.toBe(uncertainCompletion);
-        else await expect(result).rejects.toBeInstanceOf(inTxModule.TransactionConflictExhaustedError);
+        else await expect(result).rejects.toBeInstanceOf(inTxModule.TransactionDeadlineExceededError);
         expect(published).not.toHaveBeenCalled();
-        expect(transaction).toHaveBeenCalledTimes(earlierUnknown ? 2 : 1);
+        expect(transaction).toHaveBeenCalledTimes(1);
     });
 
     it.each(["postgres", "sqlite"])("does not begin preparation after an expired deadline on %s", async provider => {
@@ -512,19 +540,15 @@ describe("inTx", () => {
     });
 
     it.each([
-        new PrismaClientKnownRequestError("Expired query", {
-            code: "P2028", clientVersion: "6.19.2",
-            meta: { error: "Transaction already closed: A query cannot be executed on an expired transaction." },
-        }),
         new PrismaClientKnownRequestError(
             'Raw query failed. Code: `40001`. Message: `could not serialize access due to read/write dependencies among transactions`',
             { code: "P2010", clientVersion: "6.19.2", meta: { code: "40001", message: "could not serialize access due to read/write dependencies among transactions" } },
         ),
-        new PrismaClientUnknownRequestError(
+        new prismaRuntime.PrismaClientUnknownRequestError(
             'Invalid `prisma.session.update()` invocation: PostgresError { code: "40P01", message: "deadlock detected" }',
             { clientVersion: "6.19.2" },
         ),
-        ...["40001", "40P01", "55P03"].map(code => new PrismaClientKnownRequestError(
+        ...["40001", "40P01"].map(code => new PrismaClientKnownRequestError(
             `Raw query failed. Code: \`${code}\`. Message: \`transaction conflict\``,
             { code: "P2010", clientVersion: "6.19.2", meta: { code, message: "transaction conflict" } },
         )),
@@ -636,7 +660,7 @@ describe("inTx", () => {
         const diagnostic = logMock.mock.calls.find(([context]) => context.module === "storage-tx" && context.prismaCode === "P2028");
         expect(diagnostic?.[0]).toMatchObject({
             transactionClass: "teams.restore", prismaTransactionErrorKind: kind, attempts: 1,
-            outcome: kind === "acquisition-unavailable" ? "acquisition-unavailable" : "conflict-exhausted",
+            outcome: kind === "acquisition-unavailable" ? "acquisition-unavailable" : kind === "expired-timeout" ? "deadline-exceeded" : "conflict-exhausted",
         });
         expect(JSON.stringify(logMock.mock.calls)).not.toContain("private");
     });
@@ -663,7 +687,7 @@ describe("inTx", () => {
         "A query cannot be executed on an expired transaction.",
         "A batch query cannot be executed on an expired transaction.",
         "A commit cannot be executed on an expired transaction.",
-    ])("replays a transaction that Prisma expired whichever operation found it (%s)", async operation => {
+    ])("settles a transaction that Prisma expired whichever operation found it (%s)", async operation => {
         applyEnvValues({ HAPPIER_DB_PROVIDER: "postgres", HAPPIER_DB_TX_MAX_RETRIES: "1" });
         const expired = new PrismaClientKnownRequestError("Expired", {
             code: "P2028", clientVersion: "6.19.2",
@@ -676,17 +700,23 @@ describe("inTx", () => {
             afterTx(tx, () => published.push(attempt));
             if (attempt === 1) throw expired;
             return "committed";
-        })).resolves.toBe("committed");
-        expect(published).toEqual([2]);
-
-        applyEnvValues({ HAPPIER_DB_TX_MAX_RETRIES: "0" });
-        await expect(inTx(async () => { throw expired; })).rejects.toBeInstanceOf(inTxModule.TransactionConflictExhaustedError);
+        })).rejects.toMatchObject({ name: "TransactionDeadlineExceededError", code: "database_transaction_timeout", cause: expired });
+        expect(attempts).toBe(1);
+        expect(published).toEqual([]);
+        expect(delayMock).not.toHaveBeenCalled();
     });
 
-    it("classifies a statement the transaction budget cancelled as a rolled-back conflict and replays it", async () => {
+    it.each([
+        { sqlState: "57014", message: undefined, timeout: false },
+        { sqlState: "57014", message: "canceling statement due to user request", timeout: false },
+        { sqlState: "57014", message: "canceling statement due to statement timeout", timeout: true },
+        { sqlState: "55P03", message: undefined, timeout: false },
+        { sqlState: "55P03", message: "could not obtain lock on row in relation private_relation", timeout: false },
+        { sqlState: "55P03", message: "canceling statement due to lock timeout", timeout: true },
+    ])("settles PostgreSQL $sqlState ($message) without generic in-place replay", async ({ sqlState, message, timeout }) => {
         applyEnvValues({ HAPPIER_DB_PROVIDER: "postgres", HAPPIER_DB_TX_MAX_RETRIES: "1" });
         const cancelled = new PrismaClientKnownRequestError("Raw query failed", {
-            code: "P2010", clientVersion: "6.19.2", meta: { code: "57014", message: "canceling statement due to statement timeout" },
+            code: "P2010", clientVersion: "6.19.2", meta: { code: sqlState, ...(message ? { message } : {}) },
         });
         let attempts = 0;
         const published: number[] = [];
@@ -695,13 +725,16 @@ describe("inTx", () => {
             afterTx(tx, () => published.push(attempt));
             if (attempt === 1) throw cancelled;
             return "committed";
-        })).resolves.toBe("committed");
-        expect(published).toEqual([2]);
-
-        applyEnvValues({ HAPPIER_DB_TX_MAX_RETRIES: "0" });
-        await expect(inTx(async () => { throw cancelled; })).rejects.toBeInstanceOf(inTxModule.TransactionConflictExhaustedError);
-        expect(logMock).toHaveBeenCalledWith(expect.objectContaining({ event: "transaction-rollback", sqlState: "57014" }),
-            "Database transaction rollback recovery exhausted");
+        })).rejects.toMatchObject({
+            name: timeout ? "TransactionDeadlineExceededError" : "TransactionConflictExhaustedError",
+            code: timeout ? "database_transaction_timeout" : "database_transaction_conflict_exhausted",
+            cause: cancelled,
+        });
+        expect(attempts).toBe(1);
+        expect(published).toEqual([]);
+        expect(delayMock).not.toHaveBeenCalled();
+        expect(logMock).toHaveBeenCalledWith(expect.objectContaining({ event: "transaction-rollback", sqlState }),
+            timeout ? "Database transaction deadline expired" : "Database transaction rollback recovery exhausted");
     });
 
     it("retries repeated postgres P2034 conflicts until a later attempt succeeds", async () => {
@@ -730,7 +763,7 @@ describe("inTx", () => {
         expect(delayMock.mock.calls).toEqual([[200], [400], [800], [1600], [3200], [5000], [5000], [5000]]);
     });
 
-    it.each(["postgres", "mysql", "sqlite"].flatMap(provider => ["P2028", "P2024"].map(code => ({ provider, code }))))("retries transaction acquisition $code before the callback starts on $provider", async ({ provider, code }) => {
+    it.each(["postgres", "mysql", "sqlite"].flatMap(provider => ["P2028", "P2024"].map(code => ({ provider, code }))))("preserves the $provider acquisition policy for $code before callback entry", async ({ provider, code }) => {
         restoreEnv(envSnapshot);
         applyEnvValues({
             HAPPY_DB_PROVIDER: undefined,
@@ -745,11 +778,17 @@ describe("inTx", () => {
             .mockImplementationOnce(async (fn: any, _opts?: any) => fn(transactionBoundary()));
         const transactionBody = vi.fn(async () => 790);
 
-        await expect(inTx(transactionBody)).resolves.toBe(790);
-
-        expect(transaction).toHaveBeenCalledTimes(2);
-        expect(transactionBody).toHaveBeenCalledTimes(1);
-        expect(delayMock).toHaveBeenCalledTimes(1);
+        if (provider === "postgres") {
+            await expect(inTx(transactionBody)).rejects.toMatchObject({ name: "TransactionAcquisitionUnavailableError", cause: acquisitionError });
+            expect(transaction).toHaveBeenCalledTimes(1);
+            expect(transactionBody).not.toHaveBeenCalled();
+            expect(delayMock).not.toHaveBeenCalled();
+        } else {
+            await expect(inTx(transactionBody)).resolves.toBe(790);
+            expect(transaction).toHaveBeenCalledTimes(2);
+            expect(transactionBody).toHaveBeenCalledTimes(1);
+            expect(delayMock).toHaveBeenCalledTimes(1);
+        }
     });
 
     it.each(["P2028", "P2024"])("reports exhausted transaction acquisition %s as typed unavailability with the original cause", async (code) => {
@@ -794,7 +833,7 @@ describe("inTx", () => {
         expect(delayMock).not.toHaveBeenCalled();
     });
 
-    it.each(["postgres", "mysql", "sqlite"])("reports an explicitly expired Prisma transaction as rollback after recovery on %s", async (provider) => {
+    it.each(["postgres", "mysql", "sqlite"])("reports an explicitly expired Prisma transaction as timeout after recovery on %s", async (provider) => {
         applyEnvValues({ HAPPY_DB_PROVIDER: undefined, HAPPIER_DB_PROVIDER: provider, HAPPIER_DB_TX_MAX_RETRIES: "0" });
         const failure = new PrismaClientKnownRequestError("Expired query", {
             code: "P2028", clientVersion: "6.19.2",
@@ -802,8 +841,8 @@ describe("inTx", () => {
         });
         const body = vi.fn(async () => { throw failure; });
         const result = await inTx(body).catch((error: unknown) => error);
-        expect(result).toBeInstanceOf(inTxModule.TransactionConflictExhaustedError);
-        expect(result).toMatchObject({ cause: failure });
+        expect(result).toBeInstanceOf(inTxModule.TransactionDeadlineExceededError);
+        expect(result).toMatchObject({ code: "database_transaction_timeout", cause: failure });
         expect(body).toHaveBeenCalledTimes(1);
         expect(delayMock).not.toHaveBeenCalled();
     });
@@ -816,7 +855,7 @@ describe("inTx", () => {
         expect(delayMock).not.toHaveBeenCalled();
     });
 
-    it.each([false, true])("keeps native missing-transaction recovery inside its unfinished callback (callback completed: %s)", async completed => {
+    it.each([false, true])("settles missing native transactions according to callback completion (completed: %s)", async completed => {
         applyEnvValues({ HAPPIER_DB_PROVIDER: "postgres", HAPPIER_DB_TX_MAX_RETRIES: "1" });
         const failure = new prismaRuntime.PrismaClientKnownRequestError("Transaction API error", {
             code: "P2028", clientVersion: "6.19.2",
@@ -844,28 +883,27 @@ describe("inTx", () => {
             expect(attempts).toBe(1);
             expect(published).toEqual([]);
         } else {
-            await expect(result).resolves.toBe("committed");
-            expect(attempts).toBe(2);
-            expect(published).toEqual([2]);
+            await expect(result).rejects.toMatchObject({ name: "TransactionConflictExhaustedError", cause: failure });
+            expect(attempts).toBe(1);
+            expect(published).toEqual([]);
         }
     });
 
-    it("retries raw postgres serialization aborts that are not wrapped as P2034", async () => {
+    it("does not replay an unstructured PostgreSQL message that cannot prove a concurrency abort", async () => {
         restoreEnv(envSnapshot);
         applyEnvValues({
             HAPPY_DB_PROVIDER: undefined,
             HAPPIER_DB_PROVIDER: undefined,
         });
+        const failure = new Error("could not serialize access due to read/write dependencies among transactions");
         transaction
-            .mockRejectedValueOnce(new Error("could not serialize access due to read/write dependencies among transactions"))
+            .mockRejectedValueOnce(failure)
             .mockImplementationOnce(async (fn: any, _opts?: any) => fn(transactionBoundary()));
 
-        const result = await inTx(async () => 4242);
-
-        expect(result).toBe(4242);
-        expect(transaction).toHaveBeenCalledTimes(2);
-        expect(delayMock).toHaveBeenCalledTimes(1);
-        expect(recordDatabaseTransactionRetry).toHaveBeenCalledWith("postgres");
+        await expect(inTx(async () => 4242)).rejects.toBe(failure);
+        expect(transaction).toHaveBeenCalledTimes(1);
+        expect(delayMock).not.toHaveBeenCalled();
+        expect(recordDatabaseTransactionRetry).not.toHaveBeenCalled();
     });
 
     it("retries sqlite P1008 socket timeout and eventually succeeds", async () => {
@@ -958,22 +996,13 @@ describe("inTx", () => {
         });
     });
 
-    it.each([false, true])("does not certify rollback from PostgreSQL message heuristics (later conflict: %s)", async (laterConflict) => {
-        applyEnvValues({ HAPPIER_DB_PROVIDER: "postgres", HAPPIER_DB_TX_MAX_RETRIES: laterConflict ? "1" : "0" });
-        const uncertainCompletion = new Error("Connection lost while handling serialization failure");
-        transaction.mockRejectedValueOnce(uncertainCompletion);
-        if (laterConflict) transaction.mockRejectedValueOnce(Object.assign(new Error("Rolled back"), { code: "P2034" }));
-
-        await expect(inTx(async () => "request-effect")).rejects.toBe(uncertainCompletion);
-    });
-
-    it("keeps SQL cancellation inside the request-deadline error contract without replaying it", async () => {
+    it("preserves confirmed SQL rollback even when the caller supplied a longer deadline", async () => {
         applyEnvValues({ HAPPIER_DB_PROVIDER: "postgres" });
         const failure = new PrismaClientKnownRequestError("Raw query failed", {
             code: "P2010", clientVersion: "6.19.2", meta: { code: "57014" },
         });
         await expect(inTx(async () => { throw failure; }, { deadlineAtMs: Date.now() + 60_000 }))
-            .rejects.toMatchObject({ name: "TransactionDeadlineExceededError", cause: failure });
+            .rejects.toMatchObject({ name: "TransactionConflictExhaustedError", cause: failure });
         expect(delayMock).not.toHaveBeenCalled();
     });
 });

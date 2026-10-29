@@ -15,7 +15,7 @@ import { TransactionAcquisitionUnavailableError, TransactionConflictExhaustedErr
 describe('enableErrorHandlers', () => {
     it.each([
         { error: new TransactionAcquisitionUnavailableError(new Error('private database detail')), code: 'database_connection_unavailable' },
-        { error: new TransactionDeadlineExceededError(new Error('private database detail'), 'test-request'), code: 'database_connection_unavailable' },
+        { error: new TransactionDeadlineExceededError(new Error('private database detail'), 'test-request'), code: 'database_transaction_timeout' },
         { error: new TransactionConflictExhaustedError(new Error('private database detail')), code: 'database_transaction_conflict_exhausted' },
     ])('maps terminal $error.name to a safe typed unavailable response', async ({ error, code }) => {
         const app = Fastify({ logger: false });

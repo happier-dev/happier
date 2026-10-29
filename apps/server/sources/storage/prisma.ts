@@ -10,7 +10,7 @@ import { acquirePgliteDirLock } from "./locks/pgliteLock";
 import { resolveLightSqliteBusyTimeoutMsFromEnv } from "@/flavors/light/sqliteConnectionConfig";
 import { log, warn } from "@/utils/logging/log";
 import { AsyncLock } from "@/utils/runtime/lock";
-import { isPrismaErrorCode, readSharedQaSchemaMismatchDiagnostic } from './prismaErrors';
+import { isPrismaErrorCode, readSharedQaSchemaMismatchDiagnostic, withPrismaQueryValidationDiagnostic } from './prismaErrors';
 import { annotateWebLatencyQuery, timeWebLatencyPhase } from '@/utils/webLatencyTrace';
 export { isPrismaErrorCode } from './prismaErrors';
 export type TransactionClient = PrismaNamespace.TransactionClient;
@@ -75,9 +75,12 @@ export function getActivePrismaRuntime(): typeof import("@prisma/client").Prisma
 function createDefaultPrismaClient(databaseUrl?: string, provider: 'postgres' | 'pglite' = 'postgres'): PrismaClientType {
     preparePrismaEngineRuntime(provider, databaseUrl);
     const { PrismaClient } = loadDefaultPrismaClientModule();
-    return databaseUrl
-        ? new PrismaClient({ datasources: { db: { url: databaseUrl } } })
-        : new PrismaClient();
+    // Server diagnostics consume Prisma codes/messages, never source snippets.
+    // Prisma 6 otherwise allocates a call-site Error for every development query.
+    return new PrismaClient({
+        errorFormat: "minimal",
+        ...(databaseUrl ? { datasources: { db: { url: databaseUrl } } } : {}),
+    });
 }
 
 export function applyConfiguredDatabaseConnectionLimit(rawUrl: string, env: NodeJS.ProcessEnv): string {
@@ -157,7 +160,7 @@ function withSharedQaSchemaDiagnostics(client: PrismaClientType): PrismaClientTy
                     // Preserve Prisma's code, metadata and identity for existing error owners.
                     // All socket event logs that interpolate the error now carry the reload action.
                     if (diagnostic && error instanceof Error) error.message = diagnostic.message;
-                    throw error;
+                    throw withPrismaQueryValidationDiagnostic(error, { model, operation });
                 }
             },
         },
@@ -292,9 +295,10 @@ async function createGeneratedPrismaClient(
     }
     return {
         // Generated provider clients share the repository's Prisma client contract.
-        client: (databaseUrl
-            ? new mod.PrismaClient({ datasources: { db: { url: databaseUrl } } })
-            : new mod.PrismaClient()) as PrismaClientType,
+        client: new mod.PrismaClient({
+            errorFormat: "minimal",
+            ...(databaseUrl ? { datasources: { db: { url: databaseUrl } } } : {}),
+        }) as PrismaClientType,
         prisma: mod.Prisma as typeof import("@prisma/client").Prisma,
     };
 }

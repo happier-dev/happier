@@ -9,8 +9,9 @@ import { isServerApiRequestPath } from "./serverApiPath";
 import { redactPublicShareCapabilityUrl } from '@happier-dev/protocol/crypto/publicShareCapabilityUrl';
 import { redactHttpRequestUrlForLog } from "@/utils/logging/redactHttpRequestUrlForLog";
 import { InactiveAccountError } from "@/app/auth/accountStatus";
-import { isPrismaErrorCode, readSharedQaSchemaMismatchDiagnostic } from '@/storage/prismaErrors';
-import { isTransactionAcquisitionUnavailableError, isTransactionConflictExhaustedError, isTransactionDeadlineExceededError } from '@/storage/inTx';
+import { readSharedQaSchemaMismatchDiagnostic, readPrismaQueryValidationDiagnostic, withPrismaQueryValidationDiagnostic } from '@/storage/prismaErrors';
+import { readDatabaseErrorCode } from '@/storage/transactionErrors';
+export { readDatabaseErrorCode } from '@/storage/transactionErrors';
 import { logUnexpectedRequestError } from './logUnexpectedRequestError';
 
 function sendGlobalErrorResponse(
@@ -27,20 +28,6 @@ function sendGlobalErrorResponse(
 
 function isFastifyValidationError(error: FastifyError): boolean {
     return Array.isArray((error as FastifyError & { validation?: unknown }).validation);
-}
-
-/** Shared by global and route-local handlers; each transport retains its own envelope. */
-export function readDatabaseErrorCode(error: unknown): 'database_transaction_conflict_exhausted' | 'database_connection_unavailable' | null {
-    if (isTransactionConflictExhaustedError(error)) {
-        return error.code;
-    }
-    // Availability is not proof of rollback: connection loss must never opt
-    // an unknown transaction outcome into the confirmed-no-effect replay path.
-    if (['P1001', 'P1002', 'P1017', 'P2024'].some(code => isPrismaErrorCode(error, code)) || isTransactionAcquisitionUnavailableError(error)
-        || isTransactionDeadlineExceededError(error)) {
-        return 'database_connection_unavailable';
-    }
-    return null;
 }
 
 export function enableErrorHandlers(app: Fastify) {
@@ -63,6 +50,15 @@ export function enableErrorHandlers(app: Fastify) {
             // correlation as other failures; never retain SQL or HTTP input.
             logUnexpectedRequestError(error, correlation);
             return sendGlobalErrorResponse(reply, 503, { error: databaseError, statusCode: 503 });
+        }
+        const prismaValidation = readPrismaQueryValidationDiagnostic(error);
+        if (prismaValidation) {
+            logUnexpectedRequestError(error, correlation);
+            captureFastifyExceptionForSentry(withPrismaQueryValidationDiagnostic(error), request);
+            return sendGlobalErrorResponse(reply, 500, {
+                error: 'Internal Server Error', code: prismaValidation.errorCode,
+                message: 'An unexpected error occurred', statusCode: 500,
+            });
         }
         const statusCode = error.statusCode || 500;
         const schemaMismatch = readSharedQaSchemaMismatchDiagnostic(error);

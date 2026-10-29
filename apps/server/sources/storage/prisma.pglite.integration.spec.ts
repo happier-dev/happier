@@ -2,9 +2,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { renderPrismaCompatibleSqliteDatabaseUrl } from "@happier-dev/cli-common/firstPartyRuntime/server";
 
 import { applyEnvValues } from "@/testkit/env";
-import { db, getPrismaConnectionLimit, initDbPglite, prismaRuntime, shutdownDbPglite } from "./prisma";
+import { createDbMaintenanceClient, db, getPrismaConnectionLimit, initDbPglite, prismaRuntime, shutdownDbPglite } from "./prisma";
 import { acquirePgliteDirLock } from "./locks/pgliteLock";
 
 const createdDirs: string[] = [];
@@ -66,6 +67,49 @@ describe("storage/prisma initDbPglite", () => {
 
         const release = await acquirePgliteDirLock(dbDir, { purpose: "test-after-shutdown" });
         await release();
+    }, 30_000);
+
+    it("executes queries without allocating request call-site Errors", async () => {
+        const root = await createHarnessDir();
+        applyEnvValues({ HAPPY_SERVER_LIGHT_DATA_DIR: root });
+        // Development is the capture-enabled Prisma default; production alone
+        // would conceal a regression in the storage owner's explicit policy.
+        vi.stubEnv("NODE_ENV", "development");
+        await initDbPglite();
+        await db.$queryRaw`SELECT 1`;
+        const sqlite = await createDbMaintenanceClient("sqlite", renderPrismaCompatibleSqliteDatabaseUrl({
+            dbPath: join(root, "count.sqlite"), platform: process.platform,
+        }));
+        await sqlite.$queryRaw`SELECT 1`;
+
+        const NativeError = globalThis.Error;
+        let captures = 0;
+        const providerCaptures: number[] = [];
+        const CountingError = new Proxy(NativeError, {
+            construct(target, args, newTarget) {
+                // Prisma 6.19's EnabledCallSite creates a native Error with no
+                // arguments when the lazy query promise is evaluated.
+                if (args.length === 0) captures += 1;
+                return Reflect.construct(target, args, newTarget);
+            },
+        });
+        const queryCount = 32;
+        try {
+            for (const client of [db, sqlite]) {
+                captures = 0;
+                globalThis.Error = CountingError;
+                for (let index = 0; index < queryCount; index += 1) {
+                    const rows = await client.$queryRaw<Array<{ value: number | bigint }>>`SELECT 1 AS value`;
+                    expect(Number(rows[0].value)).toBe(1);
+                }
+                globalThis.Error = NativeError;
+                providerCaptures.push(captures);
+            }
+        } finally {
+            globalThis.Error = NativeError;
+            await sqlite.$disconnect();
+        }
+        expect(providerCaptures).toEqual([0, 0]);
     }, 30_000);
 
     it("does not keep partial initialization state when lock acquisition fails", async () => {

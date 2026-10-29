@@ -21,6 +21,13 @@ describe('HTTP transaction conflict projection', () => {
 
     it.each([
         { driver: 'P2034', expected: 'database_transaction_conflict_exhausted', meta: undefined },
+        { driver: 'P2010', expected: 'database_transaction_conflict_exhausted', meta: { code: '40001' } },
+        { driver: 'P2010', expected: 'database_transaction_timeout',
+            meta: { code: '57014', message: 'canceling statement due to statement timeout' } },
+        { driver: 'P2010', expected: 'database_transaction_timeout',
+            meta: { code: '55P03', message: 'canceling statement due to lock timeout' } },
+        { driver: 'P2028', expected: 'database_transaction_timeout',
+            meta: { error: 'Transaction already closed: A query cannot be executed on an expired transaction. The timeout for this transaction was 15000 ms, however 15048 ms passed since the start of the transaction.' } },
         { driver: 'P2024', expected: 'database_connection_unavailable', meta: undefined },
         { driver: 'P1017', expected: 'database_connection_unavailable', meta: undefined },
         { driver: 'P1001', expected: 'database_connection_unavailable', meta: undefined },
