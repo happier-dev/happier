@@ -35,6 +35,14 @@ describe('agentSettingsRoutes', () => {
             .toBe('/(app)/settings/agents/codex');
     });
 
+    it('opens an Agent on the exact machine a recovery names, after any plugin identity', () => {
+        const machine = { machineId: 'machine 1', serverIdentityId: 'server-1' };
+        expect(createAgentSettingsRoute({ agentId: 'codex', identity: null, machine }))
+            .toBe('/(app)/settings/agents/codex?machineId=machine%201&serverIdentityId=server-1');
+        expect(createAgentSettingsRoute({ agentId: 'x', identity: { pluginId: 'acme.agent', localId: 'assistant' }, machine }))
+            .toBe('/(app)/settings/agents/assistant?pluginId=acme.agent&machineId=machine%201&serverIdentityId=server-1');
+    });
+
     it('never recreates the built-in backend target split for model settings', () => {
         expect(resolveAgentModelsTargetKey({ agentId: 'codex' }))
             .toBe('agent:happier.agent.codex/codex');
