@@ -9,7 +9,7 @@ import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAre
 import { Text } from '@/components/ui/text/Text';
 import { FloatingTabBarSurface } from '@/components/ui/navigation/FloatingTabBarSurface';
 import { TabBadge } from '@/components/ui/navigation/tabBadge/TabBadge';
-import { resolveTabBarMetrics } from '@/components/ui/navigation/tabBarMetrics';
+import { resolveTabBarMetrics, type TabBarMetrics } from '@/components/ui/navigation/tabBarMetrics';
 import { useSetting } from '@/sync/domains/state/storage';
 import { Typography } from '@/constants/Typography';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
@@ -94,6 +94,8 @@ export type CockpitTabBarTabDefinition<TSurface extends string> = Readonly<{
     badge?: CockpitTabBadge;
     /** The announced name when it says more than the visible label ("Companion, 1 waiting for you"). */
     accessibilityLabel?: string;
+    disabled?: boolean;
+    unavailableReason?: string;
 }>;
 
 type CockpitTabBarProps<TSurface extends string> = Readonly<{
@@ -125,9 +127,18 @@ type CockpitTabBarProps<TSurface extends string> = Readonly<{
 }>;
 
 export function CockpitTabBar<TSurface extends string>(props: CockpitTabBarProps<TSurface>) {
-    const { theme } = useUnistyles();
     const insets = useChromeSafeAreaInsets();
     const metrics = resolveTabBarMetrics(useSetting('tabBarSize'), useSetting('tabBarShowLabels'));
+    return <CockpitTabBarView {...props} bottomInset={insets.bottom} metrics={metrics} />;
+}
+
+/** Shared controls with captured chrome inputs, including static placement previews. */
+export function CockpitTabBarView<TSurface extends string>(props: CockpitTabBarProps<TSurface> & Readonly<{
+    bottomInset: number;
+    metrics: TabBarMetrics;
+}>) {
+    const { theme } = useUnistyles();
+    const { metrics } = props;
     const renderTab = (tab: CockpitTabBarTabDefinition<TSurface>) => {
         const active = tab.id === props.activeSurface;
         const tintColor = active ? theme.colors.text.primary : theme.colors.text.secondary;
@@ -136,7 +147,7 @@ export function CockpitTabBar<TSurface extends string>(props: CockpitTabBarProps
                 key={tab.id}
                 testID={`${props.tabTestIdPrefix}${tab.id}`}
                 onPress={() => props.onSurfacePress(tab.id)}
-                hitSlop={{ top: 8, bottom: 8 }}
+                disabled={tab.disabled}
                 style={(state) => [styles.tab, {
                     minWidth: metrics.tabMinWidth,
                     paddingVertical: metrics.tabPaddingVertical,
@@ -146,6 +157,7 @@ export function CockpitTabBar<TSurface extends string>(props: CockpitTabBarProps
                 focusRingStyle({ focused: state.focused, color: theme.colors.border.focus })]}
                 accessibilityRole="tab"
                 accessibilityLabel={tab.accessibilityLabel ?? tab.label}
+                accessibilityHint={tab.unavailableReason}
                 selected={active}
                 accessibilityActions={props.bandAccessibilityActions}
                 onAccessibilityAction={props.onBandAccessibilityAction
@@ -172,7 +184,7 @@ export function CockpitTabBar<TSurface extends string>(props: CockpitTabBarProps
     const scrolls = props.layout === 'scroll' && props.tabs.length > 1;
 
     return (
-        <FloatingTabBarSurface testID={props.barTestId} bottomInset={insets.bottom} opaqueBand>
+        <FloatingTabBarSurface testID={props.barTestId} bottomInset={props.bottomInset} opaqueBand>
             <Animated.View accessibilityRole="tablist" style={[styles.innerContainer, { gap: metrics.rowGap }]}>
                 {scrolls ? (
                     <>
@@ -219,7 +231,7 @@ function CockpitTabBarTrack(props: Readonly<{ children: React.ReactNode }>) {
     );
 }
 
-export const CockpitTabBarAction = React.forwardRef<View, Readonly<{
+type CockpitTabBarActionProps = Readonly<{
     testID: string;
     label: string;
     icon: IconName;
@@ -227,9 +239,17 @@ export const CockpitTabBarAction = React.forwardRef<View, Readonly<{
     /** The open surface lives behind this action (a tool opened from More): it reads as the active tab. */
     selected?: boolean;
     onPress: () => void;
-}>>((props, ref) => {
-    const { theme } = useUnistyles();
+}>;
+
+export const CockpitTabBarAction = React.forwardRef<View, CockpitTabBarActionProps>((props, ref) => {
     const metrics = resolveTabBarMetrics(useSetting('tabBarSize'), useSetting('tabBarShowLabels'));
+    return <CockpitTabBarActionView {...props} metrics={metrics} ref={ref} />;
+});
+CockpitTabBarAction.displayName = 'CockpitTabBarAction';
+
+export const CockpitTabBarActionView = React.forwardRef<View, CockpitTabBarActionProps & Readonly<{ metrics: TabBarMetrics }>>((props, ref) => {
+    const { theme } = useUnistyles();
+    const { metrics } = props;
     return (
         <HappierPressable
             controlRef={(node) => {
@@ -240,7 +260,6 @@ export const CockpitTabBarAction = React.forwardRef<View, Readonly<{
             }}
             testID={props.testID}
             onPress={props.onPress}
-            hitSlop={{ top: 8, bottom: 8 }}
             style={(state) => [styles.tab, {
                 minWidth: metrics.tabMinWidth,
                 paddingVertical: metrics.tabPaddingVertical,
@@ -263,7 +282,7 @@ export const CockpitTabBarAction = React.forwardRef<View, Readonly<{
         </HappierPressable>
     );
 });
-CockpitTabBarAction.displayName = 'CockpitTabBarAction';
+CockpitTabBarActionView.displayName = 'CockpitTabBarActionView';
 
 function renderTabBadge(badge: CockpitTabBadge | undefined, testID: string): React.ReactNode {
     if (!badge) {

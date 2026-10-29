@@ -9,13 +9,8 @@ import { FloatingTabBarSurface } from '@/components/ui/navigation/FloatingTabBar
 import { TabBadge } from '@/components/ui/navigation/tabBadge/TabBadge';
 import { resolveTabBarMetrics } from '@/components/ui/navigation/tabBarMetrics';
 import { Typography } from '@/constants/Typography';
-import { useInboxHasContent } from '@/hooks/inbox/useInboxHasContent';
-import { useInboxAvailable } from '@/hooks/inbox/useInboxAvailable';
-import { useFriendsEnabled } from '@/hooks/server/useFriendsEnabled';
-import { useSessionsHaveAttention } from '@/hooks/session/useSessionsHaveAttention';
-import { useFriendRequestCount, useSetting } from '@/sync/domains/state/storage';
-import { t } from '@/text';
-import { resolveTabBarTabs } from '@/components/ui/navigation/resolveTabBarTabs';
+import { useSetting } from '@/sync/domains/state/storage';
+import { useMainAppTabDefinitions } from './useMainAppTabDefinitions';
 import type { TabType } from '@/components/ui/navigation/tabTypes';
 import { Icon } from '@/components/ui/icons/Icon';
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
@@ -76,35 +71,9 @@ const styles = StyleSheet.create((theme) => ({
 export const MainAppTabBar = React.memo((props: MainAppTabBarProps) => {
     const { theme } = useUnistyles();
     const insets = useChromeSafeAreaInsets();
-    const friendsEnabled = useFriendsEnabled();
-    const friendRequestCount = useFriendRequestCount();
-    const inboxEnabled = useInboxAvailable();
-    const inboxHasContent = useInboxHasContent();
-    const sessionsHaveAttention = useSessionsHaveAttention();
-    const friendsBadgeEnabled = useSetting('tabBarFriendsBadgeEnabled');
-    const inboxBadgeEnabled = useSetting('tabBarInboxBadgeEnabled');
-    const sessionsBadgeEnabled = useSetting('tabBarSessionsBadgeEnabled');
-    const showSessionsAttentionBadge = sessionsBadgeEnabled && sessionsHaveAttention;
+    const tabs = useMainAppTabDefinitions();
     const metrics = resolveTabBarMetrics(useSetting('tabBarSize'), useSetting('tabBarShowLabels'));
 
-    const tabs: { key: TabType; label: string }[] = React.useMemo(() => {
-        const tabKeys = resolveTabBarTabs({ inboxEnabled, friendsEnabled });
-        return tabKeys.map((key) => {
-            switch (key) {
-                case 'inbox':
-                    return { key, label: t('tabs.inbox') };
-                case 'projects':
-                    return { key, label: t('tabs.projects') };
-                case 'friends':
-                    return { key, label: t('tabs.friends') };
-                case 'settings':
-                    return { key, label: t('tabs.settings') };
-                case 'sessions':
-                default:
-                    return { key: 'sessions', label: t('tabs.sessions') };
-            }
-        });
-    }, [friendsEnabled, inboxEnabled]);
     return (
         <FloatingTabBarSurface bottomInset={insets.bottom} trailingAccessory={props.trailingAccessory}>
             <View
@@ -113,9 +82,7 @@ export const MainAppTabBar = React.memo((props: MainAppTabBarProps) => {
             >
                 {tabs.map((tab) => {
                     const isActive = props.activeTab === tab.key;
-                    const accessibilityLabel = tab.key === 'sessions' && showSessionsAttentionBadge
-                        ? t('tabs.sessionsNeedsAttention')
-                        : tab.label;
+                    const accessibilityLabel = tab.accessibilityLabel;
                     return (
                         <HappierPressable
                             key={tab.key}
@@ -128,26 +95,15 @@ export const MainAppTabBar = React.memo((props: MainAppTabBarProps) => {
                             }, HAPPIER_FOCUS_RING_DELEGATED_STYLE,
                             focusRingStyle({ focused: state.focused, color: theme.colors.border.focus })]}
                             onPress={() => props.onTabPress(tab.key)}
-                            hitSlop={{ top: 8, bottom: 8 }}
                             accessibilityRole="tab"
                             accessibilityLabel={accessibilityLabel}
                             selected={isActive}
                         >
                             {isActive ? <View pointerEvents="none" style={[styles.activePill, { borderRadius: metrics.activePillRadius }]} /> : null}
                             <View style={styles.tabContent}>
-                                {renderMainTabIcon(
-                                    tab.key,
-                                    metrics.iconSize,
-                                    isActive ? theme.colors.text.primary : theme.colors.text.secondary,
-                                )}
-                                {tab.key === 'friends' && friendsBadgeEnabled && friendRequestCount > 0 && (
-                                    <TabBadge variant="count" value={friendRequestCount} />
-                                )}
-                                {tab.key === 'sessions' && showSessionsAttentionBadge && (
-                                    <TabBadge variant="dot" />
-                                )}
-                                {tab.key === 'inbox' && inboxBadgeEnabled && inboxHasContent && (
-                                    <TabBadge variant="dot" />
+                                <Icon name={tab.icon} size={metrics.iconSize} color={isActive ? theme.colors.text.primary : theme.colors.text.secondary} />
+                                {tab.badge && (
+                                    tab.badge.kind === 'count' ? <TabBadge variant="count" value={tab.badge.value} /> : <TabBadge variant="dot" />
                                 )}
                             </View>
                             {metrics.showLabels ? (
@@ -165,18 +121,3 @@ export const MainAppTabBar = React.memo((props: MainAppTabBarProps) => {
         </FloatingTabBarSurface>
     );
 });
-
-// Match the app's cockpit-bar line icons (all same weight):
-// tray for Inbox, chat for Sessions, gear for Settings, people for Friends.
-function renderMainTabIcon(key: TabType, size: number, color: string): React.ReactNode {
-    const name = key === 'inbox'
-        ? 'tray'
-        : key === 'settings'
-            ? 'gear'
-            : key === 'friends'
-                ? 'users'
-                : key === 'projects'
-                    ? 'folder'
-                    : 'chats-circle';
-    return <Icon name={name} size={size} color={color} />;
-}
