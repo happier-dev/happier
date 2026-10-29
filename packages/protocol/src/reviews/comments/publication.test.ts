@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   ReviewCommentPublicationPlanV1Schema,
   formatReviewCommentPublicationMarkerV1,
+  hasReviewCommentPublicationMarkerV1,
   matchReviewCommentPublicationMarkerV1,
   preflightReviewCommentPublicationRoutingV1,
   reviewCommentPublicationTargetMatchesV1,
@@ -55,6 +56,14 @@ const target = {
 };
 
 describe('review comment publication contract', () => {
+  it('recognizes canonical entry and verdict markers without treating attribution text as a marker', () => {
+    expect(hasReviewCommentPublicationMarkerV1(`reply ${formatReviewCommentPublicationMarkerV1('entry', correlation('a'))}`)).toBe(true);
+    expect(hasReviewCommentPublicationMarkerV1(formatReviewCommentPublicationMarkerV1('verdict', correlation('v')))).toBe(true);
+    expect(hasReviewCommentPublicationMarkerV1('Posted by the agent')).toBe(false);
+    expect(hasReviewCommentPublicationMarkerV1('<!-- happier-review-comment:v1:short -->')).toBe(false);
+    expect(hasReviewCommentPublicationMarkerV1(`<!-- happier-review-comment:v2:${correlation('a')} -->`)).toBe(false);
+  });
+
   it('owns exact marker formatting and target/subtarget routing once', () => {
     expect(formatReviewCommentPublicationMarkerV1('entry', correlation('a')))
       .toBe(`<!-- happier-review-comment:v1:${correlation('a')} -->`);

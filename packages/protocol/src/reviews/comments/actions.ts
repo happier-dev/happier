@@ -410,6 +410,11 @@ export function formatReviewCommentPublicationMarkerV1(
   return `<!-- happier-review-${kind === 'entry' ? 'comment' : 'verdict'}:v1:${correlation} -->`;
 }
 
+/** A marker suppresses reflected provider content; it never establishes authorship or authority. */
+export function hasReviewCommentPublicationMarkerV1(body: string): boolean {
+  return /<!-- happier-review-(?:comment|verdict):v1:[A-Za-z0-9_-]{43} -->/u.test(body);
+}
+
 export type ReviewCommentPublicationMarkerMatchV1 = Readonly<
   | { kind: 'absent' }
   | { kind: 'unique'; externalRef: string }
