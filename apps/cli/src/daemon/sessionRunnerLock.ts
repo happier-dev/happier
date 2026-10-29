@@ -4,7 +4,7 @@ import { readFileSync, unlinkSync } from 'node:fs';
 import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { readProcessInstanceFingerprintSync } from '@happier-dev/cli-common/processInstance';
+import { hashProcessCommand, readProcessInstanceFingerprintSync } from '@happier-dev/cli-common/processInstance';
 
 import { configuration } from '@/configuration';
 
@@ -14,7 +14,6 @@ import {
   readProcessIdentityByPid,
 } from './processIdentity';
 import { readProcessRunState as readProcessRunStateDefault, type ProcessRunState } from './processRunState';
-import { hashProcessCommand } from './sessionRegistry';
 
 type SessionRunnerOwnership = {
   closed: boolean;
