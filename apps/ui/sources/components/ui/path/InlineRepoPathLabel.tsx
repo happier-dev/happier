@@ -55,6 +55,20 @@ export type InlineRepoPathLabelProps = Readonly<{
     detailFindRanges?: readonly FindTextRange[];
 }>;
 
+/**
+ * The `siblingPaths` index for a list: each file name with the paths that share it, so a row is handed
+ * only its rivals and the label's work stays linear in the list rather than in the whole inventory.
+ */
+export function indexPathsByFileName(files: Iterable<Readonly<{ fileName: string; fullPath: string }>>): ReadonlyMap<string, readonly string[]> {
+    const byName = new Map<string, string[]>();
+    for (const file of files) {
+        const paths = byName.get(file.fileName);
+        if (paths) paths.push(file.fullPath);
+        else byName.set(file.fileName, [file.fullPath]);
+    }
+    return byName;
+}
+
 function splitDir(dir: string | null): string[] {
     return dir ? dir.split(PATH_SEPARATOR).filter(Boolean) : [];
 }
