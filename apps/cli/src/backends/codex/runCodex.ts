@@ -1477,7 +1477,8 @@ export async function runCodex(opts: {
                 return false;
             }
         }
-        if (isCodexTurnFailureSettled(error)) return false;
+        // The app-server runtime already recorded this error as the failed provider turn.
+        if (isCodexTurnFailureSettled(error)) return true;
         const remoteRuntime = useCodexAppServer ? getCodexRemoteRuntime() : null;
         // A failed steer leaves the in-flight provider turn running; the runtime still owns that turn.
         if (remoteRuntime && (remoteRuntime.hasActiveProviderTurn?.() ?? remoteRuntime.isTurnInFlight())) return false;

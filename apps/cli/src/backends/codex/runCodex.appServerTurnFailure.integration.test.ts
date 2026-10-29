@@ -278,8 +278,9 @@ describe('runCodex app-server turn failure ownership', () => {
       HAPPIER_CODEX_PATH: join(root, 'missing', 'codex'),
     });
 
-    const { failures, sessionMessages } = await runPrompts(root, ['first prompt', 'second prompt']);
+    const { runError, failures, sessionMessages } = await runPrompts(root, ['first prompt', 'second prompt']);
 
+    expect(runError).toBeNull();
     expect(failures).toHaveLength(2);
     expect(new Set(failures.map((failure) => failure.turnId)).size).toBe(2);
     for (const failure of failures) {
@@ -350,12 +351,15 @@ describe('runCodex app-server turn failure ownership', () => {
       HAPPIER_CODEX_APP_SERVER_RPC_TIMEOUT_MS: '10000',
     });
 
-    const { failures } = await runPrompts(root, ['fail this turn']);
+    const { runError, failures, sessionMessages } = await runPrompts(root, ['fail this turn']);
 
+    expect(runError).toBeNull();
     expect(failures).toHaveLength(1);
     expect(failures[0]).toEqual(expect.objectContaining({
       provider: 'codex',
       issue: expect.objectContaining({ provider: 'codex' }),
     }));
+    // The runtime's failed turn already carries the error for session clients.
+    expect(sessionMessages.some((message) => message.startsWith('Codex process error:'))).toBe(false);
   }, 240_000);
 });
