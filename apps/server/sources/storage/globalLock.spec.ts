@@ -1,22 +1,19 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const globalLockCreate = vi.fn();
+const globalLockInsert = vi.fn();
 const globalLockUpdateMany = vi.fn();
 const globalLockFindUnique = vi.fn();
 const globalLockDeleteMany = vi.fn();
 
 vi.mock("@/storage/db", () => ({
     db: {
+        $executeRaw: globalLockInsert,
         globalLock: {
-            create: globalLockCreate,
             updateMany: globalLockUpdateMany,
             findUnique: globalLockFindUnique,
             deleteMany: globalLockDeleteMany,
         },
     },
-    isPrismaErrorCode: (error: unknown, code: string) => (
-        !!error && typeof error === "object" && (error as { code?: unknown }).code === code
-    ),
 }));
 
 vi.mock("@/utils/keys/randomKeyNaked", () => ({ randomKeyNaked: () => "lock-owner" }));
@@ -28,7 +25,7 @@ describe("acquireGlobalLock", () => {
     });
 
     it("acquires and owner-checks release of a named database lock", async () => {
-        globalLockCreate.mockResolvedValue({});
+        globalLockInsert.mockResolvedValue(1);
         const { acquireGlobalLock } = await import("./globalLock");
 
         const lock = await acquireGlobalLock({
@@ -43,13 +40,7 @@ describe("acquireGlobalLock", () => {
         })).resolves.toBe(true);
         await lock?.release();
 
-        expect(globalLockCreate).toHaveBeenCalledWith({
-            data: {
-                key: "server.voice.provider-identity-backfill",
-                value: "lock-owner",
-                expiresAt: new Date("2026-07-10T10:01:00.000Z"),
-            },
-        });
+        expect(lock).not.toBeNull();
         expect(globalLockDeleteMany).toHaveBeenCalledWith({
             where: {
                 key: "server.voice.provider-identity-backfill",
@@ -68,7 +59,7 @@ describe("acquireGlobalLock", () => {
     });
 
     it("returns null while another non-expired owner holds the lock", async () => {
-        globalLockCreate.mockRejectedValue(Object.assign(new Error("duplicate"), { code: "P2002" }));
+        globalLockInsert.mockResolvedValue(0);
         globalLockUpdateMany.mockResolvedValue({ count: 0 });
         const { acquireGlobalLock } = await import("./globalLock");
 

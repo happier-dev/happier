@@ -1,4 +1,5 @@
-import { db, isPrismaErrorCode } from "@/storage/db";
+import { db } from "@/storage/db";
+import { getDbProviderFromEnv } from "@/config/databaseProvider";
 import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
 
 const MIN_LOCK_TTL_MS = 30_000;
@@ -18,18 +19,21 @@ export async function acquireGlobalLock(params: Readonly<{
     const expiresAt = new Date(now.getTime() + ttlMs);
     const value = randomKeyNaked(16);
 
-    try {
-        await db.globalLock.create({
-            data: {
-                key: params.key,
-                value,
-                expiresAt,
-            },
-        });
-    } catch (error) {
-        if (!isPrismaErrorCode(error, "P2002")) {
-            throw error;
-        }
+    // Losing admission is normal across replicas; it must not raise a unique
+    // violation for every pass while another worker owns the lease.
+    const provider = getDbProviderFromEnv(process.env, "postgres");
+    const inserted = provider === "mysql"
+        ? (await db.globalLock.createMany({
+            data: { key: params.key, value, expiresAt },
+            skipDuplicates: true,
+        })).count
+        : await db.$executeRaw`
+            INSERT INTO "GlobalLock" ("key", "value", "expiresAt", "createdAt", "updatedAt")
+            VALUES (${params.key}, ${value}, ${provider === "sqlite" ? expiresAt.getTime() : expiresAt},
+                ${provider === "sqlite" ? Date.now() : new Date()}, ${provider === "sqlite" ? Date.now() : new Date()})
+            ON CONFLICT ("key") DO NOTHING
+        `;
+    if (inserted === 0) {
         const updated = await db.globalLock.updateMany({
             where: {
                 key: params.key,
