@@ -17,6 +17,10 @@ export type ShareSheetTranslations = Readonly<{
     remove: string;
     confirmRemove: string;
     removedAnnouncement: (params: Readonly<{ name: string }>) => string;
+    removeLosesPerson: (params: Readonly<{ name: string }>) => string;
+    removeLosesMembers: (params: Readonly<{ name: string }>) => string;
+    removeKeepsOtherAccess: string;
+    removeKeepsTheirWork: string;
     browseAll: string;
     browsePeople: string;
     browseTeams: string;
@@ -80,6 +84,10 @@ export const shareSheetTranslationsEnglish = { en: {
         remove: 'Remove access',
         confirmRemove: 'Confirm removal',
         removedAnnouncement: ({ name }) => `${name} no longer has access`,
+        removeLosesPerson: ({ name }) => `${name} loses access to it on every device.`,
+        removeLosesMembers: ({ name }) => `${name} members lose access to it on every device.`,
+        removeKeepsOtherAccess: "Access shared with them another way stays.",
+        removeKeepsTheirWork: "Their own checkouts, sessions and widgets stay theirs.",
         browseAll: 'Browse all',
         browsePeople: 'Browse all people',
         browseTeams: 'Browse all Teams',
