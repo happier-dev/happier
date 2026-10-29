@@ -141,10 +141,13 @@ export function createMachineSkillActions(input: MachineSkillActionsInput) {
   return {
     found: async (request: Readonly<{ directory?: string; signal?: AbortSignal }> = {}): Promise<SkillFoundListResultV1> => {
       current(request.signal);
-      const contents = await libraryContents(request.signal);
-      const receipts = await readReceipts(request.signal);
       const scan = await scanNativeSkillRoots({ purpose: 'found', home: input.homeDirectory, directory: request.directory,
         agents: input.agents, signal: request.signal });
+      current(request.signal);
+      // Library membership and install receipts annotate native rows only.
+      if (scan.items.length === 0) return SkillFoundListResultV1Schema.parse({ scannedAt: nowMs(), roots: scan.roots, items: [] });
+      const contents = await libraryContents(request.signal);
+      const receipts = await readReceipts(request.signal);
       current(request.signal);
       const context = filesystem(receipts.value.links);
       return SkillFoundListResultV1Schema.parse({ scannedAt: nowMs(), roots: scan.roots, items: scan.items.map(item => ({

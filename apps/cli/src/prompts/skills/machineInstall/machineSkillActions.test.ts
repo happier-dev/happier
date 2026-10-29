@@ -40,7 +40,7 @@ vi.mock('node:os', async importOriginal => {
 async function fixture(run: (fixture: Readonly<{
   service: ReturnType<typeof createMachineSkillActions>; home: string;
   credentials: persistence.StoredCredentials; base: string;
-  state: { text: string; homeIdentity: string; conflict: boolean; retireOnRead: boolean; retireOnWrite: boolean; unavailable: boolean; missingArtifact: boolean; malformedSkillHeader: boolean; unreadableNeighbour: boolean; writes: number; artifactListKinds: Array<string | null> };
+  state: { text: string; homeIdentity: string; conflict: boolean; retireOnRead: boolean; retireOnWrite: boolean; unavailable: boolean; missingArtifact: boolean; malformedSkillHeader: boolean; unreadableNeighbour: boolean; writes: number; artifactListKinds: Array<string | null>; requests: string[] };
   readLinks(): Extract<ReturnType<typeof PromptLibraryRecordV1Schema.parse>, { key: 'external-links' }>;
 }>) => Promise<void>) {
   const home = mkdtempSync(join(tmpdir(), 'happier-machine-actions-'));
@@ -50,7 +50,7 @@ async function fixture(run: (fixture: Readonly<{
     machineId: 'machine', serverIdentityId: 'srv_elsewhere', externalRef: { skillName: 'foreign' }, lastExternalDigest: 'untouched' };
   for (const key of PromptLibraryCatalogKeyV1Schema.options) database.prepare('INSERT INTO rows VALUES (?, 1, ?)')
     .run(key, JSON.stringify(key === 'external-links' ? { key, value: { v: 1, links: [foreign] } } : emptyPromptLibraryRecordV1(key)));
-  const state = { text: 'initial', homeIdentity: 'srv_home', conflict: false, retireOnRead: false, retireOnWrite: false, unavailable: false, missingArtifact: false, malformedSkillHeader: false, unreadableNeighbour: false, writes: 0, artifactListKinds: [] as Array<string | null> };
+  const state = { text: 'initial', homeIdentity: 'srv_home', conflict: false, retireOnRead: false, retireOnWrite: false, unavailable: false, missingArtifact: false, malformedSkillHeader: false, unreadableNeighbour: false, writes: 0, artifactListKinds: [] as Array<string | null>, requests: [] as string[] };
   const artifact = () => ({ id: 'skill', ownerAccountId: 'fixture-account', access: 'owner', encryptionMode: 'plain',
     dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER, headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1,
     header: encodePlainArtifactStoredContent({ v: 1, kind: 'prompt_bundle.v2', ...(state.malformedSkillHeader ? {} : { title: 'example' }), bundleSchemaId: 'skills.skill_md_v1' }),
@@ -61,6 +61,7 @@ async function fixture(run: (fixture: Readonly<{
     try {
       const url = new URL(request.url ?? '/', 'http://fixture');
       const path = url.pathname;
+      state.requests.push(path);
       let result: unknown;
       if (path === '/v1/account/entity-rows/prompt-library') {
         if (state.unavailable) { response.statusCode = 503; result = { error: 'unreachable' }; }
@@ -129,6 +130,18 @@ async function fixture(run: (fixture: Readonly<{
 }
 
 describe('machine skill service through real Account HTTP and SQLite CAS', () => {
+  it('reads no Account inventory for an empty native scan and rereads disk on Check again', async () => fixture(async ({ service, state, home }) => {
+    const empty = SkillFoundListResultV1Schema.parse(await service.found());
+    expect(empty.items).toEqual([]);
+    expect(empty.roots).toHaveLength(3);
+    expect(state.requests).toEqual([]);
+
+    const native = join(home, '.agents/skills/fresh');
+    mkdirSync(native, { recursive: true });
+    writeFileSync(join(native, 'SKILL.md'), '---\nname: fresh\n---\nCurrent disk content');
+    expect((await service.found()).items).toEqual([expect.objectContaining({ name: 'fresh', inLibrary: null })]);
+    expect(state.artifactListKinds).toEqual(['skill']);
+  }));
   it('keeps a retired plugin id out of an unrelated unavailable Artifact store', async () => {
     await fixture(async ({ service }) => {
       await expect(service.install({ skillId: 'plugin:com.acme.retired/check', agents: ['codex'] }))
