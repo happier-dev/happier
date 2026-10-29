@@ -1,3 +1,4 @@
+import type { ActionApprovalScopeV1 } from './actionSettings.js';
 import { ACTION_IDS } from './actionIds.js';
 import { isAutomationApprovalRequestSurface, canRequestPresentUserApprovalForActionInputV1 } from './decisionAuthority.js';
 import { ActionIdSchema, type ActionId } from './actionIds.js';
@@ -18,6 +19,13 @@ export type ActionApprovalRoutingDecision = Readonly<{
   required: boolean;
   flow: ActionApprovalFlow;
   result: ActionApprovalResult;
+}>;
+export type ActionEnvironmentApprovalScopeAdmissionV1 = Readonly<{
+  /** The actual child owns authority/effects. Null is an admitted global-only operation. */
+  scope: Extract<ActionApprovalScopeV1, { kind: 'environment' }> | null;
+  previewTemplateEnvironmentId?: string;
+  /** A current nonwaivable custody hold, such as an unapproved exact fork head. */
+  mandatoryApprovalRequired?: true;
 }>;
 
 export type ResolveActionApprovalRoutingArgs = Readonly<{

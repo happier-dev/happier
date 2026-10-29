@@ -24,6 +24,7 @@ import {
   measureSerializedValidatedStrictPluginJsonUtf8Bytes,
 } from '../contributions/strictJsonValue.js';
 import type { JsonValue as StrictRuntimeJsonValue } from '../../json/strictJsonValue.js';
+import { forEachJsonSchemaChild } from '../../actions/actionInputJsonSchema.js';
 
 export {
   containsEquivalentPluginJsonValue,
@@ -106,17 +107,18 @@ function assertSchemaSemantics(schema: Readonly<Record<string, unknown>>): void 
 // the compiler, and edits replace that identity rather than reusing stale code.
 const normalizedPluginJsonSchemas = new WeakMap<object, PluginJsonSchemaV2>();
 
+/** @internal Only this owner's admitted/constructed immutable documents are reusable. */
+export function isNormalizedPluginJsonSchema(schema: unknown): schema is PluginJsonSchemaV2 {
+  return schema !== null && typeof schema === 'object'
+    && normalizedPluginJsonSchemas.get(schema) === schema;
+}
+
 export function normalizePluginJsonSchema(schema: object): PluginJsonSchemaV2 {
   const previous = normalizedPluginJsonSchemas.get(schema);
   if (previous === schema) return previous;
-  let normalized: unknown;
-  try {
-    normalized = cloneStrictPluginJsonValue(schema, 'schema');
-  } catch (error) {
-    throw invalidSchema(error instanceof Error ? error.message : 'schema is not strict JSON');
-  }
-  // Only this strict-JSON owner's immutable graph can reuse an earlier successful
-  // validation. Object.freeze or a copied caller object does not establish it.
+  let normalized = cloneProtocolSchemaDocument(schema);
+  // Only this strict-JSON owner's immutable graph can reuse established schema
+  // validity. Object.freeze or a copied caller object does not establish it.
   if (previous && normalized === schema) return previous;
   const cloned = normalized as Readonly<Record<string, unknown>>;
   if (cloned.$schema !== undefined) {
@@ -379,8 +381,25 @@ function createProtocolSingleFailure(
   return createProtocolFailure([createProtocolValidationIssue(code, message)]);
 }
 
-function canonicalProtocolJsonSchema(projection: object): PluginJsonSchemaV2 {
-  return normalizePluginJsonSchema({
+function cloneProtocolSchemaDocument(schema: object): unknown {
+  try {
+    return cloneStrictPluginJsonValue(schema, 'schema');
+  } catch (error) {
+    throw invalidSchema(error instanceof Error ? error.message : 'schema is not strict JSON');
+  }
+}
+
+/** Constructor output already has validated options and admitted child documents. */
+function snapshotConstructedProtocolSchema(projection: PluginJsonSchemaV2): PluginJsonSchemaV2 {
+  const snapshot = cloneProtocolSchemaDocument(projection) as PluginJsonSchemaV2;
+  // Publish through the existing normalizer's immutable-document lifetime.
+  // Never grant this proof to caller documents or merely frozen objects.
+  normalizedPluginJsonSchemas.set(snapshot, snapshot);
+  return snapshot;
+}
+
+function canonicalProtocolJsonSchema(projection: PluginJsonSchemaV2): PluginJsonSchemaV2 {
+  return snapshotConstructedProtocolSchema({
     $schema: CANONICAL_PLUGIN_JSON_SCHEMA_DIALECT,
     ...projection,
   });
@@ -404,18 +423,20 @@ export function createProtocolComposableSchema<TInput, TOutput>(
   parseNormalized: ProtocolNormalizedParser<TOutput>,
   allowsUndefined = false,
 ): ProtocolComposableSchema<TInput, TOutput> {
-  return createProtocolComposableSchemaForPurpose(projection, parseNormalized, allowsUndefined, false);
+  // Custom owners supply arbitrary documents; retain full ingress admission.
+  return createProtocolComposableSchemaForPurpose(normalizePluginJsonSchema(projection), parseNormalized, allowsUndefined, false);
 }
 
 function createProtocolComposableSchemaForPurpose<TInput, TOutput>(
-  projection: object,
+  projection: PluginJsonSchemaV2,
   parseNormalized: (value: ProtocolJsonValue, purpose: ProtocolParsePurpose) => ProtocolSchemaSafeParseResult<TOutput>,
   allowsUndefined = false,
   supportsStoredRead = true,
 ): ProtocolComposableSchema<TInput, TOutput> {
   // The dialect belongs to the root; composing an incumbent parser must not
   // embed its root annotation in a nullable member.
-  const { $schema: _dialect, ...normalizedProjection } = normalizePluginJsonSchema(projection);
+  const { $schema: _dialect, ...fragment } = projection;
+  const normalizedProjection = snapshotConstructedProtocolSchema(fragment);
   const jsonSchema = canonicalProtocolJsonSchema(normalizedProjection);
   const parseForPurpose = (value: unknown, purpose: ProtocolParsePurpose): ProtocolSchemaSafeParseResult<TOutput> => {
     if (value === undefined && allowsUndefined) {
@@ -470,7 +491,7 @@ function createProtocolComposableSchemaForPurpose<TInput, TOutput>(
     },
     nullable(): ProtocolComposableSchema<TInput | null, TOutput | null> {
       return createProtocolComposableSchemaForPurpose<TInput | null, TOutput | null>(
-        { anyOf: [normalizedProjection, { type: 'null' }] },
+        { anyOf: [embedProtocolJsonSchema(normalizedProjection, ['anyOf', 0]), { type: 'null' }] },
         (value, purpose) => value === null
           ? Object.freeze({ success: true, data: null as TOutput | null })
           : parseNormalized(value, purpose) as ProtocolSchemaSafeParseResult<TOutput | null>,
@@ -514,9 +535,23 @@ function requireProtocolComposableSchema<TInput, TOutput>(
   return value;
 }
 
-function protocolComposableProjection(schema: ProtocolComposableSchema<unknown, unknown>): PluginJsonSchemaV2 {
+/** @internal Document-local references retain their scope when a document becomes a fragment. */
+export function embedProtocolJsonSchema(projection: PluginJsonSchemaV2, path: readonly (string | number)[]): PluginJsonSchemaV2 {
+  const embedded = JSON.parse(JSON.stringify(projection)) as PluginJsonSchemaV2;
+  const prefix = path.length === 0 ? '#' : `#/${path.map(segment => String(segment).replace(/~/g, '~0').replace(/\//g, '~1')).join('/')}`;
+  const relocate = (node: PluginJsonSchemaV2): void => {
+    if (node.$ref !== undefined) node.$ref = `${prefix}${node.$ref.slice(1)}`;
+    forEachJsonSchemaChild(node, child => {
+      if (isProtocolRecord(child)) relocate(child as PluginJsonSchemaV2);
+    });
+  };
+  relocate(embedded);
+  return embedded;
+}
+
+function protocolComposableProjection(schema: ProtocolComposableSchema<unknown, unknown>, path: readonly (string | number)[]): PluginJsonSchemaV2 {
   const { $schema: _dialect, ...projection } = normalizePluginJsonSchema(schema.jsonSchema);
-  return projection;
+  return embedProtocolJsonSchema(projection, path);
 }
 
 function protocolSchemaAllowsUndefined(schema: ProtocolComposableSchema<unknown, unknown>): boolean {
@@ -795,7 +830,7 @@ export function defineProtocolObject<
     const schema = requireProtocolComposableSchema<unknown, unknown>(child, `Protocol object field '${key}'`);
     children[key] = schema;
     storedChildren[key] = createProtocolStoredReadSchema(schema);
-    properties[key] = protocolComposableProjection(schema);
+    properties[key] = protocolComposableProjection(schema, ['properties', key]);
     if (!protocolSchemaAllowsUndefined(schema)) required.push(key);
   }
 
@@ -824,7 +859,7 @@ export function defineProtocolObject<
       additional,
       'Protocol object additionalProperties schema',
     );
-    projection.additionalProperties = protocolComposableProjection(additionalSchema);
+    projection.additionalProperties = protocolComposableProjection(additionalSchema, ['additionalProperties']);
   }
   const storedAdditional = additionalSchema === undefined ? undefined : createProtocolStoredReadSchema(additionalSchema);
   const schema = createProtocolComposableSchemaForPurpose<
@@ -911,7 +946,7 @@ export function defineProtocolArray<
   return createProtocolComposableSchemaForPurpose<
     readonly ProtocolSchemaInput<TSchema>[],
     readonly ProtocolSchemaOutput<TSchema>[]
-  >(protocolArrayProjection(protocolComposableProjection(item), normalized), (input, purpose) => {
+  >(protocolArrayProjection(protocolComposableProjection(item, ['items']), normalized), (input, purpose) => {
     if (!Array.isArray(input)
       || (normalized.minItems !== undefined && input.length < normalized.minItems)
       || (normalized.maxItems !== undefined && input.length > normalized.maxItems)) {
@@ -945,7 +980,7 @@ export function defineProtocolUniqueArray<
   return createProtocolComposableSchemaForPurpose<
     readonly ProtocolSchemaInput<TSchema>[],
     readonly ProtocolSchemaOutput<TSchema>[]
-  >(protocolArrayProjection(protocolComposableProjection(item), normalized, true), (input, purpose) => {
+  >(protocolArrayProjection(protocolComposableProjection(item, ['items']), normalized, true), (input, purpose) => {
     if (!Array.isArray(input)
       || (normalized.minItems !== undefined && input.length < normalized.minItems)
       || (normalized.maxItems !== undefined && input.length > normalized.maxItems)) {
@@ -993,7 +1028,7 @@ export function defineProtocolUnion<
     ProtocolSchemaInput<TMembers[number]>,
     ProtocolSchemaOutput<TMembers[number]>
   >({
-    anyOf: schemas.map(({ schema }) => protocolComposableProjection(schema)),
+    anyOf: schemas.map(({ schema }, index) => protocolComposableProjection(schema, ['anyOf', index])),
     ...(maximum === undefined ? {} : { [HAPPIER_MAX_SERIALIZED_UTF8_BYTES_KEYWORD]: maximum }),
   }, (input, purpose) => {
     // The bound belongs to the admitted input, before a member may normalize

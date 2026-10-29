@@ -7,6 +7,17 @@ import { lazyZodSchema } from '../../lazyZodSchema.js';
  */
 import { z } from 'zod/mini';
 
+/** Shared portable declaration rule: every object remains closed, including union arms. */
+export function isRecursivelyClosedPluginJsonSchemaV2(schema: PluginJsonSchemaV2): boolean {
+  if ((schema.type === 'object' || schema.properties) && schema.additionalProperties !== false) return false;
+  return Object.values(schema.properties ?? {}).every(isRecursivelyClosedPluginJsonSchemaV2)
+    && Object.values(schema.definitions ?? {}).every(isRecursivelyClosedPluginJsonSchemaV2)
+    && Object.values(schema.$defs ?? {}).every(isRecursivelyClosedPluginJsonSchemaV2)
+    && (!schema.items || isRecursivelyClosedPluginJsonSchemaV2(schema.items))
+    && (!schema.not || isRecursivelyClosedPluginJsonSchemaV2(schema.not))
+    && [...(schema.anyOf ?? []), ...(schema.oneOf ?? []), ...(schema.allOf ?? [])].every(isRecursivelyClosedPluginJsonSchemaV2);
+}
+
 /**
  * Mutable structural JSON authored into declarations and carried on wire
  * payloads, admitted by `PluginJsonValueV2Schema`. It is deliberately distinct

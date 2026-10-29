@@ -1,3 +1,4 @@
+import type { DeploymentTransportActionIdV1, DeploymentActionInputV1, DeploymentActionOutputV1 } from '../../deployments/deploymentActionsV1.js';
 import type { SessionFollowActionIdV1 } from '../../sessions/follow/actions.js';
 import type { SessionPendingNextOutput } from '../specs/session/pendingNext.js';
 import type { DaemonLocalServiceLauncherStartRequestV1, LocalServiceStartApprovalReviewV1 } from '../../local/services/launcher/v1.js';
@@ -1145,6 +1146,14 @@ export type PluginSettingsAdministrationActionRequest = Readonly<{
 }>;
 
 export type ActionExecutorDeps = Readonly<{
+  deploymentAction?: (actionId: DeploymentTransportActionIdV1, input: DeploymentActionInputV1,
+    context: ActionExecutorContext) => Promise<DeploymentActionOutputV1 | ActionApprovalRequestCreatedResult | ActionExecuteFailure>;
+  resolveEnvironmentApprovalScope?: (args: Readonly<{
+    actionId: ActionId;
+    input: unknown;
+    context: ActionExecutorContext;
+    phase: 'prepare' | 'dispatch' | 'replay';
+  }>) => Promise<import('../actionApprovalPolicy.js').ActionEnvironmentApprovalScopeAdmissionV1 | ActionExecuteFailure>;
   /** Host-private placement port. Null means this process already owns the Machine effect. */
   routeHostChildAction?: (args: Readonly<{
     actionId: ActionId;

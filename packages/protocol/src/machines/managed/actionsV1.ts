@@ -1,4 +1,8 @@
 import { z } from 'zod/mini';
+import { MachineSetupSourceV1Schema } from '../setup/machineSetupSourcesV1.js';
+import { MachineSetupEffectPlanV1Schema } from '../setup/machineRecipeV1.js';
+import { DeploymentEnvironmentCreateInputV1Schema, DeploymentDeployInputV1Schema } from '../../deployments/deploymentActionsV1.js';
+import { DeploymentTemplateInstantiateInputV1Schema } from '../../deployments/deploymentTemplateInstantiationV1.js';
 import * as mini from 'zod/mini';
 import { lazyDefinition, lazyZodSchema } from '../../lazyZodSchema.js';
 import { asProtocolZod } from '../../plugins/actions/internalProtocolZodAdapter.js';
@@ -25,6 +29,32 @@ const revision = () => mini.int().check(mini.gte(0));
 export const ManagedMachineActionIdV1Schema = lazyDefinition(() => mini.enum(MANAGED_MACHINE_ACTION_IDS_V1));
 const target = () => ({ homeId: id(), managedId: id() });
 const current = () => ({ ...target(), expectedIntentRevision: revision(), requestId: id(), controller: ManagedControllerV1Schema });
+export const MachineSetupSourcesApplyInputV1Schema = lazyZodSchema(() => z.strictObject({
+  homeId: id(), machineId: id(), sources: MachineSetupSourceV1Schema,
+}));
+export type MachineSetupSourcesApplyInputV1 = z.infer<typeof MachineSetupSourcesApplyInputV1Schema>;
+export const MachineSetupRecipePlanV1Schema = lazyZodSchema(() => z.strictObject({
+  sourceIndex: revision(), itemIndex: revision(), plan: MachineSetupEffectPlanV1Schema,
+}));
+export const MachineSetupAppChildV1Schema = lazyZodSchema(() => z.discriminatedUnion('actionId', [
+  z.strictObject({ sourceIndex: revision(), itemIndex: revision(), actionId: z.literal('deployments.environments.create'),
+    input: DeploymentEnvironmentCreateInputV1Schema }),
+  z.strictObject({ sourceIndex: revision(), itemIndex: revision(), actionId: z.literal('deployments.templates.instantiate'),
+    input: DeploymentTemplateInstantiateInputV1Schema }),
+  z.strictObject({ sourceIndex: revision(), itemIndex: revision(), actionId: z.literal('deployments.deploy'),
+    input: DeploymentDeployInputV1Schema }),
+]));
+export type MachineSetupAppChildV1 = z.infer<typeof MachineSetupAppChildV1Schema>;
+export const MachineSetupApplyTargetV1Schema = lazyZodSchema(() => z.extend(MachineSetupSourcesApplyInputV1Schema, {
+  desiredRevision: revision(), recipePlans: z.array(MachineSetupRecipePlanV1Schema),
+  appChildren: z.optional(z.array(MachineSetupAppChildV1Schema)),
+}));
+export type MachineSetupApplyTargetV1 = z.infer<typeof MachineSetupApplyTargetV1Schema>;
+export const MachineSetupApplyInputV1Schema = lazyZodSchema(() => z.strictObject({
+  homeId: id(), machineId: id(), targets: z.array(MachineSetupApplyTargetV1Schema).check(z.minLength(1)),
+}).check(z.refine(input => new Set(input.targets.map(target => JSON.stringify([target.homeId, target.machineId]))).size === input.targets.length,
+  { message: 'Setup targets must be unique.' })));
+export type MachineSetupApplyInputV1 = z.infer<typeof MachineSetupApplyInputV1Schema>;
 export const MachineEnvironmentApplyInputV1Schema = lazyZodSchema(() => z.strictObject({
   homeId: id(), machineId: id(), presetId: id(), presetRevision: revision(),
 }));

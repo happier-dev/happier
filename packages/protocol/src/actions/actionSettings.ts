@@ -18,6 +18,11 @@ import { ActionUiPlacementSchema, type ActionUiPlacement } from './actionUiPlace
 
 const ActionSurfaceKeySchema = lazyZodSchema(() => z.keyof(ActionSurfaceSchema));
 export type ActionSurfaceKey = z.infer<typeof ActionSurfaceKeySchema>;
+export const ActionApprovalScopeV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
+  z.strictObject({ kind: z.literal('machine'), machineId: z.string().check(z.minLength(1)) }),
+  z.strictObject({ kind: z.literal('environment'), environmentId: z.string().check(z.minLength(1)) }),
+]));
+export type ActionApprovalScopeV1 = z.infer<typeof ActionApprovalScopeV1Schema>;
 export const ACTION_SETTINGS_OPT_IN_PLACEMENTS = ['agent_input_chips'] as const satisfies readonly ActionUiPlacement[];
 const ACTION_SETTINGS_OPT_IN_PLACEMENT_SET = new Set<ActionUiPlacement>(ACTION_SETTINGS_OPT_IN_PLACEMENTS);
 const ACTION_TOOL_EXPOSURE_MODE_KEYS = ['agent', 'mcp', 'cli'] as const satisfies readonly ActionToolExposureSurface[];

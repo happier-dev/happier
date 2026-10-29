@@ -51,3 +51,8 @@ export const MachineInstallationPrivateKeySchema = lazyZodSchema(() => z.string(
 export const MachineInstallationProofSignatureSchema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1), z.superRefine((value, ctx) => {
         validateBase64UrlEncodedBytes(value, 'signature', ED25519_SIGNATURE_BYTES, ctx);
     })));
+
+export const MachineInstallationProofV1Schema = lazyZodSchema(() => z.object({
+    version: z.literal(1), algorithm: z.literal('ed25519'), signature: MachineInstallationProofSignatureSchema,
+}));
+export type MachineInstallationProofV1 = z.infer<typeof MachineInstallationProofV1Schema>;

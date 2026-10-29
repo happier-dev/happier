@@ -1,11 +1,47 @@
 /** Protocol-internal Mini projection of the neutral composable schema. */
 import * as mini from 'zod/mini';
-import { createProtocolStoredReadSchema, projectProtocolStoredReadJsonSchema } from './protocolComposableSchema.js';
+import { createProtocolComposableSchema, createProtocolStoredReadSchema, embedProtocolJsonSchema, normalizePluginJsonSchema, projectProtocolStoredReadJsonSchema, ProtocolValidationError, type ProtocolComposableSchema, type ProtocolJsonValue } from './protocolComposableSchema.js';
 import { defineStoredReadProjection } from '../../json/storedReadSchema.js';
+import { zodSchemaToJsonSchemaObject } from '../../actions/actionInputJsonSchema.js';
 
 import type {
   ProtocolSchemaSafeParseResult,
 } from './jsonSchemaValidation.js';
+
+/**
+ * Projects an incumbent parser; domain validation and JSON derivation stay with
+ * that owner. Successful output also passed the composable owner's strict JSON
+ * normalization, even when the native schema carries opaque internal values.
+ */
+export function projectZodProtocolSchema<TSchema extends mini.core.$ZodType>(
+  schema: TSchema,
+): ProtocolComposableSchema<mini.input<TSchema>, mini.output<TSchema> & ProtocolJsonValue>;
+export function projectZodProtocolSchema<TSchema extends mini.core.$ZodType>(
+  schema: TSchema,
+): ProtocolComposableSchema<mini.input<TSchema>, mini.output<TSchema>> {
+  // Importing a projection must not force an otherwise lazy domain graph.
+  let projection: ProtocolComposableSchema<mini.input<TSchema>, mini.output<TSchema>> | undefined;
+  const readProjection = () => projection ??= createProtocolComposableSchema<mini.input<TSchema>, mini.output<TSchema>>(
+      zodSchemaToJsonSchemaObject(schema, { target: 'draft-7' }),
+      input => {
+        const parsed = mini.safeParse(schema, input);
+        return parsed.success
+          ? { success: true, data: parsed.data }
+          : { success: false, error: new ProtocolValidationError(parsed.error.issues.map(issue => ({
+            code: issue.code,
+            message: issue.message,
+            path: issue.path.filter((part): part is string | number => typeof part === 'string' || typeof part === 'number'),
+          }))) };
+      },
+    );
+  return Object.freeze({
+    get jsonSchema() { return readProjection().jsonSchema; },
+    parse(value: unknown) { return readProjection().parse(value); },
+    safeParse(value: unknown) { return readProjection().safeParse(value); },
+    optional() { return readProjection().optional(); },
+    nullable() { return readProjection().nullable(); },
+  });
+}
 
 /**
  * This private adapter receives the neutral parser surface structurally. Its
@@ -48,12 +84,11 @@ export function asProtocolZod<TInput, TOutput>(
       }));
       // Each native adapter projects its own canonical write or stored-read
       // document only when a JSON exporter actually traverses it.
-      adapter._zod.processJSONSchema = (_context, jsonSchema) => {
+      adapter._zod.processJSONSchema = (_context, jsonSchema, params) => {
         // This is a fragment of the parent's document. Its exporter owns the
         // root dialect; the neutral owner stays an unchanged draft-07 document.
-        const fragment = Object.fromEntries<unknown>(Object.entries(projectJsonSchema())
-          .filter(([keyword]) => keyword !== '$schema'));
-        Object.assign(jsonSchema, fragment);
+        const { $schema: _dialect, ...fragment } = normalizePluginJsonSchema(projectJsonSchema());
+        Object.assign(jsonSchema, embedProtocolJsonSchema(fragment, params.path));
       };
       return adapter;
     };
