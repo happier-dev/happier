@@ -2,6 +2,7 @@ import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod/mini';
 
 import { ProviderBoundModelRefSchema } from '../../providers/selection/v1.js';
+import { SessionModelSelectionV2Schema } from '../../providers/selection/v2.js';
 
 const intentOrder = lazyZodSchema(() => z.number().check(z.nonnegative()));
 export const SessionModelMutationScopeV1Schema = lazyZodSchema(() => z.strictObject({
@@ -84,3 +85,25 @@ export const SessionModelTransitionResultV1Schema = lazyZodSchema(() => z.union(
 export type SessionModelTransitionResultV1 = z.infer<
   typeof SessionModelTransitionResultV1Schema
 >;
+
+/** Public Action successes include the addressed Session and inactive intent writes.
+ * Failures use the canonical Action failure envelope rather than this result payload.
+ */
+export const SessionModelSetResultV1Schema = lazyZodSchema(() => {
+  const addressedModel = {
+    sessionId: z.string().check(z.minLength(1)),
+    modelId: z.string().check(z.minLength(1)),
+  };
+  const intent = {
+    ok: z.literal(true), status: z.literal('intent_updated'),
+    sessionId: addressedModel.sessionId, updatedAt: intentOrder,
+  };
+  return z.union([
+    z.strictObject({ ...SessionModelTransitionSuccessV1Schema.shape, ...addressedModel }),
+    z.strictObject({ ...SessionModelTransitionArmedV1Schema.shape, ...addressedModel }),
+    z.strictObject({ ...intent, modelId: addressedModel.modelId, selection: ProviderBoundModelRefSchema,
+      reversal: z.optional(SessionModelMutationReversalV1Schema) }),
+    z.strictObject({ ...intent, modelId: z.optional(addressedModel.modelId), selection: SessionModelSelectionV2Schema }),
+  ]);
+});
+export type SessionModelSetResultV1 = z.infer<typeof SessionModelSetResultV1Schema>;
