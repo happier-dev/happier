@@ -76,6 +76,55 @@ function lastState(): Capture {
  *     fetches (covered by the second test below — unchanged).
  */
 describe('useSelectionListDynamicSections — resolverKey-driven invalidation (R16a)', () => {
+    it('dispatches only the section whose query inputs changed, not its unchanged siblings', async () => {
+        const settings = vi.fn(async (_seed: string) => ({ options: [{ id: 'settings-hit', label: 'Settings hit' }] }));
+        const transcript = vi.fn(async () => ({ options: [] }));
+        const sections = (key: string): readonly SelectionListDynamicSection[] => [
+            { id: 'settings', resolverKey: 'catalog', debounceMs: 0, resolve: settings },
+            { id: 'transcript', resolverKey: key, debounceMs: 0, resolve: transcript },
+        ];
+        const update = async (query: string, key: string) => act(async () => {
+            renderer!.update(<HostHarness dynamicSections={sections(key)} inputValue={query} onState={onState} />);
+        });
+        await act(async () => {
+            renderer = createRenderer(<HostHarness dynamicSections={sections('before')} inputValue="theme" onState={onState} />);
+        });
+        expect(settings).toHaveBeenCalledTimes(1);
+        await update('theme', 'after');
+        expect(settings).toHaveBeenCalledTimes(1);
+        expect(transcript).toHaveBeenCalledTimes(2);
+        await update('security', 'after');
+        expect(settings).toHaveBeenCalledTimes(2);
+        expect(settings.mock.calls[1]?.[0]).toBe('security');
+        expect(lastState().get('settings')?.options.map(option => option.id)).toEqual(['settings-hit']);
+    });
+
+    it('keeps an unchanged pending request through sibling removal and still cancels it for a new query', async () => {
+        const signals: AbortSignal[] = [];
+        const pending: SelectionListDynamicSection = {
+            id: 'pending', debounceMs: 0,
+            resolve: (_seed, signal) => {
+                signals.push(signal);
+                return new Promise(() => {});
+            },
+        };
+        const sibling: SelectionListDynamicSection = { id: 'sibling', debounceMs: 0, resolve: async () => ({ options: [] }) };
+        await act(async () => {
+            renderer = createRenderer(<HostHarness dynamicSections={[pending, sibling]} inputValue="first" onState={onState} />);
+        });
+        await act(async () => {
+            renderer!.update(<HostHarness dynamicSections={[pending]} inputValue="first" onState={onState} />);
+        });
+        expect(signals).toHaveLength(1);
+        expect(signals[0]?.aborted).toBe(false);
+        await act(async () => {
+            renderer!.update(<HostHarness dynamicSections={[pending]} inputValue="second" onState={onState} />);
+        });
+        expect(signals).toHaveLength(2);
+        expect(signals[0]?.aborted).toBe(true);
+        expect(signals[1]?.aborted).toBe(false);
+    });
+
     it('cancels a removed section before its pending debounce can dispatch', async () => {
         const resolve = vi.fn(async () => ({ options: [] }));
         const section: SelectionListDynamicSection = {

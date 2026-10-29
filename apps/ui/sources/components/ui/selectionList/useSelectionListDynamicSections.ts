@@ -122,6 +122,31 @@ function deriveSeed(
     return inputValue;
 }
 
+/** A query that extends or truncates the one a section last settled on is that query being refined. */
+function isQueryRefinement(settledSeed: string, seed: string): boolean {
+    const settled = settledSeed.trim().toLocaleLowerCase();
+    const next = seed.trim().toLocaleLowerCase();
+    return settled.length > 0 && next.length > 0 && (next.startsWith(settled) || settled.startsWith(next));
+}
+
+/**
+ * A high-frequency query section (`resultTransition: 'none'`) keeps presenting what it last settled while a
+ * refinement of that query resolves: those rows or that status line stay valid choices, and replacing them
+ * once the new result settles is a local update, not a blank group between two answers. Any other seed
+ * (an unrelated query, a drill into another place) never shows the prior seed's state.
+ */
+function retainsSettledState(
+    section: SelectionListDynamicSection,
+    state: DynamicSectionState | undefined,
+    seed: string,
+): boolean {
+    return section.resultTransition === 'none'
+        && state?.status === 'success'
+        && state.notFound !== true
+        && state.seed !== undefined
+        && isQueryRefinement(state.seed, seed);
+}
+
 /**
  * Orchestrates async resolvers for dynamic sections (Phase 2.2).
  *
@@ -135,6 +160,8 @@ function deriveSeed(
  *  - skeleton rows produced via `loadingSkeletonRows` (default 3)
  *  - resolver throw / reject → status='error' with stale options preserved
  *  - on a successful response, status='success' with resolver's options + emptyHint
+ *  - a `resultTransition: 'none'` section keeps its last settled state while a refinement of that
+ *    query resolves (see `retainsSettledState`); every other seed change presents loading, never prior rows
  *
  * Returns a Map keyed by section id so consumers can look up state in O(1).
  */
@@ -185,8 +212,13 @@ export function useSelectionListDynamicSections(params: {
     // saw constant loading-skeleton flicker). R16a replaces the WeakMap with
     // an explicit `resolverKey` opt-in — the default identity is `descriptor.id`
     // alone, so plain re-renders never invalidate.
-    const lastResolverKeyByIdRef = React.useRef<Map<string, string>>(new Map());
-    const lastVisibleByIdRef = React.useRef<Map<string, boolean>>(new Map());
+    const lastInputsByIdRef = React.useRef<Map<string, Readonly<{
+        resolverKey: string;
+        seed: string;
+        visible: boolean;
+        inputValue: string;
+        inputBehavior: SelectionListInputBehavior | undefined;
+    }>>>(new Map());
 
     // Reset state when the section set changes (new ids → new map). Sections
     // that survived re-mount under the same id are forwarded through; sections
@@ -210,11 +242,8 @@ export function useSelectionListDynamicSections(params: {
             abortControllers.current.delete(id);
             sequenceCounters.current.set(id, (sequenceCounters.current.get(id) ?? 0) + 1);
         }
-        for (const id of lastResolverKeyByIdRef.current.keys()) {
-            if (!activeIds.has(id)) lastResolverKeyByIdRef.current.delete(id);
-        }
-        for (const id of lastVisibleByIdRef.current.keys()) {
-            if (!activeIds.has(id)) lastVisibleByIdRef.current.delete(id);
+        for (const id of lastInputsByIdRef.current.keys()) {
+            if (!activeIds.has(id)) lastInputsByIdRef.current.delete(id);
         }
         setStateMap((prev) => {
             const next = new Map<string, DynamicSectionState>();
@@ -311,6 +340,7 @@ export function useSelectionListDynamicSections(params: {
             debounceTimers.current.clear();
             abortControllers.current.forEach((ctrl) => ctrl.abort());
             abortControllers.current.clear();
+            lastInputsByIdRef.current.clear();
         };
     }, []);
 
@@ -318,6 +348,16 @@ export function useSelectionListDynamicSections(params: {
     React.useEffect(() => {
         for (const section of dynamicSections) {
             const { id } = section;
+            const currentResolverKey = section.resolverKey ?? id;
+            const seed = deriveSeed(section, inputBehavior, inputValue);
+            const isVisible = !section.visibleWhen || section.visibleWhen(inputValue);
+            const previousInputs = lastInputsByIdRef.current.get(id);
+            // A sibling's identity/visibility change reruns this effect, but is not a
+            // new request for this section. Keep its pending or settled work intact.
+            if (previousInputs?.resolverKey === currentResolverKey
+                && previousInputs.seed === seed && previousInputs.visible === isVisible
+                && previousInputs.inputValue === inputValue && previousInputs.inputBehavior === inputBehavior) continue;
+            lastInputsByIdRef.current.set(id, { resolverKey: currentResolverKey, seed, visible: isVisible, inputValue, inputBehavior });
 
             // R16a (was R9 blocker 2): if the section's EXPLICIT `resolverKey`
             // changed for this id, invalidate the cached lastSuccessOptions so
@@ -329,11 +369,9 @@ export function useSelectionListDynamicSections(params: {
             // Default key = `id` (so plain re-renders never invalidate). Only
             // descriptors that opt into `resolverKey` get the invalidation
             // behavior — see `_types.ts` for the contract.
-            const currentResolverKey = section.resolverKey ?? id;
-            const previousResolverKey = lastResolverKeyByIdRef.current.get(id);
+            const previousResolverKey = previousInputs?.resolverKey;
             const resolverChanged = previousResolverKey !== undefined
                 && previousResolverKey !== currentResolverKey;
-            lastResolverKeyByIdRef.current.set(id, currentResolverKey);
             if (resolverChanged) {
                 sequenceCounters.current.set(id, (sequenceCounters.current.get(id) ?? 0) + 1);
                 setStateMap((prev) => {
@@ -357,9 +395,7 @@ export function useSelectionListDynamicSections(params: {
             }
 
             // `visibleWhen` gate: hidden sections stay idle (no fetch, options cleared).
-            const isVisible = !section.visibleWhen || section.visibleWhen(inputValue);
-            const wasVisible = lastVisibleByIdRef.current.get(id);
-            lastVisibleByIdRef.current.set(id, isVisible);
+            const wasVisible = previousInputs?.visible;
             if (!isVisible) {
                 // Bump the sequence so any in-flight response from the
                 // visible-side fetch is dropped on arrival; clear cached
@@ -389,7 +425,6 @@ export function useSelectionListDynamicSections(params: {
                 });
             }
 
-            const seed = deriveSeed(section, inputBehavior, inputValue);
             const debounceMs = section.debounceMs ?? SELECTION_LIST_DEFAULT_DYNAMIC_DEBOUNCE_MS;
             // A section that names its first load (`loadingHint`) shows that line, never placeholder rows.
             const skeletonCount = section.loadingHint
@@ -410,8 +445,9 @@ export function useSelectionListDynamicSections(params: {
                 // Enter loading state with skeleton rows. Preserve last-success
                 // options so the error path can show stale-cache rows.
                 setStateMap((prev) => {
-                    const next = new Map(prev);
                     const previous = prev.get(id);
+                    if (retainsSettledState(section, previous, seed)) return prev;
+                    const next = new Map(prev);
                     const sameSeed = previous?.seed === seed;
                     const lastSuccess = !sameSeed ? undefined :
                         previous?.status === 'success'
@@ -480,17 +516,19 @@ export function useSelectionListDynamicSections(params: {
                     setStateMap((prev) => {
                         const next = new Map(prev);
                         const previous = prev.get(id);
-                        // Preserve previously-loaded options so a transient failure
-                        // doesn't blank the section (stale-cache behavior).
-                        const stale =
+                        // Preserve this seed's previously-loaded options so a transient failure
+                        // doesn't blank the section (stale-cache behavior). A retained refinement
+                        // state belongs to the prior seed and is not carried under the failure.
+                        const sameSeed = previous?.seed === seed;
+                        const stale = !sameSeed ? [] :
                             previous?.lastSuccessOptions ??
                             (previous?.status === 'success' ? previous.options : []);
                         next.set(id, {
                             status: 'error',
                             options: stale,
                             error,
-                            emptyHint: previous?.emptyHint,
-                            resultHint: previous?.resultHint,
+                            emptyHint: sameSeed ? previous?.emptyHint : undefined,
+                            resultHint: sameSeed ? previous?.resultHint : undefined,
                             seed,
                             lastSuccessOptions: stale,
                             retry: dispatch,
@@ -519,12 +557,17 @@ export function useSelectionListDynamicSections(params: {
     }, [inputValue, sectionIdsKey, inputBehavior, descriptorIdentityKey, visibilityKey]);
 
     // Input paints before the dispatch effect (and before its debounce). Never
-    // expose selectable rows from a different seed during that interval.
+    // expose selectable rows from a different seed or resolver during that interval,
+    // except what a high-frequency query section keeps while its query is refined.
     let visibleState: Map<string, DynamicSectionState> | null = null;
     for (const section of dynamicSections) {
         const state = stateMap.get(section.id);
+        if (!state || state.seed === undefined) continue;
         const seed = deriveSeed(section, inputBehavior, inputValue);
-        if (!state || state.seed === undefined || state.seed === seed) continue;
+        const dispatchedResolverKey = lastInputsByIdRef.current.get(section.id)?.resolverKey;
+        const resolverMoved = dispatchedResolverKey !== undefined
+            && dispatchedResolverKey !== (section.resolverKey ?? section.id);
+        if (!resolverMoved && (state.seed === seed || retainsSettledState(section, state, seed))) continue;
         visibleState ??= new Map(stateMap);
         visibleState.set(section.id, {
             status: 'loading', options: [], seed,
