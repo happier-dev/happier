@@ -2,6 +2,7 @@ import { fileURLToPath } from 'node:url';
 
 import { describe, expect, expectTypeOf, it } from 'vitest';
 import ts from 'typescript';
+import { createSdkSourceProgram } from '../test-support/sourceProgram.js';
 
 import type {
     PluginSettingFieldV2 as ProtocolSettingField,
@@ -65,19 +66,7 @@ const SETTINGS_EXPORTS = [
 ] as const;
 
 function createSdkProgram(): ts.Program {
-    const configPath = fileURLToPath(new URL('../../tsconfig.json', import.meta.url));
-    const parsed = ts.getParsedCommandLineOfConfigFile(configPath, {}, {
-        ...ts.sys,
-        onUnRecoverableConfigFileDiagnostic(diagnostic) {
-            throw new Error(ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n'));
-        },
-    });
-    if (!parsed) throw new Error(`Unable to parse ${configPath}`);
-    return ts.createProgram({
-        rootNames: parsed.fileNames,
-        options: parsed.options,
-        projectReferences: parsed.projectReferences,
-    });
+    return createSdkSourceProgram();
 }
 
 function moduleExportNames(program: ts.Program, relativePath: string): readonly string[] {

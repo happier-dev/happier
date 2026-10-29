@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 
 import { describe, expect, expectTypeOf, it } from 'vitest';
 import ts from 'typescript';
+import { createSdkSourceProgram } from '../test-support/sourceProgram.js';
 import * as z from 'zod/mini';
 
 import {
@@ -317,19 +318,7 @@ type VoiceToolParameters = Readonly<Record<string, VoiceRealtimeJsonValue>>;
 let sdkProgram: ts.Program | undefined;
 function readSdkProgram(): ts.Program {
     if (sdkProgram) return sdkProgram;
-    const configPath = fileURLToPath(new URL('../../tsconfig.json', import.meta.url));
-    const parsed = ts.getParsedCommandLineOfConfigFile(configPath, {}, {
-        ...ts.sys,
-        onUnRecoverableConfigFileDiagnostic(diagnostic) {
-            throw new Error(ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n'));
-        },
-    });
-    if (!parsed) throw new Error(`Unable to parse ${configPath}`);
-    sdkProgram = ts.createProgram({
-        rootNames: parsed.fileNames,
-        options: parsed.options,
-        projectReferences: parsed.projectReferences,
-    });
+    sdkProgram = createSdkSourceProgram();
     return sdkProgram;
 }
 
