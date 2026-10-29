@@ -97,15 +97,25 @@ export function KeyHint(props: KeyHintProps): React.ReactElement | null {
 }
 
 /**
+ * The key combination a command's hint draws here, or null when none is drawn: no key runs the command,
+ * or there is no hardware keyboard (a finger, a phone), where keycaps name nothing. A control wrapped
+ * around the hint asks this first, so it never exists where its face is not drawn.
+ */
+export function useKeyboardCommandHintLabel(commandId: KeyboardCommandId): string | null {
+    const shortcut = useKeyboardShortcutLabel(commandId);
+    // Keycaps name a key: without a hardware keyboard they are not drawn, as in SelectionList's footer.
+    const hasKeyboard = useHardwareKeyboard();
+    return shortcut && hasKeyboard ? shortcut : null;
+}
+
+/**
  * The keycaps of one command as the person has bound it here (⌘ P), or nothing when no key runs it:
  * the hint beside a control that does the same thing (Go to file in the Files tree, Text in files).
  */
 export function KeyboardCommandHint(props: Readonly<{ commandId: KeyboardCommandId; testID?: string }>): React.ReactElement | null {
     const { theme } = useUnistyles();
-    const shortcut = useKeyboardShortcutLabel(props.commandId);
-    // Keycaps name a key: without a hardware keyboard (a finger, a phone) they are not drawn, as in SelectionList's footer.
-    const hasKeyboard = useHardwareKeyboard();
-    if (!shortcut || !hasKeyboard) return null;
+    const shortcut = useKeyboardCommandHintLabel(props.commandId);
+    if (!shortcut) return null;
     return (
         <View testID={props.testID} accessibilityLabel={shortcut} style={{ flexDirection: 'row', gap: theme.space.s2 }}>
             {splitKeybindingLabel(shortcut).map((label, index) => <KeyHint key={index} label={label} />)}
