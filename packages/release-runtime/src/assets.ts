@@ -6,6 +6,10 @@ type RawAsset = {
   url?: unknown;
 };
 
+class ReleaseArchiveMissingError extends Error {
+  readonly code = 'release_archive_missing';
+}
+
 function normalizeAsset(asset: RawAsset) {
   const name = String(asset?.name ?? '').trim();
   const url = String(asset?.browser_download_url ?? asset?.url ?? '').trim();
@@ -99,7 +103,7 @@ export function resolveReleaseAssetBundle({
   if (requireChecksumsSignature && !checksumsSig) {
     throw new Error(`[release-assets] missing release asset: ${checksumsSigName}`);
   }
-  if (!archive) throw new Error(`[release-assets] missing release asset: ${archiveName}`);
+  if (!archive) throw new ReleaseArchiveMissingError(`[release-assets] missing release asset: ${archiveName}`);
 
   return { version, archive, checksums, checksumsSig };
 }
