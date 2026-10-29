@@ -16,8 +16,9 @@ export function deriveSessionChangeSet(params: Readonly<{
         turns: params.turnChangeSets,
         rollbackRanges,
     });
+    const visibleTurnIds = new Set(visibleTurns.map((turn) => turn.turnId));
     const rolledBackTurnIds = params.turnChangeSets
-        .filter((turn) => !visibleTurns.some((visible) => visible.turnId === turn.turnId))
+        .filter((turn) => !visibleTurnIds.has(turn.turnId))
         .map((turn) => turn.turnId);
     return mergeTurnChangeSets({
         sessionId: params.sessionId,
