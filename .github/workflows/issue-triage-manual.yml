@@ -25,7 +25,7 @@ jobs:
             // We intentionally do not use GitHub Environments with required reviewers for this workflow:
             // authorization is enforced up front by repository permission level.
             const allowed = new Set(['admin', 'maintain', 'write', 'triage']);
-            if (!allowed.has(result.data.permission)) {
+            if (!allowed.has(result.data.role_name)) {
               core.setFailed(`Actor '${actor}' does not have triage permission.`);
             }
 

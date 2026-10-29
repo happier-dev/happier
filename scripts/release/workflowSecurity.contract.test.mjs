@@ -298,6 +298,24 @@ test('workflow security W7: the real validation shells accept quoted credentials
   }
 });
 
+test('workflow security W9: real triage admission accepts triage and maintain roles and refuses read', async () => {
+  const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor;
+  for (const file of ['issue-triage.yml', 'issue-triage-manual.yml']) {
+    const job = Object.values(workflows.get(file).jobs)[0];
+    const script = job.steps[0].with.script;
+    for (const [role, permission, admitted] of [
+      ['maintain', 'write', true], ['triage', 'read', true], ['read', 'read', false],
+    ]) {
+      const failures = [];
+      await new AsyncFunction('github', 'context', 'core', script)({
+        rest: { repos: { getCollaboratorPermissionLevel: async () => ({ data: { permission, role_name: role } }) } },
+      }, { actor: 'collaborator', repo: { owner: 'happier-dev', repo: 'happier' } }, {
+        setFailed: (message) => failures.push(message),
+      });
+      assert.equal(failures.length === 0, admitted, `${file}: ${role}`);
+    }
+  }
+});
 
 
 function compliantFixture() {
