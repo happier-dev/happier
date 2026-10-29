@@ -304,7 +304,7 @@ export async function runBugReportCommand(
   }
 
   let existingIssueNumber: number | undefined = parsed.existingIssueNumber ?? undefined;
-  if (providerUrl && !existingIssueNumber && interactive && !parsed.skipSimilarIssues) {
+  if (!parsed.exportPath && providerUrl && !existingIssueNumber && interactive && !parsed.skipSimilarIssues) {
     const query = [title, summary, currentBehavior ?? '', expectedBehavior ?? '']
       .map((part) => String(part).trim())
       .filter(Boolean)
