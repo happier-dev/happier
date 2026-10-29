@@ -35,8 +35,17 @@ export function createRegistryGitProtocolV1(input: Readonly<{ signal?: AbortSign
       try { header = registryTokenHeader(source, value); } catch { throw new RegistryFetchErrorV1({ state: 'auth_failed' }); }
       // Git matches scoped headers against the original URL, not redirect URLs.
       // A credentialed repository must therefore use its final HTTPS destination.
-      env.GIT_CONFIG_COUNT = '2'; env.GIT_CONFIG_KEY_0 = `http.${source.url}.extraHeader`; env.GIT_CONFIG_VALUE_0 = `${header.name}: ${header.value}`;
-      env.GIT_CONFIG_KEY_1 = `http.${source.url}.followRedirects`; env.GIT_CONFIG_VALUE_1 = 'false';
+      const rawCount = process.env.GIT_CONFIG_COUNT ?? '';
+      const inheritedCount = rawCount === '' ? 0 : /^[ \t\n\r\f\v]*[+-]?\d+$/.test(rawCount) ? Number(rawCount) : NaN;
+      // Preserve operator config (including scoped TLS trust) and its errors;
+      // derive exact indices only, leaving Git's own config limits unchanged.
+      if (inheritedCount < 0 || !Number.isSafeInteger(inheritedCount + 3)) throw new RegistryFetchErrorV1({ state: 'unreachable' });
+      env.GIT_CONFIG_COUNT = String(inheritedCount + 3);
+      // extraHeader is multi-valued. Reset it at this exact source before adding
+      // its managed credential, so an inherited header cannot change identity.
+      env[`GIT_CONFIG_KEY_${inheritedCount}`] = `http.${source.url}.extraHeader`; env[`GIT_CONFIG_VALUE_${inheritedCount}`] = '';
+      env[`GIT_CONFIG_KEY_${inheritedCount + 1}`] = `http.${source.url}.extraHeader`; env[`GIT_CONFIG_VALUE_${inheritedCount + 1}`] = `${header.name}: ${header.value}`;
+      env[`GIT_CONFIG_KEY_${inheritedCount + 2}`] = `http.${source.url}.followRedirects`; env[`GIT_CONFIG_VALUE_${inheritedCount + 2}`] = 'false';
     }
     return env;
   }

@@ -88,10 +88,9 @@ describe('Node Git registry transport',()=>{
       expect(acquired).toHaveLength(beforeCancel);
     }finally{restore();await rm(cwd,{recursive:true,force:true});}
   });
-  it('sends a custom token header only to the configured HTTPS destination, never a redirect',async()=>{
+  it.each([false,true])('preserves scoped operator TLS config and sends only the managed token to its HTTPS destination (inherited header: %s)',async inheritedHeader=>{
     const tls=await createEphemeralTlsServerFixture();
     const options={key:await readFile(tls.privateKeyPath),cert:await readFile(tls.leafCertificatePath)};
-    const oldCa=process.env.GIT_SSL_CAINFO;process.env.GIT_SSL_CAINFO=tls.caCertificatePath;
     const forwarded:unknown[]=[];const sourceHeaders:unknown[]=[];
     const target=createServer(options,(req,res)=>{forwarded.push(req.headers['x-api-key']);res.writeHead(404);res.end();});
     await new Promise<void>(resolve=>target.listen(0,'127.0.0.1',resolve));
@@ -100,12 +99,35 @@ describe('Node Git registry transport',()=>{
     await new Promise<void>(resolve=>sourceServer.listen(0,'127.0.0.1',resolve));
     try{
       const sourceAddress=sourceServer.address();if(!sourceAddress||typeof sourceAddress==='string')throw new Error('HTTPS fixture port unavailable');
+      const sourceUrl=`https://127.0.0.1:${sourceAddress.port}/repo`;
+      vi.stubEnv('GIT_SSL_CAINFO',undefined);
+      vi.stubEnv('GIT_CONFIG_COUNT',inheritedHeader?'2':'1');
+      vi.stubEnv('GIT_CONFIG_KEY_0',`http.https://127.0.0.1:${sourceAddress.port}/.sslCAInfo`);
+      vi.stubEnv('GIT_CONFIG_VALUE_0',tls.caCertificatePath);
+      if(inheritedHeader){
+        vi.stubEnv('GIT_CONFIG_KEY_1',`http.${sourceUrl}.extraHeader`);
+        vi.stubEnv('GIT_CONFIG_VALUE_1','X-Api-Key: operator-header');
+      }
       const git=createRegistryGitProtocolV1({resolveToken:async()=> 'fixture-secret'});
-      const source:RegistrySourceV1={id:'redirect',title:'Redirect',format:'git',url:`https://127.0.0.1:${sourceAddress.port}/repo`,kinds:['skill'],enabled:true,addedAt:0,
+      const source:RegistrySourceV1={id:'redirect',title:'Redirect',format:'git',url:sourceUrl,kinds:['skill'],enabled:true,addedAt:0,
         token:{secretRef:'happier:shared-secret:v1:redirect',header:{name:'X-Api-Key'}}};
       const forbidden=async()=>{throw new Error('Git transport must not use registry HTTP');};
       await expect(git.list({git,http:{getJson:forbidden,getText:forbidden,getBytes:forbidden}},{source,kind:'skill'})).rejects.toMatchObject({status:{state:'unreachable'}});
       expect(sourceHeaders).toEqual(['fixture-secret']);expect(forwarded).toEqual([]);
+      // Keep TLS available independently while proving malformed config never
+      // becomes a fresh valid config, and Git's valid empty count remains zero.
+      vi.stubEnv('GIT_SSL_CAINFO',tls.caCertificatePath);
+      for(const malformedCount of ['not-a-count','1\n']){
+        vi.stubEnv('GIT_CONFIG_COUNT',malformedCount);
+        await expect(git.list({git,http:{getJson:forbidden,getText:forbidden,getBytes:forbidden}},{source,kind:'skill'})).rejects.toMatchObject({status:{state:'unreachable'}});
+        expect(sourceHeaders).toEqual(['fixture-secret']);
+      }
+      vi.stubEnv('GIT_CONFIG_COUNT','1');vi.stubEnv('GIT_CONFIG_KEY_0',undefined);
+      await expect(git.list({git,http:{getJson:forbidden,getText:forbidden,getBytes:forbidden}},{source,kind:'skill'})).rejects.toMatchObject({status:{state:'unreachable'}});
+      expect(sourceHeaders).toEqual(['fixture-secret']);
+      vi.stubEnv('GIT_CONFIG_COUNT','');
+      await expect(git.list({git,http:{getJson:forbidden,getText:forbidden,getBytes:forbidden}},{source,kind:'skill'})).rejects.toMatchObject({status:{state:'unreachable'}});
+      expect(sourceHeaders).toEqual(['fixture-secret','fixture-secret']);expect(forwarded).toEqual([]);
       await expect(git.latest({git,http:{getJson:forbidden,getText:forbidden,getBytes:forbidden}},[{
         sourceId:source.id,format:'git',sourceUrl:source.url,itemId:'',importedAt:1,
         ref:{kind:'gitTree',repo:`https://127.0.0.1:${address.port}/other`,path:'',commit:'1'.repeat(40),treeSha:'tree'},
@@ -113,7 +135,7 @@ describe('Node Git registry transport',()=>{
       expect(forwarded).toEqual([]);
     }finally{
       await Promise.all([new Promise<void>(resolve=>sourceServer.close(()=>resolve())),new Promise<void>(resolve=>target.close(()=>resolve()))]);
-      if(oldCa===undefined)delete process.env.GIT_SSL_CAINFO;else process.env.GIT_SSL_CAINFO=oldCa;
+      vi.unstubAllEnvs();
       await tls.cleanup();
     }
   });
