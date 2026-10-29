@@ -43,7 +43,7 @@ function resolveRunningCliInstallSource(params: Readonly<{
   const layout = resolveFirstPartyInstallLayout({
     componentId: 'happier-cli',
     releaseRing: params.publicReleaseRing,
-    processEnv: { HAPPIER_HOME_DIR: params.homeDir },
+    processEnv: { ...process.env, HAPPIER_HOME_DIR: params.homeDir },
   });
   const { currentVersionId } = readInstalledVersionMarkersSync(layout);
   const versionsDir = `${comparablePath(layout.versionsDir, params.platform)}/`;
@@ -122,7 +122,7 @@ export function readCliUpdateFacts(params: Readonly<{
     updateCommand: managed ? `${resolveManagedCliToolNameForRing(params.publicReleaseRing)} self update` : packageManagerCommand,
     canUpdateRemotely: managed && params.platform !== 'win32',
     lastUpdate: managed
-      ? readLastCliUpdateResult({ channel: params.publicReleaseRing, processEnv: { HAPPIER_HOME_DIR: params.homeDir } })
+      ? readLastCliUpdateResult({ channel: params.publicReleaseRing, processEnv: { ...process.env, HAPPIER_HOME_DIR: params.homeDir } })
       : null,
   };
 }

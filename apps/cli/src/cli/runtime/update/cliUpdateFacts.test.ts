@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { CliUpdateFactsSchema } from '@happier-dev/protocol';
 
@@ -14,6 +14,7 @@ describe('readCliUpdateFacts (K5)', () => {
     homeDir = mkdtempSync(join(tmpdir(), 'happier-cli-update-facts-'));
   });
   afterEach(() => {
+    vi.unstubAllEnvs();
     rmSync(homeDir, { recursive: true, force: true });
   });
 
@@ -59,6 +60,23 @@ describe('readCliUpdateFacts (K5)', () => {
     expect(readCliUpdateFacts({
       homeDir, publicReleaseRing: 'stable', currentVersion: '0.3.13', execPath, invokedPath: execPath, platform: 'win32', npmPackageName: '@happier-dev/cli',
     })).toMatchObject({ installSource: 'managed', canUpdateRemotely: false, updateCommand: 'happier self update' });
+  });
+
+  it('offers remote updates for a shared install separate from daemon-private state', () => {
+    const installHome = join(homeDir, 'installation');
+    const execPath = installManaged('installation/cli', '0.3.13');
+    vi.stubEnv('HAPPIER_FIRST_PARTY_INSTALL_HOME', installHome);
+    writeFileSync(join(installHome, 'cli', 'last-update.json'), JSON.stringify({
+      targetVersion: '0.3.13', outcome: 'succeeded', at: 5, message: null,
+    }));
+
+    expect(readCliUpdateFacts({
+      homeDir: join(homeDir, 'private'), publicReleaseRing: 'stable', currentVersion: '0.3.13',
+      execPath, invokedPath: execPath, platform: 'linux', npmPackageName: '@happier-dev/cli',
+    })).toMatchObject({
+      installSource: 'managed', canUpdateRemotely: true,
+      lastUpdate: { targetVersion: '0.3.13', outcome: 'succeeded' },
+    });
   });
 
   it('names the package manager\'s command for an npm install and never offers a remote update', () => {
