@@ -1,7 +1,7 @@
 /** Project is a projection of the complete host listing; unknown entries stay visible. */
 export function projectRepositoryTreeNodes<T extends { path: string; type: string; depth: number }>(
-    nodes: T[], ignoredPaths: ReadonlySet<string>, preservedPaths: readonly string[],
-): T[] {
+    nodes: readonly T[], ignoredPaths: ReadonlySet<string>, preservedPaths: readonly string[],
+): readonly T[] {
     if (ignoredPaths.size === 0) return nodes;
     const preserved = new Set<string>();
     for (const path of preservedPaths) {

@@ -27,16 +27,18 @@ function canReuseLazyDirectoryTreeNode(
 export function reuseLazyDirectoryTreeNodes(
     nextNodes: readonly LazyDirectoryTreeNode[],
     previousNodes: readonly LazyDirectoryTreeNode[],
-): LazyDirectoryTreeNode[] {
-    if (nextNodes.length === 0) return [];
+): readonly LazyDirectoryTreeNode[] {
+    if (nextNodes.length === 0) return previousNodes.length === 0 ? previousNodes : [];
     if (previousNodes.length === 0) return [...nextNodes];
 
     const previousNodesByKey = new Map(
         previousNodes.map((node) => [getLazyDirectoryTreeNodeKey(node), node] as const),
     );
 
-    return nextNodes.map((node) => {
+    const nodes = nextNodes.map((node) => {
         const previousNode = previousNodesByKey.get(getLazyDirectoryTreeNodeKey(node));
         return canReuseLazyDirectoryTreeNode(previousNode, node) ? previousNode : node;
     });
+    return nodes.length === previousNodes.length && nodes.every((node, index) => node === previousNodes[index])
+        ? previousNodes : nodes;
 }
