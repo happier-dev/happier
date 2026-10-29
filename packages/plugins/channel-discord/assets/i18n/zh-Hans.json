@@ -1,0 +1,14 @@
+{
+  "discord.automation.messageSource.setup.title": "监视 Discord 频道",
+  "discord.automation.messageSource.setup.description": "选择 Discord 机器人以及消息应触发此自动化的频道。",
+  "discord.automation.messageSource.setup.submit": "监视频道",
+  "discord.automation.messageSource.setup.credential": "Discord 机器人账户",
+  "discord.automation.messageSource.setup.credential.description": "选择现有的 Discord 机器人连接账户；此处从不输入机器人令牌。",
+  "discord.automation.messageSource.setup.channel": "频道 ID",
+  "discord.automation.messageSource.setup.channel.description": "输入机器人已能读取的 Discord 频道 ID。",
+  "channels.discord.setup.title": "设置 Discord 频道",
+  "channels.discord.setup.description": "选择要验证的 Discord 机器人已连接账户。",
+  "channels.discord.setup.submit": "验证机器人",
+  "channels.discord.setup.credential": "Discord 机器人账户",
+  "channels.discord.setup.credential.description": "选择现有的 Discord 机器人已连接账户；无需在此输入机器人令牌。"
+}

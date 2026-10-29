@@ -1,0 +1,18 @@
+{
+  "channels.telegram.setup.title": "设置 Telegram 频道",
+  "channels.telegram.setup.description": "选择要验证的 Telegram 机器人已连接账户。",
+  "channels.telegram.setup.submit": "验证机器人",
+  "channels.telegram.setup.credential": "Telegram 机器人账户",
+  "channels.telegram.setup.credential.description": "选择现有的 Telegram 机器人已连接账户；无需在此输入机器人令牌。",
+  "channels.telegram.remediation.title": "移除 Telegram Webhook",
+  "channels.telegram.remediation.description": "选择要移除 Webhook 的 Telegram 机器人。",
+  "channels.telegram.remediation.submit": "继续",
+  "channels.telegram.remediation.credential": "Telegram 机器人账户",
+  "channels.telegram.remediation.credential.description": "选择现有的 Telegram 机器人已连接账户；无需在此输入机器人令牌。",
+  "channels.telegram.automation.setup.title": "选择要观察的 Telegram 聊天",
+  "channels.telegram.automation.setup.description": "选择 Telegram 机器人以及其消息应启动此自动化的聊天。",
+  "channels.telegram.automation.setup.submit": "使用此聊天",
+  "channels.telegram.automation.setup.credential": "Telegram 机器人账户",
+  "channels.telegram.automation.setup.chat": "聊天 ID",
+  "channels.telegram.automation.setup.chat.description": "Telegram 聊天的数字 ID，或机器人可触达的 @频道用户名。"
+}

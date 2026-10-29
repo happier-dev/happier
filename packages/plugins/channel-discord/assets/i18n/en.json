@@ -1,0 +1,14 @@
+{
+  "discord.automation.messageSource.setup.title": "Watch a Discord channel",
+  "discord.automation.messageSource.setup.description": "Choose the Discord bot and the channel whose messages should start this Automation.",
+  "discord.automation.messageSource.setup.submit": "Watch channel",
+  "discord.automation.messageSource.setup.credential": "Discord bot account",
+  "discord.automation.messageSource.setup.credential.description": "Choose the existing Discord bot Connected Account; bot tokens are never entered here.",
+  "discord.automation.messageSource.setup.channel": "Channel ID",
+  "discord.automation.messageSource.setup.channel.description": "Enter the Discord channel ID the bot can already read.",
+  "channels.discord.setup.title": "Set up Discord Channels",
+  "channels.discord.setup.description": "Select the Connected Account for the Discord bot to verify.",
+  "channels.discord.setup.submit": "Verify bot",
+  "channels.discord.setup.credential": "Discord bot account",
+  "channels.discord.setup.credential.description": "Choose the existing Discord bot Connected Account; bot tokens are never entered here."
+}

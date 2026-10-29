@@ -1,0 +1,8 @@
+{
+  "machineDigitalOcean.presentation.kind": "Droplet",
+  "machineDigitalOcean.presentation.description": "選択したサイズ、イメージ、リージョンのクラウド Droplet。",
+  "machineDigitalOcean.presentation.ready": "アカウント接続済み",
+  "machineDigitalOcean.presentation.unavailable": "アカウント利用不可",
+  "machineDigitalOcean.network.ipv4": "IPv4 のみ",
+  "machineDigitalOcean.network.dual": "IPv4 と IPv6"
+}

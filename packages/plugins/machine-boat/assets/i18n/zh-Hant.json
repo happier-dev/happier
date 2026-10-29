@@ -1,0 +1,7 @@
+{
+  "machineBoat.presentation.kind": "沙盒",
+  "machineBoat.presentation.description": "僅限歐盟地區的 Boat 沙盒。執行時間以秒計費；停止後運算計費暫停。方案每月 20 美元起，並包含等額的使用額度。",
+  "machineBoat.presentation.ready": "帳戶已連接",
+  "machineBoat.presentation.unavailable": "帳戶不可用",
+  "machineBoat.presentation.compute": "執行中的運算"
+}

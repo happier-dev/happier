@@ -1,0 +1,7 @@
+{
+  "machineBoat.presentation.kind": "sandbox",
+  "machineBoat.presentation.description": "Sandboxes Boat uniquement dans l’UE. Le temps d’exécution est facturé à la seconde ; l’arrêt met en pause la facturation du calcul. Les forfaits démarrent à 20 $/mois et incluent le même montant d’utilisation.",
+  "machineBoat.presentation.ready": "Compte connecté",
+  "machineBoat.presentation.unavailable": "Compte indisponible",
+  "machineBoat.presentation.compute": "Calcul en cours"
+}

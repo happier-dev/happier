@@ -1,0 +1,12 @@
+{
+  "machineHetzner.prices.compute": "Вычисления",
+  "machineHetzner.prices.primaryIpv4": "Основной IPv4",
+  "machineHetzner.prices.primaryIpv6": "Основной IPv6",
+  "machineHetzner.presentation.kind": "сервер",
+  "machineHetzner.presentation.description": "Облачный сервер с постоянным диском.",
+  "machineHetzner.presentation.ready": "Аккаунт подключён",
+  "machineHetzner.presentation.unavailable": "Аккаунт недоступен",
+  "machineHetzner.network.ipv4": "Только IPv4",
+  "machineHetzner.network.ipv6": "Только IPv6",
+  "machineHetzner.network.dual": "IPv4 и IPv6"
+}

@@ -1,0 +1,12 @@
+{
+  "machineHetzner.prices.compute": "计算",
+  "machineHetzner.prices.primaryIpv4": "主 IPv4",
+  "machineHetzner.prices.primaryIpv6": "主 IPv6",
+  "machineHetzner.presentation.kind": "服务器",
+  "machineHetzner.presentation.description": "配备持久磁盘的云服务器。",
+  "machineHetzner.presentation.ready": "账户已连接",
+  "machineHetzner.presentation.unavailable": "账户不可用",
+  "machineHetzner.network.ipv4": "仅 IPv4",
+  "machineHetzner.network.ipv6": "仅 IPv6",
+  "machineHetzner.network.dual": "IPv4 和 IPv6"
+}

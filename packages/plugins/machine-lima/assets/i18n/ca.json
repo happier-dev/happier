@@ -1,0 +1,10 @@
+{
+  "machineLima.presentation.kind": "VM",
+  "machineLima.presentation.description": "Una VM Linux lleugera per a codi, scripts i servidors de desenvolupament.",
+  "machineLima.presentation.ready": "Instal·lat",
+  "machineLima.presentation.unavailable": "No instal·lat",
+  "machineLima.presentation.lima_2_required": "Cal Lima 2",
+  "machineLima.presentation.qemu_unavailable": "QEMU no disponible",
+  "machineLima.presentation.qemu_driver_unavailable": "QEMU no disponible",
+  "machineLima.presentation.vz_driver_unavailable": "Virtualització no disponible"
+}

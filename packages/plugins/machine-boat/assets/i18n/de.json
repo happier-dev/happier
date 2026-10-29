@@ -1,0 +1,7 @@
+{
+  "machineBoat.presentation.kind": "Sandbox",
+  "machineBoat.presentation.description": "Boat-Sandboxes ausschließlich in der EU. Die Laufzeit wird sekundengenau abgerechnet; beim Stoppen pausiert die Abrechnung der Rechenleistung. Tarife beginnen bei 20 $/Monat und enthalten denselben Betrag als Nutzungsguthaben.",
+  "machineBoat.presentation.ready": "Konto verbunden",
+  "machineBoat.presentation.unavailable": "Konto nicht verfügbar",
+  "machineBoat.presentation.compute": "Laufende Rechenleistung"
+}

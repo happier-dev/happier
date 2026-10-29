@@ -1,0 +1,20 @@
+{
+  "machineCua.presentation.kind": "песочница",
+  "machineCua.presentation.description": "Изолированная машина для программирования и разработки.",
+  "machineCua.presentation.ready": "Готово",
+  "machineCua.presentation.unavailable": "Среда недоступна",
+  "machineCua.presentation.cua_native_unavailable": "Не установлено · скачайте на cua.ai",
+  "machineCua.presentation.cua_native_outdated": "Требуется обновление · обновите Cua CLI",
+  "machineCua.presentation.cua_connection_unavailable": "Соединение недоступно",
+  "machineCua.presentation.credential_unavailable": "Нет учётной записи",
+  "machineCua.presentation.spaceKind": "пространство",
+  "machineCua.presentation.spaceDescription": "Локальное пространство со своей машиной и экраном.",
+  "machineCua.presentation.byocKind": "машина",
+  "machineCua.presentation.byocDescription": "Машины в вашем облачном аккаунте под управлением Cua.",
+  "machineCua.presentation.native_facts_unknown": "Ответ среды недоступен",
+  "machineCua.presentation.native_runtime_unavailable": "Среда недоступна",
+  "machineCua.configure.cpu": "Ядра CPU",
+  "machineCua.configure.memoryBytes": "Память",
+  "machineCua.configure.diskBytes": "Диск",
+  "machineCua.configure.cloud": "Облако"
+}

@@ -1,0 +1,6 @@
+{
+  "agentInput.agent.fx": "FX",
+  "profiles.aiBackend.fxSubtitleExperimental": "Agent de codage FX (expérimental)",
+  "sessionInfo.fxSessionId": "Identifiant de session FX",
+  "sessionInfo.fxSessionIdCopied": "Identifiant de session FX copié"
+}

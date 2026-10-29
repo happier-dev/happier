@@ -1,0 +1,18 @@
+{
+  "channels.telegram.setup.title": "Configura els canals de Telegram",
+  "channels.telegram.setup.description": "Selecciona el compte connectat del bot de Telegram per verificar-lo.",
+  "channels.telegram.setup.submit": "Verifica el bot",
+  "channels.telegram.setup.credential": "Compte del bot de Telegram",
+  "channels.telegram.setup.credential.description": "Tria el compte connectat existent del bot de Telegram; els testimonis del bot no s’introdueixen mai aquí.",
+  "channels.telegram.remediation.title": "Elimina el webhook de Telegram",
+  "channels.telegram.remediation.description": "Selecciona el bot de Telegram del qual vols eliminar el webhook.",
+  "channels.telegram.remediation.submit": "Continua",
+  "channels.telegram.remediation.credential": "Compte del bot de Telegram",
+  "channels.telegram.remediation.credential.description": "Tria el compte connectat existent del bot de Telegram; els testimonis del bot no s’introdueixen mai aquí.",
+  "channels.telegram.automation.setup.title": "Tria un xat de Telegram per observar",
+  "channels.telegram.automation.setup.description": "Tria el bot de Telegram i el xat els missatges del qual han d’iniciar aquesta automatització.",
+  "channels.telegram.automation.setup.submit": "Usa aquest xat",
+  "channels.telegram.automation.setup.credential": "Compte del bot de Telegram",
+  "channels.telegram.automation.setup.chat": "Identificador del xat",
+  "channels.telegram.automation.setup.chat.description": "L’identificador numèric del xat de Telegram o un @nomd’usuari de canal que el bot pugui assolir."
+}

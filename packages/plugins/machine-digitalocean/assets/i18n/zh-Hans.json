@@ -1,0 +1,8 @@
+{
+  "machineDigitalOcean.presentation.kind": "Droplet",
+  "machineDigitalOcean.presentation.description": "使用所选规格、镜像和区域的云 Droplet。",
+  "machineDigitalOcean.presentation.ready": "账户已连接",
+  "machineDigitalOcean.presentation.unavailable": "账户不可用",
+  "machineDigitalOcean.network.ipv4": "仅 IPv4",
+  "machineDigitalOcean.network.dual": "IPv4 和 IPv6"
+}

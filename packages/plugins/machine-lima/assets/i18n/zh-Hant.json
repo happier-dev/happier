@@ -1,0 +1,10 @@
+{
+  "machineLima.presentation.kind": "虛擬機",
+  "machineLima.presentation.description": "用於程式碼、腳本和開發伺服器的輕量 Linux 虛擬機。",
+  "machineLima.presentation.ready": "已安裝",
+  "machineLima.presentation.unavailable": "未安裝",
+  "machineLima.presentation.lima_2_required": "需要 Lima 2",
+  "machineLima.presentation.qemu_unavailable": "QEMU 不可用",
+  "machineLima.presentation.qemu_driver_unavailable": "QEMU 不可用",
+  "machineLima.presentation.vz_driver_unavailable": "虛擬化不可用"
+}

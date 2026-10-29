@@ -1,0 +1,12 @@
+{
+  "machineModal.configure.appReference": "现有应用",
+  "machineModal.configure.imageReference": "镜像仓库中的镜像",
+  "machineModal.configure.cpu": "物理 CPU 核心",
+  "machineModal.configure.memoryMb": "内存（MiB）",
+  "machineModal.configure.timeoutMs": "原生运行时长（ms）",
+  "machineModal.configure.timeoutDescription": "以整秒为单位，从 1 秒到 24 小时。",
+  "machineModal.presentation.kind": "沙盒",
+  "machineModal.presentation.description": "按需提供并遵循原生运行期限的云沙盒。",
+  "machineModal.presentation.ready": "账户已连接",
+  "machineModal.presentation.unavailable": "账户不可用"
+}

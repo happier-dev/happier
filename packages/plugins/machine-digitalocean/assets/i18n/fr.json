@@ -1,0 +1,8 @@
+{
+  "machineDigitalOcean.presentation.kind": "Droplet",
+  "machineDigitalOcean.presentation.description": "Un Droplet cloud avec la taille, l’image et la région choisies.",
+  "machineDigitalOcean.presentation.ready": "Compte connecté",
+  "machineDigitalOcean.presentation.unavailable": "Compte indisponible",
+  "machineDigitalOcean.network.ipv4": "IPv4 seulement",
+  "machineDigitalOcean.network.dual": "IPv4 et IPv6"
+}

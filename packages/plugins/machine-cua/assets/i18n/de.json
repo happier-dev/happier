@@ -1,0 +1,20 @@
+{
+  "machineCua.presentation.kind": "Sandbox",
+  "machineCua.presentation.description": "Eine isolierte Maschine zum Programmieren und Entwickeln.",
+  "machineCua.presentation.ready": "Bereit",
+  "machineCua.presentation.unavailable": "Laufzeit nicht verfügbar",
+  "machineCua.presentation.cua_native_unavailable": "Nicht installiert · von cua.ai holen",
+  "machineCua.presentation.cua_native_outdated": "Update erforderlich · Cua CLI aktualisieren",
+  "machineCua.presentation.cua_connection_unavailable": "Verbindung nicht verfügbar",
+  "machineCua.presentation.credential_unavailable": "Noch kein Konto",
+  "machineCua.presentation.spaceKind": "Arbeitsbereich",
+  "machineCua.presentation.spaceDescription": "Ein lokaler Arbeitsbereich mit eigener Maschine und Bildschirm.",
+  "machineCua.presentation.byocKind": "Maschine",
+  "machineCua.presentation.byocDescription": "Maschinen in deinem Cloud-Konto, verwaltet von Cua.",
+  "machineCua.presentation.native_facts_unknown": "Laufzeitantwort nicht verfügbar",
+  "machineCua.presentation.native_runtime_unavailable": "Laufzeit nicht verfügbar",
+  "machineCua.configure.cpu": "CPU-Kerne",
+  "machineCua.configure.memoryBytes": "Arbeitsspeicher",
+  "machineCua.configure.diskBytes": "Festplatte",
+  "machineCua.configure.cloud": "Cloud"
+}

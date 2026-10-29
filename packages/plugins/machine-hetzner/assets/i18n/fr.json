@@ -1,0 +1,12 @@
+{
+  "machineHetzner.prices.compute": "Calcul",
+  "machineHetzner.prices.primaryIpv4": "IPv4 principale",
+  "machineHetzner.prices.primaryIpv6": "IPv6 principale",
+  "machineHetzner.presentation.kind": "serveur",
+  "machineHetzner.presentation.description": "Un serveur cloud avec un disque persistant.",
+  "machineHetzner.presentation.ready": "Compte connecté",
+  "machineHetzner.presentation.unavailable": "Compte indisponible",
+  "machineHetzner.network.ipv4": "IPv4 seulement",
+  "machineHetzner.network.ipv6": "IPv6 seulement",
+  "machineHetzner.network.dual": "IPv4 et IPv6"
+}

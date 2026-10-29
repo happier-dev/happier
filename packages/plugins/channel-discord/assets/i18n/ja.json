@@ -1,0 +1,14 @@
+{
+  "discord.automation.messageSource.setup.title": "Discord チャンネルを監視",
+  "discord.automation.messageSource.setup.description": "この自動化を開始するメッセージが届く Discord ボットとチャンネルを選択します。",
+  "discord.automation.messageSource.setup.submit": "チャンネルを監視",
+  "discord.automation.messageSource.setup.credential": "Discord ボットアカウント",
+  "discord.automation.messageSource.setup.credential.description": "既存の Discord ボット接続アカウントを選択します。ボットトークンをここに入力することはありません。",
+  "discord.automation.messageSource.setup.channel": "チャンネル ID",
+  "discord.automation.messageSource.setup.channel.description": "ボットがすでに読み取れる Discord チャンネル ID を入力します。",
+  "channels.discord.setup.title": "Discord チャンネルを設定",
+  "channels.discord.setup.description": "確認する Discord Bot の接続済みアカウントを選択してください。",
+  "channels.discord.setup.submit": "Bot を確認",
+  "channels.discord.setup.credential": "Discord Bot アカウント",
+  "channels.discord.setup.credential.description": "既存の Discord Bot 接続済みアカウントを選択してください。Bot トークンをここで入力することはありません。"
+}

@@ -1,0 +1,20 @@
+{
+  "machineCua.presentation.kind": "沙盒",
+  "machineCua.presentation.description": "用于编程和开发的隔离机器。",
+  "machineCua.presentation.ready": "就绪",
+  "machineCua.presentation.unavailable": "运行环境不可用",
+  "machineCua.presentation.cua_native_unavailable": "未安装 · 请从 cua.ai 获取",
+  "machineCua.presentation.cua_native_outdated": "需要更新 · 请更新 Cua CLI",
+  "machineCua.presentation.cua_connection_unavailable": "连接不可用",
+  "machineCua.presentation.credential_unavailable": "尚无账号",
+  "machineCua.presentation.spaceKind": "空间",
+  "machineCua.presentation.spaceDescription": "拥有独立机器和屏幕的本地工作空间。",
+  "machineCua.presentation.byocKind": "机器",
+  "machineCua.presentation.byocDescription": "由 Cua 管理、运行在你自己的云账户上的机器。",
+  "machineCua.presentation.native_facts_unknown": "运行环境响应不可用",
+  "machineCua.presentation.native_runtime_unavailable": "运行环境不可用",
+  "machineCua.configure.cpu": "CPU 核心",
+  "machineCua.configure.memoryBytes": "内存",
+  "machineCua.configure.diskBytes": "磁盘",
+  "machineCua.configure.cloud": "云平台"
+}

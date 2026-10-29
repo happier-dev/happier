@@ -1,0 +1,6 @@
+{
+  "agentInput.agent.fx": "FX",
+  "profiles.aiBackend.fxSubtitleExperimental": "FX コーディングエージェント（実験的）",
+  "sessionInfo.fxSessionId": "FX セッション ID",
+  "sessionInfo.fxSessionIdCopied": "FX セッション ID をコピーしました"
+}

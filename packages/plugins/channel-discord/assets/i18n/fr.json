@@ -1,0 +1,14 @@
+{
+  "discord.automation.messageSource.setup.title": "Surveiller un salon Discord",
+  "discord.automation.messageSource.setup.description": "Choisis le bot Discord et le salon dont les messages doivent démarrer cette automatisation.",
+  "discord.automation.messageSource.setup.submit": "Surveiller le salon",
+  "discord.automation.messageSource.setup.credential": "Compte du bot Discord",
+  "discord.automation.messageSource.setup.credential.description": "Choisis le compte connecté existant du bot Discord ; les jetons du bot ne sont jamais saisis ici.",
+  "discord.automation.messageSource.setup.channel": "Identifiant du salon",
+  "discord.automation.messageSource.setup.channel.description": "Saisis l’identifiant du salon Discord que le bot peut déjà lire.",
+  "channels.discord.setup.title": "Configurer les canaux Discord",
+  "channels.discord.setup.description": "Sélectionne le compte connecté du bot Discord à vérifier.",
+  "channels.discord.setup.submit": "Vérifier le bot",
+  "channels.discord.setup.credential": "Compte du bot Discord",
+  "channels.discord.setup.credential.description": "Choisis le compte connecté existant du bot Discord ; les jetons du bot ne sont jamais saisis ici."
+}

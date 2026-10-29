@@ -1,0 +1,18 @@
+{
+  "channels.telegram.setup.title": "Telegram チャンネルを設定",
+  "channels.telegram.setup.description": "確認する Telegram Bot の接続済みアカウントを選択してください。",
+  "channels.telegram.setup.submit": "Bot を確認",
+  "channels.telegram.setup.credential": "Telegram Bot アカウント",
+  "channels.telegram.setup.credential.description": "既存の Telegram Bot 接続済みアカウントを選択してください。Bot トークンをここで入力することはありません。",
+  "channels.telegram.remediation.title": "Telegram Webhook を削除",
+  "channels.telegram.remediation.description": "Webhook を削除する Telegram Bot を選択してください。",
+  "channels.telegram.remediation.submit": "続ける",
+  "channels.telegram.remediation.credential": "Telegram Bot アカウント",
+  "channels.telegram.remediation.credential.description": "既存の Telegram Bot 接続済みアカウントを選択してください。Bot トークンをここで入力することはありません。",
+  "channels.telegram.automation.setup.title": "監視する Telegram チャットを選択",
+  "channels.telegram.automation.setup.description": "このオートメーションを開始するメッセージが届く Telegram Bot とチャットを選択してください。",
+  "channels.telegram.automation.setup.submit": "このチャットを使用",
+  "channels.telegram.automation.setup.credential": "Telegram Bot アカウント",
+  "channels.telegram.automation.setup.chat": "チャット ID",
+  "channels.telegram.automation.setup.chat.description": "Telegram チャットの数値 ID、またはボットが到達できる @チャンネルユーザー名。"
+}

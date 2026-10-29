@@ -1,0 +1,7 @@
+{
+  "machineBoat.presentation.kind": "沙盒",
+  "machineBoat.presentation.description": "仅限欧盟地区的 Boat 沙盒。运行时间按秒计费；停止后计算计费暂停。套餐起价为每月 20 美元，并包含等额的使用额度。",
+  "machineBoat.presentation.ready": "账户已连接",
+  "machineBoat.presentation.unavailable": "账户不可用",
+  "machineBoat.presentation.compute": "运行中的计算"
+}

@@ -1,0 +1,20 @@
+{
+  "machineCua.presentation.kind": "piaskownica",
+  "machineCua.presentation.description": "Izolowana maszyna do programowania i tworzenia aplikacji.",
+  "machineCua.presentation.ready": "Gotowe",
+  "machineCua.presentation.unavailable": "Środowisko niedostępne",
+  "machineCua.presentation.cua_native_unavailable": "Nie zainstalowano · pobierz z cua.ai",
+  "machineCua.presentation.cua_native_outdated": "Wymagana aktualizacja · zaktualizuj Cua CLI",
+  "machineCua.presentation.cua_connection_unavailable": "Połączenie niedostępne",
+  "machineCua.presentation.credential_unavailable": "Brak konta",
+  "machineCua.presentation.spaceKind": "przestrzeń",
+  "machineCua.presentation.spaceDescription": "Lokalna przestrzeń z własną maszyną i ekranem.",
+  "machineCua.presentation.byocKind": "maszyna",
+  "machineCua.presentation.byocDescription": "Maszyny na Twoim koncie w chmurze, zarządzane przez Cua.",
+  "machineCua.presentation.native_facts_unknown": "Odpowiedź środowiska niedostępna",
+  "machineCua.presentation.native_runtime_unavailable": "Środowisko niedostępne",
+  "machineCua.configure.cpu": "Rdzenie CPU",
+  "machineCua.configure.memoryBytes": "Pamięć",
+  "machineCua.configure.diskBytes": "Dysk",
+  "machineCua.configure.cloud": "Chmura"
+}

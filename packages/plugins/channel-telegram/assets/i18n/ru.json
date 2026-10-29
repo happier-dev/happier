@@ -1,0 +1,18 @@
+{
+  "channels.telegram.setup.title": "Настроить каналы Telegram",
+  "channels.telegram.setup.description": "Выберите подключённую учётную запись бота Telegram для проверки.",
+  "channels.telegram.setup.submit": "Проверить бота",
+  "channels.telegram.setup.credential": "Учётная запись бота Telegram",
+  "channels.telegram.setup.credential.description": "Выберите существующую подключённую учётную запись бота Telegram; токены бота здесь не вводятся.",
+  "channels.telegram.remediation.title": "Удалить вебхук Telegram",
+  "channels.telegram.remediation.description": "Выберите бота Telegram, вебхук которого нужно удалить.",
+  "channels.telegram.remediation.submit": "Продолжить",
+  "channels.telegram.remediation.credential": "Учётная запись бота Telegram",
+  "channels.telegram.remediation.credential.description": "Выберите существующую подключённую учётную запись бота Telegram; токены бота здесь не вводятся.",
+  "channels.telegram.automation.setup.title": "Выберите чат Telegram для отслеживания",
+  "channels.telegram.automation.setup.description": "Выберите бота Telegram и чат, сообщения которого должны запускать эту автоматизацию.",
+  "channels.telegram.automation.setup.submit": "Использовать этот чат",
+  "channels.telegram.automation.setup.credential": "Учётная запись бота Telegram",
+  "channels.telegram.automation.setup.chat": "Идентификатор чата",
+  "channels.telegram.automation.setup.chat.description": "Числовой идентификатор чата Telegram или @имяпользователя канала, доступного боту."
+}

@@ -1,0 +1,12 @@
+{
+  "machineModal.configure.appReference": "Vorhandene App",
+  "machineModal.configure.imageReference": "Registry-Image",
+  "machineModal.configure.cpu": "Physische CPU-Kerne",
+  "machineModal.configure.memoryMb": "Arbeitsspeicher (MiB)",
+  "machineModal.configure.timeoutMs": "Native Laufzeit (ms)",
+  "machineModal.configure.timeoutDescription": "Ganze Sekunden, von 1 Sekunde bis 24 Stunden.",
+  "machineModal.presentation.kind": "Sandbox",
+  "machineModal.presentation.description": "Cloud-Sandboxes auf Abruf mit nativer Laufzeit.",
+  "machineModal.presentation.ready": "Konto verbunden",
+  "machineModal.presentation.unavailable": "Konto nicht verfügbar"
+}

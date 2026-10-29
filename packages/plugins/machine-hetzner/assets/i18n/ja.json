@@ -1,0 +1,12 @@
+{
+  "machineHetzner.prices.compute": "コンピューティング",
+  "machineHetzner.prices.primaryIpv4": "プライマリ IPv4",
+  "machineHetzner.prices.primaryIpv6": "プライマリ IPv6",
+  "machineHetzner.presentation.kind": "サーバー",
+  "machineHetzner.presentation.description": "永続ディスクを持つクラウドサーバー。",
+  "machineHetzner.presentation.ready": "アカウント接続済み",
+  "machineHetzner.presentation.unavailable": "アカウント利用不可",
+  "machineHetzner.network.ipv4": "IPv4 のみ",
+  "machineHetzner.network.ipv6": "IPv6 のみ",
+  "machineHetzner.network.dual": "IPv4 と IPv6"
+}

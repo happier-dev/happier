@@ -1,0 +1,20 @@
+{
+  "machineCua.presentation.kind": "sandbox",
+  "machineCua.presentation.description": "Una macchina isolata per programmare e sviluppare.",
+  "machineCua.presentation.ready": "Pronto",
+  "machineCua.presentation.unavailable": "Ambiente non disponibile",
+  "machineCua.presentation.cua_native_unavailable": "Non installato · scaricalo da cua.ai",
+  "machineCua.presentation.cua_native_outdated": "Aggiornamento necessario · aggiorna Cua CLI",
+  "machineCua.presentation.cua_connection_unavailable": "Connessione non disponibile",
+  "machineCua.presentation.credential_unavailable": "Nessun account",
+  "machineCua.presentation.spaceKind": "spazio",
+  "machineCua.presentation.spaceDescription": "Uno spazio locale con la propria macchina e schermo.",
+  "machineCua.presentation.byocKind": "macchina",
+  "machineCua.presentation.byocDescription": "Macchine sul tuo account cloud, gestite da Cua.",
+  "machineCua.presentation.native_facts_unknown": "Risposta dell’ambiente non disponibile",
+  "machineCua.presentation.native_runtime_unavailable": "Ambiente non disponibile",
+  "machineCua.configure.cpu": "Core CPU",
+  "machineCua.configure.memoryBytes": "Memoria",
+  "machineCua.configure.diskBytes": "Disco",
+  "machineCua.configure.cloud": "Cloud"
+}

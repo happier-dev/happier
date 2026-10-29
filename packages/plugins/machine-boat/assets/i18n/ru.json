@@ -1,0 +1,7 @@
+{
+  "machineBoat.presentation.kind": "песочница",
+  "machineBoat.presentation.description": "Песочницы Boat только в ЕС. Время работы оплачивается посекундно; при остановке тарификация вычислений приостанавливается. Тарифы начинаются от 20 $/месяц и включают такой же объём использования.",
+  "machineBoat.presentation.ready": "Аккаунт подключён",
+  "machineBoat.presentation.unavailable": "Аккаунт недоступен",
+  "machineBoat.presentation.compute": "Работающие вычисления"
+}

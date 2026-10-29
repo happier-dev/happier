@@ -1,0 +1,12 @@
+{
+  "machineModal.configure.appReference": "既存の App",
+  "machineModal.configure.imageReference": "レジストリイメージ",
+  "machineModal.configure.cpu": "物理 CPU コア",
+  "machineModal.configure.memoryMb": "メモリ（MiB）",
+  "machineModal.configure.timeoutMs": "ネイティブの有効期間（ms）",
+  "machineModal.configure.timeoutDescription": "1 秒から 24 時間までの整数秒。",
+  "machineModal.presentation.kind": "サンドボックス",
+  "machineModal.presentation.description": "ネイティブの有効期間に従うオンデマンドのクラウドサンドボックス。",
+  "machineModal.presentation.ready": "アカウント接続済み",
+  "machineModal.presentation.unavailable": "アカウント利用不可"
+}

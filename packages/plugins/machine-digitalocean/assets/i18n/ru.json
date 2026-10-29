@@ -1,0 +1,8 @@
+{
+  "machineDigitalOcean.presentation.kind": "Droplet",
+  "machineDigitalOcean.presentation.description": "Облачный Droplet с выбранными размером, образом и регионом.",
+  "machineDigitalOcean.presentation.ready": "Аккаунт подключён",
+  "machineDigitalOcean.presentation.unavailable": "Аккаунт недоступен",
+  "machineDigitalOcean.network.ipv4": "Только IPv4",
+  "machineDigitalOcean.network.dual": "IPv4 и IPv6"
+}

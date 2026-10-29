@@ -1,0 +1,20 @@
+{
+  "machineCua.presentation.kind": "サンドボックス",
+  "machineCua.presentation.description": "コーディングと開発のための隔離されたマシン。",
+  "machineCua.presentation.ready": "準備完了",
+  "machineCua.presentation.unavailable": "ランタイム利用不可",
+  "machineCua.presentation.cua_native_unavailable": "未インストール · cua.ai から入手",
+  "machineCua.presentation.cua_native_outdated": "更新が必要 · Cua CLI を更新",
+  "machineCua.presentation.cua_connection_unavailable": "接続利用不可",
+  "machineCua.presentation.credential_unavailable": "アカウントなし",
+  "machineCua.presentation.spaceKind": "スペース",
+  "machineCua.presentation.spaceDescription": "専用のマシンと画面を持つローカルワークスペース。",
+  "machineCua.presentation.byocKind": "マシン",
+  "machineCua.presentation.byocDescription": "自分のクラウドアカウント上で Cua が管理するマシン。",
+  "machineCua.presentation.native_facts_unknown": "ランタイムの応答を取得できません",
+  "machineCua.presentation.native_runtime_unavailable": "ランタイム利用不可",
+  "machineCua.configure.cpu": "CPU コア",
+  "machineCua.configure.memoryBytes": "メモリ",
+  "machineCua.configure.diskBytes": "ディスク",
+  "machineCua.configure.cloud": "クラウド"
+}

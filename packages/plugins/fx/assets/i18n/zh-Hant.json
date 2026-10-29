@@ -1,0 +1,6 @@
+{
+  "agentInput.agent.fx": "FX",
+  "profiles.aiBackend.fxSubtitleExperimental": "FX 編程代理（實驗性）",
+  "sessionInfo.fxSessionId": "FX 工作階段 ID",
+  "sessionInfo.fxSessionIdCopied": "已複製 FX 工作階段 ID"
+}

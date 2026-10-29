@@ -1,0 +1,10 @@
+{
+  "machineLima.presentation.kind": "ВМ",
+  "machineLima.presentation.description": "Лёгкая ВМ Linux для кода, скриптов и серверов разработки.",
+  "machineLima.presentation.ready": "Установлено",
+  "machineLima.presentation.unavailable": "Не установлено",
+  "machineLima.presentation.lima_2_required": "Требуется Lima 2",
+  "machineLima.presentation.qemu_unavailable": "QEMU недоступен",
+  "machineLima.presentation.qemu_driver_unavailable": "QEMU недоступен",
+  "machineLima.presentation.vz_driver_unavailable": "Виртуализация недоступна"
+}

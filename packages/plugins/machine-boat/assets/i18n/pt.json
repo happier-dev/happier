@@ -1,0 +1,7 @@
+{
+  "machineBoat.presentation.kind": "sandbox",
+  "machineBoat.presentation.description": "Sandboxes Boat somente na UE. O tempo de execução é cobrado por segundo; parar pausa a cobrança da computação. Os planos começam em US$ 20/mês e incluem o mesmo valor em uso.",
+  "machineBoat.presentation.ready": "Conta conectada",
+  "machineBoat.presentation.unavailable": "Conta indisponível",
+  "machineBoat.presentation.compute": "Computação em execução"
+}

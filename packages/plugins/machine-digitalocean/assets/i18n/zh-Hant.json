@@ -1,0 +1,8 @@
+{
+  "machineDigitalOcean.presentation.kind": "Droplet",
+  "machineDigitalOcean.presentation.description": "使用所選規格、映像和區域的雲端 Droplet。",
+  "machineDigitalOcean.presentation.ready": "帳戶已連接",
+  "machineDigitalOcean.presentation.unavailable": "帳戶不可用",
+  "machineDigitalOcean.network.ipv4": "僅 IPv4",
+  "machineDigitalOcean.network.dual": "IPv4 與 IPv6"
+}

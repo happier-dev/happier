@@ -1,0 +1,7 @@
+{
+  "machineBoat.presentation.kind": "sandbox",
+  "machineBoat.presentation.description": "Sandboxes de Boat només a la UE. El temps d’execució es factura per segon; en aturar-lo es pausa la facturació del càlcul. Els plans comencen a 20 $/mes i inclouen el mateix import en ús.",
+  "machineBoat.presentation.ready": "Compte connectat",
+  "machineBoat.presentation.unavailable": "Compte no disponible",
+  "machineBoat.presentation.compute": "Càlcul en execució"
+}

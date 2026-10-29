@@ -1,0 +1,18 @@
+{
+  "channels.telegram.setup.title": "Configurer les canaux Telegram",
+  "channels.telegram.setup.description": "Sélectionne le compte connecté du bot Telegram à vérifier.",
+  "channels.telegram.setup.submit": "Vérifier le bot",
+  "channels.telegram.setup.credential": "Compte du bot Telegram",
+  "channels.telegram.setup.credential.description": "Choisis le compte connecté existant du bot Telegram ; les jetons du bot ne sont jamais saisis ici.",
+  "channels.telegram.remediation.title": "Supprimer le webhook Telegram",
+  "channels.telegram.remediation.description": "Sélectionne le bot Telegram dont tu souhaites supprimer le webhook.",
+  "channels.telegram.remediation.submit": "Continuer",
+  "channels.telegram.remediation.credential": "Compte du bot Telegram",
+  "channels.telegram.remediation.credential.description": "Choisis le compte connecté existant du bot Telegram ; les jetons du bot ne sont jamais saisis ici.",
+  "channels.telegram.automation.setup.title": "Choisis une conversation Telegram à surveiller",
+  "channels.telegram.automation.setup.description": "Choisis le bot Telegram et la conversation dont les messages doivent démarrer cette automatisation.",
+  "channels.telegram.automation.setup.submit": "Utiliser cette conversation",
+  "channels.telegram.automation.setup.credential": "Compte du bot Telegram",
+  "channels.telegram.automation.setup.chat": "Identifiant de la conversation",
+  "channels.telegram.automation.setup.chat.description": "L’identifiant numérique de la conversation Telegram ou un @nomd’utilisateur de canal que le bot peut atteindre."
+}

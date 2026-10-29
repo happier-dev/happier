@@ -1,0 +1,6 @@
+{
+  "agentInput.agent.fx": "FX",
+  "profiles.aiBackend.fxSubtitleExperimental": "Agent de programació FX (experimental)",
+  "sessionInfo.fxSessionId": "ID de sessió de FX",
+  "sessionInfo.fxSessionIdCopied": "S’ha copiat l’ID de sessió de FX"
+}

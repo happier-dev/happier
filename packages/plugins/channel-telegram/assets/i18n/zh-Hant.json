@@ -1,0 +1,18 @@
+{
+  "channels.telegram.setup.title": "設定 Telegram 頻道",
+  "channels.telegram.setup.description": "選擇要驗證的 Telegram 機器人已連線帳戶。",
+  "channels.telegram.setup.submit": "驗證機器人",
+  "channels.telegram.setup.credential": "Telegram 機器人帳戶",
+  "channels.telegram.setup.credential.description": "選擇現有的 Telegram 機器人已連線帳戶；無需在此輸入機器人權杖。",
+  "channels.telegram.remediation.title": "移除 Telegram Webhook",
+  "channels.telegram.remediation.description": "選擇要移除 Webhook 的 Telegram 機器人。",
+  "channels.telegram.remediation.submit": "繼續",
+  "channels.telegram.remediation.credential": "Telegram 機器人帳戶",
+  "channels.telegram.remediation.credential.description": "選擇現有的 Telegram 機器人已連線帳戶；無需在此輸入機器人權杖。",
+  "channels.telegram.automation.setup.title": "選擇要觀察的 Telegram 聊天",
+  "channels.telegram.automation.setup.description": "選擇 Telegram 機器人以及其訊息應啟動此自動化的聊天。",
+  "channels.telegram.automation.setup.submit": "使用此聊天",
+  "channels.telegram.automation.setup.credential": "Telegram 機器人帳戶",
+  "channels.telegram.automation.setup.chat": "聊天 ID",
+  "channels.telegram.automation.setup.chat.description": "Telegram 聊天的數字 ID，或機器人可觸及的 @頻道使用者名稱。"
+}

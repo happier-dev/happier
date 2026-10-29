@@ -1,0 +1,7 @@
+{
+  "machineBoat.presentation.kind": "sandbox",
+  "machineBoat.presentation.description": "Sandbox Boat solo nell’UE. Il tempo di esecuzione viene fatturato al secondo; l’arresto mette in pausa la fatturazione del calcolo. I piani partono da 20 $/mese e includono lo stesso importo di utilizzo.",
+  "machineBoat.presentation.ready": "Account collegato",
+  "machineBoat.presentation.unavailable": "Account non disponibile",
+  "machineBoat.presentation.compute": "Calcolo in esecuzione"
+}

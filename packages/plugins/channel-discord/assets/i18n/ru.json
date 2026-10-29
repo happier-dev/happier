@@ -1,0 +1,14 @@
+{
+  "discord.automation.messageSource.setup.title": "Отслеживать канал Discord",
+  "discord.automation.messageSource.setup.description": "Выберите бота Discord и канал, сообщения которого должны запускать эту автоматизацию.",
+  "discord.automation.messageSource.setup.submit": "Отслеживать канал",
+  "discord.automation.messageSource.setup.credential": "Учётная запись бота Discord",
+  "discord.automation.messageSource.setup.credential.description": "Выберите существующую подключённую учётную запись бота Discord; токены бота здесь не вводятся.",
+  "discord.automation.messageSource.setup.channel": "Идентификатор канала",
+  "discord.automation.messageSource.setup.channel.description": "Укажите идентификатор канала Discord, который бот уже может читать.",
+  "channels.discord.setup.title": "Настроить каналы Discord",
+  "channels.discord.setup.description": "Выберите подключённую учётную запись бота Discord для проверки.",
+  "channels.discord.setup.submit": "Проверить бота",
+  "channels.discord.setup.credential": "Учётная запись бота Discord",
+  "channels.discord.setup.credential.description": "Выберите существующую подключённую учётную запись бота Discord; токены бота здесь не вводятся."
+}

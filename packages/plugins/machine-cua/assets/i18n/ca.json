@@ -1,0 +1,20 @@
+{
+  "machineCua.presentation.kind": "sandbox",
+  "machineCua.presentation.description": "Una màquina aïllada per programar i desenvolupar.",
+  "machineCua.presentation.ready": "A punt",
+  "machineCua.presentation.unavailable": "Entorn no disponible",
+  "machineCua.presentation.cua_native_unavailable": "No instal·lat · baixa’l de cua.ai",
+  "machineCua.presentation.cua_native_outdated": "Cal actualitzar · actualitza Cua CLI",
+  "machineCua.presentation.cua_connection_unavailable": "Connexió no disponible",
+  "machineCua.presentation.credential_unavailable": "Encara sense compte",
+  "machineCua.presentation.spaceKind": "espai",
+  "machineCua.presentation.spaceDescription": "Un espai local amb la seva màquina i pantalla.",
+  "machineCua.presentation.byocKind": "màquina",
+  "machineCua.presentation.byocDescription": "Màquines al teu compte de núvol, gestionades per Cua.",
+  "machineCua.presentation.native_facts_unknown": "Resposta de l’entorn no disponible",
+  "machineCua.presentation.native_runtime_unavailable": "Entorn no disponible",
+  "machineCua.configure.cpu": "Nuclis de CPU",
+  "machineCua.configure.memoryBytes": "Memòria",
+  "machineCua.configure.diskBytes": "Disc",
+  "machineCua.configure.cloud": "Núvol"
+}

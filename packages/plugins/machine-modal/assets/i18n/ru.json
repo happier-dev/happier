@@ -1,0 +1,12 @@
+{
+  "machineModal.configure.appReference": "Существующее приложение",
+  "machineModal.configure.imageReference": "Образ из реестра",
+  "machineModal.configure.cpu": "Физические ядра CPU",
+  "machineModal.configure.memoryMb": "Память (MiB)",
+  "machineModal.configure.timeoutMs": "Нативное время жизни (ms)",
+  "machineModal.configure.timeoutDescription": "Целые секунды, от 1 секунды до 24 часов.",
+  "machineModal.presentation.kind": "песочница",
+  "machineModal.presentation.description": "Облачные песочницы по запросу с нативным сроком работы.",
+  "machineModal.presentation.ready": "Аккаунт подключён",
+  "machineModal.presentation.unavailable": "Аккаунт недоступен"
+}

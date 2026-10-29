@@ -1,0 +1,14 @@
+{
+  "discord.automation.messageSource.setup.title": "Observa un canal de Discord",
+  "discord.automation.messageSource.setup.description": "Tria el bot de Discord i el canal els missatges del qual han d’iniciar aquesta automatització.",
+  "discord.automation.messageSource.setup.submit": "Observa el canal",
+  "discord.automation.messageSource.setup.credential": "Compte del bot de Discord",
+  "discord.automation.messageSource.setup.credential.description": "Tria el compte connectat existent del bot de Discord; els tokens del bot no s’introdueixen mai aquí.",
+  "discord.automation.messageSource.setup.channel": "ID del canal",
+  "discord.automation.messageSource.setup.channel.description": "Introdueix l’ID del canal de Discord que el bot ja pot llegir.",
+  "channels.discord.setup.title": "Configura els canals de Discord",
+  "channels.discord.setup.description": "Selecciona el compte connectat del bot de Discord per verificar-lo.",
+  "channels.discord.setup.submit": "Verifica el bot",
+  "channels.discord.setup.credential": "Compte del bot de Discord",
+  "channels.discord.setup.credential.description": "Tria el compte connectat existent del bot de Discord; els testimonis del bot no s’introdueixen mai aquí."
+}

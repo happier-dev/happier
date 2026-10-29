@@ -1,0 +1,7 @@
+{
+  "machineBoat.presentation.kind": "piaskownica",
+  "machineBoat.presentation.description": "Piaskownice Boat wyłącznie w UE. Czas działania jest rozliczany co sekundę; zatrzymanie wstrzymuje naliczanie opłat za moc obliczeniową. Plany zaczynają się od 20 $/miesiąc i obejmują taką samą ilość zużycia.",
+  "machineBoat.presentation.ready": "Konto połączone",
+  "machineBoat.presentation.unavailable": "Konto niedostępne",
+  "machineBoat.presentation.compute": "Działająca moc obliczeniowa"
+}

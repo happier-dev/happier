@@ -1,0 +1,12 @@
+{
+  "machineModal.configure.appReference": "Aplicació existent",
+  "machineModal.configure.imageReference": "Imatge del registre",
+  "machineModal.configure.cpu": "Nuclis físics de CPU",
+  "machineModal.configure.memoryMb": "Memòria (MiB)",
+  "machineModal.configure.timeoutMs": "Durada nativa (ms)",
+  "machineModal.configure.timeoutDescription": "Segons enters, d’1 segon a 24 hores.",
+  "machineModal.presentation.kind": "sandbox",
+  "machineModal.presentation.description": "Sandboxes al núvol sota demanda amb durada nativa.",
+  "machineModal.presentation.ready": "Compte connectat",
+  "machineModal.presentation.unavailable": "Compte no disponible"
+}

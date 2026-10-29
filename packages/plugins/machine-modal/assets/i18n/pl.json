@@ -1,0 +1,12 @@
+{
+  "machineModal.configure.appReference": "Istniejąca aplikacja",
+  "machineModal.configure.imageReference": "Obraz z rejestru",
+  "machineModal.configure.cpu": "Fizyczne rdzenie CPU",
+  "machineModal.configure.memoryMb": "Pamięć (MiB)",
+  "machineModal.configure.timeoutMs": "Natywny czas życia (ms)",
+  "machineModal.configure.timeoutDescription": "Pełne sekundy, od 1 sekundy do 24 godzin.",
+  "machineModal.presentation.kind": "piaskownica",
+  "machineModal.presentation.description": "Piaskownice w chmurze na żądanie z natywnym czasem działania.",
+  "machineModal.presentation.ready": "Konto połączone",
+  "machineModal.presentation.unavailable": "Konto niedostępne"
+}

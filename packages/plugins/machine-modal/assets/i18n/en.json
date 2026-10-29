@@ -1,0 +1,12 @@
+{
+  "machineModal.configure.appReference": "Existing App",
+  "machineModal.configure.imageReference": "Registry image",
+  "machineModal.configure.cpu": "Physical CPU cores",
+  "machineModal.configure.memoryMb": "Memory (MiB)",
+  "machineModal.configure.timeoutMs": "Native lifetime (ms)",
+  "machineModal.configure.timeoutDescription": "Whole seconds, from 1 second to 24 hours.",
+  "machineModal.presentation.kind": "sandbox",
+  "machineModal.presentation.description": "On-demand cloud sandboxes with a native lifetime.",
+  "machineModal.presentation.ready": "Account connected",
+  "machineModal.presentation.unavailable": "Account unavailable"
+}

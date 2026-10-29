@@ -1,0 +1,12 @@
+{
+  "machineHetzner.prices.compute": "運算",
+  "machineHetzner.prices.primaryIpv4": "主要 IPv4",
+  "machineHetzner.prices.primaryIpv6": "主要 IPv6",
+  "machineHetzner.presentation.kind": "伺服器",
+  "machineHetzner.presentation.description": "配備持久磁碟的雲端伺服器。",
+  "machineHetzner.presentation.ready": "帳戶已連接",
+  "machineHetzner.presentation.unavailable": "帳戶不可用",
+  "machineHetzner.network.ipv4": "僅 IPv4",
+  "machineHetzner.network.ipv6": "僅 IPv6",
+  "machineHetzner.network.dual": "IPv4 與 IPv6"
+}

@@ -1,0 +1,7 @@
+{
+  "machineBoat.presentation.kind": "サンドボックス",
+  "machineBoat.presentation.description": "EU 限定の Boat サンドボックスです。稼働時間は秒単位で課金され、停止するとコンピューティングの課金が一時停止します。プランは月額 20 ドルからで、同額分の利用枠が含まれます。",
+  "machineBoat.presentation.ready": "アカウント接続済み",
+  "machineBoat.presentation.unavailable": "アカウント利用不可",
+  "machineBoat.presentation.compute": "実行中のコンピューティング"
+}

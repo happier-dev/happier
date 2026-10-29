@@ -1,0 +1,10 @@
+{
+  "machineLima.presentation.kind": "VM",
+  "machineLima.presentation.description": "Uma VM Linux leve para código, scripts e servidores de desenvolvimento.",
+  "machineLima.presentation.ready": "Instalado",
+  "machineLima.presentation.unavailable": "Não instalado",
+  "machineLima.presentation.lima_2_required": "Lima 2 necessário",
+  "machineLima.presentation.qemu_unavailable": "QEMU indisponível",
+  "machineLima.presentation.qemu_driver_unavailable": "QEMU indisponível",
+  "machineLima.presentation.vz_driver_unavailable": "Virtualização indisponível"
+}

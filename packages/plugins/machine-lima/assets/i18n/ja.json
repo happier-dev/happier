@@ -1,0 +1,10 @@
+{
+  "machineLima.presentation.kind": "VM",
+  "machineLima.presentation.description": "コード、スクリプト、開発サーバー向けの軽量 Linux VM。",
+  "machineLima.presentation.ready": "インストール済み",
+  "machineLima.presentation.unavailable": "未インストール",
+  "machineLima.presentation.lima_2_required": "Lima 2 が必要",
+  "machineLima.presentation.qemu_unavailable": "QEMU 利用不可",
+  "machineLima.presentation.qemu_driver_unavailable": "QEMU 利用不可",
+  "machineLima.presentation.vz_driver_unavailable": "仮想化利用不可"
+}
