@@ -230,8 +230,9 @@ Notes:
 - `test:wiring:self` and `test:policy:self` are fast governance self-tests for the validators themselves.
 - `test:tooling:self` runs the repo-root build/QA tooling contracts under `scripts/workspaces/**` and `scripts/qa/**`. They live outside every workspace, so no package lane can reach them; without this script they exist but never execute.
 - `test:wiring` fails on invalid feature tags, obvious lane naming mistakes, and root-script/workflow/docs parity drift.
-- `test:policy` enforces only the low-noise rules that are safe today; noisier rules stay report-only until the repo cleanup catches up.
-- `test:inventory` and `test:migration:inventory` are report-only. They print lane/package-local coverage and write governance inventory artifacts under `.project/testing/reports/governance/`.
+- `test:policy` enforces only the low-noise rules that are safe today. Use `pnpm run test:policy -- --report-only` to include advisory findings during an audit.
+- `test:inventory` and `test:migration:inventory` are optional developer reports. They print lane/package-local coverage and write governance inventory artifacts under `.project/testing/reports/governance/`.
+- In the 0.3 development workflow, inventory reports and `test:migration:governance` run only when requested by a developer. Routine CI keeps the wiring and policy checks; historical migration closure and advisory reports do not gate typechecking.
 - The current rollout is:
   - `enforce`: `.only`, forbidden runtime imports from `@happier-dev/tests` internals, root-script/workflow/docs parity
   - `report-only`: direct test `console.*`, direct `.skip/.todo`, hidden skip aliases, deprecated helper imports, duplicate-pattern inventory

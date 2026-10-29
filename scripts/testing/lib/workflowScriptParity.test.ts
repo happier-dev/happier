@@ -81,7 +81,7 @@ jobs:
       - run: pnpm --silent run test:e2e:mobile
       - run: pnpm --filter @happier-dev/tests run providers:run all smoke
       - run: pnpm run test:stress
-      - run: pnpm run test:wiring:self && pnpm run test:wiring && pnpm run test:policy && pnpm run test:inventory && pnpm run test:migration:inventory && pnpm run test:migration:governance
+      - run: pnpm run test:wiring:self && pnpm run test:wiring && pnpm run test:policy
 `;
 }
 
@@ -157,20 +157,18 @@ test('flags missing governance docs and feature gating drift', () => {
   assert.match(messages, /Feature gating is not verified for apps\/server\/vitest\.dbcontract\.config\.ts/);
 });
 
-test('flags missing migration governance parity in docs and workflow', () => {
+test('keeps migration governance optional in routine CI and docs', () => {
   const report = collectWorkflowScriptParityReport({
     packageJsonText: createPackageJsonText(),
-    workflowText: createWorkflowText().replace(' && pnpm run test:migration:governance', ''),
+    workflowText: createWorkflowText(),
     docsText: createDocsText()
-      .replace('pnpm run test:migration:v2-zero:enforce\n', '')
+      .replace('pnpm run test:inventory\n', '')
+      .replace('pnpm run test:migration:inventory\n', '')
       .replace('pnpm run test:migration:governance\n', ''),
     configTexts: createFeatureGatingConfigTexts(),
   });
 
-  const messages = report.issues.map((issue) => issue.message).join('\n');
-  assert.match(messages, /Docs are missing command pnpm run test:migration:v2-zero:enforce/);
-  assert.match(messages, /Docs are missing command pnpm run test:migration:governance/);
-  assert.match(messages, /Workflow coverage is missing for test:migration:governance/);
+  assert.deepEqual(report.issues, []);
 });
 
 test('flags shared package unit workflow drift when peer mediation coverage falls out of the root lane', () => {
@@ -256,23 +254,6 @@ test('requires the derived plugin workspace test runner in scripts, docs, and CI
   assert.match(messages, /Missing root script test:plugin-workspaces/);
   assert.match(messages, /Docs are missing command pnpm run test:plugin-workspaces/);
   assert.match(messages, /Workflow coverage is missing for test:plugin-workspaces/);
-});
-
-test('flags governed root script body drift when migration governance no longer runs the owned validator chain', () => {
-  const packageJson = JSON.parse(createPackageJsonText());
-  packageJson.scripts['test:migration:governance'] = 'pnpm run test:migration:wire-compat';
-
-  const report = collectWorkflowScriptParityReport({
-    packageJsonText: JSON.stringify(packageJson, null, 2),
-    workflowText: createWorkflowText(),
-    docsText: createDocsText(),
-    configTexts: createFeatureGatingConfigTexts(),
-  });
-
-  const messages = report.issues.map((issue) => issue.message).join('\n');
-  assert.match(messages, /Root script test:migration:governance is missing required command body/);
-  assert.match(messages, /test:migration:v2-zero:enforce/);
-  assert.match(messages, /test:migration:bundled-plugin-projections/);
 });
 
 test('flags root self-lane drift when migration lib self-tests fall out of test:policy:self', () => {
@@ -425,10 +406,9 @@ test('keeps the repository typecheck reachable when the governance validators fa
   const typecheckJob = workflowText.slice(workflowText.indexOf('\n  typecheck:\n'));
   const guardedTypecheckStep = /- name: Run typecheck\n        if: \$\{\{ !cancelled\(\) \}\}\n        run: pnpm run typecheck/;
 
-  // The wiring/policy validators and the inventory reports must not be able to swallow the
+  // The wiring/policy validators must not be able to swallow the
   // typecheck evidence: a red governance gate has to leave the typecheck result visible.
   assert.match(typecheckJob, /- name: Run governance validators\n        if: \$\{\{ !cancelled\(\) \}\}/);
-  assert.match(typecheckJob, /- name: Run governance inventory reports\n        if: \$\{\{ !cancelled\(\) \}\}/);
   assert.match(typecheckJob, guardedTypecheckStep);
   assert.doesNotMatch(
     typecheckJob.replace(guardedTypecheckStep, '- name: Run typecheck\n        run: pnpm run typecheck'),

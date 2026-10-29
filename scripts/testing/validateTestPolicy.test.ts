@@ -1,10 +1,30 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 import { collectPolicyReport, resolvePolicyExitCode, runTestPolicy } from './validateTestPolicy.ts';
+
+test('advisory CLI output is opt-in without changing the policy verdict', (t) => {
+  const rootDir = mkdtempSync(join(tmpdir(), 'happier-policy-output-'));
+  t.after(() => rmSync(rootDir, { recursive: true, force: true }));
+  mkdirSync(join(rootDir, 'apps/ui/sources'), { recursive: true });
+  writeFileSync(join(rootDir, 'apps/ui/sources/advisory.test.ts'), "it.skip('pending', () => {});\n");
+  const command = fileURLToPath(new URL('./validateTestPolicy.ts', import.meta.url));
+  const results = [[], ['--report-only']].map((args) => spawnSync(
+    process.execPath, ['--experimental-strip-types', command, ...args],
+    { cwd: rootDir, encoding: 'utf8' },
+  ));
+  for (const result of results) {
+    assert.ifError(result.error);
+    assert.equal(result.status, 0, result.stderr);
+  }
+  assert.doesNotMatch(results[0]!.stdout, /advisory\.test\.ts/);
+  assert.match(results[1]!.stdout, /advisory\.test\.ts/);
+});
 
 test('resolvePolicyExitCode ignores report-only findings', () => {
   const report = collectPolicyReport([

@@ -33,8 +33,8 @@ export function resolveTestPolicyExitCode(report: PolicyReport, extensionImportB
   return resolvePolicyExitCode(report) === 1 || !extensionImportBoundaries.ok ? 1 : 0;
 }
 
-function printPolicyReport(report: PolicyReport): void {
-  if (report.enforcedFindings.length === 0 && report.reportOnlyFindings.length === 0) {
+function printPolicyReport(report: PolicyReport, includeAdvisory: boolean): void {
+  if (report.enforcedFindings.length === 0 && (!includeAdvisory || report.reportOnlyFindings.length === 0)) {
     console.log('test:policy passed: no policy findings detected.');
     return;
   }
@@ -46,7 +46,7 @@ function printPolicyReport(report: PolicyReport): void {
     }
   }
 
-  if (report.reportOnlyFindings.length > 0) {
+  if (includeAdvisory && report.reportOnlyFindings.length > 0) {
     console.log(`test:policy report-only findings: ${report.reportOnlyFindings.length}`);
     for (const finding of report.reportOnlyFindings) {
       console.log(`- ${finding.filePath}: ${finding.message}`);
@@ -85,7 +85,7 @@ export async function runTestPolicy(options?: { rootDir?: string }): Promise<Tes
 
 export async function main(): Promise<void> {
   const report = await runTestPolicy();
-  printPolicyReport(report.policy);
+  printPolicyReport(report.policy, process.argv.includes('--report-only'));
   printExtensionImportBoundaryReport(report.extensionImportBoundaries);
   process.exitCode = report.exitCode;
 }

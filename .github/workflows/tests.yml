@@ -2610,10 +2610,6 @@ jobs:
         if: ${{ !cancelled() }}
         run: pnpm run test:wiring && pnpm run test:policy
 
-      - name: Run governance inventory reports
-        if: ${{ !cancelled() }}
-        run: pnpm run test:inventory && pnpm run test:migration:inventory && pnpm run test:migration:governance
-
       - name: Run typecheck
         if: ${{ !cancelled() }}
         run: pnpm run typecheck

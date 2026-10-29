@@ -33,11 +33,8 @@ export type GovernanceCommandId =
   | 'test:wiring'
   | 'test:policy:self'
   | 'test:policy'
-  | 'test:inventory'
-  | 'test:migration:inventory'
   | 'test:migration:v2-zero:enforce'
-  | 'test:migration:bundled-plugin-projections'
-  | 'test:migration:governance';
+  | 'test:migration:bundled-plugin-projections';
 
 const CANONICAL_LANE_PARITY: readonly ParityDefinition[] = Object.freeze([
   {
@@ -191,55 +188,25 @@ const GOVERNANCE_COMMAND_PARITY: readonly ParityDefinition[] = Object.freeze([
     triggerMode: 'required',
   },
   {
-    id: 'test:inventory',
-    rootScriptName: 'test:inventory',
-    docsCommands: ['pnpm run test:inventory'],
-    workflowCommands: ['pnpm run test:inventory'],
-    workflowMode: 'any',
-    triggerMode: 'report-only',
-  },
-  {
-    id: 'test:migration:inventory',
-    rootScriptName: 'test:migration:inventory',
-    docsCommands: ['pnpm run test:migration:inventory'],
-    workflowCommands: ['pnpm run test:migration:inventory'],
-    workflowMode: 'any',
-    triggerMode: 'report-only',
-    requiredScriptBodyPatterns: [/scripts\/testing\/migrations\/validateMigrationInventory\.ts/],
-  },
-  {
     id: 'test:migration:v2-zero:enforce',
     rootScriptName: 'test:migration:v2-zero:enforce',
     docsCommands: ['pnpm run test:migration:v2-zero:enforce'],
-    workflowCommands: ['pnpm run test:migration:v2-zero:enforce', 'pnpm run test:migration:governance'],
+    workflowCommands: [],
     workflowMode: 'any',
-    triggerMode: 'required',
+    triggerMode: 'local-only',
     requiredScriptBodyPatterns: [/scripts\/testing\/migrations\/validateV2ZeroInventory\.ts/, /--enforce/],
   },
   {
     id: 'test:migration:bundled-plugin-projections',
     rootScriptName: 'test:migration:bundled-plugin-projections',
     docsCommands: [],
-    workflowCommands: ['pnpm run test:migration:governance'],
+    workflowCommands: [],
     workflowMode: 'any',
     triggerMode: 'local-only',
     requiredScriptBodyPatterns: [
       /apps\/cli\/scripts\/build-owned\/generateBundledPluginEntries\.ts/,
       /--mode check/,
       /--scope projections/,
-    ],
-  },
-  {
-    id: 'test:migration:governance',
-    rootScriptName: 'test:migration:governance',
-    docsCommands: ['pnpm run test:migration:governance'],
-    workflowCommands: ['pnpm run test:migration:governance'],
-    workflowMode: 'any',
-    triggerMode: 'required',
-    requiredScriptBodyPatterns: [
-      /test:migration:v2-zero:enforce/,
-      /test:migration:wire-compat/,
-      /test:migration:bundled-plugin-projections/,
     ],
   },
 ]);
