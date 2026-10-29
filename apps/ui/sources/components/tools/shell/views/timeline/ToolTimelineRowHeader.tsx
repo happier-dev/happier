@@ -236,8 +236,14 @@ const styles = StyleSheet.create((theme, _runtime) => ({
         gap: theme.space.s6,
     },
     terminalStatusSlot: {
-        flexShrink: 0,
-        alignItems: 'flex-end',
+        // The title and its subtitle keep priority on a narrow row: the status shrinks (and ellipsizes) after
+        // taking at most half of it, instead of leaving the title a few characters.
+        flexShrink: 1,
+        minWidth: 0,
+        maxWidth: '50%',
+        // The outcome fills the slot (its own content right-aligned) so a narrow slot ellipsizes its word rather than
+        // letting it spill over the row's actions.
+        alignItems: 'stretch',
         justifyContent: 'center',
     },
     cause: {
