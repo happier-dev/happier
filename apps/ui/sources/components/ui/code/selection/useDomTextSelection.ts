@@ -2,6 +2,9 @@ import * as React from 'react';
 import { Platform } from 'react-native';
 
 import type { AskSelection } from './useAskSelection';
+import { readDiffLineFromDomNode } from '../diff/diffTextSelection';
+import { PIERRE_DIFF_HOST_SELECTOR } from '../diff/pierre/pierreDomLine';
+import type { LanguageIntelligenceRange } from '@happier-dev/protocol/machines/languageIntelligence';
 
 type DomNodeLike = Readonly<{ parentElement?: DomElementLike | null; nodeType?: number }>;
 type DomElementLike = DomNodeLike & Readonly<{ id?: string; contains?: (node: unknown) => boolean }>;
@@ -64,6 +67,28 @@ function readSelectionEndpoints(selection: Selection, root: Element, shadowHostS
         inner = null;
     }
     return { start: composed.startContainer, end: composed.endContainer, collapsed: composed.collapsed, range: inner ?? range };
+}
+
+/** The same composed selection endpoints, restricted to current-file code text for range formatting. */
+export function readDomCodeSelectionRange(root: unknown): LanguageIntelligenceRange | null {
+    if (typeof window === 'undefined' || typeof Element === 'undefined' || !(root instanceof Element)) return null;
+    const selection = window.getSelection?.();
+    if (!selection?.rangeCount) return null;
+    const endpoints = readSelectionEndpoints(selection, root, PIERRE_DIFF_HOST_SELECTOR);
+    if (!endpoints || endpoints.collapsed || !composedContains(root, endpoints.start) || !composedContains(root, endpoints.end)) return null;
+    const position = (node: Node, offset: number) => {
+        const line = readDiffLineFromDomNode(node)?.newLine;
+        const element = node.nodeType === 1 ? node as Element : node.parentElement;
+        const code = element?.closest('[data-code-text], [data-line][data-line-type]');
+        if (line == null || !code || !code.contains(node)) return null;
+        const prefix = node.ownerDocument!.createRange();
+        prefix.selectNodeContents(code);
+        prefix.setEnd(node, offset);
+        return { line: line - 1, character: prefix.toString().length };
+    };
+    const start = position(endpoints.range.startContainer, endpoints.range.startOffset);
+    const end = position(endpoints.range.endContainer, endpoints.range.endOffset);
+    return start && end ? { start, end } : null;
 }
 
 /**
