@@ -9,7 +9,7 @@ import {
 const DEFAULT_MAX_DIAGNOSTIC_STRING_LENGTH = 500;
 const PROVIDER_RESUME_ASSIGNMENT_PATTERN = /\b(CODEX_THREAD_ID|threadId|thread_id|codexSessionId|codex_session_id|providerSessionId|provider_session_id|remoteSessionId|remote_session_id|providerSessionId|provider_session_id|sessionId|session_id|vendorResumeId|vendor_resume_id|providerResumeId|provider_resume_id|resumeId|resume_id)(?:"?)\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^\s;,]+)/giu;
 const LOCAL_PATH_ASSIGNMENT_PATTERN = /\b(cwd|cwds|directory|directories|filePath|file_path|filePaths|file_paths|home|homeDir|home_dir|localPath|local_path|savedPath|saved_path|path|paths|root|roots|worktree|worktreePath|worktree_path|workspaceRoot|workspace_root|location)(?:"?)\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^\s;,]+)/giu;
-const LOCAL_ABSOLUTE_PATH_PATTERN = /(^|[\s"'([{:=])(?:[A-Za-z]:[\\/][^\s"'();,]+|\\\\[^\s"'();,]+|\/(?!\/)[^\s"'();,]*)/gu;
+const LOCAL_ABSOLUTE_PATH_PATTERN = /(^|[\s"'([{:=])(?:file:\/\/[^\s"'();,]+|[A-Za-z]:[\\/][^\s"'();,]+|\\\\[^\s"'();,]+|\/(?!\/)[^\s"'();,]*)/giu;
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

@@ -8,6 +8,11 @@ import {
 import { sanitizeConnectedServiceDiagnosticString } from './sanitizeConnectedServiceDiagnosticString';
 
 describe('sanitizeConnectedServiceDiagnosticString', () => {
+  it('redacts native file URL stack frames through the local-path owner', () => {
+    const sanitized = sanitizeConnectedServiceDiagnosticString('at file:///private/person/project/main.mjs:12:3');
+    expect(sanitized.includes('/private/person')).toBe(false);
+    expect(sanitized).toContain(CONNECTED_SERVICE_LOCAL_PATH_REDACTION_MARKER);
+  });
   it('preserves current secret redaction for assignments, bearer tokens, known values, and token-like values', () => {
     const knownSecret = 'known-provider-secret-value';
     const sanitized = sanitizeConnectedServiceDiagnosticString(
