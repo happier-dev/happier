@@ -8,6 +8,7 @@ import {
     canResumeSessionWithOptions,
     getAgentSessionId,
     getAgentVendorResumeId,
+    resolveSessionResumeEligibility,
 } from './resumeCapabilities';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import { AcpCatalogRecordV1Schema } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
@@ -42,6 +43,15 @@ const projectedExternalLifecycleCapabilities = {
 const projectedExternalLifecycleOptions = {
     currentAgentCapabilities: projectedExternalLifecycleCapabilities,
 } as unknown as Parameters<typeof canResumeSessionWithOptions>[1];
+
+describe('Session resume eligibility knowledge', () => {
+    test('distinguishes withheld owner facts from known unsupported and resumable Sessions', () => {
+        expect(resolveSessionResumeEligibility(null)).toBe('unknown');
+        expect(resolveSessionResumeEligibility({})).toBe('ineligible');
+        expect(resolveSessionResumeEligibility({ flavor: 'claude', claudeSessionId: 'native-1' })).toBe('eligible');
+        expect(resolveSessionResumeEligibility({ flavor: 'claude' })).toBe('eligible');
+    });
+});
 
 describe('projected external Agent resume capability', () => {
     const externalRuntimeMetadata = {

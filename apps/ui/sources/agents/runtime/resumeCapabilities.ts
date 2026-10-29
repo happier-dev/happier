@@ -321,6 +321,17 @@ export function canResumeOrContinueSessionWithOptions(
         || canContinueSessionWithFreshSpawn(metadata, options);
 }
 
+export type SessionResumeEligibility = 'eligible' | 'ineligible' | 'unknown';
+
+/** Missing private owner facts do not establish that native context cannot be restored. */
+export function resolveSessionResumeEligibility(
+    metadata: SessionMetadata | null | undefined,
+    options?: ResumeCapabilityOptions,
+): SessionResumeEligibility {
+    if (!metadata) return 'unknown';
+    return canResumeOrContinueSessionWithOptions(metadata, options) ? 'eligible' : 'ineligible';
+}
+
 export function getAgentSessionId(metadata: SessionMetadata | null | undefined): string | null {
     if (!metadata) return null;
     return getAgentVendorResumeId(metadata, undefined, undefined);
