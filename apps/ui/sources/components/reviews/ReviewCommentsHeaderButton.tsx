@@ -37,7 +37,6 @@ export function ReviewCommentsHeaderButton(props: ReviewCommentsHeaderButtonProp
             title={props.labels.title}
             detail={count != null && count > 0 ? props.labels.count({ count }) : undefined}
             icon={<Icon name="chat-circle" size={ICON_SIZE.sm} color={theme.colors.text.secondary} />}
-            rightElement={<Icon name={props.expanded ? 'caret-down' : 'caret-right'} size={12} color={theme.colors.text.tertiary} />}
             accessibilityExpanded={props.expanded}
             onPress={props.onPress}
         />
