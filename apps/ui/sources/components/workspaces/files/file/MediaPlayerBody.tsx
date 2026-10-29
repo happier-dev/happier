@@ -275,6 +275,7 @@ function AudioRow(
           onValueChange={(next) => {
             void audio.seekTo(next);
           }}
+          onValuePreview={(next) => { if (next !== undefined) void audio.seekTo(next); }}
           accessibilityLabel={t('files.viewer.playbackPosition')}
           formatValueText={(value) =>
             `${formatPlaybackTime(value)} / ${formatPlaybackTime(audio.duration)}`
