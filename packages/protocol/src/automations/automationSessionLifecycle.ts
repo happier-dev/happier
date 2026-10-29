@@ -29,7 +29,7 @@ export const AUTOMATION_SESSION_LIFECYCLE_EVENT_GROUPS_V1 = {
 } as const satisfies Readonly<Record<string, readonly AutomationSessionLifecycleEvent[]>>;
 
 export const AutomationSessionLifecycleRequestKindSchema =
-  SessionUserActionRequiredRequestKindV1Schema;
+  lazyZodSchema(() => SessionUserActionRequiredRequestKindV1Schema);
 export type AutomationSessionLifecycleRequestKind =
   SessionUserActionRequiredRequestKindV1;
 

@@ -17,7 +17,7 @@ export const SESSION_AGENT_TRANSITION_ACTION_OUTPUT_SCHEMAS = {
     z.strictObject({ status: z.literal('answered'), inspection: SessionContinuationInspectionV1Schema }),
     z.strictObject({ status: z.literal('indeterminate') }),
   ])),
-  'session.agent.transition': SessionAgentTransitionResultV1Schema,
+  'session.agent.transition': lazyZodSchema(() => SessionAgentTransitionResultV1Schema),
 } as const;
 const common = {
   requiredAuthority: 'account_automation', executionPlacement: 'session', placements: [],
