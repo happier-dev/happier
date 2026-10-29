@@ -8,6 +8,7 @@ import { loadDevTargetExecutionConfig, loadDevTargetsConfig, parseDevTargetsConf
 import { resolveRepoStackIdentity, resolveStacksStorageRoot } from '../stack/repo_stack_identity.mjs';
 import { resolveDevTargetServicePlans } from './service_placement.mjs';
 import { resolveMutagenSessionName } from './mutagen_project.mjs';
+import { startRemovedCommandRepositoryRetirement } from './command_replica_retirement.mjs';
 import { renderNativeCommandPolicy } from './remote_commands.mjs';
 import { isYarnWorkspace, readWorkspacePatterns } from '../proc/workspace_package_manifests.mjs';
 import { renderNativeSyncReadinessPolicy, resolveDevTargetMutagenRuntime } from './mutagen_runtime.mjs';
@@ -156,6 +157,8 @@ export async function prepareCommandRepository({ configPath, repoRoot, executorR
   const outputPath = join(directory, 'dev-target-exec-v1.sh');
   await writeNativeExecutionProjection({ configPath: path, outputPath, repoRoot: repository, skipUnchanged: true, env });
   await prepareCommandRepositorySource(repository);
+  // Removed sibling worktrees are retired off this dispatch's path.
+  if (synchronize) startRemovedCommandRepositoryRetirement({ stackDir: dirname(configPath), executorRepoRoot, env });
   const syncTargets = resolveDevTargetServicePlans({ targets: config.targets,
     policy: resolveDevTargetExecutionPolicy(config), requested: { server: true, expo: true, daemon: true },
   }).targets.map(plan => plan.target);
