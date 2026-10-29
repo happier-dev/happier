@@ -28,6 +28,18 @@ describe('authApproveAtEndpoint explicit target', () => {
         mocks.createServerFetchAtEndpoint.mockImplementation(() => mocks.endpointFetch);
     });
 
+    it('refuses approval when the requesting client is cancelled during the status read', async () => {
+        const controller = new AbortController();
+        mocks.endpointFetch.mockImplementationOnce(async () => {
+            controller.abort();
+            return jsonResponse({ status: 'pending', supportsV2: true });
+        });
+        await expect(authApproveAtEndpoint(Object.assign({ endpointUrl: 'https://requester-home.test',
+            token: 'requester-bearer', publicKeyBase64: 'guest-public-key', responseBase64: 'sealed-requester-response',
+            responseKind: 'tokenOnly' as const }, { signal: controller.signal }))).rejects.toMatchObject({ name: 'AbortError' });
+        expect(mocks.endpointFetch.mock.calls.map(([path]) => String(path).split('?')[0])).toEqual(['/v1/auth/request/status']);
+    });
+
     it.each([
         { responseKind: 'tokenOnly' as const, responseBase64: 'opaque-response-b64' },
         // The declared kind is forwarded, never hard-coded to tokenOnly.

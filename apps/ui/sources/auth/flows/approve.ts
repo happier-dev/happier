@@ -14,9 +14,10 @@ type AuthRequestFetcher = (
     options?: { includeAuth: boolean },
 ) => Promise<Response>;
 
-async function readAuthRequestStatus(fetchAt: AuthRequestFetcher, publicKeyBase64: string): Promise<AuthRequestStatus> {
+async function readAuthRequestStatus(fetchAt: AuthRequestFetcher, publicKeyBase64: string, signal?: AbortSignal): Promise<AuthRequestStatus> {
     const statusResponse = await fetchAt(`/v1/auth/request/status?publicKey=${encodeURIComponent(publicKeyBase64)}`, {
         method: 'GET',
+        signal,
     }, { includeAuth: false });
     if (!statusResponse.ok) {
         throw new Error(`Failed to check auth status: ${statusResponse.status}`);
@@ -32,6 +33,7 @@ type AuthApprovePayload = Readonly<{
     responseBase64: string;
     /** Canonical provisioning discriminant; must match the sealed v3 payload bytes. */
     responseKind: 'tokenOnly' | 'dataKey';
+    signal?: AbortSignal;
 }>;
 
 export type AuthApproveAtEndpointParams = AuthApprovePayload & Readonly<{
@@ -48,12 +50,14 @@ async function authApproveWithRequest(
     fetchAt: AuthRequestFetcher,
     params: AuthApprovePayload,
 ): Promise<AuthApproveResult> {
+    params.signal?.throwIfAborted();
     const publicKeyBase64 = params.publicKeyBase64.trim();
     if (!publicKeyBase64) {
         throw new Error('Failed to approve auth request: missing public key');
     }
 
-    const statusData = await readAuthRequestStatus(fetchAt, publicKeyBase64);
+    const statusData = await readAuthRequestStatus(fetchAt, publicKeyBase64, params.signal);
+    params.signal?.throwIfAborted();
     if (statusData.status === 'not_found') {
         return 'not_found';
     }
@@ -63,6 +67,7 @@ async function authApproveWithRequest(
 
     const response = await fetchAt('/v1/auth/response', {
         method: 'POST',
+        signal: params.signal,
         headers: {
             'Authorization': `Bearer ${params.token}`,
             'Content-Type': 'application/json',

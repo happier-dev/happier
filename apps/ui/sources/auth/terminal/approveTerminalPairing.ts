@@ -34,9 +34,12 @@ export async function approveTerminalPairing(params: Readonly<{
     pairingContext: Readonly<{ secret: Uint8Array; createdAtMs: number; expiresAtMs: number }>;
     targetCredentials: AuthCredentials;
     supportsTokenOnly: boolean;
+    signal?: AbortSignal;
 }>): Promise<AuthApproveResult> {
+    params.signal?.throwIfAborted();
     const currentness = await resolveTerminalPairingCurrentness(params);
     const material = await resolveProvisioningMaterial(params.targetCredentials, currentness);
+    params.signal?.throwIfAborted();
     let sealedResponse: Uint8Array;
     if (material.type === 'tokenOnly') {
         if (!params.supportsTokenOnly) {
@@ -73,11 +76,13 @@ export async function approveTerminalPairing(params: Readonly<{
         });
     }
 
+    params.signal?.throwIfAborted();
     return await authApproveWithTransport({
         transport: params.target,
         token: params.targetCredentials.token,
         publicKeyBase64: encodeBase64(params.requesterPublicKey),
         responseBase64: encodeBase64(sealedResponse),
         responseKind: material.type,
+        signal: params.signal,
     });
 }
