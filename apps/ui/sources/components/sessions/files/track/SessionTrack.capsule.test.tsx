@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -40,6 +41,34 @@ function model(overrides: Partial<Model>): Model {
 }
 
 describe('Track strip capsule (lab tr T0–T2)', () => {
+  it('receives browser wheel/touch intent even when the editor stops bubbling, and ignores programmatic scroll', async () => {
+    const pause = vi.fn();
+    const following = model({ enabled: true, pause });
+    const root = document.createElement('div');
+    const editor = document.createElement('div');
+    root.append(editor);
+    for (const kind of ['wheel', 'pointerdown', 'keydown']) editor.addEventListener(kind, event => event.stopPropagation());
+    const screen = await renderScreen(<TrackInputBoundary track={following}><></></TrackInputBoundary>, {
+      createNodeMock: () => root,
+    });
+    try {
+      editor.dispatchEvent(new Event('scroll', { bubbles: true }));
+      expect(following.pause).not.toHaveBeenCalled();
+      editor.dispatchEvent(new WheelEvent('wheel', { bubbles: true, deltaY: 50 }));
+      expect(following.pause).toHaveBeenLastCalledWith('scroll');
+      pause.mockClear();
+      editor.dispatchEvent(new Event('touchmove', { bubbles: true }));
+      expect(following.pause).toHaveBeenLastCalledWith('touch');
+      pause.mockClear();
+      editor.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+      expect(pause).toHaveBeenLastCalledWith('selection');
+      editor.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'ArrowDown' }));
+      expect(pause).toHaveBeenLastCalledWith('typing');
+    } finally { await screen.unmount(); }
+    pause.mockClear();
+    editor.dispatchEvent(new WheelEvent('wheel', { bubbles: true, deltaY: 50 }));
+    expect(following.pause).not.toHaveBeenCalled();
+  });
   it('is absent while nobody writes, and each state does what its label says', async () => {
     const idle = await renderScreen(
       <TrackCapsule track={model({ target: null })} />,
@@ -76,27 +105,36 @@ describe('Track strip capsule (lab tr T0–T2)', () => {
 
   it('pauses on person input in the pane but not on a press of the capsule itself', async () => {
     const following = model({ enabled: true });
+    const root = document.createElement('div');
+    const capsule = document.createElement('button');
+    capsule.setAttribute('data-testid', 'session-details-track-capsule');
+    root.append(capsule);
     const screen = await renderScreen(
       <TrackInputBoundary track={following}>
         <TrackCapsule track={following} />
-      </TrackInputBoundary>,
+      </TrackInputBoundary>, { createNodeMock: () => root },
     );
-    const boundary = screen.tree.root.findAll(
-      (node) => typeof node.props.onPointerDown === 'function',
-    )[0]!;
-    const capsuleElement = {
-      closest: (selector: string) =>
-        selector.includes('session-details-track-capsule') ? {} : null,
-    };
-    await invokeTestInstanceHandler(boundary, 'onPointerDown', {
-      target: capsuleElement,
-    });
-    expect(following.pause).not.toHaveBeenCalled();
-    await invokeTestInstanceHandler(boundary, 'onPointerDown', {
-      target: { closest: () => null },
-    });
-    expect(following.pause).toHaveBeenCalledWith('selection');
-    await invokeTestInstanceHandler(boundary, 'onWheel', {});
-    expect(following.pause).toHaveBeenLastCalledWith('scroll');
+    try {
+      capsule.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+      capsule.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: ' ' }));
+      expect(following.pause).not.toHaveBeenCalled();
+      root.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+      expect(following.pause).toHaveBeenCalledWith('selection');
+    } finally { await screen.unmount(); }
+  });
+
+  it('retains the native touch takeover boundary', async () => {
+    const { Platform } = await import('react-native');
+    const originalOS = Object.getOwnPropertyDescriptor(Platform, 'OS')!;
+    Object.defineProperty(Platform, 'OS', { configurable: true, value: 'android' });
+    const following = model({ enabled: true });
+    try {
+      const screen = await renderScreen(<TrackInputBoundary track={following}><></></TrackInputBoundary>);
+      try {
+        const boundary = screen.tree.root.findAll(node => typeof node.props.onTouchStart === 'function')[0]!;
+        await invokeTestInstanceHandler(boundary, 'onTouchStart', {});
+        expect(following.pause).toHaveBeenCalledWith('touch');
+      } finally { await screen.unmount(); }
+    } finally { Object.defineProperty(Platform, 'OS', originalOS); }
   });
 });

@@ -161,21 +161,35 @@ export function TrackInputBoundary(
   const { pause } = props.track;
   const following =
     props.track.enabled && !props.track.paused && props.track.target !== null;
+  const inputRootRef = React.useRef<View | null>(null);
+  React.useEffect(() => {
+    if (Platform.OS !== 'web' || !following) return;
+    // RN Web View filters out onWheel. Capture real input before Monaco's scroll handlers
+    // stop bubbling; passive scroll events (including Track's own reveal) are not input.
+    const root = inputRootRef.current as unknown as HTMLElement | null;
+    if (!root?.addEventListener) return;
+    const wheel = () => pause('scroll');
+    const touch = () => pause('touch');
+    const pointer = (event: Event) => {
+      if (!isInsideTrackCapsule(event.target)) pause('selection');
+    };
+    const key = (event: Event) => {
+      if (!isInsideTrackCapsule(event.target)) pause('typing');
+    };
+    root.addEventListener('wheel', wheel, { capture: true, passive: true });
+    root.addEventListener('touchmove', touch, { capture: true, passive: true });
+    root.addEventListener('pointerdown', pointer, { capture: true, passive: true });
+    root.addEventListener('keydown', key, true);
+    return () => {
+      root.removeEventListener('wheel', wheel, true);
+      root.removeEventListener('touchmove', touch, true);
+      root.removeEventListener('pointerdown', pointer, true);
+      root.removeEventListener('keydown', key, true);
+    };
+  }, [following, pause]);
   const handlers = React.useMemo(
     () =>
-      following
-        ? Platform.OS === 'web'
-          ? {
-              onWheel: () => pause('scroll'),
-              onPointerDown: (event: Readonly<{ target?: unknown }>) => {
-                // The capsule is the Track control itself; pressing it is not input that should pause.
-                if (isInsideTrackCapsule(event.target)) return;
-                pause('selection');
-              },
-              onKeyDown: () => pause('typing'),
-            }
-          : { onTouchStart: () => pause('touch') }
-        : null,
+      following && Platform.OS !== 'web' ? { onTouchStart: () => pause('touch') } : null,
     [following, pause],
   );
   const { enabled, paused, target, agentId, agentTitle, reveal } = props.track;
@@ -186,6 +200,7 @@ export function TrackInputBoundary(
   return (
     <TrackPauseSignalProvider signal={pause} presence={presence}>
       <View
+        ref={inputRootRef}
         style={{ flex: 1, minHeight: 0, minWidth: 0 }}
         {...(handlers ?? {})}
       >
