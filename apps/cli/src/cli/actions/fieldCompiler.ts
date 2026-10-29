@@ -44,10 +44,28 @@ export function readObjectProperties(schema: JsonSchemaObject): Readonly<Record<
   return properties as Readonly<Record<string, JsonSchemaObject>>;
 }
 
+function isSchemaObject(value: unknown): value is JsonSchemaObject {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+/** Field discovery only; the original caller schema still admits complete inputs. */
+function readCallerObjectSchemas(schema: JsonSchemaObject): readonly JsonSchemaObject[] {
+  if (readObjectProperties(schema)) return [schema];
+  const arms = schema.anyOf ?? schema.oneOf;
+  if (!Array.isArray(arms)) return [];
+  const objects: JsonSchemaObject[] = [];
+  for (const arm of arms) {
+    if (!isSchemaObject(arm)) return [];
+    const nested = readCallerObjectSchemas(arm);
+    if (!nested.length) return [];
+    objects.push(...nested);
+  }
+  return objects;
+}
+
 /**
  * Zod projects `.optional()`/`.nullable()` as `anyOf` arms and unions as
- * `anyOf`/`oneOf`. Only the single meaningful arm is interesting here: a field
- * that is genuinely a union of shapes stays a JSON field.
+ * `anyOf`/`oneOf`. Unwrap a single non-null arm; distinct shapes remain a union.
  */
 export function unwrapNullableSchema(schema: JsonSchemaObject): JsonSchemaObject {
   const arms = Array.isArray(schema.anyOf)
@@ -90,6 +108,16 @@ export function resolveFieldKind(rawSchema: JsonSchemaObject): Readonly<{
   choices: readonly string[] | null;
 }> {
   const schema = unwrapNullableSchema(rawSchema);
+  const arms = schema.anyOf ?? schema.oneOf;
+  if (Array.isArray(arms) && arms.length && arms.every(isSchemaObject)) {
+    const variants = arms.map(resolveFieldKind);
+    const first = variants[0]!;
+    if (variants.every(variant => variant.kind === first.kind)) {
+      return { kind: first.kind, choices: variants.every(variant => variant.choices !== null)
+        ? Object.freeze([...new Set(variants.flatMap(variant => variant.choices ?? []))]) : null };
+    }
+    return { kind: 'json', choices: null };
+  }
   const choices = readEnumChoices(schema);
   if (choices) return { kind: 'enum', choices };
   switch (readSchemaType(schema)) {
@@ -181,21 +209,27 @@ export function compileActionCliFieldsFromJsonSchema(params: Readonly<{
   aliasesByPath?: ReadonlyMap<string, readonly string[]>;
   reservedFlags?: readonly string[];
 }>): readonly ActionCliField[] {
-  const jsonSchema = params.jsonSchema;
   const aliasesByPath = params.aliasesByPath ?? new Map<string, readonly string[]>();
-  const properties = readObjectProperties(jsonSchema);
-  if (!properties) return Object.freeze([]);
-  const requiredPaths = new Set(
-    Array.isArray(jsonSchema.required)
-      ? jsonSchema.required.filter((entry): entry is string => typeof entry === 'string')
-      : [],
-  );
+  const schemas = readCallerObjectSchemas(params.jsonSchema);
+  if (!schemas.length) return Object.freeze([]);
+  const properties = new Map<string, JsonSchemaObject[]>();
+  for (const schema of schemas) {
+    for (const [path, property] of Object.entries(readObjectProperties(schema) ?? {})) {
+      const variants = properties.get(path) ?? [];
+      variants.push(property);
+      properties.set(path, variants);
+    }
+  }
+  const requiredPaths = new Set([...properties.keys()].filter(path => schemas.every(schema => (
+    Array.isArray(schema.required) && schema.required.includes(path)
+  ))));
   const occupied = new Set([
     ...ACTION_CLI_COMPILER_OWNED_FLAGS,
     ...(params.reservedFlags ?? []),
     ...[...aliasesByPath.values()].flat(),
   ]);
-  return Object.freeze(Object.entries(properties).map(([path, propertySchema]): ActionCliField => {
+  return Object.freeze([...properties].map(([path, variants]): ActionCliField => {
+    const propertySchema = variants.length === 1 ? variants[0]! : { anyOf: variants };
     const hint = findHint(params.hints, path);
     const effectiveSchema = unwrapNullableSchema(propertySchema);
     const { kind, choices } = resolveFieldKind(effectiveSchema);
