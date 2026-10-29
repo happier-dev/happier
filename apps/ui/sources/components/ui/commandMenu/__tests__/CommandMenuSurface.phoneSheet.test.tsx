@@ -8,7 +8,10 @@ const viewport = vi.hoisted(() => ({ width: 390, height: 844 }));
 installPopoverCommonModuleMocks({
     reactNative: async () => {
         const { createReactNativeNativeMock } = await import('@/dev/testkit/mocks/reactNative');
-        return createReactNativeNativeMock({ platformOS: 'ios' }, { useWindowDimensions: () => viewport });
+        return createReactNativeNativeMock({ platformOS: 'ios' }, {
+            useWindowDimensions: () => viewport,
+            Dimensions: { get: () => ({ ...viewport, scale: 1, fontScale: 1 }) },
+        });
     },
 });
 vi.mock('react-native-safe-area-context', () => ({

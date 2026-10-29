@@ -9,6 +9,7 @@ import { installPopoverCommonModuleMocks } from '@/components/ui/popover/popover
 installPopoverCommonModuleMocks({
     reactNative: async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeNativeMock({ platformOS: 'ios' }, {
         useWindowDimensions: () => ({ width: 1000, height: 800 }),
+        Dimensions: { get: () => ({ width: 1000, height: 800, scale: 1, fontScale: 1 }) },
     }),
 });
 let restoreGlobals: (() => void) | undefined;
