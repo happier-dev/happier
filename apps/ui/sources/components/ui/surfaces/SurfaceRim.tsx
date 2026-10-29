@@ -2,6 +2,7 @@ import * as React from 'react';
 import { StyleSheet } from 'react-native';
 import Svg, { Defs, RadialGradient, Rect, Stop } from 'react-native-svg';
 import { useUnistyles } from 'react-native-unistyles';
+import { happierSvgGradientStop } from '@happier-dev/plugin-ui/presentation';
 
 import type { Theme } from '@/theme';
 
@@ -50,13 +51,13 @@ export const SurfaceRim = React.memo(function SurfaceRim(props: Readonly<{
         <Svg pointerEvents="none" style={StyleSheet.absoluteFill} width="100%" height="100%">
             <Defs>
                 <RadialGradient id={`${id}l`} cx={0} cy={0} r={1} gradientUnits="objectBoundingBox" gradientTransform={RIM_LIGHT_ELLIPSE}>
-                    <Stop offset={0} stopColor={edge.rimHi} />
-                    <Stop offset={RIM_MID_OFFSET} stopColor={edge.rimMid} />
-                    <Stop offset={RIM_END_OFFSET} stopColor={edge.rimMid} stopOpacity={0} />
+                    <Stop offset={0} {...happierSvgGradientStop(edge.rimHi)} />
+                    <Stop offset={RIM_MID_OFFSET} {...happierSvgGradientStop(edge.rimMid)} />
+                    <Stop offset={RIM_END_OFFSET} {...happierSvgGradientStop(edge.rimMid, 0)} />
                 </RadialGradient>
                 <RadialGradient id={`${id}s`} cx={0} cy={0} r={SHEEN_RADIUS} gradientUnits="objectBoundingBox" gradientTransform={SHEEN_ELLIPSE}>
-                    <Stop offset={0} stopColor={edge.sheen} />
-                    <Stop offset={1} stopColor={edge.sheen} stopOpacity={0} />
+                    <Stop offset={0} {...happierSvgGradientStop(edge.sheen)} />
+                    <Stop offset={1} {...happierSvgGradientStop(edge.sheen, 0)} />
                 </RadialGradient>
             </Defs>
             <Rect {...rect} fill={`url(#${id}s)`} />

@@ -8,6 +8,7 @@ import { PlanetCanvas, type PlanetCanvasProps } from '@/components/atmosphere/Pl
 import {
     HAPPIER_SCENE_ART_METRICS,
     HAPPIER_SCENE_VIEWBOX,
+    happierSvgGradientStop,
     type HappierResolvedSceneLayer,
     type HappierResolvedSceneMark,
     type HappierResolvedScenePlanet,
@@ -117,10 +118,10 @@ function SceneLayers(props: Readonly<{ layers: readonly HappierResolvedSceneLaye
                             <Defs>
                                 {TONES.map((tone) => (
                                     <LinearGradient key={tone} id={`${fadeId}-${tone}`} gradientUnits="userSpaceOnUse" x1={fade[0]} x2={fade[1]} y1={0} y2={0}>
-                                        <Stop offset={0} stopColor={toneColor(tone, paint)} stopOpacity={0} />
-                                        <Stop offset={FADE} stopColor={toneColor(tone, paint)} stopOpacity={toneOpacity(tone, paint)} />
-                                        <Stop offset={1 - FADE} stopColor={toneColor(tone, paint)} stopOpacity={toneOpacity(tone, paint)} />
-                                        <Stop offset={1} stopColor={toneColor(tone, paint)} stopOpacity={0} />
+                                        <Stop offset={0} {...happierSvgGradientStop(toneColor(tone, paint), 0)} />
+                                        <Stop offset={FADE} {...happierSvgGradientStop(toneColor(tone, paint), toneOpacity(tone, paint))} />
+                                        <Stop offset={1 - FADE} {...happierSvgGradientStop(toneColor(tone, paint), toneOpacity(tone, paint))} />
+                                        <Stop offset={1} {...happierSvgGradientStop(toneColor(tone, paint), 0)} />
                                     </LinearGradient>
                                 ))}
                             </Defs>

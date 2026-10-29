@@ -1,5 +1,7 @@
 import * as React from 'react';
-import { afterEach, describe, expect, it } from 'vitest';
+import Color from 'color';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import * as Unistyles from 'react-native-unistyles';
 import { resolveHappierScene } from '@happier-dev/plugin-ui/presentation';
 import { planetLightForProgress } from '@happier-dev/brand/planet';
 
@@ -9,6 +11,11 @@ import { createPlanetCanvasSceneCache } from '@/components/atmosphere/planetCanv
 import { setReducedMotionPreferenceOverride } from '@/hooks/ui/useReducedMotionPreference';
 
 import { SceneArt } from './SceneArt';
+
+vi.mock('react-native', async () => {
+    const { createReactNativeNativeMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeNativeMock({ platformOS: 'ios' });
+});
 
 type Screen = Awaited<ReturnType<typeof renderScreen>>;
 
@@ -25,7 +32,45 @@ const propGroup = (screen: Screen, transform: string) =>
  * owns the ink, the Brand planet and the one-shot rise, which reduced motion and still requests turn off.
  */
 describe('SceneArt', () => {
-    afterEach(() => setReducedMotionPreferenceOverride(null));
+    afterEach(() => {
+        setReducedMotionPreferenceOverride(null);
+        vi.restoreAllMocks();
+    });
+
+    it('preserves custom theme alpha through the scene fades once at the native drawing boundary', async () => {
+        const runtime = Unistyles.useUnistyles();
+        vi.spyOn(Unistyles, 'useUnistyles').mockReturnValue({
+            ...runtime,
+            theme: {
+                ...runtime.theme,
+                colors: {
+                    ...runtime.theme.colors,
+                    text: { ...runtime.theme.colors.text, primary: 'rgba(12, 24, 36, 0.4)' },
+                    state: {
+                        ...runtime.theme.colors.state,
+                        attention: { ...runtime.theme.colors.state.attention, foreground: 'rgba(72, 84, 96, 0.6)' },
+                    },
+                },
+            },
+        });
+        const screen = await renderScreen(<SceneArt scene={resolveHappierScene('nothingListening')} size="pane" still />);
+        const gradients = screen.findAll((node) => String(node.type) === 'SvgLinearGradient');
+        expect(gradients.length).toBeGreaterThan(0);
+        const alpha = [0.4, 0.4, 0.6];
+        const fade = [0.64, 0.24, 1];
+        const channels = [[12, 24, 36], [12, 24, 36], [72, 84, 96]];
+        for (const [index, gradient] of gradients.entries()) {
+            const tone = index % 3;
+            const stops = gradient.findAll((node) => String(node.type) === 'Stop');
+            expect(stops).toHaveLength(4);
+            for (const [stopIndex, stop] of stops.entries()) {
+                expect(Color(stop.props.stopColor).rgb().array().slice(0, 3)).toEqual(channels[tone]);
+                const strength = Math.round(alpha[tone]! * 255) / 255 * fade[tone]!;
+                expect(stop.props.stopOpacity ?? 1).toBeCloseTo(stopIndex === 0 || stopIndex === 3 ? 0 : strength);
+                if (stopIndex === 1 || stopIndex === 2) expect(Color(stop.props.stopColor).alpha()).toBe(1);
+            }
+        }
+    });
 
     it('draws the scene at its size, with the Brand dot planet hidden below the ground', async () => {
         const screen = await renderScreen(<SceneArt testID="art" scene={resolveHappierScene('nothingListening', 'page')} size="page" still />);
@@ -110,7 +155,7 @@ describe('SceneArt', () => {
         });
         const screen = await renderScreen(<SceneArt scene={scene} size="pane" still />);
         const rect = propGroup(screen, 'translate(60 46) scale(-2 2)').findAll((node) => String(node.type) === 'Rect')[0]!;
-        expect(rect.props.stroke).toBe(screen.findAll((node) => String(node.type) === 'Stop')[1]!.props.stopColor);
+        expect(Color(rect.props.stroke).rgb().array().slice(0, 3)).toEqual(Color(screen.findAll((node) => String(node.type) === 'Stop')[1]!.props.stopColor).rgb().array().slice(0, 3));
         expect(rect.props.strokeWidth).toBeCloseTo((1.3 / 1.1) / 2);
     });
 
@@ -125,7 +170,7 @@ describe('SceneArt', () => {
         expect(on.stroke).not.toBe(on.line);
         expect(on.opacity).toBe(1);
         const off = await accentOf(undefined);
-        expect(off.stroke).toBe(off.line);
+        expect(Color(off.stroke).rgb().array().slice(0, 3)).toEqual(Color(off.line).rgb().array().slice(0, 3));
         expect(off.opacity).toBeLessThan(1);
 
         const waiting = await renderScreen(<SceneArt scene={resolveHappierScene('reconnecting')} size="pane" still />);
