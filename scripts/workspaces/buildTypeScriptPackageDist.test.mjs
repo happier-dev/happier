@@ -1028,7 +1028,9 @@ test('buildTypeScriptPackageDist keeps TypeScript incremental metadata out of pr
       mkdirSync(outDir, { recursive: true });
       writeFileSync(join(outDir, 'index.js'), 'export const built = true;\n', 'utf-8');
       writeFileSync(join(outDir, 'index.d.ts'), 'export declare const built: boolean;\n', 'utf-8');
-      writeFileSync(tsBuildInfoFile, '{}\n', 'utf-8');
+      writeFileSync(tsBuildInfoFile, JSON.stringify({
+        fileNames: [relative(dirname(tsBuildInfoFile), join(packageDir, 'src', 'index.ts'))],
+      }), 'utf-8');
       return { status: 0 };
     },
   });
@@ -1563,61 +1565,6 @@ test('buildTypeScriptPackageDist discards partial compiler state left by a faile
   assert.equal(await readFile(join(packageDir, 'dist', 'index.js'), 'utf-8'), 'export const rebuilt = true;\n');
 });
 
-test('buildTypeScriptPackageDist invalidates its stable cache when compiler state tracks a renamed source', async (t) => {
-  const packageDir = await createPackageFixture(t, 'build-ts-package-renamed-source');
-  const removedSourcePath = join(packageDir, 'src', 'removed.ts');
-  const renamedSourcePath = join(packageDir, 'src', 'renamed.ts');
-  await writeFile(join(packageDir, 'src', 'index.ts'), 'export const built = true;\n', 'utf-8');
-  await writeFile(removedSourcePath, 'export const removed = true;\n', 'utf-8');
-  let compilerOutputDir = '';
-
-  await buildTypeScriptPackageDist({
-    packageDir,
-    args: ['-p', 'tsconfig.json'],
-    stdio: 'ignore',
-    resolveTypeScriptCliInvocationImpl: () => ({ command: 'tsc', argsPrefix: [] }),
-    runCommandImpl: (_command, args) => {
-      compilerOutputDir = args[args.indexOf('--outDir') + 1];
-      const tsBuildInfoFile = args[args.indexOf('--tsBuildInfoFile') + 1];
-      mkdirSync(compilerOutputDir, { recursive: true });
-      writeFileSync(join(compilerOutputDir, 'index.js'), 'export const built = true;\n', 'utf-8');
-      writeFileSync(join(compilerOutputDir, 'index.d.ts'), 'export declare const built: boolean;\n', 'utf-8');
-      writeFileSync(join(compilerOutputDir, 'removed.js'), 'export const removed = true;\n', 'utf-8');
-      writeFileSync(tsBuildInfoFile, JSON.stringify({ fileNames: ['src/index.ts', 'src/removed.ts'] }), 'utf-8');
-      return { status: 0 };
-    },
-  });
-  await rm(removedSourcePath);
-  await writeFile(renamedSourcePath, 'export const renamed = true;\n', 'utf-8');
-
-  const secondStage = join(packageDir, 'dist');
-  await buildTypeScriptPackageDist({
-    packageDir,
-    args: ['-p', 'tsconfig.json'],
-    stdio: 'ignore',
-    resolveTypeScriptCliInvocationImpl: () => ({ command: 'tsc', argsPrefix: [] }),
-    runCommandImpl: (_command, args) => {
-      assert.equal(args[args.indexOf('--outDir') + 1], compilerOutputDir);
-      assert.equal(existsSync(join(compilerOutputDir, 'removed.js')), false);
-      const tsBuildInfoFile = args[args.indexOf('--tsBuildInfoFile') + 1];
-      mkdirSync(compilerOutputDir, { recursive: true });
-      writeFileSync(join(compilerOutputDir, 'index.js'), 'export const rebuilt = true;\n', 'utf-8');
-      writeFileSync(join(compilerOutputDir, 'index.d.ts'), 'export declare const rebuilt: boolean;\n', 'utf-8');
-      writeFileSync(join(compilerOutputDir, 'renamed.js'), 'export const renamed = true;\n', 'utf-8');
-      writeFileSync(
-        tsBuildInfoFile,
-        JSON.stringify({ fileNames: ['src/index.ts', 'src/renamed.ts'] }),
-        'utf-8',
-      );
-      return { status: 0 };
-    },
-  });
-
-  assert.equal(existsSync(join(secondStage, 'removed.js')), false);
-  assert.equal(existsSync(join(secondStage, 'renamed.js')), true);
-  assert.match(await readFile(join(secondStage, 'index.js'), 'utf-8'), /rebuilt/);
-});
-
 test('buildTypeScriptPackageDist invalidates its stable cache when the compiler project excludes a prior source', async (t) => {
   const packageDir = await createPackageFixture(t, 'build-ts-package-config-change');
   const excludedSourcePath = join(packageDir, 'src', 'excluded.ts');
@@ -1673,37 +1620,89 @@ test('buildTypeScriptPackageDist invalidates its stable cache when the compiler 
   assert.match(await readFile(join(secondStage, 'index.js'), 'utf-8'), /rebuilt/);
 });
 
-test('buildTypeScriptPackageDist does not republish a deleted TypeScript emit from its real incremental cache', async (t) => {
+test('buildTypeScriptPackageDist prunes deleted sources from its persistent incremental cache without discarding unchanged outputs', async (t) => {
   const packageDir = await createPackageFixture(t, 'build-ts-package-real-deleted-source');
   const tsconfigPath = join(packageDir, 'tsconfig.json');
   const tsconfig = JSON.parse(await readFile(tsconfigPath, 'utf-8'));
   tsconfig.compilerOptions.incremental = true;
+  tsconfig.compilerOptions.sourceMap = true;
+  tsconfig.compilerOptions.declarationMap = true;
+  tsconfig.include = ['src/*.ts'];
   await writeJson(tsconfigPath, tsconfig);
 
   const deletedSourcePath = join(packageDir, 'src', 'removed.ts');
-  await writeFile(join(packageDir, 'src', 'index.ts'), 'export const built = true;\n', 'utf-8');
+  await mkdir(join(packageDir, 'src', 'nested'));
+  await writeFile(join(packageDir, 'src', 'nested', 'imported.mts'), 'export const imported = true;\n');
+  await writeFile(join(packageDir, 'src', 'index.ts'), "export const built = true;\nexport { imported } from './nested/imported.mjs';\n", 'utf-8');
   await writeFile(deletedSourcePath, 'export const removed = true;\n', 'utf-8');
-  const firstStage = join(packageDir, '.real-first-stage');
-  const secondStage = join(packageDir, '.real-second-stage');
-
-  await buildTypeScriptPackageDist({
+  let compilerInvocation;
+  let compilerOutputDir;
+  let retainedBeforeRebuild;
+  const suffixes = ['.js', '.js.map', '.d.ts', '.d.ts.map'];
+  const options = {
     packageDir,
     args: ['-p', 'tsconfig.json'],
-    outputDir: firstStage,
     stdio: 'ignore',
-  });
-  assert.equal(existsSync(join(firstStage, 'removed.js')), true);
+    // Observe the real selected Microsoft compiler process boundary; config,
+    // incremental state, source-map checks and publication stay real.
+    runCommandImpl: async (command, args, commandOptions) => {
+      compilerInvocation = { command, args, options: commandOptions };
+      compilerOutputDir = args[args.indexOf('--outDir') + 1];
+      if (!existsSync(deletedSourcePath)) {
+        retainedBeforeRebuild = suffixes.filter(suffix => existsSync(join(compilerOutputDir, `index${suffix}`))).length;
+      }
+      const result = await runCaptureResult(command, args, commandOptions);
+      assert.equal(result.exitCode, 0, `${result.stdout}\n${result.stderr}`);
+      return { status: result.exitCode };
+    },
+  };
+  await buildTypeScriptPackageDist(options);
+  const retiredOutputs = await Promise.all(suffixes.map(suffix => readFile(join(compilerOutputDir, `removed${suffix}`))));
+  for (const suffix of suffixes) {
+    assert.equal(existsSync(join(packageDir, 'dist', `removed${suffix}`)), true);
+  }
 
   await rm(deletedSourcePath);
-  await buildTypeScriptPackageDist({
-    packageDir,
-    args: ['-p', 'tsconfig.json'],
-    outputDir: secondStage,
-    stdio: 'ignore',
-  });
+  // Reproduce retained old emits after a real incremental compiler pass;
+  // the compiler leaves the deleted source's previous outputs on disk.
+  const advanced = await runCaptureResult(compilerInvocation.command, compilerInvocation.args, compilerInvocation.options);
+  assert.equal(advanced.exitCode, 0, advanced.stderr);
+  for (const suffix of suffixes) {
+    assert.equal(existsSync(join(compilerOutputDir, `removed${suffix}`)), true);
+  }
+  await buildTypeScriptPackageDist(options);
+  const retainedOnDeletion = retainedBeforeRebuild;
+  // Model a worker's stale output tree independently of its current metadata,
+  // using the real compiler's earlier emits rather than fabricated map paths.
+  await Promise.all(suffixes.map((suffix, index) => writeFile(join(compilerOutputDir, `removed${suffix}`), retiredOutputs[index])));
+  const unchanged = suffixes.map(suffix => join(compilerOutputDir, `index${suffix}`));
+  const unchangedStats = unchanged.map(path => statSync(path, { bigint: true }).mtimeNs);
+  await buildTypeScriptPackageDist(options);
+  assert.equal(retainedOnDeletion, suffixes.length, 'source deletion must retain the unchanged compiler outputs');
+  assert.equal(unchanged.filter((path, index) => statSync(path, { bigint: true }).mtimeNs === unchangedStats[index]).length, suffixes.length);
+  for (const suffix of suffixes) {
+    assert.equal(existsSync(join(compilerOutputDir, `removed${suffix}`)), false);
+    assert.equal(existsSync(join(packageDir, 'dist', `removed${suffix}`)), false);
+  }
+  assert.match(await readFile(join(packageDir, 'dist', 'index.js'), 'utf-8'), /built/);
 
-  assert.equal(existsSync(join(secondStage, 'removed.js')), false);
-  assert.match(await readFile(join(secondStage, 'index.js'), 'utf-8'), /built/);
+  // Normal build -> delete -> rebuild also retains the persistent cache,
+  // rather than handling deletion by discarding every unchanged output.
+  await writeFile(deletedSourcePath, 'export const removed = true;\n');
+  await buildTypeScriptPackageDist(options);
+  await rm(deletedSourcePath);
+  await writeFile(join(packageDir, 'src', 'renamed.ts'), 'export const renamed = true;\n');
+  await buildTypeScriptPackageDist(options);
+  assert.equal(retainedBeforeRebuild, suffixes.length);
+  for (const suffix of suffixes) {
+    assert.equal(existsSync(join(compilerOutputDir, `removed${suffix}`)), false);
+    assert.equal(existsSync(join(packageDir, 'dist', `removed${suffix}`)), false);
+    assert.equal(existsSync(join(packageDir, 'dist', `renamed${suffix}`)), true);
+  }
+  for (const suffix of ['.mjs', '.mjs.map', '.d.mts', '.d.mts.map']) {
+    assert.equal(existsSync(join(compilerOutputDir, 'nested', `imported${suffix}`)), true);
+    assert.equal(existsSync(join(packageDir, 'dist', 'nested', `imported${suffix}`)), true);
+  }
 });
 
 test('buildTypeScriptPackageDist promotes live dist under the canonical package build lock', async (t) => {
