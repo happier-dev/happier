@@ -24,6 +24,8 @@ function unavailableResult<T>(request: CryptoWorkerBatchRequest<unknown>): Nativ
 
 type WebCryptoWorkerTransport = {
     worker?: Worker;
+    ready?: Promise<Worker>;
+    rejectStartup?: (error: unknown) => void;
     tail: Promise<void>;
     pending: number;
     failActiveDispatch?: (error: unknown) => void;
@@ -37,31 +39,93 @@ const transports: Record<CryptoWorkerWorkClass, WebCryptoWorkerTransport> = {
     interactive: { tail: Promise.resolve(), pending: 0 },
 };
 
-function discardWorker(transport: WebCryptoWorkerTransport, discarded: Worker): void {
+function discardWorker(transport: WebCryptoWorkerTransport, discarded: Worker, error?: unknown): void {
     discarded.onmessage = null;
     discarded.onerror = null;
     discarded.onmessageerror = null;
     discarded.terminate();
-    if (transport.worker === discarded) transport.worker = undefined;
+    if (transport.worker === discarded) {
+        const rejectStartup = transport.rejectStartup;
+        transport.worker = undefined;
+        transport.ready = undefined;
+        transport.rejectStartup = undefined;
+        rejectStartup?.(error ?? new Error('Web crypto worker retired during startup'));
+    }
 }
 
-function getWorker(transport: WebCryptoWorkerTransport): Worker {
-    if (transport.worker) return transport.worker;
+function getWorkerStartup(transport: WebCryptoWorkerTransport): Promise<Worker> {
+    if (transport.ready) return transport.ready;
     const created = new Worker('/happier-crypto-worker.js');
     transport.worker = created;
     const fail = (error: unknown) => {
         if (transport.worker !== created) return;
         if (transport.failActiveDispatch) transport.failActiveDispatch(error);
-        else discardWorker(transport, created);
+        else discardWorker(transport, created, error);
     };
-    // Keep lifetime error handlers while idle so a failed Worker can never be
-    // retained for a later request. Retired Worker events cannot retire its replacement.
     created.onerror = (event) => {
         event.preventDefault();
         fail(event.error instanceof Error ? event.error : new Error('Web crypto worker failed'));
     };
     created.onmessageerror = () => fail(new Error('Invalid web crypto worker message'));
-    return created;
+    transport.ready = new Promise<Worker>((resolve, reject) => {
+        transport.rejectStartup = reject;
+        created.onmessage = ({ data }: MessageEvent<WebCryptoWorkerResponse>) => {
+            if (data?.status !== 'ready') {
+                fail(new Error('Invalid web crypto worker startup response'));
+                return;
+            }
+            if (transport.worker !== created) return;
+            transport.rejectStartup = undefined;
+            created.onmessage = null;
+            resolve(created);
+        };
+    });
+    return transport.ready;
+}
+
+async function waitForWorkerReady(
+    transport: WebCryptoWorkerTransport,
+    signal?: AbortSignal,
+    timeoutMs?: number,
+): Promise<Worker> {
+    const ready = getWorkerStartup(transport);
+    const worker = transport.worker!;
+    if (!signal && timeoutMs === undefined) return ready;
+    return new Promise<Worker>((resolve, reject) => {
+        let timeout: ReturnType<typeof setTimeout> | undefined;
+        let settled = false;
+        const cleanup = () => {
+            if (timeout) clearTimeout(timeout);
+            signal?.removeEventListener('abort', onAbort);
+        };
+        const fail = (error: Error) => {
+            if (settled) return;
+            settled = true;
+            cleanup();
+            discardWorker(transport, worker, error);
+            reject(error);
+        };
+        const onAbort = () => fail(new Error('Web crypto worker startup cancelled'));
+        signal?.addEventListener('abort', onAbort, { once: true });
+        if (signal?.aborted) {
+            onAbort();
+            return;
+        }
+        if (timeoutMs !== undefined) {
+            timeout = setTimeout(() => fail(new Error('Web crypto worker startup timed out')), timeoutMs);
+        }
+        void ready.then((value) => {
+            if (settled) return;
+            settled = true;
+            cleanup();
+            resolve(value);
+        }, (error) => {
+            if (settled) return;
+            settled = true;
+            cleanup();
+            reject(error);
+        });
+    });
 }
 
 export function createNativeCryptoWorker(): NativeCryptoWorker {
@@ -136,7 +200,7 @@ export function createNativeCryptoWorker(): NativeCryptoWorker {
                     }
                 };
                 request.signal?.addEventListener('abort', onAbort, { once: true });
-                void previous.then(() => {
+                void previous.then(async () => {
                     if (settled) return;
                     if (request.signal?.aborted) { onAbort(); return; }
                     queued = false;
@@ -148,7 +212,8 @@ export function createNativeCryptoWorker(): NativeCryptoWorker {
                     try {
                         // The Worker retains its code, never Account key state:
                         // its canonical handler wipes each request's recipient key.
-                        dispatchedWorker = getWorker(transport);
+                        dispatchedWorker = await waitForWorkerReady(transport, request.signal, request.startupTimeoutMs);
+                        if (settled) return;
                         transport.failActiveDispatch = fail;
                         recordDepth();
                         dispatchedWorker.onmessage = ({ data }: MessageEvent<WebCryptoWorkerResponse>) => {

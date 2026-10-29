@@ -6,6 +6,8 @@ export type WebCryptoWorkerItem = Readonly<{
 }>;
 
 export type WebCryptoWorkerResponse = Readonly<{
+    status: 'ready';
+}> | Readonly<{
     status: 'ok';
     items: readonly (Uint8Array<ArrayBuffer> | null)[];
 }> | Readonly<{
@@ -37,4 +39,5 @@ export function installWebCryptoWorker(port: WebCryptoWorkerPort): void {
             for (const item of data) item?.recipientSecretKeyOrSeed.fill(0);
         }
     };
+    port.postMessage({ status: 'ready' }, []);
 }

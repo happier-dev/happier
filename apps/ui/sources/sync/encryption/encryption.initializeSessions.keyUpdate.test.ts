@@ -5,6 +5,7 @@ import { encodeBase64 } from '@/encryption/base64';
 import { Encryption } from './encryption';
 import { createFakeCryptoWorker } from './nativeCryptoWorker/fakeCryptoWorker';
 import type { NativeCryptoWorker } from './nativeCryptoWorker/types';
+import { openSessionSharedDisplayEnvelopeV1, sealSessionSharedDisplayEnvelopeV1 } from '@happier-dev/protocol';
 
 type EncryptionGenerationReader = Readonly<{
   getCurrentGeneration: (accountId?: string, serverId?: string | null) => number;
@@ -33,6 +34,28 @@ function expectGenerationScopeReader(encryption: Encryption): EncryptionGenerati
 }
 
 describe('Encryption.initializeSessions (key updates)', () => {
+  it('opens shared display only with the installed Session key after an actual key replacement', async () => {
+    const encryption = await Encryption.create(new Uint8Array(32).fill(1));
+    await encryption.initializeSessions(new Map([['display', new Uint8Array(32).fill(2)]]));
+    const previous = encryption.getSessionEncryption('display')!;
+    const oldDisplay = await sealSessionSharedDisplayEnvelopeV1({ sessionMode: 'e2ee',
+      display: { v: 1, summaryText: 'Before replacement' }, encryptPayload: payload => previous.encryptRaw(payload) });
+    if (!oldDisplay.ok) throw new Error('Expected shared display fixture');
+    expect(await openSessionSharedDisplayEnvelopeV1({ sessionMode: 'e2ee', envelope: oldDisplay.envelope,
+      decryptPayload: ciphertext => previous.decryptRaw(ciphertext) })).toEqual({ ok: true, display: { v: 1, summaryText: 'Before replacement' } });
+    // Exercise the existing key-installation owner, not an invented content-rotation service.
+    await encryption.initializeSessions(new Map([['display', new Uint8Array(32).fill(3)]]));
+    const current = encryption.getSessionEncryption('display')!;
+    expect(await openSessionSharedDisplayEnvelopeV1({ sessionMode: 'e2ee', envelope: oldDisplay.envelope,
+      decryptPayload: ciphertext => current.decryptRaw(ciphertext) })).toMatchObject({ ok: false });
+    const replacement = await sealSessionSharedDisplayEnvelopeV1({ sessionMode: 'e2ee',
+      display: { v: 1, summaryText: 'After replacement' }, encryptPayload: payload => current.encryptRaw(payload) });
+    if (!replacement.ok) throw new Error('Expected replacement display fixture');
+    expect(await openSessionSharedDisplayEnvelopeV1({ sessionMode: 'e2ee', envelope: replacement.envelope,
+      decryptPayload: ciphertext => current.decryptRaw(ciphertext) })).toEqual({ ok: true, display: { v: 1, summaryText: 'After replacement' } });
+    expect(await previous.decryptRaw(replacement.envelope.t === 'encrypted' ? replacement.envelope.c : '')).toBeNull();
+  });
+
   it.each(['individual', 'snapshot'] as const)(
     'does not republish retired %s plaintext into a same-version regrant',
     async (readKind) => {

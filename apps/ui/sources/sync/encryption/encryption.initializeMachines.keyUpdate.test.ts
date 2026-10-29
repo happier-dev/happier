@@ -8,6 +8,42 @@ import { AES256Encryption } from './encryptor';
 import { callSocketRpc, socketRpcCodec, type SocketRpcSocket } from '@happier-dev/sync-client';
 
 describe('Encryption.initializeMachines (key updates)', () => {
+  it('retires a held decrypt and both version caches when the installation changes with the same key', async () => {
+    const encryption = await Encryption.create(new Uint8Array(32).fill(1));
+    encryption.configureNativeCryptoWorker({ routing: { mode: 'off' } });
+    const basis = { dataEncryptionKey: 'same-envelope', expectedDataEncryptionKey: 'same-envelope',
+      resourceMode: 'e2ee' as const, accessState: 'ready' as const, installationId: 'first-installation' };
+    const context = encryption.captureMachineEncryptionContext('installation-change', basis);
+    await encryption.initializeMachines(new Map([['installation-change', new Uint8Array(32).fill(2)]]));
+    const before = encryption.getMachineEncryption('installation-change')!;
+    const metadata = createMachineFixture().metadata!;
+    await before.decryptMetadata(1, await before.encryptMetadata(metadata));
+    await before.decryptDaemonState(1, await before.encryptDaemonState({ status: 'old' }));
+    const ciphertext = await before.encryptMetadata({ ...metadata, host: 'late-old-installation' });
+    const started = createDeferred<void>();
+    const release = createDeferred<void>();
+    const originalDecrypt = platformCrypto.decryptAsyncAES;
+    const spy = vi.spyOn(platformCrypto, 'decryptAsyncAES').mockImplementationOnce(async (...args) => {
+      const value = await originalDecrypt(...args);
+      started.resolve();
+      await release.promise;
+      return value;
+    });
+    const pending = before.decryptMetadata(2, ciphertext);
+    try {
+      await started.promise;
+      encryption.captureMachineEncryptionContext('installation-change', { ...basis, installationId: 'replacement-installation' });
+      await encryption.initializeMachines(new Map([['installation-change', new Uint8Array(32).fill(2)]]));
+      release.resolve();
+      expect(context.isCurrent()).toBe(false);
+      expect(await pending).toBeNull();
+      const after = encryption.getMachineEncryption('installation-change')!;
+      expect(await after.decryptMetadata(1, await after.encryptMetadata({ ...metadata, host: 'replacement' })))
+        .toMatchObject({ host: 'replacement' });
+      expect(await after.decryptDaemonState(1, await after.encryptDaemonState({ status: 'new' }))).toEqual({ status: 'new' });
+    } finally { release.resolve(); spy.mockRestore(); await pending; }
+  });
+
   it('settles an issued RPC using its captured codec across replacement without replay', async () => {
     const encryption = await Encryption.create(new Uint8Array(32).fill(1));
     await encryption.initializeMachines(new Map([['rpc-machine', new Uint8Array(32).fill(2)]]));

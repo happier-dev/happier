@@ -2,79 +2,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { encodeBase64 } from '@/encryption/base64';
 import { decodeHex } from '@/encryption/hex';
 import { CRYPTO_GOLDEN_VECTORS } from '@happier-dev/protocol/crypto/cryptoGoldenVectors';
+import * as dataKeyEnvelope from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
 import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
 import { Encryption } from '../encryption';
 import { createNativeCryptoWorker } from './nativeCryptoWorker.web';
 import { runNativeCryptoWorkerQueuedBatch } from './nativeCryptoWorkerQueue';
 import { NATIVE_CRYPTO_WORKER_PROBE_FAILURE_REASON } from './types';
+import { TestWebCryptoWorker as TestWorker } from '@/dev/testkit/harness/webCryptoWorkerBoundary';
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock();
 });
-
-// Worker/structured cloning are the system boundary. The real production worker
-// handler and canonical envelope crypto execute beneath this transport.
-class TestWorker {
-    static instances: TestWorker[] = [];
-    static failure: Error | null = null;
-    static constructorFailure: Error | null = null;
-    static transportFault: 'post' | 'message' | 'response' | 'runtime' | null = null;
-    static failNextDispatch = false;
-    static hold = false;
-    static responseDelayMs = 0;
-    onmessage: ((event: MessageEvent) => void) | null = null;
-    onerror: ((event: ErrorEvent) => void) | null = null;
-    onmessageerror: (() => void) | null = null;
-    terminated = false;
-    requestBuffers: ArrayBuffer[] = [];
-    replyBuffers: ArrayBuffer[] = [];
-    pendingReplies: Array<() => Promise<void>> = [];
-
-    constructor(readonly url: string | URL) {
-        if (TestWorker.constructorFailure) throw TestWorker.constructorFailure;
-        TestWorker.instances.push(this);
-    }
-
-    postMessage(message: unknown, transfer: ArrayBuffer[]) {
-        if (TestWorker.transportFault === 'post') throw new Error('Cannot clone Worker request');
-        this.requestBuffers = transfer;
-        const data: unknown = structuredClone(message, { transfer });
-        const failThisDispatch = TestWorker.failNextDispatch;
-        TestWorker.failNextDispatch = false;
-        const reply = async () => {
-            if (TestWorker.transportFault === 'message') { this.onmessageerror?.(); return; }
-            if (TestWorker.transportFault === 'response') {
-                this.onmessage?.({ data: null } as MessageEvent);
-                return;
-            }
-            if (TestWorker.transportFault === 'runtime') {
-                this.onmessage?.({ data: { status: 'error', error: { name: 'Error', message: 'Worker runtime failed' } } } as MessageEvent);
-                return;
-            }
-            if (failThisDispatch || TestWorker.failure) {
-                this.onerror?.({ error: TestWorker.failure ?? new Error('First dispatch failed'), preventDefault() {} } as ErrorEvent);
-                return;
-            }
-            const { installWebCryptoWorker } = await import('./webCryptoWorkerRuntime');
-            const port = {
-                onmessage: null as ((event: MessageEvent) => void) | null,
-                postMessage: (response: unknown, transfers: ArrayBuffer[]) => {
-                    this.replyBuffers = transfers;
-                    const cloned: unknown = structuredClone(response, { transfer: transfers });
-                    if (!this.terminated) this.onmessage?.({ data: cloned } as MessageEvent);
-                },
-            };
-            installWebCryptoWorker(port);
-            port.onmessage?.({ data } as MessageEvent);
-        };
-        if (TestWorker.hold) this.pendingReplies.push(reply);
-        else if (TestWorker.responseDelayMs > 0) setTimeout(reply, TestWorker.responseDelayMs);
-        else queueMicrotask(reply);
-    }
-
-    terminate() { this.terminated = true; }
-}
 
 const scope = { accountId: 'test-account', serverId: null, generation: 0 };
 
@@ -85,6 +24,7 @@ describe('web crypto worker through Encryption', () => {
         TestWorker.constructorFailure = null;
         TestWorker.transportFault = null;
         TestWorker.failNextDispatch = false;
+        TestWorker.holdStartup = false;
         TestWorker.hold = false;
         TestWorker.responseDelayMs = 0;
         vi.stubGlobal('Worker', TestWorker);
@@ -146,6 +86,31 @@ describe('web crypto worker through Encryption', () => {
         await vi.advanceTimersByTimeAsync(6000);
         await expect(pending).resolves.toEqual(key);
         expect(TestWorker.instances[0]!.terminated).toBe(false);
+    });
+
+    it('falls back when a cold Worker script never reaches its startup handshake', async () => {
+        const encryption = await Encryption.create(new Uint8Array(32).fill(49));
+        const key = new Uint8Array(32).fill(50);
+        const envelope = encodeBase64(await encryption.encryptEncryptionKey(key));
+        encryption.configureNativeCryptoWorker({ routing: { mode: 'auto', minPayloadBytes: 0, timeoutMs: 100 } });
+        TestWorker.holdStartup = true;
+        TestWorker.hold = true;
+        vi.useFakeTimers();
+        const controller = new AbortController();
+        let opened: Uint8Array | null | undefined;
+        const pending = encryption.decryptEncryptionKey(envelope, { signal: controller.signal })
+            .then((value) => { opened = value; return value; });
+        try {
+            await vi.advanceTimersByTimeAsync(0);
+            await vi.advanceTimersByTimeAsync(100);
+            expect(opened).toEqual(key);
+            expect(TestWorker.instances[0]!.terminated).toBe(true);
+        } finally {
+            controller.abort();
+            await pending;
+            TestWorker.holdStartup = false;
+            TestWorker.hold = false;
+        }
     });
 
     it('uses the reference opener only when Workers are unavailable', async () => {
@@ -252,6 +217,55 @@ describe('web crypto worker through Encryption', () => {
         await expect(second.decryptEncryptionKey(firstEnvelope)).resolves.toBeNull();
         expect(TestWorker.instances).toHaveLength(1);
         expect(TestWorker.instances[0]!.terminated).toBe(false);
+    });
+
+    it.each(['same', 'different'] as const)('opens an interactive %s envelope through Encryption before held bulk inventory', async (envelopeSelection) => {
+        const encryption = await Encryption.create(new Uint8Array(32).fill(51));
+        const bulkKeys = Array.from({ length: 500 }, (_, index) => new Uint8Array(32).fill(index % 256));
+        const bulkEnvelopes = await Promise.all(bulkKeys.map(async key => encodeBase64(await encryption.encryptEncryptionKey(key))));
+        const exactKey = envelopeSelection === 'same' ? bulkKeys[0]! : new Uint8Array(32).fill(52);
+        const exactEnvelope = envelopeSelection === 'same'
+            ? bulkEnvelopes[0]!
+            : encodeBase64(await encryption.encryptEncryptionKey(exactKey));
+        const open = vi.spyOn(dataKeyEnvelope, 'openEncryptedDataKeyEnvelopeV1');
+        const exactBytes = Buffer.from(exactEnvelope, 'base64');
+        const exactOpenCount = () => open.mock.calls.filter(([request]) => request.envelope.length === exactBytes.length
+            && request.envelope.every((byte, index) => byte === exactBytes[index])).length;
+        TestWorker.hold = true;
+        vi.useFakeTimers();
+        let bulkSettled = false;
+        const bulk = encryption.decryptEncryptionKeys(bulkEnvelopes)
+            .then(items => { bulkSettled = true; return items; });
+        try {
+            await vi.advanceTimersByTimeAsync(0);
+            expect(TestWorker.instances).toHaveLength(1);
+            const bulkWorker = TestWorker.instances[0]!;
+            TestWorker.hold = false;
+            const interactive = encryption.decryptEncryptionKey(exactEnvelope, { workClass: 'interactive' });
+            await vi.advanceTimersByTimeAsync(0);
+            expect(TestWorker.instances).toHaveLength(2);
+            await expect(interactive).resolves.toEqual(exactKey);
+            expect(exactOpenCount()).toBe(1);
+            expect(bulkSettled).toBe(false);
+            expect(bulkWorker.pendingReplies).toHaveLength(1);
+            await bulkWorker.pendingReplies.shift()!();
+            await expect(bulk).resolves.toEqual(bulkKeys);
+            const expectedOpens = envelopeSelection === 'same' ? 2 : 1;
+            expect(exactOpenCount()).toBe(expectedOpens);
+            // Completed pure opens remain shared across demand classes.
+            TestWorker.hold = true;
+            await expect(encryption.decryptEncryptionKey(exactEnvelope, { workClass: 'interactive' })).resolves.toEqual(exactKey);
+            await expect(encryption.decryptEncryptionKey(exactEnvelope)).resolves.toEqual(exactKey);
+            expect(exactOpenCount()).toBe(expectedOpens);
+            expect(TestWorker.instances.every(worker => worker.pendingReplies.length === 0)).toBe(true);
+        } finally {
+            TestWorker.hold = false;
+            for (const worker of TestWorker.instances) {
+                for (const reply of worker.pendingReplies.splice(0)) await reply();
+            }
+            await bulk;
+            open.mockRestore();
+        }
     });
 
     it('opens interactive work while the same owner has a held bulk batch and queued inventory', async () => {

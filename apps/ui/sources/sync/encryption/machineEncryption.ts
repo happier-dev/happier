@@ -14,12 +14,18 @@ export function areMachineEncryptionContextInputsEqual(
 ): boolean {
     return previous != null && previous.dataEncryptionKey === next.dataEncryptionKey
         && previous.expectedDataEncryptionKey === next.expectedDataEncryptionKey
-        && previous.resourceMode === next.resourceMode && previous.accessState === next.accessState;
+        && previous.resourceMode === next.resourceMode && previous.accessState === next.accessState
+        && (previous.installationId ?? null) === (next.installationId ?? null)
+        && (previous.installationPublicKey ?? null) === (next.installationPublicKey ?? null)
+        && (previous.contentPublicKeyFingerprint ?? null) === (next.contentPublicKeyFingerprint ?? null)
+        && (previous.custodianAccountId ?? null) === (next.custodianAccountId ?? null)
+        && (previous.accessRole ?? null) === (next.accessRole ?? null);
 }
 
 /** The recipient opening envelope and owner encoded-write identity have distinct jobs. */
 export function readMachineEncryptionContextInput(
-    machine: Readonly<{ dataEncryptionKey?: unknown; keyBasis?: unknown; access?: unknown; isShared?: boolean }>,
+    machine: Readonly<{ dataEncryptionKey?: unknown; keyBasis?: unknown; access?: unknown; isShared?: boolean;
+        installationId?: unknown; installationPublicKey?: unknown; contentPublicKeyFingerprint?: unknown }>,
     viewerAccountId: string | null,
     retained?: MachineEncryptionContextInput | null,
 ): MachineEncryptionContextInput {
@@ -31,8 +37,18 @@ export function readMachineEncryptionContextInput(
         : retained?.dataEncryptionKey ?? null;
     const basis = MachineKeyBasisStoredReadV1Schema.safeParse(machine.keyBasis);
     const access = AccessibleMachineAccessStoredReadV1Schema.safeParse(machine.access);
+    const identity = (key: 'installationId' | 'installationPublicKey' | 'contentPublicKeyFingerprint') => key in machine
+        ? typeof machine[key] === 'string' ? machine[key] : null
+        : retained?.[key] ?? null;
     return {
         dataEncryptionKey,
+        installationId: identity('installationId'),
+        installationPublicKey: identity('installationPublicKey'),
+        contentPublicKeyFingerprint: identity('contentPublicKeyFingerprint'),
+        custodianAccountId: access.success ? access.data.custodian.accountId
+            : machine.access !== undefined ? null : retained?.custodianAccountId ?? null,
+        accessRole: access.success ? access.data.role
+            : machine.access !== undefined ? null : retained?.accessRole ?? null,
         ...(access.success ? { resourceMode: access.data.resourceMode, accessState: access.data.accessState }
             : machine.access !== undefined || machine.isShared ? { accessState: 'unavailable' as const }
                 : retained ? { resourceMode: retained.resourceMode, accessState: retained.accessState } : {}),

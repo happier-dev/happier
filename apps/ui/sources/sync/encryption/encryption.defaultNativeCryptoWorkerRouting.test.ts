@@ -55,6 +55,36 @@ async function sealDataKeys(encryption: Encryption, dataKeys: readonly Uint8Arra
 }
 
 describe('Encryption native crypto worker routing default', () => {
+    it('joins signal-owned interactive openings and lets one borrower cancel without retiring its peer', async () => {
+        const encryption = await Encryption.create(new Uint8Array(32).fill(81));
+        const { worker, batches } = createRecordingCryptoWorker();
+        const entered = createDeferred<void>();
+        const release = createDeferred<void>();
+        encryption.configureNativeCryptoWorker({ worker: { ...worker,
+            decryptDataKeyEnvelopeV1: async request => {
+                entered.resolve();
+                await release.promise;
+                return worker.decryptDataKeyEnvelopeV1(request);
+            },
+        }, routing: { mode: 'require', minPayloadBytes: 0 } });
+        const key = new Uint8Array(32).fill(82);
+        const [envelope] = await sealDataKeys(encryption, [key]);
+        const first = new AbortController(), second = new AbortController();
+        const abandoned = encryption.decryptEncryptionKey(envelope!, { signal: first.signal, workClass: 'interactive' });
+        await entered.promise;
+        const survivor = encryption.decryptEncryptionKey(envelope!, { signal: second.signal, workClass: 'interactive' });
+        try {
+            first.abort();
+            expect(await abandoned).toBeNull();
+            release.resolve();
+            expect((await survivor)?.every((byte, index) => byte === key[index])).toBe(true);
+            expect(batches.flatMap(batch => batch.items)).toHaveLength(1);
+        } finally {
+            release.resolve(); first.abort(); second.abort();
+            await Promise.allSettled([abandoned, survivor]);
+            encryption.retireAccountMaterial();
+        }
+    });
     beforeEach(() => {
         resetDefaultNativeCryptoWorkerRoutingForTests();
         resetNativeCryptoWorkerCapabilityCacheForTests();
@@ -99,6 +129,46 @@ describe('Encryption native crypto worker routing default', () => {
             await Promise.allSettled(pending);
             syncPerformanceTelemetry.configure({ enabled: false });
             syncPerformanceTelemetry.reset();
+        }
+    });
+
+    it('cancels physical key work only after its final joined reader leaves and permits a fresh attempt', async () => {
+        const encryption = await Encryption.create(new Uint8Array(32).fill(83));
+        const { worker, batches } = createRecordingCryptoWorker();
+        const entered = createDeferred<void>();
+        const release = createDeferred<void>();
+        let physicalSignal: AbortSignal | undefined;
+        let hold = true;
+        encryption.configureNativeCryptoWorker({ worker: { ...worker,
+            decryptDataKeyEnvelopeV1: async request => {
+                physicalSignal = request.signal;
+                if (hold) { entered.resolve(); await release.promise; }
+                return worker.decryptDataKeyEnvelopeV1(request);
+            },
+        }, routing: { mode: 'require', minPayloadBytes: 0 } });
+        const key = new Uint8Array(32).fill(84);
+        const [envelope] = await sealDataKeys(encryption, [key]);
+        const first = new AbortController(), second = new AbortController();
+        const abandoned = encryption.decryptEncryptionKey(envelope!, { signal: first.signal });
+        await entered.promise;
+        const peer = encryption.decryptEncryptionKey(envelope!, { signal: second.signal });
+        try {
+            first.abort();
+            expect(await abandoned).toBeNull();
+            expect(physicalSignal?.aborted).toBe(false);
+            second.abort();
+            expect(await peer).toBeNull();
+            expect(physicalSignal?.aborted).toBe(true);
+            hold = false;
+            release.resolve();
+            const fresh = await encryption.decryptEncryptionKey(envelope!);
+            expect(fresh?.every((byte, index) => byte === key[index])).toBe(true);
+            // The cancelled bridge never opens an item; only the new attempt does.
+            expect(batches.flatMap(batch => batch.items)).toHaveLength(2);
+        } finally {
+            release.resolve(); first.abort(); second.abort();
+            await Promise.allSettled([abandoned, peer]);
+            encryption.retireAccountMaterial();
         }
     });
 

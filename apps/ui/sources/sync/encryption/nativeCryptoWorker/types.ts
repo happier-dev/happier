@@ -66,6 +66,8 @@ export type CryptoWorkerBatchRequest<T> = Readonly<{
     items: readonly T[];
     signal?: AbortSignal;
     workClass?: CryptoWorkerWorkClass;
+    /** Bounds only loading the worker script; completed startup leaves crypto unbounded. */
+    startupTimeoutMs?: number;
 }>;
 
 export type NativeCryptoWorkerCapability = Readonly<{

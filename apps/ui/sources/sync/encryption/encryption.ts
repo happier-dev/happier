@@ -10,6 +10,7 @@ import {
 } from "./encryptor";
 import { encodeHex } from "@/encryption/hex";
 import { EncryptionCache } from "./encryptionCache";
+import { DataKeyOpenings } from './dataKeyOpenings';
 import { createUiAccountKvCipher } from './accountKvCipher';
 import { mapCryptoBatchWithYield } from "./cryptoBatchYield";
 import { SessionEncryption } from "./sessionEncryption";
@@ -77,6 +78,11 @@ export type MachineEncryptionContextInput = Readonly<{
     expectedDataEncryptionKey: string | null | undefined;
     resourceMode?: 'plain' | 'e2ee';
     accessState?: 'ready' | 'key_pending' | 'refused' | 'unavailable';
+    installationId?: string | null;
+    installationPublicKey?: string | null;
+    contentPublicKeyFingerprint?: string | null;
+    custodianAccountId?: string | null;
+    accessRole?: 'use' | 'manage' | null;
 }>;
 
 export type MachineEncryptionContext = MachineEncryptionContextInput & Readonly<{
@@ -220,16 +226,7 @@ export class Encryption {
     // The Account encryption owner retains successful pure envelope work in the
     // same scope as in-flight work. This never grants access to a row; callers
     // still admit its mode, access and current envelope before requesting a key.
-    private dataKeyOpenings = new Map<string, {
-        entries: Map<string, {
-            result: Promise<Uint8Array | null>;
-            settledKey?: Uint8Array;
-            resolve?: (value: Uint8Array | null) => void;
-            reject?: (error: unknown) => void;
-        }>;
-        pending: string[];
-        scheduled: boolean;
-    }>();
+    private readonly dataKeyOpenings = new DataKeyOpenings();
     private dataKeyOpeningRecipient: Uint8Array;
     private readonly accountMaterialLifetime = new AbortController();
     private accountMaterialCurrentness: () => boolean = () => true;
@@ -845,73 +842,17 @@ export class Encryption {
         }
         const scope = this.getCurrentNativeCryptoWorkerScope(scopeInput);
         const recipient = this.dataKeyOpeningRecipient;
-        const isCurrent = () => this.isCurrentNativeCryptoWorkerScope(scope)
+        const isScopeCurrent = () => this.isCurrentNativeCryptoWorkerScope(scope)
             && this.dataKeyOpeningRecipient === recipient
-            && recipient.every((byte, index) => byte === this.contentKeyPair.privateKey[index])
-            && scopeInput.signal?.aborted !== true
-            && scopeInput.shouldContinue?.() !== false;
-        if (!isCurrent()) return encryptedValues.map(() => null);
+            && recipient.every((byte, index) => byte === this.contentKeyPair.privateKey[index]);
         const scopeKey = `${getScopeKey(scope)}\u0000${scope.generation}`;
-        let batch = this.dataKeyOpenings.get(scopeKey);
-        if (!batch) {
-            batch = { entries: new Map(), pending: [], scheduled: false };
-            this.dataKeyOpenings.set(scopeKey, batch);
-        }
-        const opening = batch;
-        // A cancellable native request owns its queue and cannot borrow another
-        // caller's in-flight promise. Completed pure opens can be reused safely.
-        if (scopeInput.signal) {
-            const misses = [...new Set(encryptedValues.filter(value => !opening.entries.get(value)?.settledKey))];
-            const keys = misses.length > 0 ? await this.openDataKeyEnvelopes(misses, scopeInput) : [];
-            if (!isCurrent()) return encryptedValues.map(() => null);
-            const opened = new Map(misses.map((value, index) => [value, keys[index] ?? null]));
-            for (const [value, key] of opened) {
-                if (!key) continue;
-                const retained = key.slice();
-                // Leave an independently queued ordinary caller in charge of its
-                // promise; it will publish its own successful result.
-                if (!opening.entries.has(value)) opening.entries.set(value, { result: Promise.resolve(retained), settledKey: retained });
-            }
-            return encryptedValues.map(value => (opened.get(value) ?? opening.entries.get(value)?.settledKey)?.slice() ?? null);
-        }
-        const results = encryptedValues.map(value => {
-            let entry = opening.entries.get(value);
-            if (!entry) {
-                let resolve!: (key: Uint8Array | null) => void;
-                let reject!: (error: unknown) => void;
-                const result = new Promise<Uint8Array | null>((accept, refuse) => { resolve = accept; reject = refuse; });
-                entry = { result, resolve, reject };
-                opening.entries.set(value, entry);
-                opening.pending.push(value);
-            }
-            return entry.result;
+        return await this.dataKeyOpenings.open(encryptedValues, {
+            scopeKey, isScopeCurrent, signal: scopeInput.signal,
+            shouldContinue: scopeInput.shouldContinue, workClass: scopeInput.workClass,
+            open: (values, signal) => this.openDataKeyEnvelopes(values, {
+                ...scope, signal, shouldContinue: isScopeCurrent, workClass: scopeInput.workClass,
+            }),
         });
-        if (!opening.scheduled && opening.pending.length > 0) {
-            opening.scheduled = true;
-            void Promise.resolve().then(async () => {
-                const values = opening.pending;
-                opening.pending = [];
-                opening.scheduled = false;
-                try {
-                    const keys = await this.openDataKeyEnvelopes(values, scope);
-                    values.forEach((value, index) => {
-                        const entry = opening.entries.get(value)!;
-                        const key = keys[index] ?? null;
-                        if (key && isCurrent()) entry.settledKey = key.slice();
-                        entry.resolve!(key);
-                    });
-                } catch (error) {
-                    for (const value of values) opening.entries.get(value)!.reject!(error);
-                } finally {
-                    for (const value of values) {
-                        if (!opening.entries.get(value)?.settledKey) opening.entries.delete(value);
-                    }
-                    if (opening.entries.size === 0 && this.dataKeyOpenings.get(scopeKey) === opening) this.dataKeyOpenings.delete(scopeKey);
-                }
-            });
-        }
-        return (await Promise.all(results)).map(key =>
-            isCurrent() ? key?.slice() ?? null : null);
     }
 
     private async openDataKeyEnvelopes(encryptedValues: readonly string[], scopeInput: EncryptionScopeInput): Promise<Array<Uint8Array | null>> {
@@ -1002,6 +943,7 @@ export class Encryption {
                                         items: queuedItems,
                                         signal: context.signal,
                                         workClass: scopeInput.workClass,
+                                        startupTimeoutMs: routing.timeoutMs,
                                     });
                                     if (nativeResult.status !== 'ok') {
                                         throw new Error('native data-key envelope decrypt batch did not complete');
