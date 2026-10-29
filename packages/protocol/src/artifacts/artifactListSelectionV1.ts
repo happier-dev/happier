@@ -19,6 +19,8 @@ export type ArtifactListSelectionOptionsV1 = Readonly<{
   ownerAccountId?: string;
   /** Keyholding host selection over admitted private headers; never a wire filter. */
   headerFilter?: (header: Readonly<Record<string, unknown>>) => boolean;
+  /** Async host authority checked before paging/body demand and on fresh headers; never sent over transport. */
+  headerAdmission?: (header: Readonly<Record<string, unknown>>) => Promise<boolean>;
   sort?: 'updated_desc' | 'created_desc' | 'title_asc'; includeBody?: boolean; signal?: AbortSignal;
 }>;
 
@@ -83,7 +85,7 @@ function artifactHeaderSelection(options: ArtifactListSelectionOptionsV1 = {}) {
 }
 
 type ArtifactHeaderPageInput<T> = Readonly<{
-  items: readonly T[]; options?: ArtifactListSelectionOptionsV1; encodeCursor: (item: T) => string;
+  items: readonly T[]; options?: Omit<ArtifactListSelectionOptionsV1, 'headerAdmission'>; encodeCursor: (item: T) => string;
   hasMorePhysicalRows?: boolean;
 }>;
 
@@ -114,6 +116,9 @@ export async function listArtifactHeadersV1<T extends ArtifactListHeader>(params
 }>): Promise<Readonly<{ items: readonly T[]; nextCursor?: string; coverage: 'complete' | 'partial'; kindCoverage?: ArtifactKindCoverageV1 }>> {
   const options = params.options;
   throwIfAborted(options?.signal);
+  if (options?.headerAdmission && options.includeBody && !params.readBodies) {
+    throw new TypeError('Header admission requires separate body reads');
+  }
   const { kinds, updatedOrder, matches, compare, approvalSelection, unknownApprovalStateMatches } = artifactHeaderSelection(options);
   const coarseSelection = options?.coarseKind !== undefined && kinds === undefined
     && options.indexedKinds === undefined && !approvalSelection;
@@ -121,12 +126,23 @@ export async function listArtifactHeadersV1<T extends ArtifactListHeader>(params
   // The incumbent /v1/artifacts route admits at most 500 structural rows per request.
   if (!options || (options.limit !== undefined && options.limit <= ARTIFACT_LIST_PAGE_MAX_ITEMS_V1
     && options.search === undefined && options.kind === undefined && kinds === undefined && options.indexedKinds === undefined
-    && options.browserListed === undefined && options.coarseKind === undefined && !options.headerFilter && !approvalSelection
+    && options.browserListed === undefined && options.coarseKind === undefined && !options.headerFilter && !options.headerAdmission && !approvalSelection
     && (options.sort === undefined || options.sort === 'updated_desc'))) {
     const page = await params.readPage(options);
     throwIfAborted(options?.signal);
     return { ...page, coverage: page.coverage ?? 'complete' };
   }
+  const admittedHeaders = async (items: readonly T[]): Promise<T[]> => {
+    const selected = items.filter(matches);
+    if (!options.headerAdmission) return selected;
+    const admitted: T[] = [];
+    for (const item of selected) {
+      throwIfAborted(options.signal);
+      if (await options.headerAdmission(item.header)) admitted.push(item);
+    }
+    throwIfAborted(options.signal);
+    return admitted;
+  };
   const all: T[] = [];
   let coverage: 'complete' | 'partial' = 'complete';
   let kindCoverage: ArtifactKindCoverageV1 | undefined;
@@ -156,7 +172,7 @@ export async function listArtifactHeadersV1<T extends ArtifactListHeader>(params
       kindCoverage = page.kindCoverage;
       if (kindCoverage.status === 'partial' && kinds === undefined && !options.browserListed && !approvalSelection && !coarseSelection) coverage = 'partial';
     }
-    all.push(...page.items.filter(matches));
+    all.push(...await admittedHeaders(page.items));
     cursor = page.nextCursor;
     hasMorePhysicalRows = cursor !== undefined;
     if (updatedOrder && options.limit !== undefined && all.length >= options.limit) break;
@@ -180,7 +196,7 @@ export async function listArtifactHeadersV1<T extends ArtifactListHeader>(params
       if (coarseSelection) kindCoverage = requireArtifactKindCoverageV1(page.kindCoverage);
       if (page.coverage === 'partial') coverage = 'partial';
       if (page.items.some(unknownApprovalStateMatches)) coverage = 'partial';
-      for (const item of page.items) if (!selectedIds.has(item.artifactId) && matches(item)) {
+      for (const item of await admittedHeaders(page.items.filter(item => !selectedIds.has(item.artifactId)))) {
         all.push(item);
         selectedIds.add(item.artifactId);
       }
@@ -197,6 +213,6 @@ export async function listArtifactHeadersV1<T extends ArtifactListHeader>(params
   const selected = options.includeBody && params.readBodies && pageItems.length > 0 ? await params.readBodies(pageItems) : pageItems;
   throwIfAborted(options.signal);
   if (selected.some(unknownApprovalStateMatches)) coverage = 'partial';
-  const items = selected.filter(matches).sort(compare);
+  const items = (await admittedHeaders(selected)).sort(compare);
   return { items, coverage, ...(kindCoverage ? { kindCoverage } : {}), ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}) };
 }
