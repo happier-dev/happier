@@ -1,0 +1,4 @@
+{
+  "settingsVoice.realtimeProviders.google.sttPrivacyDisclosure": "Аудио, отправленное на транскрипцию, обрабатывается Google Gemini. Happier отправляет эти запросы через выбранную исполнительную машину, используя учетные данные Google API этой машины. Google может сохранять полученные данные в соответствии с настройками выбранной учетной записи Google и условиями Google.",
+  "settingsVoice.realtimeProviders.google.ttsPrivacyDisclosure": "Текст, отправленный на речь, обрабатывается Google Cloud Text-to-Speech. Happier отправляет эти запросы через выбранную исполнительную машину, используя учетные данные Google API этой машины. Google может сохранять полученные данные в соответствии с настройками выбранной учетной записи Google и условиями Google."
+}

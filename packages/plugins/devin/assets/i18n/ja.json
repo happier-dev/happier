@@ -1,0 +1,7 @@
+{
+  "agentInput.agent.devin": "Devin",
+  "profiles.aiBackend.devinSubtitleExperimental": "Devin CLI（実験的）",
+  "sessionInfo.devinSessionId": "Devin セッション ID",
+  "sessionInfo.devinSessionIdCopied": "Devin セッション ID をコピーしました",
+  "settingsAgents.plugins.devin.title": "Devin"
+}

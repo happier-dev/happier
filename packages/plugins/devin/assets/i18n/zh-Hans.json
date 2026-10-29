@@ -1,0 +1,7 @@
+{
+  "agentInput.agent.devin": "Devin",
+  "profiles.aiBackend.devinSubtitleExperimental": "Devin CLI（实验性）",
+  "sessionInfo.devinSessionId": "Devin 会话 ID",
+  "sessionInfo.devinSessionIdCopied": "已复制 Devin 会话 ID",
+  "settingsAgents.plugins.devin.title": "Devin"
+}

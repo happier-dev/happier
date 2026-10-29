@@ -1,0 +1,7 @@
+{
+  "settingsAgents.plugins.ohmypi.title": "Oh My Pi",
+  "settingsAgents.plugins.ohmypi.fields.ohMyPiAgentDir.title": "エージェントディレクトリ",
+  "settingsAgents.plugins.ohmypi.fields.ohMyPiAgentDir.subtitle": "任意の Oh My Pi データルートです。空欄の場合は ~/.omp/agent を使用します。",
+  "settingsAgents.plugins.ohmypi.sections.storage.title": "ストレージ",
+  "settingsAgents.plugins.ohmypi.sections.storage.footer": "このディレクトリは、Happier が開始または検出した Oh My Pi セッションにのみ使用されます。"
+}

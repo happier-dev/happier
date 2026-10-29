@@ -1,0 +1,7 @@
+{
+  "settingsAgents.plugins.ohmypi.title": "Oh My Pi",
+  "settingsAgents.plugins.ohmypi.fields.ohMyPiAgentDir.title": "Directory dell’agente",
+  "settingsAgents.plugins.ohmypi.fields.ohMyPiAgentDir.subtitle": "Directory principale facoltativa dei dati di Oh My Pi. Lascia vuoto per usare ~/.omp/agent.",
+  "settingsAgents.plugins.ohmypi.sections.storage.title": "Archiviazione",
+  "settingsAgents.plugins.ohmypi.sections.storage.footer": "Questa directory viene usata solo per le sessioni Oh My Pi avviate o rilevate da Happier."
+}

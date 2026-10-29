@@ -1,0 +1,4 @@
+{
+  "settingsVoice.realtimeProviders.google.sttPrivacyDisclosure": "文字起こしのために送信された音声は Google Gemini によって処理されます。Happier は、選択した実行マシンの Google API 認証情報を使用して、これらのリクエストをそのマシン経由で送信します。Google は、選択した Google アカウントの設定および Google の規約に従って、受信したデータを保持する場合があります。",
+  "settingsVoice.realtimeProviders.google.ttsPrivacyDisclosure": "音声として送信されたテキストは Google Cloud Text-to-Speech によって処理されます。Happier は、選択した実行マシンの Google API 認証情報を使用して、これらのリクエストをそのマシン経由で送信します。Google は、選択した Google アカウントの設定および Google の規約に従って、受信したデータを保持する場合があります。"
+}

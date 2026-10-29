@@ -1,0 +1,19 @@
+{
+  "settingsVoice.realtimeProviders.elevenLabs.description": "Rozmawiaj głosami ElevenLabs.",
+  "settingsVoice.realtimeProviders.elevenLabs.groups.account": "Konto",
+  "settingsVoice.realtimeProviders.elevenLabs.agentIdDescription": "Uzupełniane, gdy Happier tworzy Twojego agenta.",
+  "settingsVoice.realtimeProviders.elevenLabs.modelDescription": "Który model głosu ElevenLabs mówi. Domyślny pasuje do większości głosów.",
+  "settingsVoice.realtimeProviders.elevenLabs.agentTitle": "Agent głosowy Happier",
+  "settingsVoice.realtimeProviders.elevenLabs.agentMissing": "Utwórz agenta lub wpisz powyżej jego ID.",
+  "settingsVoice.realtimeProviders.elevenLabs.agentConfigured": "ID agenta zapisane. Zaktualizuj po zmianie głosu.",
+  "settingsVoice.realtimeProviders.elevenLabs.openAccount": "Otwórz swoje konto ElevenLabs",
+  "settingsVoice.realtimeProviders.elevenLabs.manageApiKeys": "Zarządzaj kluczami API",
+  "settingsVoice.realtimeProviders.elevenLabs.accountFooter": "Po zmianie głosu zaktualizuj agenta, aby ElevenLabs go używał.",
+  "settingsVoice.realtimeProviders.elevenLabs.stabilityDescription": "Jak równo brzmi głos.",
+  "settingsVoice.realtimeProviders.elevenLabs.similarityDescription": "Jak bardzo przypomina oryginalny głos.",
+  "settingsVoice.realtimeProviders.elevenLabs.speedDescription": "Jak szybko mówi głos.",
+  "settingsVoice.realtimeProviders.elevenLabs.resourcesTitle": "ElevenLabs",
+  "settingsVoice.realtimeProviders.elevenLabs.groups.voice": "Głos",
+  "settingsVoice.realtimeProviders.elevenLabs.groups.conversation": "Rozmowa",
+  "settingsVoice.realtimeProviders.elevenLabs.privacyDisclosure": "Dźwięk i treść rozmowy są wysyłane z tego urządzenia do ElevenLabs przez połączenie klienta ElevenLabs. W zależności od wybranej konfiguracji Happier może również wysyłać do ElevenLabs ograniczone instrukcje agenta, definicje i wyniki narzędzi klienckich oraz żądania uwierzytelniania lub provisioningu wymagane przez tę funkcję. Serwer Happier może uczestniczyć w hostowanym uwierzytelnianiu i rozliczaniu użycia, ale ani serwer Happier, ani przekaźnik nie przesyłają dźwięku rozmowy na żywo. ElevenLabs może przetwarzać i przechowywać otrzymane dane zgodnie z ustawieniami Twojego konta ElevenLabs i jego warunkami. Kontrolki udostępniania kontekstu głosowego są odrębne od przetwarzania przez tego dostawcę."
+}

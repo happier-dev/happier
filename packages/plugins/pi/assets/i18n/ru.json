@@ -1,0 +1,7 @@
+{
+  "settingsAgents.plugins.pi.title": "Pi",
+  "settingsAgents.plugins.pi.fields.piAgentDir.title": "Каталог агента",
+  "settingsAgents.plugins.pi.fields.piAgentDir.subtitle": "Необязательный корневой каталог данных Pi. Оставьте пустым, чтобы использовать ~/.pi/agent.",
+  "settingsAgents.plugins.pi.sections.storage.title": "Хранилище",
+  "settingsAgents.plugins.pi.sections.storage.footer": "Этот каталог используется только для сеансов Pi, запущенных или обнаруженных Happier."
+}

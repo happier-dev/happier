@@ -1,0 +1,7 @@
+{
+  "settingsAgents.plugins.pi.title": "Pi",
+  "settingsAgents.plugins.pi.fields.piAgentDir.title": "Directori de l’agent",
+  "settingsAgents.plugins.pi.fields.piAgentDir.subtitle": "Arrel de dades opcional de Pi. Deixa-ho buit per utilitzar ~/.pi/agent.",
+  "settingsAgents.plugins.pi.sections.storage.title": "Emmagatzematge",
+  "settingsAgents.plugins.pi.sections.storage.footer": "Aquest directori només s’utilitza per a sessions de Pi iniciades o detectades per Happier."
+}

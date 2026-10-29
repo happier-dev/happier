@@ -1,0 +1,4 @@
+{
+  "settingsVoice.realtimeProviders.speechProcessing.openAiCompatStt": "El audio para la transcripción se envía desde la máquina de ejecución seleccionada al punto de conexión compatible con OpenAI que configures. Su operador puede conservar los datos recibidos según sus propias condiciones.",
+  "settingsVoice.realtimeProviders.speechProcessing.openAiCompatTts": "El texto de la respuesta para la síntesis de voz se envía desde la máquina de ejecución seleccionada al punto de conexión compatible con OpenAI que configures. Su operador puede conservar los datos recibidos según sus propias condiciones."
+}

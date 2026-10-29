@@ -1,0 +1,5 @@
+{
+  "agentInput.connectedServiceLabel.codex": "OpenAI Codex",
+  "settingsVoice.mode.codexRealtime": "Codex Live",
+  "settingsVoice.mode.codexRealtimeSubtitle": "Rozmawiaj bezpośrednio z aktywną sesją agenta Codex."
+}

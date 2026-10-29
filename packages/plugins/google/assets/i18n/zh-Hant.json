@@ -1,0 +1,4 @@
+{
+  "settingsVoice.realtimeProviders.google.sttPrivacyDisclosure": "發送用於轉錄的音訊由 Google Gemini 處理。Happier 使用該機器的 Google API 認證透過選定的執行機器發送這些請求。Google 可能會根據所選 Google 帳戶的設定和 Google 條款保留收到的資料。",
+  "settingsVoice.realtimeProviders.google.ttsPrivacyDisclosure": "發送用於語音的文字由 Google Cloud 文字轉語音處理。Happier 使用該機器的 Google API 認證透過選定的執行機器發送這些請求。Google 可能會根據所選 Google 帳戶的設定和 Google 條款保留收到的資料。"
+}

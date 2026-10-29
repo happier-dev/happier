@@ -1,0 +1,7 @@
+{
+  "settingsAgents.plugins.ohmypi.title": "Oh My Pi",
+  "settingsAgents.plugins.ohmypi.fields.ohMyPiAgentDir.title": "Каталог агента",
+  "settingsAgents.plugins.ohmypi.fields.ohMyPiAgentDir.subtitle": "Необязательный корневой каталог данных Oh My Pi. Оставьте пустым, чтобы использовать ~/.omp/agent.",
+  "settingsAgents.plugins.ohmypi.sections.storage.title": "Хранилище",
+  "settingsAgents.plugins.ohmypi.sections.storage.footer": "Этот каталог используется только для сеансов Oh My Pi, запущенных или обнаруженных Happier."
+}

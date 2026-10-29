@@ -1,0 +1,4 @@
+{
+  "settingsVoice.realtimeProviders.speechProcessing.openAiCompatStt": "L’àudio per a la transcripció s’envia des de la màquina d’execució seleccionada al punt final compatible amb OpenAI que configuris. L’operador del punt final pot conservar les dades rebudes segons les seves condicions.",
+  "settingsVoice.realtimeProviders.speechProcessing.openAiCompatTts": "El text de la resposta per a la síntesi de veu s’envia des de la màquina d’execució seleccionada al punt final compatible amb OpenAI que configuris. L’operador del punt final pot conservar les dades rebudes segons les seves condicions."
+}

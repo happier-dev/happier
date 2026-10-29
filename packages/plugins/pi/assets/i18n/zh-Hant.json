@@ -1,0 +1,7 @@
+{
+  "settingsAgents.plugins.pi.title": "Pi",
+  "settingsAgents.plugins.pi.fields.piAgentDir.title": "代理目錄",
+  "settingsAgents.plugins.pi.fields.piAgentDir.subtitle": "可選的 Pi 資料根目錄。留空則使用 ~/.pi/agent。",
+  "settingsAgents.plugins.pi.sections.storage.title": "儲存空間",
+  "settingsAgents.plugins.pi.sections.storage.footer": "此目錄僅供 Happier 啟動或找到的 Pi 工作階段使用。"
+}

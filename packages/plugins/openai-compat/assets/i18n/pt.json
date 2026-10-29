@@ -1,0 +1,4 @@
+{
+  "settingsVoice.realtimeProviders.speechProcessing.openAiCompatStt": "O áudio para transcrição é enviado da máquina de execução selecionada para o endpoint compatível com OpenAI que configurar. O operador do endpoint pode conservar os dados recebidos de acordo com os respetivos termos.",
+  "settingsVoice.realtimeProviders.speechProcessing.openAiCompatTts": "O texto da resposta para síntese de voz é enviado da máquina de execução selecionada para o endpoint compatível com OpenAI que configurar. O operador do endpoint pode conservar os dados recebidos de acordo com os respetivos termos."
+}

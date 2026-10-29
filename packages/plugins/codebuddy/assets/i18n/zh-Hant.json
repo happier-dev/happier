@@ -1,0 +1,7 @@
+{
+  "agentInput.agent.codebuddy": "CodeBuddy",
+  "profiles.aiBackend.codebuddySubtitleExperimental": "CodeBuddy Code 命令列（實驗性）",
+  "sessionInfo.codebuddySessionId": "CodeBuddy 工作階段 ID",
+  "sessionInfo.codebuddySessionIdCopied": "已複製 CodeBuddy 工作階段 ID",
+  "settingsAgents.plugins.codebuddy.title": "CodeBuddy"
+}

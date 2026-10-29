@@ -1,0 +1,4 @@
+{
+  "settingsVoice.realtimeProviders.speechProcessing.openAiCompatStt": "用於轉錄的音訊會從所選執行電腦傳送至您設定的 OpenAI 相容端點。端點營運商可能會依其自身條款保留收到的資料。",
+  "settingsVoice.realtimeProviders.speechProcessing.openAiCompatTts": "用於語音合成的回覆文字會從所選執行電腦傳送至您設定的 OpenAI 相容端點。端點營運商可能會依其自身條款保留收到的資料。"
+}

@@ -1,0 +1,19 @@
+{
+  "settingsVoice.realtimeProviders.elevenLabs.description": "使用 ElevenLabs 语音交谈。",
+  "settingsVoice.realtimeProviders.elevenLabs.groups.account": "账户",
+  "settingsVoice.realtimeProviders.elevenLabs.agentIdDescription": "Happier 创建代理时会自动填写。",
+  "settingsVoice.realtimeProviders.elevenLabs.modelDescription": "选择说话的 ElevenLabs 语音模型。默认模型适合大多数声音。",
+  "settingsVoice.realtimeProviders.elevenLabs.agentTitle": "Happier 语音代理",
+  "settingsVoice.realtimeProviders.elevenLabs.agentMissing": "创建代理，或在上方输入它的 ID。",
+  "settingsVoice.realtimeProviders.elevenLabs.agentConfigured": "代理 ID 已保存。更改声音后请更新。",
+  "settingsVoice.realtimeProviders.elevenLabs.openAccount": "打开你的 ElevenLabs 账户",
+  "settingsVoice.realtimeProviders.elevenLabs.manageApiKeys": "管理 API 密钥",
+  "settingsVoice.realtimeProviders.elevenLabs.accountFooter": "更改声音后，更新代理，让 ElevenLabs 使用它。",
+  "settingsVoice.realtimeProviders.elevenLabs.stabilityDescription": "声音的稳定程度。",
+  "settingsVoice.realtimeProviders.elevenLabs.similarityDescription": "与原始声音的相似程度。",
+  "settingsVoice.realtimeProviders.elevenLabs.speedDescription": "声音的说话速度。",
+  "settingsVoice.realtimeProviders.elevenLabs.resourcesTitle": "ElevenLabs",
+  "settingsVoice.realtimeProviders.elevenLabs.groups.voice": "声音",
+  "settingsVoice.realtimeProviders.elevenLabs.groups.conversation": "对话",
+  "settingsVoice.realtimeProviders.elevenLabs.privacyDisclosure": "音频和对话内容会通过 ElevenLabs 客户端连接从此设备发送到 ElevenLabs。根据所选设置，Happier 还可能向 ElevenLabs 发送受限的代理指令、客户端工具定义和结果，以及此功能所需的身份验证或预配请求。Happier 服务器可能参与托管身份验证和使用情况核算，但 Happier 服务器和中继均不传输实时对话音频。ElevenLabs 可能会根据您的 ElevenLabs 帐户设置和其条款处理并保留收到的数据。语音上下文共享控件独立于此提供商的处理。"
+}

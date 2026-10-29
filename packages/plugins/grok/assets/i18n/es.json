@@ -1,0 +1,6 @@
+{
+  "agentInput.agent.grok": "Grok",
+  "profiles.aiBackend.grokSubtitleExperimental": "Grok Build CLI (experimental)",
+  "sessionInfo.grokSessionId": "ID de sesión de Grok",
+  "sessionInfo.grokSessionIdCopied": "ID de sesión de Grok copiado"
+}

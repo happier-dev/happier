@@ -1,0 +1,7 @@
+{
+  "settingsAgents.plugins.pi.title": "Pi",
+  "settingsAgents.plugins.pi.fields.piAgentDir.title": "Agentenverzeichnis",
+  "settingsAgents.plugins.pi.fields.piAgentDir.subtitle": "Optionales Stammverzeichnis für Pi-Daten. Leer lassen, um ~/.pi/agent zu verwenden.",
+  "settingsAgents.plugins.pi.sections.storage.title": "Speicher",
+  "settingsAgents.plugins.pi.sections.storage.footer": "Dieses Verzeichnis wird nur für Pi-Sitzungen verwendet, die von Happier gestartet oder erkannt wurden."
+}

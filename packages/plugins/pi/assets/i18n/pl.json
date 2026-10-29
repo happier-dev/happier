@@ -1,0 +1,7 @@
+{
+  "settingsAgents.plugins.pi.title": "Pi",
+  "settingsAgents.plugins.pi.fields.piAgentDir.title": "Katalog agenta",
+  "settingsAgents.plugins.pi.fields.piAgentDir.subtitle": "Opcjonalny katalog główny danych Pi. Pozostaw puste, aby użyć ~/.pi/agent.",
+  "settingsAgents.plugins.pi.sections.storage.title": "Pamięć",
+  "settingsAgents.plugins.pi.sections.storage.footer": "Ten katalog jest używany wyłącznie dla sesji Pi uruchomionych lub wykrytych przez Happier."
+}

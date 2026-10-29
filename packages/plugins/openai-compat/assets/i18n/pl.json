@@ -1,0 +1,4 @@
+{
+  "settingsVoice.realtimeProviders.speechProcessing.openAiCompatStt": "Dźwięk do transkrypcji jest wysyłany z wybranej maszyny wykonawczej do skonfigurowanego punktu końcowego zgodnego z OpenAI. Operator punktu końcowego może przechowywać otrzymane dane zgodnie z własnymi warunkami.",
+  "settingsVoice.realtimeProviders.speechProcessing.openAiCompatTts": "Tekst odpowiedzi do syntezy mowy jest wysyłany z wybranej maszyny wykonawczej do skonfigurowanego punktu końcowego zgodnego z OpenAI. Operator punktu końcowego może przechowywać otrzymane dane zgodnie z własnymi warunkami."
+}

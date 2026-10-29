@@ -1,0 +1,7 @@
+{
+  "settingsAgents.plugins.pi.title": "Pi",
+  "settingsAgents.plugins.pi.fields.piAgentDir.title": "エージェントディレクトリ",
+  "settingsAgents.plugins.pi.fields.piAgentDir.subtitle": "任意の Pi データルートです。空欄の場合は ~/.pi/agent を使用します。",
+  "settingsAgents.plugins.pi.sections.storage.title": "ストレージ",
+  "settingsAgents.plugins.pi.sections.storage.footer": "このディレクトリは、Happier が開始または検出した Pi セッションにのみ使用されます。"
+}

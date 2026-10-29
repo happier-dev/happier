@@ -1,0 +1,19 @@
+{
+  "settingsVoice.realtimeProviders.elevenLabs.description": "Разговаривайте с голосами ElevenLabs.",
+  "settingsVoice.realtimeProviders.elevenLabs.groups.account": "Аккаунт",
+  "settingsVoice.realtimeProviders.elevenLabs.agentIdDescription": "Заполняется, когда Happier создаёт вашего агента.",
+  "settingsVoice.realtimeProviders.elevenLabs.modelDescription": "Какая голосовая модель ElevenLabs говорит. По умолчанию подходит большинству голосов.",
+  "settingsVoice.realtimeProviders.elevenLabs.agentTitle": "Голосовой агент Happier",
+  "settingsVoice.realtimeProviders.elevenLabs.agentMissing": "Создайте агента или введите его ID выше.",
+  "settingsVoice.realtimeProviders.elevenLabs.agentConfigured": "ID агента сохранён. Обновите после смены голоса.",
+  "settingsVoice.realtimeProviders.elevenLabs.openAccount": "Открыть ваш аккаунт ElevenLabs",
+  "settingsVoice.realtimeProviders.elevenLabs.manageApiKeys": "Управление API-ключами",
+  "settingsVoice.realtimeProviders.elevenLabs.accountFooter": "После смены голоса обновите агента, чтобы ElevenLabs использовал его.",
+  "settingsVoice.realtimeProviders.elevenLabs.stabilityDescription": "Насколько ровно звучит голос.",
+  "settingsVoice.realtimeProviders.elevenLabs.similarityDescription": "Насколько он похож на исходный голос.",
+  "settingsVoice.realtimeProviders.elevenLabs.speedDescription": "Как быстро говорит голос.",
+  "settingsVoice.realtimeProviders.elevenLabs.resourcesTitle": "ElevenLabs",
+  "settingsVoice.realtimeProviders.elevenLabs.groups.voice": "Голос",
+  "settingsVoice.realtimeProviders.elevenLabs.groups.conversation": "Разговор",
+  "settingsVoice.realtimeProviders.elevenLabs.privacyDisclosure": "Аудио и содержимое разговора отправляются с этого устройства в ElevenLabs через клиентское подключение ElevenLabs. В зависимости от выбранной настройки Happier также может отправлять в ElevenLabs ограниченные инструкции агента, определения и результаты клиентских инструментов, а также запросы аутентификации или подготовки, необходимые для функции. Сервер Happier может участвовать в размещённой аутентификации и учёте использования, но ни сервер Happier, ни ретранслятор не передают аудио живого разговора. ElevenLabs может обрабатывать и хранить полученные данные в соответствии с настройками вашей учётной записи ElevenLabs и его условиями. Элементы управления обменом голосовым контекстом отделены от обработки этим провайдером."
+}

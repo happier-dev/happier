@@ -1,0 +1,7 @@
+{
+  "agentInput.agent.codebuddy": "CodeBuddy",
+  "profiles.aiBackend.codebuddySubtitleExperimental": "CodeBuddy Code CLI (экспериментально)",
+  "sessionInfo.codebuddySessionId": "ID сессии CodeBuddy",
+  "sessionInfo.codebuddySessionIdCopied": "ID сессии CodeBuddy скопирован в буфер обмена",
+  "settingsAgents.plugins.codebuddy.title": "CodeBuddy"
+}

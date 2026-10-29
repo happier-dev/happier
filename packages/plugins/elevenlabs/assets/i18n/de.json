@@ -1,0 +1,19 @@
+{
+  "settingsVoice.realtimeProviders.elevenLabs.description": "Sprich mit den Stimmen von ElevenLabs.",
+  "settingsVoice.realtimeProviders.elevenLabs.groups.account": "Konto",
+  "settingsVoice.realtimeProviders.elevenLabs.agentIdDescription": "Wird ausgefüllt, wenn Happier deinen Agenten erstellt.",
+  "settingsVoice.realtimeProviders.elevenLabs.modelDescription": "Welches ElevenLabs-Sprachmodell spricht. Standard passt für die meisten Stimmen.",
+  "settingsVoice.realtimeProviders.elevenLabs.agentTitle": "Happier-Sprachagent",
+  "settingsVoice.realtimeProviders.elevenLabs.agentMissing": "Erstelle einen Agenten oder gib oben seine ID ein.",
+  "settingsVoice.realtimeProviders.elevenLabs.agentConfigured": "Agenten-ID gespeichert. Nach einer Stimmänderung aktualisieren.",
+  "settingsVoice.realtimeProviders.elevenLabs.openAccount": "Dein ElevenLabs-Konto öffnen",
+  "settingsVoice.realtimeProviders.elevenLabs.manageApiKeys": "API-Schlüssel verwalten",
+  "settingsVoice.realtimeProviders.elevenLabs.accountFooter": "Aktualisiere deinen Agenten nach einer Stimmänderung, damit ElevenLabs sie verwendet.",
+  "settingsVoice.realtimeProviders.elevenLabs.stabilityDescription": "Wie gleichmäßig die Stimme klingt.",
+  "settingsVoice.realtimeProviders.elevenLabs.similarityDescription": "Wie nah sie der Originalstimme kommt.",
+  "settingsVoice.realtimeProviders.elevenLabs.speedDescription": "Wie schnell die Stimme spricht.",
+  "settingsVoice.realtimeProviders.elevenLabs.resourcesTitle": "ElevenLabs",
+  "settingsVoice.realtimeProviders.elevenLabs.groups.voice": "Stimme",
+  "settingsVoice.realtimeProviders.elevenLabs.groups.conversation": "Gespräch",
+  "settingsVoice.realtimeProviders.elevenLabs.privacyDisclosure": "Audio und Gesprächsinhalte werden von diesem Gerät über die ElevenLabs-Clientverbindung an ElevenLabs gesendet. Abhängig von der ausgewählten Einrichtung kann Happier außerdem begrenzte Agentenanweisungen, Client-Tool-Definitionen und -Ergebnisse sowie für die Funktion erforderliche Authentifizierungs- oder Bereitstellungsanfragen an ElevenLabs senden. Der Happier-Server kann an gehosteter Authentifizierung und Nutzungsabrechnung beteiligt sein, aber weder der Happier-Server noch das Relay übertragen Live-Gesprächsaudio. ElevenLabs kann empfangene Daten gemäß den Einstellungen und Bedingungen Ihres ElevenLabs-Kontos verarbeiten und speichern. Steuerelemente zur Freigabe des Sprachkontexts sind von der Verarbeitung durch diesen Anbieter getrennt."
+}

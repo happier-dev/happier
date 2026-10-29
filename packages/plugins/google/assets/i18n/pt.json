@@ -1,0 +1,4 @@
+{
+  "settingsVoice.realtimeProviders.google.sttPrivacyDisclosure": "O áudio enviado para transcrição é processado pelo Google Gemini. Happier envia essas solicitações por meio da máquina de execução selecionada usando a credencial da API do Google dessa máquina. O Google pode reter os dados recebidos de acordo com as configurações da conta do Google selecionada e os termos do Google.",
+  "settingsVoice.realtimeProviders.google.ttsPrivacyDisclosure": "O texto enviado para fala é processado pelo Google Cloud Text-to-Speech. Happier envia essas solicitações por meio da máquina de execução selecionada usando a credencial da API do Google dessa máquina. O Google pode reter os dados recebidos de acordo com as configurações da conta do Google selecionada e os termos do Google."
+}

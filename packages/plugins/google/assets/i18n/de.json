@@ -1,0 +1,4 @@
+{
+  "settingsVoice.realtimeProviders.google.sttPrivacyDisclosure": "Audio, das zur Transkription gesendet wird, verarbeitet Google Gemini. Happier sendet diese Anfragen über den gewählten Ausführungsrechner mit dem Google-API-Zugangsschlüssel dieses Rechners. Google kann empfangene Daten gemäß den Einstellungen des gewählten Google-Kontos und den Bedingungen von Google aufbewahren.",
+  "settingsVoice.realtimeProviders.google.ttsPrivacyDisclosure": "Text, der zur Sprachausgabe gesendet wird, verarbeitet Google Cloud Text-to-Speech. Happier sendet diese Anfragen über den gewählten Ausführungsrechner mit dem Google-API-Zugangsschlüssel dieses Rechners. Google kann empfangene Daten gemäß den Einstellungen des gewählten Google-Kontos und den Bedingungen von Google aufbewahren."
+}

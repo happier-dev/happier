@@ -1,0 +1,19 @@
+{
+  "settingsVoice.realtimeProviders.elevenLabs.description": "Parla amb les veus d’ElevenLabs.",
+  "settingsVoice.realtimeProviders.elevenLabs.groups.account": "Compte",
+  "settingsVoice.realtimeProviders.elevenLabs.agentIdDescription": "S’emplena quan Happier crea el teu agent.",
+  "settingsVoice.realtimeProviders.elevenLabs.modelDescription": "Quin model de veu d’ElevenLabs parla. El predeterminat s’adiu amb la majoria de veus.",
+  "settingsVoice.realtimeProviders.elevenLabs.agentTitle": "Agent de veu de Happier",
+  "settingsVoice.realtimeProviders.elevenLabs.agentMissing": "Crea un agent o introdueix-ne l’ID a sobre.",
+  "settingsVoice.realtimeProviders.elevenLabs.agentConfigured": "ID de l’agent desat. Actualitza’l després de canviar la veu.",
+  "settingsVoice.realtimeProviders.elevenLabs.openAccount": "Obre el teu compte d’ElevenLabs",
+  "settingsVoice.realtimeProviders.elevenLabs.manageApiKeys": "Gestiona les claus API",
+  "settingsVoice.realtimeProviders.elevenLabs.accountFooter": "Després de canviar la veu, actualitza l’agent perquè ElevenLabs la faci servir.",
+  "settingsVoice.realtimeProviders.elevenLabs.stabilityDescription": "Com d’estable sona la veu.",
+  "settingsVoice.realtimeProviders.elevenLabs.similarityDescription": "Com s’assembla a la veu original.",
+  "settingsVoice.realtimeProviders.elevenLabs.speedDescription": "Com de ràpid parla la veu.",
+  "settingsVoice.realtimeProviders.elevenLabs.resourcesTitle": "ElevenLabs",
+  "settingsVoice.realtimeProviders.elevenLabs.groups.voice": "Veu",
+  "settingsVoice.realtimeProviders.elevenLabs.groups.conversation": "Conversa",
+  "settingsVoice.realtimeProviders.elevenLabs.privacyDisclosure": "L’àudio i el contingut de la conversa s’envien des d’aquest dispositiu a ElevenLabs mitjançant la connexió del client d’ElevenLabs. Segons la configuració seleccionada, Happier també pot enviar a ElevenLabs instruccions limitades de l’agent, definicions i resultats d’eines del client, i sol·licituds d’autenticació o aprovisionament necessàries per a la funció. El servidor de Happier pot participar en l’autenticació allotjada i la comptabilització d’ús, però ni el servidor de Happier ni el relé transporten l’àudio de la conversa en directe. ElevenLabs pot processar i conservar les dades rebudes segons la configuració i les condicions del vostre compte d’ElevenLabs. Els controls per compartir el context de veu són independents del processament per aquest proveïdor."
+}

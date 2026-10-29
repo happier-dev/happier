@@ -1,0 +1,19 @@
+{
+  "settingsVoice.realtimeProviders.elevenLabs.description": "ElevenLabs の声で会話できます。",
+  "settingsVoice.realtimeProviders.elevenLabs.groups.account": "アカウント",
+  "settingsVoice.realtimeProviders.elevenLabs.agentIdDescription": "Happierがエージェントを作成すると入力されます。",
+  "settingsVoice.realtimeProviders.elevenLabs.modelDescription": "使用するElevenLabs音声モデル。既定のモデルはほとんどの声に適しています。",
+  "settingsVoice.realtimeProviders.elevenLabs.agentTitle": "Happier音声エージェント",
+  "settingsVoice.realtimeProviders.elevenLabs.agentMissing": "エージェントを作成するか、上にIDを入力してください。",
+  "settingsVoice.realtimeProviders.elevenLabs.agentConfigured": "エージェントIDを保存済み。声を変えたら更新してください。",
+  "settingsVoice.realtimeProviders.elevenLabs.openAccount": "自分のElevenLabsアカウントを開く",
+  "settingsVoice.realtimeProviders.elevenLabs.manageApiKeys": "APIキーを管理",
+  "settingsVoice.realtimeProviders.elevenLabs.accountFooter": "声を変えたらエージェントを更新して、ElevenLabsに反映してください。",
+  "settingsVoice.realtimeProviders.elevenLabs.stabilityDescription": "声の安定性。",
+  "settingsVoice.realtimeProviders.elevenLabs.similarityDescription": "元の声にどれだけ似せるか。",
+  "settingsVoice.realtimeProviders.elevenLabs.speedDescription": "声の話す速さ。",
+  "settingsVoice.realtimeProviders.elevenLabs.resourcesTitle": "ElevenLabs",
+  "settingsVoice.realtimeProviders.elevenLabs.groups.voice": "音声",
+  "settingsVoice.realtimeProviders.elevenLabs.groups.conversation": "会話",
+  "settingsVoice.realtimeProviders.elevenLabs.privacyDisclosure": "音声と会話内容は、このデバイスから ElevenLabs クライアント接続を通じて ElevenLabs に送信されます。選択した設定に応じて、Happier は限定されたエージェント指示、クライアントツールの定義と結果、およびこの機能に必要な認証またはプロビジョニング要求も ElevenLabs に送信することがあります。Happier のサーバーはホスト型認証と使用量計測に関与する場合がありますが、Happier のサーバーもリレーもライブ会話音声を転送しません。ElevenLabs は、受信したデータをお客様の ElevenLabs アカウント設定およびその規約に従って処理・保持する場合があります。音声コンテキスト共有の制御は、このプロバイダーによる処理とは別です。"
+}

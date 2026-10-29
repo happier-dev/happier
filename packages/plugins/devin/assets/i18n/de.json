@@ -1,0 +1,7 @@
+{
+  "agentInput.agent.devin": "Devin",
+  "profiles.aiBackend.devinSubtitleExperimental": "Devin CLI (experimentell)",
+  "sessionInfo.devinSessionId": "Devin-Sitzungs-ID",
+  "sessionInfo.devinSessionIdCopied": "Devin-Sitzungs-ID kopiert",
+  "settingsAgents.plugins.devin.title": "Devin"
+}

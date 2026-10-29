@@ -1,0 +1,7 @@
+{
+  "settingsAgents.plugins.pi.title": "Pi",
+  "settingsAgents.plugins.pi.fields.piAgentDir.title": "Diretório do agente",
+  "settingsAgents.plugins.pi.fields.piAgentDir.subtitle": "Raiz de dados opcional do Pi. Deixe em branco para usar ~/.pi/agent.",
+  "settingsAgents.plugins.pi.sections.storage.title": "Armazenamento",
+  "settingsAgents.plugins.pi.sections.storage.footer": "Este diretório é usado apenas para sessões do Pi iniciadas ou detetadas pelo Happier."
+}

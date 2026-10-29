@@ -1,0 +1,7 @@
+{
+  "settingsAgents.plugins.ohmypi.title": "Oh My Pi",
+  "settingsAgents.plugins.ohmypi.fields.ohMyPiAgentDir.title": "代理目錄",
+  "settingsAgents.plugins.ohmypi.fields.ohMyPiAgentDir.subtitle": "可選的 Oh My Pi 資料根目錄。留空則使用 ~/.omp/agent。",
+  "settingsAgents.plugins.ohmypi.sections.storage.title": "儲存空間",
+  "settingsAgents.plugins.ohmypi.sections.storage.footer": "此目錄僅供 Happier 啟動或找到的 Oh My Pi 工作階段使用。"
+}

@@ -1,0 +1,4 @@
+{
+  "settingsVoice.realtimeProviders.speechProcessing.openAiCompatStt": "Audio für die Transkription wird vom gewählten Ausführungsrechner an den von dir konfigurierten OpenAI-kompatiblen Endpunkt gesendet. Der Betreiber des Endpunkts kann empfangene Daten gemäß seinen eigenen Bedingungen aufbewahren.",
+  "settingsVoice.realtimeProviders.speechProcessing.openAiCompatTts": "Antworttext für die Sprachsynthese wird vom gewählten Ausführungsrechner an den von dir konfigurierten OpenAI-kompatiblen Endpunkt gesendet. Der Betreiber des Endpunkts kann empfangene Daten gemäß seinen eigenen Bedingungen aufbewahren."
+}

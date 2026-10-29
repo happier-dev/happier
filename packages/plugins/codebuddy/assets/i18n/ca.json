@@ -1,0 +1,7 @@
+{
+  "agentInput.agent.codebuddy": "CodeBuddy",
+  "profiles.aiBackend.codebuddySubtitleExperimental": "CLI de CodeBuddy Code (experimental)",
+  "sessionInfo.codebuddySessionId": "ID de la sessió de CodeBuddy",
+  "sessionInfo.codebuddySessionIdCopied": "ID de la sessió de CodeBuddy copiat al porta-retalls",
+  "settingsAgents.plugins.codebuddy.title": "CodeBuddy"
+}
