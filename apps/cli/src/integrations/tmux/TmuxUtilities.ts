@@ -1,4 +1,5 @@
 import { spawn, type SpawnOptions } from 'child_process';
+import { mkdir } from 'node:fs/promises';
 import { classifySpawnFailure, spawnFailureMessage, SpawnFailureError, type SpawnFailure, type SpawnFailureLimitsReader } from '@/processes/spawnFailure/classifySpawnFailure';
 import { randomUUID } from 'node:crypto';
 import { TerminalHostCreationError, type TerminalHostCreationDisposition } from '../terminal/host/errors';
@@ -600,6 +601,9 @@ export class TmuxUtilities {
     const rootSpawnOptions = { throwSpawnFailure: true, readSpawnFailureLimits: options.readSpawnFailureLimits };
     const executeSpawnCommand = (cmd: string[]) => this.executeTmuxCommand(cmd, undefined, undefined, undefined, undefined, undefined, rootSpawnOptions);
     try {
+      const socketRoot = this.tmuxCommandEnv?.TMUX_TMPDIR;
+      if (socketRoot) await mkdir(socketRoot, { recursive: true });
+
       // Check if tmux is available
       const tmuxCheck = await executeSpawnCommand(['list-sessions']);
       if (!tmuxCheck) {

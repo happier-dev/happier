@@ -141,11 +141,12 @@ export function createTmuxTerminalHostAdapter(params?: Readonly<{
   const tmux = params?.tmux ?? new TmuxUtilities();
   const now = params?.now ?? Date.now;
   const wait = params?.wait ?? ((delayMs: number) => (delayMs <= 0 ? Promise.resolve() : new Promise<void>((resolve) => setTimeout(resolve, delayMs))));
-  const tmuxForHandle = (handle: TerminalHostHandle): TmuxTerminalHostUtility => {
+  const tmuxForEnvironment = (environment: Record<string, string> | undefined): TmuxTerminalHostUtility => {
     if (params?.tmux) return params.tmux;
-    const environment = resolveTmuxCommandEnvironmentForHostHandle(handle);
     return environment ? new TmuxUtilities(undefined, environment) : tmux;
   };
+  const tmuxForHandle = (handle: TerminalHostHandle): TmuxTerminalHostUtility =>
+    tmuxForEnvironment(resolveTmuxCommandEnvironmentForHostHandle(handle));
 
   async function evaluateLiveness(handle: TerminalHostHandle) {
     const handleTmux = tmuxForHandle(handle);
@@ -208,7 +209,9 @@ export function createTmuxTerminalHostAdapter(params?: Readonly<{
     async createOrAttachHost(opts) {
       // requireNewSession below never attaches to an existing native process.
       if (opts.prepareLaunch) opts = { ...opts, ...await opts.prepareLaunch() };
-      const result = await tmux.spawnInTmux([...opts.spawnArgv], {
+      // The socket root selects the tmux client/server as well as the child environment.
+      const commandEnv = opts.spawnEnv.TMUX_TMPDIR ? { TMUX_TMPDIR: opts.spawnEnv.TMUX_TMPDIR } : undefined;
+      const result = await tmuxForEnvironment(commandEnv).spawnInTmux([...opts.spawnArgv], {
         sessionName: opts.sessionName,
         windowName: opts.sessionName,
         cwd: opts.workingDirectory,
@@ -226,6 +229,7 @@ export function createTmuxTerminalHostAdapter(params?: Readonly<{
         sessionName: result.sessionName ?? opts.sessionName,
         windowId: result.windowId ?? '',
         topology: 'exclusive',
+        ...(opts.spawnEnv.TMUX_TMPDIR ? { tmuxTmpDir: opts.spawnEnv.TMUX_TMPDIR } : {}),
       });
     },
     async injectUserPrompt(handle, input) {

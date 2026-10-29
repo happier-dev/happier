@@ -876,6 +876,62 @@ describe.skipIf(!shouldRunTmuxIntegration())('tmux (real) integration tests (opt
         }
     });
 
+    it('creates native hosts in the requested socket root rather than the ambient server', async () => {
+        const ambientRoot = mkdtempSync(join(existsSync('/tmp') ? '/tmp' : tmpdir(), 'hp-ambient-'));
+        const dir = mkdtempSync(join(existsSync('/tmp') ? '/tmp' : tmpdir(), 'hp-selected-'));
+        const selectedRoot = join(dir, 'socket-root');
+        const sessionName = 'isolated-probe';
+        const { createTmuxTerminalHostAdapter } = await import('./adapter');
+        const adapter = createTmuxTerminalHostAdapter();
+        try {
+            await withCleanTmuxClientEnv(async () => {
+                process.env.TMUX_TMPDIR = ambientRoot;
+                expect(runTmux(['new-session', '-d', '-s', 'ambient-sentinel'], {
+                    env: { TMUX_TMPDIR: ambientRoot },
+                }).status).toBe(0);
+                const ambientIdentity = runTmux(['display-message', '-p', '#{socket_path},#{pid},0'], {
+                    env: { TMUX_TMPDIR: ambientRoot },
+                });
+                expect(ambientIdentity.status).toBe(0);
+                process.env.TMUX = ambientIdentity.stdout.trim();
+                process.env.TMUX_PANE = '%0';
+                const outFile = join(dir, 'native.json');
+                const handle = await adapter.createOrAttachHost({
+                    sessionName, label: 'native-client', workingDirectory: dir,
+                    spawnArgv: [process.execPath, writeDumpScript(dir), outFile, '60000', 'native-client'],
+                    spawnEnv: { TMUX_TMPDIR: selectedRoot }, isolatedEnv: true,
+                });
+                expect(handle.socketDir).toBe(selectedRoot);
+                await waitForFile(outFile, 2_000);
+                expect(readDumpPayload(outFile).argv).toEqual(['native-client']);
+                expect(runTmux(['has-session', '-t', `=${sessionName}`], {
+                    env: { TMUX_TMPDIR: selectedRoot },
+                }).status).toBe(0);
+                expect(runTmux(['has-session', '-t', `=${sessionName}`], {
+                    env: { TMUX_TMPDIR: ambientRoot },
+                }).status).not.toBe(0);
+                expect(await adapter.evaluateLiveness(handle)).toMatchObject({ paneAlive: true });
+                await adapter.dispose(handle);
+                const remainingWindows = runTmux(['list-windows', '-t', `=${sessionName}`, '-F', '#{window_id}'], {
+                    env: { TMUX_TMPDIR: selectedRoot },
+                });
+                expect(remainingWindows.status).toBe(1);
+                expect(remainingWindows.stderr).toMatch(/no server running on|can't find session:|error connecting to .+ \(no such file or directory\)/i);
+                expect(handle.paneId).toMatch(/^@\d+$/);
+                expect(remainingWindows.stdout.trim().split(/\r?\n/)).not.toContain(handle.paneId);
+                expect(runTmux(['has-session', '-t', '=ambient-sentinel'], {
+                    env: { TMUX_TMPDIR: ambientRoot },
+                }).status).toBe(0);
+            });
+        } finally {
+            for (const root of [selectedRoot, ambientRoot]) {
+                runTmux(['kill-server'], { env: { TMUX_TMPDIR: root } });
+            }
+            await removeTmuxTempDir(ambientRoot);
+            await removeTmuxTempDir(dir);
+        }
+    });
+
     it('TMUX_TMPDIR affects which tmux server commands talk to (regression: PR107 wrong-server assumptions)', async () => {
         const dir = mkdtempSync(join(tmpdir(), 'happier-cli-tmux-it-'));
         // IMPORTANT: keep the socket path short to avoid unix domain socket length limits (common on macOS).
