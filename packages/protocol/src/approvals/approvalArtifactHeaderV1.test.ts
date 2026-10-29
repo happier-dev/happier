@@ -160,7 +160,7 @@ describe('approval Artifact header correspondence', () => {
     const header = buildApprovalRequestArtifactHeaderV1(request);
     const subjectKey = deriveManagedDeleteApprovalSubjectKeyV1({ homeId: 'home', managedId: 'managed' });
     expect(header).toMatchObject({ kind: 'approval_request.v1', approvalSubjectKey: subjectKey });
-    expect(deriveArtifactStoredKindV1(header)).toBe(managedDeleteApprovalIndexedKindV1(subjectKey));
+    expect(deriveArtifactStoredKindV1(header)).toBe(`v1:other:${managedDeleteApprovalIndexedKindV1(subjectKey)}`);
     expect(approvalArtifactBodyMatchesHeaderV1(header, JSON.stringify(request)))
       .toEqual({ family: 'built_in', request });
     expect(approvalArtifactBodyMatchesHeaderV1({ ...header, approvalSubjectKey: `${subjectKey}-other` }, JSON.stringify(request)))
