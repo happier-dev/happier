@@ -1,4 +1,6 @@
 import type { JsonValue } from '../json/strictJsonValue.js';
+import { z } from 'zod/mini';
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { sameStrictJsonValue } from '../json/strictJsonValue.js';
 import type { WorkflowRunAcceptedContextV1, WorkflowRunStartRequestV1 } from './actionsV1.js';
 import type { WorkflowDefinitionV1 } from './workflowV1.js';
@@ -99,6 +101,66 @@ export type WorkflowRunStartPreparationV1 = Readonly<{
   origin?: WorkflowRunStartRequestV1['origin'];
   onComplete?: WorkflowRunStartRequestV1['onComplete'];
 }>;
+
+/** Existing, accessible Machines in the invocation's Home; callers own fresh access/reachability reads. */
+export type WorkflowCombinedActionHostMachineV1 = Readonly<{ machineId: string; online: boolean }>;
+export type WorkflowCombinedActionHostReviewV1 = Readonly<{
+  machineId: string | null;
+  machines: readonly WorkflowCombinedActionHostMachineV1[];
+}>;
+export const WorkflowCombinedActionHostReviewV1Schema = lazyZodSchema(() => z.strictObject({
+  machineId: z.nullable(z.string().check(z.trim(), z.minLength(1))),
+  machines: z.array(z.strictObject({ machineId: z.string().check(z.trim(), z.minLength(1)), online: z.boolean() })),
+}));
+export type WorkflowCombinedActionHostAdmissionV1 =
+  | Readonly<{ kind: 'ready'; machineId: string }>
+  | Readonly<{ kind: 'unavailable'; code: 'machine_unavailable'; machineId: string; role: 'controller' }>;
+export type WorkflowCombinedActionHostResolutionV1 =
+  | (WorkflowCombinedActionHostAdmissionV1 & Readonly<{ review: WorkflowCombinedActionHostReviewV1 }>)
+  | Readonly<{ kind: 'selection_required' | 'platform_only'; review: WorkflowCombinedActionHostReviewV1 }>;
+
+/** Re-admit the reviewed/accepted host at dispatch; never resolve defaults again after review. */
+export function admitCombinedActionWorkflowHostV1(params: Readonly<{
+  machineId: string;
+  machines: readonly WorkflowCombinedActionHostMachineV1[];
+  createdMachineIds?: readonly string[];
+}>): WorkflowCombinedActionHostAdmissionV1 {
+  if (params.createdMachineIds?.includes(params.machineId)
+    || !params.machines.some(machine => machine.machineId === params.machineId && machine.online)) {
+    return { kind: 'unavailable', code: 'machine_unavailable', machineId: params.machineId, role: 'controller' };
+  }
+  return { kind: 'ready', machineId: params.machineId };
+}
+
+/**
+ * Combined Action preparation shared by setup and Publish. Feed ready.machineId
+ * into the existing Workflow materializer's context and host-resolved project;
+ * review is display data only, never authority or an Account preference.
+ */
+export function resolveCombinedActionWorkflowHostV1(params: Readonly<{
+  machines: readonly WorkflowCombinedActionHostMachineV1[];
+  createdMachineIds?: readonly string[];
+  agentMachineId?: string;
+  selectedMachineId?: string;
+}> & (
+  | Readonly<{ actionId: 'machines.setup.apply'; targetMachineIds: readonly string[] }>
+  | Readonly<{ actionId: 'deployments.publish'; projectEnvironmentControllerMachineIds?: readonly string[] }>
+)): WorkflowCombinedActionHostResolutionV1 {
+  const created = new Set(params.createdMachineIds ?? []);
+  const machines = params.machines.filter(machine => !created.has(machine.machineId));
+  let machineId = params.selectedMachineId ?? params.agentMachineId;
+  if (machineId === undefined) {
+    const byId = new Map(machines.map(machine => [machine.machineId, machine]));
+    machineId = params.actionId === 'machines.setup.apply'
+      ? params.targetMachineIds.find(id => byId.get(id)?.online)
+      : params.projectEnvironmentControllerMachineIds?.find(id => byId.has(id));
+  }
+  if (machineId === undefined) {
+    return { kind: params.actionId === 'deployments.publish' && machines.length === 0 ? 'platform_only' : 'selection_required',
+      review: { machineId: null, machines } };
+  }
+  return { ...admitCombinedActionWorkflowHostV1({ machineId, machines }), review: { machineId, machines } };
+}
 
 /** One preparation owner for new starts and reviewed accepted-run repeats. Admission reopens replay authority. */
 export function prepareWorkflowRunStartV1(params: Readonly<{
