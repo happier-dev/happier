@@ -19,3 +19,13 @@ test('canonical Home placement retains every independently captured placement an
     assert.deepEqual(homePlanetSceneOptions(geometry, pane, { theme, style, digits: false }).field, { around: 0, over: 0 });
   }
 });
+
+test('a Rise band can keep its planet round: a given radius sits its limb where asked', () => {
+  const pane = { width: 1440, height: 420 };
+  const home = homePlanetGeometry('rise', pane, { limb: 120 });
+  const band = homePlanetGeometry('rise', pane, { limb: 120, radius: 600 });
+  assert.equal(band.R, 600);
+  assert.equal(band.cy - band.R, 120);
+  assert.equal(home.R, 0.8 * pane.width);
+  assert.equal(homePlanetGeometry('corner', pane, { radius: 600 }).R, homePlanetGeometry('corner', pane).R);
+});

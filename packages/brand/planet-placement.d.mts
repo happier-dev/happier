@@ -10,7 +10,7 @@ export type HomePlanetGeometry = Readonly<{
 export function homePlanetGeometry(
   placement: HomePlanetPlacement,
   pane: HomePane,
-  options?: Readonly<{ phone?: boolean; widgets?: boolean; limb?: number }>,
+  options?: Readonly<{ phone?: boolean; widgets?: boolean; limb?: number; /** Rise only: the planet's radius in place of the pane's. */ radius?: number }>,
 ): HomePlanetGeometry;
 export function homePlanetSceneOptions(
   geometry: HomePlanetGeometry,

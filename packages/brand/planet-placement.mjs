@@ -6,7 +6,8 @@ const RISE_LIMB_FALLBACK = { phone: 0.34, desktop: 0.49 };
 function homePlanetGeometry(placement, pane, options = {}) {
   const W = pane.width, H = pane.height;
   if (placement === "rise") {
-    const R2 = (options.phone ? 1.3 : 0.8) * W;
+    // A profile band keeps its planet round (R from its column), where Home's Rise spans its pane.
+    const R2 = options.radius ?? (options.phone ? 1.3 : 0.8) * W;
     const limb = options.limb ?? (options.phone ? RISE_LIMB_FALLBACK.phone : RISE_LIMB_FALLBACK.desktop) * H;
     return {
       R: R2,
