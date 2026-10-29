@@ -3,15 +3,19 @@ import { z } from 'zod/mini';
 import type { RoleActionIdV1 } from './roleActionIdsV1.js';
 import { RoleArtifactV1Schema } from './roleArtifactV1.js';
 import { RoleInstructionsOverrideV1Schema, RoleOverrideV1Schema } from './rolesV1.js';
+import { SessionTargetV1Schema } from '../../actions/sessionTargetV1.js';
 
 const SessionRoleIdentityV1Schema = lazyZodSchema(() => z.strictObject({
   sessionId: z.string().check(z.minLength(1)), roleId: z.string().check(z.minLength(1)),
 }));
-const SessionRoleSetV1Schema = lazyZodSchema(() => z.strictObject({
-  sessionId: z.string().check(z.minLength(1)),
+const SessionRoleSetTargetV1Schema = lazyZodSchema(() => z.strictObject({
+  sessionId: SessionTargetV1Schema,
   roleId: z.optional(z.string().check(z.minLength(1))),
   answersWorkerQuestions: z.optional(z.boolean()),
 }).check(z.refine((input) => input.roleId !== undefined || input.answersWorkerQuestions !== undefined)));
+const SessionRoleSetV1Schema = lazyZodSchema(() => z.safeExtend(SessionRoleSetTargetV1Schema, {
+  sessionId: z.string().check(z.minLength(1)),
+}));
 const RoleIdentityV1Schema = lazyZodSchema(() => z.strictObject({ roleId: z.string().check(z.minLength(1)) }));
 const RoleArtifactRevisionV1Schema = lazyZodSchema(() => z.strictObject({
   headerVersion: z.number().check(z.int(), z.nonnegative()),
@@ -54,6 +58,18 @@ export const RoleActionInputSchemasV1 = {
   'roles.delete': lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(RoleIdentityV1Schema, { expectedRevision: RoleArtifactRevisionV1Schema }))),
   'roles.override.set': RoleInstructionsOverrideV1Schema,
   'roles.override.reset': RoleIdentityV1Schema,
+} as const satisfies Readonly<Record<RoleActionIdV1, z.ZodMiniType>>;
+
+/** Action ingress accepts selectors; the front door resolves them before exact leaf/RPC validation. */
+export const RoleActionTargetInputSchemasV1 = {
+  ...RoleActionInputSchemasV1,
+  'session.role.set': SessionRoleSetTargetV1Schema,
+  'session.roles.override.set': lazyZodSchema(() => z.extend(RoleActionInputSchemasV1['session.roles.override.set'], { sessionId: SessionTargetV1Schema })),
+  'session.roles.override.clear': lazyZodSchema(() => z.extend(RoleActionInputSchemasV1['session.roles.override.clear'], { sessionId: SessionTargetV1Schema })),
+  'session.roles.add': lazyZodSchema(() => z.extend(RoleActionInputSchemasV1['session.roles.add'], { sessionId: SessionTargetV1Schema })),
+  'session.roles.remove': lazyZodSchema(() => z.extend(RoleActionInputSchemasV1['session.roles.remove'], { sessionId: SessionTargetV1Schema })),
+  'session.notes.set': lazyZodSchema(() => z.extend(RoleActionInputSchemasV1['session.notes.set'], { sessionId: SessionTargetV1Schema })),
+  'session.roles.apply_to_reports': lazyZodSchema(() => z.extend(RoleActionInputSchemasV1['session.roles.apply_to_reports'], { sessionId: SessionTargetV1Schema })),
 } as const satisfies Readonly<Record<RoleActionIdV1, z.ZodMiniType>>;
 
 export const RoleActionOutputSchemasV1 = {
