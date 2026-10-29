@@ -118,7 +118,8 @@ test('manual test dispatch can opt approved non-secret Linux lanes into Blacksmi
 
   const github = resolveRunnerPool(resolver, 'github');
   assert.equal(github.status, 0, github.stderr);
-  assert.deepEqual(github.outputs, { ubuntu_2204: 'ubuntu-22.04', ubuntu_2404: 'ubuntu-latest' });
+  // ubuntu-latest moved to 26.04, where Playwright cannot install Chromium; the 2404 label must mean 24.04.
+  assert.deepEqual(github.outputs, { ubuntu_2204: 'ubuntu-22.04', ubuntu_2404: 'ubuntu-24.04' });
 
   const blacksmith = resolveRunnerPool(resolver, 'blacksmith-linux-4vcpu');
   assert.equal(blacksmith.status, 0, blacksmith.stderr);

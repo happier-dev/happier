@@ -231,7 +231,7 @@ jobs:
   gate-prepare:
     name: Gate — select and prepare shared workspace
     if: ${{ !inputs.select_jobs_explicitly && ((github.event_name == 'push' && github.ref_name == 'v0.3') || (github.event_name == 'pull_request' && github.base_ref == 'v0.3')) }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Longest complete shared preparation: 53m22s in run 38398608504.
     # Twice that duration rounded up gives 110 minutes.
     # This is hang protection, not a performance target.
@@ -446,7 +446,7 @@ jobs:
   gate-compiler:
     name: Gate — UI compiler diagnostics
     needs: [gate-prepare]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Successful compiler plus preparation: 42m33s; more than twice that sample,
     # plus the 20-minute budget of the ordinary release-contracts lane it also runs.
     timeout-minutes: 110
@@ -551,7 +551,7 @@ jobs:
     name: Gate — ${{ matrix.package }} unit (${{ matrix.part }}/${{ matrix.parts }})
     needs: [gate-prepare]
     if: ${{ needs.gate-prepare.outputs.packages != '[]' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Complete UI partitions in run 38398608504 took up to 2h10m.
     # Twice that duration plus rounding headroom gives a 270-minute hang guard.
     # The grouped host suite retains the platform's existing job deadline.
@@ -654,7 +654,7 @@ jobs:
   gate-build-artifacts:
     name: Gate — build artifacts and staged import smoke
     needs: [gate-prepare]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Successful complete artifact job: 46m12s; twice that sample rounded up.
     timeout-minutes: 95
     permissions:
@@ -767,7 +767,7 @@ jobs:
     name: Gate
     if: ${{ always() && !inputs.select_jobs_explicitly && ((github.event_name == 'push' && github.ref_name == 'v0.3') || (github.event_name == 'pull_request' && github.base_ref == 'v0.3')) }}
     needs: [gate-prepare, gate-compiler, gate-unit, gate-build-artifacts, server-db-contract, installers-smoke-windows]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Normally terminating aggregate: 6s; twice that sample rounded up.
     timeout-minutes: 1
     permissions:
@@ -3082,7 +3082,7 @@ jobs:
           case "$RUNNER_POOL" in
             github)
               ubuntu_2204=ubuntu-22.04
-              ubuntu_2404=ubuntu-latest
+              ubuntu_2404=ubuntu-24.04
               ;;
             blacksmith-linux-4vcpu)
               ubuntu_2204=blacksmith-4vcpu-ubuntu-2204
