@@ -17,6 +17,31 @@ import { createSessionUsageLimitRecoveryRuntime } from './createSessionUsageLimi
 describe('native usage-limit recovery composition', () => {
   afterEach(() => vi.restoreAllMocks());
 
+  it('replaces an older daemon-owned wait when a new accepted quota failure arrives', async () => {
+    const issue: SessionRuntimeIssueV1 = { v: 1, scope: 'primary_session', status: 'failed', source: 'usage_limit',
+      code: 'usage_limit', agentId: 'codex', agentTurnId: 'new-turn', occurredAt: 300,
+      usageLimit: { v: 1, resetAtMs: 900_000, retryAfterMs: null, quotaScope: 'account', recoverability: 'wait' } };
+    const old: SessionUsageLimitRecoveryV1 = { v: 1, status: 'waiting', issueFingerprint: 'old-failure',
+      runtimeAuthRecoveryAttemptId: 'old-attempt', armedAtMs: 100, resetAtMs: 200, nextCheckAtMs: 200,
+      attemptCount: 1, maxAttempts: 3, lastProbeError: null, resumePromptMode: 'off', selectedAuth: { kind: 'native' } };
+    let metadata = createTestMetadata({ sessionUsageLimitRecoveryV1: old });
+    const recovery = createSessionUsageLimitRecoveryRuntime({ sessionId: 'new-quota-failure', currentMachineId: null,
+      getMetadata: () => metadata, updateMetadata: async update => { metadata = update(metadata); },
+      readContext: async () => null, runRequest: async operation => await operation(), isFeatureEnabled: async () => true,
+      nowMs: () => 400, getAccountSettings: () => accountSettingsParse({ usageLimitRecoverySettingsV1: { v: 1, mode: 'auto_wait' } }),
+    });
+    try {
+      await recovery.observeFailure(issue);
+      expect(metadata.sessionUsageLimitRecoveryV1).toMatchObject({
+        issueFingerprint: buildUsageLimitIssueFingerprint(issue), resetAtMs: 900_000, armedAtMs: 400,
+      });
+      expect(metadata.sessionUsageLimitRecoveryV1?.runtimeAuthRecoveryAttemptId).toBeUndefined();
+      const armed = metadata.sessionUsageLimitRecoveryV1;
+      await recovery.observeFailure(issue);
+      expect(metadata.sessionUsageLimitRecoveryV1).toEqual(armed);
+    } finally { recovery.dispose(); }
+  });
+
   it.each(['due-intent', 'healthy-no-intent', 'failed-no-intent'] as const)('admits fresh user input through its generic recovery owner (%s)', async scenario => {
     const sessionId = 'c123456789012345678901234';
     const credentials = { token: 'fresh-input-quota-test', encryption: null };
