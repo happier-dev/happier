@@ -1,11 +1,11 @@
 import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation/pageMetrics';
 import * as React from 'react';
-import { Platform, Pressable, View } from 'react-native';
+import { View } from 'react-native';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Text } from '@/components/ui/text/Text';
 import { NewSessionPathSelectionContent } from '@/components/sessions/new/components/NewSessionPathSelectionContent';
-import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import { Typography } from '@/constants/Typography';
 import { Modal } from '@/modal';
 import { createDeferredOnce } from '@/modal/async/createDeferredOnce';
@@ -42,8 +42,6 @@ type ExternalSessionTakeoverDialogProps = CustomModalInjectedProps & Readonly<{
     onRequestClose?: () => void;
 }>;
 
-const minimumInteractiveTargetSize = resolveMinimumInteractiveTargetSize(Platform.OS);
-
 const stylesheet = StyleSheet.create((theme) => ({
     body: {
         paddingHorizontal: theme.space.s16,
@@ -51,7 +49,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         gap: theme.space.s12,
     },
     optionButton: {
-        minHeight: minimumInteractiveTargetSize,
         paddingVertical: theme.space.s12,
         paddingHorizontal: 14,
         borderRadius: 12,
@@ -104,8 +101,6 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     cancelButton: {
         alignSelf: 'flex-start',
-        minHeight: minimumInteractiveTargetSize,
-        justifyContent: 'center',
         paddingVertical: theme.space.s8,
         paddingHorizontal: theme.space.s4,
     },
@@ -204,39 +199,37 @@ export function ExternalSessionTakeoverDialog(props: ExternalSessionTakeoverDial
             ) : null}
 
             {props.canTakeOverDirect ? (
-                <Pressable
+                <HappierPressable
                     testID="direct-session-takeover-dialog-direct"
                     accessibilityRole="button"
                     accessibilityLabel={t('chatFooter.directTakeoverDialogDirectTitle')}
                     accessibilityHint={t('chatFooter.directTakeoverDialogDirectBody')}
-                    accessibilityState={{ disabled: !normalizedTargetDirectory }}
                     disabled={!normalizedTargetDirectory}
                     onPress={() => resolveTakeover('direct')}
                     style={({ pressed }) => [styles.optionButton, { opacity: pressed ? motionTokens.press.opacitySubtle : 1 }]}
                 >
                     <Text style={styles.optionTitle}>{t('chatFooter.directTakeoverDialogDirectTitle')}</Text>
                     <Text style={styles.optionSubtitle}>{t('chatFooter.directTakeoverDialogDirectBody')}</Text>
-                </Pressable>
+                </HappierPressable>
             ) : null}
 
             {props.canTakeOverPersist ? (
-                <Pressable
+                <HappierPressable
                     testID="direct-session-takeover-dialog-persist"
                     accessibilityRole="button"
                     accessibilityLabel={t('chatFooter.directTakeoverDialogPersistTitle')}
                     accessibilityHint={t('chatFooter.directTakeoverDialogPersistBody')}
-                    accessibilityState={{ disabled: !normalizedTargetDirectory }}
                     disabled={!normalizedTargetDirectory}
                     onPress={() => resolveTakeover('persisted')}
                     style={({ pressed }) => [styles.optionButton, { opacity: pressed ? motionTokens.press.opacitySubtle : 1 }]}
                 >
                     <Text style={styles.optionTitle}>{t('chatFooter.directTakeoverDialogPersistTitle')}</Text>
                     <Text style={styles.optionSubtitle}>{t('chatFooter.directTakeoverDialogPersistBody')}</Text>
-                </Pressable>
+                </HappierPressable>
             ) : null}
 
             {runningProcessActive ? (
-                <Pressable
+                <HappierPressable
                     testID="direct-session-takeover-dialog-recheck"
                     accessibilityRole="button"
                     accessibilityLabel={t('chatFooter.externalSessionRecheck')}
@@ -250,10 +243,10 @@ export function ExternalSessionTakeoverDialog(props: ExternalSessionTakeoverDial
                     <Text style={styles.optionTitle}>
                         {t('chatFooter.externalSessionRecheck')}
                     </Text>
-                </Pressable>
+                </HappierPressable>
             ) : null}
 
-            <Pressable
+            <HappierPressable
                 testID="direct-session-takeover-dialog-cancel"
                 accessibilityRole="button"
                 accessibilityLabel={t('common.cancel')}
@@ -261,7 +254,7 @@ export function ExternalSessionTakeoverDialog(props: ExternalSessionTakeoverDial
                 style={({ pressed }) => [styles.cancelButton, { opacity: pressed ? motionTokens.press.opacity : 1 }]}
             >
                 <Text style={styles.cancelText}>{t('common.cancel')}</Text>
-            </Pressable>
+            </HappierPressable>
         </View>
     );
 }

@@ -59,12 +59,12 @@ describe('ExternalSessionTakeoverDialog accessibility', () => {
         );
 
         expect(screen.findByTestId('direct-session-takeover-dialog-direct')?.props).toMatchObject({
-            accessibilityRole: 'button',
+            role: 'button',
             accessibilityLabel: 'chatFooter.directTakeoverDialogDirectTitle',
             accessibilityHint: 'chatFooter.directTakeoverDialogDirectBody',
         });
         expect(screen.findByTestId('direct-session-takeover-dialog-persist')?.props).toMatchObject({
-            accessibilityRole: 'button',
+            role: 'button',
             accessibilityLabel: 'chatFooter.directTakeoverDialogPersistTitle',
             accessibilityHint: 'chatFooter.directTakeoverDialogPersistBody',
         });
@@ -73,7 +73,7 @@ describe('ExternalSessionTakeoverDialog accessibility', () => {
             accessibilityLabel: '/Users/tester/selected-workspace',
         });
         expect(screen.findByTestId('direct-session-takeover-dialog-cancel')?.props).toMatchObject({
-            accessibilityRole: 'button',
+            role: 'button',
             accessibilityLabel: 'common.cancel',
         });
 
@@ -173,7 +173,7 @@ describe('ExternalSessionTakeoverDialog accessibility', () => {
         expect(onResolve).not.toHaveBeenCalled();
     });
 
-    it('keeps every visible dialog action at the platform minimum target height', async () => {
+    it('draws every visible dialog action at its content, never at a minimum target height', async () => {
         const { ExternalSessionTakeoverDialog } = await import('./showExternalSessionTakeoverDialog');
         const screen = await renderScreen(
             <ExternalSessionTakeoverDialog
@@ -192,7 +192,7 @@ describe('ExternalSessionTakeoverDialog accessibility', () => {
             'direct-session-takeover-dialog-cancel',
         ]) {
             const action = screen.findByTestId(testID);
-            expect(flattenPressableStyle(action?.props.style).minHeight).toBeGreaterThanOrEqual(44);
+            expect(flattenPressableStyle(action?.props.style).minHeight).toBeUndefined();
         }
     });
 
@@ -232,7 +232,7 @@ describe('ExternalSessionTakeoverDialog accessibility', () => {
         expect(screen.findByTestId('direct-session-takeover-dialog-direct')).toBeNull();
         expect(screen.findByTestId('direct-session-takeover-dialog-persist')).toBeNull();
         expect(screen.findByTestId('direct-session-takeover-dialog-recheck')?.props).toMatchObject({
-            accessibilityRole: 'button',
+            role: 'button',
             accessibilityLabel: 'chatFooter.externalSessionRecheck',
             accessibilityHint: 'chatFooter.externalSessionTakeoverBlocked',
         });
