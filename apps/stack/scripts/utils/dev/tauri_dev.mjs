@@ -6,6 +6,7 @@ import { spawnSync } from 'node:child_process';
 import { applyStackActiveServerScopeEnv } from '../auth/stable_scope_id.mjs';
 import { getComponentDir, getDefaultAutostartPaths, getRepoDir } from '../paths/paths.mjs';
 import { resolveCommandInvocation } from '../process/resolveCommandInvocation.mjs';
+import { resolveCargoBinDir } from '../proc/cargo.mjs';
 
 export function resolveTauriDevUrl({ expoPort, defaultPort = 8081 } = {}) {
   const port = Number(expoPort);
@@ -35,90 +36,6 @@ export function buildTauriDevInvocation({
       }),
     ],
   };
-}
-
-function resolveCargoBinDir({ env = process.env, resolveUserHomeDir } = {}) {
-  const input = env && typeof env === 'object' ? env : process.env;
-  const delimiter = process.platform === 'win32' ? ';' : ':';
-  const cargoBinaryName = process.platform === 'win32' ? 'cargo.exe' : 'cargo';
-
-  let resolvedHomeDir = '';
-  if (typeof resolveUserHomeDir === 'function') {
-    resolvedHomeDir = String(resolveUserHomeDir()).trim();
-  }
-  if (!resolvedHomeDir) {
-    try {
-      resolvedHomeDir = String(os.userInfo()?.homedir ?? '').trim();
-    } catch {
-      resolvedHomeDir = '';
-    }
-  }
-
-  // Stack tooling sometimes isolates HOME (for cache isolation / stack-scoped state) while Rust toolchains
-  // remain installed under the real user home. When HOME is isolated, prefer the resolved user home cargo
-  // toolchain over any cargo shim present on PATH.
-  const envHome = String(input.HOME ?? input.USERPROFILE ?? '').trim();
-  const homeIsolated = Boolean(envHome && resolvedHomeDir && envHome !== resolvedHomeDir);
-
-  const cargoHomeFromEnv = String(input.CARGO_HOME ?? '').trim();
-  if (cargoHomeFromEnv) {
-    const cargoHomeBinDir = join(cargoHomeFromEnv, 'bin');
-    const cargoHomeCandidate = join(cargoHomeBinDir, cargoBinaryName);
-    if (existsSync(cargoHomeCandidate)) {
-      try {
-        accessSync(cargoHomeCandidate, constants.X_OK);
-        return cargoHomeBinDir;
-      } catch {
-        // ignore non-executable candidates
-      }
-    }
-  }
-
-  if (homeIsolated && resolvedHomeDir) {
-    const resolvedCargoBinDir = join(resolvedHomeDir, '.cargo', 'bin');
-    const resolvedCargoCandidate = join(resolvedCargoBinDir, cargoBinaryName);
-    if (existsSync(resolvedCargoCandidate)) {
-      try {
-        accessSync(resolvedCargoCandidate, constants.X_OK);
-        return resolvedCargoBinDir;
-      } catch {
-        // ignore non-executable candidates
-      }
-    }
-  }
-
-  const pathEntries = String(input.PATH ?? '')
-    .split(delimiter)
-    .map((entry) => String(entry ?? '').trim())
-    .filter(Boolean);
-
-  for (const dir of pathEntries) {
-    const candidate = join(dir, cargoBinaryName);
-    if (!existsSync(candidate)) {
-      continue;
-    }
-    try {
-      accessSync(candidate, constants.X_OK);
-      return dir;
-    } catch {
-      // ignore non-executable candidates
-    }
-  }
-
-  // Default rustup install location (non-isolated HOME, or when PATH scanning missed it).
-  const cargoHome = join(resolvedHomeDir || os.homedir(), '.cargo');
-  const cargoHomeBin = join(cargoHome, 'bin');
-  const cargoHomeCandidate = join(cargoHomeBin, cargoBinaryName);
-  if (existsSync(cargoHomeCandidate)) {
-    try {
-      accessSync(cargoHomeCandidate, constants.X_OK);
-      return cargoHomeBin;
-    } catch {
-      // ignore non-executable candidates
-    }
-  }
-
-  return '';
 }
 
 export function assertCargoAvailableForTauri({ env = process.env, resolveUserHomeDir } = {}) {
