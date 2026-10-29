@@ -331,6 +331,7 @@ function redactKnownSensitiveText(input: string): string {
       .replace(/\bauthorization\s*:\s*bearer\s+[^\r\n]+/gi, 'authorization: bearer [REDACTED]')
       .replace(/\bauthorization\s*:\s*basic\s+[^\r\n]+/gi, 'authorization: basic [REDACTED]'),
   )
+    .replace(/\bbearer\s+[A-Za-z0-9._~+/=-]+/gi, 'Bearer [REDACTED]')
     .replace(
       QUOTED_SECRET_FIELD_PATTERN,
       (_match, keyQuote: string, key: string, valueQuote: string) =>

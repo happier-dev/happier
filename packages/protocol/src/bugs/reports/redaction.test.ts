@@ -6,6 +6,11 @@ import {
   registerSensitiveDiagnosticValues,
 } from './redaction.js';
 
+it('keeps a provider failure reason while redacting bare bearer credentials', () => {
+  expect(redactBugReportSensitiveText('MCP startup failed: Bearer private-token_123+/=; executable missing'))
+    .toBe('MCP startup failed: Bearer [REDACTED]; executable missing');
+});
+
 it('redacts issued public-link fragments in diagnostic text and serialized Action results', () => {
   for (const input of [
     'issued https://public.example/s/lookup#k=FRAGMENT_SENTINEL',
