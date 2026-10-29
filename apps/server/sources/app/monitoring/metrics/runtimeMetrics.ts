@@ -2,6 +2,7 @@ import { constants, monitorEventLoopDelay, PerformanceObserver } from "node:perf
 
 import { Counter, Gauge } from "prom-client";
 import { onShutdown } from "@/utils/process/shutdown";
+import { readMetricsServerConfigFromEnv } from "@/config/monitoring";
 
 import { getOrCreateMetric, register } from "./registry";
 
@@ -14,18 +15,24 @@ const RUNTIME_GC_KINDS: readonly RuntimeGcKind[] = [
     "weakcb",
 ];
 
+const runtimeMetricsEnabled = readMetricsServerConfigFromEnv(process.env).enabled;
+
 export const runtimeEventLoopLagSecondsGauge = getOrCreateMetric("runtime_event_loop_lag_seconds", () => {
-    const eventLoopDelayMonitor = monitorEventLoopDelay({ resolution: 20 });
-    eventLoopDelayMonitor.enable();
-    onShutdown("runtime-metrics", async () => {
-        eventLoopDelayMonitor.disable();
-    });
+    // The exporter is the only consumer; a disabled exporter needs no sampler.
+    const eventLoopDelayMonitor = runtimeMetricsEnabled ? monitorEventLoopDelay({ resolution: 20 }) : undefined;
+    if (eventLoopDelayMonitor) {
+        eventLoopDelayMonitor.enable();
+        onShutdown("runtime-metrics", async () => {
+            eventLoopDelayMonitor.disable();
+        });
+    }
     return new Gauge({
         name: "runtime_event_loop_lag_seconds",
         help: "Observed event loop lag in seconds",
         labelNames: ["stat"] as const,
         registers: [register],
         collect() {
+            if (!eventLoopDelayMonitor) return;
             this.set({ stat: "mean" }, eventLoopDelayMonitor.mean / 1_000_000_000);
             this.set({ stat: "max" }, eventLoopDelayMonitor.max / 1_000_000_000);
         },
@@ -111,7 +118,7 @@ export function recordRuntimeGcEvent(params: Readonly<{
 initializeRuntimeGcMetrics();
 
 // Metric-module re-evaluation reuses the same registry and its existing observer.
-if (!runtimeGcMetricsAlreadyRegistered) {
+if (runtimeMetricsEnabled && !runtimeGcMetricsAlreadyRegistered) {
     const kinds = new Map<number, RuntimeGcKind>([
         [constants.NODE_PERFORMANCE_GC_MAJOR, "major"],
         [constants.NODE_PERFORMANCE_GC_MINOR, "minor"],
