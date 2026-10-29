@@ -64,6 +64,16 @@ function uniqueOverrides(overrides: readonly ProviderEndpointOverrideV1[], ctx: 
   });
 }
 
+export const ProviderModelGenerationSettingsV1Schema = lazyZodSchema(() => z.strictObject({
+  temperature: z.optional(z.nullable(z.number().check(z.minimum(0), z.maximum(2)))),
+  maxTokens: z.optional(z.nullable(z.number().check(z.int()))),
+}));
+
+/** A per-model patch; null removes that model's overrides. Omitted fields retain intent. */
+export const ProviderConnectionModelSettingsUpdateV1Schema = lazyZodSchema(() => z.record(
+  ProviderModelIdSchema, z.nullable(ProviderModelGenerationSettingsV1Schema),
+));
+
 export const ProviderConnectionV1Schema = lazyZodSchema(() => z.strictObject({
   v: z.literal(1),
   id: ProviderConnectionIdSchema,
@@ -83,10 +93,7 @@ export const ProviderConnectionV1Schema = lazyZodSchema(() => z.strictObject({
   purposeBindingDefaults: z.optional(ProviderConnectionPurposeBindingDefaultsV1Schema),
   gatewayPlacement: z.optional(ProviderGatewayPlacementV1Schema),
   claudeHelperModels: z.optional(ProviderClaudeHelperModelsV1Schema),
-  modelSettings: z.optional(z.record(ProviderModelIdSchema, z.strictObject({
-    temperature: z.optional(z.nullable(z.number().check(z.minimum(0), z.maximum(2)))),
-    maxTokens: z.optional(z.nullable(z.number().check(z.int()))),
-  }))),
+  modelSettings: z.optional(z.record(ProviderModelIdSchema, ProviderModelGenerationSettingsV1Schema)),
   revision: z.number().check(z.int(), z.nonnegative()),
   createdAt: z.number().check(z.nonnegative()),
   updatedAt: z.number().check(z.nonnegative()),
