@@ -36,7 +36,9 @@ At the end, the installer prints:
 
 Local access:
 
-- `http://<container-ip>:53288` (LAN)
+- `http://<container-ip>:3005` (LAN, default port)
+
+Use the installer’s printed URL if you set `HAPPIER_PVE_SERVER_PORT` or already have a container using a different port.
 
 If you select **Tailscale** during install, the stack typically binds to `loopback` and will not be reachable from your LAN IP. In that case, use the installer’s printed **HTTPS** URL instead.
 
@@ -52,7 +54,7 @@ If you select **Tailscale** during install, the stack typically binds to `loopba
 4. On your phone, scan the QR code (or open the deep link). The app will prompt to switch servers (if needed), then you can sign in/create an account and approve the terminal connection.
 5. If you installed **Dev box**, SSH into the container and run:
    - `sudo -u happier -H happier auth login`
-   - (If needed) `systemctl restart 'happier-daemon.*.service'`
+   - If needed, restart the daemon using the [service commands below](/self-hosting/proxmox#post-install-common-commands).
 
 ## After install: recommended onboarding flow
 
@@ -86,7 +88,7 @@ If you need to change it later, edit the same file and restart the stack/service
 
 For a reverse proxy setup, you typically terminate TLS on your proxy and forward to:
 
-- `http://<container-ip>:53288`
+- `http://<container-ip>:3005`
 
 Make sure your proxy supports **WebSockets** and forwards the usual “real URL” headers:
 
@@ -113,7 +115,7 @@ Then restart:
 
 ```
 happier.example.com {
-  reverse_proxy http://<container-ip>:53288
+  reverse_proxy http://<container-ip>:3005
 }
 ```
 
@@ -131,7 +133,7 @@ server {
   # TLS config omitted (use certbot, or your existing TLS setup)
 
   location / {
-    proxy_pass http://<container-ip>:53288;
+    proxy_pass http://<container-ip>:3005;
     proxy_http_version 1.1;
 
     proxy_set_header Host $host;
@@ -146,7 +148,7 @@ server {
 }
 ```
 
-If you use a UI-driven reverse proxy (e.g. Nginx Proxy Manager / Traefik), make sure “WebSocket support” is enabled and the upstream is `http://<container-ip>:53288`.
+If you use a UI-driven reverse proxy (e.g. Nginx Proxy Manager / Traefik), make sure “WebSocket support” is enabled and the upstream is `http://<container-ip>:3005`.
 
 ### 2) Configure your app/web UI to use your server
 
@@ -178,7 +180,7 @@ After login completes:
 
 - Default (recommended installers):
   - If autostart is enabled, the daemon runs as a systemd system service inside the container.
-  - If needed, restart it: `systemctl restart 'happier-daemon.*.service'`
+  - If needed, restart it using the [service commands](/self-hosting/proxmox#post-install-common-commands).
 - From-source installs:
   - If autostart is enabled, the service will start the daemon automatically after credentials exist.
   - Otherwise (manual start), restart so the daemon can start with the new credentials:
@@ -214,8 +216,8 @@ For ongoing profile switching and multi-server usage, see [Homes](/accounts/mult
 
 ### Serve the web UI
 
-- **Yes**: Builds the UI and serves it from the server.
-- **No**: Skips UI dependencies/build for a faster install.
+- **Yes**: Serves a prebuilt release bundle with managed installs, or builds the UI with from-source installs.
+- **No**: Skips the separate UI installation/build. The [unreleased helper update](/self-hosting/proxmox#unreleased-helper-update) changes this option for managed installs.
 
 ### Autostart at boot
 
@@ -244,11 +246,11 @@ Manual enrollment commands (inside the container):
 ```bash
 tailscale up
 tailscale set --operator=happier
-tailscale serve --bg http://127.0.0.1:53288
+tailscale serve --bg http://127.0.0.1:3005
 tailscale serve status
 ```
 
-### HStack release channel
+### Release channel
 
 By default, the Proxmox helper script installs Happier using the managed **Relay runtime** (`happier relay host` under the hood), which supports stable/preview/dev channels and in-place updates.
 
@@ -257,15 +259,17 @@ If you prefer an install that builds from source using `npx ... hstack setup-fro
 Non-interactive overrides:
 
 - `HAPPIER_PVE_INSTALL_METHOD=installers|from_source` (default: `installers`)
-- `HAPPIER_PVE_HSTACK_CHANNEL=stable|preview|dev` (`preview` maps to npm `@next`)
-- `HAPPIER_PVE_HSTACK_PACKAGE='@happier-dev/stack@<tag-or-version>'` (from-source only; takes precedence)
+- `HAPPIER_PVE_CHANNEL=stable|preview|dev` (`HAPPIER_PVE_HSTACK_CHANNEL` is a legacy alias; from-source `preview` maps to npm `@next`)
+- `HAPPIER_PVE_STACK_PACKAGE='@happier-dev/stack@<tag-or-version>'` (from-source only; takes precedence; `HAPPIER_PVE_HSTACK_PACKAGE` is a legacy alias)
+
+CLI examples below use the stable command, `happier`. Use `hprev` for preview or `hdev` for dev when managing those installations.
 
 ## HTTPS guidance (important)
 
 For remote usage, the Happier web UI needs **HTTPS** (secure context). Typical setups:
 
 - **Tailscale Serve** (easiest): gives you an HTTPS URL without opening ports.
-- **Reverse proxy**: terminate TLS on your network edge and proxy to `http://<container-ip>:53288` (ensure WebSockets are supported).
+- **Reverse proxy**: terminate TLS on your network edge and proxy to `http://<container-ip>:3005` (ensure WebSockets are supported).
 
 ## Post-install: common commands
 
@@ -278,9 +282,16 @@ Service management (recommended installers):
 - Server:
   - `systemctl status happier-server`
   - `journalctl -u happier-server -f`
-- Dev box daemon (if installed):
-  - `systemctl status 'happier-daemon.*.service'`
-  - `journalctl -u 'happier-daemon.*.service' -f`
+
+For a Dev box daemon, run the CLI as root with the `happier` user's home when managing its system service:
+
+```bash
+env HOME=/home/happier HAPPIER_HOME_DIR=/home/happier/.happier happier service list --mode system --system-user happier
+env HOME=/home/happier HAPPIER_HOME_DIR=/home/happier/.happier happier --server proxmox service status --mode system --system-user happier
+env HOME=/home/happier HAPPIER_HOME_DIR=/home/happier/.happier happier --server proxmox service logs --mode system --system-user happier
+```
+
+Replace `status` with `start`, `stop`, or `restart` for the corresponding action. If the inventory shows a pinned service, add its `--instance <service-id>` and `--ring <stable|preview|dev>` to the status, logs, or lifecycle command. Use the CLI's service identity rather than selecting a systemd unit by wildcard.
 
 Service management (from-source installs):
 
@@ -301,7 +312,7 @@ After login succeeds:
 
 - Recommended installers:
   - If you installed the daemon system service, it will keep retrying and will connect once credentials exist.
-  - If needed, restart it: `systemctl restart 'happier-daemon.*.service'`
+  - If needed, restart it using the [service commands](/self-hosting/proxmox#post-install-common-commands).
 - From-source installs:
   - If autostart is enabled, the service will detect the new credentials and start the daemon automatically (usually within a few seconds).
   - If you started the stack manually (no service), restart so it can start the daemon with the new credentials:
@@ -316,18 +327,26 @@ If you enabled Tailscale but skipped the key, enroll later:
 
 - `tailscale up`
 - `tailscale set --operator=happier`
-- `tailscale serve --bg http://127.0.0.1:53288`
+- `tailscale serve --bg http://127.0.0.1:3005`
 - `tailscale serve status`
 
 ## Updating
 
 Recommended installers:
 
-- Use the Proxmox helper script “Update” action (it runs `happier relay host install` and also updates the Happier CLI if installed).
-- Or update from inside the container:
-  - `happier relay host install --mode system --channel stable|preview|dev`
-  - `happier self update --channel stable|preview|dev` (Dev box only)
+- Use the Proxmox helper script’s **Update** action, or run `update` as root inside the container. This is the helper’s update path for the managed relay and installed CLI.
+- Avoid running `happier self update` as root to update a CLI installed for the container: it can select root’s private installation instead.
 
 From-source installs:
 
 - There is no fully supported in-place updater. Re-run the installer in a fresh container, or update the checked-out workspace manually (advanced).
+
+## Unreleased helper update
+
+[ProxmoxVE pull request #8](https://github.com/happier-dev/ProxmoxVE/pull/8) updates the helper described here. These changes are unreleased and are not available from the `main` install command above until that pull request is merged:
+
+- The official CLI bootstrap installs into `/opt/happier-cli`, outside the relay’s installation directory. Updates refresh that CLI before reinstalling the relay, preserve services’ enabled and running states separately, and report incomplete updates.
+- Managed installs always serve the web UI bundled with the relay. `HAPPIER_PVE_SERVE_UI=0` applies only to from-source installs.
+- Dev box installs can optionally install Claude Code and Codex (`HAPPIER_PVE_INSTALL_AGENTS=1`, the revised helper’s default) and accept a GitHub token through `HAPPIER_PVE_GITHUB_PAT`. The token is made available to agents as `GH_TOKEN` and `GITHUB_PERSONAL_ACCESS_TOKEN`; from-source installs use the existing stack env file.
+- Optional install-time QR authentication uses `HAPPIER_PVE_DAEMON_AUTH=1`. You can skip it and authenticate afterward.
+- Managed installs can opt into daily updates with `HAPPIER_PVE_AUTO_UPDATE=1` and choose a local time with `HAPPIER_PVE_AUTO_UPDATE_AT=HH:MM` (default `04:00`). The `happier-pve-update` systemd timer runs the same `update` entry point; inspect its output with `journalctl -u happier-pve-update`. From-source installs remain manual.
