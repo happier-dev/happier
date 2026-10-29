@@ -3,6 +3,9 @@ import test from 'node:test';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import fs from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
+import { createTempFixture } from '../testkit/core/temp_fixture.mjs';
 
 import { writeArtifactManifest } from '../runtime/shared/artifact_manifest.mjs';
 import { writeRuntimeManifest, writeRuntimePointer } from '../runtime/shared/runtime_manifest.mjs';
@@ -67,6 +70,58 @@ test('snapshot retention keeps the newest publication for each consumer target',
   await rm(join(damaged, 'server'), { recursive: true });
   const result = await pruneRuntimeSnapshots({ stackBaseDir, keepCount: 1 });
   assert.deepEqual(result.keptSnapshotIds.sort(), ['arm-new', 'x64']);
+});
+
+test('component retention batches eligible artifacts into two censuses and retains late references', async t => {
+  for (const count of [3, 1024]) {
+    await t.test(`${count} eligible artifacts`, async t => {
+      const { root: stackBaseDir } = await createTempFixture(t, { prefix: 'hstack-retention-batch-' });
+      const procRoot = join(stackBaseDir, 'proc');
+      await mkdir(join(procRoot, '42', 'fd'), { recursive: true });
+      await writeFile(join(procRoot, '42', 'status'), `State:\tS\nUid:\t${Array(4).fill(process.getuid()).join('\t')}\n`);
+      await writeFile(join(procRoot, '42', 'environ'), '');
+      await writeFile(join(procRoot, '42', 'maps'), '');
+      fs.symlinkSync(stackBaseDir, join(procRoot, '42', 'cwd'));
+      const eligibleIds = [];
+      for (let index = 0; index < count; index++) {
+        const id = `obsolete-${index}`;
+        eligibleIds.push(id);
+        await writeArtifact(stackBaseDir, 'server', id, '2026-10-01T00:00:00Z');
+      }
+      // Invalid publications participate in the same sweep as expired valid ones.
+      const invalid = join(stackBaseDir, 'artifacts', 'server', 'invalid');
+      await mkdir(invalid);
+      await writeArtifact(stackBaseDir, 'server', 'latest', '2026-10-03T00:00:00Z');
+      const old = new Date(Date.now() - 3600000);
+      const componentDir = join(stackBaseDir, 'artifacts', 'server');
+      for (const id of [...eligibleIds, 'invalid']) {
+        const directory = join(componentDir, id);
+        if (id !== 'invalid') {
+          fs.utimesSync(join(directory, 'payload', 'happier-server'), old, old);
+          fs.utimesSync(join(directory, 'payload'), old, old);
+          fs.utimesSync(join(directory, 'manifest.json'), old, old);
+        }
+        fs.utimesSync(directory, old, old);
+      }
+      const readdir = fs.readdirSync;
+      let censuses = 0;
+      // Count real OS observations; the production collector and deleter run unchanged.
+      t.mock.method(fs, 'readdirSync', (path, ...args) => {
+        if (path === procRoot && ++censuses === 2) {
+          fs.symlinkSync(join(componentDir, eligibleIds[0], 'payload', 'happier-server'), join(procRoot, '42', 'fd', '9'));
+        }
+        return readdir(path, ...args);
+      });
+      t.mock.method(console, 'error', () => {});
+      syncBuiltinESMExports();
+      t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); });
+      const result = await pruneComponentArtifacts({ stackBaseDir, component: 'server', keepCount: 1, unusedArtifactProcRoot: procRoot });
+      assert.equal(censuses, 2, 'all eligible artifacts of a component share two process censuses');
+      assert.deepEqual(result.keptFingerprints.sort(), [eligibleIds[0], 'latest'].sort());
+      assert.deepEqual(result.removedEntries.sort(), [...eligibleIds.slice(1), 'invalid'].sort());
+      assert.deepEqual(fs.readdirSync(componentDir).sort(), [eligibleIds[0], 'latest'].sort());
+    });
+  }
 });
 
 test('worker artifact retention uses the canonical count but preserves live descriptors and unknown observations', async t => {

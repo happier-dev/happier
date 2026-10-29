@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, writeFile, utimes, symlink, access, rm, link, stat } from 'node:fs/promises';
+import { mkdir, writeFile, utimes, symlink, access, rm, link, stat, chmod } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createTempFixture } from '../../testkit/core/temp_fixture.mjs';
 import { reapHistoricalTempRoots } from './historical_temp_roots.mjs';
@@ -8,6 +8,227 @@ import fs from 'node:fs';
 import childProcess from 'node:child_process';
 import { syncBuiltinESMExports } from 'node:module';
 import { fileURLToPath } from 'node:url';
+
+test('historical sweep uses exactly two real process censuses independent of candidate count', async t => {
+  for (const count of [1, 32, 1024]) {
+    await t.test(`${count} candidates`, async t => {
+      const { root } = await createTempFixture(t, { prefix: 'hstack-census-cost-' });
+      const parent = join(root, 'tmp'), proc = join(root, 'proc');
+      await mkdir(join(proc, '42', 'fd'), { recursive: true });
+      await writeFile(join(proc, '42', 'status'), `State:\tS\nUid:\t${Array(4).fill(process.getuid()).join('\t')}\n`);
+      await writeFile(join(proc, '42', 'environ'), '');
+      await writeFile(join(proc, '42', 'maps'), '');
+      await symlink(root, join(proc, '42', 'cwd'));
+      const old = new Date(Date.now() - 48 * 3600000);
+      for (let index = 0; index < count; index++) {
+        const directory = join(parent, `hstack-completed-${index}`);
+        await mkdir(directory, { recursive: true });
+        await utimes(directory, old, old);
+      }
+      const readdir = fs.readdirSync;
+      let censuses = 0;
+      // Observe the OS inventory boundary without replacing the collector.
+      t.mock.method(fs, 'readdirSync', (path, ...args) => {
+        if (path === proc) censuses++;
+        return readdir(path, ...args);
+      });
+      t.mock.method(console, 'error', () => {});
+      syncBuiltinESMExports();
+      t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); });
+      const result = reapHistoricalTempRoots(parent, proc);
+      assert.equal(result.reclaimedRoots, count);
+      assert.deepEqual(result.reclaimedNames.sort(), Array.from({ length: count }, (_, index) => `hstack-completed-${index}`).sort());
+      assert.equal(result.retainedRoots, 0);
+      assert.equal(fs.readdirSync(parent).length, 0);
+      assert.equal(censuses, 2, 'process-reference work must be constant per sweep');
+    });
+  }
+});
+
+test('final census follows every tree recheck and retains references acquired since the first census', async t => {
+  const { root } = await createTempFixture(t, { prefix: 'hstack-census-late-' });
+  const parent = join(root, 'tmp'), proc = join(root, 'proc');
+  await mkdir(join(proc, '42', 'fd'), { recursive: true });
+  await writeFile(join(proc, '42', 'status'), `State:\tS\nUid:\t${Array(4).fill(process.getuid()).join('\t')}\n`);
+  await writeFile(join(proc, '42', 'environ'), '');
+  await writeFile(join(proc, '42', 'maps'), '');
+  const cwd = join(proc, '42', 'cwd');
+  await symlink(root, cwd);
+  const old = new Date(Date.now() - 48 * 3600000);
+  const candidates = ['hstack-unused', 'hstack-late-held'].map(name => join(parent, name));
+  for (const directory of candidates) {
+    await mkdir(directory, { recursive: true });
+    await utimes(directory, old, old);
+  }
+  const readdir = fs.readdirSync, lstat = fs.lstatSync;
+  const treeReads = new Map(candidates.map(path => [path, 0]));
+  let censuses = 0;
+  let allTreesRechecked = false;
+  t.mock.method(fs, 'lstatSync', (path, ...args) => {
+    if (treeReads.has(path)) treeReads.set(path, treeReads.get(path) + 1);
+    return lstat(path, ...args);
+  });
+  t.mock.method(fs, 'readdirSync', (path, ...args) => {
+    if (path === proc && ++censuses === 2) {
+      allTreesRechecked = [...treeReads.values()].every(count => count >= 3);
+      fs.unlinkSync(cwd);
+      fs.symlinkSync(candidates[1], cwd);
+    }
+    return readdir(path, ...args);
+  });
+  syncBuiltinESMExports();
+  t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); });
+  const result = reapHistoricalTempRoots(parent, proc, { candidateNames: candidates.map(path => path.slice(parent.length + 1)) });
+  assert.equal(result.reclaimedRoots, 1);
+  assert.equal(result.retainedRoots, 1);
+  assert.deepEqual(result.reclaimedNames, ['hstack-unused']);
+  assert.equal(fs.existsSync(candidates[0]), false);
+  await access(candidates[1]);
+  assert.equal(allTreesRechecked, true, 'no deletion census may precede another candidate tree recheck');
+  assert.equal(censuses, 2);
+});
+
+test('deletion pass retains a root replaced or refreshed during the final process census', async t => {
+  for (const change of ['replace', 'refresh']) {
+    await t.test(change, async t => {
+      const { root } = await createTempFixture(t, { prefix: 'hstack-census-tree-' });
+      const parent = join(root, 'tmp'), proc = join(root, 'proc');
+      const candidate = join(parent, 'hstack-completed');
+      await mkdir(candidate, { recursive: true });
+      await mkdir(proc);
+      const old = new Date(Date.now() - 48 * 3600000);
+      await utimes(candidate, old, old);
+      const readdir = fs.readdirSync;
+      let censuses = 0;
+      t.mock.method(fs, 'readdirSync', (path, ...args) => {
+        if (path === proc && ++censuses === 2) {
+          if (change === 'replace') {
+            fs.renameSync(candidate, join(root, 'original'));
+            fs.mkdirSync(candidate);
+            fs.utimesSync(candidate, old, old);
+          } else fs.utimesSync(candidate, new Date(), new Date());
+        }
+        return readdir(path, ...args);
+      });
+      syncBuiltinESMExports();
+      t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); });
+      const result = reapHistoricalTempRoots(parent, proc);
+      assert.equal(result.reclaimedRoots, 0);
+      assert.equal(result.retainedRoots, 1);
+      await access(candidate);
+    });
+  }
+});
+
+test('procfs ESRCH completes custody census while unreadable live processes retain roots', { skip: process.platform !== 'linux' }, async t => {
+  for (const [entry, code] of [['cwd', 'ESRCH'], ['maps', 'ESRCH'], ['cwd', 'EACCES'], ['maps', 'EPERM'], ['maps', 'EIO']]) {
+    await t.test(`${entry} ${code} with existing process directory`, async t => {
+      const { root } = await createTempFixture(t, { prefix: 'hstack-proc-exit-' });
+      const temp = join(root, 'tmp'), proc = join(root, 'proc'), processRoot = join(proc, '42');
+      await mkdir(join(processRoot, 'fd'), { recursive: true });
+      await writeFile(join(processRoot, 'status'), `State:\tS\nUid:\t${Array(4).fill(process.getuid()).join('\t')}\n`);
+      await writeFile(join(processRoot, 'environ'), '');
+      await writeFile(join(processRoot, 'maps'), '');
+      await symlink(root, join(processRoot, 'cwd'));
+      const candidate = join(temp, 'hstack-completed');
+      await mkdir(candidate, { recursive: true });
+      const old = new Date(Date.now() - 48 * 3600000);
+      await utimes(candidate, old, old);
+      const method = entry === 'cwd' ? 'readlinkSync' : 'readFileSync';
+      const original = fs[method];
+      // Procfs is the OS boundary: an exiting task can retain its directory
+      // while its own address-space/descriptor observations report ESRCH.
+      t.mock.method(fs, method, (path, ...args) => {
+        if (path === join(processRoot, entry)) throw Object.assign(new Error('procfs observation failed'), { code });
+        return original(path, ...args);
+      });
+      syncBuiltinESMExports();
+      t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); });
+      const result = reapHistoricalTempRoots(temp, proc);
+      assert.equal(fs.existsSync(processRoot), true);
+      assert.equal(result.reclaimedRoots, code === 'ESRCH' ? 1 : 0);
+      assert.equal(result.retainedRoots, code === 'ESRCH' ? 0 : 1);
+      assert.equal(result.observationUnavailable === null, code === 'ESRCH');
+      assert.equal(fs.existsSync(candidate), code !== 'ESRCH');
+    });
+  }
+});
+
+test('privileged collector entry skips procfs ESRCH without suppressing live permission denial', { skip: process.platform !== 'linux' }, async t => {
+  const { root } = await createTempFixture(t, { prefix: 'hstack-collector-exit-' });
+  const proc = join(root, 'proc');
+  await mkdir(join(proc, '42'), { recursive: true });
+  await writeFile(join(proc, '42', 'status'), `State:\tS\nUid:\t${Array(4).fill(process.getuid()).join('\t')}\n`);
+  const collector = fileURLToPath(new URL('./historical_temp_roots.mjs', import.meta.url));
+  const script = `
+    import fs from 'node:fs';
+    import { syncBuiltinESMExports } from 'node:module';
+    import { pathToFileURL } from 'node:url';
+    const [collector, proc, code, uid] = process.argv.slice(1);
+    const originals = Object.fromEntries(['readFileSync', 'readdirSync', 'existsSync'].map(name => [name, fs[name]]));
+    for (const [name, original] of Object.entries(originals)) fs[name] = (path, ...args) => {
+      if (path === '/proc/42/environ') throw Object.assign(new Error('procfs observation failed'), { code });
+      return original(typeof path === 'string' && (path === '/proc' || path.startsWith('/proc/')) ? proc + path.slice(5) : path, ...args);
+    };
+    syncBuiltinESMExports();
+    process.argv = [process.execPath, collector, '--observe-process-references', uid];
+    await import(pathToFileURL(collector).href);
+  `;
+  for (const code of ['ESRCH', 'EACCES']) {
+    const result = childProcess.spawnSync(process.execPath, ['--input-type=module', '-e', script, collector, proc, code, String(process.getuid())], { encoding: 'utf8', input: '["42"]' });
+    if (code === 'ESRCH') {
+      assert.equal(result.status, 0, result.stderr);
+      assert.deepEqual(JSON.parse(result.stdout), { paths: [], identities: [] });
+    } else {
+      assert.notEqual(result.status, 0);
+      assert.match(result.stderr, /references unavailable \(EACCES\)/);
+    }
+  }
+});
+
+test('historical retention reclaims read-only Go-cache trees without changing held roots or symlink targets', { skip: process.platform === 'win32' }, async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-readonly-retention-', registerCleanup: false });
+  const temp = join(fixture.root, 'tmp'), proc = join(fixture.root, 'proc');
+  const outside = join(fixture.root, 'outside'), held = join(temp, 'hstack-held'), fresh = join(temp, 'hstack-fresh');
+  const directories = [];
+  t.after(async () => {
+    for (const directory of directories) await chmod(directory, 0o700).catch(error => { if (error.code !== 'ENOENT') throw error; });
+    await fixture.cleanup();
+  });
+  await mkdir(join(proc, '42', 'fd'), { recursive: true });
+  await writeFile(join(proc, '42', 'status'), `State:\tS\nUid:\t${Array(4).fill(process.getuid()).join('\t')}\n`);
+  await writeFile(join(proc, '42', 'environ'), '');
+  await writeFile(join(proc, '42', 'maps'), '');
+  await mkdir(outside);
+  await writeFile(join(outside, 'keep'), 'separately owned data');
+  directories.push(outside);
+  const old = new Date(Date.now() - 48 * 3600000);
+  const stale = Array.from({ length: 4 }, (_, index) => join(temp, `hstack-completed-${index}`));
+  for (const directory of [...stale, held, fresh]) {
+    const cache = join(directory, 'go-cache');
+    await mkdir(cache, { recursive: true });
+    await writeFile(join(cache, 'module'), 'read-only compiler cache');
+    await symlink(outside, join(directory, 'outside'));
+    directories.push(cache);
+    for (const path of [join(cache, 'module'), cache, join(directory, 'outside'), directory]) {
+      if (path.endsWith('/outside')) continue;
+      await utimes(path, old, old);
+    }
+    // Symlink timestamps participate in the existing freshness contract.
+    await fs.promises.lutimes(join(directory, 'outside'), old, old);
+    await utimes(directory, old, old);
+  }
+  await symlink(held, join(proc, '42', 'cwd'));
+  await utimes(join(fresh, 'go-cache/module'), new Date(), new Date());
+  for (const directory of directories) await chmod(directory, 0o500);
+  const result = reapHistoricalTempRoots(temp, proc);
+  assert.equal(result.reclaimedRoots, stale.length, 'N completed, expired read-only roots must leave zero retained stale roots');
+  for (const directory of stale) await assert.rejects(access(directory), { code: 'ENOENT' });
+  for (const directory of [outside, join(held, 'go-cache'), join(fresh, 'go-cache')]) {
+    assert.equal((await stat(directory)).mode & 0o777, 0o500, 'retained trees and external symlink targets keep their permissions');
+  }
+  await access(join(outside, 'keep'));
+});
 
 test('same-UID procfs permission denial uses complete read-only observation, never a process-name exemption', async t => {
   const { root } = await createTempFixture(t, { prefix: 'hstack-proc-permission-' });
@@ -120,7 +341,7 @@ test('historical sweep reclaims only old known roots with no cwd, fd or mapped-f
   await writeFile(join(proc, '42', 'status'), 'State:\tS (sleeping)\n');
   await writeFile(join(proc, '42', 'environ'), '');
   const old = new Date(Date.now() - 48 * 60 * 60 * 1000);
-  for (const name of ['yarn--old', 'yarn--live', 'yarn--recent-child', 'happier-dev-test-old', 'happier-old', 'hstack-old', 'docs-check-old', 'happier-cwd', 'happier-fd', 'happier-mapped', 'happier-recent-child', 'happier-collision', 'happier-weird\\name', 'random-name']) {
+  for (const name of ['yarn--old', 'yarn--live', 'yarn--recent-child', 'happier-dev-test-old', 'happier-old', 'hstack-old', 'docs-check-old', 'happier-metro-cache', 'happier-plugin-inventory', 'happier-cwd', 'happier-fd', 'happier-mapped', 'happier-recent-child', 'happier-collision', 'happier-weird\\name', 'random-name']) {
     const dir = join(temp, name);
     await mkdir(dir);
     await writeFile(join(dir, 'data'), 'retained or reclaimed');
@@ -128,6 +349,10 @@ test('historical sweep reclaims only old known roots with no cwd, fd or mapped-f
     await utimes(dir, old, old);
   }
   await symlink(join(temp, 'happier-cwd'), join(proc, '42', 'cwd'));
+  const inventoryPath = join(temp, 'happier-plugin-inventory', 'data');
+  // A live process can outlast its inherited scratch directory. Preserve its
+  // raw binding without blocking reclamation of unrelated existing roots.
+  await writeFile(join(proc, '42', 'environ'), `TMPDIR=${join(root, 'removed-scratch')}\0HAPPIER_TEST_TEMP_ROOTS=${join(root, 'removed-test-root')}\0HAPPIER_UI_METRO_CACHE_ROOT=${join(temp, 'happier-metro-cache')}\0HAPPIER_UI_PLUGIN_ARTIFACT_INVENTORY=${inventoryPath}\0`);
   await symlink(join(temp, 'happier-fd', 'data'), join(proc, '42', 'fd', '9'));
   await symlink(join(temp, 'yarn--live', 'data'), join(proc, '42', 'fd', '11'));
   await symlink(join(temp, 'happier-collision') + '2/data', join(proc, '42', 'fd', '10'));
@@ -135,13 +360,19 @@ test('historical sweep reclaims only old known roots with no cwd, fd or mapped-f
   await utimes(join(temp, 'happier-recent-child', 'data'), new Date(), new Date());
   await utimes(join(temp, 'yarn--recent-child', 'data'), new Date(), new Date());
   await symlink(join(temp, 'random-name'), join(temp, 'happier-symlink'));
-  const result = reapHistoricalTempRoots(temp, proc);
+  const freshPaths = [];
+  const result = reapHistoricalTempRoots(temp, proc, { retainCandidate: (_directory, references) => {
+    freshPaths.push(references?.paths ?? []);
+    return false;
+  } });
   assert.equal(result.reclaimedRoots, 6);
+  assert.ok(freshPaths.length > 0 && freshPaths.every(paths => paths.includes(inventoryPath)),
+    'lifecycle retention receives the immediately rechecked process bindings');
   assert.ok(result.reclaimedBytes > 0);
   for (const name of ['yarn--old', 'happier-dev-test-old', 'happier-old', 'hstack-old', 'docs-check-old', 'happier-collision']) {
     await assert.rejects(access(join(temp, name)), { code: 'ENOENT' });
   }
-  for (const name of ['yarn--live', 'yarn--recent-child', 'happier-cwd', 'happier-fd', 'happier-mapped', 'happier-recent-child', 'happier-weird\\name', 'random-name', 'happier-symlink']) await access(join(temp, name));
+  for (const name of ['yarn--live', 'yarn--recent-child', 'happier-metro-cache', 'happier-plugin-inventory', 'happier-cwd', 'happier-fd', 'happier-mapped', 'happier-recent-child', 'happier-weird\\name', 'random-name', 'happier-symlink']) await access(join(temp, name));
   assert.equal(reapHistoricalTempRoots(temp, proc).reclaimedRoots, 0);
 });
 
@@ -160,6 +391,37 @@ test('historical sweep retains old roots when live process observation is unavai
   await access(dir);
   await rm(join(proc, '42'), { recursive: true });
   assert.equal(reapHistoricalTempRoots(temp, proc).reclaimedRoots, 1);
+});
+
+test('unavailable fresh process observation settles the sweep and reports retained remaining roots', async t => {
+  const { root } = await createTempFixture(t, { prefix: 'hstack-historical-fresh-unavailable-' });
+  const parent = join(root, 'tmp');
+  const proc = join(root, 'proc');
+  await mkdir(join(proc, '42', 'fd'), { recursive: true });
+  await writeFile(join(proc, '42', 'status'), `State:\tS\nUid:\t${Array(4).fill(process.getuid()).join('\t')}\n`);
+  await writeFile(join(proc, '42', 'environ'), '');
+  await writeFile(join(proc, '42', 'maps'), '');
+  await symlink(root, join(proc, '42', 'cwd'));
+  const historical = new Date(Date.now() - 48 * 3600000);
+  for (const name of ['happier-old-a', 'happier-old-b', 'happier-old-c']) {
+    await mkdir(join(parent, name), { recursive: true });
+    await utimes(join(parent, name), historical, historical);
+  }
+  const read = fs.readFileSync;
+  let bindingReads = 0;
+  t.mock.method(fs, 'readFileSync', (path, ...args) => {
+    if (path === join(proc, '42', 'environ') && ++bindingReads > 1) {
+      throw Object.assign(new Error('process observation denied'), { code: 'EACCES' });
+    }
+    return read(path, ...args);
+  });
+  syncBuiltinESMExports();
+  t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); });
+  const result = reapHistoricalTempRoots(parent, proc);
+  assert.equal(result.reclaimedRoots, 0);
+  assert.equal(result.retainedRoots, 3);
+  assert.equal(bindingReads, 2, 'an unavailable fresh census settles cleanup instead of retrying once per root');
+  assert.match(result.observationUnavailable ?? '', /EACCES/);
 });
 
 test('sweep retains inherited TMPDIR and test roots before a detached process first uses them', async t => {
@@ -219,11 +481,13 @@ test('dry-run measures verified eligible roots without deleting or changing thei
   await utimes(candidate, old, old);
   const result = reapHistoricalTempRoots(parent, proc, { dryRun: true });
   assert.equal(result.reclaimedRoots, 0);
+  assert.deepEqual(result.reclaimedNames, []);
   assert.equal(result.reclaimableRoots, 1);
   await access(candidate);
   const removed = reapHistoricalTempRoots(parent, proc);
   assert.equal(result.reclaimableBytes, removed.reclaimedBytes);
   assert.equal(removed.reclaimedRoots, 1);
+  assert.deepEqual(removed.reclaimedNames, ['happier-obsolete']);
 });
 
 test('count-retention owners can reclaim recent unheld candidates while retaining another uid', async t => {

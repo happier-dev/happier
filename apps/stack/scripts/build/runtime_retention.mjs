@@ -298,18 +298,7 @@ async function pruneComponentArtifactsUnderLock({ stackBaseDir, component, keepC
   const keep = new Set(retainedFingerprintsByComponent.get(String(component ?? '').trim()) ?? []);
   const validArtifacts = [];
   const removedEntries = [];
-  const removeArtifact = async artifactId => {
-    if (unusedArtifactProcRoot) {
-      const { reapHistoricalTempRoots } = await import('../utils/dev_targets/historical_temp_roots.mjs');
-      // Artifact count/reference retention owns eligibility; custody owns the
-      // additional worker proof that no process holds the selected directory.
-      const result = reapHistoricalTempRoots(componentDir, unusedArtifactProcRoot, {
-        candidateNames: [artifactId], minimumAgeMs: 0,
-      });
-      if (!result.reclaimedRoots) { keep.add(artifactId); return; }
-    } else await rm(join(componentDir, artifactId), { recursive: true, force: true });
-    removedEntries.push(artifactId);
-  };
+  const eligibleIds = [];
 
   for (const artifactId of artifactIds) {
     // atomic_dir_swap owns private staging/rollback directories until commit.
@@ -319,7 +308,7 @@ async function pruneComponentArtifactsUnderLock({ stackBaseDir, component, keepC
     const manifest = await readArtifactManifest({ artifactDir });
     const validation = validateArtifactManifest(manifest);
     if (!validation.ok) {
-      await removeArtifact(artifactId);
+      eligibleIds.push(artifactId);
       continue;
     }
     validArtifacts.push({
@@ -336,7 +325,26 @@ async function pruneComponentArtifactsUnderLock({ stackBaseDir, component, keepC
 
   for (const artifact of validArtifacts) {
     if (keep.has(artifact.id)) continue;
-    await removeArtifact(artifact.id);
+    eligibleIds.push(artifact.id);
+  }
+
+  if (unusedArtifactProcRoot && eligibleIds.length > 0) {
+    const { reapHistoricalTempRoots } = await import('../utils/dev_targets/historical_temp_roots.mjs');
+    // Count/reference retention owns eligibility. Custody proves the entire
+    // component batch unused with two shared process censuses.
+    const result = reapHistoricalTempRoots(componentDir, unusedArtifactProcRoot, {
+      candidateNames: eligibleIds, minimumAgeMs: 0,
+    });
+    const reclaimed = new Set(result.reclaimedNames);
+    for (const artifactId of eligibleIds) {
+      if (reclaimed.has(artifactId)) removedEntries.push(artifactId);
+      else keep.add(artifactId);
+    }
+  } else {
+    for (const artifactId of eligibleIds) {
+      await rm(join(componentDir, artifactId), { recursive: true, force: true });
+      removedEntries.push(artifactId);
+    }
   }
 
   return {

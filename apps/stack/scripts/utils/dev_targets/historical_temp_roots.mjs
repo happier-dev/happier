@@ -1,8 +1,9 @@
-import { existsSync, lstatSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, statSync } from 'node:fs';
-import { dirname, join, sep } from 'node:path';
+import { existsSync, lstatSync, readdirSync, readFileSync, readlinkSync, realpathSync, statSync } from 'node:fs';
+import { basename, dirname, join, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { isHappierTempRootForUid, readHappierTempDirOwnerForDirectory, readHappierTempDirOwnerLiveness } from '../../../../../packages/cli-common/tempDirOwnership.mjs';
+import { removeOwnedDirectorySync } from '../fs/fs.mjs';
 
 // Approved historical sweep: legitimate builds run <=3h and watchers <=2h.
 // A full day is the explicit margin, not an admission or execution deadline.
@@ -54,13 +55,25 @@ function collectProcessReferences(procRoot, ownerUid, { bindingsOnly = false, pr
         try { identities.add(identity(statSync(path))); }
         catch (error) { if (error.code !== 'ENOENT') throw error; }
       };
-      // Detached children can inherit scratch before opening a file in it.
-      // Observe only the explicit non-secret temp bindings, never emit env.
+      const addBinding = path => {
+        addPath(path);
+        // Keep a pathname fact as well as the observed inode: inventories are
+        // replaced atomically while their serving process keeps its binding.
+        let canonical;
+        try { canonical = realpathSync(path); }
+        catch (error) { if (error.code === 'ENOENT') return; throw error; }
+        if (canonical !== path) addPath(canonical);
+      };
+      // Detached children can retain scratch or served cache/asset graphs
+      // without keeping descriptors open. Observe explicit non-secret paths,
+      // never emit their environment or inventory contents.
       for (const binding of readFileSync(join(processRoot, 'environ'), 'utf8').split('\0')) {
-        if (binding.startsWith('TMPDIR=/')) addPath(binding.slice('TMPDIR='.length));
+        for (const name of ['TMPDIR', 'HAPPIER_UI_METRO_CACHE_ROOT', 'HAPPIER_UI_PLUGIN_ARTIFACT_INVENTORY']) {
+          if (binding.startsWith(`${name}=/`)) addBinding(binding.slice(name.length + 1));
+        }
         if (binding.startsWith('HAPPIER_TEST_TEMP_ROOTS=')) {
           for (const path of binding.slice('HAPPIER_TEST_TEMP_ROOTS='.length).split('\n')) {
-            if (path.startsWith('/')) addPath(path);
+            if (path.startsWith('/')) addBinding(path);
           }
         }
       }
@@ -80,7 +93,9 @@ function collectProcessReferences(procRoot, ownerUid, { bindingsOnly = false, pr
         if (path) addPath(path.replace(/\\([0-7]{3})/g, (_, octal) => String.fromCharCode(parseInt(octal, 8))));
       }
     } catch (error) {
-      if (!existsSync(processRoot)) continue; // exited while being observed
+      // Exiting tasks can retain /proc entries after losing their address
+      // space/descriptors. ESRCH is an exited observation, not unreadable use.
+      if (error.code === 'ESRCH' || !existsSync(processRoot)) continue;
       const unavailable = new Error(`live process ${pid} references unavailable (${error.code ?? error.message})`);
       unavailable.canRetryPrivilegedReferences = matchingOwnerUid && ['EACCES', 'EPERM'].includes(error.code);
       throw unavailable;
@@ -120,11 +135,18 @@ function hasUser(directory, tree, references) {
     || [...tree.identities].some(key => references.identities.has(key));
 }
 
+/** Match live pathname bindings and inode identities through aliases. An
+ * unavailable target is unknown; callers must retain it. */
+export function isHistoricalTempPathReferenced(path, references) {
+  return references.paths.includes(path) || references.paths.includes(realpathSync(path))
+    || references.identities.has(identity(statSync(path)));
+}
+
 export function reapHistoricalTempRoots(tempParent, procRoot = '/proc', {
-  candidateNames, ownerUid = process.getuid(), minimumAgeMs = historicalAgeMs, dryRun = false, retainCandidate,
+  candidateNames, ownerUid = process.getuid(), minimumAgeMs = historicalAgeMs, dryRun = false, retainCandidate, processIds,
 } = {}) {
   const result = { reclaimedBytes: 0, reclaimedRoots: 0, retainedRoots: 0, observationUnavailable: null,
-    reclaimableBytes: 0, reclaimableRoots: 0 };
+    reclaimableBytes: 0, reclaimableRoots: 0, reclaimedNames: [] };
   const parent = realpathSync(tempParent);
   const cutoff = Date.now() - minimumAgeMs;
   const candidates = [];
@@ -159,29 +181,63 @@ export function reapHistoricalTempRoots(tempParent, procRoot = '/proc', {
   }
   if (!candidates.length) return result;
   let references;
-  try { references = processReferences(procRoot, ownerUid); }
+  try { references = processReferences(procRoot, ownerUid, { processIds }); }
   catch (error) {
     result.retainedRoots += candidates.length;
     result.observationUnavailable = error.message;
     console.error(`[preferred-execution] historical temporary sweep retained ${candidates.length} roots: ${error.message}`);
     return result;
   }
+  const qualified = [];
   for (const { directory, tree } of candidates) {
     try {
       if (hasUser(directory, tree, references)) { result.retainedRoots++; continue; }
-      // Recheck both mutation and live use immediately before deletion. A
-      // replacement inode never inherits this candidate's deletion authority.
+      // Qualify every tree before the final shared process census, so none
+      // of the potentially expensive tree walks delay the deletion pass.
       const current = inspectTree(directory, new Set(), ownerUid);
-      if (identity(current.info) !== identity(tree.info) || current.newestMtimeMs >= cutoff || current.ownedRootActive
-        || hasUser(directory, current, processReferences(procRoot, ownerUid)) || retainCandidate?.(directory)) {
+      if (identity(current.info) !== identity(tree.info) || current.info.uid !== ownerUid
+        || current.newestMtimeMs >= cutoff || current.ownedRootActive) {
+        result.retainedRoots++;
+        continue;
+      }
+      qualified.push({ directory, tree: current });
+    } catch (error) {
+      if (error.code === 'ENOENT') continue;
+      result.retainedRoots++;
+      console.error(`[preferred-execution] retaining historical temporary root ${directory}: ${error.code ?? error.message}`);
+    }
+  }
+  if (!qualified.length) return result;
+  let currentReferences;
+  try { currentReferences = processReferences(procRoot, ownerUid, { processIds }); }
+  catch (error) {
+    result.retainedRoots += qualified.length;
+    result.observationUnavailable = error.message;
+    console.error(`[preferred-execution] historical temporary sweep retained ${qualified.length} remaining roots: ${error.message}`);
+    return result;
+  }
+  for (const { directory, tree: current } of qualified) {
+    try {
+      // A root replaced or refreshed during the census/deletion pass never
+      // inherits the qualified tree's deletion authority.
+      const info = lstatSync(directory);
+      if (!info.isDirectory() || identity(info) !== identity(current.info)
+        || info.uid !== ownerUid || info.mtimeMs >= cutoff) {
+        result.retainedRoots++;
+        continue;
+      }
+      // Lifecycle owners can reuse this qualified tree's identity/size when
+      // their final pin check and retirement need separate narrow custody.
+      if (hasUser(directory, current, currentReferences) || retainCandidate?.(directory, currentReferences, current)) {
         result.retainedRoots++;
         continue;
       }
       result.reclaimableRoots++;
       result.reclaimableBytes += current.bytes;
       if (dryRun) continue;
-      rmSync(directory, { recursive: true });
+      removeOwnedDirectorySync(directory, { force: false });
       result.reclaimedRoots++;
+      result.reclaimedNames.push(basename(directory));
       result.reclaimedBytes += current.bytes;
       console.error(`[preferred-execution] reclaimed historical temporary root ${directory} (${current.bytes} allocated bytes)`);
     } catch (error) {
@@ -193,17 +249,22 @@ export function reapHistoricalTempRoots(tempParent, procRoot = '/proc', {
   return result;
 }
 
+function readProcessCensus() {
+  const processIds = readFileSync(0, 'utf8').split('\n').filter(line => line.trim()).map(line => {
+    const match = /^(\d+)\s+\d+\s+\S+\s+\d+$/.exec(line.trim());
+    if (!match) throw new Error('process custody census unavailable');
+    return match[1];
+  });
+  if (!processIds.length) throw new Error('process custody census unavailable');
+  return processIds;
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   if (process.argv[2] === '--test-temp-users') {
     try {
       // Reuse the native custody census. The observer is born after this
       // snapshot and never becomes a consumer merely by inheriting bindings.
-      const processIds = process.argv.includes('--census') ? readFileSync(0, 'utf8').split('\n').filter(line => line.trim()).map(line => {
-        const match = /^(\d+)\s+\d+\s+\S+\s+\d+$/.exec(line.trim());
-        if (!match) throw new Error('process custody census unavailable');
-        return match[1];
-      }) : undefined;
-      if (processIds?.length === 0) throw new Error('process custody census unavailable');
+      const processIds = process.argv.includes('--census') ? readProcessCensus() : undefined;
       const references = processReferences('/proc', process.getuid(), { bindingsOnly: true, processIds });
       const users = new Set();
       for (const path of references.paths) {
@@ -219,11 +280,29 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       console.error(`[preferred-execution] temporary custody observation unavailable: ${error.message}`);
       process.exitCode = 2;
     }
+  } else if (process.argv[2] === '--reap-command-temp-root') {
+    // The command owns lifetime, not an age deadline. Reuse historical tree,
+    // inode and complete live-reference qualification before removing it.
+    const directory = process.argv[3];
+    if (process.argv.length !== 4 || !knownRoot.test(basename(directory))) throw new Error('Owned temporary root required');
+    reapHistoricalTempRoots(dirname(directory), '/proc', {
+      candidateNames: [basename(directory)], minimumAgeMs: 0, processIds: readProcessCensus(),
+    });
+  } else if (process.argv[2] === '--remove-owned-temp-root') {
+    // Native custody already proved creator/group and inherited-binding
+    // teardown. Keep that lifetime authority there; share only filesystem removal.
+    const directory = process.argv[3];
+    if (process.argv.length !== 4 || !knownRoot.test(basename(directory))) throw new Error('Owned temporary root required');
+    try {
+      const info = lstatSync(directory);
+      if (!info.isDirectory() || info.uid !== process.getuid()) throw new Error('Owned temporary directory required');
+      removeOwnedDirectorySync(directory);
+    } catch (error) { if (error.code !== 'ENOENT') throw error; }
   } else if (['--observe-process-references', '--observe-temp-bindings'].includes(process.argv[2])) {
     const ownerUid = Number(process.argv[3]);
     if (process.argv.length !== 4 || !Number.isSafeInteger(ownerUid) || ownerUid < 0) throw new Error('process reference owner UID unavailable');
     const bindingsOnly = process.argv[2] === '--observe-temp-bindings';
-    const request = bindingsOnly ? readFileSync(0, 'utf8').trim() : '';
+    const request = readFileSync(0, 'utf8').trim();
     const processIds = request ? JSON.parse(request) : undefined;
     if (processIds !== undefined && (!Array.isArray(processIds) || !processIds.length
       || !processIds.every(pid => typeof pid === 'string' && /^\d+$/.test(pid)))) throw new Error('process custody census unavailable');
