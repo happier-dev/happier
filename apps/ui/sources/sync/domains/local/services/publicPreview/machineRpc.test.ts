@@ -4,7 +4,9 @@ import type {
     LocalServicePublicPreviewSnapshotV1,
 } from '@happier-dev/protocol';
 import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { primeServerFeaturesSnapshot, resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
 
 const machineRpcWithServerScopeMock = vi.hoisted(() => vi.fn());
 
@@ -47,9 +49,60 @@ const snapshot = {
     diagnostics: [],
 } satisfies LocalServicePublicPreviewSnapshotV1;
 
+async function publicOperations(serverId = 'server_1') {
+    const client = await import('./machineRpc');
+    const binding = { machineId: 'machine_1', sessionId: 'session_1', previewId: 'preview_1', exposureId: 'public_preview_1' };
+    return [
+        () => client.fetchLocalServicePublicPreviewStatusViaMachineRpc({ serverId, request: { machineId: binding.machineId } }),
+        () => client.createLocalServicePublicPreviewExposureViaMachineRpc({ serverId, request: {
+            machineId: binding.machineId, sessionId: binding.sessionId, previewId: binding.previewId,
+            mode: 'secret_link', ttlMs: 600_000,
+        } }),
+        () => client.revokeLocalServicePublicPreviewExposureViaMachineRpc({ serverId, request: binding }),
+        () => client.copyLocalServicePublicPreviewUrlViaMachineRpc({ serverId, request: binding }),
+    ];
+}
+
 describe('local service public-preview machine RPC client', () => {
+    beforeEach(() => {
+        const observation = { status: 'ready' as const,
+            features: createRootLayoutFeaturesResponse({ features: { localServices: { publicPreview: { enabled: true } } } }),
+        };
+        primeServerFeaturesSnapshot({ serverId: 'server_1', snapshot: observation });
+        primeServerFeaturesSnapshot({ snapshot: observation });
+    });
     afterEach(() => {
         machineRpcWithServerScopeMock.mockReset();
+        resetServerFeaturesClientForTests();
+    });
+
+    it.each(['disabled', 'missing', 'malformed'] as const)('refuses public status without issuing an RPC when the exact Home bit is %s', async kind => {
+        const features = createRootLayoutFeaturesResponse({ features: { localServices: { publicPreview: { enabled: false } } } });
+        // Public feature discovery is an untrusted network boundary; malformed/older payloads must fail closed.
+        if (kind === 'missing') Reflect.deleteProperty(features.features.localServices, 'publicPreview');
+        if (kind === 'malformed') Reflect.set(features.features.localServices.publicPreview, 'enabled', 'true');
+        primeServerFeaturesSnapshot({ serverId: 'disabled_home', snapshot: { status: 'ready', features } });
+        machineRpcWithServerScopeMock.mockResolvedValue({ protocolVersion: 1, snapshot });
+        for (const operation of await publicOperations('disabled_home')) {
+            await expect(operation()).resolves.toEqual({ ok: false, reason: 'feature_disabled' });
+        }
+        expect(machineRpcWithServerScopeMock).not.toHaveBeenCalled();
+    });
+
+    it.each(['throw', 'result'] as const)('preserves a server-policy refusal after a stale enabled observation (%s)', async carrier => {
+        if (carrier === 'throw') machineRpcWithServerScopeMock.mockRejectedValue({ rpcErrorCode: 'public_preview_disabled' });
+        else machineRpcWithServerScopeMock.mockResolvedValue({ errorCode: 'public_preview_disabled', error: 'public_preview_disabled' });
+        for (const operation of await publicOperations()) {
+            await expect(operation()).resolves.toEqual({ ok: false, reason: 'feature_disabled' });
+        }
+    });
+
+    it.each([{ error: 'HTTP request failed' }, { error: 'Forbidden', errorCode: RPC_ERROR_CODES.FORBIDDEN },
+        { error: 'session_not_authorized', errorCode: 'session_not_authorized' }])('recognizes refusal envelopes before success parsing: %j', async refusal => {
+        machineRpcWithServerScopeMock.mockResolvedValue(refusal);
+        for (const operation of await publicOperations()) {
+            await expect(operation()).resolves.toEqual({ ok: false, reason: 'request_failed' });
+        }
     });
 
     it.each(['throw', 'result'] as const)('keeps temporary routing loss distinct from an unsupported public preview (%s)', async carrier => {
@@ -85,6 +138,14 @@ describe('local service public-preview machine RPC client', () => {
                 previewId: 'preview_1',
             },
         });
+    });
+
+    it('keeps the enabled Machine-only empty-snapshot path reachable', async () => {
+        const machineSnapshot = { ...snapshot, sessionId: undefined, previewId: undefined, exposures: [] };
+        machineRpcWithServerScopeMock.mockResolvedValueOnce({ protocolVersion: 1, snapshot: machineSnapshot });
+        const { fetchLocalServicePublicPreviewStatusViaMachineRpc } = await import('./machineRpc');
+        await expect(fetchLocalServicePublicPreviewStatusViaMachineRpc({ serverId: 'server_1', request: { machineId: 'machine_1' } }))
+            .resolves.toEqual({ ok: true, snapshot: machineSnapshot });
     });
 
     it('creates, revokes, and copies bound public preview exposures through daemon machine RPC', async () => {
@@ -183,6 +244,7 @@ describe('local service public-preview machine RPC client', () => {
         } = await import('./machineRpc');
 
         await expect(fetchLocalServicePublicPreviewStatusViaMachineRpc({
+            serverId: 'server_1',
             request: { machineId: 'machine_1' },
         })).resolves.toEqual({ ok: false, reason: 'unavailable' });
         await expect(createLocalServicePublicPreviewExposureViaMachineRpc({

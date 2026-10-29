@@ -579,8 +579,8 @@ describe("local service public exposure routes", () => {
             },
         }, createReply);
 
-        expect(createReply.statusCode).toBe(404);
-        expect(createReply.send).toHaveBeenCalledWith({ error: "not_found" });
+        expect(createReply.statusCode).toBe(403);
+        expect(createReply.send).toHaveBeenCalledWith({ error: "public_preview_denied", reasonCode: "public_preview_disabled" });
         expect(createExposure).not.toHaveBeenCalled();
 
         const proxyReply = createReplyStub();
@@ -868,7 +868,7 @@ describe("local service public exposure routes", () => {
         expect(reply.headers["Referrer-Policy"]).toBe("no-referrer");
     });
 
-    it("adds no-referrer privacy headers to disabled public preview not-found responses", async () => {
+    it("keeps disabled application traffic concealed but returns typed refusals for every control handler", async () => {
         const mod = await loadPublicRoutesModule();
         expect(mod?.registerLocalServicePublicRoutes).toBeTypeOf("function");
         if (!mod?.registerLocalServicePublicRoutes) return;
@@ -895,6 +895,17 @@ describe("local service public exposure routes", () => {
 
         expect(reply.statusCode).toBe(404);
         expect(reply.headers["Referrer-Policy"]).toBe("no-referrer");
+        for (const [method, path] of [
+            ['POST', '/v1/local-services/public'],
+            ['POST', '/v1/local-services/public/status'],
+            ['DELETE', '/v1/local-services/public/:exposureId'],
+        ] as const) {
+            const refused = createReplyStub();
+            await getRouteHandler(app, method, path)({ body: {}, params: { exposureId: 'unknown' } }, refused);
+            expect(refused.statusCode).toBe(403);
+            expect(refused.send).toHaveBeenCalledWith({ error: 'public_preview_denied', reasonCode: 'public_preview_disabled' });
+            expect(refused.headers['Referrer-Policy']).toBe('no-referrer');
+        }
     });
 
     it("exchanges the minted root public exposure URL before proxying", async () => {

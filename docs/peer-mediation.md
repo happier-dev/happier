@@ -782,6 +782,23 @@ checks the current service registration and returns only that occurrence's
 exposures. Existing Session-scoped preview requests retain their contextual
 defaults and Session-by-id status behavior.
 
+Machine-wide public status in 0.3 development also accepts just `machineId`,
+including when no private previews are registered. The Home admits that read
+through the canonical Machine-access resolver and filters exposures through
+their existing Session or current service authorization before returning URLs
+or exposure diagnostics. Machine custody alone grants no Session access.
+The strict version-1 response remains unchanged; the HTTP status selector and
+its daemon/client readers use the same contract.
+When the Home disables `localServices.publicPreview`, all public-preview control
+requests refuse with HTTP 403 and the existing `public_preview_disabled` reason.
+The daemon preserves known policy refusals as RPC error codes; authorization
+refusals remain coded failures, never malformed-success responses. Status,
+create, revoke and copy UI clients share one admission boundary and return
+`feature_disabled` without issuing a Machine RPC unless the exact Home's
+canonical enabled bit is explicitly true. Missing or malformed bits fail closed.
+Public application traffic retains its concealed 404 response; arbitrary legacy
+404s are never inferred to mean feature disabled. No policy or authorization is bypassed.
+
 Final effective access loss retires serving authority immediately, even when a
 native Stop is unsupported or unconfirmed and custody remains. Another valid
 overlapping grant does not trigger retirement. Existing private/public streams

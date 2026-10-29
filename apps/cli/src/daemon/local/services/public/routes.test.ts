@@ -3,9 +3,11 @@ import { describe, expect, it, vi } from 'vitest';
 import type { LocalServicePublicExposureV1, LocalServicePublicPreviewSnapshotV1 } from '@happier-dev/protocol';
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 
-import { createLocalServicePublicPreviewServerRoutes } from './routes';
+import { createLocalServicePublicPreviewServerRoutes, LocalServicePublicPreviewCreateRefusal } from './routes';
 import { DaemonLocalServicePublicPreviewCreateRequestV1Schema } from '@happier-dev/protocol/local/services/public/v1';
 import type { RpcHandlerContext } from '@/api/rpc/types';
+import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
+import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 
 const exposure: LocalServicePublicExposureV1 = {
     exposureId: 'public_preview_1',
@@ -41,6 +43,59 @@ const snapshot: LocalServicePublicPreviewSnapshotV1 = {
 };
 
 describe('createLocalServicePublicPreviewServerRoutes', () => {
+    it.each(['create', 'later_status'] as const)('retains the positive create-refusal phase and code (%s)', async phase => {
+        const refusal = { isAxiosError: true, response: { status: 503,
+            data: { error: 'public_preview_unavailable', reasonCode: 'audit_sink_unavailable' } } };
+        const routes = createLocalServicePublicPreviewServerRoutes({ token: 'token_1', http: {
+            async post(url) {
+                if (phase === 'later_status' && !url.endsWith('/status')) return { data: { exposure } };
+                throw refusal;
+            }, async delete() { return { data: {} }; },
+        } });
+        let caught: unknown;
+        try { await routes.createExposure({ machineId: exposure.machineId, sessionId: exposure.sessionId,
+            previewId: exposure.previewId, mode: 'secret_link', ttlMs: 60_000 }); } catch (error) { caught = error; }
+        expect(caught).toMatchObject({ rpcErrorCode: 'audit_sink_unavailable' });
+        expect(caught instanceof LocalServicePublicPreviewCreateRefusal).toBe(phase === 'create');
+    });
+    it.each(['status', 'create', 'revoke', 'copy'] as const)('preserves typed disabled policy through the real RPC error envelope for %s', async operation => {
+        const refusal = { isAxiosError: true, response: { status: 403,
+            data: { error: 'public_preview_denied', reasonCode: 'public_preview_disabled' } } };
+        const routes = createLocalServicePublicPreviewServerRoutes({ token: 'token_1', http: {
+            async post() { throw refusal; },
+            async delete() { throw refusal; },
+        } });
+        const rpc = new RpcHandlerManager({ scopePrefix: 'machine', encryptionMode: 'plain', logger: () => {} });
+        const binding = { machineId: 'machine_1', sessionId: 'session_1', previewId: 'preview_1', exposureId: 'public_preview_1' };
+        rpc.registerHandler('public-status', async () => operation === 'status' ? routes.getStatus({ machineId: 'machine_1' })
+            : operation === 'create' ? routes.createExposure({ machineId: binding.machineId, sessionId: binding.sessionId,
+                previewId: binding.previewId, mode: 'secret_link', ttlMs: 60_000 })
+                : operation === 'revoke' ? routes.revokeExposure(binding) : routes.copyUrl(binding));
+        await expect(rpc.handleRequest({ method: 'machine:public-status', params: {} })).resolves.toMatchObject({
+            errorCode: 'public_preview_disabled', error: 'public_preview_disabled',
+        });
+    });
+
+    it.each([
+        { data: { error: 'public_preview_denied', reasonCode: 'session_not_authorized' }, code: 'session_not_authorized' },
+        { data: { error: 'public_preview_denied', reasonCode: 'machine_not_authorized' }, code: RPC_ERROR_CODES.FORBIDDEN },
+    ])('preserves status authorization refusal as a coded failure: $code', async ({ data, code }) => {
+        const routes = createLocalServicePublicPreviewServerRoutes({ token: 'token_1', http: {
+            async post() { throw { isAxiosError: true, response: { status: 403, data } }; },
+            async delete() { return { data: {} }; },
+        } });
+        const rpc = new RpcHandlerManager({ scopePrefix: 'machine', encryptionMode: 'plain', logger: () => {} });
+        rpc.registerHandler('public-status', async () => routes.getStatus({ machineId: 'machine_1' }));
+        await expect(rpc.handleRequest({ method: 'machine:public-status', params: {} })).resolves.toMatchObject({ errorCode: code });
+    });
+
+    it('does not mislabel an untyped missing endpoint as feature disabled', async () => {
+        const error = { isAxiosError: true, response: { status: 404, data: { error: 'not_found' } } };
+        const routes = createLocalServicePublicPreviewServerRoutes({ token: 'token_1', http: {
+            async post() { throw error; }, async delete() { return { data: {} }; },
+        } });
+        await expect(routes.getStatus({ machineId: 'machine_1' })).rejects.toBe(error);
+    });
     it('refuses foreign Machine actors before reading or mutating with the custodian credential', async () => {
         let httpReached = false;
         const input = { accountId: 'custodian', token: 'custodian-token', serverBaseUrl: 'https://home.example.test', http: {

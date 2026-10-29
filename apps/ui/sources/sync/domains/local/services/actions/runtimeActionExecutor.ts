@@ -78,6 +78,7 @@ import type {
     LocalServicePublicPreviewRevokeClientResult,
     LocalServicePublicPreviewStatusClientInput,
     LocalServicePublicPreviewStatusClientResult,
+    LocalServicePublicPreviewFailureReason,
 } from '../publicPreview/api';
 import { publishLocalServicePublicPreviewSnapshot } from '../publicPreview/sharedStore';
 
@@ -167,7 +168,7 @@ export type CreateLocalServicesRuntimeActionExecutorInput = Readonly<{
 }>;
 
 type LocalServicesRouteKind = 'inventory' | 'launcher' | 'preview' | 'public_preview' | 'action';
-type LocalServicesRouteFailureReason = 'unavailable' | 'request_failed' | 'invalid_response';
+type LocalServicesRouteFailureReason = LocalServicePublicPreviewFailureReason;
 type LocalServicesRuntimeActionDisabledReason =
     | 'local_services_machine_unavailable'
     | 'local_services_runtime_action_unbacked'

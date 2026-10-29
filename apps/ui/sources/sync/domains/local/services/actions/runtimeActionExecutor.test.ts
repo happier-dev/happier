@@ -826,6 +826,27 @@ describe('UI local-services runtime action executor', () => {
         });
     });
 
+    it('preserves disabled public status through the real status client and Action projection without dispatch', async () => {
+        const { primeServerFeaturesSnapshot, deleteServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+        const { createRootLayoutFeaturesResponse } = await import('@/dev/testkit/fixtures/featureFixtures');
+        const { fetchLocalServicePublicPreviewStatusViaMachineRpc } = await import('../publicPreview/machineRpc');
+        const { createLocalServicesRuntimeActionExecutor } = await import('./runtimeActionExecutor');
+        primeServerFeaturesSnapshot({ serverId: 'disabled_public_home', snapshot: { status: 'ready',
+            features: createRootLayoutFeaturesResponse({ features: { localServices: { publicPreview: { enabled: false } } } }),
+        } });
+        relocationBoundary.rpc.mockClear();
+        try {
+            const execute = createLocalServicesRuntimeActionExecutor({ resolveMachineId: () => 'machine_1',
+                fetchPublicPreviewStatus: fetchLocalServicePublicPreviewStatusViaMachineRpc });
+            await expect(execute(runtimeArgs({ actionId: 'localServices.publicPreview.status', input: {},
+                context: { serverId: 'disabled_public_home' } }))).resolves.toMatchObject({ ok: false,
+                errorCode: 'runtime_action_disabled',
+                error: 'runtime_action_disabled:localServices:local_services_public_preview_feature_disabled',
+            });
+            expect(relocationBoundary.rpc).not.toHaveBeenCalled();
+        } finally { deleteServerFeaturesSnapshot({ serverId: 'disabled_public_home' }); }
+    });
+
     it('redacts public-preview status URLs for agent-surface egress while publishing the raw store snapshot', async () => {
         const mod = await import('./runtimeActionExecutor').catch(() => null);
         expect(mod?.createLocalServicesRuntimeActionExecutor).toBeTypeOf('function');

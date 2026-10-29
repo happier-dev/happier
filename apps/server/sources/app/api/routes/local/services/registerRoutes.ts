@@ -39,7 +39,7 @@ import {
 } from "@/app/local/services/public/runtime";
 import { createLocalServicePublicAuditRecorder } from "@/app/local/services/public/audit";
 import { createLocalServicePublicRateLimitChecker } from "@/app/local/services/public/rateLimits";
-import { LocalServicePublicPreviewExchangeRequestV1Schema, LocalServicePublicPreviewExchangeResponseV1Schema } from '@happier-dev/protocol/local/services/public/v1';
+import { LocalServicePublicPreviewExchangeRequestV1Schema, LocalServicePublicPreviewExchangeResponseV1Schema, resolveLocalServicePublicPreviewCreateFailureV1 } from '@happier-dev/protocol/local/services/public/v1';
 import { resolvePeerRouteFeatureId } from '@happier-dev/protocol/machines/peer/mediation/routeFeature';
 import type { OpenLocalServicePreviewTunnel } from "@/app/local/services/preview/httpAdapter";
 import {
@@ -283,7 +283,10 @@ export function registerLocalServiceRoutes(
         openTunnel,
         observability: routeApp.peerMediationObservability,
     };
-    registerLocalServicePublicRoutes(publicRouteApp, publicRouteOptions);
+    // Every authenticated control uses one typed refusal; public application traffic stays concealed.
+    const { statusCode, ...disabledControl } = resolveLocalServicePublicPreviewCreateFailureV1('public_preview_disabled');
+    registerLocalServicePublicRoutes(publicRouteApp, publicRouteOptions,
+        createServerFeatureGatedRouteApp(app, 'localServices.publicPreview', env, disabledControl, statusCode));
     registerLocalServiceHostRoutes(app, featureEnv.previewHostOriginBaseDomain, async (request, reply) => {
         const hostname = readLocalServiceRequestHostname((request as { headers?: Record<string, unknown> }).headers);
         return hostname && runtimes.public.resolveExposureByHost(hostname)

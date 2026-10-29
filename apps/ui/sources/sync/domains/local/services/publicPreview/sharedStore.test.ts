@@ -8,6 +8,8 @@ import { expectNoWallClockPolling } from '../noPollingTestHelpers';
 import { LocalServicePublicPreviewSnapshotV1Schema } from '@happier-dev/protocol/local/services/public/v1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { createDeferred, flushHookEffects } from '@/dev/testkit';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { primeServerFeaturesSnapshot, resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
 
 const rpc = vi.hoisted(() => ({ machine: vi.fn() }));
 // Daemon RPC is the boundary; subscription lifecycle, request codec and response validation stay real.
@@ -93,9 +95,17 @@ describe('shared local-service public-preview store', () => {
         expect(getLocalServicePublicPreviewState(key)).toBe(published);
         release();
     });
-    beforeEach(() => { rpc.machine.mockReset(); });
+    beforeEach(() => {
+        rpc.machine.mockReset();
+        const observation = { status: 'ready' as const,
+            features: createRootLayoutFeaturesResponse({ features: { localServices: { publicPreview: { enabled: true } } } }),
+        };
+        primeServerFeaturesSnapshot({ snapshot: observation });
+        primeServerFeaturesSnapshot({ serverId: 'server_1', snapshot: observation });
+    });
     afterEach(() => {
         resetLocalServicePublicPreviewStoreForTests();
+        resetServerFeaturesClientForTests();
     });
 
     it('fetches once for a public-preview key regardless of how many panes subscribe', async () => {

@@ -19,6 +19,7 @@ import {
 import { sendLocalServicePreviewHttpResponse, type LocalServicePreviewHttpReply } from '../httpResponse';
 import { encodeLocalServiceRequestPath } from "@/app/local/services/preview/requestTarget";
 import { scopedLocalServiceViewerTokenCookie } from '@/app/local/services/viewerCookie';
+import { readLocalServicePublicStatus } from './status';
 import { LOCAL_SERVICE_APPLICATION_HTTP_METHODS } from '../hostRoutes';
 import { readLocalServiceRequestHostname, resolveLocalServiceExternalProtocol } from '@/app/local/services/preview/origin';
 import {
@@ -293,6 +294,11 @@ function sendNotFound(reply: RouteReply): void {
     reply.code?.(404).send?.({ error: "not_found" });
 }
 
+function sendFeatureDisabled(reply: RouteReply): void {
+    const refusal = resolveLocalServicePublicPreviewCreateFailureV1('public_preview_disabled');
+    sendError(reply, refusal.statusCode, refusal.error, refusal.reasonCode);
+}
+
 function publicRedirectLocation(input: Readonly<{
     exposureId: string;
     path: string;
@@ -380,7 +386,7 @@ async function handleGetStatus(
     options: RegisterLocalServicePublicRoutesOptions,
 ): Promise<void> {
     if (!await isPublicPreviewFeatureEnabled(options, request)) {
-        sendNotFound(reply);
+        sendFeatureDisabled(reply);
         return;
     }
     if (!options.getStatus) {
@@ -389,39 +395,27 @@ async function handleGetStatus(
     }
 
     const parsed = DaemonLocalServicePublicPreviewStatusRequestV1Schema.safeParse(readBodyObject(request.body));
-    if (!parsed.success || !parsed.data.sessionId && !parsed.data.previewId) {
+    if (!parsed.success) {
         sendError(reply, 400, "invalid_public_preview_status_request", "invalid_request");
         return;
     }
 
     const statusRequest = parsed.data;
-    let scopedPreview: LocalServicePreviewResourceV1 | null = null;
-    if (statusRequest.previewId) {
-        const preview = options.resolvePreview(statusRequest.previewId);
-        if (!preview) {
-            sendError(reply, 404, "preview_not_found", "preview_not_found");
-            return;
-        }
-        if (preview.machineId !== statusRequest.machineId || preview.sessionId !== statusRequest.sessionId
-            || statusRequest.serviceTarget && !isDeepStrictEqual(preview.serviceTarget, statusRequest.serviceTarget)) {
-            sendError(reply, 403, "public_preview_denied", "preview_binding_mismatch");
-            return;
-        }
-        scopedPreview = preview;
-    }
-
-    if (!(scopedPreview ? await isPreviewAuthorized(request, options, scopedPreview, 'public_status')
-        : statusRequest.sessionId && await isSessionAuthorized(request, options, {
-            sessionId: statusRequest.sessionId, machineId: statusRequest.machineId, purpose: 'public_status',
-        }))) {
-        sendError(reply, 403, "public_preview_denied", "session_not_authorized");
+    const result = await readLocalServicePublicStatus({
+        request: statusRequest, userId: request.userId, getStatus: options.getStatus,
+        resolvePreview: options.resolvePreview,
+        authorizePreview: preview => isPreviewAuthorized(request, options, preview, 'public_status'),
+        authorizeSession: sessionId => isSessionAuthorized(request, options, {
+            sessionId, machineId: statusRequest.machineId, purpose: 'public_status',
+        }),
+    });
+    if (!result.ok) {
+        sendError(reply, result.statusCode, result.error, result.reasonCode);
         return;
     }
-
-    const snapshot = options.getStatus(statusRequest);
     reply.send?.(DaemonLocalServicePublicPreviewStatusResponseV1Schema.parse({
         protocolVersion: 1,
-        snapshot,
+        snapshot: result.snapshot,
     }));
 }
 
@@ -431,7 +425,7 @@ async function handleCreateExposure(
     options: RegisterLocalServicePublicRoutesOptions,
 ): Promise<void> {
     if (!await isPublicPreviewFeatureEnabled(options, request)) {
-        sendNotFound(reply);
+        sendFeatureDisabled(reply);
         return;
     }
 
@@ -490,7 +484,7 @@ async function handleRevokeExposure(
     options: RegisterLocalServicePublicRoutesOptions,
 ): Promise<void> {
     if (!await isPublicPreviewFeatureEnabled(options, request)) {
-        sendNotFound(reply);
+        sendFeatureDisabled(reply);
         return;
     }
 
@@ -646,6 +640,7 @@ export async function handleLocalServicePublicHttpRequest(
 export function registerLocalServicePublicRoutes(
     app: Fastify,
     options: RegisterLocalServicePublicRoutesOptions,
+    controlApp: Fastify = app,
 ): void {
     // Node ignores the listener's Promise; contain admission failures as well as forwarding.
     // Returning the contained Promise still lets registration callers await completion.
@@ -654,7 +649,7 @@ export function registerLocalServicePublicRoutes(
             .catch(() => { socket.destroy?.(); })
     ));
 
-    app.post(PUBLIC_CONTROL_ROUTE_PATH, {
+    controlApp.post(PUBLIC_CONTROL_ROUTE_PATH, {
         preHandler: app.authenticate,
         config: {
             restrictedCredentialBinding: {
@@ -667,7 +662,7 @@ export function registerLocalServicePublicRoutes(
         await handleCreateExposure(request as RouteRequest, reply as RouteReply, options);
     });
 
-    app.post(PUBLIC_STATUS_ROUTE_PATH, {
+    controlApp.post(PUBLIC_STATUS_ROUTE_PATH, {
         preHandler: app.authenticate,
         config: {
             restrictedCredentialBinding: {
@@ -680,7 +675,7 @@ export function registerLocalServicePublicRoutes(
         await handleGetStatus(request as RouteRequest, reply as RouteReply, options);
     });
 
-    app.delete(PUBLIC_RESOURCE_ROUTE_PATH, {
+    controlApp.delete(PUBLIC_RESOURCE_ROUTE_PATH, {
         preHandler: app.authenticate,
         config: {
             restrictedCredentialBinding: {

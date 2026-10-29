@@ -2,23 +2,44 @@ import Fastify from "fastify";
 import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { LocalServicePreviewResourceV1 } from "@happier-dev/protocol";
 import { LocalServicePublicPreviewCreateFailureV1Schema } from '@happier-dev/protocol/local/services/public/v1';
+import { DaemonLocalServicePublicPreviewStatusResponseV1Schema } from '@happier-dev/protocol/local/services/public/v1';
+import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
+import { db } from '@/storage/db';
 
 import { peerMediationGrantSigningEnv } from "@/testkit/env";
 import { registerLocalServiceRoutes } from "./registerRoutes";
 import type { LocalServicePreviewTunnelStream } from "@/app/local/services/preview/httpAdapter";
 
-// Database boundary only; preview registration still executes the real Machine-owner check.
+const accessFixture = vi.hoisted(() => ({ sessionOwnerId: 'user_1' }));
+afterEach(() => { accessFixture.sessionOwnerId = 'user_1'; });
+
+// Database boundary only; Machine and Session authorization execute their real owners.
 vi.mock("@/storage/db", async () => {
-    const { createDbMocks } = await import("@/app/api/testkit/dbMocks");
-    const storage = createDbMocks({ machine: ["findFirst"] });
+    const { createDbMocks, createDbTransactionMock, inTxPostgresControlStatementMock } = await import("@/app/api/testkit/dbMocks");
+    const storage = createDbMocks({ machine: ["findFirst", "findMany"], session: ['findUnique'] });
     storage.db.machine.findFirst.mockImplementation(async (query: { where: { id: string; accountId: string } }) => (
         query.where.id === "machine_1" && query.where.accountId === "user_1" ? { id: "machine_1" } : null
     ));
-    return { db: storage.db };
+    storage.db.machine.findMany.mockImplementation(async (query: { where: { id: { in: string[] } } }) => (
+        query.where.id.in.includes('machine_1') ? [{
+            id: 'machine_1', kind: 'persistent', accountId: 'user_1',
+            account: { status: 'active', encryptionMode: 'plain' },
+            metadata: encodePlainMachineStoredContent({}), daemonState: null,
+            dataEncryptionKey: Buffer.from(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64'),
+            installationId: 'installation_1', active: true, revokedAt: null, replacedByMachineId: null,
+            accountGrants: [], teamGrants: [], groupGrants: [],
+        }] : []
+    ));
+    storage.db.session.findUnique.mockImplementation(async (query: { where: { id: string } }) => ({
+        id: query.where.id, accountId: accessFixture.sessionOwnerId, account: { status: 'active' },
+        currentStorageState: 'hosted', shares: [], teamGrants: [], groupGrants: [],
+    }));
+    const state = { ...storage.db, ...inTxPostgresControlStatementMock };
+    return { db: createDbTransactionMock(() => state).wrapDb(state) };
 });
 
 /**
@@ -99,7 +120,6 @@ async function buildPublicPreviewApp(recorder: UpstreamRecorder, env: NodeJS.Pro
 
     registerLocalServiceRoutes(app as never, {
         env: { ...publicPreviewEnv(), ...env },
-        authorizeSessionAccess: async () => true,
         openTunnel: async () => createRecordingTunnel(recorder),
     });
     await app.ready();
@@ -131,6 +151,80 @@ async function createExposure(app: Awaited<ReturnType<typeof buildPublicPreviewA
 }
 
 describe("public local-service exposure data plane (composed Fastify)", () => {
+    it('returns a typed disabled refusal for status while keeping the public data plane concealed', async () => {
+        const recorder = { writes: [] as string[] };
+        const app = await buildPublicPreviewApp(recorder, { HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__ENABLED: '0' });
+        try {
+            for (const payload of [{ machineId: preview.machineId }, { machineId: preview.machineId, sessionId: preview.sessionId }]) {
+                const status = await app.inject({ method: 'POST', url: '/v1/local-services/public/status', payload });
+                expect(status.statusCode).toBe(403);
+                expect(LocalServicePublicPreviewCreateFailureV1Schema.parse(status.json())).toEqual({
+                    error: 'public_preview_denied', reasonCode: 'public_preview_disabled',
+                });
+                expect(status.json()).not.toHaveProperty('snapshot');
+            }
+            for (const method of ['POST', 'DELETE'] as const) {
+                const control = await app.inject({ method,
+                    url: method === 'POST' ? '/v1/local-services/public' : '/v1/local-services/public/unknown',
+                    payload: { machineId: preview.machineId, sessionId: preview.sessionId, previewId: preview.previewId,
+                        exposureId: 'unknown', mode: 'secret_link', ttlMs: 60_000 },
+                });
+                expect(control.statusCode).toBe(403);
+                expect(LocalServicePublicPreviewCreateFailureV1Schema.parse(control.json())).toEqual({
+                    error: 'public_preview_denied', reasonCode: 'public_preview_disabled',
+                });
+            }
+            const data = await app.inject({ method: 'GET', url: '/v1/local-services/public/unknown/index.html' });
+            expect(data.statusCode).toBe(404);
+            expect(recorder.writes).toHaveLength(0);
+        } finally { await app.close(); }
+    });
+
+    it('reads Machine-only public status with no registered private previews and refuses an unknown Machine', async () => {
+        const app = await buildPublicPreviewApp({ writes: [] });
+        try {
+            vi.mocked(db.machine.findMany).mockClear();
+            vi.mocked(db.session.findUnique).mockClear();
+            const status = await app.inject({ method: 'POST', url: '/v1/local-services/public/status',
+                payload: { machineId: preview.machineId } });
+            expect(status.statusCode).toBe(200);
+            expect(DaemonLocalServicePublicPreviewStatusResponseV1Schema.parse(status.json())).toMatchObject({
+                protocolVersion: 1, snapshot: { machineId: preview.machineId, refreshState: 'idle', exposures: [] },
+            });
+            expect(db.machine.findMany).toHaveBeenCalledTimes(1);
+            expect(db.session.findUnique).not.toHaveBeenCalled();
+            const denied = await app.inject({ method: 'POST', url: '/v1/local-services/public/status',
+                payload: { machineId: 'unknown-machine' } });
+            expect(denied.statusCode).toBe(403);
+            expect(denied.json()).not.toHaveProperty('snapshot');
+        } finally { await app.close(); }
+    });
+
+    it('reads populated Machine-only public status without changing the Session-scoped response', async () => {
+        const app = await buildPublicPreviewApp({ writes: [] });
+        try {
+            const created = await createExposure(app);
+            expect(created.statusCode).toBe(201);
+            const status = await app.inject({ method: 'POST', url: '/v1/local-services/public/status',
+                payload: { machineId: preview.machineId } });
+            expect(status.statusCode).toBe(200);
+            const parsed = DaemonLocalServicePublicPreviewStatusResponseV1Schema.parse(status.json());
+            expect(parsed.snapshot.exposures).toEqual([created.json().exposure]);
+            expect(parsed.snapshot).not.toHaveProperty('sessionId');
+            const scoped = await app.inject({ method: 'POST', url: '/v1/local-services/public/status',
+                payload: { machineId: preview.machineId, sessionId: preview.sessionId, previewId: preview.previewId } });
+            expect(scoped.statusCode).toBe(200);
+            expect(DaemonLocalServicePublicPreviewStatusResponseV1Schema.parse(scoped.json()).snapshot.exposures)
+                .toEqual(parsed.snapshot.exposures);
+            // Machine custody does not grant access to another actor's Session URLs.
+            accessFixture.sessionOwnerId = 'another-account';
+            const hidden = await app.inject({ method: 'POST', url: '/v1/local-services/public/status',
+                payload: { machineId: preview.machineId } });
+            expect(hidden.statusCode).toBe(200);
+            expect(DaemonLocalServicePublicPreviewStatusResponseV1Schema.parse(hidden.json()).snapshot.exposures).toEqual([]);
+        } finally { await app.close(); }
+    });
+
     it('reports an unavailable durable audit sink as availability failure without creating an exposure', async () => {
         const scratch = await mkdtemp(join(tmpdir(), 'happier-fx89-audit-'));
         const parentFile = join(scratch, 'not-a-directory');

@@ -16,14 +16,32 @@ import { isDeepStrictEqual } from 'node:util';
 
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import type { RpcHandlerContext } from '@/api/rpc/types';
+import { RpcError, RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { assertLocalServiceCredentialAdmission } from '../credentialAdmission';
 
 /** Positive refusal of the create request, never a later status-read failure. */
-export class LocalServicePublicPreviewCreateRefusal extends Error {
+export class LocalServicePublicPreviewCreateRefusal extends RpcError {
     constructor(readonly reasonCode: LocalServicePublicPreviewCreateFailureReasonV1, readonly httpStatus: 403 | 503) {
-        super(reasonCode);
+        super(reasonCode, reasonCode);
         this.name = 'LocalServicePublicPreviewCreateRefusal';
     }
+}
+
+/** Only the HTTP control boundary interprets HTTP refusals; callers keep the canonical RPC code. */
+function throwPublicPreviewHttpFailure(error: unknown, createRequest = false): never {
+    if (axios.isAxiosError<unknown>(error)) {
+        const status = error.response?.status;
+        if (status === 403 || status === 503) {
+            const refusal = LocalServicePublicPreviewCreateFailureV1Schema.safeParse(error.response?.data);
+            if (refusal.success) {
+                if (createRequest) throw new LocalServicePublicPreviewCreateRefusal(refusal.data.reasonCode, status);
+                throw new RpcError(refusal.data.reasonCode, refusal.data.reasonCode);
+            }
+        }
+        if (status === 401 || status === 403) throw new RpcError('public_preview_denied', RPC_ERROR_CODES.FORBIDDEN);
+    }
+    // In particular, an arbitrary legacy 404 never establishes feature-disabled policy.
+    throw error;
 }
 
 export type LocalServicePublicPreviewRoutes = Readonly<{
@@ -151,7 +169,7 @@ export function createLocalServicePublicPreviewServerRoutes(
             endpoint(resolveBaseUrl(), '/v1/local-services/public/status'),
             request,
             { headers },
-        );
+        ).catch((error: unknown) => throwPublicPreviewHttpFailure(error));
         const snapshot = DaemonLocalServicePublicPreviewStatusResponseV1Schema.parse(response.data).snapshot;
         await assertCredentialAdmission(request.machineId, context);
         assertStatusSnapshotBinding(snapshot, request);
@@ -175,13 +193,7 @@ export function createLocalServicePublicPreviewServerRoutes(
                     ...(request.confirmation ? { confirmation: request.confirmation } : {}),
                 },
                 { headers },
-            ).catch((error: unknown) => {
-                if (axios.isAxiosError<unknown>(error) && (error.response?.status === 403 || error.response?.status === 503)) {
-                    const parsed = LocalServicePublicPreviewCreateFailureV1Schema.safeParse(error.response.data);
-                    if (parsed.success) throw new LocalServicePublicPreviewCreateRefusal(parsed.data.reasonCode, error.response.status);
-                }
-                throw error;
-            });
+            ).catch((error: unknown) => throwPublicPreviewHttpFailure(error, true));
             const rawExposure = typeof response.data === 'object' && response.data !== null
                 ? (response.data as { exposure?: unknown }).exposure
                 : undefined;
@@ -213,7 +225,7 @@ export function createLocalServicePublicPreviewServerRoutes(
                         exposureId: request.exposureId,
                     },
                 },
-            );
+            ).catch((error: unknown) => throwPublicPreviewHttpFailure(error));
             const snapshot = await getStatus({
                 machineId: request.machineId,
                 sessionId: request.sessionId,

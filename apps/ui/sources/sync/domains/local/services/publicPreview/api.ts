@@ -14,6 +14,7 @@ import type { LocalServicePreviewServiceTargetV1 } from '@happier-dev/protocol/l
 
 export type LocalServicePublicPreviewFailureReason =
     | 'unavailable'
+    | 'feature_disabled'
     | 'request_failed'
     | 'invalid_response';
 

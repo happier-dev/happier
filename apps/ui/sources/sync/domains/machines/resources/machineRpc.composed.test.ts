@@ -431,6 +431,13 @@ it('retires shared install-job discovery only after its last reader leaves and r
 
 it.each(['preview', 'publicPreview', 'diagnostics', 'simulator'] as const)('releases a parked %s snapshot when its effect signal retires', async family => {
     await withMachineHome(async home => {
+        if (family === 'publicPreview') {
+            const { primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+            const { createRootLayoutFeaturesResponse } = await import('@/dev/testkit/fixtures/featureFixtures');
+            primeServerFeaturesSnapshot({ serverId: home.serverId, snapshot: { status: 'ready',
+                features: createRootLayoutFeaturesResponse({ features: { localServices: { publicPreview: { enabled: true } } } }),
+            } });
+        }
         const controller = new AbortController();
         const request = { machineId: 'shared-machine', serverId: home.serverId, signal: controller.signal };
         const call = family === 'preview'
