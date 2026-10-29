@@ -216,6 +216,7 @@ export function createLinuxCensusReader(boundary: LinuxCensusBoundary) {
             ]);
             const { ownerTag, ownershipEnvironment } = readOwnershipFields(environ);
             const cgroupPath = /^0::(.*)$/mu.exec(cgroup ?? '')?.[1] || undefined;
+            if (wants('cgroup') && cgroup !== undefined && cgroupPath === undefined) missing.push('cgroup');
             const argv = cmdline?.split('\0').filter((value, index, values) => index < values.length - 1 || value !== '');
             if (missing.length && !missingByPid.has(row.pid)) partial.push({ pid: row.pid, missing });
             return { ...row,

@@ -45,6 +45,17 @@ describe('Linux census freshness', () => {
         expect(reads.get('/proc/100/cgroup')).toBe(2);
         expect(reads.get('/proc/100/cwd')).toBe(2);
         expect(reads.get('/proc/100/exe')).toBe(2);
+        denied.add('/proc/100/cgroup');
+        const deniedCgroup = await reader({ ...input, fields: ['cgroup'] });
+        expect(deniedCgroup.status === 'ok' && deniedCgroup.partial).toContainEqual({ pid: 100, missing: ['cgroup'] });
+        denied.clear();
+        files.set('/proc/100/cgroup', '11:memory:/docker/container\n10:cpu,cpuacct:/docker/container\n');
+        const unsupportedCgroup = await reader({ ...input, fields: ['cgroup'] });
+        expect(unsupportedCgroup.status === 'ok' && unsupportedCgroup.rows.find(row => row.pid === 100)?.cgroup).toBeUndefined();
+        expect(unsupportedCgroup.status === 'ok' ? unsupportedCgroup.partial ?? [] : []).toContainEqual({ pid: 100, missing: ['cgroup'] });
+        const identityOnly = await reader({ ...input, fields: [] });
+        expect(identityOnly.status === 'ok' && identityOnly.partial?.some(row => row.missing.includes('cgroup'))).not.toBe(true);
+        files.set('/proc/100/cgroup', '0::/user.slice\n');
         expect(first.status === 'ok' && first.rows.find(row => row.pid === 100)).toMatchObject({
             ownerTag: 'owner', ownershipEnvironment: { HAPPIER_HOME_DIR: '/home/user' },
         });
