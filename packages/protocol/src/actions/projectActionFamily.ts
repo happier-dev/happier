@@ -12,6 +12,9 @@ import { ActionExecuteFailureSchema } from './actionExecutionResult.js';
 import { ProjectSetupConsentFailureDetailsV1Schema, ProjectSetupConsentScopeV1Schema, type ProjectSetupConsentFailureDetailsV1 } from './projectSetupConsentFailure.js';
 import { canRetainProjectSetupReviewV1, ActionOperationGetV1ResponseSchema, type ActionOperationSnapshotV1 } from './operations/v1.js';
 import { normalizeWorkspaceRootPathV1 } from '../workspaces/workspaceRefResolutionV1.js';
+import { PluginContributionIdentityV1Schema } from '../plugins/contributionIdentity.js';
+import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
+import { projectZodProtocolSchema } from '../plugins/actions/internalProtocolZodAdapter.js';
 export { ProjectSetupConsentFailureDetailsV1Schema, ProjectSetupConsentScopeV1Schema,
   type ProjectSetupConsentFailureDetailsV1, type ProjectSetupConsentScopeV1 } from './projectSetupConsentFailure.js';
 import { PROJECT_ACTION_IDS_V1, type ProjectActionIdV1 } from './projectActionIdsV1.js';
@@ -124,7 +127,22 @@ export function readProjectSetupTrustRequestOperationV1(input: ProjectPrepareInp
     && (target.purpose === 'teardown' ? 'teardown' : 'setup') === input.phase
     ? operation : null;
 }
+const projectPageDisplay = {
+  id: nonempty, title: nonempty, icon: nonempty, href: nonempty,
+  disabledReason: z.nullable(z.string()),
+};
+/** Navigation output uses the rendered catalog glyph, rather than authored icon tokens. */
+export const ProjectPageDescriptorV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
+  z.strictObject({ ...projectPageDisplay, kind: z.literal('builtin') }),
+  z.strictObject({ ...projectPageDisplay, kind: z.literal('plugin'), destination: asProtocolZod(PluginContributionIdentityV1Schema) }),
+]));
+export type ProjectPageDescriptorV1 = z.infer<typeof ProjectPageDescriptorV1Schema>;
+export const ProjectPagesListInputV1Schema = lazyZodSchema(() => z.strictObject({ workspaceRefId: nonempty, serverId: nonempty }));
+export type ProjectPagesListInputV1 = z.infer<typeof ProjectPagesListInputV1Schema>;
+export const ProjectPagesListOutputV1Schema = lazyZodSchema(() => z.strictObject({ pages: z.array(ProjectPageDescriptorV1Schema) }));
+export type ProjectPagesListOutputV1 = z.infer<typeof ProjectPagesListOutputV1Schema>;
 export const PROJECT_ACTION_INPUT_SCHEMAS_V1 = {
+  'projects.pages.list': ProjectPagesListInputV1Schema,
   'projects.trust.list': lazyZodSchema(() => z.strictObject({ project: z.optional(QualifiedProjectTrustProjectV1Schema) })),
   'projects.trust.revoke': lazyZodSchema(() => z.strictObject({ project: QualifiedProjectTrustProjectV1Schema,
     expectedRevision: z.number().check(z.int(), z.nonnegative()), expectedEffectDigest: nonempty })),
@@ -141,13 +159,16 @@ export const PROJECT_ACTION_INPUT_SCHEMAS_V1 = {
   'projects.compute.exec': lazyZodSchema(() => z.strictObject({
     workspace, executable: nonempty, argv: z.array(z.string()), cwd: nonempty,
     environmentBindings: z.optional(SecretReferenceOverlayV1Schema), choice: z.optional(ProjectExecutionChoiceV1Schema),
+    execution: z.optional(z.enum(['primary', 'portable'])),
     memoryDemand: z.optional(ProjectMemoryDemandV1Schema),
   })),
 } as const;
 // Refusal and pre-launch failure use the incumbent ActionExecuteFailure envelope;
 // they cannot masquerade as successful launch evidence for generic completion.
 const finiteResult = lazyZodSchema(() => z.union([ProjectCommandActionOutputV1Schema, ProjectSetupConsentRequiredV1Schema]));
+export const ProjectComputeExecResultV1ProtocolSchema = lazyDefinition(() => projectZodProtocolSchema(finiteResult));
 export const PROJECT_ACTION_OUTPUT_SCHEMAS_V1 = {
+  'projects.pages.list': ProjectPagesListOutputV1Schema,
   'projects.trust.list': lazyZodSchema(() => z.strictObject({ trust: z.array(z.strictObject({
     project: QualifiedProjectTrustProjectV1Schema, revision: z.number().check(z.int(), z.nonnegative()), value: ProjectTrustValueV1Schema,
   })) })),
@@ -159,6 +180,7 @@ export const PROJECT_ACTION_OUTPUT_SCHEMAS_V1 = {
 
 // What a person reads in Settings, approvals and the form. Agents read `description`.
 const PROJECT_ACTION_COPY = {
+  'projects.pages.list': ['List project pages', 'See the pages available for this project on this device.'],
   'projects.trust.list': ['List trusted projects', 'See which projects you have allowed to run their setup on your machines.'],
   'projects.trust.revoke': ['Stop trusting a project', 'Take back a project\'s permission to run its setup. It asks again next time.'],
   'projects.prepare': ['Set up a project', 'Run a project\'s setup on a machine, so it is ready to work in.'],
@@ -168,6 +190,10 @@ const PROJECT_ACTION_COPY = {
 
 // Forms and approval review share these operands; schemas alone do not publish review fields.
 const PROJECT_ACTION_INPUT_FIELDS = {
+  'projects.pages.list': [
+    { path: 'workspaceRefId', title: 'Checkout', widget: 'text', required: true },
+    { path: 'serverId', title: 'Home', widget: 'text', required: true },
+  ],
   'projects.trust.list': [
     { path: 'project', title: 'Project', widget: 'json' },
   ],
@@ -199,19 +225,26 @@ const PROJECT_ACTION_INPUT_FIELDS = {
     { path: 'argv', title: 'Arguments', widget: 'json', required: true },
     { path: 'cwd', title: 'Working directory', widget: 'text', required: true },
     { path: 'environmentBindings', title: 'Saved Secret references', widget: 'json' },
+    { path: 'execution', title: 'Execution constraint', widget: 'select', options: [
+      { value: 'primary', label: 'Primary Machine' }, { value: 'portable', label: 'Portable' },
+    ] },
     { path: 'choice', title: 'Execution placement', widget: 'json' },
     { path: 'memoryDemand', title: 'Memory demand', widget: 'json' },
   ],
 } as const satisfies Record<ProjectActionIdV1, NonNullable<PreNormalizedActionSpec['inputHints']>['fields']>;
 
 function row<const Id extends ProjectActionIdV1>(id: Id) {
-  const read = id === 'projects.trust.list';
+  const clientRead = id === 'projects.pages.list';
+  const read = id === 'projects.trust.list' || clientRead;
   return {
     id, approval: { result: 'required' },
     ...(id === 'projects.prepare' ? { approvalPolicy: { uiConfirmation: 'policy' as const, rpcConfirmation: true as const },
       executionPlacementForInput: (input: unknown) => isProjectSetupTrustRequestV1(id, input) ? 'account' as const : 'machine' as const } : {}),
+    ...(id === 'projects.compute.exec' ? { approvalPolicy: { uiConfirmation: 'direct' as const } } : {}),
     originalExecution: { accountRoot: 'allowed' }, title: PROJECT_ACTION_COPY[id][0],
-    description: id === 'projects.script.run'
+    description: clientRead
+      ? 'List authorized applicable built-in and plugin pages for the exact accepted Project and Home on the answering client, including user-hidden pages. This reads the existing page catalog without opening a Project, selecting a Machine or loading page content. Open a returned href with workspace.tabs.open; read or change navigation placement through settings.get and settings.set.'
+      : id === 'projects.script.run'
       ? 'Run the selected Script on the exact qualified checkout through current declaration and worker policy. Read projects.inspect and projects.worker.preferences.get first; primary-only declarations cannot run on workers. An explicit invocation choice precedes the per-script override and saved checkout default; Ask requires a deliberate exact target choice. Setup-effect review follows the separate projects.prepare approval policy; waiving Run does not waive setup review. Only the user can grant remembered setup trust. Acceptance returns an exact-target operation, not completion: inspect action.operations.get and projects.execution.output.read for queue, copy, setup, output and exit facts. After possible acceptance or unknown outcome inspect that same target; do not repeat Run or fall back because it is busy, offline, failed or Stop is unconfirmed.'
       : id === 'projects.compute.exec'
       ? 'Run an explicitly requested ad-hoc command on the exact qualified checkout. Read projects.worker.preferences.get first: allowAdHoc must be enabled in ready current preferences; opted-out and unavailable settings are distinct refusals. Commands follow configurable Action approval and reviewed setup consent, and arbitrary shell commands are not automatically offloaded. Observe the chosen target through projects.worker.status or finite-purpose machines.pools.resolve. Acceptance is an inspectable operation, not completion; read its exact-target state and output, and never repeat or change targets after possible acceptance without renewed explicit intent.'
@@ -219,8 +252,8 @@ function row<const Id extends ProjectActionIdV1>(id: Id) {
       ? 'Prepare the exact Project checkout. Request consentScope untilChanged with heldOperationId and expectedEffectDigest to ask a present person to remember the retained setup effect until it changes. A person must approve through the ordinary approval flow; an agent cannot grant or approve its own setup trust. Approval rechecks the retained target review and uses the approving Account Trust writer. Ordinary preparation and one-time consent follow the projects.prepare approval policy; a waiver writes no remembered trust.'
       : 'Use the authenticated Account and exact Project workspace. Setup-effect review follows the projects.prepare approval policy. A waiver permits only this invocation and does not grant remembered setup trust; only the user can grant that trust.',
     safety: read ? 'safe' : 'danger', sideEffectClass: read ? 'read' : id === 'projects.trust.revoke' ? 'write' : 'external',
-    requiredAuthority: 'account_automation', executionPlacement: id.startsWith('projects.trust.') ? 'account' : 'machine',
-    placements: [], surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: !id.startsWith('projects.trust.') },
+    requiredAuthority: 'account_automation', executionPlacement: clientRead ? 'client' : id.startsWith('projects.trust.') ? 'account' : 'machine',
+    placements: [], surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: !clientRead && !id.startsWith('projects.trust.') },
     bindings: { mcpToolName: id.replaceAll('.', '_'), voiceClientToolName: id.replaceAll('.', '_'),
       ...(id === 'projects.prepare' || id === 'projects.script.run' || id === 'projects.compute.exec'
         ? { rpcMethod: id === 'projects.prepare' ? PROJECT_FINITE_ACTION_RPC_METHODS_V1['projects.prepare']
@@ -228,7 +261,7 @@ function row<const Id extends ProjectActionIdV1>(id: Id) {
           : PROJECT_FINITE_ACTION_RPC_METHODS_V1['projects.compute.exec'] } : {}) },
     cli: { acceptsServerId: true, commands: [{ path: ['project', ...id.split('.').slice(1)], visibility: 'canonical' }] },
     inputSchema: PROJECT_ACTION_INPUT_SCHEMAS_V1[id], outputSchema: PROJECT_ACTION_OUTPUT_SCHEMAS_V1[id],
-    ...(!id.startsWith('projects.trust.') ? {
+    ...(!clientRead && !id.startsWith('projects.trust.') ? {
       operation: { version: 1, visibility: 'activity', progress: 'reported', presentation: { onStart: 'current' } },
       completion: lazyDefinition(() => id === 'projects.prepare'
       ? createProjectCommandActionCompletionV1({ immediateResultSchema: ProjectPrepareNoLaunchResultV1Schema })
