@@ -38,40 +38,6 @@ function buildAcpProbeCacheKey(params: {
     return `${agentName}:${timeoutMs}:${command}:${cwd}:${args}`;
 }
 
-async function terminateProcess(child: ChildProcess): Promise<void> {
-    const hasExited = () => child.exitCode !== null || child.signalCode !== null;
-    if (hasExited()) return;
-
-    if (process.platform === 'win32') {
-        await terminateProcessTree(child, { graceMs: 250 });
-        return;
-    }
-
-    let exited = false;
-    const waitForExit = new Promise<void>((resolve) => {
-        child.once('exit', () => {
-            exited = true;
-            resolve();
-        });
-    });
-
-    try {
-        child.kill('SIGTERM');
-    } catch {
-        // ignore
-    }
-
-    await Promise.race([
-        waitForExit,
-        new Promise<void>((resolve) => setTimeout(resolve, 250)),
-    ]);
-
-    if (!exited && !hasExited()) {
-        child.kill('SIGKILL');
-        if (child.pid !== undefined) await waitForExit;
-    }
-}
-
 export async function probeAcpAgentCapabilities(params: {
     command: string;
     args: ReadonlyArray<string>;
@@ -224,12 +190,15 @@ export async function probeAcpAgentCapabilities(params: {
     } finally {
         if (initializeTimeout !== undefined) clearTimeout(initializeTimeout);
         if (onAbort) params.signal?.removeEventListener('abort', onAbort);
-        connection?.close();
-        if (child) {
-            await terminateProcess(child);
-            child.stdin?.destroy();
-            child.stdout?.destroy();
-            child.stderr?.destroy();
+        try {
+            // Retain ancestry until the tree owner captures it: closing ACP
+            // stdin first can make the launcher exit and orphan its children.
+            if (child) await terminateProcessTree(child, { graceMs: 250 });
+        } finally {
+            connection?.close();
+            child?.stdin?.destroy();
+            child?.stdout?.destroy();
+            child?.stderr?.destroy();
         }
     }
     };
