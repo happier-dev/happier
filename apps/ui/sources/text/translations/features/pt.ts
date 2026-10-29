@@ -14269,6 +14269,10 @@ const pt: WorkStatusTranslations = {
         idle: 'Ocioso',
         offline: 'Offline',
     },
+    words: {
+        permission: 'Permissão',
+        question: 'Pergunta',
+    },
 };
 
 const workStatusTranslations = { pt: { ...pt, task: { stopped: 'Parada', linkFailed: 'A sessão foi criada, mas o vínculo com a tarefa não foi salvo. Tente novamente para vincular a mesma sessão.' } } };

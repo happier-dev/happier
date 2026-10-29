@@ -14288,6 +14288,10 @@ const pl: WorkStatusTranslations = {
         idle: 'Bezczynne',
         offline: 'Offline',
     },
+    words: {
+        permission: 'Uprawnienie',
+        question: 'Pytanie',
+    },
 };
 
 const workStatusTranslations = { pl: { ...pl, task: { stopped: 'Zatrzymana', linkFailed: 'Sesja została utworzona, ale jej powiązanie z zadaniem nie zostało zapisane. Spróbuj ponownie powiązać tę samą sesję.' } } };

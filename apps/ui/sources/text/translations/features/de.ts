@@ -13762,6 +13762,10 @@ const de: WorkStatusTranslations = {
         idle: 'Inaktiv',
         offline: 'Offline',
     },
+    words: {
+        permission: 'Berechtigung',
+        question: 'Frage',
+    },
 };
 
 const workStatusTranslations = { de: { ...de, task: { stopped: 'Gestoppt', linkFailed: 'Die Sitzung wurde erstellt, aber die Aufgabenverknüpfung wurde nicht gespeichert. Versuche erneut, dieselbe Sitzung zu verknüpfen.' } } };

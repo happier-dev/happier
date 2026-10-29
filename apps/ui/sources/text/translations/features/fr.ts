@@ -14316,6 +14316,10 @@ const fr: WorkStatusTranslations = {
         idle: 'Inactif',
         offline: 'Hors ligne',
     },
+    words: {
+        permission: 'Autorisation',
+        question: 'Question',
+    },
 };
 
 const workStatusTranslations = { fr: { ...fr, task: { stopped: 'Arrêtée', linkFailed: 'La session a été créée, mais son lien avec la tâche n’a pas été enregistré. Réessaie pour lier la même session.' } } };

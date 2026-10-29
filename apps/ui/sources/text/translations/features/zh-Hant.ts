@@ -14252,6 +14252,10 @@ const zhHant: WorkStatusTranslations = {
         idle: '閒置',
         offline: '離線',
     },
+    words: {
+        permission: '權限',
+        question: '問題',
+    },
 };
 
 const workStatusTranslations = { zhHant: { ...zhHant, task: { stopped: '已停止', linkFailed: '工作階段已建立，但未儲存與任務的關聯。重試將關聯同一個工作階段。' } } };

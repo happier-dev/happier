@@ -14269,6 +14269,10 @@ const it: WorkStatusTranslations = {
         idle: 'Inattivo',
         offline: 'Offline',
     },
+    words: {
+        permission: 'Permesso',
+        question: 'Domanda',
+    },
 };
 
 const workStatusTranslations = { it: { ...it, task: { stopped: 'Interrotta', linkFailed: 'La sessione è stata creata, ma il collegamento all’attività non è stato salvato. Riprova per collegare la stessa sessione.' } } };

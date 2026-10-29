@@ -14292,6 +14292,10 @@ const ca: WorkStatusTranslations = {
         idle: 'En repòs',
         offline: 'Sense connexió',
     },
+    words: {
+        permission: 'Permís',
+        question: 'Pregunta',
+    },
 };
 
 const workStatusTranslations = { ca: { ...ca, task: { stopped: 'Aturada', linkFailed: 'La sessió s’ha creat, però no s’ha desat l’enllaç amb la tasca. Torna-ho a provar per enllaçar la mateixa sessió.' } } };

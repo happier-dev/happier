@@ -14319,6 +14319,10 @@ const es: WorkStatusTranslations = {
         idle: 'Inactivo',
         offline: 'Sin conexión',
     },
+    words: {
+        permission: 'Permiso',
+        question: 'Pregunta',
+    },
 };
 
 const workStatusTranslations = { es: { ...es, task: { stopped: 'Detenida', linkFailed: 'La sesión se creó, pero no se guardó su enlace con la tarea. Reintenta para enlazar la misma sesión.' } } };

@@ -14252,6 +14252,10 @@ const zhHans: WorkStatusTranslations = {
         idle: '空闲',
         offline: '离线',
     },
+    words: {
+        permission: '权限',
+        question: '问题',
+    },
 };
 
 const workStatusTranslations = { zhHans: { ...zhHans, task: { stopped: '已停止', linkFailed: '会话已创建，但未保存与任务的关联。重试将关联同一个会话。' } } };

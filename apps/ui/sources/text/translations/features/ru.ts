@@ -14300,6 +14300,10 @@ const ru: WorkStatusTranslations = {
         idle: 'Простаивает',
         offline: 'Не в сети',
     },
+    words: {
+        permission: 'Разрешение',
+        question: 'Вопрос',
+    },
 };
 
 const workStatusTranslations = { ru: { ...ru, task: { stopped: 'Остановлена', linkFailed: 'Сессия создана, но связь с задачей не сохранена. Повторите попытку, чтобы связать ту же сессию.' } } };

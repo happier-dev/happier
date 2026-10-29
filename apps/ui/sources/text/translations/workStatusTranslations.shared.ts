@@ -8,6 +8,11 @@ export type WorkStatusTranslations = Readonly<{
         idle: string;
         offline: string;
     }>;
+    /** The short word a pending request shows in a row's status slot. */
+    words: Readonly<{
+        permission: string;
+        question: string;
+    }>;
 }>;
 
 
@@ -19,6 +24,10 @@ export const en: WorkStatusTranslations = {
         finished: 'Finished',
         idle: 'Idle',
         offline: 'Offline',
+    },
+    words: {
+        permission: 'Permission',
+        question: 'Question',
     },
 };
 

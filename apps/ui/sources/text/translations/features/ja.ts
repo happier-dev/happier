@@ -14256,6 +14256,10 @@ const ja: WorkStatusTranslations = {
         idle: 'アイドル',
         offline: 'オフライン',
     },
+    words: {
+        permission: '許可',
+        question: '質問',
+    },
 };
 
 const workStatusTranslations = { ja: { ...ja, task: { stopped: '停止', linkFailed: 'セッションは作成されましたが、タスクへのリンクは保存されませんでした。再試行すると同じセッションをリンクします。' } } };
