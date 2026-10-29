@@ -48,7 +48,6 @@ export async function renderPluginActionReferenceMarkdown({
   loadRenderer = loadRendererFromCurrentBuild,
 } = {}) {
   await ensureWorkspacePackagesBuiltByName(REPO, ['@happier-dev/protocol'], {
-    force: true,
     includeDevDependencies: false,
     publicationMode: 'live',
     quiet: true,
