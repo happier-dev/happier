@@ -14,9 +14,9 @@ export type McpAlwaysAllowInput = Readonly<{
 }>;
 
 /** Answers use the incumbent Session owner. Only the catalog write is retried after an answer. */
-export function createMcpAlwaysAllowController(input: McpAlwaysAllowInput) {
+export function createMcpAlwaysAllowController(input: McpAlwaysAllowInput, receipt?: McpAlwaysAllowSnapshot) {
     const identity = ResolvedMcpToolIdentityV1Schema.parse(input.identity);
-    let snapshot: McpAlwaysAllowSnapshot = { status: 'idle', answered: false, errorCode: null };
+    let snapshot: McpAlwaysAllowSnapshot = receipt ?? { status: 'idle', answered: false, errorCode: null };
     let inFlight: Promise<void> | null = null;
     const listeners = new Set<() => void>();
     const publish = (next: McpAlwaysAllowSnapshot) => { snapshot = next; for (const listener of listeners) listener(); };
