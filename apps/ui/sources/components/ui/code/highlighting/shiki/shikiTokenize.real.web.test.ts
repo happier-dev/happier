@@ -1,8 +1,32 @@
 import { describe, expect, it } from 'vitest';
+import { build } from 'esbuild';
+import { createRequire } from 'node:module';
+import { resolve } from 'node:path';
 
 import { clearShikiCacheForKey, resolveHappierShikiThemeId, shikiTokenizeLines } from './shikiTokenize';
 
 describe('shikiTokenizeLines with the real highlighter', () => {
+    it('loads the real highlighter and requested grammar on first use in a compiled web bundle', async () => {
+        const result = await build({
+            entryPoints: [resolve(process.cwd(), 'sources/components/ui/code/highlighting/shiki/shikiTokenize.ts')],
+            bundle: true, format: 'cjs', platform: 'node', write: false,
+            resolveExtensions: ['.web.ts', '.web.tsx', '.ts', '.tsx', '.mjs', '.js', '.json'],
+            external: ['react-native'],
+        });
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        const native = await createReactNativeWebMock();
+        const nodeRequire = createRequire(resolve(process.cwd(), 'package.json'));
+        const compiled = { exports: {} };
+        // Only the genuine native platform SDK leaves the compiled owner graph.
+        new Function('require', 'module', 'exports', result.outputFiles![0].text)(
+            (specifier: string) => specifier === 'react-native' ? native : nodeRequire(specifier), compiled, compiled.exports,
+        );
+        const owner = compiled.exports as typeof import('./shikiTokenize');
+        const lines = ['const answer = 42;'];
+        const highlighted = await owner.shikiTokenizeLines({ isDark: false, language: 'typescript', lines });
+        expect(highlighted.tokensByLine[0].map(token => token.text).join('')).toBe(lines[0]);
+        expect(new Set(highlighted.tokensByLine[0].map(token => token.color)).size).toBeGreaterThan(1);
+    });
     it('exposes grammar tokens independently of color-token merging', async () => {
         const owner = await import('./shikiTokenize');
         expect(owner).toHaveProperty('shikiTokenizeScopeLines');
