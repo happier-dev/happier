@@ -79,6 +79,8 @@ export type CommandMenuProps = Readonly<{
     matchAnchorWidth?: boolean;
     /** Hold the full available height so the surface never resizes while its query narrows the rows. */
     fillHeight?: boolean;
+    /** Where a held frame (`fillHeight`) seats its `emptyState`: a pane centres, a one-line state sits under the header. */
+    emptyStateAlign?: 'center' | 'start';
     /** On a phone the menu is presented in the shared bottom sheet (Popover's phone presentation) under this title. */
     phoneSheetTitle?: string;
     testID?: string;

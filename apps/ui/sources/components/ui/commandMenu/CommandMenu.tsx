@@ -165,8 +165,8 @@ export const CommandMenu = React.memo((props: CommandMenuProps) => {
             <View style={props.fillHeight ? emptyStyles.bodyFill : emptyStyles.body}>
             <View style={emptyStyles.list}>
             {items.length === 0 && props.emptyState != null ? (
-                // A held frame centres its empty state in the room the rows would take.
-                <View style={props.fillHeight ? emptyStyles.emptyFill : undefined}>{props.emptyState}</View>
+                // A held frame centres a pane-sized empty state in the room the rows would take; a line stays under the header.
+                <View style={props.fillHeight ? (props.emptyStateAlign === 'start' ? emptyStyles.emptyFillStart : emptyStyles.emptyFill) : undefined}>{props.emptyState}</View>
             ) : items.length === 0 && emptyStateLabel ? (
                 <View
                     style={emptyStyles.container}
@@ -202,6 +202,7 @@ const emptyStyles = StyleSheet.create((theme) => ({
     bodyFill: { flexDirection: 'row', minHeight: 0, flex: 1 },
     list: { flex: 1, minWidth: 0, minHeight: 0 },
     emptyFill: { flex: 1, justifyContent: 'center' },
+    emptyFillStart: { flex: 1, justifyContent: 'flex-start' },
     container: {
         paddingHorizontal: theme.space.s24,
         paddingVertical: theme.space.s24,
