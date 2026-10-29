@@ -18,9 +18,9 @@ vi.mock('react-native', async () => {
 
 // The primary pointer (finger or precise) is a platform fact: the one boundary these rows read.
 const pointer = vi.hoisted(() => ({ touch: false }));
-vi.mock('@/components/ui/interactiveTargetSize', async (importOriginal) => ({
-    ...(await importOriginal<typeof import('@/components/ui/interactiveTargetSize')>()),
-    isTouchPrimaryPointer: () => pointer.touch,
+vi.mock('@happier-dev/plugin-ui/environment', async (importOriginal) => ({
+    ...(await importOriginal<typeof import('@happier-dev/plugin-ui/environment')>()),
+    isHappierTouchPrimaryPointer: () => pointer.touch,
 }));
 
 vi.mock('react-native-unistyles', async () => {
@@ -125,6 +125,30 @@ describe('FilesystemBrowserRow tree title (one line; the meaningful end stays)',
         const title = textNodes(screen, 'nightly-recovery.md');
         expect(title.length).toBeGreaterThan(0);
         expect(title.some((node) => node.props.ellipsizeMode === 'tail')).toBe(true);
+    });
+});
+
+describe('FilesystemBrowserRow subtitle (a phone Code row: lab p-code BROWSEp)', () => {
+    it('sets the subtitle under the name, in the name column, with the time left at the trailing edge', async () => {
+        const folder: FilesystemBrowserNode = { path: 'core', name: 'core', type: 'directory', depth: 0, isExpanded: false, isLoadingChildren: false };
+        const screen = await renderScreen(
+            <FilesystemBrowserRow
+                testID="row"
+                node={folder}
+                title="core"
+                icon={null}
+                disclosure
+                subtitle={<Text testID="row-subject">Let a beforeRetry hook change per-attempt options</Text>}
+                rightElement={<Text testID="row-time">2w</Text>}
+            />,
+        );
+        type Probe = { findAll: (predicate: (n: { props?: { testID?: string; children?: unknown; numberOfLines?: number } }) => boolean) => unknown[] };
+        const holds = (node: Probe, testID: string) => node.findAll((n) => n.props?.testID === testID).length > 0;
+        const titleHolds = (node: Probe) => node.findAll((n) => n.props?.children === 'core' && n.props?.numberOfLines === 1).length > 0;
+        const columns = screen.findAll((node) => titleHolds(node as Probe) && holds(node as Probe, 'row-subject') && !holds(node as Probe, 'row-time'));
+        // A column holds the name and the subject; the time sits outside it, so the subject never shares the name's line.
+        expect(columns.length).toBeGreaterThan(0);
+        expect(screen.findByTestId('row-time')).toBeTruthy();
     });
 });
 

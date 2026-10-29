@@ -148,6 +148,8 @@ export type HappierTreeRowProps = Readonly<{
   selectionMark?: ReactNode;
   /** A compact fact immediately after the title (for example, a changed-file count). */
   titleAccessory?: ReactNode;
+  /** A second line under the title (a phone Code row's latest commit subject); the title column keeps the room. */
+  subtitle?: ReactNode;
   /** One quiet fact at the trailing edge ("2 days"). */
   meta?: ReactNode;
   /** The row's own controls after the meta (an author's menu). */
@@ -370,26 +372,35 @@ export function HappierTreeRow(props: HappierTreeRowProps) {
               </View>
             ) : (
               <>
-                <View style={{ flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: HAPPIER_TREE_ROW_METRICS.glyphGapPx }}>
-                  {/* One title size for every row (lab `.ca-row .t`), the reading step on a phone; a branch is the bolder line. */}
-                  <HappierText
-                    numberOfLines={1}
-                    ellipsizeMode={branch ? 'middle' : 'tail'}
-                    style={{
-                      ...(props.compact
-                        ? resolveHappierTypeRoleStyle('reading', theme, typography, branch ? 'semiBold' : undefined)
-                        : resolveHappierTextStepStyle(
-                          HAPPIER_COLLECTION_LIST_TEXT[branch ? 'rowTitleSelected' : 'rowTitle'],
-                          typography,
-                        )),
-                      flexShrink: 1,
-                      minWidth: 0,
-                      color: theme.colors.text,
-                    }}
-                  >
-                    {props.title}
-                  </HappierText>
-                  {props.titleAccessory ?? null}
+                <View style={{ flex: 1, minWidth: 0, justifyContent: 'center' }}>
+                  <View style={{ minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: HAPPIER_TREE_ROW_METRICS.glyphGapPx }}>
+                    {/* One title size for every row (lab `.ca-row .t`), the reading step on a phone; a branch is the bolder line. */}
+                    <HappierText
+                      numberOfLines={1}
+                      ellipsizeMode={branch ? 'middle' : 'tail'}
+                      style={{
+                        ...(props.compact
+                          ? resolveHappierTypeRoleStyle('reading', theme, typography, branch ? 'semiBold' : undefined)
+                          : resolveHappierTextStepStyle(
+                            HAPPIER_COLLECTION_LIST_TEXT[branch ? 'rowTitleSelected' : 'rowTitle'],
+                            typography,
+                          )),
+                        flexShrink: 1,
+                        minWidth: 0,
+                        color: theme.colors.text,
+                      }}
+                    >
+                      {props.title}
+                    </HappierText>
+                    {props.titleAccessory ?? null}
+                  </View>
+                  {props.subtitle ? (
+                    typeof props.subtitle === 'string' ? (
+                      <HappierText variant="meta" numberOfLines={1} style={{ color: theme.colors.mutedText }}>
+                        {props.subtitle}
+                      </HappierText>
+                    ) : props.subtitle
+                  ) : null}
                 </View>
                 {typeof props.meta === 'string' || typeof props.meta === 'number' ? (
                   <HappierText

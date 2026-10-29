@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { hapticsMedium } from '@/components/ui/theme/haptics';
-import { View } from 'react-native';
+import { Platform, View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { Item, type ItemProps } from '@/components/ui/lists/Item';
@@ -11,7 +11,7 @@ import { HappierTreeRow, resolveHappierTreeRowIndentPx } from '@happier-dev/plug
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { resolveFilesystemErrorReason } from './filesystemErrorReason';
-import { isTouchPrimaryPointer } from '@/components/ui/interactiveTargetSize';
+import { isHappierTouchPrimaryPointer } from '@happier-dev/plugin-ui/environment';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { SelectionCheckGlyph, type SelectionCheckState } from '@/components/ui/selection/SelectionCheckGlyph';
 import { useDeviceType } from '@/utils/platform/responsive';
@@ -106,7 +106,7 @@ export function FilesystemBrowserRow(props: FilesystemBrowserRowProps): React.Re
     const showDivider = props.showDivider === true;
 
     const errorNode = props.node;
-    const touch = isTouchPrimaryPointer();
+    const touch = isHappierTouchPrimaryPointer(Platform.OS);
     const treeTouch = touch || phone;
     const selection = props.selection ? (
         <IconButton
@@ -178,7 +178,7 @@ export function FilesystemBrowserRow(props: FilesystemBrowserRowProps): React.Re
                     mark={props.selection ? undefined : props.icon}
                     selection={selection}
                     selectionMark={props.selection ? props.selectionMark : undefined}
-                    meta={props.subtitle}
+                    subtitle={props.subtitle}
                     trailing={props.rightElement}
                     renderActions={props.rowActions ?? undefined}
                     actionsRevealed={props.rowActionsRevealed}
