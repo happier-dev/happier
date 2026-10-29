@@ -1,7 +1,5 @@
-export type RaceWithTimeoutResult<T> =
-    | Readonly<{ type: 'resolved'; value: T }>
-    | Readonly<{ type: 'rejected'; error: unknown }>
-    | Readonly<{ type: 'timeout' }>;
+export { raceWithTimeout } from '@happier-dev/cli-common/plugins/registration/cleanupTimeout';
+export type { RaceWithTimeoutResult } from '@happier-dev/cli-common/plugins/registration/cleanupTimeout';
 
 export async function sleep(ms: number): Promise<void> {
     await new Promise<void>((resolve) => {
@@ -36,26 +34,6 @@ export async function sleepWithSignal(ms: number, signal?: AbortSignal | null): 
         }, Math.max(0, Math.trunc(ms)));
         signal?.addEventListener('abort', onAbort, { once: true });
     });
-}
-
-export async function raceWithTimeout<T>(
-    promise: Promise<T>,
-    timeoutMs: number,
-): Promise<RaceWithTimeoutResult<T>> {
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    try {
-        return await Promise.race([
-            promise
-                .then((value) => ({ type: 'resolved' as const, value }))
-                .catch((error: unknown) => ({ type: 'rejected' as const, error })),
-            new Promise<Readonly<{ type: 'timeout' }>>((resolve) => {
-                timer = setTimeout(() => resolve({ type: 'timeout' }), Math.max(0, Math.trunc(timeoutMs)));
-                timer.unref?.();
-            }),
-        ]);
-    } finally {
-        if (timer) clearTimeout(timer);
-    }
 }
 
 function abortReason(signal: AbortSignal): Error {

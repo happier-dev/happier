@@ -1,5 +1,3 @@
-import { readFileSync } from 'node:fs';
-
 import { describe, expect, it, vi } from 'vitest';
 
 import type { RaceWithTimeoutResult } from './timeout.js';
@@ -21,14 +19,11 @@ async function loadTimeout(): Promise<TimeoutModule> {
 }
 
 describe('async timeout helpers', () => {
-  it('publishes timeout helpers through the canonical async subpath', () => {
-    const packageJson = JSON.parse(
-      readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
-    ) as { exports?: Record<string, unknown> };
-
-    expect(packageJson.exports).toHaveProperty('./async', {
-      types: './dist/async/index.d.ts',
-      default: './dist/async/index.js',
+  it('publishes timeout helpers through the canonical async subpath', async () => {
+    const published = await import('@happier-dev/plugin-sdk/async');
+    await expect(published.raceWithTimeout(Promise.resolve('ready'), 25)).resolves.toEqual({
+      type: 'resolved',
+      value: 'ready',
     });
   });
 

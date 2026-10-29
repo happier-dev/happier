@@ -419,6 +419,36 @@
       "types": "./windowsCommandInvocation.d.mts",
       "import": "./windowsCommandInvocation.mjs",
       "default": "./windowsCommandInvocation.mjs"
+    },
+    "./plugins/errors": {
+      "happier-source": "./src/plugins/errors.ts",
+      "types": "./dist/plugins/errors.d.ts",
+      "import": "./dist/plugins/errors.js",
+      "default": "./dist/plugins/errors.js"
+    },
+    "./plugins/ui": {
+      "happier-source": "./src/plugins/ui/index.ts",
+      "types": "./dist/plugins/ui/index.d.ts",
+      "import": "./dist/plugins/ui/index.js",
+      "default": "./dist/plugins/ui/index.js"
+    },
+    "./plugins/registration/contracts": {
+      "happier-source": "./src/plugins/registration/contracts.ts",
+      "types": "./dist/plugins/registration/contracts.d.ts",
+      "import": "./dist/plugins/registration/contracts.js",
+      "default": "./dist/plugins/registration/contracts.js"
+    },
+    "./plugins/registration/actionHandlerInvocation": {
+      "happier-source": "./src/plugins/registration/actionHandlerInvocation.ts",
+      "types": "./dist/plugins/registration/actionHandlerInvocation.d.ts",
+      "import": "./dist/plugins/registration/actionHandlerInvocation.js",
+      "default": "./dist/plugins/registration/actionHandlerInvocation.js"
+    },
+    "./plugins/registration/cleanupTimeout": {
+      "happier-source": "./src/plugins/registration/cleanupTimeout.ts",
+      "types": "./dist/plugins/registration/cleanupTimeout.d.ts",
+      "import": "./dist/plugins/registration/cleanupTimeout.js",
+      "default": "./dist/plugins/registration/cleanupTimeout.js"
     }
   },
   "scripts": {

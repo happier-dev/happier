@@ -1,14 +1,9 @@
-import type { PluginContributionRef } from './identity.js';
+import type { PluginRemediationData } from '@happier-dev/cli-common/plugins/errors';
+export type { PluginRemediationData } from '@happier-dev/cli-common/plugins/errors';
 
 /** Declarative availability data is admitted by the host, not interpreted by authors. */
 export type PluginAvailabilityDescriptor = unknown;
 
-export type PluginRemediationData =
-    | Readonly<{ kind: 'retry' }>
-    | Readonly<{ kind: 'openSettings'; path: string }>
-    | Readonly<{ kind: 'selectAccount'; service: PluginContributionRef }>
-    | Readonly<{ kind: 'installDependency'; dependencyId: string }>
-    | Readonly<{ kind: 'openUrl'; url: string }>;
 
 export type PluginOperationAvailability =
     | Readonly<{ status: 'available' }>

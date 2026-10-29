@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest';
+import { PluginError as HostPluginError, isPluginError as isHostPluginError } from '@happier-dev/cli-common/plugins/errors';
+import { PluginError as AuthorPluginError } from '@happier-dev/plugin-sdk';
 
 import {
     isPluginActionHandlerInvocationNotStartedAdvisory,
     isPluginError,
     PluginError,
 } from './errors.js';
-import { createPluginActionHandlerNotStartedError } from './host/registration/index.js';
+import { createPluginActionHandlerNotStartedError } from '@happier-dev/cli-common/plugins/registration/actionHandlerInvocation';
 
 describe('isPluginError', () => {
     it('recognizes the public fields produced by PluginError construction', () => {
@@ -58,6 +60,16 @@ describe('isPluginError', () => {
 });
 
 describe('PluginError', () => {
+    it('preserves canonical structural errors across author and host copies', () => {
+        const data = { code: 'shared_error_identity', retryable: true, details: { phase: 'read' } };
+        const authorError = new AuthorPluginError(data);
+        const hostError = new HostPluginError(data);
+
+        expect(isHostPluginError(authorError)).toBe(true);
+        expect(authorError.data).toEqual(hostError.data);
+        expect(isPluginError(hostError)).toBe(true);
+    });
+
     it('fails a subclass that renames the error instead of silently losing recognition', () => {
         class RenamedPluginError extends PluginError {
             constructor() {

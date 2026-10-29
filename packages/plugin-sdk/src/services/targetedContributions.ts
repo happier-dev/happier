@@ -7,50 +7,8 @@ import type {
 } from '../targetedContributionAuthoring.js';
 import { pluginSourceCustodyV1Equal } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
 
-/**
- * One target-owned point declaration used to observe its admitted contributors.
- * The host only accepts it for the invoking target plugin; it is not a global
- * catalog query or an authority to inspect another target's point.
- */
-export type TargetedContributionPointRef<TContribution = unknown> = Readonly<{
-    /**
-     * The declaration's owning target. This is an equality fence against the
-     * invoking plugin identity, not a selector for another target's catalog.
-     */
-    targetPluginId: string;
-    id: string;
-    protocol: Readonly<{
-        id: string;
-        version: number;
-    }>;
-    /** Compile-time evidence only; no contributor implementation crosses the manifest boundary. */
-    readonly __targetedContribution?: TContribution;
-}>;
-
-/**
- * A complete current admitted view of one target-owned point.
- */
-export interface TargetedContributionSnapshot<TContribution> {
-    readonly occurrenceId: string;
-    readonly sourceCustody: PluginTargetedContributionSourceCustodyV1;
-    readonly contributions: readonly TContribution[];
-}
-
-/** A reserve-before-read observation of one target point's current admitted view. */
-export interface TargetedContributionObservation<TContribution> extends Disposable {
-    readCurrent(options?: PluginCancellationOptions): Promise<TargetedContributionSnapshot<TContribution>>;
-}
-
-/**
- * Target-local admitted-contribution discovery. The callback is level-triggered:
- * it carries no delta and callers reread a complete bounded current snapshot.
- */
-export interface TargetedContributionsService {
-    observeForSelf<TContribution>(
-        point: TargetedContributionPointRef<TContribution>,
-        options: Readonly<{ onInvalidated: () => void }>,
-    ): TargetedContributionObservation<TContribution>;
-}
+import type { TargetedContributionPointRef, TargetedContributionSnapshot, TargetedContributionObservation, TargetedContributionsService } from '@happier-dev/cli-common/plugins/registration/contracts';
+export type { TargetedContributionPointRef, TargetedContributionSnapshot, TargetedContributionObservation, TargetedContributionsService } from '@happier-dev/cli-common/plugins/registration/contracts';
 
 /**
  * The stable identity fields every host-admitted contribution carries. The

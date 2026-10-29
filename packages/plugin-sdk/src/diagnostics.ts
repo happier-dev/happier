@@ -1,18 +1,8 @@
 import { redactBugReportSensitiveText as canonicalRedactBugReportSensitiveText, trimBugReportTextToMaxBytes as canonicalTrimBugReportTextToMaxBytes } from '@happier-dev/protocol/bugs/reports/redaction';
 import { projectPluginFailureText as canonicalProjectPluginFailureText } from '@happier-dev/protocol/plugins/failureProjection';
 
-import type { PluginRemediationData } from './availability.js';
-import type { JsonValue } from './identity.js';
-
-export type { PluginRemediationData } from './availability.js';
-
-export type PluginDiagnosticData = Readonly<{
-    code: string;
-    severity: 'info' | 'warning' | 'error';
-    message?: string;
-    details?: JsonValue;
-    remediation?: PluginRemediationData;
-}>;
+import type { PluginDiagnosticData } from '@happier-dev/cli-common/plugins/errors';
+export type { PluginDiagnosticData, PluginRemediationData } from '@happier-dev/cli-common/plugins/errors';
 
 export type PluginDiagnosticSeverity = PluginDiagnosticData['severity'];
 

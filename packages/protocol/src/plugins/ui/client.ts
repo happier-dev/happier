@@ -15,6 +15,7 @@ export {
 export * from './storedImage.js';
 export * from './entityDragDrop.js';
 export * from './entityDragDropHost.js';
+export * from './actionControl.js';
 export {
   PLUGIN_UI_HOST_API_WIRE_VERSION_V1,
   PluginUiHostApiWireEnvelopeV1Schema,

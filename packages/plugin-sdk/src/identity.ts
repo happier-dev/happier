@@ -45,10 +45,11 @@ export {
     readTrimmedString,
 } from './sessions/fileStores/recordValues.js';
 
-export type PluginContributionRef = Readonly<{
-    pluginId: string;
-    localId: string;
-}>;
+import type { PluginContributionRef } from '@happier-dev/cli-common/plugins/registration/contracts';
+export type { PluginContributionRef } from '@happier-dev/cli-common/plugins/registration/contracts';
+
+/** A qualified Plugin-local contribution identity. */
+export type PluginContributionIdentity = PluginContributionRef;
 
 export type PluginReference = string | PluginContributionRef;
 

@@ -15,31 +15,10 @@ import type {
 } from './protocol/protocolFacade.js';
 import type { TargetedContributionPointRef } from './services/targetedContributions.js';
 import type { PluginUiIconTokenV1 } from './ui/publicContract.js';
+import type { PluginLocalizedStringV2 } from './manifest.js';
 
-export type PluginTargetedContributionSourceCustodyV1 =
-    | Readonly<{
-        kind: 'managed';
-        immutableGenerationId: string;
-        installSource: 'npm' | 'archive' | 'localPath';
-    }>
-    | Readonly<{
-        kind: 'bundled_first_party';
-        packagedRuntime: Readonly<
-            | { kind: 'cli_version_root'; versionRootId: string }
-            | { kind: 'pinned_runner_snapshot'; snapshotId: string }
-            | { kind: 'source_declaration'; packageName: string }
-        >;
-    }>
-    | Readonly<{
-        kind: 'development';
-        registeredRootId: string;
-    }>
-    | Readonly<{
-        kind: 'account_release';
-        pluginId: string;
-        version: string;
-        archiveDigestSha256: string;
-    }>;
+import type { PluginTargetedContributionSourceCustodyV1 } from '@happier-dev/cli-common/plugins/registration/contracts';
+export type { PluginTargetedContributionSourceCustodyV1 } from '@happier-dev/cli-common/plugins/registration/contracts';
 
 /**
  * Portable selection fact shared with the Protocol UI contract. The SDK owns
@@ -205,10 +184,7 @@ export type ContributionSurfacePresentation =
     | 'fill';
 
 /** Public plain-data wording accepted by the symbolic fallback state. */
-export type ContributionSurfaceLocalizedString = string | Readonly<{
-    key: string;
-    fallback: string;
-}>;
+export type ContributionSurfaceLocalizedString = PluginLocalizedStringV2;
 
 /** Public icon vocabulary accepted by the symbolic fallback state. */
 export type ContributionSurfaceIcon = PluginUiIconTokenV1;
