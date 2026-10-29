@@ -208,7 +208,11 @@ describe('runCodex app-server turn failure ownership', () => {
     tempRoots.clear();
   });
 
-  async function runPrompts(root: string, prompts: readonly string[]) {
+  async function runPrompts(
+    root: string,
+    prompts: readonly string[],
+    launch: Readonly<{ startedBy?: 'terminal' | 'daemon'; resume?: string }> = {},
+  ) {
     const { session } = createRunCodexFakeSession({
       path: root,
       host: 'localhost',
@@ -245,20 +249,22 @@ describe('runCodex app-server turn failure ownership', () => {
     };
 
     const { runCodex } = await import('./runCodex');
-    await runCodex({
+    const runError = await runCodex({
       credentials: { token: 'test' } as Credentials,
-      startedBy: 'terminal',
+      startedBy: launch.startedBy ?? 'terminal',
       startingMode: 'remote',
       permissionMode: 'default',
       permissionModeUpdatedAt: 1,
       codexBackendMode: 'appServer',
       directory: root,
-    });
+      ...(launch.resume ? { resume: launch.resume } : {}),
+    }).then(() => null, (error: unknown) => error);
 
     const sessionMessages = session.sendSessionEvent.mock.calls
       .map((call) => (call[0] as { message?: unknown } | undefined)?.message)
       .filter((message): message is string => typeof message === 'string');
     return {
+      runError,
       failures: mutations.filter((mutation): mutation is Extract<SessionTurnMutationV1, { action: 'fail' }> => mutation.action === 'fail'),
       sessionMessages,
     };
@@ -284,6 +290,27 @@ describe('runCodex app-server turn failure ownership', () => {
     }
     // The classified failed turn already carries the error for session clients.
     expect(sessionMessages.some((message) => message.startsWith('Codex process error:'))).toBe(false);
+  }, 240_000);
+
+  it('records a strict resume against a missing Codex CLI as one failed turn', async () => {
+    const root = await createTempDir('happier-codex-run-missing-cli-resume-');
+    tempRoots.add(root);
+    envScope.patch({
+      HAPPIER_CODEX_APP_SERVER_BIN: undefined,
+      HAPPIER_CODEX_PATH: join(root, 'missing', 'codex'),
+    });
+
+    const { runError, failures } = await runPrompts(root, ['resume prompt'], {
+      startedBy: 'daemon',
+      resume: 'resume-missing-cli',
+    });
+
+    expect(runError).toMatchObject({ name: 'CodexAcpResumeError' });
+    expect(failures).toHaveLength(1);
+    expect(failures[0]?.issue).toEqual(expect.objectContaining({
+      code: 'provider_cli_not_found',
+      source: 'dependency_failure',
+    }));
   }, 240_000);
 
   it('records a provider-failed turn once, without a second runner failure', async () => {

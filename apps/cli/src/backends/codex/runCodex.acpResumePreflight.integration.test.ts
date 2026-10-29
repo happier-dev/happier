@@ -17,7 +17,6 @@ import { createCodexPermissionHandler } from './utils/createCodexPermissionHandl
 import { applyPermissionModeToCodexPermissionHandler } from './utils/applyPermissionModeToHandler';
 import { createSessionTurnLifecycle } from '@/agent/runtime/session/turn/lifecycle';
 import { createCodexAppServerRpcError } from './appServer/appServerCompatibility';
-import { ProviderCliNotFoundError } from '@/runtime/managedTools/requireProviderCliCommand';
 
 const modelSyncFlushPendingAfterStartSpy = vi.fn(async () => {});
 const sessionModeSyncFlushPendingAfterStartSpy = vi.fn(async () => {});
@@ -1274,26 +1273,6 @@ describe('runCodex CodexACP resume behavior', () => {
       }));
       // The classified failed turn carries the error; the raw status message would only duplicate it.
       expect(readEmittedSessionMessages().some((message) => message.startsWith('Codex process error:'))).toBe(false);
-    });
-
-    it('surfaces a strict-resume missing-CLI failure as exactly one failed turn', async () => {
-      const { mutations } = installLifecycleBackedSession();
-      installAppServerRuntime({
-        startOrLoad: vi.fn(async () => {
-          throw new ProviderCliNotFoundError('codex');
-        }),
-      });
-      queueUserMessages(1);
-
-      const outcome = await runRemoteCodex({ startedBy: 'daemon', resume: 'resume-missing-cli' });
-
-      expect(outcome).toMatchObject({ ok: false });
-      const failures = readFailMutations(mutations);
-      expect(failures).toHaveLength(1);
-      expect(failures[0]?.issue).toEqual(expect.objectContaining({
-        code: 'provider_cli_not_found',
-        source: 'dependency_failure',
-      }));
     });
 
     it('settles an ACP startup failure through the ACP runtime failTurn owner', async () => {
