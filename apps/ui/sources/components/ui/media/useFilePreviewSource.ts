@@ -112,16 +112,18 @@ export function useFilePreviewSource(input: UseFilePreviewSourceInput): FilePrev
     const maxBytes = input.maxBytes !== undefined ? input.maxBytes : viewer.kind === 'video' ? null : previewLimit;
     const normalizedMaxBytes = maxBytes === null ? null : typeof maxBytes === 'number' && Number.isFinite(maxBytes) ? Math.max(0, maxBytes) : 0;
     const retryCount = input.retryCount ?? 0;
-    const cacheScopeId = input.cacheScopeId?.trim() || (attachment
+    const cacheScopeId = !enabled ? '' : input.cacheScopeId?.trim() || (attachment
         ? JSON.stringify(['session-attachment', attachment.sessionId, attachment.id])
         : stage ? JSON.stringify(['composer-stage', stage.executionTarget.serverId, stage.executionTarget.machineId, stage.owner.pluginId, stage.owner.localId, stage.id])
         : scope ? buildWorkspacePreviewIdentity(scope, filePath, sizeBytes, null).cacheScopeId
         : source.kind === 'session' ? source.sessionId : source.kind === 'resource' ? source.id : source.kind === 'bytes' ? 'bytes' : '');
-    const cacheKey = resolveImagePreviewCacheKey({ cacheScopeId, filePath,
-        cacheKey: input.cacheKey ?? stage?.sha256, acquisitionKey: input.acquisitionKey, retryCount })?.signature ?? null;
-    const stageIdentity = stage ? JSON.stringify(stage) : null;
-    const attachmentIdentity = attachment ? JSON.stringify(attachment) : null;
-    const identity = JSON.stringify([kind, cacheScopeId, cacheKey, retryCount, filePath, mimeType, sizeBytes, normalizedMaxBytes, stageIdentity, attachmentIdentity]);
+    const cacheKey = enabled ? resolveImagePreviewCacheKey({ cacheScopeId, filePath,
+        cacheKey: input.cacheKey ?? stage?.sha256, acquisitionKey: input.acquisitionKey, retryCount })?.signature ?? null : null;
+    const stageIdentity = enabled && stage ? JSON.stringify(stage) : null;
+    const attachmentIdentity = enabled && attachment ? JSON.stringify(attachment) : null;
+    // Disabled previews have no acquisition identity. A Review text row may carry a repository-sized
+    // revision; only a consumer of preview bytes needs to prepare or serialize it.
+    const identity = enabled ? JSON.stringify([kind, cacheScopeId, cacheKey, retryCount, filePath, mimeType, sizeBytes, normalizedMaxBytes, stageIdentity, attachmentIdentity]) : '';
     const [resource, setResource] = React.useState<Readonly<{ identity: string; bytes: Uint8Array | null; state: FilePreviewSourceState }> | null>(null);
     const [progress, setProgress] = React.useState<Readonly<{ identity: string; value: FilePreviewProgress }> | null>(null);
     const sourceRef = React.useRef(source);

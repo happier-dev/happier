@@ -122,6 +122,75 @@ describe('useFilePreviewSource', () => {
     });
     afterEach(async () => { await fixture.dispose(); });
 
+    it('does not serialize an undemanded repository revision, and still loads changed bytes on demand', async () => {
+        const marker = 'fileopen-cost-revision';
+        const signature = Array.from({ length: 54_849 }, (_, index) => `${marker}/src/file-${index}.ts|M`).join('\n');
+        const stringify = JSON.stringify;
+        let serializedRevisionCharacters = 0;
+        // Instrument the real serializer: count repository-sized input, keeping every serialization real.
+        const serialization = vi.spyOn(JSON, 'stringify').mockImplementation((...args) => {
+            const value: unknown = args[0];
+            if (Array.isArray(value)) {
+                for (const entry of value) {
+                    if (typeof entry === 'string' && entry.includes(marker)) serializedRevisionCharacters += entry.length;
+                }
+            }
+            return Reflect.apply(stringify, JSON, args);
+        });
+        const hook = await renderHook(({ enabled, revision }: { enabled: boolean; revision: string }) => useFilePreviewSource({
+            enabled, source: { kind: 'workspace', scope: fixture.scope, filePath: 'fileopen-cost.png' },
+            cacheKey: revision, mimeType: 'image/png',
+        }), { initialProps: { enabled: false, revision: signature } });
+        try {
+            for (let index = 0; index < 3; index++) await hook.rerender({ enabled: false, revision: signature + index });
+            expect(hook.getCurrent().status).toBe('disabled');
+            expect(transfer.prepares).toHaveLength(0);
+            expect(serializedRevisionCharacters).toBe(0);
+
+            await hook.rerender({ enabled: true, revision: 'fileopen-image-1' });
+            await vi.waitFor(() => expect(hook.getCurrent().status).toBe('loaded'));
+            const firstUri = hook.getCurrent().uri;
+            transfer.setPayload(new Uint8Array([5, 6, 7, 8]), 'fileopen-cost.png');
+            await hook.rerender({ enabled: true, revision: 'fileopen-image-2' });
+            await vi.waitFor(() => expect(hook.getCurrent().status).toBe('loaded'));
+            expect(hook.getCurrent().uri).not.toBe(firstUri);
+            expect(transfer.prepares).toHaveLength(2);
+            expect(files.get(hook.getCurrent().uri!)?.chunks.flatMap(chunk => [...chunk])).toEqual([5, 6, 7, 8]);
+        } finally { serialization.mockRestore(); await hook.unmount(); }
+    });
+
+    it('does not prepare revisions for disabled comparison sides and loads the current image when enabled', async () => {
+        const marker = 'fileopen-disabled-comparison';
+        const revision = Array.from({ length: 2_000 }, (_, index) => `${marker}/${index}.ts|M`).join('\n');
+        const stringify = JSON.stringify;
+        let serializedRevisionCharacters = 0;
+        const serialization = vi.spyOn(JSON, 'stringify').mockImplementation((...args) => {
+            const value: unknown = args[0];
+            if (Array.isArray(value)) for (const entry of value) {
+                if (typeof entry === 'string' && entry.includes(marker)) serializedRevisionCharacters += entry.length;
+            }
+            return Reflect.apply(stringify, JSON, args);
+        });
+        const hook = await renderHook(({ enabled, signature }: { enabled: boolean; signature: string }) => useImageCompare({
+            enabled, scope: fixture.scope, filePath: 'disabled-compare.png',
+            source: { kind: 'workingTree', changeKind: 'added', area: 'both', signature },
+        }), { initialProps: { enabled: false, signature: revision } });
+        try {
+            expect(transfer.prepares).toHaveLength(0);
+            expect(serializedRevisionCharacters).toBe(0);
+            await hook.rerender({ enabled: true, signature: 'demanded-comparison-1' });
+            await vi.waitFor(() => expect(hook.getCurrent().after.kind).toBe('present'));
+            expect(hook.getCurrent().before.kind).toBe('added');
+            expect(transfer.prepares).toHaveLength(1);
+            const first = hook.getCurrent().after;
+            transfer.setPayload(new Uint8Array([4, 5, 6, 7]), 'disabled-compare.png');
+            await hook.rerender({ enabled: true, signature: 'demanded-comparison-2' });
+            await vi.waitFor(() => expect(hook.getCurrent().after.kind).toBe('present'));
+            expect(hook.getCurrent().after).not.toEqual(first);
+            expect(transfer.prepares).toHaveLength(2);
+        } finally { serialization.mockRestore(); await hook.unmount(); }
+    });
+
     it('reads qualified resource bytes only on demand, shares the stage acquisition and purges retirement', async () => {
         let reads = 0;
         let current = true;

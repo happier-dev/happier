@@ -28,7 +28,8 @@ export function useFileAtRevisionPreview(input: Readonly<{
     const blobId = 'blobId' in input.selector ? input.selector.blobId : undefined;
     const area = 'area' in input.selector ? input.selector.area : undefined;
     const { serverId, machineId, rootPath } = input.scope;
-    const requestKey = JSON.stringify([serverId, machineId, rootPath, input.path, blobId, area, maxBytes, input.signature, input.attempt ?? 0]);
+    const requestKey = input.enabled
+        ? JSON.stringify([serverId, machineId, rootPath, input.path, blobId, area, maxBytes, input.signature, input.attempt ?? 0]) : '';
     const read = settled?.key === requestKey ? settled.result : null;
     React.useEffect(() => {
         if (!input.enabled) return;
