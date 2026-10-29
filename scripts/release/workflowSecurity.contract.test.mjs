@@ -170,6 +170,12 @@ test('workflow security W1: PR workflows cap candidate tokens explicitly at read
   }
 });
 
+test('workflow security W2: daemon E2E uses public test credentials without reading secrets', () => {
+  const job = workflows.get('tests.yml').jobs['cli-daemon-e2e'];
+  assert.equal(hasSecrets(job), false);
+  assert.equal(typeof job.env.HANDY_MASTER_SECRET, 'string');
+  assert.doesNotMatch(job.env.HANDY_MASTER_SECRET, /\$\{\{/);
+});
 
 
 
