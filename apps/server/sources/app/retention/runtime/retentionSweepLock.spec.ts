@@ -2,22 +2,21 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createDbMocks, installDbModuleMock } from '../../api/testkit/dbMocks';
 
-const globalLockCreate = vi.fn();
+const globalLockInsert = vi.fn();
 const globalLockUpdateMany = vi.fn();
 const globalLockFindUnique = vi.fn();
 const globalLockDeleteMany = vi.fn();
 
 const dbMocks = createDbMocks({
-    globalLock: ["create", "updateMany", "findUnique", "deleteMany"],
+    globalLock: ["updateMany", "findUnique", "deleteMany"],
 } as const);
 
-dbMocks.db.globalLock.create.mockImplementation((...args: any[]) => globalLockCreate(...args));
 dbMocks.db.globalLock.updateMany.mockImplementation((...args: any[]) => globalLockUpdateMany(...args));
 dbMocks.db.globalLock.findUnique.mockImplementation((...args: any[]) => globalLockFindUnique(...args));
 dbMocks.db.globalLock.deleteMany.mockImplementation((...args: any[]) => globalLockDeleteMany(...args));
 
 installDbModuleMock({
-    db: dbMocks.db,
+    db: { ...dbMocks.db, $executeRaw: globalLockInsert },
     isPrismaErrorCode: (error: unknown, code: string) => {
         if (!error || typeof error !== 'object') {
             return false;
@@ -36,9 +35,9 @@ describe('acquireRetentionSweepLock', () => {
         globalLockDeleteMany.mockResolvedValue({ count: 1 });
     });
 
-    it('rethrows non-conflict create errors instead of trying to steal the lock', async () => {
+    it('rethrows insertion errors instead of trying to steal the lock', async () => {
         const createError = Object.assign(new Error('database unavailable'), { code: 'P1001' });
-        globalLockCreate.mockRejectedValueOnce(createError);
+        globalLockInsert.mockRejectedValueOnce(createError);
 
         const { acquireRetentionSweepLock } = await import('./retentionSweepLock');
 
@@ -47,8 +46,8 @@ describe('acquireRetentionSweepLock', () => {
         expect(globalLockFindUnique).not.toHaveBeenCalled();
     });
 
-    it('steals an expired lock when create fails with a unique conflict', async () => {
-        globalLockCreate.mockRejectedValueOnce(Object.assign(new Error('duplicate key'), { code: 'P2002' }));
+    it('steals an expired lock when insertion reports an existing row', async () => {
+        globalLockInsert.mockResolvedValueOnce(0);
         globalLockUpdateMany.mockResolvedValueOnce({ count: 1 });
         globalLockFindUnique.mockResolvedValueOnce({ value: 'lock-value' });
 
