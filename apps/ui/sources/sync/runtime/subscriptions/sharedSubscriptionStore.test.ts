@@ -15,6 +15,34 @@ type TestState = Readonly<{
 type TestSnapshot = Readonly<{ value: number }>;
 
 describe('createSharedSubscriptionStore', () => {
+    it('rearms a watch from a direct read when its old watch answers during that read', async () => {
+        let finishRead!: (value: number) => void;
+        const pending = new Promise<number>(resolve => { finishRead = resolve; });
+        let reads = 0;
+        const watches: Array<{ cursor: number; resolve(value: SharedSubscriptionWatchOutcome<number>): void }> = [];
+        const store = createSharedSubscriptionStore({
+            emptyState: 0, createState: () => 0, normalizeInput: (key: string) => key, storeKey: (key: string) => key,
+            watchAfterRefresh: true,
+            defaultSnapshotClient: () => ++reads === 1 ? Promise.resolve(1) : pending,
+            defaultWatchClient: (cursor: number) => new Promise<SharedSubscriptionWatchOutcome<number>>(resolve => watches.push({ cursor, resolve })),
+            refresh: ({ snapshotClient }) => snapshotClient(),
+            watch: ({ state, watchClient }) => watchClient(state),
+            applySnapshot: (_state: number, snapshot: number) => snapshot,
+        });
+        const release = store.subscribe('resource', () => {});
+        try {
+            await vi.waitFor(() => expect(watches).toHaveLength(1));
+            const read = store.read('resource');
+            watches[0]!.resolve({ status: 'idle' });
+            for (let turn = 0; turn < 8; turn++) await Promise.resolve();
+            expect(watches).toHaveLength(1);
+            finishRead(2);
+            await read;
+            await vi.waitFor(() => expect(watches).toHaveLength(2));
+            expect(watches[1]?.cursor).toBe(2);
+        } finally { finishRead(2); release(); store.reset(); }
+    });
+
     it('reconciles a retained read with current publications at commit without another read', async () => {
         let current = 1;
         let held = false;
