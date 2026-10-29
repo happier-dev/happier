@@ -98,6 +98,24 @@ describe('UserActionPromptCard (preview)', () => {
         expect(routerPush).not.toHaveBeenCalled();
     });
 
+    it('names the prompt once: the header is the tool title and the form body carries the question', async () => {
+        const { UserActionPromptCard } = await import('./UserActionPromptCard');
+
+        const screen = await renderWithSessionTranscriptSource(
+            <UserActionPromptCard
+                request={{ id: 'ua1', tool: 'ask_user', kind: 'user_action', arguments: { question: 'Continue?' } } as PendingPermissionRequest}
+                location={null}
+                sessionId="session-1"
+                metadata={null}
+                canApprovePermissions={true}
+            />,
+        );
+
+        expect(screen.getTextContent()).toContain('Question');
+        // The header subtitle of the mocked model repeats the question the body renders in full.
+        expect(screen.getTextContent()).not.toContain('Continue?');
+    });
+
     it('does not render when the session is inactive', async () => {
         const { UserActionPromptCard } = await import('./UserActionPromptCard');
 

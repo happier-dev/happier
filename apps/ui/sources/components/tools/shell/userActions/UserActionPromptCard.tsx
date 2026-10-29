@@ -69,11 +69,7 @@ const GenericUserActionPromptCard = React.memo(function GenericUserActionPromptC
                     <Text style={styles.title} numberOfLines={1}>
                         {headerText.title}
                     </Text>
-                    {headerText.subtitle ? (
-                        <Text style={styles.subtitle} numberOfLines={2}>
-                            {headerText.subtitle}
-                        </Text>
-                    ) : null}
+                    {/* A question's body states its title and prompt in full: a subtitle here would say it twice. */}
                 </View>
                 {headerActions ? <View style={styles.headerActions}>{headerActions}</View> : null}
                 {canOpenToolRoute ? (
@@ -166,10 +162,6 @@ const styles = StyleSheet.create((theme) => ({
     title: {
         ...Typography.variant('body', 'semiBold'),
         color: theme.colors.text.primary,
-    },
-    subtitle: {
-        fontSize: 12,
-        color: theme.colors.text.secondary,
     },
     viewButton: {
         padding: theme.space.s6,
