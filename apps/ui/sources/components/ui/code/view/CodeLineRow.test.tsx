@@ -64,6 +64,20 @@ describe('CodeLineRow', () => {
         expect(JSON.stringify(screen.tree.toJSON())).toContain('const added = true;');
         expect(JSON.stringify(screen.tree.toJSON())).toContain('+');
     });
+    it('separates the change marker from the code by one column on every diff row, as the Pierre renderer does', async () => {
+        const { CodeLineRow } = await import('./CodeLineRow');
+        const rendered = async (kind: 'add' | 'remove' | 'context', renderPrefixText: string) => {
+            const screen = await renderScreen(<CodeLineRow
+                line={{ id: `gap-${kind}`, sourceIndex: 0, hunkIndex: null, kind, oldLine: 1, newLine: 1,
+                    renderPrefixText, renderCodeText: 'export const x = 1;', renderIsHeaderLine: false, selectable: true }}
+                selected={false}
+            />);
+            return JSON.stringify(screen.tree.toJSON());
+        };
+        expect(await rendered('add', '+')).toContain('"+ "');
+        expect(await rendered('remove', '-')).toContain('"- "');
+        expect(await rendered('context', ' ')).toContain('"  "');
+    });
     it('decorates Find ranges inside syntax-highlighted code without changing the displayed text', async () => {
         const { CodeLineRow } = await import('./CodeLineRow');
         const screen = await renderScreen(<CodeLineRow

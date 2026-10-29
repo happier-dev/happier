@@ -351,7 +351,7 @@ export function CodeLineRow(props: {
                             ellipsizeMode={wrapLines ? undefined : 'clip'}
                             style={[styles.codeText, webWhitespaceStyle, { color: textColor }, !wrapLines ? styles.noWrap : null]}
                         >
-                            {line.renderPrefixText}
+                            {`${line.renderPrefixText} `}
                         </Text>
                     ) : null}
                     <Text
