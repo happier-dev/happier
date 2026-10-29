@@ -9,6 +9,7 @@ import { PluginAccountAvailabilityIntentReadResponseV1Schema, PluginAvailability
     PluginAvailabilityIntentsListActionOutputV1Schema, PluginAvailabilityMaterializationsReadActionOutputV1Schema } from '@happier-dev/protocol/plugins/availability';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
+import { DaemonPluginInvocationLogReadRequestV1Schema, DaemonPluginInvocationLogReadResponseV1Schema } from '@happier-dev/protocol/daemon/plugin-invocation-logs';
 import type { InstalledPluginEntry } from '../model/pluginMarketplaceModel';
 import type { InvalidateSync } from '@/utils/sessions/sync';
 
@@ -30,6 +31,7 @@ const administrationTargetSelection = vi.hoisted(() => Object.freeze({
     resolveExecutionTarget: () => null,
 }));
 const logRequests: Array<Readonly<{ machineId: string; serverUrl: string | undefined; payload: unknown }>> = [];
+const logDeliveries: Array<(value: ReturnType<typeof availableLogResponse>) => void> = [];
 const account = createProviderSettingsAccountHarness();
 const { storage } = await import('@/sync/domains/state/storageStore');
 const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
@@ -53,6 +55,11 @@ function installLogSocketBoundary() {
                 throw new Error(`Unexpected log RPC fixture method: ${packet.method.slice(separator + 1)}`);
             }
             logRequests.push({ machineId: packet.method.slice(0, separator), serverUrl, payload: packet.params });
+            const query = DaemonPluginInvocationLogReadRequestV1Schema.parse(packet.params);
+            if (query.waitForChanges) {
+                const result = await new Promise<ReturnType<typeof availableLogResponse>>(resolve => { logDeliveries.push(resolve); });
+                return { ok: true, result };
+            }
             return { ok: true, result: availableLogResponse() };
         });
     });
@@ -144,13 +151,17 @@ function machineFor(origin: typeof ORIGIN_A | typeof ORIGIN_B) {
 }
 
 function availableLogResponse() {
-    return {
+    const response = DaemonPluginInvocationLogReadResponseV1Schema.parse({
         version: 1 as const,
         kind: 'available' as const,
         records: [],
         cursor: 1,
         hasMore: false,
-    };
+        logId: 'log-a',
+        cursorReset: false,
+    });
+    if (response.kind !== 'available') throw new Error('Expected available log page');
+    return response;
 }
 
 function flushAsync(): Promise<void> {
@@ -229,6 +240,7 @@ describe('PluginDetailScreen execution-origin ownership', () => {
             machines: [machineFor(ORIGIN_A), machineFor(ORIGIN_B)] });
         await publishAvailability(1, [materializationFor(ORIGIN_A)]);
         logRequests.length = 0;
+        logDeliveries.length = 0;
         fixture.installedPluginById = new Map([['acme.plugin', {
             pluginId: 'acme.plugin',
             title: 'Acme plugin',
@@ -251,8 +263,32 @@ describe('PluginDetailScreen execution-origin ownership', () => {
     });
 
     afterEach(async () => {
+        for (const deliver of logDeliveries.splice(0)) deliver(availableLogResponse());
         await standardCleanup();
         await account.reset();
+    });
+
+    it('wires Follow through the real machine RPC with one parked cursor and one line delivery', async () => {
+        const { PluginDetailScreen } = await import('./PluginDetailScreen');
+        const screen = await renderScreen(<PluginDetailScreen pluginId="acme.plugin" />);
+        const prefix = 'settings.plugins.detail.acme.plugin.invocationLogs';
+        await vi.waitFor(() => expect(screen.findByTestId(`${prefix}.empty`)).not.toBeNull());
+        const initialReads = logRequests.length;
+        await act(async () => { screen.pressByTestId(`${prefix}.follow`); });
+        await vi.waitFor(() => expect(logDeliveries).toHaveLength(1));
+        expect(logRequests).toHaveLength(initialReads + 1);
+        expect(logRequests.at(-1)?.payload).toMatchObject({ waitForChanges: true, query: { cursor: 1, logId: 'log-a' } });
+        await act(async () => {
+            logDeliveries.shift()!({ ...availableLogResponse(), kind: 'available', cursor: 2, records: [{
+                version: 1, kind: 'plugin_invocation_log', level: 'info', message: 'one pushed log line',
+                context: { plugin: { id: 'acme.plugin', version: '1.0.0' }, contribution: { id: 'run', qualifiedId: 'acme.plugin/run' },
+                    occurrenceId: 'occurrence-a', correlationId: 'correlation-a', surface: 'action' }, occurredAtMs: 123, sequence: 1,
+            }] });
+        });
+        await vi.waitFor(() => expect(screen.root.findAll(node => typeof node.type === 'string' && node.props?.title === 'one pushed log line')).toHaveLength(1));
+        expect(logRequests).toHaveLength(initialReads + 2); // One delivery rearms one parked request.
+        await act(async () => { screen.pressByTestId(`${prefix}.stopFollowing`); });
+        await screen.unmount();
     });
 
     it('projects one sole origin without persisting and keeps the log reader on its exact target through an origin change', async () => {

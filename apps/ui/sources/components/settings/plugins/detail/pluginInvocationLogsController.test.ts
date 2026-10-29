@@ -68,6 +68,111 @@ function availablePage(params?: Readonly<{
 }
 
 describe('usePluginInvocationLogsController', () => {
+    it('keeps a loaded empty page ready while Follow parks and after Pause', async () => {
+        vi.useFakeTimers();
+        try {
+            const read = vi.fn(async (input: Readonly<{ waitForChanges?: true; signal: AbortSignal }>): Promise<DaemonPluginInvocationLogReadResponseV1> => {
+                if (!input.waitForChanges) return availablePage({ cursor: 0, records: [] });
+                return new Promise<never>((_resolve, reject) => {
+                    input.signal.addEventListener('abort', () => reject(Object.assign(new Error('cancelled'), { name: 'AbortError' })), { once: true });
+                });
+            });
+            const { usePluginInvocationLogsController } = await import('./pluginInvocationLogsController');
+            const hook = await renderHook(() => usePluginInvocationLogsController({
+                pluginId: 'example.plugin', targetKey: 'origin-a', resolveTarget: () => target, read, autoLoad: false,
+            }), { flushOptions: { cycles: 0 } });
+            await act(async () => { await hook.getCurrent().refresh(); });
+            expect(hook.getCurrent().state).toMatchObject({ phase: 'ready', records: [], cursor: 0 });
+            let follow!: Promise<void>;
+            await act(async () => { follow = hook.getCurrent().startFollowing(); });
+            try {
+                expect(hook.getCurrent().state).toMatchObject({ phase: 'ready', records: [], following: true });
+                await act(async () => { await vi.advanceTimersByTimeAsync(300_000); });
+                expect(read).toHaveBeenCalledTimes(2); // One finite page and one parked watch.
+                act(() => { hook.getCurrent().stopFollowing(); });
+                await follow;
+                expect(hook.getCurrent().state).toMatchObject({ phase: 'ready', records: [], following: false });
+            } finally {
+                act(() => { hook.getCurrent().stopFollowing(); });
+                await follow;
+                await hook.unmount();
+            }
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+    it('parks Follow for 300 idle seconds and delivers one new line once, including a log replacement at the same cursor', async () => {
+        vi.useFakeTimers();
+        try {
+            const delivery = createDeferred<ReturnType<typeof availablePage>>();
+            const read = vi.fn(async (input: Readonly<{ waitForChanges?: true; signal: AbortSignal }>): Promise<DaemonPluginInvocationLogReadResponseV1> => {
+                if (!input.waitForChanges) return availablePage({ cursor: 100, records: [logRecord(1)] });
+                if (read.mock.calls.length === 2) return delivery.promise;
+                return new Promise<never>((_resolve, reject) => {
+                    input.signal.addEventListener('abort', () => reject(Object.assign(new Error('cancelled'), { name: 'AbortError' })), { once: true });
+                });
+            });
+            const { usePluginInvocationLogsController } = await import('./pluginInvocationLogsController');
+            const hook = await renderHook(() => usePluginInvocationLogsController({
+                pluginId: 'example.plugin', targetKey: 'origin-a', resolveTarget: () => target, read, autoLoad: false,
+            }), { flushOptions: { cycles: 0 } });
+            let follow!: Promise<void>;
+            await act(async () => { follow = hook.getCurrent().startFollowing(); });
+            expect(read.mock.calls.filter(([input]) => !input.waitForChanges)).toHaveLength(1);
+            await act(async () => { await vi.advanceTimersByTimeAsync(300_000); });
+            expect(read).toHaveBeenCalledTimes(2); // Initial page + one parked watch; no recurring fetches.
+            expect(read).toHaveBeenLastCalledWith(expect.objectContaining({
+                waitForChanges: true, query: { pluginId: 'example.plugin', cursor: 100, logId: 'log-1', limit: 100 },
+            }));
+            await act(async () => {
+                delivery.resolve({ ...availablePage({ cursor: 100, records: [logRecord(2)] }), logId: 'log-2', cursorReset: true });
+            });
+            expect(hook.getCurrent().state.records.map(record => record.sequence)).toEqual([2]);
+            expect(read).toHaveBeenCalledTimes(3);
+            act(() => { hook.getCurrent().stopFollowing(); });
+            await follow;
+            await hook.unmount();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+    it('reconnects a requested Follow from its cursor, retires the previous watch, and stays paused after Stop', async () => {
+        const recoveries = new Set<() => void>();
+        const subscribeToRecovery = (_target: PluginInvocationLogMachineReadTarget, recover: () => void) => {
+            recoveries.add(recover);
+            return () => { recoveries.delete(recover); };
+        };
+        let rejectWatch!: (error: Error) => void;
+        const read = vi.fn(async (input: Readonly<{ signal: AbortSignal }>): Promise<DaemonPluginInvocationLogReadResponseV1> => {
+            if (read.mock.calls.length === 1) return availablePage({ cursor: 100, records: [logRecord(1)] });
+            if (read.mock.calls.length === 3) return availablePage({ cursor: 200, records: [logRecord(2)] });
+            return new Promise((_, reject) => {
+                rejectWatch = reject;
+                input.signal.addEventListener('abort', () => reject(Object.assign(new Error('cancelled'), { name: 'AbortError' })), { once: true });
+            });
+        });
+        const { usePluginInvocationLogsController } = await import('./pluginInvocationLogsController');
+        const hook = await renderHook(() => usePluginInvocationLogsController({
+            pluginId: 'example.plugin', targetKey: 'origin-a', resolveTarget: () => target, read, subscribeToRecovery, autoLoad: false,
+        }));
+        let follow!: Promise<void>;
+        await act(async () => { follow = hook.getCurrent().startFollowing(); });
+        expect(read).toHaveBeenCalledTimes(2);
+        await act(async () => { rejectWatch(new Error('socket disconnected')); await follow; });
+        expect(hook.getCurrent().state.records.map(record => record.sequence)).toEqual([1]);
+        await act(async () => { for (const recover of recoveries) recover(); });
+        expect(read).toHaveBeenNthCalledWith(3, expect.objectContaining({
+            query: { pluginId: 'example.plugin', cursor: 100, logId: 'log-1', limit: 100 }, waitForChanges: true,
+        }));
+        expect(hook.getCurrent().state.records.map(record => record.sequence)).toEqual([1, 2]);
+        const activeSignal = read.mock.calls.at(-1)?.[0].signal;
+        act(() => { hook.getCurrent().stopFollowing(); });
+        expect(activeSignal?.aborted).toBe(true);
+        await act(async () => { for (const recover of recoveries) recover(); });
+        expect(read).toHaveBeenCalledTimes(4);
+        await hook.unmount();
+        expect(recoveries.size).toBe(0);
+    });
     it('cancels manual reads when their owner unmounts, even with automatic loading disabled', async () => {
         let requestSignal: AbortSignal | undefined;
         const read = vi.fn(({ signal }: { signal: AbortSignal }) => new Promise<DaemonPluginInvocationLogReadResponseV1>((_resolve, reject) => {
@@ -221,6 +326,7 @@ describe('usePluginInvocationLogsController', () => {
             query: {
                 pluginId: 'example.plugin',
                 cursor: 100,
+                logId: 'log-1',
                 limit: PLUGIN_INVOCATION_LOG_VIEW_LIMIT,
             },
         }));
@@ -332,9 +438,10 @@ describe('usePluginInvocationLogsController', () => {
         await hook.unmount();
     });
 
-    it('continues an advancing follow cursor, then waits instead of spinning on a non-advancing page', async () => {
+    it('continues an advancing follow cursor, then parks instead of spinning on a non-advancing page', async () => {
         const firstFollowRead = createDeferred<ReturnType<typeof availablePage>>();
         const thirdFollowRead = createDeferred<ReturnType<typeof availablePage>>();
+        const parkedRead = createDeferred<ReturnType<typeof availablePage>>();
         const read = vi.fn()
             .mockResolvedValueOnce(availablePage({
                 cursor: 100,
@@ -342,7 +449,8 @@ describe('usePluginInvocationLogsController', () => {
                 records: [logRecord(1)],
             }))
             .mockImplementationOnce(async () => await firstFollowRead.promise)
-            .mockImplementationOnce(async () => await thirdFollowRead.promise);
+            .mockImplementationOnce(async () => await thirdFollowRead.promise)
+            .mockImplementationOnce(async () => await parkedRead.promise);
         const { usePluginInvocationLogsController } = await import('./pluginInvocationLogsController');
         const hook = await renderHook(() => usePluginInvocationLogsController({
             pluginId: 'example.plugin',
@@ -366,7 +474,7 @@ describe('usePluginInvocationLogsController', () => {
         });
         await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(2));
         expect(read).toHaveBeenNthCalledWith(2, expect.objectContaining({
-            query: { pluginId: 'example.plugin', cursor: 100, limit: 100 },
+            query: { pluginId: 'example.plugin', cursor: 100, logId: 'log-1', limit: 100 },
         }));
         await act(async () => {
             firstFollowRead.resolve(availablePage({
@@ -377,7 +485,7 @@ describe('usePluginInvocationLogsController', () => {
             await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(3));
         });
         expect(read).toHaveBeenNthCalledWith(3, expect.objectContaining({
-            query: { pluginId: 'example.plugin', cursor: 200, limit: 100 },
+            query: { pluginId: 'example.plugin', cursor: 200, logId: 'log-1', limit: 100 },
         }));
 
         thirdFollowRead.resolve(availablePage({
@@ -393,15 +501,17 @@ describe('usePluginInvocationLogsController', () => {
             following: true,
         });
         expect(hook.getCurrent().state.records.map((record) => record.sequence)).toEqual([1, 2]);
-        expect(read).toHaveBeenCalledTimes(3);
+        expect(read).toHaveBeenCalledTimes(4);
+        expect(read).toHaveBeenLastCalledWith(expect.objectContaining({ waitForChanges: true }));
 
         act(() => {
             hook.getCurrent().stopFollowing();
         });
+        parkedRead.resolve(availablePage({ cursor: 200, records: [] }));
         await act(async () => {
             await follow;
         });
-        expect(read).toHaveBeenCalledTimes(3);
+        expect(read).toHaveBeenCalledTimes(4);
         await hook.unmount();
     });
 

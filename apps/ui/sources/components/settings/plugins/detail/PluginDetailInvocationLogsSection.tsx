@@ -16,6 +16,7 @@ import {
     readPluginInvocationLogsOnMachine,
     type PluginInvocationLogMachineReadTarget,
 } from '@/sync/ops/pluginInvocationLogs';
+import { subscribeMachineRpcRecovery } from '@/sync/runtime/orchestration/serverScopedRpc/subscribeMachineRpcRecovery';
 import { t } from '@/text';
 import { formatWithCachedDateTimeFormatter } from '@/utils/datetime/cachedIntlFormatters';
 
@@ -336,6 +337,7 @@ export function PluginDetailInvocationLogsSection(props: Readonly<{
         targetKey,
         resolveTarget,
         read: readPluginInvocationLogsOnMachine,
+        subscribeToRecovery: subscribeMachineRpcRecovery,
     });
     return (
         <PluginDetailInvocationLogsSectionView

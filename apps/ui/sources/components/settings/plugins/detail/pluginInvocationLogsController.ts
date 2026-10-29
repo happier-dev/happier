@@ -9,7 +9,6 @@ import type { PluginInvocationLogMachineReadTarget } from '@/sync/ops/pluginInvo
 
 /** One screen's bounded presentation window; this is not a second log sink. */
 export const PLUGIN_INVOCATION_LOG_VIEW_LIMIT = 100;
-const PLUGIN_INVOCATION_LOG_FOLLOW_POLL_MS = 750;
 
 export type PluginInvocationLogsPhase = 'idle' | 'loading' | 'ready' | 'unavailable' | 'error';
 export type PluginInvocationLogsUnavailableReason = 'machineUnavailable' | 'readerUnavailable';
@@ -28,6 +27,7 @@ type PluginInvocationLogRead = (params: Readonly<{
     target: PluginInvocationLogMachineReadTarget;
     query: PluginInvocationLogReadQueryV1;
     signal: AbortSignal;
+    waitForChanges?: true;
 }>) => Promise<DaemonPluginInvocationLogReadResponseV1>;
 
 export type PluginInvocationLogsController = Readonly<{
@@ -59,11 +59,13 @@ function queryFor(params: Readonly<{
     pluginId: string;
     correlationId: string;
     cursor?: number;
+    logId?: string;
 }>): PluginInvocationLogReadQueryV1 {
     return {
         pluginId: params.pluginId,
         ...(params.correlationId.length > 0 ? { correlationId: params.correlationId } : {}),
         ...(params.cursor === undefined ? {} : { cursor: params.cursor }),
+        ...(params.logId === undefined ? {} : { logId: params.logId }),
         limit: PLUGIN_INVOCATION_LOG_VIEW_LIMIT,
     };
 }
@@ -73,23 +75,6 @@ function appendBoundedRecords(
     next: readonly PluginInvocationLogRecordV1[],
 ): readonly PluginInvocationLogRecordV1[] {
     return [...existing, ...next].slice(-PLUGIN_INVOCATION_LOG_VIEW_LIMIT);
-}
-
-async function waitForNextFollowPoll(signal: AbortSignal): Promise<boolean> {
-    if (signal.aborted) return false;
-    return await new Promise<boolean>((resolve) => {
-        let settled = false;
-        const settle = (value: boolean) => {
-            if (settled) return;
-            settled = true;
-            clearTimeout(timeout);
-            signal.removeEventListener('abort', onAbort);
-            resolve(value);
-        };
-        const onAbort = () => settle(false);
-        const timeout = setTimeout(() => settle(true), PLUGIN_INVOCATION_LOG_FOLLOW_POLL_MS);
-        signal.addEventListener('abort', onAbort, { once: true });
-    });
 }
 
 /**
@@ -105,6 +90,7 @@ export function usePluginInvocationLogsController(params: Readonly<{
     resolveTarget: () => PluginInvocationLogMachineReadTarget | null;
     /** The one daemon-RPC boundary is supplied by the owning screen. */
     read: PluginInvocationLogRead;
+    subscribeToRecovery?: (target: PluginInvocationLogMachineReadTarget, recover: () => void) => () => void;
     autoLoad?: boolean;
 }>): PluginInvocationLogsController {
     const [state, setState] = React.useState<PluginInvocationLogsControllerState>(() => initialState());
@@ -122,12 +108,15 @@ export function usePluginInvocationLogsController(params: Readonly<{
     }> | null>(null);
     const nextRequestIdRef = React.useRef(0);
     const observedOwnerKeyRef = React.useRef<string | null>(null);
+    const logIdRef = React.useRef<string | null>(null);
+    const followRequestedRef = React.useRef(false);
     const autoLoad = params.autoLoad !== false;
     const ownerKey = params.targetKey === null
         ? null
         : `${params.pluginId}\u0000${params.targetKey}`;
 
     const commit = React.useCallback((next: PluginInvocationLogsControllerState) => {
+        if (next.cursor === null) logIdRef.current = null;
         stateRef.current = next;
         setState(next);
     }, []);
@@ -189,7 +178,10 @@ export function usePluginInvocationLogsController(params: Readonly<{
         if (!isCurrent(params.request)) return;
         const current = stateRef.current;
         const cursorAdvanced = params.requestedCursor === undefined || params.result.cursor !== params.requestedCursor;
-        const records = params.append && cursorAdvanced
+        logIdRef.current = params.result.logId;
+        const records = params.result.cursorReset
+            ? params.result.records.slice(-PLUGIN_INVOCATION_LOG_VIEW_LIMIT)
+            : params.append && cursorAdvanced
             ? appendBoundedRecords(current.records, params.result.records)
             : params.append
                 ? current.records
@@ -206,6 +198,7 @@ export function usePluginInvocationLogsController(params: Readonly<{
     }, [commit, isCurrent]);
 
     const refresh = React.useCallback(async (): Promise<void> => {
+        followRequestedRef.current = false;
         const request = beginRequest();
         const current = stateRef.current;
         const target = resolveTargetRef.current();
@@ -248,6 +241,7 @@ export function usePluginInvocationLogsController(params: Readonly<{
     const loadMore = React.useCallback(async (): Promise<void> => {
         const current = stateRef.current;
         if (!current.hasMore || current.cursor === null) return;
+        followRequestedRef.current = false;
         const request = beginRequest();
         const target = resolveTargetRef.current();
         if (!target) {
@@ -263,6 +257,7 @@ export function usePluginInvocationLogsController(params: Readonly<{
                     pluginId: pluginIdRef.current,
                     correlationId: current.correlationId,
                     cursor: current.cursor,
+                    ...(logIdRef.current === null ? {} : { logId: logIdRef.current }),
                 }),
                 signal: request.controller.signal,
             });
@@ -289,13 +284,15 @@ export function usePluginInvocationLogsController(params: Readonly<{
     }, [applyAvailablePage, beginRequest, commit, completeRequest, isCurrent, publishError, publishUnavailable]);
 
     const startFollowing = React.useCallback(async (): Promise<void> => {
+        followRequestedRef.current = true;
         const request = beginRequest();
         const initial = stateRef.current;
         let cursor = initial.cursor ?? undefined;
         let append = cursor !== undefined;
+        let waitForChanges = cursor !== undefined && !initial.hasMore;
         commit({
             ...initial,
-            phase: initial.records.length === 0 ? 'loading' : initial.phase,
+            phase: cursor === undefined ? 'loading' : 'ready',
             unavailableReason: null,
             following: true,
         });
@@ -312,11 +309,14 @@ export function usePluginInvocationLogsController(params: Readonly<{
                         pluginId: pluginIdRef.current,
                         correlationId: stateRef.current.correlationId,
                         ...(cursor === undefined ? {} : { cursor }),
+                        ...(logIdRef.current === null ? {} : { logId: logIdRef.current }),
                     }),
                     signal: request.controller.signal,
+                    ...(waitForChanges ? { waitForChanges: true } : {}),
                 });
                 if (!isCurrent(request)) return;
                 if (result.kind === 'unavailable') {
+                    followRequestedRef.current = false;
                     publishUnavailable(
                         request,
                         result.code === 'plugin_log_reader_unavailable' ? 'readerUnavailable' : 'machineUnavailable',
@@ -334,8 +334,7 @@ export function usePluginInvocationLogsController(params: Readonly<{
                 const madeProgress = requestedCursor === undefined || result.cursor !== requestedCursor;
                 cursor = result.cursor;
                 append = true;
-                if (result.hasMore && madeProgress) continue;
-                if (!await waitForNextFollowPoll(request.controller.signal)) return;
+                waitForChanges = !(result.hasMore && madeProgress);
             }
         } catch (error) {
             if (!isAbortError(error)) publishError(request);
@@ -350,6 +349,7 @@ export function usePluginInvocationLogsController(params: Readonly<{
     }, [applyAvailablePage, beginRequest, commit, completeRequest, isCurrent, publishError, publishUnavailable]);
 
     const stopFollowing = React.useCallback(() => {
+        followRequestedRef.current = false;
         abortActive();
         const current = stateRef.current;
         commit({
@@ -362,6 +362,7 @@ export function usePluginInvocationLogsController(params: Readonly<{
     const setCorrelationId = React.useCallback((value: string) => {
         const correlationId = value.trim();
         if (correlationId === stateRef.current.correlationId) return;
+        followRequestedRef.current = false;
         abortActive();
         commit(initialState(correlationId));
     }, [abortActive, commit]);
@@ -370,11 +371,13 @@ export function usePluginInvocationLogsController(params: Readonly<{
         const ownerChanged = observedOwnerKeyRef.current !== ownerKey;
         observedOwnerKeyRef.current = ownerKey;
         if (!params.targetKey) {
+            followRequestedRef.current = false;
             abortActive();
             if (ownerChanged) commit(initialState(stateRef.current.correlationId));
             return undefined;
         }
         if (ownerChanged) {
+            followRequestedRef.current = false;
             // A machine/materialization change is a new authority. Never retain
             // a prior origin's records while its exact replacement is loading.
             abortActive();
@@ -385,6 +388,14 @@ export function usePluginInvocationLogsController(params: Readonly<{
             abortActive();
         };
     }, [abortActive, autoLoad, commit, ownerKey, params.targetKey, refresh, state.correlationId]);
+
+    React.useEffect(() => {
+        const target = resolveTargetRef.current();
+        if (!target || !params.subscribeToRecovery) return;
+        return params.subscribeToRecovery(target, () => {
+            if (followRequestedRef.current) void startFollowing();
+        });
+    }, [ownerKey, params.subscribeToRecovery, startFollowing]);
 
     // The owner transition is retired in a passive effect, but rendering the
     // replacement target must never expose the previous machine's window.
