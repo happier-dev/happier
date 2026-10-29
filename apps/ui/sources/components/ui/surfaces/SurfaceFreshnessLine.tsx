@@ -1,12 +1,11 @@
 import { HAPPIER_FRESHNESS_LINE_METRICS, HappierFreshnessClauses, HappierFreshnessLine, HappierPressable, resolveHappierFreshnessText } from '@happier-dev/plugin-ui/presentation';
 import * as React from 'react';
-import { Platform, View } from 'react-native';
+import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
 import { StatusDot } from '@/components/ui/status/StatusDot';
-import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
@@ -14,16 +13,17 @@ import { getPreferredLanguage, t } from '@/text';
 
 import type { SurfaceStateAction } from './SurfaceStateCard';
 
-const LINK_MIN_TARGET_PX = resolveMinimumInteractiveTargetSize(Platform.OS);
-
 /** A recovery on the line; `primary` marks the one forward step when the line offers more than one. */
 export type SurfaceFreshnessAction = SurfaceStateAction & Readonly<{ emphasis?: 'primary' }>;
 
 const SurfaceFreshnessOnSheetContext = React.createContext(false);
 
-/** Hosts whose body already sits on a sheet or card (a widget body) render the line plain on it. */
-export function SurfaceFreshnessOnSheetProvider(props: Readonly<{ children: React.ReactNode }>): React.ReactElement {
-    return <SurfaceFreshnessOnSheetContext.Provider value>{props.children}</SurfaceFreshnessOnSheetContext.Provider>;
+/**
+ * Hosts whose body already sits on a sheet or card (a widget body, a popover, a dialog) render the line plain
+ * on it. `onSheet={false}` keeps the strip (a fullscreen page) without changing the host's tree shape.
+ */
+export function SurfaceFreshnessOnSheetProvider(props: Readonly<{ onSheet?: boolean; children: React.ReactNode }>): React.ReactElement {
+    return <SurfaceFreshnessOnSheetContext.Provider value={props.onSheet ?? true}>{props.children}</SurfaceFreshnessOnSheetContext.Provider>;
 }
 
 /**
@@ -120,7 +120,9 @@ export function SurfaceFreshnessLine(props: Readonly<{
                         testID={action.testID ?? (props.testID ? `${props.testID}-action${index === 0 ? '' : `-${index}`}` : undefined)}
                         accessibilityRole="button"
                         accessibilityLabel={action.label}
-                        hitSlop={chip ? 8 : 6}
+                        // The link's finger reach stays inside the line's own block padding (a chip has none): past
+                        // it lies the next row, whose own target it would take taps from.
+                        hitReach={{ top: chip ? 0 : HAPPIER_FRESHNESS_LINE_METRICS.paddingVerticalPx, bottom: chip ? 0 : HAPPIER_FRESHNESS_LINE_METRICS.paddingVerticalPx }}
                         disabled={action.disabled}
                         busy={action.busy}
                         onPress={action.onPress}
@@ -189,7 +191,8 @@ const stylesheet = StyleSheet.create((theme) => ({
         opacity: 0,
     },
     link: {
-        minHeight: Math.min(LINK_MIN_TARGET_PX, HAPPIER_FRESHNESS_LINE_METRICS.minHeightPx),
+        // Drawn the same under every pointer; a finger reaches past it through the hit area.
+        minHeight: HAPPIER_FRESHNESS_LINE_METRICS.chip.minHeightPx,
         justifyContent: 'center',
         paddingHorizontal: theme.space.s4,
     },

@@ -33,6 +33,7 @@ import { createBackdropWebStyle } from '@/components/ui/overlays/createBackdropL
 import { useGlassSurfaceBackdropTone, useGlassSurfaceColor } from '@/components/ui/glass/useGlassSurfaceColor';
 import { readSurfaceStyleProperty } from '@/components/ui/surfaces/surfaceStyle';
 import { useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
+import { SurfaceFreshnessOnSheetProvider } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 
 const OVERLAY_BORDER_RADIUS = FLOATING_OVERLAY_METRICS.radiusPx;
 
@@ -282,7 +283,8 @@ export const FloatingOverlay = React.memo((props: FloatingOverlayProps) => {
         </Animated.View>
     );
 
-    const surfaceContent = <>
+    // The floating surface is the sheet its content sits on: a freshness line inside is one plain line, never a strip.
+    const surfaceContent = <SurfaceFreshnessOnSheetProvider>
         {props.header}
         {content}
         {props.footer}
@@ -297,7 +299,7 @@ export const FloatingOverlay = React.memo((props: FloatingOverlayProps) => {
                 opacity={indicatorCfg.opacity}
             />
         ) : null}
-    </>;
+    </SurfaceFreshnessOnSheetProvider>;
 
     if (insideSheet) {
         return <ListPresentationProvider value="grouped">
