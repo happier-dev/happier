@@ -13,7 +13,7 @@ beforeEach(() => {
     vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null);
     vi.stubGlobal('matchMedia', () => ({ matches: false, addListener() {}, removeListener() {} }));
 });
-afterEach(() => { disposals.splice(0).forEach((dispose) => dispose()); });
+afterEach(() => { disposals.splice(0).forEach((dispose) => dispose()); vi.useRealTimers(); });
 async function fixture(text: string, scrollback = 5000) {
     const term = new Terminal({ cols: 80, rows: 24, scrollback, allowProposedApi: true });
     const element = document.createElement('div'); document.body.append(element); term.open(element);
@@ -25,6 +25,40 @@ async function fixture(text: string, scrollback = 5000) {
     return { term, find };
 }
 describe('xterm engine Find', () => {
+    it('publishes only changed snapshot facts across parsed output and addon refreshes', async () => {
+        const { term, find } = await fixture('hit');
+        find.setQuery('hit');
+        vi.useFakeTimers();
+        const snapshots: ReturnType<typeof find.getSnapshot>[] = [];
+        const unsubscribe = find.subscribe(() => snapshots.push(find.getSnapshot()));
+        disposals.push(unsubscribe);
+        const writeAndRefresh = async (text: string) => {
+            const parsed = new Promise<void>((resolve) => term.write(text, resolve));
+            await vi.advanceTimersByTimeAsync(0);
+            await parsed;
+            // Exercise the installed SearchAddon's own 200ms write/resize refresh too.
+            await vi.advanceTimersByTimeAsync(200);
+        };
+        const initial = find.getSnapshot();
+        for (let i = 0; i < 10; i++) await writeAndRefresh(' x');
+        expect(snapshots).toHaveLength(0);
+        expect(find.getSnapshot()).toBe(initial);
+        await writeAndRefresh(' hit');
+        expect(find.status).toMatchObject({ kind: 'results', total: 2 });
+        expect(snapshots).toHaveLength(1);
+        snapshots.length = 0;
+        const matched = find.getSnapshot();
+        term.resize(81, 24);
+        await vi.advanceTimersByTimeAsync(200);
+        expect(find.getSnapshot()).toBe(matched);
+        expect(snapshots).toHaveLength(0);
+        term.resize(81, 25);
+        await vi.advanceTimersByTimeAsync(200);
+        expect(find.getSnapshot().retainedLines).toBe(25);
+        expect(find.getSnapshot().status).toBe(matched.status);
+        expect(find.getSnapshot().options).toBe(matched.options);
+        expect(snapshots).toHaveLength(1);
+    });
     it('executes the shared engine inside the actual guest bridge and keeps consumed keys out of terminal input', async () => {
         const root = document.createElement('div'); root.id = 'root'; document.body.append(root);
         const terminals: Terminal[] = [];
@@ -74,9 +108,62 @@ describe('xterm engine Find', () => {
         find.setOptions({ regex: false, matchCase: true }); expect(find.status).toMatchObject({ kind: 'results', total: 0 });
         find.setOptions({ regex: false, matchCase: false }); find.setQuery('kept');
         find.step(1); expect(term.getSelection()).toBe('kept');
-        const selected = term.getSelectionPosition(); find.close();
+        const selected = term.getSelectionPosition();
+        term.resize(81, 24);
+        expect(term.getSelectionPosition()).toEqual(selected);
+        find.close();
         expect(term.getSelectionPosition()).toEqual(selected);
         find.open(); find.setQuery('\\path'); expect(find.status).toMatchObject({ kind: 'results', total: 1 });
+    });
+    it('marks the selection a match step makes as its own, so it never reads as the user selecting text', async () => {
+        const { term, find } = await fixture('tide kept\r\nslack tide');
+        const seenDuringStep: boolean[] = [];
+        const subscription = term.onSelectionChange(() => seenDuringStep.push(find.ownsSelection()));
+        find.setQuery('tide'); find.step(1);
+        subscription.dispose();
+        expect(term.getSelection()).toBe('tide');
+        // Selection listeners (the Ask · Copy toolbar) hear the step while it runs and after it.
+        expect(seenDuringStep.length).toBeGreaterThan(0);
+        expect(seenDuringStep.every(Boolean)).toBe(true);
+        expect(find.ownsSelection()).toBe(true);
+        find.close();
+        expect(find.ownsSelection()).toBe(true);
+        const selected = term.getSelectionPosition();
+        if (!selected) throw new Error('Find match selection missing');
+        term.clearSelection();
+        expect(find.ownsSelection()).toBe(false);
+        const length = (selected.end.y - selected.start.y) * term.cols + selected.end.x - selected.start.x;
+        term.select(selected.start.x, selected.start.y, length);
+        expect(term.getSelection()).toBe('tide');
+        expect(find.ownsSelection()).toBe(false);
+        find.close();
+        expect(term.getSelection()).toBe('tide');
+        expect(find.ownsSelection()).toBe(false);
+        // A selection the user makes afterwards is theirs.
+        term.select(0, 1, 5);
+        expect(find.ownsSelection()).toBe(false);
+    });
+    it('owns the match selection during the delayed output refresh', async () => {
+        const { term, find } = await fixture('tide tide');
+        find.setQuery('tide'); find.step(1);
+        expect(find.ownsSelection()).toBe(true);
+        vi.useFakeTimers();
+        const ownershipDuringRefresh: boolean[] = [];
+        const subscription = term.onSelectionChange(() => ownershipDuringRefresh.push(find.ownsSelection()));
+        disposals.push(() => subscription.dispose());
+        const parsed = new Promise<void>((resolve) => term.write(' tide', resolve));
+        await vi.advanceTimersByTimeAsync(0);
+        await parsed;
+        await vi.advanceTimersByTimeAsync(200);
+        expect(find.status).toMatchObject({ kind: 'results', total: 3 });
+        expect(term.getSelection()).toBe('tide');
+        expect(find.ownsSelection()).toBe(true);
+        expect(ownershipDuringRefresh.length).toBeGreaterThan(0);
+        expect(ownershipDuringRefresh.every(Boolean)).toBe(true);
+        term.clearSelection();
+        expect(find.ownsSelection()).toBe(false);
+        term.select(5, 0, 4);
+        expect(find.ownsSelection()).toBe(false);
     });
     it('reports addon decoration bounds and exhausted scrollback as limited', async () => {
         const { find } = await fixture('hit '.repeat(1001));
@@ -87,14 +174,14 @@ describe('xterm engine Find', () => {
     it('refreshes appended/erased/alternate-buffer results and retires invalid regex and closed work', async () => {
         const { term, find } = await fixture('match'); find.setQuery('match');
         await new Promise<void>((resolve) => term.write('\r\nmatch', resolve));
-        expect(find.status).toMatchObject({ kind: 'results', total: 2 });
+        await vi.waitFor(() => expect(find.status).toMatchObject({ kind: 'results', total: 2 }));
         term.resize(40, 24); expect(find.status).toMatchObject({ kind: 'results', total: 2 });
         await new Promise<void>((resolve) => term.write('\x1b[?1049hother', resolve));
         expect(find.status).toMatchObject({ kind: 'results', total: 0, coverage: 'loaded' });
         await new Promise<void>((resolve) => term.write('\x1b[?1049l', resolve));
         expect(find.status).toMatchObject({ kind: 'results', total: 2 });
         term.clear(); await new Promise<void>((resolve) => term.write('\x1b[2J\x1b[H', resolve));
-        expect(find.status).toMatchObject({ kind: 'results', total: 0 });
+        await vi.waitFor(() => expect(find.status).toMatchObject({ kind: 'results', total: 0 }));
         find.setOptions({ regex: true, matchCase: false }); find.setQuery('[');
         expect(find.status).toEqual({ kind: 'invalidPattern' });
         find.close(); await new Promise<void>((resolve) => term.write('match', resolve));

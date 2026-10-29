@@ -46,7 +46,7 @@ export type XtermTerminalHandle = Readonly<{
     focus: () => void;
     hasSelection: () => boolean;
     getSelectionText: () => string;
-    /** The selected buffer rows and the selection's on-screen box (window coordinates), or null. */
+    /** The user's selected buffer rows and the selection's on-screen box (window coordinates), or null (none, or a Find match). */
     getSelectionRange?: () => XtermSelectionRange | null;
 }>;
 
@@ -362,6 +362,8 @@ export const XtermTerminalView = React.forwardRef<XtermTerminalHandle, XtermTerm
         getSelectionText: () => terminalRef.current?.getSelection() ?? '',
         getSelectionRange: () => {
             const term = terminalRef.current;
+            // A Find step marks its match by selecting it; that is not text the user chose to act on.
+            if (findRef.current?.ownsSelection()) return null;
             const position = term?.hasSelection() ? term.getSelectionPosition() : undefined;
             const screen = term?.element?.querySelector('.xterm-screen');
             if (!term || !position || !screen) return null;

@@ -9,12 +9,55 @@ export function createXtermFindEngine(term: Terminal, addon: SearchAddon, colors
     dispose(): void;
     setColors(colors: XtermFindColors): void;
     applyQuery(query: string, options: TerminalFindSnapshot['options']): void;
+    /** True while the selection is the match a step selected (the addon selects it), not text the user chose. */
+    ownsSelection(): boolean;
 } {
     let snapshot: TerminalFindSnapshot = { open: false, query: '', options: { regex: false, matchCase: false }, status: { kind: 'idle' }, retainedLines: 0 };
     const listeners = new Set<() => void>();
-    const publish = (next: TerminalFindSnapshot) => { snapshot = next; for (const listener of listeners) listener(); };
+    const publish = (next: TerminalFindSnapshot) => {
+        const options = next.options.regex === snapshot.options.regex && next.options.matchCase === snapshot.options.matchCase
+            ? snapshot.options : next.options;
+        const sameStatus = next.status === snapshot.status || next.status.kind === snapshot.status.kind && (
+            next.status.kind === 'idle' || next.status.kind === 'invalidPattern'
+            || next.status.kind === 'results' && snapshot.status.kind === 'results'
+                && next.status.current === snapshot.status.current && next.status.total === snapshot.status.total
+                && next.status.coverage === snapshot.status.coverage);
+        const status = sameStatus ? snapshot.status : next.status;
+        if (next.open === snapshot.open && next.query === snapshot.query && options === snapshot.options
+            && status === snapshot.status && next.retainedLines === snapshot.retainedLines) return;
+        snapshot = { ...next, options, status };
+        for (const listener of listeners) listener();
+    };
     let disposed = false;
     let truncated = false;
+    // The addon marks a match by selecting it; that selection is Find's until the user selects something else.
+    let stepping = false;
+    let stepSelection: string | null = null;
+    // The addon also searches from its write/resize callback. Scope ownership at those public methods
+    // so selection listeners see the correct owner before onDidChangeResults fires.
+    const findNext = addon.findNext;
+    const findPrevious = addon.findPrevious;
+    const withSelectionOwnership = (search: SearchAddon['findNext']): SearchAddon['findNext'] => (...args) => {
+        const wasStepping = stepping;
+        stepping = true;
+        try { return search.apply(addon, args); }
+        finally {
+            // xterm can omit the select event when a cleared match is selected at the same cells.
+            stepSelection = selectionKey();
+            stepping = wasStepping;
+        }
+    };
+    addon.findNext = withSelectionOwnership(findNext);
+    addon.findPrevious = withSelectionOwnership(findPrevious);
+    const selectionKey = () => {
+        const position = term.getSelectionPosition();
+        return position ? `${position.start.x},${position.start.y},${position.end.x},${position.end.y}` : null;
+    };
+    const selections = term.onSelectionChange(() => {
+        const selected = selectionKey();
+        if (stepping) stepSelection = selected;
+        else if (selected !== stepSelection) stepSelection = null;
+    });
     const retainSelection = (operation: () => void) => {
         const selection = term.getSelectionPosition();
         operation();
@@ -27,13 +70,14 @@ export function createXtermFindEngine(term: Terminal, addon: SearchAddon, colors
         matchBackground: colors.matchAll, matchOverviewRuler: colors.matchAll,
         activeMatchBackground: colors.matchCurrent, activeMatchColorOverviewRuler: colors.matchCurrent,
     });
+    // This is the addon's 1000-decoration ceiling, not a second Find limit.
+    const coverage = (total: number) => total >= 1000 || truncated ? 'limited'
+        : term.buffer.active.type === 'alternate' ? 'loaded' : 'complete';
     const resultSubscription = addon.onDidChangeResults(({ resultIndex, resultCount }) => {
         if (disposed || !snapshot.open || !snapshot.query || snapshot.status.kind === 'invalidPattern') return;
-        // This is the addon's 1000-decoration ceiling, not a second Find limit.
-        const limited = resultCount >= 1000 || truncated;
         publish({ ...snapshot, retainedLines: term.buffer.active.length,
             status: { kind: 'results', current: resultIndex < 0 ? null : resultIndex + 1,
-                total: resultCount, coverage: limited ? 'limited' : term.buffer.active.type === 'alternate' ? 'loaded' : 'complete' } });
+                total: resultCount, coverage: coverage(resultCount) } });
     });
     const search = (direction: 1 | -1, refresh = false) => {
         if (disposed || !snapshot.open) return;
@@ -50,7 +94,7 @@ export function createXtermFindEngine(term: Terminal, addon: SearchAddon, colors
                 return;
             }
         }
-        // Clear the addon's cached count after parsed output/clear/resize, preserving its cell selection.
+        // Explicit query/options/buffer refreshes invalidate the addon's cached count, retaining its cell selection.
         if (refresh) retainSelection(() => addon.clearDecorations());
         if (snapshot.status.kind === 'invalidPattern') publish({ ...snapshot, status: { kind: 'idle' } });
         const options = { regex: snapshot.options.regex, caseSensitive: snapshot.options.matchCase,
@@ -58,12 +102,20 @@ export function createXtermFindEngine(term: Terminal, addon: SearchAddon, colors
         if (direction === 1) addon.findNext(snapshot.query, options);
         else addon.findPrevious(snapshot.query, options);
     };
-    const refresh = () => {
+    const updateBufferFacts = () => {
         if (term.buffer.active.type === 'normal' && term.buffer.active.length >= term.rows + (term.options.scrollback ?? 0)) truncated = true;
+        if (disposed || !snapshot.open) return;
+        const status: TerminalFindSnapshot['status'] = snapshot.status.kind === 'results' ? { ...snapshot.status,
+            coverage: coverage(snapshot.status.total) } : snapshot.status;
+        publish({ ...snapshot, status, retainedLines: term.buffer.active.length });
+    };
+    const refresh = () => {
+        updateBufferFacts();
         search(1, true);
     };
-    const writes = term.onWriteParsed(refresh);
-    const resizes = term.onResize(refresh);
+    // SearchAddon owns write/resize matching (including its refresh cadence); the host adds only coverage facts.
+    const writes = term.onWriteParsed(updateBufferFacts);
+    const resizes = term.onResize(updateBufferFacts);
     const buffers = term.buffer.onBufferChange(refresh);
     const clear = () => {
         retainSelection(() => addon.clearDecorations());
@@ -80,7 +132,12 @@ export function createXtermFindEngine(term: Terminal, addon: SearchAddon, colors
         setQuery: (query) => { publish({ ...snapshot, query }); search(1, true); },
         setOptions: (options) => { publish({ ...snapshot, options }); search(1, true); },
         step: (direction) => search(direction), stop: () => {},
-        dispose: () => { disposed = true; writes.dispose(); resizes.dispose(); buffers.dispose(); resultSubscription.dispose(); clear(); listeners.clear(); },
+        ownsSelection: () => stepping || (stepSelection !== null && selectionKey() === stepSelection),
+        dispose: () => {
+            disposed = true;
+            addon.findNext = findNext; addon.findPrevious = findPrevious;
+            writes.dispose(); resizes.dispose(); buffers.dispose(); selections.dispose(); resultSubscription.dispose(); clear(); listeners.clear();
+        },
         setColors: (next) => { colors = next; search(1, true); },
     };
 }
