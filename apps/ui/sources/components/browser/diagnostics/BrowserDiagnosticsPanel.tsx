@@ -15,6 +15,7 @@ import { t } from '@/text';
 import { BrowserConsolePanel, BrowserPageErrorPanel } from './BrowserConsolePanel';
 import {
     browserDiagnosticsPanelStyles as stylesheet,
+    diagnosticFamilyLabel,
     familyLabel,
     formatNumber,
     renderBrowserDiagnosticEvent,
@@ -244,30 +245,22 @@ function BrowserHostDiagnosticsPanel(props: Readonly<{
         );
     }
 
+    // A drawer section is one tool: its own state line says what it has. Only the overview of several
+    // tools needs the one line naming what the page reports to and how much it has said.
+    const overview = props.diagnostics.families.length !== 1;
+    const tools = props.diagnostics.families
+        .filter((family) => family.status !== 'unavailable')
+        .map((family) => diagnosticFamilyLabel(family.family));
+    const eventCount = t('browserDiagnostics.host.eventCount', { count: formatNumber(props.diagnostics.eventCount) });
     return (
         <>
-            <View style={stylesheet.header}>
-                <View style={stylesheet.titleRow}>
-                    <Text style={stylesheet.title}>{t('browserDiagnostics.host.title')}</Text>
-                    <BrowserDiagnosticsFidelityBadge
-                        fidelity={props.diagnostics.fidelity}
-                        testID={`${props.testID}-fidelity-${props.diagnostics.fidelity}`}
-                    />
-                </View>
-                <Text testID={`${props.testID}-status`} style={stylesheet.status}>
-                    {statusLabel(props.diagnostics.status)}
-                </Text>
-                <Text testID={`${props.testID}-event-count`} style={stylesheet.subtitle}>
-                    {t('browserDiagnostics.host.eventCount', {
-                        count: formatNumber(props.diagnostics.eventCount),
-                    })}
-                </Text>
-                {!props.diagnostics.trusted ? (
-                    <Text testID={`${props.testID}-untrusted`} style={stylesheet.subtitle}>
-                        {t('browserDiagnostics.host.untrustedNotice')}
+            {overview ? (
+                <View style={stylesheet.header}>
+                    <Text testID={`${props.testID}-status`} style={stylesheet.flowTitle}>
+                        {tools.length > 0 ? `${tools.join(', ')} · ${eventCount}` : eventCount}
                     </Text>
-                ) : null}
-            </View>
+                </View>
+            ) : null}
 
             {props.interaction ? (
                 <BrowserDiagnosticsInteractionPanel

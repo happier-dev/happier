@@ -33,14 +33,10 @@ export type BrowserDiagnosticsInteractionControls = Readonly<{
 export type BrowserDiagnosticsInteractionSurface = 'all' | 'console' | 'elements';
 
 const stylesheet = StyleSheet.create((theme) => ({
+    // One line in the tab's own flow (what the tools would do, and the switch for them), not a box
+    // around a mechanism.
     root: {
         gap: theme.space.s8,
-        borderRadius: 6,
-        borderWidth: 1,
-        borderColor: theme.colors.border.default,
-        backgroundColor: theme.colors.surface.inset,
-        paddingHorizontal: theme.space.s10,
-        paddingVertical: theme.space.s8,
     },
     row: {
         flexDirection: 'row',
@@ -48,23 +44,9 @@ const stylesheet = StyleSheet.create((theme) => ({
         flexWrap: 'wrap',
         gap: theme.space.s8,
     },
-    title: {
-        ...Typography.variant('meta'),
-        ...Typography.default('semiBold'),
-        color: theme.colors.text.primary,
-    },
     meta: {
         ...Typography.variant('meta'),
         color: theme.colors.text.secondary,
-    },
-    warning: {
-        ...Typography.variant('meta'),
-        ...Typography.default('semiBold'),
-        // Q2 measured the theme's semantic FOREGROUNDS as text at 2.20–3.55:1 in light theme —
-        // they are fill colours, not text colours. The words carry their own meaning here, so
-        // they take `text.primary`; the hue stays on the border/glyph beside them, where it is a
-        // redundant cue rather than the only one.
-        color: theme.colors.text.primary,
     },
 }));
 
@@ -125,21 +107,12 @@ export function BrowserDiagnosticsInteractionPanel(props: Readonly<{
 
     return (
         <View testID={`${props.testID}-interaction-${props.controls.state}`} style={stylesheet.root}>
-            <Text style={stylesheet.title}>{t('browserDiagnostics.host.interaction.title')}</Text>
-            {/* Off by design is a quiet fact; only a state the person can change speaks up. */}
-            <Text style={props.controls.state === 'disabled' ? stylesheet.warning : stylesheet.meta}>
-                {interactionStateLabel(props.controls)}
-            </Text>
-            {/* Who may turn the tools on matters only while they can be turned on; one line per state. */}
-            {props.controls.ownerOnly && props.controls.state !== 'unavailable' ? (
-                <Text style={stylesheet.meta}>{t('browserDiagnostics.host.interaction.ownerOnly')}</Text>
-            ) : null}
-            {pickerLabel ? (
-                <Text testID={`${props.testID}-picker-${props.controls.pickerState}`} style={stylesheet.meta}>
-                    {pickerLabel}
-                </Text>
-            ) : null}
+            {/* The state line says what the tools do on this page ("Let Diagnostics run code and pick
+              * elements on this page"), so its button only needs to say Allow or Turn off. */}
             <View style={stylesheet.row}>
+                <Text style={stylesheet.meta}>
+                    {interactionStateLabel(props.controls)}
+                </Text>
                 {showEnable ? (
                     <ToolbarButton
                         label={t('browserDiagnostics.host.interaction.enable')}
@@ -154,6 +127,17 @@ export function BrowserDiagnosticsInteractionPanel(props: Readonly<{
                         testID={`${props.testID}-interaction-disable`}
                     />
                 ) : null}
+            </View>
+            {/* Who may turn the tools on is news only to a viewer who can't: the owner has the button. */}
+            {props.controls.ownerOnly && props.controls.state === 'disabled' && props.controls.canEnable !== true ? (
+                <Text style={stylesheet.meta}>{t('browserDiagnostics.host.interaction.ownerOnly')}</Text>
+            ) : null}
+            {pickerLabel ? (
+                <Text testID={`${props.testID}-picker-${props.controls.pickerState}`} style={stylesheet.meta}>
+                    {pickerLabel}
+                </Text>
+            ) : null}
+            {showStartPicker || showCancelPicker ? <View style={stylesheet.row}>
                 {showStartPicker ? (
                     <ToolbarButton
                         label={t('browserDiagnostics.host.interaction.startPicker')}
@@ -168,7 +152,7 @@ export function BrowserDiagnosticsInteractionPanel(props: Readonly<{
                         testID={`${props.testID}-picker-cancel`}
                     />
                 ) : null}
-            </View>
+            </View> : null}
             {showEvalConsole && props.controls.state === 'enabled' && props.controls.evalConsole ? (
                 <BrowserDiagnosticsEvalConsole
                     controls={props.controls.evalConsole}

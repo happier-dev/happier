@@ -280,15 +280,17 @@ describe('useBrowserDiagnosticsRuntime', () => {
         await act(async () => hook.getCurrent()?.interaction?.onEnableInteraction?.());
         expect(hook.getCurrent()?.interaction?.evalConsole?.entries).toEqual([]);
     });
-    it.each(['nativeWebView', 'desktopWebView'] as const)('routes admitted Agent diagnostics to the exact mounted %s engine and returns its strict results', async engineKind => {
+    it.each(['nativeWebView', 'desktopWebView', 'webIframe'] as const)('routes admitted Agent diagnostics to the exact mounted %s engine and returns its strict results', async engineKind => {
         stubCryptoRandomUuid();
-        const view = createLocalPreviewView({ engineKind, adapterKind: 'externalUrl' });
-        const otherView = createLocalPreviewView({ engineKind, adapterKind: 'externalUrl', viewId: 'other_view' });
+        const adapterKind = engineKind === 'webIframe' ? 'localPreview' : 'externalUrl';
+        const view = createLocalPreviewView({ engineKind, adapterKind });
+        const otherView = createLocalPreviewView({ engineKind, adapterKind, viewId: 'other_view' });
+        const collector = { automationEnabled: engineKind === 'webIframe', parentOrigin: 'https://app.happier.test' };
         let current = true;
         const mounted = await renderHook(({ currentView }: { currentView: BrowserControlViewState }) =>
-            useBrowserDiagnosticsRuntime({ view: currentView, enabled: true, isCurrent: () => current }),
+            useBrowserDiagnosticsRuntime({ view: currentView, enabled: true, ...collector, isCurrent: () => current }),
         { initialProps: { currentView: view } });
-        const other = await renderHook(() => useBrowserDiagnosticsRuntime({ view: otherView, enabled: true }));
+        const other = await renderHook(() => useBrowserDiagnosticsRuntime({ view: otherView, enabled: true, ...collector }));
         expect(mounted.getCurrent()?.interaction?.state).toBe('disabled');
         const boundView = { browserSessionId: view.browserSessionId, viewId: view.viewId, sessionId: 'invoking_session' };
         const answeringViews = new Map([

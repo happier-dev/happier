@@ -322,10 +322,12 @@ export function useBrowserDiagnosticsRuntime(
     // Interactive diagnostics (eval / element-picker) push command scripts INTO the page. Native
     // WebView injected surfaces deliver them through their bridge; the desktop engine evals them via
     // the host `desktop_browser_eval_script` command (results return over the same ipc/drain channel).
-    // Web iframes are intentionally not listed here until a real script-injection owner exists.
+    // Collector-enabled iframes use the engine's nonce-bound command channel. Without that
+    // existing automation opt-in, keep iframe interaction unavailable rather than inventing a bridge.
     const interactionSupported = input.enabled === true
         && !!input.view
-        && (canAttachInjectedDiagnostics(input.view) || canAttachDesktopInjectedDiagnostics(input.view));
+        && (canAttachInjectedDiagnostics(input.view, input.automationEnabled === true)
+            || canAttachDesktopInjectedDiagnostics(input.view));
 
     const currentRef = React.useRef({ input, interactionEnabled, bridgeBase, interactionSupported });
     currentRef.current = { input, interactionEnabled, bridgeBase, interactionSupported };
@@ -616,7 +618,7 @@ export function useBrowserDiagnosticsRuntime(
             return {
                 state: 'unavailable',
                 ownerOnly: true,
-                unavailableReasonCode: input.view && canAttachInjectedDiagnostics(input.view)
+                unavailableReasonCode: input.view && canAttachInjectedDiagnostics(input.view, input.automationEnabled === true)
                     ? 'collector_unavailable'
                     : 'adapter_unavailable',
                 pickerState: 'unavailable',

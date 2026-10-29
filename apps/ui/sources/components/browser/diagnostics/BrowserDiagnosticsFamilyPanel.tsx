@@ -218,27 +218,6 @@ export function sanitizeTestIdPart(input: string): string {
     return input.replace(/[^A-Za-z0-9_-]+/g, '_');
 }
 
-export function productFamilyTitle(familyKey: BrowserDiagnosticsProductFamilyKey): string {
-    switch (familyKey) {
-        case 'console':
-            return t('browserDiagnostics.host.families.console');
-        case 'pageError':
-            return t('browserDiagnostics.host.families.pageError');
-        case 'elements':
-            return t('browserDiagnostics.host.families.elements');
-        case 'resources':
-            return t('browserDiagnostics.host.families.resources');
-        case 'storage':
-            return t('browserDiagnostics.host.families.storage');
-        case 'performance':
-            return t('browserDiagnostics.host.families.performance');
-        case 'network':
-            return t('browserDiagnostics.host.families.network');
-        case 'pageInfo':
-            return t('browserDiagnostics.host.families.pageInfo');
-    }
-}
-
 export function formatNumber(value: number): string {
     return new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 }).format(value);
 }
@@ -275,7 +254,7 @@ export function eventTitle(event: BrowserDiagnosticEventProjection): string {
     });
 }
 
-function diagnosticFamilyLabel(family: BrowserDiagnosticEventProjection['family']): string {
+export function diagnosticFamilyLabel(family: BrowserDiagnosticEventProjection['family']): string {
     switch (family) {
         case 'console':
             return t('browserDiagnostics.host.families.console');
@@ -625,35 +604,31 @@ export function BrowserDiagnosticsFamilyPanelFrame(props: BrowserDiagnosticsFami
 
     return (
         <View testID={`${props.testID}-${props.familyKey}-panel`} style={browserDiagnosticsPanelStyles.familySection}>
-            <View testID={`${props.testID}-family-${props.family.family}`} style={browserDiagnosticsPanelStyles.titleRow}>
-                <Text style={browserDiagnosticsPanelStyles.flowTitle}>{productFamilyTitle(props.familyKey)}</Text>
-                {unavailable ? null : (
-                    <BrowserDiagnosticsFidelityBadge
-                        fidelity={props.family.fidelity}
-                        testID={`${props.testID}-${props.familyKey}-fidelity-${props.family.fidelity}`}
-                    />
-                )}
-            </View>
-            {/* A family the page does not report says so once, as a quiet fact under its title. */}
+            {/* The section's one state line: what the page reports here. The selected tab already names
+              * the family, so the section repeats no title under it. */}
+            <View testID={`${props.testID}-family-${props.family.family}`}>
             <Text
                 testID={stateTestID}
                 style={props.family.status === 'stale'
                     ? browserDiagnosticsPanelStyles.warning
                     : browserDiagnosticsPanelStyles.flowMeta}
             >
-                {unavailable ? t('browserDiagnostics.host.familyNotReported') : statusLabel(props.family.status)}
+                {unavailable
+                    ? t('browserDiagnostics.host.familyNotReported')
+                    : props.family.status === 'stale'
+                        ? statusLabel(props.family.status)
+                        : props.events.length > 0
+                            ? t('browserDiagnostics.host.eventCount', { count: formatNumber(props.events.length) })
+                            : t('browserDiagnostics.host.eventsEmpty')}
             </Text>
+            </View>
             {unavailable ? null : props.events.length > 0 ? (
                 props.events.map((event) => (
                     props.renderEvent
                         ? props.renderEvent(event, props.testID, props.familyKey)
                         : renderBrowserDiagnosticFamilyEvent(event, props.testID, props.familyKey)
                 ))
-            ) : (
-                <Text testID={`${props.testID}-${props.familyKey}-empty`} style={browserDiagnosticsPanelStyles.subtitle}>
-                    {t('browserDiagnostics.host.eventsEmpty')}
-                </Text>
-            )}
+            ) : null}
         </View>
     );
 }

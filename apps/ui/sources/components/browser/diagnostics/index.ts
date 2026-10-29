@@ -1,4 +1,4 @@
-export { BrowserDiagnosticsDrawer } from './BrowserDiagnosticsDrawer';
+export { BrowserDiagnosticsDrawer, type BrowserDiagnosticsDrawerHandle } from './BrowserDiagnosticsDrawer';
 export { BrowserDiagnosticsFidelityBadge } from './BrowserDiagnosticsFidelityBadge';
 export {
     BrowserDiagnosticsInteractionPanel,

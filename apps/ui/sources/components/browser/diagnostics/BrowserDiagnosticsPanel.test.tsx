@@ -247,9 +247,10 @@ describe('BrowserDiagnosticsPanel', () => {
       />,
     );
 
-    expect(
-      screen.findByTestId('browser-diagnostics-fidelity-injectedPage'),
-    ).toBeTruthy();
+    // One state line names the tools the page reports to; the mechanism ("injected page") is not a chip.
+    expect(screen.findByTestId('browser-diagnostics-fidelity-injectedPage')).toBeNull();
+    expect(screen.findByTestId('browser-diagnostics-event-count')).toBeNull();
+    expect(screen.findHostByTestId('browser-diagnostics-status')?.props.children).toBe('Console, Page info · 2 diagnostic events');
     expect(
       screen.findByTestId('browser-diagnostics-family-console'),
     ).toBeTruthy();
@@ -668,6 +669,12 @@ describe('BrowserDiagnosticsPanel', () => {
       screen.findByTestId('browser-diagnostics-interaction-enable'),
     ).toBeTruthy();
     expect(screen.findByTestId('browser-diagnostics-picker-start')).toBeNull();
+    // One message per state: the state line names the tools, so no title repeats it, and the owner
+    // beside their own Enable button is not told that only the owner may press it.
+    const ownerText = screen.getTextContent();
+    const { t } = await import('@/text');
+    expect(ownerText.split(t('browserDiagnostics.host.interaction.disabled')).length - 1).toBe(1);
+    expect(ownerText).not.toContain('Only the session owner');
 
     screen.pressByTestId('browser-diagnostics-interaction-enable');
     expect(enableCount).toBe(1);
@@ -706,6 +713,28 @@ describe('BrowserDiagnosticsPanel', () => {
     ).toBeTruthy();
     screen.pressByTestId('browser-diagnostics-picker-start');
     expect(pickerCount).toBe(1);
+
+    // A viewer who cannot enable the tools is told who can.
+    await screen.update(
+      <mod.BrowserDiagnosticsPanel
+        diagnostics={{
+          status: 'available',
+          sourceKind: 'browserDiagnostics',
+          browserSessionId: 'browser_session_1',
+          viewId: 'view_1',
+          navigationGeneration: 2,
+          fidelity: 'injectedPage',
+          trusted: false,
+          eventCount: 0,
+          families: [],
+          events: [],
+        }}
+        interaction={{ state: 'disabled', ownerOnly: true, canEnable: false }}
+        testID="browser-diagnostics"
+      />,
+    );
+    expect(screen.findByTestId('browser-diagnostics-interaction-enable')).toBeNull();
+    expect(screen.getTextContent()).toContain('Only the session owner');
   });
 
   it('renders the performance vitals panel and capability metadata without leaking values', async () => {

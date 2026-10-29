@@ -50,11 +50,6 @@ const stylesheet = StyleSheet.create((theme) => ({
     root: {
         gap: theme.space.s8,
     },
-    title: {
-        ...Typography.variant('meta'),
-        ...Typography.default('semiBold'),
-        color: theme.colors.text.primary,
-    },
     inputRow: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -293,7 +288,7 @@ export function BrowserDiagnosticsEvalConsole(props: Readonly<{
 
     return (
         <View testID={`${props.testID}-console`} style={stylesheet.root}>
-            <Text style={stylesheet.title}>{t('browserDiagnostics.host.interaction.eval.title')}</Text>
+            {/* It sits under the Console tab, so it carries no "Console" title of its own. */}
             <View style={stylesheet.inputRow}>
                 <TextInput
                     testID={`${props.testID}-input`}
