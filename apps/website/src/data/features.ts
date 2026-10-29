@@ -313,7 +313,7 @@ const WEBSITE_PRIMARY_FEATURES: ReadonlyArray<Omit<Feature, 'availability' | 'ti
         //                 selectable: false — which is exactly "marks which are
         //                 online, and starts sessions on those". MachineSelector
         //                 renders the unselectable ones rather than hiding them.
-        //   over SSH      `happier machine setup --ssh <user@host>`
+        //   over SSH      `happier machine enroll --ssh <user@host>`
         //                 (apps/cli/src/cli/commands/machine/help.ts:8) and, in
         //                 the app, RemoteSshMachineSetupSection /
         //                 MachineSetupFlowScreen under settings/machines. Both

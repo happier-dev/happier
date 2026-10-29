@@ -142,7 +142,7 @@ Source plan: `.project/plans/todo/bootstrap/happier-desktop-setup-control-panel-
 - `[partial]` Remote SSH bootstrap desktop UX + CLI parity
   - Desktop UI: `apps/ui/sources/components/settings/machines/RemoteSshMachineSetupSection.tsx`, `apps/ui/sources/components/settings/machines/useRemoteSshBootstrapTask.ts`
   - Executor kind: `remote.ssh.bootstrapMachine.v1`, dispatched from `createDefaultInteractiveKinds()` in `apps/bootstrap/src/bin/hsetup.ts`
-  - CLI entry: `apps/cli/src/cli/commands/machine/*` (help shows `happier machine setup --ssh ...`)
+  - CLI entry: `apps/cli/src/cli/commands/machine/*` (help shows `happier machine enroll --ssh ...`)
   - Evidence: unit tests exist; interactive Tauri run still required for the native identity-file picker (`desktop_pick_ssh_identity_file`) and prompt flows.
 
 - `[partial]` Tailscale secure access follow-through to canonical URL selection

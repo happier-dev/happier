@@ -123,7 +123,7 @@ If the machine was already set up and later drifted, run `happier doctor repair`
 If you want to bootstrap a *remote machine* over SSH instead, use:
 
 ```bash
-happier machine setup --ssh user@host
+happier machine enroll --ssh user@host
 ```
 If you want to use a strict Iroh-only descriptor on a fresh machine, pass `--home-descriptor-file <path|->`. Manual HTTPS remains available through `--home-url`.
 
@@ -143,7 +143,7 @@ Compose the two canonical commands rather than asking machine setup to create a 
 
 ```bash
 happier home create --ssh user@host
-happier --server <saved-home> machine setup --ssh user@host
+happier --server <saved-home> machine enroll --ssh user@host
 ```
 
 The older `--install-relay-runtime` machine option remains an advanced compatibility path for generic runtime installation. It does not bootstrap a Personal Home.

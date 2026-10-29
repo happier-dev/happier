@@ -77,7 +77,7 @@ Create a Personal Home on a trusted remote host, installing or reusing the same 
 happier home create --ssh user@host
 ```
 
-This is different from machine setup: `home create --ssh` makes that host the Home authority, while `machine setup --ssh` connects a session-running machine to the selected Home.
+This is different from machine setup: `home create --ssh` makes that host the Home authority, while `machine enroll --ssh` connects a session-running machine to the selected Home.
 
 Noninteractive creation keeps existing Happier services and the host's default managed release channel unchanged. If the command reports a conflict, inspect the host and rerun with `--replace-services`, `--switch-channel`, or both only when you intend those exact changes:
 
@@ -90,15 +90,15 @@ happier home create --ssh user@host --replace-services --switch-channel --yes
 Bootstrap a remote machine:
 
 ```bash
-happier machine setup --ssh user@host
+happier machine enroll --ssh user@host
 ```
 
-Machine setup works differently: in a non-interactive run, `machine setup --yes` also accepts replacing conflicting Happier background services on the remote host. Pass `--service-mode none` if you want its existing services left untouched.
+Machine setup works differently: in a non-interactive run, `machine enroll --yes` also accepts replacing conflicting Happier background services on the remote host. Pass `--service-mode none` if you want its existing services left untouched.
 
 Machine setup uses the current selected Home. To target another saved Home without changing the default, put the global selector before the command:
 
 ```bash
-happier --server <saved-home> machine setup --ssh user@host
+happier --server <saved-home> machine enroll --ssh user@host
 ```
 
 The released `--server-url` / `--webapp-url` forms remain advanced HTTPS compatibility aliases. Routine setup should use a saved Home or the strict Home target already selected by `happier setup`.
@@ -106,13 +106,13 @@ The released `--server-url` / `--webapp-url` forms remain advanced HTTPS compati
 Bootstrap a remote machine using password auth:
 
 ```bash
-happier machine setup --ssh-user user --ssh-host host --ssh-port 22 --ssh-auth password
+happier machine enroll --ssh-user user --ssh-host host --ssh-port 22 --ssh-auth password
 ```
 
 Bootstrap a remote machine using a key file:
 
 ```bash
-happier machine setup --ssh-user user --ssh-host host --ssh-port 22 --ssh-auth keyfile --identity-file /path/to/key
+happier machine enroll --ssh-user user --ssh-host host --ssh-port 22 --ssh-auth keyfile --identity-file /path/to/key
 ```
 
 Install only the generic managed Relay runtime on a remote host (advanced/operator compatibility):

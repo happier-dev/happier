@@ -17,7 +17,7 @@ describe('happier machine --help', () => {
       expect(createRunner).not.toHaveBeenCalled();
       const output = logSpy.mock.calls.flat().join('\n');
       expect(output).toContain('happier machine');
-      expect(output).toContain('happier machine setup');
+      expect(output).toContain('happier machine enroll');
       expect(output).toContain('specific Home profile');
     } finally {
       logSpy.mockRestore();

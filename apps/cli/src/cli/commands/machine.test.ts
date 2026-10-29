@@ -65,7 +65,7 @@ describe('handleMachineCommand', () => {
 
     await handleMachineCommand(
       [
-        'setup',
+        'enroll',
         '--ssh',
         'dev@example.test',
         '--identity-file',
@@ -191,7 +191,7 @@ describe('handleMachineCommand', () => {
       authority: 'trusted_enrollment' as const,
     };
 
-    await handleMachineCommand(['setup', '--home-descriptor-file', '-', '--ssh', 'dev@example.test', '--json'], {
+    await handleMachineCommand(['enroll', '--home-descriptor-file', '-', '--ssh', 'dev@example.test', '--json'], {
       parseHomeTargetArgs: async (args) => ({
         target: { kind: 'descriptor', descriptor: homeTarget.descriptor, authority: 'trusted_enrollment' },
         source: '--home-descriptor-file',
@@ -232,9 +232,9 @@ describe('handleMachineCommand', () => {
     }));
 
     try {
-      process.argv = ['hdev', 'machine', 'setup'];
+      process.argv = ['hdev', 'machine', 'enroll'];
       await handleMachineCommand(
-        ['setup', '--ssh', 'dev@example.test', '--json'],
+        ['enroll', '--ssh', 'dev@example.test', '--json'],
         {
           createRunner: () => ({
             start,
@@ -297,7 +297,7 @@ describe('handleMachineCommand', () => {
       });
 
     await handleMachineCommand(
-      ['setup', '--ssh', 'dev@example.test', '--install-relay-runtime'],
+      ['enroll', '--ssh', 'dev@example.test', '--install-relay-runtime'],
       {
         createRunner: () => ({
           start: vi.fn(async () => ({ taskId: 'task-2' })),
@@ -353,7 +353,7 @@ describe('handleMachineCommand', () => {
       });
 
     await handleMachineCommand(
-      ['setup', '--ssh', 'dev@example.test', '--install-relay-runtime'],
+      ['enroll', '--ssh', 'dev@example.test', '--install-relay-runtime'],
       {
         createRunner: () => ({
           start: vi.fn(async () => ({ taskId: 'task-loopback' })),
@@ -413,7 +413,7 @@ describe('handleMachineCommand', () => {
 
     await handleMachineCommand(
       [
-        'setup',
+        'enroll',
         '--ssh',
         'dev@example.test',
         '--ssh-auth',
@@ -491,7 +491,7 @@ describe('handleMachineCommand', () => {
 
     await handleMachineCommand(
       [
-        'setup',
+        'enroll',
         '--ssh',
         'dev@example.test',
         '--ssh-port',
@@ -571,7 +571,7 @@ describe('handleMachineCommand', () => {
 
     await handleMachineCommand(
       [
-        'setup',
+        'enroll',
         '--ssh-user',
         'dev',
         '--ssh-host',
@@ -639,7 +639,7 @@ describe('handleMachineCommand', () => {
 
     await handleMachineCommand(
       [
-        'setup',
+        'enroll',
         '--server-url',
         'https://stack.example.test',
         '--local-server-url',
@@ -731,7 +731,7 @@ describe('handleMachineCommand', () => {
       });
 
     await handleMachineCommand(
-      ['setup', '--ssh', 'dev@example.test'],
+      ['enroll', '--ssh', 'dev@example.test'],
       {
         createRunner: () => ({
           start: vi.fn(async () => ({ taskId: 'task-1' })),
@@ -816,7 +816,7 @@ describe('handleMachineCommand', () => {
     });
 
     await handleMachineCommand(
-      ['setup', '--ssh', 'dev@example.test', '--yes', '--json'],
+      ['enroll', '--ssh', 'dev@example.test', '--yes', '--json'],
       {
         createRunner: () => ({
           start: vi.fn(async () => ({ taskId: 'task-1' })),
@@ -876,7 +876,7 @@ describe('handleMachineCommand', () => {
       .mockResolvedValueOnce({ events: [], nextCursor: 0, result, pendingPrompt: null });
 
     await handleMachineCommand(
-      ['setup', '--ssh', 'dev@example.test', '--yes'],
+      ['enroll', '--ssh', 'dev@example.test', '--yes'],
       {
         createRunner: () => ({
           start: vi.fn(async () => ({ taskId: 'task-1' })),
@@ -908,7 +908,7 @@ describe('handleMachineCommand', () => {
   it('fails closed in non-interactive mode without --yes when a prompt is required', async () => {
     const respond = vi.fn(async () => undefined);
     await handleMachineCommand(
-      ['setup', '--ssh', 'dev@example.test'],
+      ['enroll', '--ssh', 'dev@example.test'],
       {
         createRunner: () => ({
           start: vi.fn(async () => ({ taskId: 'task-1' })),
@@ -948,7 +948,7 @@ describe('handleMachineCommand', () => {
     const respond = vi.fn(async () => undefined);
     let promptMessage = '';
     await handleMachineCommand(
-      ['setup', '--ssh', 'dev@example.test'],
+      ['enroll', '--ssh', 'dev@example.test'],
       {
         createRunner: () => ({
           start: vi.fn(async () => ({ taskId: 'task-service-replace' })),
@@ -1009,7 +1009,7 @@ describe('handleMachineCommand', () => {
     const respond = vi.fn(async () => undefined);
     let promptMessage = '';
     await handleMachineCommand(
-      ['setup', '--ssh', 'dev@example.test'],
+      ['enroll', '--ssh', 'dev@example.test'],
       {
         createRunner: () => ({
           start: vi.fn(async () => ({ taskId: 'task-service-keep' })),
@@ -1068,7 +1068,7 @@ describe('handleMachineCommand', () => {
 
   it('rejects unknown setup flags instead of ignoring them', async () => {
     await handleMachineCommand(
-      ['setup', '--ssh', 'dev@example.test', '--bogus', '--json'],
+      ['enroll', '--ssh', 'dev@example.test', '--bogus', '--json'],
       {
         createRunner: () => ({
           start: vi.fn(async () => ({ taskId: 'task-1' })),
@@ -1100,7 +1100,7 @@ describe('handleMachineCommand', () => {
   it('rejects multi-line --trusted-host-key values', async () => {
     await handleMachineCommand(
       [
-        'setup',
+        'enroll',
         '--ssh',
         'dev@example.test',
         '--known-hosts-path',
@@ -1139,7 +1139,7 @@ describe('handleMachineCommand', () => {
 
   it('rejects specifying a port in --ssh with actionable guidance', async () => {
     await handleMachineCommand(
-      ['setup', '--ssh', 'dev@example.test:2222'],
+      ['enroll', '--ssh', 'dev@example.test:2222'],
       {
         createRunner: () => ({
           start: vi.fn(async () => ({ taskId: 'task-1' })),
@@ -1194,7 +1194,7 @@ describe('handleMachineCommand', () => {
       });
 
     await handleMachineCommand(
-      ['setup', '--ssh', 'dev@example.test', '--json'],
+      ['enroll', '--ssh', 'dev@example.test', '--json'],
       {
         createRunner: () => ({
           start: vi.fn(async () => ({ taskId: 'task-1' })),

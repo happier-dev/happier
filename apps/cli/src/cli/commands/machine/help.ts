@@ -5,11 +5,11 @@ export function showMachineHelp(): void {
     title: 'happier machine',
     subtitle: 'Set up remote machines (SSH)',
     usage: [
-      { label: 'happier machine setup --ssh <user@host> [--ssh-port <number>] [--ssh-auth=agent|keyfile|password] [--identity-file <path>] [--ssh-config-file <path>] [--known-hosts-path <path>] [--trusted-host-key <line>]', description: 'Connect a remote machine to the selected Home' },
-      { label: 'happier machine setup --ssh-user <user> --ssh-host <host> [--ssh-port <number>] [--ssh-auth=agent|keyfile|password] [--identity-file <path>] [--ssh-config-file <path>] [--known-hosts-path <path>] [--trusted-host-key <line>]', description: 'Bootstrap a remote machine with split SSH fields' },
-      { label: 'happier machine setup --ssh <user@host> [--ssh-port <number>] [--ssh-auth=agent|keyfile|password] [--identity-file <path>] [--ssh-config-file <path>] [--known-hosts-path <path>] [--trusted-host-key <line>] [--service-mode <user|none>] [--install-relay-runtime] [--relay-runtime-mode <user|system>] [--require-local-approval] [--yes] [--json] [--preview|--dev|--channel stable|preview|dev]', description: 'Advanced/operator setup, including optional generic Relay runtime installation' },
-      { label: 'happier machine setup --server-url <url> [--local-server-url <url>] --ssh <user@host> [...]', description: 'Compatibility URL form for a specific Home profile' },
-      { label: 'happier machine setup --home <saved>|--home-url <url>|--home-descriptor-file <path|-> --ssh <user@host> [...]', description: 'Target a saved, HTTPS, or Iroh-only Home' },
+      { label: 'happier machine enroll --ssh <user@host> [--ssh-port <number>] [--ssh-auth=agent|keyfile|password] [--identity-file <path>] [--ssh-config-file <path>] [--known-hosts-path <path>] [--trusted-host-key <line>]', description: 'Connect a remote machine to the selected Home' },
+      { label: 'happier machine enroll --ssh-user <user> --ssh-host <host> [--ssh-port <number>] [--ssh-auth=agent|keyfile|password] [--identity-file <path>] [--ssh-config-file <path>] [--known-hosts-path <path>] [--trusted-host-key <line>]', description: 'Bootstrap a remote machine with split SSH fields' },
+      { label: 'happier machine enroll --ssh <user@host> [--ssh-port <number>] [--ssh-auth=agent|keyfile|password] [--identity-file <path>] [--ssh-config-file <path>] [--known-hosts-path <path>] [--trusted-host-key <line>] [--service-mode <user|none>] [--install-relay-runtime] [--relay-runtime-mode <user|system>] [--require-local-approval] [--yes] [--json] [--preview|--dev|--channel stable|preview|dev]', description: 'Advanced/operator setup, including optional generic Relay runtime installation' },
+      { label: 'happier machine enroll --server-url <url> [--local-server-url <url>] --ssh <user@host> [...]', description: 'Compatibility URL form for a specific Home profile' },
+      { label: 'happier machine enroll --home <saved>|--home-url <url>|--home-descriptor-file <path|-> --ssh <user@host> [...]', description: 'Target a saved, HTTPS, or Iroh-only Home' },
     ],
     notes: [
       'This is a thin wrapper over the canonical remote SSH setup task.',

@@ -227,7 +227,7 @@ function buildMachineSetupSpec(params: Readonly<{
   const requireLocalApproval = takeFlag(args, '--require-local-approval');
   args = requireLocalApproval.rest;
   if (args.length > 0) {
-    throw new Error(`Unknown machine setup arguments: ${args.join(' ')}`);
+    throw new Error(`Unknown machine enroll arguments: ${args.join(' ')}`);
   }
 
   const explicitSshAuth = normalizeSshAuth(sshAuth.value);
@@ -382,7 +382,7 @@ function printHumanEvent(event: SystemTaskEvent): void {
   }
 }
 
-async function runSetupSubcommand(argsRaw: string[], deps: MachineCommandDeps): Promise<void> {
+async function runEnrollSubcommand(argsRaw: string[], deps: MachineCommandDeps): Promise<void> {
   const parsedTargetArgs = await deps.parseHomeTargetArgs(argsRaw);
   let args = parsedTargetArgs.rest;
   const yes = takeFlag(args, '--yes');
@@ -494,18 +494,18 @@ export async function handleMachineCommand(args: string[], deps: Partial<Machine
       return;
     }
 
-    if (subcommand !== 'setup') {
+    if (subcommand !== 'enroll') {
       throw new Error(`Unknown machine subcommand: ${subcommand}`);
     }
 
-    await runSetupSubcommand(args.slice(1), effectiveDeps);
+    await runEnrollSubcommand(args.slice(1), effectiveDeps);
   } catch (error) {
     if (json) {
       const mapped = mapUnknownErrorToControlError(error);
       await printJsonEnvelope(
         {
           ok: false,
-          kind: 'machine_setup',
+          kind: 'machine_enroll',
           error: { code: mapped.code, ...(mapped.message ? { message: mapped.message } : {}) },
         },
         { exitCode: mapped.unexpected ? 2 : 1 },

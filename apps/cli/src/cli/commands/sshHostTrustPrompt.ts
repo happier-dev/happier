@@ -33,7 +33,7 @@ export function formatSshHostTrustPrompt(prompt: SshHostTrustPrompt, fallbackMes
 
 /**
  * The single CLI policy for an SSH host-identity prompt, shared by
- * `happier machine setup` and every `happier home` command that reaches a host
+ * `happier machine enroll` and every `happier home` command that reaches a host
  * over SSH.
  *
  * `--yes` means what `StrictHostKeyChecking=accept-new` means: an unknown host
@@ -87,7 +87,7 @@ export function formatRemoteBackgroundServiceReplacementPrompt(data: SystemTaskJ
 
 /**
  * The single CLI policy for the remote background-service replacement prompt,
- * shared by `happier machine setup` and `happier home create --ssh`.
+ * shared by `happier machine enroll` and `happier home create --ssh`.
  *
  * Replacement removes services, so an interactive answer defaults to keeping
  * them. What `--yes` means is each command's documented contract, passed
