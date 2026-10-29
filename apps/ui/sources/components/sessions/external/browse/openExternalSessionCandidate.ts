@@ -95,7 +95,7 @@ export async function openExternalSessionCandidate(params: Readonly<{
         const effectiveSource = resolveExternalSessionBrowseCompatibleLinkSource({
             providerId: agentId, machineId: target.machineId, selectedSource: source, candidateSource,
         });
-        const directoryHint = readExternalSessionBrowseCandidatePath(candidate.details);
+        const directoryHint = readExternalSessionBrowseCandidatePath(candidate);
         const request = {
             machineId: target.machineId, agentId, remoteSessionId: candidate.remoteSessionId,
             ...(candidate.linkData ? { linkData: candidate.linkData } : {}),

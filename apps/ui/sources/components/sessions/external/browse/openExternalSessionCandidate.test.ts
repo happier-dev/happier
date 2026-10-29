@@ -27,6 +27,7 @@ const requests: SocketRpcRequestPayload[] = [];
 await loadSyncSingletonForTests();
 const { createFrontDoorActionExecute } = await import('@/sync/ops/actions/frontDoorRuntimeActionExecutor');
 const { openExternalSessionCandidate } = await import('./openExternalSessionCandidate');
+const { readExternalSessionBrowseCandidatePath } = await import('./useExternalSessionBrowseCandidates');
 const { storage } = await import('@/sync/domains/state/storage');
 let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefined;
 
@@ -43,16 +44,24 @@ function input() {
 }
 
 describe('openExternalSessionCandidate', () => {
+    it('keeps legacy directory hints and unknown paths', () => {
+        expect(readExternalSessionBrowseCandidatePath({ cwd: '  ', details: { cwd: ' /repo/legacy cwd ' } })).toBe('/repo/legacy cwd');
+        expect(readExternalSessionBrowseCandidatePath({ details: { path: ' /repo/legacy path ' } })).toBe('/repo/legacy path');
+        expect(readExternalSessionBrowseCandidatePath({})).toBeNull();
+    });
     it('uses the admitted existing link Action and never grants capture consent', async () => {
         boundary.ensure.mockResolvedValueOnce({ ok: true, sessionId: 'continued', created: true });
         const frontDoor = createFrontDoorActionExecute();
         // Observe invocation without substituting policy, admission or dispatch.
         const execute = Object.assign(vi.fn(frontDoor), { prepare: frontDoor.prepare });
         const params = input();
-        expect(await openExternalSessionCandidate({ ...params, linkActionExecute: execute })).toBe('opened');
+        expect(await openExternalSessionCandidate({ ...params,
+            candidate: { ...params.candidate, cwd: ' /repo/native cwd ', details: { cwd: '/legacy/should-not-win' } },
+            linkActionExecute: execute })).toBe('opened');
         expect(execute.mock.calls.map(([actionId]) => actionId)).toEqual(['sessions.external.link.ensure']);
         expect(params.openSession).toHaveBeenCalledWith('continued', params.resolveCurrentTarget(), undefined);
-        expect(requests).toMatchObject([{ method: `machine-a:${RPC_METHODS.DAEMON_EXTERNAL_SESSION_LINK_ENSURE}` }]);
+        expect(requests).toMatchObject([{ method: `machine-a:${RPC_METHODS.DAEMON_EXTERNAL_SESSION_LINK_ENSURE}`,
+            params: { directoryHint: '/repo/native cwd' } }]);
         expect(boundary.ensure).toHaveBeenCalledOnce();
         expect(homes.requestsFor('/v2/account/settings').filter(request => request.input !== null)).toEqual([]);
     });

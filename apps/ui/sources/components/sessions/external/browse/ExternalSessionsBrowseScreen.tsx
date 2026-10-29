@@ -755,7 +755,7 @@ export const ExternalSessionsBrowseScreen = React.memo((props: Readonly<{
         );
         try {
             const candidateTitle = candidate.title?.trim()
-                || readExternalSessionBrowseCandidatePath(candidate.details)
+                || readExternalSessionBrowseCandidatePath(candidate)
                 || candidate.remoteSessionId;
             const confirmed = await Modal.confirm(
                 t('externalSessions.browseDeleteCandidateConfirmTitle'),

@@ -53,10 +53,13 @@ export function readExternalSessionBrowseCandidateKey(
 }
 
 export function readExternalSessionBrowseCandidatePath(
-    details: ExternalSessionBrowseCandidate['details'],
+    candidate: Pick<ExternalSessionBrowseCandidate, 'cwd' | 'details'>,
 ): string | null {
-    const cwd = typeof details?.cwd === 'string' ? details.cwd.trim() : '';
+    const cwd = typeof candidate.cwd === 'string' ? candidate.cwd.trim() : '';
     if (cwd) return cwd;
+    const details = candidate.details;
+    const legacyCwd = typeof details?.cwd === 'string' ? details.cwd.trim() : '';
+    if (legacyCwd) return legacyCwd;
     const path = typeof details?.path === 'string' ? details.path.trim() : '';
     return path || null;
 }

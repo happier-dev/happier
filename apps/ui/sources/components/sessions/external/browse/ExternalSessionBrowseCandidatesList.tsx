@@ -409,7 +409,7 @@ function buildCandidateVirtualizedSource(params: Readonly<{
     const candidatePaths: Array<string | null> = new Array(params.candidates.length);
     for (let candidateIndex = 0; candidateIndex < params.candidates.length; candidateIndex += 1) {
         const candidate = params.candidates[candidateIndex]!;
-        const path = readExternalSessionBrowseCandidatePath(candidate.details);
+        const path = readExternalSessionBrowseCandidatePath(candidate);
         candidatePaths[candidateIndex] = path;
         const groupKey = path ?? UNKNOWN_PROJECT_KEY;
         const existingGroupIndex = projectGroupIndexByPath.get(groupKey);
