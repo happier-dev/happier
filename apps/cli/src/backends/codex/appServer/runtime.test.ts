@@ -10841,6 +10841,39 @@ describe('createCodexAppServerRuntime', () => {
         }));
     });
 
+    it('records context-window exhaustion as the failed turn when Codex recovery is disabled', async () => {
+        const { root, fakeAppServer } = await createRuntimeFixture('happier-codex-app-server-runtime-context-window-disabled-lifecycle-');
+        const processEnv = createCodexAppServerProcessEnv(fakeAppServer, {
+            HAPPIER_CODEX_CONTEXT_WINDOW_RECOVERY_MODE: 'off',
+        });
+        const mutations: SessionTurnMutationV1[] = [];
+        const runtime = createCodexAppServerRuntime({
+            directory: root,
+            processEnv,
+            onThinkingChange: vi.fn(),
+            session: {
+                ...createApiSessionClientFixture({ metadata: createRuntimeMetadata(root) }),
+                sessionTurnLifecycle: createSessionTurnLifecycle({
+                    sessionId: 'session-context-window-disabled',
+                    enqueueSessionTurn: async (mutation) => { mutations.push(mutation); },
+                }),
+            } as unknown as Parameters<typeof createCodexAppServerRuntimeProduction>[0]['session'],
+        });
+
+        await runtime.startOrLoad({});
+        const error = await runtime.sendPrompt('context-window-exhausted-once').then(() => null, (caught: unknown) => caught);
+
+        expect(error).toBeInstanceOf(Error);
+        // No retry remains, so the runtime records the provider failure itself and the runner
+        // must not report it again.
+        expect(isCodexTurnFailureSettled(error)).toBe(true);
+        expect(mutations.at(-1)).toMatchObject({
+            action: 'fail',
+            provider: 'codex',
+            issue: expect.objectContaining({ provider: 'codex' }),
+        });
+    });
+
     it('surfaces the original context-window failure when retrying after compaction fails again', async () => {
         const { root, requestLogPath } = await createRuntimeFixture('happier-codex-app-server-runtime-context-window-repeat-');
 
