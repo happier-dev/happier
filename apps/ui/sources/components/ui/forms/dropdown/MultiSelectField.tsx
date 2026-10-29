@@ -12,6 +12,8 @@ export type MultiSelectCandidate = Readonly<{
     id: string;
     title: string;
     subtitle?: string;
+    /** Shown but not choosable here; its subtitle says why. */
+    disabled?: boolean;
 }>;
 
 export type MultiSelectFieldProps = Readonly<{
@@ -87,12 +89,14 @@ export const MultiSelectField = React.memo(function MultiSelectField(
     }, [commitDraft, draft, props.selectedIds, setOpen]);
 
     const items = React.useMemo(() => props.candidates.map((candidate) => {
-        const checked = selected.has(candidate.id);
+        // A candidate that is not choosable here is never shown as chosen; its stored id still reaches the commit.
+        const checked = candidate.disabled !== true && selected.has(candidate.id);
         return {
             id: candidate.id,
             testID: `${props.optionTestIDPrefix}:${candidate.id}`,
             title: candidate.title,
             subtitle: candidate.subtitle,
+            disabled: candidate.disabled,
             icon: (
                 <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
                     <Icon
@@ -129,6 +133,7 @@ export const MultiSelectField = React.memo(function MultiSelectField(
             items={items}
             onSelect={(id) => setDraft((current) => {
                 const next = new Set(current ?? props.selectedIds);
+                if (props.candidates.some((candidate) => candidate.id === id && candidate.disabled)) return next;
                 if (props.exclusiveId && id === props.exclusiveId) return new Set([id]);
                 if (props.exclusiveId) next.delete(props.exclusiveId);
                 if (next.has(id)) {
