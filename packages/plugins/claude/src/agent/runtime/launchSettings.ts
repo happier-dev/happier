@@ -1,4 +1,5 @@
-import { readClaudeSettingSourcesV2, type ClaudeSettingSourceV2 } from '@happier-dev/plugin-sdk/first-party/claude';
+import { readClaudeSettingSourcesV2 } from '@happier-dev/protocol/agents/claude/predecessor-message-meta';
+import type { ClaudeSettingSourceV2 } from '@happier-dev/protocol/agents/claude/settings-policy';
 import type { AgentLaunchEnvironment, AgentSessionConfigurationSnapshot, AgentSessionMcpToolPolicy, AgentSessionProviderBinding } from '@happier-dev/plugin-sdk/agents/runtime';
 import { readFileSync } from 'node:fs';
 import {

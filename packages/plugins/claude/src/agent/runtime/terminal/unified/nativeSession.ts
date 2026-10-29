@@ -3,7 +3,7 @@ import {
   type AgentSessionOpenRequest,
   type AgentSessionRuntimeContext,
 } from '@happier-dev/plugin-sdk/agents/runtime';
-import { resolveClaudeUnifiedTerminalResponseLocations } from '@happier-dev/plugin-sdk/first-party/claude';
+import { resolveClaudeUnifiedTerminalResponseLocations } from '@happier-dev/protocol/agents/claude/settings-policy';
 import type { TerminalHostPreference } from '@happier-dev/plugin-sdk/agents/runtime';
 import { join } from 'node:path';
 import {

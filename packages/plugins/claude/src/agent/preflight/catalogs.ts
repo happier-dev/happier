@@ -1,4 +1,4 @@
-import { readClaudeSettingSourcesV2 } from '@happier-dev/plugin-sdk/first-party/claude';
+import { readClaudeSettingSourcesV2 } from '@happier-dev/protocol/agents/claude/predecessor-message-meta';
 import { CLAUDE_REMOTE_AGENT_SETTINGS_DEFAULTS } from '../../protocol/remoteSettings.js';
 import { buildClaudeSettingSourcesArgs } from '../runtime/launchSettings.js';
 import { CLAUDE_RUNTIME_REFRESH_SECRET_ENV_KEYS } from '../auth/services/runtime/env.js';

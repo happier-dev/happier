@@ -1,11 +1,11 @@
-import { normalizeClaudeRemoteAdvancedOptionsJson } from '@happier-dev/plugin-sdk/first-party/claude';
+import { normalizeClaudeRemoteAdvancedOptionsJson } from '@happier-dev/protocol/agents/claude/settings-policy';
 export {
   normalizeClaudeRemoteAdvancedOptionsJson,
   normalizeClaudeUnifiedTerminalHost,
   normalizeClaudeUnifiedTerminalResumeChoice,
   normalizeClaudeUnifiedTerminalWorkspaceTrustPolicy,
   isValidClaudeRemoteAdvancedOptionsJson,
-} from '@happier-dev/plugin-sdk/first-party/claude';
+} from '@happier-dev/protocol/agents/claude/settings-policy';
 export { CLAUDE_REMOTE_AGENT_SETTINGS_DEFAULTS } from '../agentSettings/definition.js';
 export {
   CLAUDE_SETTING_SOURCES_V2,
@@ -18,7 +18,7 @@ export {
   type ClaudeUnifiedTerminalHost,
   type ClaudeUnifiedTerminalResumeChoice,
   type ClaudeUnifiedTerminalWorkspaceTrustPolicy,
-} from '@happier-dev/plugin-sdk/first-party/claude';
+} from '@happier-dev/protocol/agents/claude/settings-policy';
 
 type ClaudeLocalPluginOption = Readonly<{
   type: 'local';

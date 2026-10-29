@@ -9,7 +9,7 @@ import {
 } from '../../hooks/protocol.js';
 import { isSidechainSessionHook } from '../../hooks/sidechain.js';
 import { isAskUserQuestionToolName } from '../../permissions/askUserQuestion.js';
-import type { ClaudeUnifiedTerminalResponseLocation } from '@happier-dev/plugin-sdk/first-party/claude';
+import type { ClaudeUnifiedTerminalResponseLocation } from '@happier-dev/protocol/agents/claude/settings-policy';
 import {
   createClaudePermissionEngine,
   type ClaudePermissionContext,

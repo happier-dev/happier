@@ -16,7 +16,7 @@ import {
   type ClaudeUnifiedTerminalResponseLocation,
   type ClaudeUnifiedTerminalResumeChoice,
   type ClaudeUnifiedTerminalWorkspaceTrustPolicy,
-} from '@happier-dev/plugin-sdk/first-party/claude';
+} from '@happier-dev/protocol/agents/claude/settings-policy';
 export {
   CLAUDE_SETTING_SOURCES_V2,
   CLAUDE_REMOTE_DEBUG_CATEGORIES,
@@ -33,7 +33,7 @@ export {
   type ClaudeUnifiedTerminalResponseLocation,
   type ClaudeUnifiedTerminalResumeChoice,
   type ClaudeUnifiedTerminalWorkspaceTrustPolicy,
-} from '@happier-dev/plugin-sdk/first-party/claude';
+} from '@happier-dev/protocol/agents/claude/settings-policy';
 
 const BOOLEAN_ANALYTICS = {
   trackCurrentState: true,

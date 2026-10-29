@@ -1,4 +1,4 @@
-import { normalizeClaudeOauthProfileEntitlement, readClaudeOauthCredentialOrganizationId } from '@happier-dev/plugin-sdk/first-party/claude';
+import { normalizeClaudeOauthProfileEntitlement, readClaudeOauthCredentialOrganizationId } from '@happier-dev/protocol/providers/claude/oauth-profile';
 import { resolveConnectedServiceQuotaMeterLabel } from '@happier-dev/plugin-sdk/connected-accounts';
 import type {
     AgentAccountUsageMeter,
