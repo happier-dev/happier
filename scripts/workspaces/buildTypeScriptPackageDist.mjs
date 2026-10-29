@@ -513,7 +513,10 @@ async function pruneRetiredCompilerOutputs({ packageDir, compilerWorkTree, compi
   config.fileNames = readTypeScriptBuildInputFileNames(tsBuildInfoFile)
     .filter(fileName => typeof fileName === 'string')
     .map(fileName => sourcePathBases.map(base => resolve(base, fileName)).find(path => existsSync(path)))
-    .filter(path => path !== undefined);
+    .filter(path => path !== undefined)
+    // getOutputFileNames looks inputs up in their TypeScript-normalized
+    // (forward-slash) form, so native Windows paths must match it.
+    .map(path => ts.normalizePath(path));
   // Resolve the shared output base once; getOutputFileNames otherwise derives
   // it from every input for every file when rootDir was implicit.
   config.options.rootDir ??= ts.getCommonSourceDirectoryOfConfig(config, !ts.sys.useCaseSensitiveFileNames);
