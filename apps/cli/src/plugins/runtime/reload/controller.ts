@@ -12,6 +12,7 @@ import {
     type CurrentGlobalExternalSessionsRouter,
 } from '@/session/external/currentGlobalRouting';
 import { projectPluginFailureText } from '../lifecycle/utils';
+import { createInitializationFailureResult } from './initializationFailure';
 import {
     createReloadControllerTargetedContributionsService,
     type StableTargetedContributionsOwner,
@@ -629,25 +630,11 @@ export function createPluginReloadController(params?: Readonly<{
         try {
             registry = await resolveRuntimeRegistry(attemptedGeneration, resolveRuntimeRegistryOverride);
         } catch (error) {
-            const diagnostic = Object.freeze({
-                code: 'plugin_reload_failed' as const,
-                message: projectPluginFailureText(error),
-            });
-            lastResult = {
-                ok: false,
-                generation,
-                attemptedGeneration,
-                requestedPluginIds: Object.freeze([]),
-                changedPluginIds: Object.freeze([]),
-                affectedPluginIds: Object.freeze([]),
-                runningSessionDisposition: null,
-                activeGenerationId: null,
-                registryStatus: 'unavailable',
-                diagnostics: Object.freeze([diagnostic]),
-                diagnosticsByPluginId: Object.freeze({}),
-                registry: null,
-            };
-            notifyReloadListeners(lastResult);
+            const failure = createInitializationFailureResult(lastResult, generation, attemptedGeneration, error);
+            if (failure !== lastResult) {
+                lastResult = failure;
+                notifyReloadListeners(failure);
+            }
             throw error;
         }
 
@@ -688,25 +675,12 @@ export function createPluginReloadController(params?: Readonly<{
             if (error instanceof ColdInitializationSupersededError && activeRegistry) {
                 return createActiveResult(activeRegistry, []);
             }
-            const diagnostic = Object.freeze({
-                code: 'plugin_reload_failed' as const,
-                message: projectPluginFailureText(error),
-            });
-            lastResult = {
-                ok: false,
-                generation,
-                attemptedGeneration,
-                requestedPluginIds: Object.freeze([]),
-                changedPluginIds: Object.freeze([]),
-                affectedPluginIds: Object.freeze([]),
-                runningSessionDisposition: null,
-                activeGenerationId: null,
-                registryStatus: 'unavailable',
-                diagnostics: Object.freeze([diagnostic]),
-                diagnosticsByPluginId: registry.pluginDiagnosticsByPluginId,
-                registry: null,
-            };
-            notifyReloadListeners(lastResult);
+            const failure = createInitializationFailureResult(lastResult, generation, attemptedGeneration, error,
+                registry.pluginDiagnosticsByPluginId);
+            if (failure !== lastResult) {
+                lastResult = failure;
+                notifyReloadListeners(failure);
+            }
             throw error;
         }
         if (!published) {

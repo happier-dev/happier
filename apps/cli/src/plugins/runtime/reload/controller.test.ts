@@ -135,14 +135,34 @@ describe('createPluginReloadController', () => {
 
     it('does not cold-resolve a runtime registry outside the daemon lifecycle owner', async () => {
         const controller = createPluginReloadController();
+        const publications: ReturnType<typeof controller.getState>['lastResult'][] = [];
+        controller.subscribe(result => publications.push(result));
 
-        await expect(controller.acquireRuntimeRegistry()).rejects.toThrow(
-            'Plugin runtime registry is unavailable until the daemon lifecycle owner publishes it',
-        );
+        for (let read = 0; read < 10; read++) {
+            await expect(controller.acquireRuntimeRegistry()).rejects.toThrow(
+                'Plugin runtime registry is unavailable until the daemon lifecycle owner publishes it',
+            );
+        }
+        // Re-reading the same unavailable authority cannot wake its own readers.
+        expect(publications).toHaveLength(1);
         expect(controller.getState()).toMatchObject({
             generation: 0,
             activeRegistry: null,
         });
+        expect(controller.getState().lastResult).toBe(publications[0]);
+
+        const registry = await resolveExecutablePluginRuntimeRegistry({
+            contributes: createResolvedContributionRegistry({}), pluginIds: [],
+        });
+        try {
+            await controller.adoptPreparedRuntimeRegistry({ registry, changedPluginIds: [],
+                runningSessionDisposition: 'retainRunningSessions' });
+            expect(publications).toHaveLength(2);
+            expect(publications[1]).toMatchObject({ ok: true, registry });
+            const lease = await controller.acquireRuntimeRegistry();
+            expect(lease.registry).toBe(registry);
+            await lease.release();
+        } finally { await controller.shutdown(); }
     });
 
     it('exposes no arbitrary reload owner and joins concurrent cold acquisitions through one resolver', async () => {
@@ -390,7 +410,10 @@ describe('createPluginReloadController', () => {
         const failure = new Error('purpose reconciliation failed');
         const dispose = vi.fn(async () => {});
         const registry = (await createRuntimeRegistry('cold', { dispose }));
+        const repeatedRegistry = await createRuntimeRegistry('cold', { dispose });
         const controller = createPluginReloadController();
+        const publications: ReturnType<typeof controller.getState>['lastResult'][] = [];
+        controller.subscribe(result => publications.push(result));
         const beforePublish = vi.fn(async () => {
             expect(controller.getState().activeRegistry).toBeNull();
             throw failure;
@@ -400,13 +423,18 @@ describe('createPluginReloadController', () => {
             resolveRuntimeRegistry: async () => registry,
             beforePublish,
         })).rejects.toBe(failure);
+        await expect(controller.acquireRuntimeRegistry({
+            resolveRuntimeRegistry: async () => repeatedRegistry,
+            beforePublish,
+        })).rejects.toBe(failure);
 
         expect(beforePublish).toHaveBeenCalledWith(registry, expect.any(Function));
+        expect(publications).toHaveLength(1);
         expect(controller.getState()).toMatchObject({
             generation: 0,
             activeRegistry: null,
         });
-        expect(dispose).toHaveBeenCalledTimes(1);
+        expect(dispose).toHaveBeenCalledTimes(2);
     });
 
     it('publishes a cold candidate synchronously inside the pre-publication writer fence', async () => {
@@ -538,17 +566,32 @@ describe('createPluginReloadController', () => {
 
     it('can retry cold initialization after the resolver rejects', async () => {
         const registry = (await createRuntimeRegistry('recovered'));
-        const resolveRuntimeRegistry = vi.fn()
-            .mockRejectedValueOnce(new Error('cold failure'))
-            .mockResolvedValueOnce(registry);
+        let attempts = 0;
+        const resolveRuntimeRegistry = async () => {
+            attempts++;
+            if (attempts <= 2) throw new Error('cold failure');
+            if (attempts === 3) throw new Error('changed failure');
+            return registry;
+        };
         const controller = createPluginReloadController({ resolveRuntimeRegistry });
+        const publications: ReturnType<typeof controller.getState>['lastResult'][] = [];
+        controller.subscribe(result => publications.push(result));
 
         await expect(controller.acquireRuntimeRegistry()).rejects.toThrow('cold failure');
+        await expect(controller.acquireRuntimeRegistry()).rejects.toThrow('cold failure');
+        expect(publications).toHaveLength(1);
+        await expect(controller.acquireRuntimeRegistry()).rejects.toThrow('changed failure');
+        expect(publications).toHaveLength(2);
+        expect(publications[1]).toMatchObject({ ok: false,
+            diagnostics: [{ code: 'plugin_reload_failed', message: 'changed failure' }] });
         const lease = await controller.acquireRuntimeRegistry();
 
         expect(lease.registry).toBe(registry);
-        expect(resolveRuntimeRegistry).toHaveBeenCalledTimes(2);
+        expect(attempts).toBe(4);
+        expect(publications).toHaveLength(3);
+        expect(publications[2]).toMatchObject({ ok: true, registry });
         await lease.release();
+        await controller.shutdown();
     });
 
     it('adopts a prepared registry without resolving it again or waiting for predecessor cleanup', async () => {
