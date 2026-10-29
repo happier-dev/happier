@@ -20,6 +20,15 @@ export type SelectionToolbarMenuItem = Readonly<{
   run: () => unknown;
 }>;
 
+export type SelectionToolbarAction = Readonly<{
+  id: string;
+  label: string;
+  icon: IconName;
+  /** The surface's main action: the one the selection's Ask shortcut runs, so its key is shown beside it. */
+  primary?: boolean;
+  onPress: () => unknown;
+}>;
+
 export type SelectionToolbarProps = Readonly<{
   /** Window rect of the selection's start; the toolbar grows from it. Null hides the toolbar. */
   anchor: Rect | null;
@@ -31,6 +40,8 @@ export type SelectionToolbarProps = Readonly<{
   onComment?: (() => unknown) | null;
   onCopy: () => unknown;
   testID?: string;
+  /** Surface-owned actions replace Ask and Comment; Copy keeps its place after them. */
+  actions?: readonly SelectionToolbarAction[] | null;
 }>;
 
 /**
@@ -100,6 +111,16 @@ export function SelectionToolbar(
             accessibilityLabel={t('files.askSelection.toolbarLabel')}
             testID={props.testID ?? 'selection-toolbar'}
           >
+            {props.actions ? props.actions.map((action) => (
+              <SelectionToolbarItem
+                key={action.id}
+                label={action.label}
+                icon={glyph(action.icon)}
+                shortcut={action.primary ? shortcut : undefined}
+                onPress={action.onPress}
+                testID={`selection-toolbar-${action.id}`}
+              />
+            )) : <>
             {props.onAsk ? (
               <View style={styles.askGroup}>
                 <SelectionToolbarItem
@@ -149,7 +170,8 @@ export function SelectionToolbar(
                 testID="selection-toolbar-comment"
               />
             ) : null}
-            {props.onAsk || props.onComment ? (
+            </>}
+            {props.actions?.length || props.onAsk || props.onComment ? (
               <View style={styles.separator} />
             ) : null}
             <SelectionToolbarItem
