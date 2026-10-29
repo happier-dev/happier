@@ -6,7 +6,7 @@ import type { SessionSystemRecordStored } from '@happier-dev/protocol';
 import type { SessionEffectiveAccessV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
 import { SessionCurrentProjectionRecordV1Schema } from '@happier-dev/protocol/sessions/listing/response';
 import { assertBoundaryImportOrder, recordBoundaryImportOriginal } from './assertBoundaryImportOrder';
-import { createSessionReadBatchFetchBoundary } from './sessionReadBatchHttpBoundary';
+import { createCompactSessionListFetchBoundary, createSessionReadBatchFetchBoundary } from './sessionReadBatchHttpBoundary';
 
 /** Session/record HTTP fixture below the real Sync, authority, repository and codec owners. */
 export function createSessionSystemRecordHttpFixture(params: Readonly<{
@@ -49,6 +49,11 @@ export function createSessionSystemRecordHttpFixture(params: Readonly<{
 }
 
 type ConfigureSocketBoundary = (socket: Socket, serverUrl: string | undefined) => void;
+
+/** The reachable authenticated Home probes shared by real connection fixtures. */
+export function createServerAccountConnectionProbeHttpResponse(pathname: string): Response | null {
+    return pathname === '/health' || pathname === '/v1/auth/ping' ? new Response('{}', { status: 200 }) : null;
+}
 
 /** Deliver the external SDK's successful dial through its real registered listeners. */
 export function configureConnectedServerSocketBoundary(socket: Socket): void {
@@ -190,14 +195,15 @@ export async function restoreServerAccountForTest(params: Readonly<{
     // Home activation may start readiness immediately; install its HTTP
     // boundary before activation rather than racing a real network request.
     const requestOrigins = new Set([params.serverUrl, ...(params.additionalRequestOrigins ?? [])].map(url => new URL(url).origin));
-    const requestBoundary: Parameters<typeof setRuntimeFetch>[0] = async (url, init) => {
+    const requestBoundary = createCompactSessionListFetchBoundary(async (url, init) => {
         const requestUrl = new URL(String(url));
         if (!requestOrigins.has(requestUrl.origin)) {
             throw new Error(`Unexpected test Home request origin: ${requestUrl.origin}`);
         }
-        if (requestUrl.pathname === '/health' || requestUrl.pathname === '/v1/auth/ping') return new Response('{}', { status: 200 });
-        return await params.request?.(url, init) ?? new Response('{}', { status: 404 });
-    };
+        const probe = createServerAccountConnectionProbeHttpResponse(requestUrl.pathname);
+        if (probe) return probe;
+        return await params.request?.(url, init) ?? undefined;
+    }, { preferExactSnapshot: true });
     currentRuntimeFetchBoundary = requestBoundary;
     setRuntimeFetch(requestBoundary);
     let home = await upsertServerProfileOnly({ serverUrl: params.serverUrl, name: 'Test Home' });

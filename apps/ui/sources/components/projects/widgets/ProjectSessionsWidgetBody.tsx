@@ -98,7 +98,6 @@ export function ProjectSessionsWidgetBody(
         if (!session || !item.serverId) return null;
         const serverId = item.serverId;
         const status = getSessionStatus(session, runtimeNowMs, {
-          workingTextMode: 'static',
         });
         const activityAt =
           resolveSessionListRenderableMeaningfulActivityAt(session);

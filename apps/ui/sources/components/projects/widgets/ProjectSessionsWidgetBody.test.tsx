@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { V2SessionRecordSchema } from '@happier-dev/protocol/sessions/control/contract';
-import { SessionListQueryResponseV1Schema } from '@happier-dev/protocol/sessions/listing/response';
+import { createSessionListSourceFixture } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { SessionListQueryV1Schema } from '@happier-dev/protocol/sessions/listing/query';
 import { encodeV2SessionListCursorV1, SessionAwarenessListResultV1Schema } from '@happier-dev/protocol';
 import {
@@ -30,6 +30,31 @@ let continuationIds = ['by-checkout', 'by-path'];
 let continuationGate: ReturnType<typeof createDeferred<void>> | null = null;
 const continuationCursor = encodeV2SessionListCursorV1('other');
 const finalCursor = encodeV2SessionListCursorV1('other-next');
+const sessionRecord = (id: string) => V2SessionRecordSchema.parse({
+        id, seq: 1, createdAt: 1, updatedAt: 2, active: false, activeAt: 2,
+        encryptionMode: 'plain', dataEncryptionKey: null,
+        ...(layoutOne ? {
+            metadataLayoutVersion: 1,
+            metadata: JSON.stringify(SessionSharedMetadataV1Schema.parse({ v: 1 })),
+            ownerMetadata: createPlainSessionOwnerMetadataEnvelopeV1(SessionOwnerMetadataV1Schema.parse({ v: 1, workspace: {
+                path: id.startsWith('other') ? '/other' : '/repo', machineId: 'machine',
+                ...(id === 'by-checkout' ? { workspaceId: 'checkout' }
+                    : id === 'by-path' ? {} : { projectId: id.startsWith('other') ? 'other-project' : 'anchor' }),
+            } })),
+        } : {
+            metadataLayoutVersion: 0,
+            metadata: JSON.stringify({ path: id.startsWith('other') ? '/other' : '/repo', machineId: 'machine', projectId: id.startsWith('other') ? 'other-project' : 'anchor', ...(contributedAgentId ? { runtimeDescriptorV1: { v: 1, agentId: contributedAgentId, agent: {}, provider: {} } } : {}) }),
+        }),
+        metadataVersion: 1, agentState: null, agentStateVersion: 1, share: null,
+        effectiveAccess: { v: 1, level: 'owner', sources: [{ kind: 'owner' }], capabilities: createSessionAccessFixture().capabilities },
+        responsibleAccountId: null, responsibleAccount: null,
+    viewer: {
+        latestFailureSeq: null,
+        readState: { state: 'tracking', lastViewedSessionSeq: 1, unreadSince: null },
+        relevance: { relevant: true, reasons: ['owned_by_me'] },
+        attention: { needsAttention: false, reasons: [], primary: null, presentation: 'full' },
+        follow: { follows: false, notificationLevel: null }, notification: { level: 'important', source: 'owner' },
+    } });
 const runtime = installSessionPaneRuntimeTestHarness({
     features: () => createRootLayoutFeaturesResponse({ features: { sessions: { filteredListing: { enabled: true } } } }),
     configureSocket: socket => {
@@ -42,6 +67,9 @@ const runtime = installSessionPaneRuntimeTestHarness({
 }, request: async (url, init) => {
     const address = new URL(String(url));
     const path = address.pathname;
+    const id = path.startsWith('/v2/sessions/') ? decodeURIComponent(path.slice('/v2/sessions/'.length)) : null;
+    const admittedIds = paged ? [...firstPageIds, ...continuationIds, ...(extraEmptyPage ? ['other-next'] : [])] : sessionIds;
+    if (id && admittedIds.includes(id)) return Response.json({ session: sessionRecord(id) });
     if (path !== '/v2/sessions' && path !== '/v1/sessions' && path !== '/v2/sessions/query') return null;
     requests += 1;
     if (fail) return new Response('{}', { status: 503 });
@@ -53,32 +81,8 @@ const runtime = installSessionPaneRuntimeTestHarness({
     const intermediate = extraEmptyPage && cursor === continuationCursor;
     const ids = paged ? intermediate ? ['other-next'] : cursor ? continuationIds : firstPageIds : sessionIds;
     const more = paged && (!cursor || intermediate);
-    const page = { sessions: ids.map(id => ({ ...V2SessionRecordSchema.parse({
-        id, seq: 1, createdAt: 1, updatedAt: 2, active: false, activeAt: 2,
-        encryptionMode: 'plain', dataEncryptionKey: null,
-        ...(layoutOne ? {
-            metadataLayoutVersion: 1,
-            metadata: JSON.stringify(SessionSharedMetadataV1Schema.parse({ v: 1 })),
-            ownerMetadata: createPlainSessionOwnerMetadataEnvelopeV1(SessionOwnerMetadataV1Schema.parse({ v: 1, workspace: {
-                path: '/repo', machineId: 'machine',
-                ...(id === 'by-checkout' ? { workspaceId: 'checkout' }
-                    : id === 'by-path' ? {} : { projectId: id.startsWith('other') ? 'other-project' : 'anchor' }),
-            } })),
-        } : {
-            metadataLayoutVersion: 0,
-            metadata: JSON.stringify({ path: '/repo', machineId: 'machine', projectId: id.startsWith('other') ? 'other-project' : 'anchor', ...(contributedAgentId ? { runtimeDescriptorV1: { v: 1, agentId: contributedAgentId, agent: {}, provider: {} } } : {}) }),
-        }),
-        metadataVersion: 1, agentState: null, agentStateVersion: 1, share: null,
-        effectiveAccess: { v: 1, level: 'owner', sources: [{ kind: 'owner' }], capabilities: createSessionAccessFixture().capabilities },
-        responsibleAccountId: null, responsibleAccount: null,
-    }), viewer: {
-        latestFailureSeq: null,
-        readState: { state: 'tracking', lastViewedSessionSeq: 1, unreadSince: null },
-        relevance: { relevant: true, reasons: ['owned_by_me'] },
-        attention: { needsAttention: false, reasons: [], primary: null, presentation: 'full' },
-        follow: { follows: false, notificationLevel: null }, notification: { level: 'important', source: 'owner' },
-    } })), nextCursor: more ? intermediate ? finalCursor : continuationCursor : null, hasNext: more, attentionNextCursor: null, attentionHasNext: false };
-    return Response.json(path === '/v2/sessions/query' ? SessionListQueryResponseV1Schema.parse(page) : page);
+    const page = { sessions: ids.map(sessionRecord), nextCursor: more ? intermediate ? finalCursor : continuationCursor : null, hasNext: more, attentionNextCursor: null, attentionHasNext: false };
+    return Response.json(createSessionListSourceFixture(page));
 } });
 
 const { ProjectSessionsWidgetBody } = await import('./ProjectSessionsWidgetBody');
@@ -191,7 +195,8 @@ describe('Project Sessions widget body', () => {
         paged = true;
         continuationIds = ['other'];
         const checkout = { id: 'checkout', serverId: runtime.serverId, machineId: 'machine', rootPath: '/repo', projectKey: 'anchor', createdAtMs: 1 };
-        applyProjectAccountRowsFixture(storage, { workspaceRefs: [checkout] });
+        applyProjectAccountRowsFixture(storage, { workspaceRefs: [checkout,
+            { ...checkout, id: 'other-checkout', rootPath: '/other', projectKey: 'other-project' }] });
         const screen = await renderScreen(<runtime.Wrapper><ProjectSessionsWidgetBody checkout={checkout} testID="w" /></runtime.Wrapper>);
         await vi.waitFor(async () => {
             await flushHookEffects();
