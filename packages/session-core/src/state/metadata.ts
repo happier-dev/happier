@@ -41,19 +41,19 @@ const StoredModelOptionSchema = lazyZodSchema(() => z.object({
     id: z.string(),
     name: z.string(),
     description: z.optional(z.string()),
+    category: z.optional(z.string()),
     type: z.string(),
     currentValue: z.union([z.string(), z.number(), z.boolean(), z.null()]),
     options: z.optional(z.array(StoredOptionChoiceSchema)),
-    overridesWhenOn: z.optional(AgentModelOptionOverrideRuleReadSchema),
-}));
-
-const StoredConfigOptionSchema = lazyZodSchema(() => z.extend(StoredModelOptionSchema, {
     groups: z.optional(z.array(z.object({
         id: z.string(),
         name: z.string(),
         options: z.array(StoredOptionChoiceSchema),
     }))),
+    overridesWhenOn: z.optional(AgentModelOptionOverrideRuleReadSchema),
 }));
+
+const StoredConfigOptionSchema = StoredModelOptionSchema;
 
 // This retained carrier also custodians native descriptor/facet/override bags.
 // Project its closed typed leaves, not the entire passthrough metadata tree.
@@ -183,12 +183,14 @@ const MetadataObjectSchema = lazyZodSchema(() => z.looseObject({
         agentId: z.string(),
         updatedAt: z.number(),
         configOptions: z.array(StoredConfigOptionSchema),
+        modelConfigOptionId: z.optional(z.string()),
     })),
     sessionConfigOptionsV1: z.optional(z.object({
         v: z.literal(1),
         agentId: z.string(),
         updatedAt: z.number(),
         configOptions: z.array(StoredConfigOptionSchema),
+        modelConfigOptionId: z.optional(z.string()),
     })),
     sessionRollbackRangesV1: z.optional(createSessionRollbackRangesV1Schema(zMini)),
     /**

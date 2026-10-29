@@ -3,6 +3,18 @@ import { describe, expect, it } from 'vitest';
 import { MetadataSchema } from './metadata.js';
 
 describe('stored Session metadata', () => {
+    it('retains native categories and grouped choices in both config and model catalogs', () => {
+        const option = { id: ' opaque/control= ', name: ' Native name ', description: ' Native description ', category: 'thought_level', type: 'select', currentValue: 'high',
+            options: [{ value: 'high', name: ' High ' }], groups: [{ id: ' group/+ ', name: ' Group ', options: [{ value: 'high', name: ' High ' }] }] };
+        const config = { v: 1, agentId: 'fx', updatedAt: 1, modelConfigOptionId: ' native/model= ', configOptions: [option] };
+        const models = { v: 1, agentId: 'fx', updatedAt: 1, currentModelId: 'native', availableModels: [{ id: 'native', name: 'Native', modelOptions: [option] }] };
+        const parsed = MetadataSchema.parse({ path: '/repo', host: 'work', sessionConfigOptionsV1: config, acpConfigOptionsV1: config, sessionModelsV1: models, acpSessionModelsV1: models });
+        expect(parsed.sessionConfigOptionsV1).toEqual(config);
+        expect(parsed.acpConfigOptionsV1).toEqual(config);
+        expect(parsed.sessionModelsV1).toEqual(models);
+        expect(parsed.acpSessionModelsV1).toEqual(models);
+    });
+
     it('projects known nested fields while preserving the root native extension carrier', () => {
         const source = { kind: 'discussion', serverId: 'server-a', discussionId: 'discussion-a', messageIds: ['message-a'] };
         const native = { futureNativeContext: { retained: 'opaque' } };
