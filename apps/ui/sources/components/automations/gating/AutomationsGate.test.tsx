@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('socket.io-client', async (importOriginal) =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
-import { createDeferred, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createDeferred, flattenTestStyle, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
@@ -75,7 +75,19 @@ describe('AutomationsGate', () => {
     it('renders a loading state while automations support is unresolved', async () => {
         pendingFeatures = createDeferred<Response>();
         resetServerFeaturesClientForTests();
-        const screen = await renderScreen(allowed());
+        const { GlassSurface } = await import('@/components/ui/glass/GlassSurface');
+        const { GlassRuntimeEnvironmentProvider } = await import('@/components/ui/glass/glassRuntimeEnvironment');
+        const { GlassMaterialSettingsProvider } = await import('@/components/ui/glass/useGlassMaterialSettings');
+        const { glassPresetMaterials } = await import('@/components/ui/glass/glassMaterial');
+        const screen = await renderScreen(<GlassMaterialSettingsProvider value={{ glassSurfaceMaterials: glassPresetMaterials('everywhere') }}>
+            <GlassRuntimeEnvironmentProvider value={{ atmosphereBehind: 'wallpaper' }}>
+                <GlassSurface plane surfaceGroup="content" atmosphereCoat="reading">{allowed()}</GlassSurface>
+            </GlassRuntimeEnvironmentProvider>
+        </GlassMaterialSettingsProvider>);
+        const spinner = screen.findAllByProps({ accessibilityRole: 'progressbar' }).find(node => typeof node.type === 'string');
+        let container = spinner?.parent;
+        while (container && typeof container.type !== 'string') container = container.parent;
+        expect(flattenTestStyle(container?.props.style).backgroundColor).toBe('transparent');
         expect(screen.findByTestId('automations-allowed-child')).toBeNull();
         expect(screen.findAllByProps({ accessibilityRole: 'progressbar' }).length).toBeGreaterThan(0);
         pendingFeatures.resolve(Response.json(featureResponse));

@@ -1,6 +1,7 @@
 import React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 
 import { useAutomationsSupport } from '@/hooks/server/useAutomationsSupport';
 import { ItemList } from '@/components/ui/lists/ItemList';
@@ -26,13 +27,14 @@ const stylesheet = StyleSheet.create((theme) => ({
 export function AutomationsGate(props: { children: React.ReactNode }) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
+    const materialColor = useHappierMaterialColorResolver();
     const support = useAutomationsSupport();
     const router = useRouter();
     const experimentsEnabled = useSetting('experiments') === true;
 
     if (!support || support.loading) {
         return (
-            <View style={styles.loadingContainer}>
+            <View style={[styles.loadingContainer, { backgroundColor: materialColor(theme.colors.surface.base, 'transparent') }]}>
                 <ActivitySpinner size="small" color={theme.colors.text.secondary} />
             </View>
         );
