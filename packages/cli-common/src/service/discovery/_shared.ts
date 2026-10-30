@@ -121,8 +121,9 @@ export function parseSystemdCommandLine(raw: string): string[] {
   return tokens;
 }
 
-export function parsePowerShellDoubleQuotedText(raw: string): string {
+export function parsePowerShellQuotedText(raw: string): string {
   const text = String(raw ?? '');
+  if (text.startsWith("'") && text.endsWith("'")) return text.slice(1, -1).replaceAll("''", "'");
   const quoted = text.startsWith('"') && text.endsWith('"');
   const inner = quoted ? text.slice(1, -1) : text;
   let parsed = '';

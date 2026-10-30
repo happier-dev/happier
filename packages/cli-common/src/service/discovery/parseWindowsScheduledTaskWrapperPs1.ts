@@ -2,14 +2,14 @@ import type { ParsedWindowsScheduledTaskWrapperPs1 } from './serviceDiscoveryTyp
 import {
   basenameWithoutSuffix,
   parsePowerShellCommandLine,
-  parsePowerShellDoubleQuotedText,
+  parsePowerShellQuotedText,
 } from './_shared.js';
 
 function parseEnvAssignment(line: string): [string, string] | null {
   const match = /^\$env:([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+)$/u.exec(line.trim());
   if (!match) return null;
   const key = String(match[1] ?? '').trim();
-  const value = parsePowerShellDoubleQuotedText(String(match[2] ?? '').trim());
+  const value = parsePowerShellQuotedText(String(match[2] ?? '').trim());
   if (!key) return null;
   return [key, value];
 }
@@ -41,7 +41,7 @@ function parseRedirectionPath(line: string, redirection: '1>>' | '2>>'): string 
   const index = line.indexOf(redirection);
   if (index < 0) return null;
   const value = extractPowerShellQuotedSegment(line.slice(index + redirection.length));
-  return value === null ? null : parsePowerShellDoubleQuotedText(value);
+  return value === null ? null : parsePowerShellQuotedText(value);
 }
 
 export function parseWindowsScheduledTaskWrapperPs1(params: Readonly<{
@@ -62,7 +62,7 @@ export function parseWindowsScheduledTaskWrapperPs1(params: Readonly<{
     if (line.startsWith('$ErrorActionPreference')) continue;
 
     if (line.startsWith('Set-Location -LiteralPath ')) {
-      workingDirectory = parsePowerShellDoubleQuotedText(line.slice('Set-Location -LiteralPath '.length).trim());
+      workingDirectory = parsePowerShellQuotedText(line.slice('Set-Location -LiteralPath '.length).trim());
       continue;
     }
 

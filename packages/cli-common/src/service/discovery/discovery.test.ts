@@ -138,6 +138,14 @@ describe('parseSystemdUnit', () => {
 });
 
 describe('parseWindowsScheduledTaskWrapperPs1', () => {
+  it('reads a legacy single-quoted wrapper environment without changing its home identity', () => {
+    const parsed = parseWindowsScheduledTaskWrapperPs1({
+      sourcePath: 'C:\\Users\\tester\\.happier\\services\\happier-daemon.default.ps1',
+      contents: "$env:HAPPIER_HOME_DIR = 'C:\\Users\\O''Brien\\.happier'\n& \"C:\\happier.exe\" \"daemon\" \"start-sync\"\n",
+    });
+    expect(parsed?.env.HAPPIER_HOME_DIR).toBe("C:\\Users\\O'Brien\\.happier");
+  });
+
   it('parses scheduled task wrapper service definition primitives', () => {
     const script = renderWindowsScheduledTaskWrapperPs1({
       workingDirectory: 'C:\\Users\\qa$HOME`\\.happier',
