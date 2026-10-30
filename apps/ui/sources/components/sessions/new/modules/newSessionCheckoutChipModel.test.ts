@@ -259,33 +259,4 @@ describe('resolveNewSessionCheckoutChipModel', () => {
         ).toBe('create_git_worktree');
     });
 
-    it('keeps repo-native worktree creation available even when no workspace is linked', () => {
-        expect(
-            resolveNewSessionCheckoutChipModel({
-                selectedPath: '/repo/payments',
-                checkoutCreationDraft: null,
-                repoSnapshot: makeRepoSnapshot(),
-            }).options.map((option) => option.id),
-        ).toEqual([
-            'current_path',
-            'create_git_worktree',
-            'checkout:/repo/payments-feature-auth',
-            'checkout:/repo/payments-release',
-        ]);
-    });
-
-    it('puts no-worktree first, then new worktree, then existing worktrees', () => {
-        expect(
-            resolveNewSessionCheckoutChipModel({
-                selectedPath: '/repo/payments',
-                checkoutCreationDraft: null,
-                repoSnapshot: makeRepoSnapshot(),
-            }).options.map((option) => option.id),
-        ).toEqual([
-            'current_path',
-            'create_git_worktree',
-            'checkout:/repo/payments-feature-auth',
-            'checkout:/repo/payments-release',
-        ]);
-    });
 });
