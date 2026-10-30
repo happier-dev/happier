@@ -10,7 +10,7 @@ describe('Agent CLI auth background-check safety', () => {
     for (const agentId of AGENT_IDS) {
       const definition = BUNDLED_AGENT_DEFINITIONS_BY_ID[agentId];
       expect(isAgentCliAuthBackgroundCheckSafe(agentId)).toBe(
-        isPluginAgentCliAuthBackgroundCheckSafe(definition.cli),
+        definition.cli === undefined ? false : isPluginAgentCliAuthBackgroundCheckSafe(definition.cli),
       );
     }
   });

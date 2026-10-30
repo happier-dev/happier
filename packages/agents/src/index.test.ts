@@ -137,6 +137,7 @@ describe('agents package exports', () => {
       exports?: Record<string, unknown>;
     };
     expect(packageJson.exports).toHaveProperty('./session/state/metadataWriters', {
+      'happier-source': './src/session/state/metadataWriters.ts',
       types: './dist/session/state/metadataWriters.d.ts',
       default: './dist/session/state/metadataWriters.js',
     });
@@ -147,6 +148,7 @@ describe('agents package exports', () => {
       exports?: Record<string, unknown>;
     };
     expect(packageJson.exports).toHaveProperty('./permissions', {
+      'happier-source': './src/permissions/index.ts',
       types: './dist/permissions/index.d.ts',
       default: './dist/permissions/index.js',
     });

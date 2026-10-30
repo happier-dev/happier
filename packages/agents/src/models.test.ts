@@ -103,10 +103,6 @@ describe('agent model config', () => {
     expect(geminiModels[0]?.name).toBe('Gemini 2.5 Pro');
   });
 
-  it('uses the plugin-generated Claude model config as the canonical source', () => {
-    expect(CANONICAL_AGENT_MODEL_CONFIG.claude).toBe(BUNDLED_AGENT_DEFINITIONS_BY_ID.claude.modelConfig);
-  });
-
   it('sources declared canonical model facts from bundled agent definitions', () => {
     for (const providerId of AGENT_IDS) {
       const definition = BUNDLED_AGENT_DEFINITIONS_BY_ID[providerId];

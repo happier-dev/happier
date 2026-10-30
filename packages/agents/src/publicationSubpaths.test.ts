@@ -30,13 +30,14 @@ describe('Agents publication subpaths', () => {
     };
 
     for (const [subpath, emittedOwner] of Object.entries(publicationSubpaths)) {
-      expect(packageJson.exports?.[subpath]).toEqual({
-        types: emittedOwner.replace(/\.js$/u, '.d.ts'),
-        default: emittedOwner,
-      });
       const sourceOwner = emittedOwner
         .replace(/^\.\/dist\//u, './src/')
         .replace(/\.js$/u, '.ts');
+      expect(packageJson.exports?.[subpath]).toEqual({
+        'happier-source': sourceOwner,
+        types: emittedOwner.replace(/\.js$/u, '.d.ts'),
+        default: emittedOwner,
+      });
       expect(existsSync(resolve(packageDir, sourceOwner)), sourceOwner).toBe(true);
     }
   });

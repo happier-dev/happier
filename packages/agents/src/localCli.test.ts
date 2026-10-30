@@ -62,6 +62,7 @@ describe('AGENT_LOCAL_CLI_CONFIG', () => {
   });
 
   it('marks Custom ACP as a catalog-management backend without local CLI login', () => {
+    expect(AGENT_LOCAL_CLI_CONFIG).not.toHaveProperty('customAcp');
     expect(legacyCustomAcpCompat.getLegacyCustomAcpAgentLocalCliConfig()).toMatchObject({
       agentId: 'customAcp',
       detectKey: 'custom-acp',
@@ -104,11 +105,4 @@ describe('AGENT_LOCAL_CLI_CONFIG', () => {
     }));
   });
 
-  it('still serves legacy customAcp through explicit compat lookup only', () => {
-    expect(AGENT_LOCAL_CLI_CONFIG).not.toHaveProperty('customAcp');
-    expect(legacyCustomAcpCompat.getLegacyCustomAcpAgentLocalCliConfig()).toMatchObject({
-      agentId: 'customAcp',
-      detectKey: 'custom-acp',
-    });
-  });
 });

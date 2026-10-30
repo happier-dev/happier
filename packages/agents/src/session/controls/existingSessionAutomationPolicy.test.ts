@@ -83,9 +83,8 @@ describe('evaluateExistingSessionAutomationEligibility', () => {
           runtimeDescriptorV1: {
             v: 1,
             agentId: 'opencode',
-            agent: { backendMode: 'server' },
+            agent: { backendMode: 'server', providerSessionId: 'private-descriptor-session' },
           },
-          nativeResumeIdentityV1: { v: 1, vendorResumeId: 'opencode-session-1' },
         },
       }),
     ).toEqual({ eligible: false, reasonCode: 'vendor_resume_id_missing' });
@@ -98,9 +97,8 @@ describe('evaluateExistingSessionAutomationEligibility', () => {
           agentRuntimeDescriptorV1: {
             v: 1,
             agentId: 'opencode',
-            provider: { backendMode: 'server' },
+            provider: { backendMode: 'server', providerSessionId: 'private-descriptor-session' },
           },
-          nativeResumeIdentityV1: { v: 1, vendorResumeId: 'opencode-session-1' },
         },
       }),
     ).toEqual({ eligible: false, reasonCode: 'vendor_resume_id_missing' });

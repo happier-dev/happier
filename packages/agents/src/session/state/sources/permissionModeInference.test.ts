@@ -6,7 +6,7 @@ describe('inferLatestUserPermissionModeIntent', () => {
   it('returns the latest valid user message permission-mode intent', () => {
     expect(inferLatestUserPermissionModeIntent([
       { kind: 'user-text', createdAt: 10, meta: { permissionMode: 'read-only' } },
-      { kind: 'assistant-text', createdAt: 20, meta: { permissionMode: 'bypassPermissions' } },
+      { kind: 'assistant-text', createdAt: 40, meta: { permissionMode: 'bypassPermissions' } },
       { kind: 'user-text', createdAt: 30, meta: { permissionMode: 'acceptEdits' } },
     ])).toEqual({
       permissionMode: 'safe-yolo',

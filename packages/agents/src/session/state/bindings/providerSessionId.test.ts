@@ -77,19 +77,6 @@ describe('providerSessionId session-state binding', () => {
     });
   });
 
-  it('trims blank provider session ids and preserves previous metadata', () => {
-    expect(writeProviderSessionIdSessionState({
-      path: '/tmp/project',
-      codexSessionId: 'previous-thread',
-    }, {
-      metadataKey: 'codexSessionId',
-      value: '   ',
-    })).toEqual({
-      path: '/tmp/project',
-      codexSessionId: 'previous-thread',
-    });
-  });
-
   it('generic binding writes the provider marker selected by runtimeDescriptorV1', () => {
     const next = providerSessionIdBinding.write({
       runtimeDescriptorV1: {

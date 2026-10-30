@@ -20,21 +20,24 @@ describe('agent tools delivery capability', () => {
   });
 
   it('classifies Pi native extension delivery separately from its agent caller surface', () => {
-    expect(getAgentToolsCapability('pi')).toEqual({ delivery: 'native_extension', support: 'experimental' });
+    expect(getAgentToolsCapability('pi')).toEqual({ delivery: 'native_extension', support: 'experimental',
+      mcpToolControl: { off: 'hidden', approval: 'host' } });
     expect(usesNativeExtensionTools('pi')).toBe(true);
     expect(usesNativeMcpTools('pi')).toBe(false);
     expect(usesShellBridgeTools('pi')).toBe(false);
   });
 
   it('classifies native MCP providers through helper APIs', () => {
-    expect(getAgentToolsCapability('claude')).toEqual({ delivery: 'native_mcp', support: 'supported' });
+    expect(getAgentToolsCapability('claude')).toEqual({ delivery: 'native_mcp', support: 'supported',
+      mcpToolControl: { off: 'hidden', approval: 'host' }, mcpToolCallIdMetaKey: 'claudecode/toolUseId' });
     expect(usesNativeMcpTools('claude')).toBe(true);
     expect(usesShellBridgeTools('claude')).toBe(false);
     expect(isAgentToolsUnsupported('claude')).toBe(false);
   });
 
   it('classifies Gemini native MCP delivery through helper APIs', () => {
-    expect(getAgentToolsCapability('gemini')).toEqual({ delivery: 'native_mcp', support: 'supported' });
+    expect(getAgentToolsCapability('gemini')).toEqual({ delivery: 'native_mcp', support: 'supported',
+      mcpToolControl: { off: 'blocked', approval: 'host' } });
     expect(usesNativeMcpTools('gemini')).toBe(true);
     expect(usesShellBridgeTools('gemini')).toBe(false);
     expect(isAgentToolsUnsupported('gemini')).toBe(false);
@@ -43,7 +46,8 @@ describe('agent tools delivery capability', () => {
   it.each(['auggie', 'copilot', 'cursor', 'kilo', 'qwen'] as const)(
     'classifies %s native MCP delivery through helper APIs',
     (agentId) => {
-      expect(getAgentToolsCapability(agentId)).toEqual({ delivery: 'native_mcp', support: 'experimental' });
+      expect(getAgentToolsCapability(agentId)).toEqual({ delivery: 'native_mcp', support: 'experimental',
+        ...(agentId === 'kilo' ? { mcpToolControl: { off: 'blocked', approval: 'host' } } : {}) });
       expect(usesNativeMcpTools(agentId)).toBe(true);
       expect(usesShellBridgeTools(agentId)).toBe(false);
       expect(isAgentToolsUnsupported(agentId)).toBe(false);

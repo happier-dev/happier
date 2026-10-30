@@ -87,16 +87,6 @@ describe('isAgentStateRequestCoveredByCompletedRequests', () => {
         })).toBe(true);
     });
 
-    it('does not cover same-id requests with different arguments', () => {
-        expect(isAgentStateRequestCoveredByCompletedRequests({
-            requestId: 'req-1',
-            request: { tool: 'Write', arguments: { path: 'next.txt' }, createdAt: 10 },
-            completedRequests: {
-                'req-1': { tool: 'Write', arguments: { path: 'previous.txt' }, completedAt: 20 },
-            },
-        })).toBe(false);
-    });
-
     it('does not cover terminal same-id requests when the completed entry carries different arguments', () => {
         expect(isAgentStateRequestCoveredByCompletedRequests({
             requestId: 'req-1',
@@ -113,23 +103,24 @@ describe('isAgentStateRequestCoveredByCompletedRequests', () => {
     });
 
     it('does not cover same-id requests from a different owner', () => {
+        const request = {
+            tool: 'Write', arguments: {}, createdAt: 10,
+            owner: { kind: 'plugin', pluginId: 'plugin-b', runtimeId: 'runtime-b' },
+        };
+        const completed = {
+            tool: 'Write', arguments: {}, completedAt: 20, status: 'approved',
+            owner: { kind: 'plugin', pluginId: 'plugin-a', runtimeId: 'runtime-a' },
+        };
         expect(isAgentStateRequestCoveredByCompletedRequests({
             requestId: 'req-1',
-            request: {
-                tool: 'Write',
-                arguments: {},
-                createdAt: 10,
-                owner: { kind: 'plugin', pluginId: 'plugin-b', runtimeId: 'runtime-b' },
-            },
-            completedRequests: {
-                'req-1': {
-                    tool: 'Write',
-                    arguments: {},
-                    completedAt: 20,
-                    owner: { kind: 'plugin', pluginId: 'plugin-a', runtimeId: 'runtime-a' },
-                },
-            },
+            request,
+            completedRequests: { 'req-1': completed },
         })).toBe(false);
+        expect(isAgentStateRequestCoveredByCompletedRequests({
+            requestId: 'req-1',
+            request,
+            completedRequests: { 'req-1': { ...completed, owner: request.owner } },
+        })).toBe(true);
     });
 
     it('covers fresh generated bridge requests when a canonical cancellation has the same payload', () => {

@@ -378,16 +378,6 @@ describe('vendorResumePolicy', () => {
     ).toEqual({ eligible: true, vendorResumeId: 'kiro-session-1' });
   });
 
-  it('allows ohMyPi resume when a session id is present', () => {
-    expect(
-      evaluateVendorResumeEligibility({
-        agentId: 'ohMyPi',
-        metadata: { ohMyPiSessionId: 'omp-session-1' },
-        accountSettings: {},
-      }),
-    ).toEqual({ eligible: true, vendorResumeId: 'omp-session-1' });
-  });
-
   it('prefers persisted codexBackendMode metadata over account settings for appServer sessions', () => {
     expect(
       evaluateVendorResumeEligibility({

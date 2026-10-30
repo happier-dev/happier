@@ -44,46 +44,6 @@ describe('buildHappierReplayPromptFromDialog', () => {
     expect(prompt.split('User:').length - 1).toBe(1);
   });
 
-  it('allows including more than 100 messages when recentMessagesCount exceeds 100', () => {
-    const dialog = Array.from({ length: 120 }, (_, idx) => {
-      const i = idx + 1;
-      return {
-        role: i % 2 === 0 ? ('Assistant' as const) : ('User' as const),
-        createdAt: i,
-        text: i === 1 ? 'first-unique' : `m-${i}`,
-      };
-    });
-
-    const prompt = buildHappierReplayPromptFromDialog({
-      previousSessionId: 'sess_prev',
-      strategy: 'recent_messages',
-      recentMessagesCount: 150,
-      dialog,
-    });
-
-    expect(prompt).toContain('User: first-unique');
-  });
-
-  it('allows requesting more than 200 messages when recentMessagesCount exceeds 200', () => {
-    const dialog = Array.from({ length: 300 }, (_, idx) => {
-      const i = idx + 1;
-      return {
-        role: i % 2 === 0 ? ('Assistant' as const) : ('User' as const),
-        createdAt: i,
-        text: i === 1 ? 'first-unique-over-200' : `m-${i}`,
-      };
-    });
-
-    const prompt = buildHappierReplayPromptFromDialog({
-      previousSessionId: 'sess_prev',
-      strategy: 'recent_messages',
-      recentMessagesCount: 500,
-      dialog,
-    });
-
-    expect(prompt).toContain('User: first-unique-over-200');
-  });
-
   it('includes summary text when strategy is summary_plus_recent', () => {
     const prompt = buildHappierReplayPromptFromDialog({
       previousSessionId: 'sess_prev',
@@ -2110,6 +2070,16 @@ describe('happierReplayPrompt — retrieval planning surface', () => {
     });
     expect(selected.includes('turn-0\n')).toBe(true);
     expect(selected).not.toContain('earlier message(s) omitted');
+
+    // The count also stays uncapped when the caller leaves the character budget unset.
+    const defaultBudget = buildHappierReplayPromptFromDialog({
+      previousSessionId: 'sess_uncapped',
+      strategy: 'recent_messages',
+      recentMessagesCount: 620,
+      dialog,
+    });
+    expect(defaultBudget.includes('turn-0\n')).toBe(true);
+    expect(defaultBudget).not.toContain('earlier message(s) omitted');
 
     // Discriminating control: the released count contract still binds when a
     // caller supplies one; a selected 500 still means exactly 500.

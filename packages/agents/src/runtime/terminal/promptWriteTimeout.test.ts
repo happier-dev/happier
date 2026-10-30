@@ -12,10 +12,6 @@ describe('resolveTerminalPromptWriteTimeoutMs', () => {
         expect(resolveTerminalPromptWriteTimeoutMs('hello')).toBe(TERMINAL_PROMPT_BASE_WRITE_TIMEOUT_MS);
     });
 
-    it('scales the timeout for large terminal prompts', () => {
-        expect(resolveTerminalPromptWriteTimeoutMs('x'.repeat(128_000))).toBeGreaterThan(TERMINAL_PROMPT_BASE_WRITE_TIMEOUT_MS);
-    });
-
     it('uses a conservative large-prompt byte budget for terminal host writes', () => {
         expect(resolveTerminalPromptWriteTimeoutMs('x'.repeat(128_000))).toBe(125_000);
     });

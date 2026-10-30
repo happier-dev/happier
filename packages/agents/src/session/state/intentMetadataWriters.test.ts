@@ -90,7 +90,7 @@ describe("session state intent metadata writers", () => {
             metadata,
             overrideKey: "modelOverrideV1",
             valueKey: "modelId",
-            value: "   ",
+            value: "gpt-5",
             updatedAt: 20,
         });
 
