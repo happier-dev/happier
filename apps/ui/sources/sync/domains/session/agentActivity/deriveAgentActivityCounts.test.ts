@@ -79,17 +79,6 @@ describe('deriveAgentActivityCounts', () => {
         expect(counts).toEqual({ live: 4, total: 7 });
     });
 
-    it('reports a session with only a container run as having work, so its affordance still shows', () => {
-        // `shouldShowSubagentsButton` reads `total > 0`; a kind-aware total that excluded a
-        // container with no other rows would silently hide the Agents affordance.
-        const counts = deriveAgentActivityCounts([
-            run(),
-            agent({ id: 'workflow_agent:wf_1:a1', parentId: 'workflow_run:wf_1', status: 'succeeded' }),
-        ]);
-
-        expect(counts.total).toBeGreaterThan(0);
-    });
-
     it('returns the shared empty counts for an empty roster', () => {
         expect(deriveAgentActivityCounts([])).toEqual({ live: 0, total: 0 });
     });

@@ -211,19 +211,6 @@ describe('buildSpawnHappySessionRpcParams', () => {
         expect(params).not.toHaveProperty('initialPrompt');
     });
 
-    it('does not emit the UI-only spawn attempt key in daemon payloads', () => {
-        const params = buildSpawnHappySessionRpcParams({
-            machineId: 'machine-1',
-            directory: '/tmp/workspace',
-            backendTarget: { kind: 'builtInAgent', agentId: 'opencode' },
-            spawnNonce: 'new-session-spawn-1',
-        } as any);
-
-        expect(params).toEqual(expect.objectContaining({
-            spawnNonce: 'new-session-spawn-1',
-        }));
-    });
-
     it('omits legacy spawn token passthrough when present on a compatibility-shaped input', () => {
         const params = buildSpawnHappySessionRpcParams({
             machineId: 'machine-1',

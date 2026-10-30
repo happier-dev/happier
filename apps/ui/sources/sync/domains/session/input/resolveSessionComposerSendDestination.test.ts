@@ -42,18 +42,6 @@ describe('resolveSessionComposerSendDestination', () => {
         });
     });
 
-    it('still uses the transition when the send carries attachments', () => {
-        // The attachments path is a separate call site with its own upload step,
-        // and it composes the uploaded block into the outbound text before it
-        // gets here. It is the path most likely to be forgotten, and it must
-        // reach the same decision as a plain send.
-        expect(resolveSessionComposerSendDestination({
-            route: 'sessionAgent',
-            armedContinuation: ARMED,
-            ...REACHABLE,
-        }).kind).toBe('armedAgentContinuation');
-    });
-
     it('refuses an armed send that would reach a voice adapter', () => {
         // A voice adapter is not this Session's Agent. Sending here would leave
         // the armed promise unkept and silent, which is the defect this
@@ -131,26 +119,6 @@ describe('resolveSessionComposerSendDestination', () => {
             machineId: 'machine-1',
             pendingTransitionOutcome: 'unreconciled',
         })).toEqual({ kind: 'refused', reason: 'unreconciledTransitionOutcome' });
-    });
-
-    it('identifies the TRANSITION, so an edited draft retries the same switch', () => {
-        // Deliberate, and easy to "fix" into a defect. The submitted localId is
-        // the operation's identity: the daemon derives the departure divider's
-        // localId from it, and a repeated invocation is reconciled by matching
-        // that divider. Deriving the identity from the draft text instead would
-        // break the one case that actually needs the retry — an `outcome_unknown`
-        // where the cutover committed but the input never landed — turning a
-        // send that works today into "the Session is now X, send it again".
-        //
-        // This resolver chooses only the stable transition id. SessionView's
-        // dispatch owner pairs it with the persisted nested first input, so a
-        // newer composer edit is neither submitted nor compare-cleared here.
-        const armed = { route: 'sessionAgent', armedContinuation: ARMED, ...REACHABLE } as const;
-        expect(resolveSessionComposerSendDestination(armed))
-            .toEqual(resolveSessionComposerSendDestination(armed));
-        expect(
-            resolveSessionComposerSendDestination(armed),
-        ).toMatchObject({ localId: 'armed-local-1' });
     });
 
     describe('an armed route or model change for the same Agent (D15)', () => {

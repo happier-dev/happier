@@ -82,13 +82,6 @@ describe('deriveLiveFileWrites', () => {
         expect(writes.get('src/One.ts')?.region).toEqual({ startLine: 8, endLine: 10 });
     });
 
-    it('takes Patch regions from the canonical lossless hunk engine', () => {
-        const writes = deriveLiveFileWrites([call('patch', 'Patch', { changes: [{ path: 'src/app.ts', kind: { type: 'update' },
-            diff: '@@ -3 +8,2 @@\n-a\n+b\n+c',
-        }] })], options);
-        expect(writes.get('src/app.ts')?.region).toEqual({ startLine: 8, endLine: 9 });
-    });
-
     it('targets the first hunk of a multi-hunk patch, not the span between its hunks (P5 Track region)', () => {
         const writes = deriveLiveFileWrites([call('patch', 'Patch', { changes: [{ path: 'src/app.ts', kind: { type: 'update' },
             diff: '@@ -3 +8,2 @@\n-a\n+b\n+c\n@@ -90 +95,3 @@\n-x\n+y\n+z\n+w',

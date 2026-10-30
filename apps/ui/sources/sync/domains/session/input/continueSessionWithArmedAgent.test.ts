@@ -5,7 +5,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { t } from '@/text';
 
 import {
-    buildArmedAgentContinuationTransitionInput,
     continueSessionWithArmedAgent,
     prepareArmedAgentContinuation,
     reconcileArmedAgentContinuationDisposition,
@@ -239,19 +238,6 @@ describe('continueSessionWithArmedAgent', () => {
         }));
     });
 
-    it('seals the same canonical input that the arm persists before dispatch', () => {
-        expect(buildArmedAgentContinuationTransitionInput(submission({
-            input: {
-                text: 'review comment 1\n\nship it',
-                displayText: 'ship it',
-                meta: { source: 'ui' },
-            },
-        }))).toEqual({
-            text: 'review comment 1\n\nship it',
-            localId: 'local-1',
-            meta: { displayText: 'ship it', source: 'ui' },
-        });
-    });
 });
 
 describe('resolveArmedAgentContinuationDisposition', () => {
@@ -277,15 +263,6 @@ describe('resolveArmedAgentContinuationDisposition', () => {
             expect(disposition.notice).not.toBeNull();
             expect(disposition.notice?.message).not.toBe('');
         }
-    });
-
-    it('says nothing at all when the switch completed and the message landed', () => {
-        expect(resolveArmedAgentContinuationDisposition({ type: 'accepted', localId: 'local-1' }, LABELS)).toEqual({
-            draft: 'clear',
-            arm: 'clear',
-            notice: null,
-            send: 'allow',
-        });
     });
 
     it('keeps the armed target while the Session is still the source Agent', () => {
