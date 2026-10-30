@@ -34,6 +34,7 @@ import {
     readBuiltInLegacyConnectedServiceIdForQualifiedService,
     isConnectedServiceQuotaRecoveryCreditAvailable,
     ConnectedServiceQuotaRecoveryCreditsV1Schema,
+    ConnectedServiceQuotaMeterV1Schema,
     ConnectedServiceQuotaSnapshotV1Schema,
     ConnectedServiceUsageSourceV1Schema,
     SealedConnectedServiceCredentialV1Schema,
@@ -41,6 +42,17 @@ import {
 import { SessionConnectedServiceAuthSwitchRpcParamsSchema } from './sessionConnectedServiceAuthSwitch.js';
 
 describe('connectedServiceSchemas', () => {
+    it('defaults legacy monetary meters to USD while preserving explicit currency and non-monetary quotas', () => {
+        const meter = { meterId: 'balance', label: 'Balance', used: null, remaining: -0.0123,
+            limit: null, unit: 'unknown', utilizationPct: null, resetsAt: null, status: 'ok' };
+        expect(ConnectedServiceQuotaMeterV1Schema.parse({ ...meter, currency: 'CNY' }))
+            .toMatchObject({ currency: 'CNY', remaining: -0.0123, limit: null });
+        expect(ConnectedServiceQuotaMeterV1Schema.parse({ ...meter, unit: 'usd' }))
+            .toMatchObject({ currency: 'USD', remaining: -0.0123 });
+        for (const unit of ['tokens', 'count', 'requests', 'unknown']) {
+            expect(ConnectedServiceQuotaMeterV1Schema.parse({ ...meter, unit })).not.toHaveProperty('currency');
+        }
+    });
     it('keeps available credits without expiry usable and excludes expired or unavailable credits', () => {
         const nowMs = 1_000;
         const inventory = ConnectedServiceQuotaRecoveryCreditsV1Schema.parse({

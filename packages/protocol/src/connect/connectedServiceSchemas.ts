@@ -486,6 +486,9 @@ export const ConnectedServiceQuotaMeterV1Schema = lazyZodSchema(() => z.object({
     isSoftLimited: z.optional(z.boolean()),
     isCapacityLimited: z.optional(z.boolean()),
     unit: ConnectedServiceQuotaUnitV1Schema,
+    /** ISO 4217 display denomination; legacy `usd` meters normalize omission to USD. Other currencies use
+     * `unknown` plus a denominated label so older readers never reinterpret their amount as USD. */
+    currency: z.optional(z.string().check(z.regex(/^[A-Z]{3}$/u))),
     utilizationPct: z.nullable(z.number().check(z.minimum(0), z.maximum(100))),
     resetsAt: z.nullable(z.number().check(z.int(), z.nonnegative())),
     status: z.enum(['ok', 'unavailable', 'estimated']),
@@ -494,7 +497,9 @@ export const ConnectedServiceQuotaMeterV1Schema = lazyZodSchema(() => z.object({
     limitScope: z.optional(ConnectedServiceQuotaLimitScopeV1Schema),
     confidence: z.optional(ConnectedServiceQuotaConfidenceV1Schema),
     details: z._default(z.optional(ConnectedServiceQuotaMeterDetailsV1Schema), {}),
-}));
+}).check(z.overwrite(meter => meter.unit === 'usd' && meter.currency === undefined
+    ? { ...meter, currency: 'USD' }
+    : meter)));
 
 export type ConnectedServiceQuotaMeterV1 = z.infer<typeof ConnectedServiceQuotaMeterV1Schema>;
 

@@ -34,7 +34,7 @@ const Index = lazyZodSchema(() => z.number().check(z.int(), z.nonnegative()));
 const Time = lazyZodSchema(() => z.number().check(z.int(), z.nonnegative()));
 export const PROVIDER_ACCOUNT_USAGE_PAGE_ENCODING = 'meter_readings_runs_v1' as const;
 const MeterDefinitionSchema = lazyZodSchema(() => z.strictObject({
-  ...z.omit(ConnectedServiceQuotaMeterV1Schema, { used: true, limit: true, utilizationPct: true, resetsAt: true,
+  ...z.omit(z.object(ConnectedServiceQuotaMeterV1Schema.shape), { used: true, limit: true, utilizationPct: true, resetsAt: true,
     remaining: true, remainingPct: true, usedPct: true, resetAtMs: true, details: true }).shape,
   details: z.omit(ConnectedServiceQuotaMeterDetailsV1Schema, { remainingPct: true }),
 }));

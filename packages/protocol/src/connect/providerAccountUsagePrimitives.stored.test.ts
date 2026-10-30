@@ -13,8 +13,12 @@ describe('retained Provider account usage snapshots', () => {
       recordId: buildProviderAccountUsageRecordId(recordKey), recordKey,
       providerId: 'provider', accountSubject: { kind: 'providerSubject', id: 'subject' },
       observedAtMs: 1, fetchedAtMs: 2, staleAfterMs: 10,
-      source: 'providerHttp', confidence: 'confirmed', meters: [] });
+      source: 'providerHttp', confidence: 'confirmed', meters: [{ meterId: 'balance', label: 'Balance',
+        used: null, remaining: -0.0123, limit: null, unit: 'usd', utilizationPct: null,
+        resetsAt: null, status: 'ok' }] });
+    expect(canonical.meters[0]?.currency).toBe('USD');
     const retained = { ...canonical, retired: true,
+      meters: canonical.meters.map(({ currency: _currency, ...meter }) => meter),
       recordKey: { ...canonical.recordKey, retired: true },
       accountSubject: { ...canonical.accountSubject, retired: true } };
     expect(ProviderAccountUsageSnapshotV1StoredSchema.parse(retained)).toEqual(canonical);
