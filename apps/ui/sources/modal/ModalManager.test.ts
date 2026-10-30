@@ -209,12 +209,11 @@ describe('Modal.prompt', () => {
         const { Modal } = await import('./ModalManager');
 
         type ChromeModalProps = Readonly<{
-            label: string;
             onClose: () => void;
-        }>;
+        }> & (Readonly<{ mode: 'label'; label: string }> | Readonly<{ mode: 'count'; count: number }>);
 
-        function ChromeModal(props: ChromeModalProps) {
-            return React.createElement('ChromeModal', props);
+        function ChromeModal(_props: ChromeModalProps) {
+            return null;
         }
 
         let lastConfig: any = null;
@@ -230,6 +229,7 @@ describe('Modal.prompt', () => {
         const modalId = Modal.show({
             component: ChromeModal,
             props: {
+                mode: 'label',
                 label: 'browse',
             },
             chrome: {
@@ -248,6 +248,11 @@ describe('Modal.prompt', () => {
         expect(lastConfig?.chrome?.dimensions?.size).toBe('lg');
 
         Modal.update<ChromeModalProps>(modalId, { label: 'updated' });
+        Modal.show({ component: ChromeModal, props: { mode: 'count', count: 2 } });
+        expect(lastConfig?.props).toEqual({ mode: 'count', count: 2 });
+
+        // @ts-expect-error -- union arms remain exclusive after removing injected props.
+        Modal.update<ChromeModalProps>(modalId, { mode: 'count', label: 'invalid' });
 
         // @ts-expect-error - invalid props must remain rejected by the type surface.
         Modal.update<ChromeModalProps>(modalId, { missing: true });

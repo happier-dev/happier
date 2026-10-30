@@ -1,7 +1,7 @@
 import { Platform, Alert } from 'react-native';
 import { t } from '@/text';
 import type { FocusReturnRef } from '@/keyboard/focusReturn';
-import { AlertButton, ModalConfig, CustomModalConfig, IModal, type ConfirmModalConfig, type CustomModalShowConfig, type CustomModalComponentType, type CustomModalInjectedProps } from './types';
+import { AlertButton, ModalConfig, CustomModalConfig, IModal, type ConfirmModalConfig, type CustomModalShowConfig, type CustomModalComponentType, type CustomModalInjectedProps, type CustomModalCallerProps } from './types';
 
 type ModalProviderFunctions = Readonly<{
     showModal: (config: Omit<ModalConfig, 'id'>) => string;
@@ -228,7 +228,7 @@ class ModalManagerClass implements IModal {
 
     update<P extends CustomModalInjectedProps>(
         id: string,
-        props: Partial<Omit<P, keyof CustomModalInjectedProps>>,
+        props: Partial<CustomModalCallerProps<P>>,
     ): void {
         if (!this.updateCustomModalPropsFn) {
             console.error('ModalManager not initialized. Make sure ModalProvider is mounted.');

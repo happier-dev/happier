@@ -66,12 +66,16 @@ export type CustomModalComponentType<P extends Readonly<Record<string, unknown>>
 
 type CustomModalComponentProps<C extends ComponentType<any>> = ComponentProps<C>;
 
+/** Preserve each caller-visible arm when a custom modal has union props. */
+export type CustomModalCallerProps<P extends CustomModalInjectedProps> = P extends unknown
+    ? Omit<P, keyof CustomModalInjectedProps> : never;
+
 export type CustomModalShowConfig<C extends CustomModalComponentType<any>> = Omit<
     CustomModalConfig<CustomModalComponentProps<C>>,
     'id' | 'type' | 'component' | 'props'
 > & Readonly<{
     component: C;
-    props?: Omit<CustomModalComponentProps<C>, keyof CustomModalInjectedProps>;
+    props?: CustomModalCallerProps<CustomModalComponentProps<C>>;
 }>;
 
 export type CustomModalChromeCardConfig = Readonly<{
@@ -129,7 +133,7 @@ export type CustomModalChromeConfig = CustomModalChromeCardConfig | CustomModalC
 export interface CustomModalConfig<P extends CustomModalInjectedProps = any> extends BaseModalConfig {
     type: 'custom';
     component: ComponentType<P>;
-    props?: Omit<P, keyof CustomModalInjectedProps>;
+    props?: CustomModalCallerProps<P>;
     /**
      * When false, shared dismissal surfaces (backdrop, Escape/native back, and
      * card close button) are disabled. The component may still finish its
@@ -211,7 +215,7 @@ export interface IModal {
     show<C extends CustomModalComponentType<any>>(config: CustomModalShowConfig<C>): string;
     update<P extends CustomModalInjectedProps>(
         id: string,
-        props: Partial<Omit<P, keyof CustomModalInjectedProps>>,
+        props: Partial<CustomModalCallerProps<P>>,
     ): void;
     hide(id: string): void;
     hideAll(): void;
