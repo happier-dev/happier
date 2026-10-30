@@ -54,6 +54,18 @@ Auth flows:
 - `GET /v1/sessions/:sessionId/messages`
 - `DELETE /v1/sessions/:sessionId`
 
+Development CLI display-only notices (`session send --kind notice`, also spelled
+`--no-deliver`) reuse the existing committed-message endpoint and informational
+Session event envelope (`role: 'agent'`, `content.type: 'event'`,
+`data.type: 'message'`). `--from` prefixes the informational prose; it grants no
+sender authority. Notice sends resolve the existing Session storage mode and
+seal E2EE content with its canonical encryption helper. They never enter Pending
+input admission, wake or resume a runtime, or inject context on the next turn.
+No new relay route or event discriminator is introduced. Explicit local IDs use
+the existing commit identity/reconciliation contract, including byte-stable E2EE
+retries. Other 0.2 Action surfaces reject notice intent rather than silently
+submitting it as user input.
+
 In development, the initial `GET /v2/sessions` request also accepts
 `requiredSessionIds`, a URL-encoded JSON array of session IDs. Accessible requested
 rows, including archived rows, join the existing pinned, attention, active and

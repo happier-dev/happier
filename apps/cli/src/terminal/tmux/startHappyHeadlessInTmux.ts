@@ -6,9 +6,12 @@ import { AGENTS, requireCatalogEntry } from '@/backends/catalog';
 import { DEFAULT_CATALOG_AGENT_ID } from '@/backends/types';
 import { createTerminalAttachmentId } from '@/terminal/attachment/terminalAttachmentInfo';
 import { fail } from '@happier-dev/cli-common/output';
+import { withTerminalRuntimeFlags } from '@/terminal/runtime/terminalRuntimeFlags';
+import { argvBeforeOptionTerminator } from '@/cli/commands/shared/argvFlags';
 
 function removeFlag(argv: string[], flag: string): string[] {
-  return argv.filter((arg) => arg !== flag);
+  const options = argvBeforeOptionTerminator(argv);
+  return [...options.filter((arg) => arg !== flag), ...argv.slice(options.length)];
 }
 
 function inferAgent(argv: string[]): keyof typeof AGENTS {
@@ -72,7 +75,7 @@ export async function startHappyHeadlessInTmux(argv: string[]): Promise<void> {
     attachmentId,
   ];
 
-  const launchSpec = buildHappyCliSubprocessLaunchSpec([...childArgs, ...terminalRuntimeArgs]);
+  const launchSpec = buildHappyCliSubprocessLaunchSpec(withTerminalRuntimeFlags(childArgs, terminalRuntimeArgs));
   const commandTokens = [launchSpec.filePath, ...launchSpec.args];
 
   const tmux = new TmuxUtilities(resolvedSessionName);

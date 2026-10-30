@@ -11,6 +11,7 @@ import { applyDaemonAutostartEnvForInvocation, shouldEnsureDaemonForInvocation }
 import { applyEphemeralServerSelectionFromPrefixArgs } from '@/server/serverSelection';
 import packageJson from '../../package.json';
 import { fail } from '@happier-dev/cli-common/output';
+import { argvBeforeOptionTerminator } from '@/cli/commands/shared/argvFlags';
 
 export async function dispatchCli(params: Readonly<{
   args: string[];
@@ -61,9 +62,10 @@ export async function dispatchCli(params: Readonly<{
   applyDaemonAutostartEnvForInvocation({ args, env: process.env });
 
   // Headless tmux launcher (CLI flow)
-  if (args.includes('--tmux')) {
+  const optionArgs = argvBeforeOptionTerminator(args);
+  if (optionArgs.includes('--tmux')) {
     // If user is asking for help/version, don't start a session.
-    if (args.includes('-h') || args.includes('--help') || args.includes('-v') || args.includes('--version')) {
+    if (optionArgs.includes('-h') || optionArgs.includes('--help') || optionArgs.includes('-v') || optionArgs.includes('--version')) {
       const idx = args.indexOf('--tmux');
       if (idx !== -1) args.splice(idx, 1);
     } else {

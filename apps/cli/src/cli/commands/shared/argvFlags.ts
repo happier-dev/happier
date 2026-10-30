@@ -1,3 +1,8 @@
+export function argvBeforeOptionTerminator(argv: readonly string[]): readonly string[] {
+  const index = argv.indexOf('--');
+  return index < 0 ? argv : argv.slice(0, index);
+}
+
 export function hasFlag(argv: readonly string[], flag: string): boolean {
   return argv.includes(flag);
 }

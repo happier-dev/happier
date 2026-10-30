@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { captureConsoleText } from '@/testkit/logger/captureOutput';
 import { SESSION_CREATE_USAGE } from './create/parseSessionCreateSpawnOptions';
+import { SESSION_SEND_USAGE } from './send';
 import { handleSessionCommand } from './handleSessionCommand';
 
 describe('handleSessionCommand help output', () => {
@@ -15,7 +16,7 @@ describe('handleSessionCommand help output', () => {
       expect(output.text()).toContain('happier resume [<session-id-or-prefix>]');
       expect(output.text()).toContain('happier session status <session-id-or-prefix-or-tag> [--live] [--json]');
       expect(output.text()).toContain(SESSION_CREATE_USAGE);
-      expect(output.text()).toContain('happier session send <session-id-or-prefix-or-tag> <message> [--local-id <id>] [--permission-mode <mode>] [--model <model-id>] [--wait] [--timeout <seconds>] [--json]');
+      expect(output.text()).toContain(SESSION_SEND_USAGE);
       expect(output.text()).toContain('happier session wait <session-id-or-prefix-or-tag> [--timeout <seconds>] [--json]');
       expect(output.text()).toContain('happier session stop <session-id-or-prefix-or-tag> [--json]');
       expect(output.text()).toContain('happier session set-title <session-id-or-prefix-or-tag> <title> [--json]');

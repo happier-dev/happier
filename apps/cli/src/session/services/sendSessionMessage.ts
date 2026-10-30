@@ -1,5 +1,6 @@
 import type { SessionEncryptionContext } from '@/session/transport/encryption/sessionEncryptionContext';
 import { randomUUID } from 'node:crypto';
+import { buildSessionEventContent } from '@/api/session/sessionEventContent';
 
 import {
   resolveMetadataStringOverrideV1,
@@ -24,11 +25,12 @@ import {
   isSessionUserMessage,
   type SessionTurnActivity,
 } from '@/session/query/detectSessionTurnInFlight';
-import { fetchSessionById, type RawSessionRecord } from '@/session/transport/http/sessionsHttp';
+import { commitSessionStoredMessage, fetchSessionById, type RawSessionRecord } from '@/session/transport/http/sessionsHttp';
 import { callSessionRpc } from '@/session/transport/rpc/sessionRpc';
 import { waitForIdleViaSocket } from '@/session/transport/socket/sessionSocketAgentState';
 import {
   decryptSessionPayload,
+  encryptSessionPayload,
   tryDecryptSessionMetadata,
 } from '@/session/transport/encryption/sessionEncryptionContext';
 import {
@@ -51,7 +53,7 @@ export type SendSessionMessageResult =
        * from `unsupported`, which claims this Session or daemon cannot do it at
        * all — see `InactiveSessionResumeResult`.
        */
-      code: 'session_not_found' | 'session_id_ambiguous' | 'session_lookup_timeout' | 'session_archived' | 'permission_escalation_denied' | 'unsupported' | 'resume_failed' | 'timeout' | 'wait_failed';
+      code: 'invalid_arguments' | 'session_not_found' | 'session_id_ambiguous' | 'session_lookup_timeout' | 'session_archived' | 'permission_escalation_denied' | 'unsupported' | 'resume_failed' | 'timeout' | 'wait_failed';
       candidates?: string[];
       message?: string;
     }>;
@@ -397,6 +399,8 @@ export async function sendSessionMessage(params: Readonly<{
   credentials: Credentials;
   idOrPrefix: string;
   message: string;
+  kind?: 'user' | 'notice';
+  from?: string;
   wait: boolean;
   timeoutMs: number;
   localId?: string;
@@ -409,6 +413,10 @@ export async function sendSessionMessage(params: Readonly<{
   /** Recheck a synthetic input's authority after transport lookup, before Pending custody. */
   canAdmit?: (context: Readonly<{ rawSession: RawSessionRecord; metadata: Record<string, unknown> | null }>) => boolean | Promise<boolean>;
 }>): Promise<SendSessionMessageResult> {
+  if ((params.from !== undefined && (params.kind !== 'notice' || !params.from.trim()))
+    || (params.kind === 'notice' && (params.wait || params.permissionModeOverride !== undefined || params.modelOverride !== undefined))) {
+    return { ok: false, code: 'invalid_arguments', message: 'Notices accept a sender label but cannot wait for an agent or override its model or permissions' };
+  }
   const sessionTarget = await resolveSessionTransportContext({
     credentials: params.credentials,
     idOrPrefix: params.idOrPrefix,
@@ -433,6 +441,26 @@ export async function sendSessionMessage(params: Readonly<{
     throw new Error('Pending localId must not be blank');
   }
   const localId = readPendingLocalId(params.localId) ?? randomUUID();
+  if (params.kind === 'notice') {
+    const record = buildSessionEventContent({
+      type: 'message',
+      message: `${params.from?.trim() ?? 'Notice'}: ${params.message}`,
+    }, localId);
+    await commitSessionStoredMessage({
+      token: params.credentials.token,
+      sessionId,
+      localId,
+      messageRole: 'event',
+      content: sessionTarget.mode === 'plain'
+        ? { t: 'plain', v: record }
+        : { t: 'encrypted', c: encryptSessionPayload({
+            ctx: sessionTarget.ctx,
+            payload: record,
+            idempotencyKey: `session-notice:v1:${sessionId}:${localId}`,
+          }) },
+    });
+    return { ok: true, sessionId, localId, waited: false };
+  }
   const decryptedMetadata = tryDecryptSessionMetadata({
     credentials: params.credentials,
     rawSession: sessionTarget.rawSession,

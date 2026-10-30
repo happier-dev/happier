@@ -270,6 +270,8 @@ export type ActionExecutorDeps = Readonly<{
   sessionSendMessage: (args: Readonly<{
     sessionId: string;
     message: string;
+    kind?: 'user' | 'notice';
+    from?: string;
     localId?: string;
     requestedAction: PendingRequestedActionV1;
     permissionModeOverride?: string;
@@ -2245,6 +2247,13 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         }
 
         if (actionId === 'session.message.send') {
+          const messageKind = parsed.data.kind === 'notice' ? 'notice' : parsed.data.kind === 'user' ? 'user' : undefined;
+          const from = typeof parsed.data.from === 'string' ? parsed.data.from : undefined;
+          // Only the CLI surface exposes display-only notice authoring in 0.2.
+          // Other surfaces must not silently reinterpret it as a prompt.
+          if ((messageKind === 'notice' || from !== undefined) && ctx.surface !== 'cli') {
+            return { ok: false, errorCode: 'unsupported_action', error: 'Notices are currently CLI-only' };
+          }
           const sessionId = resolveSessionIdFromInput(parsed.data, ctx);
           if (!sessionId) return { ok: false, errorCode: 'session_not_selected', error: 'session_not_selected' };
           const localIdRaw = (parsed.data as Record<string, unknown>).localId;
@@ -2269,6 +2278,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           const res = await deps.sessionSendMessage({
             sessionId,
             message: (parsed.data as any).message,
+            ...(messageKind ? { kind: messageKind } : {}),
+            ...(from !== undefined ? { from } : {}),
             ...(localId !== null ? { localId } : {}),
             requestedAction: PendingRequestedActionV1Schema.parse(
               parsed.data.requestedAction ?? { v: 1, kind: 'steer_if_active' },

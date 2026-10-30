@@ -1,4 +1,5 @@
 import { logger } from '@/ui/logger'
+import { buildSessionEventContent } from './sessionEventContent';
 import { EventEmitter } from 'node:events'
 import axios from 'axios';
 import { Socket } from 'socket.io-client'
@@ -440,8 +441,9 @@ const STALE_LOCAL_ACTIVE_TURN_RECONCILE_MS = 5 * 60 * 1000;
 
 function isProviderProgressTranscriptBody(value: unknown): boolean {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-    const role = (value as { role?: unknown }).role;
-    return role !== 'user';
+    const body = value as { role?: unknown; content?: { type?: unknown; data?: { type?: unknown } } };
+    return body.role !== 'user'
+        && !(body.role === 'agent' && body.content?.type === 'event' && body.content.data?.type === 'message');
 }
 
 function readPlannedServerRestartRetryAfterMs(payload: unknown): number | undefined {
@@ -5158,19 +5160,8 @@ export class ApiSessionClient extends EventEmitter {
         });
     }
 
-    private buildSessionEventContent(event: SessionEventMessage, id: string) {
-        return {
-            role: 'agent',
-            content: {
-                id,
-                type: 'event',
-                data: event
-            }
-        };
-    }
-
     sendSessionEvent(event: SessionEventMessage, id?: string) {
-        const content = this.buildSessionEventContent(event, id ?? randomUUID());
+        const content = buildSessionEventContent(event, id ?? randomUUID());
 
         this.logSendWhileDisconnected('session event', { eventType: event.type });
 
@@ -5193,7 +5184,7 @@ export class ApiSessionClient extends EventEmitter {
         opts: { localId: string },
     ): Promise<SessionMessageCommitResult> {
         const localId = requireExactCommitLocalId(opts?.localId);
-        const content = this.buildSessionEventContent(event, localId);
+        const content = buildSessionEventContent(event, localId);
 
         this.logSendWhileDisconnected('session event', { eventType: event.type });
 
