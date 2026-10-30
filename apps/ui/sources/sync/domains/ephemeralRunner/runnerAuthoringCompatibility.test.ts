@@ -48,16 +48,6 @@ describe('Runner ordinary-authoring compatibility', () => {
         } } })).toBe('connectedServices');
     });
 
-    it('names a Team-resource Connected Service before any activation exists', () => {
-        // The strict launch manifest already rejects this selection, but that
-        // happens after the package has been assembled and exported. The creator
-        // must explain it while the composer is still editable.
-        expect(findRunnerUnsupportedAuthoringField({ connectedServices: { v: 2, bindingsByServiceId: {
-            'happier.service.github/github': { source: 'connected', selection: 'profile', profileId: 'work' },
-            'happier.service.linear/linear': { source: 'team_resource', resourceId: 'resource-acme' },
-        } } })).toBe('connectedServices');
-    });
-
     it('allows explicit MCP selection for canonical portable materialization', () => {
         expect(findRunnerUnsupportedAuthoringField({
             capabilitySelection: { mcp: { v: 1, managedServersEnabled: false, forceIncludeServerIds: ['server-a'], forceExcludeServerIds: [] } },

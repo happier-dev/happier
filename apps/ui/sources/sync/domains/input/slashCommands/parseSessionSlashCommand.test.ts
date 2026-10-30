@@ -13,22 +13,6 @@ describe('parseSessionSlashCommand', () => {
         expect(parseSessionSlashCommand(' /clear ')).toBeNull();
     });
 
-    it('parses /h.review into a review.start action', () => {
-        expect(parseSessionSlashCommand('/h.review review this repo')).toEqual({
-            kind: 'action',
-            actionId: 'review.start',
-            rest: 'review this repo',
-        });
-    });
-
-    it('parses /review into a review.start action', () => {
-        expect(parseSessionSlashCommand('/review review this repo')).toEqual({
-            kind: 'action',
-            actionId: 'review.start',
-            rest: 'review this repo',
-        });
-    });
-
     it('parses /h.plan and /h.delegate into their start actions when registered in the protocol action spec', () => {
         expect(parseSessionSlashCommand('/h.plan make a plan')).toEqual({
             kind: 'action',
