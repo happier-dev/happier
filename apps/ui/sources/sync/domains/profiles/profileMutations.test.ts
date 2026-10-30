@@ -81,6 +81,7 @@ describe('createEmptyCustomProfile', () => {
             defaultPersistenceModeByTargetKey: { 'agent:happier.agent.claude/claude': 'persisted' as const },
             compatibilityByTargetKey: { 'agent:happier.agent.claude/claude': true },
             authMode: 'machineLogin', requiresMachineLoginTargetKey: 'agent:happier.agent.claude/claude',
+            codingPromptBehaviorV1: { v: 1, sessionTitleUpdates: 'initial' as const, responseOptions: 'disabled' as const },
             createdAt: 1, updatedAt: 1,
         });
         const original = structuredClone(legacy);
