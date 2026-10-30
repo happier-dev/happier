@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { FeaturesResponseSchema, type ActionOperationSnapshotV1, type SessionHandoffPrepareTargetRequestV2 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { writeExecutableShim } from '@/testkit/fs/executableShim';
 
 async function removeTestDirectory(path: string): Promise<void> {
   await rm(path, {
@@ -77,6 +78,11 @@ describe('rpcHandlers (session handoff async prepare)', () => {
       await mkdir(join(claudeHome, 'projects', 'existing-project'), { recursive: true });
       await mkdir(targetPath);
       await writeFile(transcriptPath, transcript);
+      // Native state and launch admission stay real; only executable presence is supplied.
+      const claudePath = await writeExecutableShim({
+        dir: activeServerDir, fileName: 'claude', contents: `#!${process.execPath}\nprocess.exit(0);\n`,
+      });
+      const processEnv = { ...process.env, HAPPIER_CLAUDE_PATH: claudePath };
       vi.resetModules();
       vi.doMock('@/configuration', async () => {
         const actual = await vi.importActual<typeof import('@/configuration')>('@/configuration');
@@ -107,7 +113,7 @@ describe('rpcHandlers (session handoff async prepare)', () => {
             }
             const environment = await resolveSpawnChildEnvironment({
               options: _options, existingSessionMetadata: metadata,
-              profileEnvironmentVariables: {}, daemonSpawnHooks: null, processEnv: process.env,
+              profileEnvironmentVariables: {}, daemonSpawnHooks: null, processEnv,
               logDebug: () => {}, logInfo: () => {}, logWarn: () => {},
             });
             if (!environment.ok) {
@@ -122,7 +128,7 @@ describe('rpcHandlers (session handoff async prepare)', () => {
           resolveExistingStateEnvironment: async () => {
             environmentRequested = true;
             await environmentReady;
-            return process.env;
+            return processEnv;
           },
         });
         return manager;

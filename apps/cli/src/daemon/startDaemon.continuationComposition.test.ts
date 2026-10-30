@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createConnectedServiceSwitchDeferralQueue } from './connectedServices/sessionAuthSwitch/connectedServiceSwitchDeferralQueue';
+import { ConnectedServiceAuthGroupGenerationConsumer } from './connectedServices/accountGroups/generation/ConnectedServiceAuthGroupGenerationConsumer';
 import {
   doesRestartCompletionProvePreviousRunnerRetired,
   isSupersededRuntimeAuthFailure,
@@ -67,11 +68,15 @@ describe('startDaemon connected-service continuation composition', () => {
       source: 'daemon_report',
       activeTurnId: 'turn-live',
       reportId: 'runtime-auth-report:origin-a',
-    })).toBe('turn-live');
+    })).toBe('runtime-auth-report:origin-a');
     expect(resolveConnectedServiceContinuationOriginId({
       source: 'scheduler_retry',
       activeTurnId: 'turn-stale',
       reportId: 'runtime-auth-report:origin-a',
+    })).toBe('runtime-auth-report:origin-a');
+    expect(resolveConnectedServiceContinuationOriginId({
+      source: 'scheduler_retry',
+      activeTurnId: 'turn-newer-user-work',
     })).toBeNull();
   });
 
@@ -100,7 +105,17 @@ describe('startDaemon connected-service continuation composition', () => {
   });
 
   it('reconsumes a superseding runtime-auth target through the existing generation consumer', async () => {
-    const consumeCommittedAuthGroupGeneration = vi.fn(async () => ({ outcome: 'adopted_current' as const }));
+    const applyCommittedGeneration = vi.fn<ConstructorParameters<typeof ConnectedServiceAuthGroupGenerationConsumer>[0]['applyCommittedGeneration']>(async ({ committedGeneration }) => ({
+      reconciliationDisposition: 'converged', errorCode: null,
+      providerAdoptedTarget: { ...committedGeneration.decisionCommittedTarget,
+        proof: { status: 'verified', source: 'codex_app_server', providerAccountId: 'account-current',
+          credentialRevision: committedGeneration.decisionCommittedTarget.credentialRevision } },
+    }));
+    const consumer = new ConnectedServiceAuthGroupGenerationConsumer({
+      resolveGenerationApplicationScope: async () => ({ status: 'supported', scope: 'per_session_runtime', ownerId: 'runner' }),
+      verifySharedGenerationApplication: async () => null,
+      applyCommittedGeneration, notifyCurrentGroupTruth: async () => ({ ok: true }),
+    });
 
     await expect(settleSupersedingRuntimeAuthGenerationForSource({
       recovery: {
@@ -116,11 +131,12 @@ describe('startDaemon connected-service continuation composition', () => {
       groupId: 'group-a',
       sessionId: 'session-1',
       fromProfileId: 'profile-stale',
-      consumeCommittedAuthGroupGeneration,
-    })).resolves.toBeUndefined();
+      consumeCommittedAuthGroupGeneration: (input) => consumer.consume(input),
+    })).resolves.toMatchObject({ profileId: 'profile-current', generation: 7,
+      credentialRevision: 'csr_cccccccccccccccccccccc', proof: { status: 'verified' } });
 
-    expect(consumeCommittedAuthGroupGeneration).toHaveBeenCalledOnce();
-    expect(consumeCommittedAuthGroupGeneration).toHaveBeenCalledWith({
+    expect(applyCommittedGeneration).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: 'session-1', fromProfileId: 'profile-stale',
       committedGeneration: expect.objectContaining({
         provenance: 'runtime_failure',
         decisionCommittedTarget: {
@@ -132,9 +148,8 @@ describe('startDaemon connected-service continuation composition', () => {
         },
       }),
       switchReason: 'automatic_runtime_failure',
-      sessions: [{ sessionId: 'session-1', activity: 'live', fromProfileId: 'profile-stale' }],
       executionAuthority: 'runtime_recovery',
-    });
+    }));
   });
 
   it('does not report superseding runtime-auth convergence when current generation adoption is not acknowledged', async () => {
@@ -152,7 +167,7 @@ describe('startDaemon connected-service continuation composition', () => {
       groupId: 'group-a',
       sessionId: 'session-1',
       fromProfileId: 'profile-stale',
-      consumeCommittedAuthGroupGeneration: async () => ({ outcome: 'retryable_not_acknowledged' }),
+      consumeCommittedAuthGroupGeneration: async () => ({ outcome: 'retryable_not_acknowledged', resultsBySessionId: {} }),
     })).rejects.toMatchObject({
       code: 'connected_service_runtime_auth_superseding_generation_not_acknowledged',
       retryable: true,
@@ -173,7 +188,7 @@ describe('startDaemon connected-service continuation composition', () => {
       groupId: 'group-a',
       sessionId: 'session-1',
       fromProfileId: 'profile-stale',
-      consumeCommittedAuthGroupGeneration: async () => ({ outcome: 'adopted_current' }),
+      consumeCommittedAuthGroupGeneration: async () => ({ outcome: 'adopted_current', resultsBySessionId: {} }),
     })).rejects.toMatchObject({
       code: 'connected_service_runtime_auth_superseding_generation_target_unavailable',
       retryable: true,
@@ -196,8 +211,6 @@ describe('startDaemon connected-service continuation composition', () => {
 
   it('contains no daemon replay, attempt timer, or historical-original reconstruction path', async () => {
     const source = await readFile(new URL('./startDaemon.ts', import.meta.url), 'utf8');
-    expect(source).toContain('enqueueInterruptedOriginContinuation');
-    expect(source.match(/\.enqueueInterruptedOriginContinuation\(/g)).toHaveLength(1);
     expect(source).toContain("input.source === 'scheduler_retry'");
     expect(source).toContain('resolveConnectedServiceContinuationOriginId({');
     expect(source).toContain('reportId: input.interruptedOriginId');

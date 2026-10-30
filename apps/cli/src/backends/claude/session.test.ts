@@ -22,6 +22,16 @@ import { DEFAULT_CLAUDE_TUI_CONTROL_TIMINGS } from './unifiedTerminal/tuiControl
 import { claudeRemoteAgentSdk } from './remote/claudeRemoteAgentSdk';
 import { buildInactiveSessionResumeSpawnOptions } from '@/daemon/sessions/runtimeSnapshot/buildInactiveSessionResumeSpawnOptions';
 import type { RawSessionRecord } from '@/session/transport/http/sessionsHttp';
+import { z } from 'zod';
+import { buildConnectedServiceCredentialRecord, SessionConnectedServiceAuthApplyGenerationRequestV1Schema } from '@happier-dev/protocol';
+import { ConnectedServiceAuthGroupGenerationConsumer } from '@/daemon/connectedServices/accountGroups/generation/ConnectedServiceAuthGroupGenerationConsumer';
+import { createConnectedServiceCurrentGroupTruthNotifier } from '@/daemon/connectedServices/accountGroups/generation/createConnectedServiceCurrentGroupTruthNotifier';
+import { reconcileConnectedServiceAuthGroupGenerationForRuntimeTarget } from '@/daemon/connectedServices/accountGroups/generation/reconcileConnectedServiceAuthGroupGenerations';
+import { buildConnectedServiceAuthGroupCommittedGenerationFact } from '@/daemon/connectedServices/sessionAuthSwitch/connectedServiceAuthSwitchOutcome';
+import { applyClaudeSharedGroupGenerationApplication } from './connectedServices/applyClaudeSharedGroupGenerationApplication';
+import { createClaudeUnifiedSustainedPendingDeliveryBlockHandler } from './unifiedTerminal/claudeUnifiedPendingDeliveryBlockHandling';
+import type { ApiClient } from '@/api/api';
+import { createConnectedServiceGroupMutationCurrentnessValidator } from '@/daemon/connectedServices/credentials/createConnectedServiceGroupMutationCurrentnessValidator';
 import { startAnthropicSseBoundary } from './sdk/anthropicSseBoundary.testkit';
 import type {
   SessionRuntimeActivityContributionHandle,
@@ -421,6 +431,131 @@ describe('Session', () => {
     expect(releaseRuntime).toHaveBeenCalledOnce();
     session.cleanup();
   });
+
+  it.each(['apply', 'already-applied legacy projection'] as const)(
+    'releases unavailable Claude input and Pending after %s through the frozen reader', async (path) => {
+      // Exact current-truth reader from cli-v0.2.15, 22ac8263cfdbcdb845441b9044ff18199cf7652e.
+      // In particular, it rejects nullable revisions; do not replace with the current schema.
+      const frozenTruthReader = z.discriminatedUnion('kind', [
+        z.object({ kind: z.literal('current_auth_group_unavailable'), groupId: z.string().trim().min(1),
+          unavailableReason: z.enum(['group_missing', 'active_profile_missing']) }).passthrough(),
+        z.object({ kind: z.literal('current_auth_group_available'), groupId: z.string().trim().min(1),
+          generation: z.number().int().nonnegative(),
+          credentialRevision: z.string().regex(/^csr_[A-Za-z0-9_-]{22,64}$/) }).passthrough(),
+      ]);
+      const activeServerDir = mkdtempSync(join(tmpdir(), 'happier-legacy-availability-'));
+      const session = createSession(createSessionClientStub());
+      const controller = new AbortController();
+      let pendingBlocked = false;
+      const pending = createClaudeUnifiedSustainedPendingDeliveryBlockHandler({
+        // These are the Pending server's block/wake boundary, not mocked domain logic.
+        blockPendingMessageDelivery: async () => { pendingBlocked = true; return true; },
+        wakePendingMaterialization: () => {
+          pendingBlocked = false;
+          session.queue.push('Continue interrupted work.', { permissionMode: 'default' });
+        },
+        logPrefix: '[test]', logDebug: () => {},
+      });
+      const unregister = session.registerConnectedServiceExactApplicationHandler(async () => {
+        pending.wakePendingMaterialization();
+      });
+      const notify = createConnectedServiceCurrentGroupTruthNotifier({
+        resolveTransport: async (sessionId) => ({ sessionId }),
+        callRpc: async ({ request }) => {
+          const parsed = SessionConnectedServiceAuthApplyGenerationRequestV1Schema.parse(request);
+          frozenTruthReader.parse(parsed.authGeneration);
+          return await session.applyConnectedServiceAuthGeneration(parsed);
+        },
+      });
+      const committed = buildConnectedServiceAuthGroupCommittedGenerationFact({
+        decisionId: 'read-back-failed', provenance: 'reconciliation',
+        decisionCommittedTarget: {
+          serviceId: 'claude-subscription', groupId: 'team', profileId: 'backup', generation: 2,
+          credentialRevision: null,
+        },
+      });
+      // A legacy DB row still has a server-resolved csr digest on a pool-capable server.
+      // Resolved by the real server owner for rowId=legacy-availability-row, metadata={v:2}.
+      const credentialRevision = 'csr_qMAFYPwqb7Ulai7se9UH-MHchuy3eVAkTXkJwxwv-lE';
+      const record = buildConnectedServiceCredentialRecord({
+        now: 1_000, serviceId: 'claude-subscription', profileId: 'backup', kind: 'token',
+        token: { token: 'sk-ant-oat01-availability-placeholder', providerAccountId: null, providerEmail: null },
+      });
+      const validateCurrent = createConnectedServiceGroupMutationCurrentnessValidator({
+        credentials: { token: 'fixture', encryption: { type: 'legacy', secret: new Uint8Array(32) } },
+        // Genuine server boundary; resolver, binding checks and write-currentness stay real.
+        api: {
+          getConnectedServiceAuthGroup: async () => ({ activeProfileId: 'backup', generation: 2 }),
+          getAccountEncryptionMode: async () => 'plain',
+          getConnectedServiceCredentialPlain: async () => ({ revisionSemantics: 'revisioned', credentialRevision,
+            content: { t: 'plain', v: record } }),
+          getConnectedServiceCredentialSealed: async () => null,
+        } as unknown as ApiClient,
+      });
+      const consumer = new ConnectedServiceAuthGroupGenerationConsumer({
+        resolveGenerationApplicationScope: async () => ({
+          status: 'supported', scope: 'shared_group_auth_surface', ownerId: 'claude',
+        }),
+        verifySharedGenerationApplication: async () => null,
+        applyCommittedGeneration: async () => { throw new Error('Shared provider owner must apply'); },
+        applySharedGenerationApplication: async () => {
+          const proof = await applyClaudeSharedGroupGenerationApplication({
+            activeServerDir, ...committed.decisionCommittedTarget, credentialRevision, record,
+            validateCurrentBeforeMutation: async () => await validateCurrent({ ...committed.decisionCommittedTarget, credentialRevision }),
+          });
+          if (proof.status !== 'verified') throw new Error('Expected actual shared credential proof');
+          return { reconciliationDisposition: 'converged', errorCode: null,
+            providerAdoptedTarget: { ...committed.decisionCommittedTarget, credentialRevision, proof } };
+        },
+        notifyCurrentGroupTruth: notify,
+      });
+      let inputReleased = false;
+      try {
+        await consumer.consumeUnavailable({ serviceId: 'claude-subscription', groupId: 'team',
+          unavailableReason: 'active_profile_missing',
+          sessions: [{ sessionId: session.client.sessionId, activity: 'live', applicationOwnerId: 'claude' }] });
+        await pending.blockForSustainedBlocker({ localIds: ['pending-recovery'],
+          blocker: { kind: 'provider_unavailable', source: 'readiness', detail: 'claude_usage_limit_dialog' },
+          isCanonicalTurnActive: false });
+        const input = session.connectedServiceAuthGroupRequestFence.waitUntilAvailable(controller.signal)
+          .then(async () => {
+            const batch = await session.queue.waitForMessagesAndGetAsString(controller.signal);
+            inputReleased = batch?.message === 'Continue interrupted work.';
+          }).catch(() => undefined);
+        expect(pendingBlocked).toBe(true);
+        expect(inputReleased).toBe(false);
+        if (path === 'apply') {
+          await expect(consumer.consume({ committedGeneration: committed, switchReason: 'automatic_runtime_failure',
+            executionAuthority: 'runtime_recovery', sessions: [{ sessionId: session.client.sessionId,
+              activity: 'live', applicationOwnerId: 'claude' }] })).resolves.toMatchObject({ acknowledgeable: true });
+        } else {
+          await reconcileConnectedServiceAuthGroupGenerationForRuntimeTarget({
+            target: { sessionId: session.client.sessionId, agentId: 'claude',
+              activeBindings: [{ ...committed.decisionCommittedTarget }],
+              connectedServiceMaterializationIdentityV1: { id: 'csm_legacy_projection' },
+              connectedServicesBindingsRaw: { v: 1, bindingsByServiceId: {
+                'claude-subscription': { source: 'connected', selection: 'group', groupId: 'team', profileId: 'backup' },
+              } } },
+            consumer, executionAuthority: 'passive_projection',
+            listCurrentGroups: async () => [{ v: 1, serviceId: 'claude-subscription', groupId: 'team',
+              activeProfileId: 'backup', generation: 2 }],
+            resolveCredentialRevision: () => null,
+            resolveCredentialBoundary: () => ({ status: 'present', revisionSemantics: 'legacy_unfenced', credentialRevision: null }),
+          });
+        }
+        // Observe the real fence/Queue result; do not await a permanently blocked input on RED.
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(pendingBlocked).toBe(false);
+        expect(session.connectedServiceAuthGroupRequestFence.readCurrentTruth()?.kind).toBe('current_auth_group_available');
+        await input;
+        expect(inputReleased).toBe(true);
+      } finally {
+        controller.abort(); unregister(); session.cleanup();
+        rmSync(activeServerDir, { recursive: true, force: true });
+      }
+    },
+  );
 
   it('tracks recent user abort requests', () => {
     vi.useFakeTimers();

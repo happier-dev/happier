@@ -8,7 +8,6 @@ export function buildConnectedServiceSwitchContinuationAttemptId(input: Readonly
   serviceIds: ReadonlySet<ConnectedServiceId>;
   normalizedBindings: ConnectedServiceBindingsV1;
   expectedGroupGenerationByServiceId?: Readonly<Record<string, number>>;
-  quotaRecoveryIdempotencyKey?: string;
 }>): string {
   const parts = [...input.serviceIds]
     .sort()
@@ -31,8 +30,5 @@ export function buildConnectedServiceSwitchContinuationAttemptId(input: Readonly
     'connected-service-auth-switch',
     input.action,
     ...parts,
-    ...(input.quotaRecoveryIdempotencyKey === undefined
-      ? []
-      : [`quota-recovery:${JSON.stringify(input.quotaRecoveryIdempotencyKey)}`]),
   ].join('|');
 }

@@ -67,6 +67,7 @@ export function mapCommittedGenerationApplyResult(input: Readonly<{
       errorCode: null,
       providerAdoptedTarget: {
         ...target,
+        credentialRevision: acceptedGenerationApplication.credentialRevision ?? null,
         proof: {
           status: 'verified',
           source: verification?.source ?? 'post_switch_verification',

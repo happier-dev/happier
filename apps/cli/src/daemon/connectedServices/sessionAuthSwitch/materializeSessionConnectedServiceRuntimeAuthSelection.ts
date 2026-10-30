@@ -3,13 +3,10 @@ import { materializeConnectedServiceRuntimeAuthSelectionThroughCatalog } from '@
 import { resolveConnectedServiceCredentialsWithRevisions } from '@/cloud/connectedServices/resolveConnectedServiceCredentials';
 import type { Credentials } from '@/persistence';
 import { findConnectedServiceChildSelection } from '@/daemon/connectedServices/connectedServiceChildEnvironment';
-import {
-  ConnectedServiceCredentialRevisionV1Schema,
-  type AccountSettings,
-} from '@happier-dev/protocol';
+import type { AccountSettings } from '@happier-dev/protocol';
 
-import { createConnectedServiceAuthGenerationApplyFailureError } from '../runtimeAuth/connectedServiceAuthGenerationApplyFailure';
 import type { SessionConnectedServiceRuntimeAuthSelectionMaterializerInput } from './switchSessionConnectedServiceAuth';
+import { createConnectedServiceAuthGenerationApplyFailureError } from '../runtimeAuth/connectedServiceAuthGenerationApplyFailure';
 
 function readNonEmptyString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
@@ -57,21 +54,13 @@ export async function materializeSessionConnectedServiceRuntimeAuthSelection(par
   });
   const resolvedCredential = credentialsByServiceId.get(params.input.serviceId);
   if (!resolvedCredential) return null;
-  if (params.input.expectedCredentialRevision !== undefined) {
-    const actualCredentialRevision = ConnectedServiceCredentialRevisionV1Schema.safeParse(
-      resolvedCredential.credentialRevision,
-    );
-    if (!actualCredentialRevision.success) {
-      throw createConnectedServiceAuthGenerationApplyFailureError({
-        errorCode: 'credential_revision_missing',
-      });
-    }
-    if (actualCredentialRevision.data !== params.input.expectedCredentialRevision) {
-      throw createConnectedServiceAuthGenerationApplyFailureError({
-        errorCode: 'credential_revision_superseded',
-      });
-    }
+  if (binding.selection === 'group' && resolvedCredential.credentialRevision === null) {
+    // Pool-capable servers resolve revisions even for legacy DB rows. A revisionless
+    // read cannot prove the available truth understood by already-running clients.
+    throw createConnectedServiceAuthGenerationApplyFailureError({ errorCode: 'credential_revision_missing' });
   }
+  // The resolver validates service/profile binding and reads the current credential. A refresh
+  // since the selection commit does not change that account; write fencing stays at mutation.
 
   const baseSelection = {
     serviceId: params.input.serviceId,

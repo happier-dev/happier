@@ -590,7 +590,9 @@ for daemon binding authorization, native-login ownership and goal reactivation.
 Claude pool sessions can proactively switch accounts during a turn through the
 shared `CLAUDE_CONFIG_DIR` home. The catalog's provider-owned auth descriptor
 declares in-turn application; the shared generation writer and verifier prove
-the selected profile, generation, credential revision and native auth. The current
+the selected profile, generation and native auth using that account's current
+credential. Credential revisions fence token writes; a missing committed revision
+or a refresh after commit does not reject application to the same account. The current
 request finishes on the old account and the next request reads the new credentials
 (maintainer live proof, 2026-07-08). External token injection, such as Codex, still
 requires exact runtime identity and refresh-selection resync. The shared predictive

@@ -17,6 +17,7 @@ import type { AcceptedConnectedServiceAccountVerificationByServiceId } from '../
 import { evaluatePredictiveSoftSwitchSessionApplyPolicy } from './predictiveSoftSwitchPolicy';
 import type { AutomaticQuotaResetContext, ConnectedServiceGroupQuotaProbeResult, ConnectedServiceQuotaRecoveryCreditConsumeResult } from '../../quotas/ConnectedServiceQuotasCoordinator';
 import { logger } from '@/ui/logger';
+import { isSameConnectedServiceAccountTarget } from '../../sessionAuthSwitch/connectedServiceAuthSwitchOutcome';
 import type { ConnectedServiceQuotaRecoveryCreditConsumeReceiptV1 } from '@happier-dev/protocol';
 import {
   buildGenerationApplyResult,
@@ -510,11 +511,9 @@ export class ConnectedServiceAuthGroupSwitchCoordinator {
         serviceId: completion.serviceId,
         groupId: completion.groupId,
       });
-      const revisionWasSuperseded = observedAfterApply.generation === completion.generation
-        && completion.credentialRevision != null
-        && observedAfterApply.credentialRevision != null
-        && observedAfterApply.credentialRevision !== completion.credentialRevision;
-      if (observedAfterApply.generation > completion.generation || revisionWasSuperseded) {
+      if (observedAfterApply.generation >= completion.generation && !isSameConnectedServiceAccountTarget({
+        ...completion, profileId: completion.activeProfileId,
+      }, { ...observedAfterApply, profileId: observedAfterApply.activeProfileId })) {
         return {
           status: 'superseded_after_apply',
           activeProfileId: observedAfterApply.activeProfileId,
@@ -539,7 +538,7 @@ export class ConnectedServiceAuthGroupSwitchCoordinator {
         status: 'observed_generation',
         activeProfileId: completion.activeProfileId,
         generation: completion.generation,
-        credentialRevision: completion.credentialRevision ?? null,
+        credentialRevision: observedAfterApply.credentialRevision ?? completion.credentialRevision ?? null,
         ...(completion.result.status === 'observed_generation' && completion.result.quotaRecovery
           ? { quotaRecovery: completion.result.quotaRecovery } : {}),
         ...applyFields,
@@ -866,6 +865,43 @@ export class ConnectedServiceAuthGroupSwitchCoordinator {
       };
     }
     return null;
+  }
+
+  /** Observes an already-selected member without attributing an old failure or replaying a switch. */
+  async observeCurrentGenerationForRecovery(input: Readonly<{
+    serviceId: string;
+    groupId: string;
+    observedProfileId: string | null;
+  }>): Promise<ConnectedServiceAuthGroupSwitchResult> {
+    const loaded = await this.deps.loadState(input);
+    const selected = selectConnectedServiceAuthGroupCandidate({
+      nowMs: this.deps.nowMs(),
+      quotaFreshnessMs: this.deps.quotaFreshnessMs,
+      activeProfileId: loaded.activeProfileId,
+      allowCurrentProfileRetry: true,
+      policy: loaded.policy,
+      members: loaded.members.filter((member) => member.profileId === loaded.activeProfileId),
+      memberStatesByProfileId: loaded.memberStatesByProfileId,
+      lastSwitchReason: loaded.lastSwitchReason,
+      lastSwitchAt: loaded.lastSwitchAt,
+    });
+    // Selection can allow an unknown quota when choosing a replacement. Resuming
+    // a previously stopped turn needs the existing fresh, usable-quota proof.
+    const quotaRecovery = resolveCurrentProfileQuotaRecoveryProof({ selected, loaded });
+    if (!loaded.activeProfileId || !quotaRecovery) {
+      return {
+        status: 'no_eligible_member', generation: loaded.generation, groupExhausted: true,
+        retryAtMs: resolveEarliestRetryAtMs(selected.excluded), excluded: selected.excluded,
+        diagnostics: buildSwitchDecisionDiagnostics({ decisionTrace: selected.decisionTrace }),
+      };
+    }
+    return {
+      status: 'observed_generation', activeProfileId: loaded.activeProfileId,
+      generation: loaded.generation, credentialRevision: loaded.credentialRevision ?? null,
+      // A reset may make the original failed member current again. Reuse the
+      // existing quota-proof continuation identity only for that same-account retry.
+      ...(loaded.activeProfileId === input.observedProfileId ? { quotaRecovery } : {}),
+    };
   }
 
   async switchAfterClassifiedFailure(input: Readonly<{
@@ -1736,14 +1772,11 @@ export class ConnectedServiceAuthGroupSwitchCoordinator {
         }
         const observedAfterApply = await this.loadStateAfterApply({ ...input, trigger });
         const adoptedProfileId = committed.activeProfileId ?? selectedProfileId;
-      // The server generation is the group-selection CAS epoch. Credential refresh can advance the
-      // exact application epoch without changing that number, so revision is the second fence.
-      // A lower generation remains a lagging/non-authoritative adapter observation.
-        const revisionWasSuperseded = observedAfterApply.generation === committed.generation
-          && committed.credentialRevision != null
-          && observedAfterApply.credentialRevision != null
-          && observedAfterApply.credentialRevision !== committed.credentialRevision;
-        if (observedAfterApply.generation > committed.generation || revisionWasSuperseded) {
+        // A successful application follows the selected account through token refreshes.
+        // Lower generations remain lagging adapter observations, not newer selection truth.
+        if (observedAfterApply.generation >= committed.generation && !isSameConnectedServiceAccountTarget({
+          ...committed, profileId: adoptedProfileId,
+        }, { ...observedAfterApply, profileId: observedAfterApply.activeProfileId })) {
         const applyFields = switchResultApplyFields(applyResult);
         this.maybeEmitSwitchPipelineResult({
           trigger,
@@ -1792,7 +1825,7 @@ export class ConnectedServiceAuthGroupSwitchCoordinator {
           status: 'switched',
           activeProfileId: committed.activeProfileId ?? selectedProfileId,
           generation: committed.generation,
-          credentialRevision: committed.credentialRevision ?? null,
+          credentialRevision: observedAfterApply.credentialRevision ?? committed.credentialRevision ?? null,
           ...applyFields,
           diagnostics: mergeSwitchDecisionDiagnostics({
             diagnostics: applyFields.diagnostics,

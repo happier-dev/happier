@@ -17,6 +17,7 @@ import {
 } from './resolveConnectedServiceAuthForSpawn';
 import { resolveConnectedServiceMaterializedRootDir } from './materialize/resolveConnectedServiceMaterializedRootDir';
 import { waitForCondition } from '@/testkit/async/waitFor';
+import { writeExecutableShim } from '@/testkit/fs/executableShim';
 import { resolveConnectedServiceHomeDir } from './homes/resolveConnectedServiceHomeDir';
 import { openSqliteDatabaseSync } from '@/utils/sqlite/sqliteSync';
 import { resolveSpawnChildEnvironment } from '@/daemon/spawn/resolveSpawnChildEnvironment';
@@ -183,6 +184,11 @@ describe('resolveConnectedServiceAuthForSpawn post-materialization resume reacha
     const credentials = makeLegacyCredentials();
     const now = 1_000_000;
     try {
+      // Provider admission stays real; only executable presence is supplied.
+      const codexPath = await writeExecutableShim({
+        dir: testRoot, fileName: 'codex', contents: `#!${process.execPath}\nprocess.exit(0);\n`,
+      });
+      const processEnv = { CODEX_HOME: sourceCodexHome, HAPPIER_CODEX_PATH: codexPath };
       await mkdir(join(sourceCodexHome, 'sessions'), { recursive: true });
       await writeFile(sourcePath, 'native-only transcript\n');
       const resolveLaunch = async () => {
@@ -190,14 +196,14 @@ describe('resolveConnectedServiceAuthForSpawn post-materialization resume reacha
         agentId: 'codex', sessionDirectory: testRoot, connectedServicesBindingsRaw: PI_CONNECTED_BINDINGS,
         materializationKey: 'existing', activeServerDir, baseDir: join(testRoot, 'materialized'),
         credentials, api: makeCodexApi(now, credentials), nowMs: () => now,
-        accountSettings: sharedStateAccountSettings(), processEnv: { CODEX_HOME: sourceCodexHome },
+        accountSettings: sharedStateAccountSettings(), processEnv,
         vendorResumeId, resumeReachabilityRequired: true, sessionStateMode: 'existing',
         candidatePersistedSessionFile: sourcePath,
         });
         const result = await resolveSpawnChildEnvironment({
           options: { directory: testRoot, backendTarget: { kind: 'builtInAgent', agentId: 'codex' }, resume: vendorResumeId, handoffStateTransfer: 'existing', codexBackendMode: 'appServer' },
           existingSessionMetadata: { machineId: 'source-machine', flavor: 'codex', codexSessionId: vendorResumeId, codexBackendMode: 'appServer', path: testRoot },
-          profileEnvironmentVariables: {}, daemonSpawnHooks: null, processEnv: { CODEX_HOME: sourceCodexHome },
+          profileEnvironmentVariables: {}, daemonSpawnHooks: null, processEnv,
           logDebug: () => {}, logInfo: () => {}, logWarn: () => {}, connectedServiceAuth: auth,
         });
         return { auth, result };

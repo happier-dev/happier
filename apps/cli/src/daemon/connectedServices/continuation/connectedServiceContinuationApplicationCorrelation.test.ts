@@ -51,18 +51,19 @@ describe('connected-service continuation application correlation', () => {
     })).resolves.toBe(true);
     await expect(correlation.settle(originKey, async () => {})).resolves.toBe(false);
     expect(localIds).toEqual(['pending:origin-turn', 'pending:origin-turn']);
-    expect(correlation.register(originKey, 'same-generation-after-custody')).toBe(false);
+    expect(correlation.register(originKey, 'same-generation-after-custody')).toBe(true);
+    await expect(settleValue(correlation, originKey)).resolves.toBe('same-generation-after-custody');
   });
 
-  it('starts empty and does not replace the first accepted origin for one committed target', async () => {
+  it('carries the latest recovery context without imposing once-per-target admission', async () => {
     const correlation = createConnectedServiceContinuationApplicationCorrelation<string>();
 
     await expect(settleValue(correlation, originKey)).resolves.toBeNull();
     expect(correlation.register(originKey, 'origin-turn')).toBe(true);
-    expect(correlation.register(originKey, 'later-origin')).toBe(false);
-    await expect(settleValue(correlation, originKey)).resolves.toBe('origin-turn');
+    expect(correlation.register(originKey, 'later-origin')).toBe(true);
+    await expect(settleValue(correlation, originKey)).resolves.toBe('later-origin');
     await expect(settleValue(correlation, originKey)).resolves.toBeNull();
-    expect(correlation.register(originKey, 'same-generation-after-consume')).toBe(false);
+    expect(correlation.register(originKey, 'same-generation-after-consume')).toBe(true);
   });
 
   it('correlates every independently interrupted origin without letting a stale sibling block an exact origin', async () => {
@@ -103,7 +104,6 @@ describe('connected-service continuation application correlation', () => {
     expect(correlation.register(otherServiceKey, 'other-service-origin')).toBe(true);
     expect(correlation.register(otherGroupKey, 'other-group-origin')).toBe(true);
     expect(correlation.register(newerKey, 'origin-1225')).toBe(true);
-    expect(correlation.register(originKey, 'stale-origin-1224')).toBe(false);
 
     await expect(settleValue(correlation, originKey)).resolves.toBeNull();
     await expect(settleValue(correlation, newerKey)).resolves.toBe('origin-1225');

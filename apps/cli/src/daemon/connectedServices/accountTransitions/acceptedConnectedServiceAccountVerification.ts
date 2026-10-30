@@ -1,6 +1,7 @@
 import type { ConnectedServiceCredentialRevisionV1, ConnectedServiceId } from '@happier-dev/protocol';
 
 import type { ConnectedServiceAccountTransitionVerificationResult } from './connectedServiceAccountTransition';
+import { isSameConnectedServiceAccountTarget } from '../sessionAuthSwitch/connectedServiceAuthSwitchOutcome';
 
 export type AcceptedConnectedServiceAccountVerification = Readonly<{
   status: 'verified' | 'weakly_verified';
@@ -107,11 +108,7 @@ export function hasExactAcceptedConnectedServiceTargetAdoptionProof(input: Reado
   }
   const generationApplication = readRecord(verification.generationApplication);
   return generationApplication !== null
-    && generationApplication.serviceId === input.target.serviceId
-    && generationApplication.groupId === input.target.groupId
-    && generationApplication.profileId === input.target.profileId
-    && generationApplication.generation === input.target.generation
-    && generationApplication.credentialRevision === input.target.credentialRevision;
+    && isSameConnectedServiceAccountTarget(input.target, generationApplication);
 }
 
 export function serializeAcceptedConnectedServiceAccountVerifications(

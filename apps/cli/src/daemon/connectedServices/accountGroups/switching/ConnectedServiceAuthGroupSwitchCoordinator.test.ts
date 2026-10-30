@@ -741,12 +741,13 @@ describe('ConnectedServiceAuthGroupSwitchCoordinator', () => {
 
   it('reloads state after recording observed failure before committing a switch', async () => {
     let generation = 1;
+    let activeProfileId = 'primary';
     const committedGenerations: number[] = [];
     const coordinator = new ConnectedServiceAuthGroupSwitchCoordinator({
       leases: new InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry(),
       nowMs: () => 1_000,
       quotaFreshnessMs: 60_000,
-      loadState: async () => state('primary', generation),
+      loadState: async () => state(activeProfileId, generation),
       recordObservedFailureState: async () => {
         generation += 1;
       },
@@ -756,6 +757,7 @@ describe('ConnectedServiceAuthGroupSwitchCoordinator', () => {
           throw new Error('connected_service_auth_group_generation_conflict');
         }
         generation += 1;
+        activeProfileId = toProfileId;
         return state(toProfileId, generation);
       },
       applyGeneration: async () => {},
@@ -1759,7 +1761,7 @@ describe('ConnectedServiceAuthGroupSwitchCoordinator', () => {
     owner.finish();
   });
 
-  it('post-fences a same-generation credential revision that was superseded during apply', async () => {
+  it('accepts successful application to the selected account after a same-generation credential refresh', async () => {
     const adoptedRevision = 'csr_aaaaaaaaaaaaaaaaaaaaaa';
     const authoritativeRevision = 'csr_bbbbbbbbbbbbbbbbbbbbbb';
     const current = {
@@ -1784,14 +1786,10 @@ describe('ConnectedServiceAuthGroupSwitchCoordinator', () => {
       credentialRevision: adoptedRevision,
       reason: 'credential_revision_changed',
     })).resolves.toMatchObject({
-      status: 'superseded_after_apply',
+      status: 'observed_generation',
       activeProfileId: 'backup',
       generation: 2,
       credentialRevision: authoritativeRevision,
-      adoptedProfileId: 'backup',
-      adoptedGeneration: 2,
-      adoptedCredentialRevision: adoptedRevision,
-      reconciliationDisposition: 'superseded_after_apply',
     });
   });
 

@@ -220,7 +220,8 @@ vi.mock('@/daemon/ownership/daemonServiceInventory', () => ({
     evaluateDaemonStartupServiceConflict: vi.fn(async () => ({ kind: 'none' })),
 }));
 
-vi.mock('./controlServer', () => ({
+vi.mock('./controlServer', async (importOriginal) => ({
+    ...await importOriginal<typeof import('./controlServer')>(),
     startDaemonControlServer: vi.fn(async () => ({
         port: 43210,
         stop: vi.fn(async () => {}),

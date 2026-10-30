@@ -27,6 +27,7 @@ const BROKER_SCOPED_TOKEN = deriveConnectedServiceBrokerRefreshToken('token');
 import { buildRuntimeAuthRecoveryKey } from './connectedServices/runtimeAuth/recoveryKey/runtimeAuthRecoveryKey';
 import {
   RuntimeAuthRecoveryScheduler,
+  buildRuntimeAuthRecoveryAttemptId,
   type RuntimeAuthRecoveryDiagnostic,
 } from './connectedServices/runtimeAuth/RuntimeAuthRecoveryScheduler';
 import {
@@ -319,7 +320,7 @@ describe('createDaemonControlApp connected-service runtime auth handling', () =>
       expect(beginClassifiedFailure).not.toHaveBeenCalled();
       expect(handleConnectedServiceRuntimeAuthFailure).toHaveBeenCalledWith(expect.objectContaining({
         sessionId: tracked.happySessionId,
-        interruptedOriginId: 'runtime-auth-report:post-apply-superseded',
+        interruptedOriginId: buildRuntimeAuthRecoveryAttemptId('runtime-auth-report:post-apply-superseded'),
         sourceAuthorization: expect.objectContaining({
           status: 'recovery_superseded',
           reason: 'source_tuple_mismatch',
@@ -2465,7 +2466,7 @@ describe('createDaemonControlApp connected-service runtime auth handling', () =>
   });
 
   it('preserves generation apply failure results when recovery scheduling fails', async () => {
-    const debugSpy = vi.spyOn(logger, 'debug').mockImplementation(() => {});
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
     const handleConnectedServiceRuntimeAuthFailure = vi.fn(async () => ({
       status: 'switch_attempted',
       result: {
@@ -2529,12 +2530,12 @@ describe('createDaemonControlApp connected-service runtime auth handling', () =>
         },
       });
       expect(enqueueApplyFailure).toHaveBeenCalled();
-      expect(debugSpy).toHaveBeenCalledWith(
+      expect(warnSpy).toHaveBeenCalledWith(
         '[CONTROL SERVER] Connected-service runtime auth recovery scheduling failed after apply failure',
         expect.objectContaining({ sessionId: 'sess_1' }),
       );
     } finally {
-      debugSpy.mockRestore();
+      warnSpy.mockRestore();
       await app.close();
     }
   });
@@ -3042,7 +3043,6 @@ describe('createDaemonControlApp connected-service runtime auth handling', () =>
 
   it('returns typed handler failures when handler recovery scheduling also fails', async () => {
     const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
-    const debugSpy = vi.spyOn(logger, 'debug').mockImplementation(() => {});
     const handleConnectedServiceRuntimeAuthFailure = vi.fn(async () => {
       throw new Error('switch coordinator crashed');
     });
@@ -3095,12 +3095,11 @@ describe('createDaemonControlApp connected-service runtime auth handling', () =>
         },
       });
       expect(enqueueHandlerFailure).toHaveBeenCalled();
-      expect(debugSpy).toHaveBeenCalledWith(
+      expect(warnSpy).toHaveBeenCalledWith(
         '[CONTROL SERVER] Connected-service runtime auth recovery scheduling failed after handler failure',
         expect.objectContaining({ sessionId: 'sess_1' }),
       );
     } finally {
-      debugSpy.mockRestore();
       warnSpy.mockRestore();
       await app.close();
     }
@@ -4351,7 +4350,7 @@ describe('startDaemonControlServer connected-service runtime wiring', () => {
         },
       });
       expect(handleConnectedServiceRuntimeAuthFailure).toHaveBeenCalledWith({
-        interruptedOriginId: 'runtime-auth-report:continuation-origin',
+        interruptedOriginId: buildRuntimeAuthRecoveryAttemptId('runtime-auth-report:continuation-origin'),
         sessionId: 'sess_1',
         switchesThisTurn: 0,
         classification: expect.objectContaining({

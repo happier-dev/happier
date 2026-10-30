@@ -8,6 +8,7 @@ import {
   serializeConnectedServiceChildSelections,
 } from '../connectedServiceChildEnvironment';
 import { readConnectedServiceMaterializationIdentityV1 } from '../materialize/createConnectedServiceMaterializationIdentity';
+import { parseConnectedServiceBindingSelections } from '../parseConnectedServicesBindings';
 import { RuntimeAccountIdentityIndex } from '../quotas/identity/RuntimeAccountIdentityIndex';
 import type {
   RuntimeAccountIdentityEntry,
@@ -144,7 +145,24 @@ function buildExactGroupApplicationSelectionEnv(
       credentialRevision: input.credentialRevision,
     };
   });
-  if (!matched) return null;
+  if (!matched) {
+    const declared = parseConnectedServiceBindingSelections(target.connectedServicesBindingsRaw).find((selection) => (
+      selection.kind === 'group'
+      && selection.serviceId === input.serviceId
+      && selection.groupId === input.groupId
+    ));
+    if (declared?.kind !== 'group') return null;
+    // Recovered metadata can declare a pool without a previously materialized selection.
+    selections.push({
+      kind: 'group',
+      serviceId: input.serviceId,
+      groupId: input.groupId,
+      activeProfileId: input.profileId,
+      fallbackProfileId: declared.fallbackProfileId ?? input.profileId,
+      generation: input.generation,
+      credentialRevision: input.credentialRevision,
+    });
+  }
   const serialized = serializeConnectedServiceChildSelections(
     new Map(selections.map((selection) => [selection.serviceId, selection])),
   );
@@ -157,6 +175,9 @@ function buildExactGroupApplicationSelectionEnv(
 
 export class ConnectedServiceRuntimeRegistry {
   private readonly targetsByPid = new Map<number, IndexedTarget>();
+  // Exact application changes the snapshot, not the recipient's registration lineage.
+  // Other updates/replacements deliberately do not inherit this lineage.
+  private readonly exactApplicationLineageByTarget = new WeakMap<ConnectedServiceRuntimeTarget, object>();
   private readonly pidBySessionId = new Map<string, number>();
   private readonly pidsByBrokerSelectionIdentity = new Map<string, Set<number>>();
   // Execution-run targets live in a SEPARATE keyspace: a run shares its RUNNER's pid with the
@@ -240,9 +261,21 @@ export class ConnectedServiceRuntimeRegistry {
   }
 
   public isCurrentTargetRegistration(registration: ConnectedServiceRuntimeTargetRegistration): boolean {
-    return registration.key.kind === 'session'
-      ? this.targetsByPid.get(registration.key.pid)?.target === registration.target
-      : this.runTargetsByRunKey.get(registration.key.runKey)?.target === registration.target;
+    return this.getCurrentTargetForRegistration(registration) !== null;
+  }
+
+  public getCurrentTargetForRegistration(
+    registration: ConnectedServiceRuntimeTargetRegistration,
+  ): ConnectedServiceRuntimeTarget | null {
+    const current = registration.key.kind === 'session'
+      ? this.targetsByPid.get(registration.key.pid)?.target
+      : this.runTargetsByRunKey.get(registration.key.runKey)?.target;
+    if (!current) return null;
+    if (current === registration.target) return current;
+    const lineage = this.exactApplicationLineageByTarget.get(registration.target);
+    return lineage !== undefined && lineage === this.exactApplicationLineageByTarget.get(current)
+      ? current
+      : null;
   }
 
   public unregisterRunKey(runKeyRaw: string): ConnectedServiceRuntimeTarget | null {
@@ -301,10 +334,16 @@ export class ConnectedServiceRuntimeRegistry {
       credentialRevision: input.credentialRevision,
     });
     if (!connectedServiceSelectionsEnv) return null;
-    return this.updateTarget({
+    const updated = this.updateTarget({
       pid: existing.pid,
       connectedServiceSelectionsEnv,
     });
+    if (updated) {
+      const lineage = this.exactApplicationLineageByTarget.get(existing) ?? {};
+      this.exactApplicationLineageByTarget.set(existing, lineage);
+      this.exactApplicationLineageByTarget.set(updated, lineage);
+    }
+    return updated;
   }
 
   public adoptCredentialRevisionForProfile(input: Readonly<{

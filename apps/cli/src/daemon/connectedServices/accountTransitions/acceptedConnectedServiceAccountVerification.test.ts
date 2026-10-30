@@ -25,7 +25,7 @@ describe('accepted connected-service account verification', () => {
     expect(isExactAcceptedConnectedServiceAccountVerification(verification)).toBe(true);
   });
 
-  it('accepts only exact identity proof applied to the exact target revision', () => {
+  it('accepts exact identity proof for the selected account across credential refreshes', () => {
     const credentialRevision = 'csr_aaaaaaaaaaaaaaaaaaaaaa';
     const verificationByServiceId = {
       'openai-codex': {
@@ -62,6 +62,12 @@ describe('accepted connected-service account verification', () => {
         profileId: 'profile-b',
         generation: 2,
         credentialRevision: 'csr_bbbbbbbbbbbbbbbbbbbbbb',
+      },
+    })).toBe(true);
+    expect(hasExactAcceptedConnectedServiceTargetAdoptionProof({
+      verificationByServiceId,
+      target: {
+        serviceId: 'openai-codex', groupId: 'group-a', profileId: 'other-account', generation: 2, credentialRevision,
       },
     })).toBe(false);
   });

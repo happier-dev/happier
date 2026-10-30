@@ -116,6 +116,24 @@ readers retire, consolidating at their existing owners. The undeployed 0.3 line
 uses qualified account services and its existing one-way upgrade boundary;
 0.2-created Antigravity data still needs its storage-ingress mapping there.
 
+### Pool application and legacy credential rows (0.2 development)
+
+Pool-capable servers return a revision for every credential row, including a
+stable `csr_` digest for rows predating explicit revision metadata. A missing
+commit-time read-back revision is therefore resolved by reading the selected
+account again at application. Successful application always carries that real
+revision into the existing available-truth RPC, which releases the runner's
+availability fence and exact-application Pending wake.
+
+The CLI 0.2.15 reader at `22ac8263cfdbcdb845441b9044ff18199cf7652e`
+requires a string revision in both available truth and generation application
+proof. Those wire shapes are unchanged; no nullable-proof negotiation is needed.
+The exact server 0.2.1 credential adapter remains for direct credentials, but
+that server has no pool/group routes and cannot originate this committed-pool
+flow. A genuinely revisionless application observation is retryable and never
+acknowledged as runner availability. Provider identity checks and write fences
+remain intact.
+
 ### Quota recovery details (0.2 development)
 
 Reset availability remains in the existing strict recovery-credit inventory.

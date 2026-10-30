@@ -176,7 +176,8 @@ describe('materializeSessionConnectedServiceRuntimeAuthSelection', () => {
     });
     const api = {
       getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
-      getConnectedServiceCredentialPlain: vi.fn(async () => ({ content: { t: 'plain' as const, v: record } })),
+      getConnectedServiceCredentialPlain: vi.fn(async () => ({ content: { t: 'plain' as const, v: record },
+        revisionSemantics: 'revisioned' as const, credentialRevision: 'csr_abcdefghijklmnopqrstuv' })),
       getConnectedServiceCredentialSealed: vi.fn(async () => null),
     };
     const credentials: Credentials = {
@@ -268,7 +269,8 @@ describe('materializeSessionConnectedServiceRuntimeAuthSelection', () => {
     });
     const api = {
       getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
-      getConnectedServiceCredentialPlain: vi.fn(async () => ({ content: { t: 'plain' as const, v: record } })),
+      getConnectedServiceCredentialPlain: vi.fn(async () => ({ content: { t: 'plain' as const, v: record },
+        revisionSemantics: 'revisioned' as const, credentialRevision: 'csr_abcdefghijklmnopqrstuv' })),
       getConnectedServiceCredentialSealed: vi.fn(async () => null),
     };
     const credentials: Credentials = {
@@ -361,7 +363,8 @@ describe('materializeSessionConnectedServiceRuntimeAuthSelection', () => {
     });
     const api = {
       getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
-      getConnectedServiceCredentialPlain: vi.fn(async () => ({ content: { t: 'plain' as const, v: record } })),
+      getConnectedServiceCredentialPlain: vi.fn(async () => ({ content: { t: 'plain' as const, v: record },
+        revisionSemantics: 'revisioned' as const, credentialRevision: 'csr_abcdefghijklmnopqrstuv' })),
       getConnectedServiceCredentialSealed: vi.fn(async () => null),
     };
     const credentials: Credentials = {
@@ -446,10 +449,9 @@ describe('materializeSessionConnectedServiceRuntimeAuthSelection', () => {
     });
   });
 
-  it('rejects a canonical credential revision mismatch before the Claude materializer writes provider state', async () => {
+  it.each(['csr_bbbbbbbbbbbbbbbbbbbbbb', null] as const)('applies the current account or retries an unavailable server revision (%s)', async (actualRevision) => {
     const committedRevision = 'csr_aaaaaaaaaaaaaaaaaaaaaa';
-    const actualRevision = 'csr_bbbbbbbbbbbbbbbbbbbbbb';
-    const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-claude-pre-effect-revision-fence-'));
+    const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-claude-current-account-'));
     const groupConfigDir = join(
       activeServerDir,
       'daemon',
@@ -464,7 +466,7 @@ describe('materializeSessionConnectedServiceRuntimeAuthSelection', () => {
     await mkdir(groupConfigDir, { recursive: true });
     await writeFile(join(groupConfigDir, '.credentials.json'), JSON.stringify({
       claudeAiOauth: {
-        accessToken: 'credential-before-mismatch',
+        accessToken: 'credential-before-refresh',
         expiresAt: 1,
         scopes: [CLAUDE_CODE_RECOMMENDED_OAUTH_SCOPE],
       },
@@ -476,8 +478,8 @@ describe('materializeSessionConnectedServiceRuntimeAuthSelection', () => {
       kind: 'oauth',
       expiresAt: 2_000,
       oauth: {
-        accessToken: 'credential-that-must-not-be-written',
-        refreshToken: 'refresh-that-must-not-be-written',
+        accessToken: 'current-selected-account-access',
+        refreshToken: 'current-selected-account-refresh',
         idToken: null,
         scope: CLAUDE_CODE_RECOMMENDED_OAUTH_SCOPE,
         tokenType: 'Bearer',
@@ -489,10 +491,11 @@ describe('materializeSessionConnectedServiceRuntimeAuthSelection', () => {
       getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
       getConnectedServiceCredentialPlain: vi.fn(async () => ({
         content: { t: 'plain' as const, v: record },
-        revisionSemantics: 'revisioned' as const,
+        revisionSemantics: actualRevision === null ? 'legacy_unfenced' as const : 'revisioned' as const,
         credentialRevision: actualRevision,
       })),
       getConnectedServiceCredentialSealed: vi.fn(async () => null),
+      getConnectedServiceAuthGroup: vi.fn(async () => ({ activeProfileId: 'backup', generation: 8 })),
     };
     const previousBindings: ConnectedServiceBindingsV1 = {
       v: 1,
@@ -528,7 +531,7 @@ describe('materializeSessionConnectedServiceRuntimeAuthSelection', () => {
       },
     } as const;
 
-    const outcome = await materializeSessionConnectedServiceRuntimeAuthSelection({
+    const materialization = materializeSessionConnectedServiceRuntimeAuthSelection({
       credentials: {
         token: 'token',
         encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
@@ -568,15 +571,22 @@ describe('materializeSessionConnectedServiceRuntimeAuthSelection', () => {
         expectedCredentialRevision: string;
       }>,
       processEnv: { HOME: tmpdir() },
-    }).then(
-      () => null,
-      (error: unknown) => error,
-    );
+    });
+
+    if (actualRevision === null) {
+      await expect(materialization).rejects.toThrow('connected_service_auth_generation_apply_failed:credential_revision_missing');
+      const unchanged = JSON.parse(await readFile(join(groupConfigDir, '.credentials.json'), 'utf8'));
+      expect(unchanged.claudeAiOauth.accessToken).toBe('credential-before-refresh');
+      return;
+    }
+    const outcome = await materialization;
 
     const credential = JSON.parse(await readFile(join(groupConfigDir, '.credentials.json'), 'utf8'));
-    expect(credential.claudeAiOauth.accessToken).toBe('credential-before-mismatch');
+    expect(credential.claudeAiOauth.accessToken).toBe('current-selected-account-access');
     expect(outcome).toMatchObject({
-      message: 'connected_service_auth_generation_apply_failed:credential_revision_superseded',
+      profileId: 'backup',
+      credentialRevision: actualRevision,
+      record,
     });
   });
 

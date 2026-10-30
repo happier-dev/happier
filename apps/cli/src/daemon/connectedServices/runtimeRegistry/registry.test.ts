@@ -302,7 +302,7 @@ describe('ConnectedServiceRuntimeRegistry', () => {
 
   it('advances the existing session binding only after exact group application settles', () => {
     const registry = new ConnectedServiceRuntimeRegistry();
-    registry.registerTarget({
+    const target = registry.registerTarget({
       pid: 42,
       agentId: 'codex',
       sessionId: 'sess-a',
@@ -312,6 +312,7 @@ describe('ConnectedServiceRuntimeRegistry', () => {
       ),
       materializationKey: 'csm_runtime_registry',
     });
+    const registration = { key: { kind: 'session' as const, pid: target.pid }, target };
 
     const settled = registry.adoptExactGroupApplicationForSession({
       sessionId: 'sess-a',
@@ -330,6 +331,7 @@ describe('ConnectedServiceRuntimeRegistry', () => {
       credentialRevision: 'csr_bbbbbbbbbbbbbbbbbbbbbb',
     }]);
     expect(registry.getBySessionId('sess-a')).toBe(settled);
+    expect(registry.isCurrentTargetRegistration(registration)).toBe(true);
   });
 
   it('does not fabricate an exact group binding for an unregistered scope', () => {

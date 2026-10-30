@@ -36,6 +36,7 @@ import { RuntimeAuthRecoveryScheduler } from './connectedServices/runtimeAuth/Ru
 import { TemporaryThrottleRecoveryScheduler } from './connectedServices/temporaryThrottle/TemporaryThrottleRecoveryScheduler';
 import { withHerdrApi } from '@/integrations/herdr/herdrApi.testkit';
 import { writeExecutableShim } from '@/testkit/fs/executableShim';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { parseAndStripTerminalRuntimeFlags } from '@/terminal/runtime/terminalRuntimeFlags';
 import type { StopSessionResult } from './sessions/stopSessionContract';
 import type { TerminalHostAdapter } from '@/integrations/terminalHost/_types';
@@ -787,7 +788,8 @@ vi.mock('@/daemon/ownership/daemonServiceInventory', () => ({
   evaluateDaemonStartupServiceConflict: vi.fn(async () => ({ kind: 'none' })),
 }));
 
-vi.mock('./controlServer', () => ({
+vi.mock('./controlServer', async (importOriginal) => ({
+  ...await importOriginal<typeof import('./controlServer')>(),
   startDaemonControlServer: vi.fn(async ({
     spawnSession,
     stopSession,
@@ -1099,6 +1101,8 @@ describe('startDaemon spawn resume wiring (integration)', () => {
   let previousHerdrFixtureBinary: string | undefined;
   let deliverShutdownWatchdog: (() => unknown) | undefined;
   let firedShutdownTimerWork: Promise<unknown>[] = [];
+  let providerCliRoot: string | undefined;
+  let providerCliEnvironment: ReturnType<typeof createEnvKeyScope> | undefined;
 
   async function restoreDaemonExitBoundary(exitSpy: MockInstance) {
     // clearTimeout cannot retire an async watchdog callback that already fired.
@@ -1108,6 +1112,17 @@ describe('startDaemon spawn resume wiring (integration)', () => {
   }
 
   beforeEach(async () => {
+    providerCliEnvironment = createEnvKeyScope(['HAPPIER_CODEX_PATH', 'HAPPIER_CLAUDE_PATH']);
+    providerCliRoot = await mkdtemp(join(tmpdir(), 'happier-spawn-resume-provider-cli-'));
+    // Admission resolves the real executable even though runner creation is the OS fixture.
+    providerCliEnvironment.patch({
+      HAPPIER_CODEX_PATH: await writeExecutableShim({
+        dir: providerCliRoot, fileName: 'codex', contents: `#!${process.execPath}\nprocess.exit(0);\n`,
+      }),
+      HAPPIER_CLAUDE_PATH: await writeExecutableShim({
+        dir: providerCliRoot, fileName: 'claude', contents: `#!${process.execPath}\nprocess.exit(0);\n`,
+      }),
+    });
     deliverShutdownWatchdog = undefined;
     firedShutdownTimerWork = [];
     const { getDaemonShutdownWatchdogTimeoutMs } = await import('./shutdownPolicy');
@@ -1228,6 +1243,10 @@ describe('startDaemon spawn resume wiring (integration)', () => {
     delete process.env.HAPPIER_DAEMON_SESSION_RESPAWN_ENABLED;
     delete process.env.HAPPIER_DAEMON_STOP_SESSION_WAIT_FOR_EXIT_MS;
     delete process.env.HAPPIER_DAEMON_STOP_SESSION_WAIT_FOR_EXIT_POLL_INTERVAL_MS;
+    providerCliEnvironment?.restore();
+    providerCliEnvironment = undefined;
+    if (providerCliRoot) await rm(providerCliRoot, { recursive: true, force: true });
+    providerCliRoot = undefined;
   });
 
   it('binds startup-reattached live sessions to the daemon final machine identity', async () => {

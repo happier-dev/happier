@@ -62,7 +62,9 @@ describe('startDaemon usage-limit recovery composition', () => {
     expect(hydrationComposition).not.toContain('resumeInactiveSessionWhenReady');
 
     expect(source).toContain('inactiveUsageLimitRecoveryScheduler.hydratePassive()');
-    expect(source).not.toContain('inactiveUsageLimitRecoveryScheduler.hydrate();');
+    // Passive reconstruction happens early; only timer arming is allowed at readiness.
+    const timerActivation = source.indexOf('inactiveUsageLimitRecoveryScheduler.hydrate();');
+    expect(timerActivation).toBeGreaterThan(source.indexOf('    writeDaemonStateOnce();'));
     expect(source).toContain('createRuntimeAuthRecoverySchedulerForDaemon({');
     expect(source).toContain('runtimeAuthRecoveryComposition.hydratedIntents');
     expect(source).toContain('resolveInactiveUsageLimitRecoverySchedulerResult({');

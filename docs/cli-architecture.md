@@ -1782,6 +1782,40 @@ available; each wake reads current session metadata. Account-owned recovery
 attempts retain their `RuntimeAuthRecoveryScheduler` owner rather than starting
 a second ordinary wait.
 
+After publishing its state, the daemon restores both schedulers' persisted retry
+deadlines through their shared timer owner. Hydration itself performs no recovery;
+each timer re-enters normal recovery and checks current session/source state.
+It also drains stranded runtime-auth reports in-process through the same
+authorization, report-ID deduplication and durable intake used by local HTTP
+reports. The session-side fast-path drain remains active.
+
+An older failure whose pool has since moved to another member does not by itself
+prove that the interrupted turn resumed. Scheduler retries observe the pool's
+current member without replaying account selection or spending switch budget.
+Fresh eligible quota evidence is necessary but does not prove that this runner
+adopted the account: when its authorized tuple differs, the existing generation
+consumer must settle the already-committed target before continuation. If that
+application redirects to newer committed truth, continuation and the recovery's
+provider-proof identity follow the recipient's actual settled target. Exhausted
+or unknown quota evidence preserves the durable wait.
+
+Initial intake and scheduler replay use the same durable recovery identity for
+Pending deduplication, even after the first continuation is consumed and the
+daemon is replaced. The selected target and durable interrupted recovery determine
+that identity; quota reset receipts and snapshots only establish eligibility.
+A later independent recovery can continue at the same account and generation.
+Recovery continuations also recheck the current failed-turn
+projection and live turn at message admission, so an old wait cannot steer newer
+consumed user work. An unresolved original turn projection is retryable, not proof
+of newer work: the durable recovery retains custody until the failure projection arrives
+and Pending admits the continuation, or terminal supersession/disabled policy
+retires it. Failure reporting does not wait for that projection. Recovery remains
+pending until provider outcome proof arrives.
+Application correlation only carries that guarded context into an early exact
+recipient acknowledgement; it does not decide admission or deduplication. A late
+superseded in-band report cannot author a continuation before durable recovery
+owns the interruption; an existing scheduled recovery uses normal admission.
+
 Provider adapters report quota evidence and optional probe/reset-credit support.
 A reported reset time can drive a continuation without a provider-specific quota
 probe. Missing timing uses the existing recovery backoff, and transient probe
@@ -1816,6 +1850,19 @@ reason and corresponding predictive or reactive policy. Claude applies a newer
 credential revision in the proven shared group home even when the selected
 member is unchanged; other continuity checks and restart restrictions remain in
 their existing owners.
+
+Application follows the committed service, pool, profile and selection generation.
+It re-reads that profile's current credential instead of requiring the token
+revision captured at commit. Pool-capable servers resolve a real revision even
+for legacy credential rows. Missing read-back revisions trigger current-account
+resolution; a still-revisionless observation remains retryable rather than being
+acknowledged as available. Provider identity verification still applies,
+and mutation-time revision checks prevent an older token from replacing a newer one.
+Read-back failures emit a warning with `credential_revision_read_failed` and no
+credential contents. Every successful pool application delivers the existing
+revisioned available-truth notification before continuation, releasing the
+runner's availability fence and Pending usage-limit block. Frozen runners retain
+their released request/proof shapes; no nullable-proof negotiation is needed.
 
 Active Session RPC checks and CLI/MCP checks route account-owned attempts to
 that same scheduler; ordinary live waits use the shared session controller.

@@ -109,15 +109,36 @@ export function buildConnectedServiceAuthGroupTargetEpochIdentity(
   return `${target.serviceId}\0${target.groupId}\0${target.profileId}\0${target.generation}\0${target.credentialRevision ?? 'unknown'}`;
 }
 
-function isSameTarget(
-  left: ConnectedServiceAuthGroupGenerationTarget,
-  right: ConnectedServiceAuthGroupGenerationTarget,
+/** Selection commits identify an account; credential revisions fence writes, not adoption. */
+export function isSameConnectedServiceAccountTarget(
+  left: Readonly<{ serviceId: string; groupId: string; profileId: string | null; generation: number }>,
+  right: Readonly<{ serviceId?: unknown; groupId?: unknown; profileId?: unknown; generation?: unknown }>,
 ): boolean {
-  return left.serviceId === right.serviceId
+  return left.profileId !== null && left.serviceId === right.serviceId
     && left.groupId === right.groupId
     && left.profileId === right.profileId
-    && left.generation === right.generation
-    && left.credentialRevision === right.credentialRevision;
+    && left.generation === right.generation;
+}
+
+export function readConnectedServiceAccountApplicationCredentialError(
+  adopted: ConnectedServiceProviderAdoptedGenerationTarget,
+): 'credential_revision_missing' | 'credential_revision_mismatch' | null {
+  if (adopted.credentialRevision === null) return 'credential_revision_missing';
+  return adopted.credentialRevision === (adopted.proof.credentialRevision ?? null)
+    ? null : 'credential_revision_mismatch';
+}
+
+export function hasConnectedServiceAccountApplicationProof(input: Readonly<{
+  target: ConnectedServiceAuthGroupGenerationTarget;
+  adopted: ConnectedServiceProviderAdoptedGenerationTarget | null;
+}>): input is Readonly<{
+  target: ConnectedServiceAuthGroupGenerationTarget;
+  adopted: ConnectedServiceProviderAdoptedGenerationTarget & Readonly<{ credentialRevision: ConnectedServiceCredentialRevisionV1 }>;
+}> {
+  return input.adopted !== null
+    && isSameConnectedServiceAccountTarget(input.target, input.adopted)
+    && input.adopted.proof.status === 'verified'
+    && readConnectedServiceAccountApplicationCredentialError(input.adopted) === null;
 }
 
 export function buildConnectedServiceAuthGroupCommittedGenerationFact(
@@ -165,17 +186,13 @@ export function finalizeConnectedServiceAuthGenerationApplication(input: Readonl
     : null;
   const scopeMatches = normalizedAtApplyTarget.serviceId === committedGeneration.decisionCommittedTarget.serviceId
     && normalizedAtApplyTarget.groupId === committedGeneration.decisionCommittedTarget.groupId;
-  const desiredCredentialRevision = normalizedAtApplyTarget.credentialRevision;
-  const provenCredentialRevision = providerAdoptedTarget?.proof.credentialRevision ?? null;
-  const credentialRevisionError = desiredCredentialRevision === null || provenCredentialRevision === null
-    ? 'credential_revision_unproven'
-    : provenCredentialRevision !== desiredCredentialRevision
-      || providerAdoptedTarget?.credentialRevision !== desiredCredentialRevision
-      ? 'credential_revision_mismatch'
-      : null;
+  const credentialRevisionError = providerAdoptedTarget
+    ? readConnectedServiceAccountApplicationCredentialError(providerAdoptedTarget)
+    : null;
   const disposition: ConnectedServiceAuthGenerationReconciliationDisposition = !scopeMatches || !providerAdoptedTarget || credentialRevisionError
     ? 'failed'
-    : isSameTarget(providerAdoptedTarget, observedAfterApplyTarget)
+    : hasConnectedServiceAccountApplicationProof({ target: normalizedAtApplyTarget, adopted: providerAdoptedTarget })
+      && isSameConnectedServiceAccountTarget(providerAdoptedTarget, observedAfterApplyTarget)
       ? 'converged'
       : 'superseded_after_apply';
   return Object.freeze({

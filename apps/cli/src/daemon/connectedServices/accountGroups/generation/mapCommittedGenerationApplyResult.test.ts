@@ -12,6 +12,54 @@ const committed = buildConnectedServiceAuthGroupCommittedGenerationFact({
 });
 
 describe('mapCommittedGenerationApplyResult', () => {
+  it.each([
+    { committedRevision: null, currentRevision: 'csr_bbbbbbbbbbbbbbbbbbbbbb' },
+    { committedRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa', currentRevision: 'csr_bbbbbbbbbbbbbbbbbbbbbb' },
+  ] as const)(
+    'converges on the selected account current credential ($committedRevision → $currentRevision)',
+    ({ committedRevision, currentRevision }) => {
+      const committedGeneration = buildConnectedServiceAuthGroupCommittedGenerationFact({
+        decisionId: 'current-selected-account',
+        provenance: 'reconciliation',
+        decisionCommittedTarget: {
+          serviceId: 'openai-codex', groupId: 'team', profileId: 'profile-b', generation: 2,
+          credentialRevision: committedRevision,
+        },
+      });
+
+      expect(mapCommittedGenerationApplyResult({
+        committedGeneration,
+        result: {
+          status: 'observed_generation',
+          activeProfileId: 'profile-b',
+          generation: 2,
+          mode: 'hot_apply',
+          providerApplication: 'applied',
+          verificationByServiceId: {
+            'openai-codex': {
+              status: 'verified',
+              proofStrength: 'exact',
+              providerAccountId: 'acct-b',
+              generationApplication: {
+                serviceId: 'openai-codex', groupId: 'team', profileId: 'profile-b', generation: 2,
+                credentialRevision: currentRevision,
+                credentialFingerprint: 'sha256:abcdef12',
+              },
+            },
+          },
+        },
+      })).toMatchObject({
+        reconciliationDisposition: 'converged',
+        errorCode: null,
+        providerAdoptedTarget: {
+          serviceId: 'openai-codex', groupId: 'team', profileId: 'profile-b', generation: 2,
+          credentialRevision: currentRevision,
+          proof: { status: 'verified', providerAccountId: 'acct-b', credentialRevision: currentRevision },
+        },
+      });
+    },
+  );
+
   it.each(['switched', 'observed_generation'] as const)('maps %s to converged', (status) => {
     const credentialRevision = 'csr_aaaaaaaaaaaaaaaaaaaaaa';
     const committedWithRevision = buildConnectedServiceAuthGroupCommittedGenerationFact({

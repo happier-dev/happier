@@ -19,7 +19,10 @@ import {
   type ProviderOutcomeProofKind,
 } from '../recovery/providerOutcomeProof';
 import type { ConnectedServiceRuntimeFailureClassification } from './types';
-import { readConnectedServiceAuthGenerationApplyFailure } from './connectedServiceAuthGenerationApplyFailure';
+import {
+  isRetryableConnectedServiceCredentialApplyFailure,
+  readConnectedServiceAuthGenerationApplyFailure,
+} from './connectedServiceAuthGenerationApplyFailure';
 import { ConnectedServiceAuthGroupSwitchLeaseExpiredError } from '../accountGroups/switching/pipeline/switchPipeline';
 import { sanitizeConnectedServiceRuntimeFailureClassification } from './sanitizeConnectedServiceRuntimeFailureClassification';
 import {
@@ -149,6 +152,7 @@ export type RuntimeAuthRecoverySchedulerDeps = Readonly<{
     classification: ConnectedServiceRuntimeFailureClassification;
     resumePromptMode: 'standard' | 'off' | 'custom';
     source: 'scheduler_retry';
+    interruptedOriginId?: string;
   }>) => Promise<unknown>;
   continueAfterUsageLimitReset?: (intent: RuntimeAuthRecoveryIntent) => Promise<unknown>;
   gate?: (input: Readonly<{ sessionId: string; intent: RuntimeAuthRecoveryIntent }>) => DurableRecoveryGateResult;
@@ -512,6 +516,15 @@ function isDurableContinuityReconstructionExhausted(
 function classifyApplyFailure(result: unknown): RetryDecision | null {
   const failure = readApplyFailure(result);
   if (!failure) return null;
+  if (isRetryableConnectedServiceCredentialApplyFailure(failure.errorCode)) {
+    return {
+      retryable: true,
+      classification: { kind: 'dependency_unavailable', retryable: true },
+      failurePhase: 'apply',
+      failureReason: failure.errorCode,
+      lastError: failure.errorCode,
+    };
+  }
   if (
     failure.errorCode === 'provider_account_adoption_mismatch'
     || failure.errorCode === 'post_switch_verification_failed'
@@ -894,7 +907,7 @@ function doesRuntimeAuthRecoveryTransitionAdvance(
     || runtimeAuthRecoveryTransitionRank[next] > runtimeAuthRecoveryTransitionRank[previous];
 }
 
-function buildRuntimeAuthRecoveryAttemptId(reportId: string | undefined): string {
+export function buildRuntimeAuthRecoveryAttemptId(reportId: string | undefined): string {
   const opaqueSource = typeof reportId === 'string' && reportId.trim().length > 0
     ? reportId.trim()
     : randomUUID();
@@ -1321,6 +1334,9 @@ export class RuntimeAuthRecoveryScheduler {
               classification: intent.classification,
               resumePromptMode: readResumePromptMode(intent.resumePromptMode),
               source: 'scheduler_retry',
+              // Predecessor waits have no attempt id; their existing durable key
+              // still identifies that recovery without borrowing a newer user turn.
+              interruptedOriginId: intent.attemptId ?? buildRecoveryKeyForIntent(intent),
             });
           const continuationResult = readSwitchAttemptResult(result);
           if (continuationResult?.status === 'continuation_cancelled') {
@@ -1649,6 +1665,11 @@ export class RuntimeAuthRecoveryScheduler {
   /** Reconstructs persisted recovery state without timers or recovery effects. */
   hydratePassive(): ReadonlyArray<RuntimeAuthRecoveryIntent> {
     return this.scheduler.hydratePassive();
+  }
+
+  /** Arms persisted waits; recovery runs asynchronously through the normal timer gate. */
+  hydrate(): ReadonlyArray<RuntimeAuthRecoveryIntent> {
+    return this.scheduler.hydrate();
   }
 
   /** Delivers only already-authorized presentation events; it never arms recovery execution. */
