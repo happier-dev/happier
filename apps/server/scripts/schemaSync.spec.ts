@@ -483,27 +483,6 @@ model Account { id String @id }
         );
     });
 
-    it("pins MySQL-indexed sha256 token hashes to VARBINARY(32)", () => {
-        const master = `
-generator client {
-    provider = "prisma-client-js"
-}
-
-datasource db {
-    provider = "postgresql"
-    url      = env("DATABASE_URL")
-}
-
-model PublicSessionShare {
-    id        String @id
-    tokenHash Bytes  @unique
-}
-`;
-
-        const mysql = generateMySqlSchemaFromPostgres(master);
-        expect(mysql).toContain("tokenHash Bytes  @db.VarBinary(32) @unique");
-    });
-
     it("pins all MySQL tokenHash unique fields to VARBINARY(32)", () => {
         const master = `
 generator client {

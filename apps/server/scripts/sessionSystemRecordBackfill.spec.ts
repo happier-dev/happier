@@ -51,30 +51,7 @@ describe("formatSessionSystemRecordBackfillFailure", () => {
 });
 
 describe("runSessionSystemRecordBackfillCommand", () => {
-    it("runs the final current-version audit without an obsolete predecessor-writer admission switch", async () => {
-        const maintenance = createTestMaintenanceClient();
-        const runOperator = vi.fn(async () => ({
-            outcome: "drained" as const,
-            pages: 1,
-            processed: 0,
-            updated: 0,
-            audit: { pages: 1, processed: 0, nullRows: 0, mismatchedRows: 0 },
-        }));
-
-        await expect(runSessionSystemRecordBackfillCommand({
-            signal: new AbortController().signal,
-            argv: ["--final-contract"],
-            env: { HAPPIER_DB_PROVIDER: "postgres" },
-            createClient: maintenance.createClient,
-            runOperator,
-        })).resolves.toBe(0);
-
-        expect(maintenance.connect).toHaveBeenCalledTimes(1);
-        expect(maintenance.disconnect).toHaveBeenCalledTimes(1);
-        expect(runOperator).toHaveBeenCalledTimes(1);
-    });
-
-    it("runs the final canonical audit without requiring a rollback-only approval environment variable", async () => {
+    it("runs the final canonical audit without obsolete authorization switches and closes the maintenance client", async () => {
         const maintenance = createTestMaintenanceClient();
         const writeOutput = vi.fn();
         const runOperator = vi.fn(async () => ({
@@ -96,6 +73,8 @@ describe("runSessionSystemRecordBackfillCommand", () => {
             writeOutput,
         })).resolves.toBe(0);
 
+        expect(maintenance.connect).toHaveBeenCalledTimes(1);
+        expect(maintenance.disconnect).toHaveBeenCalledTimes(1);
         expect(runOperator).toHaveBeenCalledTimes(1);
         expect(writeOutput).toHaveBeenCalledWith(expect.stringContaining('"mode":"final-contract"'));
     });
