@@ -399,7 +399,10 @@ describe('installTauriMcpWebviewDriverScripts', () => {
         const override = readDesktopActivityOverlayQaSyncOverride({ windowObj });
         expect(override).not.toBeNull();
         expect(native.overlayState).toBe(override);
-        expect(override?.model.expanded.cards[0]?.kind).toBe('permission_request');
+        const cards = override?.model.expanded.cards;
+        expect(cards).toBeDefined();
+        if (!cards) throw new Error('Expected the permission-request overlay to contain cards');
+        expect(cards[0]?.kind).toBe('permission_request');
         expect(override?.expanded).toBe(true);
     });
 
@@ -409,7 +412,10 @@ describe('installTauriMcpWebviewDriverScripts', () => {
         const windowObj = installDefaultQaBridge();
         await expect(windowObj.__MCP__.seedDesktopActivityOverlayQaState('quota_summary')).resolves.toMatchObject({ ok: true });
         const pinned = readDesktopActivityOverlayQaSyncOverride({ windowObj });
-        expect(pinned?.model.expanded.cards[0]?.kind).toBe('quota_summary');
+        const cards = pinned?.model.expanded.cards;
+        expect(cards).toBeDefined();
+        if (!cards) throw new Error('Expected the quota-summary overlay to contain cards');
+        expect(cards[0]?.kind).toBe('quota_summary');
         const syncsBefore = native.overlayPayloads.length;
         await vi.advanceTimersByTimeAsync(350);
         // There must be real pin delivery; a fake seed with no override used to pass this case.
@@ -434,7 +440,10 @@ describe('installTauriMcpWebviewDriverScripts', () => {
         await expect(mcp.seedDesktopActivityOverlayQaState('user_question')).resolves.toMatchObject({ ok: true });
         const currentPin = readDesktopActivityOverlayQaSyncOverride({ windowObj });
         expect(currentPin).not.toBe(oldPin);
-        expect(currentPin?.model.expanded.cards[0]?.kind).toBe('user_question');
+        const cards = currentPin?.model.expanded.cards;
+        expect(cards).toBeDefined();
+        if (!cards) throw new Error('Expected the user-question overlay to contain cards');
+        expect(cards[0]?.kind).toBe('user_question');
         const syncsBefore = native.overlayPayloads.length;
         await vi.advanceTimersByTimeAsync(250);
         const subsequentPayloads = native.overlayPayloads.slice(syncsBefore);
