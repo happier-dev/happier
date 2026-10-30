@@ -38,10 +38,11 @@ function result(evidence?: readonly UsageWorkEvidence[], complete = false) {
 
 describe('public-profile snapshot computation from canonical Usage', () => {
   it('projects actual day, source, interval and anonymous duration facts into the strict server body without private DTOs', () => {
-    const built = buildPublicProfileSnapshot({ queryResult: result(), policy, nowMs: endMs });
+    const computedAtMs = endMs + 12_345;
+    const built = buildPublicProfileSnapshot({ queryResult: result(), policy, nowMs: computedAtMs });
     expect(built.kind).toBe('ready');
     if (built.kind !== 'ready') throw new Error('Expected admitted public snapshot');
-    expect(built.snapshot).toMatchObject({ period: { startMs, endMs, timeZoneOffsetMinutes: 0 }, facts: {
+    expect(built.snapshot).toMatchObject({ computedAtMs, period: { startMs, endMs, timeZoneOffsetMinutes: 0 }, facts: {
       tokens: 50, activeDays: 3, bestStreakDays: 3, currentStreakDays: 3, agentTimeMs: 600, peakParallel: 1,
       calendar: [{ date: '2026-10-18', level: 3 }, { date: '2026-10-19', level: 4 }, { date: '2026-10-20', level: 3 }],
       sourceSplit: [{ execution: 'happier', share: .2 }, { execution: 'outside', share: .6 }, { execution: 'unknown', share: .2 }],

@@ -197,6 +197,6 @@ export function buildPublicProfileSnapshot(input: Readonly<{ queryResult: UsageQ
     }
     return { execution, facts: projected.facts };
   });
-  const parsed = PublicProfileSnapshotV1Schema.safeParse({ v: 1, computedAtMs: asOfMs, period, coverage, fieldCoverage, facts, lenses });
+  const parsed = PublicProfileSnapshotV1Schema.safeParse({ v: 1, computedAtMs: input.nowMs, period, coverage, fieldCoverage, facts, lenses });
   return parsed.success ? { kind: 'ready', snapshot: projectPublicProfileSnapshot(parsed.data, input.policy) } : unavailable('invalid_snapshot');
 }
