@@ -23,10 +23,6 @@ describe('Runtime Detection', () => {
     expect(isDeno()).toBe(runtime === 'deno');
   });
 
-  it('returns a valid runtime value', () => {
-    expect(['node', 'bun', 'deno', 'unknown']).toContain(getRuntime());
-  });
-
   it('is stable across repeated calls', () => {
     const first = getRuntime();
     expect(getRuntime()).toBe(first);

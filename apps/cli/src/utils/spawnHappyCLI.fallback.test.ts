@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, onTestFailed, vi } from 'vitest';
 import { basename, dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
 import {
   constants,
   existsSync,
@@ -442,7 +443,7 @@ describe('spawnHappyCLI fallback invocation', () => {
 
   it('keeps a complete pinned dist ready when a runtime dependency has package-local optional imports', async () => {
     await withTempDir('happier-runner-dependency-closure-', async (root) => {
-      const entrypoint = writeTinyDist(root);
+      const entrypoint = writeTinyDist(root, 'import marker from "optional-runtime-dependency";\nprocess.stdout.write(marker);\n');
       writeTinyRuntimeAssets(root);
       const fingerprint = writeDistBuildManifest(entrypoint);
       const runtimeStatePath = join(root, 'stack.runtime.json');
@@ -456,10 +457,21 @@ describe('spawnHappyCLI fallback invocation', () => {
 
       const dependencyDir = join(dirname(dirname(pinnedEntrypoint!)), 'node_modules', 'optional-runtime-dependency');
       mkdirSync(dependencyDir, { recursive: true });
-      writeFileSync(join(dependencyDir, 'index.js'), 'import "./platform-optional.js";\n', 'utf8');
+      // This consumed CommonJS package tolerates an unavailable platform-specific sibling.
+      writeFileSync(join(dependencyDir, 'index.js'), [
+        'try { require("./platform-optional.js"); }',
+        'catch (error) { if (error.code !== "MODULE_NOT_FOUND") throw error; }',
+        'module.exports = "optional-runtime-ready";',
+        '',
+      ].join('\n'), 'utf8');
 
       const reused = mod.buildHappyCliSubprocessInvocation(['claude', '--started-by', 'daemon']);
       expect(reused.argv).toContain(pinnedEntrypoint);
+      const child = spawnSync(process.execPath, [pinnedEntrypoint!], { encoding: 'utf8' });
+      expect(child.error).toBeUndefined();
+      expect(child.status, child.stderr).toBe(0);
+      expect(child.stdout).toBe('optional-runtime-ready');
+      expect(child.stderr).toBe('');
     });
   });
 
@@ -1436,10 +1448,17 @@ describe('spawnHappyCLI fallback invocation', () => {
       await withTempDir('spawn-happy-cli-source-root-', async (sourceRoot) => {
         const sourceEntrypoint = join(sourceRoot, 'src', 'index.ts');
         const sourceTsconfigPath = join(sourceRoot, 'tsconfig.runtime.json');
-        const inheritedTsxHook = '/external/tsx/dist/esm/index.mjs';
+        const inheritedTsxHook = join(sourceRoot, 'hooks', 'register.mjs');
+        const inheritedTsxSpecifier = pathToFileURL(inheritedTsxHook).href;
+        const installedRoot = join(sourceRoot, 'installed');
+        const installedEntrypoint = join(installedRoot, 'package-dist', 'index.mjs');
         mkdirSync(join(sourceRoot, 'src'), { recursive: true });
+        mkdirSync(dirname(inheritedTsxHook), { recursive: true });
+        mkdirSync(dirname(installedEntrypoint), { recursive: true });
         writeFileSync(sourceEntrypoint, 'export {};\n', 'utf8');
         writeFileSync(sourceTsconfigPath, '{}\n', 'utf8');
+        writeFileSync(inheritedTsxHook, 'export {};\n', 'utf8');
+        writeFileSync(installedEntrypoint, 'export {};\n', 'utf8');
 
         envScope.patch({
           HAPPIER_CLI_SUBPROCESS_RUNTIME: 'node',
@@ -1452,24 +1471,12 @@ describe('spawnHappyCLI fallback invocation', () => {
           HAPPIER_CLI_SUBPROCESS_ENTRYPOINT: undefined,
         });
 
-        process.argv = [process.execPath, sourceEntrypoint, 'daemon', 'start-sync'];
-        process.execArgv = ['--import', inheritedTsxHook];
+        // A source-launched parent still exposes its installed shim through argv[0].
+        process.argv = [join(installedRoot, 'happier'), sourceEntrypoint, 'daemon', 'start-sync'];
+        process.execArgv = ['--import', inheritedTsxSpecifier];
 
-        vi.doMock('node:fs', async () => {
-          const actual = await vi.importActual<typeof import('node:fs')>('node:fs');
-          return {
-            ...actual,
-            existsSync: (path: string) => {
-              if (path === sourceEntrypoint || path === sourceTsconfigPath) return true;
-              if (path === '/Users/tester/.happier/cli-dev/current/package-dist/index.mjs') return true;
-              return actual.existsSync(path);
-            },
-          };
-        });
-
-        vi.doMock('@/packagedRuntime/resolvePackagedRuntimeEntrypoint', () => ({
-          resolvePackagedRuntimeEntrypoint: () => '/Users/tester/.happier/cli-dev/current/package-dist/index.mjs',
-        }));
+        const { resolvePackagedRuntimeEntrypoint } = await import('@/packagedRuntime/resolvePackagedRuntimeEntrypoint');
+        expect(resolvePackagedRuntimeEntrypoint('index.mjs')).toBe(installedEntrypoint);
 
         const mod = (await import('@/utils/spawnHappyCLI')) as typeof import('@/utils/spawnHappyCLI');
         const inv = mod.buildHappyCliSubprocessInvocation(['claude', '--happy-starting-mode', 'remote']);
@@ -1477,7 +1484,7 @@ describe('spawnHappyCLI fallback invocation', () => {
         expect(inv.runtime).toBe('node');
         expect(inv.argv).toEqual([
           '--import',
-          inheritedTsxHook,
+          inheritedTsxSpecifier,
           '--no-warnings',
           '--no-deprecation',
           sourceEntrypoint,
@@ -1488,7 +1495,7 @@ describe('spawnHappyCLI fallback invocation', () => {
         expect(inv.env).toEqual({
           TSX_TSCONFIG_PATH: sourceTsconfigPath,
         });
-        expect(inv.argv).not.toEqual(expect.arrayContaining(['/Users/tester/.happier/cli-dev/current/package-dist/index.mjs']));
+        expect(inv.argv).not.toContain(installedEntrypoint);
       });
     } finally {
       process.argv = originalArgv;

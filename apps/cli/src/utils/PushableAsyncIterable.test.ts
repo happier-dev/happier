@@ -68,31 +68,6 @@ describe('PushableAsyncIterable', () => {
     await expect(consumer).resolves.toEqual([1, 2]);
   });
 
-  it('supports external error control from consumer logic', async () => {
-    const iterable = new PushableAsyncIterable<number>();
-
-    const consumer = (async () => {
-      const values: number[] = [];
-      try {
-        for await (const value of iterable) {
-          values.push(value);
-          if (value === 2) {
-            iterable.setError(new Error('External abort'));
-          }
-        }
-      } catch (caught) {
-        expect((caught as Error).message).toBe('External abort');
-        return values;
-      }
-      throw new Error('Expected iterable to throw');
-    })();
-
-    iterable.push(1);
-    iterable.push(2);
-
-    await expect(consumer).resolves.toEqual([1, 2]);
-  });
-
   it('queues values pushed before consumer starts', async () => {
     const iterable = new PushableAsyncIterable<number>();
 

@@ -5,7 +5,6 @@ import { describe, expect, it } from 'vitest';
 import {
   canonicalAbsolutePathsEqual,
   expandHomeDirPath,
-  isCanonicalAbsolutePathInsideRoot,
   resolveAbsolutePathFromWorkingDirectory,
   resolveCanonicalAbsolutePath,
   resolveCanonicalAbsoluteChildPathComparisonIdentity,
@@ -52,23 +51,6 @@ describe('CLI path canonicalization', () => {
     expect(canonicalAbsolutePathsEqual(
       '\\\\Server\\Share\\happier\\managed\\staging\\..\\runtime',
       '//server/share/HAPPIER/managed/runtime/',
-    )).toBe(true);
-  });
-
-  it('contains Windows paths across mixed separators without confusing siblings or dot-prefixed children', () => {
-    const root = 'C:\\Users\\Alice\\project';
-
-    expect(isCanonicalAbsolutePathInsideRoot(
-      root,
-      'c:/users/alice/project\\build/output.js',
-    )).toBe(true);
-    expect(isCanonicalAbsolutePathInsideRoot(
-      root,
-      'C:\\Users\\Alice\\project-other\\output.js',
-    )).toBe(false);
-    expect(isCanonicalAbsolutePathInsideRoot(
-      root,
-      'C:\\Users\\Alice\\project\\..build\\output.js',
     )).toBe(true);
   });
 

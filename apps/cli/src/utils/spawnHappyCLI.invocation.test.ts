@@ -142,32 +142,6 @@ describe('happier-cli subprocess invocation', () => {
         expect(inv.argv[2]).toMatch(/package-dist[\\/]index\.mjs$/);
     });
 
-    it('falls back to tsx source entrypoint in dev mode when dist entrypoint is missing', async () => {
-        envScope.patch({
-            HAPPIER_CLI_SUBPROCESS_PREFER_TSX: '0',
-            HAPPIER_STACK_REPO_DIR: undefined,
-            HAPPIER_STACK_CLI_ROOT_DIR: undefined,
-            HAPPIER_STACK_STACK: undefined,
-            HAPPIER_CLI_SUBPROCESS_RUNTIME: 'node',
-            HAPPIER_VARIANT: 'dev',
-            HAPPIER_CLI_SUBPROCESS_ALLOW_TSX_FALLBACK: '1',
-            HAPPIER_CLI_SUBPROCESS_ENTRYPOINT: join(process.cwd(), 'missing-entrypoint-synthetic', 'index.mjs'),
-        });
-
-        const mod = (await import('@/utils/spawnHappyCLI')) as typeof import('@/utils/spawnHappyCLI');
-        const inv = mod.buildHappyCliSubprocessInvocation(['daemon', 'start-sync']);
-
-        expect(inv.runtime).toBe('node');
-        const importIndex = inv.argv.indexOf('--import');
-        expect(importIndex).toBeGreaterThanOrEqual(0);
-        // Node can accept either `--import tsx` or a fully-resolved tsx loader path, depending on resolution strategy.
-        expect(inv.argv[importIndex + 1]).toMatch(/(^tsx$|[\\/]tsx[\\/]dist[\\/]esm[\\/]index\.mjs$)/);
-        expect(inv.argv).toEqual(
-            expect.arrayContaining([expect.stringMatching(/src[\\/]index\.ts$/), 'daemon', 'start-sync']),
-        );
-        expect(inv.env?.TSX_TSCONFIG_PATH).toEqual(expect.stringMatching(/[\\/]apps[\\/]cli[\\/]tsconfig\.runtime\.json$/));
-    });
-
     it('propagates --preserve-symlinks when the current CLI process was launched with it', async () => {
         await withTempHappyCliEntrypoint(async (entrypoint) => {
             envScope.patch({

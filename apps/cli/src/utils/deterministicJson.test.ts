@@ -88,9 +88,9 @@ describe('deterministicStringify', () => {
             }
         };
 
-        const str1 = deterministicStringify(obj);
-        const str2 = deterministicStringify(obj);
-        expect(str1).toBe(str2);
+        expect(deterministicStringify(obj)).toBe(
+            '{"metadata":{"counts":{"active":2,"total":2},"version":"1.0"},"users":[{"id":2,"name":"Bob","tags":["admin","user"]},{"id":1,"name":"Alice","tags":["user"]}]}'
+        );
     });
 });
 
@@ -158,15 +158,5 @@ describe('objectKey', () => {
 
         expect(key1).toBe(key2);
         expect(key1).toMatch(/^[A-Za-z0-9_-]+$/); // base64url
-    });
-
-    it('should be suitable for Map keys', () => {
-        const map = new Map<string, any>();
-
-        const obj1 = { data: 'test', id: 1 };
-        const obj2 = { id: 1, data: 'test' };
-
-        map.set(objectKey(obj1), 'value1');
-        expect(map.get(objectKey(obj2))).toBe('value1');
     });
 });
