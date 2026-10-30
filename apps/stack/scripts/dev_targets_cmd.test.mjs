@@ -192,6 +192,45 @@ test('dev-targets status exposes read-only admission holder progress and observa
   assert.equal(failed.status.state, 'ready', 'failed observation does not fabricate empty holders or alter sync health');
 });
 
+test('dev-targets conflict refusals identify the root and recovery without restarting synchronization', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'hstack-conflict-guidance-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(join(root, 'repo-test'), { recursive: true });
+  await writeFile(join(root, 'repo-test', 'dev-targets.json'), JSON.stringify({ version: 1,
+    targets: [{ name: 'linux', platform: 'posix', ssh: 'linux', repoDir: '/repo', cliHomeDir: '/state' }] }));
+  const conflictRoot = '.port-check-backend-disabled';
+  const session = { name: 'happier-linux', paused: false, status: 'watching', successfulCycles: 1,
+    alpha: { connected: true, scanned: true }, beta: { connected: true, scanned: true } };
+  const { binDir } = writeFakeBin({ root, name: 'mutagen', content: [
+    '#!/bin/sh',
+    'case "$2" in',
+    '  list) case "$5" in',
+    '    *json*) printf "%s\\n" "$SYNC_LIST" ;;',
+    '    *) [ "$SYNC_RECOVERED" = 1 ] || exit 97; printf "happier-linux|Watching|false|true|1|0/0|0/0|true|1|0/0|0/0|active|1|ok|0|0\\n" ;;',
+    '  esac ;;',
+    '  flush) [ "$SYNC_RECOVERED" = 1 ] || exit 99 ;;',
+    '  *) exit 98 ;;',
+    'esac',
+  ].join('\n') });
+  writeFakeBin({ root, name: 'ssh', content: '#!/bin/sh\nprintf \'__HAPPIER_WORKER_POWER__={"ok":true,"detail":"masked"}\\n\'\n' });
+  const env = { PATH: `${binDir}:${process.env.PATH}`,
+    SYNC_LIST: JSON.stringify([{ ...session, conflicts: [{ root: conflictRoot }] }]) };
+  for (const args of [['status', 'linux'], ['sync', 'linux']]) {
+    const result = await runRaw([...args.slice(0, 2), '--stack=repo-test', ...args.slice(2)], root, env);
+    assert.equal(result.code, 1);
+    const diagnostic = result.stdout + result.stderr;
+    assert.ok(diagnostic.includes(conflictRoot), diagnostic);
+    assert.match(diagnostic, /source.*replica/);
+    assert.match(diagnostic, /hstack dev-targets sync linux/);
+    assert.doesNotMatch(diagnostic, /run hstack dev-targets sync-service start/);
+  }
+  const recovered = await runRaw(['sync', 'linux', '--stack=repo-test'], root, {
+    ...env, SYNC_LIST: JSON.stringify([session]), SYNC_RECOVERED: '1',
+  });
+  assert.equal(recovered.code, 0, recovered.stderr);
+  assert.match(recovered.stdout, /synchronized/);
+});
+
 test('status and doctor report an idle no-watch first cycle as needs-flush without seeding it', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'hstack-no-watch-status-'));
   t.after(() => rm(root, { recursive: true, force: true }));

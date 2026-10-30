@@ -32,6 +32,7 @@ import {
   syncDevTarget,
 } from './utils/dev_targets/executor.mjs';
 import { renderAdmissionOwnerProgress } from './utils/proc/service_memory.mjs';
+import { describeDevTargetSyncRecovery } from './utils/dev_targets/mutagen_runtime.mjs';
 import {
   inspectDevTargetSyncService,
   startDevTargetSyncService,
@@ -126,8 +127,9 @@ function requireTarget(targets, rawName, command) {
 
 function formatSyncStatus(target, status) {
   const detail = status.lastError || status.error;
+  const recovery = describeDevTargetSyncRecovery(status, target.name);
   return `[dev-targets] ${target.name}\t${status.state}${detail ? `\t${detail}` : ''}`
-    + (status.recovery === 'rescan' ? '\twill rescan at the next dispatch barrier' : '');
+    + (recovery ? `\t${recovery}` : '');
 }
 
 function exitCodeForCommandResult(result) {

@@ -211,6 +211,7 @@ export function parseMutagenSyncList(raw, sessionName) {
       state: 'unhealthy',
       sessionName: expectedName,
       lastError: `${totalConflicts} unresolved synchronization ${totalConflicts === 1 ? 'conflict' : 'conflicts'}${conflictDetail}`,
+      conflictRoots: roots,
       session,
     };
   }
@@ -310,6 +311,15 @@ function isSafeRelativeConflictRoot(value) {
     && !root.startsWith('/')
     && !root.startsWith('\\')
     && !root.split(/[\\/]+/).some((segment) => segment === '..' || segment === '');
+}
+
+export function describeDevTargetSyncRecovery(status, targetName) {
+  if (status.conflictRoots) {
+    return 'inspect and reconcile the conflicting roots on the source and replica, preserving wanted changes; '
+      + `then run hstack dev-targets sync ${targetName}`;
+  }
+  if (status.recovery === 'rescan') return 'will rescan at the next dispatch barrier';
+  return '';
 }
 
 export function resolveRecoverableReplicaArtifactConflictRoots(session) {
