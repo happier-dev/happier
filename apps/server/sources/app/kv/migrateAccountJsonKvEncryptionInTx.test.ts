@@ -137,22 +137,23 @@ describe("migrateAccountJsonKvEncryptionInTx", () => {
             JSON.stringify({ t: "plain", v: { undoneOrder: [] } }),
             "utf8",
         ).toString("base64");
-        const update = vi.fn();
+        const updateMany = vi.fn();
 
         await expect(migrateAccountJsonKvEncryptionInTx({
             tx: {
                 userKVStore: {
-                    findMany: vi.fn(async () => [{
+                    findMany: vi.fn()
+                    .mockResolvedValueOnce([{
                         key: "todo.index",
                         version: 2,
                         value: new TextEncoder().encode("released-ciphertext"),
-                    }]),
-                    findUnique: vi.fn(async () => ({
+                    }])
+                    .mockResolvedValueOnce([{
                         key: "todo.index",
                         version: 3,
                         value: new TextEncoder().encode("concurrent-ciphertext"),
-                    })),
-                    update,
+                    }]),
+                    updateMany,
                 },
             } as any,
             accountId: "account-1",
@@ -170,7 +171,7 @@ describe("migrateAccountJsonKvEncryptionInTx", () => {
         })).rejects.toBeInstanceOf(
             AccountJsonKvEncryptionMigrationConflictError,
         );
-        expect(update).not.toHaveBeenCalled();
+        expect(updateMany).not.toHaveBeenCalled();
     });
 
     it("matches exact decoded Todo post-state and rejects version/set drift read-only", async () => {

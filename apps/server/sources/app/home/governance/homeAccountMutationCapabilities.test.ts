@@ -65,5 +65,12 @@ describe("resolveHomeAccountMutationCapabilitiesV1", () => {
             reenable: { status: "unavailable", reason: "target_retired" },
             delete: { status: "unavailable", reason: "team_owner_transfer_required" },
         });
+
+        expect(resolveHomeAccountMutationCapabilitiesV1({
+            actor: owner,
+            target: { accountId: "retired", homeRole: "member", status: "disabled" },
+            activeOwnerCount: 1,
+            teamOwnershipAllowsErasure: true,
+        }).delete).toEqual({ status: "available" });
     });
 });

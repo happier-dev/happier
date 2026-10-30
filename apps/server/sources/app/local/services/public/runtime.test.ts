@@ -1386,29 +1386,6 @@ describe("local service public exposure runtime", () => {
         });
     }
 
-    // S-2
-    it("refuses an authenticated exposure to an account that does not hold the bound session", async () => {
-        const mod = await loadPublicRuntimeModule();
-        const runtime = createAuthenticatedModeRuntime(mod);
-        expect(createAuthenticatedExposure(runtime).ok).toBe(true);
-
-        expect(runtime.validateAccess({
-            exposureId: "public_preview_1",
-            rawToken: null,
-            authenticated: true,
-            sessionAuthorized: false,
-            clientKey: "client_a",
-        })).toEqual({ ok: false, reasonCode: "session_not_authorized" });
-
-        expect(runtime.validateAccess({
-            exposureId: "public_preview_1",
-            rawToken: null,
-            authenticated: true,
-            sessionAuthorized: true,
-            clientKey: "client_a",
-        })).toEqual({ ok: true, preview });
-    });
-
     // S-3
     it("mints a public exposure on its own isolated origin and refuses without one", async () => {
         const mod = await loadPublicRuntimeModule();

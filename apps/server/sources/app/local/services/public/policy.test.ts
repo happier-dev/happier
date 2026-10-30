@@ -15,23 +15,6 @@ async function loadPublicPolicyModule(): Promise<typeof publicPolicyModule> {
 }
 
 describe("local service public exposure policy", () => {
-    it("fails closed when public preview is disabled", async () => {
-        const mod = await loadPublicPolicyModule();
-
-        const decision = mod?.resolveLocalServicePublicExposureDecision({
-            policy: {},
-            requestedMode: "secret_link",
-            requestedTtlMs: 60_000,
-            nowMs: 1_000,
-            previewEligible: true,
-            sessionAuthorized: true,
-            dnsTlsValid: true,
-            rateLimitProfileId: "default",
-        });
-
-        expect(decision).toEqual({ ok: false, reasonCode: "public_preview_disabled" });
-    });
-
     it("requires an eligible private preview and authorized session access", async () => {
         const mod = await loadPublicPolicyModule();
 

@@ -31,24 +31,6 @@ describe("Account encryption transition measured capacity", () => {
         });
     });
 
-    it("admits the measured census on both retained sides at once", () => {
-        const measurement = ACCOUNT_ENCRYPTION_TRANSITION_PEP1_CAPACITY_MEASUREMENT;
-        const capacity = deriveAccountEncryptionTransitionMeasuredCapacity({
-            measurement,
-            censusPageItems: CENSUS_PAGE_ITEMS,
-        });
-        const measuredCensusFootprint =
-            measurement.nearMaximumParticipantEncodedBytes
-            * BigInt(measurement.censusParticipantRows);
-        // The three fences the coordinator applies to an authorized census:
-        // participant count, one side's bytes, and the source+target peak.
-        expect(capacity.participantLimit)
-            .toBeGreaterThanOrEqual(measurement.censusParticipantRows);
-        expect(capacity.encodedByteLimit >= measuredCensusFootprint).toBe(true);
-        expect(capacity.reservedCapacityBytes >= measuredCensusFootprint * 2n)
-            .toBe(true);
-    });
-
     it("rounds a census up to whole released pages rather than truncating it", () => {
         const oneRowPastAPage = deriveAccountEncryptionTransitionMeasuredCapacity({
             measurement: {

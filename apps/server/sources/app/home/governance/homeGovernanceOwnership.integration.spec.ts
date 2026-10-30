@@ -9,7 +9,6 @@ import {
     assertHomeOwnershipSurvivesTransitionInTx,
     authorizeHomeGovernanceMutationInTx,
     countActiveHomeOwnersInTx,
-    resolveHomeAccountMutationCapabilitiesV1,
 } from "./homeCapabilities";
 
 let sequence = 0;
@@ -143,62 +142,6 @@ describe("Home last-active-owner invariant", () => {
 });
 
 describe("Home governance mutation authorization", () => {
-    it("projects per-target mutations from the same owner without client role inference", () => {
-        const owner = { accountId: "owner", homeRole: "owner", status: "active" } as const;
-        const admin = { accountId: "admin", homeRole: "admin", status: "active" } as const;
-        const member = { accountId: "member", homeRole: "member", status: "active" } as const;
-
-        expect(resolveHomeAccountMutationCapabilitiesV1({
-            actor: admin,
-            target: member,
-            activeOwnerCount: 1,
-            teamOwnershipAllowsErasure: true,
-        })).toMatchObject({
-            setRole: {
-                member: { status: "unavailable", reason: "unchanged" },
-                admin: { status: "available" },
-                owner: { status: "unavailable", reason: "not_authorized" },
-            },
-            disable: { status: "available" },
-            delete: { status: "unavailable", reason: "not_authorized" },
-        });
-
-        expect(resolveHomeAccountMutationCapabilitiesV1({
-            actor: owner,
-            target: owner,
-            activeOwnerCount: 1,
-            teamOwnershipAllowsErasure: true,
-        })).toMatchObject({
-            setRole: {
-                member: { status: "unavailable", reason: "last_active_owner" },
-                admin: { status: "unavailable", reason: "last_active_owner" },
-            },
-            disable: { status: "unavailable", reason: "last_active_owner" },
-            delete: { status: "unavailable", reason: "last_active_owner" },
-        });
-    });
-
-    it("projects terminal retry and Team-owner refusal exactly", () => {
-        const owner = { accountId: "owner", homeRole: "owner", status: "active" } as const;
-        const retired = { accountId: "retired", homeRole: "member", status: "disabled" } as const;
-        expect(resolveHomeAccountMutationCapabilitiesV1({
-            actor: owner,
-            target: retired,
-            activeOwnerCount: 1,
-            teamOwnershipAllowsErasure: false,
-        })).toMatchObject({
-            reenable: { status: "unavailable", reason: "target_retired" },
-            delete: { status: "unavailable", reason: "team_owner_transfer_required" },
-        });
-
-        expect(resolveHomeAccountMutationCapabilitiesV1({
-            actor: owner,
-            target: retired,
-            activeOwnerCount: 1,
-            teamOwnershipAllowsErasure: true,
-        }).delete).toEqual({ status: "available" });
-    });
-
     it("refuses an admin every owner transition even when another owner is active", async () => {
         const admin = await createAccount("admin");
         const firstOwner = await createAccount("owner");
