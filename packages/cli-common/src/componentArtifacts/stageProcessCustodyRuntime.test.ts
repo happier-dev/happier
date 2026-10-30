@@ -1,6 +1,8 @@
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import fs from 'node:fs/promises';
+import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { isAbsolute, join, relative, sep } from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -15,6 +17,8 @@ async function makeRoot(): Promise<string> {
 }
 
 afterEach(async () => {
+  vi.restoreAllMocks();
+  syncBuiltinESMExports();
   await Promise.all(tempDirs.splice(0).map(async (root) => {
     await rm(root, { recursive: true, force: true });
   }));
@@ -52,6 +56,8 @@ describe('stageProcessCustodyRuntime', () => {
     const prebuilt = join(root, 'prebuilt');
     await writeFile(prebuilt, 'prebuilt-bytes', 'utf8');
     const runCommand = vi.fn();
+    const scratch = vi.spyOn(fs, 'mkdtemp');
+    syncBuiltinESMExports();
 
     const staged = await stageProcessCustodyRuntime({
       repoRoot: root,
@@ -63,5 +69,13 @@ describe('stageProcessCustodyRuntime', () => {
 
     expect(runCommand).not.toHaveBeenCalled();
     await expect(readFile(staged.executablePath, 'utf8')).resolves.toBe('prebuilt-bytes');
+    expect(scratch).toHaveBeenCalled();
+    for (const created of scratch.mock.results) {
+      if (created.type !== 'return') continue;
+      const directory = String(await created.value);
+      const fromRepo = relative(root, directory);
+      expect(isAbsolute(fromRepo) || fromRepo === '..' || fromRepo.startsWith(`..${sep}`)).toBe(true);
+      await expect(fs.stat(directory)).rejects.toMatchObject({ code: 'ENOENT' });
+    }
   });
 });

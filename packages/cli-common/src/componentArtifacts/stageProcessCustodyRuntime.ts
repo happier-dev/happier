@@ -1,4 +1,5 @@
 import { chmod, cp, mkdir, mkdtemp, rename, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { ensureFileExists, type RunCommand } from './commands.js';
@@ -37,8 +38,10 @@ export async function stageProcessCustodyRuntime({
   if (prebuiltExecutablePath) {
     await ensureFileExists(prebuiltExecutablePath);
     // A previous test can still be executing the published helper. Copying
-    // over that inode fails with ETXTBSY on Linux; publish a complete sibling.
-    const stagingDir = await mkdtemp(join(toolsDir, '.process-custody-'));
+    // over that inode fails with ETXTBSY on Linux; publish a complete replacement.
+    // Metro watches source payloads: removing a transient directory there can
+    // race its directory watcher. Keep build scratch outside the checkout.
+    const stagingDir = await mkdtemp(join(tmpdir(), '.process-custody-'));
     const stagedExecutable = join(stagingDir, resolveProcessCustodyRuntimeExecutableName(target));
     try {
       await cp(prebuiltExecutablePath, stagedExecutable);
