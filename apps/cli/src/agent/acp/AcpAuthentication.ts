@@ -1,7 +1,6 @@
 import type { InitializeResponse } from '@agentclientprotocol/sdk';
 import { AgentRuntimeJsonValueV1Schema } from '@happier-dev/protocol/runtime/agentSessionV1';
 
-const MAX_AUTH_METHODS = 64;
 const MAX_AUTH_METHOD_ID_CODE_UNITS = 256;
 const MAX_INITIALIZE_METADATA_CODE_UNITS = 16_384;
 
@@ -25,7 +24,6 @@ export function readAdvertisedAuthMethodIds(initResponse: InitializeResponse): r
   const seen = new Set<string>();
   const methods = Array.isArray(initResponse.authMethods) ? initResponse.authMethods : [];
   for (const method of methods) {
-    if (output.length >= MAX_AUTH_METHODS) break;
     const record = asRecord(method);
     const rawId = record?.id;
     const id = typeof rawId === 'string' ? rawId.trim() : '';
