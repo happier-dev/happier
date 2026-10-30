@@ -1,9 +1,9 @@
-import type {
-  AgentId,
-  AgentCliManagedInstallSpec,
-  AgentCliInstallPlatform as AgentCliInstallPlatform,
-} from '@happier-dev/agents';
-import { getAgentCliRuntimeSpec } from '@happier-dev/agents';
+import type { AgentId } from '@happier-dev/agents/agent-ids';
+import {
+  getAgentCliRuntimeSpec,
+  type AgentCliManagedInstallSpec,
+  type AgentCliInstallPlatform,
+} from '@happier-dev/agents/cli/runtime';
 import { resolveAgentSetupHostPlatform } from '@happier-dev/protocol/agents/setup';
 
 import type { ManagedInstallDeps } from './install/managedInstall.js';
