@@ -1,7 +1,6 @@
 import { isExecutionRunTerminalStatus } from '@happier-dev/protocol/execution/runs/waitForTerminal';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { sessionExecutionRunGet } from '@/sync/ops/sessionExecutionRuns';
-import { resolveVoiceAgentSessionFromState } from '@/voice/agent/voiceAgentRunState';
 
 /** Execution custody retired locally without an acknowledgement of remote Stop. */
 export class VoiceRunStopUnconfirmedError extends Error {
@@ -24,13 +23,8 @@ export async function reconcileUnavailableVoiceRunStop(input: Readonly<{
   signal?: AbortSignal;
 }>): Promise<'gone' | 'unreachable'> {
   input.signal?.throwIfAborted();
-  // Absence, offline presence and an unavailable transport are unknown, never
-  // proof of death. Only the exact Account's explicit inactive carrier suffices.
-  if (input.accountLifetime.isCurrent()
-    && resolveVoiceAgentSessionFromState({
-      serverId: input.accountLifetime.scope.serverId,
-      sessionId: input.rpcSessionId,
-    })?.active === false) return 'gone';
+  // Publisher presence (including active:false) cannot establish Run finality.
+  // Only the execution owner's exact Run observation can release custody.
   if (!input.runId) return 'unreachable';
 
   const observed = await sessionExecutionRunGet(input.rpcSessionId, {

@@ -164,10 +164,7 @@ export function createVoiceRunRecovery(
       const accountLifetime = handle?.accountLifetime ?? admittedLifetime;
       if (!accountLifetime) return;
       const runOptions = { scope: accountLifetime.scope, signal };
-      let unavailableTarget: Readonly<{ rpcSessionId: string; runId: string | null }> = {
-        rpcSessionId: handle?.rpcSessionId ?? sessionId,
-        runId: handle?.voiceAgentId ?? persistedRunMeta?.runId ?? null,
-      };
+      let unconfirmedStop: VoiceRunStopUnconfirmedError | null = null;
       // Unavailability must retain its exact recovery fact even for an
       // unobserved cleanup. Other ordered failures still own their barrier.
       const cleanupFailure = (error: unknown): undefined => {
@@ -175,6 +172,11 @@ export function createVoiceRunRecovery(
         return undefined;
       };
       const reconcileStopFailure = async (error: unknown, rpcSessionId: string, runId: string): Promise<void> => {
+        if (readRpcErrorCode(error) === 'target_unavailable') {
+          const target = await reconcileUnavailableVoiceRunStop({ accountLifetime, rpcSessionId, runId, signal });
+          if (target === 'unreachable') unconfirmedStop ??= new VoiceRunStopUnconfirmedError(rpcSessionId, runId, error);
+          return;
+        }
         if (readRpcErrorCode(error) === 'execution_run_not_allowed') {
           // Stop rejects an already-terminal Run. Only its current exact
           // Account/Run observation, never the refusal code alone, settles
@@ -193,20 +195,11 @@ export function createVoiceRunRecovery(
         rpcSessionId: string,
         runId: string,
       ): Promise<void> => {
-        unavailableTarget = { rpcSessionId, runId };
-        const stopped = await sessionExecutionRunStop(
-          rpcSessionId,
-          { runId },
-          runOptions,
-        ).catch(cleanupFailure);
-        if (stopped?.ok === false) {
-          await reconcileStopFailure(
-            createRpcCallError({
-              error: stopped.error,
-              errorCode: stopped.errorCode,
-            }),
-            rpcSessionId, runId,
-          );
+        try {
+          const stopped = await sessionExecutionRunStop(rpcSessionId, { runId }, runOptions);
+          if (stopped.ok === false) throw createRpcCallError({ error: stopped.error, errorCode: stopped.errorCode });
+        } catch (error) {
+          await reconcileStopFailure(error, rpcSessionId, runId);
         }
       };
       const cleanupMetadataSessionId = handle
@@ -227,65 +220,62 @@ export function createVoiceRunRecovery(
           : (persistedRunMeta?.backendId ?? null),
       );
 
-      try {
-        if (handle) {
-          try {
-            await handle.client.stop({
-              sessionId: handle.rpcSessionId,
-              voiceAgentId: handle.voiceAgentId,
-              signal,
-            });
-          } catch (error) {
-            await reconcileStopFailure(error, handle.rpcSessionId, handle.voiceAgentId);
-          }
-        } else if (persistedRunMeta?.runId) {
-          await stopRun(fallbackRpcSessionId, persistedRunMeta.runId);
+      if (handle) {
+        try {
+          await handle.client.stop({
+            sessionId: handle.rpcSessionId,
+            voiceAgentId: handle.voiceAgentId,
+            signal,
+          });
+        } catch (error) {
+          await reconcileStopFailure(error, handle.rpcSessionId, handle.voiceAgentId);
         }
+      } else if (persistedRunMeta?.runId) {
+        await stopRun(fallbackRpcSessionId, persistedRunMeta.runId);
+      }
 
-        if (daemonBackendId) {
-          // A failed inventory cannot prove that all matching Runs are gone
-          // from the state of the already-stopped primary Run alone.
-          unavailableTarget = { rpcSessionId: daemonRpcSessionId, runId: null };
-          const listed = await Promise.resolve(
-            sessionExecutionRunList(daemonRpcSessionId, {}, runOptions),
-          ).catch(cleanupFailure);
-          if (listed && !('runs' in listed)) {
-            cleanupFailure(
-              createRpcCallError({
-                error: listed.error,
-                errorCode: listed.errorCode,
-              }),
-            );
-          }
-          const runs = listed && 'runs' in listed ? listed.runs : [];
-          const matchingRunIds: string[] = Array.from(
-            new Set(
-              runs
-                .filter(
-                  (run) =>
-                    run.intent === 'voice_agent' &&
-                    run.status === 'running' &&
-                    resolveVoiceAgentRunBackendId(run.backendTarget) ===
-                      daemonBackendId,
-                )
-                .map((run) => run.runId),
-            ),
-          );
-          for (const runId of matchingRunIds) {
-            await stopRun(daemonRpcSessionId, runId);
-          }
+      if (daemonBackendId) {
+        // A failed inventory cannot prove that all matching Runs are gone
+        // from the state of the already-stopped primary Run alone.
+        const inventoryFailure = (error: unknown): undefined => {
+          caller.throwIfAborted();
+          if (!accountLifetime.isCurrent()) throw error;
+          // Retained-read fallback can report admission_unavailable after the
+          // live target is lost. Preserve other cleanup/cancellation barriers
+          // and their codes; no inventory failure proves an empty inventory.
+          const code = readRpcErrorCode(error);
+          if (code !== 'target_unavailable' && code !== 'admission_unavailable') throw error;
+          unconfirmedStop ??= new VoiceRunStopUnconfirmedError(daemonRpcSessionId, null, error);
+          return undefined;
+        };
+        const listed = await sessionExecutionRunList(daemonRpcSessionId, {}, runOptions).catch(inventoryFailure);
+        if (listed && !('runs' in listed)) {
+          inventoryFailure(createRpcCallError({ error: listed.error, errorCode: listed.errorCode }));
         }
-      } catch (error) {
-        if (readRpcErrorCode(error) !== 'target_unavailable') throw error;
-        const { rpcSessionId, runId } = unavailableTarget;
-        const target = await reconcileUnavailableVoiceRunStop({ accountLifetime,
-          rpcSessionId, runId, signal });
-        if (target === 'unreachable') {
-          // Keep the existing persisted pointer for deliberate recovery. This
-          // fact does not retain local execution or veto a later explicit Start.
-          throw new VoiceRunStopUnconfirmedError(rpcSessionId, runId, error);
+        const runs = listed && 'runs' in listed ? listed.runs : [];
+        const matchingRunIds: string[] = Array.from(
+          new Set(
+            runs
+              .filter(
+                (run) =>
+                  run.intent === 'voice_agent' &&
+                  run.status === 'running' &&
+                  // The primary Stop was already reconciled above; inventory
+                  // cleanup is a sweep of the remaining Runs, never a retry.
+                  run.runId !== (handle?.voiceAgentId ?? persistedRunMeta?.runId) &&
+                  resolveVoiceAgentRunBackendId(run.backendTarget) ===
+                    daemonBackendId,
+              )
+              .map((run) => run.runId),
+          ),
+        );
+        for (const runId of matchingRunIds) {
+          await stopRun(daemonRpcSessionId, runId);
         }
       }
+      // One unresolved Stop never prevents cleanup of the other observed Runs.
+      // Preserve the exact retained pointer and report uncertainty after the sweep.
+      if (unconfirmedStop) throw unconfirmedStop;
 
       await clearVoiceAgentRunMetadata(
         cleanupMetadataSessionId,

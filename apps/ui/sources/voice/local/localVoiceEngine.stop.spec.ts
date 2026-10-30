@@ -30,7 +30,8 @@ afterAll(() => restoreHarnessModuleLoader());
 describe('local voice engine stop', () => {
   registerLocalVoiceEngineHarnessHooks();
 
-  it.each(['terminal_run', 'inactive_carrier', 'unreachable', 'running'] as const)('completes public End locally after target_unavailable and admits Start (%s)', async (targetState) => {
+  it.each(['terminal_run', 'inactive_terminal_carrier', 'inactive_carrier', 'unreachable', 'running',
+    'terminal_with_duplicate', 'terminal_inventory_unreachable', 'sweep_terminal_member', 'unreachable_with_duplicate'] as const)('completes public End locally after target_unavailable and admits Start (%s)', async (targetState) => {
     const storage = await getStorage();
     const local = readLocalConversationVoiceSettings(storage.getState().settings.voice);
     storage.__setState({ settings: { ...storage.getState().settings, voice: {
@@ -71,17 +72,36 @@ describe('local voice engine stop', () => {
       const previousRun = localVoiceAgentRpc.readRetainedRun();
       const retained = readPersistedVoiceConversationRuntimeState({ managedSessionId: VOICE_AGENT_GLOBAL_SESSION_ID });
       if (!previousRun || !retained) throw new Error('Expected admitted Voice Run and carrier');
-      if (targetState === 'terminal_run') previousRun.status = 'failed';
-      if (targetState === 'inactive_carrier') {
+      const primaryTerminal = ['terminal_run', 'inactive_terminal_carrier', 'terminal_with_duplicate', 'terminal_inventory_unreachable'].includes(targetState);
+      if (primaryTerminal) previousRun.status = 'failed';
+      if (targetState === 'inactive_carrier' || targetState === 'inactive_terminal_carrier') {
         const carrier = storage.getState().sessions[retained.metadataSessionId];
         if (!carrier) throw new Error('Expected hydrated carrier');
         storage.__setState({ sessions: { ...storage.getState().sessions,
           [carrier.id]: { ...carrier, active: false },
         } });
       }
+      const duplicateRuns = targetState === 'terminal_with_duplicate' || targetState === 'sweep_terminal_member' || targetState === 'unreachable_with_duplicate'
+        ? [1, 2].map(index => ({ ...previousRun, runId: `duplicate-${index}`, status: 'running' as typeof previousRun.status }))
+        : [];
       sessionRpcWithServerScope.mockImplementation(async request => {
-        if (request.method === SESSION_RPC_METHODS.EXECUTION_RUN_STOP
-          || ((targetState === 'unreachable' || targetState === 'inactive_carrier') && request.method === SESSION_RPC_METHODS.EXECUTION_RUN_GET)
+        const payload = request.payload as { runId?: string };
+        const duplicate = duplicateRuns.find(run => run.runId === payload.runId);
+        if (duplicate && request.method === SESSION_RPC_METHODS.EXECUTION_RUN_GET) return { run: duplicate };
+        if (duplicate && request.method === SESSION_RPC_METHODS.EXECUTION_RUN_STOP) {
+          if (targetState === 'sweep_terminal_member' && duplicate.runId === 'duplicate-1') {
+            duplicate.status = 'failed';
+            return { ok: false, errorCode: 'target_unavailable', error: 'Target unavailable' };
+          }
+          duplicate.status = 'cancelled';
+          return { ok: true };
+        }
+        if (request.method === SESSION_RPC_METHODS.EXECUTION_RUN_LIST && duplicateRuns.length) {
+          return { runs: [previousRun, ...duplicateRuns] };
+        }
+        if ((request.method === SESSION_RPC_METHODS.EXECUTION_RUN_STOP && targetState !== 'sweep_terminal_member')
+          || (targetState === 'terminal_inventory_unreachable' && request.method === SESSION_RPC_METHODS.EXECUTION_RUN_LIST)
+          || ((targetState === 'unreachable' || targetState === 'inactive_carrier' || targetState === 'unreachable_with_duplicate') && request.method === SESSION_RPC_METHODS.EXECUTION_RUN_GET)
           || request.method === SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_START_V2) {
           refusedRequests.push(request.method);
           return { ok: false, errorCode: 'target_unavailable', error: 'Target unavailable' };
@@ -105,20 +125,25 @@ describe('local voice engine stop', () => {
       expect(end.status).toBe('completed');
       expect(lifecycle.getSnapshot()).toMatchObject({ status: 'disconnected', canStop: false });
       expect(voiceAgentSessions.isActive(VOICE_AGENT_GLOBAL_SESSION_ID)).toBe(false);
-      expect(refusedRequests.filter(method => method === SESSION_RPC_METHODS.EXECUTION_RUN_STOP)).toHaveLength(1);
+      expect(refusedRequests.filter(method => method === SESSION_RPC_METHODS.EXECUTION_RUN_STOP)).toHaveLength(targetState === 'sweep_terminal_member' ? 0 : 1);
       const endRequests = sessionRpcWithServerScope.mock.calls.slice(callsBeforeEnd).map(([request]) => request.method);
-      expect(endRequests.filter(method => method === SESSION_RPC_METHODS.EXECUTION_RUN_GET)).toHaveLength(targetState === 'inactive_carrier' ? 0 : 1);
+      expect(endRequests.filter(method => method === SESSION_RPC_METHODS.EXECUTION_RUN_GET)).toHaveLength(1);
+      if (duplicateRuns.length) expect(duplicateRuns.map(run => run.status)).toEqual(
+        targetState === 'sweep_terminal_member' ? ['failed', 'cancelled'] : ['cancelled', 'cancelled'],
+      );
       const metadata = readVoiceAgentRunMetadataFromSession({ sessionId: retained.metadataSessionId, serverId: localVoiceHomeId });
-      if (targetState === 'unreachable' || targetState === 'running') {
+      if (targetState === 'unreachable' || targetState === 'running' || targetState === 'inactive_carrier' || targetState === 'terminal_inventory_unreachable' || targetState === 'unreachable_with_duplicate') {
         expect(metadata?.runId).toBe(previousRun.runId);
         expect(lifecycle.getAttemptTargetSessionAddress()).toEqual(target);
         expect(lifecycle.getSnapshot()).toMatchObject({ errorCode: 'provider_error', errorRecoveryAction: 'retry' });
-        expect(previousRun.status).toBe('running');
+        expect(previousRun.status).toBe(primaryTerminal ? 'failed' : 'running');
       } else {
         expect(metadata).toBeNull();
       }
-      // Restored transport serves a fresh Run; no failed-Stop barrier may veto this Start.
-      sessionRpcWithServerScope.mockImplementation(request => freshDaemon.dispatch(request.method, request.payload));
+      // Restore the same daemon for the unresolved-primary/duplicate case:
+      // readmission must adopt its retained Run rather than require a new daemon.
+      sessionRpcWithServerScope.mockImplementation(targetState === 'unreachable_with_duplicate'
+        ? responder : request => freshDaemon.dispatch(request.method, request.payload));
       const start = targetState === 'running'
         ? await executeVoiceConversationAction('ui.voice_global.recover', { expectedAttempt: getVoiceSessionPresentedAttemptId() }, { navigate() {} })
         : await executeVoiceConversationAction('ui.voice_global.start', {
@@ -129,12 +154,14 @@ describe('local voice engine stop', () => {
       await expect(voiceAgentSessions.sendTurn(VOICE_AGENT_GLOBAL_SESSION_ID, 'Fresh question', {
         userTranscript: { mode: 'suppress' },
       })).resolves.toMatchObject({ assistantText: 'Daemon reply' });
-      expect(freshDaemon.readRetainedRun()?.runId).toBe('after-unavailable-end');
+      if (targetState === 'unreachable_with_duplicate') expect(localVoiceAgentRpc.readRetainedRun()).toBe(previousRun);
+      else expect(freshDaemon.readRetainedRun()?.runId).toBe('after-unavailable-end');
       expect(freshDaemon.requests.filter(request => request.method === SESSION_RPC_METHODS.EXECUTION_RUN_STOP)).toHaveLength(0);
-      expect(previousRun.status).toBe(targetState === 'terminal_run' ? 'failed' : 'running');
-      expect(refusedRequests.filter(method => method === SESSION_RPC_METHODS.EXECUTION_RUN_STOP)).toHaveLength(1);
+      expect(previousRun.status).toBe(primaryTerminal ? 'failed' : 'running');
+      expect(refusedRequests.filter(method => method === SESSION_RPC_METHODS.EXECUTION_RUN_STOP)).toHaveLength(targetState === 'sweep_terminal_member' ? 0 : 1);
     } finally {
-      sessionRpcWithServerScope.mockImplementation(request => freshDaemon.dispatch(request.method, request.payload));
+      sessionRpcWithServerScope.mockImplementation(targetState === 'unreachable_with_duplicate'
+        ? responder : request => freshDaemon.dispatch(request.method, request.payload));
       await lifecycle.dispose();
       unsubscribe();
       setVoiceSessionLifecycleController(null);
