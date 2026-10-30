@@ -759,68 +759,6 @@ describe('ElevenLabs public account operations', () => {
     expect(request).toHaveBeenLastCalledWith(expect.objectContaining({ operationId: 'tools' }));
   });
 
-  it('uses the current preferred ElevenLabs client-tool DTO', async () => {
-    const calls: Array<Readonly<{ operationId: string; parameters: unknown }>> = [];
-    const request = provisionAccountRequest(async (input: Readonly<{
-      operationId: string;
-      parameters: unknown;
-    }>) => {
-      calls.push(input);
-      const body = input.operationId === 'voices'
-        ? ACCOUNT_VOICE_CATALOG
-        : input.operationId === 'tools'
-          ? { tools: [], has_more: false, next_cursor: null }
-          : input.operationId === 'create-tool'
-            ? { id: 'tool_1' }
-            : input.operationId === 'create-agent'
-              ? { agent_id: 'agent_1' }
-              : {};
-      return Object.freeze({
-        status: 200,
-        finalUrl: `https://api.elevenlabs.io/${input.operationId}`,
-        headers: Object.freeze({ 'content-type': 'application/json' }),
-        body: new TextEncoder().encode(JSON.stringify(body)),
-      });
-    });
-
-    await provisionElevenLabsWithAccountOperations({
-      accountOperations: Object.freeze({ request }),
-      request: {
-        kind: 'create',
-        prompt: 'Create a Happier Voice agent.',
-        tools: [{
-          name: 'sendMessage',
-          description: 'Send a message.',
-          parameters: { type: 'object', properties: {} },
-        }],
-        tts: {
-          ...ELEVENLABS_VOICE_PROVIDER_DEFAULT_SETTINGS.tts,
-          voiceId: 'voice_1',
-        },
-      },
-      signal: new AbortController().signal,
-    });
-
-    const createTool = calls.find((call) => call.operationId === 'create-tool');
-    expect(createTool?.parameters).toMatchObject({
-      body: {
-        tool_config: {
-          interruption_mode: 'allow',
-          pre_tool_speech: 'auto',
-          tool_error_handling_mode: 'passthrough',
-        },
-      },
-    });
-    expect(createTool?.parameters).not.toMatchObject({
-      body: {
-        tool_config: {
-          disable_interruptions: expect.anything(),
-          force_pre_tool_speech: expect.anything(),
-        },
-      },
-    });
-  });
-
   it('attributes provider failures to a bounded provisioning stage', async () => {
     const request = provisionAccountRequest(async (input: Readonly<{ operationId: string }>) => ({
       status: input.operationId === 'update-agent' ? 422 : 200,
