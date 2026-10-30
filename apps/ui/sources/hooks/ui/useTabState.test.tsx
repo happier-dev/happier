@@ -29,8 +29,16 @@ beforeEach(async () => {
   kv.reset();
   beforeMutation = null;
   serverId = await home.addHome({ name: 'Tab state', serverUrl, accountId: 'tab-account', currentAccount: true });
+  const credentials = await TokenStorage.getCredentialsForServerUrl(serverUrl, { serverId });
+  if (!credentials) throw new Error('Expected stored Account credentials');
   setRuntimeFetch(async (input, init) => {
     const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+    if (path === '/v1/kv' || path.startsWith('/v1/kv/')) {
+      const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
+      if (headers.get('Authorization') !== `Bearer ${credentials.token}`) {
+        return Response.json({ error: 'invalid_token' }, { status: 401 });
+      }
+    }
     if (path === '/v1/kv' && init?.method === 'POST') {
       const wait = beforeMutation;
       beforeMutation = null;
