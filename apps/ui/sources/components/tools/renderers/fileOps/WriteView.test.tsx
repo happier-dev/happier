@@ -79,7 +79,9 @@ describe('WriteView', () => {
         );
 
         expect(fileOpsRendererModuleState.toolDiffSpy).toHaveBeenCalledTimes(0);
-        expect(collectHostText(tree).join(' ')).toContain('line-0');
+        const text = collectHostText(tree).join(' ');
+        expect(text).toContain('line-0');
+        expect(text).not.toMatch(/line-[1-9]/);
     });
 
     it('falls back to placeholder content when input schema is malformed', async () => {

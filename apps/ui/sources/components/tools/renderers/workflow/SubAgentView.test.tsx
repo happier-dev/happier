@@ -178,15 +178,6 @@ describe('SubAgentView', () => {
             expect(joined).not.toContain('more');
         });
 
-        it('renders sidechain text messages when detailLevel=full', async () => {
-            const base = Date.now();
-            const taskTool = makeTaskTool({ createdAt: base, startedAt: base });
-            const messages: Message[] = [makeAgentTextMessage('Working...', base + 1)];
-            const tree = await renderView(taskTool, messages, 'full');
-
-            expect(collectHostText(tree).join(' ')).toContain('Working...');
-        });
-
         it('shows the full sidechain text history when detailLevel=full', async () => {
             const base = Date.now();
             const taskTool = makeTaskTool({ createdAt: base, startedAt: base });
