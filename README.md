@@ -104,6 +104,13 @@ It asks what it needs to know, confirms each change, and leaves the sign-in appr
 </details>
 
 <details>
+<summary><b>Use Grok Bot?</b> Install and manage Happier through Grok on X</summary>
+
+Install the [Happier session control Grok Bot](https://x.ai/bot/eI3Gm7MjAxV_bgJ_MB0pk) on X. On first run it installs the Happier CLI on its own computer, pairs with your Happier Cloud account or self-hosted relay, and starts the daemon. You control how hands-on it is: watch only, assist, or drive sessions. [Grok Bot integration](https://docs.happier.dev/extending/grok-bot-integration)
+
+</details>
+
+<details>
 <summary><b>Installing on a remote computer or devbox?</b> Set it up over SSH, from your machine</summary>
 
 One command installs the CLI and the daemon on the remote host (release-signature verified) and registers it as one of your machines:
@@ -282,6 +289,7 @@ Either way, the session shows up everywhere at once: keep typing in the terminal
 - **Session handoff.** Move a live Claude Code or OpenCode session to another machine and bring the working tree along if you want it. [Session handoff](https://docs.happier.dev/sessions/session-handoff)
 - **Session sharing.** Invite someone with view or edit access, or publish a read-only public link. [Session sharing](https://docs.happier.dev/accounts/session-sharing)
 - **Happier as an MCP server.** `happier mcp serve` lets any MCP host create sessions, send messages and run session actions. [Happier as an MCP server](https://docs.happier.dev/extending/happier-as-mcp-server) · [CLI](https://docs.happier.dev/apps/cli)
+- **Grok Bot integration.** Install and manage Happier sessions through Grok on X — setup, monitoring, and session control in one shareable bot. [Grok Bot integration](https://docs.happier.dev/extending/grok-bot-integration)
 - **MCP servers, configured once.** Use them with every agent on every machine. [MCP servers](https://docs.happier.dev/extending/mcp-servers)
 - **Add a machine over SSH** from the app or the CLI. [Machines and the daemon](https://docs.happier.dev/apps/daemon)
 - **Self-hosting.** The self-hosted relay runs the same apps, encryption and features. [Self-hosting](https://docs.happier.dev/self-hosting)
