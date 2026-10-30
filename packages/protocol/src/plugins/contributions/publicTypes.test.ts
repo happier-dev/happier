@@ -5,8 +5,37 @@ import {
   evaluatePluginPolicyExpressionV2,
   PluginAvailabilityDescriptorV2Schema,
   PluginPolicyExpressionV2Schema,
+  PluginLocalizedStringV2Schema,
+  resolvePluginLocalizedStringV2Text,
   resolveInvocationContributionPolicyFacts,
 } from './publicTypes.js';
+
+describe('localized presentation parameters', () => {
+  it('uses selected locale text only when its scalar placeholders are complete', () => {
+    const label = { key: 'review.continue', fallback: 'Continue {count} more · {pullRequest}',
+      params: { count: 7, pullRequest: 'example/repository#1' } };
+    expect(resolvePluginLocalizedStringV2Text(label)).toBe('Continue 7 more · example/repository#1');
+    expect(resolvePluginLocalizedStringV2Text(label, '{pullRequest} : encore {count}'))
+      .toBe('example/repository#1 : encore 7');
+    expect(resolvePluginLocalizedStringV2Text(label, 'Continue')).toBe('Continue 7 more · example/repository#1');
+    expect(resolvePluginLocalizedStringV2Text({ ...label, params: { count: 7 } })).toBe(label.fallback);
+    expect(resolvePluginLocalizedStringV2Text({ ...label, params: { count: {} } })).toBe(label.fallback);
+    expect(resolvePluginLocalizedStringV2Text('Literal {count}', 'Not literal')).toBe('Literal {count}');
+    expect(resolvePluginLocalizedStringV2Text({ key: 'old', fallback: 'Authored' }, 'Traduit')).toBe('Traduit');
+  });
+
+  it('admits only plain scalar values for authored fallback placeholders and preserves older labels', () => {
+    const label = { key: 'review.continue', fallback: 'Continue {count} more · {pullRequest}',
+      params: { count: 7, pullRequest: 'example/repository#1' } };
+    expect(PluginLocalizedStringV2Schema.parse(label)).toEqual(label);
+    expect(PluginLocalizedStringV2Schema.parse({ key: 'review.title', fallback: 'Review' }))
+      .toEqual({ key: 'review.title', fallback: 'Review' });
+    for (const params of [{ count: {} }, { count: true }, { count: null }, { extra: 'unused' }]) {
+      expect(PluginLocalizedStringV2Schema.safeParse({ ...label, params }).success).toBe(false);
+    }
+    expect(PluginLocalizedStringV2Schema.safeParse({ ...label, params: { count: 0 } }).success).toBe(true);
+  });
+});
 
 describe('PluginPolicyExpressionV2', () => {
   it('evaluates tri-state boolean algebra in the Protocol owner', () => {

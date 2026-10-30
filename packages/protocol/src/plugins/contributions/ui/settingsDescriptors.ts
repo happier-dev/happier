@@ -2,7 +2,7 @@ import { PluginIdSchema } from '../../pluginId.js';
 import { PluginJsonSchemaV2Schema } from '../jsonSchema.js';
 import { PluginSettingsContributionV2Schema, type PluginSettingFieldV2, type PluginSettingsContributionV2 } from '../settings.js';
 import { cloneStrictPluginJsonValue } from '../../actions/protocolComposableSchema.js';
-import type { PluginJsonValueV2 } from '../publicTypes.js';
+import { resolvePluginLocalizedStringV2Text, type PluginJsonValueV2 } from '../publicTypes.js';
 import type { PluginDeclarativeProjectedSettingsFieldV1 } from './declarativeProjectedModelV1.js';
 
 export class PluginUiDeclarationProjectionErrorV1 extends Error {
@@ -39,7 +39,7 @@ function clonePlainData<T>(value: T, path = 'value'): T {
 }
 
 function localizedText(value: string | Readonly<{ key: string; fallback: string }>): string {
-    return typeof value === 'string' ? value : value.fallback;
+    return resolvePluginLocalizedStringV2Text(value);
 }
 
 function normalizeTarget(
