@@ -34,6 +34,8 @@ async function fixture(t) {
   writeFakeBin({ root, name: 'systemctl', content: '#!/bin/sh\nexit 1\n' });
   writeFakeBin({ root, name: 'mutagen', content: '#!/bin/sh\nif [ "$2" = list ]; then printf "%s|Watching|false|true|1|0/0|0/0|true|1|0/0|0/0|active|7|ok|0|0\\n" "$3"; fi\n' });
   writeFakeBin({ root, name: 'ssh', content: `#!/bin/sh
+for argument in "$@"; do remote=$argument; done
+[ "$remote" != : ] || exit 0
 case "$*" in
   *getconf*) printf '8 0.1 0.9 22000000 20 0 28000000 30000000 0 0 0 0 0 0 0 linux\\n' ;;
   *"&& command -v "*|*-O\\ check*|*-MNf*|*" cancel "*) exit 0 ;;
