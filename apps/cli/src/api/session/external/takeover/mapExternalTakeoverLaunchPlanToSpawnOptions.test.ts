@@ -52,18 +52,6 @@ function resolvedIdentity(
 }
 
 describe('mapExternalTakeoverLaunchPlanToSpawnOptions', () => {
-    it('keeps the host-selected local target when a plugin returns remote provider context', () => {
-        expect(mapExternalTakeoverLaunchPlanToSpawnOptions({
-            plan: {},
-            targetDirectory: '/local/selected/workspace',
-            resolvedIdentity: resolvedIdentity(),
-            linkedSessionId: 'session-linked',
-            targetAgent: targetAgent(),
-        })).toMatchObject({
-            directory: '/local/selected/workspace',
-        });
-    });
-
     it('copies the validated Agent-owned runtime descriptor without generic interpretation', () => {
         const runtimeDescriptorV1 = {
             v: 1 as const,

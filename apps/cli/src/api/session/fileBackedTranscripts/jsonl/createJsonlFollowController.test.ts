@@ -306,28 +306,6 @@ describe('createJsonlFollowController', () => {
         }
     });
 
-    it('starts only once for concurrent attach calls', async () => {
-        const root = await mkdtemp(join(tmpdir(), 'jsonl-controller-concurrent-'));
-        const filePath = join(root, 'session.jsonl');
-        await writeFile(filePath, '{"first":1}\n');
-        const metrics: string[] = [];
-        const controller = createJsonlFollowController({
-            filePath,
-            onLine: () => {},
-            metrics: {
-                onEvent: (event) => metrics.push(event.type),
-            },
-        });
-
-        try {
-            await Promise.all([controller.attach(), controller.attach(), controller.attach()]);
-            expect(metrics.filter((type) => type === 'controller_started')).toHaveLength(1);
-        } finally {
-            await controller.dispose().catch(() => {});
-            await rm(root, { recursive: true, force: true });
-        }
-    });
-
     it('rolls back a failed attach so a later successful attach can stop on detach', async () => {
         const root = await mkdtemp(join(tmpdir(), 'jsonl-controller-attach-rollback-'));
         const filePath = join(root, 'session.jsonl');
@@ -374,8 +352,12 @@ describe('createJsonlFollowController', () => {
         const firstRowPromise = new Promise<void>((resolve) => {
             firstRowSeen = resolve;
         });
+        const metrics: string[] = [];
         const controller = createJsonlFollowController({
             filePath,
+            metrics: {
+                onEvent: (event) => metrics.push(event.type),
+            },
             onLine: async () => {
                 firstRowSeen();
                 await new Promise<void>((release) => {
@@ -391,11 +373,13 @@ describe('createJsonlFollowController', () => {
             const secondAttach = controller.attach().then(() => {
                 secondAttachResolved = true;
             });
+            const thirdAttach = controller.attach();
             await delay(30);
             expect(secondAttachResolved).toBe(false);
             releaseFirstIfWaiting();
-            await Promise.all([firstAttach, secondAttach]);
+            await Promise.all([firstAttach, secondAttach, thirdAttach]);
             expect(secondAttachResolved).toBe(true);
+            expect(metrics.filter((type) => type === 'controller_started')).toHaveLength(1);
         } finally {
             releaseFirstIfWaiting();
             await controller.dispose().catch(() => {});

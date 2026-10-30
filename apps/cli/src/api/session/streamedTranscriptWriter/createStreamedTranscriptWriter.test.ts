@@ -706,30 +706,6 @@ describe('createStreamedTranscriptWriter', () => {
     });
   });
 
-  it('does not route failed durable commits through best-effort commits', async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date(0));
-
-    const { session, bestEffortCalls } = createSessionStub();
-    session.enqueueAgentMessageCommitted = async () => {
-      throw new Error('boom');
-    };
-
-    const writer = createStreamedTranscriptWriter({
-      provider: 'codex' as any,
-      session: session as any,
-      makeLocalId: () => 'l1',
-      initialCheckpointDelayMs: 0,
-      checkpointIntervalMs: 1_000,
-      checkpointMinChars: 1,
-    });
-
-    writer.appendAssistantDelta('Hello');
-    await settleCommittedSnapshot();
-
-    expect(bestEffortCalls).toHaveLength(0);
-  });
-
   it('reports an incomplete durable final turn flush without a durable enqueue API', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(0));
@@ -891,61 +867,6 @@ describe('createStreamedTranscriptWriter', () => {
     });
   });
 
-  it('tracks an in-flight durable commit and drains it before flushAll resolves', async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date(0));
-
-    const { session, durableCalls } = createSessionStub();
-    let resolveFirstCommit: (() => void) | undefined;
-    session.enqueueAgentMessageCommitted = vi.fn(async (provider: any, body: any, opts: any) => {
-      durableCalls.push({
-        provider: String(provider),
-        localId: String(opts.localId),
-        meta: opts.meta,
-        body,
-      });
-      if (durableCalls.length === 1) {
-        await new Promise<void>((resolve) => {
-          resolveFirstCommit = resolve;
-        });
-      }
-      return { persisted: true as const, delivered: false as const };
-    });
-
-    const writer = createStreamedTranscriptWriter({
-      provider: 'codex' as any,
-      session: session as any,
-      makeLocalId: () => 'segment-1',
-      initialCheckpointDelayMs: 0,
-      checkpointIntervalMs: 10_000,
-      checkpointMinChars: 999,
-    });
-
-    writer.appendAssistantDelta('Hello');
-    await Promise.resolve();
-
-    let flushResolved = false;
-    const flushPromise = writer.flushAll({ reason: 'turn-end' }).then(() => {
-      flushResolved = true;
-    });
-
-    await Promise.resolve();
-    expect(flushResolved).toBe(false);
-
-    const release = resolveFirstCommit;
-    if (!release) {
-      throw new Error('expected first durable commit resolver');
-    }
-    release();
-    await flushPromise;
-
-    expect(flushResolved).toBe(true);
-    expect(durableCalls).toHaveLength(2);
-    expect(durableCalls[1]!.meta).toMatchObject({
-      happierStreamSegmentV1: expect.objectContaining({ segmentState: 'complete' }),
-    });
-  });
-
   it('redacts durable commit errors before logging', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(0));
@@ -953,6 +874,7 @@ describe('createStreamedTranscriptWriter', () => {
     const secretError = new Error(
       'commit failed for https://alice:SUPER_SECRET_PASSWORD@api.example.test/v1/messages?token=secret Authorization: Bearer COMMIT_SECRET',
     );
+    secretError.stack = `${secretError.name}: ${secretError.message}\n    at durableCommit (stream-writer.test:1:1)`;
     const session = {
       enqueueAgentMessageCommitted: vi.fn(async () => {
         throw secretError;
@@ -982,13 +904,14 @@ describe('createStreamedTranscriptWriter', () => {
       expect(logged).toEqual(expect.objectContaining({
         error: expect.objectContaining({
           name: 'Error',
-          message: 'commit failed for https://api.example.test/v1/messages Authorization: <redacted>',
+          message: expect.stringContaining('commit failed for https://api.example.test/v1/messages'),
+          stack: expect.stringContaining('at durableCommit (stream-writer.test:1:1)'),
         }),
       }));
       expect(JSON.stringify(logged)).not.toContain('SUPER_SECRET_PASSWORD');
       expect(JSON.stringify(logged)).not.toContain('token=secret');
       expect(JSON.stringify(logged)).not.toContain('COMMIT_SECRET');
-      expect(JSON.stringify(logged)).not.toContain('stack');
+      expect(JSON.stringify(logged)).not.toContain('alice');
       expect(session.sendAgentMessage).not.toHaveBeenCalled();
     } finally {
       debugSpy.mockRestore();

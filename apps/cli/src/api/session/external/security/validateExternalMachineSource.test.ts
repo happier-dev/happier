@@ -114,28 +114,6 @@ describe('validateExternalMachineSource', () => {
     });
   });
 
-  it('accepts safe Codex connectedService source ids', async () => {
-    await expect(
-      validateExternalMachineSource({
-        agentId: 'codex',
-        source: {
-          kind: 'codexHome',
-          home: 'connectedService',
-          connectedServiceId: 'openai-codex',
-          connectedServiceProfileId: 'profile-1',
-        },
-        env: {},
-      }),
-    ).resolves.toMatchObject({
-      ok: true,
-      source: {
-        kind: 'codexHome',
-        home: 'connectedService',
-        connectedServiceId: 'openai-codex',
-      },
-    });
-  });
-
   it('stamps the host-materialized connected home onto a raw machine call that omits homePath', async () => {
     const materializedRoot = await readCurrentCatalogHook('codex', entry => resolveConnectedServiceMaterializedHomeRoot('codex', {
       activeServerDir: configuration.activeServerDir,

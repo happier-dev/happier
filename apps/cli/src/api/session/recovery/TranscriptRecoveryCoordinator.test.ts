@@ -133,41 +133,6 @@ describe('TranscriptRecoveryCoordinator', () => {
     expect(started).toEqual(['a', 'b']);
   });
 
-  it('defers immediate retries during the per-key backoff window', async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(0);
-
-    const coordinator = TranscriptRecoveryCoordinator.forServer('http://server.test', {
-      delayMs: 0,
-      errorBackoffBaseMs: 100,
-      errorBackoffMaxMs: 100,
-    });
-    const runRequest = vi.fn(async (): Promise<TranscriptLookupOutcome> => ({
-      type: 'unhealthy',
-      reason: 'server_5xx',
-      error: new Error('unavailable'),
-    }));
-
-    const first = coordinator.scheduleByLocalId({
-      sessionId: 'sid',
-      localId: 'local-1',
-      supervisor: createSupervisor(),
-      runRequest,
-    });
-    await vi.runAllTimersAsync();
-
-    await expect(first).resolves.toMatchObject({ type: 'error', reason: 'unhealthy' });
-    await expect(
-      coordinator.scheduleByLocalId({
-        sessionId: 'sid',
-        localId: 'local-1',
-        supervisor: createSupervisor(),
-        runRequest,
-      }),
-    ).resolves.toEqual({ type: 'deferred', reason: 'backoff' });
-    expect(runRequest).toHaveBeenCalledTimes(1);
-  });
-
   it('reports authentication failures but keeps domain failures operation-local', async () => {
     vi.useFakeTimers();
 
@@ -205,11 +170,11 @@ describe('TranscriptRecoveryCoordinator', () => {
   });
 
   it.each([
-    ['server 5xx', { type: 'unhealthy', reason: 'server_5xx', error: new Error('unavailable') }],
-    ['network', { type: 'unhealthy', reason: 'network', error: Object.assign(new Error('connection reset'), { code: 'ECONNRESET' }) }],
-    ['timeout', { type: 'unhealthy', reason: 'timeout', error: Object.assign(new Error('request timed out'), { code: 'ETIMEDOUT' }) }],
-    ['protocol', { type: 'protocol_error', error: new Error('malformed response') }],
-  ] as const)('keeps %s lookup failures operation-local with keyed backoff', async (_name, outcome) => {
+    ['server 5xx', { type: 'unhealthy', reason: 'server_5xx', error: new Error('unavailable') }, 'unhealthy'],
+    ['network', { type: 'unhealthy', reason: 'network', error: Object.assign(new Error('connection reset'), { code: 'ECONNRESET' }) }, 'unhealthy'],
+    ['timeout', { type: 'unhealthy', reason: 'timeout', error: Object.assign(new Error('request timed out'), { code: 'ETIMEDOUT' }) }, 'unhealthy'],
+    ['protocol', { type: 'protocol_error', error: new Error('malformed response') }, 'protocol_error'],
+  ] as const)('keeps %s lookup failures operation-local with keyed backoff', async (_name, outcome, expectedReason) => {
     vi.useFakeTimers();
     vi.setSystemTime(0);
 
@@ -229,7 +194,7 @@ describe('TranscriptRecoveryCoordinator', () => {
     });
     await vi.runAllTimersAsync();
 
-    await expect(result).resolves.toMatchObject({ type: 'error' });
+    await expect(result).resolves.toMatchObject({ type: 'error', reason: expectedReason });
     expect(supervisor.reportProbeResult).not.toHaveBeenCalled();
     await expect(
       coordinator.scheduleByLocalId({
