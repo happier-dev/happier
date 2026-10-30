@@ -73,6 +73,7 @@ export {
   resolveJavaScriptRuntimeCommand,
   resolveExplicitJavaScriptRuntimeCommand,
   resolveExistingManagedJavaScriptRuntimeCommand,
+  resolveDirectJavaScriptRuntimeCommand,
 } from './managedJavaScriptRuntime.js';
 export { AgentCliDownloadError, downloadGitHubReleaseAsset } from './downloadGitHubReleaseAsset.js';
 export { extractGitHubReleaseAsset } from './extractGitHubReleaseAsset.js';
