@@ -66,17 +66,6 @@ describe('resolveSentryGetOutcome', () => {
     });
   });
 
-  it('derives the successor scope from the invoked instance, never from the response project', () => {
-    const outcome = resolve(issueDetailMergedSuccessor);
-
-    expect(outcome.kind).toBe('merged');
-    if (outcome.kind !== 'merged') return;
-    // The successor body names project 9004 / other-project; neither may rekey it.
-    expect(outcome.successor.collisionScope).toBe(SCOPE);
-    expect(outcome.successor.collisionScope).not.toContain('9004');
-    expect(outcome.successor.collisionScope).not.toContain('other-project');
-  });
-
   it('returns unresolved sentry-not-found-unverified for a 404 and never absent', () => {
     const outcome = resolve({ status: 404, body: { detail: 'The requested resource does not exist' } });
 

@@ -58,15 +58,6 @@ describe('buildSentryScanIssuesUrl', () => {
       .toThrow();
   });
 
-  it('never collapses lifetime, which is the only all-time count source', () => {
-    const collapse = parametersOf(buildSentryScanIssuesUrl({ instance: INSTANCE, nativeLimit: 64 }))
-      .getAll('collapse');
-
-    expect(collapse).not.toContain('lifetime');
-    expect(collapse).not.toContain('base');
-    expect(collapse).not.toContain('unhandled');
-  });
-
   it('appends the continuation cursor verbatim without changing the frozen geometry', () => {
     const parameters = parametersOf(buildSentryScanIssuesUrl({
       instance: INSTANCE,

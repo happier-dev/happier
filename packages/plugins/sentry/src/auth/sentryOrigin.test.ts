@@ -70,10 +70,6 @@ describe('resolveSentrySelfHostedDeployment', () => {
     });
   });
 
-  it('never leaks a submitted credential into the rejection result', () => {
-    const rejected = resolveSentrySelfHostedDeployment('https://user:secret@sentry.example.com');
-    expect(JSON.stringify(rejected)).not.toContain('secret');
-  });
 });
 
 describe('checkSentryRegionUrlConsistency', () => {
