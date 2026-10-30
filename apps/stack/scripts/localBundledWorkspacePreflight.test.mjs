@@ -254,6 +254,7 @@ test('local bundled workspace preflight refreshes a changed producer runtime dep
     const sourceRepo = resolve(stackDir, '../..');
     for (const path of [
       'scripts/workspaces/syncBundledWorkspacePackages.mjs',
+      'scripts/workspaces/workspaceBundlePublication.mjs',
       'scripts/workspaces/vendorBundledWorkspaceRuntimeDependenciesFallback.mjs',
       'packages/cli-common/dist/workspaces/index.js',
       'packages/cli-common/workspaceRuntimeDependencies.mjs',
