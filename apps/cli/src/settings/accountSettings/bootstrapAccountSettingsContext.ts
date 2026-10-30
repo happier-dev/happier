@@ -1,5 +1,5 @@
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
-import axios from 'axios';
+import axios from '@/api/client/credentialAxios';
 import { HttpStatusError } from '@/api/client/httpStatusError';
 import { createHash, randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
