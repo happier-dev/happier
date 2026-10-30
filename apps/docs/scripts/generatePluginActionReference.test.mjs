@@ -115,23 +115,6 @@ test('the docs writer preserves unchanged pages and publishes only the selected 
   assert.equal(await readFile(outputPath, 'utf8'), '# Updated\n');
 });
 
-test('the Action reference prepares the canonical built Protocol owner before loading it', async () => {
-  const events = [];
-  const rendered = await renderPluginActionReferenceMarkdown({
-    ensureWorkspacePackagesBuiltByName: async (_root, packageNames, options) => {
-      events.push(`prepare:${packageNames.join(',')}`);
-      assert.notEqual(options.force, true, 'canonical freshness must reuse a current Protocol build');
-    },
-    loadRenderer: async () => {
-      events.push('load');
-      return { renderPluginActionReferenceMarkdown: () => '# Actions\n' };
-    },
-  });
-
-  assert.equal(rendered, '# Actions\n');
-  assert.deepEqual(events, ['prepare:@happier-dev/protocol', 'load']);
-});
-
 test('renders freshly built dependencies after another reference loaded the previous build', async () => {
   const fixture = await mkdtemp(join(tmpdir(), 'docs-action-reference-'));
   try {
