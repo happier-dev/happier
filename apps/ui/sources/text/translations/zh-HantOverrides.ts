@@ -2239,6 +2239,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
       orbExpand: "展開語音",
       orbCollapse: "收合語音",
       delegatedWorking: "正在處理…",
+      earlierTurnsLeftOut: "為配合模型的記憶，此對話較早的部分已被省略。",
       composerStartHint: "開始關於此工作階段的語音對話。",
       composerGlobalStartHint: "開始不屬於任何工作階段的語音對話。",
       composerEndHint: "結束語音對話。已經開始的程式工作會繼續執行。",

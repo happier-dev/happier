@@ -8513,6 +8513,7 @@ export const zhHans: TranslationStructure = {
     orbExpand: "展开语音",
     orbCollapse: "收起语音",
     delegatedWorking: "正在处理…",
+    earlierTurnsLeftOut: "为适应模型的记忆，此对话较早的部分已被省略。",
     composerStartHint: "开始关于此会话的语音对话。",
     composerGlobalStartHint: "开始不属于任何会话的语音对话。",
     composerEndHint: "结束语音对话。已经开始的编码工作会继续运行。",

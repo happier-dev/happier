@@ -10477,6 +10477,7 @@ const enVoiceSurface = {
   orbExpand: 'Expand Voice',
   orbCollapse: 'Collapse Voice',
   delegatedWorking: 'Working…',
+  earlierTurnsLeftOut: "Earlier parts of this conversation were left out to fit the model’s memory.",
   composerStartHint: 'Starts a spoken conversation about this session.',
   composerGlobalStartHint:
     'Starts a spoken conversation that is not attached to any session.',

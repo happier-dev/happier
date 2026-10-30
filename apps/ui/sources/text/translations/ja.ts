@@ -9145,6 +9145,7 @@ localTailscale: {
     orbExpand: "音声を展開",
     orbCollapse: "音声を折りたたむ",
     delegatedWorking: "作業中…",
+    earlierTurnsLeftOut: "モデルの記憶に収まるよう、この会話の前半部分を省きました。",
     composerStartHint: "このセッションについて音声会話を開始します。",
     composerGlobalStartHint: "どのセッションにも紐づかない音声会話を開始します。",
     composerEndHint: "音声会話を終了します。すでに開始したコーディング作業は続行されます。",
