@@ -5,7 +5,7 @@ import test from 'node:test';
 
 import { createTempFixture } from '../../testkit/core/temp_fixture.mjs';
 import { readBuildInputIdentity } from '../../../../../scripts/workspaces/buildInputConvergence.mjs';
-import { readSourceComponentBuildInputs, readSourcePluginUiBuildInputs } from './workspaceBuildInputs.mjs';
+import { readSourceComponentBuildInputs, readSourcePluginUiBuildInputs, readWorkspaceBuildInputs, resolveWorkspaceBuildInputWatchPaths } from './workspaceBuildInputs.mjs';
 
 test('source web inputs retain dependency patches required by the captured UI preflight', async t => {
   const fixture = await createTempFixture(t, { prefix: 'happier-source-web-patch-inputs-' });
@@ -20,6 +20,19 @@ test('source web inputs retain dependency patches required by the captured UI pr
   const identity = await readBuildInputIdentity({ sourceDir: fixture.root, files: inputs.files });
   await writeFile(fixture.path(patch), 'changed authored patch');
   assert.notEqual(await readBuildInputIdentity({ sourceDir: fixture.root, files: inputs.files }), identity);
+});
+
+test('workspace observation retains manifest corrections while build input admission rejects malformed JSON', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'happier-malformed-watch-inputs-' });
+  await mkdir(fixture.path('src'));
+  await writeFile(fixture.path('package.json'), '{');
+  assert.throws(() => readWorkspaceBuildInputs(fixture.root), SyntaxError);
+  const paths = resolveWorkspaceBuildInputWatchPaths(fixture.root);
+  assert.ok(paths.includes(fixture.path('src')));
+  assert.ok(paths.includes(fixture.path('package.json')));
+  await writeFile(fixture.path('package.json'), JSON.stringify({ scripts: { build: 'node ./build.mjs' } }));
+  await writeFile(fixture.path('build.mjs'), 'export {};');
+  assert.ok(resolveWorkspaceBuildInputWatchPaths(fixture.root).includes(fixture.path('build.mjs')));
 });
 
 test('source build inputs capture and watch pnpm dependency resolution and policy', async t => {

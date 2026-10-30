@@ -340,9 +340,20 @@ export function resolveWorkspaceBuildInputWatchPaths(packageDir, {
   inputPaths,
 } = {}) {
   const membershipRoots = [...sourceRoots, '.happier-plugin/ui/hosted-web', ...additionalInputPaths];
+  let observedInputs = inputPaths;
+  if (!observedInputs) {
+    try {
+      observedInputs = readWorkspaceBuildInputs(packageDir, { excludeGeneratedPluginManifest, excludeGeneratedPluginArtifacts, includeShippedFiles, includeDirectories: includeShippedFiles, additionalInputPaths, sourceRoots });
+    } catch (error) {
+      if (!(error instanceof SyntaxError)) throw error;
+      // A partially edited manifest blocks build admission, not observation of
+      // the correction. Keep source roots and the manifest itself watched.
+      observedInputs = ['package.json'];
+    }
+  }
   return [...new Set([
     ...membershipRoots.map((path) => join(packageDir, path)),
-    ...(inputPaths ?? readWorkspaceBuildInputs(packageDir, { excludeGeneratedPluginManifest, excludeGeneratedPluginArtifacts, includeShippedFiles, includeDirectories: includeShippedFiles, additionalInputPaths, sourceRoots }))
+    ...observedInputs
       .filter((path) => !membershipRoots.some((root) => path.startsWith(`${root}/`)))
       .map((path) => join(packageDir, path)),
   ])].filter((path) => existsSyncImpl(path));
