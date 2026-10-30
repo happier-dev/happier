@@ -6,7 +6,7 @@ const DEFAULT_WORKSPACE = 'ios/Happierdev.xcworkspace';
 const DEFAULT_SCHEME = 'Happierdev';
 const DEFAULT_CONFIGURATION = 'Release';
 
-export function parseXcodeBuildSettings(stdout) {
+function parseXcodeBuildSettings(stdout) {
   const settings = {};
   for (const line of String(stdout ?? '').split(/\r?\n/)) {
     const match = line.match(/^\s*([A-Za-z0-9_]+)\s*=\s*(.*?)\s*$/);

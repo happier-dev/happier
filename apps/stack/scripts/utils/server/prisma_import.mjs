@@ -22,7 +22,7 @@ export async function importPrismaClientFromNodeModules({ dir }) {
   return await importPrismaClientFromFile(resolved);
 }
 
-export async function importPrismaClientFromGeneratedSqlite({ dir }) {
+async function importPrismaClientFromGeneratedSqlite({ dir }) {
   const path = join(dir, 'generated', 'sqlite-client', 'index.js');
   return await importPrismaClientFromFile(path);
 }
