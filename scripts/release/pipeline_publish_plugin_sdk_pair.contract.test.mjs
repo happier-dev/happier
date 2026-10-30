@@ -150,7 +150,12 @@ test('plugin SDK pair publisher accepts an exact release-admitted public candida
   assert.ok(sdkResultIndex >= 0 && uiResultIndex > sdkResultIndex, 'each verified identity is emitted immediately after its own final-tag verification, SDK-first');
 });
 
-test('plugin SDK pair publisher refuses a real publication without an admitted exact source SHA before npm is contacted', () => {
+for (const [label, authorizedSha] of [
+  ['missing SHA', ''],
+  ['uppercase SHA', 'A'.repeat(40)],
+  ['short SHA', 'a'.repeat(39)],
+]) {
+test(`plugin SDK pair publisher refuses ${label} before npm is contacted`, () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'happier-plugin-sdk-pair-no-admission-'));
   const version = '0.1.0-preview.7';
   createTarball(tempDir, '@happier-dev/plugin-sdk', version);
@@ -168,6 +173,7 @@ test('plugin SDK pair publisher refuses a real publication without an admitted e
       '--tarball-dir', tempDir,
       '--npm-version', '',
       '--github-output', outputPath,
+      ...(authorizedSha ? ['--authorized-sha', authorizedSha] : []),
     ], {
       cwd: repoRoot,
       env: { ...process.env, NODE_AUTH_TOKEN: 'npm-token-for-test', NPM_TOKEN: '', PATH: `${binDir}:${process.env.PATH ?? ''}`, NPM_PAIR_STATE: statePath, GITHUB_ACTIONS: 'false' },
@@ -181,11 +187,13 @@ test('plugin SDK pair publisher refuses a real publication without an admitted e
   assert.notEqual(error, undefined);
   assert.match(
     `${String(error?.message ?? '')}\n${String(error?.stderr ?? '')}`,
-    /release-admitted exact source SHA/u,
+    /\[release-admission\]/u,
   );
+  if (!authorizedSha) assert.match(String(error?.stderr ?? ''), /release-admitted exact source SHA/u);
   const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
   assert.equal(state.calls ?? 0, 0, 'admission must reject before any npm operation');
 });
+}
 
 test('plugin SDK pair publisher reports the verified SDK identity when the UI final tag fails', () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'happier-plugin-sdk-pair-partial-'));

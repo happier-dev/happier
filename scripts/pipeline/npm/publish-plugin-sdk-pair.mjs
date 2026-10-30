@@ -7,7 +7,6 @@ import { appendFileSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmS
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
-import { admitNpmPublication } from '../release/admit-release.mjs';
 
 function fail(message) {
   throw new Error(message);
@@ -185,11 +184,6 @@ function main() {
       fail(`Plugin SDK pair tarballs must share an exact version (got ${sdk.version} and ${ui.version})`);
     }
     identities = { sdk, ui };
-    admitNpmPublication({
-      mode: 'pack+publish',
-      dryRun: false,
-      authorizedSha,
-    });
   }
 
   // The existing publisher owns npm integrity verification and idempotent tag
