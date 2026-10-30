@@ -107,6 +107,31 @@ describe('getRecentPathsForMachine', () => {
         })).toEqual(['/Users/test/workspace/stale']);
     });
 
+    it('does not attribute a stale machine\'s session to a same-host machine with an empty home', () => {
+        const session = createSession({
+            id: 'session-1',
+            machineId: 'machine-old',
+            path: '/Users/test/workspace/stale',
+            updatedAt: 25,
+            active: false,
+        });
+        // Same host but an empty homeDir: locality is unknown, so neither replacement nor same-locality routing applies.
+        const target = createMachine('machine-target');
+        storage.setState({
+            machines: {
+                'machine-old': createMachine('machine-old', { active: false, activeAt: 1 }),
+                'machine-target': { ...target, metadata: { ...target.metadata!, homeDir: '' } },
+            },
+            sessions: { 'session-1': session },
+        });
+
+        expect(getRecentPathsForMachine({
+            machineId: 'machine-target',
+            recentMachinePaths: [],
+            sessions: [session],
+        })).toEqual([]);
+    });
+
     it('canonicalizes local recent path entries through explicit machine replacement', () => {
         storage.setState({
             machines: {
