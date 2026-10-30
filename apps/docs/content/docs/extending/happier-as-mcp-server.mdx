@@ -453,3 +453,66 @@ Tool visibility is driven by the action spec catalog and your account settings. 
 - **Settings → MCP servers** (if you expected a *custom MCP server* tool, not a Happier action tool)
 
 If an action is discoverable-only on the MCP surface, it will not appear as a named direct tool. Use `action_spec_search`, `action_spec_get`, and `action_execute`, or change the action’s MCP exposure setting to **Direct tool**.
+
+## Advanced: Running a second account side-by-side
+
+You can run multiple Happier accounts on the same machine by isolating their state directories with `HAPPIER_HOME_DIR`. This is useful for:
+
+- Testing with a second account without switching your primary setup
+- Operating two accounts simultaneously (e.g., personal and work)
+- Setting up an MCP relay for another user without disrupting your own credentials
+
+### How it works
+
+Set `HAPPIER_HOME_DIR` to a custom path before running `happier` commands or `happier mcp serve`:
+
+```bash
+export HAPPIER_HOME_DIR=~/.happier-alt
+happier auth status
+happier mcp serve
+```
+
+Each `HAPPIER_HOME_DIR` maintains its own:
+
+- Credentials and authentication state
+- Daemon state file and HTTP port
+- CLI configuration and profiles
+
+<Callout type="warning">
+  **Security note**: `happier mcp serve` honors `HAPPIER_HOME_DIR` but ignores other environment variables such as `HAPPIER_SERVER_URL` for security. To target a non-default Home, use CLI flags (`--server`, `--server-url`) in the MCP host's `args` configuration.
+</Callout>
+
+### MCP config example
+
+To run a second MCP server for an alternate account:
+
+```json
+{
+  "mcpServers": {
+    "happier-personal": {
+      "command": "happier",
+      "args": ["mcp", "serve"],
+      "env": {
+        "HAPPIER_HOME_DIR": "/Users/you/.happier"
+      }
+    },
+    "happier-work": {
+      "command": "happier",
+      "args": ["--server", "company-internal", "mcp", "serve"],
+      "env": {
+        "HAPPIER_HOME_DIR": "/Users/you/.happier-work"
+      }
+    }
+  }
+}
+```
+
+Authenticate each instance separately:
+
+```bash
+# Personal account
+happier auth login
+
+# Work account
+HAPPIER_HOME_DIR=~/.happier-work happier auth login --server company-internal
+```
