@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { lstat, mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -12,12 +12,11 @@ if (!originalPlatformDescriptor) {
 }
 const platformDescriptor: PropertyDescriptor = originalPlatformDescriptor;
 
-const { copyFileFailureSubstrings, cpFailureTargets, renameFailureSubstrings, symlinkFailureSubstrings, symlinkFailureTargets } = vi.hoisted(() => ({
+const { copyFileFailureSubstrings, cpFailureTargets, renameFailureSubstrings, symlinkFailureSubstrings } = vi.hoisted(() => ({
     copyFileFailureSubstrings: new Set<string>(),
     cpFailureTargets: new Set<string>(),
     renameFailureSubstrings: new Set<string>(),
     symlinkFailureSubstrings: new Set<string>(),
-    symlinkFailureTargets: new Set<string>(),
 }));
 
 vi.mock('node:fs/promises', async (importOriginal) => {
@@ -65,12 +64,6 @@ vi.mock('node:fs/promises', async (importOriginal) => {
                     throw error;
                 }
             }
-            if (symlinkFailureTargets.has(path)) {
-                symlinkFailureTargets.delete(path);
-                const error = new Error(`EPERM: operation not permitted, symlink '${target}' -> '${path}'`) as NodeJS.ErrnoException;
-                error.code = 'EPERM';
-                throw error;
-            }
             return await actual.symlink(target, path, type);
         }),
     };
@@ -100,7 +93,6 @@ describe('promoteVersionedPayload Windows copy fallback', () => {
         cpFailureTargets.clear();
         renameFailureSubstrings.clear();
         symlinkFailureSubstrings.clear();
-        symlinkFailureTargets.clear();
         vi.resetModules();
     });
 
@@ -116,7 +108,7 @@ describe('promoteVersionedPayload Windows copy fallback', () => {
                     channel: 'preview',
                     processEnv: env,
                 });
-                symlinkFailureTargets.add(paths.currentPath);
+                symlinkFailureSubstrings.add('.current.tmp-');
 
                 const promotion = await promoteVersionedPayload({
                     componentId: 'happier-cli',
@@ -127,6 +119,9 @@ describe('promoteVersionedPayload Windows copy fallback', () => {
                 });
 
                 expect(promotion.currentVersionId).toBe('1.0.0-preview.1');
+                const current = await lstat(paths.currentPath);
+                expect(current.isDirectory()).toBe(true);
+                expect(current.isSymbolicLink()).toBe(false);
                 expect(await readFile(paths.binaryPath, 'utf8')).toBe('preview-version');
                 expect(existsSync(join(paths.installRoot, 'current.version'))).toBe(true);
             }

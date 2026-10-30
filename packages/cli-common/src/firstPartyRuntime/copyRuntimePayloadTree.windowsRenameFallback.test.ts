@@ -70,7 +70,6 @@ describe('replaceRuntimePayloadTree Windows rename fallback', () => {
 
             renameMock.mockImplementation(async (from, to) => {
                 if (to === destinationPath && String(from).includes('.dest.tmp-') && renameFailureTargets.has(destinationPath)) {
-                    renameFailureTargets.delete(destinationPath);
                     const error = new Error(`EPERM: operation not permitted, rename '${from}' -> '${to}'`) as NodeJS.ErrnoException;
                     error.code = 'EPERM';
                     throw error;

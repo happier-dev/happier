@@ -45,15 +45,18 @@ describe('resolveUiDeploymentIdentity', () => {
   });
 
   it('does not reuse malformed or version-like previous identifiers', () => {
-    const result = resolveUiDeploymentIdentity({
-      digest: `sha256:${'a'.repeat(64)}`,
-      previousStateText: JSON.stringify({
-        uiDeploymentDigest: 'sha256:not-a-real-digest',
-        uiDeploymentId: 'version=0.2.10',
-      }),
-      generateId: () => 'deployment_C_123456',
-    });
-    expect(result.deploymentId).toBe('deployment_C_123456');
-    expect(result.digest).toMatch(/^sha256:[a-f0-9]{64}$/);
+    const digest = `sha256:${'a'.repeat(64)}`;
+    for (const previous of [
+      { uiDeploymentDigest: 'sha256:not-a-real-digest', uiDeploymentId: 'deployment_A_123456' },
+      { uiDeploymentDigest: digest, uiDeploymentId: 'version=0.2.10' },
+    ]) {
+      const result = resolveUiDeploymentIdentity({
+        digest,
+        previousStateText: JSON.stringify(previous),
+        generateId: () => 'deployment_C_123456',
+      });
+      expect(result.deploymentId).toBe('deployment_C_123456');
+      expect(result.digest).toBe(digest);
+    }
   });
 });
