@@ -74,7 +74,18 @@ describe('storage/files (S3 env parsing)', () => {
   });
   it('deletes local public files idempotently', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'happier-server-files-delete-'));
-    try { vi.resetModules(); const { deletePublicFile, initFilesLocalFromEnv, writePublicFile } = await import('./files'); initFilesLocalFromEnv({ HAPPIER_SERVER_LIGHT_FILES_DIR: dir } as NodeJS.ProcessEnv); await writePublicFile('public/u/a', Uint8Array.of(1)); await expect(deletePublicFile('public/u/a')).resolves.toBeUndefined(); await expect(deletePublicFile('public/u/a')).resolves.toBeUndefined(); } finally { rmSync(dir, { recursive: true, force: true }); }
+    try {
+      vi.resetModules();
+      const { deletePublicFile, initFilesLocalFromEnv, readPublicFile, writePublicFile } = await import('./files');
+      initFilesLocalFromEnv({ HAPPIER_SERVER_LIGHT_FILES_DIR: dir } as NodeJS.ProcessEnv);
+      const bytes = Uint8Array.of(1);
+      await writePublicFile('public/u/a', bytes);
+      expect(Array.from(await readPublicFile('public/u/a'))).toEqual(Array.from(bytes));
+      await expect(deletePublicFile('public/u/a')).resolves.toBeUndefined();
+      await expect(readPublicFile('public/u/a')).rejects.toMatchObject({ code: 'ENOENT' });
+      await expect(deletePublicFile('public/u/a')).resolves.toBeUndefined();
+      await expect(readPublicFile('public/u/a')).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally { rmSync(dir, { recursive: true, force: true }); }
   });
   it('does not require the MinIO dependency when the local backend is selected', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'happier-server-files-local-'));
