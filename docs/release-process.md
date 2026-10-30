@@ -425,6 +425,10 @@ Tauri surfaces likewise retain direct `run.mjs` commands, so their semantic
 operations are callable without GitHub even though GitHub remains the normal
 official-release privilege boundary.
 
+OTA publication makes one EAS update attempt. A failed command reports an
+unknown publication outcome; inspect EAS before resuming the release so an
+accepted update with a lost response is not blindly published again.
+
 Immutable version publication creates or resumes a draft, uploads missing
 assets, and verifies every remote asset's bytes before publishing the draft.
 Failed uploads or audits leave the draft private for retry. An existing public
