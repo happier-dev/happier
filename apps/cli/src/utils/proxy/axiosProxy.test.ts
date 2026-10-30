@@ -57,7 +57,7 @@ async function withProxyProbe(check: (probe: {
 
 describe('getAxiosProxyOptionsForUrl', () => {
   it('always disables axios native proxy handling', () => {
-    const opts = getAxiosProxyOptionsForUrl({ targetUrl: 'https://example.com', env: {} as NodeJS.ProcessEnv });
+    const opts = getAxiosProxyOptionsForUrl({ targetUrl: 'https://example.com', env: { NODE_ENV: 'test' } });
     expect(opts.proxy).toBe(false);
     expect(opts.httpAgent).toBeTruthy();
     expect(opts.httpsAgent).toBeTruthy();
@@ -65,7 +65,7 @@ describe('getAxiosProxyOptionsForUrl', () => {
 
   it('routes traffic through the configured proxy and selects its HTTPS agent', async () => {
     await withProxyProbe(async ({ targetUrl, proxyUrl, authorities }) => {
-      const env = { HTTP_PROXY: proxyUrl, HTTPS_PROXY: proxyUrl };
+      const env: NodeJS.ProcessEnv = { NODE_ENV: 'test', HTTP_PROXY: proxyUrl, HTTPS_PROXY: proxyUrl };
       const opts = getAxiosProxyOptionsForUrl({ targetUrl, env });
       const httpsOpts = getAxiosProxyOptionsForUrl({ targetUrl: 'https://example.com', env });
       expect(httpsOpts.httpsAgent).toBe(getHttpsProxyAgent(proxyUrl));
@@ -77,7 +77,7 @@ describe('getAxiosProxyOptionsForUrl', () => {
 
   it('uses direct traffic and agents when NO_PROXY bypasses the configured proxy', async () => {
     await withProxyProbe(async ({ targetUrl, proxyUrl, authorities }) => {
-      const env = { HTTP_PROXY: proxyUrl, HTTPS_PROXY: proxyUrl, NO_PROXY: '*' };
+      const env: NodeJS.ProcessEnv = { NODE_ENV: 'test', HTTP_PROXY: proxyUrl, HTTPS_PROXY: proxyUrl, NO_PROXY: '*' };
       const opts = getAxiosProxyOptionsForUrl({ targetUrl, env });
       const httpsOpts = getAxiosProxyOptionsForUrl({ targetUrl: 'https://example.com', env });
       expect(httpsOpts.httpsAgent).toBe(getDirectHttpAgents().httpsAgent);
@@ -104,7 +104,7 @@ describe('getAxiosProxyOptionsForUrl', () => {
     const previousGlobalKeepAlive = nodeGlobalAgent.keepAlive;
     nodeGlobalAgent.keepAlive = false;
     const targetUrl = `http://127.0.0.1:${address.port}/idle-probe`;
-    const options = getAxiosProxyOptionsForUrl({ targetUrl, env: {} as NodeJS.ProcessEnv });
+    const options = getAxiosProxyOptionsForUrl({ targetUrl, env: { NODE_ENV: 'test' } });
     try {
       for (let request = 0; request < 60; request += 1) {
         await axios.get(targetUrl, { ...options, adapter: 'http' });

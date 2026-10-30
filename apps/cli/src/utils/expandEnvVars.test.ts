@@ -41,6 +41,7 @@ describe('expandEnvironmentVariables', () => {
             EMPTY: `\${${privateEmptyName}}`,
             MISSING: `\${${privateMissingName}}`,
         }, {
+            NODE_ENV: 'test',
             [privateSourceName]: privateSourceValue,
             [privateEmptyName]: '',
         });
@@ -66,7 +67,7 @@ describe('expandEnvironmentVariables', () => {
             expect(expandEnvironmentVariables({
                 AUTH: 'Bearer ${TOKEN:-${UNUSED}}',
                 FALLBACK_AUTH: 'Bearer ${MISSING:-${FALLBACK}}',
-            }, { TOKEN: 'selected-machine-token', UNUSED: 'unused-fallback-token',
+            }, { NODE_ENV: 'test', TOKEN: 'selected-machine-token', UNUSED: 'unused-fallback-token',
                 FALLBACK: 'selected-fallback-token', UNREFERENCED: 'unreferenced-token' }, {
                 onResolvedValue: value => redaction.add([value]),
             })).toEqual({ AUTH: 'Bearer selected-machine-token', FALLBACK_AUTH: 'Bearer selected-fallback-token' });
@@ -79,7 +80,8 @@ describe('expandEnvironmentVariables', () => {
         const envVars = {
             PATH: '${BIN_DIR}:${LIB_DIR}'
         };
-        const sourceEnv = {
+        const sourceEnv: NodeJS.ProcessEnv = {
+            NODE_ENV: 'test',
             BIN_DIR: '/usr/bin',
             LIB_DIR: '/usr/lib'
         };
@@ -94,7 +96,8 @@ describe('expandEnvironmentVariables', () => {
         const envVars = {
             MIXED: '${EXISTS}:${MISSING}:${ALSO_EXISTS}'
         };
-        const sourceEnv = {
+        const sourceEnv: NodeJS.ProcessEnv = {
+            NODE_ENV: 'test',
             EXISTS: 'found1',
             ALSO_EXISTS: 'found2'
         };
@@ -109,7 +112,7 @@ describe('expandEnvironmentVariables', () => {
         const envVars = {
             TARGET: '${MISSING_VAR:-default-value}',
         };
-        const sourceEnv = {};
+        const sourceEnv: NodeJS.ProcessEnv = { NODE_ENV: 'test' };
 
         const result = expandEnvironmentVariables(envVars, sourceEnv);
         expect(result).toEqual({
@@ -121,7 +124,7 @@ describe('expandEnvironmentVariables', () => {
         const envVars = {
             TARGET: '${MISSING_VAR:=default-value}-${MISSING_VAR}',
         };
-        const sourceEnv = {};
+        const sourceEnv: NodeJS.ProcessEnv = { NODE_ENV: 'test' };
 
         const result = expandEnvironmentVariables(envVars, sourceEnv);
         expect(result).toEqual({
@@ -133,7 +136,7 @@ describe('expandEnvironmentVariables', () => {
         const envVars = {
             TARGET: '${MISSING_VAR:=${FALLBACK_VAR:-default-value}}-${MISSING_VAR}',
         };
-        const sourceEnv = {};
+        const sourceEnv: NodeJS.ProcessEnv = { NODE_ENV: 'test' };
 
         const result = expandEnvironmentVariables(envVars, sourceEnv);
         expect(result).toEqual({
@@ -145,7 +148,8 @@ describe('expandEnvironmentVariables', () => {
         const envVars = {
             TARGET: '${EMPTY_VAR:-default-value}',
         };
-        const sourceEnv = {
+        const sourceEnv: NodeJS.ProcessEnv = {
+            NODE_ENV: 'test',
             EMPTY_VAR: '',
         };
 
@@ -159,7 +163,8 @@ describe('expandEnvironmentVariables', () => {
         const envVars = {
             TARGET: '${EMPTY_VAR:=default-value}',
         };
-        const sourceEnv = {
+        const sourceEnv: NodeJS.ProcessEnv = {
+            NODE_ENV: 'test',
             EMPTY_VAR: '',
         };
 
@@ -175,7 +180,8 @@ describe('expandEnvironmentVariables', () => {
             VAR2: 'prefix-${SHARED}',
             VAR3: '${SHARED}-suffix'
         };
-        const sourceEnv = {
+        const sourceEnv: NodeJS.ProcessEnv = {
+            NODE_ENV: 'test',
             SHARED: 'common-value'
         };
 
@@ -191,7 +197,8 @@ describe('expandEnvironmentVariables', () => {
         const envVars = {
             TARGET: '${SOURCE}'
         };
-        const sourceEnv = {
+        const sourceEnv: NodeJS.ProcessEnv = {
+            NODE_ENV: 'test',
             SOURCE: 'value'
         };
 
@@ -224,7 +231,8 @@ describe('expandEnvironmentVariables', () => {
         const envVars = {
             COMPLEX: '${VAR1}/${VAR2}/literal-${}'
         };
-        const sourceEnv = {
+        const sourceEnv: NodeJS.ProcessEnv = {
+            NODE_ENV: 'test',
             VAR1: 'part1',
             VAR2: 'part2'
         };
@@ -239,7 +247,8 @@ describe('expandEnvironmentVariables', () => {
         const envVars = {
             TARGET: '${MY_VAR_123}'
         };
-        const sourceEnv = {
+        const sourceEnv: NodeJS.ProcessEnv = {
+            NODE_ENV: 'test',
             MY_VAR_123: 'value-with-numbers'
         };
 
@@ -256,7 +265,8 @@ describe('expandEnvironmentVariables', () => {
             OPENAI_API_KEY: '${Z_OPENAI_KEY}',
             CUSTOM_PATH: '/custom:${HOME}/bin'
         };
-        const daemonEnv = {
+        const daemonEnv: NodeJS.ProcessEnv = {
+            NODE_ENV: 'test',
             Z_AI_AUTH_TOKEN: 'sk-ant-12345',
             Z_OPENAI_KEY: 'sk-proj-67890',
             HOME: '/Users/test'
@@ -272,7 +282,7 @@ describe('expandEnvironmentVariables', () => {
     });
 
     it('should handle empty objects', () => {
-        const result = expandEnvironmentVariables({}, {});
+        const result = expandEnvironmentVariables({}, { NODE_ENV: 'test' });
         expect(result).toEqual({});
     });
 
@@ -283,7 +293,8 @@ describe('expandEnvironmentVariables', () => {
             BAD3: 'text-${',
             GOOD: '${VALID}'
         };
-        const sourceEnv = {
+        const sourceEnv: NodeJS.ProcessEnv = {
+            NODE_ENV: 'test',
             VALID: 'expanded'
         };
 
