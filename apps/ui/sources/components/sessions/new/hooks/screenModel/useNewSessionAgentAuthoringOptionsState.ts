@@ -181,7 +181,25 @@ export function useNewSessionAgentAuthoringOptionsState(params: Readonly<{
         params.rememberedEngineSelection?.modelId,
     ]);
 
-    const [modelMode, setModelMode] = React.useState<ModelMode>(() => initialModelMode);
+    const [modelSelection, setModelSelection] = React.useState<{ backendTargetKey: string | null; value: ModelMode }>(
+        () => ({ backendTargetKey, value: initialModelMode }),
+    );
+    const modelMode = modelSelection.backendTargetKey === null || modelSelection.backendTargetKey === backendTargetKey
+        ? modelSelection.value : initialModelMode;
+    if (modelSelection.backendTargetKey !== backendTargetKey) {
+        setModelSelection({ backendTargetKey, value: modelMode });
+    }
+    const setModelMode = React.useCallback<React.Dispatch<React.SetStateAction<ModelMode>>>((next) => {
+        setModelSelection((current) => {
+            const previous = current.backendTargetKey === null || current.backendTargetKey === backendTargetKey ? current.value : initialModelMode;
+            const value = typeof next === 'function' ? next(previous) : next;
+            // The engine picker can set both target and model in one React batch. Bind this
+            // explicit choice to the target of the next render; only inherited state resets.
+            return current.backendTargetKey === null && current.value === value
+                ? current
+                : { backendTargetKey: null, value };
+        });
+    }, [backendTargetKey, initialModelMode]);
 
     const initialAcpSessionModeId = React.useMemo<string | null>(() => {
         const temp = readScopedAcpSessionModeId(params.hydratedTempAuthoringDraft);
