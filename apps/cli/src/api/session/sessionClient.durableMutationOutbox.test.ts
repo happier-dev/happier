@@ -233,6 +233,112 @@ vi.mock('node:fs/promises', async (importOriginal) => {
 });
 
 describe('ApiSessionClient durable mutation outbox', () => {
+  it.each(['pending', 'late_failure', 'completed', 'canceled', 'scoped_cancel', 'disposed'] as const)(
+    'reconciles an offline permission on reconnect when it is %s', async (outcome) => {
+    useRealSupervisor = true;
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      features: { sharing: { pendingQueueV2: { enabled: true } } }, capabilities: {},
+    }), { status: 200 })));
+    vi.stubEnv('HAPPIER_SESSION_SOCKET_CONNECT_TIMEOUT_MS', '5');
+    const connectionReady = createDeferred<void>();
+    sessionConnectionGate = outcome === 'late_failure' ? null : connectionReady.promise;
+    const firstAckEntered = createDeferred<void>();
+    const releaseFirstAck = createDeferred<void>();
+    let failFirstAck = outcome === 'late_failure';
+    let serverState: AgentState = {};
+    let version = 0;
+    sessionSocketStub = createApiSessionSocketStub({ connected: false, emitWithAck: async (event, payload) => {
+      if (event !== 'update-state') return { ok: true };
+      const value = payload as { expectedVersion: number; agentState: string };
+      const proposed = JSON.parse(value.agentState) as AgentState;
+      if (failFirstAck && proposed.requests?.permission) {
+        failFirstAck = false;
+        firstAckEntered.resolve();
+        await releaseFirstAck.promise;
+        return { result: 'error' };
+      }
+      if (value.expectedVersion !== version) {
+        return { result: 'version-mismatch', version, agentState: JSON.stringify(serverState) };
+      }
+      serverState = proposed;
+      return { result: 'success', version: ++version, agentState: value.agentState };
+    } });
+    userSocketStub = createApiSessionSocketStub({ connected: false });
+    const { ApiSessionClient } = await import('./sessionClient');
+    const { AgentStateRequestStore } = await import('@/agent/permissions/agentStateRequestStore');
+    const { logger } = await import('@/ui/logger');
+    const infoFile = vi.spyOn(logger, 'infoFile');
+    const client = new ApiSessionClient('tok', createPlainSessionFixture({ id: 's-offline-permission' }));
+    const store = new AgentStateRequestStore({ session: client, logPrefix: '[OfflinePermission]' });
+    const request = {
+      requestId: 'permission', occurrenceId: 'offline-occurrence', toolName: 'Bash',
+      toolInput: { command: 'pwd' }, createdAt: 10,
+    };
+    try {
+      if (outcome === 'late_failure') {
+        await expect.poll(() => sessionSocketStub?.connected).toBe(true);
+        await realSupervisorConnectedCompletion;
+      }
+      store.publishRequest({ ...request, replaceCompletedRequest: outcome === 'completed' });
+      if (outcome === 'scoped_cancel') {
+        store.publishRequest({ ...request, requestId: 'retained', toolName: 'Write' });
+      }
+      if (outcome === 'late_failure') {
+        await firstAckEntered.promise;
+        disconnectSessionTransport?.();
+        await expect.poll(() => transportCreationCount).toBe(2);
+        await expect.poll(() => sessionSocketStub?.connected).toBe(true);
+        releaseFirstAck.resolve();
+      } else {
+        // This FIFO write settles after the publication's initial connection wait has expired.
+        await expect(client.updateAgentState((state) => state)).rejects.toMatchObject({ code: 'socket_not_connected' });
+      }
+      expect(serverState.requests).toBeUndefined();
+      if (outcome === 'completed') {
+        serverState = { completedRequests: { permission: {
+          tool: request.toolName, arguments: request.toolInput, createdAt: request.createdAt,
+          occurrenceId: request.occurrenceId, completedAt: 20, status: 'approved',
+        } } };
+        version += 1;
+      } else if (outcome === 'canceled' || outcome === 'scoped_cancel') {
+        const { writeCredentialsLegacy } = await import('@/persistence');
+        await writeCredentialsLegacy({ secret: new Uint8Array(32).fill(7), token: 'tok' });
+        await store.cancelAllRequests({
+          reason: 'Dialog dismissed while offline', shouldCancel: (entry) => entry.tool !== 'Write',
+        });
+      } else if (outcome === 'disposed') {
+        store.dispose();
+      }
+      connectionReady.resolve();
+      if (outcome !== 'pending' && outcome !== 'late_failure') {
+        await expect.poll(() => sessionSocketStub?.connected).toBe(true);
+        await realSupervisorConnectedCompletion;
+        await client.updateAgentState((state) => state);
+        expect(serverState.requests?.permission).toBeUndefined();
+        if (outcome === 'completed') expect(serverState.completedRequests?.permission.status).toBe('approved');
+        if (outcome === 'scoped_cancel') expect(serverState.requests?.retained).toMatchObject({ tool: 'Write' });
+        return;
+      }
+      await expect.poll(() => serverState.requests?.permission).toMatchObject({
+        tool: 'Bash', arguments: request.toolInput, createdAt: 10, occurrenceId: expect.any(String),
+      });
+      const occurrenceId = serverState.requests?.permission.occurrenceId;
+      expect(infoFile).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
+        operation: 'publish_request', sessionId: 's-offline-permission', error: expect.any(Object),
+      }));
+      store.publishRequest(request);
+      await client.updateAgentState((state) => state);
+      expect(Object.keys(serverState.requests ?? {})).toEqual(['permission']);
+      expect(serverState.requests?.permission.occurrenceId).toBe(occurrenceId);
+    } finally {
+      connectionReady.resolve();
+      releaseFirstAck.resolve();
+      store.dispose();
+      await client.close();
+      infoFile.mockRestore();
+    }
+  });
+
   it('acknowledges a fast-start permission through the attached Deferred client before resolving its provider', async () => {
     const request = { tool: 'Write', arguments: {}, createdAt: 1 };
     let serverState: AgentState = {};

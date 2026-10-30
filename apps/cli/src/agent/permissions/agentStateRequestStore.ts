@@ -22,6 +22,8 @@ import { normalizeAskUserQuestionInputForPublication } from '@/agent/questions/n
 import { logger } from '@/ui/logger';
 import { deepEqual } from '@/utils/deterministicJson';
 import { randomUUID } from 'node:crypto';
+import type { ManagedConnectionState } from '@happier-dev/connection-supervisor';
+import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLog';
 
 type AgentStateRequestEntry = NonNullable<AgentState['requests']>[string];
 type AgentStateCompletedEntry = NonNullable<AgentState['completedRequests']>[string];
@@ -71,6 +73,13 @@ type SessionLike = Readonly<{
     updateAgentStateRequestSettlement: (updater: (state: AgentState) => AgentState) => Promise<void>;
     getAgentStateSnapshot?: () => AgentState | null | undefined;
     getMetadataSnapshot?: () => unknown;
+    subscribeToSessionConnectionState?: (listener: (state: ManagedConnectionState) => void) => () => void;
+}>;
+
+type PendingRequestPublication = Readonly<{
+    request: AgentStateRequestEntry;
+    retry: () => void;
+    cancel: () => void;
 }>;
 
 export class AgentStateRequestStore {
@@ -80,6 +89,8 @@ export class AgentStateRequestStore {
     private readonly getAccountSettings: () => AccountSettings | null;
     private readonly getAccountSettingsSecretsReadKeys: () => ReadonlyArray<Uint8Array | null | undefined>;
     private permissionRequestPushNotifier: PermissionRequestPushNotifier | null = null;
+    private readonly pendingPublications = new Map<string, PendingRequestPublication>();
+    private unsubscribePublicationReconnect: (() => void) | null = null;
 
     constructor(params: Readonly<{
         session: SessionLike;
@@ -97,6 +108,7 @@ export class AgentStateRequestStore {
     }
 
     updateSession(session: SessionLike): void {
+        this.cancelPendingPublications();
         this.session = session;
         this.permissionRequestPushNotifier?.dispose();
         this.permissionRequestPushNotifier = null;
@@ -152,31 +164,36 @@ export class AgentStateRequestStore {
         const normalizedToolInput = normalizeAskUserQuestionInputForPublication(params.toolName, params.toolInput);
         const wasClaimedBeforePublication = this.isOutstandingRequestClaimed(params.requestId);
         const publicationSession = this.session;
-        const candidateOccurrenceId = params.occurrenceId ?? randomUUID();
-        const publication = updateAgentStateBestEffort(
-            publicationSession,
+        const entryTemplate = Object.create(null) as AgentStateRequestEntry & { source?: string; permissionSuggestions?: unknown[] };
+        entryTemplate.tool = params.toolName;
+        entryTemplate.kind = params.kind ?? resolveAgentRequestKind(params.toolName);
+        entryTemplate.arguments = normalizedToolInput;
+        entryTemplate.createdAt = params.createdAt;
+        if (typeof params.source === 'string') entryTemplate.source = params.source;
+        const pendingRequest = this.pendingPublications.get(params.requestId)?.request;
+        const candidateOccurrenceId = params.occurrenceId
+            ?? (isSameAgentStateRequestOccurrence(pendingRequest, entryTemplate) ? pendingRequest?.occurrenceId : undefined)
+            ?? randomUUID();
+        entryTemplate.occurrenceId = candidateOccurrenceId;
+        if (Array.isArray(params.permissionSuggestions) && params.permissionSuggestions.length > 0) {
+            entryTemplate.permissionSuggestions = params.permissionSuggestions;
+        }
+        const replacedCompletion = publicationSession.getAgentStateSnapshot?.()?.completedRequests?.[params.requestId];
+        const publication = this.publishRequestWithReconnectRetry(
+            params.requestId,
+            entryTemplate,
             (currentState) => {
                 const requests = cloneStringKeyedRecordToNullProto<AgentStateRequestEntry>(currentState.requests);
                 const completedRequests = cloneStringKeyedRecordToNullProto<AgentStateCompletedEntry>(currentState.completedRequests);
                 const existingRequest = currentState.requests?.[params.requestId];
-                if (params.replaceCompletedRequest) {
+                if (params.replaceCompletedRequest && deepEqual(completedRequests[params.requestId], replacedCompletion)) {
                     delete completedRequests[params.requestId];
                 }
-                const entry = Object.create(null) as AgentStateRequestEntry & { source?: string; permissionSuggestions?: unknown[] };
-                entry.tool = params.toolName;
-                entry.kind = params.kind ?? resolveAgentRequestKind(params.toolName);
-                entry.arguments = normalizedToolInput;
-                entry.createdAt = params.createdAt;
-                if (typeof params.source === 'string') {
-                    entry.source = params.source;
-                }
+                const entry = Object.assign(Object.create(null), entryTemplate) as typeof entryTemplate;
                 entry.occurrenceId = isSameAgentStateRequestOccurrence(existingRequest, entry)
                     && typeof existingRequest?.occurrenceId === 'string'
                     ? existingRequest.occurrenceId
                     : candidateOccurrenceId;
-                if (Array.isArray(params.permissionSuggestions) && params.permissionSuggestions.length > 0) {
-                    entry.permissionSuggestions = params.permissionSuggestions;
-                }
                 if (hasPermissionResponseClaimV1(existingRequest)) {
                     (entry as Record<string, unknown>)[PERMISSION_RESPONSE_CLAIM_V1] = existingRequest[PERMISSION_RESPONSE_CLAIM_V1];
                 }
@@ -198,12 +215,11 @@ export class AgentStateRequestStore {
                 };
                 return typeof params.updateState === 'function' ? params.updateState(nextState) : nextState;
             },
-            this.logPrefix,
-            'publish_request',
         );
 
         if (params.notifyPush !== false && !wasClaimedBeforePublication) {
-            void publication.then(() => {
+            void publication.then((published) => {
+                if (!published) return;
                 if (this.session !== publicationSession) return;
                 const current = publicationSession.getAgentStateSnapshot?.()?.requests?.[params.requestId];
                 if (hasPermissionResponseClaimV1(current)) return;
@@ -223,6 +239,71 @@ export class AgentStateRequestStore {
         }
     }
 
+    private publishRequestWithReconnectRetry(
+        requestId: string,
+        request: AgentStateRequestEntry,
+        updater: (state: AgentState) => AgentState,
+    ): Promise<boolean> {
+        this.pendingPublications.get(requestId)?.cancel();
+        const session = this.session;
+        let resolve!: (published: boolean) => void;
+        const result = new Promise<boolean>((settle) => { resolve = settle; });
+        let inFlight = false;
+        let retryRequested = false;
+        const retire = (published: boolean) => {
+            if (this.pendingPublications.get(requestId) === publication) {
+                this.pendingPublications.delete(requestId);
+                if (this.pendingPublications.size === 0) {
+                    this.unsubscribePublicationReconnect?.();
+                    this.unsubscribePublicationReconnect = null;
+                }
+            }
+            resolve(published);
+        };
+        const attempt = () => {
+            if (this.pendingPublications.get(requestId) !== publication) return;
+            if (inFlight) {
+                // A reconnect can precede the failed ACK's rejection. Replay after it settles.
+                retryRequested = true;
+                return;
+            }
+            inFlight = true;
+            let write: Promise<void>;
+            try {
+                write = Promise.resolve(session.updateAgentState((state) => (
+                    this.pendingPublications.get(requestId) === publication ? updater(state) : state
+                )));
+            } catch (error) {
+                write = Promise.reject(error);
+            }
+            void write.then(() => retire(true), (error: unknown) => {
+                logger.infoFile(`${this.logPrefix} Request publication deferred until reconnect`, {
+                    sessionId: session.sessionId,
+                    operation: 'publish_request',
+                    error: serializeAxiosErrorForLog(error),
+                });
+            }).finally(() => {
+                inFlight = false;
+                if (retryRequested) {
+                    retryRequested = false;
+                    attempt();
+                }
+            });
+        };
+        const publication: PendingRequestPublication = { request, retry: attempt, cancel: () => retire(false) };
+        this.pendingPublications.set(requestId, publication);
+        this.unsubscribePublicationReconnect ??= session.subscribeToSessionConnectionState?.((state) => {
+            if (state.phase !== 'online') return;
+            for (const pending of this.pendingPublications.values()) pending.retry();
+        }) ?? null;
+        attempt();
+        return result;
+    }
+
+    private cancelPendingPublications(): void {
+        for (const pending of this.pendingPublications.values()) pending.cancel();
+    }
+
     async completeRequest(params: Readonly<{
         requestId: string;
         status: string;
@@ -238,6 +319,7 @@ export class AgentStateRequestStore {
         /** An actual provider effect was observed, such as Claude PostToolUse. */
         observedCompletion?: true;
     }>): Promise<void> {
+        const publication = this.pendingPublications.get(params.requestId);
         const requireAck = params.requireAck === true
             || (params.status !== 'canceled' && params.observedCompletion !== true);
         let completedRequest = false;
@@ -358,6 +440,7 @@ export class AgentStateRequestStore {
                 throw new Error(`Permission request ${params.requestId} was superseded before acknowledgement`);
             }
         }
+        publication?.cancel();
         this.markPermissionRequestCompletedBestEffort(params.requestId);
     }
 
@@ -429,6 +512,12 @@ export class AgentStateRequestStore {
         const selected = new Map(Object.entries(this.session.getAgentStateSnapshot?.()?.requests ?? {})
             .filter(([id, request]) => (!params.requestIds || params.requestIds.includes(id))
                 && (!params.shouldCancel || params.shouldCancel(request))));
+        for (const [id, pending] of this.pendingPublications) {
+            if (params.requestIds && !params.requestIds.includes(id)) continue;
+            if (params.shouldCancel && !params.shouldCancel(pending.request)) continue;
+            if (!selected.has(id)) selected.set(id, pending.request);
+            pending.cancel();
+        }
         return this.settleRequests(
             (currentState) => {
                 const pendingRequests = cloneStringKeyedRecordToNullProto(currentState.requests);
@@ -474,6 +563,7 @@ export class AgentStateRequestStore {
     }
 
     dispose(): void {
+        this.cancelPendingPublications();
         this.permissionRequestPushNotifier?.dispose();
         this.permissionRequestPushNotifier = null;
     }

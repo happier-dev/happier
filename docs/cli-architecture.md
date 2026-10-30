@@ -2113,6 +2113,18 @@ record contains operation context only; it excludes request contents and server
 error payloads. It does not distinguish transport from local preparation failures
 and does not imply a replay guarantee.
 
+In development source, `AgentStateRequestStore` retains unacknowledged permission
+and dialog publications in the running process and retries them on the Session's
+existing online notification. Retries use the ordinary Agent-state CAS updater,
+preserving occurrence identity and completed-request coverage rather than replacing
+the snapshot with stale state. Admitted cancellation, disposal and Session replacement
+retire retained publications; push delivery follows successful publication. Failed
+attempts report `publish_request` in the normal file log with sanitized error
+context. This covers Claude's remote handler, local permission bridge and terminal
+dialog broker, and the shared cross-Agent permission handler. It adds no disk
+journal for publication or recovery after process exit; completion history retains
+the separate durable owner described above.
+
 ## Implementation references
 - CLI entry: `apps/cli/src/index.ts`
 - Daemon: `apps/cli/src/daemon`
