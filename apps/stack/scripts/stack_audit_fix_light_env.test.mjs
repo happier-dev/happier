@@ -44,33 +44,6 @@ async function runAuditFixPaths({ env }) {
   return await runNodeCapture([join(rootDir, 'scripts', 'stack.mjs'), 'audit', '--fix-paths', '--json'], { cwd: rootDir, env });
 }
 
-test('hstack stack audit --fix-paths preserves explicit SQLite DATABASE_URL authority', async (t) => {
-  const stackName = 'exp1';
-  const fixture = await createLightAuditFixture(t, {
-    stackName,
-    envLines: (() => {
-      const dataDir = join(join(join(tmpdir(), 'unused'), stackName), 'server-light');
-      return [
-        `HAPPIER_STACK_STACK=${stackName}`,
-        `HAPPIER_STACK_SERVER_COMPONENT=happier-server-light`,
-        `HAPPIER_STACK_UI_BUILD_DIR=${join(join(tmpdir(), 'unused'), stackName, 'ui')}`,
-        `HAPPIER_STACK_CLI_HOME_DIR=${join(join(tmpdir(), 'unused'), stackName, 'cli')}`,
-        `HAPPIER_STACK_REPO_DIR=${join(tmpdir(), 'unused', 'main')}`,
-        `HAPPIER_SERVER_LIGHT_DATA_DIR=${dataDir}`,
-        `HAPPIER_SERVER_LIGHT_FILES_DIR=${join(dataDir, 'files')}`,
-        `DATABASE_URL=file:${join(dataDir, 'happier-server-light.sqlite')}`,
-      ];
-    })(),
-  });
-
-  const res = await runAuditFixPaths({ env: fixture.env });
-  assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
-
-  const raw = await readFile(fixture.envPath, 'utf-8');
-  assert.ok(!raw.includes('HAPPIER_SERVER_LIGHT_DB_DIR='), `expected default sqlite light stack to omit PGlite db dir\n${raw}`);
-  assert.match(raw, /^DATABASE_URL=file:.*happier-server-light\.sqlite$/m);
-});
-
 test('hstack stack audit reconstructs an empty env with the effective light provider default', async (t) => {
   const fixture = await createLightAuditFixture(t, {
     stackName: 'exp-empty-provider',

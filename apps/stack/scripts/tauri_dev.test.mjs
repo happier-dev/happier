@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { createCargoProbeFixture } from './testkit/tauri_testkit.mjs';
+import { createTempFixture } from './testkit/core/temp_fixture.mjs';
 
 const execFileAsync = promisify(execFile);
 const withCargoProbe = await createCargoProbeFixture(test);
@@ -87,7 +88,8 @@ test('tauri_dev prefers the explicit stack expo dev port over stale runtime stat
   const scriptPath = join(scriptsDir, 'tauri_dev.mjs');
   const repoRoot = dirname(scriptsDir);
 
-  const storageRoot = join(tmpdir(), `happier-tauri-dev-storage-${Date.now()}`);
+  const fixture = await createTempFixture(t, { prefix: 'happier-tauri-dev-storage-' });
+  const storageRoot = fixture.path('storage');
   const stackName = `tauri-port-preference-${Date.now()}`;
   const stackBaseDir = join(storageRoot, stackName);
   const runtimeStatePath = join(stackBaseDir, 'stack.runtime.json');
@@ -126,12 +128,13 @@ test('tauri_dev prefers the explicit stack expo dev port over stale runtime stat
   assert.equal(payload?.devUrl?.includes('54321'), false);
 });
 
-test('tauri_dev prefers the pinned expo dev port from the stack env file over stale runtime state ports', async () => {
+test('tauri_dev prefers the pinned expo dev port from the stack env file over stale runtime state ports', async (t) => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const scriptPath = join(scriptsDir, 'tauri_dev.mjs');
   const repoRoot = dirname(scriptsDir);
 
-  const storageRoot = join(tmpdir(), `happier-tauri-dev-storage-envfile-${Date.now()}`);
+  const fixture = await createTempFixture(t, { prefix: 'happier-tauri-dev-storage-envfile-' });
+  const storageRoot = fixture.path('storage');
   const stackName = `tauri-envfile-preference-${Date.now()}`;
   const stackBaseDir = join(storageRoot, stackName);
   const runtimeStatePath = join(stackBaseDir, 'stack.runtime.json');
@@ -171,12 +174,13 @@ test('tauri_dev prefers the pinned expo dev port from the stack env file over st
   assert.equal(payload?.devUrl?.includes('54321'), false);
 });
 
-test('tauri_dev reads the pinned expo dev port from HAPPIER_STACK_ENV_FILE when provided', async () => {
+test('tauri_dev reads the pinned expo dev port from HAPPIER_STACK_ENV_FILE when provided', async (t) => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const scriptPath = join(scriptsDir, 'tauri_dev.mjs');
   const repoRoot = dirname(scriptsDir);
 
-  const storageRoot = join(tmpdir(), `happier-tauri-dev-storage-explicit-envfile-${Date.now()}`);
+  const fixture = await createTempFixture(t, { prefix: 'happier-tauri-dev-storage-explicit-envfile-' });
+  const storageRoot = fixture.path('storage');
   const stackName = `tauri-explicit-envfile-${Date.now()}`;
   const stackBaseDir = join(storageRoot, stackName);
   const runtimeStatePath = join(stackBaseDir, 'stack.runtime.json');
@@ -195,7 +199,7 @@ test('tauri_dev reads the pinned expo dev port from HAPPIER_STACK_ENV_FILE when 
     'utf-8',
   );
 
-  const explicitEnvFile = join(tmpdir(), `happier-tauri-dev-explicit-env-${Date.now()}.env`);
+  const explicitEnvFile = fixture.path('explicit.env');
   await writeFile(explicitEnvFile, 'HAPPIER_STACK_EXPO_DEV_PORT=12345\n', 'utf-8');
 
   const { stdout, stderr } = await execFileAsync(process.execPath, [scriptPath, '--json'], {
@@ -219,11 +223,13 @@ test('tauri_dev reads the pinned expo dev port from HAPPIER_STACK_ENV_FILE when 
   assert.equal(payload?.devUrl?.includes('54321'), false);
 });
 
-test('tauri_dev fails fast with a clear error when repo dir does not contain src-tauri', async () => {
+test('tauri_dev fails fast with a clear error when repo dir does not contain src-tauri', async (t) => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const scriptPath = join(scriptsDir, 'tauri_dev.mjs');
 
-  const fakeRepo = await mkdir(join(tmpdir(), `happier-tauri-dev-missing-repo-${Date.now()}`), { recursive: true });
+  const fixture = await createTempFixture(t, { prefix: 'happier-tauri-dev-missing-repo-' });
+  const fakeRepo = fixture.path('repo');
+  await mkdir(fakeRepo);
 
   let stderr = '';
   try {
@@ -246,11 +252,13 @@ test('tauri_dev fails fast with a clear error when repo dir does not contain src
   );
 });
 
-test('tauri_dev falls back to HAPPIER_STACK_CLI_ROOT_DIR when HAPPIER_STACK_REPO_DIR is misconfigured', async () => {
+test('tauri_dev falls back to HAPPIER_STACK_CLI_ROOT_DIR when HAPPIER_STACK_REPO_DIR is misconfigured', async (t) => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const repoRoot = dirname(scriptsDir);
   const scriptPath = join(scriptsDir, 'tauri_dev.mjs');
-  const fakeRepo = await mkdir(join(tmpdir(), `happier-tauri-dev-bad-repo-${Date.now()}`), { recursive: true });
+  const fixture = await createTempFixture(t, { prefix: 'happier-tauri-dev-bad-repo-' });
+  const fakeRepo = fixture.path('repo');
+  await mkdir(fakeRepo);
 
   const { stdout, stderr } = await execFileAsync(process.execPath, [scriptPath, '--json'], {
     cwd: repoRoot,
@@ -274,12 +282,14 @@ test('tauri_dev falls back to HAPPIER_STACK_CLI_ROOT_DIR when HAPPIER_STACK_REPO
   assert.equal(normalizedTauriArgs.some((arg) => arg.endsWith('/node_modules/@tauri-apps/cli/tauri.js')), true);
 });
 
-test('tauri_dev --json falls back to the CLI root repo when the stack repo dir is missing src-tauri', async () => {
+test('tauri_dev --json falls back to the CLI root repo when the stack repo dir is missing src-tauri', async (t) => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const scriptPath = join(scriptsDir, 'tauri_dev.mjs');
   const repoRoot = dirname(scriptsDir);
 
-  const fakeRepo = await mkdir(join(tmpdir(), `happier-tauri-dev-fallback-repo-${Date.now()}`), { recursive: true });
+  const fixture = await createTempFixture(t, { prefix: 'happier-tauri-dev-fallback-repo-' });
+  const fakeRepo = fixture.path('repo');
+  await mkdir(fakeRepo);
 
   const { stdout, stderr } = await execFileAsync(process.execPath, [scriptPath, '--json'], {
     cwd: repoRoot,

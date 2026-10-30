@@ -307,7 +307,7 @@ export async function resolve(specifier, context, defaultResolve) {
     HAPPIER_STACK_HOME_DIR: join(tmp, 'home'),
     HAPPIER_STACK_STORAGE_DIR: join(tmp, 'storage'),
     HAPPIER_STACK_WORKSPACE_DIR: join(tmp, 'workspace'),
-    HAPPIER_STACK_REVIEW_MOBILE_SCHEME: 'hstack-dev',
+    HAPPIER_STACK_REVIEW_MOBILE_SCHEME: 'hstack-review-custom',
   };
 
   const res = await runNode(
@@ -328,7 +328,7 @@ export async function resolve(specifier, context, defaultResolve) {
 
   const lines = await readMarker(markerPath);
   const mobileScheme = lines.find((l) => l.startsWith('stack.mobileScheme=')) ?? '';
-  assert.equal(mobileScheme, 'stack.mobileScheme=hstack-dev');
+  assert.equal(mobileScheme, 'stack.mobileScheme=hstack-review-custom');
 });
 
 test('setup-pr summary omits stale Expo web UI metadata when the verified UI is down', async (t) => {

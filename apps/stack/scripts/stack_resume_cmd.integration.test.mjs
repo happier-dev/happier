@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
-import { writeFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -17,7 +17,7 @@ function buildStubHappyCliScript() {
     "import { join } from 'node:path';",
     '',
     'const args = process.argv.slice(2);',
-    "const home = process.env.HAPPIER_HOME_DIR || process.cwd();",
+    "const home = process.env.HAPPIER_HOME_DIR || process.env.HAPPIER_STACK_CLI_HOME_DIR || process.cwd();",
     "const logPath = join(home, 'resume-invocations.log');",
     "const supportsDaemonResume = process.env.STUB_DAEMON_RESUME_SUPPORT === '1';",
     '',
@@ -91,4 +91,8 @@ test('hstack stack resume invokes happier daemon resume when supported', async (
 
   assert.equal(res.code, 0, `expected exit 0\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
   assert.match(res.stdout, /"resumed":\s*\[\s*"session-a",\s*"session-b"\s*\]/);
+  assert.equal(
+    await readFile(join(fixture.stackCliHome, 'resume-invocations.log'), 'utf8'),
+    'daemon resume session-a session-b\n',
+  );
 });
