@@ -46,7 +46,7 @@ describe('transferRelayV2 schemas', () => {
 
     expect(mod.TRANSFER_RELAY_V2_SOCKET_EVENT).toBe('transfer.relay.v2');
 
-    expect(mod.TransferRelayV2SendEnvelopeSchema.safeParse({
+    const relayChunk = {
       scopeUserId: 'user_1',
       sender: {
         kind: 'user',
@@ -59,9 +59,17 @@ describe('transferRelayV2 schemas', () => {
         transferId: 'relay_3',
         kind: 'chunk',
         sequence: 0,
-        payloadBase64: 'not-base64',
-        extra: 'nope',
+        payloadBase64: 'YQ==',
       },
+    };
+    expect(mod.TransferRelayV2SendEnvelopeSchema.safeParse(relayChunk).success).toBe(true);
+    expect(mod.TransferRelayV2SendEnvelopeSchema.safeParse({
+      ...relayChunk,
+      envelope: { ...relayChunk.envelope, payloadBase64: 'not-base64' },
+    }).success).toBe(false);
+    expect(mod.TransferRelayV2SendEnvelopeSchema.safeParse({
+      ...relayChunk,
+      envelope: { ...relayChunk.envelope, extra: 'nope' },
     }).success).toBe(false);
   });
 

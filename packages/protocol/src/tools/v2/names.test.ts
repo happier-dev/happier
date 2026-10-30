@@ -26,8 +26,10 @@ describe('canonical Workflow tool name', () => {
     expect(inputSchema).toBeDefined();
     expect(resultSchema).toBeDefined();
     expect(inputSchema.safeParse({ script: "export const meta = { name: 'demo' }" }).success).toBe(true);
+    expect(inputSchema.safeParse({ script: 42 }).success).toBe(false);
     // Carries the canonical tool-use id used to join transcript cards to the activity snapshot.
     expect(resultSchema.safeParse({ task_id: 'w1', tool_use_id: 'toolu_1', status: 'completed' }).success).toBe(true);
+    expect(resultSchema.safeParse({ task_id: 'w1', tool_use_id: 42, status: 'completed' }).success).toBe(false);
   });
 });
 

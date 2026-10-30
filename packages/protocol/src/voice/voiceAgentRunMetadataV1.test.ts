@@ -89,7 +89,7 @@ describe('parseVoiceAgentRunMetadataV1', () => {
     expect(parsed?.resumeHandle).toBeNull();
   });
 
-  it('preserves a non-negative welcomedEpoch and drops invalid ones', () => {
+  it('preserves a non-negative welcomedEpoch and rejects records with a negative one', () => {
     expect(
       parseVoiceAgentRunMetadataV1({
         v: 1,
@@ -108,8 +108,8 @@ describe('parseVoiceAgentRunMetadataV1', () => {
         resumeHandle: null,
         updatedAtMs: 1000,
         welcomedEpoch: -1,
-      })?.welcomedEpoch,
-    ).toBeUndefined();
+      }),
+    ).toBeNull();
   });
 });
 

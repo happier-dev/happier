@@ -49,18 +49,25 @@ describe('canonical realtime voice events', () => {
   });
 
   it('rejects missing stable identity and non-JSON tool values', () => {
-    expect(VoiceTranscriptCanonicalEventV1Schema.safeParse({
+    const transcript = {
       v: 1,
       type: 'voice.transcript.final',
       epoch: 0,
       sequence: 1,
       revision: 1,
-      eventId: '',
-      itemId: '',
+      eventId: 'event-1',
+      itemId: 'item-1',
       role: 'assistant',
       text: 'hello',
       provenance: 'live',
-    }).success).toBe(false);
+    };
+    expect(VoiceTranscriptCanonicalEventV1Schema.safeParse(transcript).success).toBe(true);
+    for (const identityField of ['eventId', 'itemId']) {
+      expect(VoiceTranscriptCanonicalEventV1Schema.safeParse({
+        ...transcript,
+        [identityField]: '',
+      }).success).toBe(false);
+    }
 
     expect(VoiceRealtimeToolCallV1Schema.safeParse({
       v: 1,
@@ -97,19 +104,26 @@ describe('canonical realtime voice events', () => {
   });
 
   it('rejects opaque identities containing unpaired UTF-16 surrogates', () => {
+    const transcript = {
+      v: 1,
+      type: 'voice.transcript.final',
+      epoch: 0,
+      sequence: 1,
+      revision: 1,
+      eventId: 'event-1',
+      itemId: 'item-1',
+      role: 'assistant',
+      text: 'must remain inert',
+      provenance: 'live',
+    };
+    expect(VoiceTranscriptCanonicalEventV1Schema.safeParse(transcript).success).toBe(true);
     for (const malformedIdentity of ['item-\uD800', 'item-\uDC00']) {
-      expect(VoiceTranscriptCanonicalEventV1Schema.safeParse({
-        v: 1,
-        type: 'voice.transcript.final',
-        epoch: 0,
-        sequence: 1,
-        revision: 1,
-        eventId: `${malformedIdentity}:final`,
-        itemId: malformedIdentity,
-        role: 'assistant',
-        text: 'must remain inert',
-        provenance: 'live',
-      }).success).toBe(false);
+      for (const identityField of ['eventId', 'itemId']) {
+        expect(VoiceTranscriptCanonicalEventV1Schema.safeParse({
+          ...transcript,
+          [identityField]: malformedIdentity,
+        }).success).toBe(false);
+      }
     }
   });
 
@@ -155,14 +169,23 @@ describe('canonical realtime voice events', () => {
       status: 'success',
       output: { ok: true },
     })).toMatchObject({ status: 'success' });
-    expect(VoiceRealtimeToolResultV1Schema.safeParse({
+    const denied = {
       v: 1,
       responseId: 'response-1',
       callId: 'call-1',
       toolName: 'sessionList',
       order: 0,
       status: 'denied',
+      errorCode: 'permission_denied',
+    };
+    expect(VoiceRealtimeToolResultV1Schema.safeParse(denied).success).toBe(true);
+    expect(VoiceRealtimeToolResultV1Schema.safeParse({
+      ...denied,
       output: { leaked: true },
+    }).success).toBe(false);
+    expect(VoiceRealtimeToolResultV1Schema.safeParse({
+      ...denied,
+      errorCode: undefined,
     }).success).toBe(false);
   });
 

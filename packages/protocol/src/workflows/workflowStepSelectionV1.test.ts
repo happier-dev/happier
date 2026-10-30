@@ -114,10 +114,6 @@ describe('workflow step selection', () => {
       .toEqual({ permissionMode: 'read-only', conversation: step.conversation });
     expect(() => selectionOwner.resolveWorkflowStepSelectionV1({ defaults, step })).toThrow(/target_unavailable/);
   });
-  it('exports the pure selection owner', () => {
-    expect(selectionOwner).toHaveProperty('resolveWorkflowStepSelectionV1');
-  });
-
   it('inherits per field, preserves explicit null and never mutates its inputs', () => {
     const defaults = { agentTarget: agent, profileId: 'default-profile', permissionMode: 'default' as const, modelSelection: model };
     const step = { profileId: null, connectedServices: null, permissionMode: 'read-only' as const };

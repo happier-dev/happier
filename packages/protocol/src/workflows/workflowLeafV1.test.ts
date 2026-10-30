@@ -47,16 +47,30 @@ describe('workflow leaf seam', () => {
 
   it('checks required built-in child bindings and literal values without requiring optional defaults', () => {
     const check = (input: unknown) => validateWorkflowDefinition({
-      inputs: [{ name: 'engines', valueType: 'json', required: true }],
+      inputs: [
+        { name: 'engines', valueType: 'json', required: true },
+        { name: 'reviewSession', valueType: 'json', required: true, inputType: { hostType: 'session' } },
+      ],
       blocks: [{ kind: 'workflow', id: 'child', workflowRef: 'builtin:review-and-converge', input }],
     });
-    expect(check({}).issues).toEqual(expect.arrayContaining([expect.objectContaining({
+    const input = {
+      engines: { kind: 'input', name: 'engines' },
+      reviewSession: { kind: 'input', name: 'reviewSession' },
+    };
+    expect(check(input).valid).toBe(true);
+    const { engines: _engines, ...withoutEngines } = input;
+    expect(check(withoutEngines).issues).toEqual(expect.arrayContaining([expect.objectContaining({
       code: 'invalid_input', blockId: 'child', path: '/blocks/0/input/engines',
     })]));
-    expect(check({ engines: { kind: 'input', name: 'engines' } }).valid).toBe(true);
-    expect(check({ engines: { kind: 'literal', value: ['engine'] }, maxRounds: { kind: 'literal', value: 'three' } }).issues)
+    const { reviewSession: _reviewSession, ...withoutReviewSession } = input;
+    expect(check(withoutReviewSession).issues).toEqual(expect.arrayContaining([expect.objectContaining({
+      code: 'invalid_input', blockId: 'child', path: '/blocks/0/input/reviewSession',
+    })]));
+    const literalInput = { ...input, engines: { kind: 'literal', value: ['engine'] } };
+    expect(check(literalInput).valid).toBe(true);
+    expect(check({ ...literalInput, maxRounds: { kind: 'literal', value: 'three' } }).issues)
       .toEqual(expect.arrayContaining([expect.objectContaining({ path: '/blocks/0/input/maxRounds', code: 'invalid_input' })]));
-    expect(check({ engines: { kind: 'literal', value: ['engine'] }, apply: { kind: 'literal', value: 'other' } }).issues)
+    expect(check({ ...literalInput, apply: { kind: 'literal', value: 'other' } }).issues)
       .toEqual(expect.arrayContaining([expect.objectContaining({ path: '/blocks/0/input/apply', code: 'invalid_input' })]));
   });
 
@@ -146,11 +160,6 @@ describe('workflow leaf seam', () => {
     }
     expect(leaves.WorkflowLeafV1Schema.safeParse({ ...workflow, pauseForReview: true }).success).toBe(false);
   });
-  it('exports the strict leaf and evaluator contracts', () => {
-    expect(leaves).toHaveProperty('WorkflowLeafV1Schema');
-    expect(leaves).toHaveProperty('WorkflowEvaluatorLeafV1Schema');
-  });
-
   it('parses Agent, Action, Workflow and Wait leaves and rejects unknown executable fields', () => {
     for (const leaf of [agent, action, workflow, wait]) {
       expect(leaves.WorkflowLeafV1Schema.safeParse(leaf).success).toBe(true);

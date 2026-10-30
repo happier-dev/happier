@@ -40,12 +40,6 @@ describe('MODEL_PACK_CATALOG', () => {
     }
   });
 
-  it('declares only valid model-pack kinds', () => {
-    for (const entry of MODEL_PACK_CATALOG) {
-      expect(ModelPackKindSchema.safeParse(entry.kind).success).toBe(true);
-    }
-  });
-
   it('has unique canonical packIds', () => {
     const ids = MODEL_PACK_CATALOG.map((e) => e.packId);
     expect(new Set(ids).size).toBe(ids.length);

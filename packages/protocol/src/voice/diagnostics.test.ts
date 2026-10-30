@@ -25,8 +25,11 @@ describe('VoiceSpeechDiagnosticsSettingsV1Schema', () => {
       maxBytes: 104_857_600,
       maxDurationMs: 300_000,
     });
-    expect(VoiceSpeechDiagnosticsSettingsV1Schema.safeParse({ enabled: true, consentVersion: null }).success).toBe(false);
-    expect(VoiceSpeechDiagnosticsSettingsV1Schema.safeParse({ enabled: true, consentVersion: 1, maxFiles: 0 }).success).toBe(false);
+    const enabled = { enabled: true, consentVersion: 1, captureSttInput: true };
+    expect(VoiceSpeechDiagnosticsSettingsV1Schema.safeParse(enabled).success).toBe(true);
+    expect(VoiceSpeechDiagnosticsSettingsV1Schema.safeParse({ ...enabled, consentVersion: null }).success).toBe(false);
+    expect(VoiceSpeechDiagnosticsSettingsV1Schema.safeParse({ ...enabled, maxFiles: 0 }).success).toBe(false);
+    expect(VoiceSpeechDiagnosticsSettingsV1Schema.safeParse({ ...enabled, captureSttInput: false }).success).toBe(false);
   });
 
   it('keeps request-scoped capture fail closed and preserves honest unknown durations', () => {

@@ -78,6 +78,11 @@ describe('voice model pack manifest', () => {
   it('rejects a frontend lexicon outside the integrity-declared pack files', () => {
     expect(() => parseModelPackManifest({
       packId: 'kokoro-multi', kind: 'tts_sherpa', model: 'kokoro', version: 'v1.1',
+      frontend: { lang: 'en', lexicon: 'lexicon-en.txt' },
+      files: [{ path: 'model.onnx', url: 'https://example.com/model', sha256: 'a'.repeat(64), sizeBytes: 1 }],
+    })).toThrow();
+    expect(() => parseModelPackManifest({
+      packId: 'kokoro-multi', kind: 'tts_sherpa', model: 'kokoro', version: 'v1.1',
       frontend: { lang: 'en', lexicon: '../other/lexicon.txt' },
       files: [{ path: 'model.onnx', url: 'https://example.com/model', sha256: 'a'.repeat(64), sizeBytes: 1 }],
     })).toThrow();

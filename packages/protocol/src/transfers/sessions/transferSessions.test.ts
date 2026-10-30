@@ -57,16 +57,28 @@ describe('transferSessions schemas', () => {
   it('rejects invalid transfer session open payloads', async () => {
     const mod = await import('./index.js');
 
-    expect(mod.TransferSessionImportOpenResponseSchema.safeParse({
+    const importResponse = {
       protocolVersion: 1,
       kind: 'import',
-      sessionId: '',
-      chunkSizeBytes: 0,
-      expiresAt: -1,
-      recipientPublicKeyBase64: 'not-base64',
-    }).success).toBe(false);
+      sessionId: 'transfer_session_import_2',
+      chunkSizeBytes: 64 * 1024,
+      expiresAt: 1_000,
+      recipientPublicKeyBase64: Buffer.from('recipient-public-key', 'utf8').toString('base64'),
+    };
+    expect(mod.TransferSessionImportOpenResponseSchema.safeParse(importResponse).success).toBe(true);
+    for (const invalidField of [
+      { sessionId: '' },
+      { chunkSizeBytes: 0 },
+      { expiresAt: -1 },
+      { recipientPublicKeyBase64: 'not-base64' },
+    ]) {
+      expect(mod.TransferSessionImportOpenResponseSchema.safeParse({
+        ...importResponse,
+        ...invalidField,
+      }).success).toBe(false);
+    }
 
-    expect(mod.TransferSessionExportOpenResponseSchema.safeParse({
+    const emptyExportResponse = {
       protocolVersion: 1,
       kind: 'export',
       sessionId: 'transfer_session_export_2',
@@ -74,6 +86,10 @@ describe('transferSessions schemas', () => {
       expiresAt: 1_000,
       manifestHash: 'sha256:abc123',
       totalChunks: 0,
+    };
+    expect(mod.TransferSessionExportOpenResponseSchema.safeParse(emptyExportResponse).success).toBe(true);
+    expect(mod.TransferSessionExportOpenResponseSchema.safeParse({
+      ...emptyExportResponse,
       extraKey: 'nope',
     }).success).toBe(false);
   });
