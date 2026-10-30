@@ -9,13 +9,13 @@ Run Happier through a shareable Grok Bot on X. The bot installs Happier, pairs w
 
 ## What it does
 
-The bot connects to your Happier account or self-hosted relay and controls sessions through `happier mcp serve`. You pick the autonomy level:
+The bot connects to your Happier account or self-hosted relay and controls sessions through `happier mcp serve`. The bot template defines three autonomy levels you can choose:
 
 - **Watch only** — the bot lists sessions and reports status when asked.
 - **Assist** — the bot answers simple questions about sessions (status, agent, machine) without changing anything.
 - **Drive** — the bot starts sessions, sends messages, and manages session state on your behalf.
 
-Permission approvals always require your yes unless you explicitly allow autonomous approval.
+The template's default policy requires your approval for permission requests unless you explicitly allow autonomous approval. (Happier itself supports autonomous permission responses through `session.permission.respond`; the bot template adds the approval requirement as a guardrail.)
 
 ## First run
 
@@ -42,7 +42,7 @@ All operations go through the same Happier MCP server interface that any MCP hos
 
 ## Monitoring
 
-The bot can poll sessions on a schedule and notify you when:
+The bot can poll sessions on a schedule (recommended: every 5–15 minutes) and notify you when:
 
 - a session is waiting on a permission request
 - a session has finished a turn
@@ -56,7 +56,9 @@ On systems without systemd, the bot runs a keep-alive routine that restarts the 
 
 ## Multiple relays
 
-By default, the bot manages one Happier connection. If you want to manage sessions on a second relay (for example, a work account and a personal account), you can set `HAPPIER_HOME_DIR` to isolate the second relay's credentials and configuration.
+By default, the bot manages one Happier connection. If you want to manage sessions on a second relay (for example, a work account and a personal account), isolate the second relay's credentials with `HAPPIER_HOME_DIR`.
+
+Server selection for `happier mcp serve` uses CLI arguments or profiles (see [CLI → Server profiles](/apps/cli#server-profiles)), not `HAPPIER_SERVER_URL`: the MCP server runs locally and ignores that environment variable.
 
 The bot does not automatically configure multiple relays. Ask it to set up a second connection if you need one.
 
@@ -72,7 +74,7 @@ Treat the bot's machine the same way you would treat a dev box or VPS where you 
 
 ## Autonomy levels
 
-You control how much the bot can do without asking:
+The bot template defines how much it can do without asking:
 
 | Level | The bot can… | Requires your approval |
 | --- | --- | --- |
@@ -80,7 +82,7 @@ You control how much the bot can do without asking:
 | Assist | Answer questions about sessions, summarize state | Starting sessions, sending messages, changing settings |
 | Drive | Start sessions, send messages, manage session state | Permission-gated operations (unless you allow autonomous approval) |
 
-The default is **assist**. Change it by telling the bot which level you want.
+The default is **assist**. Change it by telling the bot which level you want. These rules are part of the bot template's policy, not Happier itself.
 
 ## Limitations
 
@@ -91,6 +93,7 @@ The default is **assist**. Change it by telling the bot which level you want.
 ## Related
 
 - [Happier as an MCP server](/extending/happier-as-mcp-server) — the MCP interface the bot uses.
+- [Grok Bot guide](https://github.com/happier-dev/guides/pull/80) — step-by-step walkthrough for setting up and using the bot.
 - [Set up with your coding agent](/getting-started/agent-setup) — the setup flow the bot follows.
 - [Inbox and approvals](/sessions/inbox-and-approvals) — permission requests the bot can monitor.
 - [Machines and the daemon](/apps/daemon) — how the daemon runs on the bot's computer.
