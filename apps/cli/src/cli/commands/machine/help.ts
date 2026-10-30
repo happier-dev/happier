@@ -5,6 +5,7 @@ export function showMachineHelp(): void {
 ${chalk.bold('happier machine')} - Bootstrap and manage remote machines
 
 ${chalk.bold('Usage:')}
+  happier machine list [--json]
   happier machine setup --ssh <user@host> [--identity-file <path>] [--ssh-config-file <path>] [--known-hosts-path <path>] [--trusted-host-key <line>]
   happier machine setup --ssh <user@host> [--server <name-or-id> | --server-url <url> [--webapp-url <url>] [--public-server-url <url>]]
   happier machine setup --ssh <user@host> [--service-mode <user|none>] [--install-relay-runtime] [--relay-runtime-mode <user|system>] [--yes] [--json]
