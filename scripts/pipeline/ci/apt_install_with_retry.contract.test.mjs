@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -61,10 +61,12 @@ ${aptCacheBody}
 `,
   );
 
+  // apt cleanup is an OS boundary too; never remove the worker's package state.
+  writeExecutable(path.join(binDir, 'rm'), '#!/bin/sh\nprintf "%s\\n" "$*" >> "${FAKE_APT_STATE_FILE:?}.rm"\n');
   return root;
 }
 
-test('apt-install-with-retry retries transient mirror-sync failures and cleans apt state before retrying', () => {
+test('apt-install-with-retry retries transient mirror-sync failures and cleans apt state before retrying', (t) => {
   const root = createFakeAptWorkspace({
     updateBody: `    count_file="\${FAKE_APT_UPDATE_COUNT_FILE:?}"
     count=0
@@ -82,6 +84,7 @@ test('apt-install-with-retry retries transient mirror-sync failures and cleans a
   });
   const stateFile = path.join(root, 'state.log');
   const updateCountFile = path.join(root, 'update-count.txt');
+  t.after(() => rmSync(root, { recursive: true, force: true }));
 
   const res = spawnSync('bash', [scriptPath, 'ca-certificates', 'curl'], {
     cwd: repoRoot,
@@ -91,6 +94,7 @@ test('apt-install-with-retry retries transient mirror-sync failures and cleans a
       PATH: `${path.join(root, 'bin')}:${process.env.PATH ?? ''}`,
       FAKE_APT_STATE_FILE: stateFile,
       FAKE_APT_UPDATE_COUNT_FILE: updateCountFile,
+      APT_INSTALL_LOG_PATH: path.join(root, 'apt.log'),
       APT_INSTALL_RETRY_SLEEP_SECONDS: '0',
     },
   });
@@ -105,9 +109,12 @@ test('apt-install-with-retry retries transient mirror-sync failures and cleans a
   assert.match(stateLines[1], /\bclean\b/);
   assert.match(stateLines[2], /\bAcquire::Retries=3\b[\s\S]*\bupdate\b/);
   assert.match(stateLines[3], /\binstall\b[\s\S]*--no-install-recommends[\s\S]*ca-certificates[\s\S]*curl\b/);
+  const cleanup = readFileSync(`${stateFile}.rm`, 'utf8');
+  assert.match(cleanup, /\/var\/lib\/apt\/lists\//u);
+  assert.match(cleanup, /\/var\/cache\/apt\/archives\/partial\//u);
 });
 
-test('apt-install-with-retry refreshes metadata before resolving optional package alternatives', () => {
+test('apt-install-with-retry refreshes metadata before resolving optional package alternatives', (t) => {
   const root = createFakeAptWorkspace({
     updateBody: `    printf 'ready' > "\${FAKE_APT_METADATA_READY_FILE:?}"
     exit 0`,
@@ -122,6 +129,7 @@ esac`,
   });
   const stateFile = path.join(root, 'state.log');
   const metadataReadyFile = path.join(root, 'metadata-ready');
+  t.after(() => rmSync(root, { recursive: true, force: true }));
 
   const res = spawnSync(
     'bash',
@@ -140,6 +148,7 @@ esac`,
         PATH: `${path.join(root, 'bin')}:${process.env.PATH ?? ''}`,
         FAKE_APT_STATE_FILE: stateFile,
         FAKE_APT_METADATA_READY_FILE: metadataReadyFile,
+        APT_INSTALL_LOG_PATH: path.join(root, 'apt.log'),
         APT_INSTALL_RETRY_SLEEP_SECONDS: '0',
       },
     },
@@ -169,11 +178,12 @@ esac`,
   assert.doesNotMatch(stateLines[5], /(?:^|\s)(?:libfuse2|fuse)(?:\s|$)/, 'unavailable alternatives must not be installed');
 });
 
-test('apt-install-with-retry does not retry non-transient apt failures', () => {
+test('apt-install-with-retry does not retry non-transient apt failures', (t) => {
   const root = createFakeAptWorkspace({
     installBody: `    echo 'E: Unable to locate package definitely-missing-package' >&2
     exit 100`,
   });
+  t.after(() => rmSync(root, { recursive: true, force: true }));
   const stateFile = path.join(root, 'state.log');
 
   const res = spawnSync('bash', [scriptPath, 'definitely-missing-package'], {
@@ -184,6 +194,7 @@ test('apt-install-with-retry does not retry non-transient apt failures', () => {
       PATH: `${path.join(root, 'bin')}:${process.env.PATH ?? ''}`,
       FAKE_APT_STATE_FILE: stateFile,
       APT_INSTALL_RETRY_SLEEP_SECONDS: '0',
+      APT_INSTALL_LOG_PATH: path.join(root, 'apt.log'),
     },
   });
 

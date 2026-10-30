@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { execFileSync, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 
 const repositoryRoot = new URL('../..', import.meta.url);
@@ -215,11 +215,9 @@ test('npm-release rejects dirty real pack+publish before secrets', async () => {
   const temporaryRoot = await mkdtemp(join(tmpdir(), 'happier-npm-release-dirty-publication-'));
   const securityPath = join(temporaryRoot, 'security');
   const invokedPath = join(temporaryRoot, 'security-invoked');
-  const checkoutSha = execFileSync('git', ['rev-parse', 'HEAD'], {
-    cwd: repositoryRoot,
-    encoding: 'utf8',
-  }).trim();
+  const checkoutSha = 'a'.repeat(40);
   try {
+    await writeGitStatusFixture(temporaryRoot);
     await writeFile(securityPath, `#!/bin/sh\nprintf invoked > ${JSON.stringify(invokedPath)}\nexit 0\n`, { mode: 0o755 });
 
     const realPublication = spawnSync(process.execPath, [
@@ -234,7 +232,7 @@ test('npm-release rejects dirty real pack+publish before secrets', async () => {
       '--keychain-service', 'test-only-no-secret',
     ], {
       cwd: repositoryRoot,
-      env: { ...process.env, PATH: `${temporaryRoot}:${process.env.PATH ?? ''}` },
+      env: { ...process.env, PATH: `${temporaryRoot}:${process.env.PATH ?? ''}`, HAPPIER_TEST_GIT_HEAD: checkoutSha, HAPPIER_TEST_GIT_STATUS: ' M packages/sdk/src/connect.ts' },
       encoding: 'utf8',
     });
 

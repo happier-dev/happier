@@ -18,7 +18,7 @@ test('docker publish splits buildx pushes by registry when pushing to dockerhub 
   const repoRoot = process.cwd();
   const scriptPath = path.join(repoRoot, 'scripts/pipeline/docker/publish-images.mjs');
 
-  const out = run(process.execPath, [scriptPath, '--channel', 'dev', '--registries', 'dockerhub,ghcr', '--dry-run'], {
+  const out = run(process.execPath, [scriptPath, '--channel', 'dev', '--sha', '0123456789abcdef0123456789abcdef01234567', '--registries', 'dockerhub,ghcr', '--dry-run'], {
     cwd: repoRoot,
     env: {
       ...process.env,

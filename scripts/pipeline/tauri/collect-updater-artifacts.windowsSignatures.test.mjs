@@ -10,9 +10,10 @@ function writeFile(p, contents) {
   fs.writeFileSync(p, contents);
 }
 
-test('collect-updater-artifacts supports Windows .msi.sig updater signatures (non-zipped)', () => {
+test('collect-updater-artifacts supports Windows .msi.sig updater signatures (non-zipped)', (t) => {
   const repoRoot = path.resolve(import.meta.dirname, '..', '..', '..');
   const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'happier-tauri-collect-'));
+  t.after(() => fs.rmSync(fixtureRoot, { recursive: true, force: true }));
   const artifactRel = path.join(
     'apps',
     'ui',
@@ -45,10 +46,10 @@ test('collect-updater-artifacts supports Windows .msi.sig updater signatures (no
       '--ui-dir',
       fixtureUiDir,
     ],
-    { cwd: repoRoot, stdio: ['ignore', 'pipe', 'pipe'] },
+    { cwd: fixtureRoot, stdio: ['ignore', 'pipe', 'pipe'] },
   );
 
-  const outDir = path.join(repoRoot, 'dist', 'tauri', 'updates', 'windows-x86_64');
+  const outDir = path.join(fixtureRoot, 'dist', 'tauri', 'updates', 'windows-x86_64');
   assert.ok(fs.existsSync(outDir), 'expected output dir to exist');
 
   const outArtifact = path.join(outDir, 'happier-ui-desktop-dev-windows-x86_64.msi');
@@ -56,6 +57,4 @@ test('collect-updater-artifacts supports Windows .msi.sig updater signatures (no
   assert.ok(fs.existsSync(outArtifact), 'expected output artifact to exist');
   assert.ok(fs.existsSync(outSig), 'expected output signature to exist');
 
-  fs.rmSync(outDir, { recursive: true, force: true });
-  fs.rmSync(fixtureRoot, { recursive: true, force: true });
 });

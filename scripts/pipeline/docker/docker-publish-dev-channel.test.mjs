@@ -14,6 +14,8 @@ test('docker-publish supports dev channel (dry-run) and uses preview policy env'
       'docker-publish',
       '--channel',
       'dev',
+      '--sha',
+      '0123456789abcdef0123456789abcdef01234567',
       '--registries',
       'ghcr',
       '--push-latest',

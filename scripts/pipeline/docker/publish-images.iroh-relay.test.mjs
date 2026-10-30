@@ -10,6 +10,7 @@ test('canonical Docker publisher builds the stock Iroh relay with SBOM and prove
   const out = execFileSync(process.execPath, [
     path.join(repoRoot, 'scripts/pipeline/docker/publish-images.mjs'),
     '--channel', 'dev',
+    '--sha', '0123456789abcdef0123456789abcdef01234567',
     '--registries', 'dockerhub',
     '--dry-run',
     '--build-relay', 'false',

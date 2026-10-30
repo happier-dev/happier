@@ -66,16 +66,6 @@ test("Dockerfile deps stages copy shared workspace build tooling for derived wor
   }
 });
 
-test("dev-box Dockerfile no longer runs a source yarn install", () => {
-  const dockerfilePath = path.join(repoRoot, "docker", "dev-box", "Dockerfile");
-  const raw = fs.readFileSync(dockerfilePath, "utf8");
-
-  assert.doesNotMatch(raw, /AS cli-builder/);
-  assert.doesNotMatch(raw, /yarn-install-with-retry --frozen-lockfile/);
-  assert.doesNotMatch(raw, /COPY scripts\/pipeline\/expo\/eas-postinstall\.mjs scripts\/pipeline\/expo\//);
-});
-
-
 test("server images share the production dependency closure and retain their declared runtime workspaces", async () => {
   const raw = fs.readFileSync(path.join(repoRoot, "Dockerfile"), "utf8");
   const deps = extractStageSection(raw, "FROM node:${NODE_VERSION} AS deps-debian");

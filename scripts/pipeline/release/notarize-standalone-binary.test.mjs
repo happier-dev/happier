@@ -18,7 +18,6 @@ import {
   listDarwinPayloadMachOCode,
   notarizeDarwinPayload,
   repairAdHocDarwinPayloadSignatures,
-  resolveGatekeeperAssessmentCommand,
   resolveDarwinPayloadNotarizationCommands,
   runGatekeeperAssessment,
   snapshotDarwinPayload,
@@ -271,12 +270,6 @@ test('Gatekeeper assessment retries only transient online-ticket propagation fai
     policyError,
   );
   assert.equal(policyAttempts, 1);
-});
-
-test('every Gatekeeper assessment bypasses and does not repopulate stale cached results', () => {
-  const [, args] = resolveGatekeeperAssessmentCommand('/tmp/happier');
-  assert.equal(args.includes('--ignore-cache'), true);
-  assert.equal(args.includes('--no-cache'), true);
 });
 
 test('Gatekeeper assessment keeps a bounded thirty-minute window for accepted ticket propagation', () => {

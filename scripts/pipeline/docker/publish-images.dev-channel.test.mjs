@@ -16,11 +16,10 @@ test('docker publish supports dev channel (tags + embedded policy)', () => {
   const repoRoot = process.cwd();
   const scriptPath = path.join(repoRoot, 'scripts/pipeline/docker/publish-images.mjs');
 
-  const sha = run('git', ['rev-parse', 'HEAD'], { cwd: repoRoot }).trim();
-  assert.ok(/^[a-f0-9]{40}$/.test(sha), `expected git SHA, got: ${sha}`);
+  const sha = '0123456789abcdef0123456789abcdef01234567';
   const shortSha = sha.slice(0, 12);
 
-  const out = run(process.execPath, [scriptPath, '--channel', 'dev', '--registries', 'dockerhub', '--dry-run'], {
+  const out = run(process.execPath, [scriptPath, '--channel', 'dev', '--sha', sha, '--registries', 'dockerhub', '--dry-run'], {
     cwd: repoRoot,
     env: {
       ...process.env,

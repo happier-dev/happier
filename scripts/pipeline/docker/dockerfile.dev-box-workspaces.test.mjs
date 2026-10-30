@@ -23,6 +23,7 @@ test('dev-box Dockerfile consumes the CLI release artifact without stack/source 
   assert.doesNotMatch(raw, /ln -sf .*hstack/);
   assert.doesNotMatch(raw, /COPY --from=cli-builder \/repo\/node_modules/);
   assert.doesNotMatch(raw, /yarn-install-with-retry --frozen-lockfile/);
+  assert.doesNotMatch(raw, /COPY scripts\/pipeline\/expo\/eas-postinstall\.mjs scripts\/pipeline\/expo\//);
 });
 
 test('dev-box keeps a non-root runtime user and writable Happier home', () => {

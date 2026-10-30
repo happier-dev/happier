@@ -6,10 +6,11 @@ import path from 'node:path';
 
 import { pickNewestFile } from './notarize-macos-artifacts.mjs';
 
-test('pickNewestFile returns the path with the newest mtime', () => {
+test('pickNewestFile selects the newest real signature and the later entry on equal mtimes', (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'happier-tauri-notary-'));
-  const a = path.join(dir, 'a.sig');
-  const b = path.join(dir, 'b.sig');
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const a = path.join(dir, 'Happier Dev.app.tar.gz.sig');
+  const b = path.join(dir, 'Happier (dev).app.tar.gz.sig');
 
   fs.writeFileSync(a, 'a');
   fs.writeFileSync(b, 'b');
@@ -20,7 +21,8 @@ test('pickNewestFile returns the path with the newest mtime', () => {
   fs.utimesSync(b, now, now);
 
   assert.equal(pickNewestFile([a, b]), b);
-
-  fs.rmSync(dir, { recursive: true, force: true });
+  fs.utimesSync(a, now, now);
+  assert.equal(pickNewestFile([a, b]), b);
+  assert.equal(pickNewestFile([b, a]), a);
 });
 
