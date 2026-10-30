@@ -584,6 +584,8 @@ function createDeepIndexDbHandle(db: SqliteDatabaseSync): DeepIndexDbHandle {
       AND (policyKey <> ? OR seqFrom < ? OR createdAtFromMs < ?);
   `);
   const hasMismatchedPolicyStmt = db.prepare(`SELECT 1 FROM message_chunks WHERE sessionId = ? AND policyKey <> ? LIMIT 1;`);
+  const selectDocumentRevisionStmt = db.prepare(`SELECT documentId, headerVersion, bodyVersion FROM indexed_documents WHERE serverId = ? AND artifactId = ?;`);
+  const selectDocumentEntriesStmt = db.prepare(`SELECT factId, location, text FROM document_entries WHERE documentId = ? ORDER BY entryId;`);
   const deleteDocumentStmt = db.prepare(`DELETE FROM indexed_documents WHERE serverId = ? AND artifactId = ?;`);
   const deleteDocumentByIdStmt = db.prepare(`DELETE FROM indexed_documents WHERE documentId = ?;`);
   const insertDocumentStmt = db.prepare(`
@@ -640,20 +642,35 @@ function createDeepIndexDbHandle(db: SqliteDatabaseSync): DeepIndexDbHandle {
       // Schema is ensured at open time.
     },
     replaceDocumentIndexData: ({ ref, revision, entries }) => {
+      const projectedEntries = entries.flatMap(entry => {
+        const text = entry.text.trim();
+        return text ? [{ factId: entry.factId ?? null, location: serializeDocumentLocation(entry.location), text }] : [];
+      });
       db.exec('BEGIN IMMEDIATE');
       try {
+        const indexedRevision = selectDocumentRevisionStmt.get(ref.serverId, ref.artifactId) as
+          (AccountArtifactRevision & { documentId: number }) | undefined;
+        if (indexedRevision?.headerVersion === revision.headerVersion && indexedRevision.bodyVersion === revision.bodyVersion) {
+          // Expiry can move a fact into archive without changing the Artifact revision.
+          const indexedEntries = selectDocumentEntriesStmt.all(indexedRevision.documentId) as typeof projectedEntries;
+          if (indexedEntries.length === projectedEntries.length && indexedEntries.every((entry, index) => {
+            const projected = projectedEntries[index];
+            return entry.factId === projected.factId && entry.location === projected.location && entry.text === projected.text;
+          })) {
+            db.exec('COMMIT');
+            return;
+          }
+        }
         deleteDocumentStmt.run(ref.serverId, ref.artifactId);
         // Both native SQLite adapters return this insertion result shape.
         const documentInsert = insertDocumentStmt.run(
           ref.serverId, ref.artifactId, revision.headerVersion, revision.bodyVersion,
         ) as Readonly<{ lastInsertRowid: number | bigint }>;
         const documentId = Number(documentInsert.lastInsertRowid);
-        for (const entry of entries) {
-          const text = entry.text.trim();
-          if (!text) continue;
-          const entryInsert = insertDocumentEntryStmt.run(documentId, entry.factId ?? null, serializeDocumentLocation(entry.location), text) as Readonly<{ lastInsertRowid: number | bigint }>;
+        for (const entry of projectedEntries) {
+          const entryInsert = insertDocumentEntryStmt.run(documentId, entry.factId, entry.location, entry.text) as Readonly<{ lastInsertRowid: number | bigint }>;
           const entryId = Number(entryInsert.lastInsertRowid);
-          for (const term of tokenizeMemoryText(text)) insertDocumentTermStmt.run(term, entryId);
+          for (const term of tokenizeMemoryText(entry.text)) insertDocumentTermStmt.run(term, entryId);
         }
         db.exec('COMMIT');
       } catch (error) {

@@ -251,6 +251,51 @@ describe('deepIndexDb', () => {
     }
   });
 
+  it('writes no rows for an already indexed revision and replaces changed revisions after reopening', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'happier-deep-document-writes-'));
+    const dbPath = join(dir, 'deep.sqlite');
+    let db = openDeepIndexDb({ dbPath });
+    const inspection = openSqliteDatabaseSync(dbPath);
+    try {
+      inspection.exec('CREATE TABLE observed_writes (count INTEGER NOT NULL); INSERT INTO observed_writes VALUES (0);');
+      for (const table of ['indexed_documents', 'document_entries', 'document_terms']) {
+        for (const event of ['INSERT', 'UPDATE', 'DELETE']) {
+          inspection.exec(`CREATE TRIGGER observe_${table}_${event} AFTER ${event} ON ${table}
+            BEGIN UPDATE observed_writes SET count = count + 1; END;`);
+        }
+      }
+      const writeCount = () => Number((inspection.prepare('SELECT count FROM observed_writes').get() as { count: number }).count);
+      const ref = { serverId: 'home', artifactId: 'document' };
+      const revision = { headerVersion: 1, bodyVersion: 1 };
+      const entries = [{ factId: 'fact', location: 'facts' as const, text: 'original searchable content' }];
+      db.replaceDocumentIndexData({ ref, revision, entries });
+      const initialWrites = writeCount();
+      expect(initialWrites).toBeGreaterThan(0);
+      db.close();
+      db = openDeepIndexDb({ dbPath });
+      for (let repeat = 0; repeat < 3; repeat += 1) db.replaceDocumentIndexData({ ref, revision,
+        entries: [{ ...entries[0], text: ` ${entries[0].text} ` }, { location: 'facts', text: '   ' }],
+      });
+      expect.soft(writeCount() - initialWrites).toBe(0);
+      expect(db.searchDocuments({ query: 'original', eligibleDocuments: [{ ref, revision }], maxResults: 1 }))
+        .toEqual([expect.objectContaining({ ref, revision, factId: 'fact' })]);
+
+      for (const nextRevision of [{ headerVersion: 2, bodyVersion: 1 }, { headerVersion: 2, bodyVersion: 2 }]) {
+        const before = writeCount();
+        const text = `replacement version${nextRevision.headerVersion} body${nextRevision.bodyVersion}`;
+        db.replaceDocumentIndexData({ ref, revision: nextRevision, entries: [{ factId: 'replacement', location: 'facts', text }] });
+        expect(writeCount()).toBeGreaterThan(before);
+        expect(db.searchDocuments({ query: 'original', eligibleDocuments: [{ ref, revision }], maxResults: 1 })).toEqual([]);
+        expect(db.searchDocuments({ query: text, eligibleDocuments: [{ ref, revision: nextRevision }], maxResults: 1 }))
+          .toEqual([expect.objectContaining({ revision: nextRevision, factId: 'replacement', text })]);
+      }
+    } finally {
+      db.close();
+      inspection.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it('opens the legacy location table without losing documents, terms or Session data', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'happier-deep-documents-topics-upgrade-'));
     try {

@@ -292,6 +292,22 @@ it('uses the exact saved Home binding for portable Project refs without acceptin
   }, 'daemon-machine', true, true);
 });
 
+it('moves an expired Memory fact to archive in search without changing its Artifact revision', async () => {
+  const now = vi.spyOn(Date, 'now').mockReturnValue(0);
+  await withCurrentDocumentFixture(async ({ prepare, dbPath, serverId, artifactId }) => {
+    const { searchTier2Memory } = await import('./searchMemory');
+    const search = () => searchTier2Memory({ dbPath, previewChars: 64,
+      query: { v: 1, query: 'Expired', scope: { type: 'session', sessionId: 'remote-session' },
+        mode: 'deep', corpora: ['documents'], maxResults: 10 },
+      resolveDocuments: scope => prepare({ scope }),
+    });
+    const identity = { ref: { kind: 'doc', serverId, artifactId }, revision: { headerVersion: 1, bodyVersion: 1 }, factId: 'expired' };
+    expect(await search()).toMatchObject({ ok: true, hits: [{ ...identity, location: 'facts' }] });
+    now.mockReturnValue(2);
+    expect(await search()).toMatchObject({ ok: true, hits: [{ ...identity, location: 'archive' }] });
+  }, 'daemon-machine', true);
+});
+
 it('admits only matching Project Sessions and reports unreadable Project membership explicitly', async () => {
   await withCurrentDocumentFixture(async ({ prepare, serverId, setInventoryState }) => {
     const scope = { type: 'project' as const, projectRef: { serverId, projectKey: 'project' } };
