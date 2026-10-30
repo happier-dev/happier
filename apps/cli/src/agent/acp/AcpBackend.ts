@@ -458,6 +458,42 @@ function readNonNegativeFiniteNumber(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
 }
 
+function readAcpUsageTokens(record: Record<string, unknown>): Record<string, number> | undefined {
+  const camelInput = readNonNegativeFiniteNumber(record.inputTokens);
+  const camelOutput = readNonNegativeFiniteNumber(record.outputTokens);
+  const input = readNonNegativeFiniteNumber(record.input_tokens) ?? camelInput
+    ?? readNonNegativeFiniteNumber(record.prompt_tokens) ?? readNonNegativeFiniteNumber(record.promptTokens);
+  const output = readNonNegativeFiniteNumber(record.output_tokens) ?? camelOutput
+    ?? readNonNegativeFiniteNumber(record.completion_tokens) ?? readNonNegativeFiniteNumber(record.completionTokens);
+  const thought = readNonNegativeFiniteNumber(record.thought_tokens)
+    ?? readNonNegativeFiniteNumber(record.thoughtTokens) ?? readNonNegativeFiniteNumber(record.reasoningTokens);
+  const cacheRead = readNonNegativeFiniteNumber(record.cached_read_tokens)
+    ?? readNonNegativeFiniteNumber(record.cachedReadTokens)
+    ?? readNonNegativeFiniteNumber(record.cache_read_input_tokens)
+    ?? readNonNegativeFiniteNumber(record.cache_read_tokens) ?? readNonNegativeFiniteNumber(record.cacheReadTokens);
+  const cacheWrite = readNonNegativeFiniteNumber(record.cached_write_tokens)
+    ?? readNonNegativeFiniteNumber(record.cachedWriteTokens)
+    ?? readNonNegativeFiniteNumber(record.cache_creation_input_tokens)
+    ?? readNonNegativeFiniteNumber(record.cache_creation_tokens)
+    ?? readNonNegativeFiniteNumber(record.cacheCreationTokens) ?? readNonNegativeFiniteNumber(record.cacheWriteTokens);
+  const reportedTotal = readNonNegativeFiniteNumber(record.total_tokens) ?? readNonNegativeFiniteNumber(record.totalTokens);
+  if (reportedTotal === null && input === null && output === null
+    && thought === null && cacheRead === null && cacheWrite === null) return undefined;
+
+  // CamelCase input/output counters include cache/reasoning details (fx 0.0.14,
+  // responses_protocol.zig); preserve the legacy snake_case additive fallback.
+  const details = camelInput !== null || camelOutput !== null
+    ? 0
+    : (cacheRead ?? 0) + (cacheWrite ?? 0) + (thought ?? 0);
+  const tokens: Record<string, number> = { total: reportedTotal ?? (input ?? 0) + (output ?? 0) + details };
+  if (input !== null) tokens.input = input;
+  if (output !== null) tokens.output = output;
+  if (cacheRead !== null) tokens.cache_read = cacheRead;
+  if (cacheWrite !== null) tokens.cache_creation = cacheWrite;
+  if (thought !== null) tokens.thought = thought;
+  return tokens;
+}
+
 function readAcpUsageCost(record: Record<string, unknown>): Record<string, number> | undefined {
   const nested = record.cost && typeof record.cost === 'object' && !Array.isArray(record.cost)
     ? record.cost as Record<string, unknown>
@@ -2480,11 +2516,9 @@ export class AcpBackend implements AgentBackend {
       if (sessionUpdateType === 'usage_update') {
         const usedRaw = (update as any).used;
         const sizeRaw = (update as any).size;
-        const asNum = (value: unknown): number | null =>
-          typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
         const usageCost = readAcpUsageCost(update as Record<string, unknown>);
-        const used = asNum(usedRaw);
-        const size = asNum(sizeRaw);
+        const used = readNonNegativeFiniteNumber(usedRaw);
+        const size = readNonNegativeFiniteNumber(sizeRaw);
         if (used != null || size != null) {
           const tokens: Record<string, number> = { total: used ?? 0 };
           if (used != null) tokens.used = used;
@@ -2500,21 +2534,8 @@ export class AcpBackend implements AgentBackend {
         // Some ACP providers report per-turn usage via usage_update with OpenAI-like fields.
         // Accept these best-effort and convert them into token-count telemetry.
         if (used == null && size == null) {
-          const input = asNum((update as any).input_tokens) ?? asNum((update as any).prompt_tokens);
-          const output = asNum((update as any).output_tokens) ?? asNum((update as any).completion_tokens);
-          const cacheRead =
-            asNum((update as any).cache_read_input_tokens) ?? asNum((update as any).cache_read_tokens);
-          const cacheCreation =
-            asNum((update as any).cache_creation_input_tokens) ?? asNum((update as any).cache_creation_tokens);
-
-          const anyPresent = input != null || output != null || cacheRead != null || cacheCreation != null;
-          if (anyPresent) {
-            const total = (input ?? 0) + (output ?? 0) + (cacheRead ?? 0) + (cacheCreation ?? 0);
-            const tokens: Record<string, number> = { total };
-            if (input != null) tokens.input = input;
-            if (output != null) tokens.output = output;
-            if (cacheRead != null) tokens.cache_read = cacheRead;
-            if (cacheCreation != null) tokens.cache_creation = cacheCreation;
+          const tokens = readAcpUsageTokens(update as Record<string, unknown>);
+          if (tokens) {
             this.emit({
               type: 'token-count',
               key: 'acp-usage-update',
@@ -2531,53 +2552,9 @@ export class AcpBackend implements AgentBackend {
       const usageCandidate = (update as any).usage;
       if (usageCandidate && typeof usageCandidate === 'object' && !Array.isArray(usageCandidate)) {
         const record = usageCandidate as Record<string, unknown>;
-        const asNum = (value: unknown): number | null =>
-          typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
         const usageCost = readAcpUsageCost(record);
-
-        const input =
-          asNum(record.input_tokens) ??
-          asNum(record.inputTokens) ??
-          asNum(record.prompt_tokens) ??
-          asNum(record.promptTokens);
-        const output =
-          asNum(record.output_tokens) ??
-          asNum(record.outputTokens) ??
-          asNum(record.completion_tokens) ??
-          asNum(record.completionTokens);
-        const thought = asNum(record.thought_tokens) ?? asNum(record.thoughtTokens);
-        const cacheRead =
-          asNum(record.cached_read_tokens) ??
-          asNum(record.cachedReadTokens) ??
-          asNum(record.cache_read_tokens) ??
-          asNum(record.cacheReadTokens);
-        const cacheWrite =
-          asNum(record.cached_write_tokens) ??
-          asNum(record.cachedWriteTokens) ??
-          asNum(record.cache_creation_tokens) ??
-          asNum(record.cacheCreationTokens);
-        const totalFromResponse =
-          asNum(record.total_tokens) ??
-          asNum(record.totalTokens);
-        const total =
-          totalFromResponse ??
-          (input ?? 0) + (output ?? 0) + (cacheRead ?? 0) + (cacheWrite ?? 0) + (thought ?? 0);
-
-        const anyPresent =
-          totalFromResponse != null ||
-          input != null ||
-          output != null ||
-          cacheRead != null ||
-          cacheWrite != null ||
-          thought != null;
-
-        if (anyPresent) {
-          const tokens: Record<string, number> = { total };
-          if (input != null) tokens.input = input;
-          if (output != null) tokens.output = output;
-          if (cacheRead != null) tokens.cache_read = cacheRead;
-          if (cacheWrite != null) tokens.cache_creation = cacheWrite;
-          if (thought != null) tokens.thought = thought;
+        const tokens = readAcpUsageTokens(record);
+        if (tokens) {
           this.emit({
             type: 'token-count',
             key: 'acp-session-update-usage',
@@ -3296,30 +3273,7 @@ export class AcpBackend implements AgentBackend {
           return;
         }
 
-        const record = usage as Record<string, unknown>;
-        const asNum = (value: unknown): number | null =>
-          typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
-
-        const input = asNum(record.input_tokens);
-        const output = asNum(record.output_tokens);
-        const thought = asNum(record.thought_tokens);
-        const cacheRead = asNum(record.cached_read_tokens);
-        const cacheWrite = asNum(record.cached_write_tokens);
-        const totalFromResponse = asNum(record.total_tokens);
-        const total =
-          totalFromResponse ??
-          (input ?? 0) +
-            (output ?? 0) +
-            (cacheRead ?? 0) +
-            (cacheWrite ?? 0) +
-            (thought ?? 0);
-
-        const tokens: Record<string, number> = { total };
-        if (input != null) tokens.input = input;
-        if (output != null) tokens.output = output;
-        if (cacheRead != null) tokens.cache_read = cacheRead;
-        if (cacheWrite != null) tokens.cache_creation = cacheWrite;
-        if (thought != null) tokens.thought = thought;
+        const tokens = readAcpUsageTokens(usage as Record<string, unknown>) ?? { total: 0 };
 
         const modelId =
           typeof promptResponseRecord.modelId === 'string'

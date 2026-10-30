@@ -1,8 +1,30 @@
 import { describe, it, expect } from 'vitest';
 
 import { AcpBackend } from '../AcpBackend';
+import type { AgentMessage } from '../../core';
 
 describe('AcpBackend session usage_update', () => {
+  it.each(['embedded', 'direct'])('preserves overlapping camelCase usage details on %s session usage', async (kind) => {
+    const backend = new AcpBackend({ agentName: 'test', cwd: process.cwd(), command: 'noop' });
+    const emitted: AgentMessage[] = [];
+    backend.onMessage((message) => emitted.push(message));
+    const usage = { inputTokens: 100, outputTokens: 40, cacheReadTokens: 30, cacheWriteTokens: 10, reasoningTokens: 15 };
+
+    await (backend as unknown as { handleSessionUpdate(notification: unknown): Promise<void> }).handleSessionUpdate({
+      update: kind === 'embedded' ? {
+        sessionUpdate: 'task_complete',
+        id: 'task_1',
+        usage,
+      } : { sessionUpdate: 'usage_update', ...usage },
+    });
+
+    expect(emitted.filter((message) => message.type === 'token-count')).toEqual([expect.objectContaining({
+      type: 'token-count',
+      source: kind === 'embedded' ? 'acp-session-update-usage' : 'acp-usage-update',
+      tokens: { total: 140, input: 100, output: 40, cache_read: 30, cache_creation: 10, thought: 15 },
+    })]);
+  });
+
   it('emits token-count telemetry from usage_update notifications', async () => {
     const backend = new AcpBackend({
       agentName: 'test',
