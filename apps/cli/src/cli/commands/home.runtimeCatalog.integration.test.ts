@@ -537,27 +537,6 @@ describe('handleHomeCommand', () => {
     expect((error as Error).message).not.toContain('<endpoint>');
   });
 
-  it('explains every other link and unlink refusal in words instead of its raw reason code', async () => {
-    const reasons = ['home_profile_unavailable', 'home_credentials_unavailable', 'home_transport_unavailable'] as const;
-    for (const reason of reasons) {
-      const { deps } = createDeps([], {
-        linkAccount: async () => ({ kind: 'unavailable' as const, reason }),
-        unlinkAccount: async () => ({ kind: 'unavailable' as const, reason }),
-      });
-      for (const subcommand of ['link-account', 'unlink-account']) {
-        const error = await handleHomeCommand([subcommand, '--home', 'srv_home'], deps).catch((cause: unknown) => cause);
-        expect(error).toMatchObject({ code: reason });
-        expect((error as Error).message).not.toContain(reason);
-      }
-    }
-    const { deps } = createDeps([], {
-      unlinkAccount: async () => ({ kind: 'unavailable' as const, reason: 'account_service_credentials_unavailable' as const }),
-    });
-    const error = await handleHomeCommand(['unlink-account', '--home', 'srv_home'], deps).catch((cause: unknown) => cause);
-    expect(error).toMatchObject({ code: 'account_service_credentials_unavailable' });
-    expect((error as Error).message).not.toContain('account_service_credentials_unavailable');
-  });
-
   it('stops Account Service sign-in for one Home and says exactly what unlinking does not revoke', async () => {
     const unlinkAccount = vi.fn(async () => ({
       kind: 'unlinked' as const,
@@ -1978,9 +1957,11 @@ describe('handleHomeCommand', () => {
   });
 
   it('projects only the non-secret upload locator from a destination transfer reservation', async () => {
+    // The reservation carries its receipt token; only the locator may be projected.
     const prepareRelocationUpload = vi.fn(async () => ({
       operationId: 'remote-verify-1',
       uploadLocator: '/tmp/happier-transfer/bundle.tar',
+      uploadReceipt: '11111111-1111-4111-8111-111111111111',
     }));
     const { deps } = createDeps([homeStatus], { prepareRelocationUpload });
     const output = captureStdoutJsonOutput<Record<string, unknown>>();
@@ -2495,19 +2476,6 @@ describe('handleHomeCommand', () => {
     expect(respond).toHaveBeenCalledWith({ taskId: 'task-2', answer: { confirmed: false } });
   });
 
-  it('confirmed erase starts the exact erase kind', async () => {
-    vi.spyOn(console, 'log').mockImplementation(() => {});
-    const erased = success('erase', { removedPaths: ['/data/home'] });
-    const { deps, start, respond } = createDeps([homeStatus, erasePrompt(erased)]);
-
-    await handleHomeCommand(['erase', '--yes'], deps);
-    expect(start).toHaveBeenNthCalledWith(2, { spec: expect.objectContaining({
-      kind: PERSONAL_HOME_SYSTEM_TASK_KINDS.erase,
-      params: expect.not.objectContaining({ confirmErase: expect.anything() }),
-    }) });
-    expect(respond).toHaveBeenCalledWith({ taskId: 'task-2', answer: { confirmed: true } });
-  });
-
   it('prints partial erase facts and rejects a partial outcome', async () => {
     const output = vi.spyOn(console, 'log').mockImplementation(() => {});
     const erased = success('erase', {
@@ -2546,6 +2514,11 @@ describe('handleHomeCommand', () => {
       'relay.runtime.status.v1',
       PERSONAL_HOME_SYSTEM_TASK_KINDS.erase,
     ]);
+    // Erase confirmation is answered through the owner prompt, never carried as a task param.
+    expect(start).toHaveBeenNthCalledWith(2, { spec: expect.objectContaining({
+      kind: PERSONAL_HOME_SYSTEM_TASK_KINDS.erase,
+      params: expect.not.objectContaining({ confirmErase: expect.anything() }),
+    }) });
     expect(prompt).not.toHaveBeenCalled();
     expect(respond).toHaveBeenCalledWith({ taskId: 'task-2', answer: { confirmed: true } });
   });

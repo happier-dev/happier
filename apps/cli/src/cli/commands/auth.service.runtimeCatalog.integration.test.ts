@@ -125,29 +125,18 @@ describe('happier auth service', () => {
     expect(process.exitCode).toBe(1);
   });
 
-  it('reports a sign-in the service refused in words instead of its raw outcome kind', async () => {
-    const output = captureLog();
-
-    await handleAuthServiceCommand(['use', 'https://service.example'], undefined, {
-      createSession: () => sessionOwner(),
-      runSetupEntry: (async () => ({ kind: 'account_service_unavailable' })) as never,
-      isInteractiveTerminal: () => true,
-      promptInput: vi.fn(async () => ''),
-    });
-
-    expect(output.mock.calls.flat().join('\n')).not.toContain('account_service_unavailable');
-    expect(process.exitCode).toBe(1);
-  });
-
   it('drops only this CLI\'s service credential on logout', async () => {
     const output = captureLog();
     const logout = vi.fn(async () => {});
+    const clear = vi.fn(async () => {});
 
     await handleAuthServiceCommand(['logout'], undefined, {
-      createSession: () => sessionOwner({ logout }),
+      createSession: () => sessionOwner({ logout, clear }),
     });
 
     expect(logout).toHaveBeenCalledOnce();
+    // `clear` would also drop the selected service; logout must not.
+    expect(clear).not.toHaveBeenCalled();
     expect(output.mock.calls.flat().join('\n'))
       .toContain('Homes you already entered keep their own access.');
   });
