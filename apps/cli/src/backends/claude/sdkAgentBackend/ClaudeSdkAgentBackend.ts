@@ -9,6 +9,7 @@ import { emitCanonicalTurnDiffTool } from '@/agent/runtime/emitCanonicalTurnDiff
 import { ensureClaudeJsRuntimeExecutable } from '@/backends/claude/utils/ensureClaudeJsRuntimeExecutable';
 import { ClaudeTurnChangeTracker } from '../utils/ClaudeTurnChangeTracker';
 import { isClaudeExplicitDiffToolInput } from '../utils/isClaudeExplicitDiffToolInput';
+import { createClaudeSdkResultError } from './failure';
 import type { AcpPermissionHandler } from '@/agent/acp/AcpBackend';
 import { readNonBlankOpaqueIdentifier } from '@/utils/opaqueIdentifiers';
 import {
@@ -588,7 +589,7 @@ export class ClaudeSdkAgentBackend implements AgentBackend {
         this.pendingTurnCompletion = null;
         this.turnChangeTracker.resetTurn();
         this.suppressedExplicitDiffCallIds.clear();
-        pending.reject(new Error(`Claude SDK error: ${result.subtype}`));
+        pending.reject(createClaudeSdkResultError(result));
       }
       this.settledTurnOrdinal = result.num_turns;
       this.emit({ type: 'status', status: 'error', detail: String(result.subtype) });
