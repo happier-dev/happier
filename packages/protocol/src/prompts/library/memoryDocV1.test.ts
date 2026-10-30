@@ -1,9 +1,32 @@
 import { describe, expect, it } from 'vitest';
-import { MemoryDocBodyV1Schema, MemoryDocBodyV1StoredSchema, projectMemoryDocIndexV1, renderMemoryDocV1 } from './memoryDocV1.js';
+import { MemoryDocBodyV1Schema, MemoryDocBodyV1StoredSchema, MemoryFactV1Schema, MemoryTopicReadV1Schema,
+  isMemoryFactRenewableV1, readMemoryDocTopicV1, projectMemoryDocIndexV1, renderMemoryDocV1 } from './memoryDocV1.js';
 
 const fact = (id: string, text = id) => ({ id, text, createdAtMs: 1, sourceSessionRef: null });
 
 describe('memory document content', () => {
+  it('projects mutation archive membership without persisting it and tolerates unknown read fields', () => {
+    const expired = { ...fact('expired'), expiresAtMs: 5 };
+    const forgotten = { ...fact('forgotten'), expiresAtMs: 5 };
+    const body = MemoryDocBodyV1Schema.parse({ v: 1, index: [expired], topics: [
+      { title: 'archive', summary: 'History', facts: [forgotten] },
+    ] });
+    const before = JSON.stringify(body);
+    const projection = readMemoryDocTopicV1(body, 'archive', 10)!;
+    const read = MemoryTopicReadV1Schema.parse({ ...projection, futureTopicField: true,
+      facts: projection.facts.map(entry => ({ ...entry, futureFactField: true })) });
+    expect(read).toEqual({ title: 'archive', summary: 'History', facts: [
+      { ...forgotten, archivedByMutation: true }, { ...expired, archivedByMutation: false },
+    ] });
+    expect(read.facts.map(entry => isMemoryFactRenewableV1(entry, 10))).toEqual([false, true]);
+    expect(isMemoryFactRenewableV1(expired, 4)).toBe(false);
+    expect(MemoryFactV1Schema.safeParse(read.facts[0]).success).toBe(false);
+    expect(MemoryDocBodyV1StoredSchema.parse({ ...body, topics: body.topics.map(topic => ({ ...topic,
+      facts: topic.facts.map(entry => ({ ...entry, archivedByMutation: true, futureFactField: true })),
+    })) })).toEqual(body);
+    expect(JSON.stringify(body)).toBe(before);
+    expect(MemoryTopicReadV1Schema.safeParse({ ...projection, facts: [{ ...forgotten, archivedByMutation: 'true' }] }).success).toBe(false);
+  });
   it('retains decision source and actual approval in stored reads while keeping decision detail out of prepared context', () => {
     const decision = { reason: 'The team reviewed the migration', sourceMessageRef: { kind: 'session',
       session: { serverId: 'home', sessionId: 'session' }, messageId: 'committed' },

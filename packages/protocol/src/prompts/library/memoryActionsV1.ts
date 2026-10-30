@@ -1,7 +1,7 @@
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { PromptDocArtifactRefV1Schema } from './promptArtifactRefsV1.js';
-import { MemoryDocArtifactHeaderV1Schema, MemoryDocIndexV1Schema, MemoryTopicV1Schema, MemoryDecisionV1Schema } from './memoryDocV1.js';
+import { MemoryDocArtifactHeaderV1Schema, MemoryDocIndexV1Schema, MemoryTopicReadV1Schema, MemoryDecisionV1Schema } from './memoryDocV1.js';
 import { QualifiedProjectKeyV1Schema } from '../../workspaces/workspaceRefV1.js';
 import { CoordinationMessageRefV1Schema } from '../../discussions/messageRefs.js';
 import { ProjectSourcesFailureV1Schema } from '../../projects/sources/projectSourceV1.js';
@@ -79,7 +79,7 @@ export type MemorySemanticMutationResultV1 = z.infer<typeof MemorySemanticMutati
 export const MemoryDocReadResultV1Schema = lazyZodSchema(() => {
   const version = { ok: z.literal(true), artifactId: z.string().check(z.minLength(1)), revision, header: MemoryDocArtifactHeaderV1Schema };
   return z.union([z.strictObject({ ...version, body: MemoryDocIndexV1Schema }),
-    z.strictObject({ ...version, topic: MemoryTopicV1Schema })]);
+    z.strictObject({ ...version, topic: MemoryTopicReadV1Schema })]);
 });
 export const MemoryListResultV1Schema = lazyZodSchema(() => z.strictObject({
   items: z.array(z.strictObject({ artifactId: z.string().check(z.minLength(1)), title: z.string().check(z.minLength(1)), updatedAtMs: until() })),
