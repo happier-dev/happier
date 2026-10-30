@@ -514,4 +514,163 @@ describe('handleMachineCommand', () => {
       output.restore();
     }
   });
+
+  describe('list subcommand', () => {
+    it('lists active machines in JSON format', async () => {
+      const credentials = { token: 'test-token', encryption: { type: 'legacy' as const, secret: 'test-secret' } };
+      const machines = [
+        { id: 'machine-1', active: true, revokedAt: null, replacedByMachineId: null },
+        { id: 'machine-2', active: false, revokedAt: null, replacedByMachineId: null },
+        { id: 'machine-3', active: true, revokedAt: 123456, replacedByMachineId: null },
+      ];
+      
+      const output = captureStdout();
+      try {
+        await handleMachineCommand(
+          ['list', '--json'],
+          {
+            readCredentials: async () => credentials,
+            fetchAccountMachines: async () => machines,
+            applyServerSelectionFromArgs: async (args) => args,
+            createRunner: () => ({ start: vi.fn(), poll: vi.fn(), respond: vi.fn() }),
+            readRelaySelection: () => ({ relayUrl: 'https://relay.example.test', webappUrl: 'https://app.example.test' }),
+            promptInput: async () => { throw new Error('prompt should not be used'); },
+            isInteractiveTerminal: () => false,
+            sleep: async () => undefined,
+          }
+        );
+
+        const jsonOutput = JSON.parse(output.text().trim());
+        expect(jsonOutput.ok).toBe(true);
+        expect(jsonOutput.kind).toBe('machine_list');
+        expect(jsonOutput.data.machines).toHaveLength(2);
+        expect(jsonOutput.data.machines[0].id).toBe('machine-1');
+        expect(jsonOutput.data.machines[1].id).toBe('machine-2');
+      } finally {
+        output.restore();
+      }
+    });
+
+    it('lists active machines in human-readable format', async () => {
+      const credentials = { token: 'test-token', encryption: { type: 'legacy' as const, secret: 'test-secret' } };
+      const machines = [
+        { id: 'machine-1', active: true, revokedAt: null, replacedByMachineId: null },
+        { id: 'machine-2', active: false, revokedAt: null, replacedByMachineId: null },
+      ];
+
+      await handleMachineCommand(
+        ['list'],
+        {
+          readCredentials: async () => credentials,
+          fetchAccountMachines: async () => machines,
+          applyServerSelectionFromArgs: async (args) => args,
+          createRunner: () => ({ start: vi.fn(), poll: vi.fn(), respond: vi.fn() }),
+          readRelaySelection: () => ({ relayUrl: 'https://relay.example.test', webappUrl: 'https://app.example.test' }),
+          promptInput: async () => { throw new Error('prompt should not be used'); },
+          isInteractiveTerminal: () => true,
+          sleep: async () => undefined,
+        }
+      );
+
+      const logOutput = logSpy.mock.calls.flat().join('\n');
+      expect(logOutput).toContain('Registered machines (2)');
+      expect(logOutput).toContain('machine-1');
+      expect(logOutput).toContain('machine-2');
+      expect(logOutput).toContain('active');
+      expect(logOutput).toContain('inactive');
+    });
+
+    it('shows message when no machines are registered', async () => {
+      const credentials = { token: 'test-token', encryption: { type: 'legacy' as const, secret: 'test-secret' } };
+
+      await handleMachineCommand(
+        ['list'],
+        {
+          readCredentials: async () => credentials,
+          fetchAccountMachines: async () => [],
+          applyServerSelectionFromArgs: async (args) => args,
+          createRunner: () => ({ start: vi.fn(), poll: vi.fn(), respond: vi.fn() }),
+          readRelaySelection: () => ({ relayUrl: 'https://relay.example.test', webappUrl: 'https://app.example.test' }),
+          promptInput: async () => { throw new Error('prompt should not be used'); },
+          isInteractiveTerminal: () => true,
+          sleep: async () => undefined,
+        }
+      );
+
+      const logOutput = logSpy.mock.calls.flat().join('\n');
+      expect(logOutput).toContain('No machines registered');
+    });
+
+    it('handles not authenticated error in JSON mode', async () => {
+      const output = captureStdout();
+      try {
+        await handleMachineCommand(
+          ['list', '--json'],
+          {
+            readCredentials: async () => null,
+            fetchAccountMachines: async () => { throw new Error('should not be called'); },
+            applyServerSelectionFromArgs: async (args) => args,
+            createRunner: () => ({ start: vi.fn(), poll: vi.fn(), respond: vi.fn() }),
+            readRelaySelection: () => ({ relayUrl: 'https://relay.example.test', webappUrl: 'https://app.example.test' }),
+            promptInput: async () => { throw new Error('prompt should not be used'); },
+            isInteractiveTerminal: () => false,
+            sleep: async () => undefined,
+          }
+        );
+
+        const jsonOutput = JSON.parse(output.text().trim());
+        expect(jsonOutput.ok).toBe(false);
+        expect(jsonOutput.kind).toBe('machine_list');
+        expect(jsonOutput.error.code).toBe('not_authenticated');
+      } finally {
+        output.restore();
+      }
+    });
+
+    it('handles machine inventory unavailable error in JSON mode', async () => {
+      const credentials = { token: 'test-token', encryption: { type: 'legacy' as const, secret: 'test-secret' } };
+      const output = captureStdout();
+      try {
+        await handleMachineCommand(
+          ['list', '--json'],
+          {
+            readCredentials: async () => credentials,
+            fetchAccountMachines: async () => null,
+            applyServerSelectionFromArgs: async (args) => args,
+            createRunner: () => ({ start: vi.fn(), poll: vi.fn(), respond: vi.fn() }),
+            readRelaySelection: () => ({ relayUrl: 'https://relay.example.test', webappUrl: 'https://app.example.test' }),
+            promptInput: async () => { throw new Error('prompt should not be used'); },
+            isInteractiveTerminal: () => false,
+            sleep: async () => undefined,
+          }
+        );
+
+        const jsonOutput = JSON.parse(output.text().trim());
+        expect(jsonOutput.ok).toBe(false);
+        expect(jsonOutput.kind).toBe('machine_list');
+        expect(jsonOutput.error.code).toBe('machine_inventory_unavailable');
+      } finally {
+        output.restore();
+      }
+    });
+
+    it('handles not authenticated error in human-readable mode', async () => {
+      await handleMachineCommand(
+        ['list'],
+        {
+          readCredentials: async () => null,
+          fetchAccountMachines: async () => { throw new Error('should not be called'); },
+          applyServerSelectionFromArgs: async (args) => args,
+          createRunner: () => ({ start: vi.fn(), poll: vi.fn(), respond: vi.fn() }),
+          readRelaySelection: () => ({ relayUrl: 'https://relay.example.test', webappUrl: 'https://app.example.test' }),
+          promptInput: async () => { throw new Error('prompt should not be used'); },
+          isInteractiveTerminal: () => true,
+          sleep: async () => undefined,
+        }
+      );
+
+      const errorOutput = errorSpy.mock.calls.flat().join('\n');
+      expect(errorOutput).toContain('Not authenticated');
+    });
+  });
 });

@@ -15,9 +15,11 @@ import type {
   SystemTaskResult,
   SystemTaskSpec,
 } from '@happier-dev/protocol';
+import { readCredentials, type Credentials } from '@/persistence';
+import { fetchAccountMachines } from '@/api/machine/fetchAccountMachines';
 
 import { showMachineHelp } from './machine/help';
-import { fail } from '@happier-dev/cli-common/output';
+import { fail, neutral } from '@happier-dev/cli-common/output';
 
 type SystemTasksRunnerAdapter = Readonly<{
   start: (params: Readonly<{ spec: SystemTaskSpec }>) => Promise<Readonly<{ taskId: string }>>;
@@ -41,6 +43,8 @@ export type MachineCommandDeps = Readonly<{
   promptInput: (prompt: string) => Promise<string>;
   isInteractiveTerminal: () => boolean;
   sleep: (ms: number) => Promise<void>;
+  readCredentials: () => Promise<Credentials | null>;
+  fetchAccountMachines: (params: { credentials: Credentials }) => Promise<readonly any[] | null>;
 }>;
 
 const DEFAULT_DEPS: MachineCommandDeps = {
@@ -72,6 +76,8 @@ const DEFAULT_DEPS: MachineCommandDeps = {
   sleep: async (ms) => {
     await new Promise((resolve) => setTimeout(resolve, ms));
   },
+  readCredentials,
+  fetchAccountMachines,
 };
 
 function takeFlagValue(args: string[], name: string): { value: string | null; rest: string[] } {
@@ -312,6 +318,71 @@ async function resolvePromptAnswer(params: Readonly<{
   return {};
 }
 
+async function runListSubcommand(args: string[], deps: MachineCommandDeps): Promise<void> {
+  const json = wantsJson(args);
+  
+  const credentials = await deps.readCredentials();
+  if (!credentials) {
+    if (json) {
+      await printJsonEnvelope({
+        ok: false,
+        kind: 'machine_list',
+        error: { code: 'not_authenticated', message: 'Not authenticated. Run happier auth login first.' },
+      }, { exitCode: 1 });
+      return;
+    }
+    throw new Error('Not authenticated. Run happier auth login first.');
+  }
+
+  const machines = await deps.fetchAccountMachines({ credentials });
+  
+  if (!machines) {
+    if (json) {
+      await printJsonEnvelope({
+        ok: false,
+        kind: 'machine_list',
+        error: { code: 'machine_inventory_unavailable', message: 'The current machine inventory is unavailable.' },
+      }, { exitCode: 1 });
+      return;
+    }
+    throw new Error('The current machine inventory is unavailable.');
+  }
+
+  const activeMachines = machines.filter(
+    (m) => m.revokedAt == null && m.replacedByMachineId == null
+  );
+
+  if (json) {
+    await printJsonEnvelope({
+      ok: true,
+      kind: 'machine_list',
+      data: {
+        machines: activeMachines.map((m) => ({
+          id: m.id,
+          active: m.active ?? false,
+          serverId: configuration.activeServerId,
+          serverUrl: configuration.serverUrl,
+        })),
+      },
+    });
+    return;
+  }
+
+  if (activeMachines.length === 0) {
+    console.log(neutral('No machines registered'));
+    return;
+  }
+
+  console.log(chalk.bold(`Registered machines (${activeMachines.length}):`));
+  console.log();
+  
+  for (const machine of activeMachines) {
+    const statusMarker = machine.active === true ? chalk.green('●') : chalk.gray('○');
+    const statusText = machine.active === true ? chalk.green('active') : chalk.gray('inactive');
+    console.log(`${statusMarker} ${chalk.bold(machine.id)} ${chalk.gray(`· ${statusText}`)}`);
+  }
+}
+
 function printHumanEvent(event: SystemTaskEvent): void {
   if (event.type === 'prompt') {
     return;
@@ -440,6 +511,11 @@ export async function handleMachineCommand(args: string[], deps: Partial<Machine
       return;
     }
 
+    if (subcommand === 'list') {
+      await runListSubcommand(args.slice(1), effectiveDeps);
+      return;
+    }
+
     if (subcommand !== 'setup') {
       throw new Error(`Unknown machine subcommand: ${subcommand}`);
     }
@@ -451,7 +527,7 @@ export async function handleMachineCommand(args: string[], deps: Partial<Machine
       await printJsonEnvelope(
         {
           ok: false,
-          kind: 'machine_setup',
+          kind: subcommand === 'list' ? 'machine_list' : 'machine_setup',
           error: { code: mapped.code, ...(mapped.message ? { message: mapped.message } : {}) },
         },
         { exitCode: mapped.unexpected ? 2 : 1 },
