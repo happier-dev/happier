@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 import { DaemonFilesystemListDirectoryRequestSchema, type DaemonFilesystemListDirectoryRequest, type DaemonFilesystemListDirectoryResponse } from '@happier-dev/protocol/machines/fileBrowser';
 import { useWorkspaceRepositoryTreeBrowser } from './useWorkspaceRepositoryTreeBrowser';
-import { useRepositoryTreeVisibility } from './useRepositoryTreeVisibility';
+import { useRepositoryTreeBrowserState } from './repositoryTreeBrowserState';
 
 const directoryRpc = vi.hoisted(() => vi.fn<(machineId: string, request: DaemonFilesystemListDirectoryRequest,
     options: Readonly<{ serverId?: string | null }>) => Promise<DaemonFilesystemListDirectoryResponse>>());
@@ -19,11 +19,11 @@ const scope = { serverId: 'server-1', machineId: 'm1', rootPath: '/visibility-li
 
 describe('Project workspace tree', () => {
     it('shares visibility and reveal state between hosts of one qualified workspace', async () => {
-        let first: ReturnType<typeof useRepositoryTreeVisibility> | undefined;
-        let second: ReturnType<typeof useRepositoryTreeVisibility> | undefined;
+        let first: ReturnType<typeof useRepositoryTreeBrowserState> | undefined;
+        let second: ReturnType<typeof useRepositoryTreeBrowserState> | undefined;
         function Test() {
-            first = useRepositoryTreeVisibility('home-a:machine:/shared-browser');
-            second = useRepositoryTreeVisibility('home-a:machine:/shared-browser');
+            first = useRepositoryTreeBrowserState('home-a:machine:/shared-browser');
+            second = useRepositoryTreeBrowserState('home-a:machine:/shared-browser');
             return null;
         }
         await renderScreen(<Test />);

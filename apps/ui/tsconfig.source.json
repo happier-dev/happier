@@ -3190,8 +3190,6 @@
     "sources/hooks/ui/useOptionalSafeAreaInsets.ts",
     "sources/hooks/ui/useWebFileDropZone.web.ts",
     "sources/hooks/ui/useWebInitialRouteReconcile.ts",
-    "sources/hooks/workspaces/files/useRepositoryTreeRevealedPaths.ts",
-    "sources/hooks/workspaces/files/useRepositoryTreeVisibility.ts",
     "sources/hooks/workspaces/scm/buildWorkspaceChangedFilesData.ts",
     "sources/hooks/workspaces/scm/useWorkspaceScmCommitHistory.ts",
     "sources/keyboard/sessions.ts",
