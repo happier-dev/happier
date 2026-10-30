@@ -1761,7 +1761,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     safety: 'safe',
     approval: APPROVAL_RESULT_OPTIONAL_DEFERRED,
     placements: ['command_palette', 'session_info', 'voice_panel'],
-    bindings: { voiceClientToolName: 'openSession' },
+    bindings: { voiceClientToolName: 'openSession', mcpToolName: 'session_open' },
     examples: {
       voice: { argsExample: '{"sessionTitle":"Session Setup"}' },
     },
@@ -1771,7 +1771,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       voice_tool: true,
       voice_action_block: true,
       session_agent: false,
-      mcp: false,
+      mcp: true,
       cli: false,
     },
     inputHints: {
@@ -1951,7 +1951,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     safety: 'safe',
     approval: APPROVAL_RESULT_REQUIRED,
     placements: ['voice_panel'],
-    bindings: { voiceClientToolName: 'listRecentPaths' },
+    bindings: { voiceClientToolName: 'listRecentPaths', mcpToolName: 'paths_list_recent' },
     examples: {
       voice: { argsExample: '{"limit":10}' },
     },
@@ -1980,7 +1980,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     safety: 'safe',
     approval: APPROVAL_RESULT_REQUIRED,
     placements: ['voice_panel'],
-    bindings: { voiceClientToolName: 'listMachines' },
+    bindings: { voiceClientToolName: 'listMachines', mcpToolName: 'machines_list' },
     examples: {
       voice: { argsExample: '{"limit":50}' },
     },
@@ -2006,7 +2006,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     safety: 'safe',
     approval: APPROVAL_RESULT_REQUIRED,
     placements: ['voice_panel'],
-    bindings: { voiceClientToolName: 'listServers' },
+    bindings: { voiceClientToolName: 'listServers', mcpToolName: 'servers_list' },
     examples: {
       voice: { argsExample: '{"limit":50}' },
     },
