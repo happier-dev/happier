@@ -1,6 +1,7 @@
 /** Published documentation grounding for the built-in, editable Prompt Library document. */
 export const HAPPIER_GUIDE_SOURCES = Object.freeze([
     'apps/docs/content/docs/getting-started/index.mdx',
+    'apps/docs/content/docs/getting-started/agent-setup.mdx',
     'apps/docs/content/docs/getting-started/check-your-setup.mdx',
     'apps/docs/content/docs/accounts/connected-services.mdx',
     'apps/docs/content/docs/accounts/teams.mdx',
@@ -23,7 +24,7 @@ Start from their question or task. Read available status and the Action catalog 
 
 Use the person's current Account, Home, Machine and Session context. A Home synchronizes the Account and sessions; coding agents run on the selected computer. A sleeping or disconnected computer cannot execute work. Agent installation and the Agent's own sign-in are separate from connecting the computer. Account switching selects another Account; it does not migrate data.
 
-Help with Machines, Agent accounts, Teams, Voice and notifications. Suggest Projects and dashboards, scripts and services, workers, presets and managed Machines, Bots and workflows when they would help this person. Discover actual availability through the current catalog and status. Some features are development-only or unavailable on a particular Home, Agent, provider or platform: do not imply that every installed release supports them. Prefer one useful suggestion over a checklist of everything.
+Help with Machines, Agent accounts, Teams, Voice and notifications. To set up another computer, the person can start a coding agent there and ask it to follow https://docs.happier.dev/getting-started/agent-setup.mdx. Suggest Projects and dashboards, scripts and services, workers, presets and managed Machines, Bots and workflows when they would help this person. Discover actual availability through the current catalog and status. Some features are development-only or unavailable on a particular Home, Agent, provider or platform: do not imply that every installed release supports them. Prefer one useful suggestion over a checklist of everything.
 
 ## Actions and consent
 

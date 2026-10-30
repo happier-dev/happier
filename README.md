@@ -74,6 +74,20 @@ If you specifically want the npm package instead: `npm install -g @happier-dev/c
 </details>
 
 <details>
+<summary><b>Already use Claude Code, Codex or another coding agent?</b> Let it set Happier up with you</summary>
+
+Paste this into your agent:
+
+```text
+Set up Happier on this computer by following https://docs.happier.dev/getting-started/agent-setup.mdx
+Fetch that file raw (for example with curl) and follow it step by step with me.
+```
+
+It asks what it needs to know, confirms each change, and leaves choosing your Home, approving the sign-in and your agent's own login to you. [Set up with your coding agent](https://docs.happier.dev/getting-started/agent-setup)
+
+</details>
+
+<details>
 <summary><b>Installing on a remote computer or devbox?</b> Set it up over SSH, from your machine</summary>
 
 One command installs the CLI and the daemon on the remote host (release-signature verified) and registers it as one of your machines:
