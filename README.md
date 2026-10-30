@@ -184,6 +184,8 @@ happier session send <id> "rerun the failing test"
 happier session actions execute <id> session.spawn_new
 ```
 
+**Grok Bot integration.** Install and manage Happier sessions through a shareable Grok Bot on X — setup, monitoring, and session control in one bot. [Grok Bot integration](https://docs.happier.dev/extending/grok-bot-integration)
+
 **MCP servers, configured once.** Define your MCP servers once and use them with every agent on every machine, even agents with no native MCP support. [MCP servers](https://docs.happier.dev/extending/mcp-servers)
 
 **A usage limit should not end your session.** Link provider subscriptions and API keys once, sealed on your device before they sync, and pick which account each session runs under. When a provider limit bites, Happier shows the reset time, waits, and resumes the session on its own (Claude Code, Codex, OpenCode, Gemini, Pi). [Connected services](https://docs.happier.dev/accounts/connected-services) · [Usage limits](https://happier.dev/features/usage-limits)
