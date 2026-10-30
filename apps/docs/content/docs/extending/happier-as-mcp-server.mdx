@@ -86,6 +86,32 @@ Notes:
 - The MCP host must run on a machine that is already authenticated to Happier, or the server will fail with `not_authenticated`.
 - For security, `happier mcp serve` does **not** honor server-selection *environment variables* (like `HAPPIER_SERVER_URL`). To target a non-default server, pass the CLI server flags in `args` (see below) or switch the active server profile in the CLI home directory.
 
+### Advanced: Running a second account side-by-side
+
+To run `happier mcp serve` with a different Happier account on the same machine (for example, a personal account alongside a work account), set `HAPPIER_HOME_DIR` to point to an alternate CLI home directory:
+
+```json
+{
+  "mcpServers": {
+    "happier-work": {
+      "command": "happier",
+      "args": ["mcp", "serve"],
+      "env": {
+        "HAPPIER_HOME_DIR": "/Users/you/.happier-work"
+      }
+    }
+  }
+}
+```
+
+Each `HAPPIER_HOME_DIR` isolates credentials, daemon state, and settings. Authenticate the alternate CLI home first:
+
+```bash
+HAPPIER_HOME_DIR=/Users/you/.happier-work happier auth login
+```
+
+This is **not** the default workflow — most users do not need it. Use it only when you need MCP hosts to access different Happier accounts simultaneously.
+
 ### Target a specific server
 
 If your MCP host supports it, include the normal CLI server selection flags in the configured `args`:
