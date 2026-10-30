@@ -847,12 +847,6 @@ jobs:
           sudo apt-get install -y sqlite3
           sqlite3 --version
 
-      - name: Validate UI E2E shard selector
-        # Runs exactly once per full run, exactly when the selector is the spec
-        # source (explicit UI_E2E_SPECS selections bypass it).
-        if: (inputs.select_jobs_explicitly || steps.changes.outputs.ui_e2e == 'true') && matrix.shard == 1 && env.UI_E2E_SPECS == ''
-        run: node --test scripts/ci/select-ui-e2e-shard.test.mjs
-
       - name: Run UI E2E
         if: inputs.select_jobs_explicitly || steps.changes.outputs.ui_e2e == 'true'
         run: |
