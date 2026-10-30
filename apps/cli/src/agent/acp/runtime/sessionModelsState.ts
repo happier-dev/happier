@@ -1,4 +1,6 @@
 import type { Metadata } from '@/api/types';
+import { isDeepStrictEqual } from 'node:util';
+import { reconcileAcpCatalogRows } from '@/agent/acp/reconcileAcpCatalogRows';
 import { updateMetadataBestEffort } from '@/api/session/sessionWritesBestEffort';
 import { normalizeAcpConfigOptionChoices } from '@/agent/acp/configOptionChoiceNormalization';
 import { readNonBlankSessionControlIdentifier } from '@/agent/runtime/sessionControlIdentifiers';
@@ -74,10 +76,12 @@ export function applyObservedAcpModelOptions<
     const previous = previousById.get(model.id);
     return previous ? { ...previous, ...model } : model;
   });
-  return catalogModels.map((model) => {
+  return reconcileAcpCatalogRows(previousModels, catalogModels.map((model) => {
     if (model.id === 'default' || model.id !== currentModelId) return model;
-    return { ...model, modelOptions: observedOptions.length > 0 ? [...observedOptions] : undefined };
-  });
+    return { ...model, modelOptions: observedOptions.length > 0
+      ? reconcileAcpCatalogRows(previousById.get(model.id)?.modelOptions, [...observedOptions])
+      : undefined };
+  }));
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -189,13 +193,19 @@ export function buildAcpSessionModelsStateFromPayload(params: Readonly<{
     ? payload.observedAt
     : Date.now();
 
+  const previous = params.previousState;
+  const reconciledModels = reconcileAcpCatalogRows(previous?.availableModels, availableModels);
+  if (previous?.provider === params.provider
+    && previous.currentModelId === currentModelId
+    && isDeepStrictEqual(previous.availableModels, reconciledModels)) return previous;
+
   return {
     v: 1,
     provider: params.provider,
     // Current-model telemetry does not establish or renew catalog freshness.
     updatedAt: hasCatalog ? observedAt : (params.previousState?.updatedAt ?? 0),
     currentModelId,
-    availableModels,
+    availableModels: reconciledModels,
   };
 }
 
@@ -211,16 +221,16 @@ export function publishAcpSessionModelsState(params: Readonly<{
   updateMetadataBestEffort(
     params.session,
     (metadata) => {
-      const previous = params.preservePreviousAvailableModels === true
-        ? readNewestSessionModelsMetadataStateV1(metadata as unknown as Record<string, unknown>) as AcpSessionModelsState | null
-        : null;
+      const previous = readNewestSessionModelsMetadataStateV1(metadata as unknown as Record<string, unknown>) as AcpSessionModelsState | null;
       const next = buildAcpSessionModelsStateFromPayload({
         provider: params.provider,
         payload: params.payload,
-        previousState: previous?.provider === params.provider ? previous : undefined,
+        previousState: previous?.provider === params.provider
+          && (params.preservePreviousAvailableModels === true || Array.isArray(asRecord(params.payload)?.availableModels))
+          ? previous : undefined,
         requireAvailableModels: params.requireAvailableModels,
       });
-      return next ? { ...metadata, sessionModelsV1: next, acpSessionModelsV1: next } : metadata;
+      return next && next !== previous ? { ...metadata, sessionModelsV1: next, acpSessionModelsV1: next } : metadata;
     },
     params.logPrefix,
     params.reason,

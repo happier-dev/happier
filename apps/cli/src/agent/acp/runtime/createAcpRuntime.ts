@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
+import { reconcileAcpCatalogRows } from '@/agent/acp/reconcileAcpCatalogRows';
 
 import { logger } from '@/ui/logger';
 import type { AgentBackend, AgentMessage, McpServerConfig } from '@/agent';
@@ -1994,16 +1996,18 @@ export function createAcpRuntime(params: {
               publishRuntimeMetadataBestEffort(
                 (metadata) => {
                   const now = Date.now();
-                  const next: any = {
-                    ...metadata,
-                    sessionConfigOptionsV1: {
-                      v: 1,
+                  let next = metadata;
+                  const previousConfig = metadata.sessionConfigOptionsV1 ?? metadata.acpConfigOptionsV1;
+                  if (previousConfig?.provider !== params.provider
+                    || !isDeepStrictEqual(previousConfig.configOptions, configOptions)) {
+                    const sessionConfigOptions = {
+                      v: 1 as const,
                       provider: params.provider,
                       updatedAt: now,
-                      configOptions,
-                    },
-                  };
-                  next.acpConfigOptionsV1 = next.sessionConfigOptionsV1;
+                      configOptions: reconcileAcpCatalogRows(previousConfig?.configOptions, configOptions),
+                    };
+                    next = { ...next, sessionConfigOptionsV1: sessionConfigOptions, acpConfigOptionsV1: sessionConfigOptions };
+                  }
 
                   const previousModels = readNewestSessionModelsMetadataStateV1(metadata as unknown as Record<string, unknown>);
                   const modelSnapshot = derivedModels ?? (
@@ -2023,28 +2027,34 @@ export function createAcpRuntime(params: {
                         collectAcpModelScopedConfigOptions(configOptions.filter((option) => option !== modelOpt)),
                         previousModels?.provider === params.provider ? previousModels.availableModels : [],
                       );
-                    next.sessionModelsV1 = {
-                      v: 1,
-                      provider: params.provider,
-                      updatedAt: derivedModels ? now : previousModels?.updatedAt ?? 0,
-                      currentModelId: modelSnapshot.currentModelId,
-                      availableModels,
-                    };
-                    next.acpSessionModelsV1 = next.sessionModelsV1;
+                    if (previousModels?.provider !== params.provider
+                      || previousModels.currentModelId !== modelSnapshot.currentModelId
+                      || !isDeepStrictEqual(previousModels.availableModels, availableModels)) {
+                      const sessionModels = {
+                        v: 1 as const,
+                        provider: params.provider,
+                        updatedAt: derivedModels ? now : previousModels?.updatedAt ?? 0,
+                        currentModelId: modelSnapshot.currentModelId,
+                        availableModels: reconcileAcpCatalogRows(previousModels?.availableModels, availableModels),
+                      };
+                      next = { ...next, sessionModelsV1: sessionModels, acpSessionModelsV1: sessionModels };
+                    }
                   }
-                  if (derivedModes) {
+                  const previousModes = metadata.sessionModesV1 ?? metadata.acpSessionModesV1;
+                  if (derivedModes && (previousModes?.provider !== params.provider
+                    || previousModes.currentModeId !== derivedModes.currentModeId
+                    || !isDeepStrictEqual(previousModes.availableModes, derivedModes.availableModes))) {
                     const sessionModes = {
                       v: 1 as const,
                       provider: params.provider,
                       updatedAt: now,
                       currentModeId: derivedModes.currentModeId,
-                      availableModes: derivedModes.availableModes,
+                      availableModes: reconcileAcpCatalogRows(previousModes?.availableModes, derivedModes.availableModes),
                     };
-                    next.sessionModesV1 = sessionModes;
-                    next.acpSessionModesV1 = sessionModes;
+                    next = { ...next, sessionModesV1: sessionModes, acpSessionModesV1: sessionModes };
                   }
 
-                  return next as any;
+                  return next;
                 },
                 'config_options_state',
               );

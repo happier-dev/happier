@@ -7,6 +7,7 @@
  */
 
 import type { ChildProcess } from 'node:child_process';
+import { isDeepStrictEqual } from 'node:util';
 import spawn from 'cross-spawn';
 import type {
   SessionNotification,
@@ -46,6 +47,7 @@ import {
   type AcpAuthentication,
 } from './AcpAuthentication';
 import { isAcpModeConfigOptionLike, normalizeAcpConfigOptionChoices } from './configOptionChoiceNormalization';
+import { reconcileAcpCatalogRows } from './reconcileAcpCatalogRows';
 import {
   readNonBlankSessionControlIdentifier,
   readSessionControlValueId,
@@ -2488,14 +2490,7 @@ export class AcpBackend implements AgentBackend {
       if (sessionUpdateType === 'config_option_update') {
         const configOptionsCandidate = (update as any).configOptions;
         const configOptionsRaw = Array.isArray(configOptionsCandidate) ? configOptionsCandidate : null;
-        if (configOptionsRaw) {
-          const next = this.normalizeSupportedSessionConfigOptions(configOptionsRaw);
-          this.sessionConfigOptionsState = next;
-          const modelState = this.options.sessionModelAdapter?.deriveModelStateFromConfigOptions?.({
-            configOptions: next,
-          });
-          if (modelState) this.sessionModelState = modelState;
-        }
+        if (!configOptionsRaw || !this.reconcileSessionConfigOptions(configOptionsRaw)) return;
         this.emit({
           type: 'event',
           name: 'config_options_update',
@@ -2699,6 +2694,22 @@ export class AcpBackend implements AgentBackend {
       : options;
   }
 
+  private reconcileSessionConfigOptions(raw: ReadonlyArray<unknown>): boolean {
+    const normalized = this.normalizeSupportedSessionConfigOptions(raw);
+    if (isDeepStrictEqual(this.sessionConfigOptionsState, normalized)) return false;
+    this.sessionConfigOptionsState = reconcileAcpCatalogRows(this.sessionConfigOptionsState, normalized);
+    const modelState = this.options.sessionModelAdapter?.deriveModelStateFromConfigOptions?.({
+      configOptions: this.sessionConfigOptionsState,
+    });
+    if (modelState && !isDeepStrictEqual(this.sessionModelState, modelState)) {
+      this.sessionModelState = {
+        ...modelState,
+        availableModels: reconcileAcpCatalogRows(this.sessionModelState?.availableModels, modelState.availableModels),
+      };
+    }
+    return true;
+  }
+
   private seedSessionConfigOptionsFromSessionResponse(sessionResponse: unknown): void {
     const response = asRecord(sessionResponse);
     if (!response) return;
@@ -2707,14 +2718,12 @@ export class AcpBackend implements AgentBackend {
     const configOptionsRaw: unknown[] | null = Array.isArray(configOptionsCandidate) ? configOptionsCandidate : null;
     if (!configOptionsRaw) return;
 
-    const configOptions = this.normalizeSupportedSessionConfigOptions(configOptionsRaw);
-    this.sessionConfigOptionsState = configOptions;
-    const modelState = this.options.sessionModelAdapter?.deriveModelStateFromConfigOptions?.({ configOptions });
-    if (modelState) {
-      this.sessionModelState = modelState;
-      this.emit({ type: 'event', name: 'session_models_state', payload: modelState });
+    const previousModelState = this.sessionModelState;
+    if (!this.reconcileSessionConfigOptions(configOptionsRaw)) return;
+    if (this.sessionModelState && this.sessionModelState !== previousModelState) {
+      this.emit({ type: 'event', name: 'session_models_state', payload: this.sessionModelState });
     }
-    this.emit({ type: 'event', name: 'config_options_state', payload: { configOptions } });
+    this.emit({ type: 'event', name: 'config_options_state', payload: { configOptions: this.sessionConfigOptionsState } });
   }
 
   async setSessionConfigOption(
@@ -2764,19 +2773,21 @@ export class AcpBackend implements AgentBackend {
     if (modelUpdate) {
       await this.setSessionModel(normalizedSessionId, modelUpdate.modelId, modelUpdate.requestMeta);
       if (this.sessionModelState) {
-        this.sessionModelState = {
+        const next = {
           ...this.sessionModelState,
-          availableModels: this.sessionModelState.availableModels.map((model) =>
+          availableModels: reconcileAcpCatalogRows(this.sessionModelState.availableModels, this.sessionModelState.availableModels.map((model) =>
             model.id === this.sessionModelState?.currentModelId && model.modelOptions
               ? {
                   ...model,
-                  modelOptions: model.modelOptions.map((option) =>
+                  modelOptions: reconcileAcpCatalogRows(model.modelOptions, model.modelOptions.map((option) =>
                     option.id === normalizedConfigId
                       ? { ...option, currentValue: normalizedValueId }
-                      : option),
+                      : option)),
                 }
-              : model),
+              : model)),
         };
+        if (isDeepStrictEqual(this.sessionModelState, next)) return;
+        this.sessionModelState = next;
         this.emit({ type: 'event', name: 'session_models_state', payload: this.sessionModelState });
       }
       return;
@@ -2799,22 +2810,12 @@ export class AcpBackend implements AgentBackend {
 
     const configOptionsCandidate = response?.configOptions;
     const configOptionsRaw = Array.isArray(configOptionsCandidate) ? configOptionsCandidate : null;
-    if (configOptionsRaw) {
-      this.sessionConfigOptionsState = this.normalizeSupportedSessionConfigOptions(configOptionsRaw);
-    } else if (this.sessionConfigOptionsState) {
-      this.sessionConfigOptionsState = this.sessionConfigOptionsState.map((option) =>
-        option.id === normalizedConfigId
-          ? { ...option, currentValue: normalizedValueId }
-          : option
-      );
-    }
-    if (this.sessionConfigOptionsState) {
-      const modelState = this.options.sessionModelAdapter?.deriveModelStateFromConfigOptions?.({
-        configOptions: this.sessionConfigOptionsState,
-      });
-      if (modelState) this.sessionModelState = modelState;
-    }
-    if (!this.sessionConfigOptionsState) return;
+    const next = configOptionsRaw ?? this.sessionConfigOptionsState?.map((option) =>
+      option.id === normalizedConfigId
+        ? { ...option, currentValue: normalizedValueId }
+        : option
+    );
+    if (!next || !this.reconcileSessionConfigOptions(next)) return;
     this.emit({
       type: 'event',
       name: 'config_options_update',
@@ -3684,6 +3685,7 @@ export class AcpBackend implements AgentBackend {
       modelState: this.sessionModelState,
     })
       ?? normalizedModelId;
+    if (this.sessionModelState?.currentModelId === projectedModelId) return;
     if (this.sessionModelState) {
       this.sessionModelState = { ...this.sessionModelState, currentModelId: projectedModelId };
     }
