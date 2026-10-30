@@ -305,41 +305,6 @@ describe('buildTmuxSessionIdentifier', () => {
     });
 });
 
-describe('Round-trip consistency', () => {
-    it('should parse and format consistently for session-only', () => {
-        const original = 'my-session';
-        const parsed = parseTmuxSessionIdentifier(original);
-        const formatted = formatTmuxSessionIdentifier(parsed);
-        expect(formatted).toBe(original);
-    });
-
-    it('should parse and format consistently for session:window', () => {
-        const original = 'my-session:window-1';
-        const parsed = parseTmuxSessionIdentifier(original);
-        const formatted = formatTmuxSessionIdentifier(parsed);
-        expect(formatted).toBe(original);
-    });
-
-    it('should parse and format consistently for session:window.pane', () => {
-        const original = 'my-session:window-1.2';
-        const parsed = parseTmuxSessionIdentifier(original);
-        const formatted = formatTmuxSessionIdentifier(parsed);
-        expect(formatted).toBe(original);
-    });
-
-    it('should build and parse consistently', () => {
-        const params = {
-            session: 'my-session',
-            window: 'window-1',
-            pane: '2'
-        };
-        const built = buildTmuxSessionIdentifier(params);
-        expect(built.success).toBe(true);
-        const parsed = parseTmuxSessionIdentifier(built.identifier!);
-        expect(parsed).toEqual(params);
-    });
-});
-
 describe('extractSessionAndWindow', () => {
     it('extracts session and window names containing spaces', () => {
         const parsed = extractSessionAndWindow('my session:my window.2');

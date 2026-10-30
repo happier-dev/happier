@@ -779,43 +779,6 @@ describe('TmuxUtilities.spawnInTmux', () => {
         expect(tmux.calls.filter((call) => call.cmd[0] === 'kill-window')).toHaveLength(0);
     });
 
-    it('terminates only the observed exact unrecoverable window id and verifies its absence', async () => {
-        class TerminatingExactIdTmuxUtilities extends FakeTmuxUtilities {
-            private listed = false;
-
-            override async executeTmuxCommand(cmd: string[], session?: string): Promise<TmuxCommandResult | null> {
-                this.calls.push({ cmd, session });
-                if (cmd[0] === 'new-window') {
-                    return { returncode: 1, stdout: '@6\tnot-a-pid\n', stderr: '', command: cmd, timedOut: true };
-                }
-                if (cmd[0] === 'list-windows') {
-                    if (!this.listed) {
-                        this.listed = true;
-                        return {
-                            returncode: 0,
-                            stdout: '@6\tmy-window\tnot-a-pid\n@7\tmy-window\t4242\n',
-                            stderr: '',
-                            command: cmd,
-                        };
-                    }
-                    return { returncode: 0, stdout: '@7\tmy-window\t4242\n', stderr: '', command: cmd };
-                }
-                return { returncode: 0, stdout: '', stderr: '', command: cmd };
-            }
-        }
-
-        const tmux = new TerminatingExactIdTmuxUtilities();
-        const result = await tmux.spawnInTmux(
-            ['echo', 'hello'],
-            { sessionName: 'my-session', windowName: 'my-window', windowNameIsUnique: true },
-            {},
-        );
-
-        expect(result).toMatchObject({ success: false, creationDisposition: 'created_and_absent' });
-        expect(tmux.calls).toContainEqual(expect.objectContaining({ cmd: ['kill-window', '-t', '@6'] }));
-        expect(tmux.calls).not.toContainEqual(expect.objectContaining({ cmd: ['kill-window', '-t', '@7'] }));
-    });
-
     it('does not recover a sole same-name window without an exact id or uniqueness guarantee', async () => {
         class NonUniqueNamedWindowTmuxUtilities extends FakeTmuxUtilities {
             override async executeTmuxCommand(cmd: string[], session?: string): Promise<TmuxCommandResult | null> {

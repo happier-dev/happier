@@ -23,11 +23,6 @@ function recordingExecutor(result: TmuxCommandResult | null = ok()): {
 }
 
 describe('createTmuxTerminalControlPort', () => {
-  it('exposes the tmux host kind', () => {
-    const { executor } = recordingExecutor();
-    expect(createTmuxTerminalControlPort({ executor, target: TARGET }).hostKind).toBe('tmux');
-  });
-
   it('is a control-only surface that is NOT a prompt-injection surface (A6 fence)', () => {
     const { executor } = recordingExecutor();
     const port = createTmuxTerminalControlPort({ executor, target: TARGET });

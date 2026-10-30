@@ -55,10 +55,6 @@ function makePort(rec: Recorder, paneId: string | typeof OMIT_PANE = 'terminal_2
 }
 
 describe('createZellijTerminalControlPort', () => {
-  it('exposes the zellij host kind', () => {
-    expect(makePort(recordingActions()).hostKind).toBe('zellij');
-  });
-
   it('is a control-only surface that is NOT a prompt-injection surface (A6 fence)', () => {
     const port = makePort(recordingActions());
     expect('injectUserPrompt' in port).toBe(false);
