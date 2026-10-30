@@ -77,7 +77,7 @@ describe('storage/files (S3 env parsing)', () => {
     try {
       vi.resetModules();
       const { deletePublicFile, initFilesLocalFromEnv, readPublicFile, writePublicFile } = await import('./files');
-      initFilesLocalFromEnv({ HAPPIER_SERVER_LIGHT_FILES_DIR: dir } as NodeJS.ProcessEnv);
+      initFilesLocalFromEnv({ HAPPIER_SERVER_LIGHT_FILES_DIR: dir } as unknown as NodeJS.ProcessEnv);
       const bytes = Uint8Array.of(1);
       await writePublicFile('public/u/a', bytes);
       expect(Array.from(await readPublicFile('public/u/a'))).toEqual(Array.from(bytes));
