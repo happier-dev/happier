@@ -2,6 +2,7 @@ import type { ComponentType, ReactElement } from 'react';
 import { Pressable, View } from 'react-native';
 
 import { HAPPIER_SPACE_STEPS } from '../../environment/spacing.js';
+import { HappierPressable } from '../interaction/Pressable.js';
 import type { HappierStyleProp } from '../portableTypes.js';
 
 /** What saving does to the saved fact it resembles. */
@@ -181,14 +182,16 @@ export function HappierMemoryDuplicateChoice(
                       </View>
                     ) : null}
                     {view ? (
-                      <Pressable
+                      <HappierPressable
                         testID={`${props.testID}.candidate.${candidate.id}.view`}
                         accessibilityRole="button"
-                        hitSlop={space.s8}
+                        // Inside a selectable row: the link reaches only into the row's own gaps (half the body gap above,
+                        // the row padding below and beside), never into the text that selects the row.
+                        hitReach={{ top: space.s2 / 2, bottom: space.s4, left: space.s8 / 2, right: space.s4 }}
                         onPress={() => view.open(candidate.id)}
                       >
                         <Text role="action">{view.label}</Text>
-                      </Pressable>
+                      </HappierPressable>
                     ) : null}
                   </View>
                 ) : null}

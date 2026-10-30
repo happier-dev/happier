@@ -7,6 +7,8 @@ import { MemoryDuplicateChoiceExample } from '../../fixtures/external-authoring/
 import { mountThroughReactNativeWeb } from '../rnwMount.testSupport.js';
 import { createHostApiStub, createSurfaceContext } from '../surfaceFixture.testSupport.js';
 import { PluginUiProvider } from './PluginUiProvider.js';
+import { resetHappierPrimaryPointerForTesting } from '../environment/interactiveTarget.js';
+import { readHitAreaReach } from '../presentation/interaction/hitArea.testSupport.js';
 
 const byId = (container: HTMLElement, id: string) => container.querySelector<HTMLElement>(`[data-testid="${id}"]`);
 
@@ -63,6 +65,26 @@ describe('external author memory duplicate choice', () => {
       expect(byId(mounted.container, 'author-duplicate.candidate.saved-retry')!.getAttribute('aria-checked')).toBe('true');
       expect(byId(mounted.container, 'author-duplicate.effect')!.textContent).toBe('The saved fact moves to history. Agents only see the new one.');
     } finally { mounted.unmount(); }
+  });
+
+  it('lets a finger reach the small View action through the shared hit area (web ignores a raw hitSlop)', () => {
+    vi.stubGlobal('matchMedia', (query: string) => ({ matches: query === '(pointer: coarse)' || query === '(hover: none)' }));
+    resetHappierPrimaryPointerForTesting();
+    const context = createSurfaceContext();
+    const mounted = mountThroughReactNativeWeb(<PluginUiProvider hostApi={createHostApiStub(context)} context={context}>
+      <MemoryDuplicateChoiceExample onView={() => {}} />
+    </PluginUiProvider>);
+    try {
+      const view = byId(mounted.container, 'author-duplicate.candidate.saved-backoff.view')!;
+      const handler = Reflect.get(view, '__reactLayoutHandler');
+      if (typeof handler === 'function') act(() => handler({ nativeEvent: { layout: { x: 0, y: 0, width: 32, height: 16 } } }));
+      // Nested in the selectable row: the reach is the row's own gaps (half the 2 px body gap above), not the finger target.
+      expect(readHitAreaReach(view)).toMatchObject({ top: 1, bottom: 4, left: 4, right: 4 });
+    } finally {
+      mounted.unmount();
+      vi.unstubAllGlobals();
+      resetHappierPrimaryPointerForTesting();
+    }
   });
 
   it('draws no view control when the caller has none', () => {

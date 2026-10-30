@@ -1,9 +1,11 @@
 import { act, useState } from 'react';
 import { Text } from 'react-native';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { mountThroughReactNativeWeb } from '../../rnwMount.testSupport.js';
 import { createSurfaceContext } from '../../surfaceFixture.testSupport.js';
+import { resetHappierPrimaryPointerForTesting } from '../../environment/interactiveTarget.js';
+import { readHitAreaReach } from '../interaction/hitArea.testSupport.js';
 import {
   HappierLocalDateTimeField,
   type HappierLocalDateTimePickerHost,
@@ -45,7 +47,20 @@ const query = (
   testID: string,
 ) => view.container.querySelector<HTMLElement>(`[data-testid="${testID}"]`);
 
+afterEach(() => {
+  vi.unstubAllGlobals();
+  resetHappierPrimaryPointerForTesting();
+});
+
 describe('local date-time field', () => {
+  it('keeps a finger on the picker button out of the text it shares the field with', () => {
+    vi.stubGlobal('matchMedia', (query: string) => ({ matches: query === '(pointer: coarse)' || query === '(hover: none)' }));
+    resetHappierPrimaryPointerForTesting();
+    const picker: HappierLocalDateTimePickerHost = { renderGlyph: (mode) => <Text>{mode}</Text>, renderPicker: () => null };
+    const view = mountThroughReactNativeWeb(<Harness picker={picker} />);
+    expect(readHitAreaReach(query(view, 'lease-date-picker-button')!)?.left).toBe(0);
+  });
+
   it('is typed alone when the host has no picker, and says when the reading is not in the future', () => {
     const view = mountThroughReactNativeWeb(
       <Harness initial={{ date: '2026-09-01', time: '09:00' }} />,

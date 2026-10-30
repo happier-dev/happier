@@ -127,7 +127,8 @@ export function HappierLocalDateTimeField(
               accessibilityRole="button"
               accessibilityLabel={label}
               expanded={pickerMode === mode}
-              hitSlop={8}
+              // The glyph button sits inside the field: its hit area never reaches left into the text it shares the field with.
+              hitReach={{ left: 0 }}
               onPress={() =>
                 setPickerMode((current) => (current === mode ? null : mode))
               }
