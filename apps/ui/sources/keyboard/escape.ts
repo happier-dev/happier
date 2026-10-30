@@ -73,7 +73,7 @@ let nextEscapeEntryId = 1;
 let escapeLayers: ReadonlyArray<EscapeLayerEntry> = [];
 let escapeKeyBlockers: ReadonlyArray<EscapeKeyBlockerEntry> = [];
 
-export function markEscapeEventHandled(event: unknown): void {
+function markEscapeEventHandled(event: unknown): void {
     if (!event || typeof event !== 'object') return;
     try {
         (event as Record<string, unknown>)[ESCAPE_EVENT_HANDLED_KEY] = true;
