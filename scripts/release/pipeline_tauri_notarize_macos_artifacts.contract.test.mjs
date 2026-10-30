@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
-import { readFileSync, writeFileSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { readFileSync, writeFileSync, mkdirSync, mkdtempSync, rmSync, existsSync } from 'node:fs';
 import { dirname, resolve, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -58,12 +58,15 @@ test('macOS notarization re-signs through a file key without inheriting a confli
   const root = mkdtempSync(join(tmpdir(), 'happier-notary-signer-env-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const bin = join(root, 'bin');
-  const bundle = join(root, 'src-tauri', 'target', 'release', 'bundle');
+  const bundle = join(root, 'src-tauri', 'target', 'aarch64-apple-darwin', 'release', 'bundle');
   mkdirSync(bin);
   mkdirSync(bundle, { recursive: true });
   const artifact = join(bundle, 'Happier.app.tar.gz');
   writeFileSync(artifact, 'candidate');
   writeFileSync(`${artifact}.sig`, 'candidate-signature');
+  const otherTarget = join(root, 'src-tauri', 'target', 'x86_64-apple-darwin', 'release', 'bundle');
+  mkdirSync(otherTarget, { recursive: true });
+  writeFileSync(join(otherTarget, 'Cached.app.tar.gz.sig'), 'other-target-signature');
   const signature = Buffer.alloc(96, 8).toString('base64');
 
   // Only external macOS tools and the Tauri process are substituted. Run the
@@ -92,7 +95,7 @@ assert.equal(process.env.MINISIGN_PASSPHRASE, 'fallback-password');
 process.stdout.write(${JSON.stringify(`Signature: ${signature}\n`)});
 `, { mode: 0o755 });
 
-  execFileSync(process.execPath, [notarizeScriptPath, '--ui-dir', root], {
+  execFileSync(process.execPath, [notarizeScriptPath, '--ui-dir', root, '--tauri-target', 'aarch64-apple-darwin'], {
     cwd: repoRoot,
     env: {
       ...process.env,
@@ -110,4 +113,45 @@ process.stdout.write(${JSON.stringify(`Signature: ${signature}\n`)});
   });
   assert.equal(readFileSync(artifact, 'utf8'), 'notarized-candidate');
   assert.equal(readFileSync(`${artifact}.sig`, 'utf8'), `${signature}\n`);
+});
+
+test('macOS notarization refuses ambiguous current-target archives before contacting Apple', {
+  skip: process.platform === 'win32' && 'macOS tool harness requires POSIX executables',
+}, (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'happier-notary-ambiguous-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const bin = join(root, 'bin');
+  const bundle = join(root, 'src-tauri', 'target', 'aarch64-apple-darwin', 'release', 'bundle');
+  mkdirSync(bin);
+  mkdirSync(bundle, { recursive: true });
+  for (const name of ['Happier.app.tar.gz', 'Cached.app.tar.gz']) {
+    writeFileSync(join(bundle, name), 'candidate');
+    writeFileSync(join(bundle, `${name}.sig`), 'signature');
+  }
+  const contacted = join(root, 'apple-contacted');
+  // Substitute OS/vendor processes only; keep real discovery and selection.
+  writeFileSync(join(bin, 'tar'), `#!/usr/bin/env node
+const fs = require('node:fs');
+const path = require('node:path');
+const args = process.argv.slice(2);
+fs.mkdirSync(path.join(args[args.indexOf('-C') + 1], 'Happier.app'));
+`, { mode: 0o755 });
+  writeFileSync(join(bin, 'ditto'), '#!/usr/bin/env node\nprocess.exit(0);\n', { mode: 0o755 });
+  writeFileSync(join(bin, 'xcrun'), `#!/usr/bin/env node
+require('node:fs').writeFileSync(${JSON.stringify(contacted)}, 'called');
+process.exit(1);
+`, { mode: 0o755 });
+  const result = spawnSync(process.execPath, [notarizeScriptPath,
+    '--ui-dir', root, '--tauri-target', 'aarch64-apple-darwin'], {
+    cwd: repoRoot,
+    env: {
+      ...process.env, PATH: `${bin}:${process.env.PATH ?? ''}`, RUNNER_TEMP: join(root, 'tmp'),
+      APPLE_API_KEY_ID: 'test-key', APPLE_API_ISSUER_ID: 'test-issuer', APPLE_API_PRIVATE_KEY: 'test-key',
+      TAURI_SIGNING_PRIVATE_KEY: '', TAURI_PRIVATE_KEY: '',
+    },
+    encoding: 'utf8',
+  });
+  assert.equal(existsSync(contacted), false, 'ambiguous archives must not reach Apple');
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /exactly one updater signature/);
 });

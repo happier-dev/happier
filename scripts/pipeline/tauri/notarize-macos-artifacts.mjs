@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { createTauriSignerFileEnv, ensureTauriSigningKeyFile } from './ensure-signing-key-file.mjs';
 import { resolveTauriSigningPrivateKeyPassword } from './resolve-signing-key-password.mjs';
 import { resolvePnpmInvocation } from '../../workspaces/execPnpmCommand.mjs';
+import { pickUpdaterSignature } from './updater-signature.mjs';
 
 const DEFAULT_NOTARYTOOL_SUBMIT_ATTEMPTS = 2;
 const DEFAULT_NOTARYTOOL_RETRY_DELAY_MS = 10_000;
@@ -222,38 +223,6 @@ function tempFile(dir, filename) {
   return path.join(dir, filename);
 }
 
-/**
- * When caches restore previous bundle outputs, multiple updater signatures can exist under the same
- * `target/<tauri-target>` directory. We prefer the newest signature to ensure we notarize the
- * artifacts produced by the current build run.
- *
- * @param {readonly string[]} paths
- * @returns {string}
- */
-export function pickNewestFile(paths) {
-  if (!Array.isArray(paths) || paths.length === 0) {
-    fail('pickNewestFile expected at least one path');
-  }
-
-  let bestPath = paths[0];
-  let bestMtime = -Infinity;
-
-  for (const p of paths) {
-    try {
-      const stat = fs.statSync(p);
-      const mtime = Number(stat?.mtimeMs ?? 0);
-      if (Number.isFinite(mtime) && mtime >= bestMtime) {
-        bestMtime = mtime;
-        bestPath = p;
-      }
-    } catch {
-      // ignore missing/stat failures; we'll keep the current best.
-    }
-  }
-
-  return bestPath;
-}
-
 function main() {
   const repoRoot = path.resolve(process.cwd());
   const { values } = parseArgs({
@@ -318,13 +287,7 @@ function main() {
 
   let sigPath = opts.dryRun ? path.join(searchDir, 'DRY_RUN.app.tar.gz.sig') : '';
   if (!opts.dryRun) {
-    if (sigMatches.length === 0) {
-      fail(`Expected at least one macOS updater signature under ${searchDir}; found 0`);
-    }
-    sigPath = sigMatches.length === 1 ? sigMatches[0] : pickNewestFile(sigMatches);
-    if (sigMatches.length > 1) {
-      console.warn(`Found multiple macOS updater signatures under ${searchDir}; using newest: ${sigPath}`);
-    }
+    sigPath = pickUpdaterSignature('darwin', sigMatches);
   }
 
   const artifactPath = sigPath.endsWith('.sig') ? sigPath.slice(0, -'.sig'.length) : sigPath;

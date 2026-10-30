@@ -9,6 +9,7 @@ import { execFileSync } from 'node:child_process';
 import { parseArgs } from 'node:util';
 import { formatPublicReleaseChannelChoices, normalizePublicReleaseChannel } from '../release/lib/public-release-rings.mjs';
 import { isLinuxDesktopPackage } from './linux-desktop-artifact-policy.mjs';
+import { pickUpdaterSignature } from './updater-signature.mjs';
 
 function fail(message) {
   console.error(message);
@@ -55,36 +56,6 @@ function rel(absPath) {
  */
 function findMatching(files, predicate) {
   return files.filter(predicate).sort((a, b) => a.localeCompare(b));
-}
-
-/**
- * @param {string} platformKey
- * @param {string[]} matches
- * @returns {string}
- */
-function pickSignature(platformKey, matches) {
-  if (platformKey.startsWith('windows-')) {
-    const preferred =
-      matches.find((m) => m.endsWith('.nsis.zip.sig')) ||
-      matches.find((m) => m.endsWith('.nsis.sig')) ||
-      matches.find((m) => m.endsWith('.exe.zip.sig')) ||
-      matches.find((m) => m.endsWith('.exe.sig')) ||
-      matches.find((m) => m.endsWith('.msi.zip.sig')) ||
-      matches.find((m) => m.endsWith('.msi.sig')) ||
-      matches[0];
-    if (!preferred) fail(`Expected at least one Windows updater signature; found 0`);
-    if (matches.length > 1) {
-      console.error(`Found multiple Windows updater signatures for ${platformKey}; using preferred artifact: ${rel(preferred)}`);
-      console.error('All matches:');
-      for (const match of matches) console.error(`  ${rel(match)}`);
-    }
-    return preferred;
-  }
-
-  if (matches.length !== 1) {
-    fail(`Expected exactly one updater signature for ${platformKey}; found ${matches.length}`);
-  }
-  return matches[0];
 }
 
 /**
@@ -203,7 +174,7 @@ function main() {
     return lower.endsWith('.appimage.sig') || lower.endsWith('.appimage.tar.gz.sig');
   });
 
-  const sigPath = dryRun ? path.join(searchDir, 'DRY_RUN.sig') : pickSignature(platformKey, signatureMatches);
+  const sigPath = dryRun ? path.join(searchDir, 'DRY_RUN.sig') : pickUpdaterSignature(platformKey, signatureMatches);
   const artifactPath = sigPath.endsWith('.sig') ? sigPath.slice(0, -'.sig'.length) : sigPath;
 
   if (!dryRun) {
