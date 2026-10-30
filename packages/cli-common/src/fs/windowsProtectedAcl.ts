@@ -104,7 +104,10 @@ function resolveWindowsProtectedAclCommandEnvironment(command: string, nativeCom
   if (command !== 'powershell.exe') return undefined;
   // Both command runners must load modules from the selected Windows
   // PowerShell installation, regardless of the launching shell's version.
-  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => key.toLowerCase() !== 'psmodulepath'));
+  const env = { ...process.env };
+  for (const key of Object.keys(env)) {
+    if (key.toLowerCase() === 'psmodulepath') delete env[key];
+  }
   return { ...env, PSModulePath: win32.join(win32.dirname(nativeCommand), 'Modules') };
 }
 

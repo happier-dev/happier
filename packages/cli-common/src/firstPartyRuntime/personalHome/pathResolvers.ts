@@ -13,7 +13,7 @@ import { expandHomeDirPath } from '../../path/expandHomeDirPath.js';
  */
 export function resolvePersonalHomePrivateFilesDir(params: Readonly<{
   dataDir: string;
-  env?: NodeJS.ProcessEnv;
+  env?: Readonly<Record<string, string | undefined>>;
   platform?: NodeJS.Platform;
 }>): string {
   const env = params.env ?? process.env;
@@ -33,7 +33,7 @@ export function resolvePersonalHomePrivateFilesDir(params: Readonly<{
 }
 
 export function resolveManagedServerLightPathEnvValue(
-  env: NodeJS.ProcessEnv,
+  env: Readonly<Record<string, string | undefined>>,
   currentName:
     | 'HAPPIER_SERVER_LIGHT_DATA_DIR'
     | 'HAPPIER_SERVER_LIGHT_FILES_DIR'
@@ -56,7 +56,7 @@ export function resolveManagedServerLightPathEnvValue(
  */
 export function resolvePersonalHomeSqliteDatabasePath(params: Readonly<{
   dataDir: string;
-  env?: NodeJS.ProcessEnv;
+  env?: Readonly<Record<string, string | undefined>>;
   platform?: NodeJS.Platform;
 }>): string {
   const env = params.env ?? process.env;

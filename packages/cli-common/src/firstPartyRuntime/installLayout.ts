@@ -27,7 +27,7 @@ const FIRST_PARTY_VERSION_ID_MAX_LENGTH = 200;
 export const FIRST_PARTY_INSTALL_HOME_ENV_KEY = 'HAPPIER_FIRST_PARTY_INSTALL_HOME';
 
 /** Reuse the canonical home expansion rules without changing daemon-private state. */
-export function resolveFirstPartyInstallHomeDir(processEnv: NodeJS.ProcessEnv = process.env): string {
+export function resolveFirstPartyInstallHomeDir(processEnv: Readonly<Record<string, string | undefined>> = process.env): string {
   const override = processEnv[FIRST_PARTY_INSTALL_HOME_ENV_KEY]?.trim();
   return resolveHappyHomeDirFromEnvironment(override
     ? { ...processEnv, HAPPIER_HOME_DIR: override }
@@ -59,7 +59,7 @@ export function resolveFirstPartyInstallLayout(params: Readonly<{
   componentId: FirstPartyComponentId;
   channel?: PublicReleaseRingId;
   releaseRing?: PublicReleaseRingId;
-  processEnv?: NodeJS.ProcessEnv;
+  processEnv?: Readonly<Record<string, string | undefined>>;
 }>): FirstPartyInstallLayout {
   const processEnv = params.processEnv ?? process.env;
   const channel = params.channel ?? params.releaseRing ?? 'stable';
@@ -94,7 +94,7 @@ export function resolveFirstPartyVersionInstallPath(params: Readonly<{
   versionId: string;
   channel?: PublicReleaseRingId;
   releaseRing?: PublicReleaseRingId;
-  processEnv?: NodeJS.ProcessEnv;
+  processEnv?: Readonly<Record<string, string | undefined>>;
 }>): string {
   const layout = resolveFirstPartyInstallLayout({
     componentId: params.componentId,

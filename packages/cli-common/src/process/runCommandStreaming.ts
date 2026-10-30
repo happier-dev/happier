@@ -24,7 +24,7 @@ export async function runCommandStreaming(params: Readonly<{
   cmd: string;
   args: string[];
   cwd?: string;
-  env?: NodeJS.ProcessEnv;
+  env?: Readonly<Record<string, string | undefined>>;
   context?: string;
   maxCapturedBytes?: number;
 }>): Promise<void> {
@@ -43,7 +43,8 @@ export async function runCommandStreaming(params: Readonly<{
     });
     const child = spawn(invocation.command, [...invocation.args], {
       cwd: params.cwd,
-      env: params.env,
+      // OS environments may be sparse even when a consumer augments ProcessEnv with required fields.
+      env: params.env as NodeJS.ProcessEnv | undefined,
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
       windowsVerbatimArguments: invocation.windowsVerbatimArguments,

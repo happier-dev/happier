@@ -4,21 +4,21 @@ export type CommandInvocation = Readonly<{
   windowsVerbatimArguments?: boolean;
 }>;
 export function isWindowsShellShimPath(pathLike: string): boolean;
-export function resolveWindowsCommandPath(commandPath: string, env?: NodeJS.ProcessEnv): string | null;
+export function resolveWindowsCommandPath(commandPath: string, env?: Readonly<Record<string, string | undefined>>): string | null;
 export function resolveWindowsCommandOnPath(
   command: string,
-  env?: NodeJS.ProcessEnv,
+  env?: Readonly<Record<string, string | undefined>>,
   accept?: (candidate: string) => boolean,
 ): string | null;
 export function buildWindowsCmdShimInvocation(
   command: string,
   args: readonly string[],
-  options?: Readonly<{ env?: NodeJS.ProcessEnv; comspec?: string | null }>,
+  options?: Readonly<{ env?: Readonly<Record<string, string | undefined>>; comspec?: string | null }>,
 ): CommandInvocation;
 export function resolveWindowsCommandInvocation(params: Readonly<{
   command: string;
   args: readonly string[];
-  env?: NodeJS.ProcessEnv;
+  env?: Readonly<Record<string, string | undefined>>;
   comspec?: string | null;
   resolveCommandOnPath?: boolean;
 }>): CommandInvocation;

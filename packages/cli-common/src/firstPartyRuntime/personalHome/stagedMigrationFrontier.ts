@@ -53,7 +53,7 @@ export type PersonalHomeSqliteMigrationFrontierFacts = Readonly<{
 export type PersonalHomeMigrationProcessRunner = (input: Readonly<{
     command: string;
     args: readonly string[];
-    env: NodeJS.ProcessEnv;
+    env: Readonly<Record<string, string | undefined>>;
 }>) => Promise<void>;
 
 const DATA_AUTHORITY_ENV_KEYS = Object.freeze([
@@ -176,14 +176,14 @@ function assertStagedDatabasePath(params: Readonly<{
 }
 
 function createMigrationEnv(params: Readonly<{
-    persistedEnv: NodeJS.ProcessEnv;
+    persistedEnv: Readonly<Record<string, string | undefined>>;
     databasePath: string;
     stagedDataDir: string;
     migrationsDir: string;
     platform: NodeJS.Platform;
-}>): NodeJS.ProcessEnv {
+}>): Record<string, string | undefined> {
     const pathApi = params.platform === 'win32' ? win32 : posix;
-    const env: NodeJS.ProcessEnv = { ...params.persistedEnv };
+    const env = { ...params.persistedEnv };
     for (const key of DATA_AUTHORITY_ENV_KEYS) delete env[key];
     env.HAPPIER_DB_PROVIDER = 'sqlite';
     env.DATABASE_URL = renderPrismaCompatibleSqliteDatabaseUrl({

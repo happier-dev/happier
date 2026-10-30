@@ -7,7 +7,7 @@ import {
   resolvePathForPathShape,
 } from '../path/pathShape.js';
 
-function resolveConfiguredHomeOverride(rawOverride: string, processEnv: NodeJS.ProcessEnv): string {
+function resolveConfiguredHomeOverride(rawOverride: string, processEnv: Readonly<Record<string, string | undefined>>): string {
   const override = rawOverride.trim();
   if (!override) return '';
 
@@ -28,7 +28,7 @@ function resolveConfiguredHomeOverride(rawOverride: string, processEnv: NodeJS.P
   return isAbsolutePathForPathShape(expandedOverride) ? expandedOverride : resolvePathForPathShape(expandedOverride);
 }
 
-export function resolveHappyHomeDirFromEnvironment(processEnv: NodeJS.ProcessEnv = process.env): string {
+export function resolveHappyHomeDirFromEnvironment(processEnv: Readonly<Record<string, string | undefined>> = process.env): string {
   const override = typeof processEnv.HAPPIER_HOME_DIR === 'string' ? processEnv.HAPPIER_HOME_DIR.trim() : '';
   if (override) {
     return resolveConfiguredHomeOverride(override, processEnv);

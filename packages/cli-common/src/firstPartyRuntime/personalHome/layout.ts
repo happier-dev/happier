@@ -43,7 +43,7 @@ export type PersonalHomeRuntimeArtifactPaths = Readonly<{
 }>;
 
 type HomeRuntimeLayoutOptions = Readonly<{
-  env?: NodeJS.ProcessEnv;
+  env?: Readonly<Record<string, string | undefined>>;
   homeDir?: string;
   platform?: NodeJS.Platform;
   mode?: 'user' | 'system';
@@ -55,7 +55,7 @@ function resolveHomeRuntimeDataPaths(params: HomeRuntimeLayoutOptions) {
   const platform = params.platform ?? process.platform;
   const mode = params.mode ?? 'user';
   const fallbackHome = params.homeDir ?? homedir();
-  const pathEnv: NodeJS.ProcessEnv = platform === 'win32'
+  const pathEnv = platform === 'win32'
     ? { ...env, USERPROFILE: fallbackHome }
     : { ...env, HOME: fallbackHome };
   const defaults = resolveRelayRuntimeDefaults({ platform, mode, channel: params.channel ?? 'stable', homeDir: fallbackHome });
