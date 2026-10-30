@@ -7,9 +7,24 @@ import {
   applyCodingPromptBehaviorOverrideToSettings,
   DEFAULT_CODING_PROMPT_BEHAVIOR_V1,
   resolveCodingPromptBehaviorV1,
+  resolveCodingPromptSessionTitleInstructionModeV1,
 } from './codingPromptBehaviorV1.js';
 
 describe('codingPromptBehaviorV1 (overrides)', () => {
+  it('requests initial title generation only while the session has no usable title', () => {
+    expect(resolveCodingPromptSessionTitleInstructionModeV1({}, { summary: { text: 'Existing title' } })).toBe('disabled');
+    expect(resolveCodingPromptSessionTitleInstructionModeV1({}, { name: 'Legacy title' })).toBe('disabled');
+    expect(resolveCodingPromptSessionTitleInstructionModeV1({}, { summary: { text: 123 } })).toBe('initial');
+    expect(resolveCodingPromptSessionTitleInstructionModeV1({}, { summary: { text: '  ' } })).toBe('initial');
+    expect(resolveCodingPromptSessionTitleInstructionModeV1({}, null)).toBe('initial');
+    expect(resolveCodingPromptSessionTitleInstructionModeV1({
+      codingPromptBehaviorV1: { sessionTitleUpdates: 'ongoing' },
+    }, { summary: { text: 'Existing title' } })).toBe('ongoing');
+    expect(resolveCodingPromptSessionTitleInstructionModeV1({
+      codingPromptBehaviorV1: { sessionTitleUpdates: 'disabled' },
+    }, null)).toBe('disabled');
+  });
+
   it.each([
     undefined,
     {},

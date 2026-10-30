@@ -6,6 +6,7 @@ export async function resolveGeminiSystemPromptText(params: Readonly<{
   credentials: Credentials;
   settings: Record<string, unknown> | null | undefined;
   profileId: string | null | undefined;
+  sessionMetadata?: unknown;
   baseOverride?: string | null;
   executionRunsFeatureEnabled?: boolean;
   sessionId: string;
@@ -17,6 +18,7 @@ export async function resolveGeminiSystemPromptText(params: Readonly<{
     credentials: params.credentials,
     settings: params.settings,
     profileId: params.profileId,
+    sessionMetadata: params.sessionMetadata,
     baseOverride: params.baseOverride,
     executionRunsFeatureEnabled: params.executionRunsFeatureEnabled,
     providerId: 'gemini',

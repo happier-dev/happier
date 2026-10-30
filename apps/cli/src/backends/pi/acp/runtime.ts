@@ -114,6 +114,7 @@ export function createPiAcpRuntime(params: {
         agentDir,
         sessionId: session.sessionId,
         settings: mergedSettings,
+        sessionMetadata: session.getMetadataSnapshot(),
         memoryRecallGuidanceEnabled,
         memoryMachineId: params.machineId,
       });
@@ -125,6 +126,7 @@ export function createPiAcpRuntime(params: {
         credentials: params.credentials,
         settings: params.accountSettings ?? null,
         profileId: sessionProfileId,
+        sessionMetadata: session.getMetadataSnapshot(),
         providerId: 'pi',
         executionRunsFeatureEnabled: resolveCliFeatureDecision({
           featureId: 'execution.runs',

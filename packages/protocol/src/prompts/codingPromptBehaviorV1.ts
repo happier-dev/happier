@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { lazySchema } from '../lazySchema.js';
+import { hasSessionTitleInMetadata } from '../sessionMetadata/sessionTitle.js';
 
 export const CodingPromptBehaviorModeV1Schema = lazySchema(() => z.enum(['agent', 'disabled']));
 export type CodingPromptBehaviorModeV1 = z.infer<typeof CodingPromptBehaviorModeV1Schema>;
@@ -38,6 +39,17 @@ export function resolveCodingPromptBehaviorV1(settingsLike: unknown): CodingProm
 
 export function resolveCodingPromptSessionTitleUpdatesModeV1(settingsLike: unknown): CodingPromptSessionTitleUpdatesModeV1 {
   return resolveCodingPromptBehaviorV1(settingsLike).sessionTitleUpdates;
+}
+
+/** Prompt guidance follows the Happier Session, not each new provider conversation. */
+export function resolveCodingPromptSessionTitleInstructionModeV1(
+  settingsLike: unknown,
+  sessionMetadata?: unknown,
+): CodingPromptSessionTitleUpdatesModeV1 {
+  const mode = resolveCodingPromptSessionTitleUpdatesModeV1(settingsLike);
+  return mode === 'initial' && hasSessionTitleInMetadata(sessionMetadata)
+    ? 'disabled'
+    : mode;
 }
 
 export function isCodingPromptSessionTitleUpdatesEnabled(settingsLike: unknown): boolean {

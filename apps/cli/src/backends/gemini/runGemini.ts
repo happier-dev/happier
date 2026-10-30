@@ -300,6 +300,7 @@ export async function runGemini(opts: {
       credentials: opts.credentials,
       settings: opts.accountSettingsContext?.settings ?? null,
       profileId: session.getMetadataSnapshot()?.profileId ?? null,
+      sessionMetadata: session.getMetadataSnapshot(),
       baseOverride,
       executionRunsFeatureEnabled: resolveCliFeatureDecision({
         featureId: 'execution.runs',

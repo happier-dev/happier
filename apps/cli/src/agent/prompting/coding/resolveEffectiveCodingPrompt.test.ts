@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
 import { deriveBoxPublicKeyFromSeed, sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol';
+import { projectCurrentAgentSessionView } from '@happier-dev/agents';
 
 import { encodeBase64, encryptWithDataKey } from '@/api/encryption';
 import type { Credentials } from '@/persistence';
+import { createSessionTitleMetadataUpdater } from '@/session/services/setSessionTitle';
 
 import { resolveEffectiveCodingPromptText, type PromptArtifactRecord } from './resolveEffectiveCodingPrompt';
 
@@ -50,6 +52,35 @@ function createCredentials(): DataKeyCredentials {
 }
 
 describe('resolveEffectiveCodingPromptText', () => {
+  it.each(['native_mcp', 'shell_bridge'] as const)('preserves an existing title under initial title policy with %s delivery', async (toolDelivery) => {
+    const input = {
+      credentials: createCredentials(),
+      settings: { codingPromptBehaviorV1: { sessionTitleUpdates: 'initial' } },
+      profileId: null,
+      sessionMetadata: projectCurrentAgentSessionView({
+        metadata: createSessionTitleMetadataUpdater({ title: 'Original task', updatedAt: 1 })({ flavor: 'claude' }),
+        target: { agentId: 'codex', updatedAtMs: 2 },
+      }),
+      toolDelivery,
+      toolDeliverySessionId: 'session-1',
+      toolDeliveryDirectory: '/workspace',
+      memoryRecallGuidanceEnabled: false,
+    } as const;
+
+    const continuation = await resolveEffectiveCodingPromptText(input);
+    expect(continuation).not.toContain('change_title');
+    expect(continuation).toContain('Linked workspace files');
+
+    const untitled = await resolveEffectiveCodingPromptText({ ...input, sessionMetadata: { summary: { text: '  ' } } });
+    expect(untitled).toContain('change_title');
+
+    const ongoing = await resolveEffectiveCodingPromptText({
+      ...input,
+      settings: { codingPromptBehaviorV1: { sessionTitleUpdates: 'ongoing' } },
+    });
+    expect(ongoing).toContain('change_title');
+  });
+
   it('decrypts referenced prompt docs and caches artifact bodies across calls', async () => {
     const credentials = createCredentials();
 

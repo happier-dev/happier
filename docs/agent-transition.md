@@ -26,6 +26,16 @@ vocabulary).
 This is not session handoff, which moves a Session between machines and keeps
 the Agent, and not forking, which creates a new Session.
 
+In development source, **Session title updates: At session start** generates a
+title only while the Happier Session has no non-empty `summary.text` or legacy
+`name`. Starting a fresh Agent conversation during continuation does not restart
+that instruction. `resolveCodingPromptSessionTitleInstructionModeV1` owns this
+decision for base prompts, shell-bridge guidance and Pi's extension prompt;
+the runtime passes the Session's existing metadata into prompt composition.
+Ongoing title guidance and explicit rename tools retain their existing policy.
+The shared `hasSessionTitleInMetadata` reader also governs ACP native-title
+initialization, so a provider title cannot replace a legacy `name` title either.
+
 ## Canonical owners
 
 | Concern | Owner |

@@ -1,5 +1,5 @@
 import type { PromptBlockV1 } from '@happier-dev/protocol';
-import { resolveCodingPromptSessionTitleUpdatesModeV1 } from '@happier-dev/protocol';
+import { resolveCodingPromptSessionTitleInstructionModeV1 } from '@happier-dev/protocol';
 
 import { buildHappierToolsPromptAppendix } from '@/agent/tools/happierTools/runtime/buildHappierToolsPromptAppendix';
 
@@ -12,6 +12,7 @@ export function resolveCodingToolDeliveryBlocks(args: Readonly<{
     machineId?: string | null;
   }>;
   settings?: Record<string, unknown> | null | undefined;
+  sessionMetadata?: unknown;
 }>): PromptBlockV1[] {
   if (args.delivery !== 'shell_bridge') return [];
 
@@ -22,7 +23,7 @@ export function resolveCodingToolDeliveryBlocks(args: Readonly<{
       text: buildHappierToolsPromptAppendix({
         sessionId: args.sessionId,
         directory: args.directory,
-        sessionTitleUpdatesMode: resolveCodingPromptSessionTitleUpdatesModeV1(args.settings),
+        sessionTitleUpdatesMode: resolveCodingPromptSessionTitleInstructionModeV1(args.settings, args.sessionMetadata),
         memoryRecallGuidance: args.memoryRecallGuidance,
       }),
     },

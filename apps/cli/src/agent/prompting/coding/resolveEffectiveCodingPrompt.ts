@@ -24,6 +24,7 @@ type ResolveEffectiveCodingPromptArgs = Readonly<{
   credentials: Credentials;
   settings: Record<string, unknown> | null | undefined;
   profileId: string | null | undefined;
+  sessionMetadata?: unknown;
   baseOverride?: string | null;
   executionRunsFeatureEnabled?: boolean;
   memoryRecallGuidanceEnabled?: boolean;
@@ -67,6 +68,7 @@ export async function resolveEffectiveCodingPromptPlan(
 
   const basePlan = buildCodingSessionPromptPlanBaseV1({
     settings: basePromptSettings,
+    sessionMetadata: args.sessionMetadata,
     base: args.baseOverride === null ? '' : args.baseOverride,
     executionRunsFeatureEnabled: args.executionRunsFeatureEnabled === true,
     memoryRecallGuidanceEnabled,
@@ -101,6 +103,7 @@ export async function resolveEffectiveCodingPromptPlan(
       // Merged settings (profile override applied): the appendix must honor the same
       // resolved coding-prompt behavior as the base blocks above.
       settings: basePromptSettings,
+      sessionMetadata: args.sessionMetadata,
       memoryRecallGuidance: {
         enabled: memoryRecallGuidanceEnabled,
         machineId: args.memoryMachineId ?? null,

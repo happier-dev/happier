@@ -22,6 +22,19 @@ afterEach(() => {
 });
 
 describe('resolveHappyToolsBridgeBackendOptions', () => {
+  it('preserves an existing title without removing the explicit rename tool', async () => {
+    const resolved = await resolveHappyToolsBridgeBackendOptions({
+      agentDir: tempAgentDir(),
+      sessionId: 'happy-session-1',
+      settings: { codingPromptBehaviorV1: { sessionTitleUpdates: 'initial' } },
+      sessionMetadata: { summary: { text: 'Original task' } },
+      memoryRecallGuidanceEnabled: false,
+    });
+
+    expect(resolved?.sessionConfig.promptAddition).not.toContain('change_title');
+    expect(resolved?.sessionConfig.directTools.map((tool) => tool.name)).toContain('change_title');
+  });
+
   it('returns null when Happier does not control the Pi agent dir', async () => {
     expect(await resolveHappyToolsBridgeBackendOptions({
       agentDir: null,
