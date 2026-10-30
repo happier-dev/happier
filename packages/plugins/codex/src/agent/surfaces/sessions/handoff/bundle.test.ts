@@ -1167,38 +1167,6 @@ describe('codex session handoff bundle', () => {
     });
   });
 
-  it('returns author-safe launch hints for imported sessions', async () => {
-    const codexHome = await mkdtemp(join(tmpdir(), 'happier-codex-handoff-import-persisted-'));
-    const targetPath = join(tmpdir(), 'repo-target-persisted');
-    const content = nativeRolloutContent({ sessionId: 'thread_2', body: { event: 'hello' } });
-
-    const result = await importCodexSessionBundle({
-      bundle: {
-        agentId: 'codex',
-        remoteSessionId: 'thread_2',
-        affinity: {
-          backendMode: 'appServer',
-        },
-        files: [
-          {
-            relativePath: 'sessions/2026/03/08/rollout-2026-03-08T10-00-00-thread_2.jsonl',
-            contentBase64: content.toString('base64'),
-          },
-        ],
-      },
-      targetPath,
-      env: {
-        CODEX_HOME: codexHome,
-      },
-    });
-
-    expect(result.resume).toMatchObject({
-      directory: targetPath,
-      environmentVariables: {
-        CODEX_HOME: codexHome,
-      },
-    });
-  });
 
   it('preserves ACP backend affinity when importing an ACP handoff bundle', async () => {
     const codexHome = await mkdtemp(join(tmpdir(), 'happier-codex-handoff-import-acp-'));

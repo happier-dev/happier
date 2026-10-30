@@ -5,7 +5,6 @@ import {
 import { describe, expect, it } from 'vitest';
 
 import {
-  CODEX_CATALOG_BACKED_HOOK_IDS,
   CODEX_HOOK_PARITY_ROWS,
   CODEX_MISSING_A_LANE_HOOK_IDS,
 } from './hookParity.fixture.js';
@@ -44,20 +43,14 @@ describe('Codex B.6 hook parity fixture', () => {
     expect(ids).not.toEqual(expect.arrayContaining([...BROAD_SURFACE_LABELS]));
   });
 
-  it('verifies catalog-backed hooks against the accepted protocol hook catalog', () => {
-    const catalogIds = new Set(PLUGIN_HOOK_IDS);
-
-    for (const hookId of CODEX_CATALOG_BACKED_HOOK_IDS) {
-      expect(catalogIds.has(hookId)).toBe(true);
-      expect(getPluginHookDefinition(hookId)?.id).toBe(hookId);
-    }
-  });
 
   it('records no remaining A-lane hook catalog blockers after A.7 acceptance', () => {
+    const catalogIds = new Set(PLUGIN_HOOK_IDS);
     expect(CODEX_MISSING_A_LANE_HOOK_IDS).toEqual([]);
 
     for (const row of CODEX_HOOK_PARITY_ROWS) {
       expect(row.catalogStatus).toBe('catalog-backed');
+      expect(catalogIds.has(row.id)).toBe(true);
       expect(getPluginHookDefinition(row.id)?.id).toBe(row.id);
     }
   });

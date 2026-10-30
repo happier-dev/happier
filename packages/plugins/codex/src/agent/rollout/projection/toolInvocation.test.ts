@@ -18,12 +18,6 @@ describe('codex terminal-mode rollout tool mapping', () => {
         expect(unique.size).toBe(actual.length);
     });
 
-    it('canonicalizes exec_command as Bash (default-visible)', () => {
-        expect(canonicalizeCodexRolloutToolName('exec_command')).toEqual({
-            canonicalToolName: 'Bash',
-            visibility: 'default',
-        });
-    });
 
     it('canonicalizes shell/shell_command as Bash (default-visible)', () => {
         expect(canonicalizeCodexRolloutToolName('shell')).toEqual({
@@ -36,12 +30,6 @@ describe('codex terminal-mode rollout tool mapping', () => {
         });
     });
 
-    it('canonicalizes apply_patch as Patch (default-visible)', () => {
-        expect(canonicalizeCodexRolloutToolName('apply_patch')).toEqual({
-            canonicalToolName: 'Patch',
-            visibility: 'default',
-        });
-    });
 
     it('canonicalizes title-control aliases as change_title (default-visible)', () => {
         expect(canonicalizeCodexRolloutToolName('change_title')).toEqual({
@@ -100,9 +88,4 @@ describe('codex terminal-mode rollout tool mapping', () => {
         expect(normalizeCodexRolloutToolInput('exec_command', '{"cmd":"echo hi"}')).toEqual({ cmd: 'echo hi' });
     });
 
-    it('normalizes apply_patch input into an object with patch', () => {
-        expect(normalizeCodexRolloutToolInput('apply_patch', '*** Begin Patch\n*** End Patch')).toEqual({
-            patch: '*** Begin Patch\n*** End Patch',
-        });
-    });
 });

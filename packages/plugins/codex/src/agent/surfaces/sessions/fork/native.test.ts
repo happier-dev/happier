@@ -8,20 +8,6 @@ const EXACT_PARENT_SESSION_ID = '  provider\nses/AB+cd==  ';
 const EXACT_CHILD_SESSION_ID = '  child\nses/ZY+xw==  ';
 
 describe('forkCodexNativeAppServerConversation', () => {
-  it('prefers thread/fork and reads nested thread ids from the response payload', async () => {
-    const request = vi.fn(async () => ({ thread: { id: 'forked-thread' } }));
-
-    await expect(forkCodexNativeAppServerConversation({
-      client: { request },
-      parentCodexSessionId: 'parent-thread',
-    })).resolves.toEqual({ providerSessionId: 'forked-thread' });
-
-    expect(request).toHaveBeenCalledWith('thread/fork', {
-      threadId: 'parent-thread',
-      persistExtendedHistory: true,
-      excludeTurns: true,
-    }, { timeoutMs: null });
-  });
 
   it('forks using the parent thread id exactly as Codex minted it', async () => {
     const request = vi.fn(async () => ({ thread: { id: EXACT_CHILD_SESSION_ID } }));

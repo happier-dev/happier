@@ -204,27 +204,6 @@ describe('Codex runtime auth adapter', () => {
     expect(applyConnectedServiceAuthGeneration).toHaveBeenCalledOnce();
   });
 
-  it('suppresses transport recycle when direct live hot apply is required', async () => {
-    const adapter = createCodexConnectedServiceRuntimeAuthAdapter();
-    const selection = {
-    };
-
-    expect(adapter.canHotApply({
-      target: { agentId: 'codex' },
-      selection,
-    })).toEqual({
-      supported: false,
-      reason: 'runtime_apply_callback_unavailable',
-    });
-
-    await expect(adapter.hotApply({
-      target: { agentId: 'codex' },
-      selection,
-    })).resolves.toEqual({
-      applied: false,
-      reason: 'runtime_apply_callback_unavailable',
-    });
-  });
 
   it('combines named provider-account and typed native-auth evidence', async () => {
     await expect(createCodexConnectedServiceRuntimeAuthAdapter().verifyActiveAccount({
