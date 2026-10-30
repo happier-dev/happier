@@ -7,6 +7,25 @@ import { generateKeyPairSync } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { buildReleaseNotesBundle } from '../release/release-notes/project-release-notes.mjs';
 
+test('expo submit preserves exact build ids and the selected wait policy in final EAS commands', () => {
+  const repoRoot = path.resolve(import.meta.dirname, '../../..');
+  const buildId = '123e4567-e89b-12d3-a456-426614174000';
+  for (const wait of ['true', 'false']) {
+    const result = spawnSync(process.execPath, [
+      'scripts/pipeline/expo/submit.mjs', '--environment', 'preview', '--platform', 'android',
+      '--id', buildId, '--wait', wait, '--dry-run',
+    ], { cwd: repoRoot, encoding: 'utf8', env: { ...process.env, CI: '1', EXPO_TOKEN: 'fixture' } });
+    assert.equal(result.status, 0, result.stderr);
+    const command = result.stdout.split('\n').find((line) => line.includes('eas-cli@') && line.includes('submit'));
+    assert.ok(command, result.stdout);
+    const args = command.slice(command.indexOf(' npx ') + 5).trim().split(/\s+/u);
+    assert.equal(args[args.indexOf('--id') + 1], buildId);
+    assert.ok(args.includes(wait === 'true' ? '--wait' : '--no-wait'), command);
+    assert.ok(!args.includes(wait === 'true' ? '--no-wait' : '--wait'), command);
+    assert.ok(!args.includes('--latest'), command);
+  }
+});
+
 test('trusted pipeline expo-submit carries exact build identity and notes for a historical source checkout', (t) => {
   const repoRoot = path.resolve(import.meta.dirname, '../../..');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'happier-expo-submit-binding-'));

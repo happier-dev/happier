@@ -52,4 +52,11 @@ test('canonical Expo fingerprint recomputes the hash after filtering volatile so
   assert.notEqual(canonical.hash, raw.hash);
   assert.equal(canonical.sources.length, 2);
   assert.match(canonical.hash, /^[a-f0-9]{40}$/);
+  assert.equal(createCanonicalFingerprintFromExpoFingerprint(raw).hash, canonical.hash);
+  assert.equal(createCanonicalFingerprintFromExpoFingerprint({
+    sources: raw.sources.map((source) => source.hash === 'volatile' ? { ...source, hash: 'changed-generated-output' } : source),
+  }).hash, canonical.hash);
+  assert.notEqual(createCanonicalFingerprintFromExpoFingerprint({
+    sources: raw.sources.map((source) => source.filePath === 'stable-a' ? { ...source, hash: 'changed-source' } : source),
+  }).hash, canonical.hash);
 });

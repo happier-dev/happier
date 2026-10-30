@@ -87,11 +87,15 @@ test('existing non-English localizations are updated without inventing an Englis
   assert.equal(api.writes.some((w) => new URL(w.url).pathname === '/v1/appStoreVersionLocalizations'), false);
 });
 
-test('immutable notes in a non-default localization are checked before any policy mutation', async (t) => {
-  const api = httpStore(t, { existing: true, state: 'WAITING_FOR_REVIEW', releaseType: 'MANUAL', locales: ['en-US', 'fr-FR'],
-    initialNotes: identity.whatsNew, localeNotes: { 'fr-FR': 'Different projection' } });
-  await assert.rejects(publishAppStoreVersion({ ...identity, request: api.request }), /bound projection/);
-  assert.deepEqual(api.writes, []);
+test('immutable notes in default and paginated non-default localizations are checked before any policy mutation', async (t) => {
+  for (const options of [
+    { initialNotes: 'Other release' },
+    { locales: ['en-US', 'fr-FR'], initialNotes: identity.whatsNew, localeNotes: { 'fr-FR': 'Different projection' } },
+  ]) {
+    const api = httpStore(t, { existing: true, state: 'WAITING_FOR_REVIEW', releaseType: 'MANUAL', ...options });
+    await assert.rejects(publishAppStoreVersion({ ...identity, request: api.request }), /bound projection/);
+    assert.deepEqual(api.writes, []);
+  }
 });
 
 test('a version with no localizations creates only the requested default before review', async (t) => {
@@ -199,11 +203,5 @@ test('a distribution-ready version that is unavailable to download is not report
 test('a notarization-only version cannot be mistaken for App Store publication', async () => {
   const api = store({ existing: true, state: 'READY_FOR_DISTRIBUTION', reviewType: 'NOTARIZATION', phased: false, initialNotes: identity.whatsNew });
   await assert.rejects(publishAppStoreVersion({ ...identity, request: api.request }), /App Store review/);
-  assert.deepEqual(api.writes, []);
-});
-
-test('immutable release notes cannot be silently replaced on retry', async () => {
-  const api = store({ existing: true, state: 'WAITING_FOR_REVIEW', releaseType: 'MANUAL', initialNotes: 'Other release' });
-  await assert.rejects(publishAppStoreVersion({ ...identity, request: api.request }), /bound projection/);
   assert.deepEqual(api.writes, []);
 });
