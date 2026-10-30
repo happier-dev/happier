@@ -30,7 +30,7 @@ export type HappierInlineCodeProps = Readonly<{
   Text: ComponentType<HappierInlineCodeTextProps>;
   /** The host's mono face; absent, the platform's. */
   fontFamily?: string;
-  /** The code's ink and the elevated surface step it sits on. */
+  /** The code's ink and its fill (an ink tint in core, so the chip shows on every surface). */
   ink: string;
   fill: string;
   /** The horizontal inset, the host's `s4` spacing step (density-aware in core). */
@@ -47,7 +47,7 @@ const WEB_NO_WRAP_STYLE =
     : null;
 
 /**
- * A command, flag or identifier set inside a sentence: mono on the elevated surface step. The prose
+ * A command, flag or identifier set inside a sentence: mono on a quiet ink fill. The prose
  * around it stays localized; the code itself is never translated. On web the chip never breaks inside
  * itself: when it does not fit the line it moves to the next line as one unit (native Text has no such
  * control). Happier core and plugin surfaces draw the chip with this one owner; each host supplies only
